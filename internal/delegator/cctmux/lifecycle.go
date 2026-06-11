@@ -365,16 +365,6 @@ func (b *Backend) IsRunning() bool {
 	return pane.isAlive(context.Background())
 }
 
-func (b *Backend) Restart(ctx context.Context) error {
-	if err := b.Close(); err != nil {
-		return fmt.Errorf("close before restart: %w", err)
-	}
-	return b.Start(ctx, delegator.StartOptions{
-		WorkDir: b.workDir,
-		AgentID: b.agentID,
-	})
-}
-
 func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

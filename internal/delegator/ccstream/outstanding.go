@@ -71,14 +71,6 @@ func (r *OutstandingRegistry) SetOnEmpty(fn func()) {
 	r.mu.Unlock()
 }
 
-// onEmptyHook returns the currently-installed onEmpty callback. Used by
-// Backend.Restart to preserve the drain hook across registry replacement.
-func (r *OutstandingRegistry) onEmptyHook() func() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.onEmpty
-}
-
 // Register adds a new prompt under the given requestID. If a prompt with the
 // same requestID already exists, it is replaced (its listeners are dropped).
 func (r *OutstandingRegistry) Register(requestID string, kind OutstandingKind) {

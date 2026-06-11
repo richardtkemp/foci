@@ -64,9 +64,6 @@ type Delegator interface {
 	// IsRunning reports whether the agent subprocess is alive.
 	IsRunning() bool
 
-	// Restart kills and relaunches the agent subprocess.
-	Restart(ctx context.Context) error
-
 	// SetPermissionPromptFunc sets the function used to send permission
 	// prompts with inline keyboard choices. Optional — if not set, the
 	// backend logs and drops undeliverable prompts.

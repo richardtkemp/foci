@@ -2550,53 +2550,6 @@ func TestFinalizeExit_SubsequentOnReaderStoppedIsNoOp(t *testing.T) {
 	}
 }
 
-func TestRestart_ResetsFinalizeOnce(t *testing.T) {
-	// After a process death and Restart, the backend must accept a fresh
-	// finalizeExit invocation for the new subprocess. Without resetting
-	// finalizeOnce in Restart, the second subprocess's death cleanup would
-	// be silently skipped — same wedge, just delayed.
-	t.Parallel()
-
-	b := &Backend{}
-	b.mu.Lock()
-	b.running = true
-	b.mu.Unlock()
-	b.typingFunc = func(bool) {}
-
-	// First lifecycle: simulate death.
-	var firstCount int
-	h1 := &delegator.EventHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { firstCount++ },
-	}
-	applyHandler(b, h1)
-	b.finalizeExit(fmt.Errorf("first death"))
-	if firstCount != 1 {
-		t.Fatalf("first lifecycle completion: got %d, want 1", firstCount)
-	}
-
-	// Restart resets state. We bypass actual subprocess relaunch — only the
-	// once-reset is under test here.
-	b.finalizeOnce = sync.Once{}
-	b.mu.Lock()
-	b.running = true
-	b.closing = false
-	b.mu.Unlock()
-
-	// Second lifecycle: a new in-flight turn must see its own completion.
-	var secondCount int
-	h2 := &delegator.EventHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { secondCount++ },
-	}
-	applyHandler(b, h2)
-	b.finalizeExit(fmt.Errorf("second death"))
-	if secondCount != 1 {
-		t.Errorf("second lifecycle completion: got %d, want 1 (finalizeOnce was not reset)", secondCount)
-	}
-	if b.IsRunning() {
-		t.Error("IsRunning = true after second finalizeExit")
-	}
-}
-
 func TestClose_BoundedWaitWhenWaiterStalls(t *testing.T) {
 	// Regression for the 2026-05-06 deadlock: when CC dies but the waiter
 	// goroutine fails to deliver to b.waitCh (e.g. a stalled callback inside

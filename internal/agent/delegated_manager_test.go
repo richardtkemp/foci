@@ -154,7 +154,6 @@ func (m *mockBackendDM) Inject(ctx context.Context, inj delegator.Inject) error 
 
 func (m *mockBackendDM) IsRunning() bool { return m.running }
 
-func (m *mockBackendDM) Restart(_ context.Context) error { return nil }
 
 func (m *mockBackendDM) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
 	m.mu.Lock()
