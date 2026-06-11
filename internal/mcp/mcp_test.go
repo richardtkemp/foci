@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -498,6 +499,58 @@ func TestServerConfigsEqual(t *testing.T) {
 	if !serverConfigsEqual(nil, nil) {
 		t.Error("nil vs nil should be equal")
 	}
+}
+
+// TestConcurrentExecuteAndRefresh stresses the RWMutex drain path: many
+// concurrent tool calls run while refreshServers fires repeatedly. Under -race
+// this proves a refresh can't close a session out from under an in-flight call
+// (calls hold the read lock; Close takes the write lock and drains behind them).
+func TestConcurrentExecuteAndRefresh(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dir := t.TempDir()
+	content := "[[servers]]\nname = \"test\"\ncommand = \"echo\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "mcp.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManagerForAgent(dir, "test")
+	defer m.Close()
+	_, ct := newTestServer(ctx, t)
+	m.tf = func(cfg ServerConfig) (mcp.Transport, error) { return ct, nil }
+	m.refreshServers(ctx)
+	if m.serverCount() != 1 {
+		t.Fatalf("setup: serverCount = %d, want 1", m.serverCount())
+	}
+
+	params, _ := json.Marshal(mcpParams{
+		Server: "test", Tool: "echo", Arguments: json.RawMessage(`{"message":"hi"}`),
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				if _, err := m.execute(ctx, params); err != nil {
+					t.Errorf("execute: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				m.refreshServers(ctx) // unchanged config → RLock fast path
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestDynamicReload(t *testing.T) {
