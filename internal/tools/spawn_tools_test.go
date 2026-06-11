@@ -185,9 +185,11 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 	}
 }
 
-func TestSpawnCharacterAllTools(t *testing.T) {
-	// Proves that character context mode sends all registered tools to the model,
-	// including communication tools like send_to_chat and send_to_session.
+func TestSpawnCharacterTools(t *testing.T) {
+	// Proves character context mode sends registered tools to the model and
+	// keeps send_to_chat, but excludes send_to_session: a one-shot character
+	// spawn has no persistent session of its own, so it must not be able to
+	// inject into other sessions (raw/explore already exclude it).
 	t.Parallel()
 	var receivedReq *provider.MessageRequest
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -230,8 +232,8 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 	if !toolNames["send_to_chat"] {
 		t.Error("send_to_chat should be included in character mode")
 	}
-	if !toolNames["send_to_session"] {
-		t.Error("send_to_session should be included in character mode")
+	if toolNames["send_to_session"] {
+		t.Error("send_to_session should be excluded from character mode (ephemeral one-shot spawn)")
 	}
 }
 
