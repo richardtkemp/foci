@@ -473,37 +473,6 @@ func (b *Backend) closeInner() {
 	// backend restarts.
 }
 
-// Restart kills and relaunches the Claude Code subprocess.
-func (b *Backend) Restart(ctx context.Context) error {
-	_ = b.Close()
-
-	// Reset state for fresh start.
-	b.readyCh = make(chan struct{})
-	b.readyOnce = sync.Once{}
-	b.finalizeOnce = sync.Once{}
-	b.closeOnce = sync.Once{}
-	b.mu.Lock()
-	b.initReqID = ""
-	b.mu.Unlock()
-
-	b.permMu.Lock()
-	b.pendingPerms = make(map[string]*pendingPermission)
-	b.permMu.Unlock()
-
-	b.elicMu.Lock()
-	b.pendingElicits = make(map[string]*pendingElicitation)
-	b.elicMu.Unlock()
-
-	// Drain the registry without firing onEmpty (subprocess restarts are not
-	// user-driven cancellations). Reset by replacing the registry while
-	// preserving the configured drain hook.
-	onEmpty := b.outstanding.onEmptyHook()
-	b.outstanding = NewOutstandingRegistry()
-	b.outstanding.SetOnEmpty(onEmpty)
-
-	return b.Start(ctx, b.startOpts)
-}
-
 // IsRunning reports whether the Claude Code subprocess is alive.
 func (b *Backend) IsRunning() bool {
 	b.mu.Lock()

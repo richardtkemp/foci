@@ -363,7 +363,6 @@ func (m *mockPassBackend) Inject(ctx context.Context, inj delegator.Inject) erro
 	return nil
 }
 func (m *mockPassBackend) IsRunning() bool                                        { return true }
-func (m *mockPassBackend) Restart(context.Context) error                          { return nil }
 func (m *mockPassBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
 func (m *mockPassBackend) SetOnPromptsCleared(func())                             {}
 func (m *mockPassBackend) RegisterPromptCancelListener(string, func(string))      {}
@@ -417,7 +416,6 @@ func (m *mockPassBackendNoCapturer) Inject(ctx context.Context, inj delegator.In
 	return nil
 }
 func (m *mockPassBackendNoCapturer) IsRunning() bool                                        { return true }
-func (m *mockPassBackendNoCapturer) Restart(context.Context) error                          { return nil }
 func (m *mockPassBackendNoCapturer) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
 func (m *mockPassBackendNoCapturer) SetOnPromptsCleared(func())                             {}
 func (m *mockPassBackendNoCapturer) RegisterPromptCancelListener(string, func(string))      {}

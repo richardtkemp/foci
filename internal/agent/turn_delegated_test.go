@@ -115,7 +115,6 @@ type mockBackendDT struct {
 
 func (m *mockBackendDT) Start(_ context.Context, _ delegator.StartOptions) error             { return nil }
 func (m *mockBackendDT) IsRunning() bool                                                   { return true }
-func (m *mockBackendDT) Restart(_ context.Context) error                                   { return nil }
 func (m *mockBackendDT) SetPermissionPromptFunc(_ delegator.PermissionPromptFunc)            {}
 func (m *mockBackendDT) SetOnPromptsCleared(_ func())                                      {}
 func (m *mockBackendDT) RegisterPromptCancelListener(_ string, _ func(string))             {}
