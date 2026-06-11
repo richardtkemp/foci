@@ -7,8 +7,17 @@ package delegator
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrTurnNotInFlight is returned by Inject(SourceSteer) when the steer arrives
+// after the turn it meant to interrupt has already completed and the inject
+// carries no Turn of its own to track a fresh turn. Rather than silently
+// beginning an untracked turn (nil TurnEvents → no OnTurnComplete, lost
+// usage/compaction), the backend declines and the caller re-routes the message
+// through the normal idle path. See the Steer/idle row in Delegator.Inject.
+var ErrTurnNotInFlight = errors.New("delegator: turn not in flight")
 
 // Backend is the interface that all coding agent backends implement.
 // A Backend owns the entire turn: inference, tool execution, and context
@@ -32,7 +41,7 @@ type Delegator interface {
 	//   User     | idle       | begin turn (with attachments if provided)
 	//   User     | in-flight  | send follow-up; CC's mid-turn drain folds it
 	//   Steer    | in-flight  | send at priority "now"; CC folds at next tool boundary
-	//   Steer    | idle       | begin turn — degrades to User-idle
+	//   Steer    | idle       | with inj.Turn: begin turn; without: ErrTurnNotInFlight (caller re-routes)
 	//   Compact  | any        | send slash command (fire-and-forget)
 	//   Pass     | any        | send slash command (fire-and-forget)
 	//

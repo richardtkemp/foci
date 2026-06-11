@@ -198,6 +198,49 @@ func TestInbox_Enqueue_InFlight_CCBackend_InjectsSteer(t *testing.T) {
 	}
 }
 
+// errTurnNotInFlightBackend always declines an Inject with
+// ErrTurnNotInFlight, modelling the race where the turn completed between the
+// inbox's turnActive check and the inject landing.
+type errTurnNotInFlightBackend struct{ mockBackendDT }
+
+func (*errTurnNotInFlightBackend) Inject(context.Context, delegator.Inject) error {
+	return delegator.ErrTurnNotInFlight
+}
+
+// TestInbox_Enqueue_Steer_RacesTurnCompletion_ReRoutes verifies the steer-race
+// fix: when the backend declines a steer with ErrTurnNotInFlight (the turn
+// finished underneath it), the inbox re-routes the envelope to the normal idle
+// channel so the worker drives a properly-tracked turn instead of dropping it.
+func TestInbox_Enqueue_Steer_RacesTurnCompletion_ReRoutes(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.SetInboxSteerMode(true)
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return &errTurnNotInFlightBackend{}, nil
+	})
+
+	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
+
+	// Steer path is taken (turnActive true), but Inject declines → re-route.
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{
+		SessionKey: "test/s",
+		Text:       "raced steer",
+		Driver:     d,
+	})
+
+	if !waitFor(time.Second, func() bool { return d.NumCalls() == 1 }) {
+		t.Fatalf("re-routed envelope did not drive a turn within 1s; calls=%d", d.NumCalls())
+	}
+	calls := d.Calls()
+	if len(calls[0]) != 1 || calls[0][0].Text != "raced steer" {
+		t.Errorf("unexpected batch after re-route: %+v", calls[0])
+	}
+}
+
 // TestInbox_Enqueue_InFlight_APIBackend_AppendsSteer verifies that a
 // steer-eligible mid-turn message goes to AppendSteer when no backend
 // is registered (API-mode agents).

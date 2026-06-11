@@ -25,6 +25,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -300,20 +301,30 @@ func (a *Agent) Enqueue(env Envelope) {
 			return
 		}
 		if be != nil {
-			if err := be.Inject(a.inboxCtx, delegator.Inject{
+			err := be.Inject(a.inboxCtx, delegator.Inject{
 				Source: delegator.SourceSteer,
 				Text:   env.Text,
-			}); err != nil {
+			})
+			switch {
+			case err == nil:
+				a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB", env.SessionKey, len(env.Text))
+				return
+			case errors.Is(err, delegator.ErrTurnNotInFlight):
+				// The turn finished between the turnActive check above and the
+				// inject landing. Fall through to the normal idle path so the
+				// message starts a properly-tracked turn instead of an untracked
+				// one inside the backend.
+				a.logger().Debugf("inbox: steer raced turn completion sk=%s, re-routing to idle path", env.SessionKey)
+			default:
 				a.logger().Warnf("inbox: urgent dispatch sk=%s failed: %v", env.SessionKey, err)
 				return
 			}
-			a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB", env.SessionKey, len(env.Text))
+		} else {
+			// API-mode fallback: buffer for next tool-boundary drain.
+			inb.appendSteer(env.Text, env.ReceivedAt)
+			a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
 			return
 		}
-		// API-mode fallback: buffer for next tool-boundary drain.
-		inb.appendSteer(env.Text, env.ReceivedAt)
-		a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
-		return
 	}
 
 	// Push to this session's channel; drop with warning if full.

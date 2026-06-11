@@ -991,8 +991,18 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 
 	case delegator.SourceSteer:
 		if !inFlight {
-			// Edge case: steer at idle. Degrade to begin-turn.
-			b.logger().Debugf("Inject(Steer): no turn in flight, degrading to begin-turn")
+			// Steer at idle — the turn this steer meant to interrupt finished
+			// in the window between the inbox's turnActive check and this
+			// dispatch. The inbox builds steers with no inj.Turn, so beginning
+			// a turn here would run it untracked (nil TurnEvents → no
+			// OnTurnComplete, lost usage/compaction). Decline and let the caller
+			// re-route through the normal idle path, which supplies a Turn.
+			// If a steer *does* carry its own Turn, it is safe to begin.
+			if inj.Turn == nil {
+				b.logger().Debugf("Inject(Steer): no turn in flight and no inj.Turn, returning ErrTurnNotInFlight for re-route")
+				return delegator.ErrTurnNotInFlight
+			}
+			b.logger().Debugf("Inject(Steer): no turn in flight, beginning tracked turn from inj.Turn")
 			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn)
 		}
 		// In-flight steer: SendUser at priority "now". CC dequeues "now"
