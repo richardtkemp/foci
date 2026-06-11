@@ -86,7 +86,7 @@ type serverConn struct {
 // the manager re-reads mcp.toml on every tool call and reconnects
 // if the server list has changed.
 type Manager struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	servers   []serverConn
 	configDir string           // directory containing mcp.toml
 	agentID   string           // agent ID for server filtering
@@ -264,9 +264,9 @@ func (m *Manager) refreshServers(ctx context.Context) {
 
 	servers := cfg.ServersForAgent(m.agentID)
 
-	m.mu.Lock()
+	m.mu.RLock()
 	changed := !serverConfigsEqual(m.current, servers)
-	m.mu.Unlock()
+	m.mu.RUnlock()
 
 	if !changed {
 		return
@@ -398,7 +398,13 @@ func (m *Manager) execute(ctx context.Context, params json.RawMessage) (tools.To
 		return tools.ToolResult{}, fmt.Errorf("invalid mcp tool params: %w", err)
 	}
 
-	m.mu.Lock()
+	// Hold the read lock for the whole tool call. A concurrent refreshServers
+	// closes sessions on an mcp.toml change via the write lock, so it now
+	// drains behind any in-flight call instead of closing the session
+	// mid-call; the session we resolve here can't be retired under us.
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	var conn *serverConn
 	for i := range m.servers {
 		if m.servers[i].name == p.Server {
@@ -406,8 +412,6 @@ func (m *Manager) execute(ctx context.Context, params json.RawMessage) (tools.To
 			break
 		}
 	}
-	m.mu.Unlock()
-
 	if conn == nil {
 		return tools.TextResult("error: unknown MCP server " + p.Server), nil
 	}
