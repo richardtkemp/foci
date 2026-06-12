@@ -59,13 +59,13 @@ type TelegramStub struct {
 //
 // RetryAfter >0      → only valid when Code=429; embeds parameters.retry_after.
 type injectedFault struct {
-	Code        int    // HTTP + Bot API error_code (e.g. 429, 502)
-	Desc        string // description in the error JSON
-	RetryAfter  int    // for 429: parameters.retry_after seconds
-	Body        []byte // raw body override; overrides Code/Desc when set
-	BodyCT      string // content-type for Body ("" = application/json)
-	BodyStatus  int    // HTTP status for Body ("" = 200)
-	ConnDrop    bool   // hijack and close the underlying TCP conn
+	Code       int    // HTTP + Bot API error_code (e.g. 429, 502)
+	Desc       string // description in the error JSON
+	RetryAfter int    // for 429: parameters.retry_after seconds
+	Body       []byte // raw body override; overrides Code/Desc when set
+	BodyCT     string // content-type for Body ("" = application/json)
+	BodyStatus int    // HTTP status for Body ("" = 200)
+	ConnDrop   bool   // hijack and close the underlying TCP conn
 }
 
 // botState holds per-token mutable state.
@@ -94,9 +94,9 @@ type FileBlob struct {
 // these to verify side effects (e.g. did foci-gw send a sendMessage with
 // the right body to the right chat).
 type SentCall struct {
-	Method  string          // e.g. "sendMessage"
-	Body    json.RawMessage // JSON form of the parsed request payload
-	Time    time.Time
+	Method string          // e.g. "sendMessage"
+	Body   json.RawMessage // JSON form of the parsed request payload
+	Time   time.Time
 }
 
 // NewTelegramStub starts the stub on a local httptest port.
