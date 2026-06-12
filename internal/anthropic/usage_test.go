@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -544,5 +545,64 @@ func TestMapUsageResponseNilFiveHour(t *testing.T) {
 	}
 	if w.Period != 5*time.Hour {
 		t.Errorf("period = %v, want 5h", w.Period)
+	}
+}
+
+func TestUsageClientSetBaseURLAndPostFetchHook(t *testing.T) {
+	// Proves SetBaseURL redirects usage fetches, and the post-fetch hook fires after a fresh fetch but not on cache hits.
+	util := 10.0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(usageTestResponse{FiveHour: &usageAPIWindow{Utilization: &util}})
+	}))
+	defer server.Close()
+
+	client := NewUsageClient(StaticToken("tok"))
+	client.SetBaseURL(server.URL)
+
+	var hookCalls atomic.Int32
+	client.SetPostFetchHook(func() { hookCalls.Add(1) })
+
+	if _, err := client.GetUsage(context.Background()); err != nil {
+		t.Fatalf("GetUsage: %v", err)
+	}
+	if hookCalls.Load() != 1 {
+		t.Errorf("hook calls after fetch = %d, want 1", hookCalls.Load())
+	}
+
+	// Cached call: no fetch, no hook.
+	if _, err := client.GetUsage(context.Background()); err != nil {
+		t.Fatalf("GetUsage cached: %v", err)
+	}
+	if hookCalls.Load() != 1 {
+		t.Errorf("hook calls after cache hit = %d, want still 1", hookCalls.Load())
+	}
+}
+
+func TestTokenResolutionErrorUnwrap(t *testing.T) {
+	// Proves tokenResolutionError preserves the underlying error for errors.Is/As chains — GetUsage's backoff exemption depends on this.
+	inner := fmt.Errorf("token gone")
+	wrapped := &tokenResolutionError{inner}
+	if !errors.Is(wrapped, inner) {
+		t.Error("errors.Is failed to see through tokenResolutionError")
+	}
+	if wrapped.Error() != "token gone" {
+		t.Errorf("Error() = %q", wrapped.Error())
+	}
+}
+
+func TestGetUsageMalformedJSON(t *testing.T) {
+	// Proves a non-JSON 200 response is reported as an unmarshal error rather than a panic or silent zero-value usage.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "<html>gateway error</html>")
+	}))
+	defer server.Close()
+
+	client := NewUsageClient(StaticToken("tok"))
+	client.SetBaseURL(server.URL)
+
+	_, err := client.GetUsage(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unmarshal") {
+		t.Errorf("err = %v, want unmarshal error", err)
 	}
 }

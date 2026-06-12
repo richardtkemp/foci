@@ -582,4 +582,3 @@ func TestContentBlockToolUseRoundTrip(t *testing.T) {
 		t.Errorf("decoded = %+v", decoded)
 	}
 }
-

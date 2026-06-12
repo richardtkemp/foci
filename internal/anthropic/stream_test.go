@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -215,7 +216,6 @@ data: {"type":"message_stop"}`,
 	}
 }
 
-
 func TestStreamMessageNilHandler(t *testing.T) {
 	// Proves that StreamMessage completes successfully when passed a nil handler, allowing callers that only want the final response to omit the handler.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,4 +263,109 @@ data: {"type":"message_stop"}`,
 func TestStreamingClientInterface(t *testing.T) {
 	// Proves that *Client satisfies the provider.StreamingClient interface at runtime (compile-time assertion exists in stream.go; this documents the contract explicitly in the test suite).
 	var _ provider.StreamingClient = (*Client)(nil)
+}
+
+func TestStreamMessageSSEErrorEvent(t *testing.T) {
+	// Proves an SSE "error" event before any deltas is classified into a retryable APIError with the mapped status code (overloaded → 529), not wrapped as mid-stream.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprintf(w, "%s\n\n", `event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)
+		flusher.Flush()
+	}))
+	defer server.Close()
+
+	client := NewClient(StaticToken("test-key"), 10*time.Second)
+	client.SetBaseURL(server.URL)
+
+	_, err := client.StreamMessage(context.Background(), &MessageRequest{
+		Model: "claude-haiku-4-5", MaxTokens: 64,
+		Messages: []Message{{Role: "user", Content: TextContent("hi")}},
+	}, &provider.StreamHandler{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var apiErr *provider.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T (%v), want *APIError", err, err)
+	}
+	if apiErr.StatusCode != 529 {
+		t.Errorf("StatusCode = %d, want 529 (overloaded)", apiErr.StatusCode)
+	}
+	if strings.Contains(err.Error(), "mid-stream") {
+		t.Error("pre-delta error must not be marked mid-stream (it is retryable)")
+	}
+	if len(apiErr.WireRequest) == 0 {
+		t.Error("WireRequest not attached to streaming APIError")
+	}
+}
+
+func TestStreamMessageMidStreamError(t *testing.T) {
+	// Proves an SSE error arriving after text deltas were already emitted is wrapped as a non-retryable mid-stream error, while still exposing the underlying APIError.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		events := []string{
+			`event: message_start
+data: {"type":"message_start","message":{"id":"msg_mid","type":"message","role":"assistant","content":[],"model":"claude-haiku-4-5","stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}`,
+			`event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`,
+			`event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
+		}
+		for _, event := range events {
+			fmt.Fprintf(w, "%s\n\n", event)
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(StaticToken("test-key"), 10*time.Second)
+	client.SetBaseURL(server.URL)
+
+	var deltas []string
+	_, err := client.StreamMessage(context.Background(), &MessageRequest{
+		Model: "claude-haiku-4-5", MaxTokens: 64,
+		Messages: []Message{{Role: "user", Content: TextContent("hi")}},
+	}, &provider.StreamHandler{
+		OnTextDelta: func(d string) { deltas = append(deltas, d) },
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if len(deltas) != 1 || deltas[0] != "partial" {
+		t.Fatalf("deltas = %v, want [partial] before the error", deltas)
+	}
+	if !strings.Contains(err.Error(), "mid-stream error") {
+		t.Errorf("err = %v, want mid-stream wrap", err)
+	}
+	var apiErr *provider.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 529 {
+		t.Errorf("err = %v, want wrapped *APIError with status 529", err)
+	}
+}
+
+func TestStreamMessageTokenError(t *testing.T) {
+	// Proves a token resolution failure aborts the stream before any HTTP request is made.
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requested = true }))
+	defer server.Close()
+
+	client := NewClient(func() (string, error) { return "", fmt.Errorf("no creds") }, 10*time.Second)
+	client.SetBaseURL(server.URL)
+
+	_, err := client.StreamMessage(context.Background(), &MessageRequest{
+		Model: "claude-haiku-4-5", MaxTokens: 64,
+		Messages: []Message{{Role: "user", Content: TextContent("hi")}},
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "no creds") {
+		t.Fatalf("err = %v, want token error", err)
+	}
+	if requested {
+		t.Error("HTTP request was made despite token failure")
+	}
 }

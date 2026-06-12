@@ -80,7 +80,7 @@ func (c *Client) ensureSDKClient() *sdk.Client {
 		sc := sdk.NewClient(
 			option.WithBaseURL(c.baseURL),
 			option.WithHTTPClient(c.httpClient),
-			option.WithMaxRetries(0), // we handle retries ourselves
+			option.WithMaxRetries(0),            // we handle retries ourselves
 			option.WithAuthToken("placeholder"), // overridden per-request
 		)
 		c.sdkClient = &sc
