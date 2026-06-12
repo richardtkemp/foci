@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -218,9 +219,9 @@ func TestContentBlockToSDKImage(t *testing.T) {
 	b := ContentBlock{
 		Type: "image",
 		Source: &ContentSource{
-			Type:      "base64",
+			Type:     "base64",
 			MimeType: "image/jpeg",
-			Data:      "abc123",
+			Data:     "abc123",
 		},
 	}
 	sdk := contentBlockToSDK(b)
@@ -573,5 +574,169 @@ func TestStripUnsupportedParamsSpeed(t *testing.T) {
 	stripUnsupportedParams(reqSonnet)
 	if reqSonnet.Speed != "" {
 		t.Errorf("Speed should be cleared for sonnet, got %q", reqSonnet.Speed)
+	}
+}
+
+// mustUnmarshalSDKBlock decodes wire JSON into an SDK ContentBlockUnion, as the
+// SDK would when parsing an API response.
+func mustUnmarshalSDKBlock(t *testing.T, raw string) sdk.ContentBlockUnion {
+	t.Helper()
+	var block sdk.ContentBlockUnion
+	if err := json.Unmarshal([]byte(raw), &block); err != nil {
+		t.Fatalf("unmarshal SDK block: %v", err)
+	}
+	return block
+}
+
+func TestContentBlockFromSDKVariants(t *testing.T) {
+	// Proves contentBlockFromSDK translates every wire block type — text, thinking, redacted_thinking, tool_use — into the matching provider ContentBlock fields.
+	tests := []struct {
+		name string
+		wire string
+		want ContentBlock
+	}{
+		{
+			name: "text",
+			wire: `{"type":"text","text":"hello"}`,
+			want: ContentBlock{Type: "text", Text: "hello"},
+		},
+		{
+			name: "thinking",
+			wire: `{"type":"thinking","thinking":"hmm","signature":"sig1"}`,
+			want: ContentBlock{Type: "thinking", Thinking: "hmm", Signature: "sig1"},
+		},
+		{
+			name: "redacted_thinking",
+			wire: `{"type":"redacted_thinking","data":"opaque"}`,
+			want: ContentBlock{Type: "redacted_thinking", Data: "opaque"},
+		},
+		{
+			name: "tool_use",
+			wire: `{"type":"tool_use","id":"tu_1","name":"calc","input":{"x":1}}`,
+			want: ContentBlock{Type: "tool_use", ID: "tu_1", Name: "calc", Input: json.RawMessage(`{"x":1}`)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := contentBlockFromSDK(mustUnmarshalSDKBlock(t, tt.wire))
+			if got.Type != tt.want.Type || got.Text != tt.want.Text ||
+				got.Thinking != tt.want.Thinking || got.Signature != tt.want.Signature ||
+				got.Data != tt.want.Data || got.ID != tt.want.ID || got.Name != tt.want.Name {
+				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+			if string(tt.want.Input) != "" && string(got.Input) != string(tt.want.Input) {
+				t.Errorf("input = %s, want %s", got.Input, tt.want.Input)
+			}
+		})
+	}
+}
+
+func TestContentBlockFromSDKServerToolUse(t *testing.T) {
+	// Proves server_tool_use blocks are preserved with raw JSON for passthrough, and that HTML characters in tool input are not escaped (MarshalRaw).
+	block := mustUnmarshalSDKBlock(t,
+		`{"type":"server_tool_use","id":"st_1","name":"web_search","input":{"query":"a>b & c<d"}}`)
+
+	got := contentBlockFromSDK(block)
+	if got.Type != "server_tool_use" || got.ID != "st_1" || got.Name != "web_search" {
+		t.Errorf("got %+v", got)
+	}
+	if len(got.Raw) == 0 {
+		t.Fatal("Raw passthrough not populated")
+	}
+	for _, s := range []string{string(got.Raw), string(got.Input)} {
+		if !strings.Contains(s, "a>b & c<d") {
+			t.Errorf("HTML characters escaped in %q", s)
+		}
+	}
+}
+
+func TestContentBlockFromSDKUnknownType(t *testing.T) {
+	// Proves unknown block types fall back to raw JSON passthrough while still extracting the common id/name/input fields.
+	block := mustUnmarshalSDKBlock(t,
+		`{"type":"mystery_block","id":"m_1","name":"thing","input":{"k":"v"}}`)
+
+	got := contentBlockFromSDK(block)
+	if got.Type != "mystery_block" {
+		t.Errorf("type = %q", got.Type)
+	}
+	if got.ID != "m_1" || got.Name != "thing" {
+		t.Errorf("id/name = %q/%q", got.ID, got.Name)
+	}
+	if !strings.Contains(string(got.Raw), "mystery_block") {
+		t.Errorf("Raw = %s, want original JSON preserved", got.Raw)
+	}
+}
+
+func TestContentBlockToSDKDocument(t *testing.T) {
+	// Proves document blocks with a source are passed through as raw JSON so the wire format (media_type, base64 data) is preserved exactly.
+	b := DocumentBlock("application/pdf", "BASE64DATA")
+	union := contentBlockToSDK(b)
+
+	out, err := json.Marshal(union)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{`"document"`, `"application/pdf"`, `"BASE64DATA"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("wire JSON %s missing %s", out, want)
+		}
+	}
+}
+
+func TestContentBlockToSDKRawPassthrough(t *testing.T) {
+	// Proves unknown block types carrying Raw JSON (e.g. server tool results) are sent on the wire byte-identical to the stored raw form.
+	raw := `{"type":"web_search_tool_result","tool_use_id":"st_1","content":[]}`
+	union := contentBlockToSDK(ContentBlock{Type: "web_search_tool_result", Raw: json.RawMessage(raw)})
+
+	out, err := json.Marshal(union)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != raw {
+		t.Errorf("wire JSON = %s, want %s", out, raw)
+	}
+}
+
+func TestContentBlockToSDKFallbacks(t *testing.T) {
+	// Proves degenerate blocks (unknown type without raw, image/document without source) degrade to a visible placeholder text block instead of panicking or sending garbage.
+	tests := []struct {
+		name string
+		in   ContentBlock
+	}{
+		{"unknown type no raw", ContentBlock{Type: "mystery"}},
+		{"image without source", ContentBlock{Type: "image"}},
+		{"document without source", ContentBlock{Type: "document"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			union := contentBlockToSDK(tt.in)
+			if union.OfText == nil {
+				t.Fatal("expected fallback text block")
+			}
+			if !strings.Contains(union.OfText.Text, "unsupported block type") {
+				t.Errorf("fallback text = %q", union.OfText.Text)
+			}
+		})
+	}
+}
+
+func TestAttachWireRequest(t *testing.T) {
+	// Proves attachWireRequest sets WireRequest on APIErrors (including wrapped ones) and is a safe no-op for other error types.
+	apiErr := &APIError{StatusCode: 500}
+	wrapped := fmt.Errorf("call failed: %w", apiErr)
+	attachWireRequest(wrapped, json.RawMessage(`{"model":"m"}`))
+	if string(apiErr.WireRequest) != `{"model":"m"}` {
+		t.Errorf("WireRequest = %s", apiErr.WireRequest)
+	}
+
+	attachWireRequest(errors.New("plain"), json.RawMessage(`{}`)) // must not panic
+}
+
+func TestSetBlockCacheControlImage(t *testing.T) {
+	// Proves setBlockCacheControl handles the image variant, so an explicit cache breakpoint lands on a trailing image block.
+	block := sdk.NewImageBlockBase64("image/png", "DATA")
+	setBlockCacheControl(&block, cacheControlWithTTL(""))
+	if block.OfImage == nil || string(block.OfImage.CacheControl.Type) != "ephemeral" {
+		t.Error("image block should carry cache_control")
 	}
 }

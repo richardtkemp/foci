@@ -389,8 +389,10 @@ func toolToSDK(t ToolDef) sdk.ToolUnionParam {
 	_ = json.Unmarshal(raw, &peek)
 
 	// Server tools (web_search, web_fetch, etc.): passthrough raw JSON.
+	// Must be json.RawMessage — a plain string would be marshaled as a
+	// double-encoded JSON string on the wire.
 	if peek.Type != "" && peek.Type != "custom" {
-		return param.Override[sdk.ToolUnionParam](string(raw))
+		return param.Override[sdk.ToolUnionParam](json.RawMessage(raw))
 	}
 
 	// Custom tools: extract fields into typed struct.
@@ -417,9 +419,10 @@ func toolToSDK(t ToolDef) sdk.ToolUnionParam {
 func countToolsToSDK(tools []ToolDef) []sdk.MessageCountTokensToolUnionParam {
 	result := make([]sdk.MessageCountTokensToolUnionParam, 0, len(tools))
 	for _, t := range tools {
-		raw := t.Raw()
 		// Use raw JSON passthrough for all tool types in token counting.
-		result = append(result, param.Override[sdk.MessageCountTokensToolUnionParam](string(raw)))
+		// Must be json.RawMessage — a plain string would be marshaled as a
+		// double-encoded JSON string on the wire.
+		result = append(result, param.Override[sdk.MessageCountTokensToolUnionParam](json.RawMessage(t.Raw())))
 	}
 	return result
 }

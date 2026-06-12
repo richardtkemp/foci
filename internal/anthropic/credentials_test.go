@@ -1,9 +1,15 @@
 package anthropic
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"foci/internal/config"
 )
 
 func TestTokenHolder_GetSet(t *testing.T) {
@@ -69,4 +75,201 @@ func TestTokenHolder_ConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// fakeSecretsStore is a map-backed SecretsStore for resolver tests.
+type fakeSecretsStore map[string]string
+
+func (s fakeSecretsStore) Get(name string) (string, bool) { v, ok := s[name]; return v, ok }
+func (s fakeSecretsStore) Set(name, value string)         { s[name] = value }
+func (s fakeSecretsStore) Save() error                    { return nil }
+
+// newTestResolver builds an AnthropicResolver via NewResolver with HOME pointed
+// at a temp dir. If ccToken is non-empty, a valid CC credentials file is written
+// there so the resolver picks up a CC token source.
+func newTestResolver(t *testing.T, store SecretsStore, ccToken string) *AnthropicResolver {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if ccToken != "" {
+		if err := os.MkdirAll(filepath.Join(home, ".claude"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		writeCCCreds(t, filepath.Join(home, ".claude", ".credentials.json"), ccToken, "ref", time.Now().Add(time.Hour))
+	}
+	r, err := NewResolver(context.Background(), &config.AnthropicConfig{
+		UsageCacheTTL:     "3m",
+		CCExpiryThreshold: "2m",
+	}, store)
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	return r
+}
+
+func TestNewResolverInvalidDurationsUseDefaults(t *testing.T) {
+	// Proves NewResolver falls back to the documented defaults (10m usage cache, 5m expiry threshold) when the configured durations don't parse, instead of failing startup.
+	t.Setenv("HOME", t.TempDir())
+	r, err := NewResolver(context.Background(), &config.AnthropicConfig{
+		UsageCacheTTL:     "not-a-duration",
+		CCExpiryThreshold: "also-bad",
+	}, fakeSecretsStore{})
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	if r.usageCacheTTL != 10*time.Minute {
+		t.Errorf("usageCacheTTL = %v, want 10m default", r.usageCacheTTL)
+	}
+	if r.ccSrc != nil {
+		t.Error("ccSrc should be nil with no credentials file in HOME")
+	}
+}
+
+func TestNewResolverDetectsCCCredentials(t *testing.T) {
+	// Proves NewResolver picks up ~/.claude/.credentials.json when present and configures a CC token source from it.
+	r := newTestResolver(t, fakeSecretsStore{}, "cc-tok")
+	if r.ccSrc == nil {
+		t.Fatal("ccSrc not configured despite valid credentials file")
+	}
+	if r.usageCacheTTL != 3*time.Minute {
+		t.Errorf("usageCacheTTL = %v, want 3m from config", r.usageCacheTTL)
+	}
+	tok, err := r.ccSrc.Token()
+	if err != nil || tok != "cc-tok" {
+		t.Errorf("ccSrc.Token = %q, %v", tok, err)
+	}
+}
+
+func TestResolveClientAPIKeyPriority(t *testing.T) {
+	// Proves an API key in the secrets store wins over CC credentials, the returned client authenticates with it, and the custom base URL is applied.
+	store := fakeSecretsStore{"anthropic.api_key": "sk-test"}
+	r := newTestResolver(t, store, "cc-tok")
+
+	pc, err := r.ResolveClient(context.Background(), "main", "anthropic.api_key", "http://example.test", time.Second)
+	if err != nil {
+		t.Fatalf("ResolveClient: %v", err)
+	}
+	client, ok := pc.(*Client)
+	if !ok {
+		t.Fatalf("client type = %T, want *Client", pc)
+	}
+	tok, err := client.resolveToken()
+	if err != nil || tok != "sk-test" {
+		t.Errorf("token = %q, %v — want API key, not CC token", tok, err)
+	}
+	if client.baseURL != "http://example.test" {
+		t.Errorf("baseURL = %q", client.baseURL)
+	}
+}
+
+func TestResolveClientCCFallback(t *testing.T) {
+	// Proves that without an API key in secrets, ResolveClient falls back to CC credentials and the client authenticates with the CC token.
+	r := newTestResolver(t, fakeSecretsStore{}, "cc-tok")
+
+	pc, err := r.ResolveClient(context.Background(), "main", "anthropic.api_key", "", time.Second)
+	if err != nil {
+		t.Fatalf("ResolveClient: %v", err)
+	}
+	tok, err := pc.(*Client).resolveToken()
+	if err != nil || tok != "cc-tok" {
+		t.Errorf("token = %q, %v — want CC token", tok, err)
+	}
+}
+
+func TestResolveClientNoCredentials(t *testing.T) {
+	// Proves ResolveClient returns an actionable error when neither an API key nor CC credentials exist.
+	r := newTestResolver(t, fakeSecretsStore{}, "")
+
+	_, err := r.ResolveClient(context.Background(), "main", "anthropic.api_key", "", time.Second)
+	if err == nil || !strings.Contains(err.Error(), "foci auth") {
+		t.Errorf("err = %v, want no-credentials error pointing at foci auth", err)
+	}
+}
+
+func TestResolveUsageClient(t *testing.T) {
+	// Proves ResolveUsageClient only works with CC (OAuth) credentials: with them it returns a usage client carrying the configured cache TTL and a post-fetch refresh hook; without them it errors.
+	r := newTestResolver(t, fakeSecretsStore{}, "cc-tok")
+	uc, err := r.ResolveUsageClient("main", "anthropic.api_key")
+	if err != nil {
+		t.Fatalf("ResolveUsageClient: %v", err)
+	}
+	client, ok := uc.(*UsageClient)
+	if !ok {
+		t.Fatalf("client type = %T, want *UsageClient", uc)
+	}
+	if client.cacheTTL != 3*time.Minute {
+		t.Errorf("cacheTTL = %v, want 3m from config", client.cacheTTL)
+	}
+	if client.postFetch == nil {
+		t.Error("postFetch hook not set — proactive token refresh would never trigger")
+	}
+
+	noCC := newTestResolver(t, fakeSecretsStore{}, "")
+	if _, err := noCC.ResolveUsageClient("main", "anthropic.api_key"); err == nil {
+		t.Error("expected error without CC credentials")
+	}
+}
+
+func TestGetReloadFuncNilForCCOnly(t *testing.T) {
+	// Proves GetReloadFunc returns nil when running purely on CC credentials — there is nothing in secrets.toml to hot-reload.
+	r := newTestResolver(t, fakeSecretsStore{}, "cc-tok")
+	if fn := r.GetReloadFunc("/nonexistent/secrets.toml"); fn != nil {
+		t.Error("expected nil reload func for CC-only resolver")
+	}
+}
+
+func TestGetReloadFuncHotReloadsAPIKey(t *testing.T) {
+	// Proves the reload func re-reads secrets.toml and swaps the new API key into every live client's token holder without restarting.
+	store := fakeSecretsStore{"anthropic.api_key": "sk-old"}
+	r := newTestResolver(t, store, "")
+	if _, err := r.ResolveClient(context.Background(), "main", "anthropic.api_key", "", time.Second); err != nil {
+		t.Fatalf("ResolveClient: %v", err)
+	}
+
+	secretsPath := filepath.Join(t.TempDir(), "secrets.toml")
+	if err := os.WriteFile(secretsPath, []byte("[anthropic]\napi_key = \"sk-new\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	reload := r.GetReloadFunc(secretsPath)
+	if reload == nil {
+		t.Fatal("expected reload func when API-key holders exist")
+	}
+	if err := reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	tok, err := r.credHolders["main"].Get()
+	if err != nil || tok != "sk-new" {
+		t.Errorf("holder token = %q, %v — want hot-reloaded sk-new", tok, err)
+	}
+}
+
+func TestGetReloadFuncErrors(t *testing.T) {
+	// Proves the reload func reports failure when secrets.toml has no api_key (missing file parses as empty) or contains invalid TOML.
+	store := fakeSecretsStore{"anthropic.api_key": "sk-old"}
+	r := newTestResolver(t, store, "")
+	if _, err := r.ResolveClient(context.Background(), "main", "anthropic.api_key", "", time.Second); err != nil {
+		t.Fatalf("ResolveClient: %v", err)
+	}
+	reload := r.GetReloadFunc(filepath.Join(t.TempDir(), "missing.toml"))
+	if reload == nil {
+		t.Fatal("expected reload func")
+	}
+	if err := reload(); err == nil || !strings.Contains(err.Error(), "no api_key") {
+		t.Errorf("err = %v, want missing api_key error", err)
+	}
+
+	badPath := filepath.Join(t.TempDir(), "secrets.toml")
+	if err := os.WriteFile(badPath, []byte("not [valid toml"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.GetReloadFunc(badPath)(); err == nil {
+		t.Error("expected error for invalid TOML")
+	}
+}
+
+func TestResolverClose(t *testing.T) {
+	// Proves Close is a safe no-op (interface compliance) — no panic, callable on any resolver.
+	newTestResolver(t, fakeSecretsStore{}, "").Close()
 }

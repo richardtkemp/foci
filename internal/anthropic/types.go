@@ -7,28 +7,28 @@ import "foci/internal/provider"
 // Type aliases — these allow anthropic/ internal code (client.go, tests)
 // to use unqualified names while the canonical definitions live in provider/.
 type (
-	ContentSource  = provider.ContentSource
-	ContentBlock   = provider.ContentBlock
-	ToolDef        = provider.ToolDef
-	OutputConfig   = provider.OutputConfig
-	ThinkingConfig = provider.ThinkingConfig
-	SystemBlock    = provider.SystemBlock
-	Message        = provider.Message
-	MessageRequest = provider.MessageRequest
-	Usage          = provider.Usage
+	ContentSource   = provider.ContentSource
+	ContentBlock    = provider.ContentBlock
+	ToolDef         = provider.ToolDef
+	OutputConfig    = provider.OutputConfig
+	ThinkingConfig  = provider.ThinkingConfig
+	SystemBlock     = provider.SystemBlock
+	Message         = provider.Message
+	MessageRequest  = provider.MessageRequest
+	Usage           = provider.Usage
 	MessageResponse = provider.MessageResponse
-	APIError       = provider.APIError
-	ModelInfo      = provider.ModelInfo
+	APIError        = provider.APIError
+	ModelInfo       = provider.ModelInfo
 )
 
 // Re-export constructors and helpers so anthropic-internal code compiles unchanged.
 var (
-	TextContent   = provider.TextContent
-	ImageBlock    = provider.ImageBlock
-	DocumentBlock = provider.DocumentBlock
+	TextContent     = provider.TextContent
+	ImageBlock      = provider.ImageBlock
+	DocumentBlock   = provider.DocumentBlock
 	ToolResultBlock = provider.ToolResultBlock
-	TextOf        = provider.TextOf
-	NewCustomTool = provider.NewCustomTool
-	NewServerTool = provider.NewServerTool
-	MarshalRaw    = provider.MarshalRaw
+	TextOf          = provider.TextOf
+	NewCustomTool   = provider.NewCustomTool
+	NewServerTool   = provider.NewServerTool
+	MarshalRaw      = provider.MarshalRaw
 )

@@ -46,4 +46,3 @@ func parseCredentials(data []byte) (OAuthCredentials, error) {
 
 	return OAuthCredentials{}, fmt.Errorf("unrecognized credentials format")
 }
-
