@@ -117,4 +117,3 @@ func TestIsImageMIME(t *testing.T) {
 		t.Error("expected application/pdf to not be image")
 	}
 }
-

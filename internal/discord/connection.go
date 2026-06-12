@@ -25,6 +25,23 @@ import (
 var _ platform.Sender = (*Bot)(nil)
 var _ platform.ButtonSender = (*Bot)(nil)
 
+// messageSession is the subset of the discordgo session API the bot uses for
+// message I/O (send/edit/delete/typing/interaction responses). It mirrors the
+// telegram package's botClient seam: *discordgo.Session satisfies it in
+// production, and tests supply a fake. Gateway lifecycle concerns (AddHandler,
+// State, Token) stay on the concrete *discordgo.Session.
+type messageSession interface {
+	ChannelMessageSend(channelID string, content string, options ...discordgo.RequestOption) (*discordgo.Message, error)
+	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error)
+	ChannelMessageEdit(channelID, messageID, content string, options ...discordgo.RequestOption) (*discordgo.Message, error)
+	ChannelMessageEditComplex(m *discordgo.MessageEdit, options ...discordgo.RequestOption) (*discordgo.Message, error)
+	ChannelMessageDelete(channelID, messageID string, options ...discordgo.RequestOption) error
+	ChannelTyping(channelID string, options ...discordgo.RequestOption) error
+	InteractionRespond(interaction *discordgo.Interaction, resp *discordgo.InteractionResponse, options ...discordgo.RequestOption) error
+}
+
+var _ messageSession = (*discordgo.Session)(nil)
+
 // attachment is a downloaded file ready for the agent (image, PDF, or convertible document).
 type attachment struct {
 	data      []byte
@@ -44,14 +61,15 @@ type queuedMessage struct {
 // Messages are received via WebSocket gateway and processed on a worker goroutine.
 type Bot struct {
 	log                *log.ComponentLogger
-	session            *discordgo.Session  // Discord API session (shared across bots for same token)
+	session            *discordgo.Session // Discord gateway session (handlers, state, token)
+	api                messageSession     // message I/O seam; the session in production, a fake in tests
 	handler            platform.MessageHandler
 	commands           *command.Registry
 	dispatcher         *dispatch.Dispatcher
 	lastMsgStore       *command.LastMessageStore
-	allowedUsers       map[string]bool     // Discord user ID strings
+	allowedUsers       map[string]bool // Discord user ID strings
 	agentID            string
-	sessionKey         string              // override session key (facet bots)
+	sessionKey         string // override session key (facet bots)
 	sessionMu          sync.RWMutex
 	isSecondary        bool
 	pool               *Pool
@@ -63,8 +81,8 @@ type Bot struct {
 	transcriber voice.STT
 	tts         voice.TTS
 
-	mq         *platform.MessageQueue // shared message queue (commands + receive funnel)
-	agentRef   *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
+	mq       *platform.MessageQueue // shared message queue (commands + receive funnel)
+	agentRef *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
 	// turnActive is true while Bot.Drive is executing an agent turn.
 	// Replaces the old turnCancel-as-activity-indicator after TODO #746
 	// moved cancellable ctx ownership into agent.driveOnce.
@@ -76,9 +94,9 @@ type Bot struct {
 	chatmeta     *chatmeta.Resolver
 
 	display         BotDisplayConfig
-	fileMode        os.FileMode      // permission bits for saved files (media, etc.)
-	toolResults     sync.Map         // message ID (int64) -> toolResultEntry; for button expansion
-	thinkingStore   sync.Map         // message ID (int64) -> thinkingEntry; ephemeral
+	fileMode        os.FileMode       // permission bits for saved files (media, etc.)
+	toolResults     sync.Map          // message ID (int64) -> toolResultEntry; for button expansion
+	thinkingStore   sync.Map          // message ID (int64) -> thinkingEntry; ephemeral
 	toolDetailStore *tooldetail.Store // nil = no persistence; write-through to SQLite
 
 	pendingNotifsMu sync.Mutex // protects pendingNotifs
@@ -180,6 +198,7 @@ func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.Messa
 	bot := &Bot{
 		log:          lg,
 		session:      dg,
+		api:          dg,
 		handler:      handler,
 		commands:     cmds,
 		lastMsgStore: lastMsgStore,

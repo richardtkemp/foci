@@ -210,7 +210,6 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 	return true // silently consumed (stale command or idle secondary)
 }
 
-
 // chatIDFromMsg extracts a numeric chat ID from a Discord message's ChannelID string.
 func chatIDFromMsg(msg *discordgo.Message) int64 {
 	id, _ := strconv.ParseInt(msg.ChannelID, 10, 64)

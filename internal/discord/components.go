@@ -28,7 +28,7 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 	chatID, _ := strconv.ParseInt(channelID, 10, 64)
 
 	// Always acknowledge the interaction to prevent the "interaction failed" error.
-	_ = b.session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	_ = b.api.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredMessageUpdate,
 	})
 
@@ -41,7 +41,7 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 		editText, _, ok := platform.HandleInteractiveCallback(cbData)
 		if ok && editText != "" {
 			noComponents := []discordgo.MessageComponent{}
-			_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+			_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 				Channel:    channelID,
 				ID:         msgID,
 				Content:    &editText,
@@ -67,7 +67,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 	if outcome.Chain != nil {
 		display := "/" + outcome.Chain.CommandName + " " + strings.TrimPrefix(cmdText, "/"+outcome.Chain.CommandName+" ") + ":"
 		buttons := buildButtonComponents(dispatch.CmdButtons(outcome.Chain.CommandName, outcome.Chain.Options), "cmd:")
-		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
 			Content:    &display,
@@ -102,7 +102,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 	if len(resp.Keyboard) > 0 {
 		cmdName, _, _ := strings.Cut(strings.TrimPrefix(cmdText, "/"), " ")
 		buttons := buildButtonComponents(dispatch.CmdButtons(cmdName, resp.Keyboard), "cmd:")
-		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
 			Content:    &result,
@@ -112,7 +112,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 	}
 
 	noComponents := []discordgo.MessageComponent{}
-	_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+	_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    channelID,
 		ID:         msgID,
 		Content:    &result,
@@ -144,7 +144,7 @@ func (b *Bot) handleToolCallCallback(channelID, action, msgID string) {
 			expanded = expanded[:discordMaxChars-4] + "\n..."
 		}
 		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Hide", Data: "hide"}}, "tc:")
-		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
 			Content:    &expanded,
@@ -154,7 +154,7 @@ func (b *Bot) handleToolCallCallback(channelID, action, msgID string) {
 		stored.expanded = false
 		b.toolResults.Store(msgIDInt, stored)
 		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show full", Data: "show"}}, "tc:")
-		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
 			Content:    &stored.compactText,
@@ -180,7 +180,7 @@ func (b *Bot) handleThinkingCallback(channelID, action, msgID string) {
 			expanded = expanded[:discordMaxChars-4] + "\n..."
 		}
 		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Hide thinking", Data: "hide"}}, "th:")
-		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
 			Content:    &expanded,
@@ -188,7 +188,7 @@ func (b *Bot) handleThinkingCallback(channelID, action, msgID string) {
 		})
 	case "hide":
 		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
-		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
 			Content:    &entry.responseText,
@@ -202,4 +202,3 @@ func formatThinkingExpanded(thinkingText, responseText string, displayWidth int)
 	divider := "\n" + strings.Repeat("-", displayWidth) + "\n\n"
 	return "*" + thinkingText + "*" + divider + responseText
 }
-
