@@ -21,7 +21,7 @@ type sessionWatcher struct {
 	path    string
 	fsnot   *fsnotify.Watcher
 	mu      sync.Mutex
-	offset  int64                // current read position in the file
+	offset  int64                   // current read position in the file
 	handler *delegator.EventHandler // current turn's handler (nil between turns)
 
 	// onPermissionCheck is called periodically to detect permission prompts
@@ -37,7 +37,7 @@ type sessionWatcher struct {
 	turnText  string
 	turnTools int
 	turnUsage *delegator.TurnUsage // usage from the last assistant message
-	turnModel string             // model from the last assistant message
+	turnModel string               // model from the last assistant message
 
 	// toolNamesByID maps tool_use IDs observed in assistant messages to their
 	// tool names, so the subsequent tool_result block (which only carries the
@@ -189,7 +189,7 @@ func (w *sessionWatcher) processLine(line []byte, handler *delegator.EventHandle
 		w.handleUser(&entry, handler)
 	case "system":
 		w.handleSystem(&entry, handler)
-	// progress, file-history-snapshot, queue-operation: ignored for now
+		// progress, file-history-snapshot, queue-operation: ignored for now
 	}
 }
 
@@ -316,7 +316,3 @@ func (w *sessionWatcher) handleUser(entry *sessionEntry, handler *delegator.Even
 		}
 	}
 }
-
-
-
-

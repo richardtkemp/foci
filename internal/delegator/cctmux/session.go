@@ -134,4 +134,3 @@ func discoverSessionFileFrom(pidFile, homeDir, workDir string) (string, string, 
 func projectSlug(path string) string {
 	return strings.ReplaceAll(path, "/", "-")
 }
-

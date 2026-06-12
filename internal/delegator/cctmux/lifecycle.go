@@ -59,6 +59,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		workDir:    opts.WorkDir,
 		cols:       opts.TmuxCols,
 		rows:       opts.TmuxRows,
+		exec:       b.tmuxExec,
 	}
 
 	// Build env vars to inject into the tmux pane from StartOptions.Env.

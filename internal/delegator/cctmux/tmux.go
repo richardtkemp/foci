@@ -12,14 +12,45 @@ import (
 	"foci/internal/procx"
 )
 
+// tmuxExecFunc executes a tmux invocation with the given args (socket flags
+// already included) and optional stdin, returning combined output. The
+// production implementation spawns a real tmux subprocess; tests inject fakes.
+type tmuxExecFunc func(ctx context.Context, stdin string, args ...string) (string, error)
+
+// execTmuxProc is the production tmuxExecFunc: runs tmux in its own session
+// group via procx with a 5-second timeout.
+func execTmuxProc(ctx context.Context, stdin string, args ...string) (string, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// enterRetryDelays is the exponential backoff schedule for re-sending Enter
+// after pasting a prompt (see sendText for why retries are needed).
+var enterRetryDelays = []time.Duration{
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	200 * time.Millisecond,
+	400 * time.Millisecond,
+	800 * time.Millisecond,
+	1600 * time.Millisecond,
+}
+
 // tmuxPane manages a tmux pane running claude interactively.
 type tmuxPane struct {
-	socketPath string // tmux -S socket (empty = default)
-	windowName string // tmux window name (e.g. "cc-main")
-	workDir    string // working directory for the pane
-	pid        int    // PID of the shell process in the pane (0 = unknown)
-	cols       int    // window width (0 = tmux default 80)
-	rows       int    // window height (0 = tmux default 24)
+	socketPath string       // tmux -S socket (empty = default)
+	windowName string       // tmux window name (e.g. "cc-main")
+	workDir    string       // working directory for the pane
+	pid        int          // PID of the shell process in the pane (0 = unknown)
+	cols       int          // window width (0 = tmux default 80)
+	rows       int          // window height (0 = tmux default 24)
+	exec       tmuxExecFunc // tmux subprocess runner (nil = execTmuxProc)
 }
 
 // create creates a new tmux session running the claude command.
@@ -85,14 +116,7 @@ func (p *tmuxPane) sendText(ctx context.Context, text string) error {
 	// Retrying at increasing intervals catches slow TUI initialization.
 	// Extra Enters are harmless — CC ignores them while processing, and
 	// empty submits on the ❯ prompt are no-ops.
-	for _, delay := range []time.Duration{
-		50 * time.Millisecond,
-		100 * time.Millisecond,
-		200 * time.Millisecond,
-		400 * time.Millisecond,
-		800 * time.Millisecond,
-		1600 * time.Millisecond,
-	} {
+	for _, delay := range enterRetryDelays {
 		time.Sleep(delay)
 		if _, err := p.runTmux(ctx, "send-keys", "-t", target, "Enter"); err != nil {
 			return fmt.Errorf("send-keys Enter: %w", err)
@@ -362,33 +386,30 @@ func (p *tmuxPane) target() string {
 // loadBufferFromStdin pipes text into tmux's paste buffer via stdin.
 // "load-buffer -" reads from stdin, avoiding any temp file.
 func (p *tmuxPane) loadBufferFromStdin(ctx context.Context, text string) error {
-	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	args := []string{"load-buffer", "-"}
-	if p.socketPath != "" {
-		args = append([]string{"-S", p.socketPath}, args...)
-	}
-	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
-	cmd.Stdin = strings.NewReader(text)
-	out, err := cmd.CombinedOutput()
+	out, err := p.runTmuxStdin(ctx, text, "load-buffer", "-")
 	if err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
 	}
 	return nil
 }
 
 // runTmux executes a tmux command with the configured socket.
 func (p *tmuxPane) runTmux(ctx context.Context, args ...string) (string, error) {
-	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	return p.runTmuxStdin(ctx, "", args...)
+}
 
+// runTmuxStdin executes a tmux command with the configured socket, feeding
+// stdin to the process when non-empty. All tmux invocations funnel through
+// here so the socket flag and subprocess mechanics live in one place.
+func (p *tmuxPane) runTmuxStdin(ctx context.Context, stdin string, args ...string) (string, error) {
 	if p.socketPath != "" {
 		args = append([]string{"-S", p.socketPath}, args...)
 	}
-	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	run := p.exec
+	if run == nil {
+		run = execTmuxProc
+	}
+	return run(ctx, stdin, args...)
 }
 
 // shellQuote wraps s in single quotes for shell safety.

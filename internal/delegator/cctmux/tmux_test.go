@@ -530,4 +530,3 @@ And later: press Esc to cancel the operation.
 		t.Errorf("expected nil for markers in tool output, got %+v", got)
 	}
 }
-
