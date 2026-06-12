@@ -370,8 +370,6 @@ func TestClose_Idempotent(t *testing.T) {
 	}
 }
 
-
-
 // ---------------------------------------------------------------------------
 // newFromConfig tests
 // ---------------------------------------------------------------------------
@@ -673,4 +671,3 @@ func TestDiscoverSession_NoSession(t *testing.T) {
 		t.Errorf("sessionID = %q, want empty", b.sessionID)
 	}
 }
-

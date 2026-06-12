@@ -586,9 +586,9 @@ func TestProcessLine_SkipsSidechainEntries(t *testing.T) {
 	var toolStarts []string
 	var toolEnds []string
 	handler := &delegator.EventHandler{
-		OnText:       func(text string) { textEvents = append(textEvents, text) },
-		OnToolStart:  func(_, name, _ string) { toolStarts = append(toolStarts, name) },
-		OnToolEnd:    func(_, name, _ string, _ bool) { toolEnds = append(toolEnds, name) },
+		OnText:      func(text string) { textEvents = append(textEvents, text) },
+		OnToolStart: func(_, name, _ string) { toolStarts = append(toolStarts, name) },
+		OnToolEnd:   func(_, name, _ string, _ bool) { toolEnds = append(toolEnds, name) },
 		OnTurnComplete: func(_ *delegator.TurnResult) {
 			t.Error("OnTurnComplete fired for sidechain entry")
 		},
@@ -887,7 +887,6 @@ func TestFireTurnResult_NilCallback(t *testing.T) {
 		t.Errorf("turnText should be reset even with nil callback")
 	}
 }
-
 
 // --- setHandler tests ---
 

@@ -26,24 +26,25 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 // Backend drives Claude Code as a subprocess in a tmux pane.
 type Backend struct {
 	cfg        map[string]any
-	socketPath string // tmux socket override (empty = default)
+	socketPath string       // tmux socket override (empty = default)
+	tmuxExec   tmuxExecFunc // tmux subprocess runner injected into panes (nil = real tmux)
 
 	mu              sync.Mutex
 	pane            *tmuxPane
 	watcher         *sessionWatcher
 	watcherStarting bool // true while ensureWatcher is running (prevents concurrent discovery)
-	watchCtx       context.Context
-	watchStop      context.CancelFunc
-	sessionID string // CC session UUID
-	agentID        string                // foci agent ID
-	workDir        string                // workspace directory
+	watchCtx        context.Context
+	watchStop       context.CancelFunc
+	sessionID       string // CC session UUID
+	agentID         string // foci agent ID
+	workDir         string // workspace directory
 
 	// replyFunc delivers text to the user's platform chat.
-	replyMu            sync.Mutex
-	replyFunc          func(string)
-	permPromptFunc     delegator.PermissionPromptFunc
-	onSessionReady     func(string)     // called once when session ID is discovered
-	typingFunc         func(bool)       // typing indicator: true=start, false=stop
+	replyMu        sync.Mutex
+	replyFunc      func(string)
+	permPromptFunc delegator.PermissionPromptFunc
+	onSessionReady func(string) // called once when session ID is discovered
+	typingFunc     func(bool)   // typing indicator: true=start, false=stop
 
 	// lastPrompt tracks the last permission prompt sent to avoid duplicates.
 	// permissionActive tracks whether a prompt is currently displayed, so we
