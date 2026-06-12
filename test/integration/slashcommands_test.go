@@ -385,11 +385,16 @@ func TestL2_SlashCommands_ResetHardCancelsInflightTurn(t *testing.T) {
 }
 
 // TestL2_SlashCommands_ReloadReturnsSkillCount proves /reload reloads
-// workspace files and skills and returns a sendMessage containing the
-// skill count and a note that foci.toml changes need a service
-// restart. Confirms the ReloadSystem path is reachable from the
-// command registry without invoking cc-stub.
-func TestL2_SlashCommands_ReloadReturnsSkillCount(t *testing.T) {
+// /reload is NOT available on a delegated (claude-code) backend: it is gated to
+// API backends only (TODO #799 — a delegated backend captures its system prompt
+// once at session start via StartOpts.SystemPrompt and is never refreshed
+// mid-session, so registering /reload there would falsely imply an edit took
+// effect). The default harness agent is delegated, so the gateway must answer
+// "Unknown command /reload" rather than a reload confirmation. This guards the
+// API-backend gate in cmd/foci-gw/commands.go from silently regressing.
+// (ReloadCommand's reply formatting is covered by the unit test
+// TestReloadCommand_ReplyFormat in internal/command.)
+func TestL2_SlashCommands_ReloadRejectedForDelegatedAgent(t *testing.T) {
 	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7009}},
@@ -398,10 +403,9 @@ func TestL2_SlashCommands_ReloadReturnsSkillCount(t *testing.T) {
 	pushTelegramText(t, h, "alpha", 7009, "/reload")
 
 	token := h.AgentBotToken("alpha")
-	// ReloadCommand reply: "Reloaded:\n- workspace files (system prompt)\n- N skills\n\nNote: foci.toml config changes require a service restart..."
-	text := waitForSendMessageText(t, h, token, 15*time.Second, "Reloaded", "skills", "foci.toml")
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "Unknown command", "/reload")
 	if text == "" {
-		t.Fatalf("/reload never produced the expected reply\nsent so far:\n%v\nstderr tail:\n%s",
+		t.Fatalf("/reload should be rejected as unknown on a delegated agent, but no such reply arrived\nsent so far:\n%v\nstderr tail:\n%s",
 			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
 	}
 }
