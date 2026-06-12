@@ -18,11 +18,11 @@ import (
 
 // AgentSetupParams holds all dependencies needed to set up platform bots for an agent.
 type AgentSetupParams struct {
-	Agent          platform.MessageHandler
-	Commands       *command.Registry
-	CommandContext command.CommandContext
-	LastMsgStore   *command.LastMessageStore
-	AgentConfig    config.AgentConfig
+	Agent           platform.MessageHandler
+	Commands        *command.Registry
+	CommandContext  command.CommandContext
+	LastMsgStore    *command.LastMessageStore
+	AgentConfig     config.AgentConfig
 	GlobalConfig    *config.Config
 	SecretStore     *secrets.Store
 	Sessions        *session.Store
@@ -336,4 +336,3 @@ func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.R
 
 	bot.display = d
 }
-

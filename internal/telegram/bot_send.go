@@ -319,7 +319,6 @@ func (b *Bot) SendText(text string) error {
 	return b.SendTextToChat(chatID, text)
 }
 
-
 // SendInjectedMessage sends a system/injected text message to the chat
 // associated with the given session key. Falls back to the bot's default chat
 // if the session key doesn't contain a chat ID (e.g. independent sessions).

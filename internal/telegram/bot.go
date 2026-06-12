@@ -68,7 +68,7 @@ type Bot struct {
 	client             botClient    // for sending messages and files (mockable in tests)
 	handler            platform.MessageHandler
 	commands           *command.Registry
-	dispatcher         *dispatch.Dispatcher       // platform-agnostic command dispatch
+	dispatcher         *dispatch.Dispatcher      // platform-agnostic command dispatch
 	lastMsgStore       *command.LastMessageStore // for // repeat command
 	allowedUsers       map[string]bool
 	agentID            string                            // agent ID for session key derivation
@@ -86,8 +86,8 @@ type Bot struct {
 	transcriber voice.STT // nil = voice notes not supported
 	tts         voice.TTS // nil = TTS not available
 
-	mq             *platform.MessageQueue // shared message queue (commands + receive funnel)
-	agentRef       *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
+	mq       *platform.MessageQueue // shared message queue (commands + receive funnel)
+	agentRef *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
 	// turnActive is true while Bot.Drive is executing an agent turn.
 	// Used by SendNotification to buffer notifications during turns. Set
 	// at Drive entry, cleared on return. Replaces the old turnCancel-as-
@@ -95,15 +95,15 @@ type Bot struct {
 	// into agent.driveOnce.
 	turnActive atomic.Bool
 	chatID     int64 // last known chat ID (for notifications)
-	chatMu         sync.Mutex
+	chatMu     sync.Mutex
 
 	sessionIndex platform.SessionIndex // nil = no session key persistence across restarts
-	chatmeta     *chatmeta.Resolver   // shared session key management
+	chatmeta     *chatmeta.Resolver    // shared session key management
 
-	display     BotDisplayConfig
-	fileMode    os.FileMode      // permission bits for saved files (media, etc.)
-	toolResults sync.Map         // message ID (int64) → toolResultEntry; for inline keyboard expansion
-	thinkingStore sync.Map       // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
+	display         BotDisplayConfig
+	fileMode        os.FileMode       // permission bits for saved files (media, etc.)
+	toolResults     sync.Map          // message ID (int64) → toolResultEntry; for inline keyboard expansion
+	thinkingStore   sync.Map          // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 	toolDetailStore *tooldetail.Store // nil = no persistence; write-through to SQLite
 
 	pendingNotifsMu sync.Mutex // protects pendingNotifs

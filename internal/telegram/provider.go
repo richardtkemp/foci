@@ -15,10 +15,10 @@ import (
 
 // telegramProvider implements platform.MessagingProvider for Telegram.
 type telegramProvider struct {
-	mgr            *BotManager
-	connMgr        *ConnectionManagerAdapter
+	mgr             *BotManager
+	connMgr         *ConnectionManagerAdapter
 	toolDetailStore *tooldetail.Store
-	deps           platform.ProviderDeps
+	deps            platform.ProviderDeps
 }
 
 func (p *telegramProvider) Name() string { return "telegram" }
@@ -61,23 +61,23 @@ func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionP
 	lastMsgStore, _ := params.LastMsgStore.(*command.LastMessageStore)
 
 	return SetupAgent(p.mgr, AgentSetupParams{
-		Agent:          params.Handler,
-		Commands:       cmds,
-		CommandContext: cc,
-		LastMsgStore:   lastMsgStore,
-		AgentConfig:     params.AgentConfig,
-		GlobalConfig:    p.deps.Config,
-		SecretStore:     p.deps.SecretStore,
-		Sessions:        p.deps.Sessions,
-		SessionIndex:    p.deps.SessionIndex,
-		ToolDetailStore: p.toolDetailStore,
-		STT:             params.STT,
-		TTS:             params.TTS,
-		STTMap:          p.deps.STTMap,
-		TTSMap:          p.deps.TTSMap,
-		Ctx:             p.deps.Ctx,
-		ResolveTTS:      p.deps.ResolveTTS,
-		ResolveSTT:      p.deps.ResolveSTT,
+		Agent:             params.Handler,
+		Commands:          cmds,
+		CommandContext:    cc,
+		LastMsgStore:      lastMsgStore,
+		AgentConfig:       params.AgentConfig,
+		GlobalConfig:      p.deps.Config,
+		SecretStore:       p.deps.SecretStore,
+		Sessions:          p.deps.Sessions,
+		SessionIndex:      p.deps.SessionIndex,
+		ToolDetailStore:   p.toolDetailStore,
+		STT:               params.STT,
+		TTS:               params.TTS,
+		STTMap:            p.deps.STTMap,
+		TTSMap:            p.deps.TTSMap,
+		Ctx:               p.deps.Ctx,
+		ResolveTTS:        p.deps.ResolveTTS,
+		ResolveSTT:        p.deps.ResolveSTT,
 		ReclaimHook:       params.ReclaimHook,
 		DisplayOverrideFn: params.DisplayOverrideFn,
 		Resolved:          params.Resolved,

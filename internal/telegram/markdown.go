@@ -1,8 +1,8 @@
 package telegram
 
 import (
-	"foci/internal/display"
 	"fmt"
+	"foci/internal/display"
 	"regexp"
 	"strings"
 )
@@ -10,22 +10,22 @@ import (
 // Precompiled regexes for markdown → HTML conversion.
 // These are called ~4/s during streaming; compiling once avoids repeated work.
 var (
-	reCodeBlock    = regexp.MustCompile("(?m)^```(?:[a-z]+)?\n([\\s\\S]*?)\n```")
-	reInlineCode   = regexp.MustCompile("`([^`]+)`")
-	reLink         = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
-	reSpoiler      = regexp.MustCompile(`\|\|([^\|]+)\|\|`)
-	reBold         = regexp.MustCompile(`\*\*([^\*]+)\*\*`)
-	reStrikethrough = regexp.MustCompile(`~~([^~]+)~~`)
-	reUnderline    = regexp.MustCompile(`__([^_]+)__`)
-	reItalicStar   = regexp.MustCompile(`\*([^\*\n]+)\*`)
+	reCodeBlock        = regexp.MustCompile("(?m)^```(?:[a-z]+)?\n([\\s\\S]*?)\n```")
+	reInlineCode       = regexp.MustCompile("`([^`]+)`")
+	reLink             = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
+	reSpoiler          = regexp.MustCompile(`\|\|([^\|]+)\|\|`)
+	reBold             = regexp.MustCompile(`\*\*([^\*]+)\*\*`)
+	reStrikethrough    = regexp.MustCompile(`~~([^~]+)~~`)
+	reUnderline        = regexp.MustCompile(`__([^_]+)__`)
+	reItalicStar       = regexp.MustCompile(`\*([^\*\n]+)\*`)
 	reItalicUnderscore = regexp.MustCompile(`(^|[^a-z0-9])_([^_\n]+?)_([^a-z0-9]|$)`)
-	reHRule        = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`)
-	reBulletList   = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`)
-	reOrderedList  = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`)
-	reH1           = regexp.MustCompile(`(?m)^#\s+(.+)$`)
-	reH2           = regexp.MustCompile(`(?m)^##\s+(.+)$`)
-	reH3Plus       = regexp.MustCompile(`(?m)^###+ (.+)$`)
-	reBlockquote   = regexp.MustCompile(`^> ?(.*)$`)
+	reHRule            = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`)
+	reBulletList       = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`)
+	reOrderedList      = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`)
+	reH1               = regexp.MustCompile(`(?m)^#\s+(.+)$`)
+	reH2               = regexp.MustCompile(`(?m)^##\s+(.+)$`)
+	reH3Plus           = regexp.MustCompile(`(?m)^###+ (.+)$`)
+	reBlockquote       = regexp.MustCompile(`^> ?(.*)$`)
 )
 
 // ConvertToTelegramHTML converts standard markdown to Telegram's HTML format.

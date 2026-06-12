@@ -121,8 +121,9 @@ func (b *telegramBackend) Deliver(p turn.Payload, stream turn.StreamSink) (turn.
 	}
 
 	// Delete any leftover messages from the live sequence (final shorter than
-	// the live stream).
-	for _, orphan := range ids[len(chunks):] {
+	// the live stream). When the final needed more chunks than the stream had
+	// messages there are no leftovers — min() keeps the slice in bounds.
+	for _, orphan := range ids[min(len(chunks), len(ids)):] {
 		id := parseTelegramMsgID(orphan)
 		if _, err := b.bot.client.DeleteMessage(b.chatID, id, nil); err != nil {
 			b.bot.logger().Debugf("deliver delete orphan %s: %v", orphan, err)

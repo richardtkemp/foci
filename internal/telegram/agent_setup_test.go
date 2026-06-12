@@ -15,9 +15,9 @@ func newBotForTest() *Bot {
 		log: lg,
 	}
 	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
-		Size:       64,
+		Size: 64,
 
-		Logger:     lg,
+		Logger: lg,
 	})
 	return b
 }

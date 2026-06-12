@@ -16,20 +16,23 @@ import (
 
 // mockClient implements botClient for testing.
 type mockClient struct {
-	mu             sync.Mutex
-	sends          int                  // counts SendMessage calls
-	edits          int                  // counts EditMessageText calls
-	deletes        int                  // counts DeleteMessage calls
-	files          map[string]string    // fileId → filePath for GetFile mock
-	setCmds        []gotgbot.BotCommand // last SetMyCommands call
-	setCmdsErr     error                // error to return from SetMyCommands
-	lastSendOpts   *gotgbot.SendMessageOpts  // last SendMessage opts
-	lastSendInjected   string                    // last SendMessage text
-	lastEditOpts   *gotgbot.EditMessageTextOpts // last EditMessageText opts
-	lastEditText   string                    // last EditMessageText text
-	answerCBCalls  int                       // counts AnswerCallbackQuery calls
-	editErr        error                     // error to return from EditMessageText
-	editErrOnce    bool                      // if true, only return editErr on first call
+	mu               sync.Mutex
+	sends            int                          // counts SendMessage calls
+	edits            int                          // counts EditMessageText calls
+	deletes          int                          // counts DeleteMessage calls
+	files            map[string]string            // fileId → filePath for GetFile mock
+	setCmds          []gotgbot.BotCommand         // last SetMyCommands call
+	setCmdsErr       error                        // error to return from SetMyCommands
+	lastSendOpts     *gotgbot.SendMessageOpts     // last SendMessage opts
+	lastSendInjected string                       // last SendMessage text
+	lastEditOpts     *gotgbot.EditMessageTextOpts // last EditMessageText opts
+	lastEditText     string                       // last EditMessageText text
+	answerCBCalls    int                          // counts AnswerCallbackQuery calls
+	editErr          error                        // error to return from EditMessageText
+	editErrOnce      bool                         // if true, only return editErr on first call
+	sendErr          error                        // error to return from SendMessage
+	sendErrOnce      bool                         // if true, only return sendErr on first call
+	docs             int                          // counts SendDocument calls
 }
 
 func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error) {
@@ -38,6 +41,13 @@ func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMe
 	m.sends++
 	m.lastSendInjected = text
 	m.lastSendOpts = opts
+	if m.sendErr != nil {
+		err := m.sendErr
+		if m.sendErrOnce {
+			m.sendErr = nil
+		}
+		return nil, err
+	}
 	return &gotgbot.Message{MessageId: int64(m.sends)}, nil
 }
 
@@ -58,6 +68,9 @@ func (m *mockClient) EditMessageText(text string, opts *gotgbot.EditMessageTextO
 }
 
 func (m *mockClient) SendDocument(chatId int64, document gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.docs++
 	return &gotgbot.Message{}, nil
 }
 
@@ -140,6 +153,12 @@ func (m *mockClient) deleteCount() int {
 	return m.deletes
 }
 
+func (m *mockClient) docCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.docs
+}
+
 // testBot creates a Bot for testing with a mock client.
 func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) {
 	mock := &mockClient{}
@@ -161,9 +180,9 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) 
 		},
 	}
 	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
-		Size:       64,
+		Size: 64,
 
-		Logger:     lg,
+		Logger: lg,
 	})
 	b.dispatcher = dispatch.NewDispatcher(cmds, command.CommandContext{}, "test")
 	return b, mock

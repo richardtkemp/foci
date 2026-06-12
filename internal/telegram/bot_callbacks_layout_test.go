@@ -76,10 +76,10 @@ func TestLayoutButtons_LongLabelsLimit2PerRow(t *testing.T) {
 		n        int
 		wantRows int
 	}{
-		{3, 2},  // [2, 1]
-		{4, 2},  // [2, 2]
-		{5, 3},  // [2, 2, 1]
-		{7, 4},  // [2, 2, 2, 1]
+		{3, 2}, // [2, 1]
+		{4, 2}, // [2, 2]
+		{5, 3}, // [2, 2, 1]
+		{7, 4}, // [2, 2, 2, 1]
 	}
 	for _, tt := range tests {
 		rows := layoutButtons(makeLongButtons(tt.n))

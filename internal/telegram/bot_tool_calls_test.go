@@ -10,7 +10,6 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-
 func TestAsyncNotifierNoPrimaryBot(t *testing.T) {
 	// When no primary bot is configured, PrimaryBot returns nil.
 	// The main.go closure logs a warning and skips delivery.

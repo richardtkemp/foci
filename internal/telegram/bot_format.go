@@ -28,8 +28,9 @@ func isImageMIME(mime string) bool {
 // It prefers splitting at newline boundaries and preserves HTML formatting
 // by closing open tags at split points and reopening them in the next chunk.
 //
-//nolint:unparam // production always passes telegramMaxChars, but the tests
 // vary maxLen to exercise chunk-boundary handling on short inputs.
+//
+//nolint:unparam // production always passes telegramMaxChars, but the tests
 func splitMessage(text string, maxLen int) []string {
 	if len(text) <= maxLen {
 		return []string{text}
@@ -162,21 +163,21 @@ func closingHTMLTag(openTag string) string {
 
 // toolEmoji maps tool names to per-tool display emoji.
 var toolEmoji = map[string]string{
-	"shell":                "▶️",
-	"web_fetch":            "🔗",
-	"web_search":           "🔍",
-	"http_request":         "🌍",
-	"read":                 "📖",
-	"write":                "✏️",
-	"edit":                 "✂️",
-	"tmux":                 "🪟",
-	"todo":                 "☑️",
-	"send_to_chat": "📨",
-	"memory_search":        "🧠",
-	"spawn":                "🐣",
-	"scratchpad":           "📋",
-	"send_to_session":      "💬",
-	"remind":               "💭",
+	"shell":           "▶️",
+	"web_fetch":       "🔗",
+	"web_search":      "🔍",
+	"http_request":    "🌍",
+	"read":            "📖",
+	"write":           "✏️",
+	"edit":            "✂️",
+	"tmux":            "🪟",
+	"todo":            "☑️",
+	"send_to_chat":    "📨",
+	"memory_search":   "🧠",
+	"spawn":           "🐣",
+	"scratchpad":      "📋",
+	"send_to_session": "💬",
+	"remind":          "💭",
 }
 
 // emojiForTool returns the per-tool emoji, falling back to 🔧 for unknown tools.

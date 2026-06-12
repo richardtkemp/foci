@@ -134,4 +134,3 @@ func TestSwitchToIPv4_NilSafe(t *testing.T) {
 		t.Fatal("switch on nil-wired bot must stay not latched")
 	}
 }
-
