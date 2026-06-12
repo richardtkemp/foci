@@ -21,10 +21,10 @@ type CacheManager struct {
 	ttl    time.Duration
 
 	mu        sync.Mutex
-	cacheName string     // server-assigned cache resource name
-	cacheHash [16]byte   // MD5 of system + tools content
-	expiresAt time.Time  // when the cache expires
-	model     string     // model the cache was created for
+	cacheName string    // server-assigned cache resource name
+	cacheHash [16]byte  // MD5 of system + tools content
+	expiresAt time.Time // when the cache expires
+	model     string    // model the cache was created for
 
 	cachingNotSupported bool // true if we've detected free tier (no caching available)
 }
