@@ -21,7 +21,7 @@ type GoroutineMonitorConfig struct {
 type GoroutineMonitor struct {
 	cfg GoroutineMonitorConfig
 
-	mu       sync.Mutex
+	mu        sync.Mutex
 	warnFired bool
 
 	cancel context.CancelFunc

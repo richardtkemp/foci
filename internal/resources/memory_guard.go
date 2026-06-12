@@ -16,6 +16,9 @@ import (
 	"foci/internal/log"
 )
 
+// defaultProcDir is the real procfs mount point. Tests substitute a fake tree.
+const defaultProcDir = "/proc"
+
 // MemoryGuardConfig holds parsed configuration for the memory guard.
 type MemoryGuardConfig struct {
 	Interval          time.Duration
@@ -42,11 +45,11 @@ type MemoryGuard struct {
 	done   chan struct{}
 
 	// Overridable for testing.
-	getMemTotalFn    func() (int64, error)          // returns total RAM in kB
-	getUserRSSFn     func(uid int) (int64, error)    // returns total RSS for user in kB
-	getPressureFn    func() (float64, error)         // returns PSI memory avg10
-	findLargestFn    func(uid, selfPid int) (int, string, int64, error) // returns pid, comm, rssKB of largest non-self process
-	killProcessFn    func(pid int) error             // SIGTERM then SIGKILL
+	getMemTotalFn func() (int64, error)                              // returns total RAM in kB
+	getUserRSSFn  func(uid int) (int64, error)                       // returns total RSS for user in kB
+	getPressureFn func() (float64, error)                            // returns PSI memory avg10
+	findLargestFn func(uid, selfPid int) (int, string, int64, error) // returns pid, comm, rssKB of largest non-self process
+	killProcessFn func(pid int) error                                // SIGTERM then SIGKILL
 }
 
 // NewMemoryGuard creates a memory guard. warnFn is called for warning
@@ -100,15 +103,15 @@ func (g *MemoryGuard) Stop() {
 func (g *MemoryGuard) checkOnce() {
 	getMemTotal := g.getMemTotalFn
 	if getMemTotal == nil {
-		getMemTotal = readMemTotal
+		getMemTotal = func() (int64, error) { return readMemTotal(defaultProcDir) }
 	}
 	getUserRSS := g.getUserRSSFn
 	if getUserRSS == nil {
-		getUserRSS = readUserRSS
+		getUserRSS = func(uid int) (int64, error) { return readUserRSS(defaultProcDir, uid) }
 	}
 	getPressure := g.getPressureFn
 	if getPressure == nil {
-		getPressure = readMemoryPressure
+		getPressure = func() (float64, error) { return readMemoryPressure(defaultProcDir) }
 	}
 
 	memTotalKB, err := getMemTotal()
@@ -181,7 +184,9 @@ func (g *MemoryGuard) checkOnce() {
 func (g *MemoryGuard) doKill(userMB, totalMB int64, pct, pressure float64) {
 	findLargest := g.findLargestFn
 	if findLargest == nil {
-		findLargest = findLargestProcess
+		findLargest = func(uid, selfPid int) (int, string, int64, error) {
+			return findLargestProcess(defaultProcDir, uid, selfPid)
+		}
 	}
 	killProc := g.killProcessFn
 	if killProc == nil {
@@ -211,9 +216,9 @@ func (g *MemoryGuard) doKill(userMB, totalMB int64, pct, pressure float64) {
 	}
 }
 
-// readMemTotal reads MemTotal from /proc/meminfo in kB.
-func readMemTotal() (int64, error) {
-	f, err := os.Open("/proc/meminfo")
+// readMemTotal reads MemTotal from procDir/meminfo in kB.
+func readMemTotal(procDir string) (int64, error) {
+	f, err := os.Open(filepath.Join(procDir, "meminfo"))
 	if err != nil {
 		return 0, err
 	}
@@ -235,10 +240,10 @@ func readMemTotal() (int64, error) {
 
 // readUserRSS sums VmRSS (in kB) for all processes owned by the given UID.
 // Reads /proc/[pid]/status directly — no external commands.
-func readUserRSS(uid int) (int64, error) {
-	entries, err := os.ReadDir("/proc")
+func readUserRSS(procDir string, uid int) (int64, error) {
+	entries, err := os.ReadDir(procDir)
 	if err != nil {
-		return 0, fmt.Errorf("read /proc: %w", err)
+		return 0, fmt.Errorf("read %s: %w", procDir, err)
 	}
 
 	var totalRSS int64
@@ -252,7 +257,7 @@ func readUserRSS(uid int) (int64, error) {
 			continue
 		}
 
-		statusPath := filepath.Join("/proc", e.Name(), "status")
+		statusPath := filepath.Join(procDir, e.Name(), "status")
 		rss, owned := readStatusRSS(statusPath, uidStr)
 		if owned {
 			totalRSS += rss
@@ -288,10 +293,10 @@ func readStatusRSS(path, uidStr string) (rssKB int64, owned bool) {
 	return
 }
 
-// readMemoryPressure reads PSI memory avg10 from /proc/pressure/memory.
+// readMemoryPressure reads PSI memory avg10 from procDir/pressure/memory.
 // Format: "some avg10=X.XX avg60=... avg300=... total=..."
-func readMemoryPressure() (float64, error) {
-	data, err := os.ReadFile("/proc/pressure/memory")
+func readMemoryPressure(procDir string) (float64, error) {
+	data, err := os.ReadFile(filepath.Join(procDir, "pressure", "memory"))
 	if err != nil {
 		return 0, err
 	}
@@ -310,10 +315,10 @@ func readMemoryPressure() (float64, error) {
 
 // findLargestProcess finds the process with the largest RSS owned by uid,
 // excluding selfPid (the foci process itself). Returns pid, comm, rssKB.
-func findLargestProcess(uid, selfPid int) (int, string, int64, error) {
-	entries, err := os.ReadDir("/proc")
+func findLargestProcess(procDir string, uid, selfPid int) (int, string, int64, error) {
+	entries, err := os.ReadDir(procDir)
 	if err != nil {
-		return 0, "", 0, fmt.Errorf("read /proc: %w", err)
+		return 0, "", 0, fmt.Errorf("read %s: %w", procDir, err)
 	}
 
 	var bestPid int
@@ -333,7 +338,7 @@ func findLargestProcess(uid, selfPid int) (int, string, int64, error) {
 			continue
 		}
 
-		statusPath := filepath.Join("/proc", e.Name(), "status")
+		statusPath := filepath.Join(procDir, e.Name(), "status")
 		rss, owned, comm := readStatusFull(statusPath, uidStr)
 		if owned && rss > bestRSS {
 			bestPid = pid

@@ -144,6 +144,20 @@ func TestNewGoroutineMonitor(t *testing.T) {
 	}
 }
 
+func TestGoroutineMonitor_DefaultCountFn(t *testing.T) {
+	// Verifies that checkOnce falls back to runtime.NumGoroutine when no count function is
+	// injected, and that the real (small) count stays below a generous threshold without warning.
+	m := NewGoroutineMonitor(GoroutineMonitorConfig{Interval: time.Second, Threshold: 1 << 20})
+
+	m.checkOnce()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.warnFired {
+		t.Error("expected no warning with real goroutine count below huge threshold")
+	}
+}
+
 func TestGoroutineMonitor_ExactThreshold(t *testing.T) {
 	// Verifies that the count equal to the
 	// threshold does NOT trigger a warning (only > threshold does).
