@@ -9,6 +9,7 @@ import (
 	"foci/internal/procx"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
+	"foci/internal/tools"
 )
 
 type secretsResult struct {
@@ -41,6 +42,15 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 	}
 	if len(cfg.Agents) > 1 && !store.HasAgentRestrictions() {
 		log.Warnf("security", "multiple agents but no allowed_agents/denied_agents in secrets.toml — all agents can access all secrets")
+	}
+
+	// On a host that has opted out of the strict secrets posture, let the HTTP
+	// tools reach loopback targets (e.g. local test servers). Every other SSRF
+	// block — private ranges, cloud-metadata, ULA — stays strict. Production
+	// leaves skip_security_checks unset and keeps loopback blocked.
+	if cfg.SkipSecurityChecks {
+		tools.PermitLoopbackHTTP()
+		log.Warnf("security", "skip_security_checks set — SSRF guard now permits loopback HTTP targets (dev/test only)")
 	}
 
 	// Auto-generate HTTP API key if not present
