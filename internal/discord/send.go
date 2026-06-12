@@ -25,7 +25,7 @@ const discordMaxChars = 2000
 // that fit within Discord's 2000 character limit.
 func (b *Bot) sendMarkdownChunks(channelID string, text string) {
 	for _, chunk := range splitMessage(text, discordMaxChars) {
-		if _, err := b.session.ChannelMessageSend(channelID, chunk); err != nil {
+		if _, err := b.api.ChannelMessageSend(channelID, chunk); err != nil {
 			var callers [4]string
 			for i := range callers {
 				_, file, line, ok := runtime.Caller(i + 1)
@@ -147,7 +147,7 @@ func (b *Bot) SetTyping(typing bool) {
 	}
 
 	chID := fmt.Sprintf("%d", channelID)
-	_ = b.session.ChannelTyping(chID)
+	_ = b.api.ChannelTyping(chID)
 	ctx, cancel := context.WithCancel(context.Background())
 	b.typingCancel = cancel
 	go func() {
@@ -156,7 +156,7 @@ func (b *Bot) SetTyping(typing bool) {
 		for {
 			select {
 			case <-ticker.C:
-				_ = b.session.ChannelTyping(chID)
+				_ = b.api.ChannelTyping(chID)
 			case <-ctx.Done():
 				return
 			}
@@ -193,7 +193,7 @@ func (b *Bot) sendNotificationImmediate(text string) string {
 	}
 
 	channelIDStr := strconv.FormatInt(channelID, 10)
-	msg, err := b.session.ChannelMessageSend(channelIDStr, text)
+	msg, err := b.api.ChannelMessageSend(channelIDStr, text)
 	if err != nil {
 		b.logger().Errorf("send notification (channel=%s): %s", channelIDStr, b.sanitizeError(err))
 		if isUnknownChannel(err) {
@@ -240,7 +240,7 @@ func (b *Bot) SendStartupNotification(agentID string) {
 	text := fmt.Sprintf("%s restarted at %s", botName, time.Now().Format("15:04:05"))
 
 	channelIDStr := strconv.FormatInt(channelID, 10)
-	if _, err := b.session.ChannelMessageSend(channelIDStr, text); err != nil {
+	if _, err := b.api.ChannelMessageSend(channelIDStr, text); err != nil {
 		b.logger().Errorf("send startup notification (channel=%s): %s", channelIDStr, b.sanitizeError(err))
 		if isUnknownChannel(err) {
 			b.clearStaleChannel(channelIDStr)
@@ -266,7 +266,6 @@ func (b *Bot) SendText(text string) error {
 	}
 	return b.SendTextToChat(channelID, text)
 }
-
 
 // SendInjectedMessage sends a system/injected text message to the channel
 // associated with the given session key. Falls back to the bot's default channel
@@ -366,7 +365,7 @@ func (b *Bot) SendVoiceData(audioData []byte) error {
 // SendVoiceDataToChat sends audio bytes as a Discord message attachment to a specific channel.
 func (b *Bot) SendVoiceDataToChat(chatID int64, audioData []byte) error {
 	channelIDStr := strconv.FormatInt(chatID, 10)
-	_, err := b.session.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
+	_, err := b.api.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
 		Files: []*discordgo.File{
 			{
 				Name:   "voice.mp3",
@@ -414,7 +413,7 @@ func (b *Bot) sendMediaFile(chatID int64, filePath, caption string) error {
 	defer func() { _ = f.Close() }()
 
 	channelIDStr := strconv.FormatInt(chatID, 10)
-	_, err = b.session.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
+	_, err = b.api.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
 		Content: caption,
 		Files: []*discordgo.File{
 			{
@@ -475,7 +474,7 @@ func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, 
 
 	channelIDStr := strconv.FormatInt(channelID, 10)
 	components := buildButtonComponents(buttons, callbackPrefix)
-	msg, err := b.session.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
+	msg, err := b.api.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
 		Content:    text,
 		Components: components,
 	})
@@ -499,7 +498,7 @@ func (b *Bot) EditMessageText(msgID string, text string) error {
 
 	channelIDStr := strconv.FormatInt(channelID, 10)
 	noComponents := []discordgo.MessageComponent{}
-	_, err := b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+	_, err := b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    channelIDStr,
 		ID:         msgID,
 		Content:    &text,
@@ -522,7 +521,7 @@ func (b *Bot) EditMessageWithButtons(msgID string, text string, buttons []platfo
 
 	channelIDStr := strconv.FormatInt(channelID, 10)
 	components := buildButtonComponents(buttons, callbackPrefix)
-	_, err := b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+	_, err := b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    channelIDStr,
 		ID:         msgID,
 		Content:    &text,

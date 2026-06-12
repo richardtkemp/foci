@@ -55,7 +55,7 @@ func (b *discordTrackerBackend) FormatRetryClear() string {
 }
 
 func (b *discordTrackerBackend) Send(text string) (string, error) {
-	sent, err := b.bot.session.ChannelMessageSend(b.channelID, text)
+	sent, err := b.bot.api.ChannelMessageSend(b.channelID, text)
 	if err != nil {
 		return "", err
 	}
@@ -64,7 +64,7 @@ func (b *discordTrackerBackend) Send(text string) (string, error) {
 
 func (b *discordTrackerBackend) SendWithButton(text, btnLabel, btnData string) (string, error) {
 	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: btnLabel, Data: btnData}}, "")
-	sent, err := b.bot.session.ChannelMessageSendComplex(b.channelID, &discordgo.MessageSend{
+	sent, err := b.bot.api.ChannelMessageSendComplex(b.channelID, &discordgo.MessageSend{
 		Content:    text,
 		Components: buttons,
 	})
@@ -75,13 +75,13 @@ func (b *discordTrackerBackend) SendWithButton(text, btnLabel, btnData string) (
 }
 
 func (b *discordTrackerBackend) Edit(msgID, text string) error {
-	_, err := b.bot.session.ChannelMessageEdit(b.channelID, msgID, text)
+	_, err := b.bot.api.ChannelMessageEdit(b.channelID, msgID, text)
 	return err
 }
 
 func (b *discordTrackerBackend) EditWithButton(msgID, text, btnLabel, btnData string) error {
 	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: btnLabel, Data: btnData}}, "")
-	_, err := b.bot.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+	_, err := b.bot.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    b.channelID,
 		ID:         msgID,
 		Content:    &text,
@@ -91,7 +91,7 @@ func (b *discordTrackerBackend) EditWithButton(msgID, text, btnLabel, btnData st
 }
 
 func (b *discordTrackerBackend) Delete(msgID string) error {
-	return b.bot.session.ChannelMessageDelete(b.channelID, msgID)
+	return b.bot.api.ChannelMessageDelete(b.channelID, msgID)
 }
 
 func (b *discordTrackerBackend) Logger() *log.ComponentLogger {

@@ -23,8 +23,8 @@ type botEntry struct {
 type Pool struct {
 	bots        []*botEntry
 	mu          sync.Mutex
-	sessionTTL  time.Duration          // 0 = no auto-reclaim
-	sessions    SessionActivityChecker // nil = no activity checking
+	sessionTTL  time.Duration           // 0 = no auto-reclaim
+	sessions    SessionActivityChecker  // nil = no activity checking
 	ReclaimHook func(sessionKey string) // called before releasing a stale session; nil = no hook
 }
 

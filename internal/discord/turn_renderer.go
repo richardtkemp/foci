@@ -112,9 +112,11 @@ func (b *discordBackend) Deliver(p turn.Payload, stream turn.StreamSink) (turn.D
 	}
 
 	// Delete leftover messages from the live sequence (final shorter than live).
-	for _, orphan := range ids[len(chunks):] {
-		if err := b.bot.session.ChannelMessageDelete(b.channelID, orphan); err != nil {
-			b.bot.logger().Debugf("deliver delete orphan %s: %v", orphan, err)
+	if len(ids) > len(chunks) {
+		for _, orphan := range ids[len(chunks):] {
+			if err := b.bot.api.ChannelMessageDelete(b.channelID, orphan); err != nil {
+				b.bot.logger().Debugf("deliver delete orphan %s: %v", orphan, err)
+			}
 		}
 	}
 
@@ -166,7 +168,7 @@ func (b *discordBackend) composeBody(p turn.Payload) (body string, hasButton boo
 // sendMarkdown sends one (already-chunked) markdown body as a single message and
 // returns its ID.
 func (b *discordBackend) sendMarkdown(text string) (string, bool) {
-	msg, err := b.bot.session.ChannelMessageSend(b.channelID, text)
+	msg, err := b.bot.api.ChannelMessageSend(b.channelID, text)
 	if err != nil {
 		b.bot.logger().Errorf("send error (channel=%s): %s", b.channelID, b.bot.sanitizeError(err))
 		if isUnknownChannel(err) {
@@ -181,7 +183,7 @@ func (b *discordBackend) sendMarkdown(text string) (string, bool) {
 // thinking entry keyed on the sent message ID.
 func (b *discordBackend) sendChunkWithButton(text, thinkingText string) (string, error) {
 	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
-	sent, err := b.bot.session.ChannelMessageSendComplex(b.channelID, &discordgo.MessageSend{
+	sent, err := b.bot.api.ChannelMessageSendComplex(b.channelID, &discordgo.MessageSend{
 		Content:    text,
 		Components: buttons,
 	})
@@ -198,7 +200,7 @@ func (b *discordBackend) sendChunkWithButton(text, thinkingText string) (string,
 
 // editMarkdown edits an existing message with the given markdown body.
 func (b *discordBackend) editMarkdown(msgID, text string) error {
-	_, err := b.bot.session.ChannelMessageEdit(b.channelID, msgID, text)
+	_, err := b.bot.api.ChannelMessageEdit(b.channelID, msgID, text)
 	return err
 }
 
@@ -206,7 +208,7 @@ func (b *discordBackend) editMarkdown(msgID, text string) error {
 // and stores the thinking entry keyed on that message ID.
 func (b *discordBackend) editChunkWithButton(msgID, text, thinkingText string) error {
 	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
-	_, err := b.bot.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+	_, err := b.bot.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    b.channelID,
 		ID:         msgID,
 		Content:    &text,
@@ -254,14 +256,14 @@ func (s *discordStreamSink) Update(fullText string) {
 			if i < len(s.lastSent) && s.lastSent[i] == chunk {
 				continue
 			}
-			if _, err := s.bot.session.ChannelMessageEdit(s.channelID, s.msgIDs[i], chunk); err != nil {
+			if _, err := s.bot.api.ChannelMessageEdit(s.channelID, s.msgIDs[i], chunk); err != nil {
 				s.bot.logger().Debugf("stream edit: %v", err)
 			}
 			s.setLastSent(i, chunk)
 			continue
 		}
 		// Rollover: send a new message for this chunk.
-		msg, err := s.bot.session.ChannelMessageSend(s.channelID, chunk)
+		msg, err := s.bot.api.ChannelMessageSend(s.channelID, chunk)
 		if err != nil {
 			break
 		}

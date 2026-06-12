@@ -10,8 +10,9 @@ import (
 // It prefers splitting at newline boundaries and respects code block boundaries
 // by closing and reopening ``` blocks at split points.
 //
-//nolint:unparam // production always passes discordMaxChars, but the tests vary
 // maxLen to exercise chunk-boundary handling on short inputs.
+//
+//nolint:unparam // production always passes discordMaxChars, but the tests vary
 func splitMessage(text string, maxLen int) []string {
 	if len(text) <= maxLen {
 		return []string{text}

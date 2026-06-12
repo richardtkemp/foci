@@ -20,21 +20,21 @@ import (
 
 // AgentSetupParams holds all dependencies needed to set up Discord bots for an agent.
 type AgentSetupParams struct {
-	Agent          platform.MessageHandler
-	Commands       *command.Registry
-	CommandContext command.CommandContext
-	LastMsgStore   *command.LastMessageStore
-	AgentConfig    config.AgentConfig
-	GlobalConfig   *config.Config
-	SecretStore    *secrets.Store
-	Sessions       *session.Store
-	SessionIndex   *session.SessionIndex
+	Agent           platform.MessageHandler
+	Commands        *command.Registry
+	CommandContext  command.CommandContext
+	LastMsgStore    *command.LastMessageStore
+	AgentConfig     config.AgentConfig
+	GlobalConfig    *config.Config
+	SecretStore     *secrets.Store
+	Sessions        *session.Store
+	SessionIndex    *session.SessionIndex
 	ToolDetailStore *tooldetail.Store
-	STT            voice.STT
-	TTS            voice.TTS
-	STTMap         map[string]voice.STT
-	TTSMap         map[string]voice.TTS
-	Ctx            context.Context //nolint:containedctx
+	STT             voice.STT
+	TTS             voice.TTS
+	STTMap          map[string]voice.STT
+	TTSMap          map[string]voice.TTS
+	Ctx             context.Context //nolint:containedctx
 
 	// ReclaimHook is called when a facet session is reclaimed.
 	ReclaimHook func(sessionKey string)
@@ -279,4 +279,3 @@ func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.R
 
 	bot.display = d
 }
-
