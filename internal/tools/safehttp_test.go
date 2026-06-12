@@ -24,6 +24,31 @@ func init() {
 	}
 }
 
+// TestPermitLoopbackHTTP proves the skip_security_checks loopback relaxation
+// allows loopback targets but keeps every other SSRF block strict — cloud
+// metadata, private ranges, the unspecified address, and ULA all stay denied.
+// Not parallel: it mutates the shared blockedIP var, so it runs in the
+// sequential phase while parallel tests are paused, and restores on cleanup.
+func TestPermitLoopbackHTTP(t *testing.T) {
+	orig := blockedIP
+	t.Cleanup(func() { blockedIP = orig })
+
+	blockedIP = isBlockedIP // strict baseline
+	if !blockedIP(net.ParseIP("127.0.0.1")) {
+		t.Fatal("baseline should block loopback")
+	}
+
+	PermitLoopbackHTTP()
+	if blockedIP(net.ParseIP("127.0.0.1")) {
+		t.Error("loopback should be permitted after PermitLoopbackHTTP")
+	}
+	for _, s := range []string{"169.254.169.254", "10.0.0.1", "192.168.1.1", "0.0.0.0", "fd00::1", "fe80::1"} {
+		if !blockedIP(net.ParseIP(s)) {
+			t.Errorf("%s must stay blocked after PermitLoopbackHTTP", s)
+		}
+	}
+}
+
 // TestIsBlockedIP proves the SSRF address filter rejects every non-public range
 // an attacker could use to reach internal services or cloud metadata — including
 // the unspecified address (0.0.0.0 / ::) that the old isPrivateIP missed — while

@@ -46,10 +46,26 @@ func isBlockedIP(ip net.IP) bool {
 }
 
 // blockedIP is the SSRF predicate the dialer applies to each resolved address.
-// It is a variable (rather than a direct isBlockedIP call) solely so tests can
-// permit loopback httptest servers while keeping every other block strict;
-// production never reassigns it. See safehttp_test.go.
+// It is a variable (rather than a direct isBlockedIP call) so tests can permit
+// loopback httptest servers, and so the gateway can relax loopback on a
+// skip_security_checks host (see PermitLoopbackHTTP); production with the flag
+// unset never reassigns it. See safehttp_test.go.
 var blockedIP = isBlockedIP
+
+// PermitLoopbackHTTP relaxes the SSRF dialer to allow loopback targets (e.g. a
+// 127.0.0.1 test server) while keeping every other block strict — private
+// ranges, link-local/cloud-metadata, ULA, multicast, and the unspecified
+// address all stay denied. The gateway calls this ONLY when
+// skip_security_checks is set (a dev/test host that has already opted out of
+// the strict secrets posture); production with the flag unset never calls it.
+func PermitLoopbackHTTP() {
+	blockedIP = func(ip net.IP) bool {
+		if ip != nil && ip.IsLoopback() {
+			return false
+		}
+		return isBlockedIP(ip)
+	}
+}
 
 // safeDialContext resolves the target host, rejects the connection if ANY
 // resolved address is non-public, and then dials a validated IP directly. By
