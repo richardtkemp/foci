@@ -111,7 +111,7 @@ func messagesToGenai(msgs []provider.Message) []*genai.Content {
 					})
 				}
 
-			// Skip server_tool_use, web_search_tool_result, etc. — Gemini-incompatible
+				// Skip server_tool_use, web_search_tool_result, etc. — Gemini-incompatible
 			}
 		}
 
@@ -272,8 +272,8 @@ func responseFromGenai(resp *genai.GenerateContentResponse, model string) (*prov
 	if resp.UsageMetadata != nil {
 		cached := int(resp.UsageMetadata.CachedContentTokenCount)
 		result.Usage = provider.Usage{
-			InputTokens:         int(resp.UsageMetadata.PromptTokenCount) - cached,
-			OutputTokens:        int(resp.UsageMetadata.CandidatesTokenCount),
+			InputTokens:          int(resp.UsageMetadata.PromptTokenCount) - cached,
+			OutputTokens:         int(resp.UsageMetadata.CandidatesTokenCount),
 			CacheReadInputTokens: cached,
 		}
 	}

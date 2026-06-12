@@ -330,8 +330,8 @@ func TestResponseFromGenai_CachedTokensNonOverlapping(t *testing.T) {
 			},
 		},
 		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
-			PromptTokenCount:      150000,
-			CandidatesTokenCount:  500,
+			PromptTokenCount:        150000,
+			CandidatesTokenCount:    500,
 			CachedContentTokenCount: 120000,
 		},
 	}
@@ -537,7 +537,7 @@ func TestThoughtSignatureRoundTrip(t *testing.T) {
 }
 
 func TestMapFinishReason(t *testing.T) {
-	// Proves that Gemini finish reasons map to the expected provider stop reason strings, including that safety and recitation map to "end_turn" rather than exposing internal Gemini codes.
+	// Proves that Gemini finish reasons map to the expected provider stop reason strings, including that safety, recitation, malformed calls, and unrecognized reasons all collapse to "end_turn" rather than exposing internal Gemini codes.
 	tests := []struct {
 		reason genai.FinishReason
 		want   string
@@ -546,6 +546,9 @@ func TestMapFinishReason(t *testing.T) {
 		{genai.FinishReasonMaxTokens, "max_tokens"},
 		{genai.FinishReasonSafety, "end_turn"},
 		{genai.FinishReasonRecitation, "end_turn"},
+		{genai.FinishReasonMalformedFunctionCall, "end_turn"},
+		{genai.FinishReasonBlocklist, "end_turn"}, // unmapped → default
+		{genai.FinishReasonUnspecified, "end_turn"},
 	}
 
 	for _, tt := range tests {
@@ -591,6 +594,137 @@ func TestJSONSchemaToGenai(t *testing.T) {
 	}
 	if len(schema.Required) != 1 || schema.Required[0] != "name" {
 		t.Errorf("required = %v", schema.Required)
+	}
+}
+
+func TestMessagesToGenai_ImageAndSkippedBlocks(t *testing.T) {
+	// Proves that image blocks become InlineData parts, while empty text blocks and Gemini-incompatible block types are dropped — and a message left with no parts is omitted entirely.
+	msgs := []provider.Message{
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "text", Text: ""}, // empty text — must be skipped (Gemini rejects it)
+			{Type: "image", Source: &provider.ContentSource{
+				Type:     "base64",
+				MimeType: "image/png",
+				Data:     "aGVsbG8=",
+			}},
+		}},
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "server_tool_use", ID: "st_1", Name: "web_search"}, // incompatible — skipped
+			{Type: "image"}, // image without source — skipped
+		}},
+	}
+
+	contents := messagesToGenai(msgs)
+	if len(contents) != 1 {
+		t.Fatalf("contents = %d, want 1 (second message has no convertible parts)", len(contents))
+	}
+	if len(contents[0].Parts) != 1 {
+		t.Fatalf("parts = %d, want 1 (empty text skipped)", len(contents[0].Parts))
+	}
+	blob := contents[0].Parts[0].InlineData
+	if blob == nil {
+		t.Fatal("expected InlineData part for image block")
+	}
+	if blob.MIMEType != "image/png" {
+		t.Errorf("mime = %q", blob.MIMEType)
+	}
+	if string(blob.Data) != "aGVsbG8=" {
+		t.Errorf("data = %q", blob.Data)
+	}
+}
+
+func TestResponseFromGenai_NilAndEmpty(t *testing.T) {
+	// Proves the degenerate response shapes are handled: nil response errors, zero candidates yields a bare end_turn, and a candidate with no usable parts gets a placeholder text block (empty content is rejected by the APIs).
+	if _, err := responseFromGenai(nil, "gemini-2.5-flash"); err == nil {
+		t.Error("nil response should error")
+	}
+
+	result, err := responseFromGenai(&genai.GenerateContentResponse{}, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("no candidates: %v", err)
+	}
+	if result.StopReason != "end_turn" {
+		t.Errorf("stop = %q, want end_turn", result.StopReason)
+	}
+
+	result, err = responseFromGenai(&genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{
+			{Content: &genai.Content{Parts: []*genai.Part{{Text: ""}}}, FinishReason: genai.FinishReasonStop},
+		},
+	}, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("empty parts: %v", err)
+	}
+	if got := provider.TextOf(result.Content); got != "(empty response)" {
+		t.Errorf("text = %q, want placeholder", got)
+	}
+}
+
+func TestToolsToGenai_SkipsUnusableDefs(t *testing.T) {
+	// Proves that tool definitions with no raw JSON or unparseable JSON are silently skipped instead of producing broken declarations, and that all-skipped input yields nil.
+	var invalid provider.ToolDef
+	if err := invalid.UnmarshalJSON([]byte("{not json")); err != nil {
+		t.Fatalf("UnmarshalJSON: %v", err)
+	}
+
+	defs := []provider.ToolDef{
+		{},      // zero value — nil raw
+		invalid, // unparseable raw JSON
+		provider.NewCustomTool("exec", "run commands", json.RawMessage(`{"type":"object"}`)),
+	}
+
+	tools := toolsToGenai(defs)
+	if len(tools) != 1 || len(tools[0].FunctionDeclarations) != 1 {
+		t.Fatalf("expected exactly one declaration, got %+v", tools)
+	}
+	if tools[0].FunctionDeclarations[0].Name != "exec" {
+		t.Errorf("name = %q, want exec", tools[0].FunctionDeclarations[0].Name)
+	}
+
+	// All-unusable input collapses to nil.
+	if got := toolsToGenai([]provider.ToolDef{{}, invalid}); got != nil {
+		t.Errorf("expected nil for all-unusable defs, got %+v", got)
+	}
+}
+
+func TestJSONSchemaToGenai_EdgeCases(t *testing.T) {
+	// Proves the remaining schema conversions: invalid JSON errors, enum/number/boolean types map correctly, and malformed nested property or items schemas are dropped without failing the whole schema.
+	if _, err := jsonSchemaToGenai(json.RawMessage(`{not json`)); err == nil {
+		t.Error("invalid JSON should error")
+	}
+
+	schema, err := jsonSchemaToGenai(json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"mode": {"type": "string", "enum": ["fast", "slow"]},
+			"ratio": {"type": "number"},
+			"force": {"type": "boolean"},
+			"bad": 123
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if len(schema.Properties) != 3 {
+		t.Errorf("properties = %d, want 3 (malformed 'bad' dropped)", len(schema.Properties))
+	}
+	if got := schema.Properties["mode"].Enum; len(got) != 2 || got[0] != "fast" {
+		t.Errorf("enum = %v", got)
+	}
+	if schema.Properties["ratio"].Type != genai.TypeNumber {
+		t.Errorf("ratio.type = %v", schema.Properties["ratio"].Type)
+	}
+	if schema.Properties["force"].Type != genai.TypeBoolean {
+		t.Errorf("force.type = %v", schema.Properties["force"].Type)
+	}
+
+	// Malformed items schema is ignored, leaving Items nil.
+	schema, err = jsonSchemaToGenai(json.RawMessage(`{"type": "array", "items": 123}`))
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if schema.Items != nil {
+		t.Errorf("items = %+v, want nil for malformed items", schema.Items)
 	}
 }
 

@@ -3,6 +3,7 @@ package gemini
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -136,21 +137,33 @@ func (c *Client) HandlesOwnRetries() bool {
 }
 
 // CountTokens returns the input token count for a request.
+//
+// The genai SDK rejects SystemInstruction and Tools in CountTokensConfig for
+// the Gemini API backend (only Vertex supports them), so they are folded into
+// the counted contents instead: the system prompt tokenizes identically as a
+// user content, and tool declarations are approximated by counting their JSON
+// serialization.
 func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) (int, error) {
 	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
 	contents := messagesToGenai(req.Messages)
 
-	countConfig := &genai.CountTokensConfig{}
-	if len(req.System) > 0 {
-		countConfig.SystemInstruction = systemToGenai(req.System)
+	if system := systemToGenai(req.System); system != nil {
+		contents = append([]*genai.Content{system}, contents...)
 	}
 	if tools := toolsToGenai(req.Tools); len(tools) > 0 {
-		countConfig.Tools = tools
+		raw, err := json.Marshal(tools)
+		if err != nil {
+			return 0, fmt.Errorf("gemini: marshal tools for count: %w", err)
+		}
+		contents = append(contents, &genai.Content{
+			Parts: []*genai.Part{{Text: string(raw)}},
+			Role:  "user",
+		})
 	}
 
-	resp, err := c.client.Models.CountTokens(ctx, modelID, contents, countConfig)
+	resp, err := c.client.Models.CountTokens(ctx, modelID, contents, nil)
 	if err != nil {
 		return 0, fmt.Errorf("gemini: count tokens: %w", err)
 	}

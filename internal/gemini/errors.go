@@ -24,32 +24,32 @@ func classifyError(err error) error {
 	case strings.Contains(msg, "429") || strings.Contains(msg, "RESOURCE_EXHAUSTED"):
 		return &provider.APIError{
 			StatusCode: http.StatusTooManyRequests,
-			Body:    fmt.Sprintf("gemini: rate limited: %v", err),
+			Body:       fmt.Sprintf("gemini: rate limited: %v", err),
 		}
 	case strings.Contains(msg, "500") || strings.Contains(msg, "INTERNAL"):
 		return &provider.APIError{
 			StatusCode: http.StatusInternalServerError,
-			Body:    fmt.Sprintf("gemini: server error: %v", err),
+			Body:       fmt.Sprintf("gemini: server error: %v", err),
 		}
 	case strings.Contains(msg, "503") || strings.Contains(msg, "UNAVAILABLE"):
 		return &provider.APIError{
 			StatusCode: http.StatusServiceUnavailable,
-			Body:    fmt.Sprintf("gemini: service unavailable: %v", err),
+			Body:       fmt.Sprintf("gemini: service unavailable: %v", err),
 		}
 	case strings.Contains(msg, "400") || strings.Contains(msg, "INVALID_ARGUMENT"):
 		return &provider.APIError{
 			StatusCode: http.StatusBadRequest,
-			Body:    fmt.Sprintf("gemini: bad request: %v", err),
+			Body:       fmt.Sprintf("gemini: bad request: %v", err),
 		}
 	case strings.Contains(msg, "401") || strings.Contains(msg, "UNAUTHENTICATED"):
 		return &provider.APIError{
 			StatusCode: http.StatusUnauthorized,
-			Body:    fmt.Sprintf("gemini: unauthorized: %v", err),
+			Body:       fmt.Sprintf("gemini: unauthorized: %v", err),
 		}
 	case strings.Contains(msg, "403") || strings.Contains(msg, "PERMISSION_DENIED"):
 		return &provider.APIError{
 			StatusCode: http.StatusForbidden,
-			Body:    fmt.Sprintf("gemini: forbidden: %v", err),
+			Body:       fmt.Sprintf("gemini: forbidden: %v", err),
 		}
 	}
 
@@ -57,7 +57,7 @@ func classifyError(err error) error {
 	if isSafetyError(err) {
 		return &provider.APIError{
 			StatusCode: http.StatusBadRequest,
-			Body:    fmt.Sprintf("gemini: content filtered: %v", err),
+			Body:       fmt.Sprintf("gemini: content filtered: %v", err),
 		}
 	}
 
