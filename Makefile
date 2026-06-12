@@ -90,7 +90,7 @@ coverage-check:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
-	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./prompts/... 2>&1 | tee .test-output.tmp
+	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
 	@rm -rf $(TESTDIR)
 	@if grep -q '^FAIL' .test-output.tmp; then \
 		rm -f .test-output.tmp; \
