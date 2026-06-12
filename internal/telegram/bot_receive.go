@@ -285,4 +285,3 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 	}
 	return true // silently consumed (stale command or idle secondary)
 }
-

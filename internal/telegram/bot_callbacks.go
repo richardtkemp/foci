@@ -287,4 +287,3 @@ func (b *Bot) sanitizeError(err error) string {
 	}
 	return redactToken(err.Error(), b.botToken)
 }
-

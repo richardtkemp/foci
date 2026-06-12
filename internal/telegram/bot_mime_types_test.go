@@ -82,4 +82,3 @@ func TestMIMEChecksWithParameters(t *testing.T) {
 		t.Error("image/jpeg with params should be image")
 	}
 }
-

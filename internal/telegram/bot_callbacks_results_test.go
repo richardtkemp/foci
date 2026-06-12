@@ -313,4 +313,3 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 		t.Errorf("result = %q, want %q", entry.result, "file1.txt\nfile2.txt")
 	}
 }
-

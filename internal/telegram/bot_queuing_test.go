@@ -15,8 +15,7 @@ func TestReceiveMessage_QueueFull(t *testing.T) {
 
 	// Replace the default mq with a tiny one (size=2)
 	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
-		Size:       2,
-
+		Size: 2,
 	})
 	b.mq.PushFlushed(platform.QueuedMessage{UserID: "111", Text: "msg1", ChatID: 12345})
 	b.mq.PushFlushed(platform.QueuedMessage{UserID: "111", Text: "msg2", ChatID: 12345})
