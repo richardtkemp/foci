@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,7 +12,6 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
-	mcpkg "foci/internal/mcp"
 	"foci/internal/nudge"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -22,157 +19,11 @@ import (
 	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/internal/tools"
-	"foci/internal/tools/browser"
-	"foci/internal/tools/shell"
-	"foci/internal/tools/tmux"
 	"foci/internal/voice"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
 	"foci/shared/prompts"
 )
-
-// coreToolsResult holds the side-products of core tool registration.
-type coreToolsResult struct {
-	tmuxTool       *tools.Tool
-	tmuxClearAll   func()
-	tmuxWatchCount func() int
-	tmuxMigrateKey func(string, string)
-}
-
-// registerCoreTools registers exec, tmux, browser, file I/O, summary, and HTTP tools.
-func registerCoreTools(registry *tools.Registry, p setupParams, client provider.Client, agentStore *secrets.Store, notifier *tools.AsyncNotifier, groupResolver *config.GroupResolver, fallbackFn provider.FallbackFunc) coreToolsResult {
-	acfg := p.acfg
-
-	tc := p.resolved.Tools
-	sc := p.resolved.Summary
-	execAutoBg := tc.ExecAutoBackground
-	maxUploadSize := tc.MaxUploadFileSize
-	spillThreshold := sc.MaxResultChars
-	fileMode, _ := config.ParseFileMode(p.cfg.FileMode)
-
-	// Inject FOCI_ADDR and FOCI_GW_SOCK so agents can run foci CLI commands
-	// (send, branch, ping, etc.) without sourcing vars manually.
-	// FOCI_GW_SOCK is a Unix socket path (not a secret) — the CLI uses it
-	// for same-user authentication via kernel peer credentials, so no API
-	// key needs to appear in the child environment.
-	var execExtraEnv []string
-	if p.cfg.HTTP.Port > 0 {
-		bind := p.cfg.HTTP.Bind
-		if bind == "" || bind == "0.0.0.0" {
-			bind = "127.0.0.1"
-		}
-		execExtraEnv = append(execExtraEnv, fmt.Sprintf("FOCI_ADDR=%s:%d", bind, p.cfg.HTTP.Port))
-	}
-	if p.gwSocketPath != "" {
-		execExtraEnv = append(execExtraEnv, "FOCI_GW_SOCK="+p.gwSocketPath)
-	}
-
-	registry.Register(shell.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir, execExtraEnv))
-
-	var result coreToolsResult
-
-	// Only register tmux tool if tmux is available in PATH
-	if _, err := exec.LookPath("tmux"); err == nil {
-		tmuxAutopilot := tc.TmuxAutopilot
-		tmuxWatchThreshold := tc.TmuxWatchThreshold
-		tmuxWatchThresholdSec := 30
-		if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
-			tmuxWatchThresholdSec = int(d.Seconds())
-		}
-		tmuxSessionTTLStr := tc.TmuxSessionTTL
-		var tmuxSessionTTL time.Duration
-		if tmuxSessionTTLStr != "0" {
-			if d, err := time.ParseDuration(tmuxSessionTTLStr); err == nil {
-				tmuxSessionTTL = d
-			}
-		}
-		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll, result.tmuxMigrateKey = tmux.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.sessionIndex, acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL, "")
-		registry.Register(result.tmuxTool)
-	}
-
-	// Only register browser tool if enabled
-	bc := p.resolved.Browser
-	if bc.Enabled {
-		browserMgr := browser.NewBrowserManager(&bc, fileMode)
-		registry.Register(browser.NewBrowserTool(browserMgr))
-	}
-
-	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
-	if len(blockedPaths) > 0 {
-		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
-	}
-	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace, tc.MaxFileReadBytes))
-	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
-	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths, fileMode, tc.MaxFileReadBytes))
-	apiSummariser := tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, sc.MaxSummaryInputChars)
-	registry.Register(tools.NewSummaryTool(agentStore, apiSummariser, acfg.Workspace))
-	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier, fileMode))
-
-	return result
-}
-
-// registerWebTools registers web search and fetch tools.
-// Returns server-side tool definitions for provider-hosted tools.
-func registerWebTools(registry *tools.Registry, p setupParams) []provider.ToolDef {
-	var serverTools []provider.ToolDef
-
-	tc := p.resolved.Tools
-	searchProvider := tc.SearchProvider
-	if searchProvider == "anthropic" {
-		serverTools = append(serverTools, buildServerTool("web_search_20250305", "web_search",
-			p.cfg.Tools.WebSearchMaxUses, p.cfg.Tools.WebSearchAllowedDomains, p.cfg.Tools.WebSearchBlockedDomains))
-	} else if searchProvider == "brave" && p.braveKey != "" {
-		registry.Register(tools.NewWebSearchTool(p.braveKey))
-	}
-
-	fetchProvider := tc.FetchProvider
-	if fetchProvider == "anthropic" {
-		serverTools = append(serverTools, buildServerTool("web_fetch_20250910", "web_fetch",
-			p.cfg.Tools.WebFetchMaxUses, p.cfg.Tools.WebFetchAllowedDomains, p.cfg.Tools.WebFetchBlockedDomains))
-	} else {
-		registry.Register(tools.NewWebFetchTool())
-	}
-
-	return serverTools
-}
-
-// registerMemoryAndExtTools registers memory, scratchpad, todo, task list,
-// bitwarden, and MCP tools. Returns the MCP manager.
-func registerMemoryAndExtTools(registry *tools.Registry, p setupParams, agLazy func() *agent.Agent) *mcpkg.Manager {
-	acfg := p.acfg
-
-	if len(p.memBackends) > 0 {
-		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.resolved.MemorySearch.SearchBackend, p.convReader))
-	}
-	if p.scratchpadStore != nil {
-		registry.Register(tools.NewScratchpadTool(p.scratchpadStore, acfg.ID))
-	}
-	if p.todoStore != nil {
-		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
-	}
-	if p.taskListStore != nil {
-		registry.Register(tools.NewTaskListTool(p.taskListStore, acfg.ID, func(sk, msg string) {
-			ag := agLazy()
-			for _, fn := range ag.TaskListNotifyFunc {
-				fn(sk, msg)
-			}
-		}))
-	}
-
-	// Bitwarden tools (if enabled)
-	if p.bwStore != nil {
-		registry.Register(tools.NewBitwardenSearchTool(p.bwStore))
-		registry.Register(tools.NewBitwardenUnlockTool(p.bwStore))
-	}
-
-	// MCP servers (dynamic — re-reads mcp.toml on each tool call)
-	mcpMgr := mcpkg.NewManagerForAgent(filepath.Dir(p.configPath), acfg.ID)
-	if tool := mcpMgr.Tool(); tool != nil {
-		registry.Register(tool)
-	}
-
-	return mcpMgr
-}
 
 // bootstrapResult holds the output of setupBootstrapAndSkills.
 type bootstrapResult struct {
@@ -232,32 +83,6 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 	compactor.ClientProvider = p.clientProvider
 
 	return compactor, compactionThreshold
-}
-
-// registerSessionTools registers send_to_chat and send_to_session tools.
-// Returns the resolved agent TTS and TTS replacements for reuse in platform setup.
-func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platform.ConnectionManager, notifier *tools.AsyncNotifier) (voice.TTS, map[string]string) {
-	acfg := p.acfg
-
-	vc := p.resolved.Voice
-	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
-	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
-	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
-		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
-		if conn == nil {
-			return nil
-		}
-		return conn
-	}, agentTTS))
-
-	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
-	var resolveKeyFn tools.SessionKeyResolverFn
-	if p.sessionIndex != nil {
-		resolveKeyFn = p.sessionIndex.ResolveLooseKey
-	}
-	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn, resolveKeyFn))
-
-	return agentTTS, ttsRepls
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
@@ -455,37 +280,6 @@ func setupManaWatcher(ag *agent.Agent, p setupParams) {
 	ag.ManaWatcher.SetSessionIndex(p.sessionIndex, p.acfg.ID)
 	ag.ManaWatcher.Restore()
 	ag.ManaWatcher.SetRestoreThreshold(mc.RestoreThreshold)
-}
-
-// registerSpawnTool registers the spawn tool for forking sub-agents.
-func registerSpawnTool(registry *tools.Registry, p setupParams, client provider.Client, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, resolvedModel, defaultFormat string, fallbackFn provider.FallbackFunc) {
-	acfg := p.acfg
-	fileMode, _ := config.ParseFileMode(p.cfg.FileMode)
-
-	spawnOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
-	al := p.resolved.Loop
-	tc := p.resolved.Tools
-	spawnDeps := tools.SpawnDeps{
-		Client:              client,
-		ClientProvider:      p.clientProvider,
-		Bootstrap:           bootstrap,
-		Registry:            registry,
-		Sessions:            &sessionBranchAdapter{store: p.sessions},
-		AgentID:             acfg.ID,
-		GroupResolver:       groupResolver,
-		FallbackFunc:        fallbackFn,
-		FallbackModel:       resolvedModel,
-		FallbackFormat:      defaultFormat,
-		MaxInherit:          tc.MaxConcurrentSpawns,
-		MaxToolLoops:        al.MaxToolLoops,
-		ExploreMaxDepth:     tc.ExploreMaxDepth,
-		Notifier:            notifier,
-		OrientationTemplate: prompts.ResolveOrientationTemplate(spawnOrientPath, false, promptSearchDirs...),
-		SetNoCompact:        setNoCompact,
-		FileMode:            fileMode,
-		Store:               p.store,
-	}
-	registry.Register(tools.NewSpawnTool(spawnDeps, agLazy))
 }
 
 // platformConnectionResult holds the callbacks wired by platform connection setup.
