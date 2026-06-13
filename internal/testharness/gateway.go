@@ -197,6 +197,7 @@ type Harness struct {
 	// without re-doing the build / config / stub-setup work.
 	gwBin        string
 	binDir       string // for lazy CLI build via FociCLI()
+	ccStubBin    string // path to the shared cc-stub binary (used as the global ClaudeBinary)
 	repoRoot     string // for lazy CLI build via FociCLI()
 	fociCLIBin   string // set on first FociCLI() call; "" until built
 	fociCLIOnce  sync.Once
@@ -261,18 +262,15 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		}
 	}
 
-	// Build foci-gw + cc-stub. go build is cheap when sources are
-	// unchanged thanks to Go's build cache; expensive only on the first
-	// test of a fresh checkout.
+	// Build foci-gw + cc-stub ONCE per test process and share the binaries
+	// across all tests. The binaries are identical for every test (same
+	// source); per-test behaviour comes from the config and the cc-stub
+	// script file, not the binary. Linking foci-gw is ~2.6s even with a warm
+	// build cache, so re-linking it per test (×170 L2 tests) was the dominant
+	// cost of the suite — see sharedBinary.
 	repoRoot := findRepoRoot(t)
-	gwBin := filepath.Join(binDir, "foci-gw")
-	stubBin := filepath.Join(binDir, "cc-stub")
-	buildBinary(t, repoRoot, "./cmd/foci-gw", gwBin)
-	// cc-stub is built unconditionally so the cached binary is available
-	// even when ClaudeBinary overrides where foci-gw looks for it; tests
-	// that swap the binary mid-flight rely on having a known-good stub
-	// in opts (via h.ScriptDir()/etc.).
-	buildBinary(t, repoRoot, "./cmd/cc-stub", stubBin)
+	gwBin := sharedBinary(t, repoRoot, "./cmd/foci-gw")
+	stubBin := sharedBinary(t, repoRoot, "./cmd/cc-stub")
 	claudeBinary := stubBin
 	if opts.ClaudeBinary != "" {
 		claudeBinary = opts.ClaudeBinary
@@ -407,6 +405,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		controlSock:  controlSock,
 		gwBin:        gwBin,
 		binDir:       binDir,
+		ccStubBin:    stubBin,
 		repoRoot:     repoRoot,
 		agents:       opts.Agents,
 		readyTimeout: opts.ReadyTimeout,
@@ -674,6 +673,13 @@ func (h *Harness) ScriptDir() string { return h.scriptDir }
 // config, recorder, cc-scripts) live under it.
 func (h *Harness) TempDir() string { return h.tempDir }
 
+// CCStubBinary returns the path to the cc-stub binary this harness uses as the
+// global ClaudeBinary. It is shared across all tests in the process (built
+// once), so tests that need the stub's path — e.g. to symlink it as a
+// per-agent override — must read it here rather than reconstructing
+// TempDir()/bin/cc-stub.
+func (h *Harness) CCStubBinary() string { return h.ccStubBin }
+
 // DataDir returns the on-disk data directory foci-gw was configured
 // with. Tests use it to seed JSONL session files, mutate permissions,
 // or read foci's persisted state.
@@ -889,6 +895,61 @@ func buildBinary(t *testing.T, repoRoot, pkg, outPath string) {
 	if err != nil {
 		t.Fatalf("go build %s: %v\n%s", pkg, err, string(out))
 	}
+}
+
+// Shared, build-once-per-process binary cache. Every StartGateway used to
+// re-link foci-gw + cc-stub into its own t.TempDir; foci-gw links in ~2.6s
+// even with a warm cache, so across the ~170 L2 tests that was the suite's
+// single biggest cost. The binaries are byte-identical for every test, so we
+// build each package exactly once (keyed by package path) into a shared temp
+// dir and hand every test the same path.
+var (
+	sharedBinMu   sync.Mutex
+	sharedBinDir  string
+	sharedBins    = map[string]string{}
+	sharedBinErr  = map[string]error{}
+	sharedBinOnce = map[string]*sync.Once{}
+)
+
+func sharedBinary(t *testing.T, repoRoot, pkg string) string {
+	t.Helper()
+	sharedBinMu.Lock()
+	if sharedBinDir == "" {
+		d, err := os.MkdirTemp("", "foci-l2-bin")
+		if err != nil {
+			sharedBinMu.Unlock()
+			t.Fatalf("shared bin dir: %v", err)
+		}
+		sharedBinDir = d
+	}
+	once := sharedBinOnce[pkg]
+	if once == nil {
+		once = &sync.Once{}
+		sharedBinOnce[pkg] = once
+	}
+	sharedBinMu.Unlock()
+
+	// once.Do blocks all concurrent callers until the single build finishes.
+	once.Do(func() {
+		out := filepath.Join(sharedBinDir, filepath.Base(pkg))
+		cmd := exec.Command("go", "build", "-o", out, pkg) //nolint:forbidigo // builds a test binary with the go toolchain
+		cmd.Dir = repoRoot
+		b, err := cmd.CombinedOutput()
+		sharedBinMu.Lock()
+		if err != nil {
+			sharedBinErr[pkg] = fmt.Errorf("go build %s: %v\n%s", pkg, err, string(b))
+		} else {
+			sharedBins[pkg] = out
+		}
+		sharedBinMu.Unlock()
+	})
+
+	sharedBinMu.Lock()
+	defer sharedBinMu.Unlock()
+	if err := sharedBinErr[pkg]; err != nil {
+		t.Fatalf("%v", err)
+	}
+	return sharedBins[pkg]
 }
 
 // ----- Internal: synthetic buffer with mutex ------------------------

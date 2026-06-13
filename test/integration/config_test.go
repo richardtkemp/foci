@@ -248,7 +248,7 @@ func TestL2_Config_PerAgentClaudeBinaryOverridesGlobal(t *testing.T) {
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userA}},
 		ReadyTimeout: 30 * time.Second,
 	})
-	scratchBin := filepath.Join(scratch.TempDir(), "bin", "cc-stub")
+	scratchBin := scratch.CCStubBinary()
 	if _, err := os.Stat(scratchBin); err != nil {
 		t.Fatalf("scratch cc-stub binary missing at %s: %v", scratchBin, err)
 	}
