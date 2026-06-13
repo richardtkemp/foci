@@ -3,12 +3,14 @@ package discord
 import (
 	"context"
 	"testing"
+
+	"foci/internal/platform"
 )
 
 // TestConnectionManagerAdapterNilSafety verifies all adapter accessors return
 // true nil interfaces (not typed-nil wrappers) when no bot matches.
 func TestConnectionManagerAdapterNilSafety(t *testing.T) {
-	a := &ConnectionManagerAdapter{BotManager: NewBotManager()}
+	a := platform.NewConnectionManagerAdapter[*Bot](NewBotManager())
 
 	if a.Primary("ghost") != nil {
 		t.Error("Primary should return nil interface")
@@ -39,11 +41,12 @@ func TestConnectionManagerAdapterNilSafety(t *testing.T) {
 // TestConnectionManagerAdapterWrapping verifies the adapter surfaces registered
 // bots as platform.Connection values.
 func TestConnectionManagerAdapterWrapping(t *testing.T) {
-	a := &ConnectionManagerAdapter{BotManager: NewBotManager()}
+	mgr := NewBotManager()
+	a := platform.NewConnectionManagerAdapter[*Bot](mgr)
 	primary := &Bot{agentID: "a", sessionKey: "a/c1/123"}
-	a.AddPrimary("a", primary)
+	mgr.AddPrimary("a", primary)
 	facet := &Bot{}
-	a.AddFacet("a", facet)
+	mgr.AddFacet("a", facet)
 
 	if got := a.Primary("a"); got != primary {
 		t.Error("Primary should return the registered bot")

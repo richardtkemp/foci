@@ -16,10 +16,16 @@ import (
 // telegramProvider implements platform.MessagingProvider for Telegram.
 type telegramProvider struct {
 	mgr             *BotManager
-	connMgr         *ConnectionManagerAdapter
+	connMgr         platform.ConnectionManager
 	toolDetailStore *tooldetail.Store
 	deps            platform.ProviderDeps
 }
+
+// Compile-time checks.
+var (
+	_ platform.Connection        = (*Bot)(nil)
+	_ platform.ConnectionManager = (*platform.ConnectionManagerAdapter[*Bot])(nil)
+)
 
 func (p *telegramProvider) Name() string { return "telegram" }
 
@@ -36,7 +42,7 @@ func (p *telegramProvider) IsConfigured(cfg *config.Config) (bool, string) {
 
 func (p *telegramProvider) Init(deps platform.ProviderDeps) error {
 	p.mgr = NewBotManager()
-	p.connMgr = &ConnectionManagerAdapter{BotManager: p.mgr}
+	p.connMgr = platform.NewConnectionManagerAdapter[*Bot](p.mgr)
 	p.deps = deps
 
 	// Create tool detail store
