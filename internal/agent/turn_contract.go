@@ -278,6 +278,14 @@ func (s *sharedTurnOps) RegisterSessionIndex(ts *TurnState) {
 	if s.agent.SessionIndex == nil {
 		return
 	}
+	// Memory-formation turns (reflection / session-end memory) inject into the
+	// main session on delegated agents. Registering them would advance
+	// last_activity_at and defeat the reflection-skip guard. The main session
+	// is already registered (these passes only fire on existing sessions), so
+	// skip the bump entirely. See isMemoryTrigger.
+	if isMemoryTrigger(ts.Trigger) {
+		return
+	}
 	now := time.Now()
 	filePath := ""
 	if s.agent.DelegatedManager != nil {
@@ -314,6 +322,14 @@ func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 // TouchActivity fires OnActivity callbacks so session liveness is tracked.
 // Extracted from agent.go:353-355 and turn_delegated.go:17-19.
 func (s *sharedTurnOps) TouchActivity(ts *TurnState) {
+	// Memory-formation turns must not advance last_activity_at — see
+	// isMemoryTrigger and RegisterSessionIndex. The OnActivity callbacks are
+	// the session-index bump plus two sync.Once initialisers (nudge-init,
+	// first-run); the latter have already fired on a real turn long before any
+	// reflection runs, so skipping them here is a no-op in practice.
+	if isMemoryTrigger(ts.Trigger) {
+		return
+	}
 	for _, fn := range s.agent.OnActivity {
 		fn(ts.SessionKey)
 	}
@@ -345,6 +361,10 @@ func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
 // Same as TouchActivity — separate method for contract clarity and because
 // post-turn may run asynchronously (delegated path).
 func (s *sharedTurnOps) TouchActivityPost(ts *TurnState) {
+	// See TouchActivity: memory-formation turns are excluded from activity bumps.
+	if isMemoryTrigger(ts.Trigger) {
+		return
+	}
 	for _, fn := range s.agent.OnActivity {
 		fn(ts.SessionKey)
 	}

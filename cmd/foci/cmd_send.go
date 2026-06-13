@@ -7,17 +7,14 @@ import (
 )
 
 type sendFlags struct {
-	agent          string
-	session        string
-	model          string // model override (group name, alias, or developer/model_id)
-	ifActive       string // session-level activity gate (TODO #753): skip unless this session ran a turn within dur (or one is in flight)
-	ifInactive     string // session-level inactivity gate: skip if this session ran a turn within dur (or one is in flight) — keepalive shape
-	ifUserActive   string // user-attention gate: skip unless the user touched this agent within dur (or a turn is in flight)
-	ifUserInactive string // user-attention gate: skip if the user was active within dur (or a turn is in flight)
-	messageText    string // explicit --message-text / -mt
-	messageFile    string // explicit --message-file / -mf
-	async          bool   // fire-and-forget mode
-	sync           bool   // wait for response (overrides async)
+	agent       string
+	session     string
+	model       string // model override (group name, alias, or developer/model_id)
+	gateFlags          // ifActive / ifInactive / ifUserActive / ifUserInactive (TODO #753)
+	messageText string // explicit --message-text / -mt
+	messageFile string // explicit --message-file / -mf
+	async       bool   // fire-and-forget mode
+	sync        bool   // wait for response (overrides async)
 }
 
 func parseSendFlags(args []string) (flags sendFlags, rest []string) {
@@ -60,41 +57,8 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "-m=") {
 			flags.model = args[i][len("-m="):]
 			consumed = true
-		} else if args[i] == "--if-active" {
-			if i+1 < len(args) {
-				flags.ifActive = args[i+1]
-				i++
-				consumed = true
-			}
-		} else if strings.HasPrefix(args[i], "--if-active=") {
-			flags.ifActive = args[i][len("--if-active="):]
-			consumed = true
-		} else if args[i] == "--if-inactive" {
-			if i+1 < len(args) {
-				flags.ifInactive = args[i+1]
-				i++
-				consumed = true
-			}
-		} else if strings.HasPrefix(args[i], "--if-inactive=") {
-			flags.ifInactive = args[i][len("--if-inactive="):]
-			consumed = true
-		} else if args[i] == "--if-user-active" {
-			if i+1 < len(args) {
-				flags.ifUserActive = args[i+1]
-				i++
-				consumed = true
-			}
-		} else if strings.HasPrefix(args[i], "--if-user-active=") {
-			flags.ifUserActive = args[i][len("--if-user-active="):]
-			consumed = true
-		} else if args[i] == "--if-user-inactive" {
-			if i+1 < len(args) {
-				flags.ifUserInactive = args[i+1]
-				i++
-				consumed = true
-			}
-		} else if strings.HasPrefix(args[i], "--if-user-inactive=") {
-			flags.ifUserInactive = args[i][len("--if-user-inactive="):]
+		} else if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
+			i = ni
 			consumed = true
 		} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
 			if i+1 < len(args) {
@@ -135,10 +99,7 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	flags.agent = envDefault(flags.agent, "FOCI_AGENT")
 	flags.session = envDefault(flags.session, "FOCI_SESSION")
 	flags.model = envDefault(flags.model, "FOCI_MODEL")
-	flags.ifActive = envDefault(flags.ifActive, "FOCI_IF_ACTIVE")
-	flags.ifInactive = envDefault(flags.ifInactive, "FOCI_IF_INACTIVE")
-	flags.ifUserActive = envDefault(flags.ifUserActive, "FOCI_IF_USER_ACTIVE")
-	flags.ifUserInactive = envDefault(flags.ifUserInactive, "FOCI_IF_USER_INACTIVE")
+	flags.gateFlags.applyEnvDefaults()
 	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
 	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
 	flags.async = envBool(flags.async, "FOCI_ASYNC")
@@ -229,18 +190,7 @@ func cmdSend(base string, args []string) error {
 	if flags.session != "" {
 		body["session"] = flags.session
 	}
-	if flags.ifActive != "" {
-		body["if_active"] = flags.ifActive
-	}
-	if flags.ifInactive != "" {
-		body["if_inactive"] = flags.ifInactive
-	}
-	if flags.ifUserActive != "" {
-		body["if_user_active"] = flags.ifUserActive
-	}
-	if flags.ifUserInactive != "" {
-		body["if_user_inactive"] = flags.ifUserInactive
-	}
+	flags.gateFlags.addToBody(body)
 	if flags.model != "" {
 		body["model"] = flags.model
 	}
@@ -293,14 +243,15 @@ func cmdBranch(base string, args []string) error {
 	asyncFlag := false
 	syncFlag := false
 	model := ""
-	ifActive := ""
-	ifInactive := ""
-	ifUserActive := ""
-	ifUserInactive := ""
+	var gf gateFlags
 	messageText := ""
 	messageFile := ""
 	var filtered []string
 	for i := 0; i < len(args); i++ {
+		if c, ni := gf.tryParseGateArg(args, i); c {
+			i = ni
+			continue
+		}
 		switch {
 		case args[i] == "--no-compact":
 			noCompact = true
@@ -323,26 +274,6 @@ func cmdBranch(base string, args []string) error {
 			model = args[i][len("--model="):]
 		case strings.HasPrefix(args[i], "-m="):
 			model = args[i][len("-m="):]
-		case args[i] == "--if-active" && i+1 < len(args):
-			ifActive = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--if-active="):
-			ifActive = args[i][len("--if-active="):]
-		case args[i] == "--if-inactive" && i+1 < len(args):
-			ifInactive = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--if-inactive="):
-			ifInactive = args[i][len("--if-inactive="):]
-		case args[i] == "--if-user-active" && i+1 < len(args):
-			ifUserActive = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--if-user-active="):
-			ifUserActive = args[i][len("--if-user-active="):]
-		case args[i] == "--if-user-inactive" && i+1 < len(args):
-			ifUserInactive = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--if-user-inactive="):
-			ifUserInactive = args[i][len("--if-user-inactive="):]
 		case (args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt") && i+1 < len(args):
 			messageText = args[i+1]
 			i++
@@ -371,10 +302,7 @@ func cmdBranch(base string, args []string) error {
 	model = envDefault(model, "FOCI_MODEL")
 	asyncFlag = envBool(asyncFlag, "FOCI_ASYNC")
 	syncFlag = envBool(syncFlag, "FOCI_SYNC")
-	ifActive = envDefault(ifActive, "FOCI_IF_ACTIVE")
-	ifInactive = envDefault(ifInactive, "FOCI_IF_INACTIVE")
-	ifUserActive = envDefault(ifUserActive, "FOCI_IF_USER_ACTIVE")
-	ifUserInactive = envDefault(ifUserInactive, "FOCI_IF_USER_INACTIVE")
+	gf.applyEnvDefaults()
 	messageText = envDefault(messageText, "FOCI_MESSAGE_TEXT")
 	messageFile = envDefault(messageFile, "FOCI_MESSAGE_FILE")
 
@@ -402,18 +330,7 @@ func cmdBranch(base string, args []string) error {
 	if noResetHook {
 		body["no_reset_hook"] = true
 	}
-	if ifActive != "" {
-		body["if_active"] = ifActive
-	}
-	if ifInactive != "" {
-		body["if_inactive"] = ifInactive
-	}
-	if ifUserActive != "" {
-		body["if_user_active"] = ifUserActive
-	}
-	if ifUserInactive != "" {
-		body["if_user_inactive"] = ifUserInactive
-	}
+	gf.addToBody(body)
 	if silent {
 		body["silent"] = true
 	}
