@@ -24,7 +24,7 @@ type BranchMeta struct {
 	ParentKey   string `json:"parent_key"`
 	BranchPoint int    `json:"branch_point"`
 	NoResetHook bool   `json:"no_reset_hook,omitempty"` // skip pre-reset memory hook
-	Orientation string `json:"orientation,omitempty"`    // orientation text for first turn
+	Orientation string `json:"orientation,omitempty"`   // orientation text for first turn
 }
 
 // Template placeholders for orientation text. These are substituted by

@@ -30,7 +30,7 @@ type Bootstrap struct {
 	secretNames   []string // available secret names for {{secret:NAME}} templates
 	hasBitwarden  bool     // bitwarden integration is enabled
 	cached        []provider.SystemBlock
-	cachedNames   []string // source filename for each cached block (parallel to cached)
+	cachedNames   []string               // source filename for each cached block (parallel to cached)
 	cachedWithSec []provider.SystemBlock // cached blocks with secrets injected
 	mu            sync.RWMutex
 }

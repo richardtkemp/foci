@@ -197,9 +197,9 @@ func TestSplitDeveloperModel(t *testing.T) {
 	// cases: no slash returns empty developer, leading slash returns empty developer,
 	// and empty string returns both empty.
 	tests := []struct {
-		input           string
-		wantDeveloper   string
-		wantModelID     string
+		input         string
+		wantDeveloper string
+		wantModelID   string
 	}{
 		{"anthropic/claude-opus-4-6", "anthropic", "claude-opus-4-6"},
 		{"google/gemini-2.5-flash", "google", "gemini-2.5-flash"},
@@ -240,14 +240,14 @@ func TestStripDeveloperPrefix(t *testing.T) {
 		{"openai/gpt-4o", "gpt-4o"},
 		{"openai/o3", "o3"},
 		{"deepseek/deepseek-chat", "deepseek-chat"},
-		{"claude-opus-4-6", "claude-opus-4-6"},       // no prefix
-		{"gpt-4o", "gpt-4o"},                         // no prefix
-		{"gemini-2.5-flash", "gemini-2.5-flash"},     // no prefix
-		{"", ""},                                     // empty
-		{"no-slash-here", "no-slash-here"},           // no slash
-		{"/model", "/model"},                         // leading slash (no developer part)
-		{"foo/bar/baz", "bar/baz"},                   // slash in middle (should strip first part only)
-		{"developer/", ""},                           // trailing slash
+		{"claude-opus-4-6", "claude-opus-4-6"},   // no prefix
+		{"gpt-4o", "gpt-4o"},                     // no prefix
+		{"gemini-2.5-flash", "gemini-2.5-flash"}, // no prefix
+		{"", ""},                                 // empty
+		{"no-slash-here", "no-slash-here"},       // no slash
+		{"/model", "/model"},                     // leading slash (no developer part)
+		{"foo/bar/baz", "bar/baz"},               // slash in middle (should strip first part only)
+		{"developer/", ""},                       // trailing slash
 	}
 
 	for _, tt := range tests {
@@ -303,9 +303,9 @@ func TestModelStringConfigToWire(t *testing.T) {
 	// and the remaining "stepfun/step-3.5-flash" is the OpenRouter model ID.
 	t.Parallel()
 	tests := []struct {
-		name      string
-		config    string // model string from TOML config
-		wantWire  string // expected model in API request body
+		name     string
+		config   string // model string from TOML config
+		wantWire string // expected model in API request body
 	}{
 		{"anthropic native", "anthropic/claude-opus-4-6", "claude-opus-4-6"},
 		{"openai native", "openai/gpt-4o", "gpt-4o"},

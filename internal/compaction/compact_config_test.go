@@ -173,4 +173,3 @@ func TestCompactDefaultPrompts(t *testing.T) {
 		t.Errorf("handoff = %q, want default handoff", handoff)
 	}
 }
-

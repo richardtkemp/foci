@@ -194,8 +194,6 @@ func TestScratchpadBusyTimeout(t *testing.T) {
 	}
 }
 
-
-
 func TestScratchpadList(t *testing.T) {
 	// Verifies that List returns metadata (key, size, updated timestamp) for each entry in alphabetical order, without content.
 	s := testScratchpad(t)

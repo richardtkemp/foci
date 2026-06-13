@@ -63,8 +63,10 @@ func TestRegistryDispatch(t *testing.T) {
 func TestDispatchCaseInsensitive(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Command{
-		Name:    "ping",
-		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) { return Response{Text: "pong"}, nil },
+		Name: "ping",
+		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+			return Response{Text: "pong"}, nil
+		},
 	})
 
 	resp, ok, _ := r.Dispatch(context.Background(), Request{Name: "ping"}, CommandContext{})
@@ -388,8 +390,10 @@ func TestLookupChainKeyboard(t *testing.T) {
 		},
 	})
 	r.Register(&Command{
-		Name:    "ping",
-		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) { return Response{Text: "pong"}, nil },
+		Name: "ping",
+		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+			return Response{Text: "pong"}, nil
+		},
 		// No ChainKeyboard
 	})
 
@@ -667,7 +671,7 @@ func TestRestartCommand(t *testing.T) {
 func TestSecretsCommand(t *testing.T) {
 	store := &mockSecretsStore{data: map[string]string{
 		"anthropic.setup_token": "sk-ant-123",
-		"custom.api_key":       "key-456",
+		"custom.api_key":        "key-456",
 	}}
 	cc := CommandContext{SecretsStore: store}
 	cmd := SecretsCommand()

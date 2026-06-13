@@ -15,7 +15,7 @@ type DispatchFunc func(warningText string)
 // DispatcherConfig holds all the dependencies for creating a Dispatcher.
 type DispatcherConfig struct {
 	Queue                 *Queue
-	PeerQueues            []*Queue                 // additional queues to suppress during dispatch (prevents cross-queue feedback)
+	PeerQueues            []*Queue // additional queues to suppress during dispatch (prevents cross-queue feedback)
 	DispatchFn            DispatchFunc
 	FormatFn              func(body string) string // wraps body with injection header; nil = use body as-is
 	ActiveInterval        time.Duration
@@ -40,9 +40,9 @@ type Dispatcher struct {
 	lastUserMessageTimeFn func() time.Time
 	isProcessingFn        func() bool
 
-	mu            sync.Mutex
-	lastDispatch  time.Time
-	dispatching   bool
+	mu           sync.Mutex
+	lastDispatch time.Time
+	dispatching  bool
 }
 
 // NewDispatcher creates a Dispatcher from the given config.

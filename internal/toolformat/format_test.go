@@ -287,4 +287,3 @@ func raw(m map[string]string) map[string]json.RawMessage {
 	}
 	return out
 }
-

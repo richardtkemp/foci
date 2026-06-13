@@ -21,7 +21,7 @@ type clientRegistry struct {
 	mu      sync.Mutex
 	entries map[string]*clientEntry
 
-	cfg *config.Config
+	cfg   *config.Config
 	store *secrets.Store
 	ctx   context.Context
 }

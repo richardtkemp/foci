@@ -78,4 +78,3 @@ func TestGeneratePassphraseWordCount(t *testing.T) {
 		}
 	}
 }
-

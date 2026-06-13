@@ -545,21 +545,21 @@ func formatValue(val interface{}) string {
 // displayConfig is a struct used for TOML marshaling that includes
 // only the relevant sections for a given agent.
 type displayConfig struct {
-	Agent         AgentConfig        `toml:"agent"`
-	Platforms     []PlatformConfig   `toml:"platforms"`
-	Sessions      SessionsConfig     `toml:"sessions"`
-	Memory        MemoryConfig       `toml:"memory"`
-	HTTP          HTTPConfig         `toml:"http"`
-	Logging       LoggingConfig      `toml:"logging"`
-	Tools         ToolsConfig        `toml:"tools"`
-	Environment   EnvironmentConfig  `toml:"environment"`
-	Skills        SkillsConfig       `toml:"skills"`
-	Mana          ManaConfig         `toml:"mana"`
-	TTS           []TTSConfig        `toml:"tts"`
-	STT           []STTConfig        `toml:"stt"`
-	Debug         DebugConfig        `toml:"debug"`
-	Database      DatabaseConfig     `toml:"database"`
-	Anthropic     displayAnthropic   `toml:"anthropic"`
+	Agent       AgentConfig       `toml:"agent"`
+	Platforms   []PlatformConfig  `toml:"platforms"`
+	Sessions    SessionsConfig    `toml:"sessions"`
+	Memory      MemoryConfig      `toml:"memory"`
+	HTTP        HTTPConfig        `toml:"http"`
+	Logging     LoggingConfig     `toml:"logging"`
+	Tools       ToolsConfig       `toml:"tools"`
+	Environment EnvironmentConfig `toml:"environment"`
+	Skills      SkillsConfig      `toml:"skills"`
+	Mana        ManaConfig        `toml:"mana"`
+	TTS         []TTSConfig       `toml:"tts"`
+	STT         []STTConfig       `toml:"stt"`
+	Debug       DebugConfig       `toml:"debug"`
+	Database    DatabaseConfig    `toml:"database"`
+	Anthropic   displayAnthropic  `toml:"anthropic"`
 }
 
 type displayAnthropic struct {
@@ -571,20 +571,20 @@ type displayAnthropic struct {
 // config for the given agent. Secrets are redacted.
 func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 	dc := displayConfig{
-		Agent:         agent,
-		Platforms:     cfg.Platforms,
-		Sessions:      cfg.Sessions,
-		Memory:        cfg.Memory,
-		HTTP:          cfg.HTTP,
-		Logging:       cfg.Logging,
-		Tools:         cfg.Tools,
-		Environment:   cfg.Environment,
-		Skills:        cfg.Skills,
-		Mana:          cfg.Mana,
-		TTS:           cfg.TTS,
-		STT:           cfg.STT,
-		Debug:         cfg.Debug,
-		Database:      cfg.Database,
+		Agent:       agent,
+		Platforms:   cfg.Platforms,
+		Sessions:    cfg.Sessions,
+		Memory:      cfg.Memory,
+		HTTP:        cfg.HTTP,
+		Logging:     cfg.Logging,
+		Tools:       cfg.Tools,
+		Environment: cfg.Environment,
+		Skills:      cfg.Skills,
+		Mana:        cfg.Mana,
+		TTS:         cfg.TTS,
+		STT:         cfg.STT,
+		Debug:       cfg.Debug,
+		Database:    cfg.Database,
 		Anthropic: displayAnthropic{
 			UsageAPITimeout: cfg.Anthropic.UsageAPITimeout,
 			UsageCacheTTL:   cfg.Anthropic.UsageCacheTTL,

@@ -9,7 +9,7 @@ func TestReflectFindsExplicitSecrets(t *testing.T) {
 	// across agent, TTS, STT, and endpoint config structs, ignoring empty values.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram",BotSecret: "custom.bot_token"}}},
+			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram", BotSecret: "custom.bot_token"}}},
 		},
 		TTS: []TTSConfig{
 			{ID: "tts1", Secret: "groq.api_key"},
@@ -48,7 +48,7 @@ func TestReflectIgnoresEmptySecrets(t *testing.T) {
 	// secrets list, preventing spurious missing-secret warnings.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram",BotSecret: ""}}},
+			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram", BotSecret: ""}}},
 		},
 		TTS: []TTSConfig{
 			{ID: "tts1", Secret: ""},
@@ -68,7 +68,7 @@ func TestConventionTelegramBot(t *testing.T) {
 	// a "telegram.<bot_name>" convention secret reference with AgentID and Platform set.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "scout", Platforms: []PlatformConfig{{ID: "telegram",Bot: "scout_bot"}}},
+			{ID: "scout", Platforms: []PlatformConfig{{ID: "telegram", Bot: "scout_bot"}}},
 		},
 	}
 
@@ -87,7 +87,7 @@ func TestConventionTelegramBotWithOverride(t *testing.T) {
 	// not produced; only the explicit override key is reported.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "scout", Platforms: []PlatformConfig{{ID: "telegram",Bot: "scout_bot", BotSecret: "custom.token"}}},
+			{ID: "scout", Platforms: []PlatformConfig{{ID: "telegram", Bot: "scout_bot", BotSecret: "custom.token"}}},
 		},
 	}
 
@@ -100,7 +100,7 @@ func TestConventionDiscordBot(t *testing.T) {
 	// Proves that discord bot convention refs have AgentID and Platform set.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "fotini", Platforms: []PlatformConfig{{ID: "discord",Bot: "fotini_bot"}}},
+			{ID: "fotini", Platforms: []PlatformConfig{{ID: "discord", Bot: "fotini_bot"}}},
 		},
 	}
 
@@ -120,7 +120,7 @@ func TestConventionFacetBots(t *testing.T) {
 	// bots have AgentID set; global ones have empty AgentID.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram",FacetBots: []string{"extra1"}}}},
+			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram", FacetBots: []string{"extra1"}}}},
 		},
 		Platforms: []PlatformConfig{{ID: "telegram", FacetBots: []string{"shared1", "shared2"}}},
 	}
@@ -154,7 +154,7 @@ func TestConventionEndpointAPIKey(t *testing.T) {
 		Groups: GroupsConfig{
 			Groups: map[string]string{
 				"powerful": "anthropic/claude-sonnet-4-5-20250929",
-				"cheap":   "deepseek/deepseek-chat", // resolves to openrouter endpoint
+				"cheap":    "deepseek/deepseek-chat", // resolves to openrouter endpoint
 			},
 		},
 		Endpoints: map[string]EndpointConfig{
@@ -260,7 +260,7 @@ func TestDeduplication(t *testing.T) {
 		Groups: GroupsConfig{
 			Groups: map[string]string{
 				"powerful": "openrouter/some-model",
-				"cheap":   "openrouter/another-model",
+				"cheap":    "openrouter/another-model",
 			},
 		},
 		Endpoints: map[string]EndpointConfig{

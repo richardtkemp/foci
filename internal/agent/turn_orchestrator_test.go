@@ -148,16 +148,16 @@ func (s *asyncStubContract) RateLimitGate(*TurnState) error        { return nil 
 func (s *asyncStubContract) AcquireTurnLock(*TurnState) func()     { return func() {} }
 func (s *asyncStubContract) IncrementProcessing(*TurnState) func() { return func() {} }
 func (s *asyncStubContract) RegisterTurn(*TurnState) func()        { return func() {} }
-func (s *asyncStubContract) CheckStaleContext(*TurnState) error     { return nil }
-func (s *asyncStubContract) RegisterSessionIndex(*TurnState)        {}
-func (s *asyncStubContract) LogConversationRecv(*TurnState)         {}
-func (s *asyncStubContract) TouchActivity(*TurnState)               {}
-func (s *asyncStubContract) LoadSessionMeta(*TurnState)             {}
-func (s *asyncStubContract) ComposePrompt(*TurnState) error         { return nil }
-func (s *asyncStubContract) LoadAndRepairSession(*TurnState) error  { return nil }
-func (s *asyncStubContract) ResolveModelEffort(*TurnState)          {}
-func (s *asyncStubContract) BuildSystemAndTools(*TurnState)         {}
-func (s *asyncStubContract) InjectNudges(*TurnState)                {}
+func (s *asyncStubContract) CheckStaleContext(*TurnState) error    { return nil }
+func (s *asyncStubContract) RegisterSessionIndex(*TurnState)       {}
+func (s *asyncStubContract) LogConversationRecv(*TurnState)        {}
+func (s *asyncStubContract) TouchActivity(*TurnState)              {}
+func (s *asyncStubContract) LoadSessionMeta(*TurnState)            {}
+func (s *asyncStubContract) ComposePrompt(*TurnState) error        { return nil }
+func (s *asyncStubContract) LoadAndRepairSession(*TurnState) error { return nil }
+func (s *asyncStubContract) ResolveModelEffort(*TurnState)         {}
+func (s *asyncStubContract) BuildSystemAndTools(*TurnState)        {}
+func (s *asyncStubContract) InjectNudges(*TurnState)               {}
 func (s *asyncStubContract) RunInference(ts *TurnState) error {
 	go func() {
 		time.Sleep(s.completionDelay)
@@ -172,7 +172,7 @@ func (s *asyncStubContract) SaveSession(ts *TurnState) error {
 	ts.NewMessages = nil
 	return nil
 }
-func (s *asyncStubContract) UpdateSessionMeta(*TurnState)  {}
+func (s *asyncStubContract) UpdateSessionMeta(*TurnState)   {}
 func (s *asyncStubContract) LogUsage(*TurnState)            {}
 func (s *asyncStubContract) RunCompaction(*TurnState)       {}
 func (s *asyncStubContract) LogConversationSent(*TurnState) {}
@@ -187,16 +187,16 @@ func (s *errorStubContract) RateLimitGate(*TurnState) error        { return nil 
 func (s *errorStubContract) AcquireTurnLock(*TurnState) func()     { return func() {} }
 func (s *errorStubContract) IncrementProcessing(*TurnState) func() { return func() {} }
 func (s *errorStubContract) RegisterTurn(*TurnState) func()        { return func() {} }
-func (s *errorStubContract) CheckStaleContext(*TurnState) error     { return nil }
-func (s *errorStubContract) RegisterSessionIndex(*TurnState)        {}
-func (s *errorStubContract) LogConversationRecv(*TurnState)         {}
-func (s *errorStubContract) TouchActivity(*TurnState)               {}
-func (s *errorStubContract) LoadSessionMeta(*TurnState)             {}
-func (s *errorStubContract) ComposePrompt(*TurnState) error         { return nil }
-func (s *errorStubContract) LoadAndRepairSession(*TurnState) error  { return nil }
-func (s *errorStubContract) ResolveModelEffort(*TurnState)          {}
-func (s *errorStubContract) BuildSystemAndTools(*TurnState)         {}
-func (s *errorStubContract) InjectNudges(*TurnState)                {}
+func (s *errorStubContract) CheckStaleContext(*TurnState) error    { return nil }
+func (s *errorStubContract) RegisterSessionIndex(*TurnState)       {}
+func (s *errorStubContract) LogConversationRecv(*TurnState)        {}
+func (s *errorStubContract) TouchActivity(*TurnState)              {}
+func (s *errorStubContract) LoadSessionMeta(*TurnState)            {}
+func (s *errorStubContract) ComposePrompt(*TurnState) error        { return nil }
+func (s *errorStubContract) LoadAndRepairSession(*TurnState) error { return nil }
+func (s *errorStubContract) ResolveModelEffort(*TurnState)         {}
+func (s *errorStubContract) BuildSystemAndTools(*TurnState)        {}
+func (s *errorStubContract) InjectNudges(*TurnState)               {}
 func (s *errorStubContract) RunInference(*TurnState) error {
 	return fmt.Errorf("simulated execution error")
 }
@@ -207,7 +207,7 @@ func (s *errorStubContract) SaveSession(ts *TurnState) error {
 	ts.NewMessages = nil
 	return nil
 }
-func (s *errorStubContract) UpdateSessionMeta(*TurnState)  {}
+func (s *errorStubContract) UpdateSessionMeta(*TurnState)   {}
 func (s *errorStubContract) LogUsage(*TurnState)            {}
 func (s *errorStubContract) RunCompaction(*TurnState)       {}
 func (s *errorStubContract) LogConversationSent(*TurnState) {}

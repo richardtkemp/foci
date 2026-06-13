@@ -158,13 +158,13 @@ func TestDisplayWidthZeroWidth(t *testing.T) {
 		{"ZWNJ", "\u200C", 0},
 		{"ZWSP", "\u200B", 0},
 		{"BOM", "\uFEFF", 0},
-		{"combining 0300", "a\u0300", 1},  // a + combining grave
-		{"combining 1AB0", "x\u1AB0", 1},  // x + combining mark
-		{"combining 1DC0", "y\u1DC0", 1},  // y + combining mark
-		{"combining 20D0", "z\u20D0", 1},  // z + combining mark
-		{"combining FE20", "w\uFE20", 1},  // w + combining mark
-		{"VS16 emoji", "✏\uFE0F", 2},  // pencil + VS16 (emoji presentation)
-		{"VS15 text", "✏\uFE0E", 2},   // pencil + VS15 (text presentation)
+		{"combining 0300", "a\u0300", 1}, // a + combining grave
+		{"combining 1AB0", "x\u1AB0", 1}, // x + combining mark
+		{"combining 1DC0", "y\u1DC0", 1}, // y + combining mark
+		{"combining 20D0", "z\u20D0", 1}, // z + combining mark
+		{"combining FE20", "w\uFE20", 1}, // w + combining mark
+		{"VS16 emoji", "✏\uFE0F", 2},     // pencil + VS16 (emoji presentation)
+		{"VS15 text", "✏\uFE0E", 2},      // pencil + VS15 (text presentation)
 		{"VS selector E0100", string([]rune{'A', 0xE0100}), 1},
 		{"bidi LRE", "\u202A", 0},
 		{"WJ", "\u2060", 0},
@@ -224,12 +224,12 @@ func TestTruncate(t *testing.T) {
 		maxWidth int
 		want     string
 	}{
-		{"hello", 10, "hello"},        // fits
-		{"hello", 5, "hello"},         // exact fit
-		{"hello world", 6, "hello…"},  // truncated
-		{"hello world", 1, "…"},       // minimal
-		{"abcdef", 4, "abc…"},         // cut at 3 + ellipsis
-		{"", 5, ""},                   // empty
+		{"hello", 10, "hello"},       // fits
+		{"hello", 5, "hello"},        // exact fit
+		{"hello world", 6, "hello…"}, // truncated
+		{"hello world", 1, "…"},      // minimal
+		{"abcdef", 4, "abc…"},        // cut at 3 + ellipsis
+		{"", 5, ""},                  // empty
 	}
 	for _, tt := range tests {
 		got := Truncate(tt.in, tt.maxWidth)
@@ -271,10 +271,10 @@ func TestDisplayWidthMultipleTabs(t *testing.T) {
 		in   string
 		want int
 	}{
-		{"\t\t", 8},        // 0→4, 4→8
-		{"ab\t", 4},        // ab(2) + tab to 4 = 4
-		{"abcd\t", 8},      // abcd(4) + tab to 8 = 8
-		{"abc\tdef\t", 8},  // abc(3)+tab→4(+1)+def(3)=7+tab→8(+1)=8
+		{"\t\t", 8},       // 0→4, 4→8
+		{"ab\t", 4},       // ab(2) + tab to 4 = 4
+		{"abcd\t", 8},     // abcd(4) + tab to 8 = 8
+		{"abc\tdef\t", 8}, // abc(3)+tab→4(+1)+def(3)=7+tab→8(+1)=8
 	}
 	for _, tt := range tests {
 		if got := DisplayWidth(tt.in); got != tt.want {

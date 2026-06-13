@@ -44,9 +44,9 @@ func TestApplyReplacementsMultipleWords(t *testing.T) {
 	// Verifies that multiple replacement
 	// pairs work simultaneously and later entries in the map don't interfere.
 	repls := map[string]string{
-		"foci":  "foki",
-		"llm":   "L L M",
-		"api":   "A P I",
+		"foci": "foki",
+		"llm":  "L L M",
+		"api":  "A P I",
 	}
 
 	input := "foci uses an LLM via the API"

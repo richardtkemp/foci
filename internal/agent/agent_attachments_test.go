@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
-	"foci/internal/platform"
 	"foci/internal/workspace"
 )
 
@@ -359,5 +359,3 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 		}
 	}
 }
-
-

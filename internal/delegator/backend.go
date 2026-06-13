@@ -248,11 +248,11 @@ type ElicitationResponder interface {
 // ContextUsage holds context window usage data returned by a backend's
 // get_context_usage control request. Zero-cost (no API call).
 type ContextUsage struct {
-	TotalTokens          int              // tokens currently consumed
-	MaxTokens            int              // total context window size
-	Percentage           int              // usage percentage (0–100)
-	AutoCompactThreshold int              // CC's autocompact trigger threshold
-	Model                string           // model reported by CC
+	TotalTokens          int               // tokens currently consumed
+	MaxTokens            int               // total context window size
+	Percentage           int               // usage percentage (0–100)
+	AutoCompactThreshold int               // CC's autocompact trigger threshold
+	Model                string            // model reported by CC
 	Categories           []ContextCategory // per-category token breakdown
 }
 
@@ -271,18 +271,18 @@ type ContextUsageQuerier interface {
 
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
-	WorkDir         string // agent workspace directory (becomes cwd)
-	SystemPrompt    string // concatenated character/system files
-	Model           string // initial model (e.g. "opus", "sonnet")
-	AgentID         string // foci agent ID
-	Label           string // unique label for this instance (used for tmux window naming); falls back to AgentID
-	ResumeSessionID string // resume a previous CC session (e.g. --resume <uuid>); empty = new session
-	SessionKey      string // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
-	ExecRegistry    any    // *tools.Registry — if set, used by DelegatedManager to create exec bridges
-	Env             map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
-	TmuxCols        int      // tmux window width (0 = use tools.tmux_cols default)
-	TmuxRows        int      // tmux window height (0 = use tools.tmux_rows default)
-	AutoApproveRules []string // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
+	WorkDir          string            // agent workspace directory (becomes cwd)
+	SystemPrompt     string            // concatenated character/system files
+	Model            string            // initial model (e.g. "opus", "sonnet")
+	AgentID          string            // foci agent ID
+	Label            string            // unique label for this instance (used for tmux window naming); falls back to AgentID
+	ResumeSessionID  string            // resume a previous CC session (e.g. --resume <uuid>); empty = new session
+	SessionKey       string            // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
+	ExecRegistry     any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
+	Env              map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
+	TmuxCols         int               // tmux window width (0 = use tools.tmux_cols default)
+	TmuxRows         int               // tmux window height (0 = use tools.tmux_rows default)
+	AutoApproveRules []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
 
 	// ClaudeBinary overrides the path to the `claude` executable that
 	// delegated/RunOnce launches. Empty = use "claude" (resolved via

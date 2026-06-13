@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	maxThinkingLines   = 10
-	maxToolResultLen   = 500
-	maxStringValueLen  = 200
+	maxThinkingLines  = 10
+	maxToolResultLen  = 500
+	maxStringValueLen = 200
 )
 
 // ANSI color codes

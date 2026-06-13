@@ -13,21 +13,21 @@ func testConfig() (*Config, AgentConfig) {
 			UsageAPITimeout: "10s",
 		},
 		Platforms: []PlatformConfig{{
-			ID: "telegram",
-			Notify:  NotifyConfig{StartupNotify: Ptr[bool](true)},
+			ID:     "telegram",
+			Notify: NotifyConfig{StartupNotify: Ptr[bool](true)},
 			Display: DisplayConfig{
 				ShowToolCalls: Ptr[ToolCallDisplay](ToolCallPreview),
 				ShowThinking:  Ptr[ShowThinking](ShowThinkingOff),
 				DisplayWidth:  Ptr[int](44),
 			},
-			Access: AccessConfig{AllowedUsers: []string{"alice"}},
+			Access:           AccessConfig{AllowedUsers: []string{"alice"}},
 			FacetSessionTTL:  "60m",
 			MessageQueueSize: 64,
-			Telegram: &TelegramSpecific{LongPollTimeout: "65s"},
+			Telegram:         &TelegramSpecific{LongPollTimeout: "65s"},
 		}},
 		Sessions: SessionsConfig{
-			Dir:              "/data/sessions",
-			CompactionConfig: CompactionConfig{CompactionThreshold: Ptr[float64](0.8)},
+			Dir:                   "/data/sessions",
+			CompactionConfig:      CompactionConfig{CompactionThreshold: Ptr[float64](0.8)},
 			CompactionMaxTokens:   4096,
 			CompactionMinMessages: 4,
 		},
@@ -71,9 +71,9 @@ func testConfig() (*Config, AgentConfig) {
 			TmuxMemoryCritical:      "20%",
 			TmuxMemoryKill:          "30%",
 		},
-		Environment:  EnvironmentConfig{Enabled: Ptr[bool](true)},
-		Mana: ManaConfig{},
-		Database:     DatabaseConfig{BusyTimeout: "5s"},
+		Environment: EnvironmentConfig{Enabled: Ptr[bool](true)},
+		Mana:        ManaConfig{},
+		Database:    DatabaseConfig{BusyTimeout: "5s"},
 	}
 	agent := AgentConfig{
 		ID:        "test-agent",
@@ -85,7 +85,6 @@ func testConfig() (*Config, AgentConfig) {
 	}
 	return cfg, agent
 }
-
 
 func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
 	// Proves that background and invest_interval fields appear in the grouped output
@@ -172,8 +171,8 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	tableStyle := "pretty"
 	recvDir := "/tmp/images"
 	agent.Platforms = []PlatformConfig{{
-		ID:  "telegram",
-		Bot: "primary",
+		ID:        "telegram",
+		Bot:       "primary",
 		FacetBots: []string{"mb1"},
 		Display: DisplayConfig{
 			DisplayWidth:     &displayWidth,
@@ -300,9 +299,9 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 
 	// Simulate TOML metadata: max_output_tokens is explicitly set, some others are not (hardcoded default).
 	cfg.DefinedKeys = map[string]bool{
-		"agent_loop":                     true,
-		"agent_loop.max_output_tokens":   true,
-		"agent_loop.max_tool_loops":      true,
+		"agent_loop":                   true,
+		"agent_loop.max_output_tokens": true,
+		"agent_loop.max_tool_loops":    true,
 		"groups":                       true,
 		"groups.powerful":              true,
 		"telegram":                     true,
@@ -395,5 +394,3 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 		t.Errorf("branch_orientation_facet_prompt appears %d times, expected 1 after dedup", facetCount)
 	}
 }
-
-

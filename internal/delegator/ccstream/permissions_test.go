@@ -258,7 +258,7 @@ func TestHandlePermissionRequest_AutoApprove(t *testing.T) {
 	b := &Backend{
 		writer:           NewWriter(nopWriteCloser{&buf}),
 		pendingPerms:     make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:      NewOutstandingRegistry(),
 		autoApproveRules: parseAutoApproveRules([]string{"Read"}),
 		permPromptFn: func(reqID, text, summary string, choices []delegator.PromptChoice) {
 			promptCalled = true

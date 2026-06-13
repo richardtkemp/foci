@@ -10,10 +10,10 @@ import (
 	"foci/internal/memory"
 	"foci/internal/messages"
 	"foci/internal/modelinfo"
-	"foci/internal/tools"
-	"foci/shared/prompts"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/tools"
+	"foci/shared/prompts"
 )
 
 // Compactor handles session compaction when context gets too large.
@@ -23,14 +23,14 @@ type Compactor struct {
 	threshold        float64 // fraction of context window (e.g. 0.8)
 	maxTokens        int
 	minMessages      int
-	preserveMessages int                // preserve last N messages through compaction (0 disables)
+	preserveMessages int                                     // preserve last N messages through compaction (0 disables)
 	ModelMetaFn      func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
 	ModelDefaultsFn  func(model string) config.ModelDefaults // per-model defaults from [models.*] config
-	Scratchpad       *memory.Scratchpad         // nil disables scratchpad injection
-	TaskListStore    *memory.TaskListStore      // nil disables task list injection
-	AgentID          string                     // agent ID for per-agent store queries
-	FallbackFunc     provider.FallbackFunc      // nil disables automatic model fallback
-	ClientProvider   provider.ClientProvider     // resolves clients for fallback models; nil = reuse caller's client
+	Scratchpad       *memory.Scratchpad                      // nil disables scratchpad injection
+	TaskListStore    *memory.TaskListStore                   // nil disables task list injection
+	AgentID          string                                  // agent ID for per-agent store queries
+	FallbackFunc     provider.FallbackFunc                   // nil disables automatic model fallback
+	ClientProvider   provider.ClientProvider                 // resolves clients for fallback models; nil = reuse caller's client
 }
 
 // NewCompactor creates a new Compactor with defaults.

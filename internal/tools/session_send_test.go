@@ -76,7 +76,6 @@ func TestSendToSession(t *testing.T) {
 		t.Errorf("result = %q", result.Text)
 	}
 
-
 	// The tool no longer appends directly — InjectToAgent triggers
 	// HandleMessage which loads the session and appends the message.
 	// So we only verify the notifier was called correctly.
@@ -195,7 +194,6 @@ func TestSendToSessionEmptyParams(t *testing.T) {
 		t.Errorf("error = %q", err.Error())
 	}
 }
-
 
 func TestSendToSessionNilNotifier(t *testing.T) {
 	// Verifies graceful behavior when notifier is nil.

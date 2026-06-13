@@ -293,7 +293,7 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result.Text,"fast") {
+	if !strings.Contains(result.Text, "fast") {
 		t.Errorf("result = %q, want 'fast'", result.Text)
 	}
 	if called {
@@ -321,7 +321,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	}
 
 	// Should get the auto-background message
-	if !strings.Contains(result.Text,"still running") {
+	if !strings.Contains(result.Text, "still running") {
 		t.Errorf("expected auto-background message, got %q", result.Text)
 	}
 

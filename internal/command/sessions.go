@@ -108,11 +108,11 @@ var knownSessionStatuses = map[string]bool{
 
 // knownSessionTypes is the set of valid type filter values.
 var knownSessionTypes = map[string]bool{
-	"chat":      true,
-	"spawn":     true,
-	"cron":      true,
-	"facet": true,
-	"branch":    true,
+	"chat":   true,
+	"spawn":  true,
+	"cron":   true,
+	"facet":  true,
+	"branch": true,
 }
 
 // parseIndexArgs parses flexible filter arguments for /sessions index.
@@ -410,4 +410,3 @@ func statusEmoji(status string) string {
 		return status
 	}
 }
-

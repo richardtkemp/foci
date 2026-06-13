@@ -145,4 +145,3 @@ func logBusyAgents(agents map[string]*agentInstance, timeout time.Duration) {
 		log.Warnf("main", "graceful shutdown timed out after %s — blocking: %s", timeout, strings.Join(parts, ", "))
 	}
 }
-

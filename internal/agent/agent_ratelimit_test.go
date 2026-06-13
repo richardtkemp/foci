@@ -22,7 +22,7 @@ type mockUsageClient struct{}
 func (m *mockUsageClient) GetUsage(_ context.Context) (*mana.UsageWindow, error) {
 	return nil, nil
 }
-func (m *mockUsageClient) Invalidate()                {}
+func (m *mockUsageClient) Invalidate()                 {}
 func (m *mockUsageClient) SetCacheTTL(_ time.Duration) {}
 
 // usageClientProviderFunc adapts a function to the mana.UsageClientProvider interface.
@@ -196,9 +196,9 @@ func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 	// (e.g. backend agent, non-Anthropic provider), background ops are allowed —
 	// unknown mana does not block operations.
 	ag := &Agent{
-		UsageClient:        nil,
+		UsageClient:         nil,
 		UsageClientProvider: usageClientProviderFunc(func(endpoint string) mana.UsageClient { return nil }),
-		ManaInvestInterval: 30 * time.Minute,
+		ManaInvestInterval:  30 * time.Minute,
 	}
 
 	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
@@ -215,9 +215,9 @@ func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 	mockClient := &mockUsageClient{}
 
 	ag := &Agent{
-		UsageClient:        mockClient,
+		UsageClient:         mockClient,
 		UsageClientProvider: usageClientProviderFunc(func(endpoint string) mana.UsageClient { return mockClient }),
-		ManaInvestInterval: 0, // disabled
+		ManaInvestInterval:  0, // disabled
 	}
 
 	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
@@ -230,14 +230,13 @@ func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 	}
 }
 
-
 func TestCanFireBackgroundOperation_Success(t *testing.T) {
 	// Proves the full success path: gate open, valid session key, and mana tracking
 	// disabled (ManaInvestInterval=0) all combine to return canFire=true.
 	ag := &Agent{
-		UsageClient:        nil,
+		UsageClient:         nil,
 		UsageClientProvider: usageClientProviderFunc(func(endpoint string) mana.UsageClient { return nil }),
-		ManaInvestInterval: 0, // disabled — bypasses mana check
+		ManaInvestInterval:  0, // disabled — bypasses mana check
 	}
 
 	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")

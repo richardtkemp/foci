@@ -177,30 +177,30 @@ func WrapText(s string, maxWidth, maxLines int) []string {
 // wideRanges defines Unicode ranges for characters that take two display columns.
 var wideRanges = &unicode.RangeTable{
 	R16: []unicode.Range16{
-		{0x1100, 0x115F, 1},  // Hangul Jamo
-		{0x2329, 0x232A, 1},  // Angle brackets
-		{0x2600, 0x26FF, 1},  // Miscellaneous Symbols
-		{0x2700, 0x27BF, 1},  // Dingbats
-		{0x2E80, 0x303E, 1},  // CJK Radicals, Kangxi, Ideographic
-		{0x3040, 0xA4CF, 1},  // CJK Unified + Hiragana/Katakana/Bopomofo/Hangul/Yi
-		{0xAC00, 0xD7A3, 1},  // Hangul Syllables
-		{0xF900, 0xFAFF, 1},  // CJK Compatibility Ideographs
-		{0xFE10, 0xFE1F, 1},  // Vertical forms
-		{0xFE30, 0xFE6F, 1},  // CJK Compatibility Forms
-		{0xFF00, 0xFF60, 1},  // Fullwidth Forms
-		{0xFFE0, 0xFFE6, 1},  // Fullwidth Signs
+		{0x1100, 0x115F, 1}, // Hangul Jamo
+		{0x2329, 0x232A, 1}, // Angle brackets
+		{0x2600, 0x26FF, 1}, // Miscellaneous Symbols
+		{0x2700, 0x27BF, 1}, // Dingbats
+		{0x2E80, 0x303E, 1}, // CJK Radicals, Kangxi, Ideographic
+		{0x3040, 0xA4CF, 1}, // CJK Unified + Hiragana/Katakana/Bopomofo/Hangul/Yi
+		{0xAC00, 0xD7A3, 1}, // Hangul Syllables
+		{0xF900, 0xFAFF, 1}, // CJK Compatibility Ideographs
+		{0xFE10, 0xFE1F, 1}, // Vertical forms
+		{0xFE30, 0xFE6F, 1}, // CJK Compatibility Forms
+		{0xFF00, 0xFF60, 1}, // Fullwidth Forms
+		{0xFFE0, 0xFFE6, 1}, // Fullwidth Signs
 	},
 	R32: []unicode.Range32{
-		{0x1F000, 0x1F02F, 1},  // Mahjong/Domino Tiles
-		{0x1F100, 0x1F1FF, 1},  // Enclosed Alphanumeric Supplement
-		{0x1F300, 0x1FAD6, 1},  // Misc Symbols & Pictographs, Emoticons, etc.
-		{0x1F600, 0x1F64F, 1},  // Emoticons
-		{0x1F680, 0x1F6FF, 1},  // Transport & Map Symbols
-		{0x1F900, 0x1F9FF, 1},  // Supplemental Symbols
-		{0x1FA00, 0x1FA6F, 1},  // Chess Symbols
-		{0x1FA70, 0x1FAFF, 1},  // Symbols Extended-A
-		{0x20000, 0x2FFFD, 1},  // CJK Unified Ideographs Extension B+
-		{0x30000, 0x3FFFD, 1},  // CJK Unified Ideographs Extension G+
+		{0x1F000, 0x1F02F, 1}, // Mahjong/Domino Tiles
+		{0x1F100, 0x1F1FF, 1}, // Enclosed Alphanumeric Supplement
+		{0x1F300, 0x1FAD6, 1}, // Misc Symbols & Pictographs, Emoticons, etc.
+		{0x1F600, 0x1F64F, 1}, // Emoticons
+		{0x1F680, 0x1F6FF, 1}, // Transport & Map Symbols
+		{0x1F900, 0x1F9FF, 1}, // Supplemental Symbols
+		{0x1FA00, 0x1FA6F, 1}, // Chess Symbols
+		{0x1FA70, 0x1FAFF, 1}, // Symbols Extended-A
+		{0x20000, 0x2FFFD, 1}, // CJK Unified Ideographs Extension B+
+		{0x30000, 0x3FFFD, 1}, // CJK Unified Ideographs Extension G+
 	},
 }
 
@@ -209,17 +209,17 @@ func isWide(r rune) bool { return unicode.Is(wideRanges, r) }
 // zeroWidthRanges defines Unicode ranges for characters that take zero display columns.
 var zeroWidthRanges = &unicode.RangeTable{
 	R16: []unicode.Range16{
-		{0x0300, 0x036F, 1},  // Combining Diacritical Marks
-		{0x1AB0, 0x1AFF, 1},  // Combining Diacritical Marks Extended
-		{0x1DC0, 0x1DFF, 1},  // Combining Diacritical Marks Supplement
-		{0x200B, 0x200D, 1},  // Zero Width Space/Joiner/Non-Joiner
-		{0x202A, 0x202E, 1},  // Bidi controls
-		{0x2060, 0x2063, 1},  // Invisible operators
-		{0x2066, 0x2069, 1},  // Bidi isolates
-		{0x20D0, 0x20FF, 1},  // Combining Marks for Symbols
-		{0xFE00, 0xFE0F, 1},  // Variation Selectors
-		{0xFE20, 0xFE2F, 1},  // Combining Half Marks
-		{0xFEFF, 0xFEFF, 1},  // BOM / Zero Width No-Break Space
+		{0x0300, 0x036F, 1}, // Combining Diacritical Marks
+		{0x1AB0, 0x1AFF, 1}, // Combining Diacritical Marks Extended
+		{0x1DC0, 0x1DFF, 1}, // Combining Diacritical Marks Supplement
+		{0x200B, 0x200D, 1}, // Zero Width Space/Joiner/Non-Joiner
+		{0x202A, 0x202E, 1}, // Bidi controls
+		{0x2060, 0x2063, 1}, // Invisible operators
+		{0x2066, 0x2069, 1}, // Bidi isolates
+		{0x20D0, 0x20FF, 1}, // Combining Marks for Symbols
+		{0xFE00, 0xFE0F, 1}, // Variation Selectors
+		{0xFE20, 0xFE2F, 1}, // Combining Half Marks
+		{0xFEFF, 0xFEFF, 1}, // BOM / Zero Width No-Break Space
 	},
 	R32: []unicode.Range32{
 		{0xE0100, 0xE01EF, 1}, // Variation Selectors Supplement

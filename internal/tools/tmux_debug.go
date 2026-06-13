@@ -12,8 +12,8 @@ import (
 
 // tmuxDebugLog provides comprehensive debugging for tmux operations.
 type tmuxDebugLog struct {
-	mu       sync.Mutex
-	file     *os.File
+	mu        sync.Mutex
+	file      *os.File
 	startTime time.Time
 }
 

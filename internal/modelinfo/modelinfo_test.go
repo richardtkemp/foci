@@ -20,15 +20,15 @@ func TestContextWindow(t *testing.T) {
 		{"claude-code", 1_000_000},
 		{"gemini-2.5-pro", 1_000_000},
 		{"gemini-2.0-flash", 1_000_000},
-		{"gemini-1.5-pro", 2_000_000},       // family fallback
-		{"gemini-99-future", 1_000_000},      // unknown gemini fallback
+		{"gemini-1.5-pro", 2_000_000},   // family fallback
+		{"gemini-99-future", 1_000_000}, // unknown gemini fallback
 		{"google/gemini-99-future", 1_000_000},
-		{"claude-haiku-4-5-20251001", 200_000}, // date suffix stripped → exact match
-		{"claude-opus-4-6-20260101", 1_000_000}, // date suffix stripped → exact match
+		{"claude-haiku-4-5-20251001", 200_000},           // date suffix stripped → exact match
+		{"claude-opus-4-6-20260101", 1_000_000},          // date suffix stripped → exact match
 		{"anthropic/claude-haiku-4-5-20251001", 200_000}, // prefix + date suffix
-		{"claude-opus-99", 1_000_000},        // unknown opus family fallback
-		{"claude-sonnet-99", 200_000},        // unknown claude fallback
-		{"totally-unknown", 200_000},         // default fallback
+		{"claude-opus-99", 1_000_000},                    // unknown opus family fallback
+		{"claude-sonnet-99", 200_000},                    // unknown claude fallback
+		{"totally-unknown", 200_000},                     // default fallback
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
@@ -45,7 +45,7 @@ func TestCapabilities(t *testing.T) {
 	// variants fall back by family, and non-claude models return all false.
 	t.Parallel()
 	tests := []struct {
-		model                          string
+		model                               string
 		wantEffort, wantThinking, wantSpeed bool
 	}{
 		{"claude-opus-4-6", true, true, true},
@@ -53,9 +53,9 @@ func TestCapabilities(t *testing.T) {
 		{"claude-sonnet-4-5", true, true, false},
 		{"claude-haiku-4-5", false, false, false},
 		{"CLAUDE-HAIKU-4-5", false, false, false},
-		{"claude-sonnet-99", true, true, false},   // unknown sonnet fallback
-		{"claude-opus-99", true, true, true},      // unknown opus fallback
-		{"claude-haiku-99", false, false, false},   // unknown haiku fallback
+		{"claude-sonnet-99", true, true, false},            // unknown sonnet fallback
+		{"claude-opus-99", true, true, true},               // unknown opus fallback
+		{"claude-haiku-99", false, false, false},           // unknown haiku fallback
 		{"claude-haiku-4-5-20251001", false, false, false}, // date suffix stripped
 		{"claude-opus-4-6-20260101", true, true, true},     // date suffix stripped
 		{"gemini-2.5-flash", false, false, false},
@@ -89,8 +89,8 @@ func TestCost(t *testing.T) {
 		{"claude-opus-4-6", 15.00 + 75.00 + 1.50 + 18.75},
 		{"gemini-2.5-pro", 1.25 + 10.00 + 0.315 + 0},
 		{"gemini-99-future", 0.15 + 0.60 + 0.0375 + 0}, // falls back to flash
-		{"gpt-4o", 5.00 + 15.00 + 0 + 0},                // OpenAI fallback
-		{"totally-unknown", 1.00 + 5.00 + 0.10 + 1.25},   // haiku fallback
+		{"gpt-4o", 5.00 + 15.00 + 0 + 0},               // OpenAI fallback
+		{"totally-unknown", 1.00 + 5.00 + 0.10 + 1.25}, // haiku fallback
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
@@ -109,12 +109,12 @@ func TestStripDateSuffix(t *testing.T) {
 	}{
 		{"claude-haiku-4-5-20251001", "claude-haiku-4-5"},
 		{"claude-opus-4-6-20260101", "claude-opus-4-6"},
-		{"claude-opus-4-6", "claude-opus-4-6"},             // no suffix
-		{"claude-opus-4-6[1m]", "claude-opus-4-6[1m]"},     // not a date suffix
-		{"gemini-2.5-pro", "gemini-2.5-pro"},                // no suffix
-		{"short", "short"},                                  // too short
-		{"x-1234567a", "x-1234567a"},                        // non-digit in suffix
-		{"", ""},                                            // empty
+		{"claude-opus-4-6", "claude-opus-4-6"},         // no suffix
+		{"claude-opus-4-6[1m]", "claude-opus-4-6[1m]"}, // not a date suffix
+		{"gemini-2.5-pro", "gemini-2.5-pro"},           // no suffix
+		{"short", "short"},                             // too short
+		{"x-1234567a", "x-1234567a"},                   // non-digit in suffix
+		{"", ""},                                       // empty
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

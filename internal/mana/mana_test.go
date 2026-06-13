@@ -139,7 +139,7 @@ func TestFromUtilization(t *testing.T) {
 		{0, 100},
 		{0.5, 50},
 		{1, 0},
-		{1.1, 0},    // clamped
+		{1.1, 0}, // clamped
 		{0.255, 74.5},
 	}
 	for _, tt := range tests {

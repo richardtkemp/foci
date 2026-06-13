@@ -537,4 +537,3 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 		t.Errorf("no thinking should allow duplication: expected 2, got %d", count)
 	}
 }
-

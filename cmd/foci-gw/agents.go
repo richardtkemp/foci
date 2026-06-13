@@ -31,21 +31,21 @@ import (
 
 // agentInstance holds all per-agent state.
 type agentInstance struct {
-	id                string
-	ag                *agent.Agent
-	cmds              *command.Registry
-	cc                command.CommandContext
-	registry          *tools.Registry
-	bootstrap         *workspace.Bootstrap
-	agentCfg          config.AgentConfig
-	resolved          *config.ResolvedAgentConfig // pre-merged agent+global config
-	promptSearchDirs  []string         // directories to search for prompt files
-	tmuxClearAll      func()               // clears tmux tool state (watches, owned sessions)
-	tmuxWatchCount    func() int           // returns number of active tmux watches
-	tmuxMigrateKey    func(string, string) // updates tmux owned/watched maps on session key rotation
-	webhooks          map[string]string // hook ID → prompt path (merged from global + per-agent)
-	kaRunner          *periodic.Runner  // keepalive & background work timer (nil if disabled)
-	mcpManager        *mcpkg.Manager    // nil if no MCP servers configured
+	id               string
+	ag               *agent.Agent
+	cmds             *command.Registry
+	cc               command.CommandContext
+	registry         *tools.Registry
+	bootstrap        *workspace.Bootstrap
+	agentCfg         config.AgentConfig
+	resolved         *config.ResolvedAgentConfig // pre-merged agent+global config
+	promptSearchDirs []string                    // directories to search for prompt files
+	tmuxClearAll     func()                      // clears tmux tool state (watches, owned sessions)
+	tmuxWatchCount   func() int                  // returns number of active tmux watches
+	tmuxMigrateKey   func(string, string)        // updates tmux owned/watched maps on session key rotation
+	webhooks         map[string]string           // hook ID → prompt path (merged from global + per-agent)
+	kaRunner         *periodic.Runner            // keepalive & background work timer (nil if disabled)
+	mcpManager       *mcpkg.Manager              // nil if no MCP servers configured
 
 	// Test-only override fields. Used by the env-gated testharness
 	// control socket (see testharness_control.go). Production code never
@@ -94,8 +94,8 @@ type setupParams struct {
 	sessionIndex        *session.SessionIndex
 	ttsMap              map[string]voice.TTS
 	sttMap              map[string]voice.STT
-	braveKey     string
-	gwSocketPath string // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
+	braveKey            string
+	gwSocketPath        string // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
 
 	startTime       time.Time
 	ctx             context.Context

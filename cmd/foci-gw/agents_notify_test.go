@@ -19,19 +19,19 @@ type stubConnMgr struct {
 	sessionKey string
 }
 
-func (s stubConnMgr) Primary(string) platform.Connection                    { return nil }
+func (s stubConnMgr) Primary(string) platform.Connection { return nil }
 func (s stubConnMgr) AllForAgent(agentID string) []platform.Connection {
 	if s.agentID != "" && agentID == s.agentID && s.sessionKey != "" {
 		return []platform.Connection{&stubConn{sessionKey: s.sessionKey}}
 	}
 	return nil
 }
-func (s stubConnMgr) ForSession(string) platform.Connection                 { return nil }
+func (s stubConnMgr) ForSession(string) platform.Connection                  { return nil }
 func (s stubConnMgr) ForSessionOrPrimary(string, string) platform.Connection { return nil }
-func (s stubConnMgr) AcquireFacet(string) (platform.Connection, bool)   { return nil, false }
-func (s stubConnMgr) HasFacet(string) bool                              { return false }
-func (s stubConnMgr) StartAll(context.Context)                              {}
-func (s stubConnMgr) Wait()                                                 {}
+func (s stubConnMgr) AcquireFacet(string) (platform.Connection, bool)        { return nil, false }
+func (s stubConnMgr) HasFacet(string) bool                                   { return false }
+func (s stubConnMgr) StartAll(context.Context)                               {}
+func (s stubConnMgr) Wait()                                                  {}
 
 // stubConn is a minimal Connection that returns a fixed session key.
 type stubConn struct{ sessionKey string }
@@ -47,7 +47,7 @@ func (c *stubConn) ChatID() int64                                   { return 0 }
 func (c *stubConn) Username() string                                { return "test" }
 func (c *stubConn) UpdateChatSessionKey(int64, string)              {}
 func (c *stubConn) SendText(string) error                           { return nil }
-func (c *stubConn) SendDocument(string, string) error              { return nil }
+func (c *stubConn) SendDocument(string, string) error               { return nil }
 func (c *stubConn) SendVoice(string) error                          { return nil }
 func (c *stubConn) SendVideo(string, string) error                  { return nil }
 func (c *stubConn) SendPhoto(string, string) error                  { return nil }
@@ -65,8 +65,8 @@ func (c *stubConn) SendVoiceDataToChat(int64, []byte) error         { return nil
 func (c *stubConn) SendInjectedMessage(string, string) error        { return nil }
 func (c *stubConn) SendToSession(string, string) error              { return nil }
 func (c *stubConn) SendNotification(string)                         {}
-func (c *stubConn) SendNotificationDirect(string) string             { return "" }
-func (c *stubConn) SetTyping(bool)                                   {}
+func (c *stubConn) SendNotificationDirect(string) string            { return "" }
+func (c *stubConn) SetTyping(bool)                                  {}
 
 func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {
 	// The resolver must receive the correct agent ID extracted from
@@ -207,7 +207,7 @@ func TestNewAsyncNotifier_CrossAgentTarget_UsesResolver(t *testing.T) {
 
 	notifier := newAsyncNotifier(
 		func() *agent.Agent { return nil }, // caller agent — unused on cross-agent path
-		"caller",                            // caller's agentID
+		"caller",                           // caller's agentID
 		resolver,
 		context.Background(),
 		stubConnMgr{},

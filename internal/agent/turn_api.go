@@ -649,4 +649,3 @@ func toolDisplayNote(mode string) string {
 		return "[display] tool_results=hidden — the user cannot see tool calls or results. Narrate important actions and findings in your replies."
 	}
 }
-

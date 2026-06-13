@@ -247,4 +247,3 @@ func branchFromSession(parentKey string) (string, error) {
 	}
 	return parent.Branch().String(), nil
 }
-

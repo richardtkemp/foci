@@ -356,10 +356,10 @@ func TestInbox_Worker_BatchesAvailableMessages(t *testing.T) {
 	// it's holding the Drive call, messages 2 and 3 land on the channel
 	// and will be batched into the next Drive iteration.
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "first", Driver: d})
-	<-hook                                   // first Drive started, channel now empty
+	<-hook // first Drive started, channel now empty
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "second", Driver: d})
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "third", Driver: d})
-	<-done                                   // first Drive complete
+	<-done // first Drive complete
 
 	// Worker re-enters; second + third should batch.
 	<-hook
@@ -1008,4 +1008,3 @@ func TestInbox_Worker_SinkDeliveryGate_BatchesArrivalsWhileWaiting(t *testing.T)
 		}
 	}
 }
-

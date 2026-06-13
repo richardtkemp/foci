@@ -126,4 +126,3 @@ func TestWrapPCMInWAVEmpty(t *testing.T) {
 		t.Errorf("data size = %d, want 0", dataSize)
 	}
 }
-

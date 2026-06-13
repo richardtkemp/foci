@@ -64,8 +64,8 @@ func TestSendMessageToUserVoice(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file": "/tmp/note.ogg",
-		"send_as":   "voice",
+		"file":    "/tmp/note.ogg",
+		"send_as": "voice",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -193,8 +193,8 @@ func TestSendMessageToUserVoiceError(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file": "/tmp/voice.ogg",
-		"send_as":   "voice",
+		"file":    "/tmp/voice.ogg",
+		"send_as": "voice",
 	})
 
 	_, err := tool.Execute(context.Background(), params)

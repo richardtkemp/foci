@@ -345,8 +345,8 @@ func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 		log.Infof("voice-ws", "agent selected: %s (reused session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	} else {
 		// Generate a timestamp-based chat ID for new voice sessions.
-	voiceChatID := int64(time.Now().Unix())
-	c.sessionKey = session.NewChatSessionKey(sel.AgentID, voiceChatID)
+		voiceChatID := int64(time.Now().Unix())
+		c.sessionKey = session.NewChatSessionKey(sel.AgentID, voiceChatID)
 		log.Infof("voice-ws", "agent selected: %s (new session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	}
 

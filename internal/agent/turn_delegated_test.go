@@ -113,24 +113,24 @@ type mockBackendDT struct {
 	sessionEvents *delegator.SessionEvents // captured by AttachSessionEvents; Inject splices delivery callbacks back into handler
 }
 
-func (m *mockBackendDT) Start(_ context.Context, _ delegator.StartOptions) error             { return nil }
-func (m *mockBackendDT) IsRunning() bool                                                   { return true }
-func (m *mockBackendDT) SetPermissionPromptFunc(_ delegator.PermissionPromptFunc)            {}
-func (m *mockBackendDT) SetOnPromptsCleared(_ func())                                      {}
-func (m *mockBackendDT) RegisterPromptCancelListener(_ string, _ func(string))             {}
-func (m *mockBackendDT) SetOnSessionReady(_ func(string))                                  {}
-func (m *mockBackendDT) SetTypingFunc(_ func(bool))                                        {}
+func (m *mockBackendDT) Start(_ context.Context, _ delegator.StartOptions) error  { return nil }
+func (m *mockBackendDT) IsRunning() bool                                          { return true }
+func (m *mockBackendDT) SetPermissionPromptFunc(_ delegator.PermissionPromptFunc) {}
+func (m *mockBackendDT) SetOnPromptsCleared(_ func())                             {}
+func (m *mockBackendDT) RegisterPromptCancelListener(_ string, _ func(string))    {}
+func (m *mockBackendDT) SetOnSessionReady(_ func(string))                         {}
+func (m *mockBackendDT) SetTypingFunc(_ func(bool))                               {}
 func (m *mockBackendDT) AttachSessionEvents(events *delegator.SessionEvents) {
 	m.mu.Lock()
 	m.sessionEvents = events
 	m.mu.Unlock()
 }
-func (m *mockBackendDT) SendKeystroke(_ context.Context, _ string) error                   { return nil }
-func (m *mockBackendDT) SendSpecialKey(_ context.Context, _ string) error                  { return nil }
-func (m *mockBackendDT) Interrupt(_ context.Context) error                                 { return nil }
-func (m *mockBackendDT) SessionID() string                                                 { return "" }
-func (m *mockBackendDT) WaitReady(_ context.Context) error                                 { return nil }
-func (m *mockBackendDT) Close() error                                                      { return nil }
+func (m *mockBackendDT) SendKeystroke(_ context.Context, _ string) error  { return nil }
+func (m *mockBackendDT) SendSpecialKey(_ context.Context, _ string) error { return nil }
+func (m *mockBackendDT) Interrupt(_ context.Context) error                { return nil }
+func (m *mockBackendDT) SessionID() string                                { return "" }
+func (m *mockBackendDT) WaitReady(_ context.Context) error                { return nil }
+func (m *mockBackendDT) Close() error                                     { return nil }
 
 func (m *mockBackendDT) SessionFilePath() string {
 	m.mu.Lock()

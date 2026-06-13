@@ -47,21 +47,21 @@ func TestPromptsCommand(t *testing.T) {
 	checks := []string{
 		"agent: clutch",
 		"compaction_summary",
-		"✏️",  // custom file
+		"✏️", // custom file
 		"keepalive",
-		"✅",  // default
+		"✅", // default
 		"[default]",
 		"handoff_msg",
 		"[custom inline: 39 chars]",
 		"branch_orientation",
-		"❌",  // not found
+		"❌", // not found
 		"[not found]",
 		"background",
-		"⛔",  // disabled
+		"⛔", // disabled
 		"disabled",
 		"braindead_warning",
 		"[default inline: 5 chars]",
-		"---",  // table separator
+		"---", // table separator
 		"Unrecognised prompt files",
 		"daily-review.md",
 	}
@@ -135,8 +135,8 @@ func TestPromptsCommandNoFiles(t *testing.T) {
 func TestPromptsCommandKnownFilenamesFiltered(t *testing.T) {
 	cmd := PromptsCommand()
 	cc := promptsCC(PromptsData{
-		AgentID: "test",
-		Prompts: []PromptInfo{{Label: "keepalive", Filename: "keepalive.md", Default: true}},
+		AgentID:    "test",
+		Prompts:    []PromptInfo{{Label: "keepalive", Filename: "keepalive.md", Default: true}},
 		PromptDirs: []string{"/ws/prompts"},
 		Files: []PromptFile{
 			{Dir: "/ws/prompts", Name: "keepalive.md", Configured: true},
@@ -634,20 +634,20 @@ func TestPromptsCommandDiffFuzzyMatch(t *testing.T) {
 			{Label: "braindead_warning"},
 		},
 		ResolvedTexts: map[string]string{
-			"compaction_summary":      "text",
-			"keepalive":               "keepalive text",
+			"compaction_summary":  "text",
+			"keepalive":           "keepalive text",
 			"branch_orient_facet": "facet text",
-			"braindead_warning":       "braindead text",
+			"braindead_warning":   "braindead text",
 		},
 		DefaultTexts: map[string]string{
-			"compaction_summary":      "compaction default",
-			"keepalive":               "keepalive default",
+			"compaction_summary":  "compaction default",
+			"keepalive":           "keepalive default",
 			"branch_orient_facet": "facet default",
-			"braindead_warning":       "",
+			"braindead_warning":   "",
 		},
 		EmbeddedPrompts: map[string]string{
-			"compaction-summary.md":           "compaction default",
-			"keepalive.md":                    "keepalive default",
+			"compaction-summary.md":       "compaction default",
+			"keepalive.md":                "keepalive default",
 			"branch-orientation-facet.md": "facet default",
 		},
 	}

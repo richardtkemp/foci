@@ -68,14 +68,14 @@ type settingChoice struct {
 type sessionSettingDef struct {
 	Name         string
 	Description  string
-	OptionsHint  string                                    // shown below current value (e.g. "Options: 1) low  2) medium  3) high")
-	Capability   func(config.ModelCaps) bool               // model capability check for Visible (nil = always visible)
-	ModelDefault func(config.ModelDefaults) string          // extract this setting from ModelDefaults (nil = no model default fallback)
-	GateExecute  bool                                      // also reject in Execute when capability is false
-	GateMsg      string                                    // rejection message format (%s = model name)
-	EmptyShow    string                                    // display when effective value is "" (e.g. "not set")
-	DefaultShow  string                                    // display when getter returns "" or matches this value (e.g. "off", "standard")
-	InvalidName  string                                    // noun for error messages (e.g. "effort level", "thinking mode")
+	OptionsHint  string                            // shown below current value (e.g. "Options: 1) low  2) medium  3) high")
+	Capability   func(config.ModelCaps) bool       // model capability check for Visible (nil = always visible)
+	ModelDefault func(config.ModelDefaults) string // extract this setting from ModelDefaults (nil = no model default fallback)
+	GateExecute  bool                              // also reject in Execute when capability is false
+	GateMsg      string                            // rejection message format (%s = model name)
+	EmptyShow    string                            // display when effective value is "" (e.g. "not set")
+	DefaultShow  string                            // display when getter returns "" or matches this value (e.g. "off", "standard")
+	InvalidName  string                            // noun for error messages (e.g. "effort level", "thinking mode")
 	Get          func(CommandContext, string) string
 	Set          func(CommandContext, string, string)
 	Choices      []settingChoice
@@ -193,9 +193,9 @@ func EffortCommand() *Command {
 		Capability:   func(c config.ModelCaps) bool { return c.Effort },
 		ModelDefault: func(md config.ModelDefaults) string { return md.Effort },
 		EmptyShow:    "not set",
-		InvalidName: "effort level",
-		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
-		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
+		InvalidName:  "effort level",
+		Get:          func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
+		Set:          func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
 		Choices: []settingChoice{
 			{Label: "low", Aliases: []string{"1"}, SetValue: "low", Response: "Effort set to: low"},
 			{Label: "medium", Aliases: []string{"2"}, SetValue: "medium", Response: "Effort set to: medium"},
@@ -215,9 +215,9 @@ func ThinkingCommand() *Command {
 		Capability:   func(c config.ModelCaps) bool { return c.Thinking },
 		ModelDefault: func(md config.ModelDefaults) string { return md.Thinking },
 		DefaultShow:  "off",
-		InvalidName: "thinking mode",
-		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionThinking(sk) },
-		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionThinking(sk, v) },
+		InvalidName:  "thinking mode",
+		Get:          func(cc CommandContext, sk string) string { return cc.Agent.SessionThinking(sk) },
+		Set:          func(cc CommandContext, sk, v string) { cc.Agent.SetSessionThinking(sk, v) },
 		Choices: []settingChoice{
 			{Label: "off", Aliases: []string{"0", "none"}, SetValue: "off", Response: "Thinking: off"},
 			{Label: "adaptive", Aliases: []string{"1"}, SetValue: "adaptive", Response: "Thinking: adaptive"},
@@ -234,11 +234,11 @@ func SpeedCommand() *Command {
 		Capability:   func(c config.ModelCaps) bool { return c.Speed },
 		ModelDefault: func(md config.ModelDefaults) string { return md.Speed },
 		GateExecute:  true,
-		GateMsg:     "Speed is not supported by %s (Opus only)",
-		DefaultShow: "standard",
-		InvalidName: "speed mode",
-		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionSpeed(sk) },
-		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionSpeed(sk, v) },
+		GateMsg:      "Speed is not supported by %s (Opus only)",
+		DefaultShow:  "standard",
+		InvalidName:  "speed mode",
+		Get:          func(cc CommandContext, sk string) string { return cc.Agent.SessionSpeed(sk) },
+		Set:          func(cc CommandContext, sk, v string) { cc.Agent.SetSessionSpeed(sk, v) },
 		Choices: []settingChoice{
 			{Label: "standard", Aliases: []string{"0", "off"}, SetValue: "standard", Response: "Speed: standard (overrides model default)"},
 			{Label: "fast", Aliases: []string{"1"}, SetValue: "fast", Response: "Speed: fast (6x pricing, separate prompt cache)"},
@@ -558,17 +558,21 @@ func OverridesCommand() *Command {
 var overrideKeyMap = map[string]struct {
 	clearFn func(CommandContext, string)
 }{
-	"effort":                 {func(cc CommandContext, sk string) { cc.Agent.SetSessionEffort(sk, "") }},
-	"thinking":               {func(cc CommandContext, sk string) { cc.Agent.SetSessionThinking(sk, "") }},
-	"speed":                  {func(cc CommandContext, sk string) { cc.Agent.SetSessionSpeed(sk, "") }},
-	"model":                  {func(cc CommandContext, sk string) { cc.Agent.SetSessionModel(sk, "", "", "", nil) }},
-	"model_endpoint":         {func(cc CommandContext, sk string) { cc.Agent.SetSessionModel(sk, cc.Agent.SessionModel(sk), "", "", nil) }},
-	"model_format":           {func(cc CommandContext, sk string) { cc.Agent.SetSessionModel(sk, cc.Agent.SessionModel(sk), "", "", nil) }},
-	"show_tool_calls":        {func(cc CommandContext, sk string) { cc.Agent.SetSessionShowToolCalls(sk, "") }},
-	"display_show_thinking":  {func(cc CommandContext, sk string) { cc.Agent.SetSessionDisplayShowThinking(sk, "") }},
-	"stream_output":          {func(cc CommandContext, sk string) { cc.Agent.SetSessionStreamOutput(sk, "") }},
-	"display_width":          {func(cc CommandContext, sk string) { cc.Agent.SetSessionDisplayWidth(sk, "") }},
-	"no_compact":             {func(cc CommandContext, sk string) { cc.Agent.SetSessionNoCompact(sk, false) }},
+	"effort":   {func(cc CommandContext, sk string) { cc.Agent.SetSessionEffort(sk, "") }},
+	"thinking": {func(cc CommandContext, sk string) { cc.Agent.SetSessionThinking(sk, "") }},
+	"speed":    {func(cc CommandContext, sk string) { cc.Agent.SetSessionSpeed(sk, "") }},
+	"model":    {func(cc CommandContext, sk string) { cc.Agent.SetSessionModel(sk, "", "", "", nil) }},
+	"model_endpoint": {func(cc CommandContext, sk string) {
+		cc.Agent.SetSessionModel(sk, cc.Agent.SessionModel(sk), "", "", nil)
+	}},
+	"model_format": {func(cc CommandContext, sk string) {
+		cc.Agent.SetSessionModel(sk, cc.Agent.SessionModel(sk), "", "", nil)
+	}},
+	"show_tool_calls":       {func(cc CommandContext, sk string) { cc.Agent.SetSessionShowToolCalls(sk, "") }},
+	"display_show_thinking": {func(cc CommandContext, sk string) { cc.Agent.SetSessionDisplayShowThinking(sk, "") }},
+	"stream_output":         {func(cc CommandContext, sk string) { cc.Agent.SetSessionStreamOutput(sk, "") }},
+	"display_width":         {func(cc CommandContext, sk string) { cc.Agent.SetSessionDisplayWidth(sk, "") }},
+	"no_compact":            {func(cc CommandContext, sk string) { cc.Agent.SetSessionNoCompact(sk, false) }},
 }
 
 // formatOverridesStatus builds a display of all current session overrides.

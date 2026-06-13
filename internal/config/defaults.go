@@ -119,4 +119,3 @@ func setTagDefaultScalar(f reflect.Value, tag string) {
 		f.SetString(tag)
 	}
 }
-

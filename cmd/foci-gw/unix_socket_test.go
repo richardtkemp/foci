@@ -226,6 +226,6 @@ type statusRecorder struct {
 	code int
 }
 
-func (r *statusRecorder) Header() http.Header        { return http.Header{} }
+func (r *statusRecorder) Header() http.Header         { return http.Header{} }
 func (r *statusRecorder) Write(b []byte) (int, error) { return len(b), nil }
 func (r *statusRecorder) WriteHeader(code int)        { r.code = code }

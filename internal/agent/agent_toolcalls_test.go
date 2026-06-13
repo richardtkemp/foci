@@ -407,4 +407,3 @@ func TestToolErrorRedaction(t *testing.T) {
 		}
 	}
 }
-

@@ -735,8 +735,8 @@ func TestSendToPane_Success(t *testing.T) {
 	var buf bytes.Buffer
 	var typingCalls []bool
 	b := &Backend{
-		writer:   NewWriter(nopWriteCloser{&buf}),
-		readyCh:  make(chan struct{}),
+		writer:  NewWriter(nopWriteCloser{&buf}),
+		readyCh: make(chan struct{}),
 	}
 	b.SetTypingFunc(func(v bool) { typingCalls = append(typingCalls, v) })
 
@@ -1879,7 +1879,6 @@ func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
 		t.Errorf("writer should stay empty when pre_answer returns empty, got: %q", buf.String())
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // OnSystem

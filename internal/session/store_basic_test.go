@@ -53,9 +53,9 @@ func TestSessionPathRejectsTraversal(t *testing.T) {
 	s := NewStore(dir)
 
 	bad := []string{
-		"main/i../../../../../../../../../../etc/passwd/0",      // root-style escape
-		"../../../../../../../../../../etc/x/0/ichild",          // child-style escape
-		"../../../../../../../../../../etc/cron.d/x/0",          // leading escape
+		"main/i../../../../../../../../../../etc/passwd/0", // root-style escape
+		"../../../../../../../../../../etc/x/0/ichild",     // child-style escape
+		"../../../../../../../../../../etc/cron.d/x/0",     // leading escape
 	}
 	for _, key := range bad {
 		got, err := s.SessionPath(key)
@@ -256,7 +256,6 @@ func TestMessageCount(t *testing.T) {
 		t.Errorf("count = %d, want 2", n)
 	}
 }
-
 
 func TestAppendAllAtomicOnMarshalError(t *testing.T) {
 	// Verify that if one message in a batch fails to marshal, NO messages

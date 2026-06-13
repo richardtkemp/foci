@@ -178,7 +178,6 @@ func TestAgentWizardNoPreFlightWarning(t *testing.T) {
 	}
 }
 
-
 // Verifies copying character files from an existing agent.
 func TestAgentWizardCharModeCopy(t *testing.T) {
 	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil)

@@ -28,10 +28,10 @@ func fakeCheckers(userActive, sessionActive bool) (userActivityChecker, sessionA
 // `sessionActiveWithin` evaluate to true regardless of the underlying
 // checker results. So:
 //
-//   * --if-user-inactive skips (gate fires) if InFlight=true
-//   * --if-user-active passes (gate doesn't fire) if InFlight=true
-//   * --if-inactive skips if InFlight=true
-//   * --if-active passes if InFlight=true
+//   - --if-user-inactive skips (gate fires) if InFlight=true
+//   - --if-user-active passes (gate doesn't fire) if InFlight=true
+//   - --if-inactive skips if InFlight=true
+//   - --if-active passes if InFlight=true
 func TestCheckActivityGate_FourFlagMatrix(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -56,10 +56,10 @@ func TestCheckActivityGate_FourFlagMatrix(t *testing.T) {
 			wantBodyMarker: "no recent user activity",
 		},
 		{
-			name:          "if_user_active=1h, user-active, idle → pass",
-			in:            activityGateInputs{IfUserActive: "1h"},
-			userActive:    true,
-			wantPass:      true,
+			name:       "if_user_active=1h, user-active, idle → pass",
+			in:         activityGateInputs{IfUserActive: "1h"},
+			userActive: true,
+			wantPass:   true,
 		},
 		{
 			name:     "if_user_active=1h, user-inactive, in-flight → pass (in-flight counts as user attention)",
@@ -286,4 +286,3 @@ func TestCheckActivityGate_HTTPStatusOnBadDuration(t *testing.T) {
 		t.Fatalf("bad-duration status = %d, want 400", w.Code)
 	}
 }
-

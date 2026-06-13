@@ -34,12 +34,12 @@ type APIEntry struct {
 
 // PayloadEntry is a full API request/response record.
 type PayloadEntry struct {
-	Timestamp  time.Time       `json:"ts"`
-	Session    string          `json:"session"`
-	SeqNum     int             `json:"seq"`
-	Model      string          `json:"model"`
-	SystemHash string          `json:"system_hash"`
-	Request    json.RawMessage `json:"request"`
+	Timestamp    time.Time       `json:"ts"`
+	Session      string          `json:"session"`
+	SeqNum       int             `json:"seq"`
+	Model        string          `json:"model"`
+	SystemHash   string          `json:"system_hash"`
+	Request      json.RawMessage `json:"request"`
 	Response     json.RawMessage `json:"response,omitempty"`
 	Error        string          `json:"error,omitempty"`
 	StatusCode   int             `json:"status_code,omitempty"`

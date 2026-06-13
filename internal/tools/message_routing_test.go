@@ -78,8 +78,8 @@ func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
-		"file": "/tmp/note.ogg",
-		"send_as":   "voice",
+		"file":    "/tmp/note.ogg",
+		"send_as": "voice",
 	})
 
 	_, err := tool.Execute(ctx, params)
@@ -161,10 +161,10 @@ func TestChatIDFromSessionKey(t *testing.T) {
 		{"test/c-1001234567890/1000", -1001234567890}, // group chat
 		{"test/ispawn-123456/1000", 0},                // independent session
 		{"test/i0/0", 0},                              // independent session
-		{"test/if-123/1000", 0},                      // facet (independent)
+		{"test/if-123/1000", 0},                       // facet (independent)
 		{"", 0},
-		{"fotini/c99887766/1000/b2000", 99887766},            // branch preserves chat ID
-		{"test/c-1001234567890/1000/b2000", -1001234567890},  // branch — group chat
+		{"fotini/c99887766/1000/b2000", 99887766},           // branch preserves chat ID
+		{"test/c-1001234567890/1000/b2000", -1001234567890}, // branch — group chat
 	}
 	for _, tt := range tests {
 		got := ChatIDFromSessionKey(tt.key)

@@ -139,8 +139,8 @@ func (m *mockTrackerBackend) deleteCount() int {
 
 // mockTrackerStore records store operations for test assertions.
 type mockTrackerStore struct {
-	mu      sync.Mutex
-	entries map[string]mockTrackerEntry
+	mu        sync.Mutex
+	entries   map[string]mockTrackerEntry
 	persisted []mockTrackerPersisted
 }
 

@@ -81,8 +81,12 @@ func TestSubcommandHiddenExcludedFromKeyboard(t *testing.T) {
 	cmd := &Command{
 		Name: "test",
 		Subcommands: []Subcommand{
-			{Name: "visible", Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) { return Response{Text: "v"}, nil }},
-			{Name: "hidden", Hidden: true, Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) { return Response{Text: "h"}, nil }},
+			{Name: "visible", Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+				return Response{Text: "v"}, nil
+			}},
+			{Name: "hidden", Hidden: true, Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+				return Response{Text: "h"}, nil
+			}},
 		},
 	}
 	reg := NewRegistry()
@@ -257,7 +261,9 @@ func TestSubcommandDefaultExecute(t *testing.T) {
 	cmd := &Command{
 		Name: "test",
 		Subcommands: []Subcommand{
-			{Name: "named", Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) { return Response{Text: "named"}, nil }},
+			{Name: "named", Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+				return Response{Text: "named"}, nil
+			}},
 		},
 		DefaultExecute: func(_ context.Context, req Request, _ CommandContext) (Response, error) {
 			return Response{Text: "default:" + req.Args}, nil
@@ -291,7 +297,9 @@ func TestSubcommandChainKeyboardAlongside(t *testing.T) {
 	cmd := &Command{
 		Name: "test",
 		Subcommands: []Subcommand{
-			{Name: "sub", Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) { return Response{Text: "sub"}, nil }},
+			{Name: "sub", Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+				return Response{Text: "sub"}, nil
+			}},
 		},
 		ChainKeyboard: func(_ context.Context, subcommand string, _ CommandContext) []KeyboardOption {
 			if subcommand == "sub" {

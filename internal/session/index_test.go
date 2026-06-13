@@ -150,7 +150,7 @@ func TestSessionIndex_QueryLimit(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		idx.Upsert(SessionIndexEntry{
 			SessionKey: "agent:bot:chat:" + string(rune('a'+i)), FilePath: "f",
-			CreatedAt: now.Add(time.Duration(i) * time.Minute),
+			CreatedAt:   now.Add(time.Duration(i) * time.Minute),
 			SessionType: SessionTypeChat, Status: SessionStatusActive,
 		})
 	}
@@ -241,11 +241,11 @@ func TestClassifySessionKey(t *testing.T) {
 		want SessionType
 	}{
 		{"bot/c123/1000000000", SessionTypeChat},
-		{"bot/i123/123", SessionTypeUnknown},                // independent — can't distinguish facet/spawn/cron from key alone
-		{"bot/c123/1000000000/b456", SessionTypeBranch},     // branch child type
-		{"bot/i123/1000000000/b456", SessionTypeBranch},     // branch from independent parent
-		{"bot/c123/1000000000/i456", SessionTypeUnknown},    // independent spawn child
-		{"agent:bot:unknown:thing", SessionTypeUnknown},     // old format / unparseable
+		{"bot/i123/123", SessionTypeUnknown},             // independent — can't distinguish facet/spawn/cron from key alone
+		{"bot/c123/1000000000/b456", SessionTypeBranch},  // branch child type
+		{"bot/i123/1000000000/b456", SessionTypeBranch},  // branch from independent parent
+		{"bot/c123/1000000000/i456", SessionTypeUnknown}, // independent spawn child
+		{"agent:bot:unknown:thing", SessionTypeUnknown},  // old format / unparseable
 		{"bad", SessionTypeUnknown},
 	}
 	for _, tt := range tests {

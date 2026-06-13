@@ -24,7 +24,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
-						ID:            "telegram",
+						ID:      "telegram",
 						Display: config.DisplayConfig{StreamOutput: &trueVal},
 					}},
 				}},
@@ -38,7 +38,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
-						ID:            "telegram",
+						ID:      "telegram",
 						Display: config.DisplayConfig{StreamOutput: &trueVal},
 					}},
 				}},
@@ -51,7 +51,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
-						ID:            "telegram",
+						ID:      "telegram",
 						Display: config.DisplayConfig{StreamOutput: &falseVal},
 					}},
 				}},
@@ -64,7 +64,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
-						ID:            "telegram",
+						ID:      "telegram",
 						Display: config.DisplayConfig{StreamOutput: &falseVal},
 					}},
 				}},
@@ -78,7 +78,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 					ID:      "bot1",
 					Display: config.DisplayConfig{Streaming: &trueVal},
 					Platforms: []config.PlatformConfig{{
-						ID:            "telegram",
+						ID:      "telegram",
 						Display: config.DisplayConfig{StreamOutput: &trueVal},
 					}},
 				}},
@@ -93,7 +93,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 					ID:      "bot1",
 					Display: config.DisplayConfig{Streaming: &falseVal},
 					Platforms: []config.PlatformConfig{{
-						ID:            "telegram",
+						ID:      "telegram",
 						Display: config.DisplayConfig{StreamOutput: &trueVal},
 					}},
 				}},

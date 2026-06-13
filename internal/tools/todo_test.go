@@ -694,7 +694,6 @@ func TestNormalizeStatusFilter(t *testing.T) {
 	}
 }
 
-
 func newTestTodoStore(t *testing.T) *memory.TodoStore {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "todo_test.db")

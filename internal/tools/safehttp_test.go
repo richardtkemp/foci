@@ -58,7 +58,7 @@ func TestIsBlockedIP(t *testing.T) {
 		"0.0.0.0", "::", // unspecified (route to localhost) — the P1-4 bypass
 		"127.0.0.1", "::1", // loopback
 		"10.0.0.1", "192.168.1.1", "172.16.0.1", // private v4
-		"169.254.169.254", // cloud metadata (link-local)
+		"169.254.169.254",    // cloud metadata (link-local)
 		"fc00::1", "fd00::1", // IPv6 ULA
 		"fe80::1", // IPv6 link-local
 	}

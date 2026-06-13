@@ -51,7 +51,7 @@ func TestStatusCommand(t *testing.T) {
 		"main",
 		sk,
 		"claude-haiku-4-5",
-		"2",       // 2 conversation turns
+		"2", // 2 conversation turns
 		"idle",
 		"2h30m",
 		"$0.00",   // session cost

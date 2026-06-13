@@ -26,7 +26,7 @@ type BrowserManager struct {
 	snapshot   *Snapshot
 	generation int
 	FileMode   os.FileMode // permission bits for saved files (screenshots, PDFs)
-	incognito  bool // runtime-toggleable; default true
+	incognito  bool        // runtime-toggleable; default true
 }
 
 // NewBrowserManager creates a new browser manager with the given config.
@@ -229,17 +229,17 @@ type fillField struct {
 }
 
 type browserParams struct {
-	Action   string      `json:"action"`
-	URL      string      `json:"url"`
-	Ref      string      `json:"ref"`
-	Element  string      `json:"element"`
-	Value    string      `json:"value"`
-	Values   []string    `json:"values"`
-	Fields   []fillField `json:"fields"`
-	Submit   bool        `json:"submit"`
-	Key      string      `json:"key"`
-	Script   string      `json:"script"`
-	WaitType string      `json:"waitType"`
+	Action    string      `json:"action"`
+	URL       string      `json:"url"`
+	Ref       string      `json:"ref"`
+	Element   string      `json:"element"`
+	Value     string      `json:"value"`
+	Values    []string    `json:"values"`
+	Fields    []fillField `json:"fields"`
+	Submit    bool        `json:"submit"`
+	Key       string      `json:"key"`
+	Script    string      `json:"script"`
+	WaitType  string      `json:"waitType"`
 	FullPage  bool        `json:"fullPage"`
 	RetPath   bool        `json:"returnPath"`
 	Incognito *bool       `json:"incognito"`

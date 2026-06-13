@@ -222,14 +222,14 @@ func TestExtractCommandOutput(t *testing.T) {
 		want    string
 	}{
 		{
-			name: "normal output with prompts and separator",
-			pane: "❯ /model\n  ⎿  claude-opus-4-6\n─────────────────────────\n❯",
+			name:    "normal output with prompts and separator",
+			pane:    "❯ /model\n  ⎿  claude-opus-4-6\n─────────────────────────\n❯",
 			command: "/model",
 			want:    "⎿  claude-opus-4-6",
 		},
 		{
-			name: "multi-line output",
-			pane: "❯ /context\n  ⎿  System: 1200 tokens\n  ⎿  History: 800 tokens\n  ⎿  Total: 2000 tokens\n───────────────────\n❯",
+			name:    "multi-line output",
+			pane:    "❯ /context\n  ⎿  System: 1200 tokens\n  ⎿  History: 800 tokens\n  ⎿  Total: 2000 tokens\n───────────────────\n❯",
 			command: "/context",
 			want:    "⎿  System: 1200 tokens\n  ⎿  History: 800 tokens\n  ⎿  Total: 2000 tokens",
 		},
@@ -246,8 +246,8 @@ func TestExtractCommandOutput(t *testing.T) {
 			want:    "",
 		},
 		{
-			name: "no trailing prompt — output extends to end",
-			pane: "❯ /help\n  ⎿  Available commands:\n  ⎿  /model /context /compact",
+			name:    "no trailing prompt — output extends to end",
+			pane:    "❯ /help\n  ⎿  Available commands:\n  ⎿  /model /context /compact",
 			command: "/help",
 			want:    "⎿  Available commands:\n  ⎿  /model /context /compact",
 		},
@@ -258,14 +258,14 @@ func TestExtractCommandOutput(t *testing.T) {
 			want:    "",
 		},
 		{
-			name: "trailing prompt with space",
-			pane: "❯ /model opus\n  ⎿  Switched to opus\n❯ ",
+			name:    "trailing prompt with space",
+			pane:    "❯ /model opus\n  ⎿  Switched to opus\n❯ ",
 			command: "/model opus",
 			want:    "⎿  Switched to opus",
 		},
 		{
-			name: "multiple commands — picks last matching",
-			pane: "❯ /model\n  ⎿  haiku\n❯ /model\n  ⎿  opus\n❯",
+			name:    "multiple commands — picks last matching",
+			pane:    "❯ /model\n  ⎿  haiku\n❯ /model\n  ⎿  opus\n❯",
 			command: "/model",
 			want:    "⎿  opus",
 		},
@@ -276,14 +276,14 @@ func TestExtractCommandOutput(t *testing.T) {
 			want:    "⎿  opus",
 		},
 		{
-			name: "heavy separator characters",
-			pane: "❯ /status\n  ⎿  all good\n━━━━━━━━━━━━━━━━━━━━\n❯",
+			name:    "heavy separator characters",
+			pane:    "❯ /status\n  ⎿  all good\n━━━━━━━━━━━━━━━━━━━━\n❯",
 			command: "/status",
 			want:    "⎿  all good",
 		},
 		{
-			name: "mixed separator with dashes",
-			pane: "❯ /status\n  ⎿  ok\n-------------------\n❯",
+			name:    "mixed separator with dashes",
+			pane:    "❯ /status\n  ⎿  ok\n-------------------\n❯",
 			command: "/status",
 			want:    "⎿  ok",
 		},
@@ -343,8 +343,8 @@ func (m *mockPassBackend) Start(context.Context, delegator.StartOptions) error {
 func (m *mockPassBackend) SendToPane(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error) {
 	return &delegator.TurnResult{}, nil
 }
-func (m *mockPassBackend) WaitForTurn(context.Context) error             { return nil }
-func (m *mockPassBackend) IsTurnInFlight() bool                          { return false }
+func (m *mockPassBackend) WaitForTurn(context.Context) error { return nil }
+func (m *mockPassBackend) IsTurnInFlight() bool              { return false }
 func (m *mockPassBackend) SendCommand(_ context.Context, cmd string) error {
 	m.sentCommand = cmd
 	return nil
@@ -363,19 +363,19 @@ func (m *mockPassBackend) Inject(ctx context.Context, inj delegator.Inject) erro
 	return nil
 }
 func (m *mockPassBackend) IsRunning() bool                                        { return true }
-func (m *mockPassBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
+func (m *mockPassBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc) {}
 func (m *mockPassBackend) SetOnPromptsCleared(func())                             {}
 func (m *mockPassBackend) RegisterPromptCancelListener(string, func(string))      {}
 func (m *mockPassBackend) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackend) SetTypingFunc(func(bool))                               {}
-func (m *mockPassBackend) AttachSessionEvents(*delegator.SessionEvents)            {}
-func (m *mockPassBackend) SendKeystroke(context.Context, string) error             { return nil }
-func (m *mockPassBackend) SendSpecialKey(context.Context, string) error            { return nil }
-func (m *mockPassBackend) Interrupt(context.Context) error                         { return nil }
-func (m *mockPassBackend) SessionID() string                                       { return "" }
-func (m *mockPassBackend) SessionFilePath() string                                 { return "" }
-func (m *mockPassBackend) WaitReady(context.Context) error                         { return nil }
-func (m *mockPassBackend) Close() error                                            { return nil }
+func (m *mockPassBackend) AttachSessionEvents(*delegator.SessionEvents)           {}
+func (m *mockPassBackend) SendKeystroke(context.Context, string) error            { return nil }
+func (m *mockPassBackend) SendSpecialKey(context.Context, string) error           { return nil }
+func (m *mockPassBackend) Interrupt(context.Context) error                        { return nil }
+func (m *mockPassBackend) SessionID() string                                      { return "" }
+func (m *mockPassBackend) SessionFilePath() string                                { return "" }
+func (m *mockPassBackend) WaitReady(context.Context) error                        { return nil }
+func (m *mockPassBackend) Close() error                                           { return nil }
 
 func (m *mockPassBackend) CaptureCommandOutput(_ context.Context, _, _ time.Duration) (string, error) {
 	return m.captureOutput, nil
@@ -383,7 +383,7 @@ func (m *mockPassBackend) CaptureCommandOutput(_ context.Context, _, _ time.Dura
 
 // Compile-time verification that mockPassBackend satisfies both interfaces.
 var (
-	_ delegator.Delegator               = (*mockPassBackend)(nil)
+	_ delegator.Delegator             = (*mockPassBackend)(nil)
 	_ delegator.CommandOutputCapturer = (*mockPassBackend)(nil)
 )
 
@@ -396,8 +396,8 @@ func (m *mockPassBackendNoCapturer) Start(context.Context, delegator.StartOption
 func (m *mockPassBackendNoCapturer) SendToPane(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error) {
 	return &delegator.TurnResult{}, nil
 }
-func (m *mockPassBackendNoCapturer) WaitForTurn(context.Context) error             { return nil }
-func (m *mockPassBackendNoCapturer) IsTurnInFlight() bool                          { return false }
+func (m *mockPassBackendNoCapturer) WaitForTurn(context.Context) error { return nil }
+func (m *mockPassBackendNoCapturer) IsTurnInFlight() bool              { return false }
 func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd string) error {
 	m.sentCommand = cmd
 	return nil
@@ -416,19 +416,19 @@ func (m *mockPassBackendNoCapturer) Inject(ctx context.Context, inj delegator.In
 	return nil
 }
 func (m *mockPassBackendNoCapturer) IsRunning() bool                                        { return true }
-func (m *mockPassBackendNoCapturer) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
+func (m *mockPassBackendNoCapturer) SetPermissionPromptFunc(delegator.PermissionPromptFunc) {}
 func (m *mockPassBackendNoCapturer) SetOnPromptsCleared(func())                             {}
 func (m *mockPassBackendNoCapturer) RegisterPromptCancelListener(string, func(string))      {}
 func (m *mockPassBackendNoCapturer) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackendNoCapturer) SetTypingFunc(func(bool))                               {}
-func (m *mockPassBackendNoCapturer) AttachSessionEvents(*delegator.SessionEvents)            {}
-func (m *mockPassBackendNoCapturer) SendKeystroke(context.Context, string) error             { return nil }
-func (m *mockPassBackendNoCapturer) SendSpecialKey(context.Context, string) error            { return nil }
-func (m *mockPassBackendNoCapturer) Interrupt(context.Context) error                         { return nil }
-func (m *mockPassBackendNoCapturer) SessionID() string                                       { return "" }
-func (m *mockPassBackendNoCapturer) SessionFilePath() string                                 { return "" }
-func (m *mockPassBackendNoCapturer) WaitReady(context.Context) error                         { return nil }
-func (m *mockPassBackendNoCapturer) Close() error                                            { return nil }
+func (m *mockPassBackendNoCapturer) AttachSessionEvents(*delegator.SessionEvents)           {}
+func (m *mockPassBackendNoCapturer) SendKeystroke(context.Context, string) error            { return nil }
+func (m *mockPassBackendNoCapturer) SendSpecialKey(context.Context, string) error           { return nil }
+func (m *mockPassBackendNoCapturer) Interrupt(context.Context) error                        { return nil }
+func (m *mockPassBackendNoCapturer) SessionID() string                                      { return "" }
+func (m *mockPassBackendNoCapturer) SessionFilePath() string                                { return "" }
+func (m *mockPassBackendNoCapturer) WaitReady(context.Context) error                        { return nil }
+func (m *mockPassBackendNoCapturer) Close() error                                           { return nil }
 
 // Compile-time verification.
 var _ delegator.Delegator = (*mockPassBackendNoCapturer)(nil)

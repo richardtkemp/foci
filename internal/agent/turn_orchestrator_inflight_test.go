@@ -32,13 +32,16 @@ func (s *rateLimitedStubContract) LoadAndRepairSession(*TurnState) error { retur
 func (s *rateLimitedStubContract) ResolveModelEffort(*TurnState)         {}
 func (s *rateLimitedStubContract) BuildSystemAndTools(*TurnState)        {}
 func (s *rateLimitedStubContract) InjectNudges(*TurnState)               {}
-func (s *rateLimitedStubContract) RunInference(ts *TurnState) error      { close(ts.CompletionChan); return nil }
-func (s *rateLimitedStubContract) SaveSession(*TurnState) error          { return nil }
-func (s *rateLimitedStubContract) UpdateSessionMeta(*TurnState)          {}
-func (s *rateLimitedStubContract) LogUsage(*TurnState)                   {}
-func (s *rateLimitedStubContract) RunCompaction(*TurnState)              {}
-func (s *rateLimitedStubContract) LogConversationSent(*TurnState)        {}
-func (s *rateLimitedStubContract) TouchActivityPost(*TurnState)          {}
+func (s *rateLimitedStubContract) RunInference(ts *TurnState) error {
+	close(ts.CompletionChan)
+	return nil
+}
+func (s *rateLimitedStubContract) SaveSession(*TurnState) error   { return nil }
+func (s *rateLimitedStubContract) UpdateSessionMeta(*TurnState)   {}
+func (s *rateLimitedStubContract) LogUsage(*TurnState)            {}
+func (s *rateLimitedStubContract) RunCompaction(*TurnState)       {}
+func (s *rateLimitedStubContract) LogConversationSent(*TurnState) {}
+func (s *rateLimitedStubContract) TouchActivityPost(*TurnState)   {}
 
 // orchestratorTestKey is a representative session key for orchestrator
 // integration tests. SessionKeyBase strips the trailing version segment, so

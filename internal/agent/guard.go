@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"crypto/rand"
-	"unicode/utf8"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"foci/internal/config"
 	"foci/internal/log"
@@ -48,7 +48,6 @@ func getMissingQueryTools() map[string]bool {
 	})
 	return missingQueryTools
 }
-
 
 func detectContentExtension(content string) string {
 	trimmed := strings.TrimSpace(content)

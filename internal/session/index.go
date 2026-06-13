@@ -17,12 +17,12 @@ import (
 type SessionType string
 
 const (
-	SessionTypeChat       SessionType = "chat"
-	SessionTypeFacet  SessionType = "facet"
-	SessionTypeSpawn      SessionType = "spawn"
-	SessionTypeCron       SessionType = "cron"
-	SessionTypeBranch     SessionType = "branch"
-	SessionTypeUnknown    SessionType = "unknown"
+	SessionTypeChat    SessionType = "chat"
+	SessionTypeFacet   SessionType = "facet"
+	SessionTypeSpawn   SessionType = "spawn"
+	SessionTypeCron    SessionType = "cron"
+	SessionTypeBranch  SessionType = "branch"
+	SessionTypeUnknown SessionType = "unknown"
 )
 
 // SessionStatus tracks the lifecycle state of a session.
@@ -612,7 +612,7 @@ func migrateCcResumeIDs(db *sql.DB) {
 // migrateChatMetadataPlatform adds the platform column to chat_metadata if missing.
 // Detects old schema by attempting to select the platform column. If it doesn't
 // exist, rebuilds the table in a transaction: rename → create new → copy → drop old.
-// Old rows get platform='' which won't match explicit platform queries.
+// Old rows get platform=” which won't match explicit platform queries.
 func migrateChatMetadataPlatform(db *sql.DB) {
 	// Check if platform column already exists by querying it.
 	var dummy string

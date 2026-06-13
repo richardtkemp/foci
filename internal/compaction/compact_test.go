@@ -30,12 +30,22 @@ type retryable interface {
 	ServerErrorMaxDuration() time.Duration
 }
 
-func (n nonStreamingClient) OnRetrySuccess()                       { n.Client.(retryable).OnRetrySuccess() }
-func (n nonStreamingClient) WaitForRecovery() <-chan struct{}      { return n.Client.(retryable).WaitForRecovery() }
-func (n nonStreamingClient) RetryBaseDelay() time.Duration         { return n.Client.(retryable).RetryBaseDelay() }
-func (n nonStreamingClient) OverloadBaseDelay() time.Duration      { return n.Client.(retryable).OverloadBaseDelay() }
-func (n nonStreamingClient) OverloadMaxDuration() time.Duration    { return n.Client.(retryable).OverloadMaxDuration() }
-func (n nonStreamingClient) ServerErrorMaxDuration() time.Duration { return n.Client.(retryable).ServerErrorMaxDuration() }
+func (n nonStreamingClient) OnRetrySuccess() { n.Client.(retryable).OnRetrySuccess() }
+func (n nonStreamingClient) WaitForRecovery() <-chan struct{} {
+	return n.Client.(retryable).WaitForRecovery()
+}
+func (n nonStreamingClient) RetryBaseDelay() time.Duration {
+	return n.Client.(retryable).RetryBaseDelay()
+}
+func (n nonStreamingClient) OverloadBaseDelay() time.Duration {
+	return n.Client.(retryable).OverloadBaseDelay()
+}
+func (n nonStreamingClient) OverloadMaxDuration() time.Duration {
+	return n.Client.(retryable).OverloadMaxDuration()
+}
+func (n nonStreamingClient) ServerErrorMaxDuration() time.Duration {
+	return n.Client.(retryable).ServerErrorMaxDuration()
+}
 
 // mockCompactionServer returns a test API server for compaction tests.
 func mockCompactionServer(summaryText string) *httptest.Server {

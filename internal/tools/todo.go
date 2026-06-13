@@ -514,7 +514,6 @@ func formatTodoAge(item memory.TodoItem) string {
 	return display.RelativeTime(item.CreatedAt)
 }
 
-
 func resolveIDs(id int64, ids []int64) ([]int64, error) {
 	if id != 0 && len(ids) > 0 {
 		return nil, fmt.Errorf("use id or ids, not both")

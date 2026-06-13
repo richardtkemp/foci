@@ -381,4 +381,3 @@ func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
 		t.Errorf("lastMessageTime = %v, want %v (should skip restart marker and find first meta)", sm.lastMessageTime, expected)
 	}
 }
-

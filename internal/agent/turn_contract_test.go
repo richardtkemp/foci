@@ -35,7 +35,6 @@ func TestNewTurnState(t *testing.T) {
 	}
 }
 
-
 // TestAPITransportSatisfiesInterface verifies that *APITransport satisfies the
 // TurnContract interface (compile-time check).
 func TestAPITransportSatisfiesInterface(t *testing.T) {
@@ -129,17 +128,17 @@ func (s *stubContract) RateLimitGate(*TurnState) error        { return nil }
 func (s *stubContract) AcquireTurnLock(*TurnState) func()     { return func() {} }
 func (s *stubContract) IncrementProcessing(*TurnState) func() { return func() {} }
 func (s *stubContract) RegisterTurn(*TurnState) func()        { return func() {} }
-func (s *stubContract) CheckStaleContext(*TurnState) error     { return nil }
-func (s *stubContract) RegisterSessionIndex(*TurnState)        {}
-func (s *stubContract) LogConversationRecv(*TurnState)         {}
-func (s *stubContract) TouchActivity(*TurnState)               {}
-func (s *stubContract) LoadSessionMeta(*TurnState)             {}
-func (s *stubContract) ComposePrompt(*TurnState) error         { return nil }
-func (s *stubContract) LoadAndRepairSession(*TurnState) error  { return nil }
-func (s *stubContract) ResolveModelEffort(*TurnState)          {}
-func (s *stubContract) BuildSystemAndTools(*TurnState)         {}
-func (s *stubContract) InjectNudges(*TurnState)                {}
-func (s *stubContract) RunInference(ts *TurnState) error        { close(ts.CompletionChan); return nil }
+func (s *stubContract) CheckStaleContext(*TurnState) error    { return nil }
+func (s *stubContract) RegisterSessionIndex(*TurnState)       {}
+func (s *stubContract) LogConversationRecv(*TurnState)        {}
+func (s *stubContract) TouchActivity(*TurnState)              {}
+func (s *stubContract) LoadSessionMeta(*TurnState)            {}
+func (s *stubContract) ComposePrompt(*TurnState) error        { return nil }
+func (s *stubContract) LoadAndRepairSession(*TurnState) error { return nil }
+func (s *stubContract) ResolveModelEffort(*TurnState)         {}
+func (s *stubContract) BuildSystemAndTools(*TurnState)        {}
+func (s *stubContract) InjectNudges(*TurnState)               {}
+func (s *stubContract) RunInference(ts *TurnState) error      { close(ts.CompletionChan); return nil }
 func (s *stubContract) SaveSession(ts *TurnState) error {
 	if s.saveFn != nil {
 		s.saveFn()
@@ -147,8 +146,8 @@ func (s *stubContract) SaveSession(ts *TurnState) error {
 	ts.NewMessages = nil
 	return nil
 }
-func (s *stubContract) UpdateSessionMeta(*TurnState)    {}
-func (s *stubContract) LogUsage(*TurnState)              {}
-func (s *stubContract) RunCompaction(*TurnState)         {}
-func (s *stubContract) LogConversationSent(*TurnState)   {}
-func (s *stubContract) TouchActivityPost(*TurnState)     {}
+func (s *stubContract) UpdateSessionMeta(*TurnState)   {}
+func (s *stubContract) LogUsage(*TurnState)            {}
+func (s *stubContract) RunCompaction(*TurnState)       {}
+func (s *stubContract) LogConversationSent(*TurnState) {}
+func (s *stubContract) TouchActivityPost(*TurnState)   {}

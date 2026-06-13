@@ -64,11 +64,11 @@
 //     fire. Mark them with a doc comment containing the directive
 //     "disconnected-test-ok" (optionally followed by a reason), e.g.:
 //
-//         // TestCLIIntegration spawns the built binary and asserts on
-//         // its stdout — it cannot reference package symbols directly.
-//         //
-//         // disconnected-test-ok: black-box CLI integration test
-//         func TestCLIIntegration(t *testing.T) { ... }
+//     // TestCLIIntegration spawns the built binary and asserts on
+//     // its stdout — it cannot reference package symbols directly.
+//     //
+//     // disconnected-test-ok: black-box CLI integration test
+//     func TestCLIIntegration(t *testing.T) { ... }
 //
 // A test in cmd/X that only references identifiers from imported packages
 // (but not from cmd/X itself) is a *real* finding — it is testing those

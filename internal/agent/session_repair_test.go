@@ -540,7 +540,7 @@ func TestRepairMissingAssistantMessages_MixedCorruption(t *testing.T) {
 	// Proves that both consecutive users and empty assistant content are repaired in one pass.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
-		{Role: "assistant", Content: nil},                       // empty!
+		{Role: "assistant", Content: nil}, // empty!
 		{Role: "user", Content: provider.TextContent("retry")},
 		{Role: "user", Content: provider.TextContent("again")}, // consecutive!
 		{Role: "assistant", Content: provider.TextContent("ok")},

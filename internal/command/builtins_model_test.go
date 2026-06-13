@@ -50,7 +50,7 @@ func TestModelCommand(t *testing.T) {
 	}
 
 	// Switch with full model ID
-	result, _ = cmd.Execute(skCtx, Request{Args:"anthropic/claude-opus-4-6"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "anthropic/claude-opus-4-6"}, cc)
 	if !strings.Contains(result.Text, "claude-opus-4-6") {
 		t.Errorf("result = %q", result.Text)
 	}
@@ -75,7 +75,7 @@ func TestEffortCommand(t *testing.T) {
 
 	// Set valid levels by name
 	for _, level := range []string{"low", "medium", "high"} {
-		result, _ = cmd.Execute(skCtx, Request{Args:level}, cc)
+		result, _ = cmd.Execute(skCtx, Request{Args: level}, cc)
 		got := ag.SessionEffort(sk)
 		if got != level {
 			t.Errorf("effort not set to %s: %s", level, got)
@@ -87,7 +87,7 @@ func TestEffortCommand(t *testing.T) {
 
 	// Set valid levels by number
 	for num, level := range map[string]string{"1": "low", "2": "medium", "3": "high"} {
-		result, _ = cmd.Execute(skCtx, Request{Args:num}, cc)
+		result, _ = cmd.Execute(skCtx, Request{Args: num}, cc)
 		got := ag.SessionEffort(sk)
 		if got != level {
 			t.Errorf("/effort %s: expected %s, got %s", num, level, got)
@@ -102,13 +102,13 @@ func TestEffortCommand(t *testing.T) {
 	}
 
 	// Invalid level
-	result, _ = cmd.Execute(skCtx, Request{Args:"turbo"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "turbo"}, cc)
 	if !strings.Contains(result.Text, "Invalid") {
 		t.Errorf("expected 'Invalid', got %q", result.Text)
 	}
 
 	// Clear
-	result, _ = cmd.Execute(skCtx, Request{Args:"none"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "none"}, cc)
 	if !strings.Contains(result.Text, "cleared") {
 		t.Errorf("result = %q", result.Text)
 	}
@@ -129,7 +129,7 @@ func TestThinkingCommand(t *testing.T) {
 	}
 
 	// Set to adaptive
-	result, _ = cmd.Execute(skCtx, Request{Args:"adaptive"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "adaptive"}, cc)
 	if ag.SessionThinking(sk) != "adaptive" {
 		t.Errorf("thinking not set to adaptive: %q", ag.SessionThinking(sk))
 	}
@@ -138,18 +138,18 @@ func TestThinkingCommand(t *testing.T) {
 	}
 
 	// Set via numeric alias
-	_, _ = cmd.Execute(skCtx, Request{Args:"0"}, cc)
+	_, _ = cmd.Execute(skCtx, Request{Args: "0"}, cc)
 	if ag.SessionThinking(sk) != "off" {
 		t.Errorf("thinking not set to 'off' via '0': %q", ag.SessionThinking(sk))
 	}
 
-	_, _ = cmd.Execute(skCtx, Request{Args:"1"}, cc)
+	_, _ = cmd.Execute(skCtx, Request{Args: "1"}, cc)
 	if ag.SessionThinking(sk) != "adaptive" {
 		t.Errorf("thinking not set via '1': %q", ag.SessionThinking(sk))
 	}
 
 	// Turn off
-	result, _ = cmd.Execute(skCtx, Request{Args:"off"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "off"}, cc)
 	if ag.SessionThinking(sk) != "off" {
 		t.Errorf("thinking not set to 'off': %q", ag.SessionThinking(sk))
 	}
@@ -159,7 +159,7 @@ func TestThinkingCommand(t *testing.T) {
 
 	// Invalid value
 	ag.SetSessionThinking(sk, "adaptive")
-	result, _ = cmd.Execute(skCtx, Request{Args:"turbo"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "turbo"}, cc)
 	if !strings.Contains(result.Text, "Invalid") {
 		t.Errorf("expected 'Invalid', got %q", result.Text)
 	}
@@ -176,7 +176,7 @@ func TestThinkingCommandContextRouting(t *testing.T) {
 	cc := modelCC(ag)
 	cmd := ThinkingCommand()
 
-	_, _ = cmd.Execute(skCtx, Request{Args:"adaptive"}, cc)
+	_, _ = cmd.Execute(skCtx, Request{Args: "adaptive"}, cc)
 
 	// The agent should have the thinking mode set for this session key
 	if ag.SessionThinking(sk) != "adaptive" {
@@ -230,7 +230,7 @@ func TestSpeedCommand(t *testing.T) {
 	}
 
 	// Set to fast
-	result, _ = cmd.Execute(skCtx, Request{Args:"fast"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "fast"}, cc)
 	if ag.SessionSpeed(sk) != "fast" {
 		t.Errorf("speed not set to fast: %q", ag.SessionSpeed(sk))
 	}
@@ -239,12 +239,12 @@ func TestSpeedCommand(t *testing.T) {
 	}
 
 	// Set to standard via numeric alias (explicit override that blocks model defaults)
-	_, _ = cmd.Execute(skCtx, Request{Args:"0"}, cc)
+	_, _ = cmd.Execute(skCtx, Request{Args: "0"}, cc)
 	if ag.SessionSpeed(sk) != "standard" {
 		t.Errorf("speed not set to standard via '0': %q", ag.SessionSpeed(sk))
 	}
 
-	_, _ = cmd.Execute(skCtx, Request{Args:"1"}, cc)
+	_, _ = cmd.Execute(skCtx, Request{Args: "1"}, cc)
 	if ag.SessionSpeed(sk) != "fast" {
 		t.Errorf("speed not set via '1': %q", ag.SessionSpeed(sk))
 	}
@@ -256,7 +256,7 @@ func TestSpeedCommand(t *testing.T) {
 	}
 
 	// Set to standard via name (explicit override)
-	result, _ = cmd.Execute(skCtx, Request{Args:"standard"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "standard"}, cc)
 	if ag.SessionSpeed(sk) != "standard" {
 		t.Errorf("speed not set to standard: %q", ag.SessionSpeed(sk))
 	}
@@ -265,14 +265,14 @@ func TestSpeedCommand(t *testing.T) {
 	}
 
 	// Clear via "none" (revert to model default)
-	_, _ = cmd.Execute(skCtx, Request{Args:"none"}, cc)
+	_, _ = cmd.Execute(skCtx, Request{Args: "none"}, cc)
 	if ag.SessionSpeed(sk) != "" {
 		t.Errorf("speed not cleared via 'none': %q", ag.SessionSpeed(sk))
 	}
 
 	// Invalid value
 	ag.SetSessionSpeed(sk, "fast")
-	result, _ = cmd.Execute(skCtx, Request{Args:"turbo"}, cc)
+	result, _ = cmd.Execute(skCtx, Request{Args: "turbo"}, cc)
 	if !strings.Contains(result.Text, "Invalid") {
 		t.Errorf("expected 'Invalid', got %q", result.Text)
 	}
@@ -289,7 +289,7 @@ func TestSpeedCommandUnsupportedModel(t *testing.T) {
 	cc := modelCC(ag)
 	cmd := SpeedCommand()
 
-	result, _ := cmd.Execute(skCtx, Request{Args:"fast"}, cc)
+	result, _ := cmd.Execute(skCtx, Request{Args: "fast"}, cc)
 	if !strings.Contains(result.Text, "not supported") {
 		t.Errorf("expected unsupported error, got %q", result.Text)
 	}
@@ -309,7 +309,6 @@ func TestSpeedCommandVisibility(t *testing.T) {
 	if cmd.Visible == nil {
 		t.Fatal("Visible should be set")
 	}
-
 
 	ag.SetSessionModel(sk, "anthropic/claude-haiku-4-5-20251001", "", "", nil)
 	if cmd.Visible(skCtx, Request{}, cc) {
@@ -339,7 +338,6 @@ func TestEffortCommandVisibility(t *testing.T) {
 		t.Fatal("Visible should be set")
 	}
 
-
 	ag.SetSessionModel(sk, "anthropic/claude-haiku-4-5-20251001", "", "", nil)
 	if cmd.Visible(skCtx, Request{}, cc) {
 		t.Error("Visible should return false for haiku")
@@ -362,7 +360,6 @@ func TestThinkingCommandVisibility(t *testing.T) {
 	if cmd.Visible == nil {
 		t.Fatal("Visible should be set")
 	}
-
 
 	ag.SetSessionModel(sk, "anthropic/claude-haiku-4-5-20251001", "", "", nil)
 	if cmd.Visible(skCtx, Request{}, cc) {

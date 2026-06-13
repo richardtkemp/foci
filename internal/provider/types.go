@@ -73,9 +73,9 @@ type ModelInfo struct {
 
 // ContentSource holds base64-encoded data for image and document content blocks.
 type ContentSource struct {
-	Type      string `json:"type"`       // "base64"
-	MimeType  string `json:"media_type"` // "image/jpeg", "image/png", "application/pdf", etc.
-	Data      string `json:"data"`       // base64-encoded data
+	Type     string `json:"type"`       // "base64"
+	MimeType string `json:"media_type"` // "image/jpeg", "image/png", "application/pdf", etc.
+	Data     string `json:"data"`       // base64-encoded data
 }
 
 // knownBlockTypes lists content block types fully modeled by struct fields.
@@ -93,18 +93,18 @@ var knownBlockTypes = map[string]bool{
 type ContentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
-	Thinking     string          `json:"thinking,omitempty"`  // thinking: internal reasoning text
-	Signature    string          `json:"signature,omitempty"` // thinking: encrypted verification signature (must be preserved)
-	Data         string          `json:"data,omitempty"`      // redacted_thinking: encrypted thinking data
-	Source       *ContentSource  `json:"source,omitempty"`    // image/document: base64 source
-	ID           string          `json:"id,omitempty"`        // tool_use / server_tool_use: block ID
-	Name         string          `json:"name,omitempty"`      // tool_use / server_tool_use: tool name
-	Input        json.RawMessage `json:"input,omitempty"`     // tool_use / server_tool_use: parameters
+	Thinking     string          `json:"thinking,omitempty"`    // thinking: internal reasoning text
+	Signature    string          `json:"signature,omitempty"`   // thinking: encrypted verification signature (must be preserved)
+	Data         string          `json:"data,omitempty"`        // redacted_thinking: encrypted thinking data
+	Source       *ContentSource  `json:"source,omitempty"`      // image/document: base64 source
+	ID           string          `json:"id,omitempty"`          // tool_use / server_tool_use: block ID
+	Name         string          `json:"name,omitempty"`        // tool_use / server_tool_use: tool name
+	Input        json.RawMessage `json:"input,omitempty"`       // tool_use / server_tool_use: parameters
 	ToolUseID    string          `json:"tool_use_id,omitempty"` // tool_result: references tool_use block
-	Content      string          `json:"content,omitempty"`   // tool_result: result text
-	IsError      bool            `json:"is_error,omitempty"`  // tool_result: error flag
-	ReasoningRaw json.RawMessage  `json:"-"`                   // OpenRouter reasoning_details (raw for pass-back)
-	Raw          json.RawMessage `json:"-"`                   // complete JSON for passthrough (server tool blocks)
+	Content      string          `json:"content,omitempty"`     // tool_result: result text
+	IsError      bool            `json:"is_error,omitempty"`    // tool_result: error flag
+	ReasoningRaw json.RawMessage `json:"-"`                     // OpenRouter reasoning_details (raw for pass-back)
+	Raw          json.RawMessage `json:"-"`                     // complete JSON for passthrough (server tool blocks)
 }
 
 // contentBlockAlias avoids infinite recursion in custom marshal/unmarshal.
@@ -118,7 +118,9 @@ func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
 	cb.Raw = append(json.RawMessage(nil), data...)
 
 	// Extract the type first to determine error handling strategy.
-	var peek struct{ Type string `json:"type"` }
+	var peek struct {
+		Type string `json:"type"`
+	}
 	_ = json.Unmarshal(data, &peek)
 
 	type alias contentBlockAlias
@@ -216,7 +218,9 @@ func (t *ToolDef) UnmarshalJSON(data []byte) error {
 
 // Name returns the tool name from the raw JSON (works for both custom and server tools).
 func (t ToolDef) Name() string {
-	var v struct{ Name string `json:"name"` }
+	var v struct {
+		Name string `json:"name"`
+	}
 	_ = json.Unmarshal(t.raw, &v)
 	return v.Name
 }
@@ -319,9 +323,9 @@ func mediaContentBlock(blockType, mimeType, base64Data string) ContentBlock {
 	return ContentBlock{
 		Type: blockType,
 		Source: &ContentSource{
-			Type:      "base64",
-			MimeType:  mimeType,
-			Data:      base64Data,
+			Type:     "base64",
+			MimeType: mimeType,
+			Data:     base64Data,
 		},
 	}
 }
@@ -348,8 +352,8 @@ func ToolResultBlock(toolUseID string, content string, isError bool) ContentBloc
 
 // SessionStats holds summary metrics for a session's message history.
 type SessionStats struct {
-	Messages   int // number of messages
-	Blocks     int // total content blocks across all messages
+	Messages    int // number of messages
+	Blocks      int // total content blocks across all messages
 	ApproxBytes int // approximate size in bytes (text + tool content)
 }
 
@@ -404,10 +408,10 @@ func ThinkingOf(blocks []ContentBlock) string {
 // APIError is returned when an LLM API responds with a non-200 status code.
 // Use errors.As to check for this type and inspect StatusCode or RetryAfter.
 type APIError struct {
-	StatusCode  int              // HTTP status code
-	Body        string           // response body
-	RetryAfter  string           // retry-after header value (seconds or date), empty if not present
-	WireRequest json.RawMessage  // SDK-serialized request body (for error payload logging)
+	StatusCode  int             // HTTP status code
+	Body        string          // response body
+	RetryAfter  string          // retry-after header value (seconds or date), empty if not present
+	WireRequest json.RawMessage // SDK-serialized request body (for error payload logging)
 }
 
 // Anthropic-specific HTTP status code for overloaded service.
@@ -433,7 +437,7 @@ func (e *APIError) IsOverloaded() bool {
 func (e *APIError) IsRetryable() bool {
 	switch e.StatusCode {
 	case http.StatusInternalServerError, // 500
-		http.StatusBadGateway,        // 502
+		http.StatusBadGateway,         // 502
 		http.StatusServiceUnavailable, // 503
 		statusOverloaded:              // 529
 		return true

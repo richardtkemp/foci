@@ -112,7 +112,6 @@ func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey
 	return Result{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
 }
 
-
 // DispatchCommand runs the full command dispatch pipeline: normalize dot-commands
 // to slash form, check for keyboard display, check for chain keyboard, then dispatch.
 // Returns a CommandOutcome describing what the platform should render.

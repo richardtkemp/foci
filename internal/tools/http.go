@@ -17,9 +17,9 @@ import (
 	"strings"
 
 	"foci/internal/log"
-	"foci/internal/tempdir"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
+	"foci/internal/tempdir"
 )
 
 type fileAttachment struct {
@@ -396,7 +396,6 @@ func normalizeContentType(ct string) string {
 	}
 	return ct
 }
-
 
 // getResponseBodyLimit determines the max response body size based on content type and options.
 func getResponseBodyLimit(contentType, saveTo string, maxResponseBytes int64) int64 {

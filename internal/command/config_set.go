@@ -9,12 +9,12 @@ import (
 
 // ConfigSetDeps holds dependencies for the /config set wizard and direct mode.
 type ConfigSetDeps struct {
-	Registry        *Registry // for activating wizard via SetWizard
-	ConfigPath      string
-	AgentID         string // current agent's ID, for targeting [[agents]] block
-	SectionsFn      func() []string
-	FieldsInSection func(section string) []config.ConfigField
-	LookupFn        func(sectionKey string) (config.ConfigField, bool)
+	Registry         *Registry // for activating wizard via SetWizard
+	ConfigPath       string
+	AgentID          string // current agent's ID, for targeting [[agents]] block
+	SectionsFn       func() []string
+	FieldsInSection  func(section string) []config.ConfigField
+	LookupFn         func(sectionKey string) (config.ConfigField, bool)
 	SetInFileFn      func(path string, target config.SetTarget, value string) (string, error)
 	EffectiveValueFn func(section, key string) string // returns the running value (includes defaults)
 }

@@ -79,7 +79,7 @@ func TestNormalizeWarning(t *testing.T) {
 		{"mixed", "host 10.0.0.1 error 42 ref abcdef12", "host <IP> error <N> ref <HEX>"},
 		{"no_change", "something went wrong", "something went wrong"},
 		{"single_digit", "retry 5 times", "retry 5 times"}, // single digit not replaced
-		{"short_hex", "code abc12", "code abc<N>"},          // too short for hex
+		{"short_hex", "code abc12", "code abc<N>"},         // too short for hex
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -166,8 +166,8 @@ func TestQueue_Dedup_DifferentKeysIndependent(t *testing.T) {
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	q.Push("WARN", "telegram", "error A")
-	q.Push("WARN", "telegram", "error A") // suppressed
-	q.Push("WARN", "config", "error A")   // different component = different key
+	q.Push("WARN", "telegram", "error A")  // suppressed
+	q.Push("WARN", "config", "error A")    // different component = different key
 	q.Push("ERROR", "telegram", "error A") // different level = different key
 
 	if q.Len() != 3 {

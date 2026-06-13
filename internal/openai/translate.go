@@ -151,7 +151,7 @@ func assistantMessageToOpenAI(blocks []provider.ContentBlock) openai.ChatComplet
 				reasoningRaw = b.ReasoningRaw
 			}
 
-		// Skip redacted_thinking, server_tool_use — OpenAI-incompatible
+			// Skip redacted_thinking, server_tool_use — OpenAI-incompatible
 		}
 	}
 

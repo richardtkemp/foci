@@ -21,8 +21,8 @@ const expiredInteractiveText = "⌛ This request expired."
 
 // interactiveMsg stores the state for an active interactive message.
 type interactiveMsg struct {
-	bs       ButtonSender    // who to call to edit the message later (e.g. for cancellation)
-	msgID    string          // platform-side message ID, used by CancelInteractiveMessage
+	bs       ButtonSender // who to call to edit the message later (e.g. for cancellation)
+	msgID    string       // platform-side message ID, used by CancelInteractiveMessage
 	buttons  []ButtonChoice
 	callback ButtonCallback
 	onExpire func() // resolves the upstream waiter on expiry (e.g. deny to CC); nil = no-op

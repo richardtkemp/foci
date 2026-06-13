@@ -263,9 +263,9 @@ func TestExtractEndToEnd(t *testing.T) {
 
 // mockRunner implements OneShotRunner for testing.
 type mockRunner struct {
-	response    string
-	err         error
-	gotPrompt   string
+	response     string
+	err          error
+	gotPrompt    string
 	gotSysPrompt string
 }
 

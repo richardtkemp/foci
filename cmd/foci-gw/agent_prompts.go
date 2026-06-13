@@ -12,14 +12,14 @@ import (
 // exist. This gives users editable copies they can customise.
 func seedDefaultPrompts(dir string, fileMode os.FileMode) {
 	promptFiles := map[string]func() string{
-		"keepalive.md":                    prompts.Keepalive,
-		"background.md":                   prompts.Background,
-		"reflection.md":                   prompts.Reflection,
-		"memory-consolidation.md":         prompts.MemoryConsolidation,
-		"compaction-summary.md":           prompts.CompactionSummary,
-		"compaction-handoff.md":           prompts.CompactionHandoff,
-		"branch-orientation-headless.md":  prompts.BranchOrientationHeadless,
-		"branch-orientation-facet.md": prompts.BranchOrientationFacet,
+		"keepalive.md":                   prompts.Keepalive,
+		"background.md":                  prompts.Background,
+		"reflection.md":                  prompts.Reflection,
+		"memory-consolidation.md":        prompts.MemoryConsolidation,
+		"compaction-summary.md":          prompts.CompactionSummary,
+		"compaction-handoff.md":          prompts.CompactionHandoff,
+		"branch-orientation-headless.md": prompts.BranchOrientationHeadless,
+		"branch-orientation-facet.md":    prompts.BranchOrientationFacet,
 		"weekly-character-review.md":     prompts.WeeklyCharacterReview,
 	}
 

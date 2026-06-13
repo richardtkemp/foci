@@ -62,13 +62,13 @@ func TestBitwardenSearchTool(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result.Text,"GitHub API") {
+	if !strings.Contains(result.Text, "GitHub API") {
 		t.Errorf("result should contain item name: %s", result.Text)
 	}
-	if !strings.Contains(result.Text,"aaaa-1111") {
+	if !strings.Contains(result.Text, "aaaa-1111") {
 		t.Errorf("result should contain item ID: %s", result.Text)
 	}
-	if !strings.Contains(result.Text,"api.github.com") {
+	if !strings.Contains(result.Text, "api.github.com") {
 		t.Errorf("result should contain URI: %s", result.Text)
 	}
 }
@@ -86,7 +86,7 @@ func TestBitwardenSearchEmpty(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result.Text,"No matching") {
+	if !strings.Contains(result.Text, "No matching") {
 		t.Errorf("expected 'No matching' message: %s", result.Text)
 	}
 }
@@ -107,10 +107,10 @@ func TestBitwardenUnlockTool(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result.Text,"Unlocked") {
+	if !strings.Contains(result.Text, "Unlocked") {
 		t.Errorf("result should confirm unlock: %s", result.Text)
 	}
-	if !strings.Contains(result.Text,"{{secret:bw.aaaa-1111}}") {
+	if !strings.Contains(result.Text, "{{secret:bw.aaaa-1111}}") {
 		t.Errorf("result should show template syntax: %s", result.Text)
 	}
 }
@@ -151,7 +151,7 @@ func TestBitwardenUnlockNeverReturnsValue(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if strings.Contains(result.Text,"ghp_supersecret123") {
+	if strings.Contains(result.Text, "ghp_supersecret123") {
 		t.Error("tool result MUST NOT contain the actual secret value")
 	}
 }

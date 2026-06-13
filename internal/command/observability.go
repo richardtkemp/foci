@@ -694,4 +694,3 @@ func countContextTokens(ctx context.Context, cc CommandContext, sk, model string
 		Sections:     sectionTokens,
 	}, nil
 }
-

@@ -152,10 +152,10 @@ type CommandContext struct {
 
 // TokenCountCache caches token counting results so /context doesn't re-count every call.
 type TokenCountCache struct {
-	mu        sync.Mutex
-	counts    *TokenCounts
-	msgCount  int
-	sysChars  int
+	mu       sync.Mutex
+	counts   *TokenCounts
+	msgCount int
+	sysChars int
 }
 
 // NewTokenCountCache creates a new token count cache.

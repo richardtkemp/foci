@@ -42,42 +42,42 @@ func TestConnectionManagerInterface(t *testing.T) {
 
 type mockSender struct{}
 
-func (m *mockSender) SessionKey() string                                       { return "" }
-func (m *mockSender) SendText(text string) error                            { return nil }
-func (m *mockSender) SendDocument(filePath, caption string) error              { return nil }
-func (m *mockSender) SendVoice(filePath string) error                          { return nil }
-func (m *mockSender) SendVideo(filePath, caption string) error                 { return nil }
-func (m *mockSender) SendPhoto(filePath, caption string) error                 { return nil }
-func (m *mockSender) SendAudio(filePath, caption string) error                 { return nil }
-func (m *mockSender) SendAnimation(filePath, caption string) error             { return nil }
-func (m *mockSender) SendVoiceData(audioData []byte) error                     { return nil }
-func (m *mockSender) SendTextToChat(chatID int64, text string) error        { return nil }
+func (m *mockSender) SessionKey() string                                               { return "" }
+func (m *mockSender) SendText(text string) error                                       { return nil }
+func (m *mockSender) SendDocument(filePath, caption string) error                      { return nil }
+func (m *mockSender) SendVoice(filePath string) error                                  { return nil }
+func (m *mockSender) SendVideo(filePath, caption string) error                         { return nil }
+func (m *mockSender) SendPhoto(filePath, caption string) error                         { return nil }
+func (m *mockSender) SendAudio(filePath, caption string) error                         { return nil }
+func (m *mockSender) SendAnimation(filePath, caption string) error                     { return nil }
+func (m *mockSender) SendVoiceData(audioData []byte) error                             { return nil }
+func (m *mockSender) SendTextToChat(chatID int64, text string) error                   { return nil }
 func (m *mockSender) SendDocumentToChat(chatID int64, filePath, caption string) error  { return nil }
-func (m *mockSender) SendVoiceToChat(chatID int64, filePath string) error             { return nil }
-func (m *mockSender) SendVideoToChat(chatID int64, filePath, caption string) error    { return nil }
-func (m *mockSender) SendPhotoToChat(chatID int64, filePath, caption string) error    { return nil }
-func (m *mockSender) SendAudioToChat(chatID int64, filePath, caption string) error    { return nil }
+func (m *mockSender) SendVoiceToChat(chatID int64, filePath string) error              { return nil }
+func (m *mockSender) SendVideoToChat(chatID int64, filePath, caption string) error     { return nil }
+func (m *mockSender) SendPhotoToChat(chatID int64, filePath, caption string) error     { return nil }
+func (m *mockSender) SendAudioToChat(chatID int64, filePath, caption string) error     { return nil }
 func (m *mockSender) SendAnimationToChat(chatID int64, filePath, caption string) error { return nil }
-func (m *mockSender) SendVoiceDataToChat(chatID int64, audioData []byte) error        { return nil }
+func (m *mockSender) SendVoiceDataToChat(chatID int64, audioData []byte) error         { return nil }
 
 type mockConnection struct {
 	*mockSender
 }
 
-func (m *mockConnection) PlatformName() string                 { return "mock" }
-func (m *mockConnection) SessionKeyForChat(chatID int64) string { return "" }
-func (m *mockConnection) DefaultSessionKey() string             { return "" }
-func (m *mockConnection) SetSessionKey(key string)              {}
-func (m *mockConnection) SetSessionKeyDirect(key string)        {}
-func (m *mockConnection) SetChatID(chatID int64)                {}
-func (m *mockConnection) ChatID() int64                         { return 0 }
-func (m *mockConnection) Username() string                      { return "" }
-func (m *mockConnection) UpdateChatSessionKey(int64, string)     {}
+func (m *mockConnection) PlatformName() string                      { return "mock" }
+func (m *mockConnection) SessionKeyForChat(chatID int64) string     { return "" }
+func (m *mockConnection) DefaultSessionKey() string                 { return "" }
+func (m *mockConnection) SetSessionKey(key string)                  {}
+func (m *mockConnection) SetSessionKeyDirect(key string)            {}
+func (m *mockConnection) SetChatID(chatID int64)                    {}
+func (m *mockConnection) ChatID() int64                             { return 0 }
+func (m *mockConnection) Username() string                          { return "" }
+func (m *mockConnection) UpdateChatSessionKey(int64, string)        {}
 func (m *mockConnection) SendInjectedMessage(sk, text string) error { return nil }
 func (m *mockConnection) SendToSession(sk, text string) error       { return nil }
-func (m *mockConnection) SendNotification(text string)            {}
+func (m *mockConnection) SendNotification(text string)              {}
 func (m *mockConnection) SendNotificationDirect(text string) string { return "" }
-func (m *mockConnection) SetTyping(bool)                           {}
+func (m *mockConnection) SetTyping(bool)                            {}
 
 type mockHandler struct{}
 
@@ -99,9 +99,9 @@ func (p *mockProvider) IsConfigured(*config.Config) (bool, string)              
 func (p *mockProvider) Init(ProviderDeps) error                                 { return nil }
 func (p *mockProvider) ConnectionManager() ConnectionManager                    { return &noopConnMgr{} }
 func (p *mockProvider) SetupAgentConnection(AgentConnectionParams) *SetupResult { return nil }
-func (p *mockProvider) SetupSharedFacet(SharedFacetParams)              {}
-func (p *mockProvider) RestoreFacetSessions(RestoreParams)                  {}
-func (p *mockProvider) SetLifecycleCallback(string, LifecycleEvent, func())    {}
+func (p *mockProvider) SetupSharedFacet(SharedFacetParams)                      {}
+func (p *mockProvider) RestoreFacetSessions(RestoreParams)                      {}
+func (p *mockProvider) SetLifecycleCallback(string, LifecycleEvent, func())     {}
 func (p *mockProvider) ToolDetailStore() ToolDetailStore                        { return nil }
 func (p *mockProvider) AgentPreFlight(string) []string                          { return nil }
 func (p *mockProvider) DefaultPlatformConfig() config.PlatformConfig            { return config.PlatformConfig{} }

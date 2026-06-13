@@ -37,34 +37,34 @@ type Constraint struct {
 // globalSections maps TOML section names to their Go struct types.
 // Used by the reflection-based field registry builder.
 var globalSections = map[string]reflect.Type{
-	"notify":           reflect.TypeOf(NotifyConfig{}),
-	"display":          reflect.TypeOf(DisplayConfig{}),
-	"nudge":            reflect.TypeOf(NudgeConfig{}),
-	"voice":            reflect.TypeOf(VoiceConfig{}),
-	"agent_loop":       reflect.TypeOf(AgentLoopConfig{}),
-	"behavior":         reflect.TypeOf(BehaviorConfig{}),
-	"sessions":         reflect.TypeOf(SessionsConfig{}),
-	"tools":            reflect.TypeOf(ToolsConfig{}),
-	"browser":          reflect.TypeOf(BrowserConfig{}),
-	"keepalive":        reflect.TypeOf(KeepaliveConfig{}),
-	"background":       reflect.TypeOf(BackgroundConfig{}),
-	"reflection":      reflect.TypeOf(ReflectionConfig{}),
-	"mana":             reflect.TypeOf(ManaConfig{}),
-	"debug":            reflect.TypeOf(DebugConfig{}),
-	"logging":          reflect.TypeOf(LoggingConfig{}),
-	"memory":           reflect.TypeOf(MemoryConfig{}),
-	"http":             reflect.TypeOf(HTTPConfig{}),
-	"database":         reflect.TypeOf(DatabaseConfig{}),
-	"environment":      reflect.TypeOf(EnvironmentConfig{}),
-	"anthropic":        reflect.TypeOf(AnthropicConfig{}),
-	"platforms":        reflect.TypeOf(PlatformConfig{}),
-	"resources":        reflect.TypeOf(ResourcesConfig{}),
+	"notify":      reflect.TypeOf(NotifyConfig{}),
+	"display":     reflect.TypeOf(DisplayConfig{}),
+	"nudge":       reflect.TypeOf(NudgeConfig{}),
+	"voice":       reflect.TypeOf(VoiceConfig{}),
+	"agent_loop":  reflect.TypeOf(AgentLoopConfig{}),
+	"behavior":    reflect.TypeOf(BehaviorConfig{}),
+	"sessions":    reflect.TypeOf(SessionsConfig{}),
+	"tools":       reflect.TypeOf(ToolsConfig{}),
+	"browser":     reflect.TypeOf(BrowserConfig{}),
+	"keepalive":   reflect.TypeOf(KeepaliveConfig{}),
+	"background":  reflect.TypeOf(BackgroundConfig{}),
+	"reflection":  reflect.TypeOf(ReflectionConfig{}),
+	"mana":        reflect.TypeOf(ManaConfig{}),
+	"debug":       reflect.TypeOf(DebugConfig{}),
+	"logging":     reflect.TypeOf(LoggingConfig{}),
+	"memory":      reflect.TypeOf(MemoryConfig{}),
+	"http":        reflect.TypeOf(HTTPConfig{}),
+	"database":    reflect.TypeOf(DatabaseConfig{}),
+	"environment": reflect.TypeOf(EnvironmentConfig{}),
+	"anthropic":   reflect.TypeOf(AnthropicConfig{}),
+	"platforms":   reflect.TypeOf(PlatformConfig{}),
+	"resources":   reflect.TypeOf(ResourcesConfig{}),
 }
 
 // configFields and fieldConstraints are populated at init time by reflection
 // over struct tags. Fields opt in to the registry via the `desc:"..."` tag.
 var (
-	configFields    []ConfigField
+	configFields     []ConfigField
 	fieldConstraints map[string]Constraint
 )
 
