@@ -30,7 +30,7 @@ import (
 // aggressive test using CCSTUB_FAIL_ON_RESUME is left for follow-up
 // once the harness exposes per-test env-var injection.)
 func TestL2_Lifecycle_RestartAfterStubExit(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9999},

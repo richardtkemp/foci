@@ -25,7 +25,7 @@ import (
 // Telegram bridge to the stub's recorded sendMessage calls. Test polls
 // until the recorded sendMessage body contains the echo prefix.
 func TestL2_Egress_AssistantReplyReachesTelegram(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 5555},
@@ -83,7 +83,7 @@ func TestL2_Egress_AssistantReplyReachesTelegram(t *testing.T) {
 // CC-harness-internal task-notification injection produced assistant
 // text outside any foci-side user message.
 func TestL2_Egress_LateAssistantTextReachesTelegram(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 5556},
@@ -94,8 +94,8 @@ func TestL2_Egress_LateAssistantTextReachesTelegram(t *testing.T) {
 	const firstReply = "first reply from turn"
 	const lateReply = "this is the late reply"
 	scriptBody, err := json.Marshal(map[string]any{
-		"text":       firstReply,
-		"late_text":  lateReply,
+		"text":      firstReply,
+		"late_text": lateReply,
 	})
 	if err != nil {
 		t.Fatalf("marshal script body: %v", err)
@@ -196,7 +196,7 @@ func TestL2_Egress_LateAssistantTextReachesTelegram(t *testing.T) {
 // by the result envelope. Passes on current code; locks in the shape so a
 // future regression in OnReply's delivery path is caught.
 func TestL2_Egress_SilentIntermediateThenRealReplyReachesTelegram(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 5557},
@@ -261,7 +261,7 @@ func TestL2_Egress_SilentIntermediateThenRealReplyReachesTelegram(t *testing.T) 
 // sentinel stripped. This test asserts that — so it FAILS on current code
 // (the marker leaks) and PASSES once the trim fix lands.
 func TestL2_Egress_TrailingSentinelStrippedNonStreaming(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 5560},
@@ -328,7 +328,7 @@ func TestL2_Egress_TrailingSentinelStrippedNonStreaming(t *testing.T) {
 // the committed message excludes the marker — FAILS on current code, PASSES
 // after the fix.
 func TestL2_Egress_TrailingSentinelStrippedStreaming(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 5561},

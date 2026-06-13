@@ -4,6 +4,11 @@ BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 GOBIN ?= $(shell go env GOPATH)/bin
 NPROC := $(shell nproc 2>/dev/null || echo 4)
+# -parallel ceiling for L2 integration tests. Set well above the real
+# governor — the weighted budget in internal/testharness/parallel.go
+# (loadPerCPU * NumCPU) — so the flag never binds before the semaphore.
+# Scales with the host; the semaphore caps actual concurrency.
+IPARALLEL := $(shell expr $(NPROC) \* 8)
 
 LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
@@ -54,7 +59,24 @@ integration:
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
 	$(eval TESTDIR := /tmp/foci/integration-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
-	@TMPDIR=$(TESTDIR) go test -tags=integration -count=1 -timeout 300s ./test/integration/... ./internal/testharness/... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+	@TMPDIR=$(TESTDIR) go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) ./test/integration/... ./internal/testharness/... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+
+# bucket-audit: the differential half of weight-bucket detection. Runs the
+# L2 suite at low (-parallel=2) and high (-parallel=IPARALLEL) concurrency
+# and surfaces, from each pass, the tests that FAILED plus the in-run weight
+# auditor's advisories. A wait-weighted test that is green-and-flat at low
+# but fails/inflates at high is contention-sensitive and wants a heavier
+# weight; that is the signal a single run can't see. Advisory tool, not a
+# gate — read the two passes side by side.
+bucket-audit:
+	@echo "=== bucket-audit: low vs high parallelism ==="
+	$(eval TESTDIR := /tmp/foci/bktaudit-$(shell date +%s))
+	@mkdir -p $(TESTDIR)
+	@echo "--- low (-parallel=2) ---"
+	-@TMPDIR=$(TESTDIR) go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
+	@echo "--- high (-parallel=$(IPARALLEL)) ---"
+	-@TMPDIR=$(TESTDIR) go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
+	@rm -rf $(TESTDIR)
 
 coverage:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
@@ -145,6 +167,17 @@ lint: find-disconnected-tests
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@./bin/find-disconnected-tests ./...
+	@echo "=== integration parallel-bucket gate (no bare t.Parallel) ==="
+	@# Every L2 test must declare a concurrency weight via testharness.Parallel*
+	@# (ParallelWait/ParallelHeavy/ParallelWeight) so it is throttled by the
+	@# weighted budget and covered by the bucket auditor. A bare t.Parallel()
+	@# runs unthrottled and silently escapes both — forbid it here since
+	@# forbidigo is disabled for _test.go files.
+	@bad=$$(grep -rnE '^[[:space:]]*t\.Parallel\(\)' test/integration/ || true); \
+	if [ -n "$$bad" ]; then \
+		echo "bare t.Parallel() in L2 tests — use testharness.ParallelWait/ParallelHeavy/ParallelWeight:"; \
+		echo "$$bad"; exit 1; \
+	fi
 
 lint-fix:
 	@echo "=== golangci-lint --fix ==="

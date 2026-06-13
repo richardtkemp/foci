@@ -124,9 +124,9 @@ func userMessagesForWorkdir(entries []recorderEntry, workdirSubstr string) []rec
 // registry walk is wired through the interceptor and that the reply
 // path bypasses cc-stub entirely.
 func TestL2_SlashCommands_HelpListsRegisteredCommands(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7001}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7001}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	pushTelegramText(t, h, "alpha", 7001, "/help")
@@ -147,9 +147,9 @@ func TestL2_SlashCommands_HelpListsRegisteredCommands(t *testing.T) {
 // after the command runs, so we are not paying mana for a model
 // turn on a foci-internal command.
 func TestL2_SlashCommands_HelpDoesNotInvokeCCStub(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7002}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7002}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	token := h.AgentBotToken("alpha")
@@ -197,9 +197,9 @@ func TestL2_SlashCommands_HelpDoesNotInvokeCCStub(t *testing.T) {
 // produces a "pong" sendMessage with a timestamp. Bare smoke test
 // for the command dispatch path.
 func TestL2_SlashCommands_PingReturnsPong(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7003}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7003}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	pushTelegramText(t, h, "alpha", 7003, "/ping")
@@ -216,9 +216,9 @@ func TestL2_SlashCommands_PingReturnsPong(t *testing.T) {
 // to type on a phone keyboard). Asserts the same sendMessage shape as
 // the slash form.
 func TestL2_SlashCommands_DotPrefixAlias(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7004}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7004}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	pushTelegramText(t, h, "alpha", 7004, ".ping")
@@ -236,9 +236,9 @@ func TestL2_SlashCommands_DotPrefixAlias(t *testing.T) {
 // user_message containing the literal ".something". This protects
 // against the dot-prefix alias eating common phone-typed messages.
 func TestL2_SlashCommands_DotPrefixNonCommandPassesThrough(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7005}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7005}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	const literal = ".nottacommand"
@@ -259,9 +259,9 @@ func TestL2_SlashCommands_DotPrefixNonCommandPassesThrough(t *testing.T) {
 // reply built from the registry's Levenshtein-distance suggester. The
 // reply MUST come via sendMessage; cc-stub MUST NOT be invoked.
 func TestL2_SlashCommands_UnknownCommandSuggestsAlternatives(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7006}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7006}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	// "/halp" should be within edit distance of /help.
@@ -288,9 +288,9 @@ func TestL2_SlashCommands_UnknownCommandSuggestsAlternatives(t *testing.T) {
 // the recorder under a *different* session id than before the reset,
 // proving the session key rotated.
 func TestL2_SlashCommands_ResetClearsSession(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7007}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7007}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	token := h.AgentBotToken("alpha")
@@ -350,7 +350,7 @@ func TestL2_SlashCommands_ResetClearsSession(t *testing.T) {
 // ("Session reset (hard)...") must arrive without the original turn
 // ever completing.
 func TestL2_SlashCommands_ResetHardCancelsInflightTurn(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const userID = 8511
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -395,9 +395,9 @@ func TestL2_SlashCommands_ResetHardCancelsInflightTurn(t *testing.T) {
 // (ReloadCommand's reply formatting is covered by the unit test
 // TestReloadCommand_ReplyFormat in internal/command.)
 func TestL2_SlashCommands_ReloadRejectedForDelegatedAgent(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7009}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7009}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	pushTelegramText(t, h, "alpha", 7009, "/reload")
@@ -426,7 +426,7 @@ func TestL2_SlashCommands_ReloadRejectedForDelegatedAgent(t *testing.T) {
 // the log with a mix of INFO/WARN/ERROR lines and asserts the reply
 // contains the WARN and ERROR but not the INFO entries.
 func TestL2_SlashCommands_ErrorsTailsEventLog(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	tempDir := t.TempDir()
 	logPath := tempDir + "/test-events.log"
 	// Seed a deterministic log: 1 INFO, 1 WARN, 1 ERROR. /errors should
@@ -475,7 +475,7 @@ func TestL2_SlashCommands_ErrorsTailsEventLog(t *testing.T) {
 // for the comment in the original placeholder: "should return recent
 // ERROR/WARN log lines, not 404".
 func TestL2_SlashCommands_ErrorsMissingLogFile(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Reachability note: foci-gw writes its own startup warnings (e.g.
 	// missing-secret warnings) to whatever [logging].event_file is
 	// configured. By the time /errors runs, the file has already been
@@ -523,7 +523,7 @@ func TestL2_SlashCommands_ErrorsMissingLogFile(t *testing.T) {
 // TestL2_SlashCommands_ErrorsRespectsLineCountArg proves /errors 5
 // honours its line-count arg and caps the reply at 5 matching lines.
 func TestL2_SlashCommands_ErrorsRespectsLineCountArg(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	tempDir := t.TempDir()
 	logPath := tempDir + "/test-events.log"
 	// Seed 8 distinct WARN lines so we can verify the cap of 5.
@@ -595,7 +595,7 @@ func TestL2_SlashCommands_ErrorsRespectsLineCountArg(t *testing.T) {
 // command" via the suggester — NOT as a panic and NOT as a fake
 // percentage.
 func TestL2_SlashCommands_ManaReportsNoProviderSupport(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Premise correction: the harness configures the agent with
 	// backend="claude-code" (delegated/ccstream), and the ccstream
 	// agent wiring in cmd/foci-gw/agents_delegated.go sets
@@ -606,7 +606,7 @@ func TestL2_SlashCommands_ManaReportsNoProviderSupport(t *testing.T) {
 	// manaCheck takes the FormatPercent("") branch and replies
 	// "<emoji> Mana: unknown".
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7012}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7012}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	pushTelegramText(t, h, "alpha", 7012, "/mana")
@@ -652,7 +652,7 @@ func TestL2_SlashCommands_ManaReportsNoProviderSupport(t *testing.T) {
 // api log with two synthetic entries dated today; asserts both
 // session names appear and the total matches the seeded sum.
 func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// writeTestConfig DOES emit [logging].api_file pointing at the
 	// harness LogsDir (gateway_config.go:84); Harness.LogsDir() exposes
 	// the directory. /cost today reads via log.ReadAPILog fresh on every
@@ -701,9 +701,9 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 // string listing the supported subcommands rather than crashing or
 // dispatching to cc-stub.
 func TestL2_SlashCommands_CostUnknownPeriodShowsUsage(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7014}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7014}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	pushTelegramText(t, h, "alpha", 7014, "/cost banana")
@@ -739,9 +739,9 @@ func TestL2_SlashCommands_CostUnknownPeriodShowsUsage(t *testing.T) {
 // (default)" — confirms the displayMode reverse-mapping from CC's
 // "default" wire value to the user-friendly "normal" label.
 func TestL2_SlashCommands_ModeBareShowsCurrent(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7015}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7015}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	// Bare /mode triggers the keyboard render (KeyboardOptions returns
@@ -777,9 +777,9 @@ func TestL2_SlashCommands_ModeBareShowsCurrent(t *testing.T) {
 // bare-query must report "accept" — proving the session metadata
 // actually changed.
 func TestL2_SlashCommands_ModeSwitchToAccept(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7016}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7016}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	token := h.AgentBotToken("alpha")
@@ -820,9 +820,9 @@ func TestL2_SlashCommands_ModeSwitchToAccept(t *testing.T) {
 // options hint, without mutating session metadata. A follow-up bare
 // /mode must still report the previous mode.
 func TestL2_SlashCommands_ModeInvalidValueReturnsError(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7017}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7017}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	token := h.AgentBotToken("alpha")
@@ -859,9 +859,9 @@ func TestL2_SlashCommands_ModeInvalidValueReturnsError(t *testing.T) {
 // and a WARN line in foci-gw stderr. Protects against replay storms
 // after a foci restart drains old getUpdates.
 func TestL2_SlashCommands_StaleCommandDropped(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7018}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7018}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	token := h.AgentBotToken("alpha")
@@ -914,9 +914,9 @@ func TestL2_SlashCommands_StaleCommandDropped(t *testing.T) {
 // regressions where a future change forwards command text into the
 // agent pipeline.
 func TestL2_SlashCommands_NeverReachCCStub(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7019}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7019}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	token := h.AgentBotToken("alpha")
@@ -969,9 +969,9 @@ func TestL2_SlashCommands_NeverReachCCStub(t *testing.T) {
 // escape hatch documented for running CC's own slash commands like
 // /pass /context.
 func TestL2_SlashCommands_PassForwardsToBackend(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7020}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7020}},
 		ReadyTimeout: 30 * time.Second,
 	})
 
@@ -1014,9 +1014,9 @@ func TestL2_SlashCommands_PassForwardsToBackend(t *testing.T) {
 // text. Negative path: // sent before any prior message must reply
 // "no previous message to repeat".
 func TestL2_SlashCommands_RepeatResendsLastMessage(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7021}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7021}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	token := h.AgentBotToken("alpha")
@@ -1072,9 +1072,9 @@ func TestL2_SlashCommands_RepeatResendsLastMessage(t *testing.T) {
 // build-info plumbing reaches the command without going through
 // cc-stub.
 func TestL2_SlashCommands_VersionReportsBuildInfo(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7022}},
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7022}},
 		ReadyTimeout: 30 * time.Second,
 	})
 	pushTelegramText(t, h, "alpha", 7022, "/version")
@@ -1107,7 +1107,7 @@ func TestL2_SlashCommands_VersionReportsBuildInfo(t *testing.T) {
 // though the original message would otherwise have hung the worker
 // goroutine indefinitely.
 func TestL2_SlashCommands_StopCancelsInflightTurn(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const userID = 8512
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -1139,4 +1139,3 @@ func TestL2_SlashCommands_StopCancelsInflightTurn(t *testing.T) {
 			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
 	}
 }
-
