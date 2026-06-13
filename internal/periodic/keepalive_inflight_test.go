@@ -247,10 +247,10 @@ func TestMaybeConsolidation_SkipsWhenTurnInFlight(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		reflectCfg: config.ResolvedReflection{
-			ConsolidationEnabled:  true,
-			ConsolidationInterval: "1h",
-			ConsolidationPrompt:   "memory-consolidation.md",
+		maintCfg: config.ResolvedMaintenance{
+			ConsolidationEnabled: true,
+			ConsolidationTime:    "1h",
+			ConsolidationPrompt:  "memory-consolidation.md",
 		},
 		lastInteraction:   now.Add(-30 * time.Minute),
 		lastConsolidation: now.Add(-2 * time.Hour),

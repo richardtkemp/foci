@@ -215,8 +215,11 @@ Set globally in `[reflection]` or per-agent in `[[agents.reflection]]`.
 interval_enabled = true
 interval = "1h"
 session_end_enabled = true
+
+[maintenance]
 consolidation_enabled = true
-consolidation_interval = "20h"
+consolidation_time = "20h"   # or "04:00" for daily at 4am
+reset_time = ""              # e.g. "04:20" for a daily soft /reset
 ```
 
 | Key | Type | Default | Description |
@@ -226,9 +229,16 @@ consolidation_interval = "20h"
 | `interval_prompt` | string | `""` | Prompt override. `""` = embedded default, `"none"` = disabled, file path = custom prompt. |
 | `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and facet reclaim. |
 | `session_end_prompt` | string | `""` | Prompt override (same 3-state resolution). |
+
+Consolidation and the daily reset live in `[maintenance]` (or per-agent `[[agents.maintenance]]`):
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
 | `consolidation_enabled` | bool | `true` | Enable periodic MEMORY.md curation. |
-| `consolidation_interval` | string | `"20h"` | Minimum time between consolidation runs. Persisted across restarts. |
+| `consolidation_time` | string | `"20h"` | `"HH:MM"` daily or a duration like `"20h"`. Persisted across restarts. |
 | `consolidation_prompt` | string | `""` | Prompt override (same 3-state resolution). |
+| `reset_time` | string | `""` | Daily soft `/reset`: `"HH:MM"`, a duration, or `""` to disable. |
+| `reset_idle_guard` | string | `"55m"` | Skip the scheduled reset if the user was active within this window. |
 
 ### Prompt Customization
 
@@ -269,10 +279,10 @@ Periodic curation of `MEMORY.md` from recent daily memory files. Uses the prompt
 ### When It Runs
 
 Consolidation fires when:
-1. `consolidation_interval` has elapsed since the last run
-2. There's been user activity within the last hour
+1. `consolidation_time` is due — either the daily `"HH:MM"` clock time has arrived, or the configured duration has elapsed since the last run
+2. The user has been active within the last hour
 
-The last-run timestamp is persisted in state, so it survives restarts.
+The last-run timestamp is persisted in state, so it survives restarts. Configured under `[maintenance]` (was `[reflection].consolidation_interval` before the rename).
 
 ---
 

@@ -606,7 +606,9 @@ Creates a branch session that picks up the highest-priority background todo item
 
 **Memory formation** — Periodic memory capture. Fires when `interval` (default 1h) has elapsed since last formation and user activity occurred within that window. Captures conversation memories to daily files.
 
-**Memory consolidation** — MEMORY.md curation. Fires when `consolidation_interval` (default 20h) has elapsed since last run and user was active within the last hour. Reviews daily memory files and curates MEMORY.md. Last-run timestamp persisted in state store.
+**Memory consolidation** — MEMORY.md curation. Fires when `[maintenance].consolidation_time` is due — a daily `"HH:MM"` clock time or an elapsed duration (default `"20h"`) — and the user was active within the last hour. Reviews daily memory files and curates MEMORY.md. Last-run timestamp persisted in state store.
+
+**Scheduled reset** — `[maintenance].reset_time` (default off) fires a daily soft `/reset` (memory formation + key rotation) at an `"HH:MM"` clock time or duration, skipped if the user was active within `reset_idle_guard` (default `"55m"`).
 
 **Manamometer** — Linear interpolation of expected mana over the 5-hour budget window. After `invest_interval` (default 30m) of quiet to let the cache build, the expected mana line drops linearly from 100% to 0% at window end. Work fires when actual mana exceeds expected mana. Near reset, even tiny mana is "in credit" since the budget resets soon.
 

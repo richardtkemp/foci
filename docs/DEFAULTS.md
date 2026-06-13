@@ -45,9 +45,16 @@ Tilde expansion (`~/...`) is handled automatically.
 |---------|---------|-------------|
 | `interval_enabled` | `true` (nil) | Periodic memory capture enabled |
 | `interval` | `"1h"` | Time between captures |
-| `consolidation_enabled` | `true` (nil) | MEMORY.md curation enabled |
-| `consolidation_interval` | `"20h"` | Minimum time between consolidations |
 | `session_end_enabled` | `true` (nil) | Capture on /reset and reclaim |
+
+Memory consolidation and the daily session reset live in `[maintenance]`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `consolidation_enabled` | `true` (nil) | MEMORY.md curation enabled |
+| `consolidation_time` | `"20h"` | `"HH:MM"` daily or a duration (e.g. `"20h"`) |
+| `reset_time` | `""` | Daily soft `/reset`: `"HH:MM"`, a duration, or `""` to disable |
+| `reset_idle_guard` | `"55m"` | Skip scheduled reset if user active within this window |
 
 All `*_enabled` fields use `*bool` — `nil` means `true`. Set to explicit `false` to disable.
 

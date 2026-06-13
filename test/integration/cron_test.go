@@ -889,7 +889,7 @@ func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
 
 // TestL2_Cron_ConsolidationFiresOnLongerInterval proves consolidation
 // dispatches via RunOnceFunc (when set) or branchFn (otherwise) with
-// the memory-consolidation prompt. With a short ConsolidationInterval
+// the memory-consolidation prompt. With a short ConsolidationTime
 // and recent interaction, the scheduler should call the RunOnce path
 // once per interval. Asserts on the recorder for a consolidation
 // prompt invocation in the agent's workdir.
@@ -904,7 +904,7 @@ func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
 		// Disable the interval-reflection timer to isolate consolidation,
 		// then enable consolidation with a sub-minute interval so it
 		// fires within the test window.
-		ExtraConfigTOML: "\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
+		ExtraConfigTOML: "\n[reflection]\ninterval_enabled = false\n\n[maintenance]\nconsolidation_enabled = true\nconsolidation_time = \"1s\"\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -930,7 +930,7 @@ func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	before := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 
-	// The first 30s tick should see consolidation_interval elapsed and
+	// The first 30s tick should see consolidation_time elapsed and
 	// dispatch the consolidation branch (a new invocation). No Telegram
 	// update is pushed in this window so any recorder growth comes from
 	// consolidation — poll for that growth rather than sleeping the full
@@ -960,7 +960,7 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 		// time-gate trivially passes every tick. Each tick runs maybeReflection
 		// before maybeConsolidation — so when reflection is mid-flight,
 		// consolidation sees reflectionRunning=true and must defer.
-		ExtraConfigTOML: "\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\n\n[maintenance]\nconsolidation_enabled = true\nconsolidation_time = \"1s\"\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -1046,7 +1046,7 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 	testharness.ParallelHeavy(t)
 	const testUserID = 5310
-	// Strategy: a long consolidation_interval (24h) so a SECOND consolidation
+	// Strategy: a long consolidation_time (24h) so a SECOND consolidation
 	// would only fire if the persisted timestamp is NOT loaded on restart. A
 	// fresh agent now anchors lastConsolidation to boot (it no longer fires
 	// immediately), so we SEED an overdue consolidation_last (48h ago, ≥ 2×
@@ -1067,7 +1067,7 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: testUserID},
 		},
-		ExtraConfigTOML:   "\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = true\nconsolidation_interval = \"24h\"\n",
+		ExtraConfigTOML:   "\n[reflection]\ninterval_enabled = false\n\n[maintenance]\nconsolidation_enabled = true\nconsolidation_time = \"24h\"\n",
 		SeedAgentMetadata: map[string]map[string]string{"alpha": {"consolidation_last": overdue}},
 		ReadyTimeout:      30 * time.Second,
 	})
@@ -1119,9 +1119,9 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("Restart: %v", err)
 	}
 
-	// Observe several cron ticks post-restart. With consolidation_interval =
-	// "1h" and a fresh lastConsolidation loaded from disk pointing at ~seconds
-	// ago, nextFire is ~59m in the future, so every tick must skip. Had the
+	// Observe several cron ticks post-restart. With consolidation_time =
+	// "24h" and a fresh lastConsolidation loaded from disk pointing at ~seconds
+	// ago, nextFire is ~a day in the future, so every tick must skip. Had the
 	// persisted value been ignored, a re-fire would land within ~2 ticks.
 	time.Sleep(6 * time.Second)
 	secondInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
@@ -1989,7 +1989,7 @@ func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
 		},
 		// All three schedulers enabled with short intervals. With the
 		// canFire override locked to false, none should dispatch.
-		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\n\n[maintenance]\nconsolidation_enabled = true\nconsolidation_time = \"1s\"\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 

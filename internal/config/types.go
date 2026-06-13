@@ -296,6 +296,7 @@ type AgentConfig struct {
 	Background      BackgroundConfig      `toml:"background"`        // overrides from [background]
 	Reflection ReflectionConfig `toml:"reflection"`  // overrides from [reflection]
 	Scheduler       SchedulerConfig       `toml:"scheduler"`         // overrides from [scheduler]
+	Maintenance     MaintenanceConfig     `toml:"maintenance"`       // overrides from [maintenance]
 	Mana            ManaConfig            `toml:"mana"`              // overrides from [mana]
 	Groups          GroupsConfig          `toml:"groups"`            // overrides from [groups]
 	Permissions     PermissionsConfig     `toml:"permissions"`       // overrides from [permissions]
@@ -958,9 +959,6 @@ type ReflectionConfig struct {
 	IntervalEnabled       *bool   `toml:"interval_enabled"       default:"true" desc:"periodic reflection pass on timer"` // periodic reflection on timer
 	Interval              *string `toml:"interval"               default:"1h"   desc:"time between reflection passes" type:"duration"` // time between reflections
 	IntervalPrompt        *string `toml:"interval_prompt"                       desc:"interval reflection prompt file path"` // prompt override (nil = embedded, "none" = disabled)
-	ConsolidationEnabled  *bool   `toml:"consolidation_enabled"  default:"true" desc:"curate MEMORY.md periodically"` // curate MEMORY.md periodically
-	ConsolidationInterval *string `toml:"consolidation_interval" default:"20h"  desc:"min time between consolidations" type:"duration"` // min time between consolidations
-	ConsolidationPrompt   *string `toml:"consolidation_prompt"                  desc:"consolidation prompt file path"` // prompt override (nil = embedded, "none" = disabled)
 	SessionEndEnabled     *bool   `toml:"session_end_enabled"    default:"true" desc:"run reflection on /reset and reclaim"` // reflect on /reset and reclaim
 	SessionEndPrompt      *string `toml:"session_end_prompt"                    desc:"session end reflection prompt file path"` // prompt override (nil = embedded, "none" = disabled)
 	CompactionEnabled     *bool   `toml:"compaction_enabled"     default:"true" desc:"reflection before compaction"` // reflect before compaction
@@ -975,6 +973,20 @@ type ReflectionConfig struct {
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type SchedulerConfig struct {
 	TickInterval *string `toml:"tick_interval" default:"30s" desc:"periodic scheduler poll cadence" type:"duration"` // how often the periodic timers are checked
+}
+
+// MaintenanceConfig controls scheduled housekeeping that runs at a wall-clock
+// time of day or on a fixed interval: MEMORY.md consolidation and daily session
+// reset. Both consolidation_time and reset_time accept EITHER a "HH:MM" clock
+// time (interpreted in the process timezone, daily) OR a Go duration like "20h"
+// (fixed interval since the last run). All fields are pointer types for
+// Merge-based resolution (per-agent → global).
+type MaintenanceConfig struct {
+	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"curate MEMORY.md periodically"`                                        // curate MEMORY.md periodically
+	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"when to consolidate: HH:MM daily or a duration like 20h"`            // "HH:MM" daily or duration
+	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"consolidation prompt file path"`                                     // prompt override (nil = embedded, "none" = disabled)
+	ResetTime            *string `toml:"reset_time"            default:""     desc:"daily session reset: HH:MM, a duration, or empty to disable"`        // "HH:MM" daily, duration, or "" = never
+	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"skip scheduled reset if user active within this window" type:"duration"` // skip reset if recently active
 }
 
 // BackgroundConfig controls the mana-gated background work timer.
@@ -1043,6 +1055,7 @@ type Config struct {
 	Background         BackgroundConfig          `toml:"background"`
 	Reflection         ReflectionConfig          `toml:"reflection"`
 	Scheduler          SchedulerConfig           `toml:"scheduler"`
+	Maintenance        MaintenanceConfig         `toml:"maintenance"`
 	Permissions        PermissionsConfig         `toml:"permissions"`
 	CCBackend          CCBackendConfig           `toml:"cc_backend"`          // shared defaults for Claude Code delegator backends
 	Commands           []CommandConfig           `toml:"commands"`

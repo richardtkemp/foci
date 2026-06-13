@@ -385,7 +385,13 @@ func resolveBlockedPaths(acfg config.AgentConfig, cfg *config.Config) []config.B
 }
 
 // hasReflection returns true if any reflection feature is enabled.
-// All four default to true, so returns false only when all are explicitly disabled.
+// All three default to true, so returns false only when all are explicitly disabled.
 func hasReflection(r config.ResolvedReflection) bool {
-	return r.IntervalEnabled || r.ConsolidationEnabled || r.SessionEndEnabled || r.CompactionEnabled
+	return r.IntervalEnabled || r.SessionEndEnabled || r.CompactionEnabled
+}
+
+// hasMaintenance returns true if any scheduled maintenance task is enabled:
+// MEMORY.md consolidation (default on) or a configured reset_time.
+func hasMaintenance(m config.ResolvedMaintenance) bool {
+	return m.ConsolidationEnabled || m.ResetTime != ""
 }

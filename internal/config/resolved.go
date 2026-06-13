@@ -21,6 +21,7 @@ type ResolvedAgentConfig struct {
 	MemorySearch    ResolvedMemorySearch
 	Reflection      ResolvedReflection
 	Scheduler       ResolvedScheduler
+	Maintenance     ResolvedMaintenance
 	Browser         ResolvedBrowser
 	Mana            ResolvedMana
 	Display         ResolvedDisplay
@@ -114,6 +115,7 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Scheduler:       resolveScheduler(Merge(acfg.Scheduler, cfg.Scheduler)),
 		MemorySearch:    resolveMemorySearch(Merge(acfg.Memory, cfg.Memory)),
 		Reflection:      resolveReflection(Merge(acfg.Reflection, cfg.Reflection)),
+		Maintenance:     resolveMaintenance(Merge(acfg.Maintenance, cfg.Maintenance)),
 		Browser:         resolveBrowser(Merge(acfg.Browser, cfg.Browser)),
 		Mana:            resolveMana(Merge(acfg.Mana, cfg.Mana)),
 		Display:         resolveDisplay(Merge(displayLayers...)),
