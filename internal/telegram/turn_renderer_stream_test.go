@@ -233,23 +233,22 @@ func TestDeliver_CompactThinkingFinalizeEditsWithButton(t *testing.T) {
 	}
 }
 
-func TestSendHTMLChunkIDs_FallbackAndFailure(t *testing.T) {
-	// Proves sendHTMLChunkIDs falls back to plain text when the HTML send
-	// fails, and returns nil IDs when both attempts fail.
+func TestSendChunk_FallbackAndFailure(t *testing.T) {
+	// Proves SendChunk falls back to plain text when the HTML send fails, and
+	// reports ok=false when both attempts fail.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	backend := testBackend(b, 12345)
 
 	mock.sendErr = fmt.Errorf("Bad Request: can't parse entities")
 	mock.sendErrOnce = true
-	ids := backend.sendHTMLChunkIDs("text")
-	if len(ids) != 1 {
-		t.Errorf("ids = %v, want one from plain-text fallback", ids)
+	if id, ok := backend.SendChunk("text"); !ok || id == "" {
+		t.Errorf("SendChunk = %q/%v, want an id from plain-text fallback", id, ok)
 	}
 
 	mock.sendErr = fmt.Errorf("persistent failure")
 	mock.sendErrOnce = false
-	if ids := backend.sendHTMLChunkIDs("text"); ids != nil {
-		t.Errorf("ids = %v, want nil when both sends fail", ids)
+	if id, ok := backend.SendChunk("text"); ok || id != "" {
+		t.Errorf("SendChunk = %q/%v, want \"\"/false when both sends fail", id, ok)
 	}
 }
 

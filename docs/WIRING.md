@@ -611,6 +611,8 @@ type Sink interface {
 
 After **TODO #746**, the agent owns turn execution; platforms contribute only renderer/tracker construction and a thin lifecycle envelope.
 
+Each platform's `turn.Platform` backend implements the layout primitives of `turn.ChunkWriter` (`ComposeBody`, `Split`, `SendChunk`, `SendChunkWithButton`, `EditChunk`, `EditChunkWithButton`, `DeleteMsg`) — HTML/4096 for Telegram, Markdown/2000 for Discord. The shared send-edit-cache-delete-orphans control flow lives once in `turn.DeliverChunks` / `turn.EditChunksInPlace` (`internal/turn/deliver.go`); the backend's `Deliver`/`EditInPlace` just delegate to it.
+
 The `agent.Driver` interface is three methods:
 
 ```go
