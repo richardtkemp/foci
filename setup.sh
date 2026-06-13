@@ -515,7 +515,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$FOCI_USER
-SupplementaryGroups=$SECRETS_GROUP
+SupplementaryGroups=$SECRETS_GROUP crontab
 AmbientCapabilities=CAP_SETGID
 CapabilityBoundingSet=CAP_SETGID
 NoNewPrivileges=yes
@@ -541,6 +541,11 @@ EMIT_SERVICE
         emit_comment "Patch systemd service — add secrets group, CAP_SETGID, NoNewPrivileges, and migrate binary name"
         if ! grep -q "SupplementaryGroups=" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i '/^User=/a SupplementaryGroups=$SECRETS_GROUP' \"$SERVICE_FILE\""
+        fi
+        # crontab group: native membership so foci-gw + CC children manage their
+        # own user crontab without setgid escalation (NoNewPrivileges-safe).
+        if ! grep -qE "SupplementaryGroups=.*\bcrontab\b" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^SupplementaryGroups=/s/\$/ crontab/' \"$SERVICE_FILE\""
         fi
         if ! grep -q "AmbientCapabilities=" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i '/^SupplementaryGroups=/a AmbientCapabilities=CAP_SETGID' \"$SERVICE_FILE\""

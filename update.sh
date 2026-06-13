@@ -77,6 +77,17 @@ for svcfile in /etc/systemd/system/foci*.service; do
         echo "  Patching $svcfile: add SupplementaryGroups=$SECRETS_GROUP"
         sed -i "/^User=/a SupplementaryGroups=$SECRETS_GROUP" "$svcfile"
     fi
+    # Grant the `crontab` group per-process so foci-gw and its CC-backend
+    # children can read/write their own user crontab natively. NoNewPrivileges
+    # blocks the setgid escalation /usr/bin/crontab would otherwise use, so
+    # native group membership is the only sandbox-safe path (the hardening stays
+    # fully in force). procx drops only foci-secrets from children, so the
+    # crontab group propagates through to spawned agents. Idempotent — appends
+    # crontab to the SupplementaryGroups line only if not already present.
+    if grep -q "^SupplementaryGroups=" "$svcfile" && ! grep -qE "^SupplementaryGroups=.*\bcrontab\b" "$svcfile"; then
+        echo "  Patching $svcfile: add crontab to SupplementaryGroups"
+        sed -i "/^SupplementaryGroups=/s/$/ crontab/" "$svcfile"
+    fi
     if ! grep -q "^AmbientCapabilities=" "$svcfile"; then
         echo "  Patching $svcfile: add AmbientCapabilities=CAP_SETGID"
         sed -i "/^SupplementaryGroups=/a AmbientCapabilities=CAP_SETGID" "$svcfile"
