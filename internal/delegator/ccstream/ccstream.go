@@ -1289,9 +1289,24 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		// Surface sub-agent text as blockquoted intermediate replies so
 		// the user can follow sub-agent progress. Tool_use blocks are not
 		// forwarded — the parent tracker owns tool visibility.
-		if se != nil && se.OnText != nil {
+		//
+		// Route via OnSubagentText (carrying the parent tool_use id as the
+		// group key) when the consumer supports it — that lets the platform
+		// attach a rolling "Hide this" control and delete the group on demand.
+		// Fall back to OnText for consumers without subagent support.
+		groupKey := ""
+		if msg.ParentToolUseID != nil {
+			groupKey = *msg.ParentToolUseID
+		}
+		if se != nil {
 			for _, block := range msg.Message.Content {
-				if block.Type == "text" && block.Text != "" {
+				if block.Type != "text" || block.Text == "" {
+					continue
+				}
+				switch {
+				case se.OnSubagentText != nil:
+					se.OnSubagentText(groupKey, blockquote(block.Text))
+				case se.OnText != nil:
 					se.OnText(blockquote(block.Text))
 				}
 			}
