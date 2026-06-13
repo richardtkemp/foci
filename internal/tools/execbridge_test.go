@@ -408,6 +408,7 @@ func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
+		Positional: []string{"url"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
@@ -440,6 +441,7 @@ func TestExecBridgeHTTPRequestIncludeHeaders(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
+		Positional: []string{"url"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
@@ -484,6 +486,7 @@ func TestExecBridgeHTTPRequestIncludeHeadersFalse(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
+		Positional: []string{"url"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
@@ -512,6 +515,7 @@ func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
+		Positional: []string{"url"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
@@ -548,6 +552,7 @@ func TestExecBridgeTmuxShellFunc(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "tmux",
+		Positional: []string{"operation"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"operation":{"type":"string"},"name":{"type":"string"},"command":{"type":"string"},"workdir":{"type":"string"},"watch":{"type":"boolean"},"keys":{"type":"string"},"enter":{"type":"boolean"},"lines":{"type":"integer"},"window":{"type":"integer"},"threshold_seconds":{"type":"integer"},"raw":{"type":"boolean"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
@@ -604,6 +609,7 @@ func TestFinalizeShellDescription(t *testing.T) {
 	})
 	reg.Register(&Tool{
 		Name:        "summary",
+		Positional:  []string{"prompt"},
 		ExecExport:  true,
 		Description: "Summarise content",
 		Parameters:  json.RawMessage(`{}`),
@@ -708,6 +714,7 @@ func TestTodoActionsCoverEveryDispatchArm(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
 	})
@@ -767,6 +774,7 @@ func TestTodoShellFunc_TopLevelHelpListsSubcommands(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
 	})
@@ -795,6 +803,7 @@ func TestTodoShellFunc_PerActionHelpIntercept(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
 	})
@@ -834,6 +843,7 @@ func TestTodoShellFunc_UnknownFlagErrorScopedToAction(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
 	})
@@ -867,6 +877,7 @@ func TestTodoShellFunc_CloseReasonAliases(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
 	})
@@ -953,6 +964,7 @@ func TestTodoActionAliases(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
 	})
@@ -1002,6 +1014,7 @@ func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"text":{"type":"string"},"priority":{"type":"string"},"tag":{"type":"string"},"query":{"type":"string"},"status":{"type":"string"},"id":{"type":"integer"},"reason":{"type":"string"},"sort":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
@@ -1047,6 +1060,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 		name       string
 		params     json.RawMessage
 		validFlags []string
+		positional []string // bare-arg params (matches the tool's real Tool.Positional)
 	}{
 		{
 			name:       "web_search",
@@ -1067,6 +1081,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 			name:       "http_request",
 			params:     json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"}}}`),
 			validFlags: []string{"--method", "--body", "--header", "--save-to", "--include-headers"},
+			positional: []string{"url"},
 		},
 		{
 			name:       "send_to_chat",
@@ -1077,11 +1092,13 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 			name:       "todo",
 			params:     json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"text":{"type":"string"},"priority":{"type":"string"},"tag":{"type":"string"},"query":{"type":"string"},"status":{"type":"string"},"id":{"type":"integer"},"reason":{"type":"string"},"sort":{"type":"string"}}}`),
 			validFlags: []string{"--text", "--priority", "--tag", "--query", "--status", "--id", "--reason", "--sort"},
+			positional: []string{"action"},
 		},
 		{
 			name:       "summary",
 			params:     json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"prompt":{"type":"string"}}}`),
 			validFlags: []string{"--file"},
+			positional: []string{"prompt"},
 		},
 		{
 			name:       "spawn",
@@ -1092,6 +1109,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 			name:       "tmux",
 			params:     json.RawMessage(`{"type":"object","properties":{"operation":{"type":"string"},"name":{"type":"string"},"command":{"type":"string"},"workdir":{"type":"string"},"watch":{"type":"boolean"},"keys":{"type":"string"},"enter":{"type":"boolean"},"lines":{"type":"integer"},"window":{"type":"integer"},"threshold_seconds":{"type":"integer"},"raw":{"type":"boolean"}}}`),
 			validFlags: []string{"--name", "--command", "--workdir", "--watch", "--keys", "--enter", "--lines", "--window", "--threshold-seconds", "--raw"},
+			positional: []string{"operation"},
 		},
 	}
 
@@ -1099,6 +1117,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 		r.Register(&Tool{
 			Name:       tool.name,
 			ExecExport: true,
+			Positional: tool.positional,
 			Parameters: tool.params,
 			Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 				return TextResult("ok"), nil
@@ -1190,6 +1209,7 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"integer"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
