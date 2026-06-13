@@ -50,6 +50,6 @@ func runConfigCheck(path string) int {
 		return 1
 	}
 
-	fmt.Fprintf(os.Stdout, "config check OK: %s loads cleanly with no unknown keys\n", path)
+	fmt.Println("config check OK: " + path + " loads cleanly with no unknown keys")
 	return 0
 }

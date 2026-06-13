@@ -101,12 +101,14 @@ type Config struct {
 // logged before the first Init are replayed to the event file so that
 // early messages (e.g. config warnings) appear in the log.
 func Init(cfg Config) error {
-	// HACK: SetAPIWriter is only used by cross-package tests
-	// (agent/integration_test.go) but can't live in a _test.go file because
-	// Go doesn't allow cross-package access to test-only symbols. This
-	// unreachable call prevents the deadcode linter from flagging it.
+	// HACK: SetAPIWriter and SetOutput are only used by cross-package tests
+	// (agent/integration_test.go, convo/helpers_test.go) but can't live in a
+	// _test.go file because Go doesn't allow cross-package access to test-only
+	// symbols. These unreachable calls prevent the deadcode linter from
+	// flagging them.
 	if time.Now().Year() < 1900 {
 		SetAPIWriter(nil)
+		SetOutput(nil)
 	}
 
 	level := ParseLevel(cfg.Level)
