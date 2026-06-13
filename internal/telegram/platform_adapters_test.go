@@ -9,7 +9,7 @@ import (
 
 // adapterFixture builds a ConnectionManagerAdapter over a BotManager with one
 // primary bot ("scout") and one idle facet bot in scout's pool.
-func adapterFixture(t *testing.T) (*ConnectionManagerAdapter, *Bot, *Bot) {
+func adapterFixture(t *testing.T) (*platform.ConnectionManagerAdapter[*Bot], *Bot, *Bot) {
 	t.Helper()
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
@@ -17,7 +17,7 @@ func adapterFixture(t *testing.T) (*ConnectionManagerAdapter, *Bot, *Bot) {
 	facet, _ := testBot(nil, command.NewRegistry())
 	facet.SetSessionKeyDirect("") // idle, acquirable
 	mgr.AddFacet("scout", facet)
-	return &ConnectionManagerAdapter{BotManager: mgr}, primary, facet
+	return platform.NewConnectionManagerAdapter[*Bot](mgr), primary, facet
 }
 
 func TestAdapter_Primary(t *testing.T) {

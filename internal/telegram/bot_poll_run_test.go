@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/command"
+	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -176,7 +177,7 @@ func TestBotManagerStartAllAndWait(t *testing.T) {
 	mgr.AddFacet("scout", b2)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	adapter := &ConnectionManagerAdapter{BotManager: mgr}
+	adapter := platform.NewConnectionManagerAdapter[*Bot](mgr)
 	adapter.StartAll(ctx)
 	cancel()
 
