@@ -22,6 +22,9 @@ import (
 	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/internal/tools"
+	"foci/internal/tools/browser"
+	"foci/internal/tools/shell"
+	"foci/internal/tools/tmux"
 	"foci/internal/voice"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
@@ -64,7 +67,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, client provider.
 		execExtraEnv = append(execExtraEnv, "FOCI_GW_SOCK="+p.gwSocketPath)
 	}
 
-	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir, execExtraEnv))
+	registry.Register(shell.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir, execExtraEnv))
 
 	var result coreToolsResult
 
@@ -83,15 +86,15 @@ func registerCoreTools(registry *tools.Registry, p setupParams, client provider.
 				tmuxSessionTTL = d
 			}
 		}
-		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll, result.tmuxMigrateKey = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.sessionIndex, acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL, "")
+		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll, result.tmuxMigrateKey = tmux.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.sessionIndex, acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL, "")
 		registry.Register(result.tmuxTool)
 	}
 
 	// Only register browser tool if enabled
 	bc := p.resolved.Browser
 	if bc.Enabled {
-		browserMgr := tools.NewBrowserManager(&bc, fileMode)
-		registry.Register(tools.NewBrowserTool(browserMgr))
+		browserMgr := browser.NewBrowserManager(&bc, fileMode)
+		registry.Register(browser.NewBrowserTool(browserMgr))
 	}
 
 	blockedPaths := resolveBlockedPaths(acfg, p.cfg)

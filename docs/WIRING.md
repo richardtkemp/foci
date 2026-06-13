@@ -156,7 +156,11 @@ main
  ├── startup       → log, state (leaf package for crash detection)
  ├── resources     → log (goroutine monitor, memory guard)
  ├── mcp           → provider, log, tools, BurntSushi/toml, go-sdk/mcp
- ├── tools         → anthropic, config, display, log, memory, modelinfo, platform, provider, secrets, secrets/bitwarden, session, state, tempdir, tools/browserjs, voice
+ ├── tools         → anthropic, config, display, log, memory, modelinfo, platform, provider, secrets, secrets/bitwarden, session, state, tempdir, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
+ │     ├── tools/shell    → tools, log, procx, secrets, secrets/bitwarden (the exec/shell tool + spill; execbridge generator stays at root)
+ │     ├── tools/tmux     → tools, log, display, session, procx (tmux session tool — 8 files)
+ │     ├── tools/browser  → tools, log, tools/browserjs (browser automation — imports root for Tool/ToolResult)
+ │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
  ├── workspace     → log, provider
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
  ├── prompts       (top-level package, not internal) → log (embedded .md files + ResolveOrientationTemplate helpers)

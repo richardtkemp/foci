@@ -9,7 +9,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/resources"
-	"foci/internal/tools"
+	"foci/internal/tools/tmux"
 )
 
 // setupWarningHooks wires log warnings into agent warning queues.
@@ -58,8 +58,8 @@ func setupTmuxMemoryMonitor(
 	if checkInterval <= 0 {
 		return nil
 	}
-	tmuxMemMon := tools.NewTmuxMemoryMonitor(
-		tools.TmuxMemoryConfig{
+	tmuxMemMon := tmux.NewTmuxMemoryMonitor(
+		tmux.TmuxMemoryConfig{
 			CheckInterval: checkInterval,
 			WarnStr:       cfg.Tools.TmuxMemoryWarn,
 			CriticalStr:   cfg.Tools.TmuxMemoryCritical,
