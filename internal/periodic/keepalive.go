@@ -1,6 +1,7 @@
 // Package periodic provides cache keepalive, background work, and memory formation timers.
 //
-// Four mechanisms run as a single goroutine with ~30s ticks:
+// Four mechanisms run as a single goroutine on a shared tick (30s by default,
+// configurable via [scheduler] tick_interval):
 //
 //   - Keepalive: fires when the cache hasn't been warmed within the configured interval.
 //     Creates a lightweight branch session to keep the Anthropic cache prefix alive.
@@ -32,7 +33,12 @@ import (
 )
 
 const (
-	tickInterval = 30 * time.Second
+	// defaultTickInterval is the production poll cadence for all four periodic
+	// timers, used when [scheduler] tick_interval is unset or unparseable. The
+	// tick is only a polling cadence — every real threshold is config-driven —
+	// so it can be lowered (e.g. by integration tests) without affecting
+	// scheduling correctness.
+	defaultTickInterval = 30 * time.Second
 )
 
 // parseDuration parses a duration string, returning the parsed duration or logging a warning on error.
@@ -60,16 +66,17 @@ type Runner struct {
 	kaCfg              config.ResolvedKeepalive
 	bgCfg              config.ResolvedBackground
 	reflectCfg         config.ResolvedReflection
-	manaInvestInterval string // mana invest interval (Go duration string)
+	manaInvestInterval string        // mana invest interval (Go duration string)
+	tickInterval       time.Duration // poll cadence for the timer loop (resolved from config)
 	promptSearchDirs   []string
 	todoStore          *memory.TodoStore
 	sessionIndex       *session.SessionIndex
 	branchFn           BranchFunc
 
-	warningDispatcher      *warnings.Dispatcher
-	chatWarningDispatcher  *warnings.Dispatcher
-	hasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
-	drainFn            func() // called each tick to drain rate-limit queues
+	warningDispatcher     *warnings.Dispatcher
+	chatWarningDispatcher *warnings.Dispatcher
+	hasActiveWorkFn       func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
+	drainFn               func()     // called each tick to drain rate-limit queues
 
 	// In-flight check for the parent session. Mirrors the activity gate's
 	// IsTurnInFlight check used by the gateway send/branch handlers (TODO #753):
@@ -79,17 +86,17 @@ type Runner struct {
 	isTurnInFlightFn func(parentBase string) bool
 
 	// Session-aware availability checking
-	sessionKeyFn   func() string                                                   // returns the session key these operations will run on
-	canFireFn      func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
-	isDelegatedAgent bool // reflection needs quiet period in delegated mode
-	runOnceFn      func(ctx context.Context, prompt, systemPrompt string) (string, error)
+	sessionKeyFn     func() string                                               // returns the session key these operations will run on
+	canFireFn        func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
+	isDelegatedAgent bool                                                        // reflection needs quiet period in delegated mode
+	runOnceFn        func(ctx context.Context, prompt, systemPrompt string) (string, error)
 
-	mu                    sync.Mutex
-	lastCacheWarmed       time.Time
-	lastInteraction       time.Time
-	keepaliveRunning      bool
-	backgroundRunning     bool
-	lastBackgroundEnded   time.Time // when the last background session finished
+	mu                  sync.Mutex
+	lastCacheWarmed     time.Time
+	lastInteraction     time.Time
+	keepaliveRunning    bool
+	backgroundRunning   bool
+	lastBackgroundEnded time.Time // when the last background session finished
 
 	// Reflection state
 	lastReflection       time.Time
@@ -109,16 +116,17 @@ type RunnerConfig struct {
 	Keepalive          config.ResolvedKeepalive
 	Background         config.ResolvedBackground
 	Reflection         config.ResolvedReflection
-	ManaInvestInterval string                // mana invest interval (Go duration string, default: "30m")
-	PromptSearchDirs   []string              // directories to search for prompt files (agent workspace, shared)
+	TickInterval       string   // scheduler poll cadence (Go duration string, default: "30s")
+	ManaInvestInterval string   // mana invest interval (Go duration string, default: "30m")
+	PromptSearchDirs   []string // directories to search for prompt files (agent workspace, shared)
 	TodoStore          *memory.TodoStore
 	SessionIndex       *session.SessionIndex
 	BranchFunc         BranchFunc
 
-	WarningDispatcher      *warnings.Dispatcher
-	ChatWarningDispatcher  *warnings.Dispatcher
-	HasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
-	DrainFn            func() // called each tick to drain rate-limit queues; nil = skip
+	WarningDispatcher     *warnings.Dispatcher
+	ChatWarningDispatcher *warnings.Dispatcher
+	HasActiveWorkFn       func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
+	DrainFn               func()     // called each tick to drain rate-limit queues; nil = skip
 
 	// IsTurnInFlightFunc reports whether a turn is currently executing on the
 	// session base passed in. Wired from cmd/foci-gw/periodic_setup.go to
@@ -127,7 +135,7 @@ type RunnerConfig struct {
 	IsTurnInFlightFunc func(parentBase string) bool
 
 	// Session-aware availability checking
-	SessionKeyFunc func() string                                                   // returns the session key these operations will run on
+	SessionKeyFunc func() string                                               // returns the session key these operations will run on
 	CanFireFunc    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
 
 	// IsDelegatedAgent indicates this agent uses a delegated transport (CC).
@@ -159,19 +167,31 @@ func New(cfg RunnerConfig) *Runner {
 		sessionIndex:       cfg.SessionIndex,
 		branchFn:           cfg.BranchFunc,
 
-		warningDispatcher:      cfg.WarningDispatcher,
-		chatWarningDispatcher:  cfg.ChatWarningDispatcher,
-		hasActiveWorkFn:    cfg.HasActiveWorkFn,
-		drainFn:            cfg.DrainFn,
-		isTurnInFlightFn:   cfg.IsTurnInFlightFunc,
-		sessionKeyFn:       cfg.SessionKeyFunc,
-		canFireFn:          cfg.CanFireFunc,
-		isDelegatedAgent:   cfg.IsDelegatedAgent,
-		runOnceFn:          cfg.RunOnceFunc,
-		lastCacheWarmed:    now,
-		lastInteraction:    now,
-		lastReflection:     now,
-		done:               make(chan struct{}),
+		warningDispatcher:     cfg.WarningDispatcher,
+		chatWarningDispatcher: cfg.ChatWarningDispatcher,
+		hasActiveWorkFn:       cfg.HasActiveWorkFn,
+		drainFn:               cfg.DrainFn,
+		isTurnInFlightFn:      cfg.IsTurnInFlightFunc,
+		sessionKeyFn:          cfg.SessionKeyFunc,
+		canFireFn:             cfg.CanFireFunc,
+		isDelegatedAgent:      cfg.IsDelegatedAgent,
+		runOnceFn:             cfg.RunOnceFunc,
+		lastCacheWarmed:       now,
+		lastInteraction:       now,
+		lastReflection:        now,
+		// Like lastReflection, anchor to boot so a FRESH agent waits a full
+		// interval before its first consolidation rather than firing one
+		// immediately on init (the zero value's Truncate(interval).Add(interval)
+		// lands in the distant past). A persisted value below overrides this.
+		lastConsolidation: now,
+		done:              make(chan struct{}),
+	}
+	// Resolve the tick cadence: config value if valid, else the 30s default.
+	r.tickInterval = defaultTickInterval
+	if cfg.TickInterval != "" {
+		if d, ok := r.parseDuration("scheduler tick_interval", cfg.TickInterval); ok && d > 0 {
+			r.tickInterval = d
+		}
 	}
 	// Restore consolidation timestamp from persistent state
 	if cfg.SessionIndex != nil {
@@ -248,7 +268,13 @@ func (r *Runner) parentTurnInFlight(parentKey string) bool {
 func (r *Runner) run(ctx context.Context) {
 	defer close(r.done)
 
-	ticker := time.NewTicker(tickInterval)
+	// Guard against a zero interval: a Runner built as a struct literal (some
+	// tests) bypasses New()'s resolution and leaves tickInterval unset.
+	tick := r.tickInterval
+	if tick <= 0 {
+		tick = defaultTickInterval
+	}
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 
 	for {

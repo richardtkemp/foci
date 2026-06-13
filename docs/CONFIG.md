@@ -990,6 +990,14 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
 - `keepalive.interval > [cache] ttl` — cache may expire between keepalives (default TTL is 1 hour).
 
+### Scheduler (`[scheduler]` / `[[agents.scheduler]]`)
+
+Poll cadence for the periodic scheduler. A single ticker drives all four timers (keepalive, background, reflection, consolidation): on each tick it checks whether any of their configured intervals has elapsed. `tick_interval` is **only** that polling cadence — every real threshold lives in the individual timers' own `interval` settings — so lowering it just makes the timers respond sooner (used by the integration suite to run the cron tests fast), and is not something most deployments need to change.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tick_interval` | string | `"30s"` | How often the periodic timers are checked. Must be ≤ the shortest timer interval you care about firing on time. |
+
 ### Mana (`[mana]` / `[[agents.mana]]`)
 
 Controls mana budget behavior and usage warning thresholds. All fields overridable per-agent.

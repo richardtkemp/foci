@@ -295,6 +295,7 @@ type AgentConfig struct {
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`         // overrides from [keepalive]
 	Background      BackgroundConfig      `toml:"background"`        // overrides from [background]
 	Reflection ReflectionConfig `toml:"reflection"`  // overrides from [reflection]
+	Scheduler       SchedulerConfig       `toml:"scheduler"`         // overrides from [scheduler]
 	Mana            ManaConfig            `toml:"mana"`              // overrides from [mana]
 	Groups          GroupsConfig          `toml:"groups"`            // overrides from [groups]
 	Permissions     PermissionsConfig     `toml:"permissions"`       // overrides from [permissions]
@@ -967,6 +968,15 @@ type ReflectionConfig struct {
 	BackendQuietPeriod    *string `toml:"backend_quiet_period"   default:"5m"   desc:"min idle time before reflection in backend mode" type:"duration"` // min idle before firing in backend mode
 }
 
+// SchedulerConfig controls the periodic scheduler that drives all four timers
+// (keepalive, background, reflection, consolidation) off a single ticker.
+// tick_interval is purely the poll cadence — the real thresholds live in each
+// timer's own interval — so lowering it only makes the timers respond sooner.
+// All fields are pointer types for Merge-based resolution (per-agent → global).
+type SchedulerConfig struct {
+	TickInterval *string `toml:"tick_interval" default:"30s" desc:"periodic scheduler poll cadence" type:"duration"` // how often the periodic timers are checked
+}
+
 // BackgroundConfig controls the mana-gated background work timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type BackgroundConfig struct {
@@ -1032,6 +1042,7 @@ type Config struct {
 	Keepalive          KeepaliveConfig           `toml:"keepalive"`
 	Background         BackgroundConfig          `toml:"background"`
 	Reflection         ReflectionConfig          `toml:"reflection"`
+	Scheduler          SchedulerConfig           `toml:"scheduler"`
 	Permissions        PermissionsConfig         `toml:"permissions"`
 	CCBackend          CCBackendConfig           `toml:"cc_backend"`          // shared defaults for Claude Code delegator backends
 	Commands           []CommandConfig           `toml:"commands"`

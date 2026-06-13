@@ -225,6 +225,16 @@ func resolveKeepalive(m KeepaliveConfig) ResolvedKeepalive {
 	}
 }
 
+type ResolvedScheduler struct {
+	TickInterval string // default "30s"
+}
+
+func resolveScheduler(m SchedulerConfig) ResolvedScheduler {
+	return ResolvedScheduler{
+		TickInterval: DerefStr(m.TickInterval),
+	}
+}
+
 type ResolvedBackground struct {
 	Enabled  bool
 	Interval string

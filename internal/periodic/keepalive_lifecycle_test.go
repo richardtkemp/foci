@@ -220,7 +220,7 @@ func TestMaybeReflection_Disabled(t *testing.T) {
 		reflectCfg: config.ResolvedReflection{
 			IntervalEnabled: false,
 		},
-		lastInteraction:     time.Now().Add(-1 * time.Hour),
+		lastInteraction: time.Now().Add(-1 * time.Hour),
 		lastReflection:  time.Now().Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
@@ -246,7 +246,7 @@ func TestMaybeReflection_BadInterval(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "invalid",
 		},
-		lastInteraction:     time.Now().Add(-1 * time.Hour),
+		lastInteraction: time.Now().Add(-1 * time.Hour),
 		lastReflection:  time.Now().Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
@@ -292,8 +292,8 @@ func TestMaybeReflection_Fires(t *testing.T) {
 			Interval:        "1h",
 			IntervalPrompt:  "reflection.md",
 		},
-		sessionIndex:        idx,
-		lastInteraction:     now.Add(-30 * time.Minute),
+		sessionIndex:    idx,
+		lastInteraction: now.Add(-30 * time.Minute),
 		lastReflection:  now.Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			if branchType != "reflection" {
@@ -349,7 +349,7 @@ func TestMaybeConsolidation_BadInterval(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		reflectCfg: config.ResolvedReflection{
-			ConsolidationEnabled: true,
+			ConsolidationEnabled:  true,
 			ConsolidationInterval: "invalid",
 		},
 		lastInteraction:   time.Now(),
@@ -455,7 +455,7 @@ func TestMaybeReflection_NoActivity(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
-		lastInteraction:     time.Now().Add(-2 * time.Hour),
+		lastInteraction: time.Now().Add(-2 * time.Hour),
 		lastReflection:  time.Now().Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
