@@ -92,6 +92,15 @@ archive_dir = %q
 		)
 	}
 
+	// Default to a fast scheduler tick so cron tests observe periodic events
+	// in ~1s instead of waiting on the 30s production cadence. Tests that
+	// exercise tick-coupled timing (exact-count / cooldown windows) pin their
+	// own [scheduler] block, which suppresses this default (skip-if-overridden,
+	// same mechanism as [logging] above).
+	if !extraConfigHasSection(o.ExtraConfigTOML, "scheduler") {
+		sb.WriteString("\n[scheduler]\ntick_interval = \"1s\"\n")
+	}
+
 	fmt.Fprintf(&sb, `
 [groups]
 powerful = "stub"
