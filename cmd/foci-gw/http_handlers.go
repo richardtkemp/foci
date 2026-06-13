@@ -244,15 +244,19 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 }
 
 // handleCommand returns the handler for POST /command.
-func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFunc { // nolint:unparam
+func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
-			Agent   string `json:"agent"`
-			Command string `json:"command"`
+			Agent          string `json:"agent"`
+			Command        string `json:"command"`
+			IfUserActive   string `json:"if_user_active"`
+			IfUserInactive string `json:"if_user_inactive"`
+			IfActive       string `json:"if_active"`
+			IfInactive     string `json:"if_inactive"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Command == "" {
@@ -270,6 +274,27 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 			return
 		}
 		sk := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
+
+		// Activity gate (TODO #753): a gated command — e.g. an overnight
+		// `/reset` cron with --if-inactive — is skipped when the target
+		// session ran a turn recently or has one in flight. Gating here, on
+		// the session this command actually targets, keeps it from
+		// interrupting active or mid-turn work.
+		sessionBase := session.SessionKeyBase(sk)
+		if !gate(w, activityGateInputs{
+			AgentID:        inst.id,
+			SessionBase:    sessionBase,
+			InFlight:       inst.ag.IsTurnInFlight(sessionBase),
+			IfUserActive:   req.IfUserActive,
+			IfUserInactive: req.IfUserInactive,
+			IfActive:       req.IfActive,
+			IfInactive:     req.IfInactive,
+			LogTag:         "http",
+			Endpoint:       "/command",
+		}) {
+			return
+		}
+
 		cmdReq := command.RequestFromText(req.Command, sk, "", 0)
 		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(r.Context(), sk), cmdReq, inst.cc)
 		if !ok {
