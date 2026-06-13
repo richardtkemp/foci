@@ -143,7 +143,6 @@ func TestReflectionConfigMerge(t *testing.T) {
 	// without overwriting them.
 	global := ReflectionConfig{
 		IntervalEnabled: Ptr[bool](true), Interval: Ptr[string]("1h"), IntervalPrompt: Ptr[string]("mf.md"),
-		ConsolidationEnabled: Ptr[bool](true), ConsolidationInterval: Ptr[string]("20h"),
 		SessionEndEnabled: Ptr[bool](true), SessionEndPrompt: Ptr[string]("se.md"),
 	}
 
@@ -160,9 +159,6 @@ func TestReflectionConfigMerge(t *testing.T) {
 		}
 		if DerefStr(mf.Interval) != "2h" {
 			t.Errorf("Interval should be preserved, got %q", DerefStr(mf.Interval))
-		}
-		if DerefStr(mf.ConsolidationInterval) != "20h" {
-			t.Errorf("ConsolidationInterval should be filled, got %q", DerefStr(mf.ConsolidationInterval))
 		}
 		if !DerefBool(mf.SessionEndEnabled) {
 			t.Errorf("SessionEndEnabled should be filled from global")

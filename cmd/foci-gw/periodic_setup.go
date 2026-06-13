@@ -60,6 +60,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	bg := inst.resolved.Background
 	refl := inst.resolved.Reflection
+	maint := inst.resolved.Maintenance
 
 	cachingAvailable := true
 	if cachingOverride != nil {
@@ -71,7 +72,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() })
 	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() })
-	if !kaEnabled && !bg.Enabled && !hasReflection(refl) && !hasAgentWarnings && !hasChatWarnings {
+	if !kaEnabled && !bg.Enabled && !hasReflection(refl) && !hasMaintenance(maint) && !hasAgentWarnings && !hasChatWarnings {
 		return nil
 	}
 
@@ -165,6 +166,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		Background:         bg,
 		Reflection:         refl,
 		TickInterval:       inst.resolved.Scheduler.TickInterval,
+		Maintenance:        maint,
 		ManaInvestInterval: inst.resolved.Mana.InvestInterval,
 		PromptSearchDirs:   inst.promptSearchDirs,
 		TodoStore:          p.todoStore,
@@ -208,6 +210,17 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 				return nil
 			}
 			return inst.ag.DelegatedManager.RunOnce
+		}(),
+		// Scheduled reset_time: soft reset (memory formation + key rotation),
+		// the same path as a manual /reset. Wired only when reset_time is set.
+		ResetFunc: func() func(ctx context.Context, sessionKey string) error {
+			if maint.ResetTime == "" {
+				return nil
+			}
+			return func(ctx context.Context, sessionKey string) error {
+				_, err := inst.ag.ResetSession(ctx, sessionKey)
+				return err
+			}
 		}(),
 	})
 	runner.Start(p.ctx)

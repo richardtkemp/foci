@@ -173,6 +173,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Memory:          MemoryConfig{SearchBackend: Ptr("bleve")},
 		Reflection:      ReflectionConfig{IntervalEnabled: Ptr(true)},
 		Scheduler:       SchedulerConfig{TickInterval: Ptr("30s")},
+		Maintenance:     MaintenanceConfig{ConsolidationEnabled: Ptr(true), ConsolidationTime: Ptr("20h"), ResetTime: Ptr("04:20"), ResetIdleGuard: Ptr("55m")},
 		Browser:         BrowserConfig{Enabled: Ptr(true)},
 		Mana:            ManaConfig{Name: Ptr("m")},
 	}

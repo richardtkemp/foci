@@ -1416,14 +1416,24 @@ Reflection and consolidation run in the keepalive timer loop (30s ticks):
 
 Reflection runs before consolidation so the latest memory content is available. Consolidation is blocked while reflection is running.
 
-**Consolidation** (`maybeConsolidation`):
+**Consolidation** (`maybeConsolidation`) — config now under `[maintenance]` (`r.maintCfg`):
 1. Check `consolidation_enabled` (nil = true)
-2. Check consolidation interval elapsed (persisted in state store)
+2. Compute next-fire via `parseSchedule(consolidation_time).nextFire(...)` — `consolidation_time` is `"HH:MM"` daily (process tz) or a Go duration; persisted last-run in state store
 3. Check recent user activity (within 1h)
-4. Check reflection is not running
+4. Check reflection / reset is not running
 5. Resolve prompt via `prompts.ResolvePrompt`
 6. Fire branch on default session: `branchFn("consolidation", parentKey, promptText, true)`
 7. On completion: persist timestamp to state store
+
+**Scheduled reset** (`maybeReset`) — `[maintenance].reset_time` (default off):
+1. Skip if `resetFn` nil or `reset_time` empty
+2. Compute next-fire via `parseSchedule(reset_time).nextFire(...)` (same dual format as consolidation; `lastReset` anchored to boot, persisted as `reset_last`)
+3. Skip if reflection/consolidation/reset already running
+4. Inactivity guard: skip if user active within `reset_idle_guard` (default `"55m"`) — mirrors the `foci command --if-inactive` crontab it replaces
+5. Skip if no default session or a turn is in flight on it
+6. Fire `resetFn(ctx, parentKey)` (→ `Agent.ResetSession`: memory formation + key rotation, the same path as a manual `/reset`) in a goroutine; persist `reset_last` on completion
+
+The shared schedule parser lives in `internal/periodic/schedule.go` (`parseSchedule` / `schedule.nextFire`): a daemon asleep past a clock time fires once on wake (catch-up), never once per missed day; clock times are rebuilt via `time.Date` so they stay stable across DST.
 
 **Proactive warning dispatch** (`warnings.Dispatcher.MaybeFire`):
 1. Check `queue != nil` and `dispatchFn != nil` — skip if no injection configured
