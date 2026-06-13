@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/convo"
 	"foci/internal/log"
 	"foci/internal/tempdir"
 )
@@ -113,10 +114,10 @@ func initLogging(cfg *config.Config) func() {
 			}
 			return ""
 		}
-		if err := log.InitPerAgentConversation(agentIDs, pathFn); err != nil {
+		if err := convo.InitPerAgent(agentIDs, pathFn); err != nil {
 			log.Fatalf("main", "init conversation log: %v", err)
 		}
-		cleanups = append(cleanups, log.CloseConversation)
+		cleanups = append(cleanups, convo.Close)
 	}
 
 	return func() {

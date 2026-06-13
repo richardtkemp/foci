@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
@@ -81,7 +82,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 	}
 	duration := time.Since(start)
 
-	cost := log.CalculateCost(model,
+	cost := modelinfo.Cost(model,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 

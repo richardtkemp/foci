@@ -36,16 +36,6 @@ func filePaths() (event, api, payload string) {
 }
 
 // initConversation opens a single conversation log (test-only).
-func initConversation(path string) error {
-	cl, err := openConversationLog(path)
-	if err != nil {
-		return err
-	}
-	convLogs = map[string]*ConversationLog{"": cl}
-	convFallback = cl
-	return nil
-}
-
 // resetGlobal restores the global logger to its initial state for test isolation.
 func resetGlobal() {
 	std.mu.Lock()

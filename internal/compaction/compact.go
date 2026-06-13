@@ -348,7 +348,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	}
 
 	duration := time.Since(start)
-	cost := log.CalculateCost(model,
+	cost := modelinfo.Cost(model,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	log.API(log.APIEntry{

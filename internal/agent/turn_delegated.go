@@ -10,6 +10,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
@@ -439,7 +440,7 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	if model == "" {
 		model = ts.TurnModel
 	}
-	cost := log.CalculateCost(model,
+	cost := modelinfo.Cost(model,
 		ts.FinalUsage.InputTokens, ts.FinalUsage.OutputTokens,
 		ts.FinalUsage.CacheReadInputTokens, ts.FinalUsage.CacheCreationInputTokens)
 	ts.FinalCost = cost

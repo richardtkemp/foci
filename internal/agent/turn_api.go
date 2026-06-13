@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
+	"foci/internal/convo"
 	"foci/internal/provider"
 )
 
@@ -612,7 +612,7 @@ func (a *Agent) logConversationSent(chatID int64, meta *TurnMetadata, sessionKey
 	if text == "" {
 		return
 	}
-	log.Conversation(log.ConversationEntry{
+	convo.Record(convo.Entry{
 		Direction: "sent",
 		UserID:    meta.UserID,
 		Username:  meta.Username,
@@ -627,7 +627,7 @@ func (a *Agent) logConversationThinking(chatID int64, meta *TurnMetadata, sessio
 	if thinking == "" {
 		return
 	}
-	log.Conversation(log.ConversationEntry{
+	convo.Record(convo.Entry{
 		Direction:   "sent",
 		UserID:      meta.UserID,
 		Username:    meta.Username,

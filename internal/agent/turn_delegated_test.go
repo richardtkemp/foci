@@ -11,8 +11,8 @@ import (
 
 	"foci/internal/agent/turnevent"
 	"foci/internal/compaction"
+	"foci/internal/convo"
 	"foci/internal/delegator"
-	focilog "foci/internal/log"
 	"foci/internal/nudge"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -1111,16 +1111,16 @@ func TestDelegatedTransport_RunInference_NilTurnResult(t *testing.T) {
 // This is the fix for conversation.db missing per-message rows (Issue 2) and
 // concatenating separate messages into one row (Issue 3).
 func TestDelegatedTransport_OnText_LogsEachMessage(t *testing.T) {
-	// Set up a temp conversation DB so log.Conversation() actually writes.
+	// Set up a temp conversation DB so convo.Record() actually writes.
 	dir := t.TempDir()
 	agentID := "test"
-	err := focilog.InitPerAgentConversation([]string{agentID}, func(id string) string {
+	err := convo.InitPerAgent([]string{agentID}, func(id string) string {
 		return dir + "/" + id + ".db"
 	})
 	if err != nil {
 		t.Fatalf("InitPerAgentConversation: %v", err)
 	}
-	defer focilog.CloseConversation()
+	defer convo.Close()
 
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
