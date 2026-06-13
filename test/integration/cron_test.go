@@ -212,16 +212,17 @@ func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 	}
 
 	// Hold the parent session in-flight across the T+30s keepalive tick.
-	// cc-stub caps each Bash tool_use at 10s (runBashToolUse wall-clock
-	// guard), but multiple tool_uses each get a fresh budget. Chain four
-	// `sleep 9` calls for ~36s of in-flight wall time — long enough to
-	// span the T+30s tick comfortably while leaving room for the post-
-	// hang T+60s tick to fire keepalive within the observation window.
-	hangSleep := map[string]any{"name": "Bash", "input": map[string]any{"command": "sleep 9"}}
+	// Hold the parent session in-flight long enough to span several scheduler
+	// ticks. With a 1s tick, keepalive is eligible almost immediately and
+	// tries every tick — the in-flight guard must defer each one until the
+	// turn completes. Two `sleep 4` Bash tool_uses give ~8s of in-flight wall
+	// time (cc-stub caps each Bash at 10s); keepalive then fires on the first
+	// tick after the hang.
+	hangSleep := map[string]any{"name": "Bash", "input": map[string]any{"command": "sleep 4"}}
 	hangBody, err := json.Marshal(map[string]any{
 		"text": "holding",
 		"tool_uses": []map[string]any{
-			hangSleep, hangSleep, hangSleep, hangSleep,
+			hangSleep, hangSleep,
 		},
 	})
 	if err != nil {
@@ -239,11 +240,11 @@ func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 		},
 	})
 
-	// Wait long enough to cover (a) the in-flight window (T+30s tick must
-	// defer) and (b) at least one tick AFTER the hang completes (T+60s tick
-	// should fire). The hang runs ~40s, so the post-hang tick lands around
-	// T+60s. Sleeping 65s gives us a comfortable observation window.
-	time.Sleep(65 * time.Second)
+	// Poll for the post-hang keepalive injection. The in-flight guard should
+	// defer every tick during the ~8s hang, so it only appears afterwards.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 30*time.Second, "[KEEPALIVE]"); !ok {
+		t.Fatalf("keepalive never fired post-hang within 30s\n%s", recorderTail(t, h.RecorderPath()))
+	}
 
 	// Locate the hold user_message timestamp and any [KEEPALIVE] injection.
 	var holdTS, keepaliveTS time.Time
@@ -263,15 +264,14 @@ func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 		t.Fatalf("hold-turn user_message never recorded\n%s", recorderTail(t, h.RecorderPath()))
 	}
 	if keepaliveTS.IsZero() {
-		t.Fatalf("keepalive never fired post-hang within 65s observation window\n%s",
-			recorderTail(t, h.RecorderPath()))
+		t.Fatalf("keepalive never fired post-hang\n%s", recorderTail(t, h.RecorderPath()))
 	}
-	// The in-flight guard must have deferred keepalive past the hang. Hang
-	// length is ~40s; keepalive must therefore appear at least ~35s after
-	// the hold message was pushed. If the gap is much smaller the guard
-	// fired during the hang (or didn't engage).
+	// The in-flight guard must have deferred keepalive past the ~8s hang.
+	// Keepalive must therefore appear at least ~6s after the hold message was
+	// pushed. If the gap is much smaller the guard fired during the hang (a
+	// failed guard would inject at the first tick, ~1-2s after push).
 	gap := keepaliveTS.Sub(holdPushTime)
-	if gap < 35*time.Second {
+	if gap < 6*time.Second {
 		t.Errorf("keepalive fired %s after hold push — in-flight guard did not defer past hang",
 			gap.Round(time.Second))
 	}
@@ -319,27 +319,17 @@ func TestL2_Cron_KeepaliveDoesNotReplyToTelegram(t *testing.T) {
 	// keepalive scan only sees sends emitted after the tick (if any).
 	_ = h.TelegramStub().DrainSent(token)
 
-	// One full 30s tickInterval + buffer. The proven KeepaliveFires test
-	// shows the marker appears in the recorder's user_message stream within
-	// 35s for interval=1s.
-	time.Sleep(35 * time.Second)
-
 	// First sanity-check: the keepalive prompt DID reach cc-stub as a
-	// user_message (test would otherwise be a tautology).
-	sawKeepalive := false
-	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
-		if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
-			continue
-		}
-		if strings.Contains(e.TextPrefix, "[KEEPALIVE]") {
-			sawKeepalive = true
-			break
-		}
-	}
-	if !sawKeepalive {
+	// user_message (test would otherwise be a tautology). Poll for it.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 20*time.Second, "[KEEPALIVE]"); !ok {
 		t.Fatalf("keepalive prompt never reached cc-stub as user_message — cannot meaningfully assert Telegram silence\n%s",
 			recorderTail(t, h.RecorderPath()))
 	}
+
+	// Settle: give any (erroneous) branch egress a moment to land on the
+	// Telegram stub before we assert silence — a misrouted reply would follow
+	// the keepalive injection by one turn.
+	time.Sleep(2 * time.Second)
 
 	// Real assertion: no payload sent to Telegram carries the keepalive
 	// prompt text. If the branch/inject egress path were misrouted, the
@@ -462,9 +452,10 @@ func TestL2_Cron_BackgroundSkippedWithNoOpenTodos(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	before := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 
-	// One full 30s tick + buffer. With empty todo store the scheduler
-	// must not dispatch regardless of idle/interval state.
-	time.Sleep(35 * time.Second)
+	// A few fast ticks. With an empty todo store the scheduler must not
+	// dispatch regardless of idle/interval state; a wrongful fire would land
+	// within ~2 ticks, so 5s is an ample absence window.
+	time.Sleep(5 * time.Second)
 
 	after := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 	if after != before {
@@ -489,14 +480,14 @@ func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: testUserID},
 		},
-		// interval=30s shapes the test window:
-		//   t≈+30s tick — idle 29s < 30s → idle gate blocks (no fire)
-		//   t≈+60s tick — idle 59s > 30s → fires; ends ~T+61s
-		//   t≈+90s tick — sinceLastBgEnd ~29s < 30s → cooldown blocks
-		// Total expected [background] fires across the run: exactly 1.
-		// Without the cooldown the T+90s tick would fire again because
-		// idle is also ≥ interval.
-		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"30s\"\n\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = false\n",
+		// interval=10s doubles as the idle gate AND the post-completion
+		// cooldown. With the test's fast tick: the idle gate opens ~10s after
+		// bootstrap → one fire (ends ~1s later); the cooldown then blocks
+		// re-firing until ~10s after that end. We poll for the fire, then hold
+		// well inside the cooldown and assert it stayed at exactly 1. Without
+		// the cooldown the next tick would re-fire immediately (idle is also
+		// ≥ interval).
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"10s\"\n\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -527,12 +518,17 @@ func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
 		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Run past the third tick (~T+95s) so we observe both the first fire
-	// (T+60s tick) and the cooldown-blocked third tick (T+90s).
-	time.Sleep(95 * time.Second)
+	// Wait for the first background fire (idle gate opens ~10s after
+	// bootstrap). Polling makes the test robust to bootstrap-timing variance.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 25*time.Second, "[background]", "Background Work"); !ok {
+		t.Fatalf("background never fired within 25s\n%s", recorderTail(t, h.RecorderPath()))
+	}
 
-	// Count background prompt injections in the recorder. Cooldown must
-	// prevent the third tick from firing despite idle and open todos.
+	// Hold well inside the 10s cooldown (which starts when that session ends)
+	// and confirm the scheduler did NOT self-chain a second fire despite the
+	// idle gate still being open and todos remaining.
+	time.Sleep(6 * time.Second)
+
 	count := 0
 	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
 		if strings.Contains(e.TextPrefix, "[background]") && strings.Contains(e.TextPrefix, "Background Work") {
@@ -540,7 +536,7 @@ func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
 		}
 	}
 	if count != 1 {
-		t.Errorf("expected exactly 1 background fire across 95s with cooldown=30s; got %d\n%s",
+		t.Errorf("expected exactly 1 background fire (cooldown must block self-chaining); got %d\n%s",
 			count, recorderTail(t, h.RecorderPath()))
 	}
 }
@@ -600,10 +596,10 @@ func TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches(t *testing.T) {
 		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// One full 30s tick + buffer. With HasActiveWork pinned to 1 the
-	// background scheduler must not dispatch despite an open background
-	// todo and the idle gate having passed.
-	time.Sleep(35 * time.Second)
+	// A few fast ticks. With HasActiveWork pinned to 1 the background
+	// scheduler must not dispatch despite an open background todo and the
+	// idle gate having passed; a wrongful fire would land within ~2 ticks.
+	time.Sleep(5 * time.Second)
 
 	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
 		if strings.Contains(e.TextPrefix, "[background]") && strings.Contains(e.TextPrefix, "Background Work") {
@@ -628,12 +624,12 @@ func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: testUserID},
 		},
-		// interval=20s passes the lastReflection time-gate after one 30s
-		// tick AND keeps the idle-vs-interval window achievable. Reflection
-		// SKIPS when sinceLastInteraction > interval (dormant sessions);
-		// the test sends a refresh message before the tick so idle stays
-		// low. consolidation_enabled=false isolates the assertion.
-		ExtraConfigTOML: "\n[reflection]\ninterval = \"20s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		// interval=5s: with the fast tick, the lastReflection time-gate opens
+		// ~5s after boot and the first tick after bootstrap finds idle well
+		// under the 5s interval, so reflection fires without a warm-up refresh.
+		// Reflection SKIPS when sinceLastInteraction > interval (dormant
+		// sessions). consolidation_enabled=false isolates the assertion.
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -656,71 +652,40 @@ func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Wait, then push a refresh message so lastInteraction is recent
-	// when the 30s reflection tick lands. Without this the bootstrap-
-	// at-T+~3s becomes idle ~27s by tick time, which exceeds the
-	// 20s interval and reflection skips ("idle > interval").
-	time.Sleep(20 * time.Second)
-	refreshBody, _ := json.Marshal(map[string]any{"text": "refresh"})
-	h.WriteCCStubScript(t, "alpha", refreshBody)
-	h.TelegramStub().PushUpdate(token, gotgbot.Update{
-		Message: &gotgbot.Message{
-			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
-			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
-			Text: "keep session warm",
-		},
-	})
-	if !waitForUserMessage(t, h, "workspaces/alpha", "keep session warm", 15*time.Second) {
-		t.Fatalf("refresh never processed; stderr:\n%s", stderrTail(h.Stderr()))
-	}
-
-	// Wait through the next 30s tick. With the refresh ~22s in, the
-	// next tick lands within a window where sinceLastInteraction < 20s
-	// interval AND lastReflection-time-gate has elapsed.
-	// Poll for the reflection marker rather than sleeping a fixed window;
-	// return as soon as the pass injects.
+	// The first tick after bootstrap (idle ~1s < 5s interval) once the
+	// lastReflection time-gate has elapsed (~5s) fires the pass. Poll for the
+	// reflection marker rather than sleeping a fixed window.
 	if _, ok := waitForUserMessageContaining(t, h, "alpha", 25*time.Second, "Reflection Pass"); !ok {
 		t.Fatalf("reflection prompt never reached cc-stub as user_message; stderr:\n%s",
 			stderrTail(h.Stderr()))
 	}
 }
 
-// TestL2_Cron_ReflectionStampPreventsImmediateRefire proves the
-// SessionIndex.StampReflection write inside maybeReflection: once a
-// session has been reflected on, subsequent ticks within the configured
-// interval skip it (the "no sessions need reflection" path). Asserts at
-// most one reflection invocation per session across a window of
-// multiple ticks.
+// TestL2_Cron_ReflectionStampPreventsImmediateRefire proves reflection
+// does not immediately re-fire after a pass: once a session has been
+// reflected, subsequent ticks within the configured interval skip it (the
+// lastReflection time-gate, backed by SessionIndex's reflected-stamp). The
+// test keeps the session warm across the window so neither dormancy nor the
+// idle gate is what blocks the re-fire. (Fully isolating the stamp from the
+// time-gate would need a SessionIndex.MarkReflected harness helper; this
+// asserts the observable no-immediate-refire contract.)
+//
+// This was previously skipped as infeasible with the hardcoded 30s tick —
+// you couldn't have "first tick fires" (interval ≤ tick) and "next tick
+// skips via the time-gate" (interval > tick gap) at once. A configurable
+// fast tick makes interval comfortably larger than the tick gap.
 func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
 	testharness.ParallelWait(t)
-	// SKIP: structurally infeasible with the current implementation +
-	// 30s tickInterval. To observe "fires then skips" we need both:
-	//   - first 30s tick must fire (so interval ≤ 30s)
-	//   - second 30s tick must skip via the lastReflection time-gate
-	//     (so now < lastReflection + interval, i.e. interval > tick gap)
-	// Those two are unsatisfiable with a single interval value.
-	//
-	// The other potential guard — SessionIndex's "needs reflection" stamp
-	// — also can't isolate, because any user-message refresh used to keep
-	// the idle gate satisfied ALSO restamps the session as needing
-	// reflection on the next tick. Catch-22 with the warm-session
-	// requirement.
-	//
-	// Unblock paths: (a) make tickInterval configurable so a test can
-	// fit interval > tick gap, (b) expose a SessionIndex.MarkReflected
-	// helper for the harness so the test can stamp without a user msg.
-	t.Skip("INFEASIBLE: cannot observe 'fires then skips' isolated to the stamp with the current 30s tickInterval and idle-gate constraints. See comment for unblock paths.")
 	const testUserID = 5305
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: testUserID},
 		},
-		// interval=20s — chosen so:
-		//   - lastReflection time-gate passes after one 30s tick
-		//   - sinceLastInteraction can stay < interval across two refreshes
-		// consolidation_enabled=false isolates the assertion to reflection.
-		ExtraConfigTOML: "\n[reflection]\ninterval = \"20s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		// interval=10s: the time-gate opens ~10s after boot and fires once;
+		// re-firing is then blocked until ~10s after that fire. We assert well
+		// inside that window. consolidation_enabled=false isolates reflection.
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"10s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -752,47 +717,33 @@ func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
 		return n
 	}
 
-	// Push a refresh ~20s in to keep lastInteraction recent for the
-	// next 30s tick — see TestL2_Cron_ReflectionFiresOnInterval for the
-	// idle-vs-interval gate reasoning.
-	pushRefresh := func(text string) {
-		body, _ := json.Marshal(map[string]any{"text": "refresh"})
-		h.WriteCCStubScript(t, "alpha", body)
-		h.TelegramStub().PushUpdate(token, gotgbot.Update{
-			Message: &gotgbot.Message{
-				Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
-				From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
-				Text: text,
-			},
-		})
-		if !waitForUserMessage(t, h, "workspaces/alpha", text, 15*time.Second) {
-			t.Fatalf("refresh %q never processed; stderr:\n%s", text, stderrTail(h.Stderr()))
-		}
+	// Wait for the first reflection pass (time-gate opens ~10s after boot).
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 25*time.Second, "Reflection Pass"); !ok {
+		t.Fatalf("reflection did not fire within 25s; stderr:\n%s", stderrTail(h.Stderr()))
 	}
+	afterFirst := countReflectionInjects()
 
-	// First reflection cycle: warm session, wait through first 30s tick,
-	// assert reflection fired exactly once.
-	time.Sleep(20 * time.Second)
-	pushRefresh("warm-1")
-	time.Sleep(20 * time.Second)
-	afterFirstTick := countReflectionInjects()
-	if afterFirstTick == 0 {
-		t.Fatalf("reflection did not fire on first tick (no 'Reflection Pass' user_message recorded); stderr:\n%s",
-			stderrTail(h.Stderr()))
+	// Keep the session warm: a refresh re-stamps it as needing reflection AND
+	// resets the idle gate, so neither dormancy nor idle can explain the
+	// absence of a re-fire. Then hold well inside the interval — reflection
+	// must NOT re-fire on the intervening ticks.
+	refreshBody, _ := json.Marshal(map[string]any{"text": "refresh"})
+	h.WriteCCStubScript(t, "alpha", refreshBody)
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "keep session warm",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "keep session warm", 15*time.Second) {
+		t.Fatalf("refresh never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
+	time.Sleep(4 * time.Second)
 
-	// Second reflection cycle: refresh again to keep idle gate satisfied,
-	// then wait through the next 30s tick. The session was just stamped
-	// by the first reflection, so SessionIndex should report "no sessions
-	// need reflection" and the count must not grow. With interval=20s
-	// the time-gate alone would not block (20s elapsed since first fire),
-	// so the stamp is the only remaining guard.
-	pushRefresh("warm-2")
-	time.Sleep(30 * time.Second)
-	afterSecondTick := countReflectionInjects()
-	if afterSecondTick != afterFirstTick {
-		t.Errorf("reflection refired despite recent stamp: afterFirst=%d afterSecond=%d; stderr:\n%s",
-			afterFirstTick, afterSecondTick, stderrTail(h.Stderr()))
+	if afterSecond := countReflectionInjects(); afterSecond != afterFirst {
+		t.Errorf("reflection re-fired within its interval despite a recent pass: afterFirst=%d afterSecond=%d; stderr:\n%s",
+			afterFirst, afterSecond, stderrTail(h.Stderr()))
 	}
 }
 
@@ -837,10 +788,10 @@ func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
 		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Second turn: hold the session in-flight for 35s so the first 30s
-	// tick lands while parent is still processing. Bash sleep is the
+	// Second turn: hold the session in-flight for ~6s so several scheduler
+	// ticks land while the parent is still processing. Bash sleep is the
 	// canonical hold pattern (see TestL2_Cron_WakeReminderWaitsForActiveTurn).
-	hangBash := fmt.Sprintf(`echo %s; sleep 35`, hangMarker)
+	hangBash := fmt.Sprintf(`echo %s; sleep 6`, hangMarker)
 	hangBody, err := json.Marshal(map[string]any{
 		"text": "holding",
 		"tool_uses": []map[string]any{
@@ -869,9 +820,10 @@ func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
 
 	beforeTick := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 
-	// Wait through the 30s tick (which lands during the 35s hold). The
-	// in-flight filter should defer reflection.
-	time.Sleep(33 * time.Second)
+	// Observe several ticks that land WHILE the parent turn is still in
+	// flight (the ~6s hold). Reflection is otherwise eligible (interval=1s),
+	// so any growth here would mean the in-flight filter failed to defer.
+	time.Sleep(4 * time.Second)
 	afterTick := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 	if afterTick != beforeTick {
 		t.Errorf("reflection fired while parent session was in-flight: before=%d after=%d; stderr:\n%s",
@@ -923,9 +875,10 @@ func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	before := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 
-	// One tick + buffer. Since IntervalEnabled=false, reflection must
-	// not dispatch regardless of how long the interval has elapsed.
-	time.Sleep(35 * time.Second)
+	// A few fast ticks. Since IntervalEnabled=false, reflection must not
+	// dispatch regardless of how long the interval has elapsed; a wrongful
+	// fire would land within ~2 ticks.
+	time.Sleep(5 * time.Second)
 
 	after := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 	if after != before {
@@ -1002,12 +955,12 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: testUserID},
 		},
-		// Reflection at interval=20s (passes time-gate after one 30s tick),
-		// consolidation enabled at interval=1s so its time-gate trivially
-		// passes every tick. The runner ticks at 30s and runs maybeReflection
-		// before maybeConsolidation in the same tick — so when reflection
-		// fires, consolidation sees reflectionRunning=true on the SAME tick.
-		ExtraConfigTOML: "\n[reflection]\ninterval = \"20s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
+		// Reflection at interval=5s (fires a few seconds after bootstrap, idle
+		// still under interval), consolidation enabled at interval=1s so its
+		// time-gate trivially passes every tick. Each tick runs maybeReflection
+		// before maybeConsolidation — so when reflection is mid-flight,
+		// consolidation sees reflectionRunning=true and must defer.
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -1029,62 +982,31 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Refresh ~22s in (with a quick script) so lastInteraction stays recent
-	// for the reflection idle gate at T+30s. After refresh completes, write
-	// the HANG script so the upcoming reflection turn keeps reflectionRunning
-	// true for ~36s across the next tick (where consolidation would otherwise
-	// fire).
-	time.Sleep(20 * time.Second)
-	refreshBody, _ := json.Marshal(map[string]any{"text": "refresh"})
-	h.WriteCCStubScript(t, "alpha", refreshBody)
-	h.TelegramStub().PushUpdate(token, gotgbot.Update{
-		Message: &gotgbot.Message{
-			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
-			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
-			Text: "keep session warm",
-		},
-	})
-	if !waitForUserMessage(t, h, "workspaces/alpha", "keep session warm", 15*time.Second) {
-		t.Fatalf("refresh never processed; stderr:\n%s", stderrTail(h.Stderr()))
-	}
-
-	// 4× sleep 9 ≈ 36s of in-flight time for the reflection turn. branchFn
-	// (delegated) blocks until cc-stub finishes the turn, so reflectionRunning
-	// stays true for the duration. The T+60s consolidation tick lands inside
-	// this window and MUST defer.
-	hangSleep := map[string]any{"name": "Bash", "input": map[string]any{"command": "sleep 9"}}
+	// Write the HANG script so the upcoming reflection turn keeps
+	// reflectionRunning true for ~8s — long enough that several consolidation
+	// ticks (interval=1s) land inside the window and MUST defer. branchFn
+	// (delegated) blocks until cc-stub finishes the turn. One `sleep 8` stays
+	// under cc-stub's 10s Bash cap.
 	hangBody, _ := json.Marshal(map[string]any{
 		"text": "reflecting (held open)",
 		"tool_uses": []map[string]any{
-			hangSleep, hangSleep, hangSleep, hangSleep,
+			{"name": "Bash", "input": map[string]any{"command": "sleep 8"}},
 		},
 	})
 	h.WriteCCStubScript(t, "alpha", hangBody)
 
-	// Wait through reflection fire (T+30s tick), the hang window (~T+30s to
-	// ~T+66s), and the post-hang consolidation tick (T+90s).
-	time.Sleep(70 * time.Second)
-
-	// Find (a) the reflection user_message in main session, (b) the first
-	// consolidation invocation AFTER the reflection. Consolidation creates a
-	// new isolated CC session in delegated mode (not in branchTypesForMainSession),
-	// so it shows up as kind=invocation. We must filter on timestamp because
-	// startup RunOnce calls (nudge rule extraction) also create invocations.
-	entries := readRecorderEntries(t, h.RecorderPath())
-	var reflectionTS time.Time
-	for _, e := range entries {
-		if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
-			continue
-		}
-		if strings.Contains(e.TextPrefix, "Reflection Pass") {
-			reflectionTS, _ = time.Parse(time.RFC3339Nano, e.Timestamp)
-			break
-		}
-	}
-	if reflectionTS.IsZero() {
+	// Poll for the reflection fire (the turn that runs the hang), capturing
+	// when it started.
+	reflEntry, ok := waitForUserMessageContaining(t, h, "alpha", 25*time.Second, "Reflection Pass")
+	if !ok {
 		t.Fatalf("reflection user_message never recorded — test cannot prove gate\n%s",
 			recorderTail(t, h.RecorderPath()))
 	}
+	reflectionTS, _ := time.Parse(time.RFC3339Nano, reflEntry.Timestamp)
+
+	// Let the ~8s hang finish and the first post-hang consolidation tick land.
+	time.Sleep(12 * time.Second)
+	entries := readRecorderEntries(t, h.RecorderPath())
 
 	var consolidationTS time.Time
 	for _, e := range entries {
@@ -1103,12 +1025,12 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 		t.Fatalf("no consolidation invocation recorded after reflection — gate may be over-blocking, OR consolidation interval mis-configured\n%s",
 			recorderTail(t, h.RecorderPath()))
 	}
-	// The first post-reflection invocation must arrive AFTER the hang would
-	// have ended (~36s after reflection started). If it appeared during the
-	// hang window, the reflectionRunning gate (or the in-flight gate) didn't
-	// engage and consolidation fired while reflection was mid-flight.
+	// The first post-reflection invocation must arrive AFTER the ~8s hang
+	// ended. If it appeared during the hang window, the reflectionRunning gate
+	// (or the in-flight gate) didn't engage and consolidation fired while
+	// reflection was mid-flight.
 	gap := consolidationTS.Sub(reflectionTS)
-	if gap < 30*time.Second {
+	if gap < 6*time.Second {
 		t.Errorf("first post-reflection invocation %s after reflection — gate did not defer past reflection's in-flight window\n%s",
 			gap.Round(time.Second), recorderTail(t, h.RecorderPath()))
 	}
@@ -1124,25 +1046,30 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 	testharness.ParallelHeavy(t)
 	const testUserID = 5310
-	// Strategy: configure consolidation_interval = "1h" — well past the
-	// test wall-clock — so a SECOND consolidation would only fire if the
-	// persisted timestamp is NOT loaded on restart. The first
-	// consolidation fires on the very first cron tick because zero-time
-	// + interval rounds well into the past; that fire writes
-	// consolidation_last via SetAgentMetadata. After Restart, the new
-	// Runner reads consolidation_last in init (keepalive.go:178) and
-	// computes nextFire ~1h ahead — every post-restart tick must skip.
+	// Strategy: a long consolidation_interval (24h) so a SECOND consolidation
+	// would only fire if the persisted timestamp is NOT loaded on restart. A
+	// fresh agent now anchors lastConsolidation to boot (it no longer fires
+	// immediately), so we SEED an overdue consolidation_last (48h ago, ≥ 2×
+	// interval, guaranteed past nextFire) to make the first consolidation fire
+	// promptly. That fire rewrites consolidation_last to ~now. After Restart
+	// the new Runner reads it and computes nextFire ~a day ahead, so every
+	// post-restart tick must skip. (A 24h interval also makes the post-fire
+	// nextFire's Truncate-boundary alignment essentially never coincide with
+	// the few-second restart window — the 1h interval this test used was ~2%
+	// alignment-flaky.)
 	//
-	// Harness.Restart() reuses h.configPath (and therefore h.dataDir),
-	// so the SessionIndex sqlite file persists across the restart. The
-	// recorder file is shared across spawns, so invocations from both
-	// processes accumulate to the same JSONL.
+	// Harness.Restart() reuses h.configPath (and therefore h.dataDir), so the
+	// SessionIndex sqlite file persists across the restart. The recorder file
+	// is shared across spawns, so invocations from both processes accumulate
+	// to the same JSONL.
+	overdue := time.Now().Add(-48 * time.Hour).Format(time.RFC3339)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: testUserID},
 		},
-		ExtraConfigTOML: "\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = true\nconsolidation_interval = \"1h\"\n",
-		ReadyTimeout:    30 * time.Second,
+		ExtraConfigTOML:   "\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = true\nconsolidation_interval = \"24h\"\n",
+		SeedAgentMetadata: map[string]map[string]string{"alpha": {"consolidation_last": overdue}},
+		ReadyTimeout:      30 * time.Second,
 	})
 
 	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
@@ -1165,17 +1092,26 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Wait for one cron tick — consolidation fires and writes
-	// consolidation_last via SetAgentMetadata. The cron tick interval
-	// is 30s; budget 40s to land inside the tick window comfortably.
-	time.Sleep(40 * time.Second)
-	firstInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
-	if firstInvocations < 2 {
-		// 1 bootstrap + 1 consolidation expected. Surface stderr so a
-		// scheduling miss is debuggable.
-		t.Fatalf("expected at least 2 invocations (bootstrap + first consolidation) before restart; got %d. stderr:\n%s",
-			firstInvocations, stderrTail(h.Stderr()))
+	// The seeded overdue timestamp makes consolidation fire on the first cron
+	// tick; that fire rewrites consolidation_last via SetAgentMetadata. Three
+	// invocations on first boot: the startup nudge-rule RunOnce, the bootstrap
+	// turn, then the first consolidation — poll for all three so we KNOW
+	// consolidation has fired (a count of 2 is only nudge + bootstrap). The
+	// post-restart boot reuses the cached nudge rules, so it adds no nudge
+	// invocation; any post-restart growth is a consolidation.
+	firstEntries, ok := waitForInvocationCount(t, h, "workspaces/alpha", 3, 25*time.Second)
+	if !ok {
+		t.Fatalf("expected 3 invocations (nudge + bootstrap + first consolidation) before restart; got %d. stderr:\n%s",
+			len(firstEntries), stderrTail(h.Stderr()))
 	}
+	firstInvocations := len(firstEntries)
+
+	// The invocation is recorded when consolidation DISPATCHES, but
+	// consolidation_last is persisted only after the RunOnce completes. Settle
+	// briefly so the timestamp is on disk before we restart — otherwise the
+	// new process races the write and re-fires (the bug this test guards
+	// would be indistinguishable from that race).
+	time.Sleep(3 * time.Second)
 
 	// Restart foci-gw — same DataDir, fresh subprocess. Runner re-init
 	// reads consolidation_last from the persisted SessionIndex.
@@ -1183,11 +1119,11 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("Restart: %v", err)
 	}
 
-	// Observe two full cron ticks post-restart (~70s). With
-	// consolidation_interval = "1h" and a fresh lastConsolidation from
-	// disk pointing at ~70s ago, nextFire is ~59m in the future, so
-	// every tick must skip.
-	time.Sleep(70 * time.Second)
+	// Observe several cron ticks post-restart. With consolidation_interval =
+	// "1h" and a fresh lastConsolidation loaded from disk pointing at ~seconds
+	// ago, nextFire is ~59m in the future, so every tick must skip. Had the
+	// persisted value been ignored, a re-fire would land within ~2 ticks.
+	time.Sleep(6 * time.Second)
 	secondInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 	if secondInvocations > firstInvocations {
 		// The persisted timestamp would mean nextFire is ~1h ahead, so
@@ -2053,7 +1989,7 @@ func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
 		},
 		// All three schedulers enabled with short intervals. With the
 		// canFire override locked to false, none should dispatch.
-		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval = \"20s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -2092,11 +2028,9 @@ func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	beforeInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 
-	// Push a refresh ~5s before the next 30s tick to keep reflection
-	// eligible (sinceLastInteraction < 20s interval). Without this the
-	// reflection eligibility gate skips before canFire is consulted,
-	// which weakens the "canFire blocked reflection" claim.
-	time.Sleep(20 * time.Second)
+	// Refresh to keep reflection eligible (sinceLastInteraction < 5s interval)
+	// so the reflection eligibility gate doesn't skip before canFire is
+	// consulted — that would weaken the "canFire blocked reflection" claim.
 	refreshBody, _ := json.Marshal(map[string]any{"text": "refresh"})
 	h.WriteCCStubScript(t, "alpha", refreshBody)
 	h.TelegramStub().PushUpdate(token, gotgbot.Update{
@@ -2110,9 +2044,10 @@ func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
 		t.Fatalf("refresh never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Wait through the next 30s tick. With canFire blocked, no
-	// scheduler should dispatch.
-	time.Sleep(20 * time.Second)
+	// Observe several ticks where all three schedulers are eligible (reflection
+	// time-gate opens ~5s after boot; bg/consolidation every tick). With
+	// canFire blocked, none should dispatch; a leak would land within ~2 ticks.
+	time.Sleep(5 * time.Second)
 
 	// Consolidation creates new invocations; bg + reflection inject
 	// user_messages. Assert all three markers are absent.
@@ -2175,20 +2110,23 @@ func TestL2_Cron_IncomingMessageDuringKeepaliveQueues(t *testing.T) {
 
 	// Write a HANG script for the upcoming keepalive turn. branchFn
 	// (delegated, keepalive) injects the [KEEPALIVE] prompt as a
-	// user_message in the main session — cc-stub picks up this script
-	// to script the response. 4× sleep 9 ≈ 36s of in-flight time.
-	hangSleep := map[string]any{"name": "Bash", "input": map[string]any{"command": "sleep 9"}}
+	// user_message in the main session — cc-stub picks up this script to
+	// script the response. One `sleep 8` (under cc-stub's 10s Bash cap) holds
+	// the keepalive turn in-flight long enough to push during it.
 	hangBody, _ := json.Marshal(map[string]any{
 		"text": "keepalive-acknowledged",
 		"tool_uses": []map[string]any{
-			hangSleep, hangSleep, hangSleep, hangSleep,
+			{"name": "Bash", "input": map[string]any{"command": "sleep 8"}},
 		},
 	})
 	h.WriteCCStubScript(t, "alpha", hangBody)
 
-	// Wait until the keepalive tick at T+30s has fired and the hang turn
-	// is well underway. T+35s is safely inside the in-flight window.
-	time.Sleep(35 * time.Second)
+	// Poll for the keepalive injection (fires within ~1-2s); its hang turn is
+	// then in-flight for ~8s.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 25*time.Second, "[KEEPALIVE]"); !ok {
+		t.Fatalf("keepalive prompt never reached cc-stub — cannot prove queuing behaviour\n%s",
+			recorderTail(t, h.RecorderPath()))
+	}
 
 	// Push a Telegram message during the in-flight keepalive turn. foci's
 	// receive path should queue it (not drop it) and process once the
@@ -2202,10 +2140,12 @@ func TestL2_Cron_IncomingMessageDuringKeepaliveQueues(t *testing.T) {
 		},
 	})
 
-	// Wait until the hang completes (~T+66s) and the queued user message
-	// has a chance to process (cc-stub default echo, no script needed).
-	// 40s past push gives ~T+75s — comfortable.
-	time.Sleep(40 * time.Second)
+	// Poll until the queued user message processes once the hang completes
+	// (cc-stub default echo, no script needed).
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 25*time.Second, userMsgText); !ok {
+		t.Fatalf("user message %q never processed — was dropped instead of queued\n%s",
+			userMsgText, recorderTail(t, h.RecorderPath()))
+	}
 
 	// Recorder should contain BOTH the keepalive prompt AND the user
 	// message, with the keepalive arriving first.

@@ -49,7 +49,7 @@ find-disconnected-tests:
 test:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
-	TMPDIR=$(TESTDIR) go test -p=$(NPROC) -parallel=16 ./... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+	TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 # Integration tests (L2): real foci-gw subprocess against stubbed CC and
 # stubbed Telegram. Build-tagged so they only run under this target — not
@@ -59,7 +59,7 @@ integration:
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
 	$(eval TESTDIR := /tmp/foci/integration-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
-	@TMPDIR=$(TESTDIR) go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) ./test/integration/... ./internal/testharness/... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+	@TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) ./test/integration/... ./internal/testharness/... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 # bucket-audit: the differential half of weight-bucket detection. Runs the
 # L2 suite at low (-parallel=2) and high (-parallel=IPARALLEL) concurrency
@@ -73,22 +73,22 @@ bucket-audit:
 	$(eval TESTDIR := /tmp/foci/bktaudit-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "--- low (-parallel=2) ---"
-	-@TMPDIR=$(TESTDIR) go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
+	-@TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
 	@echo "--- high (-parallel=$(IPARALLEL)) ---"
-	-@TMPDIR=$(TESTDIR) go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
+	-@TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
 	@rm -rf $(TESTDIR)
 
 coverage:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Test Coverage ==="
-	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+	@TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage-report:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Generating Coverage Report ==="
-	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
+	@TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
 	@rm -rf $(TESTDIR)
 	@go tool cover -func=coverage.out | tail -20
 	@echo ""
@@ -99,7 +99,7 @@ coverage-html:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Generating HTML Coverage Report ==="
-	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
+	@TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
 	@rm -rf $(TESTDIR)
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report saved to coverage.html"
@@ -112,7 +112,7 @@ coverage-check:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
-	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
+	@TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
 	@rm -rf $(TESTDIR)
 	@if grep -q '^FAIL' .test-output.tmp; then \
 		rm -f .test-output.tmp; \

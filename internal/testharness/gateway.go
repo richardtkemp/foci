@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
+
+	"foci/internal/session"
 )
 
 // AgentSpec describes one agent to wire up in a test foci-gw.
@@ -160,6 +162,13 @@ type HarnessOptions struct {
 	// startup. Parent dirs are created with 0o755; files are written
 	// with 0o600. Paths must be relative (no leading "/", no "..").
 	PreStartDataFiles map[string]string
+	// SeedAgentMetadata writes rows into the session index's agent_metadata
+	// table BEFORE foci-gw spawns: outer key is the agent ID, inner map is
+	// key→value. Use to set up persistent-state preconditions a fresh boot
+	// would otherwise lack — e.g. an overdue "consolidation_last" so a
+	// scheduler fires promptly despite a long interval. Written via the same
+	// SessionIndex foci-gw reads at startup.
+	SeedAgentMetadata map[string]map[string]string
 }
 
 // Harness drives one foci-gw subprocess against a Telegram stub. Tests
@@ -408,10 +417,33 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	// by which point t.Failed() reflects the test's final verdict.
 	t.Cleanup(func() { auditWeight(t) })
 
+	if len(opts.SeedAgentMetadata) > 0 {
+		seedAgentMetadata(t, filepath.Join(dataDir, "state.db"), opts.SeedAgentMetadata)
+	}
+
 	if err := h.spawnGateway(); err != nil {
 		return nil, err
 	}
 	return h, nil
+}
+
+// seedAgentMetadata writes the requested agent_metadata rows into the session
+// index at dbPath before foci-gw opens it. Reuses the production SessionIndex
+// so the schema and write path match exactly.
+func seedAgentMetadata(t *testing.T, dbPath string, seed map[string]map[string]string) {
+	t.Helper()
+	idx, err := session.NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatalf("seed agent metadata: open session index: %v", err)
+	}
+	defer func() { _ = idx.Close() }()
+	for agentID, kv := range seed {
+		for k, v := range kv {
+			if err := idx.SetAgentMetadata(agentID, k, v); err != nil {
+				t.Fatalf("seed agent metadata %s/%s: %v", agentID, k, err)
+			}
+		}
+	}
 }
 
 // spawnGateway forks the foci-gw subprocess, wires up streaming I/O
