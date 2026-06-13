@@ -1364,7 +1364,7 @@ Endpoints for external integration. All endpoints accept an optional `agent` par
 
 - `POST /send` — message to agent's default session (activity-gated). Returns 412 if no default session.
 - `GET /status` — dispatches `/status` for the specified agent
-- `POST /command` — dispatches slash command (bypasses agent context)
+- `POST /command` — dispatches slash command (bypasses agent context; activity-gated — accepts `if_active`/`if_inactive`/`if_user_active`/`if_user_inactive` in the JSON body, with the same in-flight short-circuit as `/send`, so an unattended `/reset` skips a session that is active or mid-turn)
 - `POST /wake` — branch from default session (activity-gated, supports `no_compact`/`no_reset_hook`). Returns 412 if no default session.
 - `POST /webhook/{agent}/{hookid}` — trigger agent turn from external events. `{hookid}` must be declared in the agent's `webhooks` config map (global `[system]` merged with per-agent `[[agents]].system`). The mapped prompt path is resolved via `prompts.ResolvePrompt()` (agent workspace/prompts → shared workspace/prompts). Reads request body as payload (max 1 MB), combines prompt + payload under a `## Webhook Payload` heading, and sends to the agent's default session. Async (202) by default; `?sync=true` for synchronous response. Supports four activity gate query params — `?if_active` / `?if_inactive` (session-level, with in-flight short-circuit) and `?if_user_active` / `?if_user_inactive` (user-attention only); see [SPEC.md](SPEC.md) Activity gating. Returns 404 if hookid not in config or prompt file not found, 412 if no default session.
 - `GET /voice` — WebSocket upgrade for real-time voice conversation. Enabled when `[http] ws_enabled = true`.
@@ -1387,12 +1387,15 @@ Before a session is cleared (`/reset` or facet TTL reclaim), the agent runs the 
 
 Flow (`agent.FireSessionEndMemory` in `internal/agent/session_end_memory.go`):
 1. Check `reflection.session_end_enabled` (nil = true, explicit false skips)
-2. Resolve prompt via `prompts.ResolvePrompt(session_end_prompt, ...)` — embedded default on empty/error
-3. If prompt resolves to empty, skip
-4. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip (unless skipMetaCheck=true for background branches)
-5. Create branch from expiring session (copies conversation history)
-6. Return immediately — caller proceeds to clear the main session
-7. Async: `HandleMessage(ctx, branchKey, prompt)` with 120s timeout, trigger `"session_end_memory"`, NoCompact
+2. **Reflect-twice guard** — `SessionIndex.ReflectionRedundant(sessionKey)`: skip if a reflection has already run AND nothing substantive happened since (`last_activity_at <= last_reflection`). Unknown / never-reflected sessions reflect. Relies on activity tracking excluding memory turns (below).
+3. Resolve prompt via `prompts.ResolvePrompt(session_end_prompt, ...)` — embedded default on empty/error
+4. If prompt resolves to empty, skip
+5. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip (unless skipMetaCheck=true for background branches)
+6. Create branch from expiring session (copies conversation history)
+7. Return immediately — caller proceeds to clear the main session
+8. Async: `HandleMessage(ctx, branchKey, prompt)` with 120s timeout, trigger `"session_end_memory"`, NoCompact
+
+**Activity tracking excludes memory turns.** `last_activity_at` is bumped by `RegisterSessionIndex` / `TouchActivity` (`turn_contract.go`) on every turn *except* those whose trigger is a memory-formation pass — `isMemoryTrigger` returns true for `"reflection"` and `"session_end_memory"` (`internal/agent/context.go`). Without this, a delegated agent's reflection (which injects into the *main* session, not a branch) would bump `last_activity_at` past `last_reflection` and make the reflect-twice guard always fire reflection. Keepalive / background / cron turns still count as activity by design — only the memory passes themselves are excluded.
 
 Entry points:
 - `/reset` command → `agent.FireSessionEndMemory` (async) → `RotateKey` → `Reload`

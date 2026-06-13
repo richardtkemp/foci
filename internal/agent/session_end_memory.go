@@ -19,6 +19,16 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 
+	// No need to reflect twice: skip if a reflection has already run on this
+	// session and nothing substantive has happened since (last_activity_at <=
+	// last_reflection). last_activity_at excludes memory-formation turns (see
+	// isMemoryTrigger), so a prior reflection's own turn doesn't count as
+	// activity here. Unknown / never-reflected sessions return false → reflect.
+	if a.SessionIndex != nil && a.SessionIndex.ReflectionRedundant(sessionKey) {
+		log.Debugf("session-end-memory", "skipping for %s: no activity since last reflection", sessionKey)
+		return
+	}
+
 	canFire, reason := a.CanFireBackgroundOperation(ctx, sessionKey)
 	if !canFire {
 		log.Debugf("session-end-memory", "skipping for %s: %s", sessionKey, reason)
