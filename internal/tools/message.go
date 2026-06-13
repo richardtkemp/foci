@@ -50,186 +50,209 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 			}
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			p, err := UnmarshalParams[struct {
-				Text     string `json:"text"`
-				FilePath string `json:"file"`
-				Filename string `json:"filename"`
-				SendAs   string `json:"send_as"`
-			}](params)
-			if err != nil {
-				return ToolResult{}, err
-			}
-			if p.Text == "" && p.FilePath == "" {
-				return ToolResult{}, fmt.Errorf("at least one of text or file is required")
-			}
-			if p.Filename != "" && p.FilePath == "" {
-				return ToolResult{}, fmt.Errorf("filename requires file")
-			}
-			if p.SendAs == "" {
-				p.SendAs = "document"
-			}
-
-			// Custom display filename: symlink the source into a per-call temp
-			// dir under the desired basename, then send the symlink. Platform
-			// implementations use filepath.Base(path) to label the attachment,
-			// so the symlink name becomes the displayed filename. Symlinks are
-			// followed by os.Open, so size/mime detection still sees the real
-			// file. Per-call temp dir avoids collisions on concurrent sends.
-			if p.Filename != "" {
-				cleanName := filepath.Base(p.Filename) // strip any path components defensively
-				if cleanName == "." || cleanName == "/" || cleanName == "" {
-					return ToolResult{}, fmt.Errorf("invalid filename %q", p.Filename)
-				}
-				absSrc, err := filepath.Abs(p.FilePath)
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("resolve source path: %w", err)
-				}
-				tmpDir, err := os.MkdirTemp("", "foci-send-")
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
-				}
-				defer func() { _ = os.RemoveAll(tmpDir) }()
-				linkPath := filepath.Join(tmpDir, cleanName)
-				if err := os.Symlink(absSrc, linkPath); err != nil {
-					return ToolResult{}, fmt.Errorf("create filename symlink: %w", err)
-				}
-				p.FilePath = linkPath
-			}
-
-			sessionKey := SessionKeyFromContext(ctx)
-			bot := getSender(sessionKey)
-			if bot == nil {
-				return ToolResult{}, fmt.Errorf("messaging not configured")
-			}
-
-			// Extract chat ID from session key for targeted delivery.
-			chatID := ChatIDFromSessionKey(sessionKey)
-
-			var sent []string
-
-			// TTS synthesis: send_as="voice" + text + no file
-			if p.SendAs == "voice" && p.Text != "" && p.FilePath == "" {
-				if tts == nil {
-					return ToolResult{}, fmt.Errorf("tts not configured")
-				}
-				audioData, err := tts.Synthesize(ctx, p.Text)
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("tts: %w", err)
-				}
-				if chatID != 0 {
-					err = bot.SendVoiceDataToChat(chatID, audioData)
-				} else {
-					err = bot.SendVoiceData(audioData)
-				}
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("send voice note: %w", err)
-				}
-				logToolSend(sessionKey, chatID, "[voice note]")
-				return TextResult("Sent: voice note"), nil
-			}
-
-			// If the message originates from a different session than the bot's
-			// own session, prepend a header so the user knows which session sent it.
-			// Placed after TTS early-return so the header isn't synthesized as speech.
-			if p.Text != "" && sessionKey != "" {
-				botSession := bot.SessionKey()
-				if botSession != "" && sessionKey != botSession {
-					p.Text = "[[ message from " + sessionKey + " ]]\n" + p.Text
-				}
-			}
-
-			// Decide whether text rides along as a caption on the file
-			// or goes as a separate text message. send_as=voice doesn't
-			// caption (foci's voice path is for raw voice notes, no
-			// caption param plumbed); long text falls back to a
-			// separate message because Telegram caps captions at 1024
-			// chars and Discord at 2000.
-			canCaption := p.FilePath != "" &&
-				p.SendAs != "voice" &&
-				p.Text != "" &&
-				len(p.Text) <= platform.MaxCaptionLen
-			caption := ""
-			if canCaption {
-				caption = p.Text
-			}
-
-			// Standalone text — only when not riding as caption.
-			if p.Text != "" && !canCaption {
-				var err error
-				if chatID != 0 {
-					err = bot.SendTextToChat(chatID, p.Text)
-				} else {
-					err = bot.SendText(p.Text)
-				}
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("send text: %w", err)
-				}
-				logToolSend(sessionKey, chatID, p.Text)
-				sent = append(sent, "text")
-			}
-
-			if p.FilePath != "" {
-				var err error
-				var label string
-				switch p.SendAs {
-				case "voice":
-					if chatID != 0 {
-						err = bot.SendVoiceToChat(chatID, p.FilePath)
-					} else {
-						err = bot.SendVoice(p.FilePath)
-					}
-					label = "voice note"
-				case "video":
-					if chatID != 0 {
-						err = bot.SendVideoToChat(chatID, p.FilePath, caption)
-					} else {
-						err = bot.SendVideo(p.FilePath, caption)
-					}
-					label = "video"
-				case "photo":
-					if chatID != 0 {
-						err = bot.SendPhotoToChat(chatID, p.FilePath, caption)
-					} else {
-						err = bot.SendPhoto(p.FilePath, caption)
-					}
-					label = "photo"
-				case "audio":
-					if chatID != 0 {
-						err = bot.SendAudioToChat(chatID, p.FilePath, caption)
-					} else {
-						err = bot.SendAudio(p.FilePath, caption)
-					}
-					label = "audio"
-				case "animation":
-					if chatID != 0 {
-						err = bot.SendAnimationToChat(chatID, p.FilePath, caption)
-					} else {
-						err = bot.SendAnimation(p.FilePath, caption)
-					}
-					label = "animation"
-				default: // "document"
-					if chatID != 0 {
-						err = bot.SendDocumentToChat(chatID, p.FilePath, caption)
-					} else {
-						err = bot.SendDocument(p.FilePath, caption)
-					}
-					label = "document"
-				}
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("send %s: %w", label, err)
-				}
-				if caption != "" {
-					logToolSend(sessionKey, chatID, fmt.Sprintf("[%s %s + caption: %s]", label, p.FilePath, caption))
-					sent = append(sent, label+"+caption")
-				} else {
-					logToolSend(sessionKey, chatID, fmt.Sprintf("[%s %s]", label, p.FilePath))
-					sent = append(sent, label)
-				}
-			}
-
-			return TextResult(fmt.Sprintf("Sent: %s", joinWords(sent))), nil
+			return sendToChatExecute(ctx, params, getSender, tts)
 		},
 	}
+}
+
+// messageTarget binds a Sender to a resolved chat so send sites don't each
+// repeat the "if chatID != 0 { …ToChat(chatID, …) } else { …(…) }" branch.
+// A zero chatID means "use the sender's default chat".
+type messageTarget struct {
+	bot    platform.Sender
+	chatID int64
+}
+
+func (m messageTarget) text(text string) error {
+	if m.chatID != 0 {
+		return m.bot.SendTextToChat(m.chatID, text)
+	}
+	return m.bot.SendText(text)
+}
+
+func (m messageTarget) voiceData(audioData []byte) error {
+	if m.chatID != 0 {
+		return m.bot.SendVoiceDataToChat(m.chatID, audioData)
+	}
+	return m.bot.SendVoiceData(audioData)
+}
+
+// file sends filePath according to sendAs and returns the human label used for
+// logging and the result message. Unknown kinds fall back to "document".
+func (m messageTarget) file(sendAs, filePath, caption string) (string, error) {
+	fs, ok := fileSenders[sendAs]
+	if !ok {
+		fs = fileSenders["document"]
+	}
+	if m.chatID != 0 {
+		return fs.label, fs.chat(m.bot, m.chatID, filePath, caption)
+	}
+	return fs.label, fs.def(m.bot, filePath, caption)
+}
+
+// fileSenders maps a send_as kind to its label and the two Sender methods
+// (default chat vs targeted chat). This is data, not control flow — it replaces
+// the former six-case switch that duplicated the chatID branch in every arm.
+// voice carries no caption, so its closures ignore the caption argument.
+var fileSenders = map[string]struct {
+	label string
+	def   func(b platform.Sender, filePath, caption string) error
+	chat  func(b platform.Sender, chatID int64, filePath, caption string) error
+}{
+	"voice": {"voice note",
+		func(b platform.Sender, p, _ string) error { return b.SendVoice(p) },
+		func(b platform.Sender, id int64, p, _ string) error { return b.SendVoiceToChat(id, p) }},
+	"video": {"video",
+		func(b platform.Sender, p, c string) error { return b.SendVideo(p, c) },
+		func(b platform.Sender, id int64, p, c string) error { return b.SendVideoToChat(id, p, c) }},
+	"photo": {"photo",
+		func(b platform.Sender, p, c string) error { return b.SendPhoto(p, c) },
+		func(b platform.Sender, id int64, p, c string) error { return b.SendPhotoToChat(id, p, c) }},
+	"audio": {"audio",
+		func(b platform.Sender, p, c string) error { return b.SendAudio(p, c) },
+		func(b platform.Sender, id int64, p, c string) error { return b.SendAudioToChat(id, p, c) }},
+	"animation": {"animation",
+		func(b platform.Sender, p, c string) error { return b.SendAnimation(p, c) },
+		func(b platform.Sender, id int64, p, c string) error { return b.SendAnimationToChat(id, p, c) }},
+	"document": {"document",
+		func(b platform.Sender, p, c string) error { return b.SendDocument(p, c) },
+		func(b platform.Sender, id int64, p, c string) error { return b.SendDocumentToChat(id, p, c) }},
+}
+
+// prepareNamedFile gives filePath a custom display basename by symlinking it
+// into a per-call temp dir under name, then returning the symlink path plus a
+// cleanup func to remove the temp dir. Platform send methods label attachments
+// via filepath.Base, so the symlink name becomes the displayed filename; the
+// symlink is followed by os.Open, so size/mime detection still sees the real
+// file. When name is empty this is a no-op (returns filePath and a no-op
+// cleanup). The caller must defer the returned cleanup.
+func prepareNamedFile(filePath, name string) (string, func(), error) {
+	noop := func() {}
+	if name == "" {
+		return filePath, noop, nil
+	}
+	cleanName := filepath.Base(name) // strip any path components defensively
+	if cleanName == "." || cleanName == "/" || cleanName == "" {
+		return "", noop, fmt.Errorf("invalid filename %q", name)
+	}
+	absSrc, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", noop, fmt.Errorf("resolve source path: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp("", "foci-send-")
+	if err != nil {
+		return "", noop, fmt.Errorf("create temp dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
+	linkPath := filepath.Join(tmpDir, cleanName)
+	if err := os.Symlink(absSrc, linkPath); err != nil {
+		cleanup()
+		return "", noop, fmt.Errorf("create filename symlink: %w", err)
+	}
+	return linkPath, cleanup, nil
+}
+
+func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, tts voice.TTS) (ToolResult, error) {
+	p, err := UnmarshalParams[struct {
+		Text     string `json:"text"`
+		FilePath string `json:"file"`
+		Filename string `json:"filename"`
+		SendAs   string `json:"send_as"`
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	if p.Text == "" && p.FilePath == "" {
+		return ToolResult{}, fmt.Errorf("at least one of text or file is required")
+	}
+	if p.Filename != "" && p.FilePath == "" {
+		return ToolResult{}, fmt.Errorf("filename requires file")
+	}
+	if p.SendAs == "" {
+		p.SendAs = "document"
+	}
+
+	// Custom display filename via a per-call symlink (no-op when unset).
+	sendPath, cleanup, err := prepareNamedFile(p.FilePath, p.Filename)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	defer cleanup()
+	p.FilePath = sendPath
+
+	sessionKey := SessionKeyFromContext(ctx)
+	bot := getSender(sessionKey)
+	if bot == nil {
+		return ToolResult{}, fmt.Errorf("messaging not configured")
+	}
+	target := messageTarget{bot: bot, chatID: ChatIDFromSessionKey(sessionKey)}
+
+	// TTS synthesis: send_as="voice" + text + no file.
+	if p.SendAs == "voice" && p.Text != "" && p.FilePath == "" {
+		if tts == nil {
+			return ToolResult{}, fmt.Errorf("tts not configured")
+		}
+		audioData, err := tts.Synthesize(ctx, p.Text)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("tts: %w", err)
+		}
+		if err := target.voiceData(audioData); err != nil {
+			return ToolResult{}, fmt.Errorf("send voice note: %w", err)
+		}
+		logToolSend(sessionKey, target.chatID, "[voice note]")
+		return TextResult("Sent: voice note"), nil
+	}
+
+	// If the message originates from a different session than the bot's own
+	// session, prepend a header so the user knows which session sent it.
+	// Placed after the TTS early-return so the header isn't spoken.
+	if p.Text != "" && sessionKey != "" {
+		botSession := bot.SessionKey()
+		if botSession != "" && sessionKey != botSession {
+			p.Text = "[[ message from " + sessionKey + " ]]\n" + p.Text
+		}
+	}
+
+	// Decide whether text rides along as a caption on the file or goes as a
+	// separate text message. send_as=voice doesn't caption (foci's voice path
+	// is for raw voice notes, no caption param plumbed); long text falls back
+	// to a separate message because Telegram caps captions at 1024 chars and
+	// Discord at 2000.
+	canCaption := p.FilePath != "" &&
+		p.SendAs != "voice" &&
+		p.Text != "" &&
+		len(p.Text) <= platform.MaxCaptionLen
+	caption := ""
+	if canCaption {
+		caption = p.Text
+	}
+
+	var sent []string
+
+	// Standalone text — only when not riding as caption.
+	if p.Text != "" && !canCaption {
+		if err := target.text(p.Text); err != nil {
+			return ToolResult{}, fmt.Errorf("send text: %w", err)
+		}
+		logToolSend(sessionKey, target.chatID, p.Text)
+		sent = append(sent, "text")
+	}
+
+	if p.FilePath != "" {
+		label, err := target.file(p.SendAs, p.FilePath, caption)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("send %s: %w", label, err)
+		}
+		if caption != "" {
+			logToolSend(sessionKey, target.chatID, fmt.Sprintf("[%s %s + caption: %s]", label, p.FilePath, caption))
+			sent = append(sent, label+"+caption")
+		} else {
+			logToolSend(sessionKey, target.chatID, fmt.Sprintf("[%s %s]", label, p.FilePath))
+			sent = append(sent, label)
+		}
+	}
+
+	return TextResult(fmt.Sprintf("Sent: %s", joinWords(sent))), nil
 }
 
 // logToolSend logs a conversation entry for a tool-initiated send.
