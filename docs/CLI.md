@@ -224,8 +224,10 @@ Dispatches a slash command directly via the HTTP API and returns the result to t
 
 **Usage:**
 ```
-foci command [-a agent] </cmd> [args]
+foci command [-a agent] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] </cmd> [args]
 ```
+
+**Activity gates:** `command` accepts the same four activity-gate flags as `send` (and reads the same `FOCI_IF_*` env vars). The gate is evaluated server-side against the session the command targets; a turn in flight always counts as active, so a gated command never interrupts mid-turn work. This is what makes an unattended `/reset` safe — see the example below.
 
 **Examples:**
 ```bash
@@ -233,6 +235,10 @@ foci command /cache
 foci command -a research /status
 foci command /config available
 foci command /cost today
+
+# Overnight reset that skips if the session ran a turn within 55m (or one is
+# in flight) — the shape used by an unattended reset cron:
+foci command --if-inactive 55m -a helen /reset
 ```
 
 ---

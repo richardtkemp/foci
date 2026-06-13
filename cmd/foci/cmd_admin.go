@@ -69,12 +69,22 @@ func cmdEval(base string, args []string) error {
 }
 
 func commandUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci command [-a agent] </cmd> [args]
+	fmt.Fprintf(os.Stderr, `Usage: foci command [-a agent] [gate flags] </cmd> [args]
 
 Dispatch a slash command via the gateway (bypasses agent conversation).
 
 Flags:
-  -a, --agent <id>        Target agent (env: FOCI_AGENT)
+  -a, --agent <id>          Target agent (env: FOCI_AGENT)
+
+Activity gates (evaluated server-side; skip the command unless/if the target
+session has run a turn recently — a turn in flight always counts as active):
+  --if-active <dur>         Skip unless this session ran a turn within duration (env: FOCI_IF_ACTIVE)
+  --if-inactive <dur>       Skip if this session ran a turn within duration (env: FOCI_IF_INACTIVE)
+  --if-user-active <dur>    Skip unless the user touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
+  --if-user-inactive <dur>  Skip if the user touched this agent within duration (env: FOCI_IF_USER_INACTIVE)
+
+Example (overnight reset that won't interrupt active or in-flight work):
+  foci command --if-inactive 55m -a helen /reset
 `)
 }
 
@@ -84,17 +94,28 @@ func cmdCommand(base string, args []string) error {
 		return nil
 	}
 	agent, args := parseAgentFlag(args)
-	if len(args) == 0 {
-		return fmt.Errorf("usage: foci command [-a agent] </cmd> [args]")
+	var gf gateFlags
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		if c, ni := gf.tryParseGateArg(args, i); c {
+			i = ni
+			continue
+		}
+		rest = append(rest, args[i])
 	}
-	cmd := strings.Join(args, " ")
+	gf.applyEnvDefaults()
+	if len(rest) == 0 {
+		return fmt.Errorf("usage: foci command [-a agent] [gate flags] </cmd> [args]")
+	}
+	cmd := strings.Join(rest, " ")
 	if !strings.HasPrefix(cmd, "/") {
 		cmd = "/" + cmd
 	}
-	body := map[string]string{"command": cmd}
+	body := map[string]interface{}{"command": cmd}
 	if agent != "" {
 		body["agent"] = agent
 	}
+	gf.addToBody(body)
 	return postJSON(base+"/command", body)
 }
 

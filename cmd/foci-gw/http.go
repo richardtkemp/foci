@@ -174,7 +174,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 
 	mux.HandleFunc("/send", handleSend(d, resolveAgent, gate))
 	mux.HandleFunc("/status", handleStatus(d, resolveAgent))
-	mux.HandleFunc("/command", handleCommand(d, resolveAgent))
+	mux.HandleFunc("/command", handleCommand(d, resolveAgent, gate))
 	mux.HandleFunc("/wake", handleWake(d, resolveAgent, gate))
 	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, gate))
 
