@@ -131,3 +131,15 @@ func TestParseCallbackColonInPayload(t *testing.T) {
 		t.Errorf("expected 'key:value:extra', got %q", data)
 	}
 }
+
+// TestParseCallbackSubagentHide verifies that the "sa:" prefix is parsed as
+// CallbackSubagentHide with the subagent token extracted.
+func TestParseCallbackSubagentHide(t *testing.T) {
+	action, data := ParseCallback("sa:deadbeefdeadbeef")
+	if action != CallbackSubagentHide {
+		t.Errorf("expected CallbackSubagentHide, got %d", action)
+	}
+	if data != "deadbeefdeadbeef" {
+		t.Errorf("expected 'deadbeefdeadbeef', got %q", data)
+	}
+}

@@ -3,8 +3,6 @@ package telegram
 import (
 	"testing"
 
-	"foci/internal/dispatch"
-
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
@@ -95,16 +93,5 @@ func TestSubagentSeparateGroups(t *testing.T) {
 	}
 	if mock.sends != 2 {
 		t.Fatalf("sends=%d, want 2", mock.sends)
-	}
-}
-
-// TestParseCallbackSubagentHide: the "sa:" prefix routes to CallbackSubagentHide.
-func TestParseCallbackSubagentHide(t *testing.T) {
-	action, data := dispatch.ParseCallback("sa:deadbeefdeadbeef")
-	if action != dispatch.CallbackSubagentHide {
-		t.Fatalf("action=%d, want CallbackSubagentHide", action)
-	}
-	if data != "deadbeefdeadbeef" {
-		t.Fatalf("data=%q, want token", data)
 	}
 }
