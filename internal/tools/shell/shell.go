@@ -112,14 +112,14 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 }
 
 func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *tools.AsyncNotifier, workDir string, registry *tools.Registry, spillThreshold int64, spillTempDir string, extraEnv []string) (tools.ToolResult, error) {
-	var p struct {
+	p, err := tools.UnmarshalParams[struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
 		Background bool   `json:"background"`
 		OutputMode string `json:"output_mode"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return tools.ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return tools.ToolResult{}, err
 	}
 
 	// Check blocked paths

@@ -97,12 +97,12 @@ func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duratio
 }
 
 func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-	var p struct {
+	p, err := UnmarshalParams[struct {
 		URL string `json:"url"`
 		Raw bool   `json:"raw"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	parsed, err := url.Parse(p.URL)
@@ -162,11 +162,11 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 }
 
 func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (ToolResult, error) {
-	var p struct {
+	p, err := UnmarshalParams[struct {
 		Query string `json:"query"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	if apiKey == "" {

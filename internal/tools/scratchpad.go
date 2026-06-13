@@ -33,13 +33,13 @@ func NewScratchpadTool(s *memory.Scratchpad, agentID string) *Tool {
 			"required": ["action"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Action  string `json:"action"`
 				Key     string `json:"key"`
 				Content string `json:"content"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 
 			switch p.Action {

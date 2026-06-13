@@ -129,7 +129,7 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 }
 
 func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier, fileMode os.FileMode) (ToolResult, error) {
-	var p struct {
+	p, err := UnmarshalParams[struct {
 		URL              string            `json:"url"`
 		Method           string            `json:"method"`
 		Headers          map[string]string `json:"headers"`
@@ -143,9 +143,9 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		Timeout          int               `json:"timeout"`
 		MaxResponseBytes int64             `json:"max_response_bytes"`
 		Background       bool              `json:"background"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	if p.Method == "" {
@@ -161,7 +161,6 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	// environ). Isolated-dir containment (baseDir) is added for spawn sandboxes
 	// in a follow-up. (P0-2.)
 	fs := fileScope{store: store}
-	var err error
 	if p.BodyFile != "" {
 		if p.BodyFile, err = fs.resolveFileArg(p.BodyFile); err != nil {
 			return ToolResult{}, err
@@ -659,11 +658,11 @@ func NewIsolatedHTTPRequestTool(base *Tool, store *secrets.Store, baseDir string
 		Description: base.Description,
 		Parameters:  base.Parameters,
 		Execute: func(ctx context.Context, input json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				URL string `json:"url"`
-			}
-			if err := json.Unmarshal(input, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse input: %w", err)
+			}](input)
+			if err != nil {
+				return ToolResult{}, err
 			}
 
 			parsed, err := url.Parse(p.URL)

@@ -26,11 +26,11 @@ func NewBitwardenSearchTool(store *bitwarden.Store) *Tool {
 			"required": ["query"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Query string `json:"query"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Query == "" {
 				return ToolResult{}, fmt.Errorf("query is required")
@@ -79,11 +79,11 @@ func NewBitwardenUnlockTool(store *bitwarden.Store) *Tool {
 			"required": ["id"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				ID string `json:"id"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.ID == "" {
 				return ToolResult{}, fmt.Errorf("id is required")
@@ -97,7 +97,7 @@ func NewBitwardenUnlockTool(store *bitwarden.Store) *Tool {
 			}
 
 			// This call blocks until aisudo approval or denial
-			_, err := store.GetPassword(p.ID)
+			_, err = store.GetPassword(p.ID)
 			if err != nil {
 				return ToolResult{}, err
 			}

@@ -101,16 +101,16 @@ func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNot
 			"required": ["action"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Action      string      `json:"action"`
 				ID          int         `json:"id"`
 				Tasks       []taskInput `json:"tasks"`
 				Subject     string      `json:"subject"`
 				Description string      `json:"description"`
 				Status      string      `json:"status"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 
 			sk := SessionKeyFromContext(ctx)

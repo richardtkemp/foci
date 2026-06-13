@@ -50,14 +50,14 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 			}
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Text     string `json:"text"`
 				FilePath string `json:"file"`
 				Filename string `json:"filename"`
 				SendAs   string `json:"send_as"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Text == "" && p.FilePath == "" {
 				return ToolResult{}, fmt.Errorf("at least one of text or file is required")

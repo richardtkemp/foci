@@ -152,14 +152,14 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			"required": ["prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Prompt  string `json:"prompt"`
 				Model   string `json:"model"`
 				Context string `json:"context"`
 				Timeout int    `json:"timeout"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Prompt == "" {
 				return ToolResult{}, fmt.Errorf("prompt is required")

@@ -133,16 +133,16 @@ func parseConversationRef(query string) (session string, rowID int64, ok bool) {
 }
 
 func memorySearch(ctx context.Context, params json.RawMessage, backends map[string]memory.Searcher, defaultBackend string, convReader *memory.ConversationReader) (ToolResult, error) {
-	var p struct {
+	p, err := UnmarshalParams[struct {
 		Query    string `json:"query"`
 		Sort     string `json:"sort"`
 		Backend  string `json:"backend"`
 		DateFrom string `json:"date_from"`
 		DateTo   string `json:"date_to"`
 		Lines    int    `json:"lines"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	// Direct conversation lookup: "session#rowID"

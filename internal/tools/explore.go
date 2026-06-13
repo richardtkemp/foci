@@ -102,12 +102,12 @@ func NewLsTool() *Tool {
 			"required": ["path"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Path   string `json:"path"`
 				Params string `json:"params"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Path == "" {
 				return ToolResult{}, fmt.Errorf("path is required")
@@ -146,12 +146,12 @@ func NewFindTool() *Tool {
 			"required": ["path", "params"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Path   string `json:"path"`
 				Params string `json:"params"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Path == "" {
 				return ToolResult{}, fmt.Errorf("path is required")
@@ -204,13 +204,13 @@ func NewGrepTool(binary, name string) *Tool {
 			"required": ["pattern"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Pattern string `json:"pattern"`
 				Path    string `json:"path"`
 				Params  string `json:"params"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Pattern == "" {
 				return ToolResult{}, fmt.Errorf("pattern is required")
@@ -278,11 +278,11 @@ func NewGitTool() *Tool {
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Command string `json:"command"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Command == "" {
 				return ToolResult{}, fmt.Errorf("command is required")
@@ -540,12 +540,12 @@ func newPathTool(name, binPath, description string, pathRequired bool, validate 
 		Description: description,
 		Parameters:  json.RawMessage(schema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Path   string `json:"path"`
 				Params string `json:"params"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if pathRequired && p.Path == "" {
 				return ToolResult{}, fmt.Errorf("path is required")
@@ -659,11 +659,11 @@ func newSubcmdTool(name, binPath, description string, allowed map[string]bool) *
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Command string `json:"command"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Command == "" {
 				return ToolResult{}, fmt.Errorf("command is required")
@@ -755,12 +755,12 @@ func NewSQLiteTool(binPath string) *Tool {
 			"required": ["database", "query"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Database string `json:"database"`
 				Query    string `json:"query"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.Database == "" {
 				return ToolResult{}, fmt.Errorf("database is required")
