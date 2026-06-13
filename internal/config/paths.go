@@ -130,11 +130,14 @@ func (c *Config) ResolveAllPaths() {
 	}
 }
 
-// ParseFlags returns the config file path from command-line flags.
-func ParseFlags() string {
-	path := flag.String("config", "foci.toml", "path to config file")
+// ParseFlags returns the config file path and the -check-config flag from the
+// command line. When checkConfig is true the caller should validate the config
+// and exit without starting the server (see cmd/foci-gw/checkconfig.go).
+func ParseFlags() (path string, checkConfig bool) {
+	p := flag.String("config", "foci.toml", "path to config file")
+	check := flag.Bool("check-config", false, "validate the config file and exit (0 = will start cleanly, 1 = parse/validate error or unknown keys); does not start the server")
 	flag.Parse()
-	return *path
+	return *p, *check
 }
 
 // UnknownKeys returns the list of unrecognised key names from the TOML metadata.
