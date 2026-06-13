@@ -40,7 +40,7 @@ type mockBackendDM struct {
 	running          bool
 	waitForTurnErr   error
 	waitForTurnBlock chan struct{} // if non-nil, WaitForTurn blocks until closed
-	sendToPaneFn     func(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error)
+	sendToPaneFn     func(context.Context, string, *mockHandler) (*delegator.TurnResult, error)
 	sessionEvents    *delegator.SessionEvents
 	sendCommandFn    func(context.Context, string) error
 	closeFn          func() error
@@ -61,7 +61,7 @@ func (m *mockBackendDM) Start(_ context.Context, opts delegator.StartOptions) er
 	return nil
 }
 
-func (m *mockBackendDM) SendToPane(ctx context.Context, text string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+func (m *mockBackendDM) SendToPane(ctx context.Context, text string, handler *mockHandler) (*delegator.TurnResult, error) {
 	if m.sendToPaneFn != nil {
 		return m.sendToPaneFn(ctx, text, handler)
 	}
@@ -99,18 +99,15 @@ func (m *mockBackendDM) SendCommand(ctx context.Context, cmd string) error {
 // turn) or SendCommand mid-turn (follow-up); slash commands route to
 // SendCommand directly.
 //
-// Production callers (turn_delegated.go) pass inj.Turn (TurnEvents) rather
-// than inj.Handler post-TODO #747; we synthesise an EventHandler from
-// inj.Turn for the SendToPane mock so the existing test surface (which
-// invokes handler.OnTurnComplete) keeps working without per-test churn.
+// Production callers (turn_delegated.go) pass inj.Turn (TurnEvents) for
+// bookkeeping and install delivery via AttachSessionEvents; we recombine the
+// two into a mockHandler for the SendToPane test seam so the existing test
+// surface (which invokes handler.OnTurnComplete) keeps working without churn.
 func (m *mockBackendDM) Inject(ctx context.Context, inj delegator.Inject) error {
 	m.mu.Lock()
 	se := m.sessionEvents
 	m.mu.Unlock()
-	handler := inj.Handler
-	if handler == nil {
-		handler = &delegator.EventHandler{}
-	}
+	handler := &mockHandler{}
 	if inj.Turn != nil {
 		if handler.OnTurnComplete == nil {
 			handler.OnTurnComplete = inj.Turn.OnTurnComplete

@@ -292,32 +292,6 @@ type StartOptions struct {
 	ClaudeBinary string
 }
 
-// EventHandler is the legacy per-turn callback bundle: delivery callbacks
-// (OnText, OnTextDelta, OnThinkingDelta, OnToolStart, OnToolEnd) and
-// bookkeeping callbacks (OnTurnComplete, PostToolNudgeFunc, PreAnswerNudgeFunc)
-// in one struct. Used by cctmux's JSONL watcher path. ccstream has migrated
-// to the SessionEvents + TurnEvents split (see below) which divorces session-
-// lifetime delivery from per-turn bookkeeping.
-//
-// Deprecated: prefer SessionEvents (delivery) + TurnEvents (bookkeeping)
-// for new backends.
-type EventHandler struct {
-	OnText          func(text string)                           // complete text block from the agent
-	OnTextDelta     func(delta string)                          // streaming text delta
-	OnThinkingDelta func(delta string)                          // streaming thinking delta
-	OnToolStart     func(id, name, input string)                // tool execution began
-	OnToolEnd       func(id, name, output string, isError bool) // tool execution finished
-	OnTurnComplete  func(result *TurnResult)                    // turn finished
-
-	// PostToolNudgeFunc is called after each tool's completion signal.
-	// See TurnEvents.PostToolNudgeFunc for full semantics.
-	PostToolNudgeFunc func(toolName, toolInput string, isError bool) []string
-
-	// PreAnswerNudgeFunc is called when the backend signals end_turn.
-	// See TurnEvents.PreAnswerNudgeFunc for full semantics.
-	PreAnswerNudgeFunc func(result *TurnResult) string
-}
-
 // SessionEvents are the session-scoped, always-callable delivery callbacks.
 // Set once on a Backend via AttachSessionEvents and live for the session's
 // lifetime. Never nil after attachment; the backend's text/tool emission
@@ -457,18 +431,10 @@ type Inject struct {
 	// is strictly bookkeeping: turn completion, post-tool nudges,
 	// pre-answer gate.
 	//
-	// Used by ccstream. cctmux still uses the legacy Handler field; the
-	// two are mutually exclusive within a single Inject call.
+	// Used by both ccstream and cctmux. Delivery (text, tool events) does NOT
+	// route through Turn — it routes through the SessionEvents installed via
+	// AttachSessionEvents, which lives for the session's lifetime.
 	Turn *TurnEvents
-
-	// Handler is the legacy combined per-turn EventHandler. Used by
-	// cctmux which still threads delivery + bookkeeping through one
-	// pointer via its session JSONL watcher. New code should use Turn
-	// (per-turn bookkeeping) plus AttachSessionEvents (session-scoped
-	// delivery). Will be removed once cctmux is migrated.
-	//
-	// Deprecated: use Turn + AttachSessionEvents.
-	Handler *EventHandler
 }
 
 // TurnUsage holds token counts from a completed backend turn,

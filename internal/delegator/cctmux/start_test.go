@@ -284,12 +284,12 @@ func TestStartWatcher_WiresHandlerAndCatchesUp(t *testing.T) {
 	turnDone := make(chan *delegator.TurnResult, 2)
 
 	b.replyMu.Lock()
-	b.replyFunc = func(text string) { replies <- text }
+	b.AttachSessionEvents(&delegator.SessionEvents{OnText: func(text string) { replies <- text }})
 	b.typingFunc = func(v bool) { typing = append(typing, v) }
 	b.replyMu.Unlock()
-	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *delegator.TurnResult) { turnDone <- r }
-	b.turnCompleteMu.Unlock()
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) { turnDone <- r }}
+	b.turnMu.Unlock()
 
 	if err := b.startWatcher(path); err != nil {
 		t.Fatalf("startWatcher: %v", err)
@@ -326,9 +326,9 @@ func TestStartWatcher_WiresHandlerAndCatchesUp(t *testing.T) {
 
 	// Live path: a new turn callback and a fresh appended entry flow
 	// through the long-lived watch loop.
-	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *delegator.TurnResult) { turnDone <- r }
-	b.turnCompleteMu.Unlock()
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) { turnDone <- r }}
+	b.turnMu.Unlock()
 	appendLine(t, path, endTurnLine("live reply"))
 
 	select {
@@ -351,7 +351,7 @@ func TestStartWatcher_AgentStatusRoutesToReply(t *testing.T) {
 	b := &Backend{preSendOffset: 0}
 	replies := make(chan string, 4)
 	b.replyMu.Lock()
-	b.replyFunc = func(text string) { replies <- text }
+	b.AttachSessionEvents(&delegator.SessionEvents{OnText: func(text string) { replies <- text }})
 	b.replyMu.Unlock()
 
 	if err := b.startWatcher(path); err != nil {
@@ -615,7 +615,7 @@ func TestCheckPermissionPrompt_PlainTextFallback(t *testing.T) {
 
 	var reply string
 	b.replyMu.Lock()
-	b.replyFunc = func(text string) { reply = text }
+	b.AttachSessionEvents(&delegator.SessionEvents{OnText: func(text string) { reply = text }})
 	b.replyMu.Unlock()
 
 	b.checkPermissionPrompt()

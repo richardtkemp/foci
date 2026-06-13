@@ -175,30 +175,29 @@ func TestCheckPermissionPrompt_StructuredCallback(t *testing.T) {
 	}
 }
 
-// TestCheckPermissionPrompt_FallbackToReplyFunc verifies that when
-// permPromptFunc is nil, the prompt falls back to plain text via replyFunc.
-func TestCheckPermissionPrompt_FallbackToReplyFunc(t *testing.T) {
+// TestCheckPermissionPrompt_FallbackToSessionEvents verifies that when
+// permPromptFunc is nil, the prompt falls back to plain text through the
+// session-scoped delivery sink (SessionEvents.OnText).
+func TestCheckPermissionPrompt_FallbackToSessionEvents(t *testing.T) {
 	b := &Backend{}
 
 	var gotReply string
-	b.replyMu.Lock()
-	b.replyFunc = func(text string) { gotReply = text }
-	b.replyMu.Unlock()
+	b.AttachSessionEvents(&delegator.SessionEvents{OnText: func(text string) { gotReply = text }})
 
-	// Simulate the fallback path: permPromptFunc is nil, so use replyFunc.
+	// Simulate the fallback path: permPromptFunc is nil, so use SessionEvents.
 	prompt := &permissionPrompt{
 		Raw: "some permission prompt",
 	}
 
 	b.replyMu.Lock()
 	promptFn := b.permPromptFunc
-	replyFn := b.replyFunc
 	b.replyMu.Unlock()
+	se := b.sessionEvents.Load()
 
 	if promptFn != nil && len(prompt.Choices) > 0 {
 		t.Fatal("should not take structured path")
-	} else if replyFn != nil {
-		replyFn("\u26a0\ufe0f Claude Code needs permission:\n\n" + prompt.Raw + "\n\nReply with your choice (1, 2, 3, etc.)")
+	} else if se != nil && se.OnText != nil {
+		se.OnText("\u26a0\ufe0f Claude Code needs permission:\n\n" + prompt.Raw + "\n\nReply with your choice (1, 2, 3, etc.)")
 	}
 
 	if !strings.Contains(gotReply, "some permission prompt") {
@@ -207,10 +206,10 @@ func TestCheckPermissionPrompt_FallbackToReplyFunc(t *testing.T) {
 }
 
 // TestCheckPermissionPrompt_NoCallbacksSet verifies that when neither
-// permPromptFunc nor replyFunc is set, nothing panics.
+// permPromptFunc nor SessionEvents is set, nothing panics.
 func TestCheckPermissionPrompt_NoCallbacksSet(t *testing.T) {
 	b := &Backend{}
-	// Both permPromptFunc and replyFunc are nil. Simulate the callback
+	// Both permPromptFunc and sessionEvents are nil. Simulate the callback
 	// dispatch — should not panic.
 	prompt := &permissionPrompt{
 		Description: "Edit file",
@@ -221,15 +220,14 @@ func TestCheckPermissionPrompt_NoCallbacksSet(t *testing.T) {
 
 	b.replyMu.Lock()
 	promptFn := b.permPromptFunc
-	replyFn := b.replyFunc
 	b.replyMu.Unlock()
 
 	// Neither path should execute.
 	if promptFn != nil {
 		t.Fatal("promptFn should be nil")
 	}
-	if replyFn != nil {
-		t.Fatal("replyFn should be nil")
+	if se := b.sessionEvents.Load(); se != nil {
+		t.Fatal("sessionEvents should be nil")
 	}
 	_ = prompt // used above
 }
@@ -546,9 +544,9 @@ func TestIsTurnInFlight_NoCallback(t *testing.T) {
 // TestIsTurnInFlight_WithCallback verifies true when a callback is registered.
 func TestIsTurnInFlight_WithCallback(t *testing.T) {
 	b := &Backend{}
-	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *delegator.TurnResult) {}
-	b.turnCompleteMu.Unlock()
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) {}}
+	b.turnMu.Unlock()
 
 	if !b.IsTurnInFlight() {
 		t.Error("IsTurnInFlight should be true with callback set")
@@ -559,9 +557,9 @@ func TestIsTurnInFlight_WithCallback(t *testing.T) {
 // IsTurnInFlight returns false.
 func TestIsTurnInFlight_ClearedAfterFire(t *testing.T) {
 	b := &Backend{}
-	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *delegator.TurnResult) {}
-	b.turnCompleteMu.Unlock()
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) {}}
+	b.turnMu.Unlock()
 
 	b.fireTurnComplete(&delegator.TurnResult{})
 

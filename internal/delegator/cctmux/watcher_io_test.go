@@ -79,6 +79,78 @@ func TestNewSessionWatcher_MissingFile(t *testing.T) {
 	}
 }
 
+// TestWatcher_RoutesToBackendSessionAndTurnEvents is the end-to-end revival
+// proof: it wires a Backend exactly as the agent does — session-scoped delivery
+// via AttachSessionEvents, per-turn bookkeeping installed as turnEvents — then
+// drives the JSONL watcher (whose sink is the Backend) over a transcript with
+// text, a tool call, its result, and an end_turn. It asserts the SessionEvents
+// delivery callbacks fired with the right values AND TurnEvents.OnTurnComplete
+// fired exactly once. This is the path that was dead post-#747 (AttachSessionEvents
+// was a no-op and Inject read the nil inj.Handler).
+func TestWatcher_RoutesToBackendSessionAndTurnEvents(t *testing.T) {
+	b := &Backend{}
+
+	var texts []string
+	var toolStarts, toolEnds []string
+	b.AttachSessionEvents(&delegator.SessionEvents{
+		OnText:      func(text string) { texts = append(texts, text) },
+		OnToolStart: func(_, name, _ string) { toolStarts = append(toolStarts, name) },
+		OnToolEnd:   func(_, name, _ string, _ bool) { toolEnds = append(toolEnds, name) },
+	})
+
+	completes := 0
+	var gotResult *delegator.TurnResult
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) {
+		completes++
+		gotResult = r
+	}}
+	b.turnMu.Unlock()
+
+	// A representative single turn: assistant text + tool_use, the tool_result
+	// on a user message, then an end_turn assistant message.
+	content := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working on it"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}` + "\n" +
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file.txt","is_error":false}]}}` + "\n" +
+		endTurnLine("done")
+
+	path := writeSessionFile(t, content)
+	w, err := newSessionWatcher(path, 0)
+	if err != nil {
+		t.Fatalf("newSessionWatcher: %v", err)
+	}
+	defer w.close()
+	w.setEvents(b) // the watcher's sink is the Backend, as in startWatcher
+
+	w.readNew(b)
+
+	// Delivery routed through SessionEvents.
+	if len(texts) != 2 || texts[0] != "working on it" || texts[1] != "done" {
+		t.Errorf("OnText calls = %v, want [\"working on it\" \"done\"]", texts)
+	}
+	if len(toolStarts) != 1 || toolStarts[0] != "Bash" {
+		t.Errorf("OnToolStart = %v, want [Bash]", toolStarts)
+	}
+	if len(toolEnds) != 1 || toolEnds[0] != "Bash" {
+		t.Errorf("OnToolEnd = %v, want [Bash] (name correlated via tool_use id)", toolEnds)
+	}
+
+	// Completion routed through the per-turn TurnEvents, exactly once.
+	if completes != 1 {
+		t.Fatalf("OnTurnComplete fired %d times, want 1", completes)
+	}
+	if gotResult == nil || gotResult.Text != "done" || gotResult.ToolCalls != 1 {
+		t.Errorf("TurnResult = %+v, want Text=done ToolCalls=1", gotResult)
+	}
+
+	// One-shot: turnEvents cleared after completion.
+	b.turnMu.Lock()
+	te := b.turnEvents
+	b.turnMu.Unlock()
+	if te != nil {
+		t.Error("turnEvents should be nil after the turn completed")
+	}
+}
+
 // TestReadNew_IncrementalReads proves readNew processes only lines after the
 // stored offset and advances it, so repeated calls never re-deliver entries.
 func TestReadNew_IncrementalReads(t *testing.T) {
@@ -90,7 +162,7 @@ func TestReadNew_IncrementalReads(t *testing.T) {
 	defer w.close()
 
 	var texts []string
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnText: func(text string) { texts = append(texts, text) },
 	}
 
@@ -127,7 +199,7 @@ func TestReadNew_MissingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Should not panic.
-	w.readNew(&delegator.EventHandler{})
+	w.readNew(&testEvents{})
 	if w.offset != 0 {
 		t.Errorf("offset = %d, should be untouched when file is gone", w.offset)
 	}
@@ -145,7 +217,7 @@ func TestWatchLoop_DeliversAppendedEntries(t *testing.T) {
 	defer w.close()
 
 	turnDone := make(chan *delegator.TurnResult, 1)
-	w.setHandler(&delegator.EventHandler{
+	w.setEvents(&testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { turnDone <- r },
 	})
 
@@ -196,7 +268,7 @@ func TestWatchLoop_NoLossAcrossNilHandler(t *testing.T) {
 	appendLine(t, path, endTurnLine("buffered"))
 
 	texts := make(chan string, 4)
-	w.setHandler(&delegator.EventHandler{
+	w.setEvents(&testEvents{
 		OnText: func(text string) { texts <- text },
 	})
 

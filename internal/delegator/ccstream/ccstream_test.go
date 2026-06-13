@@ -274,7 +274,7 @@ func TestBeginTurnAndCancel(t *testing.T) {
 
 	b := &Backend{}
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnText: func(text string) {},
 	}
 	applyHandler(b, handler)
@@ -317,7 +317,7 @@ func TestBeginTurnResetsState(t *testing.T) {
 	b.turnTools = 5
 	b.lastUsage = &TokenUsage{InputTokens: 100}
 
-	handler := &delegator.EventHandler{}
+	handler := &testHandler{}
 	applyHandler(b, handler)
 
 	b.turnMu.Lock()
@@ -476,12 +476,13 @@ func TestInject_User_Idle_BeginsTurn(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
-	handler := &delegator.EventHandler{OnText: func(string) {}}
+	handler := &testHandler{OnText: func(string) {}}
+	b.AttachSessionEvents(handler.session())
 
 	if err := b.Inject(context.Background(), delegator.Inject{
-		Source:  delegator.SourceUser,
-		Text:    "hello",
-		Handler: handler,
+		Source: delegator.SourceUser,
+		Text:   "hello",
+		Turn:   handler.turn(),
 	}); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
@@ -511,7 +512,8 @@ func TestInject_User_Idle_WithAttachments(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
-	handler := &delegator.EventHandler{OnText: func(string) {}}
+	handler := &testHandler{OnText: func(string) {}}
+	b.AttachSessionEvents(handler.session())
 
 	if err := b.Inject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
@@ -519,7 +521,7 @@ func TestInject_User_Idle_WithAttachments(t *testing.T) {
 		Attachments: []delegator.Attachment{
 			{MimeType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
 		},
-		Handler: handler,
+		Turn: handler.turn(),
 	}); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
@@ -617,12 +619,13 @@ func TestInject_Steer_Idle_BeginsTurn(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
-	handler := &delegator.EventHandler{OnText: func(string) {}}
+	handler := &testHandler{OnText: func(string) {}}
+	b.AttachSessionEvents(handler.session())
 
 	if err := b.Inject(context.Background(), delegator.Inject{
-		Source:  delegator.SourceSteer,
-		Text:    "steer-at-idle",
-		Handler: handler,
+		Source: delegator.SourceSteer,
+		Text:   "steer-at-idle",
+		Turn:   handler.turn(),
 	}); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
@@ -874,7 +877,7 @@ func TestOnAssistant_TextAccumulation(t *testing.T) {
 	var handlerTexts []string
 
 	b := &Backend{}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnText: func(text string) { handlerTexts = append(handlerTexts, text) },
 	}
 	applyHandler(b, handler)
@@ -911,7 +914,7 @@ func TestOnAssistant_CrossMessageSeparation(t *testing.T) {
 	t.Parallel()
 
 	b := &Backend{}
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 
 	mkMsg := func(blocks ...ContentBlock) *AssistantMessage {
 		return &AssistantMessage{Message: BetaMessage{
@@ -1031,7 +1034,7 @@ func TestOnAssistant_ToolUseTracking(t *testing.T) {
 	var toolStarts []string
 
 	b := &Backend{}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolStart: func(_ string, name string, input string) {
 			toolStarts = append(toolStarts, name)
 		},
@@ -1071,7 +1074,7 @@ func TestOnAssistant_ModelAndUsageExtraction(t *testing.T) {
 	t.Parallel()
 
 	b := &Backend{}
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -1118,7 +1121,7 @@ func TestOnAssistant_EmptyModel(t *testing.T) {
 
 	b := &Backend{}
 	b.lastModel = "claude-sonnet-4-20250514"
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -1146,7 +1149,7 @@ func TestOnAssistant_TypingRestarted(t *testing.T) {
 	var typingCalls []bool
 	b := &Backend{}
 	b.typingFunc = func(v bool) { typingCalls = append(typingCalls, v) }
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 
 	// No stop_reason — typing should restart.
 	msg := &AssistantMessage{
@@ -1170,7 +1173,7 @@ func TestOnAssistant_NoTypingOnEndTurn(t *testing.T) {
 	var typingCalls []bool
 	b := &Backend{}
 	b.typingFunc = func(v bool) { typingCalls = append(typingCalls, v) }
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 
 	endTurn := "end_turn"
 	msg := &AssistantMessage{
@@ -1218,7 +1221,7 @@ func TestOnAssistant_NilCallbacks(t *testing.T) {
 	t.Parallel()
 
 	b := &Backend{}
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -1239,7 +1242,7 @@ func TestOnAssistant_ThinkingBlock(t *testing.T) {
 
 	var handlerTexts []string
 	b := &Backend{}
-	applyHandler(b, &delegator.EventHandler{
+	applyHandler(b, &testHandler{
 		OnText: func(text string) { handlerTexts = append(handlerTexts, text) },
 	})
 
@@ -1274,7 +1277,7 @@ func TestOnAssistant_AgentToolUseTracking(t *testing.T) {
 	var statusMessages []string
 	b := &Backend{}
 	b.SetOnAgentStatus(func(text string) { statusMessages = append(statusMessages, text) })
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 
 	agentInput := json.RawMessage(`{"description":"search for patterns"}`)
 	msg := &AssistantMessage{
@@ -1305,7 +1308,7 @@ func TestOnAssistant_AgentDuplicateIgnored(t *testing.T) {
 
 	b := &Backend{}
 	b.SetOnAgentStatus(func(string) {})
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -1333,7 +1336,7 @@ func TestOnResult_ClearsTrackedAgents(t *testing.T) {
 	b.agents.Add("ag1", "still running")
 	statusMessages = nil // clear Add notification
 
-	applyHandler(b, &delegator.EventHandler{})
+	applyHandler(b, &testHandler{})
 	b.OnResult(&ResultMessage{Subtype: "success", Usage: TokenUsage{}})
 
 	if b.agents.Pending() != 0 {
@@ -1363,7 +1366,7 @@ func TestOnResult_BasicTurnCompletion(t *testing.T) {
 	b := &Backend{}
 	b.typingFunc = func(v bool) { typingCalls = append(typingCalls, v) }
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
 	applyHandler(b, handler)
@@ -1431,7 +1434,7 @@ func TestOnResult_UsesResultTextWhenPresent(t *testing.T) {
 	var completedResult *delegator.TurnResult
 
 	b := &Backend{}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
 	applyHandler(b, handler)
@@ -1469,7 +1472,7 @@ func TestOnAssistant_SubagentSurfacesBlockquotedText(t *testing.T) {
 	var toolStarts []string
 
 	b := &Backend{}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnText:      func(text string) { textEvents = append(textEvents, text) },
 		OnToolStart: func(_, name, _ string) { toolStarts = append(toolStarts, name) },
 	}
@@ -1517,7 +1520,7 @@ func TestOnAssistant_SubagentMultilineBlockquote(t *testing.T) {
 
 	var textEvents []string
 	b := &Backend{}
-	applyHandler(b, &delegator.EventHandler{
+	applyHandler(b, &testHandler{
 		OnText: func(text string) { textEvents = append(textEvents, text) },
 	})
 
@@ -1544,7 +1547,7 @@ func TestOnAssistant_SubagentEmptyTextSkipped(t *testing.T) {
 
 	var textEvents []string
 	b := &Backend{}
-	applyHandler(b, &delegator.EventHandler{
+	applyHandler(b, &testHandler{
 		OnText: func(text string) { textEvents = append(textEvents, text) },
 	})
 
@@ -1572,7 +1575,7 @@ func TestOnResult_SubagentDoesNotOverrideModel(t *testing.T) {
 	var completedResult *delegator.TurnResult
 
 	b := &Backend{}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
 	applyHandler(b, handler)
@@ -1634,7 +1637,7 @@ func TestOnResult_FallbackToResultUsage(t *testing.T) {
 	var completedResult *delegator.TurnResult
 
 	b := &Backend{}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
 	applyHandler(b, handler)
@@ -1677,7 +1680,7 @@ func TestOnResult_SignalsWaitForTurn(t *testing.T) {
 	t.Parallel()
 
 	b := &Backend{}
-	handler := &delegator.EventHandler{}
+	handler := &testHandler{}
 	applyHandler(b, handler)
 
 	// Start WaitForTurn in a goroutine.
@@ -1753,7 +1756,7 @@ func TestOnResult_ClearsLastUsage(t *testing.T) {
 	t.Parallel()
 
 	b := &Backend{}
-	handler := &delegator.EventHandler{}
+	handler := &testHandler{}
 	applyHandler(b, handler)
 
 	// Set lastUsage as if from an assistant message.
@@ -1793,7 +1796,7 @@ func TestOnResult_PreAnswerReDispatches(t *testing.T) {
 	var completedCount int
 	var completedResult *delegator.TurnResult
 	var preAnswerCalls int
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) {
 			completedCount++
 			completedResult = r
@@ -1858,7 +1861,7 @@ func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
 	b.typingFunc = func(bool) {}
 
 	var completed *delegator.TurnResult
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete:     func(r *delegator.TurnResult) { completed = r },
 		PreAnswerNudgeFunc: func(_ *delegator.TurnResult) string { return "" },
 	}
@@ -2312,7 +2315,7 @@ func TestOnReaderStopped_ClearsTurnState(t *testing.T) {
 	b.mu.Unlock()
 	b.typingFunc = func(v bool) { typingCalls = append(typingCalls, v) }
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
 	applyHandler(b, handler)
@@ -2350,7 +2353,7 @@ func TestOnReaderStopped_UnblocksWaitForTurn(t *testing.T) {
 	b.mu.Lock()
 	b.running = true
 	b.mu.Unlock()
-	handler := &delegator.EventHandler{}
+	handler := &testHandler{}
 	applyHandler(b, handler)
 
 	done := make(chan error, 1)
@@ -2417,7 +2420,7 @@ func TestOnReaderStopped_ExpectedClose(t *testing.T) {
 	b.mu.Unlock()
 	b.typingFunc = func(bool) {}
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
 	applyHandler(b, handler)
@@ -2458,7 +2461,7 @@ func TestFinalizeExit_RunsOnlyOnce(t *testing.T) {
 	b.mu.Unlock()
 	b.typingFunc = func(bool) {}
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completionCount++ },
 	}
 	applyHandler(b, handler)
@@ -2487,7 +2490,7 @@ func TestFinalizeExit_ConcurrentCallsRunOnce(t *testing.T) {
 	b.mu.Unlock()
 	b.typingFunc = func(bool) {}
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completionCount.Add(1) },
 	}
 	applyHandler(b, handler)
@@ -2526,7 +2529,7 @@ func TestFinalizeExit_SubsequentOnReaderStoppedIsNoOp(t *testing.T) {
 	b.mu.Unlock()
 	b.typingFunc = func(bool) {}
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) {
 			completionTexts = append(completionTexts, r.Text)
 		},
@@ -3292,7 +3295,7 @@ func TestConcurrentOnAssistantAndOnResult(t *testing.T) {
 
 	b := &Backend{}
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnText:         func(string) {},
 		OnToolStart:    func(string, string, string) {},
 		OnTurnComplete: func(*delegator.TurnResult) {},

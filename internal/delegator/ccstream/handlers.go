@@ -464,7 +464,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 
 	case "hook_response":
 		// PostToolUse / PostToolUseFailure hook completions. Parsed and
-		// dispatched to the current turn's EventHandler.OnToolEnd via the
+		// dispatched to the sessions SessionEvents.OnToolEnd via the
 		// helper defined in hooks.go.
 		b.handleHookResponse(raw)
 

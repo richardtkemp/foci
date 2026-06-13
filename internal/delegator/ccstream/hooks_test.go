@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"foci/internal/delegator"
 )
 
 // ---------------------------------------------------------------------------
@@ -221,7 +219,7 @@ func TestHandleHookResponse_PostToolUse(t *testing.T) {
 		isErr            bool
 	}
 	var got []captured
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(id, name, output string, isError bool) {
 			got = append(got, captured{id, name, output, isError})
 		},
@@ -261,7 +259,7 @@ func TestHandleHookResponse_PostToolUseFailure(t *testing.T) {
 		id, name, output string
 		isErr            bool
 	}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(id, name, output string, isError bool) {
 			captured.id = id
 			captured.name = name
@@ -300,7 +298,7 @@ func TestHandleHookResponse_PostToolUseFailure(t *testing.T) {
 func TestHandleHookResponse_FiltersForeignInstallID(t *testing.T) {
 	b := &Backend{hookInstallID: "install-us"}
 	fired := false
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
 	applyHandler(b, handler)
@@ -330,7 +328,7 @@ func TestHandleHookResponse_FiltersForeignInstallID(t *testing.T) {
 func TestHandleHookResponse_FiltersUserHookNoID(t *testing.T) {
 	b := &Backend{hookInstallID: "install-us"}
 	fired := false
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
 	applyHandler(b, handler)
@@ -357,7 +355,7 @@ func TestHandleHookResponse_FiltersUserHookNoID(t *testing.T) {
 func TestHandleHookResponse_DropsEventsWhenHooksDisabled(t *testing.T) {
 	b := &Backend{} // hookInstallID intentionally empty — install failed
 	fired := false
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
 	applyHandler(b, handler)
@@ -380,7 +378,7 @@ func TestHandleHookResponse_DropsEventsWhenHooksDisabled(t *testing.T) {
 func TestHandleHookResponse_SkipsSubagent(t *testing.T) {
 	b := &Backend{hookInstallID: "install-us"}
 	fired := false
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
 	applyHandler(b, handler)
@@ -410,7 +408,7 @@ func TestHandleHookResponse_SkipsSubagent(t *testing.T) {
 func TestHandleHookResponse_SkipsUnknownHookEvent(t *testing.T) {
 	b := &Backend{hookInstallID: "install-us"}
 	fired := false
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
 	applyHandler(b, handler)
@@ -432,7 +430,7 @@ func TestHandleHookResponse_SkipsUnknownHookEvent(t *testing.T) {
 func TestHandleHookResponse_MalformedStdoutGracefulSkip(t *testing.T) {
 	b := &Backend{hookInstallID: "install-us"}
 	fired := false
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
 	applyHandler(b, handler)
@@ -454,7 +452,7 @@ func TestHandleHookResponse_MalformedStdoutGracefulSkip(t *testing.T) {
 func TestHandleHookResponse_EmptyStdoutSilent(t *testing.T) {
 	b := &Backend{hookInstallID: "install-us"}
 	fired := false
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
 	applyHandler(b, handler)
@@ -482,7 +480,7 @@ func TestHandleHookResponse_PostToolNudgeDispatched(t *testing.T) {
 		writer:        NewWriter(nopWriteCloser{&buf}),
 	}
 
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) {},
 		PostToolNudgeFunc: func(name, _ string, isErr bool) []string {
 			if name == "Bash" && !isErr {
@@ -523,7 +521,7 @@ func TestHandleHookResponse_PostToolNudgeNilFunc(t *testing.T) {
 		hookInstallID: "install-us",
 		writer:        NewWriter(nopWriteCloser{&buf}),
 	}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) {},
 	}
 	applyHandler(b, handler)
@@ -555,7 +553,7 @@ func TestHandleHookResponse_PostToolNudgeSkipsEmpty(t *testing.T) {
 		hookInstallID: "install-us",
 		writer:        NewWriter(nopWriteCloser{&buf}),
 	}
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) {},
 		PostToolNudgeFunc: func(_, _ string, _ bool) []string {
 			return []string{"", "real", ""}

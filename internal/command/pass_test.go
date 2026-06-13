@@ -340,7 +340,7 @@ type mockPassBackend struct {
 }
 
 func (m *mockPassBackend) Start(context.Context, delegator.StartOptions) error { return nil }
-func (m *mockPassBackend) SendToPane(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error) {
+func (m *mockPassBackend) SendToPane(context.Context, string) (*delegator.TurnResult, error) {
 	return &delegator.TurnResult{}, nil
 }
 func (m *mockPassBackend) WaitForTurn(context.Context) error { return nil }
@@ -353,7 +353,7 @@ func (m *mockPassBackend) Inject(ctx context.Context, inj delegator.Inject) erro
 	switch inj.Source {
 	case delegator.SourceUser, delegator.SourceSteer:
 		if !m.IsTurnInFlight() {
-			_, err := m.SendToPane(ctx, inj.Text, inj.Handler)
+			_, err := m.SendToPane(ctx, inj.Text)
 			return err
 		}
 		return m.SendCommand(ctx, inj.Text)
@@ -393,7 +393,7 @@ type mockPassBackendNoCapturer struct {
 }
 
 func (m *mockPassBackendNoCapturer) Start(context.Context, delegator.StartOptions) error { return nil }
-func (m *mockPassBackendNoCapturer) SendToPane(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error) {
+func (m *mockPassBackendNoCapturer) SendToPane(context.Context, string) (*delegator.TurnResult, error) {
 	return &delegator.TurnResult{}, nil
 }
 func (m *mockPassBackendNoCapturer) WaitForTurn(context.Context) error { return nil }
@@ -406,7 +406,7 @@ func (m *mockPassBackendNoCapturer) Inject(ctx context.Context, inj delegator.In
 	switch inj.Source {
 	case delegator.SourceUser, delegator.SourceSteer:
 		if !m.IsTurnInFlight() {
-			_, err := m.SendToPane(ctx, inj.Text, inj.Handler)
+			_, err := m.SendToPane(ctx, inj.Text)
 			return err
 		}
 		return m.SendCommand(ctx, inj.Text)

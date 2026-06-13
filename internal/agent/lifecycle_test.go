@@ -240,7 +240,7 @@ func TestResetSessionHard_DelegatedPath_NoMemoryFormation(t *testing.T) {
 				backendClosed.Store(true)
 				return nil
 			}
-			be.sendToPaneFn = func(_ context.Context, _ string, _ *delegator.EventHandler) (*delegator.TurnResult, error) {
+			be.sendToPaneFn = func(_ context.Context, _ string, _ *mockHandler) (*delegator.TurnResult, error) {
 				memorySent.Store(true)
 				return &delegator.TurnResult{}, nil
 			}
@@ -714,7 +714,7 @@ func TestResetDelegatedSession(t *testing.T) {
 	// immediately complete the turn (simulating CC finishing).
 	mb, _ := dm.getManaged(sessionKey)
 	mock := mb.be.(*mockBackendDM)
-	mock.sendToPaneFn = func(_ context.Context, text string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+	mock.sendToPaneFn = func(_ context.Context, text string, handler *mockHandler) (*delegator.TurnResult, error) {
 		if strings.Contains(text, "memories") || strings.Contains(text, "session") {
 			memorySent.Store(true)
 		}

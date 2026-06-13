@@ -15,9 +15,9 @@ func TestFireTurnComplete_PerTurnCallback(t *testing.T) {
 	b := &Backend{}
 
 	var got *delegator.TurnResult
-	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *delegator.TurnResult) { got = r }
-	b.turnCompleteMu.Unlock()
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) { got = r }}
+	b.turnMu.Unlock()
 
 	result := &delegator.TurnResult{
 		Text:      "hello",
@@ -49,9 +49,9 @@ func TestFireTurnComplete_OneShot(t *testing.T) {
 	b := &Backend{}
 
 	callCount := 0
-	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *delegator.TurnResult) { callCount++ }
-	b.turnCompleteMu.Unlock()
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) { callCount++ }}
+	b.turnMu.Unlock()
 
 	b.fireTurnComplete(&delegator.TurnResult{Text: "first"})
 	b.fireTurnComplete(&delegator.TurnResult{Text: "second"})
@@ -60,12 +60,12 @@ func TestFireTurnComplete_OneShot(t *testing.T) {
 		t.Fatalf("callback called %d times, want 1", callCount)
 	}
 
-	// turnCompleteFn should be nil.
-	b.turnCompleteMu.Lock()
-	fn := b.turnCompleteFn
-	b.turnCompleteMu.Unlock()
-	if fn != nil {
-		t.Fatal("turnCompleteFn should be nil after firing")
+	// turnEvents should be nil (one-shot, cleared after firing).
+	b.turnMu.Lock()
+	te := b.turnEvents
+	b.turnMu.Unlock()
+	if te != nil {
+		t.Fatal("turnEvents should be nil after firing")
 	}
 }
 
@@ -106,9 +106,9 @@ func TestFireTurnComplete_RaceSafety(t *testing.T) {
 		// Concurrent set.
 		go func() {
 			defer wg.Done()
-			b.turnCompleteMu.Lock()
-			b.turnCompleteFn = func(r *delegator.TurnResult) {}
-			b.turnCompleteMu.Unlock()
+			b.turnMu.Lock()
+			b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) {}}
+			b.turnMu.Unlock()
 		}()
 		// Concurrent fire.
 		go func() {

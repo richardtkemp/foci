@@ -14,10 +14,10 @@ func TestProcessLine_ExtractsUsage(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var got *delegator.TurnResult
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
-	w.setHandler(handler)
+	w.setEvents(handler)
 
 	// Simulate an assistant message with usage and end_turn.
 	stopReason := "end_turn"
@@ -68,10 +68,10 @@ func TestProcessLine_UsageResetsAcrossTurns(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var results []*delegator.TurnResult
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { results = append(results, r) },
 	}
-	w.setHandler(handler)
+	w.setEvents(handler)
 
 	stopReason := "end_turn"
 
@@ -117,10 +117,10 @@ func TestProcessLine_LastUsageWins(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var got *delegator.TurnResult
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
-	w.setHandler(handler)
+	w.setEvents(handler)
 
 	toolUse := "tool_use"
 	endTurn := "end_turn"
@@ -167,7 +167,7 @@ func TestHandleAssistant_TextEvent(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var textEvents []string
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnText: func(text string) { textEvents = append(textEvents, text) },
 	}
 
@@ -195,7 +195,7 @@ func TestHandleAssistant_ToolCallTracking(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var toolStarts []string
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnToolStart: func(_ string, name, input string) { toolStarts = append(toolStarts, name) },
 	}
 
@@ -229,7 +229,7 @@ func TestHandleAssistant_SyntheticNoResponsePassedThrough(t *testing.T) {
 			w := &sessionWatcher{}
 
 			var textEvents []string
-			handler := &delegator.EventHandler{
+			handler := &testEvents{
 				OnText: func(text string) { textEvents = append(textEvents, text) },
 			}
 
@@ -258,7 +258,7 @@ func TestHandleAssistant_SyntheticNoResponsePassedThrough(t *testing.T) {
 // when the entry has no message payload.
 func TestHandleAssistant_NilMessage(t *testing.T) {
 	w := &sessionWatcher{}
-	handler := &delegator.EventHandler{}
+	handler := &testEvents{}
 
 	entry := &sessionEntry{Type: "assistant", Message: nil}
 	// Should not panic.
@@ -273,7 +273,7 @@ func TestHandleAssistant_AgentTracking(t *testing.T) {
 	var statusMessages []string
 	w.agents.OnStatus = func(text string) { statusMessages = append(statusMessages, text) }
 
-	handler := &delegator.EventHandler{}
+	handler := &testEvents{}
 
 	agentInput, _ := json.Marshal(map[string]string{"description": "search files"})
 	content, _ := json.Marshal([]contentBlock{
@@ -309,7 +309,7 @@ func TestHandleAssistant_MultipleAgents(t *testing.T) {
 	var statusMessages []string
 	w.agents.OnStatus = func(text string) { statusMessages = append(statusMessages, text) }
 
-	handler := &delegator.EventHandler{}
+	handler := &testEvents{}
 
 	input1, _ := json.Marshal(map[string]string{"description": "task A"})
 	input2, _ := json.Marshal(map[string]string{"description": "task B"})
@@ -345,7 +345,7 @@ func TestHandleAssistant_EndTurnFiresResult(t *testing.T) {
 	w.turnTools = 2
 
 	var got *delegator.TurnResult
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
 
@@ -393,7 +393,7 @@ func TestHandleAssistant_NonEndTurnDoesNotFire(t *testing.T) {
 	w := &sessionWatcher{}
 
 	called := false
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { called = true },
 	}
 
@@ -420,7 +420,7 @@ func TestHandleAssistant_EmptyTextIgnored(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var textEvents []string
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnText: func(text string) { textEvents = append(textEvents, text) },
 	}
 
@@ -463,7 +463,7 @@ func TestHandleUser_AgentCompletion(t *testing.T) {
 		},
 	}
 
-	w.handleUser(entry, nil)
+	w.handleUser(entry, &testEvents{})
 
 	if w.agents.Pending() != 1 {
 		t.Fatalf("Pending() = %d, want 1 (ag1 should be removed)", w.agents.Pending())
@@ -497,7 +497,7 @@ func TestHandleUser_AllAgentsComplete(t *testing.T) {
 		},
 	}
 
-	w.handleUser(entry, nil)
+	w.handleUser(entry, &testEvents{})
 
 	if w.agents.Pending() != 0 {
 		t.Fatalf("Pending() = %d, want 0", w.agents.Pending())
@@ -527,7 +527,7 @@ func TestHandleUser_NoPendingAgents(t *testing.T) {
 	}
 
 	// Should not panic.
-	w.handleUser(entry, nil)
+	w.handleUser(entry, &testEvents{})
 }
 
 // TestHandleUser_NilMessage verifies handleUser is a safe no-op when
@@ -537,7 +537,7 @@ func TestHandleUser_NilMessage(t *testing.T) {
 	w.agents.Add("ag1", "")
 
 	entry := &sessionEntry{Type: "user", Message: nil}
-	w.handleUser(entry, nil)
+	w.handleUser(entry, &testEvents{})
 
 	// Pending agents should be unchanged.
 	if w.agents.Pending() != 1 {
@@ -565,7 +565,7 @@ func TestHandleUser_UnmatchedToolResult(t *testing.T) {
 		},
 	}
 
-	w.handleUser(entry, nil)
+	w.handleUser(entry, &testEvents{})
 
 	if w.agents.Pending() != 1 {
 		t.Fatalf("Pending() = %d, want 1 (should not change)", w.agents.Pending())
@@ -585,7 +585,7 @@ func TestProcessLine_SkipsSidechainEntries(t *testing.T) {
 	var textEvents []string
 	var toolStarts []string
 	var toolEnds []string
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnText:      func(text string) { textEvents = append(textEvents, text) },
 		OnToolStart: func(_, name, _ string) { toolStarts = append(toolStarts, name) },
 		OnToolEnd:   func(_, name, _ string, _ bool) { toolEnds = append(toolEnds, name) },
@@ -638,7 +638,7 @@ func TestHandleUser_FiresToolEndWithName(t *testing.T) {
 		isError bool
 	}
 	var events []captured
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnToolStart: func(_ string, _ string, _ string) {},
 		OnToolEnd: func(id, name, output string, isErr bool) {
 			events = append(events, captured{id: id, name: name, output: output, isError: isErr})
@@ -688,7 +688,7 @@ func TestHandleSystem_TurnDuration(t *testing.T) {
 	w.turnTools = 3
 
 	var got *delegator.TurnResult
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
 
@@ -722,7 +722,7 @@ func TestHandleSystem_CompactBoundary(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var got *delegator.TurnResult
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
 
@@ -744,7 +744,7 @@ func TestHandleSystem_OtherSubtype(t *testing.T) {
 	w := &sessionWatcher{}
 
 	called := false
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { called = true },
 	}
 
@@ -770,7 +770,7 @@ func TestProcessLine_DispatchesCorrectly(t *testing.T) {
 
 	var textCalled bool
 	var turnComplete bool
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnText:         func(text string) { textCalled = true },
 		OnTurnComplete: func(r *delegator.TurnResult) { turnComplete = true },
 	}
@@ -810,7 +810,7 @@ func TestProcessLine_DispatchesCorrectly(t *testing.T) {
 // is silently skipped without panicking.
 func TestProcessLine_IgnoresUnparseableLines(t *testing.T) {
 	w := &sessionWatcher{}
-	handler := &delegator.EventHandler{}
+	handler := &testEvents{}
 
 	// Should not panic.
 	w.processLine([]byte("not valid json"), handler)
@@ -824,7 +824,7 @@ func TestProcessLine_IgnoresUnknownTypes(t *testing.T) {
 	w := &sessionWatcher{}
 
 	called := false
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnText:         func(text string) { called = true },
 		OnTurnComplete: func(r *delegator.TurnResult) { called = true },
 	}
@@ -851,7 +851,7 @@ func TestFireTurnResult_ResetsAllState(t *testing.T) {
 	w.turnUsage = &delegator.TurnUsage{InputTokens: 100}
 	w.turnModel = "claude-opus-4-6"
 
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) {},
 	}
 
@@ -877,7 +877,7 @@ func TestFireTurnResult_NilCallback(t *testing.T) {
 	w := &sessionWatcher{}
 	w.turnText = "text"
 
-	handler := &delegator.EventHandler{} // OnTurnComplete is nil
+	handler := &testEvents{} // OnTurnComplete is nil
 
 	// Should not panic.
 	w.fireTurnResult(handler)
@@ -888,39 +888,39 @@ func TestFireTurnResult_NilCallback(t *testing.T) {
 	}
 }
 
-// --- setHandler tests ---
+// --- setEvents tests ---
 
-// TestSetHandler verifies that setHandler stores the event handler
+// TestSetEvents verifies that setEvents stores the event sink
 // thread-safely.
-func TestSetHandler(t *testing.T) {
+func TestSetEvents(t *testing.T) {
 	w := &sessionWatcher{}
 
-	handler := &delegator.EventHandler{
+	handler := &testEvents{
 		OnText: func(text string) {},
 	}
 
-	w.setHandler(handler)
+	w.setEvents(handler)
 
 	w.mu.Lock()
-	h := w.handler
+	h := w.events
 	w.mu.Unlock()
 
 	if h != handler {
-		t.Fatal("handler should be set after setHandler")
+		t.Fatal("events should be set after setEvents")
 	}
 }
 
-// TestSetHandler_NilClears verifies that setting a nil handler clears it.
-func TestSetHandler_NilClears(t *testing.T) {
+// TestSetHandler_NilClears verifies that setting a nil sink clears it.
+func TestSetEvents_NilClears(t *testing.T) {
 	w := &sessionWatcher{}
-	w.setHandler(&delegator.EventHandler{})
-	w.setHandler(nil)
+	w.setEvents(&testEvents{})
+	w.setEvents(nil)
 
 	w.mu.Lock()
-	h := w.handler
+	h := w.events
 	w.mu.Unlock()
 
 	if h != nil {
-		t.Fatal("handler should be nil after setHandler(nil)")
+		t.Fatal("events should be nil after setEvents(nil)")
 	}
 }
