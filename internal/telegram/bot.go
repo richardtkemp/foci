@@ -31,6 +31,7 @@ var _ platform.ButtonSender = (*Bot)(nil)
 type botClient interface {
 	SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error)
 	EditMessageText(text string, opts *gotgbot.EditMessageTextOpts) (*gotgbot.Message, bool, error)
+	EditMessageReplyMarkup(opts *gotgbot.EditMessageReplyMarkupOpts) (*gotgbot.Message, bool, error)
 	SendDocument(chatId int64, document gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error)
 	SendVoice(chatId int64, voice gotgbot.InputFileOrString, opts *gotgbot.SendVoiceOpts) (*gotgbot.Message, error)
 	SendVideo(chatId int64, video gotgbot.InputFileOrString, opts *gotgbot.SendVideoOpts) (*gotgbot.Message, error)
@@ -100,10 +101,11 @@ type Bot struct {
 	sessionIndex platform.SessionIndex // nil = no session key persistence across restarts
 	chatmeta     *chatmeta.Resolver    // shared session key management
 
-	display         BotDisplayConfig
-	fileMode        os.FileMode       // permission bits for saved files (media, etc.)
+	display       BotDisplayConfig
+	fileMode      os.FileMode          // permission bits for saved files (media, etc.)
 	toolStore     turn.ToolResultStore // tool-call display state (in-memory + optional SQLite write-through)
 	thinkingStore sync.Map             // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
+	subagentStore sync.Map             // token (string) → *subagentGroup; rolling "Hide this" button state per subagent run
 
 	pendingNotifsMu sync.Mutex // protects pendingNotifs
 	pendingNotifs   []string   // notifications buffered during active turns; drained after turn ends

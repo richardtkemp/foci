@@ -77,6 +77,8 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 		b.handleToolCallCallback(chatID, data, msgID)
 	case dispatch.CallbackThinking:
 		b.handleThinkingCallback(chatID, data, msgID)
+	case dispatch.CallbackSubagentHide:
+		b.handleSubagentHideCallback(chatID, data)
 	}
 }
 

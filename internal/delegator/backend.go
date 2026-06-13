@@ -329,6 +329,7 @@ type EventHandler struct {
 // without having to match by name or rely on ordering.
 type SessionEvents struct {
 	OnText          func(text string)                           // complete text block from the agent
+	OnSubagentText  func(groupKey, text string)                 // complete text block from a subagent (Task tool); groupKey = parent tool_use id
 	OnTextDelta     func(delta string)                          // streaming text delta (content_block_delta)
 	OnThinkingDelta func(delta string)                          // streaming thinking delta (content_block_delta)
 	OnToolStart     func(id, name, input string)                // tool execution began

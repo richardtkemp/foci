@@ -14,6 +14,8 @@ const (
 	CallbackToolCall
 	// CallbackThinking is a thinking block expand/collapse callback ("th:" prefix).
 	CallbackThinking
+	// CallbackSubagentHide is a "hide this subagent's messages" callback ("sa:" prefix).
+	CallbackSubagentHide
 	// CallbackUnknown is an unrecognized callback type.
 	CallbackUnknown
 )
@@ -37,6 +39,8 @@ func ParseCallback(data string) (CallbackAction, string) {
 		return CallbackToolCall, parts[1]
 	case "th":
 		return CallbackThinking, parts[1]
+	case "sa":
+		return CallbackSubagentHide, parts[1]
 	default:
 		return CallbackUnknown, data
 	}

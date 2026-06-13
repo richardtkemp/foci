@@ -96,6 +96,12 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 			log.Debugf("turn-sink", "sink=%p TextBlock(final): text_len=%d (no-op — final text carried by TurnComplete)", s, len(e.Text))
 		}
 
+	case turnevent.SubagentText:
+		// Subagent progress is ancillary — route it to the renderer (which
+		// hands it to the platform's per-subagent control if supported) but do
+		// NOT set s.delivered, so it never suppresses the real final reply.
+		s.renderer.OnSubagentReply(e.GroupKey, e.Text)
+
 	case turnevent.ThinkingDelta:
 		s.renderer.OnThinkingDelta(e.Delta)
 
@@ -216,6 +222,20 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 	case turnevent.Activity:
 		if s.conn != nil {
 			s.conn.SetTyping(true)
+		}
+	case turnevent.SubagentText:
+		// Notify/wake flows have no rolling-button surface; deliver subagent
+		// progress as plain session text. Do not set delivered — it must not
+		// suppress the final reply.
+		if s.conn == nil {
+			return
+		}
+		text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.Text))
+		if text == "" {
+			return
+		}
+		if err := s.conn.SendToSession(s.sessionKey, text); err != nil && s.onError != nil {
+			s.onError(s.trigger, err)
 		}
 	case turnevent.TextBlock:
 		if e.Phase != turnevent.PhaseIntermediate || s.conn == nil {

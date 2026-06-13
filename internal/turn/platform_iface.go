@@ -42,6 +42,19 @@ type Platform interface {
 	Logger() *log.ComponentLogger
 }
 
+// SubagentDeliverer is an optional interface a Platform may implement to take
+// over delivery of subagent (Task tool) progress messages, enabling per-subagent
+// UI such as Telegram's rolling "Hide this" button. Platforms that don't
+// implement it receive subagent text as ordinary intermediate replies via the
+// renderer's OnReply fallback.
+type SubagentDeliverer interface {
+	// DeliverSubagentText delivers one subagent progress message. groupKey
+	// identifies the originating subagent (its parent tool_use id) so the
+	// platform can group its messages, roll a control button forward to the
+	// newest, and delete the group on demand. text is the already-formatted body.
+	DeliverSubagentText(groupKey, text string)
+}
+
 // StreamSink is the live streaming handle returned by OpenStream. It is
 // platform-side and owns the live message sequence internally. Update is
 // called ONLY by the turn-side pump goroutine; Close is called by
