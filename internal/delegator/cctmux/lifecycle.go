@@ -216,13 +216,11 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 		b.checkPermissionPrompt()
 	}
 
-	// Forward agent spawn/completion status to the user via replyFunc.
+	// Forward agent spawn/completion status to the user through the
+	// session-scoped delivery sink (same pipeline as ordinary text).
 	w.agents.OnStatus = func(text string) {
-		b.replyMu.Lock()
-		fn := b.replyFunc
-		b.replyMu.Unlock()
-		if fn != nil {
-			fn(text)
+		if se := b.sessionEvents.Load(); se != nil && se.OnText != nil {
+			se.OnText(text)
 		}
 	}
 
@@ -231,30 +229,11 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 	b.preSendOffset = -1 // consumed — future watchers default to tail
 	b.mu.Unlock()
 
-	// Set persistent handler that delegates to the current turn's replyFunc
-	// and fires per-turn + legacy WaitForTurn callbacks on completion.
-	// OnText also re-establishes the typing indicator — by the time the
-	// watcher sees CC's first output, processAgentMessage has returned and
-	// its defer has stopped typing. This restarts it for the duration of
-	// the turn (fireTurnComplete stops it via OnTurnDone).
-	w.setHandler(&delegator.EventHandler{
-		OnText: func(text string) {
-			// Re-establish typing — CC is actively producing output.
-			b.replyMu.Lock()
-			typFn := b.typingFunc
-			fn := b.replyFunc
-			b.replyMu.Unlock()
-			if typFn != nil {
-				typFn(true)
-			}
-			if fn != nil {
-				fn(text)
-			}
-		},
-		OnTurnComplete: func(result *delegator.TurnResult) {
-			b.fireTurnComplete(result)
-		},
-	})
+	// The watcher dispatches to the Backend, which routes delivery to the
+	// session-scoped SessionEvents and completion to the per-turn TurnEvents.
+	// Set once for the watcher's lifetime — not per turn — so delivery never
+	// drops between turns.
+	w.setEvents(b)
 
 	// Start long-lived watch loop — lives until Close() cancels watchCtx.
 	b.mu.Lock()
@@ -267,10 +246,10 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 	// entries written in the gap (e.g. CC completing a turn before the
 	// watcher started) would be missed without this initial read.
 	w.mu.Lock()
-	h := w.handler
+	e := w.events
 	w.mu.Unlock()
-	if h != nil {
-		w.readNew(h)
+	if e != nil {
+		w.readNew(e)
 	}
 
 	return nil
@@ -329,10 +308,10 @@ func (b *Backend) checkPermissionPrompt() {
 
 	b.replyMu.Lock()
 	promptFn := b.permPromptFunc
-	replyFn := b.replyFunc
 	b.replyMu.Unlock()
 
-	// Prefer structured prompt with keyboard; fall back to plain text.
+	// Prefer structured prompt with keyboard; fall back to plain text through
+	// the session-scoped delivery sink.
 	if promptFn != nil && len(prompt.Choices) > 0 {
 		var choices []delegator.PromptChoice
 		for _, c := range prompt.Choices {
@@ -342,8 +321,8 @@ func (b *Backend) checkPermissionPrompt() {
 			})
 		}
 		promptFn("", "⚠️ Permission required:\n\n"+prompt.Description, prompt.Summary, choices)
-	} else if replyFn != nil {
-		replyFn("⚠️ Claude Code needs permission:\n\n" + prompt.Raw + "\n\nReply with your choice (1, 2, 3, etc.)")
+	} else if se := b.sessionEvents.Load(); se != nil && se.OnText != nil {
+		se.OnText("⚠️ Claude Code needs permission:\n\n" + prompt.Raw + "\n\nReply with your choice (1, 2, 3, etc.)")
 	}
 }
 

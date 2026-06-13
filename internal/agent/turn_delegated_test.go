@@ -102,10 +102,27 @@ func TestDelegatedTransport_ComposePrompt(t *testing.T) {
 // Each method delegates to a function field when set, otherwise returns sane
 // defaults. Keeps test code focused on DelegatedTransport behaviour.
 // ---------------------------------------------------------------------------
+// mockHandler bundles per-turn callbacks for the delegated-backend mocks — the
+// shape the production EventHandler used to have. The mock Inject synthesises
+// one from the installed SessionEvents (delivery) + Inject.Turn (bookkeeping),
+// so test closures that fire handler.OnText/OnTurnComplete exercise the same
+// routing production uses (SendToPane is a mock-only test seam).
+type mockHandler struct {
+	OnText          func(text string)
+	OnTextDelta     func(delta string)
+	OnThinkingDelta func(delta string)
+	OnToolStart     func(id, name, input string)
+	OnToolEnd       func(id, name, output string, isError bool)
+	OnTurnComplete  func(result *delegator.TurnResult)
+
+	PostToolNudgeFunc  func(toolName, toolInput string, isError bool) []string
+	PreAnswerNudgeFunc func(result *delegator.TurnResult) string
+}
+
 type mockBackendDT struct {
 	mu sync.Mutex
 
-	sendToPaneFn  func(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error)
+	sendToPaneFn  func(ctx context.Context, prompt string, handler *mockHandler) (*delegator.TurnResult, error)
 	sendCommandFn func(ctx context.Context, command string) error
 	waitForTurnFn func(ctx context.Context) error
 	turnInFlight  bool
@@ -144,7 +161,7 @@ func (m *mockBackendDT) IsTurnInFlight() bool {
 	return m.turnInFlight
 }
 
-func (m *mockBackendDT) SendToPane(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+func (m *mockBackendDT) SendToPane(ctx context.Context, prompt string, handler *mockHandler) (*delegator.TurnResult, error) {
 	if m.sendToPaneFn != nil {
 		return m.sendToPaneFn(ctx, prompt, handler)
 	}
@@ -158,22 +175,17 @@ func (m *mockBackendDT) SendCommand(ctx context.Context, command string) error {
 	return nil
 }
 
-// Inject mirrors production routing so tests written against the new
-// canonical entry point exercise the same code paths as the legacy mocks.
-// Production passes inj.Turn (TurnEvents) post-TODO #747; we synthesise
-// an EventHandler so the SendToPane mock surface — which still uses
-// EventHandler — keeps working without per-test churn. Delivery callbacks
-// (OnText etc.) come from the SessionEvents previously installed via
-// AttachSessionEvents — that's how production routes them, so test
-// callbacks that fire handler.OnText exercise the new path.
+// Inject mirrors production routing so tests exercise the same code paths.
+// Production passes inj.Turn (TurnEvents) for bookkeeping and installs delivery
+// via AttachSessionEvents; we recombine the two into a mockHandler for the
+// SendToPane test seam so test closures that fire handler.OnText/OnTurnComplete
+// keep working without per-test churn — delivery callbacks come from the
+// SessionEvents installed via AttachSessionEvents, exactly as production routes them.
 func (m *mockBackendDT) Inject(ctx context.Context, inj delegator.Inject) error {
 	m.mu.Lock()
 	se := m.sessionEvents
 	m.mu.Unlock()
-	handler := inj.Handler
-	if handler == nil {
-		handler = &delegator.EventHandler{}
-	}
+	handler := &mockHandler{}
 	if inj.Turn != nil {
 		if handler.OnTurnComplete == nil {
 			handler.OnTurnComplete = inj.Turn.OnTurnComplete
@@ -376,7 +388,7 @@ func TestDelegatedTransport_InjectNudges_ReflectionTriggerSuppressed(t *testing.
 func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 	be := &mockBackendDT{
 		sessionFile: "/tmp/test-session.jsonl",
-		sendToPaneFn: func(_ context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, prompt string, handler *mockHandler) (*delegator.TurnResult, error) {
 			if !strings.Contains(prompt, "hello") {
 				t.Errorf("prompt should contain 'hello', got: %q", prompt)
 			}
@@ -447,7 +459,7 @@ func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 // completion's result wins.
 func TestDelegatedTransport_RunInference_DoubleComplete(t *testing.T) {
 	be := &mockBackendDT{
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			// Simulate the OnResult/finalizeExit race: both fire completion.
 			handler.OnTurnComplete(&delegator.TurnResult{Text: "real answer"})
 			handler.OnTurnComplete(&delegator.TurnResult{Text: "process exited"})
@@ -481,7 +493,7 @@ func TestDelegatedTransport_RunInference_DoubleComplete(t *testing.T) {
 func TestDelegatedTransport_RunInference_ConcurrentComplete(t *testing.T) {
 	var wg sync.WaitGroup
 	be := &mockBackendDT{
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			for i := 0; i < 8; i++ {
 				wg.Add(1)
 				go func() {
@@ -609,7 +621,7 @@ func TestDelegatedTransport_RunInference_TurnInFlightSendCommandError(t *testing
 func TestDelegatedTransport_RunInference_WaitForPermission(t *testing.T) {
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			if handler != nil && handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(&delegator.TurnResult{Text: "done"})
 			}
@@ -664,7 +676,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 	var capturedNudgeFunc func(string, string, bool) []string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedNudgeFunc = handler.PostToolNudgeFunc
 			if handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
@@ -693,7 +705,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 		t.Fatalf("RunInference: %v", err)
 	}
 	if capturedNudgeFunc == nil {
-		t.Fatal("PostToolNudgeFunc should be wired into the EventHandler")
+		t.Fatal("PostToolNudgeFunc should be wired into the handler")
 	}
 
 	// Two successful tools — no reminder yet (every_n_tools N=3, after_error needs isError).
@@ -729,7 +741,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeNilNudger(t *testing.T) {
 	var capturedNudgeFunc func(string, string, bool) []string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedNudgeFunc = handler.PostToolNudgeFunc
 			if handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
@@ -765,7 +777,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
 	var capturedPreAnswerFunc func(*delegator.TurnResult) string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedPreAnswerFunc = handler.PreAnswerNudgeFunc
 			if handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(&delegator.TurnResult{Text: "final"})
@@ -799,7 +811,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
 		t.Fatalf("RunInference: %v", err)
 	}
 	if capturedPreAnswerFunc == nil {
-		t.Fatal("PreAnswerNudgeFunc should be wired into the EventHandler")
+		t.Fatal("PreAnswerNudgeFunc should be wired into the handler")
 	}
 
 	// First call: round-1 result arrives with no tools — gate fires.
@@ -835,7 +847,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection(t *
 	var capturedPreAnswerFunc func(*delegator.TurnResult) string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedPreAnswerFunc = handler.PreAnswerNudgeFunc
 			if handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(&delegator.TurnResult{Text: "final"})
@@ -870,7 +882,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection(t *
 		t.Fatalf("RunInference: %v", err)
 	}
 	if capturedPreAnswerFunc == nil {
-		t.Fatal("PreAnswerNudgeFunc should be wired into the EventHandler")
+		t.Fatal("PreAnswerNudgeFunc should be wired into the handler")
 	}
 
 	firstRound := &delegator.TurnResult{Text: "memory written"}
@@ -886,7 +898,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 	var capturedPreAnswerFunc func(*delegator.TurnResult) string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedPreAnswerFunc = handler.PreAnswerNudgeFunc
 			if handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
@@ -929,10 +941,10 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 // log would under-report the true token spend of the user's turn since
 // ccstream's beginTurn resets lastUsage between rounds.
 func TestDelegatedTransport_RunInference_PreAnswerAccumulatesUsage(t *testing.T) {
-	var capturedHandler *delegator.EventHandler
+	var capturedHandler *mockHandler
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedHandler = handler
 			return nil, nil
 		},
@@ -1000,10 +1012,10 @@ func TestDelegatedTransport_RunInference_PreAnswerAccumulatesUsage(t *testing.T)
 // the platform delivers the answer the agent originally committed to rather
 // than a raw sentinel literal.
 func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *testing.T) {
-	var capturedHandler *delegator.EventHandler
+	var capturedHandler *mockHandler
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedHandler = handler
 			return nil, nil
 		},
@@ -1056,7 +1068,7 @@ func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *te
 func TestDelegatedTransport_RunInference_NilTurnResult(t *testing.T) {
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			if handler != nil && handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(nil)
 			}
@@ -1112,7 +1124,7 @@ func TestDelegatedTransport_OnText_LogsEachMessage(t *testing.T) {
 
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			// Simulate CC producing three intermediate text blocks
 			// followed by turn completion.
 			if handler != nil {

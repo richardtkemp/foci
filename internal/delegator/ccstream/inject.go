@@ -235,26 +235,6 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 	b.logger().Debugf("Inject: source=%s text_bytes=%d attachments=%d in_flight=%v",
 		inj.Source, len(inj.Text), len(inj.Attachments), inFlight)
 
-	// Back-compat shim: legacy callers (cctmux-shaped mocks, older tests)
-	// still pass Inject.Handler. Split it into the new SessionEvents +
-	// TurnEvents form so the rest of ccstream only deals with the split
-	// types. Removed once all callers migrate (TODO #747 cleanup).
-	if inj.Turn == nil && inj.Handler != nil {
-		h := inj.Handler
-		b.AttachSessionEvents(&delegator.SessionEvents{
-			OnText:          h.OnText,
-			OnTextDelta:     h.OnTextDelta,
-			OnThinkingDelta: h.OnThinkingDelta,
-			OnToolStart:     h.OnToolStart,
-			OnToolEnd:       h.OnToolEnd,
-		})
-		inj.Turn = &delegator.TurnEvents{
-			OnTurnComplete:     h.OnTurnComplete,
-			PostToolNudgeFunc:  h.PostToolNudgeFunc,
-			PreAnswerNudgeFunc: h.PreAnswerNudgeFunc,
-		}
-	}
-
 	switch inj.Source {
 	case delegator.SourceUser:
 		if !inFlight {

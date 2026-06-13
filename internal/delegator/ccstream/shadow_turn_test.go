@@ -52,7 +52,7 @@ func TestSteerFold_KeepsTurnInFlight_UntilShadowReply(t *testing.T) {
 
 	var completedCount int
 	var completedResult *delegator.TurnResult
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) {
 			completedCount++
 			completedResult = r
@@ -126,7 +126,7 @@ func TestSteerFold_WatchdogReleasesWhenNoShadowReply(t *testing.T) {
 
 	var completedCount int32
 	done := make(chan *delegator.TurnResult, 1)
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) {
 			atomic.AddInt32(&completedCount, 1)
 			done <- r
@@ -187,7 +187,7 @@ func TestSteerFold_WatchdogDefersWhileOutstandingPrompt(t *testing.T) {
 
 	var completedCount int32
 	done := make(chan struct{}, 1)
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(_ *delegator.TurnResult) {
 			atomic.AddInt32(&completedCount, 1)
 			select {
@@ -248,7 +248,7 @@ func TestSteerFold_WatchdogDefersWhileActive(t *testing.T) {
 
 	var completedCount int32
 	done := make(chan struct{}, 1)
-	handler := &delegator.EventHandler{
+	handler := &testHandler{
 		OnTurnComplete: func(_ *delegator.TurnResult) {
 			atomic.AddInt32(&completedCount, 1)
 			select {

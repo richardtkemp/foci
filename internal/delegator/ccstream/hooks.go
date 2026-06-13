@@ -26,7 +26,7 @@ import (
 //
 // Foci receives that hook_response message in OnSystem, parses the stdout
 // field as the compact JSON our helper wrote, and dispatches to the current
-// turn's EventHandler.OnToolEnd with the tool_use_id / tool_name / output /
+// turns SessionEvents.OnToolEnd with the tool_use_id / tool_name / output /
 // is_error fields. Sub-agent tool calls are filtered out by checking agent_id
 // (non-empty = subagent) before dispatch.
 //
@@ -275,7 +275,7 @@ type hookScriptOutput struct {
 }
 
 // handleHookResponse parses a system/hook_response envelope and dispatches
-// to the current turn's EventHandler.OnToolEnd for PostToolUse and
+// to the sessions SessionEvents.OnToolEnd for PostToolUse and
 // PostToolUseFailure events.
 //
 // Three filter layers before dispatch:

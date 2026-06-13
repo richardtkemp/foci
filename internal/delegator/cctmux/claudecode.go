@@ -7,6 +7,7 @@ package cctmux
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"foci/internal/delegator"
 )
@@ -39,9 +40,14 @@ type Backend struct {
 	agentID         string // foci agent ID
 	workDir         string // workspace directory
 
-	// replyFunc delivers text to the user's platform chat.
+	// sessionEvents holds the session-scoped delivery callbacks installed via
+	// AttachSessionEvents. Stored in atomic.Pointer so the watcher goroutine
+	// reads them lock-free; set once per session (idempotent re-attach), never
+	// nil after the first attach so delivery never drops between turns.
+	sessionEvents atomic.Pointer[delegator.SessionEvents]
+
+	// replyMu guards the callback setters below.
 	replyMu        sync.Mutex
-	replyFunc      func(string)
 	permPromptFunc delegator.PermissionPromptFunc
 	onSessionReady func(string) // called once when session ID is discovered
 	typingFunc     func(bool)   // typing indicator: true=start, false=stop
@@ -59,10 +65,12 @@ type Backend struct {
 	waitMu sync.Mutex
 	waitCh chan struct{}
 
-	// turnCompleteMu guards turnCompleteFn. Set by SendToPane from the
-	// per-turn EventHandler; fired once by the watcher on end_turn, then nil'd.
-	turnCompleteMu sync.Mutex
-	turnCompleteFn func(*delegator.TurnResult)
+	// turnMu guards turnEvents — the current turn's per-turn bookkeeping
+	// (OnTurnComplete, nudges). Installed by sendToPane when a turn begins,
+	// captured-and-nil'd by fireTurnComplete on end_turn (one-shot). Nil
+	// between turns; the backend tolerates that.
+	turnMu     sync.Mutex
+	turnEvents *delegator.TurnEvents
 
 	// preSendOffset records the JSONL file size before sendText, so the
 	// watcher starts from there and catches responses written before it starts.

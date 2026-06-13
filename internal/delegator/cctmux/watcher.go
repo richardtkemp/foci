@@ -15,14 +15,25 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// watchEvents is the sink the watcher dispatches parsed JSONL events to.
+// Implemented by *Backend, which routes delivery (onText/onToolStart/onToolEnd)
+// to the session-scoped SessionEvents and completion (onTurnComplete) to the
+// per-turn TurnEvents. Kept as an interface so watcher tests can supply a fake.
+type watchEvents interface {
+	onText(text string)
+	onToolStart(id, name, input string)
+	onToolEnd(id, name, output string, isError bool)
+	onTurnComplete(result *delegator.TurnResult)
+}
+
 // sessionWatcher tails a Claude Code session JSONL file and emits events
 // as new entries are appended. Uses fsnotify for immediate event delivery.
 type sessionWatcher struct {
-	path    string
-	fsnot   *fsnotify.Watcher
-	mu      sync.Mutex
-	offset  int64                   // current read position in the file
-	handler *delegator.EventHandler // current turn's handler (nil between turns)
+	path   string
+	fsnot  *fsnotify.Watcher
+	mu     sync.Mutex
+	offset int64       // current read position in the file
+	events watchEvents // event sink; set once in startWatcher, never nil after
 
 	// onPermissionCheck is called periodically to detect permission prompts
 	// in the tmux pane. Decoupled from session events because prompts can
@@ -105,10 +116,10 @@ func (w *sessionWatcher) watchLoop(ctx context.Context) {
 			}
 			if event.Has(fsnotify.Write) {
 				w.mu.Lock()
-				h := w.handler
+				e := w.events
 				w.mu.Unlock()
-				if h != nil {
-					w.readNew(h)
+				if e != nil {
+					w.readNew(e)
 				}
 			}
 		case <-permTicker.C:
@@ -123,15 +134,16 @@ func (w *sessionWatcher) watchLoop(ctx context.Context) {
 	}
 }
 
-// setHandler sets the event handler for the current turn.
-func (w *sessionWatcher) setHandler(h *delegator.EventHandler) {
+// setEvents sets the watcher's event sink. Called once in startWatcher with the
+// Backend; the sink is session-scoped, not per-turn.
+func (w *sessionWatcher) setEvents(e watchEvents) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.handler = h
+	w.events = e
 }
 
 // readNew reads any new lines appended since the last read and processes them.
-func (w *sessionWatcher) readNew(handler *delegator.EventHandler) {
+func (w *sessionWatcher) readNew(events watchEvents) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -154,7 +166,7 @@ func (w *sessionWatcher) readNew(handler *delegator.EventHandler) {
 		if len(line) == 0 {
 			continue
 		}
-		w.processLine(line, handler)
+		w.processLine(line, events)
 	}
 
 	pos, err := f.Seek(0, io.SeekCurrent)
@@ -172,7 +184,7 @@ func (w *sessionWatcher) readNew(handler *delegator.EventHandler) {
 // overwrite turnUsage/turnModel with subagent values, handleUser would fire
 // OnToolEnd for nested tool_results, and handleSystem's turn_duration
 // path would fire OnTurnComplete on the parent prematurely.
-func (w *sessionWatcher) processLine(line []byte, handler *delegator.EventHandler) {
+func (w *sessionWatcher) processLine(line []byte, events watchEvents) {
 	var entry sessionEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
 		return // skip unparseable lines
@@ -184,18 +196,18 @@ func (w *sessionWatcher) processLine(line []byte, handler *delegator.EventHandle
 
 	switch entry.Type {
 	case "assistant":
-		w.handleAssistant(&entry, handler)
+		w.handleAssistant(&entry, events)
 	case "user":
-		w.handleUser(&entry, handler)
+		w.handleUser(&entry, events)
 	case "system":
-		w.handleSystem(&entry, handler)
+		w.handleSystem(&entry, events)
 		// progress, file-history-snapshot, queue-operation: ignored for now
 	}
 }
 
 // handleAssistant processes an assistant entry, extracting text deltas
 // and tool call events.
-func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator.EventHandler) {
+func (w *sessionWatcher) handleAssistant(entry *sessionEntry, events watchEvents) {
 	if entry.Message == nil {
 		return
 	}
@@ -206,9 +218,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator
 		case "text":
 			if b.Text != "" {
 				w.turnText = b.Text
-				if handler.OnText != nil {
-					handler.OnText(b.Text)
-				}
+				events.onText(b.Text)
 			}
 		case "tool_use":
 			w.turnTools++
@@ -218,10 +228,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator
 				w.toolNamesByID = make(map[string]string)
 			}
 			w.toolNamesByID[b.ID] = b.Name
-			if handler.OnToolStart != nil {
-				input := string(b.Input)
-				handler.OnToolStart(b.ID, b.Name, input)
-			}
+			events.onToolStart(b.ID, b.Name, string(b.Input))
 			// Track Agent tool calls for status reporting.
 			if b.Name == "Agent" {
 				desc := delegator.ExtractAgentDescription(b.Input)
@@ -248,7 +255,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator
 		stopReason = *entry.Message.StopReason
 	}
 	if stopReason == "end_turn" {
-		w.fireTurnResult(handler)
+		w.fireTurnResult(events)
 	}
 }
 
@@ -262,10 +269,10 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator
 // produce an assistant message (no end_turn) or turn_duration, so without
 // this check WaitForTurn blocks until the next real turn — causing the
 // "context compacted" notification to arrive one turn late.
-func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *delegator.EventHandler) {
+func (w *sessionWatcher) handleSystem(entry *sessionEntry, events watchEvents) {
 	switch entry.Subtype {
 	case "turn_duration", "compact_boundary":
-		w.fireTurnResult(handler)
+		w.fireTurnResult(events)
 	}
 }
 
@@ -274,7 +281,7 @@ func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *delegator.Ev
 // and handleSystem (turn_duration). If both fire for the same turn, the
 // second is a safe no-op — fireTurnComplete is one-shot (nils the callback
 // after first call) and turn state is already reset.
-func (w *sessionWatcher) fireTurnResult(handler *delegator.EventHandler) {
+func (w *sessionWatcher) fireTurnResult(events watchEvents) {
 	result := &delegator.TurnResult{
 		Text:      w.turnText,
 		ToolCalls: w.turnTools,
@@ -286,9 +293,7 @@ func (w *sessionWatcher) fireTurnResult(handler *delegator.EventHandler) {
 	w.turnUsage = nil
 	w.turnModel = ""
 	w.toolNamesByID = nil
-	if handler.OnTurnComplete != nil {
-		handler.OnTurnComplete(result)
-	}
+	events.onTurnComplete(result)
 }
 
 // handleUser processes user entries, firing OnToolEnd for each tool_result
@@ -297,7 +302,7 @@ func (w *sessionWatcher) fireTurnResult(handler *delegator.EventHandler) {
 // correlate results with the matching OnToolStart event, and the recorded
 // id → name map lets us pass the originating tool name through to
 // OnToolEnd (tool_result blocks only carry the ID themselves).
-func (w *sessionWatcher) handleUser(entry *sessionEntry, handler *delegator.EventHandler) {
+func (w *sessionWatcher) handleUser(entry *sessionEntry, events watchEvents) {
 	if entry.Message == nil {
 		return
 	}
@@ -306,10 +311,8 @@ func (w *sessionWatcher) handleUser(entry *sessionEntry, handler *delegator.Even
 		if b.Type != "tool_result" {
 			continue
 		}
-		if handler != nil && handler.OnToolEnd != nil {
-			name := w.toolNamesByID[b.ToolUseID]
-			handler.OnToolEnd(b.ToolUseID, name, string(b.Content), b.IsError)
-		}
+		name := w.toolNamesByID[b.ToolUseID]
+		events.onToolEnd(b.ToolUseID, name, string(b.Content), b.IsError)
 		delete(w.toolNamesByID, b.ToolUseID)
 		if w.agents.Pending() > 0 {
 			w.agents.Remove(b.ToolUseID)

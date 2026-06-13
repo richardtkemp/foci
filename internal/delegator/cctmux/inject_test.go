@@ -50,11 +50,10 @@ func TestInject_UserIdleBeginsTurn(t *testing.T) {
 	b.lastPrompt = "stale prompt" // must be cleared on user input
 	b.lastPromptMu.Unlock()
 
-	handler := &delegator.EventHandler{OnTurnComplete: func(*delegator.TurnResult) {}}
 	err := b.Inject(context.Background(), delegator.Inject{
-		Source:  delegator.SourceUser,
-		Text:    "hello claude, do the thing",
-		Handler: handler,
+		Source: delegator.SourceUser,
+		Text:   "hello claude, do the thing",
+		Turn:   &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}},
 	})
 	if err != nil {
 		t.Fatalf("Inject: %v", err)
@@ -83,14 +82,14 @@ func TestInject_UserInFlightFollowsUp(t *testing.T) {
 	b, f := newStartedBackend(t)
 
 	fired := false
-	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(*delegator.TurnResult) { fired = true }
-	b.turnCompleteMu.Unlock()
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) { fired = true }}
+	b.turnMu.Unlock()
 
 	err := b.Inject(context.Background(), delegator.Inject{
-		Source:  delegator.SourceUser,
-		Text:    "follow-up message",
-		Handler: &delegator.EventHandler{OnTurnComplete: func(*delegator.TurnResult) { t.Error("replacement callback installed") }},
+		Source: delegator.SourceUser,
+		Text:   "follow-up message",
+		Turn:   &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) { t.Error("replacement callback installed") }},
 	})
 	if err != nil {
 		t.Fatalf("Inject: %v", err)
@@ -110,9 +109,9 @@ func TestInject_UserInFlightFollowsUp(t *testing.T) {
 // Escape twice and Ctrl-C (interrupt) before delivering the steer text.
 func TestInject_SteerInFlightInterruptsThenSends(t *testing.T) {
 	b, f := newStartedBackend(t)
-	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(*delegator.TurnResult) {}
-	b.turnCompleteMu.Unlock()
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}}
+	b.turnMu.Unlock()
 
 	err := b.Inject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
@@ -144,9 +143,9 @@ func TestInject_SteerIdleDegradesToBeginTurn(t *testing.T) {
 	b, f := newStartedBackend(t)
 
 	err := b.Inject(context.Background(), delegator.Inject{
-		Source:  delegator.SourceSteer,
-		Text:    "idle steer",
-		Handler: &delegator.EventHandler{OnTurnComplete: func(*delegator.TurnResult) {}},
+		Source: delegator.SourceSteer,
+		Text:   "idle steer",
+		Turn:   &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}},
 	})
 	if err != nil {
 		t.Fatalf("Inject: %v", err)

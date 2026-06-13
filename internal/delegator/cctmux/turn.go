@@ -80,11 +80,10 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 }
 
 // sendToPane is the internal begin-turn primitive on the tmux backend.
-// Pastes the prompt into the Claude Code pane and registers a per-turn
-// completion callback (if handler.OnTurnComplete is set). Output is
-// delivered asynchronously via the persistent watcher handler using the
-// internal replyFunc; callers reach turn-start through Inject.
-func (b *Backend) sendToPane(ctx context.Context, prompt string, handler *delegator.EventHandler) error {
+// Pastes the prompt into the Claude Code pane and installs the per-turn
+// TurnEvents (bookkeeping). Delivery flows asynchronously through the watcher
+// into the session-scoped SessionEvents; callers reach turn-start through Inject.
+func (b *Backend) sendToPane(ctx context.Context, prompt string, turn *delegator.TurnEvents) error {
 	b.mu.Lock()
 	if b.pane == nil {
 		b.mu.Unlock()
@@ -93,12 +92,10 @@ func (b *Backend) sendToPane(ctx context.Context, prompt string, handler *delega
 	pane := b.pane
 	b.mu.Unlock()
 
-	// Register per-turn completion callback (if provided).
-	if handler != nil && handler.OnTurnComplete != nil {
-		b.turnCompleteMu.Lock()
-		b.turnCompleteFn = handler.OnTurnComplete
-		b.turnCompleteMu.Unlock()
-	}
+	// Install the per-turn bookkeeping callbacks for this turn.
+	b.turnMu.Lock()
+	b.turnEvents = turn
+	b.turnMu.Unlock()
 
 	// Clear permission prompt dedup so the next prompt is forwarded.
 	b.clearLastPrompt()
@@ -150,13 +147,14 @@ func (b *Backend) fireTurnComplete(result *delegator.TurnResult) {
 		typFn(false)
 	}
 
-	// Per-turn callback (one-shot).
-	b.turnCompleteMu.Lock()
-	fn := b.turnCompleteFn
-	b.turnCompleteFn = nil
-	b.turnCompleteMu.Unlock()
-	if fn != nil {
-		fn(result)
+	// Per-turn bookkeeping (one-shot): capture-and-nil under the lock, fire
+	// outside it. Mirrors ccstream's OnResult capture-then-clear.
+	b.turnMu.Lock()
+	turn := b.turnEvents
+	b.turnEvents = nil
+	b.turnMu.Unlock()
+	if turn != nil && turn.OnTurnComplete != nil {
+		turn.OnTurnComplete(result)
 	}
 
 	// Legacy WaitForTurn signal.
@@ -228,15 +226,48 @@ func (b *Backend) SetTypingFunc(fn func(bool)) {
 	b.typingFunc = fn
 }
 
-// AttachSessionEvents is a no-op on cctmux. Delivery flows through cctmux's
-// own JSONL watcher path which still uses the legacy combined EventHandler;
-// the SessionEvents/TurnEvents split is implemented in ccstream where the
-// drop-on-nil-handler bug lived. cctmux's watcher does not drop on nil
-// handler — it has a separate problem (screen-scraped permissions) that
-// isn't addressed by this restructure. Stub exists to satisfy the
-// Delegator interface.
+// AttachSessionEvents installs the session-scoped delivery callbacks. The
+// JSONL watcher reads them lock-free on every dispatch (atomic.Pointer), so
+// delivery never drops between turns. Idempotent — re-attach replaces. Mirrors
+// ccstream; the agent calls this once per RunInference.
 func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
-	// no-op: cctmux uses Inject.Handler (EventHandler) for delivery.
+	b.sessionEvents.Store(events)
+}
+
+// onText/onToolStart/onToolEnd/onTurnComplete implement watchEvents: the
+// watcher calls them as it parses the session JSONL. Delivery routes to the
+// session-scoped SessionEvents; completion routes to the per-turn TurnEvents.
+
+func (b *Backend) onText(text string) {
+	// Re-establish typing — CC is actively producing output. By the time the
+	// watcher sees CC's first output, the inbound message's handler has
+	// returned and stopped typing; restart it for the turn's duration
+	// (fireTurnComplete stops it).
+	b.replyMu.Lock()
+	typFn := b.typingFunc
+	b.replyMu.Unlock()
+	if typFn != nil {
+		typFn(true)
+	}
+	if se := b.sessionEvents.Load(); se != nil && se.OnText != nil {
+		se.OnText(text)
+	}
+}
+
+func (b *Backend) onToolStart(id, name, input string) {
+	if se := b.sessionEvents.Load(); se != nil && se.OnToolStart != nil {
+		se.OnToolStart(id, name, input)
+	}
+}
+
+func (b *Backend) onToolEnd(id, name, output string, isError bool) {
+	if se := b.sessionEvents.Load(); se != nil && se.OnToolEnd != nil {
+		se.OnToolEnd(id, name, output, isError)
+	}
+}
+
+func (b *Backend) onTurnComplete(result *delegator.TurnResult) {
+	b.fireTurnComplete(result)
 }
 
 func (b *Backend) SessionID() string {
@@ -286,13 +317,13 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	return b.SendSpecialKey(ctx, "C-c")
 }
 
-// IsTurnInFlight reports whether a per-turn callback is registered but
-// hasn't fired yet. Inject consults this to choose between begin-turn
-// and follow-up routing on cctmux.
+// IsTurnInFlight reports whether per-turn bookkeeping is installed but hasn't
+// fired yet. Inject consults this to choose between begin-turn and follow-up
+// routing on cctmux.
 func (b *Backend) IsTurnInFlight() bool {
-	b.turnCompleteMu.Lock()
-	defer b.turnCompleteMu.Unlock()
-	return b.turnCompleteFn != nil
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	return b.turnEvents != nil
 }
 
 // sendCommand is the internal primitive for queued user-text and slash
@@ -332,7 +363,7 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 	switch inj.Source {
 	case delegator.SourceUser:
 		if !inFlight {
-			return b.sendToPane(ctx, inj.Text, inj.Handler)
+			return b.sendToPane(ctx, inj.Text, inj.Turn)
 		}
 		return b.sendCommand(ctx, inj.Text)
 
@@ -340,7 +371,7 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		if !inFlight {
 			// Edge case: idle steer. Degrade to begin-turn — message is
 			// still delivered, just without an in-flight task to interrupt.
-			return b.sendToPane(ctx, inj.Text, inj.Handler)
+			return b.sendToPane(ctx, inj.Text, inj.Turn)
 		}
 		if err := b.Interrupt(ctx); err != nil {
 			log.Warnf("cctmux", "Inject(Steer): Interrupt failed: %v (continuing with sendCommand)", err)
