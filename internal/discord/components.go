@@ -122,24 +122,21 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 
 // handleToolCallCallback handles tool call expand/collapse button presses.
 func (b *Bot) handleToolCallCallback(channelID, action, msgID string) {
-	msgIDInt, _ := strconv.ParseInt(msgID, 10, 64)
-	toolTextVal, ok := b.toolResults.Load(msgIDInt)
+	stored, ok := b.toolStore.Load(msgID)
 	if !ok {
 		return
 	}
-	stored := toolTextVal.(toolResultEntry)
 
 	switch action {
 	case "show":
 		var expanded string
-		if stored.result == "" {
-			expanded = stored.fullInput + "\n\n**Result:** Running..."
+		if stored.Result == "" {
+			expanded = stored.FullInput + "\n\n**Result:** Running..."
 		} else {
-			expanded = formatToolCallWithResult(stored.fullInput, stored.result)
+			expanded = formatToolCallWithResult(stored.FullInput, stored.Result)
 		}
-		stored.expanded = true
-		stored.channelID = channelID
-		b.toolResults.Store(msgIDInt, stored)
+		stored.Expanded = true
+		b.toolStore.Update(msgID, stored)
 		if len(expanded) > discordMaxChars {
 			expanded = expanded[:discordMaxChars-4] + "\n..."
 		}
@@ -151,13 +148,13 @@ func (b *Bot) handleToolCallCallback(channelID, action, msgID string) {
 			Components: &buttons,
 		})
 	case "hide":
-		stored.expanded = false
-		b.toolResults.Store(msgIDInt, stored)
+		stored.Expanded = false
+		b.toolStore.Update(msgID, stored)
 		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show full", Data: "show"}}, "tc:")
 		_, _ = b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
-			Content:    &stored.compactText,
+			Content:    &stored.CompactText,
 			Components: &buttons,
 		})
 	}

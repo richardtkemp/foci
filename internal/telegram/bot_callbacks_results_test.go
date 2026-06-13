@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/turn"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -83,10 +85,10 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 	var msgID int64 = 42
 	compactText := `▶️ <b>shell</b>: ls`
 	fullInput := "▶️ <b>shell</b>\n<pre>ls</pre>"
-	b.toolResults.Store(msgID, toolResultEntry{
-		compactText: compactText,
-		fullInput:   fullInput,
-		result:      "file1.txt\nfile2.txt",
+	b.toolStore.Update(strconv.FormatInt(msgID, 10), turn.ToolResultEntry{
+		CompactText: compactText,
+		FullInput:   fullInput,
+		Result:      "file1.txt\nfile2.txt",
 	})
 
 	cq := &gotgbot.CallbackQuery{
@@ -141,10 +143,10 @@ func TestHandleCallbackQuery_Hide(t *testing.T) {
 	var msgID int64 = 42
 	compactText := `▶️ <b>exec</b>: ls`
 	fullInput := "▶️ <b>exec</b>\n<pre>ls</pre>"
-	b.toolResults.Store(msgID, toolResultEntry{
-		compactText: compactText,
-		fullInput:   fullInput,
-		result:      "file1.txt\nfile2.txt",
+	b.toolStore.Update(strconv.FormatInt(msgID, 10), turn.ToolResultEntry{
+		CompactText: compactText,
+		FullInput:   fullInput,
+		Result:      "file1.txt\nfile2.txt",
 	})
 
 	cq := &gotgbot.CallbackQuery{
@@ -295,21 +297,20 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 		if msgID == 0 {
 			return
 		}
-		b.toolResults.Store(msgID, toolResultEntry{
-			compactText: compact,
-			fullInput:   full,
-			result:      result,
+		b.toolStore.Update(strconv.FormatInt(msgID, 10), turn.ToolResultEntry{
+			CompactText: compact,
+			FullInput:   full,
+			Result:      result,
 		})
 	}
 
 	observer("shell", "file1.txt\nfile2.txt", false)
 
-	val, ok := b.toolResults.Load(int64(99))
+	entry, ok := b.toolStore.Load("99")
 	if !ok {
 		t.Fatal("expected tool result to be stored")
 	}
-	entry := val.(toolResultEntry)
-	if entry.result != "file1.txt\nfile2.txt" {
-		t.Errorf("result = %q, want %q", entry.result, "file1.txt\nfile2.txt")
+	if entry.Result != "file1.txt\nfile2.txt" {
+		t.Errorf("result = %q, want %q", entry.Result, "file1.txt\nfile2.txt")
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/tooldetail"
 	"foci/internal/turn"
 )
 
@@ -148,40 +147,6 @@ func TestTrackerBackendMessaging(t *testing.T) {
 	}
 	if len(fs.deletes) != 1 || fs.deletes[0] != id {
 		t.Errorf("Delete: %v", fs.deletes)
-	}
-}
-
-// TestTrackerStore verifies StoreEntry/IsExpanded round-trips through the bot's
-// in-memory map and Persist writes through to the SQLite store when present.
-func TestTrackerStore(t *testing.T) {
-	b, _, _ := newTestBot(t, "a")
-	store := &discordTrackerStore{bot: b, channelID: "42"}
-
-	if store.IsExpanded("100") {
-		t.Error("expected unknown entry not expanded")
-	}
-	store.StoreEntry("100", "compact", "full", "result", true)
-	if !store.IsExpanded("100") {
-		t.Error("expected stored entry expanded")
-	}
-
-	// Persist without a detail store is a no-op.
-	store.Persist("100", "c", "f", "r")
-
-	// Persist with a real store writes through.
-	td, err := tooldetail.NewStore(t.TempDir() + "/d.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = td.Close() }()
-	b.toolDetailStore = td
-	store.Persist("100", "c2", "f2", "r2")
-	entries, err := td.LoadAll()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if e, ok := entries[100]; !ok || e.CompactText != "c2" {
-		t.Errorf("expected persisted entry, got %+v", entries)
 	}
 }
 

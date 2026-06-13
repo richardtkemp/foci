@@ -124,12 +124,11 @@ func TestSetToolDetailStore_RestoresEntries(t *testing.T) {
 	b.SetToolDetailStore(store)
 	defer func() { _ = store.Close() }()
 
-	val, ok := b.toolResults.Load(int64(100))
+	entry, ok := b.toolStore.Load("100")
 	if !ok {
 		t.Fatal("entry not restored")
 	}
-	entry := val.(toolResultEntry)
-	if entry.compactText != "compact" || entry.result != "result" {
+	if entry.CompactText != "compact" || entry.Result != "result" {
 		t.Errorf("restored entry = %+v", entry)
 	}
 

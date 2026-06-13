@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/turn"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-// storeToolResult seeds the bot's in-memory tool result map for callback tests.
-func storeToolResult(b *Bot, msgID int64, entry toolResultEntry) {
-	b.toolResults.Store(msgID, entry)
+// storeToolResult seeds the bot's in-memory tool result store for callback tests.
+func storeToolResult(b *Bot, msgID string, entry turn.ToolResultEntry) {
+	b.toolStore.Update(msgID, entry)
 }
 
 // componentInteraction builds a button-press interaction event.
@@ -32,7 +33,7 @@ func componentInteraction(channelID, msgID, customID string) *discordgo.Interact
 // the button to Hide.
 func TestHandleToolCallCallbackShow(t *testing.T) {
 	b, fs, _ := newTestBot(t, "a")
-	storeToolResult(b, 100, toolResultEntry{compactText: "compact", fullInput: "full input"})
+	storeToolResult(b, "100", turn.ToolResultEntry{CompactText: "compact", FullInput: "full input"})
 
 	b.handleToolCallCallback("42", "show", "100")
 
@@ -40,13 +41,13 @@ func TestHandleToolCallCallbackShow(t *testing.T) {
 	if !strings.Contains(got.content, "full input") || !strings.Contains(got.content, "Running...") {
 		t.Errorf("expected expanded view with Running placeholder, got %q", got.content)
 	}
-	val, _ := b.toolResults.Load(int64(100))
-	if !val.(toolResultEntry).expanded {
+	entry, _ := b.toolStore.Load("100")
+	if !entry.Expanded {
 		t.Error("expected entry marked expanded")
 	}
 
 	// With a result present, the expansion includes it.
-	storeToolResult(b, 101, toolResultEntry{compactText: "c", fullInput: "f", result: "the result"})
+	storeToolResult(b, "101", turn.ToolResultEntry{CompactText: "c", FullInput: "f", Result: "the result"})
 	b.handleToolCallCallback("42", "show", "101")
 	if got := fs.lastEdit(t); !strings.Contains(got.content, "the result") {
 		t.Errorf("expected result in expansion, got %q", got.content)
@@ -57,7 +58,7 @@ func TestHandleToolCallCallbackShow(t *testing.T) {
 // the compact text.
 func TestHandleToolCallCallbackHide(t *testing.T) {
 	b, fs, _ := newTestBot(t, "a")
-	storeToolResult(b, 100, toolResultEntry{compactText: "compact view", fullInput: "f", expanded: true})
+	storeToolResult(b, "100", turn.ToolResultEntry{CompactText: "compact view", FullInput: "f", Expanded: true})
 
 	b.handleToolCallCallback("42", "hide", "100")
 
@@ -65,8 +66,8 @@ func TestHandleToolCallCallbackHide(t *testing.T) {
 	if got.content != "compact view" {
 		t.Errorf("expected compact text, got %q", got.content)
 	}
-	val, _ := b.toolResults.Load(int64(100))
-	if val.(toolResultEntry).expanded {
+	entry, _ := b.toolStore.Load("100")
+	if entry.Expanded {
 		t.Error("expected entry marked collapsed")
 	}
 }
@@ -111,7 +112,7 @@ func TestHandleThinkingCallback(t *testing.T) {
 // and dispatched by their callback prefix (tool-call expansion here).
 func TestHandleComponentInteraction(t *testing.T) {
 	b, fs, _ := newTestBot(t, "a")
-	storeToolResult(b, 100, toolResultEntry{compactText: "c", fullInput: "full input"})
+	storeToolResult(b, "100", turn.ToolResultEntry{CompactText: "c", FullInput: "full input"})
 
 	b.handleComponentInteraction(context.Background(), componentInteraction("42", "100", "tc:show"))
 

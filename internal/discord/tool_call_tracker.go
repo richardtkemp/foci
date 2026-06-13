@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -19,9 +18,8 @@ import (
 // Discord-specific formatting and messaging.
 func newToolCallTracker(bot *Bot, channelID string, d turn.TurnDisplay) *turn.ToolCallTracker {
 	backend := &discordTrackerBackend{bot: bot, channelID: channelID}
-	store := &discordTrackerStore{bot: bot, channelID: channelID}
 	display := turn.TrackerDisplay{ShowToolCalls: d.ShowToolCalls}
-	return turn.NewToolCallTracker(backend, store, display, compactResultHint)
+	return turn.NewToolCallTracker(backend, &bot.toolStore, display, compactResultHint)
 }
 
 // discordTrackerBackend implements turn.TrackerBackend for Discord.
@@ -96,50 +94,6 @@ func (b *discordTrackerBackend) Delete(msgID string) error {
 
 func (b *discordTrackerBackend) Logger() *log.ComponentLogger {
 	return b.bot.logger()
-}
-
-// discordTrackerStore implements turn.TrackerStore backed by the Bot's
-// sync.Map and optional ToolDetailStore.
-type discordTrackerStore struct {
-	bot       *Bot
-	channelID string
-}
-
-func (s *discordTrackerStore) StoreEntry(msgID, compact, full, result string, expanded bool) {
-	id, _ := strconv.ParseInt(msgID, 10, 64)
-	s.bot.toolResults.Store(id, toolResultEntry{
-		compactText: compact,
-		fullInput:   full,
-		result:      result,
-		expanded:    expanded,
-		channelID:   s.channelID,
-	})
-}
-
-func (s *discordTrackerStore) IsExpanded(msgID string) bool {
-	id, _ := strconv.ParseInt(msgID, 10, 64)
-	if prev, ok := s.bot.toolResults.Load(id); ok {
-		return prev.(toolResultEntry).expanded
-	}
-	return false
-}
-
-func (s *discordTrackerStore) Persist(msgID, compact, full, result string) {
-	if s.bot.toolDetailStore == nil {
-		return
-	}
-	id, _ := strconv.ParseInt(msgID, 10, 64)
-	s.bot.toolDetailStore.Store(id, compact, full, result)
-}
-
-// toolResultEntry stores the compact summary, full input text, and result
-// for button expansion in "full" mode.
-type toolResultEntry struct {
-	compactText string // compact one-line summary (collapsed state)
-	fullInput   string // full formatted tool call with JSON params
-	result      string // the raw tool result text (empty while tool is running)
-	expanded    bool   // true if user clicked "Show full" before result arrived
-	channelID   string // channel where the message lives (for deferred edits)
 }
 
 // toolEmoji maps tool names to per-tool display prefixes.

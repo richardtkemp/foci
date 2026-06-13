@@ -2,30 +2,27 @@ package telegram
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"foci/internal/command"
-	"foci/internal/tooldetail"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// newTrackerBackend builds a telegramTrackerBackend and store over a test bot.
-func newTrackerBackend(t *testing.T) (*telegramTrackerBackend, *telegramTrackerStore, *Bot, *mockClient) {
+// newTrackerBackend builds a telegramTrackerBackend over a test bot. The shared
+// tool-result store (turn.ToolResultStore) is tested in the turn package.
+func newTrackerBackend(t *testing.T) (*telegramTrackerBackend, *Bot, *mockClient) {
 	t.Helper()
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
-	return &telegramTrackerBackend{bot: b, chatID: 12345},
-		&telegramTrackerStore{bot: b, chatID: 12345},
-		b, mock
+	return &telegramTrackerBackend{bot: b, chatID: 12345}, b, mock
 }
 
 func TestTrackerBackend_Formatting(t *testing.T) {
 	// Proves the tracker backend's pure formatting helpers produce the
 	// Telegram-specific HTML surfaces: compact line, hint suffix with HTML
 	// escaping, retry banner, and retry-clear confirmation.
-	be, _, _, _ := newTrackerBackend(t)
+	be, _, _ := newTrackerBackend(t)
 
 	if got := be.FormatCompact("Read", []byte(`{"path":"/tmp/x"}`)); !strings.Contains(got, "Read") {
 		t.Errorf("FormatCompact missing tool name: %q", got)
@@ -48,7 +45,7 @@ func TestTrackerBackend_SendAndSendWithButton(t *testing.T) {
 	// Proves Send and SendWithButton deliver HTML messages to the tracker's
 	// chat and return the sent Telegram message ID as a string; the button
 	// variant attaches an inline keyboard with the given label/data.
-	be, _, _, mock := newTrackerBackend(t)
+	be, _, mock := newTrackerBackend(t)
 
 	id, err := be.Send("<b>tool call</b>")
 	if err != nil {
@@ -81,7 +78,7 @@ func TestTrackerBackend_SendAndSendWithButton(t *testing.T) {
 func TestTrackerBackend_EditAndEditWithButton(t *testing.T) {
 	// Proves Edit and EditWithButton edit the identified message in the
 	// tracker's chat; the button variant attaches an inline keyboard.
-	be, _, _, mock := newTrackerBackend(t)
+	be, _, mock := newTrackerBackend(t)
 
 	if err := be.Edit("42", "updated"); err != nil {
 		t.Fatalf("Edit: %v", err)
@@ -108,7 +105,7 @@ func TestTrackerBackend_EditAndEditWithButton(t *testing.T) {
 func TestTrackerBackend_SendEditErrors(t *testing.T) {
 	// Proves API failures surface as errors from Send/SendWithButton/Edit so
 	// the shared tracker can fall back appropriately.
-	be, _, _, mock := newTrackerBackend(t)
+	be, _, mock := newTrackerBackend(t)
 	mock.sendErr = fmt.Errorf("boom")
 	mock.editErr = fmt.Errorf("boom")
 
@@ -129,7 +126,7 @@ func TestTrackerBackend_SendEditErrors(t *testing.T) {
 func TestTrackerBackend_DeleteAndLogger(t *testing.T) {
 	// Proves Delete removes the identified message (best-effort, nil error)
 	// and Logger returns the bot's component logger.
-	be, _, _, mock := newTrackerBackend(t)
+	be, _, mock := newTrackerBackend(t)
 
 	if err := be.Delete("7"); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -139,61 +136,6 @@ func TestTrackerBackend_DeleteAndLogger(t *testing.T) {
 	}
 	if be.Logger() == nil {
 		t.Error("Logger returned nil")
-	}
-}
-
-func TestTrackerStore_StoreEntryAndIsExpanded(t *testing.T) {
-	// Proves StoreEntry records a toolResultEntry in the bot's in-memory map
-	// keyed by message ID, and IsExpanded reflects the stored flag (false for
-	// unknown IDs).
-	_, st, b, _ := newTrackerBackend(t)
-
-	st.StoreEntry("100", "compact", "full", "result", true)
-	val, ok := b.toolResults.Load(int64(100))
-	if !ok {
-		t.Fatal("entry not stored")
-	}
-	entry := val.(toolResultEntry)
-	if entry.compactText != "compact" || entry.fullInput != "full" || entry.result != "result" || !entry.expanded {
-		t.Errorf("unexpected entry: %+v", entry)
-	}
-	if entry.chatID != 12345 {
-		t.Errorf("chatID = %d, want 12345", entry.chatID)
-	}
-
-	if !st.IsExpanded("100") {
-		t.Error("IsExpanded(100) = false, want true")
-	}
-	if st.IsExpanded("999") {
-		t.Error("IsExpanded(999) = true for unknown ID, want false")
-	}
-}
-
-func TestTrackerStore_Persist(t *testing.T) {
-	// Proves Persist is a no-op without a detail store, and write-through to
-	// the SQLite store (readable via LoadAll) when one is configured.
-	_, st, b, _ := newTrackerBackend(t)
-
-	st.Persist("100", "c", "f", "r") // nil store: must not panic
-
-	store, err := tooldetail.NewStore(filepath.Join(t.TempDir(), "details.db"))
-	if err != nil {
-		t.Fatalf("create store: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	b.toolDetailStore = store
-
-	st.Persist("100", "c", "f", "r")
-	entries, err := store.LoadAll()
-	if err != nil {
-		t.Fatalf("LoadAll: %v", err)
-	}
-	e, ok := entries[100]
-	if !ok {
-		t.Fatal("persisted entry not found")
-	}
-	if e.CompactText != "c" || e.FullInput != "f" || e.Result != "r" {
-		t.Errorf("unexpected entry: %+v", e)
 	}
 }
 
