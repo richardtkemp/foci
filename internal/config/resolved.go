@@ -72,7 +72,17 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		displayLayers = append(displayLayers, p.Display)
 	}
 
-	// Per-platform 4-layer resolution for display and notify.
+	// Per-platform resolution for display and notify. Merge picks the first
+	// non-nil field across these four layers, most-specific first:
+	//
+	//   per-agent-platform → per-agent → global-platform → global
+	//   acfg.Platform(name) → acfg → cfg.Platform(name) → cfg
+	//
+	// The 5th cascade tier (code default) is applied by the resolveX accessors
+	// below. SafeDisplay/SafeNotify return a zero (all-nil) struct when the
+	// platform isn't defined at that level, so an absent layer contributes
+	// nothing rather than overriding. See docs/CONFIG.md "Per-agent platform
+	// overrides" for the full 5-level cascade.
 	platformNames := make(map[string]bool)
 	for _, p := range acfg.Platforms {
 		platformNames[p.ID] = true
