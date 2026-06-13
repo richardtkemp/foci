@@ -138,16 +138,11 @@ func TestL2_Cron_KeepaliveFiresAtConfiguredInterval(t *testing.T) {
 	// NOT spawn a new cc-stub process — it injects the keepalive prompt
 	// into the running main session as a user_message. So we assert on
 	// user_message TextPrefix carrying the keepalive prompt marker.
-	time.Sleep(35 * time.Second)
-
-	found := false
-	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
-		if strings.Contains(e.TextPrefix, "[KEEPALIVE]") {
-			found = true
-			break
-		}
-	}
-	if !found {
+	// Poll for the keepalive marker rather than sleeping a fixed tick +
+	// buffer: it lands on the first scheduler tick after the bootstrap
+	// turn, so return as soon as it appears. The ceiling stays generous
+	// enough to tolerate a missed first tick under load.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 40*time.Second, "[KEEPALIVE]"); !ok {
 		t.Fatalf("keepalive prompt never reached cc-stub as user_message; stderr:\n%s",
 			stderrTail(h.Stderr()))
 	}
@@ -412,19 +407,12 @@ func TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos(t *testing.T) {
 	// scheduler tick. Then sleep one tickInterval + interval + buffer so
 	// the T+30s tick sees idle > interval and a non-zero open todo count.
 	time.Sleep(1 * time.Second)
-	time.Sleep(35 * time.Second)
 
 	// In delegated mode, background work injects into the main session as
 	// a user_message — same shape as keepalive. Marker is the first line
-	// of background.md: "[background] # Background Work".
-	found := false
-	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
-		if strings.Contains(e.TextPrefix, "[background]") && strings.Contains(e.TextPrefix, "Background Work") {
-			found = true
-			break
-		}
-	}
-	if !found {
+	// of background.md: "[background] # Background Work". Poll for it
+	// rather than sleeping the full tick + buffer.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 40*time.Second, "[background]", "Background Work"); !ok {
 		t.Fatalf("background prompt never reached cc-stub as user_message after seeding a background todo; stderr:\n%s",
 			stderrTail(h.Stderr()))
 	}
@@ -689,16 +677,9 @@ func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 	// Wait through the next 30s tick. With the refresh ~22s in, the
 	// next tick lands within a window where sinceLastInteraction < 20s
 	// interval AND lastReflection-time-gate has elapsed.
-	time.Sleep(20 * time.Second)
-
-	found := false
-	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
-		if strings.Contains(e.TextPrefix, "Reflection Pass") {
-			found = true
-			break
-		}
-	}
-	if !found {
+	// Poll for the reflection marker rather than sleeping a fixed window;
+	// return as soon as the pass injects.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 25*time.Second, "Reflection Pass"); !ok {
 		t.Fatalf("reflection prompt never reached cc-stub as user_message; stderr:\n%s",
 			stderrTail(h.Stderr()))
 	}
@@ -996,15 +977,14 @@ func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	before := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 
-	// First 30s tick should see consolidation_interval elapsed and
-	// dispatch the consolidation branch. No Telegram update is pushed
-	// in this window so any recorder growth comes from consolidation.
-	time.Sleep(35 * time.Second)
-
-	after := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
-	if after <= before {
-		t.Fatalf("consolidation did not fire: before=%d after=%d; stderr:\n%s",
-			before, after, stderrTail(h.Stderr()))
+	// The first 30s tick should see consolidation_interval elapsed and
+	// dispatch the consolidation branch (a new invocation). No Telegram
+	// update is pushed in this window so any recorder growth comes from
+	// consolidation — poll for that growth rather than sleeping the full
+	// tick + buffer.
+	if _, ok := waitForInvocationCount(t, h, "workspaces/alpha", before+1, 40*time.Second); !ok {
+		t.Fatalf("consolidation did not fire: before=%d; stderr:\n%s",
+			before, stderrTail(h.Stderr()))
 	}
 }
 
