@@ -119,6 +119,19 @@ func (r *TurnRenderer) OnReply(text string) {
 	r.resetStream()
 }
 
+// OnSubagentReply delivers a subagent (Task tool) progress message. When the
+// platform implements SubagentDeliverer it routes there — enabling per-subagent
+// UI such as Telegram's rolling "Hide this" button. Otherwise it falls back to
+// ordinary intermediate delivery via OnReply (the historical behaviour, where
+// subagent text arrived through OnText).
+func (r *TurnRenderer) OnSubagentReply(groupKey, text string) {
+	if sd, ok := r.platform.(SubagentDeliverer); ok && groupKey != "" {
+		sd.DeliverSubagentText(groupKey, text)
+		return
+	}
+	r.OnReply(text)
+}
+
 // resetStream recreates the stream buffer for the next segment and clears the
 // per-segment thinking-phase flags.
 func (r *TurnRenderer) resetStream() {

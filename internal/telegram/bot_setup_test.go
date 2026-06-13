@@ -33,6 +33,9 @@ type mockClient struct {
 	sendErr          error                        // error to return from SendMessage
 	sendErrOnce      bool                         // if true, only return sendErr on first call
 	docs             int                          // counts SendDocument calls
+	markupEdits      int                          // counts EditMessageReplyMarkup calls
+	lastMarkupOpts   *gotgbot.EditMessageReplyMarkupOpts
+	deletedIDs       []int64 // message IDs passed to DeleteMessage, in order
 }
 
 func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error) {
@@ -121,6 +124,14 @@ func (m *mockClient) SetMyCommands(commands []gotgbot.BotCommand, opts *gotgbot.
 	return true, nil
 }
 
+func (m *mockClient) EditMessageReplyMarkup(opts *gotgbot.EditMessageReplyMarkupOpts) (*gotgbot.Message, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.markupEdits++
+	m.lastMarkupOpts = opts
+	return &gotgbot.Message{MessageId: 1}, true, nil
+}
+
 func (m *mockClient) AnswerCallbackQuery(callbackQueryId string, opts *gotgbot.AnswerCallbackQueryOpts) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -132,6 +143,7 @@ func (m *mockClient) DeleteMessage(chatId int64, messageId int64, opts *gotgbot.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deletes++
+	m.deletedIDs = append(m.deletedIDs, messageId)
 	return true, nil
 }
 

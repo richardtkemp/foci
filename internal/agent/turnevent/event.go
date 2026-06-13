@@ -66,6 +66,18 @@ type TextBlock struct {
 	Phase Phase
 }
 
+// SubagentText carries a complete text block produced by a subagent (a Task/
+// Agent tool invocation). GroupKey identifies the originating subagent (its
+// parent tool_use id) so platforms that support per-subagent message control
+// — Telegram's rolling "Hide this" button — can group a subagent's messages,
+// roll the control forward to the newest, and delete the set on demand. Text
+// is the already-formatted (blockquoted) body. Platforms without such support
+// render it as ordinary intermediate text.
+type SubagentText struct {
+	GroupKey string
+	Text     string
+}
+
 // ThinkingDelta carries a streaming fragment of extended-thinking output.
 type ThinkingDelta struct {
 	Delta string
@@ -123,6 +135,7 @@ type TurnComplete struct {
 func (TurnStart) turnEvent()     {}
 func (TextDelta) turnEvent()     {}
 func (TextBlock) turnEvent()     {}
+func (SubagentText) turnEvent()  {}
 func (ThinkingDelta) turnEvent() {}
 func (ThinkingBlock) turnEvent() {}
 func (ToolCall) turnEvent()      {}
