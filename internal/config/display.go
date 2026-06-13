@@ -112,15 +112,18 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 
 	// reflection
 	add("reflection", "interval", cfg.Reflection.Interval)
-	add("reflection", "consolidation_interval", cfg.Reflection.ConsolidationInterval)
 	if cfg.Reflection.IntervalEnabled != nil {
 		add("reflection", "interval_enabled", *cfg.Reflection.IntervalEnabled)
 	}
-	if cfg.Reflection.ConsolidationEnabled != nil {
-		add("reflection", "consolidation_enabled", *cfg.Reflection.ConsolidationEnabled)
-	}
 	if cfg.Reflection.SessionEndEnabled != nil {
 		add("reflection", "session_end_enabled", *cfg.Reflection.SessionEndEnabled)
+	}
+
+	// maintenance
+	add("maintenance", "consolidation_time", cfg.Maintenance.ConsolidationTime)
+	add("maintenance", "reset_time", cfg.Maintenance.ResetTime)
+	if cfg.Maintenance.ConsolidationEnabled != nil {
+		add("maintenance", "consolidation_enabled", *cfg.Maintenance.ConsolidationEnabled)
 	}
 
 	// platforms
@@ -471,14 +474,20 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Reflection.IntervalPrompt != nil {
 		add("reflection.interval_prompt", *agent.Reflection.IntervalPrompt)
 	}
-	if agent.Reflection.ConsolidationInterval != nil {
-		add("reflection.consolidation_interval", *agent.Reflection.ConsolidationInterval)
+	if agent.Maintenance.ConsolidationTime != nil {
+		add("maintenance.consolidation_time", *agent.Maintenance.ConsolidationTime)
 	}
-	if agent.Reflection.ConsolidationEnabled != nil {
-		add("reflection.consolidation_enabled", *agent.Reflection.ConsolidationEnabled)
+	if agent.Maintenance.ConsolidationEnabled != nil {
+		add("maintenance.consolidation_enabled", *agent.Maintenance.ConsolidationEnabled)
 	}
-	if agent.Reflection.ConsolidationPrompt != nil {
-		add("reflection.consolidation_prompt", *agent.Reflection.ConsolidationPrompt)
+	if agent.Maintenance.ConsolidationPrompt != nil {
+		add("maintenance.consolidation_prompt", *agent.Maintenance.ConsolidationPrompt)
+	}
+	if agent.Maintenance.ResetTime != nil {
+		add("maintenance.reset_time", *agent.Maintenance.ResetTime)
+	}
+	if agent.Maintenance.ResetIdleGuard != nil {
+		add("maintenance.reset_idle_guard", *agent.Maintenance.ResetIdleGuard)
 	}
 	if agent.Reflection.SessionEndEnabled != nil {
 		add("reflection.session_end_enabled", *agent.Reflection.SessionEndEnabled)

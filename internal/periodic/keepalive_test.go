@@ -148,9 +148,9 @@ func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		reflectCfg: config.ResolvedReflection{
-			ConsolidationEnabled:  true,
-			ConsolidationInterval: "1h",
+		maintCfg: config.ResolvedMaintenance{
+			ConsolidationEnabled: true,
+			ConsolidationTime:    "1h",
 		},
 		sessionKeyFn: func() string { return "test/c123/1000000000" },
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {

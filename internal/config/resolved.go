@@ -20,6 +20,7 @@ type ResolvedAgentConfig struct {
 	Background      ResolvedBackground
 	MemorySearch    ResolvedMemorySearch
 	Reflection      ResolvedReflection
+	Maintenance     ResolvedMaintenance
 	Browser         ResolvedBrowser
 	Mana            ResolvedMana
 	Display         ResolvedDisplay
@@ -112,6 +113,7 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Background:      resolveBackground(Merge(acfg.Background, cfg.Background)),
 		MemorySearch:    resolveMemorySearch(Merge(acfg.Memory, cfg.Memory)),
 		Reflection:      resolveReflection(Merge(acfg.Reflection, cfg.Reflection)),
+		Maintenance:     resolveMaintenance(Merge(acfg.Maintenance, cfg.Maintenance)),
 		Browser:         resolveBrowser(Merge(acfg.Browser, cfg.Browser)),
 		Mana:            resolveMana(Merge(acfg.Mana, cfg.Mana)),
 		Display:         resolveDisplay(Merge(displayLayers...)),
