@@ -196,9 +196,9 @@ func TestSanitizeError(t *testing.T) {
 // in-memory expansion map on startup, and nil store is a no-op.
 func TestSetToolDetailStore(t *testing.T) {
 	b, _, _ := newTestBot(t, "a")
-	b.SetToolDetailStore(nil)
-	if b.toolDetailStore != nil {
-		t.Fatal("expected nil store accepted")
+	b.SetToolDetailStore(nil) // nil store: safe no-op
+	if _, ok := b.toolStore.Load("99"); ok {
+		t.Fatal("nil store should restore nothing")
 	}
 
 	dbPath := t.TempDir() + "/details.db"
@@ -211,12 +211,11 @@ func TestSetToolDetailStore(t *testing.T) {
 
 	b2, _, _ := newTestBot(t, "a")
 	b2.SetToolDetailStore(store)
-	val, ok := b2.toolResults.Load(int64(99))
+	entry, ok := b2.toolStore.Load("99")
 	if !ok {
 		t.Fatal("expected entry restored from store")
 	}
-	entry := val.(toolResultEntry)
-	if entry.compactText != "compact" || entry.fullInput != "full input" || entry.result != "result text" {
+	if entry.CompactText != "compact" || entry.FullInput != "full input" || entry.Result != "result text" {
 		t.Errorf("unexpected restored entry %+v", entry)
 	}
 }

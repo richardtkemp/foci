@@ -102,9 +102,8 @@ type Bot struct {
 
 	display         BotDisplayConfig
 	fileMode        os.FileMode       // permission bits for saved files (media, etc.)
-	toolResults     sync.Map          // message ID (int64) → toolResultEntry; for inline keyboard expansion
-	thinkingStore   sync.Map          // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
-	toolDetailStore *tooldetail.Store // nil = no persistence; write-through to SQLite
+	toolStore     turn.ToolResultStore // tool-call display state (in-memory + optional SQLite write-through)
+	thinkingStore sync.Map             // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 
 	pendingNotifsMu sync.Mutex // protects pendingNotifs
 	pendingNotifs   []string   // notifications buffered during active turns; drained after turn ends
@@ -416,25 +415,7 @@ func (b *Bot) messageContainsMention(msg *gotgbot.Message) bool {
 // SetToolDetailStore sets the persistent store for tool call details.
 // On startup, loads entries <48h old into the in-memory map.
 func (b *Bot) SetToolDetailStore(store *tooldetail.Store) {
-	b.toolDetailStore = store
-	if store == nil {
-		return
-	}
-	entries, err := store.LoadAll()
-	if err != nil {
-		b.logger().Warnf("load tool details: %v", err)
-		return
-	}
-	for id, entry := range entries {
-		b.toolResults.Store(id, toolResultEntry{
-			compactText: entry.CompactText,
-			fullInput:   entry.FullInput,
-			result:      entry.Result,
-		})
-	}
-	if len(entries) > 0 {
-		b.logger().Infof("restored %d tool call details from disk", len(entries))
-	}
+	b.toolStore.SetDetailStore(store, b.logger())
 }
 
 // SetCommandContext configures the command dispatcher with the unified CommandContext.

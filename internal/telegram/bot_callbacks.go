@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"foci/internal/command"
@@ -164,25 +165,24 @@ func (b *Bot) editMessageWithKeyboard(chatID, msgID int64, parentName, cmdText s
 
 // handleToolCallCallback handles tool call expand/collapse button presses.
 func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
-	toolTextVal, ok := b.toolResults.Load(msgID)
+	key := strconv.FormatInt(msgID, 10)
+	stored, ok := b.toolStore.Load(key)
 	if !ok {
 		return
 	}
-	stored := toolTextVal.(toolResultEntry)
 
 	switch action {
 	case "show":
 		var expanded string
-		if stored.result == "" {
+		if stored.Result == "" {
 			// Tool still running — show params with placeholder.
-			expanded = formatToolCallWithResult(stored.fullInput, "⏳ Running...")
+			expanded = formatToolCallWithResult(stored.FullInput, "⏳ Running...")
 		} else {
-			expanded = formatToolCallWithResult(stored.fullInput, stored.result)
+			expanded = formatToolCallWithResult(stored.FullInput, stored.Result)
 		}
 		// Mark as expanded so ToolResultObserver can update when result arrives.
-		stored.expanded = true
-		stored.chatID = chatID
-		b.toolResults.Store(msgID, stored)
+		stored.Expanded = true
+		b.toolStore.Update(key, stored)
 		rows := buildButtonRows([]platform.ButtonChoice{{Label: "Hide", Data: "hide"}}, "tc:")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
@@ -193,10 +193,10 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 			},
 		})
 	case "hide":
-		stored.expanded = false
-		b.toolResults.Store(msgID, stored)
+		stored.Expanded = false
+		b.toolStore.Update(key, stored)
 		rows := buildButtonRows([]platform.ButtonChoice{{Label: "Show full", Data: "show"}}, "tc:")
-		_, _, _ = b.client.EditMessageText(stored.compactText, &gotgbot.EditMessageTextOpts{
+		_, _, _ = b.client.EditMessageText(stored.CompactText, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",

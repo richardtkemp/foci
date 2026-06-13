@@ -16,9 +16,8 @@ import (
 // Telegram-specific formatting and messaging.
 func newToolCallTracker(bot *Bot, chatID int64, d turn.TurnDisplay) *turn.ToolCallTracker {
 	backend := &telegramTrackerBackend{bot: bot, chatID: chatID}
-	store := &telegramTrackerStore{bot: bot, chatID: chatID}
 	display := turn.TrackerDisplay{ShowToolCalls: d.ShowToolCalls}
-	return turn.NewToolCallTracker(backend, store, display, compactResultHint)
+	return turn.NewToolCallTracker(backend, &bot.toolStore, display, compactResultHint)
 }
 
 // telegramTrackerBackend implements turn.TrackerBackend for Telegram.
@@ -111,50 +110,6 @@ func (b *telegramTrackerBackend) Delete(msgID string) error {
 
 func (b *telegramTrackerBackend) Logger() *log.ComponentLogger {
 	return b.bot.logger()
-}
-
-// telegramTrackerStore implements turn.TrackerStore backed by the Bot's
-// sync.Map and optional ToolDetailStore.
-type telegramTrackerStore struct {
-	bot    *Bot
-	chatID int64
-}
-
-func (s *telegramTrackerStore) StoreEntry(msgID, compact, full, result string, expanded bool) {
-	id, _ := strconv.ParseInt(msgID, 10, 64)
-	s.bot.toolResults.Store(id, toolResultEntry{
-		compactText: compact,
-		fullInput:   full,
-		result:      result,
-		expanded:    expanded,
-		chatID:      s.chatID,
-	})
-}
-
-func (s *telegramTrackerStore) IsExpanded(msgID string) bool {
-	id, _ := strconv.ParseInt(msgID, 10, 64)
-	if prev, ok := s.bot.toolResults.Load(id); ok {
-		return prev.(toolResultEntry).expanded
-	}
-	return false
-}
-
-func (s *telegramTrackerStore) Persist(msgID, compact, full, result string) {
-	if s.bot.toolDetailStore == nil {
-		return
-	}
-	id, _ := strconv.ParseInt(msgID, 10, 64)
-	s.bot.toolDetailStore.Store(id, compact, full, result)
-}
-
-// toolResultEntry stores the compact summary, full input text, and result
-// for inline keyboard expansion in "full" mode.
-type toolResultEntry struct {
-	compactText string // compact one-line summary (collapsed state)
-	fullInput   string // full formatted tool call HTML with JSON params
-	result      string // the raw tool result text (empty while tool is running)
-	expanded    bool   // true if user clicked "Show full" before result arrived
-	chatID      int64  // chat where the message lives (for deferred edits)
 }
 
 // formatToolCallWithResult combines a tool call message with its result,
