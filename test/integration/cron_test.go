@@ -93,7 +93,7 @@ func waitForSocket(t *testing.T, sockPath string, timeout time.Duration) {
 // workdir. The recorder should show an extra invocation for the agent
 // without any Telegram update having been pushed.
 func TestL2_Cron_KeepaliveFiresAtConfiguredInterval(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5301
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -161,7 +161,7 @@ func TestL2_Cron_KeepaliveFiresAtConfiguredInterval(t *testing.T) {
 // without a caching-capable model should leave the recorder free of
 // keepalive invocations across multiple ticks.
 func TestL2_Cron_KeepaliveSkippedWhenCachingUnavailable(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// SCOPE: API-backend behaviour. The caching gate evaluates
 	// r.cachingOverride or r.client.IsCachingAvailable() at runtime
 	// (internal/periodic/keepalive.go:294-301). For L2's claude-code
@@ -186,7 +186,7 @@ func TestL2_Cron_KeepaliveSkippedWhenCachingUnavailable(t *testing.T) {
 // while the keepalive interval elapses, then verifies no keepalive
 // invocation was recorded until after the held turn completes.
 func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5302
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -290,7 +290,7 @@ func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 // stub. The assertion is the absence of any user-visible message for
 // the keepalive prompt body in the Telegram stub's call log.
 func TestL2_Cron_KeepaliveDoesNotReplyToTelegram(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5303
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -366,7 +366,7 @@ func TestL2_Cron_KeepaliveDoesNotReplyToTelegram(t *testing.T) {
 // todo store path, leaves the agent idle past the interval, and
 // asserts a recorder entry with the background prompt appears.
 func TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5305
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -436,7 +436,7 @@ func TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos(t *testing.T) {
 // must not dispatch. Asserts the recorder shows no background-prompt
 // invocation across multiple ticks when the todo store is empty.
 func TestL2_Cron_BackgroundSkippedWithNoOpenTodos(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5304
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -494,7 +494,7 @@ func TestL2_Cron_BackgroundSkippedWithNoOpenTodos(t *testing.T) {
 // the next. The test runs one background session, then verifies the
 // next tick declines despite open todos remaining.
 func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5306
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -566,7 +566,7 @@ func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
 // inst.tmuxWatchCount is nil for delegated agents — the override is
 // the only path that exercises this gate from L2.
 func TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5306
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -633,7 +633,7 @@ func TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches(t *testing.T) {
 // assertion is a recorder entry whose text prefix matches the
 // reflection prompt header.
 func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5302
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -711,7 +711,7 @@ func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 // most one reflection invocation per session across a window of
 // multiple ticks.
 func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// SKIP: structurally infeasible with the current implementation +
 	// 30s tickInterval. To observe "fires then skips" we need both:
 	//   - first 30s tick must fire (so interval ≤ 30s)
@@ -822,7 +822,7 @@ func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
 // Test holds a turn open via cc-stub and asserts no reflection
 // recorder entry appears for that session until the turn completes.
 func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5306
 	const hangMarker = "REFL_DEFER_HOLD"
 
@@ -903,7 +903,7 @@ func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
 // short interval, the scheduler returns immediately without
 // dispatching. Asserts the recorder shows zero reflection invocations.
 func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5303
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -960,7 +960,7 @@ func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
 // once per interval. Asserts on the recorder for a consolidation
 // prompt invocation in the agent's workdir.
 func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5307
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -1015,7 +1015,7 @@ func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
 // reflection and asserts consolidation only runs after reflection
 // completes.
 func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5307
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -1142,7 +1142,7 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 // interval. Asserts at most one consolidation invocation across both
 // processes.
 func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelHeavy(t)
 	const testUserID = 5310
 	// Strategy: configure consolidation_interval = "1h" — well past the
 	// test wall-clock — so a SECOND consolidation would only fire if the
@@ -1228,7 +1228,7 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 // user_message containing the SCHEDULED WAKE header plus the original
 // reminder text.
 func TestL2_Cron_WakeReminderFiresAfterDelay(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5101
 	const reminderText = "MARKER_WAKE_FIRES_AFTER_DELAY"
 
@@ -1293,7 +1293,7 @@ func TestL2_Cron_WakeReminderFiresAfterDelay(t *testing.T) {
 // should be re-scheduled and still fire. The injected turn lands in
 // the second process's recorder.
 func TestL2_Cron_WakeReminderSurvivesRestart(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelHeavy(t)
 	const testUserID = 5400
 	const reminderText = "MARKER_WAKE_SURVIVES_RESTART"
 
@@ -1380,7 +1380,7 @@ func TestL2_Cron_WakeReminderSurvivesRestart(t *testing.T) {
 // the recorder shows no SCHEDULED WAKE injection and the tool exec
 // produced a non-zero result.
 func TestL2_Cron_WakeReminderRejectsNegativeDelay(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5102
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -1434,7 +1434,7 @@ func TestL2_Cron_WakeReminderRejectsNegativeDelay(t *testing.T) {
 // fails the tool call. Asserts the tool returns "cannot parse when ..."
 // and no DB row or goroutine is created.
 func TestL2_Cron_WakeReminderRejectsUnparseableWhen(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5103
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -1495,7 +1495,7 @@ func TestL2_Cron_WakeReminderRejectsUnparseableWhen(t *testing.T) {
 // one, and asserts the wake lands in the older session's recorder
 // entries (matched by session_id).
 func TestL2_Cron_WakeReminderRoutesToOriginatingSession(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// NOTE: the previous skip claimed "allowed_users rejects messages
 	// from other chat IDs" — that's inaccurate. allowed_users gates on
 	// the sender's user_id (Update.Message.From.Id), not the chat id.
@@ -1616,7 +1616,7 @@ func TestL2_Cron_WakeReminderRoutesToOriginatingSession(t *testing.T) {
 // scripts cc-stub to hang for 3s, and asserts the SCHEDULED WAKE
 // user_message appears only after the held turn's user_message.
 func TestL2_Cron_WakeReminderWaitsForActiveTurn(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5104
 	const reminderText = "MARKER_WAKE_WAITS_FOR_TURN"
 	const hangMarker = "HOLD_TURN_OPEN"
@@ -1729,7 +1729,7 @@ func TestL2_Cron_WakeReminderWaitsForActiveTurn(t *testing.T) {
 // recorder shows no SCHEDULED WAKE injection regardless of how long
 // the test waits.
 func TestL2_Cron_RemindToolUnavailableWithoutWakeFn(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// INFEASIBLE for L2 as written. The nil-reminderStore branch exists
 	// only as a unit-test construct (agents_delegated_test.go:79 omits
 	// p.reminderStore). In production, initStandaloneStores (memory_init.go:62)
@@ -1756,7 +1756,7 @@ func TestL2_Cron_RemindToolUnavailableWithoutWakeFn(t *testing.T) {
 // Asserts the rendered lines contain the agent id and the agent's
 // resolved workspace path.
 func TestL2_Cron_GenerateCrontabRendersAgentPlaceholders(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	tmpDir := t.TempDir()
 	templatePath := filepath.Join(tmpDir, "crontab.template")
 	template := `# header comment, must be stripped
@@ -1802,7 +1802,7 @@ func TestL2_Cron_GenerateCrontabRendersAgentPlaceholders(t *testing.T) {
 // alone. Test generates entries for three agents and asserts the
 // minute fields differ by the stagger offset.
 func TestL2_Cron_GenerateCrontabStaggersMultipleAgents(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	tmpDir := t.TempDir()
 	templatePath := filepath.Join(tmpDir, "crontab.template")
 	template := `0 4 * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/p.md
@@ -1873,7 +1873,7 @@ func TestL2_Cron_GenerateCrontabStaggersMultipleAgents(t *testing.T) {
 // for any system-cron-driven workflow (the weekly character review
 // in the template, future scheduled jobs).
 func TestL2_Cron_BranchOneshotEndToEnd(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5201
 	const promptBody = "MARKER_BRANCH_ONESHOT_PROMPT"
 
@@ -1939,7 +1939,7 @@ func TestL2_Cron_BranchOneshotEndToEnd(t *testing.T) {
 // non-zero with a message naming the missing agent, and no recorder
 // invocation is created.
 func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5202
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -2003,7 +2003,7 @@ func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
 // We still pass --addr <unreachable> for hygiene to guarantee the CLI
 // doesn't accidentally talk to a production foci-gw if one is running.
 func TestL2_Cron_BranchOneshotMalformedPromptFile(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 9300}},
 		ReadyTimeout: 30 * time.Second,
@@ -2064,7 +2064,7 @@ func TestL2_Cron_BranchOneshotMalformedPromptFile(t *testing.T) {
 // the test still must set up eligible conditions to prove canFire is
 // what's blocking.
 func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5311
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -2161,7 +2161,7 @@ func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
 // keepalive recorder entry AND the user-message recorder entry are
 // present, in that order.
 func TestL2_Cron_IncomingMessageDuringKeepaliveQueues(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 5308
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{

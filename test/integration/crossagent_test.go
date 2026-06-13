@@ -47,7 +47,7 @@ import (
 // test would fail with a clear "send_to_session never reached clutch"
 // signal. With the fix in place, the entry appears as expected.
 func TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 4242
 	const testMarker = "MARKER_CROSS_AGENT_REGRESSION_NET"
 
@@ -157,7 +157,7 @@ func TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir(t *testing.T) {
 // Telegram message to clutch marks its session is_default, so the bare
 // name "clutch" resolves to clutch/c<USER>/<ts> via DefaultSessionKeyForAgent.
 func TestL2_CrossAgent_SendToSession_BareAgentName_RoutesToTarget(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 4343
 	const testMarker = "MARKER_CROSS_AGENT_BARE_NAME"
 

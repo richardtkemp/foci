@@ -64,7 +64,7 @@ func answerQuestion(t *testing.T, h *testharness.Harness, token, wantText, click
 // TestL2_Ask_FullFlow drives a two-question ask to completion via button clicks
 // and asserts the answer batch is delivered back to the backend.
 func TestL2_Ask_FullFlow(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelHeavy(t)
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	// Distinct labels so the delivered batch is unambiguous in the recorder.

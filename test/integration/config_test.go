@@ -26,7 +26,7 @@ import (
 // recorded invocation flags — if the per-agent override silently lost
 // to the group default, the wrong model name would land in --model.
 func TestL2_Config_PerAgentModelOverridesGroupDefault(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	t.Skip("SCOPE: For L2's claude-code (delegated) backend, the per-agent " +
 		"backend_config.model is read VERBATIM and never consults [groups] — " +
 		"see TestL2_Config_DelegatedBackendReceivesModelVerbatim. The " +
@@ -53,7 +53,7 @@ func TestL2_Config_PerAgentModelOverridesGroupDefault(t *testing.T) {
 // and TOML semantics scope it back to the latest `[[platforms]]` (the
 // global one) because `agents` and `platforms` are independent root paths.
 func TestL2_Config_PlatformDisplayCascadesToAgentPlatform(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 7400},
@@ -90,7 +90,7 @@ func TestL2_Config_PlatformDisplayCascadesToAgentPlatform(t *testing.T) {
 // and assert the runtime value matches the per-agent one — proves the
 // cascade direction is correct, not just that some cascade fires.
 func TestL2_Config_PerAgentDisplayBeatsPlatformDisplay(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Order matters: [agents.platforms.display] must come FIRST in the
 	// appended block so it scopes to the latest [[agents.platforms]] that
 	// writeTestConfig emitted. After it, [platforms.display] scopes back to
@@ -132,7 +132,7 @@ func TestL2_Config_PerAgentDisplayBeatsPlatformDisplay(t *testing.T) {
 // `compaction_notify` (e.g. send a startup message vs. not) and assert
 // against the Telegram stub's call log.
 func TestL2_Config_PlatformNotifyAppliesWhenAgentUnset(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	t.Skip("OBSERVABILITY GAP: [platforms.notify] startup_notify=true is parseable " +
 		"via ExtraConfigTOML, but the only sendNotification call path that " +
 		"actually fires (notifications.go:43-58) requires diagnosis.Class != " +
@@ -152,7 +152,7 @@ func TestL2_Config_PlatformNotifyAppliesWhenAgentUnset(t *testing.T) {
 // and assert the steer path is NOT taken — proves the defaults section
 // actually wires through the cascade rather than being silently dropped.
 func TestL2_Config_DefaultsBehaviorAppliedWhenGlobalUnset(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// SCOPE: [defaults.behavior] is parseable via ExtraConfigTOML (the
 	// HarnessOptions field exists; FormatConfigTOML in internal/config
 	// just doesn't include [defaults] in its emission, so /config toml
@@ -179,7 +179,7 @@ func TestL2_Config_DefaultsBehaviorAppliedWhenGlobalUnset(t *testing.T) {
 // message, then read cc-stub's recorder — the workdir entry confirms
 // the binary that ran was the stub configured globally.
 func TestL2_Config_CCBackendClaudeBinaryFromGlobal(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// The harness already sets [cc_backend].claude_binary = <cc-stub path>
 	// at the global level. If this knob ever regressed, foci-gw would
 	// spawn "claude" from $PATH instead of the stub, which would either
@@ -224,7 +224,7 @@ func TestL2_Config_CCBackendClaudeBinaryFromGlobal(t *testing.T) {
 // per-agent to B, send a message to that agent, and assert only
 // recorder-B got the invocation.
 func TestL2_Config_PerAgentClaudeBinaryOverridesGlobal(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Build a second cc-stub binary at a distinct path. We can't easily
 	// `go build` from inside a test here without duplicating the harness's
 	// buildBinary machinery; the simplest correct approach is to symlink
@@ -355,7 +355,7 @@ func TestL2_Config_PerAgentClaudeBinaryOverridesGlobal(t *testing.T) {
 // existing api_base plumbing makes any future regression a hard failure
 // at startup.
 func TestL2_Config_PlatformTelegramSubBlockInheritedWhenNil(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// The harness's writeTestConfig already emits the agent platform
 	// entry WITHOUT a per-agent [agents.platforms.telegram] sub-block —
 	// only [agents.platforms.access] is set. So if inheritance broke,
@@ -389,7 +389,7 @@ func TestL2_Config_PlatformTelegramSubBlockInheritedWhenNil(t *testing.T) {
 // message, then check cc-stub's recorder for the invocation workdir —
 // it must match the derived path, not "" or the data_dir.
 func TestL2_Config_SmartDefaultWorkspaceFromAgentID(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const userID = 1500
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{{
@@ -437,7 +437,7 @@ func TestL2_Config_SmartDefaultWorkspaceFromAgentID(t *testing.T) {
 // successfully — proven by the long-poll firing and a Telegram update
 // reaching cc-stub.
 func TestL2_Config_SmartDefaultPlatformBotFromAgentID(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const userID = 1501
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{{
@@ -466,7 +466,7 @@ func TestL2_Config_SmartDefaultPlatformBotFromAgentID(t *testing.T) {
 // notify body) and assert the recorded sendMessage body contains the
 // title-cased form — proves load.go's runes-based capitalisation runs.
 func TestL2_Config_SmartDefaultAgentNameFromAgentID(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	t.Skip("HARNESS GAP: needs HarnessOptions to enable a notify path that surfaces the resolved agent.Name (e.g. startup_notify=true with a chat_id), AND the agent config must omit `name = ...` so the title-cased ID default fires")
 }
 
@@ -477,7 +477,7 @@ func TestL2_Config_SmartDefaultAgentNameFromAgentID(t *testing.T) {
 // assert it returns results from a file the test wrote to
 // `<workspace>/memory/` — proves the default source got indexed.
 func TestL2_Config_SmartDefaultMemorySourceFromWorkspace(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Pre-seed a memory file in alpha's workspace that foci will
 	// discover at startup. The marker text must be searchable via
 	// foci_memory_search after indexing — proving the smart-default
@@ -554,7 +554,7 @@ func TestL2_Config_SmartDefaultMemorySourceFromWorkspace(t *testing.T) {
 // HTTP server), then assert the server saw the literal secret — not
 // the unresolved template, not the empty string.
 func TestL2_Config_SecretTemplateResolvedAtExec(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Side server records the Authorization header. The bash command
 	// references {{secret:custom.token}} which the bridge's secret
 	// resolver should substitute before the real HTTP call goes out.
@@ -583,7 +583,7 @@ func TestL2_Config_SecretTemplateResolvedAtExec(t *testing.T) {
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 4101},
 		},
-		ReadyTimeout: 30 * time.Second,
+		ReadyTimeout:     30 * time.Second,
 		ExtraSecretsTOML: fmt.Sprintf("[custom]\ntoken = %q\nallowed_hosts = [%q]\n", secretValue, sideHost),
 	})
 
@@ -637,7 +637,7 @@ func TestL2_Config_SecretTemplateResolvedAtExec(t *testing.T) {
 // assert foci-gw stderr contains a warning naming the missing key —
 // proves RequiredSecrets / startup checks actually fire.
 func TestL2_Config_MissingSecretLoggedAtStartup(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Inject a custom endpoint block referencing a secret key that
 	// doesn't exist in secrets.toml. EndpointConfig.APIKey carries
 	// toml:"api_key" which RequiredSecrets reflects on, so the
@@ -677,7 +677,7 @@ api_key = "custom.absent_at_startup"
 // Resolve() surfaces the error to the caller and foci doesn't ship the
 // bare template to the shell.
 func TestL2_Config_UnknownSecretInTemplateFailsResolution(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Side server should NEVER be hit — the resolver fails before the
 	// HTTP call goes out. Count hits to prove the resolver short-
 	// circuited the request.
@@ -765,7 +765,7 @@ func TestL2_Config_UnknownSecretInTemplateFailsResolution(t *testing.T) {
 // string to the generated config via ExtraConfigTOML and assert
 // TryStartGateway returns a non-Fatal error referencing parse failure.
 func TestL2_Config_MalformedTOMLFailsStartup(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// Trailing line with an unterminated string is unambiguous TOML noise
 	// that survives any preceding-section validity. Place it as the very
 	// last appended block so the rest of the config is well-formed up to
@@ -797,7 +797,7 @@ func TestL2_Config_MalformedTOMLFailsStartup(t *testing.T) {
 // the field path. Catches regressions where a field is added without
 // being wired through validateDurations.
 func TestL2_Config_InvalidDurationFailsValidation(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// archive_after is one of the duration fields enforced by
 	// validateDurations (validate.go:256). Injecting a syntactically valid
 	// TOML key with a non-parseable Go duration value drives the
@@ -827,7 +827,7 @@ func TestL2_Config_InvalidDurationFailsValidation(t *testing.T) {
 // a foci.toml with `mysteryfield = 42` and assert foci-gw reaches ready
 // AND stderr contains a warning naming the key.
 func TestL2_Config_UnknownTopLevelKeyWarnsNotFails(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 7300},
@@ -851,7 +851,7 @@ func TestL2_Config_UnknownTopLevelKeyWarnsNotFails(t *testing.T) {
 // set on the same section and assert foci-gw refuses to start with an
 // error naming the section.
 func TestL2_Config_SecretsAllowedAndDeniedAgentsConflictFails(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// A section with both allowed_agents and denied_agents is a config
 	// authoring error — secrets.LoadOnce returns "use one or the other"
 	// (secrets.go:131). foci-gw treats it as Fatal at startup. Inject the
@@ -887,7 +887,7 @@ func TestL2_Config_SecretsAllowedAndDeniedAgentsConflictFails(t *testing.T) {
 // the keepalive subsystem starts (a keepalive timer log line or a
 // keepalive-tagged user message in the recorder).
 func TestL2_Config_BoolStringOnOffNormalised(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const testUserID = 7600
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -954,7 +954,7 @@ func TestL2_Config_BoolStringOnOffNormalised(t *testing.T) {
 // behaviour worth its own test once the harness grows an API-backend
 // variant. See TODO #773 for that follow-up.
 func TestL2_Config_DelegatedBackendReceivesModelVerbatim(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 7180},
@@ -1013,7 +1013,7 @@ func TestL2_Config_DelegatedBackendReceivesModelVerbatim(t *testing.T) {
 // NOT invoked AND a denial log line appears in stderr — proves the
 // access check sits in front of agent dispatch, not buried in the loop.
 func TestL2_Config_AccessAllowedUsersOnlyTrueRejectsUnlisted(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	// The harness's writeTestConfig sets [platforms.access]
 	// allowed_users_only = false hard-coded; the agent's
 	// allowed_users = [<UserID>] populates the bot-level map and
@@ -1076,7 +1076,7 @@ func TestL2_Config_AccessAllowedUsersOnlyTrueRejectsUnlisted(t *testing.T) {
 // stub-registered token — proves the override path resolves before
 // the convention path.
 func TestL2_Config_PerAgentBotSecretOverrideUsesNamedKey(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const userID = 7500
 	// Fix the BotToken so we can register the same value under a
 	// custom secret path. Using a fixed value (rather than the auto-
@@ -1115,7 +1115,7 @@ func TestL2_Config_PerAgentBotSecretOverrideUsesNamedKey(t *testing.T) {
 // braces companion to the rejection test; together they pin both
 // branches of the access gate.
 func TestL2_Config_AccessAllowedUsersOnlyFalseAcceptsAny(t *testing.T) {
-	t.Parallel()
+	testharness.ParallelWait(t)
 	const expectedUserID = 1502
 	const arbitraryUserID = 999999 // far outside any list
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
