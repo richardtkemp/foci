@@ -34,9 +34,16 @@ func newTurnRenderer(bot *Bot, msg *gotgbot.Message, tracker *turn.ToolCallTrack
 	return turn.NewTurnRenderer(backend, tracker, d, newSB)
 }
 
-// telegramBackend implements turn.Platform for Telegram. It owns all layout:
-// HTML formatting, chopping at Telegram's 4096-char limit, message identity,
-// streaming rollover, and thinking-button placement.
+// Compile-time checks.
+var (
+	_ turn.Platform    = (*telegramBackend)(nil)
+	_ turn.ChunkWriter = (*telegramBackend)(nil)
+)
+
+// telegramBackend implements turn.Platform and turn.ChunkWriter for Telegram. It
+// owns all layout: HTML formatting, chopping at Telegram's 4096-char limit,
+// message identity, streaming rollover, and thinking-button placement. The
+// shared delivery loop (turn.DeliverChunks) drives the ChunkWriter primitives.
 type telegramBackend struct {
 	bot    *Bot
 	msg    *gotgbot.Message
@@ -55,101 +62,29 @@ func (b *telegramBackend) OpenStream() turn.StreamSink {
 	}
 }
 
-// Deliver performs the terminal delivery. It composes the message body per
-// thinking mode, chops it into 4096-char chunks, and lays those chunks over the
-// stream's existing message sequence (editing/appending/deleting as needed) or
-// sends fresh messages when nothing surfaced.
+// Deliver performs the terminal delivery via the shared chunk-delivery loop.
 func (b *telegramBackend) Deliver(p turn.Payload, stream turn.StreamSink) (turn.DeliveryResult, error) {
-	body, hasButton, thinkingText := b.composeBody(p)
-	chunks := splitMessage(body, telegramMaxChars)
-	if len(chunks) == 0 {
-		chunks = []string{""}
-	}
-
-	var ids []string
-	if stream != nil {
-		ids = stream.MsgIDs()
-	}
-
-	// Fresh send: nothing surfaced. Send each chunk as a new message; the last
-	// chunk carries the thinking button in compact mode.
-	if len(ids) == 0 {
-		var used []string
-		for i, chunk := range chunks {
-			last := i == len(chunks)-1
-			if last && hasButton {
-				id, err := b.sendChunkWithButton(chunk, thinkingText)
-				if err != nil {
-					return turn.DeliveryResult{MsgIDs: used}, err
-				}
-				used = append(used, id)
-				continue
-			}
-			used = append(used, b.sendHTMLChunkIDs(chunk)...)
-		}
-		return turn.DeliveryResult{MsgIDs: used}, nil
-	}
-
-	// Finalize-in-place: lay the chunks over the existing live sequence.
-	var used []string
-	for i, chunk := range chunks {
-		last := i == len(chunks)-1
-		if i < len(ids) {
-			// Edit the existing message at this position.
-			if last && hasButton {
-				if err := b.editChunkWithButton(ids[i], chunk, thinkingText); err != nil {
-					return turn.DeliveryResult{MsgIDs: used}, err
-				}
-			} else {
-				if err := b.editHTML(ids[i], chunk); err != nil {
-					b.bot.logger().Debugf("deliver edit: %v", err)
-				}
-			}
-			used = append(used, ids[i])
-			continue
-		}
-		// Append a new message beyond the live sequence.
-		if last && hasButton {
-			id, err := b.sendChunkWithButton(chunk, thinkingText)
-			if err != nil {
-				return turn.DeliveryResult{MsgIDs: used}, err
-			}
-			used = append(used, id)
-		} else {
-			used = append(used, b.sendHTMLChunkIDs(chunk)...)
-		}
-	}
-
-	// Delete any leftover messages from the live sequence (final shorter than
-	// the live stream). When the final needed more chunks than the stream had
-	// messages there are no leftovers — min() keeps the slice in bounds.
-	for _, orphan := range ids[min(len(chunks), len(ids)):] {
-		id := parseTelegramMsgID(orphan)
-		if _, err := b.bot.client.DeleteMessage(b.chatID, id, nil); err != nil {
-			b.bot.logger().Debugf("deliver delete orphan %s: %v", orphan, err)
-		}
-	}
-
-	return turn.DeliveryResult{MsgIDs: used}, nil
+	return turn.DeliverChunks(b, p, stream)
 }
 
-// EditInPlace replaces a single existing message (a tool-call preview) in
-// place. Returns turn.ErrTooLongForEdit if the composed body would need to
-// split across more than one message.
+// EditInPlace replaces a single existing message (a tool-call preview) in place
+// via the shared single-message edit. Returns turn.ErrTooLongForEdit if the
+// composed body would need to split across more than one message.
 func (b *telegramBackend) EditInPlace(msgID string, p turn.Payload) error {
-	body, hasButton, thinkingText := b.composeBody(p)
-	chunks := splitMessage(body, telegramMaxChars)
-	if len(chunks) > 1 {
-		return turn.ErrTooLongForEdit
+	return turn.EditChunksInPlace(b, msgID, p)
+}
+
+// Split chops an HTML body at Telegram's char limit, preserving open tags.
+func (b *telegramBackend) Split(body string) []string {
+	return splitMessage(body, telegramMaxChars)
+}
+
+// DeleteMsg deletes a leftover live-stream message, best-effort.
+func (b *telegramBackend) DeleteMsg(msgID string) {
+	id := parseTelegramMsgID(msgID)
+	if _, err := b.bot.client.DeleteMessage(b.chatID, id, nil); err != nil {
+		b.bot.logger().Debugf("deliver delete orphan %s: %v", msgID, err)
 	}
-	chunk := body
-	if len(chunks) == 1 {
-		chunk = chunks[0]
-	}
-	if hasButton {
-		return b.editChunkWithButton(msgID, chunk, thinkingText)
-	}
-	return b.editHTML(msgID, chunk)
 }
 
 func (b *telegramBackend) SendTyping() {
@@ -163,7 +98,7 @@ func (b *telegramBackend) Logger() *log.ComponentLogger {
 // composeBody builds the message body for the payload per thinking mode and
 // reports whether the last chunk should carry a "Show thinking" button (compact
 // mode) and the raw thinking text to store with it.
-func (b *telegramBackend) composeBody(p turn.Payload) (body string, hasButton bool, thinkingText string) {
+func (b *telegramBackend) ComposeBody(p turn.Payload) (body string, hasButton bool, thinkingText string) {
 	response := ConvertToTelegramHTML(p.Text, b.opts)
 	switch p.ThinkingMode {
 	case "full":
@@ -175,24 +110,24 @@ func (b *telegramBackend) composeBody(p turn.Payload) (body string, hasButton bo
 	}
 }
 
-// sendHTMLChunkIDs sends a single (already-chunked) HTML body as one message,
-// falling back to plain text on HTML error, and returns the sent message IDs.
-func (b *telegramBackend) sendHTMLChunkIDs(html string) []string {
+// SendChunk sends a single (already-chunked) HTML body as one message, falling
+// back to plain text on HTML error; ok=false on a (logged) send failure.
+func (b *telegramBackend) SendChunk(html string) (string, bool) {
 	msg, err := b.bot.client.SendMessage(b.chatID, html, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	if err != nil {
 		msg, err = b.bot.client.SendMessage(b.chatID, html, nil)
 		if err != nil {
 			b.bot.logger().Errorf("send error: %s", b.bot.sanitizeError(err))
-			return nil
+			return "", false
 		}
 	}
 	b.bot.refreshTyping()
-	return []string{formatTelegramMsgID(msg.MessageId)}
+	return formatTelegramMsgID(msg.MessageId), true
 }
 
-// sendChunkWithButton sends a chunk with a "Show thinking" button and stores the
+// SendChunkWithButton sends a chunk with a "Show thinking" button and stores the
 // thinking entry keyed on the sent message ID.
-func (b *telegramBackend) sendChunkWithButton(html, thinkingText string) (string, error) {
+func (b *telegramBackend) SendChunkWithButton(html, thinkingText string) (string, error) {
 	thinkingRows := buildButtonRows([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 	sent, err := b.bot.client.SendMessage(b.chatID, html, &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",
@@ -211,8 +146,8 @@ func (b *telegramBackend) sendChunkWithButton(html, thinkingText string) (string
 	return formatTelegramMsgID(sent.MessageId), nil
 }
 
-// editHTML edits an existing message with the given HTML body.
-func (b *telegramBackend) editHTML(msgID, html string) error {
+// EditChunk edits an existing message with the given HTML body.
+func (b *telegramBackend) EditChunk(msgID, html string) error {
 	id := parseTelegramMsgID(msgID)
 	_, _, err := b.bot.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
 		ChatId:    b.chatID,
@@ -222,9 +157,9 @@ func (b *telegramBackend) editHTML(msgID, html string) error {
 	return err
 }
 
-// editChunkWithButton edits an existing message with a "Show thinking" button
+// EditChunkWithButton edits an existing message with a "Show thinking" button
 // and stores the thinking entry keyed on that message ID.
-func (b *telegramBackend) editChunkWithButton(msgID, html, thinkingText string) error {
+func (b *telegramBackend) EditChunkWithButton(msgID, html, thinkingText string) error {
 	id := parseTelegramMsgID(msgID)
 	thinkingRows := buildButtonRows([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 	_, _, err := b.bot.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{

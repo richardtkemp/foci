@@ -29,9 +29,16 @@ func newTurnRenderer(bot *Bot, msg *discordgo.Message, tracker *turn.ToolCallTra
 	return turn.NewTurnRenderer(backend, tracker, d, newSB)
 }
 
-// discordBackend implements turn.Platform for Discord. It owns all layout:
-// markdown chopping at Discord's 2000-char limit, message identity, streaming
-// rollover, and thinking-button placement.
+// Compile-time checks.
+var (
+	_ turn.Platform    = (*discordBackend)(nil)
+	_ turn.ChunkWriter = (*discordBackend)(nil)
+)
+
+// discordBackend implements turn.Platform and turn.ChunkWriter for Discord. It
+// owns all layout: markdown chopping at Discord's 2000-char limit, message
+// identity, streaming rollover, and thinking-button placement. The shared
+// delivery loop (turn.DeliverChunks) drives the ChunkWriter primitives.
 type discordBackend struct {
 	bot       *Bot
 	msg       *discordgo.Message
@@ -47,99 +54,28 @@ func (b *discordBackend) OpenStream() turn.StreamSink {
 	}
 }
 
-// Deliver performs the terminal delivery. It composes the message body per
-// thinking mode, chops it into discordMaxChars chunks, and lays those chunks
-// over the stream's existing message sequence (editing/appending/deleting as
-// needed) or sends fresh messages when nothing surfaced.
+// Deliver performs the terminal delivery via the shared chunk-delivery loop.
 func (b *discordBackend) Deliver(p turn.Payload, stream turn.StreamSink) (turn.DeliveryResult, error) {
-	body, hasButton, thinkingText := b.composeBody(p)
-	chunks := splitMessage(body, discordMaxChars)
-	if len(chunks) == 0 {
-		chunks = []string{""}
-	}
-
-	var ids []string
-	if stream != nil {
-		ids = stream.MsgIDs()
-	}
-
-	// Fresh send: nothing surfaced.
-	if len(ids) == 0 {
-		var used []string
-		for i, chunk := range chunks {
-			last := i == len(chunks)-1
-			if last && hasButton {
-				id, err := b.sendChunkWithButton(chunk, thinkingText)
-				if err != nil {
-					return turn.DeliveryResult{MsgIDs: used}, err
-				}
-				used = append(used, id)
-				continue
-			}
-			if id, ok := b.sendMarkdown(chunk); ok {
-				used = append(used, id)
-			}
-		}
-		return turn.DeliveryResult{MsgIDs: used}, nil
-	}
-
-	// Finalize-in-place: lay the chunks over the existing live sequence.
-	var used []string
-	for i, chunk := range chunks {
-		last := i == len(chunks)-1
-		if i < len(ids) {
-			if last && hasButton {
-				if err := b.editChunkWithButton(ids[i], chunk, thinkingText); err != nil {
-					return turn.DeliveryResult{MsgIDs: used}, err
-				}
-			} else {
-				if err := b.editMarkdown(ids[i], chunk); err != nil {
-					b.bot.logger().Debugf("deliver edit: %v", err)
-				}
-			}
-			used = append(used, ids[i])
-			continue
-		}
-		if last && hasButton {
-			id, err := b.sendChunkWithButton(chunk, thinkingText)
-			if err != nil {
-				return turn.DeliveryResult{MsgIDs: used}, err
-			}
-			used = append(used, id)
-		} else if id, ok := b.sendMarkdown(chunk); ok {
-			used = append(used, id)
-		}
-	}
-
-	// Delete leftover messages from the live sequence (final shorter than live).
-	if len(ids) > len(chunks) {
-		for _, orphan := range ids[len(chunks):] {
-			if err := b.bot.api.ChannelMessageDelete(b.channelID, orphan); err != nil {
-				b.bot.logger().Debugf("deliver delete orphan %s: %v", orphan, err)
-			}
-		}
-	}
-
-	return turn.DeliveryResult{MsgIDs: used}, nil
+	return turn.DeliverChunks(b, p, stream)
 }
 
-// EditInPlace replaces a single existing message (a tool-call preview) in
-// place. Returns turn.ErrTooLongForEdit if the composed body would need to
-// split across more than one message.
+// EditInPlace replaces a single existing message (a tool-call preview) in place
+// via the shared single-message edit. Returns turn.ErrTooLongForEdit if the
+// composed body would need to split across more than one message.
 func (b *discordBackend) EditInPlace(msgID string, p turn.Payload) error {
-	body, hasButton, thinkingText := b.composeBody(p)
-	chunks := splitMessage(body, discordMaxChars)
-	if len(chunks) > 1 {
-		return turn.ErrTooLongForEdit
+	return turn.EditChunksInPlace(b, msgID, p)
+}
+
+// Split chops a markdown body at Discord's char limit, preserving code fences.
+func (b *discordBackend) Split(body string) []string {
+	return splitMessage(body, discordMaxChars)
+}
+
+// DeleteMsg deletes a leftover live-stream message, best-effort.
+func (b *discordBackend) DeleteMsg(msgID string) {
+	if err := b.bot.api.ChannelMessageDelete(b.channelID, msgID); err != nil {
+		b.bot.logger().Debugf("deliver delete orphan %s: %v", msgID, err)
 	}
-	chunk := body
-	if len(chunks) == 1 {
-		chunk = chunks[0]
-	}
-	if hasButton {
-		return b.editChunkWithButton(msgID, chunk, thinkingText)
-	}
-	return b.editMarkdown(msgID, chunk)
 }
 
 func (b *discordBackend) SendTyping() {
@@ -153,7 +89,7 @@ func (b *discordBackend) Logger() *log.ComponentLogger {
 // composeBody builds the message body for the payload per thinking mode and
 // reports whether the last chunk should carry a "Show thinking" button (compact
 // mode) and the raw thinking text to store with it.
-func (b *discordBackend) composeBody(p turn.Payload) (body string, hasButton bool, thinkingText string) {
+func (b *discordBackend) ComposeBody(p turn.Payload) (body string, hasButton bool, thinkingText string) {
 	switch p.ThinkingMode {
 	case "full":
 		divider := "\n" + strings.Repeat("-", b.width) + "\n\n"
@@ -165,9 +101,9 @@ func (b *discordBackend) composeBody(p turn.Payload) (body string, hasButton boo
 	}
 }
 
-// sendMarkdown sends one (already-chunked) markdown body as a single message and
-// returns its ID.
-func (b *discordBackend) sendMarkdown(text string) (string, bool) {
+// SendChunk sends one (already-chunked) markdown body as a single message and
+// returns its ID; ok=false on a (logged) send failure.
+func (b *discordBackend) SendChunk(text string) (string, bool) {
 	msg, err := b.bot.api.ChannelMessageSend(b.channelID, text)
 	if err != nil {
 		b.bot.logger().Errorf("send error (channel=%s): %s", b.channelID, b.bot.sanitizeError(err))
@@ -179,9 +115,9 @@ func (b *discordBackend) sendMarkdown(text string) (string, bool) {
 	return msg.ID, true
 }
 
-// sendChunkWithButton sends a chunk with a "Show thinking" button and stores the
+// SendChunkWithButton sends a chunk with a "Show thinking" button and stores the
 // thinking entry keyed on the sent message ID.
-func (b *discordBackend) sendChunkWithButton(text, thinkingText string) (string, error) {
+func (b *discordBackend) SendChunkWithButton(text, thinkingText string) (string, error) {
 	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 	sent, err := b.bot.api.ChannelMessageSendComplex(b.channelID, &discordgo.MessageSend{
 		Content:    text,
@@ -198,15 +134,15 @@ func (b *discordBackend) sendChunkWithButton(text, thinkingText string) (string,
 	return sent.ID, nil
 }
 
-// editMarkdown edits an existing message with the given markdown body.
-func (b *discordBackend) editMarkdown(msgID, text string) error {
+// EditChunk edits an existing message with the given markdown body.
+func (b *discordBackend) EditChunk(msgID, text string) error {
 	_, err := b.bot.api.ChannelMessageEdit(b.channelID, msgID, text)
 	return err
 }
 
-// editChunkWithButton edits an existing message with a "Show thinking" button
+// EditChunkWithButton edits an existing message with a "Show thinking" button
 // and stores the thinking entry keyed on that message ID.
-func (b *discordBackend) editChunkWithButton(msgID, text, thinkingText string) error {
+func (b *discordBackend) EditChunkWithButton(msgID, text, thinkingText string) error {
 	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 	_, err := b.bot.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    b.channelID,

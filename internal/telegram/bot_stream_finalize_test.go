@@ -134,14 +134,14 @@ func TestTelegramBackend_EditWithThinkingButton_Error(t *testing.T) {
 }
 
 func TestTelegramBackend_BuildThinkingCombined(t *testing.T) {
-	// Verifies that composeBody in full thinking mode produces thinking +
+	// Verifies that ComposeBody in full thinking mode produces thinking +
 	// divider + response.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.display.DisplayWidth = 40
 	backend := testBackend(b, 12345)
 	backend.width = 40
 
-	combined, _, _ := backend.composeBody(turn.Payload{
+	combined, _, _ := backend.ComposeBody(turn.Payload{
 		Text:         "Response text",
 		ThinkingText: "Deep thoughts",
 		ThinkingMode: "full",
@@ -205,11 +205,11 @@ func TestTelegramBackend_EditInPlace_TooLong(t *testing.T) {
 }
 
 func TestTelegramBackend_ComposeBody_FormatsHTML(t *testing.T) {
-	// Verifies that composeBody converts markdown to Telegram HTML.
+	// Verifies that ComposeBody converts markdown to Telegram HTML.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	backend := testBackend(b, 12345)
 
-	html, hasButton, _ := backend.composeBody(turn.Payload{Text: "**bold text**", ThinkingMode: "off"})
+	html, hasButton, _ := backend.ComposeBody(turn.Payload{Text: "**bold text**", ThinkingMode: "off"})
 
 	if !strings.Contains(html, "<b>bold text</b>") {
 		t.Errorf("expected HTML bold, got: %s", html)

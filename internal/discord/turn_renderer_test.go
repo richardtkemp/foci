@@ -26,17 +26,17 @@ func rendererBackend(t *testing.T) (*discordBackend, *fakeSession) {
 func TestComposeBody(t *testing.T) {
 	backend, _ := rendererBackend(t)
 
-	body, hasButton, thinking := backend.composeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "full"})
+	body, hasButton, thinking := backend.ComposeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "full"})
 	if !strings.Contains(body, "thought") || !strings.Contains(body, "answer") || hasButton {
 		t.Errorf("full: body=%q hasButton=%v", body, hasButton)
 	}
 
-	body, hasButton, thinking = backend.composeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "compact"})
+	body, hasButton, thinking = backend.ComposeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "compact"})
 	if body != "answer" || !hasButton || thinking != "thought" {
 		t.Errorf("compact: body=%q hasButton=%v thinking=%q", body, hasButton, thinking)
 	}
 
-	body, hasButton, _ = backend.composeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "off"})
+	body, hasButton, _ = backend.ComposeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "off"})
 	if body != "answer" || hasButton {
 		t.Errorf("off: body=%q hasButton=%v", body, hasButton)
 	}
@@ -170,7 +170,7 @@ func TestSendMarkdownErrorPath(t *testing.T) {
 	backend.bot.SetChatID(42)
 	fs.sendErr = unknownChannelErr()
 
-	if id, ok := backend.sendMarkdown("text"); ok || id != "" {
+	if id, ok := backend.SendChunk("text"); ok || id != "" {
 		t.Error("expected failure")
 	}
 	if backend.bot.ChatID() != 0 {
