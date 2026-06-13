@@ -67,13 +67,13 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			"required": ["session_key", "message"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				SessionKey string `json:"session_key"`
 				Message    string `json:"message"`
 				ReplyTo    string `json:"reply_to"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 			if p.SessionKey == "" {
 				return ToolResult{}, fmt.Errorf("session_key is required")

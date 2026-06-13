@@ -39,13 +39,13 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 			"required": ["text", "when"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Text string `json:"text"`
 				When string `json:"when"`
 				Wake bool   `json:"wake"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 
 			if p.Text == "" {

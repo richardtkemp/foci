@@ -357,13 +357,13 @@ func checkConfigBlockedPath(blockedPaths []config.BlockedPath, resolved string) 
 }
 
 func readFile(ctx context.Context, params json.RawMessage, fs fileScope) (ToolResult, error) {
-	var p struct {
+	p, err := UnmarshalParams[struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset"`
 		Limit  int    `json:"limit"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	resolved, err := fs.resolveFileArg(p.Path)
@@ -471,12 +471,12 @@ func writeFile(ctx context.Context, params json.RawMessage, fs fileScope, fileMo
 	if fileMode == 0 {
 		fileMode = 0640
 	}
-	var p struct {
+	p, err := UnmarshalParams[struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	resolved, err := fs.resolveFileArg(p.Path)
@@ -501,13 +501,13 @@ func editFile(ctx context.Context, params json.RawMessage, fs fileScope, fileMod
 	if fileMode == 0 {
 		fileMode = 0640
 	}
-	var p struct {
+	p, err := UnmarshalParams[struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
 		NewString string `json:"new_string"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	resolved, err := fs.resolveFileArg(p.Path)

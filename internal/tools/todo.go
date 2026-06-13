@@ -76,7 +76,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			"required": ["action"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct {
+			p, err := UnmarshalParams[struct {
 				Action   string  `json:"action"`
 				Text     string  `json:"text"`
 				Priority string  `json:"priority"`
@@ -90,9 +90,9 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				Sort     string  `json:"sort"`
 				Reverse  bool    `json:"reverse"`
 				Limit    int     `json:"limit"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
 			}
 
 			// Normalize action aliases (e.g. "create" → "add") so direct

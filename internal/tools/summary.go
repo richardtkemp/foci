@@ -70,12 +70,12 @@ func NewIsolatedSummaryTool(base *Tool, store *secrets.Store, baseDir string) *T
 }
 
 func summaryExecute(ctx context.Context, params json.RawMessage, fs fileScope, summariser Summariser) (ToolResult, error) {
-	var p struct {
+	p, err := UnmarshalParams[struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return ToolResult{}, err
 	}
 
 	if p.File == "" {

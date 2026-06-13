@@ -264,7 +264,7 @@ func intDefault(value, defaultValue int) int {
 }
 
 func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
-	var p struct {
+	p, err := tools.UnmarshalParams[struct {
 		Operation        string `json:"operation"`
 		Name             string `json:"name"`
 		Command          string `json:"command"`
@@ -276,9 +276,9 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 		Window           int    `json:"window"`
 		ThresholdSeconds int    `json:"threshold_seconds"`
 		Raw              bool   `json:"raw"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return tools.ToolResult{}, fmt.Errorf("parse params: %w", err)
+	}](params)
+	if err != nil {
+		return tools.ToolResult{}, err
 	}
 
 	switch p.Operation {
