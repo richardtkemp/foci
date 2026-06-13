@@ -21,6 +21,7 @@ func TestFociTodo_IDsCommaFormNormalised(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
+		Positional: []string{"action"},
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
 	})

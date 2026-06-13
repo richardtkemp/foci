@@ -40,6 +40,7 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 	return &Tool{
 		Name:        "http_request",
 		ExecExport:  true,
+		Positional:  []string{"url"},
 		Description: "Make an HTTP request. Secrets referenced via {{secret:NAME}} in headers are resolved server-side and validated against allowed_hosts. Secrets in request body/body_file/form_fields require the key to be listed in allowed_in_body in secrets.toml. Binary responses are auto-saved to files. Responses can be saved directly to a file path.",
 		Parameters: json.RawMessage(`{
 			"type": "object",

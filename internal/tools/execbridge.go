@@ -367,29 +367,11 @@ func toolParamKeys(t *Tool) string {
 	return strings.Join(keys, " ")
 }
 
-// shellPositionalParams is the legacy fallback for tools that haven't yet
-// migrated to the Tool.Positional field. New tools should declare positional
-// params on the Tool struct itself; positionalParamsForTool prefers the
-// struct field over this map. Once all entries here are also set on their
-// respective Tool structs, the map can be removed.
-var shellPositionalParams = map[string][]string{
-	"http_request": {"url"},
-	"todo":         {"action"},
-	"summary":      {"prompt"},
-	"tmux":         {"operation"},
-}
-
-// positionalParamsForTool returns a tool's positional schema params. Prefers
-// the Tool.Positional struct field; falls back to the legacy
-// shellPositionalParams map. The bool reports whether any are declared.
+// positionalParamsForTool returns a tool's positional schema params (declared on
+// the Tool.Positional struct field — the single source of truth). The bool
+// reports whether any are declared.
 func positionalParamsForTool(t *Tool) ([]string, bool) {
-	if len(t.Positional) > 0 {
-		return t.Positional, true
-	}
-	if pos, ok := shellPositionalParams[t.Name]; ok {
-		return pos, true
-	}
-	return nil, false
+	return t.Positional, len(t.Positional) > 0
 }
 
 // generateHelpText builds a help string for a tool from its description and JSON schema.
@@ -962,7 +944,7 @@ func generateShellFunc(t *Tool) string {
 //   - Snake_case schema keys become kebab-case flags: date_from -> --date-from
 //   - String/integer/number/object/array params consume two args: --flag VALUE
 //   - Boolean params are presence-only: --flag (sets variable to "true")
-//   - Positional params (per shellPositionalParams) accept bare args, joined
+//   - Positional params (per Tool.Positional) accept bare args, joined
 //     with a space when multiple arrive (matches existing query/text UX)
 //   - Required params (per schema.Required) trigger a usage line on missing
 //   - JSON-typed params (object/array/integer/number) use jq --argjson, so jq
