@@ -323,7 +323,7 @@ func TestMaybeConsolidation_Disabled(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		reflectCfg: config.ResolvedReflection{
+		maintCfg: config.ResolvedMaintenance{
 			ConsolidationEnabled: false,
 		},
 		lastInteraction:   time.Now(),
@@ -348,9 +348,9 @@ func TestMaybeConsolidation_BadInterval(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		reflectCfg: config.ResolvedReflection{
+		maintCfg: config.ResolvedMaintenance{
 			ConsolidationEnabled: true,
-			ConsolidationInterval: "invalid",
+			ConsolidationTime:    "invalid",
 		},
 		lastInteraction:   time.Now(),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
@@ -375,10 +375,10 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		reflectCfg: config.ResolvedReflection{
-			ConsolidationEnabled:  true,
-			ConsolidationInterval: "1h",
-			ConsolidationPrompt:   "memory-consolidation.md",
+		maintCfg: config.ResolvedMaintenance{
+			ConsolidationEnabled: true,
+			ConsolidationTime:    "1h",
+			ConsolidationPrompt:  "memory-consolidation.md",
 		},
 		sessionKeyFn:      func() string { return "test/c1/1" },
 		lastInteraction:   now.Add(-30 * time.Minute),
@@ -410,10 +410,10 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		reflectCfg: config.ResolvedReflection{
-			ConsolidationEnabled:  true,
-			ConsolidationInterval: "1h",
-			ConsolidationPrompt:   "memory-consolidation.md",
+		maintCfg: config.ResolvedMaintenance{
+			ConsolidationEnabled: true,
+			ConsolidationTime:    "1h",
+			ConsolidationPrompt:  "memory-consolidation.md",
 		},
 		sessionKeyFn:      func() string { return "test/c1/1" },
 		lastInteraction:   now.Add(-30 * time.Minute),
@@ -504,9 +504,9 @@ func TestMaybeConsolidation_TooMuchInactivity(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		reflectCfg: config.ResolvedReflection{
-			ConsolidationEnabled:  true,
-			ConsolidationInterval: "1h",
+		maintCfg: config.ResolvedMaintenance{
+			ConsolidationEnabled: true,
+			ConsolidationTime:    "1h",
 		},
 		lastInteraction:   time.Now().Add(-3 * time.Hour),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
@@ -530,9 +530,9 @@ func TestMaybeConsolidation_AlreadyRunning(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		reflectCfg: config.ResolvedReflection{
-			ConsolidationEnabled:  true,
-			ConsolidationInterval: "1h",
+		maintCfg: config.ResolvedMaintenance{
+			ConsolidationEnabled: true,
+			ConsolidationTime:    "1h",
 		},
 		lastInteraction:      time.Now().Add(-30 * time.Minute),
 		lastConsolidation:    time.Now().Add(-2 * time.Hour),

@@ -240,32 +240,44 @@ func resolveBackground(m BackgroundConfig) ResolvedBackground {
 }
 
 type ResolvedReflection struct {
-	IntervalEnabled       bool // default true
-	Interval              string
-	IntervalPrompt        string
-	ConsolidationEnabled  bool // default true
-	ConsolidationInterval string
-	ConsolidationPrompt   string
-	SessionEndEnabled     bool // default true
-	SessionEndPrompt      string
-	CompactionEnabled     bool // default true
-	CompactionPrompt      string
-	BackendQuietPeriod    string // default "5m"
+	IntervalEnabled    bool // default true
+	Interval           string
+	IntervalPrompt     string
+	SessionEndEnabled  bool // default true
+	SessionEndPrompt   string
+	CompactionEnabled  bool // default true
+	CompactionPrompt   string
+	BackendQuietPeriod string // default "5m"
 }
 
 func resolveReflection(m ReflectionConfig) ResolvedReflection {
 	return ResolvedReflection{
-		IntervalEnabled:       DerefBool(m.IntervalEnabled),
-		Interval:              DerefStr(m.Interval),
-		IntervalPrompt:        DerefStr(m.IntervalPrompt),
-		ConsolidationEnabled:  DerefBool(m.ConsolidationEnabled),
-		ConsolidationInterval: DerefStr(m.ConsolidationInterval),
-		ConsolidationPrompt:   DerefStr(m.ConsolidationPrompt),
-		SessionEndEnabled:     DerefBool(m.SessionEndEnabled),
-		SessionEndPrompt:      DerefStr(m.SessionEndPrompt),
-		CompactionEnabled:     DerefBool(m.CompactionEnabled),
-		CompactionPrompt:      DerefStr(m.CompactionPrompt),
-		BackendQuietPeriod:    DerefStr(m.BackendQuietPeriod),
+		IntervalEnabled:    DerefBool(m.IntervalEnabled),
+		Interval:           DerefStr(m.Interval),
+		IntervalPrompt:     DerefStr(m.IntervalPrompt),
+		SessionEndEnabled:  DerefBool(m.SessionEndEnabled),
+		SessionEndPrompt:   DerefStr(m.SessionEndPrompt),
+		CompactionEnabled:  DerefBool(m.CompactionEnabled),
+		CompactionPrompt:   DerefStr(m.CompactionPrompt),
+		BackendQuietPeriod: DerefStr(m.BackendQuietPeriod),
+	}
+}
+
+type ResolvedMaintenance struct {
+	ConsolidationEnabled bool // default true
+	ConsolidationTime    string
+	ConsolidationPrompt  string
+	ResetTime            string // "" = disabled
+	ResetIdleGuard       string // default "55m"
+}
+
+func resolveMaintenance(m MaintenanceConfig) ResolvedMaintenance {
+	return ResolvedMaintenance{
+		ConsolidationEnabled: DerefBool(m.ConsolidationEnabled),
+		ConsolidationTime:    DerefStr(m.ConsolidationTime),
+		ConsolidationPrompt:  DerefStr(m.ConsolidationPrompt),
+		ResetTime:            DerefStr(m.ResetTime),
+		ResetIdleGuard:       DerefStr(m.ResetIdleGuard),
 	}
 }
 

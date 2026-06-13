@@ -60,6 +60,7 @@ type Runner struct {
 	kaCfg              config.ResolvedKeepalive
 	bgCfg              config.ResolvedBackground
 	reflectCfg         config.ResolvedReflection
+	maintCfg           config.ResolvedMaintenance
 	manaInvestInterval string // mana invest interval (Go duration string)
 	promptSearchDirs   []string
 	todoStore          *memory.TodoStore
@@ -84,6 +85,10 @@ type Runner struct {
 	isDelegatedAgent bool // reflection needs quiet period in delegated mode
 	runOnceFn      func(ctx context.Context, prompt, systemPrompt string) (string, error)
 
+	// resetFn fires a soft session reset (memory formation + key rotation) for
+	// the scheduled reset_time maintenance task. nil = reset disabled/unwired.
+	resetFn func(ctx context.Context, sessionKey string) error
+
 	mu                    sync.Mutex
 	lastCacheWarmed       time.Time
 	lastInteraction       time.Time
@@ -94,8 +99,10 @@ type Runner struct {
 	// Reflection state
 	lastReflection       time.Time
 	lastConsolidation    time.Time
+	lastReset            time.Time
 	reflectionRunning    bool
 	consolidationRunning bool
+	resetRunning         bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -109,6 +116,7 @@ type RunnerConfig struct {
 	Keepalive          config.ResolvedKeepalive
 	Background         config.ResolvedBackground
 	Reflection         config.ResolvedReflection
+	Maintenance        config.ResolvedMaintenance
 	ManaInvestInterval string                // mana invest interval (Go duration string, default: "30m")
 	PromptSearchDirs   []string              // directories to search for prompt files (agent workspace, shared)
 	TodoStore          *memory.TodoStore
@@ -140,6 +148,11 @@ type RunnerConfig struct {
 	// BranchFunc, avoiding interactive session overhead and platform delivery.
 	// The systemPrompt parameter is passed via --system-prompt (empty = default).
 	RunOnceFunc func(ctx context.Context, prompt, systemPrompt string) (string, error)
+
+	// ResetFunc fires a soft session reset (memory formation + key rotation)
+	// for the scheduled reset_time task. nil = reset disabled. Wired to
+	// Agent.ResetSession in periodic_setup.go.
+	ResetFunc func(ctx context.Context, sessionKey string) error
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
@@ -153,6 +166,7 @@ func New(cfg RunnerConfig) *Runner {
 		kaCfg:              cfg.Keepalive,
 		bgCfg:              cfg.Background,
 		reflectCfg:         cfg.Reflection,
+		maintCfg:           cfg.Maintenance,
 		manaInvestInterval: cfg.ManaInvestInterval,
 		promptSearchDirs:   cfg.PromptSearchDirs,
 		todoStore:          cfg.TodoStore,
@@ -168,16 +182,26 @@ func New(cfg RunnerConfig) *Runner {
 		canFireFn:          cfg.CanFireFunc,
 		isDelegatedAgent:   cfg.IsDelegatedAgent,
 		runOnceFn:          cfg.RunOnceFunc,
+		resetFn:            cfg.ResetFunc,
 		lastCacheWarmed:    now,
 		lastInteraction:    now,
 		lastReflection:     now,
-		done:               make(chan struct{}),
+		// Anchor reset to boot so a fresh agent waits for the next scheduled
+		// slot rather than resetting immediately on startup (a persisted value
+		// below overrides this).
+		lastReset: now,
+		done:      make(chan struct{}),
 	}
 	// Restore consolidation timestamp from persistent state
 	if cfg.SessionIndex != nil {
 		if raw, err := cfg.SessionIndex.GetAgentMetadata(cfg.AgentID, "consolidation_last"); err == nil && raw != "" {
 			if ts, err := time.Parse(time.RFC3339, raw); err == nil {
 				r.lastConsolidation = ts
+			}
+		}
+		if raw, err := cfg.SessionIndex.GetAgentMetadata(cfg.AgentID, "reset_last"); err == nil && raw != "" {
+			if ts, err := time.Parse(time.RFC3339, raw); err == nil {
+				r.lastReset = ts
 			}
 		}
 	}
@@ -266,6 +290,7 @@ func (r *Runner) run(ctx context.Context) {
 			// Consolidation also skips if reflection is still running.
 			r.maybeReflection()
 			r.maybeConsolidation()
+			r.maybeReset(ctx)
 			if r.warningDispatcher != nil {
 				r.warningDispatcher.MaybeFire()
 			}
@@ -583,7 +608,7 @@ func (r *Runner) maybeReflection() {
 }
 
 func (r *Runner) maybeConsolidation() {
-	if !r.reflectCfg.ConsolidationEnabled {
+	if !r.maintCfg.ConsolidationEnabled {
 		return
 	}
 
@@ -594,27 +619,33 @@ func (r *Runner) maybeConsolidation() {
 		}
 	}()
 
-	interval, ok := r.parseDuration("consolidation interval", r.reflectCfg.ConsolidationInterval)
+	sched, ok := parseSchedule(r.maintCfg.ConsolidationTime)
 	if !ok {
+		r.log.Warnf("bad consolidation_time %q (want HH:MM or a duration like 20h)", r.maintCfg.ConsolidationTime)
 		return
 	}
 
-	now := time.Now()
+	now := timeutil.Now()
 
 	r.mu.Lock()
 	lastConsolidation := r.lastConsolidation
 	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.consolidationRunning
 	reflectionRunning := r.reflectionRunning
+	resetRunning := r.resetRunning
 	r.mu.Unlock()
 
-	nextFire := lastConsolidation.Truncate(interval).Add(interval)
+	nextFire := sched.nextFire(lastConsolidation, now.Location())
 	if running {
 		skip = "already running"
 		return
 	}
 	if reflectionRunning {
 		skip = "reflection running"
+		return
+	}
+	if resetRunning {
+		skip = "reset running"
 		return
 	}
 	if now.Before(nextFire) {
@@ -648,7 +679,7 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
-	promptText := prompts.ResolvePrompt(r.reflectCfg.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)
+	promptText := prompts.ResolvePrompt(r.maintCfg.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
 	}
@@ -683,5 +714,97 @@ func (r *Runner) maybeConsolidation() {
 		} else {
 			r.branchFn("consolidation", parentKey, promptText, true)
 		}
+	}()
+}
+
+// maybeReset fires the scheduled daily session reset (reset_time). A soft reset
+// runs memory formation then rotates the session key — identical to a manual
+// /reset (see Agent.ResetSession, wired via resetFn). Disabled when reset_time
+// is empty. Skips if the user interacted within reset_idle_guard, mirroring the
+// `foci command --if-inactive` crontab this replaces, so a live conversation is
+// never wiped out from under the user.
+func (r *Runner) maybeReset(ctx context.Context) {
+	if r.resetFn == nil || r.maintCfg.ResetTime == "" {
+		return
+	}
+
+	skip := ""
+	defer func() {
+		if skip != "" {
+			r.log.Debugf("skip reset: %s", skip)
+		}
+	}()
+
+	sched, ok := parseSchedule(r.maintCfg.ResetTime)
+	if !ok {
+		r.log.Warnf("bad reset_time %q (want HH:MM or a duration like 24h)", r.maintCfg.ResetTime)
+		return
+	}
+
+	now := timeutil.Now()
+
+	r.mu.Lock()
+	lastReset := r.lastReset
+	sinceLastInteraction := time.Since(r.lastInteraction)
+	running := r.resetRunning
+	reflectionRunning := r.reflectionRunning
+	consolidationRunning := r.consolidationRunning
+	r.mu.Unlock()
+
+	nextFire := sched.nextFire(lastReset, now.Location())
+	if running {
+		skip = "already running"
+		return
+	}
+	if reflectionRunning || consolidationRunning {
+		skip = "memory task running"
+		return
+	}
+	if now.Before(nextFire) {
+		skip = fmt.Sprintf("too soon (next at %s)", nextFire.Format("2006-01-02 15:04:05"))
+		return
+	}
+
+	// Inactivity guard: skip if the user was active within the guard window.
+	// A zero/invalid guard disables the check (always fire at the scheduled time).
+	if guard, gok := r.parseDuration("reset_idle_guard", r.maintCfg.ResetIdleGuard); gok && guard > 0 && sinceLastInteraction < guard {
+		skip = fmt.Sprintf("user active %s ago (< guard %s)", sinceLastInteraction.Round(time.Second), guard)
+		return
+	}
+
+	parentKey := r.defaultParentKey()
+	if parentKey == "" {
+		skip = "no default session"
+		return
+	}
+
+	if r.parentTurnInFlight(parentKey) {
+		skip = "turn in flight on parent session"
+		return
+	}
+
+	r.mu.Lock()
+	r.resetRunning = true
+	r.lastReset = now
+	r.mu.Unlock()
+
+	r.log.Infof("firing scheduled session reset for agent %s (session %s)", r.agentID, parentKey)
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.resetRunning = false
+			r.mu.Unlock()
+			if r.sessionIndex != nil {
+				if err := r.sessionIndex.SetAgentMetadata(r.agentID, "reset_last", timeutil.Format(timeutil.Now())); err != nil {
+					r.log.Warnf("persist reset timestamp: %v", err)
+				}
+			}
+		}()
+		if err := r.resetFn(ctx, parentKey); err != nil {
+			r.log.Warnf("scheduled reset failed for %s: %v", parentKey, err)
+			return
+		}
+		r.log.Infof("scheduled session reset complete for agent %s", r.agentID)
 	}()
 }

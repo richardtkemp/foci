@@ -134,7 +134,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 			derefStr(acfg.Reflection.IntervalPrompt),
 			"reflection.md", prompts.Reflection(), dirs),
 		resolvePromptInfo("memory_consolidation",
-			derefStr(acfg.Reflection.ConsolidationPrompt),
+			derefStr(acfg.Maintenance.ConsolidationPrompt),
 			"memory-consolidation.md", prompts.MemoryConsolidation(), dirs),
 		resolvePromptInfo("reflection_session_end",
 			derefStr(acfg.Reflection.SessionEndPrompt),
@@ -171,7 +171,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		{"keepalive", derefStr(acfg.Keepalive.Prompt), "keepalive.md", prompts.Keepalive()},
 		{"background", derefStr(acfg.Background.Prompt), "background.md", prompts.Background()},
 		{"reflection", derefStr(acfg.Reflection.IntervalPrompt), "reflection.md", prompts.Reflection()},
-		{"memory_consolidation", derefStr(acfg.Reflection.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation()},
+		{"memory_consolidation", derefStr(acfg.Maintenance.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation()},
 		{"reflection_session_end", derefStr(acfg.Reflection.SessionEndPrompt), "reflection.md", prompts.Reflection()},
 	}
 	resolvedTexts := make(map[string]string, len(fileDefs)+2)
