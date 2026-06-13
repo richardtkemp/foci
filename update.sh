@@ -16,6 +16,42 @@ NEW_COMMIT="$(git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" rev-parse --s
 echo "Building..."
 sudo -u foci bash -c "cd '$SCRIPT_DIR' && make all"
 
+# ===== Config compatibility pre-check =====
+# Validate every foci service's config with the FRESHLY-BUILT binary BEFORE we
+# install it or restart anything. If the new binary can't load a service's
+# config (parse/validate error, or — strict policy — any unknown/deprecated
+# key such as a renamed setting), abort here with the running daemon untouched.
+# Run as root (this script's user): root can read every service's config, and
+# the check has no side effects (no log init, no DB, no file writes), so it
+# never produces root-owned artefacts. config.Load reads only the TOML file —
+# secrets and prompt files load later at real startup — so a root check is a
+# faithful test of parse/validate compatibility.
+echo "Checking config compatibility..."
+NEW_GW="$SCRIPT_DIR/bin/foci-gw"
+checked_any=false
+for svcfile in /etc/systemd/system/foci*.service; do
+    [[ -f "$svcfile" ]] || continue
+    svcname="$(basename "$svcfile" .service)"
+    # Extract the -config argument from ExecStart (services may omit it).
+    SVC_CFG="$(grep '^ExecStart=' "$svcfile" | grep -oP '(?<=-config )\S+' || true)"
+    if [[ -z "$SVC_CFG" ]]; then
+        echo "  $svcname: SKIP (no -config in ExecStart — cannot locate config)"
+        continue
+    fi
+    echo -n "  $svcname: $SVC_CFG ... "
+    if "$NEW_GW" -check-config -config "$SVC_CFG"; then
+        checked_any=true
+    else
+        echo >&2
+        echo "ABORT: the newly-built foci-gw cannot load $svcname's config ($SVC_CFG)." >&2
+        echo "The running daemon has NOT been touched. Fix the config above and re-run update.sh." >&2
+        exit 1
+    fi
+done
+if [[ "$checked_any" != true ]]; then
+    echo "  WARNING: no service configs were checked." >&2
+fi
+
 echo "Installing..."
 install -m 755 "$SCRIPT_DIR/bin/foci-gw" "$INSTALL_DIR/foci-gw"
 install -m 755 "$SCRIPT_DIR/bin/foci" "$INSTALL_DIR/foci"

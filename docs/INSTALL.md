@@ -155,6 +155,23 @@ git pull
 
 On update, setup generates a changelog (`WELCOME.md`) that the agent summarises and sends to you via Telegram.
 
+### Config compatibility pre-check
+
+`update.sh` validates every foci service's config with the freshly-built binary
+*before* installing it or restarting anything. Each service's config (the
+`-config` path from its `ExecStart`) is checked via:
+
+```bash
+foci-gw -check-config -config /path/to/foci.toml
+```
+
+This exits `0` if the config loads cleanly and `1` on a parse/validate error or
+any unknown/deprecated key (e.g. a renamed setting — strict policy, since the
+old value would be silently dropped at startup). If any service's config fails,
+`update.sh` aborts with the running daemon untouched, so a config incompatibility
+can no longer brick the service mid-upgrade. You can run the same check by hand
+before upgrading.
+
 ## Directory Layout
 
 After setup, the foci user's home looks like:
