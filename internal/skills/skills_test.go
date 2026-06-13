@@ -293,10 +293,10 @@ func TestLoadCollisionPreservesOrder(t *testing.T) {
 // TestShortPathComparison tests shortPath returns the shorter of absolute or relative
 func TestShortPathComparison(t *testing.T) {
 	tests := []struct {
-		name       string
-		absPath    string
-		baseDir    string
-		expectRel  bool
+		name      string
+		absPath   string
+		baseDir   string
+		expectRel bool
 	}{
 		{
 			"relative shorter",
@@ -419,8 +419,8 @@ empty_quotes: ""
 	}
 
 	tests := []struct {
-		key   string
-		want  string
+		key  string
+		want string
 	}{
 		{"single", "quoted value"},
 		{"double", "another value"},

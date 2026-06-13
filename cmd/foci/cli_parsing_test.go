@@ -194,11 +194,11 @@ func TestParseSendFlagsAsyncSync(t *testing.T) {
 // TestParseSendFlagsMessageFlags tests -mt, -mf, --message-text, and --message-file flag parsing.
 func TestParseSendFlagsMessageFlags(t *testing.T) {
 	tests := []struct {
-		name        string
-		args        []string
-		wantMT      string
-		wantMF      string
-		wantRest    []string
+		name     string
+		args     []string
+		wantMT   string
+		wantMF   string
+		wantRest []string
 	}{
 		{"-mt with value", []string{"-mt", "hello"}, "hello", "", nil},
 		{"--mt with value", []string{"--mt", "hello"}, "hello", "", nil},

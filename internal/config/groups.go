@@ -3,19 +3,19 @@ package config
 // Call site names — each identifies a specific LLM call site in the codebase.
 const (
 	// Powerful group (default)
-	CallChat               = "chat"
-	CallSpawnClone         = "spawn-clone"
-	CallBackground         = "background"
-	CallCompaction         = "compaction"
-	CallMemoryCapture      = "memory-capture"
-	CallMemoryConsolidate  = "memory-consolidate"
+	CallChat              = "chat"
+	CallSpawnClone        = "spawn-clone"
+	CallBackground        = "background"
+	CallCompaction        = "compaction"
+	CallMemoryCapture     = "memory-capture"
+	CallMemoryConsolidate = "memory-consolidate"
 
 	// Fast group (default)
 	CallSpawnRaw       = "spawn-raw"
 	CallSpawnCharacter = "spawn-character"
 
 	// Cheap group (default)
-	CallSpawnExplore = "spawn-explore"
+	CallSpawnExplore  = "spawn-explore"
 	CallSummarizeTool = "summarize-tool"
 	CallSummarizeFile = "summarize-file"
 	CallPromptDiff    = "prompt-diff"
@@ -118,4 +118,3 @@ func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 	}
 	return resolved
 }
-

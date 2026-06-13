@@ -210,7 +210,6 @@ func resolveEnvironment(m EnvironmentConfig) ResolvedEnvironment {
 	}
 }
 
-
 type ResolvedKeepalive struct {
 	Enabled  bool
 	Interval string

@@ -198,9 +198,9 @@ func TestFallbackResolver_InvalidKeysIgnored(t *testing.T) {
 	// (no slash, empty) are silently ignored rather than causing errors.
 	fr := NewFallbackResolver(
 		map[string]string{
-			"badkey":                      "anthropic/claude-sonnet-4-6",
+			"badkey":                    "anthropic/claude-sonnet-4-6",
 			"anthropic/claude-opus-4-6": "badvalue",
-			"":                           "anthropic/claude-sonnet-4-6",
+			"":                          "anthropic/claude-sonnet-4-6",
 		},
 		nil, nil,
 	)

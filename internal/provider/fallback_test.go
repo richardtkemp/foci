@@ -199,8 +199,8 @@ func TestSend_ChainWalk(t *testing.T) {
 	t.Parallel()
 	// Proves that fallback walks the chain: primary → fb1 → fb2 succeeds.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
-		{err: &APIError{StatusCode: 529}},                         // primary fails
-		{err: &APIError{StatusCode: 503}},                         // fb1 fails
+		{err: &APIError{StatusCode: 529}},                        // primary fails
+		{err: &APIError{StatusCode: 503}},                        // fb1 fails
 		{resp: &MessageResponse{Content: TextContent("fb2 ok")}}, // fb2 succeeds
 	}}
 	fallbackFn := func(model string) (string, string, string, bool) {

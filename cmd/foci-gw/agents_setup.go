@@ -463,24 +463,24 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, client provider.
 	al := p.resolved.Loop
 	tc := p.resolved.Tools
 	spawnDeps := tools.SpawnDeps{
-		Client:          client,
-		ClientProvider:  p.clientProvider,
-		Bootstrap:       bootstrap,
-		Registry:        registry,
-		Sessions:        &sessionBranchAdapter{store: p.sessions},
-		AgentID:         acfg.ID,
-		GroupResolver:   groupResolver,
-		FallbackFunc:    fallbackFn,
-		FallbackModel:   resolvedModel,
-		FallbackFormat:  defaultFormat,
-		MaxInherit:      tc.MaxConcurrentSpawns,
-		MaxToolLoops:    al.MaxToolLoops,
-		ExploreMaxDepth: tc.ExploreMaxDepth,
-		Notifier:        notifier,
+		Client:              client,
+		ClientProvider:      p.clientProvider,
+		Bootstrap:           bootstrap,
+		Registry:            registry,
+		Sessions:            &sessionBranchAdapter{store: p.sessions},
+		AgentID:             acfg.ID,
+		GroupResolver:       groupResolver,
+		FallbackFunc:        fallbackFn,
+		FallbackModel:       resolvedModel,
+		FallbackFormat:      defaultFormat,
+		MaxInherit:          tc.MaxConcurrentSpawns,
+		MaxToolLoops:        al.MaxToolLoops,
+		ExploreMaxDepth:     tc.ExploreMaxDepth,
+		Notifier:            notifier,
 		OrientationTemplate: prompts.ResolveOrientationTemplate(spawnOrientPath, false, promptSearchDirs...),
-		SetNoCompact: setNoCompact,
-		FileMode:     fileMode,
-		Store:        p.store,
+		SetNoCompact:        setNoCompact,
+		FileMode:            fileMode,
+		Store:               p.store,
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, agLazy))
 }
@@ -564,4 +564,3 @@ func logRegisteredTools(registry *tools.Registry, serverTools []provider.ToolDef
 		log.Infof("main", "agent %q: server tools: [%s]", agentID, strings.Join(stNames, ", "))
 	}
 }
-

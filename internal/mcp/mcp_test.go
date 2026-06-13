@@ -446,7 +446,7 @@ func TestLoadConfig_InvalidTOML(t *testing.T) {
 func TestServersForAgent(t *testing.T) {
 	cfg := MCPConfig{
 		Servers: []ServerConfig{
-			{Name: "global", Command: "echo"},                                 // no agents → all
+			{Name: "global", Command: "echo"},                                      // no agents → all
 			{Name: "research-only", Command: "echo", Agents: []string{"research"}}, // only research
 			{Name: "shared", Command: "echo", Agents: []string{"research", "assistant"}},
 		},

@@ -10,9 +10,9 @@ import (
 
 // rateLimitTypePeriod maps CC's rateLimitType strings to window durations.
 var rateLimitTypePeriod = map[string]time.Duration{
-	"five_hour":       5 * time.Hour,
-	"seven_day":       7 * 24 * time.Hour,
-	"seven_day_opus":  7 * 24 * time.Hour,
+	"five_hour":        5 * time.Hour,
+	"seven_day":        7 * 24 * time.Hour,
+	"seven_day_opus":   7 * 24 * time.Hour,
 	"seven_day_sonnet": 7 * 24 * time.Hour,
 }
 

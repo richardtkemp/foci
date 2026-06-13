@@ -496,7 +496,6 @@ func TestSessionsListCurrentMarker(t *testing.T) {
 	}
 }
 
-
 // TestSessionsIndexSortedByLastActive verifies that the "index" subcommand
 // sorts results by LastActivityAt in descending order (most recent first). Three
 // sessions are inserted in chronological order (oldest first) and the output is

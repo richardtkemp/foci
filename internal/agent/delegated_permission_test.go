@@ -15,13 +15,13 @@ import (
 type mockPermBackend struct {
 	delegator.Delegator // embed to satisfy the interface; unused methods will panic
 
-	respondCalls    []respondCall
-	ruleCalls       []ruleCall
-	keystrokeCalls  []string
-	respondErr      error
-	ruleErr         error
-	keystrokeErr    error
-	supportsRule    bool
+	respondCalls   []respondCall
+	ruleCalls      []ruleCall
+	keystrokeCalls []string
+	respondErr     error
+	ruleErr        error
+	keystrokeErr   error
+	supportsRule   bool
 }
 
 type respondCall struct {

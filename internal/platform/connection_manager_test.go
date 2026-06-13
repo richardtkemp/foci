@@ -12,14 +12,14 @@ type testConnMgr struct {
 	sessions map[string]Connection
 }
 
-func (m *testConnMgr) Primary(string) Connection                    { return m.primary }
-func (m *testConnMgr) AllForAgent(string) []Connection              { return nil }
-func (m *testConnMgr) ForSession(sk string) Connection              { return m.sessions[sk] }
+func (m *testConnMgr) Primary(string) Connection                     { return m.primary }
+func (m *testConnMgr) AllForAgent(string) []Connection               { return nil }
+func (m *testConnMgr) ForSession(sk string) Connection               { return m.sessions[sk] }
 func (m *testConnMgr) ForSessionOrPrimary(sk, aid string) Connection { return nil } // unused
-func (m *testConnMgr) AcquireFacet(string) (Connection, bool)       { return nil, false }
-func (m *testConnMgr) HasFacet(string) bool                         { return false }
-func (m *testConnMgr) StartAll(context.Context)                     {}
-func (m *testConnMgr) Wait()                                        {}
+func (m *testConnMgr) AcquireFacet(string) (Connection, bool)        { return nil, false }
+func (m *testConnMgr) HasFacet(string) bool                          { return false }
+func (m *testConnMgr) StartAll(context.Context)                      {}
+func (m *testConnMgr) Wait()                                         {}
 
 // namedConn is a mockConnection that reports a name for test assertions.
 type namedConn struct {

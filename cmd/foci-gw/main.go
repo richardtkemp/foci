@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	_ "foci/internal/delegator/ccstream"   // register claude-code backend (stream-json)
-	_ "foci/internal/delegator/cctmux" // register claude-code-tmux backend
+	_ "foci/internal/delegator/ccstream" // register claude-code backend (stream-json)
+	_ "foci/internal/delegator/cctmux"   // register claude-code-tmux backend
 	_ "foci/internal/discord"            // register discord messaging provider
 	_ "foci/internal/telegram"           // register telegram messaging provider
 
@@ -304,8 +304,8 @@ Subcommands:
 			sessionIndex:        si.sessionIndex,
 			ttsMap:              ttsMap,
 			sttMap:              sttMap,
-			braveKey:     braveKey,
-			gwSocketPath: gwSocketPath,
+			braveKey:            braveKey,
+			gwSocketPath:        gwSocketPath,
 			startTime:           startTime,
 			ctx:                 ctx,
 			agentListFn:         agentListFn,
@@ -448,7 +448,6 @@ Subcommands:
 	// crash by a heartbeat firing during shutdown.
 	hbCtx, hbCancel := context.WithCancel(ctx)
 	go startup.RunHeartbeat(hbCtx, si.sessionIndex, startup.HeartbeatInterval)
-
 
 	// ========== HTTP server ==========
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")

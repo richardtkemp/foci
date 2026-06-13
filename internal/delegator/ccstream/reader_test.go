@@ -22,20 +22,32 @@ type mockHandler struct {
 	streamEvents []json.RawMessage
 }
 
-func (h *mockHandler) OnAssistant(msg *AssistantMessage)          { h.assistants = append(h.assistants, msg) }
-func (h *mockHandler) OnResult(msg *ResultMessage)                { h.results = append(h.results, msg) }
-func (h *mockHandler) OnPermissionRequest(msg *PermissionRequest) { h.permissions = append(h.permissions, msg) }
+func (h *mockHandler) OnAssistant(msg *AssistantMessage) { h.assistants = append(h.assistants, msg) }
+func (h *mockHandler) OnResult(msg *ResultMessage)       { h.results = append(h.results, msg) }
+func (h *mockHandler) OnPermissionRequest(msg *PermissionRequest) {
+	h.permissions = append(h.permissions, msg)
+}
 func (h *mockHandler) OnElicitationRequest(msg *ElicitationRequest) {
 	h.elicitations = append(h.elicitations, msg)
 }
-func (h *mockHandler) OnControlResponse(raw json.RawMessage)      { h.controlResps = append(h.controlResps, raw) }
-func (h *mockHandler) OnControlCancelRequest(reqID string)        { h.cancelReqs = append(h.cancelReqs, reqID) }
-func (h *mockHandler) OnToolProgress(msg *ToolProgressMessage)    { h.toolProgress = append(h.toolProgress, msg) }
-func (h *mockHandler) OnStreamEvent(raw json.RawMessage)          { h.streamEvents = append(h.streamEvents, raw) }
-func (h *mockHandler) OnKeepAlive()                               {}
-func (h *mockHandler) OnRateLimit(_ *RateLimitEvent)              {}
-func (h *mockHandler) OnSystem(subtype string, _ json.RawMessage) { h.systems = append(h.systems, subtype) }
-func (h *mockHandler) OnReaderStopped(err error)                  { h.errors = append(h.errors, err) }
+func (h *mockHandler) OnControlResponse(raw json.RawMessage) {
+	h.controlResps = append(h.controlResps, raw)
+}
+func (h *mockHandler) OnControlCancelRequest(reqID string) {
+	h.cancelReqs = append(h.cancelReqs, reqID)
+}
+func (h *mockHandler) OnToolProgress(msg *ToolProgressMessage) {
+	h.toolProgress = append(h.toolProgress, msg)
+}
+func (h *mockHandler) OnStreamEvent(raw json.RawMessage) {
+	h.streamEvents = append(h.streamEvents, raw)
+}
+func (h *mockHandler) OnKeepAlive()                  {}
+func (h *mockHandler) OnRateLimit(_ *RateLimitEvent) {}
+func (h *mockHandler) OnSystem(subtype string, _ json.RawMessage) {
+	h.systems = append(h.systems, subtype)
+}
+func (h *mockHandler) OnReaderStopped(err error) { h.errors = append(h.errors, err) }
 
 func TestReaderDispatchAssistant(t *testing.T) {
 	t.Parallel()

@@ -23,42 +23,44 @@
 // the test foci.toml. The binary must be on $PATH or referenced absolutely.
 //
 // Env vars (all optional):
-//   CCSTUB_RECORDER       — path to a JSONL file; each invocation appends one line
-//   CCSTUB_EXIT_CODE      — exit with this code before any handshake (lifecycle tests)
-//   CCSTUB_EXIT_CODE_ONCE_MARKER — one-shot gate for CCSTUB_EXIT_CODE: first
-//                                  spawn exits, subsequent spawns proceed normally
-//   CCSTUB_FAIL_ON_RESUME — if "1"/"true" and --resume is set, exit 1 (simulates missing JSONL)
-//   CCSTUB_HANG           — duration to sleep before the handshake (e.g. "5s")
-//   CCSTUB_RESPONSE       — assistant reply text; default echoes the user prompt
-//   CCSTUB_SCRIPT_DIR     — directory holding per-workdir scripts; the file
-//                           named after the basename of $CWD (e.g. "fotini.json")
-//                           is read on the next user message and its three
-//                           sections applied:
-//                             • text                — assistant reply text
-//                             • tool_uses[]         — tool_use blocks emitted
-//                                                     inside the assistant
-//                                                     message (Bash blocks
-//                                                     are literally executed
-//                                                     so the exec bridge
-//                                                     fires).
-//                             • permission_requests[] — can_use_tool
-//                                                     control_request
-//                                                     envelopes emitted
-//                                                     AFTER the result, with
-//                                                     stable test-supplied
-//                                                     request_ids so the
-//                                                     test can construct
-//                                                     "im:<reqID>:<idx>"
-//                                                     callback strings ahead
-//                                                     of time.
-//                           Script is consumed one-shot — the file is removed
-//                           after the next user message processes.
+//
+//	CCSTUB_RECORDER       — path to a JSONL file; each invocation appends one line
+//	CCSTUB_EXIT_CODE      — exit with this code before any handshake (lifecycle tests)
+//	CCSTUB_EXIT_CODE_ONCE_MARKER — one-shot gate for CCSTUB_EXIT_CODE: first
+//	                               spawn exits, subsequent spawns proceed normally
+//	CCSTUB_FAIL_ON_RESUME — if "1"/"true" and --resume is set, exit 1 (simulates missing JSONL)
+//	CCSTUB_HANG           — duration to sleep before the handshake (e.g. "5s")
+//	CCSTUB_RESPONSE       — assistant reply text; default echoes the user prompt
+//	CCSTUB_SCRIPT_DIR     — directory holding per-workdir scripts; the file
+//	                        named after the basename of $CWD (e.g. "fotini.json")
+//	                        is read on the next user message and its three
+//	                        sections applied:
+//	                          • text                — assistant reply text
+//	                          • tool_uses[]         — tool_use blocks emitted
+//	                                                  inside the assistant
+//	                                                  message (Bash blocks
+//	                                                  are literally executed
+//	                                                  so the exec bridge
+//	                                                  fires).
+//	                          • permission_requests[] — can_use_tool
+//	                                                  control_request
+//	                                                  envelopes emitted
+//	                                                  AFTER the result, with
+//	                                                  stable test-supplied
+//	                                                  request_ids so the
+//	                                                  test can construct
+//	                                                  "im:<reqID>:<idx>"
+//	                                                  callback strings ahead
+//	                                                  of time.
+//	                        Script is consumed one-shot — the file is removed
+//	                        after the next user message processes.
 //
 // Usage:
-//   cc-stub --print --input-format stream-json --output-format stream-json \
-//           [--resume <session-id>] [--model <m>] [--allowedTools <rules>] \
-//           [--settings <json>] [--permission-prompt-tool stdio] \
-//           [--include-partial-messages] [--include-hook-events] [--verbose]
+//
+//	cc-stub --print --input-format stream-json --output-format stream-json \
+//	        [--resume <session-id>] [--model <m>] [--allowedTools <rules>] \
+//	        [--settings <json>] [--permission-prompt-tool stdio] \
+//	        [--include-partial-messages] [--include-hook-events] [--verbose]
 package main
 
 import (
@@ -204,35 +206,35 @@ type stubScript struct {
 // recorderEntry is one line written to the recorder file. Two event
 // kinds are emitted:
 //
-//   Kind="invocation" — at process spawn; captures workdir / resume / flags.
-//   Kind="user_message" — for each user message processed during the
-//     lifetime of the long-lived CC process; captures session_id +
-//     workdir + a short prefix of the text. This is the regression net
-//     for the cross-agent send_to_session bug: a turn that targets
-//     clutch's session MUST land in clutch's workdir.
-//   Kind="permission_request" — for each can_use_tool control_request the
-//     stub emitted on a scripted user turn; captures the request_id so
-//     tests that didn't pre-specify one can still discover it.
-//   Kind="control_response" — for each inbound control_response from foci
-//     (the answer to a can_use_tool request); captures the full inner
-//     payload (behavior / message / decisionClassification / updatedPermissions)
-//     so tests can assert on whatever they need.
-//   Kind="init_system" — captures the system_prompt + appendSystemPrompt
-//     foci sent on the initialize control_request, recorded once per
-//     subprocess at handshake. Tests can assert system-prompt rebuilds
-//     after /reload by comparing PromptLen + PromptSHA256 across spawns.
-//   Kind="bash_tool_use" — captures the Bash command + output + is_error
-//     for every Bash tool_use cc-stub executed inline. Tests use this to
-//     observe what `foci_*` shell functions returned (e.g. memory_search
-//     results, secret-template resolved values) without depending on
-//     foci's tool_result re-injection (which is CC-internal and not
-//     observable in foci's stdout).
+//	Kind="invocation" — at process spawn; captures workdir / resume / flags.
+//	Kind="user_message" — for each user message processed during the
+//	  lifetime of the long-lived CC process; captures session_id +
+//	  workdir + a short prefix of the text. This is the regression net
+//	  for the cross-agent send_to_session bug: a turn that targets
+//	  clutch's session MUST land in clutch's workdir.
+//	Kind="permission_request" — for each can_use_tool control_request the
+//	  stub emitted on a scripted user turn; captures the request_id so
+//	  tests that didn't pre-specify one can still discover it.
+//	Kind="control_response" — for each inbound control_response from foci
+//	  (the answer to a can_use_tool request); captures the full inner
+//	  payload (behavior / message / decisionClassification / updatedPermissions)
+//	  so tests can assert on whatever they need.
+//	Kind="init_system" — captures the system_prompt + appendSystemPrompt
+//	  foci sent on the initialize control_request, recorded once per
+//	  subprocess at handshake. Tests can assert system-prompt rebuilds
+//	  after /reload by comparing PromptLen + PromptSHA256 across spawns.
+//	Kind="bash_tool_use" — captures the Bash command + output + is_error
+//	  for every Bash tool_use cc-stub executed inline. Tests use this to
+//	  observe what `foci_*` shell functions returned (e.g. memory_search
+//	  results, secret-template resolved values) without depending on
+//	  foci's tool_result re-injection (which is CC-internal and not
+//	  observable in foci's stdout).
 //
 // Tests read the JSONL file, group by kind, and assert structurally.
 type recorderEntry struct {
-	Kind      string   `json:"kind"`
-	Timestamp string   `json:"ts"`
-	Workdir   string   `json:"workdir"`
+	Kind      string `json:"kind"`
+	Timestamp string `json:"ts"`
+	Workdir   string `json:"workdir"`
 
 	// invocation-only
 	ResumeID string   `json:"resume_id,omitempty"`
@@ -256,14 +258,14 @@ type recorderEntry struct {
 	ContentBlockTypes []string `json:"content_block_types,omitempty"`
 
 	// permission_request / control_response shared
-	ControlRequestID string          `json:"control_request_id,omitempty"`
+	ControlRequestID string `json:"control_request_id,omitempty"`
 	// permission_request only — the outbound shape the stub emitted, so a
 	// test can also assert "what cc-stub asked foci to approve".
-	OutboundToolName string          `json:"outbound_tool_name,omitempty"`
+	OutboundToolName string `json:"outbound_tool_name,omitempty"`
 	// control_response only — the inner foci payload (e.g. {"behavior":"allow",...}).
 	// Stored as raw JSON so tests can pick fields without coupling to the stub's
 	// view of the schema.
-	ControlResponse  json.RawMessage `json:"control_response,omitempty"`
+	ControlResponse json.RawMessage `json:"control_response,omitempty"`
 
 	// init_system only — system prompt observed on the initialize
 	// control_request. Stored as length + sha256-hex so tests can detect
@@ -293,19 +295,19 @@ func main() {
 	// Parse the flag surface foci passes. We ignore most values — the
 	// stub doesn't care about content, only that flags are accepted.
 	var (
-		printMode        bool
-		inputFormat      string
-		outputFormat     string
-		permTool         string
-		includePartial   bool
-		includeHook      bool
-		verbose          bool
-		model            string
-		resume           string
-		allowedTools     string
-		settings         string
-		appendSysPrompt  string
-		helpFlag         bool
+		printMode       bool
+		inputFormat     string
+		outputFormat    string
+		permTool        string
+		includePartial  bool
+		includeHook     bool
+		verbose         bool
+		model           string
+		resume          string
+		allowedTools    string
+		settings        string
+		appendSysPrompt string
+		helpFlag        bool
 	)
 	fs := flag.NewFlagSet("cc-stub", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -426,8 +428,8 @@ func main() {
 	// Best-effort: send a control_response only if we saw an init request.
 	if reqID, _ := extractInitRequestID(first); reqID != "" {
 		emit(out, map[string]any{
-			"type":        "control_response",
-			"request_id":  reqID,
+			"type":       "control_response",
+			"request_id": reqID,
 			"response": map[string]any{
 				"subtype":    "initialize_success",
 				"session_id": sessionID,

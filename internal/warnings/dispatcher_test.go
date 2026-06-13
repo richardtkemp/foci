@@ -39,10 +39,10 @@ func TestDispatcher_ActiveUser_RateLimit(t *testing.T) {
 	calls := 0
 
 	d := NewDispatcher(DispatcherConfig{
-		Queue:             q,
-		ActiveInterval:    5 * time.Minute,
-		InactiveInterval:  1 * time.Hour,
-		ActivityThreshold: 10 * time.Minute,
+		Queue:                 q,
+		ActiveInterval:        5 * time.Minute,
+		InactiveInterval:      1 * time.Hour,
+		ActivityThreshold:     10 * time.Minute,
 		LastUserMessageTimeFn: func() time.Time { return time.Now() }, // active user
 		DispatchFn: func(text string) {
 			mu.Lock()
@@ -83,10 +83,10 @@ func TestDispatcher_InactiveUser_RateLimit(t *testing.T) {
 	calls := 0
 
 	d := NewDispatcher(DispatcherConfig{
-		Queue:             q,
-		ActiveInterval:    5 * time.Minute,
-		InactiveInterval:  1 * time.Hour,
-		ActivityThreshold: 10 * time.Minute,
+		Queue:                 q,
+		ActiveInterval:        5 * time.Minute,
+		InactiveInterval:      1 * time.Hour,
+		ActivityThreshold:     10 * time.Minute,
 		LastUserMessageTimeFn: func() time.Time { return time.Now().Add(-30 * time.Minute) }, // inactive user
 		DispatchFn: func(text string) {
 			mu.Lock()
@@ -127,10 +127,10 @@ func TestDispatcher_Dispatches(t *testing.T) {
 	var dispatched string
 
 	d := NewDispatcher(DispatcherConfig{
-		Queue:             q,
-		ActiveInterval:    0, // no rate limit for test
-		InactiveInterval:  0,
-		ActivityThreshold: 10 * time.Minute,
+		Queue:                 q,
+		ActiveInterval:        0, // no rate limit for test
+		InactiveInterval:      0,
+		ActivityThreshold:     10 * time.Minute,
 		LastUserMessageTimeFn: func() time.Time { return time.Now() },
 		FormatFn: func(body string) string {
 			return "[PROACTIVE WARNINGS]\n" + body + "\n[SYSTEM INJECTION]"
@@ -163,10 +163,10 @@ func TestDispatcher_ConcurrentGuard(t *testing.T) {
 	calls := 0
 
 	d := NewDispatcher(DispatcherConfig{
-		Queue:             q,
-		ActiveInterval:    0,
-		InactiveInterval:  0,
-		ActivityThreshold: 10 * time.Minute,
+		Queue:                 q,
+		ActiveInterval:        0,
+		InactiveInterval:      0,
+		ActivityThreshold:     10 * time.Minute,
 		LastUserMessageTimeFn: func() time.Time { return time.Now() },
 		DispatchFn: func(text string) {
 			mu.Lock()

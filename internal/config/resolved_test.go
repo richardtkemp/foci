@@ -165,17 +165,17 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Sessions: SessionsConfig{
 			CompactionConfig: CompactionConfig{CompactionThreshold: ptrFloat(0.5)},
 		},
-		Debug:           DebugConfig{MessagesInLog: Ptr(true)},
-		Environment:     EnvironmentConfig{Enabled: Ptr(true), DocsPath: Ptr("docs")},
-		Groups:          GroupsConfig{Groups: map[string]string{"powerful": "x"}},
-		Keepalive:       KeepaliveConfig{Enabled: Ptr(true)},
-		Background:      BackgroundConfig{Enabled: Ptr(true)},
-		Memory:          MemoryConfig{SearchBackend: Ptr("bleve")},
-		Reflection:      ReflectionConfig{IntervalEnabled: Ptr(true)},
-		Scheduler:       SchedulerConfig{TickInterval: Ptr("30s")},
-		Maintenance:     MaintenanceConfig{ConsolidationEnabled: Ptr(true), ConsolidationTime: Ptr("20h"), ResetTime: Ptr("04:20"), ResetIdleGuard: Ptr("55m")},
-		Browser:         BrowserConfig{Enabled: Ptr(true)},
-		Mana:            ManaConfig{Name: Ptr("m")},
+		Debug:       DebugConfig{MessagesInLog: Ptr(true)},
+		Environment: EnvironmentConfig{Enabled: Ptr(true), DocsPath: Ptr("docs")},
+		Groups:      GroupsConfig{Groups: map[string]string{"powerful": "x"}},
+		Keepalive:   KeepaliveConfig{Enabled: Ptr(true)},
+		Background:  BackgroundConfig{Enabled: Ptr(true)},
+		Memory:      MemoryConfig{SearchBackend: Ptr("bleve")},
+		Reflection:  ReflectionConfig{IntervalEnabled: Ptr(true)},
+		Scheduler:   SchedulerConfig{TickInterval: Ptr("30s")},
+		Maintenance: MaintenanceConfig{ConsolidationEnabled: Ptr(true), ConsolidationTime: Ptr("20h"), ResetTime: Ptr("04:20"), ResetIdleGuard: Ptr("55m")},
+		Browser:     BrowserConfig{Enabled: Ptr(true)},
+		Mana:        ManaConfig{Name: Ptr("m")},
 	}
 	acfg := AgentConfig{} // all nil — global values should fill in
 
@@ -249,7 +249,7 @@ func TestResolve_PermissionsUnionRules(t *testing.T) {
 	// not first-non-nil. Also proves the bool follows standard cascade.
 	cfg := &Config{
 		Permissions: PermissionsConfig{
-			AutoApprove:              []string{"Bash:git *", "Read"},
+			AutoApprove:               []string{"Bash:git *", "Read"},
 			AutoApproveCommonReadonly: Ptr(true),
 		},
 	}

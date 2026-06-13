@@ -32,7 +32,7 @@ func TestApplyItalic(t *testing.T) {
 		in, want string
 	}{
 		{"Hello", "𝘏𝘦𝘭𝘭𝘰"},
-		{"Test 123", "𝘛𝘦𝘴𝘵 123"},  // digits unchanged
+		{"Test 123", "𝘛𝘦𝘴𝘵 123"}, // digits unchanged
 		{"", ""},
 	}
 	for _, tt := range tests {
@@ -49,7 +49,7 @@ func TestApplyBoldItalic(t *testing.T) {
 		in, want string
 	}{
 		{"Hello", "𝙃𝙚𝙡𝙡𝙤"},
-		{"A1", "𝘼𝟭"},  // letter bold-italic, digit bold
+		{"A1", "𝘼𝟭"}, // letter bold-italic, digit bold
 		{"", ""},
 	}
 	for _, tt := range tests {

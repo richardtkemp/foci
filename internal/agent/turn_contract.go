@@ -161,7 +161,7 @@ type TurnState struct {
 	TurnThinking string          // resolved thinking mode
 	TurnSpeed    string          // resolved speed setting
 
-	EffectiveDuplicate bool // whether duplicate messages are active (API only)
+	EffectiveDuplicate bool  // whether duplicate messages are active (API only)
 	ConvChatID         int64 // chat ID for conversation logging
 
 	System   []provider.SystemBlock // system prompt blocks (API only)
@@ -207,7 +207,7 @@ type TurnState struct {
 	// --- Delegated-specific ---
 
 	Backend         delegator.Delegator // backend instance for this session (nil for API)
-	sessionFilePath string          // cached before SendToPane to avoid deadlock in OnTurnComplete
+	sessionFilePath string              // cached before SendToPane to avoid deadlock in OnTurnComplete
 }
 
 // NewTurnState creates a TurnState with a properly initialised CompletionChan.

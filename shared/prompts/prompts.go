@@ -53,7 +53,6 @@ func MemoryConsolidation() string { return read("memory-consolidation.md") }
 // FirstRun returns the onboarding prompt injected on an agent's first session.
 func FirstRun() string { return read("first-run.md") }
 
-
 // WeeklyCharacterReview returns the default weekly character review prompt.
 func WeeklyCharacterReview() string { return read("weekly-character-review.md") }
 
@@ -105,4 +104,3 @@ func ResolveOrientationTemplate(promptPath string, directChat bool, searchDirs .
 	}
 	return ResolvePrompt(promptPath, filename, embedded, searchDirs...)
 }
-

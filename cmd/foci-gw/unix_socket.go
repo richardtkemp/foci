@@ -51,7 +51,7 @@ func startUnixSocket(sockPath string, handler http.Handler) (*http.Server, error
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
-		ConnContext:        injectPeerUID,
+		ConnContext:       injectPeerUID,
 	}
 
 	go func() {

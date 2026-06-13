@@ -364,11 +364,11 @@ func TestHandleMessageWithCSVAttachment(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
-		Client:        client,
-		Sessions:      store,
-		Tools:         tools.NewRegistry(),
-		Bootstrap:     bootstrap,
-		Model:         "claude-haiku-4-5",
+		Client:         client,
+		Sessions:       store,
+		Tools:          tools.NewRegistry(),
+		Bootstrap:      bootstrap,
+		Model:          "claude-haiku-4-5",
 		MaxResultChars: 100000,
 	}
 
@@ -426,11 +426,11 @@ func TestHandleMessageWithHTMLAttachment(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
-		Client:        client,
-		Sessions:      store,
-		Tools:         tools.NewRegistry(),
-		Bootstrap:     bootstrap,
-		Model:         "claude-haiku-4-5",
+		Client:         client,
+		Sessions:       store,
+		Tools:          tools.NewRegistry(),
+		Bootstrap:      bootstrap,
+		Model:          "claude-haiku-4-5",
 		MaxResultChars: 100000,
 	}
 

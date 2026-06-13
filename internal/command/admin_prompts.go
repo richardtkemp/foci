@@ -39,15 +39,15 @@ type PromptFile struct {
 type PromptsData struct {
 	AgentID             string
 	Prompts             []PromptInfo
-	PromptDirs          []string           // directories scanned
-	Files               []PromptFile       // files found on disk
-	KnownFilenames      map[string]bool    // recognised prompt filenames (embedded + first-run)
-	WorkspacePromptsDir string             // {workspace}/prompts/ — target for reinstall
-	SharedPromptsDir    string             // {workspace}/../shared/prompts/ — alternate target
-	EmbeddedPrompts     map[string]string  // filename → embedded text (for reinstall)
-	ResolvedTexts       map[string]string  // label → resolved text (for diff)
-	DefaultTexts        map[string]string  // label → embedded default text (for diff)
-	FileMode            os.FileMode        // permission bits for written files
+	PromptDirs          []string          // directories scanned
+	Files               []PromptFile      // files found on disk
+	KnownFilenames      map[string]bool   // recognised prompt filenames (embedded + first-run)
+	WorkspacePromptsDir string            // {workspace}/prompts/ — target for reinstall
+	SharedPromptsDir    string            // {workspace}/../shared/prompts/ — alternate target
+	EmbeddedPrompts     map[string]string // filename → embedded text (for reinstall)
+	ResolvedTexts       map[string]string // label → resolved text (for diff)
+	DefaultTexts        map[string]string // label → embedded default text (for diff)
+	FileMode            os.FileMode       // permission bits for written files
 }
 
 // PromptsCommand returns a /prompts command showing prompt config and files.
@@ -150,14 +150,14 @@ func buildPromptsData(cc CommandContext) PromptsData {
 	)
 
 	embedded := map[string]string{
-		"compaction-summary.md":           prompts.CompactionSummary(),
-		"compaction-handoff.md":           prompts.CompactionHandoff(),
-		"branch-orientation-facet.md": prompts.BranchOrientationFacet(),
-		"branch-orientation-headless.md":  prompts.BranchOrientationHeadless(),
-		"keepalive.md":                    prompts.Keepalive(),
-		"background.md":                   prompts.Background(),
-		"reflection.md":                   prompts.Reflection(),
-		"memory-consolidation.md":         prompts.MemoryConsolidation(),
+		"compaction-summary.md":          prompts.CompactionSummary(),
+		"compaction-handoff.md":          prompts.CompactionHandoff(),
+		"branch-orientation-facet.md":    prompts.BranchOrientationFacet(),
+		"branch-orientation-headless.md": prompts.BranchOrientationHeadless(),
+		"keepalive.md":                   prompts.Keepalive(),
+		"background.md":                  prompts.Background(),
+		"reflection.md":                  prompts.Reflection(),
+		"memory-consolidation.md":        prompts.MemoryConsolidation(),
 	}
 
 	type promptDef struct {

@@ -11,7 +11,7 @@ import (
 // mockDeliver records a Deliver call with the FULL (uncut) payload and whether
 // a surfaced stream sequence was passed.
 type mockDeliver struct {
-	Payload     Payload
+	Payload      Payload
 	StreamMsgIDs []string // MsgIDs() of the stream passed (nil if no stream surfaced)
 }
 

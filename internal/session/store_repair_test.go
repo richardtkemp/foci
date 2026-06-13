@@ -167,4 +167,3 @@ func TestRepairOrphansEmptyDir(t *testing.T) {
 		t.Errorf("repaired = %d, want 0", n)
 	}
 }
-

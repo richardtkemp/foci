@@ -3,12 +3,12 @@ package secrets
 import (
 	"crypto/rand"
 	"fmt"
+	"github.com/BurntSushi/toml"
 	"math/big"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-	"github.com/BurntSushi/toml"
 )
 
 // GeneratePassphrase picks wordCount random words from the EFF Short Wordlist
@@ -39,12 +39,12 @@ var defaultBlockedPaths = []string{
 // Store holds secrets loaded from secrets.toml.
 // Values are stored as flat keys: "anthropic.setup_token", "custom.github_token", etc.
 type Store struct {
-	path          string
-	values        map[string]string
-	allowedHosts  map[string][]string            // section name → allowed hosts
-	allowedAgents map[string][]string            // section name → agent whitelist
-	deniedAgents       map[string][]string            // section name → agent blacklist
-	allowedInBody      map[string][]string            // section name → key names allowed in request body
+	path               string
+	values             map[string]string
+	allowedHosts       map[string][]string // section name → allowed hosts
+	allowedAgents      map[string][]string // section name → agent whitelist
+	deniedAgents       map[string][]string // section name → agent blacklist
+	allowedInBody      map[string][]string // section name → key names allowed in request body
 	blockedPaths       []string
 	agentValues        map[string]map[string]string   // agent ID → flat key → value
 	agentHosts         map[string]map[string][]string // agent ID → section → allowed hosts
@@ -412,4 +412,3 @@ func writeStringArrayField(buf *strings.Builder, key string, values []string) {
 	}
 	buf.WriteString("]\n")
 }
-

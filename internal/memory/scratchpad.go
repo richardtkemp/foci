@@ -43,8 +43,6 @@ func NewScratchpad(dbPath string) (*Scratchpad, error) {
 	return &Scratchpad{db: db}, nil
 }
 
-
-
 // Write sets or overwrites a scratchpad entry for the given agent.
 func (s *Scratchpad) Write(agentID, key, content string) error {
 	now := timeutil.FormatNano(timeutil.Now())

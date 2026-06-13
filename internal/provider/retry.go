@@ -123,10 +123,10 @@ func EndpointNameFromURL(rawURL string) string {
 type retryableClient interface {
 	OnRetrySuccess()
 	WaitForRecovery() <-chan struct{}
-	RetryBaseDelay() time.Duration            // base delay for phase 1 retries
-	OverloadBaseDelay() time.Duration         // base delay for phase 2 retries
-	OverloadMaxDuration() time.Duration       // max duration for phase 2 overload (529) retries
-	ServerErrorMaxDuration() time.Duration    // max duration for phase 2 server error (5xx) retries
+	RetryBaseDelay() time.Duration         // base delay for phase 1 retries
+	OverloadBaseDelay() time.Duration      // base delay for phase 2 retries
+	OverloadMaxDuration() time.Duration    // max duration for phase 2 overload (529) retries
+	ServerErrorMaxDuration() time.Duration // max duration for phase 2 server error (5xx) retries
 }
 
 // retryWithBackoff performs standard exponential backoff retries for retryable errors.

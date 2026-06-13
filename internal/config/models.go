@@ -19,10 +19,10 @@ type ModelDefaults struct {
 
 // ResolvedModel holds the canonical resolution of a model string.
 type ResolvedModel struct {
-	Developer       string // "anthropic", "google", "openai", "deepseek", etc.
-	ModelID         string // "claude-opus-4-6", "gemini-2.5-flash", etc.
-	Format          string // "anthropic", "gemini", "openai" (wire format, derived from developer)
-	Endpoint        string // "anthropic", "openrouter", "google", etc.
+	Developer string // "anthropic", "google", "openai", "deepseek", etc.
+	ModelID   string // "claude-opus-4-6", "gemini-2.5-flash", etc.
+	Format    string // "anthropic", "gemini", "openai" (wire format, derived from developer)
+	Endpoint  string // "anthropic", "openrouter", "google", etc.
 	// From ModelConfig (populated when resolved via a named model entry)
 	Thinking        string // "adaptive", "off", or ""
 	Effort          string // "low", "medium", "high", or ""

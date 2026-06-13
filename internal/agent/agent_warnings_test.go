@@ -130,7 +130,9 @@ func TestBraindeadWarningInjected(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "noop",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("ok"), nil
+		},
 	})
 
 	rs := &nudge.RuleSet{Rules: nudge.BraindeadRule(threshold, "")}
@@ -198,7 +200,9 @@ func TestBraindeadWarningCooldown(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "noop",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("ok"), nil
+		},
 	})
 
 	// cooldown=5 means after firing at tool 2, next eligible is tool 7+.
@@ -266,7 +270,9 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "noop",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("ok"), nil
+		},
 	})
 
 	// threshold=0 → BraindeadRule returns nil → no nudger
@@ -329,7 +335,9 @@ func TestDisplayNoteInjectedOnce(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "noop",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("ok"), nil
+		},
 	})
 
 	ag := &Agent{
@@ -396,7 +404,9 @@ func TestDisplayNoteReflectsSessionOverride(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "noop",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("ok"), nil
+		},
 	})
 
 	sk := "test/imain/1000000000"
@@ -432,4 +442,3 @@ func TestDisplayNoteReflectsSessionOverride(t *testing.T) {
 	}
 	t.Error("no [display] note found in tool results")
 }
-

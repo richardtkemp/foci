@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/internal/provider"
 	"foci/internal/config"
+	"foci/internal/provider"
 	"foci/internal/secrets"
 )
 
@@ -118,7 +118,7 @@ func NewReadTool(store *secrets.Store, workspace string, maxReadBytes int64) *To
 	return &Tool{
 		Name:        "read",
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
-		Parameters: json.RawMessage(readToolSchema),
+		Parameters:  json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return readFile(ctx, params, fileScope{store: store, workspace: workspace, maxReadBytes: maxReadBytes})
 		},
@@ -181,7 +181,7 @@ func NewIsolatedReadTool(store *secrets.Store, baseDir string) *Tool {
 	return &Tool{
 		Name:        "read",
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
-		Parameters: json.RawMessage(readToolSchema),
+		Parameters:  json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return readFile(ctx, params, fileScope{store: store, baseDir: baseDir})
 		},

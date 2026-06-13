@@ -66,9 +66,9 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		AgentID:           acfg.ID,
 		SessionIndex:      s.p.sessionIndex,
 		MessageTransforms: agent.CompileTransforms(resolveMessageTransforms(acfg, s.p.cfg)),
-		PromptSearchDirs:      s.promptSearchDirs,
-		Reflection:            s.p.resolved.Reflection,
-		ShowToolCalls:         resolveShowToolCalls(s.p.resolved),
+		PromptSearchDirs:  s.promptSearchDirs,
+		Reflection:        s.p.resolved.Reflection,
+		ShowToolCalls:     resolveShowToolCalls(s.p.resolved),
 	}
 }
 
@@ -108,22 +108,22 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 // fields; delegated agents populate bootstrap + skillRegistry + skillsDirs
 // and leave the API-only tool/client fields nil.
 type finalizeParams struct {
-	bootstrap     *workspace.Bootstrap
-	registry      *tools.Registry        // nil for delegated agents
-	skillRegistry *skills.Registry
-	serverTools   []provider.ToolDef     // nil for delegated agents
-	client        provider.Client        // nil for delegated agents
-	clientProvider provider.ClientProvider // nil for delegated agents
+	bootstrap           *workspace.Bootstrap
+	registry            *tools.Registry // nil for delegated agents
+	skillRegistry       *skills.Registry
+	serverTools         []provider.ToolDef       // nil for delegated agents
+	client              provider.Client          // nil for delegated agents
+	clientProvider      provider.ClientProvider  // nil for delegated agents
 	usageClientProvider mana.UsageClientProvider // nil for delegated agents
-	fallbackFn    provider.FallbackFunc  // nil for delegated agents
-	compactionThreshold float64          // 0 for delegated agents
-	tmuxTool      *tools.Tool            // nil for delegated agents
-	tmuxClearAll  func()                 // nil for delegated agents
-	tmuxWatchCount func() int            // nil for delegated agents
-	tmuxMigrateKey func(string, string)  // nil for delegated agents
-	ttsRepls      map[string]string      // nil for delegated agents
-	mcpManager    *mcpkg.Manager         // nil for delegated agents
-	skillsDirs    []string
+	fallbackFn          provider.FallbackFunc    // nil for delegated agents
+	compactionThreshold float64                  // 0 for delegated agents
+	tmuxTool            *tools.Tool              // nil for delegated agents
+	tmuxClearAll        func()                   // nil for delegated agents
+	tmuxWatchCount      func() int               // nil for delegated agents
+	tmuxMigrateKey      func(string, string)     // nil for delegated agents
+	ttsRepls            map[string]string        // nil for delegated agents
+	mcpManager          *mcpkg.Manager           // nil for delegated agents
+	skillsDirs          []string
 }
 
 // finalize performs the common postamble: nudge system, slash commands,

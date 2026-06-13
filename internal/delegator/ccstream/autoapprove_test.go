@@ -239,7 +239,7 @@ func TestExtractMatchString(t *testing.T) {
 		{"Grep", `{"pattern":"TODO","path":"/src"}`, "TODO"},
 		{"WebFetch", `{"url":"https://example.com"}`, "https://example.com"},
 		{"WebSearch", `{"query":"golang generics"}`, "golang generics"},
-		{"Search", `{"query":"hello"}`, ""},  // Search has no match key
+		{"Search", `{"query":"hello"}`, ""}, // Search has no match key
 		{"Bash", `{}`, ""},
 		{"Bash", `invalid json`, ""},
 		{"Bash", ``, ""},
@@ -656,11 +656,11 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"rm -rf /"}`},
 		{"Bash", `{"command":"sudo reboot"}`},
 		{"Bash", `{"command":"chmod 777 /etc/shadow"}`},
-		{"Bash", `{"command":"ls && rm -rf /"}`},         // safe prefix + dangerous chain
-		{"Bash", `{"command":"cat /etc/hosts | sh"}`},    // safe prefix piped to shell
-		{"Bash", `{"command":"echo hello; curl evil"}`},  // safe prefix + dangerous chain
-		{"Bash", `{"command":"ls $(rm -rf /)"}`},         // unsafe command inside $()
-		{"Bash", `{"command":"echo $(curl evil.com)"}`},  // unsafe command inside $()
+		{"Bash", `{"command":"ls && rm -rf /"}`},        // safe prefix + dangerous chain
+		{"Bash", `{"command":"cat /etc/hosts | sh"}`},   // safe prefix piped to shell
+		{"Bash", `{"command":"echo hello; curl evil"}`}, // safe prefix + dangerous chain
+		{"Bash", `{"command":"ls $(rm -rf /)"}`},        // unsafe command inside $()
+		{"Bash", `{"command":"echo $(curl evil.com)"}`}, // unsafe command inside $()
 
 		// sed with -i is in-place edit — must be rejected.
 		{"Bash", `{"command":"sed -i 's/foo/bar/' file.txt"}`},
@@ -716,7 +716,7 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"cat /etc/{passwd,shadow}"}`},
 
 		// awk has built-in command execution and file I/O.
-		{"Bash", `{"command":"awk 'BEGIN{system(\"rm file\")}'"}` },
+		{"Bash", `{"command":"awk 'BEGIN{system(\"rm file\")}'"}`},
 		{"Bash", `{"command":"awk '{print > \"/tmp/stolen\"}' /etc/passwd"}`},
 
 		// Absolute paths bypass command-name matching.
@@ -1057,7 +1057,7 @@ func TestSedArgUnsafe(t *testing.T) {
 		{"'y/abc/xyz/'", false},
 		{"'q'", false},
 		{"'a\\text'", false},
-		{"'r file'", false},  // r reads from file (not a write)
+		{"'r file'", false}, // r reads from file (not a write)
 		{"'1p'", false},
 		// Dangerous: w command writes to file.
 		{"'w /tmp/stolen.txt'", true},
@@ -1076,8 +1076,8 @@ func TestSedArgUnsafe(t *testing.T) {
 		// Dangerous: s///e flag — execute replacement as shell command.
 		{"'s/foo/bar/e'", true},
 		{"'s|cmd|replacement|e'", true},
-		{"'s/foo/bar/ge'", true},    // combined flags
-		{"'s/foo/bar/Ie'", true},    // case-insensitive + execute
+		{"'s/foo/bar/ge'", true}, // combined flags
+		{"'s/foo/bar/Ie'", true}, // case-insensitive + execute
 		// Dangerous: s///w flag — write matched lines to file.
 		{"'s/foo/bar/w /tmp/file'", true},
 		// Without quotes.

@@ -22,33 +22,33 @@ var boolKeyLineRe = regexp.MustCompile(`(?m)^(\s*(\w+)\s*=\s*)"(?i)(on|off|true|
 // boolKeys is the set of TOML keys that are bool-typed in the config structs.
 // Only these keys have their quoted string values normalized to native bools.
 var boolKeys = map[string]bool{
-	"duplicate_messages":    true,
-	"startup_notify":        true,
-	"messages_in_log":       true,
-	"compaction_notify":     true,
-	"compaction_debug":      true,
-	"log_api_key_suffix":    true,
-	"tmux_autopilot":        true,
-	"auto_refresh":          true,
-	"enable_stop_aliases":   true,
-	"full_payload":          true,
-	"cache_bust_detect":     true,
-	"log_rotation":          true,
-	"ws_enabled":            true,
-	"enabled":               true,
-	"skip_security_checks":  true,
-	"streaming":             true,
-	"interval_enabled":      true,
-	"consolidation_enabled": true,
-	"session_end_enabled":   true,
-	"steer_mode":            true,
-	"nudge_enable":           true,
-	"nudge_auto_extract":     true,
-	"nudge_pre_answer_gate":  true,
-	"nudge_default_enable":   true,
-	"browser_enabled":       true,
-	"headless":              true,
-	"autocompact_before_mana_refresh":     true,
+	"duplicate_messages":              true,
+	"startup_notify":                  true,
+	"messages_in_log":                 true,
+	"compaction_notify":               true,
+	"compaction_debug":                true,
+	"log_api_key_suffix":              true,
+	"tmux_autopilot":                  true,
+	"auto_refresh":                    true,
+	"enable_stop_aliases":             true,
+	"full_payload":                    true,
+	"cache_bust_detect":               true,
+	"log_rotation":                    true,
+	"ws_enabled":                      true,
+	"enabled":                         true,
+	"skip_security_checks":            true,
+	"streaming":                       true,
+	"interval_enabled":                true,
+	"consolidation_enabled":           true,
+	"session_end_enabled":             true,
+	"steer_mode":                      true,
+	"nudge_enable":                    true,
+	"nudge_auto_extract":              true,
+	"nudge_pre_answer_gate":           true,
+	"nudge_default_enable":            true,
+	"browser_enabled":                 true,
+	"headless":                        true,
+	"autocompact_before_mana_refresh": true,
 }
 
 // normalizeBoolStrings preprocesses TOML content to convert quoted bool-like
@@ -128,7 +128,6 @@ func ApplyProviderDefaults(cfg *Config, getDefaults PlatformDefaulter) {
 		}
 	}
 }
-
 
 // Load reads config from the given TOML file path.
 func Load(path string) (*Config, error) {

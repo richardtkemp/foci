@@ -362,4 +362,3 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 		t.Errorf("final response = %q, want %q", finalResp, expected)
 	}
 }
-

@@ -98,7 +98,6 @@ func modelDefaultsFn(models map[string]config.ModelConfig) func(string) config.M
 	}
 }
 
-
 // buildBotConflictSkipSet returns a map of agent IDs that should be skipped
 // because they share a bot token with an earlier agent.  It also logs a loud
 // banner for each conflict so operators notice immediately.

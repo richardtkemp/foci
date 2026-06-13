@@ -173,8 +173,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		SessionIndex:       p.sessionIndex,
 		BranchFunc:         branchFn,
 
-		WarningDispatcher:      warningDispatcher,
-		ChatWarningDispatcher:  chatWarningDispatcher,
+		WarningDispatcher:     warningDispatcher,
+		ChatWarningDispatcher: chatWarningDispatcher,
 		HasActiveWorkFn: func() int {
 			// Test-only override: if the L2 control socket has set a
 			// value (≥ 0), use it verbatim. -1 sentinel means no

@@ -16,10 +16,10 @@ import (
 // function to dispatch directly to the correct platform, avoiding false-positive
 // matches when chat IDs collide across platforms.
 type aggregatingConnMgr struct {
-	named                map[string]ConnectionManager // platform name → manager
-	order                []string                     // iteration order
-	chatPlatformFn       func(agentID string, chatID int64) string
-	defaultSessionKeyFn  func(agentID string) string // resolves most recently active session
+	named               map[string]ConnectionManager // platform name → manager
+	order               []string                     // iteration order
+	chatPlatformFn      func(agentID string, chatID int64) string
+	defaultSessionKeyFn func(agentID string) string // resolves most recently active session
 }
 
 func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(agentID string, chatID int64) string, defaultSessionKeyFn func(agentID string) string) *aggregatingConnMgr {

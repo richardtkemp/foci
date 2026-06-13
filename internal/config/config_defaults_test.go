@@ -186,7 +186,6 @@ id = "test"
 	}
 }
 
-
 func TestApplyDefaultsReflect(t *testing.T) {
 	// Verify that the reflect-based waterfall copies all config section fields.
 	// Note: effort and thinking are now per-model in [models.<name>], not global sections.

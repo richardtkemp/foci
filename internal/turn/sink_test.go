@@ -49,24 +49,26 @@ func (f *fakeTypingConn) SetTyping(on bool) { f.typingCalls = append(f.typingCal
 
 // Everything else panics — if StreamingSink ever reaches for these we want
 // the test to fail loudly so we know the sink grew a new coupling.
-func (f *fakeTypingConn) SendText(string) error                 { panic("SendText") }
-func (f *fakeTypingConn) SendTextToChat(int64, string) error    { panic("SendTextToChat") }
-func (f *fakeTypingConn) SessionKey() string                    { panic("SessionKey") }
-func (f *fakeTypingConn) SendDocument(string, string) error     { panic("SendDocument") }
-func (f *fakeTypingConn) SendVoice(string) error                { panic("SendVoice") }
-func (f *fakeTypingConn) SendVideo(string, string) error        { panic("SendVideo") }
-func (f *fakeTypingConn) SendPhoto(string, string) error        { panic("SendPhoto") }
-func (f *fakeTypingConn) SendAudio(string, string) error        { panic("SendAudio") }
-func (f *fakeTypingConn) SendAnimation(string, string) error    { panic("SendAnimation") }
-func (f *fakeTypingConn) SendVoiceData([]byte) error            { panic("SendVoiceData") }
+func (f *fakeTypingConn) SendText(string) error              { panic("SendText") }
+func (f *fakeTypingConn) SendTextToChat(int64, string) error { panic("SendTextToChat") }
+func (f *fakeTypingConn) SessionKey() string                 { panic("SessionKey") }
+func (f *fakeTypingConn) SendDocument(string, string) error  { panic("SendDocument") }
+func (f *fakeTypingConn) SendVoice(string) error             { panic("SendVoice") }
+func (f *fakeTypingConn) SendVideo(string, string) error     { panic("SendVideo") }
+func (f *fakeTypingConn) SendPhoto(string, string) error     { panic("SendPhoto") }
+func (f *fakeTypingConn) SendAudio(string, string) error     { panic("SendAudio") }
+func (f *fakeTypingConn) SendAnimation(string, string) error { panic("SendAnimation") }
+func (f *fakeTypingConn) SendVoiceData([]byte) error         { panic("SendVoiceData") }
 func (f *fakeTypingConn) SendDocumentToChat(int64, string, string) error {
 	panic("SendDocumentToChat")
 }
-func (f *fakeTypingConn) SendVoiceToChat(int64, string) error             { panic("SendVoiceToChat") }
-func (f *fakeTypingConn) SendVideoToChat(int64, string, string) error     { panic("SendVideoToChat") }
-func (f *fakeTypingConn) SendPhotoToChat(int64, string, string) error     { panic("SendPhotoToChat") }
-func (f *fakeTypingConn) SendAudioToChat(int64, string, string) error     { panic("SendAudioToChat") }
-func (f *fakeTypingConn) SendAnimationToChat(int64, string, string) error { panic("SendAnimationToChat") }
+func (f *fakeTypingConn) SendVoiceToChat(int64, string) error         { panic("SendVoiceToChat") }
+func (f *fakeTypingConn) SendVideoToChat(int64, string, string) error { panic("SendVideoToChat") }
+func (f *fakeTypingConn) SendPhotoToChat(int64, string, string) error { panic("SendPhotoToChat") }
+func (f *fakeTypingConn) SendAudioToChat(int64, string, string) error { panic("SendAudioToChat") }
+func (f *fakeTypingConn) SendAnimationToChat(int64, string, string) error {
+	panic("SendAnimationToChat")
+}
 func (f *fakeTypingConn) SendVoiceDataToChat(int64, []byte) error { panic("SendVoiceDataToChat") }
 func (f *fakeTypingConn) PlatformName() string                    { panic("PlatformName") }
 func (f *fakeTypingConn) SessionKeyForChat(int64) string          { panic("SessionKeyForChat") }
@@ -80,9 +82,9 @@ func (f *fakeTypingConn) UpdateChatSessionKey(int64, string)      { panic("Updat
 func (f *fakeTypingConn) SendInjectedMessage(string, string) error {
 	panic("SendInjectedMessage")
 }
-func (f *fakeTypingConn) SendToSession(string, string) error     { panic("SendToSession") }
-func (f *fakeTypingConn) SendNotification(string)                { panic("SendNotification") }
-func (f *fakeTypingConn) SendNotificationDirect(string) string   { panic("SendNotificationDirect") }
+func (f *fakeTypingConn) SendToSession(string, string) error   { panic("SendToSession") }
+func (f *fakeTypingConn) SendNotification(string)              { panic("SendNotification") }
+func (f *fakeTypingConn) SendNotificationDirect(string) string { panic("SendNotificationDirect") }
 
 // TestStreamingSinkTypingLifecycle asserts the sink drives the typing
 // indicator entirely through events: TurnStart turns typing on, TurnComplete
@@ -328,8 +330,8 @@ func TestStreamingSinkCancelledContextDropsError(t *testing.T) {
 type fakeSessionConn struct {
 	fakeTypingConn
 
-	sendCalls  []string
-	sendErr    error
+	sendCalls []string
+	sendErr   error
 }
 
 func (f *fakeSessionConn) SendToSession(_ string, text string) error {

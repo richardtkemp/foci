@@ -237,8 +237,8 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 // e.g. foci.log → archive/foci-2026-03-01T17:00:00Z--2026-03-01T19:15:00Z.log.gz
 func archiveName(path, archiveDir string, first, last time.Time) string {
 	base := filepath.Base(path)
-	ext := filepath.Ext(base)              // .jsonl or .log
-	name := strings.TrimSuffix(base, ext)  // api-payload or foci
+	ext := filepath.Ext(base)             // .jsonl or .log
+	name := strings.TrimSuffix(base, ext) // api-payload or foci
 
 	startStr := timeutil.Format(first)
 	endStr := timeutil.Format(last)

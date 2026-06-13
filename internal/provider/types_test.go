@@ -158,8 +158,8 @@ func TestAPIErrorIsOverloaded(t *testing.T) {
 	// Proves that IsOverloaded correctly identifies only HTTP 529 as an overload error,
 	// returning false for other status codes.
 	tests := []struct {
-		status    int
-		wantOvld  bool
+		status   int
+		wantOvld bool
 	}{
 		{529, true},
 		{500, false},
@@ -606,7 +606,7 @@ func TestComputeSessionStats_MixedBlocks(t *testing.T) {
 		{
 			Role: "user",
 			Content: []ContentBlock{
-				{Type: "tool_result", Content: "result"}, // 6 bytes
+				{Type: "tool_result", Content: "result"},              // 6 bytes
 				{Type: "image", Source: &ContentSource{Data: "AAAA"}}, // 4 bytes
 			},
 		},

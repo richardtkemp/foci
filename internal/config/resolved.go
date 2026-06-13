@@ -5,27 +5,27 @@ package config
 // Resolve(). All fields have defaults baked in — consumers read directly
 // without DerefBool/DerefStr/DerefInt.
 type ResolvedAgentConfig struct {
-	Loop            ResolvedLoop
-	Behavior        ResolvedBehavior
-	Voice           ResolvedVoice
-	Nudge           ResolvedNudge
-	System          ResolvedSystem
-	Tools           ResolvedTool
-	Summary         ResolvedSummary
-	Compaction      ResolvedCompaction
-	Debug           ResolvedDebug
-	Environment     ResolvedEnvironment
-	Groups          GroupsConfig
-	Keepalive       ResolvedKeepalive
-	Background      ResolvedBackground
-	MemorySearch    ResolvedMemorySearch
-	Reflection      ResolvedReflection
-	Scheduler       ResolvedScheduler
-	Maintenance     ResolvedMaintenance
-	Browser         ResolvedBrowser
-	Mana            ResolvedMana
-	Display         ResolvedDisplay
-	Notify          ResolvedNotify
+	Loop         ResolvedLoop
+	Behavior     ResolvedBehavior
+	Voice        ResolvedVoice
+	Nudge        ResolvedNudge
+	System       ResolvedSystem
+	Tools        ResolvedTool
+	Summary      ResolvedSummary
+	Compaction   ResolvedCompaction
+	Debug        ResolvedDebug
+	Environment  ResolvedEnvironment
+	Groups       GroupsConfig
+	Keepalive    ResolvedKeepalive
+	Background   ResolvedBackground
+	MemorySearch ResolvedMemorySearch
+	Reflection   ResolvedReflection
+	Scheduler    ResolvedScheduler
+	Maintenance  ResolvedMaintenance
+	Browser      ResolvedBrowser
+	Mana         ResolvedMana
+	Display      ResolvedDisplay
+	Notify       ResolvedNotify
 
 	Permissions ResolvedPermissions
 

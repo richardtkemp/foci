@@ -75,7 +75,6 @@ func TestGracefulShutdown_TimesOut(t *testing.T) {
 	ag.SetProcessingForTest(0)
 }
 
-
 func TestReadAndConsumeWelcomeFile(t *testing.T) {
 	// Proves that readAndConsumeWelcomeFile reads the file, deletes it, and
 	// returns the trimmed content.
@@ -449,7 +448,6 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 		t.Errorf("second result source = %q, want 'global'", results[1].Source)
 	}
 }
-
 
 // ========== /-/reload-credentials endpoint tests ==========
 

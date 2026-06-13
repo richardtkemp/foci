@@ -33,8 +33,8 @@ func NormalizeWarning(msg string) string {
 // warningBucket tracks rate-limiting state for one unique warning key.
 type warningBucket struct {
 	windowStart          time.Time
-	allowed              int // messages passed through in this window
-	suppressedSinceDrain int // suppressed count since last Drain()
+	allowed              int    // messages passed through in this window
+	suppressedSinceDrain int    // suppressed count since last Drain()
 	component            string // for summary messages
 	level                string
 	quiet                bool // entered after first saturated window expires
@@ -54,9 +54,9 @@ type Queue struct {
 	maxPerWindow   int
 	windowDuration time.Duration
 	buckets        map[string]*warningBucket
-	errorsOnly     bool                 // when true, Push silently drops non-ERROR entries
-	nowFunc        func() time.Time     // for deterministic testing
-	suppressed     atomic.Int32         // when > 0, Push is a no-op (breaks dispatch→warn→push loops)
+	errorsOnly     bool             // when true, Push silently drops non-ERROR entries
+	nowFunc        func() time.Time // for deterministic testing
+	suppressed     atomic.Int32     // when > 0, Push is a no-op (breaks dispatch→warn→push loops)
 }
 
 // NewQueue creates a warning queue with optional rate-limiting.
@@ -88,7 +88,7 @@ func (q *Queue) SetErrorsOnly(v bool) {
 // log warning (e.g. "no channel ID"), that warning must not re-enter the same
 // queue, otherwise each failed dispatch grows the next diagnostic payload
 // indefinitely.
-func (q *Queue) Suppress()   { q.suppressed.Add(1) }
+func (q *Queue) Suppress() { q.suppressed.Add(1) }
 
 // Unsuppress decrements the suppression counter.
 func (q *Queue) Unsuppress() { q.suppressed.Add(-1) }

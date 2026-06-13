@@ -290,4 +290,3 @@ func TestProcessingCounter_Multiple(t *testing.T) {
 		t.Fatal("should not be processing with count 0")
 	}
 }
-

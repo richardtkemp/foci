@@ -291,4 +291,3 @@ allowed_hosts = ["api-b.example.com"]
 		t.Errorf("api_b hosts = %v", hostsB)
 	}
 }
-

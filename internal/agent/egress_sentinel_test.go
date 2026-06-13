@@ -46,24 +46,26 @@ func (c *recordingConn) SendVoiceData([]byte) error         { panic("SendVoiceDa
 func (c *recordingConn) SendDocumentToChat(int64, string, string) error {
 	panic("SendDocumentToChat")
 }
-func (c *recordingConn) SendVoiceToChat(int64, string) error             { panic("SendVoiceToChat") }
-func (c *recordingConn) SendVideoToChat(int64, string, string) error     { panic("SendVideoToChat") }
-func (c *recordingConn) SendPhotoToChat(int64, string, string) error     { panic("SendPhotoToChat") }
-func (c *recordingConn) SendAudioToChat(int64, string, string) error     { panic("SendAudioToChat") }
-func (c *recordingConn) SendAnimationToChat(int64, string, string) error { panic("SendAnimationToChat") }
-func (c *recordingConn) SendVoiceDataToChat(int64, []byte) error         { panic("SendVoiceDataToChat") }
-func (c *recordingConn) PlatformName() string                           { return "test" }
-func (c *recordingConn) SessionKeyForChat(int64) string                 { return "" }
-func (c *recordingConn) DefaultSessionKey() string                      { return "" }
-func (c *recordingConn) SetSessionKey(string)                           {}
-func (c *recordingConn) SetSessionKeyDirect(string)                     {}
-func (c *recordingConn) SetChatID(int64)                                {}
-func (c *recordingConn) ChatID() int64                                  { return 0 }
-func (c *recordingConn) Username() string                               { return "" }
-func (c *recordingConn) UpdateChatSessionKey(int64, string)             {}
-func (c *recordingConn) SendInjectedMessage(string, string) error       { panic("SendInjectedMessage") }
-func (c *recordingConn) SendNotification(string)                        {}
-func (c *recordingConn) SendNotificationDirect(string) string           { return "" }
+func (c *recordingConn) SendVoiceToChat(int64, string) error         { panic("SendVoiceToChat") }
+func (c *recordingConn) SendVideoToChat(int64, string, string) error { panic("SendVideoToChat") }
+func (c *recordingConn) SendPhotoToChat(int64, string, string) error { panic("SendPhotoToChat") }
+func (c *recordingConn) SendAudioToChat(int64, string, string) error { panic("SendAudioToChat") }
+func (c *recordingConn) SendAnimationToChat(int64, string, string) error {
+	panic("SendAnimationToChat")
+}
+func (c *recordingConn) SendVoiceDataToChat(int64, []byte) error  { panic("SendVoiceDataToChat") }
+func (c *recordingConn) PlatformName() string                     { return "test" }
+func (c *recordingConn) SessionKeyForChat(int64) string           { return "" }
+func (c *recordingConn) DefaultSessionKey() string                { return "" }
+func (c *recordingConn) SetSessionKey(string)                     {}
+func (c *recordingConn) SetSessionKeyDirect(string)               {}
+func (c *recordingConn) SetChatID(int64)                          {}
+func (c *recordingConn) ChatID() int64                            { return 0 }
+func (c *recordingConn) Username() string                         { return "" }
+func (c *recordingConn) UpdateChatSessionKey(int64, string)       {}
+func (c *recordingConn) SendInjectedMessage(string, string) error { panic("SendInjectedMessage") }
+func (c *recordingConn) SendNotification(string)                  {}
+func (c *recordingConn) SendNotificationDirect(string) string     { return "" }
 
 // newSentinelTestAgent builds a minimal API-backend agent (DelegatedManager is
 // nil, so HandleMessage selects APITransport) whose single inference call

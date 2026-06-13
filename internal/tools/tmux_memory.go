@@ -37,9 +37,9 @@ type TmuxMemoryMonitor struct {
 	done   chan struct{}
 
 	// Overridable for testing.
-	getTmuxRSSFn func() (int64, error)
+	getTmuxRSSFn  func() (int64, error)
 	getMemTotalFn func() (int64, error)
-	killTmuxFn   func() ([]string, error)
+	killTmuxFn    func() ([]string, error)
 }
 
 // NewTmuxMemoryMonitor creates a monitor. notifyFn is called for user

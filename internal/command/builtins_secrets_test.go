@@ -27,10 +27,10 @@ func TestSecretsListTable(t *testing.T) {
 	store := &mockSecretsStore{
 		data: map[string]string{
 			"anthropic.setup_token": "x",
-			"telegram.clutch":      "x",
-			"telegram.clutchling":  "x",
-			"telegram.scout":       "x",
-			"brave.api_key":        "x",
+			"telegram.clutch":       "x",
+			"telegram.clutchling":   "x",
+			"telegram.scout":        "x",
+			"brave.api_key":         "x",
 		},
 		allowedHosts: map[string][]string{
 			"anthropic": {"api.anthropic.com"},

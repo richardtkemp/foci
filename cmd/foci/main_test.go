@@ -145,8 +145,6 @@ func mockGateway() *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-
-
 // TestCLIEnvVars verifies that FOCI_* environment variables are correctly
 // honoured, including overrides from explicit flags. The test execs the built
 // foci binary as a subprocess and asserts on stdout/exit codes — it cannot
@@ -322,13 +320,6 @@ func TestCLIEnvVars(t *testing.T) {
 	}
 }
 
-
-
-
-
-
-
-
 func TestSubcommandHelp(t *testing.T) {
 	// Each subcommand should return nil (no error) when given -h or --help,
 	// without making any HTTP requests.
@@ -461,4 +452,3 @@ func TestWantsHelp(t *testing.T) {
 		}
 	}
 }
-

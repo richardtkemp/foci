@@ -90,9 +90,9 @@ func (s *ShowThinking) UnmarshalTOML(v any) error {
 type InjectionLevel string
 
 const (
-	InjectionAll  InjectionLevel = "all"  // inject WARN + ERROR
+	InjectionAll    InjectionLevel = "all"    // inject WARN + ERROR
 	InjectionErrors InjectionLevel = "errors" // inject ERROR only
-	InjectionOff  InjectionLevel = "off"  // disabled
+	InjectionOff    InjectionLevel = "off"    // disabled
 )
 
 // UnmarshalTOML accepts "off"/"false", "errors", or "all"/"true"/"full" (plus bool).
@@ -143,12 +143,11 @@ func (il InjectionLevel) IncludeWarnings() bool {
 // Embed in Config (global, TOML [mana]) and AgentConfig (per-agent).
 // All fields are pointer/slice types for Merge-based resolution.
 type ManaConfig struct {
-	Name             *string `toml:"name"              default:"mana"  desc:"what to call quota (e.g. mana)"` // what to call quota
-	Thresholds       []int   `toml:"thresholds"`                       // mana percentages to warn at (e.g. [50, 25, 10, 5])
+	Name             *string `toml:"name"              default:"mana"  desc:"what to call quota (e.g. mana)"`               // what to call quota
+	Thresholds       []int   `toml:"thresholds"`                                                                            // mana percentages to warn at (e.g. [50, 25, 10, 5])
 	RestoreThreshold *int    `toml:"restore_threshold" desc:"mana restore notice threshold (0=disabled)" min:"0" max:"100"` // inject session notice when mana restores to 100% after being below this (0=disabled)
 	InvestInterval   *string `toml:"invest_interval"   default:"30m"  desc:"quiet period after mana reset" type:"duration"` // quiet period after mana reset before spending
 }
-
 
 // ContextWindow represents a model's context window size in tokens.
 // Accepts plain integers or strings with k/K suffix (1k = 1000 tokens).
@@ -232,9 +231,9 @@ type ModelConfig struct {
 	Effort          string        `toml:"effort"`           // "low", "medium", "high"
 	Speed           string        `toml:"speed"`            // "fast" or ""
 	Context         ContextWindow `toml:"context"`          // context window size in tokens (e.g. 262000 or "262k")
-	EnableKeepalive *bool         `toml:"enable_keepalive"`  // nil=auto-detect, true/false=explicit
-	CacheTTL        string        `toml:"cache_ttl"`         // cache TTL: Go duration, empty=auto-detect (Anthropic: "5m"/"1h"; Gemini: any duration)
-	CacheStrategy   string        `toml:"cache_strategy"`    // cache marker strategy: "auto" or "explicit" (Anthropic only, default "auto")
+	EnableKeepalive *bool         `toml:"enable_keepalive"` // nil=auto-detect, true/false=explicit
+	CacheTTL        string        `toml:"cache_ttl"`        // cache TTL: Go duration, empty=auto-detect (Anthropic: "5m"/"1h"; Gemini: any duration)
+	CacheStrategy   string        `toml:"cache_strategy"`   // cache marker strategy: "auto" or "explicit" (Anthropic only, default "auto")
 }
 
 // CCBackendConfig holds defaults shared by all Claude Code-based delegator
@@ -263,19 +262,19 @@ type CCBackendConfig struct {
 // (not decoded by TOML directly since the section mixes string keys with sub-tables).
 // Users can define arbitrary groups; "powerful" is required, "fast"/"cheap" default to it.
 type GroupsConfig struct {
-	Groups    map[string]string `toml:"-"`          // group name → model (populated by load.go from TOML metadata)
-	Calls     map[string]string `toml:"calls"`      // call site → group overrides
-	Fallbacks map[string]string `toml:"fallbacks"`  // model → fallback model
+	Groups    map[string]string `toml:"-"`         // group name → model (populated by load.go from TOML metadata)
+	Calls     map[string]string `toml:"calls"`     // call site → group overrides
+	Fallbacks map[string]string `toml:"fallbacks"` // model → fallback model
 }
 
 type AgentConfig struct {
 	ID        string `toml:"id"`
-	Name      string `toml:"name"`      // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji     string `toml:"emoji"`     // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	Name      string `toml:"name"`  // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji     string `toml:"emoji"` // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
 	Workspace string `toml:"workspace"`
 
-	Memory    MemoryConfig      `toml:"memory"`    // per-agent memory overrides (sources combined with global [memory])
-	Platforms []PlatformConfig  `toml:"platforms"` // per-agent platform configurations
+	Memory    MemoryConfig     `toml:"memory"`    // per-agent memory overrides (sources combined with global [memory])
+	Platforms []PlatformConfig `toml:"platforms"` // per-agent platform configurations
 
 	// Per-agent overrides — resolved via Merge at use time
 	// (e.g. config.Merge(acfg.Nudge, cfg.Defaults.Nudge)).
@@ -287,19 +286,19 @@ type AgentConfig struct {
 	Behavior BehaviorConfig  `toml:"behavior"` // overrides from [defaults.behavior]
 	System   SystemConfig    `toml:"system"`   // overrides from [defaults.system]
 
-	Sessions        AgentSessionsOverride `toml:"sessions"`          // overrides from [sessions]
-	Tools           AgentToolsOverride    `toml:"tools"`             // overrides from [tools]
-	Debug           DebugConfig           `toml:"debug"`             // overrides from [debug]
-	Environment     EnvironmentConfig     `toml:"environment"`       // overrides from [environment]
-	Browser         BrowserConfig         `toml:"browser"`           // overrides from [browser]
-	Keepalive       KeepaliveConfig       `toml:"keepalive"`         // overrides from [keepalive]
-	Background      BackgroundConfig      `toml:"background"`        // overrides from [background]
-	Reflection ReflectionConfig `toml:"reflection"`  // overrides from [reflection]
-	Scheduler       SchedulerConfig       `toml:"scheduler"`         // overrides from [scheduler]
-	Maintenance     MaintenanceConfig     `toml:"maintenance"`       // overrides from [maintenance]
-	Mana            ManaConfig            `toml:"mana"`              // overrides from [mana]
-	Groups          GroupsConfig          `toml:"groups"`            // overrides from [groups]
-	Permissions     PermissionsConfig     `toml:"permissions"`       // overrides from [permissions]
+	Sessions    AgentSessionsOverride `toml:"sessions"`    // overrides from [sessions]
+	Tools       AgentToolsOverride    `toml:"tools"`       // overrides from [tools]
+	Debug       DebugConfig           `toml:"debug"`       // overrides from [debug]
+	Environment EnvironmentConfig     `toml:"environment"` // overrides from [environment]
+	Browser     BrowserConfig         `toml:"browser"`     // overrides from [browser]
+	Keepalive   KeepaliveConfig       `toml:"keepalive"`   // overrides from [keepalive]
+	Background  BackgroundConfig      `toml:"background"`  // overrides from [background]
+	Reflection  ReflectionConfig      `toml:"reflection"`  // overrides from [reflection]
+	Scheduler   SchedulerConfig       `toml:"scheduler"`   // overrides from [scheduler]
+	Maintenance MaintenanceConfig     `toml:"maintenance"` // overrides from [maintenance]
+	Mana        ManaConfig            `toml:"mana"`        // overrides from [mana]
+	Groups      GroupsConfig          `toml:"groups"`      // overrides from [groups]
+	Permissions PermissionsConfig     `toml:"permissions"` // overrides from [permissions]
 
 	// Backend selection: empty or "api" = traditional agent loop.
 	// A coding agent name (e.g. "claude-code-tmux", "codex", "opencode") delegates
@@ -400,16 +399,16 @@ const DefaultMaxFileReadBytes int64 = 50 << 20 // 50 MiB
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
-	TTS             *string           `toml:"tts"      desc:"TTS provider id"`
-	STT             *string           `toml:"stt"      desc:"STT provider id"`
-	TTSRate         *float64          `toml:"tts_rate"  desc:"TTS speech rate multiplier"`
-	TTSReplacements map[string]string `toml:"tts_replacements"`
-	STTReplacements map[string]string `toml:"stt_replacements"`
-	MaxFrameBytes   *int              `toml:"max_frame_bytes" default:"1048576"  desc:"max single inbound websocket frame in bytes"`
-	MaxAudioBytes   *int              `toml:"max_audio_bytes" default:"52428800" desc:"max accumulated voice audio buffer in bytes"`
-	MaxConcurrentTurns   *int         `toml:"max_concurrent_turns" default:"4" desc:"max in-flight STT/agent/TTS turns per voice connection"`
-	HTTPTimeout          *string      `toml:"http_timeout" default:"60s" desc:"timeout for STT/TTS HTTP calls"`
-	HTTPMaxResponseBytes *int         `toml:"http_max_response_bytes" default:"67108864" desc:"max STT/TTS HTTP response size in bytes"`
+	TTS                  *string           `toml:"tts"      desc:"TTS provider id"`
+	STT                  *string           `toml:"stt"      desc:"STT provider id"`
+	TTSRate              *float64          `toml:"tts_rate"  desc:"TTS speech rate multiplier"`
+	TTSReplacements      map[string]string `toml:"tts_replacements"`
+	STTReplacements      map[string]string `toml:"stt_replacements"`
+	MaxFrameBytes        *int              `toml:"max_frame_bytes" default:"1048576"  desc:"max single inbound websocket frame in bytes"`
+	MaxAudioBytes        *int              `toml:"max_audio_bytes" default:"52428800" desc:"max accumulated voice audio buffer in bytes"`
+	MaxConcurrentTurns   *int              `toml:"max_concurrent_turns" default:"4" desc:"max in-flight STT/agent/TTS turns per voice connection"`
+	HTTPTimeout          *string           `toml:"http_timeout" default:"60s" desc:"timeout for STT/TTS HTTP calls"`
+	HTTPMaxResponseBytes *int              `toml:"http_max_response_bytes" default:"67108864" desc:"max STT/TTS HTTP response size in bytes"`
 }
 
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().
@@ -445,7 +444,7 @@ type ToolConfig struct {
 	ExecAutoBackground  *int    `toml:"exec_auto_background"  default:"10"        desc:"seconds before auto-backgrounding exec"`
 	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns" default:"3"         desc:"max concurrent spawn sessions"`
 	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       desc:"max tool loops for explore spawn"`
-	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"max upload file size in bytes"` // 50MB
+	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"max upload file size in bytes"`                        // 50MB
 	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  desc:"max file size the read/edit tools will load in bytes"` // 50MB
 	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"      desc:"auto-unwatch on inactivity"`
 	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"       desc:"default watch threshold duration" type:"duration"`
@@ -467,33 +466,33 @@ type AnthropicConfig struct {
 type DisplayConfig struct {
 	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         desc:"tool call display: off, preview, full" choices:"off,preview,full"` // tool call display: off, preview, full
 	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"thinking display: off, compact, true" choices:"off,compact,true"`  // thinking display: off, compact, true
-	StreamOutput          *bool            `toml:"stream_output"           desc:"stream model output"`          // stream model output in real-time
-	StreamInterval        *string          `toml:"stream_interval"         desc:"interval between stream edits" type:"duration"` // duration between message edits during streaming
-	Streaming             *bool            `toml:"streaming"               desc:"use streaming API"`              // use streaming API
-	DisplayWidth          *int             `toml:"display_width"           desc:"display width for dividers"`          // display width for dividers
-	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"save received files to this directory"`     // save received files to this directory
-	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"header prepended to injected messages"` // header prepended to injected messages
+	StreamOutput          *bool            `toml:"stream_output"           desc:"stream model output"`                                              // stream model output in real-time
+	StreamInterval        *string          `toml:"stream_interval"         desc:"interval between stream edits" type:"duration"`                    // duration between message edits during streaming
+	Streaming             *bool            `toml:"streaming"               desc:"use streaming API"`                                                // use streaming API
+	DisplayWidth          *int             `toml:"display_width"           desc:"display width for dividers"`                                       // display width for dividers
+	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"save received files to this directory"`                            // save received files to this directory
+	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"header prepended to injected messages"`                            // header prepended to injected messages
 }
 
 // AccessConfig holds access control settings that can be set at any level
 // of the configuration cascade.
 type AccessConfig struct {
 	AllowedUsersOnly *bool    `toml:"allowed_users_only" default:"true" desc:"require allowed_users; when false, accept messages from any user"`
-	AllowedUsers     []string `toml:"allowed_users"`                                                                                              // platform-specific user IDs allowed to interact
-	RequireMention   *bool    `toml:"require_mention"`                                                                                            // require @mention in group chats
+	AllowedUsers     []string `toml:"allowed_users"`   // platform-specific user IDs allowed to interact
+	RequireMention   *bool    `toml:"require_mention"` // require @mention in group chats
 }
 
 // NotifyConfig holds notification/warning settings that can be configured at
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type NotifyConfig struct {
-	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   desc:"inject warnings into agent session: all, errors, off"` // inject warnings/errors into agent session
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   desc:"inject warnings into agent session: all, errors, off"`  // inject warnings/errors into agent session
 	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    desc:"send warnings as chat notifications: all, errors, off"` // send warnings/errors as chat notifications
-	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"send notification on startup"` // send startup notification
-	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" desc:"send notification on compaction"` // send notification on compaction
-	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" desc:"send notification on task list changes"` // send notification on task list changes
-	CompactionDebug     *bool           `toml:"compaction_debug"                        desc:"send compaction summary as file attachment"` // send compaction summary as file attachment
-	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    desc:"max identical warnings per window before suppression"` // max identical warnings per window before suppression (default 3)
+	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"send notification on startup"`                          // send startup notification
+	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" desc:"send notification on compaction"`                       // send notification on compaction
+	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" desc:"send notification on task list changes"`                // send notification on task list changes
+	CompactionDebug     *bool           `toml:"compaction_debug"                        desc:"send compaction summary as file attachment"`            // send compaction summary as file attachment
+	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    desc:"max identical warnings per window before suppression"`  // max identical warnings per window before suppression (default 3)
 }
 
 // InjectAgentWarningsLevel returns the resolved injection level (default: off).
@@ -613,8 +612,8 @@ func (p *PlatformConfig) SafeDisplay() DisplayConfig {
 
 // TelegramSpecific holds Telegram-only config fields.
 type TelegramSpecific struct {
-	LongPollTimeout string  `toml:"long_poll_timeout"` // default "30s" (HTTP-client timeout; Telegram-side long-poll derived as -5s)
-	TableWrapLines  *int    `toml:"table_wrap_lines"  desc:"max wrapped lines per table cell"` // default 5
+	LongPollTimeout string  `toml:"long_poll_timeout"`                                                                  // default "30s" (HTTP-client timeout; Telegram-side long-poll derived as -5s)
+	TableWrapLines  *int    `toml:"table_wrap_lines"  desc:"max wrapped lines per table cell"`                          // default 5
 	TableStyle      *string `toml:"table_style"       desc:"table style: pretty or markdown" choices:"pretty,markdown"` // default "pretty"
 
 	// APIBase overrides the Telegram Bot API base URL (default
@@ -673,10 +672,10 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 type SessionsConfig struct {
 	Dir string `toml:"dir"`
 
-	CompactionConfig  // compaction settings (global defaults, overridable per-agent)
-	CompactionMaxTokens   int `toml:"compaction_max_tokens"         default:"4096"  desc:"max output tokens for summary" min:"0"` // max output tokens for summary
-	CompactionMinMessages int `toml:"compaction_min_messages"       default:"4"     desc:"min messages before compacting" min:"0"` // min messages before compacting
-	MaxSystemPromptFile   int `toml:"max_system_prompt_chars_file"  default:"20000" desc:"per-file char warning threshold"` // per-file char threshold for warnings
+	CompactionConfig          // compaction settings (global defaults, overridable per-agent)
+	CompactionMaxTokens   int `toml:"compaction_max_tokens"         default:"4096"  desc:"max output tokens for summary" min:"0"`      // max output tokens for summary
+	CompactionMinMessages int `toml:"compaction_min_messages"       default:"4"     desc:"min messages before compacting" min:"0"`     // min messages before compacting
+	MaxSystemPromptFile   int `toml:"max_system_prompt_chars_file"  default:"20000" desc:"per-file char warning threshold"`            // per-file char threshold for warnings
 	MaxSystemPromptTotal  int `toml:"max_system_prompt_chars_total" default:"80000" desc:"total system prompt char warning threshold"` // total system prompt char threshold
 
 	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`    // path to prompt file for user-attached facet branches
@@ -698,13 +697,12 @@ type MemorySource struct {
 // Sources are combined additively (not merged) — see load.go.
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
-	SearchBackend      *string        `toml:"search_backend"      default:"bleve" desc:"search backend: fts5 or bleve"` // search backend: "fts5" or "bleve"
-	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"delay before reindex" type:"duration"` // delay before reindex (e.g., "500ms", "2s"), default "0s"
+	SearchBackend      *string        `toml:"search_backend"      default:"bleve" desc:"search backend: fts5 or bleve"`                          // search backend: "fts5" or "bleve"
+	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"delay before reindex" type:"duration"`                                   // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"weight for conversation search results" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
-	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"max search results to return"` // max search results to return (default 20)
-	SweepInterval      *string        `toml:"sweep_interval"      default:"1h"    desc:"periodic full reindex interval" type:"duration"` // periodic full reindex interval (default "1h", "0" disables)
+	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"max search results to return"`                           // max search results to return (default 20)
+	SweepInterval      *string        `toml:"sweep_interval"      default:"1h"    desc:"periodic full reindex interval" type:"duration"`         // periodic full reindex interval (default "1h", "0" disables)
 }
-
 
 type DatabaseConfig struct {
 	BusyTimeout string `toml:"busy_timeout" default:"5s" desc:"SQLite busy timeout" type:"duration"` // SQLite busy timeout for concurrent access (default "5s")
@@ -714,43 +712,43 @@ type HTTPConfig struct {
 	Port                    int    `toml:"port" default:"18791" desc:"HTTP server port" min:"1" max:"65535"`
 	Bind                    string `toml:"bind" default:"127.0.0.1" desc:"HTTP server bind address"`
 	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout" default:"30s"` // time to wait for in-flight requests on shutdown (default "30s")
-	WSEnabled               bool   `toml:"ws_enabled"`                // enable /voice WebSocket endpoint (default false)
-	SocketPath              string `toml:"socket_path"`               // Unix socket path for same-user auth (default: auto-resolved to data dir)
+	WSEnabled               bool   `toml:"ws_enabled"`                              // enable /voice WebSocket endpoint (default false)
+	SocketPath              string `toml:"socket_path"`                             // Unix socket path for same-user auth (default: auto-resolved to data dir)
 }
 
 type LoggingConfig struct {
-	Level            string `toml:"level"      default:"INFO" desc:"log level: DEBUG, INFO, WARN, ERROR" choices:"DEBUG,INFO,WARN,ERROR"`
-	EventFile        string `toml:"event_file" default:"logs/foci.log"`
-	APIFile          string `toml:"api_file"   default:"logs/api.jsonl"`
-	APIDB            string `toml:"api_db" default:"api.db"` // SQLite API call log path (relative to data_dir)
-	ConversationLog *bool `toml:"conversation_log" default:"true" desc:"enable per-agent conversation logging"`
+	Level           string `toml:"level"      default:"INFO" desc:"log level: DEBUG, INFO, WARN, ERROR" choices:"DEBUG,INFO,WARN,ERROR"`
+	EventFile       string `toml:"event_file" default:"logs/foci.log"`
+	APIFile         string `toml:"api_file"   default:"logs/api.jsonl"`
+	APIDB           string `toml:"api_db" default:"api.db"` // SQLite API call log path (relative to data_dir)
+	ConversationLog *bool  `toml:"conversation_log" default:"true" desc:"enable per-agent conversation logging"`
 
-	FullPayload          bool   `toml:"full_payload"                         desc:"write full API payloads to file"` // write full API payloads to api-payload.jsonl
-	PayloadFile          string `toml:"payload_file"             default:"logs/api-payload.jsonl"` // path for full API payload log
+	FullPayload bool   `toml:"full_payload"                         desc:"write full API payloads to file"` // write full API payloads to api-payload.jsonl
+	PayloadFile string `toml:"payload_file"             default:"logs/api-payload.jsonl"`                   // path for full API payload log
 
-	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"  desc:"time window for warning dedup" type:"duration"` // time window for warning dedup (default "5m")
-	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"  desc:"min interval between proactive warnings (active user)" type:"duration"` // min interval between proactive warning turns when user is active (default "5m")
+	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"  desc:"time window for warning dedup" type:"duration"`                           // time window for warning dedup (default "5m")
+	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"  desc:"min interval between proactive warnings (active user)" type:"duration"`   // min interval between proactive warning turns when user is active (default "5m")
 	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"  default:"1h"  desc:"min interval between proactive warnings (inactive user)" type:"duration"` // min interval when user is inactive (default "1h")
-	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold" default:"10m" desc:"user is active if last message within this window" type:"duration"` // user is "active" if last message within this window (default "10m")
+	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold" default:"10m" desc:"user is active if last message within this window" type:"duration"`       // user is "active" if last message within this window (default "10m")
 
-	LogRotation         *bool  `toml:"log_rotation"            default:"true" desc:"enable built-in log rotation"` // enable built-in log rotation (default true)
-	RotationPeriod      string `toml:"rotation_period"        default:"24h"   desc:"how often to rotate logs" type:"duration"` // how often to rotate (default "24h")
+	LogRotation         *bool  `toml:"log_rotation"            default:"true" desc:"enable built-in log rotation"`               // enable built-in log rotation (default true)
+	RotationPeriod      string `toml:"rotation_period"        default:"24h"   desc:"how often to rotate logs" type:"duration"`   // how often to rotate (default "24h")
 	RetentionPeriod     string `toml:"retention_period"       default:"48h"   desc:"keep lines newer than this" type:"duration"` // keep lines newer than this (default "48h")
-	RotationMaxLineSize string `toml:"rotation_max_line_size" default:"64MB"  desc:"max line size for scanner buffer"` // max line size for scanner buffer (default "64MB")
-	ArchiveDir          string `toml:"archive_dir"`            // gzip archive directory (default: log_dir/archive/)
-	LogFileMode         string `toml:"log_file_mode"          default:"0600"  desc:"octal file permissions for log files"` // octal file permissions for log files (default "0600")
+	RotationMaxLineSize string `toml:"rotation_max_line_size" default:"64MB"  desc:"max line size for scanner buffer"`           // max line size for scanner buffer (default "64MB")
+	ArchiveDir          string `toml:"archive_dir"`                                                                              // gzip archive directory (default: log_dir/archive/)
+	LogFileMode         string `toml:"log_file_mode"          default:"0600"  desc:"octal file permissions for log files"`       // octal file permissions for log files (default "0600")
 }
 
 // TTSConfig describes a text-to-speech provider entry.
 // Multiple entries are supported via [[tts]]; first entry is the default.
 type TTSConfig struct {
-	ID             string  `toml:"id"`              // lookup key for agent overrides
-	Format         string  `toml:"format"`          // "openai" or "edge-tts"
-	Endpoint       string  `toml:"endpoint"`        // API URL (ignored for edge-tts)
-	Model          string  `toml:"model"`           // model name (ignored for edge-tts)
-	Voice          string  `toml:"voice"`           // voice name (format-specific)
-	Rate           float64 `toml:"rate"`            // speed multiplier: 1.0 = normal, 0 = omit
-	Secret         string  `toml:"secret"`          // secret name in secrets.toml (optional, fallback: hostname)
+	ID             string            `toml:"id"`              // lookup key for agent overrides
+	Format         string            `toml:"format"`          // "openai" or "edge-tts"
+	Endpoint       string            `toml:"endpoint"`        // API URL (ignored for edge-tts)
+	Model          string            `toml:"model"`           // model name (ignored for edge-tts)
+	Voice          string            `toml:"voice"`           // voice name (format-specific)
+	Rate           float64           `toml:"rate"`            // speed multiplier: 1.0 = normal, 0 = omit
+	Secret         string            `toml:"secret"`          // secret name in secrets.toml (optional, fallback: hostname)
 	Command        string            `toml:"command"`         // binary for edge-tts (default: "edge-tts")
 	ResponseFormat string            `toml:"response_format"` // audio format: "mp3", "wav", etc. (default: "wav")
 	Replacements   map[string]string `toml:"replacements"`    // word replacements applied before synthesis (e.g. "foci" = "foki")
@@ -759,31 +757,30 @@ type TTSConfig struct {
 // STTConfig describes a speech-to-text provider entry.
 // Multiple entries are supported via [[stt]]; first entry is the default.
 type STTConfig struct {
-	ID       string `toml:"id"`       // lookup key for agent overrides
-	Format   string `toml:"format"`   // "openai" (only supported format currently)
-	Endpoint string `toml:"endpoint"` // API URL
-	Model    string `toml:"model"`    // model name
+	ID           string            `toml:"id"`           // lookup key for agent overrides
+	Format       string            `toml:"format"`       // "openai" (only supported format currently)
+	Endpoint     string            `toml:"endpoint"`     // API URL
+	Model        string            `toml:"model"`        // model name
 	Secret       string            `toml:"secret"`       // secret name in secrets.toml (optional, fallback: hostname)
 	Replacements map[string]string `toml:"replacements"` // word replacements applied after transcription (e.g. "foki" = "foci")
 }
 
 type BitwardenConfig struct {
 	Enabled         bool   `toml:"enabled"`
-	RefreshInterval string `toml:"refresh_interval" default:"15m"`                       // how often to refresh item metadata (default "15m")
-	SecretTTL       string `toml:"secret_ttl"       default:"30m"`                       // how long unlocked values stay cached (default "30m")
+	RefreshInterval string `toml:"refresh_interval" default:"15m"`                         // how often to refresh item metadata (default "15m")
+	SecretTTL       string `toml:"secret_ttl"       default:"30m"`                         // how long unlocked values stay cached (default "30m")
 	SessionFile     string `toml:"session_file"     default:"/home/bitwarden/.bw_session"` // path to BW session file read by bitwarden user (default "/home/bitwarden/.bw_session")
-	CleanupInterval string `toml:"cleanup_interval" default:"1m"`                        // how often to purge expired values (default "1m")
+	CleanupInterval string `toml:"cleanup_interval" default:"1m"`                          // how often to purge expired values (default "1m")
 }
-
 
 // PermissionsConfig controls foci-level auto-approval of delegated backend
 // permission requests. Rules from global [permissions] and per-agent
 // [[agents]].permissions are combined (union) — both sets apply.
 // All fields are pointer/slice types for Merge-based resolution.
 type PermissionsConfig struct {
-	AutoApprove               []string `toml:"auto_approve"`                                                                                        // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
-	AutoApproveCommonReadonly *bool    `toml:"auto_approve_common_readonly"  default:"true"  desc:"auto-approve common read-only tools and commands"` // enable built-in read-only tool/command allowlist
-	AutoApproveCommonSafeWrite *bool   `toml:"auto_approve_common_safe_write" default:"false" desc:"auto-approve common side-effecting commands (curl, wget, mkdir, touch)"` // enable built-in safe-write allowlist (default false — not path-scoped)
+	AutoApprove                []string `toml:"auto_approve"`                                                                                                                 // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
+	AutoApproveCommonReadonly  *bool    `toml:"auto_approve_common_readonly"  default:"true"  desc:"auto-approve common read-only tools and commands"`                        // enable built-in read-only tool/command allowlist
+	AutoApproveCommonSafeWrite *bool    `toml:"auto_approve_common_safe_write" default:"false" desc:"auto-approve common side-effecting commands (curl, wget, mkdir, touch)"` // enable built-in safe-write allowlist (default false — not path-scoped)
 	// PromptTTL is how long an unanswered interactive prompt (permission
 	// request, AskUserQuestion) stays live before it auto-expires. On expiry
 	// the prompt is resolved as a denial/cancel so the waiting backend doesn't
@@ -809,7 +806,7 @@ func (p PermissionsConfig) AutoApproveCommonSafeWriteEnabled() bool {
 }
 
 type EnvironmentConfig struct {
-	Enabled  *bool   `toml:"enabled"    default:"true"         desc:"inject environment block"` // inject environment block as first system block (default true)
+	Enabled  *bool   `toml:"enabled"    default:"true"         desc:"inject environment block"`        // inject environment block as first system block (default true)
 	DocsPath *string `toml:"docs_path"  default:"shared/docs"  desc:"path to platform docs directory"` // path to platform docs directory; relative paths resolve against $HOME
 }
 
@@ -818,51 +815,51 @@ type SkillsConfig struct {
 }
 
 type ResourcesConfig struct {
-	MemoryGuardEnabled        *bool    `toml:"memory_guard_enabled"        default:"true" desc:"enable system memory guard"` // enable system memory guard (default true)
-	MemoryGuardInterval       string   `toml:"memory_guard_interval"       default:"60s"  desc:"memory guard check interval" type:"duration"` // check interval (default "60s")
-	MemoryWarnPercent         *int     `toml:"memory_warn_percent"         default:"25"   desc:"warn threshold as %% of total RAM"` // warn threshold as % of total RAM (default 25)
-	MemoryKillPercent         *int     `toml:"memory_kill_percent"         default:"40"   desc:"kill threshold as %% of total RAM"` // kill threshold as % of total RAM (default 40)
-	MemoryPressureThreshold   *float64 `toml:"memory_pressure_threshold"   default:"10"   desc:"PSI avg10 threshold before acting"` // PSI avg10 threshold to require before acting (default 10.0)
+	MemoryGuardEnabled        *bool    `toml:"memory_guard_enabled"        default:"true" desc:"enable system memory guard"`                     // enable system memory guard (default true)
+	MemoryGuardInterval       string   `toml:"memory_guard_interval"       default:"60s"  desc:"memory guard check interval" type:"duration"`    // check interval (default "60s")
+	MemoryWarnPercent         *int     `toml:"memory_warn_percent"         default:"25"   desc:"warn threshold as %% of total RAM"`              // warn threshold as % of total RAM (default 25)
+	MemoryKillPercent         *int     `toml:"memory_kill_percent"         default:"40"   desc:"kill threshold as %% of total RAM"`              // kill threshold as % of total RAM (default 40)
+	MemoryPressureThreshold   *float64 `toml:"memory_pressure_threshold"   default:"10"   desc:"PSI avg10 threshold before acting"`              // PSI avg10 threshold to require before acting (default 10.0)
 	GoroutineMonitorInterval  string   `toml:"goroutine_monitor_interval"  default:"60s"  desc:"goroutine count check interval" type:"duration"` // goroutine count check interval (default "60s")
-	GoroutineMonitorThreshold int      `toml:"goroutine_monitor_threshold"                desc:"goroutine count warning threshold (0=auto)"` // warn when goroutine count exceeds this (0 = auto: 30 + 25×agents + 5×telegram_bots)
+	GoroutineMonitorThreshold int      `toml:"goroutine_monitor_threshold"                desc:"goroutine count warning threshold (0=auto)"`     // warn when goroutine count exceeds this (0 = auto: 30 + 25×agents + 5×telegram_bots)
 }
 
 // BrowserConfig holds configuration for the browser automation tool.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 // TOML: [browser] globally, [[agents]].browser per-agent.
 type BrowserConfig struct {
-	Enabled        *bool    `toml:"enabled"         default:"true" desc:"enable browser tool"` // enable browser tool
-	Headless       *bool    `toml:"headless"        default:"true" desc:"run headless"` // run headless
-	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"   desc:"page operation timeout in seconds"` // page operation timeout in seconds
-	UserDataDir    *string  `toml:"user_data_dir"                  desc:"Chrome user data dir (empty = temp profile)"` // Chrome user data dir (empty = temp profile)
+	Enabled        *bool    `toml:"enabled"         default:"true" desc:"enable browser tool"`                          // enable browser tool
+	Headless       *bool    `toml:"headless"        default:"true" desc:"run headless"`                                 // run headless
+	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"   desc:"page operation timeout in seconds"`            // page operation timeout in seconds
+	UserDataDir    *string  `toml:"user_data_dir"                  desc:"Chrome user data dir (empty = temp profile)"`  // Chrome user data dir (empty = temp profile)
 	ExecutablePath *string  `toml:"executable_path"                desc:"Chrome executable path (empty = auto-detect)"` // Chrome executable path (empty = auto-detect)
-	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"DOM stability wait interval in seconds"` // DOM stability wait interval in seconds
-	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"DOM stability diff threshold"` // DOM stability diff threshold
+	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"DOM stability wait interval in seconds"`       // DOM stability wait interval in seconds
+	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"DOM stability diff threshold"`                 // DOM stability diff threshold
 }
 
 type ToolsConfig struct {
 	SummaryConfig // global summary/tool-result defaults (resolved via Merge with per-agent)
 	ToolConfig    // global tool behavioral defaults (resolved via Merge with per-agent)
 
-	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results"` // where to write large tool results (default /tmp/foci/tool-results)
-	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"tmux window columns"` // tmux window columns on start (default 300)
-	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"tmux window rows"` // tmux window rows on start (default 30)
-	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"default timeout for exec in seconds"` // default timeout for exec commands in seconds (default 30)
-	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s"`                    // timeout for tmux control commands (default "5s")
-	WebFetchTimeout         string   `toml:"web_fetch_timeout"          default:"30s"       desc:"HTTP timeout for web fetch" type:"duration"` // HTTP timeout for web fetch (default "30s")
-	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576"`               // max bytes to read from web fetch (default 1048576 = 1MB)
+	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results"`                                       // where to write large tool results (default /tmp/foci/tool-results)
+	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"tmux window columns"`                         // tmux window columns on start (default 300)
+	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"tmux window rows"`                            // tmux window rows on start (default 30)
+	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"default timeout for exec in seconds"`         // default timeout for exec commands in seconds (default 30)
+	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s"`                                                           // timeout for tmux control commands (default "5s")
+	WebFetchTimeout         string   `toml:"web_fetch_timeout"          default:"30s"       desc:"HTTP timeout for web fetch" type:"duration"`  // HTTP timeout for web fetch (default "30s")
+	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576"`                                                      // max bytes to read from web fetch (default 1048576 = 1MB)
 	WebSearchTimeout        string   `toml:"web_search_timeout"         default:"15s"       desc:"HTTP timeout for web search" type:"duration"` // HTTP timeout for web search (default "15s")
-	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"    default:"450"       desc:"max chars for tool call preview"` // max chars for tool call param preview in Telegram (default 450)
-	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval" default:"5m"`                    // how often to check tmux RSS (default "5m", "0" disables)
-	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"           default:"10%"`                   // warn threshold as % of RAM or absolute (default "10%")
-	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%"`                   // critical threshold (default "20%")
-	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%"`                   // kill threshold (default "30%")
-	WebSearchMaxUses        int      `toml:"web_search_max_uses"`        // max searches per API call (0 = unlimited)
-	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"` // domain whitelist (mutually exclusive with blocked)
-	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"` // domain blacklist
-	WebFetchMaxUses         int      `toml:"web_fetch_max_uses"`         // max fetches per API call (0 = unlimited)
-	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"`  // domain whitelist
-	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"`  // domain blacklist
+	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"    default:"450"       desc:"max chars for tool call preview"`             // max chars for tool call param preview in Telegram (default 450)
+	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval" default:"5m"`                                                           // how often to check tmux RSS (default "5m", "0" disables)
+	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"           default:"10%"`                                                          // warn threshold as % of RAM or absolute (default "10%")
+	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%"`                                                          // critical threshold (default "20%")
+	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%"`                                                          // kill threshold (default "30%")
+	WebSearchMaxUses        int      `toml:"web_search_max_uses"`                                                                               // max searches per API call (0 = unlimited)
+	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"`                                                                        // domain whitelist (mutually exclusive with blocked)
+	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"`                                                                        // domain blacklist
+	WebFetchMaxUses         int      `toml:"web_fetch_max_uses"`                                                                                // max fetches per API call (0 = unlimited)
+	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"`                                                                         // domain whitelist
+	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"`                                                                         // domain blacklist
 }
 
 type MessageTransform struct {
@@ -893,7 +890,6 @@ type DefaultsConfig struct {
 	Behavior BehaviorConfig  `toml:"behavior"`
 	System   SystemConfig    `toml:"system"`
 }
-
 
 // EndpointConfig describes a model API endpoint.
 type EndpointConfig struct {
@@ -946,9 +942,9 @@ func (e EndpointConfig) URLForFormat(f string) string {
 // KeepaliveConfig controls the cache keepalive timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type KeepaliveConfig struct {
-	Enabled  *bool   `toml:"enabled"                  desc:"enable keepalive timer"` // enable keepalive timer
+	Enabled  *bool   `toml:"enabled"                  desc:"enable keepalive timer"`                       // enable keepalive timer
 	Interval *string `toml:"interval" default:"55m"   desc:"time since cache last warmed" type:"duration"` // time since cache last warmed before firing
-	Prompt   *string `toml:"prompt"                   desc:"keepalive prompt file path"` // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	Prompt   *string `toml:"prompt"                   desc:"keepalive prompt file path"`                   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 }
 
 // ReflectionConfig controls the periodic reflection pass, which captures both
@@ -956,14 +952,14 @@ type KeepaliveConfig struct {
 // from recent session activity. All fields are pointer types for Merge-based
 // resolution (per-agent → global).
 type ReflectionConfig struct {
-	IntervalEnabled       *bool   `toml:"interval_enabled"       default:"true" desc:"periodic reflection pass on timer"` // periodic reflection on timer
-	Interval              *string `toml:"interval"               default:"1h"   desc:"time between reflection passes" type:"duration"` // time between reflections
-	IntervalPrompt        *string `toml:"interval_prompt"                       desc:"interval reflection prompt file path"` // prompt override (nil = embedded, "none" = disabled)
-	SessionEndEnabled     *bool   `toml:"session_end_enabled"    default:"true" desc:"run reflection on /reset and reclaim"` // reflect on /reset and reclaim
-	SessionEndPrompt      *string `toml:"session_end_prompt"                    desc:"session end reflection prompt file path"` // prompt override (nil = embedded, "none" = disabled)
-	CompactionEnabled     *bool   `toml:"compaction_enabled"     default:"true" desc:"reflection before compaction"` // reflect before compaction
-	CompactionPrompt      *string `toml:"compaction_prompt"                     desc:"compaction reflection prompt file path"` // prompt override (nil = embedded, "none" = disabled)
-	BackendQuietPeriod    *string `toml:"backend_quiet_period"   default:"5m"   desc:"min idle time before reflection in backend mode" type:"duration"` // min idle before firing in backend mode
+	IntervalEnabled    *bool   `toml:"interval_enabled"       default:"true" desc:"periodic reflection pass on timer"`                               // periodic reflection on timer
+	Interval           *string `toml:"interval"               default:"1h"   desc:"time between reflection passes" type:"duration"`                  // time between reflections
+	IntervalPrompt     *string `toml:"interval_prompt"                       desc:"interval reflection prompt file path"`                            // prompt override (nil = embedded, "none" = disabled)
+	SessionEndEnabled  *bool   `toml:"session_end_enabled"    default:"true" desc:"run reflection on /reset and reclaim"`                            // reflect on /reset and reclaim
+	SessionEndPrompt   *string `toml:"session_end_prompt"                    desc:"session end reflection prompt file path"`                         // prompt override (nil = embedded, "none" = disabled)
+	CompactionEnabled  *bool   `toml:"compaction_enabled"     default:"true" desc:"reflection before compaction"`                                    // reflect before compaction
+	CompactionPrompt   *string `toml:"compaction_prompt"                     desc:"compaction reflection prompt file path"`                          // prompt override (nil = embedded, "none" = disabled)
+	BackendQuietPeriod *string `toml:"backend_quiet_period"   default:"5m"   desc:"min idle time before reflection in backend mode" type:"duration"` // min idle before firing in backend mode
 }
 
 // SchedulerConfig controls the periodic scheduler that drives all four timers
@@ -982,28 +978,28 @@ type SchedulerConfig struct {
 // (fixed interval since the last run). All fields are pointer types for
 // Merge-based resolution (per-agent → global).
 type MaintenanceConfig struct {
-	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"curate MEMORY.md periodically"`                                        // curate MEMORY.md periodically
-	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"when to consolidate: HH:MM daily or a duration like 20h"`            // "HH:MM" daily or duration
-	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"consolidation prompt file path"`                                     // prompt override (nil = embedded, "none" = disabled)
-	ResetTime            *string `toml:"reset_time"            default:""     desc:"daily session reset: HH:MM, a duration, or empty to disable"`        // "HH:MM" daily, duration, or "" = never
+	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"curate MEMORY.md periodically"`                                          // curate MEMORY.md periodically
+	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"when to consolidate: HH:MM daily or a duration like 20h"`                // "HH:MM" daily or duration
+	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"consolidation prompt file path"`                                         // prompt override (nil = embedded, "none" = disabled)
+	ResetTime            *string `toml:"reset_time"            default:""     desc:"daily session reset: HH:MM, a duration, or empty to disable"`            // "HH:MM" daily, duration, or "" = never
 	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"skip scheduled reset if user active within this window" type:"duration"` // skip reset if recently active
 }
 
 // BackgroundConfig controls the mana-gated background work timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type BackgroundConfig struct {
-	Enabled  *bool   `toml:"enabled"                  desc:"enable background work timer"` // enable background work timer
+	Enabled  *bool   `toml:"enabled"                  desc:"enable background work timer"`                              // enable background work timer
 	Interval *string `toml:"interval" default:"15m"   desc:"time since last interaction before firing" type:"duration"` // time since last interaction before firing
-	Prompt   *string `toml:"prompt"                   desc:"background work prompt file path"` // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	Prompt   *string `toml:"prompt"                   desc:"background work prompt file path"`                          // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 }
 
 // DebugConfig holds developer/debugging knobs that can be configured at
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type DebugConfig struct {
-	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      desc:"log last 4 chars of API keys on provider calls"` // log last 4 chars of API keys on each provider call (default false)
-	MessagesInLog        *bool `toml:"messages_in_log"         desc:"log user message content"` // log user message content to event log (default false for privacy)
-	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" desc:"alert on cache_read drop"` // alert when cache_read drops >50% vs previous request
+	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      desc:"log last 4 chars of API keys on provider calls"`                // log last 4 chars of API keys on each provider call (default false)
+	MessagesInLog        *bool `toml:"messages_in_log"         desc:"log user message content"`                                      // log user message content to event log (default false for privacy)
+	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" desc:"alert on cache_read drop"`                      // alert when cache_read drops >50% vs previous request
 	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    desc:"suppress cache bust alert if idle > N minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
 
 	// EnablePprof exposes the net/http/pprof endpoints under /debug/pprof/*.
@@ -1022,18 +1018,18 @@ type DebugConfig struct {
 }
 
 type Config struct {
-	DataDir            string                       `toml:"data_dir"`  // directory for databases, sessions, state (default: $HOME/data)
-	Notify             NotifyConfig                  `toml:"notify"`      // global notification defaults
-	Display            DisplayConfig                 `toml:"display"`     // global display defaults
-	Nudge              NudgeConfig                   `toml:"nudge"`       // global nudge defaults
-	Voice              VoiceConfig                   `toml:"voice"`       // global voice defaults
-	AgentLoop          AgentLoopConfig               `toml:"agent_loop"`  // global agent loop defaults
-	Behavior           BehaviorConfig                `toml:"behavior"`    // global behavior defaults
-	System             SystemConfig                  `toml:"system"`      // global system defaults
-	Groups             GroupsConfig                  `toml:"groups"`      // model group assignments and fallbacks
-	Models             map[string]ModelConfig        `toml:"models"`    // named model definitions with per-model settings
-	Endpoints          map[string]EndpointConfig     `toml:"endpoints"` // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
-	Agents             []AgentConfig             `toml:"agents"`    // multi-agent: array of agents
+	DataDir            string                    `toml:"data_dir"`   // directory for databases, sessions, state (default: $HOME/data)
+	Notify             NotifyConfig              `toml:"notify"`     // global notification defaults
+	Display            DisplayConfig             `toml:"display"`    // global display defaults
+	Nudge              NudgeConfig               `toml:"nudge"`      // global nudge defaults
+	Voice              VoiceConfig               `toml:"voice"`      // global voice defaults
+	AgentLoop          AgentLoopConfig           `toml:"agent_loop"` // global agent loop defaults
+	Behavior           BehaviorConfig            `toml:"behavior"`   // global behavior defaults
+	System             SystemConfig              `toml:"system"`     // global system defaults
+	Groups             GroupsConfig              `toml:"groups"`     // model group assignments and fallbacks
+	Models             map[string]ModelConfig    `toml:"models"`     // named model definitions with per-model settings
+	Endpoints          map[string]EndpointConfig `toml:"endpoints"`  // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
+	Agents             []AgentConfig             `toml:"agents"`     // multi-agent: array of agents
 	Anthropic          AnthropicConfig           `toml:"anthropic"`
 	Platforms          []PlatformConfig          `toml:"platforms"`
 	Sessions           SessionsConfig            `toml:"sessions"`
@@ -1057,14 +1053,14 @@ type Config struct {
 	Scheduler          SchedulerConfig           `toml:"scheduler"`
 	Maintenance        MaintenanceConfig         `toml:"maintenance"`
 	Permissions        PermissionsConfig         `toml:"permissions"`
-	CCBackend          CCBackendConfig           `toml:"cc_backend"`          // shared defaults for Claude Code delegator backends
+	CCBackend          CCBackendConfig           `toml:"cc_backend"` // shared defaults for Claude Code delegator backends
 	Commands           []CommandConfig           `toml:"commands"`
-	MessageTransforms  []MessageTransform        `toml:"message_transforms"`   // regex find/replace rules applied to inbound messages
-	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`        // path prefixes that write/edit tools refuse (with rebuke message)
-	FileMode           string                    `toml:"file_mode"            default:"0640"` // octal file permissions for workspace/content files (default "0640")
+	MessageTransforms  []MessageTransform        `toml:"message_transforms"`                             // regex find/replace rules applied to inbound messages
+	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`                                  // path prefixes that write/edit tools refuse (with rebuke message)
+	FileMode           string                    `toml:"file_mode"            default:"0640"`            // octal file permissions for workspace/content files (default "0640")
 	WelcomeFile        string                    `toml:"welcome_file"         default:"data/WELCOME.md"` // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
-	Timezone           string                    `toml:"timezone"`             // IANA timezone for timestamps (e.g. "Europe/Athens", "UTC", "Local"); empty = machine local
-	SkipSecurityChecks bool                      `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
-	DefinedKeys        map[string]bool           `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)
-	UndefinedKeys      []string                  `toml:"-"`                    // unrecognised TOML keys (populated by Load, logged by caller)
+	Timezone           string                    `toml:"timezone"`                                       // IANA timezone for timestamps (e.g. "Europe/Athens", "UTC", "Local"); empty = machine local
+	SkipSecurityChecks bool                      `toml:"skip_security_checks"`                           // if true, skip startup security checks for secrets.toml
+	DefinedKeys        map[string]bool           `toml:"-"`                                              // keys explicitly set in TOML file (populated by Load)
+	UndefinedKeys      []string                  `toml:"-"`                                              // unrecognised TOML keys (populated by Load, logged by caller)
 }

@@ -37,16 +37,16 @@ type Attachment struct {
 
 // legacyMIMEMap maps legacy MIME types to their modern convertible equivalents.
 var legacyMIMEMap = map[string]string{
-	"application/msword":                                                          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	"application/vnd.ms-excel":                                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-	"application/vnd.ms-powerpoint":                                               "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.template":      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	"application/vnd.openxmlformats-officedocument.spreadsheetml.template":         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-	"application/vnd.openxmlformats-officedocument.presentationml.template":        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-	"application/vnd.openxmlformats-officedocument.presentationml.slideshow":       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-	"application/vnd.ms-word.document.macroEnabled.12":                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	"application/vnd.ms-excel.sheet.macroEnabled.12":                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-	"application/vnd.ms-powerpoint.presentation.macroEnabled.12":                   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/msword":            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.ms-excel":      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.ms-powerpoint": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.template": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.template":    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.openxmlformats-officedocument.presentationml.template":   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.openxmlformats-officedocument.presentationml.slideshow":  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.ms-word.document.macroEnabled.12":                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.ms-excel.sheet.macroEnabled.12":                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.ms-powerpoint.presentation.macroEnabled.12":              "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 
 // NormalizeMIME strips parameters (e.g. "; charset=utf-8") and maps legacy
@@ -239,7 +239,6 @@ func StripSpuriousPrefix(text string) string {
 	return text
 }
 
-
 type Sender interface {
 	TextSender
 
@@ -298,7 +297,7 @@ type Connection interface {
 	SendToSession(sessionKey, text string) error       // sends without header (for agent replies)
 	SendNotification(text string)
 	SendNotificationDirect(text string) string // sends immediately, bypassing turn buffering; returns platform msg ID ("" if unknown)
-	SetTyping(typing bool)              // true starts typing indicator, false stops it
+	SetTyping(typing bool)                     // true starts typing indicator, false stops it
 }
 
 // ButtonChoice represents an inline keyboard button for interactive prompts.
@@ -366,7 +365,7 @@ type MessageHandler interface {
 type LifecycleEvent int
 
 const (
-	OnUserMessage  LifecycleEvent = iota
+	OnUserMessage LifecycleEvent = iota
 	OnTurnComplete
 	OnTurnEnd // fires after turn's final message is sent and cleanup is done
 )
@@ -393,7 +392,7 @@ type MessagingProvider interface {
 	SetupSharedFacet(params SharedFacetParams)
 	RestoreFacetSessions(params RestoreParams)
 	SetLifecycleCallback(agentID string, event LifecycleEvent, fn func())
-	ToolDetailStore() ToolDetailStore // may return nil
+	ToolDetailStore() ToolDetailStore       // may return nil
 	AgentPreFlight(agentID string) []string // warnings for /agents new wizard
 	DefaultPlatformConfig() config.PlatformConfig
 	ValidateConfig(cfg config.PlatformConfig) []string
@@ -721,11 +720,11 @@ func (m *Messaging) Close() error {
 
 type noopConnMgr struct{}
 
-func (n *noopConnMgr) Primary(string) Connection                          { return nil }
-func (n *noopConnMgr) AllForAgent(string) []Connection                    { return nil }
-func (n *noopConnMgr) ForSession(string) Connection                       { return nil }
-func (n *noopConnMgr) ForSessionOrPrimary(string, string) Connection      { return nil }
-func (n *noopConnMgr) AcquireFacet(string) (Connection, bool)         { return nil, false }
-func (n *noopConnMgr) HasFacet(string) bool                           { return false }
-func (n *noopConnMgr) StartAll(context.Context)                           {}
-func (n *noopConnMgr) Wait()                                              {}
+func (n *noopConnMgr) Primary(string) Connection                     { return nil }
+func (n *noopConnMgr) AllForAgent(string) []Connection               { return nil }
+func (n *noopConnMgr) ForSession(string) Connection                  { return nil }
+func (n *noopConnMgr) ForSessionOrPrimary(string, string) Connection { return nil }
+func (n *noopConnMgr) AcquireFacet(string) (Connection, bool)        { return nil, false }
+func (n *noopConnMgr) HasFacet(string) bool                          { return false }
+func (n *noopConnMgr) StartAll(context.Context)                      {}
+func (n *noopConnMgr) Wait()                                         {}

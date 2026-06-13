@@ -301,7 +301,7 @@ func TestEditFileSyntaxValidToInvalid(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": `"value"}`,
-		"new_string": `"value"`,  // removes closing brace
+		"new_string": `"value"`, // removes closing brace
 	})
 
 	_, err := tool.Execute(context.Background(), params)
@@ -324,13 +324,13 @@ func TestEditFileSyntaxInvalidToValid(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
-	os.WriteFile(path, []byte(`{"key": "value"`), 0644)  // missing closing brace
+	os.WriteFile(path, []byte(`{"key": "value"`), 0644) // missing closing brace
 
 	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": `"value"`,
-		"new_string": `"value"}`,  // fixes the JSON
+		"new_string": `"value"}`, // fixes the JSON
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -347,7 +347,7 @@ func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
-	os.WriteFile(path, []byte(`{"key": bad}`), 0644)  // already invalid
+	os.WriteFile(path, []byte(`{"key": bad}`), 0644) // already invalid
 
 	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{

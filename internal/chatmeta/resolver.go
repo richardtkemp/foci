@@ -18,7 +18,7 @@ import (
 // Resolver manages per-chat session keys backed by a platform.SessionIndex.
 // All methods are safe to call on a nil receiver or when Index is nil.
 type Resolver struct {
-	Index        platform.SessionIndex     // may be nil (no persistence)
+	Index        platform.SessionIndex // may be nil (no persistence)
 	AgentID      string
 	PlatformName string
 	Logger       func() *log.ComponentLogger // lazy logger (borrows the bot's logger)

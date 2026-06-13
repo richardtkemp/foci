@@ -878,9 +878,9 @@ func TestUserMessage_WithImage(t *testing.T) {
 	blocks := []provider.ContentBlock{
 		{Type: "text", Text: "what is this?"},
 		{Type: "image", Source: &provider.ContentSource{
-			Type:      "base64",
+			Type:     "base64",
 			MimeType: "image/png",
-			Data:      "iVBORw0KGgo=",
+			Data:     "iVBORw0KGgo=",
 		}},
 	}
 
@@ -892,4 +892,3 @@ func TestUserMessage_WithImage(t *testing.T) {
 		t.Fatal("expected user message")
 	}
 }
-

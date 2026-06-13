@@ -50,12 +50,12 @@ type SpawnAgent interface {
 // the isolated file tools enforce path containment, but shell access
 // allows arbitrary filesystem access and symlink creation.
 var spawnRawBlacklist = map[string]bool{
-	"shell":                true,
-	"tmux":                 true,
-	"send_to_chat":         true,
-	"send_to_session":      true,
-	"scratchpad":           true,
-	"todo":                 true,
+	"shell":           true,
+	"tmux":            true,
+	"send_to_chat":    true,
+	"send_to_session": true,
+	"scratchpad":      true,
+	"todo":            true,
 }
 
 // spawnCharacterBlacklist lists tools excluded from "character" mode spawns.
@@ -95,24 +95,24 @@ var spawnExploreAllowed = map[string]bool{
 
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
-	Client             provider.Client
-	ClientProvider     provider.ClientProvider // provides access to clients for different endpoint:format pairs
-	Bootstrap          SystemBlocksProvider
-	Registry           *Registry // tool registry for one-shot tool access
-	Sessions           SessionBrancher
-	AgentID            string
-	GroupResolver      *config.GroupResolver                    // resolves model groups for spawn modes
-	FallbackFunc       provider.FallbackFunc                    // nil disables automatic model fallback on transient errors
-	FallbackModel      string                                   // agent's default model (developer/model_id) for single-model mode fallback
-	FallbackFormat     string                                   // agent's default format for single-model mode fallback
-	MaxInherit         int                                      // semaphore size (from config)
-	MaxToolLoops       int                                      // max tool loops for raw/character spawns
-	ExploreMaxDepth    int                                      // max tool loops for explore spawns
-	Notifier           *AsyncNotifier                           // async result delivery for inherit mode
-	OrientationTemplate string                                  // orientation template for branch sessions ({branch_key}, {parent_key}, {branch_type} resolved at creation)
-	SetNoCompact       func(sessionKey string, value bool)      // marks branch sessions as no_compact (prevents compaction)
-	FileMode           os.FileMode                              // permission bits for files created by spawned sessions
-	Store              *secrets.Store                           // secrets store for blocked-path enforcement in isolated tools
+	Client              provider.Client
+	ClientProvider      provider.ClientProvider // provides access to clients for different endpoint:format pairs
+	Bootstrap           SystemBlocksProvider
+	Registry            *Registry // tool registry for one-shot tool access
+	Sessions            SessionBrancher
+	AgentID             string
+	GroupResolver       *config.GroupResolver               // resolves model groups for spawn modes
+	FallbackFunc        provider.FallbackFunc               // nil disables automatic model fallback on transient errors
+	FallbackModel       string                              // agent's default model (developer/model_id) for single-model mode fallback
+	FallbackFormat      string                              // agent's default format for single-model mode fallback
+	MaxInherit          int                                 // semaphore size (from config)
+	MaxToolLoops        int                                 // max tool loops for raw/character spawns
+	ExploreMaxDepth     int                                 // max tool loops for explore spawns
+	Notifier            *AsyncNotifier                      // async result delivery for inherit mode
+	OrientationTemplate string                              // orientation template for branch sessions ({branch_key}, {parent_key}, {branch_type} resolved at creation)
+	SetNoCompact        func(sessionKey string, value bool) // marks branch sessions as no_compact (prevents compaction)
+	FileMode            os.FileMode                         // permission bits for files created by spawned sessions
+	Store               *secrets.Store                      // secrets store for blocked-path enforcement in isolated tools
 }
 
 // NewSpawnTool creates the unified spawn tool that replaces request_model.

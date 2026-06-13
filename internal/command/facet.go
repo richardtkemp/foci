@@ -61,4 +61,3 @@ func forkFacet(ctx context.Context, _ Request, cc CommandContext) (string, error
 
 	return fmt.Sprintf("Forked to @%s (session: %s)", secConn.Username(), branchKey), nil
 }
-

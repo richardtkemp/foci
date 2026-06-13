@@ -22,10 +22,10 @@ type pendingPermission struct {
 	createdAt   time.Time
 
 	// Question-specific fields (zero values for regular permissions).
-	questions     []userQuestion      // parsed questions from AskUserQuestion input
-	currentIndex  int                 // which question is currently being presented
-	answers       map[string]string   // accumulated answers (question text → answer)
-	originalInput json.RawMessage     // preserved for building updatedInput
+	questions     []userQuestion    // parsed questions from AskUserQuestion input
+	currentIndex  int               // which question is currently being presented
+	answers       map[string]string // accumulated answers (question text → answer)
+	originalInput json.RawMessage   // preserved for building updatedInput
 }
 
 // handleToolRequest is called by the reader goroutine when CC sends a

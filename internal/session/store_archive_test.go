@@ -107,24 +107,24 @@ func TestIsArchiveFile(t *testing.T) {
 		want bool
 	}{
 		{"5970082313.jsonl", false},
-		{"5970082313.1.jsonl", true},                                    // old numbered pattern
-		{"5970082313.2.jsonl", true},                                    // old numbered pattern
-		{"5970082313.10.jsonl", true},                                   // old numbered pattern
-		{"5970082313.2026-03-04T02-30-00Z.jsonl", true},                 // new timestamp pattern
-		{"5970082313.2026-03-04T02-30-00Z.2.jsonl", true},               // new timestamp pattern with counter
-		{"5970082313.2026-03-04T02-30-00Z.10.jsonl", true},              // new timestamp pattern with counter
-		{"wake-111.2026-12-25T14-35-22Z.jsonl", true},                   // new timestamp pattern
-		{"wake-111.2026-12-25T14-35-22Z.3.jsonl", true},                 // new timestamp pattern with counter
-		{"5970082313.2026-03-04T02-30-00+0100.jsonl", true},             // timestamp with offset
-		{"5970082313.2026-03-04T02-30-00-0500.jsonl", true},             // timestamp with negative offset
-		{"5970082313.2026-03-04T02-30-00+0100.2.jsonl", true},           // timestamp with offset and counter
+		{"5970082313.1.jsonl", true},                          // old numbered pattern
+		{"5970082313.2.jsonl", true},                          // old numbered pattern
+		{"5970082313.10.jsonl", true},                         // old numbered pattern
+		{"5970082313.2026-03-04T02-30-00Z.jsonl", true},       // new timestamp pattern
+		{"5970082313.2026-03-04T02-30-00Z.2.jsonl", true},     // new timestamp pattern with counter
+		{"5970082313.2026-03-04T02-30-00Z.10.jsonl", true},    // new timestamp pattern with counter
+		{"wake-111.2026-12-25T14-35-22Z.jsonl", true},         // new timestamp pattern
+		{"wake-111.2026-12-25T14-35-22Z.3.jsonl", true},       // new timestamp pattern with counter
+		{"5970082313.2026-03-04T02-30-00+0100.jsonl", true},   // timestamp with offset
+		{"5970082313.2026-03-04T02-30-00-0500.jsonl", true},   // timestamp with negative offset
+		{"5970082313.2026-03-04T02-30-00+0100.2.jsonl", true}, // timestamp with offset and counter
 		{"main.jsonl", false},
 		{"wake-111.jsonl", false},
-		{"wake-111.1.jsonl", true},                                      // old numbered pattern
-		{"invalid.2026-03-04.jsonl", false},                             // invalid timestamp (missing time)
-		{"invalid.2026-03-04T02-30-00.jsonl", false},                    // invalid timestamp (missing Z)
-		{"invalid.abc.jsonl", false},                                    // invalid suffix
-		{"invalid.2026-03-04T02-30-00Z.abc.jsonl", false},               // timestamp with invalid counter
+		{"wake-111.1.jsonl", true},                        // old numbered pattern
+		{"invalid.2026-03-04.jsonl", false},               // invalid timestamp (missing time)
+		{"invalid.2026-03-04T02-30-00.jsonl", false},      // invalid timestamp (missing Z)
+		{"invalid.abc.jsonl", false},                      // invalid suffix
+		{"invalid.2026-03-04T02-30-00Z.abc.jsonl", false}, // timestamp with invalid counter
 	}
 	for _, tt := range tests {
 		if got := isArchiveFile(tt.name); got != tt.want {

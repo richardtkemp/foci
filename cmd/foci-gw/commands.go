@@ -59,10 +59,10 @@ type cmdRegParams struct {
 	agentListFn func() []command.AgentInfo
 
 	// Platform
-	plat               *platform.Messaging
-	connMgr            platform.ConnectionManager
-	configureFacet func(platform.Connection)
-	displayDefaultsFn  func() platform.DisplaySettings
+	plat              *platform.Messaging
+	connMgr           platform.ConnectionManager
+	configureFacet    func(platform.Connection)
+	displayDefaultsFn func() platform.DisplaySettings
 
 	// Model groups
 	groupResolver *config.GroupResolver
@@ -125,23 +125,23 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	// Construct the CommandContext
 	cc := command.CommandContext{
-		Agent:               p.ag,
-		Sessions:            p.sessions,
-		Bootstrap:           p.bootstrap,
-		SessionIndex:        p.sessionIndex,
-		Config:              p.cfg,
-		AgentConfig:         p.acfg,
-		Client:              p.client,
-		ClientProvider:      p.clientProvider,
-		ConnMgr:             p.connMgr,
-		PromptSearchDirs:    p.promptSearchDirs,
-		APILogPath:          p.cfg.Logging.APIFile,
-		EventLogPath:        p.cfg.Logging.EventFile,
-		ConfigPath:          p.configPath,
-		GroupResolver:       p.groupResolver,
-		FallbackFunc:        p.fallbackFn,
-		ToolsRegistry:       p.registry,
-		TmuxTool:            p.tmuxTool,
+		Agent:            p.ag,
+		Sessions:         p.sessions,
+		Bootstrap:        p.bootstrap,
+		SessionIndex:     p.sessionIndex,
+		Config:           p.cfg,
+		AgentConfig:      p.acfg,
+		Client:           p.client,
+		ClientProvider:   p.clientProvider,
+		ConnMgr:          p.connMgr,
+		PromptSearchDirs: p.promptSearchDirs,
+		APILogPath:       p.cfg.Logging.APIFile,
+		EventLogPath:     p.cfg.Logging.EventFile,
+		ConfigPath:       p.configPath,
+		GroupResolver:    p.groupResolver,
+		FallbackFunc:     p.fallbackFn,
+		ToolsRegistry:    p.registry,
+		TmuxTool:         p.tmuxTool,
 		BuildInfo: command.BuildInfo{
 			Version:   version,
 			GoVersion: goVersion,

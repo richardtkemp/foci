@@ -172,12 +172,12 @@ func TestTmuxReapExpiredSessions(t *testing.T) {
 	name := "foci-test-reap"
 
 	inst := &tmuxInstance{
-		watched:           make(map[string]*watchedSession),
-		owned:             make(map[string]string),
-		lastSend:          make(map[string]time.Time),
-		lastAccess:        make(map[string]time.Time),
-		sessionTTL:        100 * time.Millisecond,
-		socketPath:        sock,
+		watched:    make(map[string]*watchedSession),
+		owned:      make(map[string]string),
+		lastSend:   make(map[string]time.Time),
+		lastAccess: make(map[string]time.Time),
+		sessionTTL: 100 * time.Millisecond,
+		socketPath: sock,
 	}
 
 	// Create a real tmux session on the isolated server
@@ -217,12 +217,12 @@ func TestTmuxReapPreservesActiveSession(t *testing.T) {
 	tmuxSetup(t, name)
 
 	inst := &tmuxInstance{
-		watched:           make(map[string]*watchedSession),
-		owned:             make(map[string]string),
-		lastSend:          make(map[string]time.Time),
-		lastAccess:        make(map[string]time.Time),
-		sessionTTL:        1 * time.Hour,
-		socketPath:        tmuxSocketPath,
+		watched:    make(map[string]*watchedSession),
+		owned:      make(map[string]string),
+		lastSend:   make(map[string]time.Time),
+		lastAccess: make(map[string]time.Time),
+		sessionTTL: 1 * time.Hour,
+		socketPath: tmuxSocketPath,
 	}
 
 	// Create a real tmux session

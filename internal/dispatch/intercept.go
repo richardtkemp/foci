@@ -43,7 +43,7 @@ type Interceptor struct {
 	Handler      platform.MessageHandler // for TransformMessage; may be nil
 	Dispatcher   *Dispatcher
 	IsSecondary  bool
-	SessionKeyFn func() string     // returns current session key; empty for idle secondary bots
+	SessionKeyFn func() string // returns current session key; empty for idle secondary bots
 	LogWarnf     func(string, ...any)
 	LogDebugf    func(string, ...any)
 }

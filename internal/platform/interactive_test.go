@@ -480,7 +480,9 @@ func (m *mockButtonSender) EditMessageText(msgID string, text string) error {
 	m.editedText = text
 	return m.editErr
 }
-func (m *mockButtonSender) EditMessageWithButtons(string, string, []ButtonChoice, string) error { return nil }
+func (m *mockButtonSender) EditMessageWithButtons(string, string, []ButtonChoice, string) error {
+	return nil
+}
 
 // Compile-time verification.
 var _ ButtonSender = (*mockButtonSender)(nil)

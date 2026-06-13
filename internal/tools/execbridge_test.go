@@ -20,7 +20,9 @@ func testRegistry() *Registry {
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			var p struct{ Text string `json:"text"` }
+			var p struct {
+				Text string `json:"text"`
+			}
 			json.Unmarshal(params, &p)
 			return TextResult("echo: " + p.Text), nil
 		},
@@ -695,7 +697,6 @@ func TestExecExportToolsHaveShellFunc(t *testing.T) {
 		}
 	}
 }
-
 
 // TestTodoActionsCoverEveryDispatchArm guards against the foci_todo action
 // list drifting between todoActions (the source for help / flag-scope) and

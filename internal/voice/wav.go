@@ -27,13 +27,13 @@ func wrapPCMInWAV(pcm []byte, sampleRate, numChannels, bitsPerSample int) []byte
 
 	// fmt chunk
 	copy(header[12:16], []byte("fmt "))
-	binary.LittleEndian.PutUint32(header[16:20], 16) // chunk size
-	binary.LittleEndian.PutUint16(header[20:22], 1)  // audio format (1 = PCM)
-	binary.LittleEndian.PutUint16(header[22:24], uint16(numChannels))        // #nosec G115 - WAV header fields, values within valid audio range
-	binary.LittleEndian.PutUint32(header[24:28], uint32(sampleRate))         // #nosec G115 - WAV header fields, values within valid audio range
-	binary.LittleEndian.PutUint32(header[28:32], uint32(byteRate))           // #nosec G115 - WAV header fields, values within valid audio range
-	binary.LittleEndian.PutUint16(header[32:34], uint16(blockAlign))         // #nosec G115 - WAV header fields, values within valid audio range
-	binary.LittleEndian.PutUint16(header[34:36], uint16(bitsPerSample))      // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint32(header[16:20], 16)                    // chunk size
+	binary.LittleEndian.PutUint16(header[20:22], 1)                     // audio format (1 = PCM)
+	binary.LittleEndian.PutUint16(header[22:24], uint16(numChannels))   // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint32(header[24:28], uint32(sampleRate))    // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint32(header[28:32], uint32(byteRate))      // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint16(header[32:34], uint16(blockAlign))    // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint16(header[34:36], uint16(bitsPerSample)) // #nosec G115 - WAV header fields, values within valid audio range
 
 	// data chunk
 	copy(header[36:40], []byte("data"))

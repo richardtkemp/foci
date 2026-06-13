@@ -447,7 +447,7 @@ func TestSpawnExploreToolAllowlist(t *testing.T) {
 		"write":            true,
 		"edit":             true,
 		"http_request":     true,
-		"send_to_chat":    true,
+		"send_to_chat":     true,
 		"send_to_session":  true,
 		"scratchpad":       true,
 		"remind":           true,

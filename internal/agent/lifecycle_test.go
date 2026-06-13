@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/delegator"
 	"foci/internal/compaction"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -869,4 +869,3 @@ func TestReloadAfterMutation(t *testing.T) {
 		t.Error("session 2 system cache should be invalidated")
 	}
 }
-

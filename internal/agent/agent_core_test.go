@@ -418,7 +418,6 @@ func TestTriggerContext(t *testing.T) {
 	}
 }
 
-
 func TestDeferredReply(t *testing.T) {
 	// Verify that text in tool_use responses is sent via ReplyFunc
 	var callCount atomic.Int32
@@ -529,5 +528,3 @@ func TestNoResponseSentinelPassedThrough(t *testing.T) {
 }
 
 // newTestClientWithBase creates a test client with a custom base URL.
-
-

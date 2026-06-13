@@ -41,8 +41,8 @@ type selfRetryingClient interface {
 // - Other clients get provider-level retry:
 //   - Phase 1: Standard exponential backoff (3 retries, 2s→4s→8s) for all retryable errors
 //   - Phase 2: Extended retry for retryableClient implementations:
-//     - 529 overload: up to ~2h (configurable via OverloadMaxDuration)
-//     - 5xx server errors: up to ~5min (configurable via ServerErrorMaxDuration)
+//   - 529 overload: up to ~2h (configurable via OverloadMaxDuration)
+//   - 5xx server errors: up to ~5min (configurable via ServerErrorMaxDuration)
 func sendWithRetry(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
 	// Check if client handles its own retries (e.g., Gemini SDK has built-in retry)
 	if src, ok := client.(selfRetryingClient); ok && src.HandlesOwnRetries() {

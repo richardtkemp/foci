@@ -63,7 +63,7 @@ type Command struct {
 	// that cancels or interrupts an active agent turn (e.g. /stop), since the
 	// worker is blocked while a turn is running and cannot process deferred work.
 	Immediate bool
-	Visible func(ctx context.Context, req Request, cc CommandContext) bool // when non-nil and returns false, suppressed from listings/keyboards
+	Visible   func(ctx context.Context, req Request, cc CommandContext) bool // when non-nil and returns false, suppressed from listings/keyboards
 
 	// Subcommands declares the command's subcommand set. When non-empty and
 	// Execute is nil, Register auto-wires Execute and (if nil) KeyboardOptions

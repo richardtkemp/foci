@@ -377,10 +377,10 @@ func isDevNullRedirect(r *syntax.Redirect) bool {
 func isOutputRedirect(op syntax.RedirOperator) bool {
 	switch op {
 	case syntax.RdrOut, // >
-		syntax.AppOut, // >>
+		syntax.AppOut,  // >>
 		syntax.RdrClob, // >|
-		syntax.RdrAll, // &>
-		syntax.AppAll: // &>>
+		syntax.RdrAll,  // &>
+		syntax.AppAll:  // &>>
 		return true
 	}
 	return false
@@ -408,13 +408,13 @@ func litContainsBraceExpansion(s string) bool {
 // arbitrary code execution or security bypass. Assignments to these via
 // export/declare/readonly/typeset are rejected by the auto-approve walker.
 var dangerousVars = map[string]bool{
-	"PATH":             true, // redirects command lookups
-	"LD_PRELOAD":       true, // injects shared library into every process
-	"LD_LIBRARY_PATH":  true, // redirects shared library resolution
-	"PROMPT_COMMAND":   true, // executed by bash before every prompt
-	"BASH_ENV":         true, // executed on non-interactive bash startup
-	"ENV":              true, // executed on sh/dash startup
-	"HISTFILE":         true, // controls command history location
+	"PATH":            true, // redirects command lookups
+	"LD_PRELOAD":      true, // injects shared library into every process
+	"LD_LIBRARY_PATH": true, // redirects shared library resolution
+	"PROMPT_COMMAND":  true, // executed by bash before every prompt
+	"BASH_ENV":        true, // executed on non-interactive bash startup
+	"ENV":             true, // executed on sh/dash startup
+	"HISTFILE":        true, // controls command history location
 }
 
 // isDangerousVarName reports whether assigning to the named variable can lead to

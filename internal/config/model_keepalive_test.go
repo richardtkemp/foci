@@ -94,7 +94,7 @@ func TestResolveModelKeepalive_CustomTTL(t *testing.T) {
 		Developer:       "openai",
 		ModelID:         "gpt-4o",
 		EnableKeepalive: &boolTrue,
-		CacheTTL:  "10m",
+		CacheTTL:        "10m",
 	}
 	enabled, interval := ResolveModelKeepalive(resolved)
 	if !enabled {
@@ -113,7 +113,7 @@ func TestResolveModelKeepalive_InvalidTTL(t *testing.T) {
 		Developer:       "openai",
 		ModelID:         "gpt-4o",
 		EnableKeepalive: &boolTrue,
-		CacheTTL:  "invalid",
+		CacheTTL:        "invalid",
 	}
 	enabled, _ := ResolveModelKeepalive(resolved)
 	if enabled {
@@ -128,7 +128,7 @@ func TestResolveModelKeepalive_ZeroTTL(t *testing.T) {
 		Developer:       "openai",
 		ModelID:         "gpt-4o",
 		EnableKeepalive: &boolTrue,
-		CacheTTL:  "0s",
+		CacheTTL:        "0s",
 	}
 	enabled, _ := ResolveModelKeepalive(resolved)
 	if enabled {

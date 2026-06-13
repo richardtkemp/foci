@@ -27,23 +27,23 @@ type mockBackendDM struct {
 	startErr    error
 	startOpts   delegator.StartOptions
 
-	permPromptFunc      delegator.PermissionPromptFunc
-	onPermCleared       func()
-	cancelListeners     map[string][]func(reason string)
-	onSessionReady      func(string)
-	typingFunc          func(bool)
-	sessionID           string
-	sessionFilePath     string
-	waitReadyErr        error
-	waitReadyDelay      time.Duration
-	turnInFlight        bool
-	running             bool
-	waitForTurnErr      error
-	waitForTurnBlock    chan struct{} // if non-nil, WaitForTurn blocks until closed
-	sendToPaneFn        func(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error)
-	sessionEvents       *delegator.SessionEvents
-	sendCommandFn       func(context.Context, string) error
-	closeFn             func() error
+	permPromptFunc   delegator.PermissionPromptFunc
+	onPermCleared    func()
+	cancelListeners  map[string][]func(reason string)
+	onSessionReady   func(string)
+	typingFunc       func(bool)
+	sessionID        string
+	sessionFilePath  string
+	waitReadyErr     error
+	waitReadyDelay   time.Duration
+	turnInFlight     bool
+	running          bool
+	waitForTurnErr   error
+	waitForTurnBlock chan struct{} // if non-nil, WaitForTurn blocks until closed
+	sendToPaneFn     func(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error)
+	sessionEvents    *delegator.SessionEvents
+	sendCommandFn    func(context.Context, string) error
+	closeFn          func() error
 }
 
 func (m *mockBackendDM) Start(_ context.Context, opts delegator.StartOptions) error {
@@ -154,7 +154,6 @@ func (m *mockBackendDM) Inject(ctx context.Context, inj delegator.Inject) error 
 
 func (m *mockBackendDM) IsRunning() bool { return m.running }
 
-
 func (m *mockBackendDM) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -194,7 +193,7 @@ func (m *mockBackendDM) AttachSessionEvents(events *delegator.SessionEvents) {
 	m.mu.Unlock()
 }
 
-func (m *mockBackendDM) SendKeystroke(_ context.Context, _ string) error { return nil }
+func (m *mockBackendDM) SendKeystroke(_ context.Context, _ string) error  { return nil }
 func (m *mockBackendDM) SendSpecialKey(_ context.Context, _ string) error { return nil }
 
 func (m *mockBackendDM) Interrupt(_ context.Context) error {

@@ -128,8 +128,8 @@ func IsGood(actualMana float64, resetsAt time.Time, investInterval time.Duration
 // Caching is handled by UsageClient; Monitor just calls GetUsage and evaluates.
 type Monitor struct {
 	log         *log.ComponentLogger
-	usageClient UsageClient                        // static client (if not using getClient)
-	getClient   func() UsageClient                // dynamic client getter (for session-aware)
+	usageClient UsageClient        // static client (if not using getClient)
+	getClient   func() UsageClient // dynamic client getter (for session-aware)
 }
 
 // NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor returns true

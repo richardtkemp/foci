@@ -294,9 +294,9 @@ func TestSpawnModelOpenRouter(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		config    string // model string in GroupsConfig.Powerful
-		wantWire  string // expected model in HTTP request body
+		name     string
+		config   string // model string in GroupsConfig.Powerful
+		wantWire string // expected model in HTTP request body
 	}{
 		{"3-segment stepfun", "openrouter/stepfun/step-3.5-flash", "stepfun/step-3.5-flash"},
 		{"3-segment deepseek", "openrouter/deepseek/deepseek-r1", "deepseek/deepseek-r1"},

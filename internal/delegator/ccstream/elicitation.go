@@ -59,7 +59,7 @@ type elicSchema struct {
 
 // elicProperty describes a single schema property.
 type elicProperty struct {
-	Type        string   // "string"|"number"|"integer"|"boolean"
+	Type        string // "string"|"number"|"integer"|"boolean"
 	Description string
 	Title       string
 	Enum        []string // if non-empty, rendered as buttons

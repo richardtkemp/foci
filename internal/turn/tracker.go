@@ -68,9 +68,9 @@ const previewKey = ""
 // preview message (preview mode, via previewKey).
 type trackerEntry struct {
 	msgID      string
-	text       string           // compact summary (full mode) or full text (preview mode)
-	fullText   string           // full-formatted tool call text (full mode only)
-	lastParams json.RawMessage  // params of the originating tool_use (for result hints)
+	text       string          // compact summary (full mode) or full text (preview mode)
+	fullText   string          // full-formatted tool call text (full mode only)
+	lastParams json.RawMessage // params of the originating tool_use (for result hints)
 }
 
 // ToolCallTracker manages tool call visibility state during an agent turn.

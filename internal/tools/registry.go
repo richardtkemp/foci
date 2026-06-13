@@ -11,10 +11,10 @@ import (
 
 // ToolResult is the return value from a tool execution.
 type ToolResult struct {
-	Text        string                   // primary text result (goes into tool_result content)
+	Text        string                  // primary text result (goes into tool_result content)
 	ExtraBlocks []provider.ContentBlock // additional content blocks (e.g. document) placed alongside tool_result
-	ResultFile  string                   // if set, full result is already at this path (skip redundant write in guard)
-	ResultSize  int64                    // total bytes of the full result (0 if not spilled)
+	ResultFile  string                  // if set, full result is already at this path (skip redundant write in guard)
+	ResultSize  int64                   // total bytes of the full result (0 if not spilled)
 }
 
 // TextResult creates a ToolResult with only text (no extra blocks).
