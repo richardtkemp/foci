@@ -54,7 +54,7 @@ config.Load(path)                                        ← validates values; l
          → shared.finalize(ag, params)                      ← commands, platform, nudge (shared postamble)
      → ELSE (traditional API agent):
        → tools.NewAsyncNotifier()                           ← shared by exec + http_request + tmux, routes by session key
-       → tools.NewRegistry() + register all tools           ← per-agent registry (incl. bitwarden_search/unlock, browser if enabled)
+       → tools.NewRegistry() + registerTools(pathAPI)        ← unified tool table (tool_table.go), one source of truth shared with exec path
        → mcp.NewManagerForAgent(configDir, agentID)         ← dynamic MCP; re-reads mcp.toml on each tool call
        → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
        → buildEnvironmentBlock(acfg, configPath, cfg)       ← if [environment] enabled
@@ -508,7 +508,7 @@ Used by permission prompts (delegated backends), config selection menus, and oth
 
 **Typed ("Other") answers:** a pending ask is also keyed by session (`askState.bySession`, exposed via `AskRouter`, stored on `Agent.AskRouter`). `Agent.RunTurn` (`run_turn.go`, the platform-message path only) checks for a pending ask and routes a typed reply to `AskRouter.HandleResponse` instead of starting a turn. Gating on `RunTurn` (not the shared `HandleMessage`) ensures system injects (keepalive, reflection, `session_notify`) — which call `HandleMessage` directly — are never mistaken for answers.
 
-**Registration:** `registerAskTool` is called on both the API path (`agents.go`) and the delegated path (`agents_delegated.go` → `buildExecRegistry`), so `foci_ask` is available to every agent. Shell input is JSON-only (positional object, `--json`, or stdin); the hand-rolled shell func lives in `execbridge.go`'s `generateShellFunc` (`questions` is declared positional so the schema-parity validator skips it). `multiSelect` is accepted but currently single-select.
+**Registration:** the `ask` tool's `pathBoth` row in the unified tool table (`cmd/foci-gw/tool_table.go`) registers it on both the API path and the delegated/exec path, so `foci_ask` is available to every agent. The build closure calls `tools.NewAskTool(newAskPresentFn(...), ...)` and stashes the returned `AskRouter` on `toolOutputs.askRouter`, which each call site assigns to `Agent.AskRouter`. Shell input is JSON-only (positional object, `--json`, or stdin); the hand-rolled shell func lives in `execbridge.go`'s `generateShellFunc` (`questions` is declared positional so the schema-parity validator skips it). `multiSelect` is accepted but currently single-select.
 
 ### API Tool Loop Detail
 
@@ -741,7 +741,7 @@ Cctmux plumbs the id through via `handleAssistant` recording `toolNamesByID` at 
 
 The agent can defer thoughts for later via the `remind` tool. Reminders are stored in SQLite (`reminders.db`) and surfaced as injected context when due. With `wake=true`, the session is actively woken at the specified time.
 
-**Tool registration:** `remind` is `ExecExport: true`, so it is exposed both as a native API tool (in API-mode agents) and as a `foci_remind` shell function via the exec bridge (in delegated/Claude Code agents). The wake-scheduling machinery (`buildWakeScheduler` in `cmd/foci-gw/agents_notify.go`) is built once per agent in `setupAgent` — transport-independent — and the resulting `tools.ScheduleWakeFn` is held on `sharedAgentSetup.wakeScheduleFn`. Each transport then registers the tool into its own registry: `configureAPI` adds it to the API tool registry; `buildExecRegistry` adds it to the delegated exec registry. Both registrations are gated on `reminderStore != nil && wakeScheduleFn != nil`.
+**Tool registration:** `remind` is `ExecExport: true`, so it is exposed both as a native API tool (in API-mode agents) and as a `foci_remind` shell function via the exec bridge (in delegated/Claude Code agents). The wake-scheduling machinery (`buildWakeScheduler` in `cmd/foci-gw/agents_notify.go`) is built once per agent in `setupAgent` — transport-independent — and the resulting `tools.ScheduleWakeFn` is held on `sharedAgentSetup.wakeScheduleFn` and passed into `toolDeps.wakeFn`. The `remind` row in the unified tool table (`cmd/foci-gw/tool_table.go`) is `pathBoth` and gated on `reminderStore != nil && wakeFn != nil`, so the single `registerTools` driver adds it to whichever registry (API or exec) is being built.
 
 **Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `agent_id`, `text`, `due_at`, `due_tag`, `created`. Scoped per-agent — each agent sees only its own reminders.
 

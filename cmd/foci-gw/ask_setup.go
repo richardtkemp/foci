@@ -39,14 +39,3 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 		}
 	}
 }
-
-// registerAskTool builds and registers the `ask`/`foci_ask` tool against the
-// given registry. deliver injects the assembled answer batch back into the
-// asking session as a normal inbound message (waking the agent). Returns the
-// AskRouter used by the inbound path to divert typed ("Other") answers.
-func registerAskTool(registry *tools.Registry, agentID string, connMgr platform.ConnectionManager, deliver tools.SessionNotifyFn) *tools.AskRouter {
-	present := newAskPresentFn(agentID, connMgr)
-	tool, router := tools.NewAskTool(present, tools.AskDeliverFn(deliver))
-	registry.Register(tool)
-	return router
-}

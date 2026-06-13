@@ -91,9 +91,10 @@ func TestBuildExecRegistryAllToolsHaveShellFuncParity(t *testing.T) {
 	// schema gains a parameter without a matching flag arm in its generated
 	// shell-func body fails this test.
 	//
-	// New ExecExport tools added to buildExecRegistry are automatically
-	// covered: there is no hand-maintained list to update. This is the
-	// structural fix for the foci_remind --text drift (TODO #723).
+	// New ExecExport tools added to the unified tool table (tool_table.go,
+	// pathExec rows) are automatically covered: there is no hand-maintained
+	// list to update. This is the structural fix for the foci_remind --text
+	// drift (TODO #723).
 	t.Parallel()
 
 	rs, err := memory.NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
@@ -119,8 +120,8 @@ func TestBuildExecRegistryAllToolsHaveShellFuncParity(t *testing.T) {
 
 	registry := buildExecRegistry(p, stubWakeFn, nil)
 
-	// Sanity: every conditional tool we expect should be present. If
-	// buildExecRegistry's wiring changes, update this list AND the test
+	// Sanity: every conditional tool we expect should be present. If the
+	// tool table's pathExec set changes, update this list AND the test
 	// will still cover all registered tools because the parity check runs
 	// over registry.All().
 	for _, want := range []string{"send_to_chat", "send_to_session", "web_fetch", "http_request", "todo", "web_search", "memory_search", "remind"} {

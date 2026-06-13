@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
 	"foci/internal/log"
@@ -319,15 +318,13 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	acfg := p.acfg
 	connMgr := p.connMgr
 
-	// Shared infrastructure that mirrors the API path's tool wiring
-	// (cmd/foci-gw/agents_setup.go). Build once at registry construction so
-	// every tool gets the same agent-scoped store, async notifier, file
-	// permissions, and resolved TTS as their API-path counterparts.
+	// Shared infrastructure that mirrors the API path's tool wiring. Build once
+	// at registry construction so every tool gets the same agent-scoped store,
+	// async notifier, and resolved TTS as their API-path counterparts.
 	var agentStore *secrets.Store
 	if p.store != nil {
 		agentStore = p.store.ForAgent(acfg.ID)
 	}
-	fileMode, _ := config.ParseFileMode(p.cfg.FileMode)
 	var notifier *tools.AsyncNotifier
 	if agLazy != nil {
 		notifier = newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr)
@@ -336,59 +333,33 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
 	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
 
-	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
-		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
-		if conn == nil {
-			return nil
-		}
-		return conn
-	}, agentTTS))
+	// Delegated agents shell out to `claude --print` (CLISummariser) for the
+	// summary tool, routing through the parent CC subprocess's subscription auth
+	// so the call charges mana, not API spend. (API agents use APISummariser.)
+	cliSummariser := tools.NewCLISummariser("", "haiku", p.resolved.Summary.MaxSummaryInputChars)
 
-	// send_to_session: cross-session messaging. Wires the same async notifier
-	// and session-notify routes as the API path (registerSessionTools). The
-	// notifier handles reply_to=caller (response routes back); sessionNotifyFn
-	// handles reply_to=session (response goes to target's own chat).
-	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
-	var resolveKeyFn tools.SessionKeyResolverFn
-	if p.sessionIndex != nil {
-		resolveKeyFn = p.sessionIndex.ResolveLooseKey
-	}
-	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn, resolveKeyFn))
-
-	// ask / foci_ask: async, backend-agnostic AskUserQuestion. Posts questions
-	// as interactive buttons and delivers the answer batch back into this
-	// session via the same session-notify route as send_to_session.
-	askRouter := registerAskTool(registry, acfg.ID, connMgr, sessionNotifyFn)
+	// Register the exec-exported subset from the single data-driven table (see
+	// tool_table.go) — the same source of truth that drives the API path. The
+	// table's pathExec filter selects exactly the exec-bridge tools.
+	out := &toolOutputs{}
+	registerTools(&toolDeps{
+		p:             p,
+		path:          pathExec,
+		registry:      registry,
+		agentStore:    agentStore,
+		notifier:      notifier,
+		connMgr:       connMgr,
+		agLazy:        agLazy,
+		summariser:    cliSummariser,
+		wakeFn:        wakeScheduleFn,
+		sessionNotify: newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr),
+		agentTTS:      agentTTS,
+		out:           out,
+	})
 	if agLazy != nil {
 		if a := agLazy(); a != nil {
-			a.AskRouter = askRouter
+			a.AskRouter = out.askRouter
 		}
-	}
-
-	if p.todoStore != nil {
-		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
-	}
-
-	if p.braveKey != "" {
-		registry.Register(tools.NewWebSearchTool(p.braveKey))
-	}
-
-	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, p.resolved.Tools.ExecAutoBackground, p.resolved.Tools.MaxUploadFileSize, notifier, fileMode))
-
-	// Summary tool: piped/file content summarisation. Delegated agents shell
-	// out to `claude --print` (CLISummariser), routing through the parent CC
-	// subprocess's subscription auth so the call charges mana, not API spend.
-	// API agents register this in registerCoreTools with APISummariser.
-	cliSummariser := tools.NewCLISummariser("", "haiku", p.resolved.Summary.MaxSummaryInputChars)
-	registry.Register(tools.NewSummaryTool(agentStore, cliSummariser, acfg.Workspace))
-
-	if len(p.memBackends) > 0 {
-		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.resolved.MemorySearch.SearchBackend, p.convReader))
-	}
-
-	if p.reminderStore != nil && wakeScheduleFn != nil {
-		registry.Register(tools.NewRemindTool(p.reminderStore, acfg.ID, wakeScheduleFn))
 	}
 
 	log.Infof("agent/"+acfg.ID, "exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())

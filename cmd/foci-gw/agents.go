@@ -209,22 +209,43 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	notifier := newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr)
 	agentStore := p.store.ForAgent(acfg.ID)
 
-	// Register tools by category
-	coreResult := registerCoreTools(registry, p, client, agentStore, notifier, groupResolver, fallbackFn)
-	serverTools := registerWebTools(registry, p)
-	mcpMgr := registerMemoryAndExtTools(registry, p, agLazy)
-
-	// Bootstrap and skills
+	// Bootstrap and skills — computed before tool registration because the spawn
+	// tool needs the bootstrap.
 	bs := setupBootstrapAndSkills(p, agentStore)
 
-	// Session messaging tools (send_to_chat, send_to_session)
-	_, ttsRepls := registerSessionTools(registry, p, connMgr, notifier)
+	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
+	if len(blockedPaths) > 0 {
+		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
+	}
+	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
+	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, p.resolved.Voice.TTS, p.resolved.Voice.TTSRate, ttsRepls)
 
-	// ask / foci_ask: async, backend-agnostic AskUserQuestion. Registered on the
-	// API path too so non-delegated agents get the tool. Answers route back into
-	// this session via the same session-notify mechanism as send_to_session.
-	askDeliver := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
-	ag.AskRouter = registerAskTool(registry, acfg.ID, connMgr, askDeliver)
+	// Register all tools from the single data-driven table (see tool_table.go),
+	// which is the one source of truth shared with the delegated exec path.
+	out := &toolOutputs{}
+	registerTools(&toolDeps{
+		p:                p,
+		path:             pathAPI,
+		registry:         registry,
+		agentStore:       agentStore,
+		notifier:         notifier,
+		connMgr:          connMgr,
+		agLazy:           agLazy,
+		summariser:       tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, p.resolved.Summary.MaxSummaryInputChars),
+		wakeFn:           shared.wakeScheduleFn,
+		sessionNotify:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr),
+		agentTTS:         agentTTS,
+		blockedPaths:     blockedPaths,
+		client:           client,
+		groupResolver:    groupResolver,
+		fallbackFn:       fallbackFn,
+		bootstrap:        bs.bootstrap,
+		promptSearchDirs: promptSearchDirs,
+		resolvedModel:    resolvedModel,
+		defaultFormat:    defaultFormat,
+		out:              out,
+	})
+	ag.AskRouter = out.askRouter
 
 	// Per-agent environment block
 	var envBlock string
@@ -240,7 +261,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.Client = client
 	ag.ClientProvider = p.clientProvider
 	ag.Tools = registry
-	ag.ServerTools = serverTools
+	ag.ServerTools = out.serverTools
 	ag.EnvironmentBlock = envBlock
 	ag.AsyncNotifier = notifier
 	ag.Model = resolvedModel
@@ -279,27 +300,21 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// Post-creation agent configuration (API-specific)
 	setupRedaction(ag, p, agentStore)
 
-	// Spawn and wake tools (registered after agent creation for lazy capture)
-	registerSpawnTool(registry, p, client, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, resolvedModel, defaultFormat, fallbackFn)
-	if p.reminderStore != nil && shared.wakeScheduleFn != nil {
-		registry.Register(tools.NewRemindTool(p.reminderStore, acfg.ID, shared.wakeScheduleFn))
-	}
-
 	return finalizeParams{
 		bootstrap:           bs.bootstrap,
 		registry:            registry,
 		skillRegistry:       bs.skillRegistry,
-		serverTools:         serverTools,
+		serverTools:         out.serverTools,
 		client:              client,
 		clientProvider:      p.clientProvider,
 		usageClientProvider: p.usageClientProvider,
 		fallbackFn:          fallbackFn,
-		tmuxTool:            coreResult.tmuxTool,
-		tmuxClearAll:        coreResult.tmuxClearAll,
-		tmuxWatchCount:      coreResult.tmuxWatchCount,
-		tmuxMigrateKey:      coreResult.tmuxMigrateKey,
+		tmuxTool:            out.tmuxTool,
+		tmuxClearAll:        out.tmuxClearAll,
+		tmuxWatchCount:      out.tmuxWatchCount,
+		tmuxMigrateKey:      out.tmuxMigrateKey,
 		ttsRepls:            ttsRepls,
-		mcpManager:          mcpMgr,
+		mcpManager:          out.mcpMgr,
 		skillsDirs:          bs.skillsDirs,
 	}, true
 }
