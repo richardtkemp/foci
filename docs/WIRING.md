@@ -1387,12 +1387,15 @@ Before a session is cleared (`/reset` or facet TTL reclaim), the agent runs the 
 
 Flow (`agent.FireSessionEndMemory` in `internal/agent/session_end_memory.go`):
 1. Check `reflection.session_end_enabled` (nil = true, explicit false skips)
-2. Resolve prompt via `prompts.ResolvePrompt(session_end_prompt, ...)` — embedded default on empty/error
-3. If prompt resolves to empty, skip
-4. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip (unless skipMetaCheck=true for background branches)
-5. Create branch from expiring session (copies conversation history)
-6. Return immediately — caller proceeds to clear the main session
-7. Async: `HandleMessage(ctx, branchKey, prompt)` with 120s timeout, trigger `"session_end_memory"`, NoCompact
+2. **Reflect-twice guard** — `SessionIndex.ReflectionRedundant(sessionKey)`: skip if a reflection has already run AND nothing substantive happened since (`last_activity_at <= last_reflection`). Unknown / never-reflected sessions reflect. Relies on activity tracking excluding memory turns (below).
+3. Resolve prompt via `prompts.ResolvePrompt(session_end_prompt, ...)` — embedded default on empty/error
+4. If prompt resolves to empty, skip
+5. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip (unless skipMetaCheck=true for background branches)
+6. Create branch from expiring session (copies conversation history)
+7. Return immediately — caller proceeds to clear the main session
+8. Async: `HandleMessage(ctx, branchKey, prompt)` with 120s timeout, trigger `"session_end_memory"`, NoCompact
+
+**Activity tracking excludes memory turns.** `last_activity_at` is bumped by `RegisterSessionIndex` / `TouchActivity` (`turn_contract.go`) on every turn *except* those whose trigger is a memory-formation pass — `isMemoryTrigger` returns true for `"reflection"` and `"session_end_memory"` (`internal/agent/context.go`). Without this, a delegated agent's reflection (which injects into the *main* session, not a branch) would bump `last_activity_at` past `last_reflection` and make the reflect-twice guard always fire reflection. Keepalive / background / cron turns still count as activity by design — only the memory passes themselves are excluded.
 
 Entry points:
 - `/reset` command → `agent.FireSessionEndMemory` (async) → `RotateKey` → `Reload`

@@ -87,6 +87,30 @@ func isUserTrigger(trigger string) bool {
 	}
 }
 
+// isMemoryTrigger reports whether a turn is a memory-formation pass —
+// reflection or end-of-session memory — rather than substantive activity.
+//
+// On delegated (CC) agents these passes inject into the *main* session, so a
+// turn running them bumps that session's last_activity_at. Counting them as
+// activity would defeat the reflection-skip guard
+// (Agent.SessionIndex.ReflectionRedundant): a reflection would forever look
+// like "new activity since the last reflection", so the next /reset would
+// always fire a redundant reflection. These triggers are therefore excluded
+// from last_activity_at bumps (RegisterSessionIndex / TouchActivity).
+//
+// Note: this is deliberately narrow. Keepalive, background work, wake, and
+// cron turns DO count as activity — autonomous work is worth reflecting on.
+// Only the reflection/memory passes themselves are excluded, because only they
+// would self-trigger the guard.
+func isMemoryTrigger(trigger string) bool {
+	switch trigger {
+	case "reflection", "session_end_memory":
+		return true
+	default:
+		return false
+	}
+}
+
 // nudgesAllowed reports whether automatic nudges should fire on this turn.
 // Nudges (turn-interval, regex, after-tools, pre-answer) exist to shape the
 // agent's user-facing reply. System-internal turns — reflection, keepalive,

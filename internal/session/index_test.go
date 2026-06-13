@@ -1102,6 +1102,58 @@ func TestStampReflection(t *testing.T) {
 	}
 }
 
+func TestReflectionRedundant(t *testing.T) {
+	// ReflectionRedundant backs the reset-time "no need to reflect twice" guard.
+	// It must return true only when a reflection has run AND no activity has
+	// occurred since; unknown / never-reflected sessions default to false (reflect).
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	mk := func(key string) {
+		idx.Upsert(SessionIndexEntry{
+			SessionKey:     key,
+			FilePath:       "/f/" + key,
+			CreatedAt:      now.Add(-time.Hour),
+			LastActivityAt: now,
+			SessionType:    SessionTypeChat,
+			Status:         SessionStatusActive,
+		})
+	}
+
+	// Unknown session → not redundant (default to reflecting).
+	if idx.ReflectionRedundant("bot/c0/1000000000") {
+		t.Error("unknown session: want false, got true")
+	}
+
+	// Never reflected (last_reflection NULL) → not redundant.
+	mk("bot/c1/1000000000")
+	if idx.ReflectionRedundant("bot/c1/1000000000") {
+		t.Error("never-reflected session: want false, got true")
+	}
+
+	// Reflection ran, then activity since → not redundant.
+	mk("bot/c2/1000000000")
+	idx.StampReflection("bot/c2/1000000000", now.Add(-time.Minute))
+	idx.UpdateActivity("bot/c2/1000000000", now)
+	if idx.ReflectionRedundant("bot/c2/1000000000") {
+		t.Error("activity after reflection: want false, got true")
+	}
+
+	// Reflection at/after last activity → redundant (the skip case).
+	mk("bot/c3/1000000000")
+	idx.StampReflection("bot/c3/1000000000", now.Add(time.Minute))
+	if !idx.ReflectionRedundant("bot/c3/1000000000") {
+		t.Error("reflection newer than activity: want true, got false")
+	}
+
+	// Exact tie (last_reflection == last_activity_at) → redundant (<=).
+	mk("bot/c4/1000000000")
+	idx.StampReflection("bot/c4/1000000000", now)
+	if !idx.ReflectionRedundant("bot/c4/1000000000") {
+		t.Error("reflection == activity: want true, got false")
+	}
+}
+
 func TestSessionsNeedingReflection(t *testing.T) {
 	// Proves that SessionsNeedingReflection correctly filters sessions based on
 	// activity vs reflection timestamps, session type, status, and agent scoping.
