@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"foci/internal/delegator"
@@ -23,5 +24,86 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 		})
 	default:
 		return fmt.Errorf("ccstream: unsupported control request type %T", req)
+	}
+}
+
+// SendKeystroke is a no-op for the stream backend (no TUI).
+func (b *Backend) SendKeystroke(ctx context.Context, key string) error {
+	return fmt.Errorf("SendKeystroke not supported by stream backend")
+}
+
+// SendSpecialKey is a no-op for the stream backend (no TUI).
+func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
+	return fmt.Errorf("SendSpecialKey not supported by stream backend")
+}
+
+// Interrupt cancels the current agent turn by sending an interrupt control
+// message over the stdio protocol.
+func (b *Backend) Interrupt(ctx context.Context) error {
+	return b.writer.SendInterrupt()
+}
+
+// SetModel sends a set_model control request to CC via the generic
+// ControlSender interface. Convenience method retained for direct callers.
+func (b *Backend) SetModel(ctx context.Context, model string) error {
+	return b.SendControl(ctx, &delegator.SetModelRequest{Model: model})
+}
+
+// GetContextUsage sends a get_context_usage control request and returns the
+// parsed response. Zero API cost — CC computes this locally. ~650ms on a
+// persistent session.
+func (b *Backend) GetContextUsage(ctx context.Context) (*delegator.ContextUsage, error) {
+	reqID := newRequestID()
+
+	// Arm response channel before sending.
+	ch := make(chan json.RawMessage, 1)
+	b.pendingControlMu.Lock()
+	if b.pendingControls == nil {
+		b.pendingControls = make(map[string]chan json.RawMessage)
+	}
+	b.pendingControls[reqID] = ch
+	b.pendingControlMu.Unlock()
+
+	if err := b.writer.SendControl(reqID, &GetContextUsageRequest{
+		Subtype: "get_context_usage",
+	}); err != nil {
+		// Clean up on send failure.
+		b.pendingControlMu.Lock()
+		delete(b.pendingControls, reqID)
+		b.pendingControlMu.Unlock()
+		return nil, fmt.Errorf("send get_context_usage: %w", err)
+	}
+
+	select {
+	case raw := <-ch:
+		var env controlResponseInbound
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return nil, fmt.Errorf("unmarshal control_response envelope: %w", err)
+		}
+		if env.Response.Subtype != "success" {
+			return nil, fmt.Errorf("get_context_usage returned subtype %q", env.Response.Subtype)
+		}
+		var payload contextUsagePayload
+		if err := json.Unmarshal(env.Response.Response, &payload); err != nil {
+			return nil, fmt.Errorf("unmarshal context_usage payload: %w", err)
+		}
+		cats := make([]delegator.ContextCategory, len(payload.Categories))
+		for i, c := range payload.Categories {
+			cats[i] = delegator.ContextCategory{Name: c.Name, Tokens: c.Tokens}
+		}
+		return &delegator.ContextUsage{
+			TotalTokens:          payload.TotalTokens,
+			MaxTokens:            payload.MaxTokens,
+			Percentage:           payload.Percentage,
+			AutoCompactThreshold: payload.AutoCompactThreshold,
+			Model:                payload.Model,
+			Categories:           cats,
+		}, nil
+	case <-ctx.Done():
+		// Clean up on timeout.
+		b.pendingControlMu.Lock()
+		delete(b.pendingControls, reqID)
+		b.pendingControlMu.Unlock()
+		return nil, ctx.Err()
 	}
 }
