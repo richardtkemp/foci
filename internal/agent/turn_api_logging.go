@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.
 func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, duration time.Duration, req *provider.MessageRequest, resp *provider.MessageResponse, msgCount int) float64 {
-	cost := log.CalculateCost(model,
+	cost := modelinfo.Cost(model,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 

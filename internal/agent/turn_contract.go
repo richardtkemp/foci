@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/convo"
 	"foci/internal/delegator"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -309,7 +309,7 @@ func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 		chatID = session.ChatIDFromKey(ts.SessionKey)
 	}
 	ts.ConvChatID = chatID
-	log.Conversation(log.ConversationEntry{
+	convo.Record(convo.Entry{
 		Direction: "recv",
 		UserID:    ts.Meta.UserID,
 		Username:  ts.Meta.Username,
@@ -347,7 +347,7 @@ func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
 	if ts.FinalText == "" {
 		return
 	}
-	log.Conversation(log.ConversationEntry{
+	convo.Record(convo.Entry{
 		Direction: "sent",
 		UserID:    ts.Meta.UserID,
 		Username:  ts.Meta.Username,

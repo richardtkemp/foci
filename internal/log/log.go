@@ -288,6 +288,14 @@ func SetWarnHook(fn func(level Level, component string, msg string)) {
 	warnBuffer = nil
 }
 
+// SetOutput redirects the event output stream. Exported for cross-package test
+// use (e.g. convo tests that assert an error was logged); mirrors SetAPIWriter.
+func SetOutput(w io.Writer) {
+	std.mu.Lock()
+	std.eventOut = w
+	std.mu.Unlock()
+}
+
 // event writes a formatted log line if the level is at or above the configured level.
 func (l *Logger) event(level Level, component string, format string, args ...interface{}) {
 	if level < l.level {

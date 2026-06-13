@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 
 	"foci/internal/config"
-	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/tools"
 )
@@ -158,7 +158,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sess
 	}
 
 	duration := time.Since(start)
-	cost := log.CalculateCost(model,
+	cost := modelinfo.Cost(model,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 

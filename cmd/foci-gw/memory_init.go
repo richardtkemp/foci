@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/convo"
 	"foci/internal/log"
 	"foci/internal/memory"
 )
@@ -256,7 +257,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 
 		// Conversation hook: route to agent's indices by session key prefix
 		if len(result.agentFTS5) > 0 || len(result.agentBleve) > 0 {
-			log.ConversationHook = func(text, session string, rowID int64) {
+			convo.Hook = func(text, session string, rowID int64) {
 				for agentID, idx := range result.agentFTS5 {
 					if strings.HasPrefix(session, agentID+"/") {
 						idx.IndexConversation(text, session, rowID)
@@ -283,14 +284,14 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		// Wire conversation hook to all active backends
 		switch {
 		case fts5Idx != nil && bleveIdx != nil:
-			log.ConversationHook = func(text, session string, rowID int64) {
+			convo.Hook = func(text, session string, rowID int64) {
 				fts5Idx.IndexConversation(text, session, rowID)
 				bleveIdx.IndexConversation(text, session, rowID)
 			}
 		case fts5Idx != nil:
-			log.ConversationHook = fts5Idx.IndexConversation
+			convo.Hook = fts5Idx.IndexConversation
 		case bleveIdx != nil:
-			log.ConversationHook = bleveIdx.IndexConversation
+			convo.Hook = bleveIdx.IndexConversation
 		}
 	}
 

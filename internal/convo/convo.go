@@ -1,4 +1,8 @@
-package log
+// Package convo persists platform conversation messages to per-agent SQLite
+// databases and offers an optional indexing hook (used to feed the memory
+// search index). It was extracted from internal/log so the logging package can
+// stay a lightweight leaf rather than carrying a data store.
+package convo
 
 import (
 	"database/sql"
@@ -6,12 +10,13 @@ import (
 	"strings"
 	"sync"
 
+	"foci/internal/log"
 	"foci/internal/sqlite"
 	"foci/internal/timeutil"
 )
 
-// ConversationEntry is a single message in the conversation log.
-type ConversationEntry struct {
+// Entry is a single message in the conversation log.
+type Entry struct {
 	Direction   string // "recv" or "sent"
 	UserID      string
 	Username    string
@@ -23,24 +28,24 @@ type ConversationEntry struct {
 	ContentType string // "text" (default) or "thinking"
 }
 
-// ConversationLog writes platform messages to a SQLite database.
-type ConversationLog struct {
+// agentLog writes platform messages to a SQLite database.
+type agentLog struct {
 	db *sql.DB
 	mu sync.Mutex
 }
 
 var (
-	convLogs     map[string]*ConversationLog // agentID → log
-	convFallback *ConversationLog            // used when session can't be routed
+	convLogs     map[string]*agentLog // agentID → log
+	convFallback *agentLog            // used when session can't be routed
 )
 
-// ConversationHook is called for each logged conversation entry.
-// Set by main.go to index conversation text into the memory index.
-// rowID is the SQLite row ID from the conversation log INSERT.
-var ConversationHook func(text, session string, rowID int64)
+// Hook is called for each logged conversation entry. Set by the gateway to
+// index conversation text into the memory index. rowID is the SQLite row ID
+// from the conversation log INSERT.
+var Hook func(text, session string, rowID int64)
 
-// openConversationLog opens a single conversation log database.
-func openConversationLog(path string) (*ConversationLog, error) {
+// openLog opens a single conversation log database.
+func openLog(path string) (*agentLog, error) {
 	db, err := sqlite.OpenInit(path, `CREATE TABLE IF NOT EXISTS messages (
 		id           INTEGER PRIMARY KEY AUTOINCREMENT,
 		ts           TEXT    NOT NULL,
@@ -61,15 +66,15 @@ func openConversationLog(path string) (*ConversationLog, error) {
 	}
 	// Migration for existing DBs.
 	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text'`)
-	return &ConversationLog{db: db}, nil
+	return &agentLog{db: db}, nil
 }
 
-// InitPerAgentConversation opens per-agent conversation log databases.
-// pathFn maps each agent ID to its database path.
-func InitPerAgentConversation(agentIDs []string, pathFn func(string) string) error {
-	m := make(map[string]*ConversationLog, len(agentIDs))
+// InitPerAgent opens per-agent conversation log databases. pathFn maps each
+// agent ID to its database path.
+func InitPerAgent(agentIDs []string, pathFn func(string) string) error {
+	m := make(map[string]*agentLog, len(agentIDs))
 	for _, id := range agentIDs {
-		cl, err := openConversationLog(pathFn(id))
+		cl, err := openLog(pathFn(id))
 		if err != nil {
 			// Close already-opened logs on failure.
 			for _, opened := range m {
@@ -87,8 +92,8 @@ func InitPerAgentConversation(agentIDs []string, pathFn func(string) string) err
 	return nil
 }
 
-// CloseConversation closes all conversation log databases.
-func CloseConversation() {
+// Close closes all conversation log databases.
+func Close() {
 	for _, cl := range convLogs {
 		_ = cl.db.Close()
 	}
@@ -96,22 +101,22 @@ func CloseConversation() {
 	convFallback = nil
 }
 
-// Conversation logs a conversation entry. No-op if not initialized.
-func Conversation(entry ConversationEntry) {
-	cl := resolveConvLog(entry.Session)
+// Record logs a conversation entry. No-op if not initialized.
+func Record(entry Entry) {
+	cl := resolveLog(entry.Session)
 	if cl == nil {
 		return
 	}
-	rowID := cl.log(entry)
+	rowID := cl.insert(entry)
 
-	if ConversationHook != nil && entry.Text != "" {
-		ConversationHook(entry.Text, entry.Session, rowID)
+	if Hook != nil && entry.Text != "" {
+		Hook(entry.Text, entry.Session, rowID)
 	}
 }
 
-// resolveConvLog picks the per-agent log for a session key, falling back
-// to the default log when the session can't be routed.
-func resolveConvLog(session string) *ConversationLog {
+// resolveLog picks the per-agent log for a session key, falling back to the
+// default log when the session can't be routed.
+func resolveLog(session string) *agentLog {
 	if len(convLogs) == 0 {
 		return nil
 	}
@@ -123,9 +128,9 @@ func resolveConvLog(session string) *ConversationLog {
 	return convFallback
 }
 
-// agentFromSession extracts the agent ID from a session key.
-// Session keys use slash-separated format: "{agentID}/{typeID}/{versionTS}".
-// Returns "" if the format doesn't match.
+// agentFromSession extracts the agent ID from a session key. Session keys use
+// slash-separated format: "{agentID}/{typeID}/{versionTS}". Returns "" if the
+// format doesn't match.
 func agentFromSession(session string) string {
 	if idx := strings.IndexByte(session, '/'); idx > 0 {
 		return session[:idx]
@@ -133,8 +138,8 @@ func agentFromSession(session string) string {
 	return ""
 }
 
-// log inserts a conversation entry and returns the SQLite row ID (0 on error).
-func (c *ConversationLog) log(entry ConversationEntry) int64 {
+// insert writes a conversation entry and returns the SQLite row ID (0 on error).
+func (c *agentLog) insert(entry Entry) int64 {
 	ts := timeutil.FormatNano(timeutil.Now())
 
 	contentType := entry.ContentType
@@ -152,7 +157,7 @@ func (c *ConversationLog) log(entry ConversationEntry) int64 {
 		entry.Text, entry.ParseMode, entry.Session, entry.Error, contentType,
 	)
 	if err != nil {
-		std.event(ERROR, "conversation", "insert error: %v", err)
+		log.Errorf("conversation", "insert error: %v", err)
 		return 0
 	}
 	rowID, _ := res.LastInsertId()

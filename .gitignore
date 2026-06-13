@@ -26,7 +26,7 @@ docker/memory/*
 codeql-db/
 coverage.out
 coverage.html
-internal/tools/logs/tmux.debug
+internal/tools/**/logs/tmux.debug
 *.out
 .test-output.tmp
 cover.html

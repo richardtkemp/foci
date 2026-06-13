@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/internal/log"
+	"foci/internal/convo"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/voice"
@@ -234,7 +234,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 
 // logToolSend logs a conversation entry for a tool-initiated send.
 func logToolSend(sessionKey string, chatID int64, text string) {
-	log.Conversation(log.ConversationEntry{
+	convo.Record(convo.Entry{
 		Direction: "sent",
 		ChatID:    chatID,
 		Text:      text,

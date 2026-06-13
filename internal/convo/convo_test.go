@@ -1,8 +1,9 @@
-package log
+package convo
 
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,10 +18,10 @@ func TestConversationLog(t *testing.T) {
 	if err := initConversation(dbPath); err != nil {
 		t.Fatalf("initConversation: %v", err)
 	}
-	defer CloseConversation()
+	defer Close()
 
 	// Log a received message
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "recv",
 		UserID:    "12345",
 		Username:  "testuser",
@@ -30,7 +31,7 @@ func TestConversationLog(t *testing.T) {
 	})
 
 	// Log a sent response
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "sent",
 		UserID:    "12345",
 		Username:  "testuser",
@@ -41,7 +42,7 @@ func TestConversationLog(t *testing.T) {
 	})
 
 	// Log a failed send
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "sent",
 		UserID:    "12345",
 		Username:  "testuser",
@@ -138,7 +139,7 @@ func TestConversationNoopWhenUninitialized(t *testing.T) {
 	}()
 
 	// Should not panic
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "recv",
 		UserID:    "1",
 		Username:  "test",
@@ -155,7 +156,7 @@ func TestConversationBusyTimeout(t *testing.T) {
 	if err := initConversation(dbPath); err != nil {
 		t.Fatalf("initConversation: %v", err)
 	}
-	defer CloseConversation()
+	defer Close()
 
 	var timeout int
 	if err := convFallback.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
@@ -187,23 +188,23 @@ func TestAgentFromSession(t *testing.T) {
 }
 
 func TestConversationHook(t *testing.T) {
-	// Verifies that ConversationHook is called for non-empty text entries.
+	// Verifies that Hook is called for non-empty text entries.
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
 	if err := initConversation(dbPath); err != nil {
 		t.Fatalf("initConversation: %v", err)
 	}
-	defer CloseConversation()
+	defer Close()
 
 	var hookedText, hookedSession string
 	var hookedRowID int64
-	ConversationHook = func(text, session string, rowID int64) {
+	Hook = func(text, session string, rowID int64) {
 		hookedText = text
 		hookedSession = session
 		hookedRowID = rowID
 	}
-	defer func() { ConversationHook = nil }()
+	defer func() { Hook = nil }()
 
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
 		Text: "hook test", Session: "main/c1/1000",
 	})
@@ -220,7 +221,7 @@ func TestConversationHook(t *testing.T) {
 
 	// Empty text should NOT trigger the hook
 	hookedText = ""
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
 		Text: "", Session: "main/c1/1000",
 	})
@@ -237,19 +238,19 @@ func TestConversationFallbackRouting(t *testing.T) {
 	pathFn := func(id string) string {
 		return filepath.Join(dir, "conversation-"+id+".db")
 	}
-	if err := InitPerAgentConversation(agentIDs, pathFn); err != nil {
-		t.Fatalf("InitPerAgentConversation: %v", err)
+	if err := InitPerAgent(agentIDs, pathFn); err != nil {
+		t.Fatalf("InitPerAgent: %v", err)
 	}
-	defer CloseConversation()
+	defer Close()
 
 	// Unknown agent session should go to fallback (alpha)
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
 		Text: "unknown agent", Session: "unknown/c1/1000",
 	})
 
 	// Non-slash session should also go to fallback
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
 		Text: "no agent prefix", Session: "noslash",
 	})
@@ -264,7 +265,7 @@ func TestConversationFallbackRouting(t *testing.T) {
 }
 
 func TestInitPerAgentConversationError(t *testing.T) {
-	// Verifies that InitPerAgentConversation
+	// Verifies that InitPerAgent
 	// cleans up already-opened logs when one fails to open.
 	dir := t.TempDir()
 	pathFn := func(id string) string {
@@ -274,9 +275,9 @@ func TestInitPerAgentConversationError(t *testing.T) {
 		return filepath.Join(dir, "conversation-"+id+".db")
 	}
 
-	err := InitPerAgentConversation([]string{"good", "bad"}, pathFn)
+	err := InitPerAgent([]string{"good", "bad"}, pathFn)
 	if err == nil {
-		CloseConversation()
+		Close()
 		t.Fatal("expected error for bad path")
 	}
 }
@@ -285,7 +286,7 @@ func TestInitConversationError(t *testing.T) {
 	// Verifies initConversation returns an error for a bad path.
 	err := initConversation("/nonexistent/dir/conv.db")
 	if err == nil {
-		CloseConversation()
+		Close()
 		t.Fatal("expected error for bad path")
 	}
 }
@@ -299,18 +300,18 @@ func TestPerAgentConversationRouting(t *testing.T) {
 	pathFn := func(id string) string {
 		return filepath.Join(dir, "conversation-"+id+".db")
 	}
-	if err := InitPerAgentConversation(agentIDs, pathFn); err != nil {
-		t.Fatalf("InitPerAgentConversation: %v", err)
+	if err := InitPerAgent(agentIDs, pathFn); err != nil {
+		t.Fatalf("InitPerAgent: %v", err)
 	}
-	defer CloseConversation()
+	defer Close()
 
 	// Log to alpha
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
 		Text: "hello alpha", Session: "alpha/i0/0",
 	})
 	// Log to beta
-	Conversation(ConversationEntry{
+	Record(Entry{
 		Direction: "recv", UserID: "2", Username: "v", ChatID: 2,
 		Text: "hello beta", Session: "beta/i0/0",
 	})
@@ -331,5 +332,29 @@ func TestPerAgentConversationRouting(t *testing.T) {
 	betaDB.QueryRow("SELECT COUNT(*) FROM messages").Scan(&betaCount)
 	if betaCount != 1 {
 		t.Errorf("beta messages = %d, want 1", betaCount)
+	}
+}
+
+func TestConversationLogInsertError(t *testing.T) {
+	// Verifies the conversation log handles a DB insert error gracefully —
+	// logging an error (via log.Errorf) rather than panicking.
+	t.Cleanup(resetConvo)
+	buf := captureLog(t)
+
+	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
+	if err := initConversation(dbPath); err != nil {
+		t.Fatalf("initConversation: %v", err)
+	}
+
+	// Close the DB to force an error on insert.
+	convFallback.db.Close()
+
+	Record(Entry{
+		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
+		Text: "should fail", Session: "",
+	})
+
+	if !strings.Contains(buf.String(), "insert error") {
+		t.Errorf("expected insert error log, got: %s", buf.String())
 	}
 }

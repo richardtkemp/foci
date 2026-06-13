@@ -14,6 +14,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/display"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/secrets"
@@ -431,7 +432,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 		}
 
 		duration := time.Since(start)
-		cost := log.CalculateCost(model,
+		cost := modelinfo.Cost(model,
 			resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 

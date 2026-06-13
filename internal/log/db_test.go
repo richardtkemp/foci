@@ -208,32 +208,3 @@ func TestInsertSessionLineNullability(t *testing.T) {
 		t.Errorf("session_line = %v, want 42", sl)
 	}
 }
-
-func TestConversationLogInsertError(t *testing.T) {
-	// Verifies that the conversation log handles a DB insert
-	// error gracefully — logging an error rather than panicking.
-	resetGlobal()
-	t.Cleanup(resetGlobal)
-	buf := captureOutput(t)
-
-	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
-	if err := initConversation(dbPath); err != nil {
-		t.Fatalf("initConversation: %v", err)
-	}
-
-	// Close the DB to force an error on insert
-	convFallback.db.Close()
-
-	Conversation(ConversationEntry{
-		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
-		Text: "should fail", Session: "",
-	})
-
-	if !strings.Contains(buf.String(), "insert error") {
-		t.Errorf("expected insert error log, got: %s", buf.String())
-	}
-
-	// Clean up
-	convLogs = nil
-	convFallback = nil
-}

@@ -125,10 +125,6 @@ func SystemHash(texts []string) string {
 	return fmt.Sprintf("%x", h.Sum(nil)[:8])
 }
 
-// CalculateCost returns the estimated cost in USD for an API request.
-func CalculateCost(model string, input, output, cacheRead, cacheWrite int) float64 {
-	return modelinfo.Cost(model, input, output, cacheRead, cacheWrite)
-}
 
 // ReadAPILog reads a JSONL API log file and returns all entries.
 func ReadAPILog(path string) []APIEntry {

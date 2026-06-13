@@ -138,7 +138,8 @@ DiagnoseRestart(sessionIndex, startTime, logsDir)
 main
  ├── config        → display, modelinfo
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
- ├── log           → sqlite, modelinfo
+ ├── log           → sqlite, modelinfo (the latter two only for API-call usage logging; conversation storage was extracted to convo)
+ ├── convo         → log, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
  ├── display       (no deps — table rendering with Unicode display-width handling)
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
