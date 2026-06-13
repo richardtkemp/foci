@@ -42,9 +42,33 @@ func tmuxAvailable(t *testing.T) {
 	}
 }
 
+// tmuxIsolatedSocket creates a per-test tmux server on its own socket and
+// registers cleanup to kill it. Returns the socket path to pass to NewTmuxTool
+// (and to any direct tmux commands the test issues).
+//
+// Unlike the package-shared tmuxSocketPath, this fully isolates the test from
+// sibling parallel tests: a kill-server (or production maybeKillTmuxServer) in
+// another test can never destroy this test's sessions. Tests that depend on a
+// session staying alive across a NewTmuxTool restore MUST use this — sharing the
+// package socket lets a concurrent kill-server prune their watches mid-test.
+// Skips the test if tmux is unavailable.
+func tmuxIsolatedSocket(t *testing.T) string {
+	t.Helper()
+	tmuxAvailable(t)
+	sock := filepath.Join(t.TempDir(), "tmux.sock")
+	exec.Command("tmux", "-S", sock, "start-server").Run()
+	t.Cleanup(func() {
+		exec.Command("tmux", "-S", sock, "kill-server").Run()
+	})
+	return sock
+}
+
 // tmuxSetup pre-cleans named sessions (from prior crashed runs) and registers
 // t.Cleanup to kill them when the test finishes. All operations use the
-// test-isolated tmux socket.
+// shared package tmux socket.
+//
+// Prefer tmuxIsolatedSocket for any test that creates sessions and depends on
+// them surviving: the shared socket is vulnerable to cross-test kill-server.
 func tmuxSetup(t *testing.T, names ...string) {
 	t.Helper()
 	for _, name := range names {
