@@ -75,7 +75,15 @@ Subcommands:
 		os.Exit(1)
 	}
 
-	configPath := config.ParseFlags()
+	configPath, checkConfig := config.ParseFlags()
+
+	// -check-config: validate the config and exit without starting the server.
+	// Runs BEFORE any log init so it never opens or rotates the production log
+	// (see checkconfig.go). Used by update.sh as a pre-flight before swapping
+	// the running daemon.
+	if checkConfig {
+		os.Exit(runConfigCheck(configPath))
+	}
 
 	// Early log init: open the default event log file so that config parse
 	// errors are captured on disk, not just stderr/journal.
