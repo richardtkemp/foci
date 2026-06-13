@@ -10,7 +10,6 @@ import (
 	"foci/internal/log"
 )
 
-
 func TestBackgroundRunningGuard(t *testing.T) {
 	// Verifies the backgroundRunning flag prevents concurrent dispatch. Calls maybeBackgroundWork
 	// twice while the first is still running and confirms only one branchFn invocation occurs.

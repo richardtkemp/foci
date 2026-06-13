@@ -252,10 +252,10 @@ func TestMaybeConsolidation_SkipsWhenTurnInFlight(t *testing.T) {
 			ConsolidationInterval: "1h",
 			ConsolidationPrompt:   "memory-consolidation.md",
 		},
-		lastInteraction:  now.Add(-30 * time.Minute),
+		lastInteraction:   now.Add(-30 * time.Minute),
 		lastConsolidation: now.Add(-2 * time.Hour),
-		sessionKeyFn:     func() string { return "test/c1/1" },
-		isTurnInFlightFn: inFlightFn(t, "test/c1"),
+		sessionKeyFn:      func() string { return "test/c1/1" },
+		isTurnInFlightFn:  inFlightFn(t, "test/c1"),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
 			return true
