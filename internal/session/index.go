@@ -212,6 +212,38 @@ func (idx *SessionIndex) StampReflection(sessionKey string, at time.Time) {
 	}
 }
 
+// ReflectionRedundant reports whether a reflection pass would be redundant for
+// the given session: a reflection has already run AND no substantive activity
+// has occurred since (last_activity_at <= last_reflection).
+//
+// This is the single-session inverse of the SessionsNeedingReflection
+// predicate. It backs the reset-time skip guard in Agent.FireSessionEndMemory
+// — "no need to reflect twice" when nothing happened since the last pass.
+//
+// Correctness depends on last_activity_at excluding memory-formation turns
+// (see isMemoryTrigger): without that, a reflection's own turn would bump
+// last_activity_at past last_reflection and this would always return false.
+//
+// Returns false (→ do reflect) when the session is unknown or has never been
+// reflected, so callers default to reflecting rather than silently skipping.
+func (idx *SessionIndex) ReflectionRedundant(sessionKey string) bool {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	var redundant bool
+	err := idx.db.QueryRow(
+		`SELECT last_reflection IS NOT NULL
+		        AND unixepoch(last_activity_at) <= unixepoch(last_reflection)
+		 FROM session_index WHERE session_key = ?`,
+		sessionKey,
+	).Scan(&redundant)
+	if err != nil {
+		// sql.ErrNoRows (unknown session) or any error → default to reflecting.
+		return false
+	}
+	return redundant
+}
+
 // SessionsNeedingReflection returns active chat session keys for an agent where
 // activity has occurred since the last reflection pass (or it has never run).
 func (idx *SessionIndex) SessionsNeedingReflection(agentID string) ([]string, error) {
