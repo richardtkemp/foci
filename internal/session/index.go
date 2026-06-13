@@ -958,25 +958,31 @@ func (idx *SessionIndex) DefaultChatIDs(agentID string) map[int64]bool {
 // session keys, and finally queries session_index for the most recently active
 // root session.
 func (idx *SessionIndex) DefaultSessionKeyForAgent(agentID string) string {
-	// Try default chats (any platform) — pick the one with most recent activity.
+	// Try default chats. The is_default flag is platform-scoped, so the
+	// authoritative session_key is the one on the SAME platform as the flag.
+	// Resolving "any platform" here could grab a stale empty-platform pointer
+	// left by a superseded session — the inter-agent send-routing bug, where a
+	// bare `send_to_session <agent>` landed in a dead session instead of the
+	// user's live default chat. Join session_key on the is_default row's exact
+	// (agent, platform, chat) and pick the most recently active default chat.
 	idx.mu.Lock()
-	var chatID int64
+	var sk string
 	_ = idx.db.QueryRow(
-		`SELECT cm.chat_id FROM chat_metadata cm
-		 LEFT JOIN chat_metadata sk
-		   ON sk.agent_id = cm.agent_id AND sk.chat_id = cm.chat_id AND sk.key = 'session_key'
-		 LEFT JOIN session_index si ON si.session_key = sk.value
-		 WHERE cm.agent_id = ? AND cm.key = 'is_default'
+		`SELECT skm.value FROM chat_metadata cm
+		 JOIN chat_metadata skm
+		   ON skm.agent_id = cm.agent_id
+		  AND skm.platform = cm.platform
+		  AND skm.chat_id  = cm.chat_id
+		  AND skm.key = 'session_key'
+		 LEFT JOIN session_index si ON si.session_key = skm.value
+		 WHERE cm.agent_id = ? AND cm.key = 'is_default' AND cm.value = 'true'
 		 ORDER BY unixepoch(si.last_activity_at) DESC NULLS LAST
 		 LIMIT 1`,
 		agentID,
-	).Scan(&chatID)
+	).Scan(&sk)
 	idx.mu.Unlock()
-	if chatID != 0 {
-		// Look up the session key for this chat.
-		if sk, err := idx.GetChatMetadataAnyPlatform(agentID, chatID, "session_key"); err == nil && sk != "" {
-			return sk
-		}
+	if sk != "" {
+		return sk
 	}
 
 	idx.mu.Lock()

@@ -776,6 +776,36 @@ func TestDefaultSessionKeyForAgent_ExcludesChildren(t *testing.T) {
 	}
 }
 
+func TestDefaultSessionKeyForAgent_HonoursDefaultChatPlatform(t *testing.T) {
+	// Regression for the inter-agent send-routing bug. A chat has TWO
+	// session_key rows: a stale empty-platform pointer (superseded session) and
+	// the live telegram pointer, with is_default flagged on telegram. The
+	// resolver must return the telegram session_key (the is_default platform),
+	// not the stale empty-platform one that a platform-blind "any platform"
+	// lookup would grab first.
+	idx := tempIndex(t)
+
+	// Stale empty-platform pointer (older session), inserted first so a
+	// LIMIT-1-no-ORDER-BY query would return it.
+	if err := idx.SetChatMetadata("helen", "", 5970, "session_key", "helen/c5970/1000"); err != nil {
+		t.Fatalf("set stale chat metadata: %v", err)
+	}
+	// Live telegram pointer + is_default flag.
+	if err := idx.SetChatMetadata("helen", "telegram", 5970, "session_key", "helen/c5970/2000"); err != nil {
+		t.Fatalf("set live chat metadata: %v", err)
+	}
+	if err := idx.SetDefaultChat("helen", "telegram", 5970); err != nil {
+		t.Fatalf("set default chat: %v", err)
+	}
+
+	if key := idx.DefaultSessionKeyForAgent("helen"); key != "helen/c5970/2000" {
+		t.Errorf("expected telegram (is_default) session key helen/c5970/2000, got %q", key)
+	}
+	if key := idx.ResolveLooseKey("helen"); key != "helen/c5970/2000" {
+		t.Errorf("ResolveLooseKey: expected helen/c5970/2000, got %q", key)
+	}
+}
+
 // ========== ResolveLooseKey tests ==========
 
 func TestResolveLooseKey_BareAgentName(t *testing.T) {
