@@ -56,6 +56,27 @@ func TestGuardToolResult_ExactlyAtLimit(t *testing.T) {
 	}
 }
 
+func TestGuardToolResult_EngagesOnResultFile(t *testing.T) {
+	// Proves the guard engages when a tool pre-spilled the full body to disk
+	// (ResultFile set) even if the inline preview is well under MaxResultChars,
+	// so a spilled result is surfaced as a pointer rather than silently returned
+	// as just its short head. (Covers the http spill-and-keep path.)
+	tmpDir := t.TempDir()
+	full := filepath.Join(tmpDir, "body.json")
+	if err := os.WriteFile(full, []byte(`{"big":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{MaxResultChars: 10000, ToolResultTempDir: tmpDir}
+	tr := tools.ToolResult{Text: "short preview", ResultFile: full, ResultSize: 999999}
+	got := a.guardToolResult(context.Background(), nil, "s", "http_request", "", tr, nil)
+	if !strings.Contains(got, full) {
+		t.Errorf("guard message should reference the spill file %s, got %q", full, got)
+	}
+	if !strings.Contains(got, "999999") {
+		t.Errorf("guard message should report the full size, got %q", got)
+	}
+}
+
 func TestGuardToolResult_OverLimit_JSONHint(t *testing.T) {
 	// Proves that oversized JSON results are replaced by a guard message suggesting jq for querying.
 	tmpDir := t.TempDir()

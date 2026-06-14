@@ -20,7 +20,7 @@ func TestHTTPRequestBasicGET(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/test",
 	})
@@ -49,7 +49,7 @@ func TestHTTPRequestQueryParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/search",
 		"query": map[string]string{
@@ -79,7 +79,7 @@ func TestHTTPRequestCustomTimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 60,
@@ -104,7 +104,7 @@ func TestHTTPRequestTimeoutCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 
 	// Request with 1-second timeout should fail
 	params, _ := json.Marshal(map[string]interface{}{

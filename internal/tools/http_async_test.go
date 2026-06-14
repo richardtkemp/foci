@@ -20,7 +20,7 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	defer srv.Close()
 
 	var called bool
-	tool := NewHTTPRequestTool(nil, nil, "", 5, 50*1024*1024, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", 5, 50*1024*1024, 0, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		called = true
 	}), 0640)
 
@@ -50,7 +50,7 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	defer srv.Close()
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", 1, 50*1024*1024, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", 1, 50*1024*1024, 0, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
 	}), 0640)
 
@@ -96,7 +96,7 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 		sk, msg string
 	}
 	ch := make(chan result, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", 1, 50*1024*1024, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", 1, 50*1024*1024, 0, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		ch <- result{sk, msg}
 	}), 0640)
 
@@ -136,7 +136,7 @@ func TestHTTPRequestExplicitBackground(t *testing.T) {
 	defer srv.Close()
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
 	}), 0640)
 
@@ -174,7 +174,7 @@ func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":        srv.URL,

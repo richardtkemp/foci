@@ -180,7 +180,7 @@ var toolTable = []toolEntry{
 		tc := d.p.resolved.Tools
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
 		return tools.NewHTTPRequestTool(d.agentStore, d.p.bwStore, d.p.cfg.Tools.TempDir,
-			tc.ExecAutoBackground, tc.MaxUploadFileSize, d.notifier, fileMode)
+			tc.ExecAutoBackground, tc.MaxUploadFileSize, tc.HTTPMaxSpillBytes, d.notifier, fileMode)
 	}},
 
 	{name: "web_search", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {

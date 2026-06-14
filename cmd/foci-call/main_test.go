@@ -81,6 +81,67 @@ func TestFociCallSuccess(t *testing.T) {
 	}
 }
 
+// TestFociCallStreamsResultFile verifies that when the server returns a
+// result_file pointer (large result spilled to disk), foci-call streams the
+// file's full contents to stdout rather than printing the inline preview —
+// so a downstream pipe receives the complete body.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
+func TestFociCallStreamsResultFile(t *testing.T) {
+	bin := buildBinary(t)
+	full := filepath.Join(t.TempDir(), "body.json")
+	fullContent := strings.Repeat("X", 5000) + `{"complete":true}`
+	if err := os.WriteFile(full, []byte(fullContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := startTestServer(t, func(req string) string {
+		resp, _ := json.Marshal(map[string]any{
+			"result":      "PREVIEW-ONLY",
+			"result_file": full,
+			"result_size": len(fullContent),
+		})
+		return string(resp)
+	})
+
+	cmd := exec.Command(bin, `{"tool":"http_request","params":{}}`)
+	cmd.Env = append(os.Environ(), "FOCI_SOCK="+sockPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("foci-call failed: %v\n%s", err, out)
+	}
+	if string(out) != fullContent {
+		t.Errorf("expected full file contents streamed to stdout (%d bytes), got %d bytes; preview leak=%v",
+			len(fullContent), len(out), strings.Contains(string(out), "PREVIEW-ONLY"))
+	}
+}
+
+// TestFociCallResultFileFallback verifies that if the referenced result_file
+// can't be opened, foci-call falls back to the inline preview (data is not
+// lost from the agent's view) and still exits zero.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
+func TestFociCallResultFileFallback(t *testing.T) {
+	bin := buildBinary(t)
+	sockPath := startTestServer(t, func(req string) string {
+		resp, _ := json.Marshal(map[string]any{
+			"result":      "fallback preview",
+			"result_file": "/nonexistent/path/body.json",
+			"result_size": 999,
+		})
+		return string(resp)
+	})
+
+	cmd := exec.Command(bin, `{"tool":"http_request","params":{}}`)
+	cmd.Env = append(os.Environ(), "FOCI_SOCK="+sockPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("foci-call should fall back, not fail: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "fallback preview") {
+		t.Errorf("expected fallback to inline preview, got %q", string(out))
+	}
+}
+
 // TestFociCallError verifies the binary exits non-zero when the server
 // returns an error field in the JSON response.
 //

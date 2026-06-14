@@ -20,6 +20,7 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/tempdir"
+	"foci/internal/tools/spill"
 )
 
 type fileAttachment struct {
@@ -36,7 +37,9 @@ type fileAttachment struct {
 // autoBackgroundSecs is the threshold after which a running request is auto-backgrounded
 // (0 disables). notifier delivers results when an auto-backgrounded request finishes.
 // maxUploadFileSize is the max file size in bytes for multipart uploads (0 = 50MB default).
-func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier, fileMode os.FileMode) *Tool {
+// maxSpillBytes is the ceiling on retained response bytes: the inline text path keeps a
+// preview in the result and spills the full body (up to this cap) to disk (0 = 50MB default).
+func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize, maxSpillBytes int64, notifier *AsyncNotifier, fileMode os.FileMode) *Tool {
 	return &Tool{
 		Name:        "http_request",
 		ExecExport:  true,
@@ -123,12 +126,12 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, maxUploadFileSize, notifier, fileMode)
+			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, maxUploadFileSize, maxSpillBytes, notifier, fileMode)
 		},
 	}
 }
 
-func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier, fileMode os.FileMode) (ToolResult, error) {
+func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize, maxSpillBytes int64, notifier *AsyncNotifier, fileMode os.FileMode) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		URL              string            `json:"url"`
 		Method           string            `json:"method"`
@@ -260,7 +263,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			return ToolResult{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, tempDir, store, bwStore, fileMode)
+		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, maxSpillBytes, tempDir, store, bwStore, fileMode)
 	}
 
 	displayURL := formatDisplayURL(p.URL, p.Method)
@@ -275,27 +278,17 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 }
 
 // processHTTPResponse reads and formats an HTTP response.
-func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
+func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes, maxSpillBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
 	if fileMode == 0 {
 		fileMode = 0640
 	}
-	bodyLimit := getResponseBodyLimit(resp.Header.Get("Content-Type"), saveTo, maxResponseBytes)
-	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
-	if err != nil {
-		return ToolResult{}, fmt.Errorf("read response: %w", err)
-	}
-
-	if parsed, err := url.Parse(reqURL); err == nil {
-		log.Debugf("http_request", "session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, len(body))
-	}
-
 	contentType := resp.Header.Get("Content-Type")
 
-	// Determine if we need to save to file. An explicit save_to uses WriteFile
+	// Determine save vs inline up front. An explicit save_to uses WriteFile
 	// (the caller chose the path and may intend to overwrite); auto-saved binary
 	// responses go to an atomically-created temp file (os.CreateTemp, O_EXCL) so
 	// a predictable name in world-writable /tmp can't be pre-created or
-	// symlinked by another process.
+	// symlinked by another process. The inline path streams instead of buffering.
 	savePath := saveTo
 	autoSave := false
 	var autoDir, autoExt string
@@ -331,6 +324,15 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	}
 
 	if savePath != "" || autoSave {
+		bodyLimit := getResponseBodyLimit(contentType, saveTo, maxResponseBytes)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("read response: %w", err)
+		}
+		if parsed, perr := url.Parse(reqURL); perr == nil {
+			log.Debugf("http_request", "session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, len(body))
+		}
+
 		saveData := body
 
 		// Extract from JSON response if save_from_json_path is set
@@ -373,10 +375,44 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		return TextResult(fmt.Sprintf("%s\nSaved %d bytes to %s", formatHeaders(), len(saveData), savePath)), nil
 	}
 
-	// Text response — return inline
-	bodyStr := string(body)
+	// Inline text path: stream the body through a spiller. The first `preview`
+	// bytes stay in memory (the model-facing head); the full body — up to the
+	// `ceiling` DoS cap — overflows to a temp file so the agent can recover it.
+	// We do NOT truncate-with-marker or signal here: that's done by the layer
+	// above (the API guard via ResultFile/ResultSize, or CC for exec-bridge
+	// calls), where it won't corrupt a shell pipe.
+	preview := getResponseBodyLimit(contentType, "", maxResponseBytes) // text limit (1MB default, or override)
+	ceiling := maxSpillBytes
+	if ceiling <= 0 {
+		ceiling = 50 << 20 // 50MB fallback
+	}
+	if preview > ceiling {
+		preview = ceiling
+	}
+	spillDir := tempDir
+	if spillDir == "" {
+		spillDir = tempdir.Dir()
+	}
+	sw := spill.New(preview, ceiling, spillDir)
+	if _, err := io.Copy(sw, resp.Body); err != nil {
+		sw.Cleanup()
+		return ToolResult{}, fmt.Errorf("read response: %w", err)
+	}
+	if err := sw.Close(); err != nil {
+		sw.Cleanup()
+		return ToolResult{}, fmt.Errorf("buffer response: %w", err)
+	}
 
-	// Redact secrets from response
+	if parsed, err := url.Parse(reqURL); err == nil {
+		log.Debugf("http_request", "session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, sw.Total())
+	}
+	if sw.Truncated() {
+		log.Warnf("http_request", "session=%s response exceeded spill ceiling %d bytes (got %d) — body truncated on disk", sessionKey, ceiling, sw.Total())
+	}
+
+	// Redact the inline preview (best-effort; the on-disk full body is raw, same
+	// as the shell tool — Redact is defence-in-depth, not a boundary).
+	bodyStr := sw.String()
 	if store != nil {
 		bodyStr = store.Redact(bodyStr)
 	}
@@ -384,7 +420,12 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		bodyStr = bwStore.Redact(bodyStr)
 	}
 
-	return TextResult(formatHeaders() + "\n" + bodyStr), nil
+	result := TextResult(formatHeaders() + "\n" + bodyStr)
+	if sw.Spilled() {
+		result.ResultFile = sw.FilePath() // raw body on disk; full content for the agent / pipe
+		result.ResultSize = sw.Total()
+	}
+	return result, nil
 }
 
 // normalizeContentType extracts the MIME type from a Content-Type header,

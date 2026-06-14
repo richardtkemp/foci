@@ -50,7 +50,7 @@ func TestSummaryRejectsBlockedPath(t *testing.T) {
 // secrets.toml exfiltration path).
 func TestHTTPBodyFileRejectsBlockedPath(t *testing.T) {
 	store, blocked := blockedSecretsFile(t)
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 
 	params, _ := json.Marshal(map[string]any{
 		"url":       "http://example.invalid/",
@@ -68,7 +68,7 @@ func TestHTTPBodyFileRejectsBlockedPath(t *testing.T) {
 // scanning entirely).
 func TestHTTPFilesRejectsBlockedPath(t *testing.T) {
 	store, blocked := blockedSecretsFile(t)
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 
 	params, _ := json.Marshal(map[string]any{
 		"url":    "http://example.invalid/",
@@ -85,7 +85,7 @@ func TestHTTPFilesRejectsBlockedPath(t *testing.T) {
 // response to a blocked path (the save_to backdoor-plant vector).
 func TestHTTPSaveToRejectsBlockedPath(t *testing.T) {
 	store, blocked := blockedSecretsFile(t)
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 
 	params, _ := json.Marshal(map[string]any{
 		"url":     "http://example.invalid/",

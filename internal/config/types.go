@@ -446,6 +446,7 @@ type ToolConfig struct {
 	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       desc:"max tool loops for explore spawn"`
 	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"max upload file size in bytes"`                        // 50MB
 	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  desc:"max file size the read/edit tools will load in bytes"` // 50MB
+	HTTPMaxSpillBytes   *int64  `toml:"http_max_spill_bytes"  default:"52428800"  desc:"max http_request response bytes retained; full body spills to disk past the inline preview (remote DoS ceiling)"` // 50MB
 	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"      desc:"auto-unwatch on inactivity"`
 	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"       desc:"default watch threshold duration" type:"duration"`
 	TmuxSessionTTL      *string `toml:"tmux_session_ttl"      default:"24h"       desc:"auto-kill idle tmux sessions after" type:"duration"`

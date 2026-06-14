@@ -157,8 +157,9 @@ main
  ├── startup       → log, state (leaf package for crash detection)
  ├── resources     → log (goroutine monitor, memory guard)
  ├── mcp           → provider, log, tools, BurntSushi/toml, go-sdk/mcp
- ├── tools         → anthropic, config, display, log, memory, modelinfo, platform, provider, secrets, secrets/bitwarden, session, state, tempdir, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
- │     ├── tools/shell    → tools, log, procx, secrets, secrets/bitwarden (the exec/shell tool + spill; execbridge generator stays at root)
+ ├── tools         → anthropic, config, display, log, memory, modelinfo, platform, provider, secrets, secrets/bitwarden, session, state, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
+ │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
+ │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden (the exec/shell tool; execbridge generator stays at root)
  │     ├── tools/tmux     → tools, log, display, session, procx (tmux session tool — 8 files)
  │     ├── tools/browser  → tools, log, tools/browserjs (browser automation — imports root for Tool/ToolResult)
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
@@ -1062,7 +1063,9 @@ exec subprocess                       foci process
 
 **Tools with `ExecExport: true`:** `http_request`, `web_fetch`, `web_search`, `memory_search`, `todo`, `send_to_chat`, `spawn`, `tmux`.
 
-**`foci-call` binary** (`cmd/foci-call/`): Reads `FOCI_SOCK`, connects to unix socket, sends JSON request (newline-terminated), prints result to stdout or error to stderr, exits 0/1. 1MB scanner buffer.
+**`foci-call` binary** (`cmd/foci-call/`): Reads `FOCI_SOCK`, connects to unix socket, sends JSON request (newline-terminated), prints result to stdout or error to stderr, exits 0/1. 1MB scanner buffer for the response envelope.
+
+**Large-result spill handoff:** A tool may return its full result on disk via `ToolResult.ResultFile` (set by the http tool when the response body exceeds the inline preview, and by the shell tool when command output overflows — both via `tools/spill`). In that case the bridge response carries a small `{result, result_file, result_size}` envelope rather than inlining megabytes, and `foci-call` streams the file straight to stdout (same-UID, 0600 file). So `foci_http_request url | jq` pipes the complete body without it passing through the socket as one giant JSON line; the calling agent (CC for delegated, the tool-result guard for API) then applies its own output truncation. Falls back to the inline preview if the file can't be opened.
 
 ### Tmux Memory Monitor (`tools/tmux_memory.go`)
 

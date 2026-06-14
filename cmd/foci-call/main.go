@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"runtime"
@@ -100,8 +101,10 @@ func main() {
 	}
 
 	var resp struct {
-		Result string `json:"result"`
-		Error  string `json:"error"`
+		Result     string `json:"result"`
+		Error      string `json:"error"`
+		ResultFile string `json:"result_file"`
+		ResultSize int64  `json:"result_size"`
 	}
 	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
 		fmt.Fprintf(os.Stderr, "foci-call: parse response: %v\n", err)
@@ -111,6 +114,24 @@ func main() {
 	if resp.Error != "" {
 		fmt.Fprintln(os.Stderr, resp.Error)
 		os.Exit(1)
+	}
+
+	// Large results are spilled to a file by the gateway and referenced here so
+	// the full body never has to fit through the socket. Stream it straight to
+	// stdout — a pipe (e.g. `| jq`) then sees the complete body, and the calling
+	// agent applies its own output truncation to the final result. Falls back to
+	// the inline preview if the file can't be opened.
+	if resp.ResultFile != "" {
+		if f, err := os.Open(resp.ResultFile); err == nil {
+			defer func() { _ = f.Close() }()
+			if _, err := io.Copy(os.Stdout, f); err != nil {
+				fmt.Fprintf(os.Stderr, "foci-call: stream result file %s: %v\n", resp.ResultFile, err)
+				os.Exit(1)
+			}
+			return
+		} else {
+			fmt.Fprintf(os.Stderr, "foci-call: open result file %s: %v (showing preview)\n", resp.ResultFile, err)
+		}
 	}
 
 	fmt.Print(resp.Result)
