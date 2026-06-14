@@ -28,13 +28,15 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
-		sessionKeyFn:    func() string { return "test/c1/1" },
-		hasActiveWorkFn: func() int { return activeCount },
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			mu.Lock()
-			calls++
-			mu.Unlock()
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn:    func() string { return "test/c1/1" },
+			hasActiveWorkFn: func() int { return activeCount },
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				mu.Lock()
+				calls++
+				mu.Unlock()
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -76,10 +78,12 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
-		sessionKeyFn:    func() string { return "test/c1/1" },
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1/1" },
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -120,13 +124,15 @@ func TestMaybeReflection_SkipsWhenRateLimited(t *testing.T) {
 			Interval:        "1h",
 		},
 		sessionIndex: idx,
-		sessionKeyFn: func() string { return "test/c123/1000000000" },
-		canFireFn: func(ctx context.Context, sk string) (bool, string) {
-			return false, "rate limited"
-		},
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			called = true
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c123/1000000000" },
+			canFireFn: func(ctx context.Context, sk string) (bool, string) {
+				return false, "rate limited"
+			},
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				called = true
+				return true
+			},
 		},
 		lastReflection:  now.Add(-2 * time.Hour),
 		lastInteraction: now.Add(-30 * time.Minute),
@@ -152,13 +158,15 @@ func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
 			ConsolidationEnabled: true,
 			ConsolidationTime:    "1h",
 		},
-		sessionKeyFn: func() string { return "test/c123/1000000000" },
-		canFireFn: func(ctx context.Context, sk string) (bool, string) {
-			return false, "rate limited"
-		},
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			called = true
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c123/1000000000" },
+			canFireFn: func(ctx context.Context, sk string) (bool, string) {
+				return false, "rate limited"
+			},
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				called = true
+				return true
+			},
 		},
 		lastConsolidation: now.Add(-2 * time.Hour),
 		lastInteraction:   now.Add(-30 * time.Minute),
@@ -183,13 +191,15 @@ func TestMaybeBackgroundWork_SkipsWhenRateLimited(t *testing.T) {
 			Enabled:  true,
 			Interval: "1s",
 		},
-		sessionKeyFn: func() string { return "test/c123/1000000000" },
-		canFireFn: func(ctx context.Context, sk string) (bool, string) {
-			return false, "mana insufficient"
-		},
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			called = true
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c123/1000000000" },
+			canFireFn: func(ctx context.Context, sk string) (bool, string) {
+				return false, "mana insufficient"
+			},
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				called = true
+				return true
+			},
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		todoStore:       nil, // skip todo check

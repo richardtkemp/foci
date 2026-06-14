@@ -73,12 +73,14 @@ func TestMaybeKeepalive_SkipsWhenTurnInFlight(t *testing.T) {
 			Interval: "1m",
 			Prompt:   "keepalive.md",
 		},
-		lastCacheWarmed:  time.Now().Add(-10 * time.Minute),
-		sessionKeyFn:     func() string { return "test/c1/1" },
-		isTurnInFlightFn: inFlightFn(t, "test/c1"),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn:     func() string { return "test/c1/1" },
+			isTurnInFlightFn: inFlightFn(t, "test/c1"),
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -103,14 +105,16 @@ func TestMaybeBackgroundWork_SkipsWhenTurnInFlight(t *testing.T) {
 			Interval: "1m",
 			Prompt:   "background.md",
 		},
-		lastInteraction:  time.Now().Add(-10 * time.Minute),
-		sessionKeyFn:     func() string { return "test/c1/1" },
-		isTurnInFlightFn: inFlightFn(t, "test/c1"),
+		lastInteraction: time.Now().Add(-10 * time.Minute),
 		// hasActiveWorkFn=nil and todoStore=nil means the open-todo gate is skipped,
 		// so the only thing protecting us from a fire is the in-flight gate.
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn:     func() string { return "test/c1/1" },
+			isTurnInFlightFn: inFlightFn(t, "test/c1"),
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -161,10 +165,12 @@ func TestMaybeReflection_FiltersInFlightSessions(t *testing.T) {
 		lastInteraction: now.Add(-30 * time.Minute),
 		lastReflection:  now.Add(-2 * time.Hour),
 		// c1 and c3 are busy; c2 is free.
-		isTurnInFlightFn: inFlightFn(t, "test/c1", "test/c3"),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			got[parentKey]++
-			return true
+		agent: &fakeBackgroundAgent{
+			isTurnInFlightFn: inFlightFn(t, "test/c1", "test/c3"),
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				got[parentKey]++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -214,13 +220,15 @@ func TestMaybeReflection_SkipsWhenAllSessionsBusy(t *testing.T) {
 			Interval:        "1h",
 			IntervalPrompt:  "reflection.md",
 		},
-		sessionIndex:     idx,
-		lastInteraction:  now.Add(-30 * time.Minute),
-		lastReflection:   now.Add(-2 * time.Hour),
-		isTurnInFlightFn: inFlightFn(t, "test/c1"),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		sessionIndex:    idx,
+		lastInteraction: now.Add(-30 * time.Minute),
+		lastReflection:  now.Add(-2 * time.Hour),
+		agent: &fakeBackgroundAgent{
+			isTurnInFlightFn: inFlightFn(t, "test/c1"),
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -254,11 +262,13 @@ func TestMaybeConsolidation_SkipsWhenTurnInFlight(t *testing.T) {
 		},
 		lastInteraction:   now.Add(-30 * time.Minute),
 		lastConsolidation: now.Add(-2 * time.Hour),
-		sessionKeyFn:      func() string { return "test/c1/1" },
-		isTurnInFlightFn:  inFlightFn(t, "test/c1"),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn:     func() string { return "test/c1/1" },
+			isTurnInFlightFn: inFlightFn(t, "test/c1"),
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -285,7 +295,9 @@ func TestParentTurnInFlight_EmptyKey(t *testing.T) {
 	// Empty parent key (no default session) → return false. Avoids passing
 	// an empty base into the callback and getting a misleading positive.
 	r := &Runner{
-		isTurnInFlightFn: func(string) bool { return true },
+		agent: &fakeBackgroundAgent{
+			isTurnInFlightFn: func(string) bool { return true },
+		},
 	}
 	if r.parentTurnInFlight("") {
 		t.Error("parentTurnInFlight should return false on empty parentKey")
@@ -297,9 +309,11 @@ func TestParentTurnInFlight_BasePassedToCallback(t *testing.T) {
 	// key. The callback's job is to look up in-flight state by base.
 	var got string
 	r := &Runner{
-		isTurnInFlightFn: func(base string) bool {
-			got = base
-			return false
+		agent: &fakeBackgroundAgent{
+			isTurnInFlightFn: func(base string) bool {
+				got = base
+				return false
+			},
 		},
 	}
 	r.parentTurnInFlight("test/c1/1759000000")

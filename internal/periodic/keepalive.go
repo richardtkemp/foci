@@ -57,6 +57,36 @@ func (r *Runner) parseDuration(field string, s string) (time.Duration, bool) {
 // Returns true if the branch was created and the agent turn completed successfully.
 type BranchFunc func(branchType, parentKey, promptText string, noCompact bool) bool
 
+// BackgroundAgent is everything the Runner needs to drive background work on an
+// agent. It replaces the former wall of individually-injected closures with one
+// honest dependency: "an agent the scheduler can poke between turns". The single
+// production implementation is an adapter in cmd/foci-gw; tests use a configurable
+// fake. Methods are only invoked once their owning scheduler passes its config and
+// gate checks (e.g. RunOnce only when delegated, ResetSession only when a
+// reset_time is configured).
+type BackgroundAgent interface {
+	// Branch dispatches a background prompt as a branch turn (keepalive,
+	// background, reflection, consolidation). Returns true if the turn completed.
+	Branch(branchType, parentKey, promptText string, noCompact bool) bool
+	// HasActiveWork returns the count of in-progress async work (e.g. tmux
+	// watches); >0 suppresses background work. 0 = idle.
+	HasActiveWork() int
+	// DrainRateLimitQueue flushes any queued rate-limited operations; called each tick.
+	DrainRateLimitQueue(ctx context.Context)
+	// IsTurnInFlight reports whether a turn is executing on the given session base.
+	IsTurnInFlight(parentBase string) bool
+	// SessionKey returns the session key background operations run against ("" if none).
+	SessionKey() string
+	// CanFire reports whether a background operation may fire now (rate limit + mana).
+	CanFire(ctx context.Context, sessionKey string) (allowed bool, reason string)
+	// RunOnce executes a one-shot headless prompt (delegated agents only); used by
+	// consolidation. Only called when the agent is delegated.
+	RunOnce(ctx context.Context, prompt, systemPrompt string) (string, error)
+	// ResetSession performs a soft session reset (memory formation + key rotation).
+	// Only called when a reset_time is configured.
+	ResetSession(ctx context.Context, sessionKey string) error
+}
+
 // Runner manages keepalive, background work, and reflection timers for an agent.
 type Runner struct {
 	log                *log.ComponentLogger
@@ -72,29 +102,19 @@ type Runner struct {
 	promptSearchDirs   []string
 	todoStore          *memory.TodoStore
 	sessionIndex       *session.SessionIndex
-	branchFn           BranchFunc
+
+	// agent is the single dependency the schedulers drive — Branch, CanFire,
+	// IsTurnInFlight, etc. (replaces the former eight injected closures). The
+	// in-flight check mirrors the gateway send/branch gate (TODO #753): periodic
+	// schedulers dispatch via Branch directly, bypassing the gate, so they need
+	// their own in-flight signal to avoid injecting prompts into a busy session
+	// as SourceUser follow-ups.
+	agent BackgroundAgent
 
 	warningDispatcher     *warnings.Dispatcher
 	chatWarningDispatcher *warnings.Dispatcher
-	hasActiveWorkFn       func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
-	drainFn               func()     // called each tick to drain rate-limit queues
 
-	// In-flight check for the parent session. Mirrors the activity gate's
-	// IsTurnInFlight check used by the gateway send/branch handlers (TODO #753):
-	// internal periodic schedulers dispatch via branchFn directly, bypassing
-	// the gate, so they need their own in-flight signal to avoid injecting
-	// scheduler prompts into a busy CC session as SourceUser follow-ups.
-	isTurnInFlightFn func(parentBase string) bool
-
-	// Session-aware availability checking
-	sessionKeyFn     func() string                                               // returns the session key these operations will run on
-	canFireFn        func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
-	isDelegatedAgent bool                                                        // reflection needs quiet period in delegated mode
-	runOnceFn        func(ctx context.Context, prompt, systemPrompt string) (string, error)
-
-	// resetFn fires a soft session reset (memory formation + key rotation) for
-	// the scheduled reset_time maintenance task. nil = reset disabled/unwired.
-	resetFn func(ctx context.Context, sessionKey string) error
+	isDelegatedAgent bool // reflection needs quiet period in delegated mode; consolidation uses RunOnce
 
 	mu                  sync.Mutex
 	lastCacheWarmed     time.Time
@@ -129,38 +149,19 @@ type RunnerConfig struct {
 	PromptSearchDirs   []string // directories to search for prompt files (agent workspace, shared)
 	TodoStore          *memory.TodoStore
 	SessionIndex       *session.SessionIndex
-	BranchFunc         BranchFunc
+
+	// Agent is the single dependency the schedulers drive. Wired from
+	// cmd/foci-gw/periodic_setup.go to an adapter over the agent instance.
+	Agent BackgroundAgent
 
 	WarningDispatcher     *warnings.Dispatcher
 	ChatWarningDispatcher *warnings.Dispatcher
-	HasActiveWorkFn       func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
-	DrainFn               func()     // called each tick to drain rate-limit queues; nil = skip
-
-	// IsTurnInFlightFunc reports whether a turn is currently executing on the
-	// session base passed in. Wired from cmd/foci-gw/periodic_setup.go to
-	// Agent.IsTurnInFlight. Nil = no in-flight gating (schedulers fire blindly,
-	// pre-TODO #760 behaviour). See Runner.isTurnInFlightFn.
-	IsTurnInFlightFunc func(parentBase string) bool
-
-	// Session-aware availability checking
-	SessionKeyFunc func() string                                               // returns the session key these operations will run on
-	CanFireFunc    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
 
 	// IsDelegatedAgent indicates this agent uses a delegated transport (CC).
-	// When true, reflection requires a quiet period (no recent user
-	// activity) because reflection runs IN the live session, not as a branch.
+	// When true, reflection requires a quiet period (no recent user activity)
+	// because reflection runs IN the live session, and consolidation dispatches
+	// via Agent.RunOnce rather than Agent.Branch.
 	IsDelegatedAgent bool
-
-	// RunOnceFunc executes a one-shot prompt via claude --print.
-	// If set, used for consolidation (and other independent tasks) instead of
-	// BranchFunc, avoiding interactive session overhead and platform delivery.
-	// The systemPrompt parameter is passed via --system-prompt (empty = default).
-	RunOnceFunc func(ctx context.Context, prompt, systemPrompt string) (string, error)
-
-	// ResetFunc fires a soft session reset (memory formation + key rotation)
-	// for the scheduled reset_time task. nil = reset disabled. Wired to
-	// Agent.ResetSession in periodic_setup.go.
-	ResetFunc func(ctx context.Context, sessionKey string) error
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
@@ -179,18 +180,11 @@ func New(cfg RunnerConfig) *Runner {
 		promptSearchDirs:   cfg.PromptSearchDirs,
 		todoStore:          cfg.TodoStore,
 		sessionIndex:       cfg.SessionIndex,
-		branchFn:           cfg.BranchFunc,
 
+		agent:                 cfg.Agent,
 		warningDispatcher:     cfg.WarningDispatcher,
 		chatWarningDispatcher: cfg.ChatWarningDispatcher,
-		hasActiveWorkFn:       cfg.HasActiveWorkFn,
-		drainFn:               cfg.DrainFn,
-		isTurnInFlightFn:      cfg.IsTurnInFlightFunc,
-		sessionKeyFn:          cfg.SessionKeyFunc,
-		canFireFn:             cfg.CanFireFunc,
 		isDelegatedAgent:      cfg.IsDelegatedAgent,
-		runOnceFn:             cfg.RunOnceFunc,
-		resetFn:               cfg.ResetFunc,
 		lastCacheWarmed:       now,
 		lastInteraction:       now,
 		lastReflection:        now,
@@ -268,10 +262,10 @@ func (r *Runner) NotifyTurnEnd() {
 
 // defaultParentKey returns the default session key, or "" if unavailable.
 func (r *Runner) defaultParentKey() string {
-	if r.sessionKeyFn == nil {
+	if r.agent == nil {
 		return ""
 	}
-	return r.sessionKeyFn()
+	return r.agent.SessionKey()
 }
 
 // parentTurnInFlight reports whether a turn is currently executing on the
@@ -283,10 +277,10 @@ func (r *Runner) defaultParentKey() string {
 // queued behind the active turn as a SourceUser follow-up — see TODO #760
 // (companion to TODO #753 which added the same check on the gateway gate path).
 func (r *Runner) parentTurnInFlight(parentKey string) bool {
-	if r.isTurnInFlightFn == nil || parentKey == "" {
+	if r.agent == nil || parentKey == "" {
 		return false
 	}
-	return r.isTurnInFlightFn(session.SessionKeyBase(parentKey))
+	return r.agent.IsTurnInFlight(session.SessionKeyBase(parentKey))
 }
 
 func (r *Runner) run(ctx context.Context) {
@@ -306,8 +300,8 @@ func (r *Runner) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if r.drainFn != nil {
-				r.drainFn()
+			if r.agent != nil {
+				r.agent.DrainRateLimitQueue(ctx)
 			}
 			r.maybeKeepalive(ctx)
 			r.maybeBackgroundWork(ctx)
@@ -328,7 +322,7 @@ func (r *Runner) run(ctx context.Context) {
 }
 
 func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
-	if !r.kaCfg.Enabled {
+	if !r.kaCfg.Enabled || r.agent == nil {
 		return
 	}
 
@@ -398,12 +392,12 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 			r.keepaliveRunning = false
 			r.mu.Unlock()
 		}()
-		r.branchFn("keepalive", parentKey, promptText, true)
+		r.agent.Branch("keepalive", parentKey, promptText, true)
 	}()
 }
 
 func (r *Runner) maybeBackgroundWork(ctx context.Context) {
-	if !r.bgCfg.Enabled {
+	if !r.bgCfg.Enabled || r.agent == nil {
 		return
 	}
 
@@ -431,11 +425,9 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		return
 	}
 
-	if r.hasActiveWorkFn != nil {
-		if n := r.hasActiveWorkFn(); n > 0 {
-			skip = fmt.Sprintf("%d active tmux watches", n)
-			return
-		}
+	if n := r.agent.HasActiveWork(); n > 0 {
+		skip = fmt.Sprintf("%d active tmux watches", n)
+		return
 	}
 
 	if elapsed < interval {
@@ -466,13 +458,10 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	}
 
 	// Check availability (rate limit + mana)
-	if r.sessionKeyFn != nil && r.canFireFn != nil {
-		sessionKey := r.sessionKeyFn()
-		canFire, reason := r.canFireFn(ctx, sessionKey)
-		if !canFire {
-			skip = reason
-			return
-		}
+	sessionKey := r.agent.SessionKey()
+	if canFire, reason := r.agent.CanFire(ctx, sessionKey); !canFire {
+		skip = reason
+		return
 	}
 
 	parentKey := r.defaultParentKey()
@@ -502,12 +491,12 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 			r.lastBackgroundEnded = time.Now()
 			r.mu.Unlock()
 		}()
-		r.branchFn("background", parentKey, promptText, true)
+		r.agent.Branch("background", parentKey, promptText, true)
 	}()
 }
 
 func (r *Runner) maybeReflection() {
-	if !r.reflectCfg.IntervalEnabled {
+	if !r.reflectCfg.IntervalEnabled || r.agent == nil {
 		return
 	}
 
@@ -576,34 +565,28 @@ func (r *Runner) maybeReflection() {
 	// user's turn is mid-flight queues the reflection prompt as a SourceUser
 	// follow-up, which is the wrong source attribution and the wrong timing.
 	// Defer to the next 30s tick. (TODO #760)
-	if r.isTurnInFlightFn != nil {
-		filtered := keys[:0]
-		busy := 0
-		for _, k := range keys {
-			if r.isTurnInFlightFn(session.SessionKeyBase(k)) {
-				busy++
-				continue
-			}
-			filtered = append(filtered, k)
+	filtered := keys[:0]
+	busy := 0
+	for _, k := range keys {
+		if r.agent.IsTurnInFlight(session.SessionKeyBase(k)) {
+			busy++
+			continue
 		}
-		keys = filtered
-		if busy > 0 {
-			r.log.Debugf("reflection: deferred %d session(s) with in-flight turns", busy)
-		}
-		if len(keys) == 0 {
-			skip = "all candidate sessions have in-flight turns"
-			return
-		}
+		filtered = append(filtered, k)
+	}
+	keys = filtered
+	if busy > 0 {
+		r.log.Debugf("reflection: deferred %d session(s) with in-flight turns", busy)
+	}
+	if len(keys) == 0 {
+		skip = "all candidate sessions have in-flight turns"
+		return
 	}
 
 	// Check availability (rate limit + mana)
-	if r.sessionKeyFn != nil && r.canFireFn != nil {
-		sessionKey := r.sessionKeyFn()
-		canFire, reason := r.canFireFn(context.Background(), sessionKey)
-		if !canFire {
-			skip = reason
-			return
-		}
+	if canFire, reason := r.agent.CanFire(context.Background(), r.agent.SessionKey()); !canFire {
+		skip = reason
+		return
 	}
 
 	promptText := prompts.ResolvePrompt(r.reflectCfg.IntervalPrompt, "reflection.md", prompts.Reflection(), r.promptSearchDirs...)
@@ -626,7 +609,7 @@ func (r *Runner) maybeReflection() {
 		}()
 		for _, key := range keys {
 			t := time.Now()
-			if r.branchFn("reflection", key, promptText, true) {
+			if r.agent.Branch("reflection", key, promptText, true) {
 				r.sessionIndex.StampReflection(key, t)
 			}
 		}
@@ -634,7 +617,7 @@ func (r *Runner) maybeReflection() {
 }
 
 func (r *Runner) maybeConsolidation() {
-	if !r.maintCfg.ConsolidationEnabled {
+	if !r.maintCfg.ConsolidationEnabled || r.agent == nil {
 		return
 	}
 
@@ -685,13 +668,9 @@ func (r *Runner) maybeConsolidation() {
 	}
 
 	// Check availability (rate limit + mana)
-	if r.sessionKeyFn != nil && r.canFireFn != nil {
-		sessionKey := r.sessionKeyFn()
-		canFire, reason := r.canFireFn(context.Background(), sessionKey)
-		if !canFire {
-			skip = reason
-			return
-		}
+	if canFire, reason := r.agent.CanFire(context.Background(), r.agent.SessionKey()); !canFire {
+		skip = reason
+		return
 	}
 
 	parentKey := r.defaultParentKey()
@@ -728,9 +707,9 @@ func (r *Runner) maybeConsolidation() {
 				}
 			}
 		}()
-		if r.runOnceFn != nil {
+		if r.isDelegatedAgent {
 			// Backend: one-shot via claude --print with full character as system prompt.
-			resp, err := r.runOnceFn(context.Background(), promptText, "")
+			resp, err := r.agent.RunOnce(context.Background(), promptText, "")
 			if err != nil {
 				r.log.Warnf("consolidation RunOnce failed: %v", err)
 				return
@@ -738,19 +717,19 @@ func (r *Runner) maybeConsolidation() {
 			_ = resp // consolidation writes to files directly via tools
 			r.log.Infof("consolidation RunOnce complete")
 		} else {
-			r.branchFn("consolidation", parentKey, promptText, true)
+			r.agent.Branch("consolidation", parentKey, promptText, true)
 		}
 	}()
 }
 
 // maybeReset fires the scheduled daily session reset (reset_time). A soft reset
 // runs memory formation then rotates the session key — identical to a manual
-// /reset (see Agent.ResetSession, wired via resetFn). Disabled when reset_time
-// is empty. Skips if the user interacted within reset_idle_guard, mirroring the
-// `foci command --if-inactive` crontab this replaces, so a live conversation is
-// never wiped out from under the user.
+// /reset (see Agent.ResetSession, via BackgroundAgent.ResetSession). Disabled
+// when reset_time is empty. Skips if the user interacted within reset_idle_guard,
+// mirroring the `foci command --if-inactive` crontab this replaces, so a live
+// conversation is never wiped out from under the user.
 func (r *Runner) maybeReset(ctx context.Context) {
-	if r.resetFn == nil || r.maintCfg.ResetTime == "" {
+	if r.maintCfg.ResetTime == "" || r.agent == nil {
 		return
 	}
 
@@ -827,7 +806,7 @@ func (r *Runner) maybeReset(ctx context.Context) {
 				}
 			}
 		}()
-		if err := r.resetFn(ctx, parentKey); err != nil {
+		if err := r.agent.ResetSession(ctx, parentKey); err != nil {
 			r.log.Warnf("scheduled reset failed for %s: %v", parentKey, err)
 			return
 		}

@@ -171,57 +171,16 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		PromptSearchDirs:   inst.promptSearchDirs,
 		TodoStore:          p.todoStore,
 		SessionIndex:       p.sessionIndex,
-		BranchFunc:         branchFn,
+
+		// The schedulers' single dependency: branch dispatch, in-flight checks,
+		// rate-limit/mana gating, reset, etc. (see background_agent.go). Test
+		// overrides and the consolidation RunOnce/Branch and reset_time feature
+		// flags are resolved inside the adapter / by IsDelegatedAgent + ResetTime.
+		Agent: &backgroundAgent{inst: inst, connMgr: p.connMgr, agentID: agentID, branch: branchFn},
 
 		WarningDispatcher:     warningDispatcher,
 		ChatWarningDispatcher: chatWarningDispatcher,
-		HasActiveWorkFn: func() int {
-			// Test-only override: if the L2 control socket has set a
-			// value (≥ 0), use it verbatim. -1 sentinel means no
-			// override is active and we fall through to the production
-			// path (tmuxWatchCount, which is nil for delegated agents).
-			if v := inst.testActiveWorkOverride.Load(); v >= 0 {
-				return int(v)
-			}
-			if inst.tmuxWatchCount == nil {
-				return 0
-			}
-			return inst.tmuxWatchCount()
-		},
-		DrainFn: func() {
-			inst.ag.DrainRateLimitQueue(p.ctx)
-		},
-		IsTurnInFlightFunc: inst.ag.IsTurnInFlight,
-		// Session-aware availability checking
-		SessionKeyFunc: func() string { return mostRecentSessionKey(inst.ag, p.connMgr, agentID) },
-		CanFireFunc: func(ctx context.Context, sessionKey string) (bool, string) {
-			// Test-only override: if the L2 control socket has set a
-			// state, return it verbatim. nil pointer means no override
-			// and we fall through to the production rate-limit / mana
-			// check on the agent.
-			if s := inst.testCanFireOverride.Load(); s != nil {
-				return s.allowed, s.reason
-			}
-			return inst.ag.CanFireBackgroundOperation(ctx, sessionKey)
-		},
-		IsDelegatedAgent: inst.ag.DelegatedManager != nil,
-		RunOnceFunc: func() func(ctx context.Context, prompt, systemPrompt string) (string, error) {
-			if inst.ag.DelegatedManager == nil {
-				return nil
-			}
-			return inst.ag.DelegatedManager.RunOnce
-		}(),
-		// Scheduled reset_time: soft reset (memory formation + key rotation),
-		// the same path as a manual /reset. Wired only when reset_time is set.
-		ResetFunc: func() func(ctx context.Context, sessionKey string) error {
-			if maint.ResetTime == "" {
-				return nil
-			}
-			return func(ctx context.Context, sessionKey string) error {
-				_, err := inst.ag.ResetSession(ctx, sessionKey)
-				return err
-			}
-		}(),
+		IsDelegatedAgent:      inst.ag.DelegatedManager != nil,
 	})
 	runner.Start(p.ctx)
 	inst.kaRunner = runner
