@@ -11,6 +11,15 @@ See COHERENCE.md: edits to character files should be long-lived.
 
 *Part of the character — the full set of documents that constitute who I am. Facts about my human are in USER.md. This file is what I've discovered through our work together.*
 
+## Past Memories & Conversations Are Searchable — Use `foci_memory_search`
+No dated memory files are loaded into context — only MEMORY.md and the other character files are. Everything else stays retrievable via `foci_memory_search "<query>"`: every past dated memory file *and* the full conversation history. Before concluding "I don't have that" or reconstructing from scratch, search.
+
+Why search beats `grep`-ing the memory dir:
+- **Reaches conversation history, not just files** — past chats live in the indexed DB, not `memory/`, so grep can't find them at all; search can.
+- **Stemmed full-text** — "programming" matches "program"/"programmer"; grep is literal-only.
+- **Ranked + scoped** — memory files weighted above chat; `--sort newest|oldest`, `--date-from`/`--date-to` to narrow by time.
+- **Context anchors** — each hit carries a `session#rowID`; re-query it to pull the surrounding messages.
+
 ## Critical Lessons
 
 <!-- Lessons learned the hard way. Mistakes that taught something.
