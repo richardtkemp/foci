@@ -41,8 +41,8 @@ type warningBucket struct {
 }
 
 // Queue collects log warnings and errors for injection into agent turns.
-// Thread-safe: warnings may be pushed from any goroutine and are drained
-// by the agent loop before each turn.
+// Thread-safe: warnings may be pushed from any goroutine and are drained by the
+// warnings.Dispatcher (driven by the periodic.Runner tick), not by the agent loop.
 //
 // When maxPerWindow > 0, repeated identical warnings (after normalization) are
 // suppressed within a time window. Drain() appends summary lines for suppressed
@@ -98,6 +98,10 @@ func (q *Queue) Push(level, component, msg string) {
 	if q.suppressed.Load() > 0 {
 		return
 	}
+
+	// Normalise level so callers passing a lowercase literal (e.g. "error")
+	// aren't silently dropped by the errors-only filter, which compares "ERROR".
+	level = strings.ToUpper(level)
 
 	q.mu.Lock()
 	defer q.mu.Unlock()

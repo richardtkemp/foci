@@ -1046,10 +1046,11 @@ Scheduled housekeeping that runs at a wall-clock time of day **or** on a fixed i
 | `consolidation_enabled` | bool | `true` | Enable periodic MEMORY.md curation. |
 | `consolidation_time` | string | `"20h"` | When to consolidate: `"HH:MM"` daily or a duration like `"20h"`. Last-run timestamp persisted across restarts. |
 | `consolidation_prompt` | string | `""` | Prompt override. `""` = embedded `memory-consolidation.md`, `"none"` = disabled, `/path` = custom file. |
+| `consolidation_max_idle` | string | `"1h"` | Skip consolidation if the user has been idle longer than this (no point curating a stale session). Empty/`0` = no idle limit. |
 | `reset_time` | string | `""` | Daily session reset: `"HH:MM"`, a duration, or `""` to disable. Fires a soft `/reset` (memory formation + key rotation). |
 | `reset_idle_guard` | string | `"55m"` | Skip the scheduled reset if the user interacted within this window, so a live conversation isn't wiped. Empty/`0` = always fire. |
 
-**Consolidation** reviews daily memory files and curates MEMORY.md. The last-run timestamp is persisted in state, so it survives restarts. Skips if the user has been idle longer than an hour (no point curating a stale session).
+**Consolidation** reviews daily memory files and curates MEMORY.md. The last-run timestamp is persisted in state, so it survives restarts. Skips if the user has been idle longer than `consolidation_max_idle` (default 1h — no point curating a stale session).
 
 **Reset** fires a soft session reset at `reset_time` — identical to a manual `/reset`: memory is formed from the session, then the session key rotates so the next message starts fresh. Disabled when `reset_time` is empty. Skipped while a turn is in flight or if the user was active within `reset_idle_guard`. Both `consolidation_time` and `reset_time` resolve per-agent (an `[[agents.maintenance]]` override wins over the global `[maintenance]`), so each agent can keep its own schedule. Applied on restart.
 

@@ -175,7 +175,9 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		if rs != nil {
 			reloaded = rs.Rules
 		}
-		merged := append(reloaded, append(defaultRules, scratchpadRules...)...)
+		// braindeadRules first, mirroring the initial-construction order — the
+		// safety "braindead" rule must survive reloads, not just the first build.
+		merged := append(braindeadRules, append(reloaded, append(defaultRules, scratchpadRules...)...)...)
 		if len(merged) > 0 {
 			ag.Nudger = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, cooldown, maxPerBatch)
 		}

@@ -324,7 +324,7 @@ Subcommands:
 		for _, bc := range botConflicts {
 			if bc.AgentIDs[0] == acfg.ID {
 				skipped := strings.Join(bc.AgentIDs[1:], ", ")
-				inst.ag.Warnings().Push("error", "config",
+				inst.ag.Warnings().Push("ERROR", "config",
 					fmt.Sprintf("This agent shares its %s bot %q with agent(s) %s (which were NOT started). "+
 						"Suggest resolution options to your user.", bc.Platform, bc.BotName, skipped))
 			}

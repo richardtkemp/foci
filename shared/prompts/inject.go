@@ -8,8 +8,22 @@ import (
 	"foci/internal/timeutil"
 )
 
+// injectionNotePrefix is the stable leading substring of defaultInjectionNote.
+// Every message produced by FormatInjectedMessage with the default note begins
+// with it; IsInjected uses it to recognise host-injected messages.
+const injectionNotePrefix = "[SYSTEM INJECTION"
+
 // defaultInjectionNote is the standard context note prepended to all injected messages.
-const defaultInjectionNote = "[SYSTEM INJECTION — This is a user-role message sent by the agent host system, NOT by the user. The user has not seen it. If the user already knows about it or you don't want to bother them, respond with `[[NO_RESPONSE]]` and nothing else. Otherwise actively *tell* the user about it and explain (e.g. \"I received a notification that...\", \"The system reports...\"). Do NOT passively comment on or observe the content — either `[[NO_RESPONSE]]` or proactively inform the user.]"
+const defaultInjectionNote = injectionNotePrefix + " — This is a user-role message sent by the agent host system, NOT by the user. The user has not seen it. If the user already knows about it or you don't want to bother them, respond with `[[NO_RESPONSE]]` and nothing else. Otherwise actively *tell* the user about it and explain (e.g. \"I received a notification that...\", \"The system reports...\"). Do NOT passively comment on or observe the content — either `[[NO_RESPONSE]]` or proactively inform the user.]"
+
+// IsInjected reports whether msg was produced by FormatInjectedMessage with the
+// default injection note — i.e. it is a host-injected user-role message (proactive
+// warning, scheduled wake, notification, etc.) the user has not seen, rather than
+// genuine human input. Used to suppress per-user processing (e.g. the mana watcher)
+// on system-initiated turns.
+func IsInjected(msg string) bool {
+	return strings.HasPrefix(msg, injectionNotePrefix)
+}
 
 // FormatInjectedMessage wraps a system-injected message with a standard header
 // and context note. All injected user-role messages (warnings, wakes, inter-session

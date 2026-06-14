@@ -276,6 +276,7 @@ type ResolvedMaintenance struct {
 	ConsolidationEnabled bool // default true
 	ConsolidationTime    string
 	ConsolidationPrompt  string
+	ConsolidationMaxIdle string // default "1h"; skip consolidation if idle longer
 	ResetTime            string // "" = disabled
 	ResetIdleGuard       string // default "55m"
 }
@@ -285,6 +286,7 @@ func resolveMaintenance(m MaintenanceConfig) ResolvedMaintenance {
 		ConsolidationEnabled: DerefBool(m.ConsolidationEnabled),
 		ConsolidationTime:    DerefStr(m.ConsolidationTime),
 		ConsolidationPrompt:  DerefStr(m.ConsolidationPrompt),
+		ConsolidationMaxIdle: DerefStr(m.ConsolidationMaxIdle),
 		ResetTime:            DerefStr(m.ResetTime),
 		ResetIdleGuard:       DerefStr(m.ResetIdleGuard),
 	}
