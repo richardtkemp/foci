@@ -14,7 +14,7 @@ AI agents on Telegram, written in Go.
 
 ---
 
-Inspired by [OpenClaw](https://github.com/claw-project/openclaw), built from scratch in Go — single binary, cache-first, with OS-level secret isolation. Session branching, tool piping, and coding agent orchestration go well beyond the original. Built for Anthropic, but any OpenAI-compatible endpoint works.
+Inspired by [OpenClaw](https://github.com/openclaw/openclaw), built from scratch in Go — single binary, cache-first, with OS-level secret isolation. Session branching, tool piping, and coding agent orchestration go well beyond the original. Built for Anthropic, but any OpenAI-compatible endpoint works.
 
 ## Quick Start
 
@@ -83,7 +83,7 @@ Fewer moving parts means fewer surprises. Secret management follows the same pri
 - You need broad provider failover across many LLM backends
 - You want a large community and established support ecosystem
 
-[OpenClaw](https://github.com/claw-project/openclaw) is good software. If those are your priorities, use it.
+[OpenClaw](https://github.com/openclaw/openclaw) is good software. If those are your priorities, use it.
 
 ## Requirements
 
