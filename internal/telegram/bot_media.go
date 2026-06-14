@@ -147,20 +147,31 @@ func (b *Bot) sendMedia(chatID int64, caption string, send func(captionText, par
 	return nil
 }
 
-// SendDocumentToChat sends a file as a Telegram document to a specific chat ID.
-// If caption is non-empty, its markdown is rendered as the document caption
-// (with over-length captions continued as a follow-up message).
-func (b *Bot) SendDocumentToChat(chatID int64, filePath, caption string) error {
+// sendCaptionedMedia is the shared body of the captioned SendXToChat methods:
+// it renders the caption (over-length → follow-up message, via sendMedia), opens
+// filePath, and dispatches the gotgbot call via send. kind labels the file in
+// open/send errors. Each caller supplies only its one-line gotgbot send.
+func (b *Bot) sendCaptionedMedia(chatID int64, filePath, caption, kind string, send func(in gotgbot.InputFile, captionText, parseMode string) error) error {
 	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
-		in, f, err := openMediaFile(filePath, "document")
+		in, f, err := openMediaFile(filePath, kind)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = f.Close() }()
-		if _, err := b.client.SendDocument(chatID, in, &gotgbot.SendDocumentOpts{Caption: capt, ParseMode: parseMode}); err != nil {
-			return fmt.Errorf("send document: %w", err)
+		if err := send(in, capt, parseMode); err != nil {
+			return fmt.Errorf("send %s: %w", kind, err)
 		}
 		return nil
+	})
+}
+
+// SendDocumentToChat sends a file as a Telegram document to a specific chat ID.
+// If caption is non-empty, its markdown is rendered as the document caption
+// (with over-length captions continued as a follow-up message).
+func (b *Bot) SendDocumentToChat(chatID int64, filePath, caption string) error {
+	return b.sendCaptionedMedia(chatID, filePath, caption, "document", func(in gotgbot.InputFile, capt, parseMode string) error {
+		_, err := b.client.SendDocument(chatID, in, &gotgbot.SendDocumentOpts{Caption: capt, ParseMode: parseMode})
+		return err
 	})
 }
 
@@ -179,61 +190,33 @@ func (b *Bot) SendVoiceToChat(chatID int64, filePath string) error {
 
 // SendVideoToChat sends a video file to a specific chat ID.
 func (b *Bot) SendVideoToChat(chatID int64, filePath, caption string) error {
-	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
-		in, f, err := openMediaFile(filePath, "video")
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		if _, err := b.client.SendVideo(chatID, in, &gotgbot.SendVideoOpts{Caption: capt, ParseMode: parseMode}); err != nil {
-			return fmt.Errorf("send video: %w", err)
-		}
-		return nil
+	return b.sendCaptionedMedia(chatID, filePath, caption, "video", func(in gotgbot.InputFile, capt, parseMode string) error {
+		_, err := b.client.SendVideo(chatID, in, &gotgbot.SendVideoOpts{Caption: capt, ParseMode: parseMode})
+		return err
 	})
 }
 
 // SendPhotoToChat sends a photo to a specific chat ID.
 func (b *Bot) SendPhotoToChat(chatID int64, filePath, caption string) error {
-	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
-		in, f, err := openMediaFile(filePath, "photo")
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		if _, err := b.client.SendPhoto(chatID, in, &gotgbot.SendPhotoOpts{Caption: capt, ParseMode: parseMode}); err != nil {
-			return fmt.Errorf("send photo: %w", err)
-		}
-		return nil
+	return b.sendCaptionedMedia(chatID, filePath, caption, "photo", func(in gotgbot.InputFile, capt, parseMode string) error {
+		_, err := b.client.SendPhoto(chatID, in, &gotgbot.SendPhotoOpts{Caption: capt, ParseMode: parseMode})
+		return err
 	})
 }
 
 // SendAudioToChat sends an audio file to a specific chat ID.
 func (b *Bot) SendAudioToChat(chatID int64, filePath, caption string) error {
-	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
-		in, f, err := openMediaFile(filePath, "audio")
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		if _, err := b.client.SendAudio(chatID, in, &gotgbot.SendAudioOpts{Caption: capt, ParseMode: parseMode}); err != nil {
-			return fmt.Errorf("send audio: %w", err)
-		}
-		return nil
+	return b.sendCaptionedMedia(chatID, filePath, caption, "audio", func(in gotgbot.InputFile, capt, parseMode string) error {
+		_, err := b.client.SendAudio(chatID, in, &gotgbot.SendAudioOpts{Caption: capt, ParseMode: parseMode})
+		return err
 	})
 }
 
 // SendAnimationToChat sends an animation (GIF) to a specific chat ID.
 func (b *Bot) SendAnimationToChat(chatID int64, filePath, caption string) error {
-	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
-		in, f, err := openMediaFile(filePath, "animation")
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		if _, err := b.client.SendAnimation(chatID, in, &gotgbot.SendAnimationOpts{Caption: capt, ParseMode: parseMode}); err != nil {
-			return fmt.Errorf("send animation: %w", err)
-		}
-		return nil
+	return b.sendCaptionedMedia(chatID, filePath, caption, "animation", func(in gotgbot.InputFile, capt, parseMode string) error {
+		_, err := b.client.SendAnimation(chatID, in, &gotgbot.SendAnimationOpts{Caption: capt, ParseMode: parseMode})
+		return err
 	})
 }
 
