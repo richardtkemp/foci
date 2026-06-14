@@ -14,7 +14,6 @@ import (
 // type; this is purely for routing assertions.
 type recordingRouterSink struct {
 	id    string
-	mu    sync.Mutex
 	count atomic.Int32
 }
 

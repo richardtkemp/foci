@@ -33,27 +33,6 @@ func (h *mockHandler) IsProcessing() bool               { return false }
 func (h *mockHandler) TransformMessage(t string) string { return t }
 func (h *mockHandler) Warnings() *warnings.Queue        { return nil }
 
-// allCalls returns a copy of all recorded call batches. Retained for
-// potential future tests; currently unused.
-func (h *mockHandler) allCalls() [][]string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	out := make([][]string, len(h.calls))
-	for i, c := range h.calls {
-		cp := make([]string, len(c))
-		copy(cp, c)
-		out[i] = cp
-	}
-	return out
-}
-
-// totalCalls returns the total number of calls received.
-func (h *mockHandler) totalCalls() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.calls)
-}
-
 // TestCommandWorker_DispatchesQueuedCommands verifies the command worker
 // goroutine pulls from mq.CmdChan and dispatches via the bot's command
 // dispatcher. Commands flow on their own channel independent of the
