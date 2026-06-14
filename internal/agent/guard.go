@@ -69,7 +69,12 @@ func detectContentExtension(content string) string {
 
 func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, turnModel string, tr tools.ToolResult, messages []provider.Message) string {
 	result := tr.Text
-	if a.MaxResultChars <= 0 || utf8.RuneCountInString(result) <= a.MaxResultChars {
+	// Engage if the result is over the char limit OR the tool already spilled
+	// the full body to disk (ResultFile set) — the latter guarantees a
+	// pre-spilled body is surfaced as a pointer/summary even when its inline
+	// preview is short.
+	overLimit := a.MaxResultChars > 0 && utf8.RuneCountInString(result) > a.MaxResultChars
+	if !overLimit && tr.ResultFile == "" {
 		return result
 	}
 

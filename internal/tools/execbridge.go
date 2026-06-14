@@ -138,16 +138,16 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	// request — never let a different-UID peer drive these tools.
 	uc, ok := conn.(*net.UnixConn)
 	if !ok {
-		writeResponse(conn, "", "exec bridge: non-unix connection rejected")
+		writeError(conn, "exec bridge: non-unix connection rejected")
 		return
 	}
 	if match, err := peercred.MatchesSelf(uc); err != nil {
 		log.Warnf("execbridge", "peer credential check failed: %v", err)
-		writeResponse(conn, "", "peer credential check failed")
+		writeError(conn, "peer credential check failed")
 		return
 	} else if !match {
 		log.Warnf("execbridge", "peer UID mismatch, rejecting connection")
-		writeResponse(conn, "", "peer UID mismatch")
+		writeError(conn, "peer UID mismatch")
 		return
 	}
 
@@ -163,17 +163,17 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		IncludeHeaders bool            `json:"include_headers,omitempty"`
 	}
 	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-		writeResponse(conn, "", fmt.Sprintf("invalid request: %v", err))
+		writeError(conn, fmt.Sprintf("invalid request: %v", err))
 		return
 	}
 
 	tool := b.registry.Get(req.Tool)
 	if tool == nil {
-		writeResponse(conn, "", fmt.Sprintf("unknown tool: %s", req.Tool))
+		writeError(conn, fmt.Sprintf("unknown tool: %s", req.Tool))
 		return
 	}
 	if !tool.ExecExport {
-		writeResponse(conn, "", fmt.Sprintf("tool %s not exported for exec", req.Tool))
+		writeError(conn, fmt.Sprintf("tool %s not exported for exec", req.Tool))
 		return
 	}
 
@@ -186,7 +186,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		// tools return errors via fmt.Errorf; without this log the error
 		// would only reach the calling agent's tool_result envelope.
 		log.Warnf("execbridge", "session=%s tool=%s error: %v", SessionKeyFromContext(b.ctx), req.Tool, err)
-		writeResponse(conn, "", err.Error())
+		writeError(conn, err.Error())
 		return
 	}
 
@@ -199,14 +199,33 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		text = stripHTTPHeaders(text)
 	}
 
-	writeResponse(conn, text, "")
+	// When the tool spilled the full result to disk (large http body, etc.),
+	// pass the file pointer through instead of inlining megabytes onto the
+	// socket. foci-call streams the file straight to stdout, so a pipe
+	// (`foci_http_request url | jq`) gets the complete body and CC applies its
+	// own output truncation to the final result. text remains the inline
+	// preview for the non-spilled case / fallback.
+	writeBridgeResponse(conn, bridgeResponse{
+		Result:     text,
+		ResultFile: result.ResultFile,
+		ResultSize: result.ResultSize,
+	})
 }
 
-func writeResponse(conn net.Conn, result, errMsg string) {
-	resp := struct {
-		Result string `json:"result,omitempty"`
-		Error  string `json:"error,omitempty"`
-	}{Result: result, Error: errMsg}
+// bridgeResponse is the JSON envelope written back to foci-call.
+type bridgeResponse struct {
+	Result     string `json:"result,omitempty"`
+	Error      string `json:"error,omitempty"`
+	ResultFile string `json:"result_file,omitempty"` // full result on disk; foci-call streams it
+	ResultSize int64  `json:"result_size,omitempty"` // total bytes of the full result
+}
+
+// writeError sends an error-only response envelope to foci-call.
+func writeError(conn net.Conn, errMsg string) {
+	writeBridgeResponse(conn, bridgeResponse{Error: errMsg})
+}
+
+func writeBridgeResponse(conn net.Conn, resp bridgeResponse) {
 	data, _ := json.Marshal(resp)
 	data = append(data, '\n')
 	_, _ = conn.Write(data)

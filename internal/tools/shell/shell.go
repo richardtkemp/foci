@@ -18,6 +18,7 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/tools"
+	"foci/internal/tools/spill"
 )
 
 // defaultSpillThreshold is the default byte count kept in memory before
@@ -412,20 +413,21 @@ func processExitError(state *os.ProcessState, waitErr error) error {
 // All reads must complete before proc.Wait is called (Go 1.22+ closes pipe
 // read-ends in Wait, racing in-progress reads).
 //
-// For "separated" mode, stdout and stderr are captured into independent spillWriters.
-// For combined mode, both streams write through a single spillWriter (mutex-protected)
+// For "separated" mode, stdout and stderr are captured into independent spill.Writers.
+// For combined mode, both streams write through a single spill.Writer (mutex-protected)
 // so output appears in roughly chronological order (not all-stdout-then-all-stderr).
 //
 // spillThreshold controls how many bytes are kept in memory before overflowing to
-// a temp file. spillTempDir is the directory for overflow files.
+// a temp file. spillTempDir is the directory for overflow files. Shell output is
+// local/trusted, so there is no total cap (maxTotal 0 = unbounded).
 //
 // Returns (stdoutSpill, stderrSpill, combinedSpill, doneRead). Use stdout/stderr
 // for separated mode; use combined for combined mode. doneRead is closed when
 // all reads are finished.
-func startPipeReaders(stdout, stderr io.ReadCloser, outputMode string, spillThreshold int64, spillTempDir string) (stdoutSpill, stderrSpill, combinedSpill *spillWriter, doneRead chan struct{}) {
-	stdoutSpill = newSpillWriter(spillThreshold, spillTempDir)
-	stderrSpill = newSpillWriter(spillThreshold, spillTempDir)
-	combinedSpill = newSpillWriter(spillThreshold, spillTempDir)
+func startPipeReaders(stdout, stderr io.ReadCloser, outputMode string, spillThreshold int64, spillTempDir string) (stdoutSpill, stderrSpill, combinedSpill *spill.Writer, doneRead chan struct{}) {
+	stdoutSpill = spill.New(spillThreshold, 0, spillTempDir)
+	stderrSpill = spill.New(spillThreshold, 0, spillTempDir)
+	combinedSpill = spill.New(spillThreshold, 0, spillTempDir)
 	doneRead = make(chan struct{})
 
 	go func() {
@@ -445,9 +447,9 @@ func startPipeReaders(stdout, stderr io.ReadCloser, outputMode string, spillThre
 }
 
 // applySpillResult sets ResultFile and ResultSize on the tools.ToolResult if any
-// spillWriter overflowed to disk. For separated mode, pass stdoutSpill and
+// spill.Writer overflowed to disk. For separated mode, pass stdoutSpill and
 // stderrSpill (the combined one is ignored); for combined mode, pass combinedSpill.
-func applySpillResult(result *tools.ToolResult, stdoutSpill, stderrSpill, combinedSpill *spillWriter) {
+func applySpillResult(result *tools.ToolResult, stdoutSpill, stderrSpill, combinedSpill *spill.Writer) {
 	if combinedSpill != nil && combinedSpill.Spilled() {
 		result.ResultFile = combinedSpill.FilePath()
 		result.ResultSize = combinedSpill.Total()

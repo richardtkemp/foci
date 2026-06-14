@@ -18,7 +18,7 @@ import (
 func TestIsolatedHTTPFileParamsContained(t *testing.T) {
 	store, _ := secrets.Load("/nonexistent")
 	baseDir := t.TempDir()
-	base := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	base := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
 	tool := NewIsolatedHTTPRequestTool(base, store, baseDir)
 
 	cases := []struct {
