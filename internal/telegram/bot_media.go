@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/platform"
 	"foci/internal/timeutil"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -111,19 +112,56 @@ func openMediaFile(filePath, mediaType string) (gotgbot.InputFile, *os.File, err
 	return gotgbot.InputFileByReader(filepath.Base(filePath), f), f, nil
 }
 
-// SendDocumentToChat sends a file as a Telegram document to a specific chat ID.
-// If caption is non-empty, it's sent inline as the document caption.
-func (b *Bot) SendDocumentToChat(chatID int64, filePath, caption string) error {
-	in, f, err := openMediaFile(filePath, "document")
+// sendMedia sends a media file with an optional caption, shared by all the
+// captioned Send*ToChat methods. It:
+//   - converts the caption's markdown to Telegram HTML and sets ParseMode,
+//   - enforces Telegram's 1024-char caption cap by detaching an over-length
+//     caption and sending it as a follow-up text message after the file,
+//   - falls back to an unformatted caption if HTML entity parsing fails.
+//
+// send performs the actual gotgbot call with the resolved caption text and
+// parse mode. It MUST open the file fresh on each invocation: a failed first
+// attempt consumes the multipart upload reader, so the fallback retry needs a
+// rewound file. The follow-up message is only sent after the file send
+// succeeds, which (because the gotgbot call is synchronous) guarantees the file
+// lands before the overflow text.
+func (b *Bot) sendMedia(chatID int64, caption string, send func(captionText, parseMode string) error) error {
+	head, overflow := platform.SplitCaption(caption, platform.TelegramCaptionLimit)
+
+	var err error
+	if strings.TrimSpace(head) == "" {
+		// No caption to attach (none given, or detached as overflow).
+		err = send("", "")
+	} else if err = send(ConvertToTelegramHTML(head, b.tableOpts()), "HTML"); err != nil {
+		// Malformed HTML entities reject the whole send — retry once with the
+		// raw caption and no parse mode so the file still goes out (as plaintext).
+		err = send(head, "")
+	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	opts := &gotgbot.SendDocumentOpts{Caption: caption}
-	if _, err := b.client.SendDocument(chatID, in, opts); err != nil {
-		return fmt.Errorf("send document: %w", err)
+
+	if strings.TrimSpace(overflow) != "" {
+		b.sendHTMLChunks(chatID, ConvertToTelegramHTML(overflow, b.tableOpts()))
 	}
 	return nil
+}
+
+// SendDocumentToChat sends a file as a Telegram document to a specific chat ID.
+// If caption is non-empty, its markdown is rendered as the document caption
+// (with over-length captions continued as a follow-up message).
+func (b *Bot) SendDocumentToChat(chatID int64, filePath, caption string) error {
+	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
+		in, f, err := openMediaFile(filePath, "document")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := b.client.SendDocument(chatID, in, &gotgbot.SendDocumentOpts{Caption: capt, ParseMode: parseMode}); err != nil {
+			return fmt.Errorf("send document: %w", err)
+		}
+		return nil
+	})
 }
 
 // SendVoiceToChat sends a voice note from a file to a specific chat ID.
@@ -141,58 +179,62 @@ func (b *Bot) SendVoiceToChat(chatID int64, filePath string) error {
 
 // SendVideoToChat sends a video file to a specific chat ID.
 func (b *Bot) SendVideoToChat(chatID int64, filePath, caption string) error {
-	in, f, err := openMediaFile(filePath, "video")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	opts := &gotgbot.SendVideoOpts{Caption: caption}
-	if _, err := b.client.SendVideo(chatID, in, opts); err != nil {
-		return fmt.Errorf("send video: %w", err)
-	}
-	return nil
+	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
+		in, f, err := openMediaFile(filePath, "video")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := b.client.SendVideo(chatID, in, &gotgbot.SendVideoOpts{Caption: capt, ParseMode: parseMode}); err != nil {
+			return fmt.Errorf("send video: %w", err)
+		}
+		return nil
+	})
 }
 
 // SendPhotoToChat sends a photo to a specific chat ID.
 func (b *Bot) SendPhotoToChat(chatID int64, filePath, caption string) error {
-	in, f, err := openMediaFile(filePath, "photo")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	opts := &gotgbot.SendPhotoOpts{Caption: caption}
-	if _, err := b.client.SendPhoto(chatID, in, opts); err != nil {
-		return fmt.Errorf("send photo: %w", err)
-	}
-	return nil
+	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
+		in, f, err := openMediaFile(filePath, "photo")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := b.client.SendPhoto(chatID, in, &gotgbot.SendPhotoOpts{Caption: capt, ParseMode: parseMode}); err != nil {
+			return fmt.Errorf("send photo: %w", err)
+		}
+		return nil
+	})
 }
 
 // SendAudioToChat sends an audio file to a specific chat ID.
 func (b *Bot) SendAudioToChat(chatID int64, filePath, caption string) error {
-	in, f, err := openMediaFile(filePath, "audio")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	opts := &gotgbot.SendAudioOpts{Caption: caption}
-	if _, err := b.client.SendAudio(chatID, in, opts); err != nil {
-		return fmt.Errorf("send audio: %w", err)
-	}
-	return nil
+	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
+		in, f, err := openMediaFile(filePath, "audio")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := b.client.SendAudio(chatID, in, &gotgbot.SendAudioOpts{Caption: capt, ParseMode: parseMode}); err != nil {
+			return fmt.Errorf("send audio: %w", err)
+		}
+		return nil
+	})
 }
 
 // SendAnimationToChat sends an animation (GIF) to a specific chat ID.
 func (b *Bot) SendAnimationToChat(chatID int64, filePath, caption string) error {
-	in, f, err := openMediaFile(filePath, "animation")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	opts := &gotgbot.SendAnimationOpts{Caption: caption}
-	if _, err := b.client.SendAnimation(chatID, in, opts); err != nil {
-		return fmt.Errorf("send animation: %w", err)
-	}
-	return nil
+	return b.sendMedia(chatID, caption, func(capt, parseMode string) error {
+		in, f, err := openMediaFile(filePath, "animation")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := b.client.SendAnimation(chatID, in, &gotgbot.SendAnimationOpts{Caption: capt, ParseMode: parseMode}); err != nil {
+			return fmt.Errorf("send animation: %w", err)
+		}
+		return nil
+	})
 }
 
 // downloadFile downloads a file from Telegram by file ID.

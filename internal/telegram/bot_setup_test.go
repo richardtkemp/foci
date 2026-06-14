@@ -33,6 +33,9 @@ type mockClient struct {
 	sendErr          error                        // error to return from SendMessage
 	sendErrOnce      bool                         // if true, only return sendErr on first call
 	docs             int                          // counts SendDocument calls
+	lastDocOpts      *gotgbot.SendDocumentOpts    // last SendDocument opts (caption/parse mode)
+	docErr           error                        // error to return from SendDocument
+	docErrOnce       bool                         // if true, only return docErr on first call
 	markupEdits      int                          // counts EditMessageReplyMarkup calls
 	lastMarkupOpts   *gotgbot.EditMessageReplyMarkupOpts
 	deletedIDs       []int64 // message IDs passed to DeleteMessage, in order
@@ -74,6 +77,14 @@ func (m *mockClient) SendDocument(chatId int64, document gotgbot.InputFileOrStri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.docs++
+	m.lastDocOpts = opts
+	if m.docErr != nil {
+		err := m.docErr
+		if m.docErrOnce {
+			m.docErr = nil
+		}
+		return nil, err
+	}
 	return &gotgbot.Message{}, nil
 }
 
