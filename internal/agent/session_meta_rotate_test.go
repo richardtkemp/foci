@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -114,6 +115,33 @@ func TestRotateSession_MigratesAsyncPending(t *testing.T) {
 	notifier.MarkDone(oldKey)
 	if notifier.HasPending(newKey) {
 		t.Error("new key should have no pending after MarkDone")
+	}
+}
+
+func TestRotateSession_DoesNotMigrateBackend(t *testing.T) {
+	// Proves RotateSession leaves a live delegated backend under the OLD key —
+	// it must never drag a running CC onto the rotated-to key. The async soft
+	// reset depends on this: the old backend stays put for background reflection
+	// while the fresh key starts with no backend (lazy spawn on next message).
+	idx := newTestSessionIndex(t)
+	mgr, _ := newTestManager(t, idx)
+	t.Cleanup(func() { mgr.Close() })
+
+	oldKey := "bot/c100/1000000000"
+	newKey := "bot/c100/2000000000"
+
+	if _, err := mgr.Get(context.Background(), oldKey); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	ag := &Agent{SessionIndex: idx, DelegatedManager: mgr}
+	ag.RotateSession(oldKey, newKey)
+
+	if _, ok := mgr.getManaged(oldKey); !ok {
+		t.Error("backend should still be mapped under the old key after RotateSession")
+	}
+	if _, ok := mgr.getManaged(newKey); ok {
+		t.Error("backend must NOT be migrated to the new key by RotateSession")
 	}
 }
 

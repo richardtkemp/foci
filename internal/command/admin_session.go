@@ -95,7 +95,7 @@ func ResetCommand() *Command {
 			return Response{}, err
 		}
 		if cc.Agent.DelegatedManager != nil {
-			return Response{Text: "Session reset — memories saved, fresh CC session will start on next message."}, nil
+			return Response{Text: "Session reset — fresh session ready. Memories from the previous session are being saved in the background."}, nil
 		}
 		return Response{Text: "Session cleared."}, nil
 	}

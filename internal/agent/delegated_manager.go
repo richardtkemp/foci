@@ -136,7 +136,6 @@ func (mb *managedBackend) clearPermission() {
 
 // Get returns the Backend for the given session key, creating and starting
 // one if it doesn't exist yet. Each session key gets its own backend.
-// Use RotateBackendKey after compaction to re-key the map entry.
 func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
 	// Fast path: an existing, running backend needs no creation, so don't
 	// serialize it through the singleflight group.
@@ -558,7 +557,7 @@ func (m *DelegatedManager) Count() int {
 
 // setBackendCallbacks wires up reply, permission, typing, and session-ready
 // callbacks on a managed backend. Callbacks read mb.sessionKey dynamically
-// so they automatically use the correct key after RotateBackendKey.
+// so they always use the backend's current key.
 func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	sk := func() string {
 		m.mu.Lock()
@@ -615,28 +614,6 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	})
 }
 
-// RotateBackendKey re-keys a backend entry after session key rotation
-// (e.g. compaction). The backend continues running — only the map key
-// and session key reference change. Resume ID is migrated atomically.
-func (m *DelegatedManager) RotateBackendKey(oldKey, newKey string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	mb, ok := m.backends[oldKey]
-	if !ok {
-		return
-	}
-	delete(m.backends, oldKey)
-	mb.sessionKey = newKey
-	m.backends[newKey] = mb
-	// Migrate resume ID via single-UPDATE rename.
-	if m.SessionIndex != nil {
-		if err := m.SessionIndex.RenameSessionMetadata(oldKey, newKey); err != nil {
-			log.Warnf("delegated", "rename session_metadata %s → %s: %v", oldKey, newKey, err)
-		}
-	}
-	log.Infof("delegated", "rotated backend key %s → %s", oldKey, newKey)
-}
-
 // resumeIDKey is the session_metadata key under which CC backend resume UUIDs
 // are stored. The data is session-scoped (each post-compact JSONL is a
 // distinct UUID) and the session key already encodes the agent ID, so we
@@ -661,6 +638,15 @@ func (m *DelegatedManager) clearResumeID(sessionKey string) {
 	if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, resumeIDKey); err != nil {
 		log.Warnf("delegated", "clear resume ID for %s: %v", sessionKey, err)
 	}
+}
+
+// ClearResumeID removes the saved CC resume UUID for a session without touching
+// the live backend. Used by the async soft reset so that when sessionKey's
+// metadata is renamed forward to the rotated key, the fresh session does not
+// inherit (and resume) the old CC conversation. Reflection still reaches the
+// old backend via the manager map, which is unaffected.
+func (m *DelegatedManager) ClearResumeID(sessionKey string) {
+	m.clearResumeID(sessionKey)
 }
 
 // loadResumeID reads a saved CC session UUID from state.db.

@@ -671,9 +671,10 @@ func TestCompactSession_Delegated_DryRunUnsupported(t *testing.T) {
 }
 
 func TestResetDelegatedSession(t *testing.T) {
-	// Proves that resetDelegatedSession sends memory formation to the backend
-	// (blocking until CC completes), then closes the backend, rotates the
-	// foci session key, and reloads the bootstrap.
+	// Proves the delegated soft reset is non-blocking: it rotates the foci key
+	// and reloads the bootstrap synchronously, then runs memory formation on
+	// the old CC session and closes that backend in the BACKGROUND. The backend
+	// must stay open until reflection completes, then close.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	sessionKey := "test/delegated/1000000000"
@@ -686,9 +687,12 @@ func TestResetDelegatedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Build a DelegatedManager with a mock backend that completes turns immediately.
+	// The mock blocks inside reflection until the test releases it, so we can
+	// observe that ResetSession returned without waiting.
 	var memorySent atomic.Bool
 	var backendClosed atomic.Bool
+	reflectStarted := make(chan struct{})
+	reflectRelease := make(chan struct{})
 	dm := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {
 			be := &mockBackendDM{running: true}
@@ -710,14 +714,14 @@ func TestResetDelegatedSession(t *testing.T) {
 		t.Fatalf("pre-create backend: %v", err)
 	}
 
-	// Override SendToPane on the mock to capture memory formation and
-	// immediately complete the turn (simulating CC finishing).
+	// Reflection (memory formation) lands here; signal start, then block until
+	// the test releases us, then complete the turn.
 	mb, _ := dm.getManaged(sessionKey)
 	mock := mb.be.(*mockBackendDM)
-	mock.sendToPaneFn = func(_ context.Context, text string, handler *mockHandler) (*delegator.TurnResult, error) {
-		if strings.Contains(text, "memories") || strings.Contains(text, "session") {
-			memorySent.Store(true)
-		}
+	mock.sendToPaneFn = func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+		memorySent.Store(true)
+		close(reflectStarted)
+		<-reflectRelease
 		result := &delegator.TurnResult{Text: "memory formed"}
 		if handler != nil && handler.OnTurnComplete != nil {
 			handler.OnTurnComplete(result)
@@ -736,11 +740,6 @@ func TestResetDelegatedSession(t *testing.T) {
 		},
 	}
 
-	var notifyMsgs []string
-	ag.ResetNotifyFunc.Add(func(sk, msg string) {
-		notifyMsgs = append(notifyMsgs, msg)
-	})
-
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
 
@@ -754,33 +753,40 @@ func TestResetDelegatedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResetSession (delegated): %v", err)
 	}
+
+	// Synchronous results: key rotated, rotation callback fired, bootstrap reloaded.
 	if newKey == "" || newKey == sessionKey {
 		t.Errorf("newKey = %q, want a rotated key different from %q", newKey, sessionKey)
 	}
-
-	// Verify the progress notification was sent.
-	if len(notifyMsgs) == 0 {
-		t.Error("expected a progress notification during delegated reset")
-	}
-
-	// Memory formation sent synchronously — no need to sleep.
-	if !memorySent.Load() {
-		t.Error("memory formation was not sent to the backend")
-	}
-
-	// Backend closed after HandleMessage returned.
-	if !backendClosed.Load() {
-		t.Error("backend Close was not called after memory formation")
-	}
-
-	// Verify session rotation.
 	if rotatedOld != sessionKey || rotatedNew != newKey {
 		t.Errorf("rotation: old=%q new=%q, want %q/%q", rotatedOld, rotatedNew, sessionKey, newKey)
 	}
-
-	// Verify bootstrap was reloaded.
 	if !nudgeReloaded {
 		t.Error("NudgeReloadFunc was not called after delegated reset")
+	}
+
+	// Reflection runs in the background — wait for it to start.
+	select {
+	case <-reflectStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reflection did not start in the background")
+	}
+	// While reflection is still in flight, the backend must NOT be closed.
+	if backendClosed.Load() {
+		t.Error("backend was closed before reflection completed")
+	}
+
+	// Release reflection; the backend must close only after it finishes.
+	close(reflectRelease)
+	deadline := time.Now().Add(2 * time.Second)
+	for !backendClosed.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !backendClosed.Load() {
+		t.Error("backend was not closed after reflection completed")
+	}
+	if !memorySent.Load() {
+		t.Error("memory formation was not sent to the backend")
 	}
 }
 
@@ -836,8 +842,13 @@ func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 	if newKey == "" || newKey == sessionKey {
 		t.Errorf("expected rotated key, got %q", newKey)
 	}
+	// Teardown is backgrounded even with reflection disabled — wait for close.
+	deadline := time.Now().Add(2 * time.Second)
+	for !backendClosed.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if !backendClosed.Load() {
-		t.Error("backend should be closed even when memory is disabled")
+		t.Error("backend should be closed in the background even when memory is disabled")
 	}
 }
 
