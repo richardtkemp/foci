@@ -78,14 +78,6 @@ func wireAgentPlatformCallbacks(
 		}
 	})
 
-	// Reset notify — send "please wait" during delegated session reset.
-	// Uses SendNotificationDirect to bypass turn buffering (same as compaction start).
-	ag.ResetNotifyFunc.Add(func(sk, msg string) {
-		if c := connMgr.ForSessionOrPrimary(sk, acfg.ID); c != nil {
-			_ = c.SendText(msg)
-		}
-	})
-
 	// Compaction notify — per-platform resolution.
 	// Start notifications use SendNotificationDirect to bypass turn buffering
 	// so ⏳ arrives before the compaction completes (not batched with ✅).

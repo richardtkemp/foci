@@ -11,7 +11,6 @@ import (
 	"fmt"
 
 	"foci/internal/log"
-	"foci/shared/prompts"
 )
 
 // reloadAfterMutation reloads the bootstrap (system prompt files from disk),
@@ -48,8 +47,9 @@ func (a *Agent) ReloadSystem() int {
 // For API agents: fires memory formation as an async branch, then rotates
 // the session key and reloads the bootstrap.
 //
-// For delegated agents: sends a memory formation prompt to the live backend
-// session, waits for completion, destroys the backend session, then rotates.
+// For delegated agents: rotates immediately to a fresh session, then runs
+// memory formation on the old CC session and destroys it in the background —
+// the caller is not blocked on reflection.
 //
 // Returns the new session key on success.
 func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (string, error) {
@@ -192,38 +192,54 @@ func (a *Agent) ResetSessionHard(ctx context.Context, sessionKey string) (string
 	return newKey, nil
 }
 
-// resetDelegatedSession handles session reset for backend-managed agents.
-// Sends memory formation prompt to the live backend session (blocking until
-// CC completes), then destroys the backend and rotates the session key.
+// resetDelegatedSession resets a backend-managed session without blocking the
+// caller. It rotates the foci session key immediately — the chat maps to a
+// fresh session right away (a new CC backend is spawned lazily on the next
+// message) — then runs reflection on the old CC session and tears it down in
+// the background.
+//
+// The old backend deliberately stays mapped under sessionKey so the background
+// reflection can drive it (RotateSession no longer migrates backends). The old
+// CC resume ID is cleared up front so the rotated-to key starts a genuinely
+// fresh CC session rather than inheriting the old conversation when its
+// metadata is renamed forward.
 func (a *Agent) resetDelegatedSession(ctx context.Context, sessionKey string) (string, error) {
-	for _, fn := range a.ResetNotifyFunc {
-		fn(sessionKey, "♻️ Session reset — saving memories...")
+	orientTemplate := ""
+	if a.ResetOrientTemplateFn != nil {
+		orientTemplate = a.ResetOrientTemplateFn()
 	}
 
-	// Send memory formation prompt to the live backend session.
-	// HandleMessage blocks until CC completes the turn.
-	if a.Reflection.SessionEndEnabled {
-		prompt := prompts.ResolvePrompt(
-			a.Reflection.SessionEndPrompt,
-			"reflection.md", prompts.Reflection(),
-			a.PromptSearchDirs...)
-		if prompt != "" {
-			log.Infof("reset", "sending memory formation to backend session %s", sessionKey)
-			if err := a.HandleMessage(ctx, sessionKey, []string{prompt}, nil); err != nil {
-				log.Warnf("reset", "memory formation failed for %s: %v", sessionKey, err)
-			}
-		}
-	}
+	// Drop the old CC resume ID before rotating: RotateSession renames
+	// sessionKey's metadata (including cc_resume_id) forward to newKey, and we
+	// must not let the fresh session resume the old conversation. The live
+	// backend stays in the manager map, so reflection below still reaches it.
+	a.DelegatedManager.ClearResumeID(sessionKey)
 
-	// Destroy backend — HandleMessage already completed, safe to close.
-	a.DelegatedManager.ResetSession(sessionKey)
-
-	// Rotate foci session key, reload, invalidate caches.
 	newKey, err := a.Sessions.RotateKey(sessionKey)
 	if err != nil {
 		return "", err
 	}
 	a.RotateSession(sessionKey, newKey)
 	a.reloadAfterMutation()
+
+	// Reflect on the live CC session, then destroy it — in the background so
+	// the user isn't blocked. FireSessionEndMemory injects the reflection into
+	// the existing CC session (it special-cases delegated mode) and blocks
+	// internally until CC completes, so the backend is only closed once
+	// memories are saved. Detach from the request context so the work survives
+	// this call returning.
+	bg := context.WithoutCancel(ctx)
+	go func() {
+		a.FireSessionEndMemory(bg, sessionKey, orientTemplate, false)
+		a.DelegatedManager.ResetSession(sessionKey)
+		// Reflection ran after the metadata rename, so it left rows under the
+		// now-defunct old key. Clear them so nothing leaks.
+		if a.SessionIndex != nil {
+			if err := a.SessionIndex.DeleteAllSessionMetadata(sessionKey); err != nil {
+				log.Warnf("reset", "cleanup metadata for %s: %v", sessionKey, err)
+			}
+		}
+	}()
+
 	return newKey, nil
 }

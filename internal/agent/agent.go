@@ -135,7 +135,6 @@ type Agent struct {
 	DelegatedManager                        *DelegatedManager                       // nil = traditional agent loop; non-nil = lazy per-session delegated transport management
 	Reflection                              config.ResolvedReflection               // resolved reflection config (agent+global merged)
 	ResetOrientTemplateFn                   func() string                           // resolves orientation template for session reset; nil = no orientation
-	ResetNotifyFunc                         HookList[func(string, string)]          // fires progress notifications during reset (session key, message)
 	ReloadSystemFn                          func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op
 
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name

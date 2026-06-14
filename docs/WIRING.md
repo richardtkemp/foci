@@ -309,7 +309,7 @@ Used by:
 
 The agent exposes three lifecycle methods that encapsulate multi-step sequences previously scattered across command handlers:
 
-- **`ResetSession(ctx, sessionKey)`** — clears session history with memory formation. For API agents: fires memory formation as an async branch, rotates the session key, reloads bootstrap. For delegated agents: sends a memory formation prompt to the live backend session, waits for completion (up to 120s), destroys the backend session, rotates, and starts fresh. Returns the new session key.
+- **`ResetSession(ctx, sessionKey)`** — clears session history with memory formation. For API agents: fires memory formation as an async branch, rotates the session key, reloads bootstrap. For delegated agents: rotates the session key and reloads immediately (the chat maps to a fresh session at once; a new CC backend spawns lazily on the next message), then runs memory formation on the old CC session and destroys it in the background (up to 120s). The old CC resume ID is cleared before rotation so the fresh key does not resume the previous conversation. Returns the new session key.
 - **`CompactSession(ctx, sessionKey, dryRun)`** — triggers manual compaction. Validates message count (min 5), runs the compaction pipeline, then reloads bootstrap and resets cache baseline. When `dryRun` is true, the full pipeline runs (API call, summary generation) but the session is left unchanged — the summary is returned for inspection.
 - **`ReloadSystem()`** — reloads bootstrap (system prompt files from disk), refreshes nudge rules, invalidates system caches, and reloads extra system blocks (skills) via `ReloadSystemFn`. Returns the count of reloaded extra items.
 
@@ -361,7 +361,7 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 - **New independent CC session** — consolidation, background tasks, and nudge extraction use `RunOnce` (see above), which spawns an independent headless CC process.
 - **Reject** — the HTTP `/branch` endpoint is explicitly rejected since delegated agents don't support session branching.
 
-**/reset:** Sends the memory formation prompt to the CC session, waits for completion, destroys the backend session (kills tmux pane or closes stream subprocess), and starts a fresh CC session. The session ID is cleared from the state store and a new one is persisted on reconnection. See `agent/lifecycle.go:resetDelegatedSession`.
+**/reset:** Rotates to a fresh session immediately and returns — it does not block on memory formation. In the background it runs the reflection pass on the old CC session, then destroys that backend (kills tmux pane or closes stream subprocess). The old CC resume ID is cleared before rotation so the rotated-to key does not resume the previous conversation; a new CC session spawns lazily on the next message. See `agent/lifecycle.go:resetDelegatedSession`.
 
 **/stop:** Interrupts the current turn. Tmux backend: sends Escape×2 + Ctrl-C via `send-keys`. Stream backend: sends an `interrupt` control message over stdin. Both halt the in-flight inference/tool execution inside Claude Code.
 

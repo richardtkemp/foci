@@ -370,7 +370,6 @@ func TestGet_LazyCreation(t *testing.T) {
 	}
 
 	// Different session key creates a separate backend.
-	// In production, use RotateBackendKey to migrate after compaction.
 	be3, err := mgr.Get(context.Background(), "test-agent/c123/2000")
 	if err != nil {
 		t.Fatalf("Get #3 (different key): %v", err)
@@ -1694,17 +1693,17 @@ func TestRegisterPromptCancelListener_UnknownSession(t *testing.T) {
 	})
 }
 
-func TestRotateBackendKey(t *testing.T) {
+func TestClearResumeID_KeepsBackend(t *testing.T) {
+	// Proves the exported ClearResumeID removes the persisted CC resume UUID for
+	// a session while leaving the live backend in the manager map intact. The
+	// async soft reset relies on this: clearing the resume ID before the
+	// metadata is renamed forward stops the fresh key from resuming the old CC,
+	// but the backend must remain so background reflection can still drive it.
 	idx := newTestSessionIndex(t)
 	mgr, mocks := newTestManager(t, idx)
 
-	// Create a backend under the old key.
-	be, err := mgr.Get(context.Background(), "old-key")
-	if err != nil {
+	if _, err := mgr.Get(context.Background(), "old-key"); err != nil {
 		t.Fatalf("Get: %v", err)
-	}
-	if be == nil {
-		t.Fatal("Get returned nil")
 	}
 
 	// Simulate session-ready to persist a resume ID.
@@ -1714,70 +1713,18 @@ func TestRotateBackendKey(t *testing.T) {
 	if osr != nil {
 		osr("resume-uuid-123")
 	}
+	if got := mgr.loadResumeID("old-key"); got != "resume-uuid-123" {
+		t.Fatalf("precondition: resume ID = %q, want resume-uuid-123", got)
+	}
 
-	// Rotate the key.
-	mgr.RotateBackendKey("old-key", "new-key")
+	mgr.ClearResumeID("old-key")
 
-	// Old key should be gone — Get would create a new backend.
+	if got := mgr.loadResumeID("old-key"); got != "" {
+		t.Errorf("resume ID not cleared: got %q", got)
+	}
+	// The live backend must still be present and reusable.
 	if mgr.Count() != 1 {
-		t.Fatalf("expected 1 backend after rotate, got %d", mgr.Count())
-	}
-
-	// New key should return the same backend without creating a new one.
-	be2, err := mgr.Get(context.Background(), "new-key")
-	if err != nil {
-		t.Fatalf("Get new-key: %v", err)
-	}
-	if len(*mocks) != 1 {
-		t.Fatalf("expected no new backend creation, got %d mocks", len(*mocks))
-	}
-	_ = be2
-
-	// Resume ID should be migrated: new key has it, old key doesn't.
-	newID := mgr.loadResumeID("new-key")
-	oldID := mgr.loadResumeID("old-key")
-	if newID != "resume-uuid-123" {
-		t.Errorf("resume ID not migrated to new key: got %q", newID)
-	}
-	if oldID != "" {
-		t.Errorf("resume ID not cleared from old key: got %q", oldID)
-	}
-}
-
-func TestRotateBackendKey_NoOp(t *testing.T) {
-	mgr, _ := newTestManager(t, nil)
-
-	// Rotating a key that doesn't exist should be a no-op, not panic.
-	mgr.RotateBackendKey("nonexistent", "new-key")
-
-	if mgr.Count() != 0 {
-		t.Fatalf("expected 0 backends, got %d", mgr.Count())
-	}
-}
-
-func TestRotateBackendKey_NilSessionIndex(t *testing.T) {
-	mgr, mocks := newTestManager(t, nil) // no session index
-
-	_, err := mgr.Get(context.Background(), "old-key")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	_ = mocks
-
-	// Should not panic even without a session index.
-	mgr.RotateBackendKey("old-key", "new-key")
-
-	if mgr.Count() != 1 {
-		t.Fatalf("expected 1 backend after rotate, got %d", mgr.Count())
-	}
-
-	// New key should find the existing backend.
-	_, err = mgr.Get(context.Background(), "new-key")
-	if err != nil {
-		t.Fatalf("Get new-key: %v", err)
-	}
-	if len(*mocks) != 1 {
-		t.Fatal("should not have created a new backend")
+		t.Errorf("backend count = %d, want 1 (backend must remain after ClearResumeID)", mgr.Count())
 	}
 }
 

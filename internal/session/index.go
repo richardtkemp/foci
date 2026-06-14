@@ -1085,6 +1085,18 @@ func (idx *SessionIndex) RenameSessionMetadata(oldKey, newKey string) error {
 	return err
 }
 
+// DeleteAllSessionMetadata removes every metadata row for a session key. Used
+// to clean up rows left under a defunct key (e.g. after an async reset rotates
+// away and then reflects on the old key).
+func (idx *SessionIndex) DeleteAllSessionMetadata(sessionKey string) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	_, err := idx.db.Exec(
+		`DELETE FROM session_metadata WHERE session_key = ?`, sessionKey,
+	)
+	return err
+}
+
 // SessionKeysWithMetadata returns all session keys that have a given metadata key set.
 // Used for cleanup of stale session metadata (e.g. no_compact entries for rotated sessions).
 func (idx *SessionIndex) SessionKeysWithMetadata(key string) ([]string, error) {
