@@ -19,10 +19,12 @@ func newResetRunner(t *testing.T, maint config.ResolvedMaintenance, lastReset, l
 		maintCfg:        maint,
 		lastReset:       lastReset,
 		lastInteraction: lastInteraction,
-		sessionKeyFn:    func() string { return "test/c123/1000000000" },
-		resetFn: func(ctx context.Context, sk string) error {
-			resetCh <- sk
-			return nil
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c123/1000000000" },
+			resetFn: func(ctx context.Context, sk string) error {
+				resetCh <- sk
+				return nil
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -83,14 +85,14 @@ func TestMaybeReset_DisabledWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestMaybeReset_NoResetFn(t *testing.T) {
+func TestMaybeReset_NoAgent(t *testing.T) {
 	r := &Runner{
 		log:      log.NewComponentLogger("keepalive:test"),
 		agentID:  "test",
 		maintCfg: config.ResolvedMaintenance{ResetTime: "1h", ResetIdleGuard: "55m"},
 		done:     make(chan struct{}),
 	}
-	// Must not panic with a nil resetFn.
+	// Must not panic when no BackgroundAgent is wired (agent nil).
 	r.maybeReset(context.Background())
 }
 

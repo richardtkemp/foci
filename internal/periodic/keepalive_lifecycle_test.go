@@ -21,9 +21,11 @@ func TestMaybeKeepalive_Disabled(t *testing.T) {
 			Enabled: false,
 		},
 		lastCacheWarmed: time.Now().Add(-1 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -45,9 +47,11 @@ func TestMaybeKeepalive_BadInterval(t *testing.T) {
 			Interval: "invalid",
 		},
 		lastCacheWarmed: time.Now().Add(-1 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -70,9 +74,11 @@ func TestMaybeKeepalive_RecentCache(t *testing.T) {
 			Interval: "1h",
 		},
 		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -96,10 +102,12 @@ func TestMaybeKeepalive_Fires(t *testing.T) {
 			Prompt:   "keepalive.md",
 		},
 		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
-		sessionKeyFn:    func() string { return "test/c1/1" },
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1/1" },
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -125,9 +133,11 @@ func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
 		},
 		lastCacheWarmed:  time.Now().Add(-10 * time.Minute),
 		keepaliveRunning: true,
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -148,9 +158,11 @@ func TestMaybeBackgroundWork_Disabled(t *testing.T) {
 			Enabled: false,
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -173,9 +185,11 @@ func TestMaybeBackgroundWork_BadInterval(t *testing.T) {
 			Interval: "invalid",
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -198,9 +212,11 @@ func TestMaybeBackgroundWork_RecentInteraction(t *testing.T) {
 			Interval: "1h",
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -222,9 +238,11 @@ func TestMaybeReflection_Disabled(t *testing.T) {
 		},
 		lastInteraction: time.Now().Add(-1 * time.Hour),
 		lastReflection:  time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -248,9 +266,11 @@ func TestMaybeReflection_BadInterval(t *testing.T) {
 		},
 		lastInteraction: time.Now().Add(-1 * time.Hour),
 		lastReflection:  time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -295,13 +315,15 @@ func TestMaybeReflection_Fires(t *testing.T) {
 		sessionIndex:    idx,
 		lastInteraction: now.Add(-30 * time.Minute),
 		lastReflection:  now.Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			if branchType != "reflection" {
-				t.Errorf("expected branch type 'reflection', got %q", branchType)
-			}
-			gotParentKey = parentKey
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				if branchType != "reflection" {
+					t.Errorf("expected branch type 'reflection', got %q", branchType)
+				}
+				gotParentKey = parentKey
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -328,9 +350,11 @@ func TestMaybeConsolidation_Disabled(t *testing.T) {
 		},
 		lastInteraction:   time.Now(),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -354,9 +378,11 @@ func TestMaybeConsolidation_BadInterval(t *testing.T) {
 		},
 		lastInteraction:   time.Now(),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -380,15 +406,17 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 			ConsolidationTime:    "1h",
 			ConsolidationPrompt:  "memory-consolidation.md",
 		},
-		sessionKeyFn:      func() string { return "test/c1/1" },
 		lastInteraction:   now.Add(-30 * time.Minute),
 		lastConsolidation: now.Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			if branchType != "consolidation" {
-				t.Errorf("expected branch type 'consolidation', got %q", branchType)
-			}
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1/1" },
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				if branchType != "consolidation" {
+					t.Errorf("expected branch type 'consolidation', got %q", branchType)
+				}
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -415,17 +443,20 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 			ConsolidationTime:    "1h",
 			ConsolidationPrompt:  "memory-consolidation.md",
 		},
-		sessionKeyFn:      func() string { return "test/c1/1" },
+		isDelegatedAgent:  true,
 		lastInteraction:   now.Add(-30 * time.Minute),
 		lastConsolidation: now.Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			branchCalls++
-			return true
-		},
-		runOnceFn: func(_ context.Context, prompt, systemPrompt string) (string, error) {
-			runOnceCalls++
-			gotPrompt = prompt
-			return "done", nil
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1/1" },
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				branchCalls++
+				return true
+			},
+			runOnceFn: func(_ context.Context, prompt, systemPrompt string) (string, error) {
+				runOnceCalls++
+				gotPrompt = prompt
+				return "done", nil
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -457,9 +488,11 @@ func TestMaybeReflection_NoActivity(t *testing.T) {
 		},
 		lastInteraction: time.Now().Add(-2 * time.Hour),
 		lastReflection:  time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -484,9 +517,11 @@ func TestMaybeReflection_AlreadyRunning(t *testing.T) {
 		lastInteraction:   time.Now().Add(-30 * time.Minute),
 		lastReflection:    time.Now().Add(-2 * time.Hour),
 		reflectionRunning: true,
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -510,9 +545,11 @@ func TestMaybeConsolidation_TooMuchInactivity(t *testing.T) {
 		},
 		lastInteraction:   time.Now().Add(-3 * time.Hour),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -537,9 +574,11 @@ func TestMaybeConsolidation_AlreadyRunning(t *testing.T) {
 		lastInteraction:      time.Now().Add(-30 * time.Minute),
 		lastConsolidation:    time.Now().Add(-2 * time.Hour),
 		consolidationRunning: true,
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			calls++
-			return true
+		agent: &fakeBackgroundAgent{
+			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+				calls++
+				return true
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -565,7 +604,7 @@ func TestNew(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
-		BranchFunc: func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
+		Agent: &fakeBackgroundAgent{branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool { return true }},
 	}
 
 	r := New(cfg)
@@ -599,7 +638,7 @@ func TestNew_WithSessionIndex(t *testing.T) {
 	cfg := RunnerConfig{
 		AgentID:      "test-agent",
 		SessionIndex: idx,
-		BranchFunc:   func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
+		Agent:        &fakeBackgroundAgent{branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool { return true }},
 	}
 
 	r := New(cfg)
@@ -661,7 +700,7 @@ func TestStartStop(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
-		BranchFunc: func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
+		Agent: &fakeBackgroundAgent{branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool { return true }},
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -676,8 +715,8 @@ func TestStartStop(t *testing.T) {
 func TestStop_WithoutStart(t *testing.T) {
 	// Verifies that calling Stop on a Runner that was never Started does not panic.
 	r := New(RunnerConfig{
-		AgentID:    "test",
-		BranchFunc: func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
+		AgentID: "test",
+		Agent:   &fakeBackgroundAgent{branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool { return true }},
 	})
 
 	r.Stop() // Should not panic
@@ -699,8 +738,8 @@ func TestRun_ContextCancellation(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
-		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
-		done:     make(chan struct{}),
+		agent: &fakeBackgroundAgent{branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool { return true }},
+		done:  make(chan struct{}),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
