@@ -283,6 +283,31 @@ func (r *Runner) parentTurnInFlight(parentKey string) bool {
 	return r.agent.IsTurnInFlight(session.SessionKeyBase(parentKey))
 }
 
+// readyParentKey resolves the default session to dispatch a branch into and
+// confirms it isn't mid-turn. It returns the key, or a non-empty skip reason
+// (and an empty key) if there is no default session or a turn is in flight. The
+// keepalive/background/consolidation/reset schedulers all gate on this.
+func (r *Runner) readyParentKey() (parentKey, skip string) {
+	parentKey = r.defaultParentKey()
+	if parentKey == "" {
+		return "", "no default session"
+	}
+	if r.parentTurnInFlight(parentKey) {
+		return "", "turn in flight on parent session"
+	}
+	return parentKey, ""
+}
+
+// checkCanFire applies the agent's rate-limit + mana affordability gate for the
+// current default session. Returns "" if the operation may fire, else the skip
+// reason. Used by the background/reflection/consolidation schedulers.
+func (r *Runner) checkCanFire(ctx context.Context) (skip string) {
+	if canFire, reason := r.agent.CanFire(ctx, r.agent.SessionKey()); !canFire {
+		return reason
+	}
+	return ""
+}
+
 func (r *Runner) run(ctx context.Context) {
 	defer close(r.done)
 
@@ -366,14 +391,8 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
-	parentKey := r.defaultParentKey()
-	if parentKey == "" {
-		skip = "no default session"
-		return
-	}
-
-	if r.parentTurnInFlight(parentKey) {
-		skip = "turn in flight on parent session"
+	parentKey, skip := r.readyParentKey()
+	if skip != "" {
 		return
 	}
 
@@ -458,20 +477,12 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	}
 
 	// Check availability (rate limit + mana)
-	sessionKey := r.agent.SessionKey()
-	if canFire, reason := r.agent.CanFire(ctx, sessionKey); !canFire {
-		skip = reason
+	if skip = r.checkCanFire(ctx); skip != "" {
 		return
 	}
 
-	parentKey := r.defaultParentKey()
-	if parentKey == "" {
-		skip = "no default session"
-		return
-	}
-
-	if r.parentTurnInFlight(parentKey) {
-		skip = "turn in flight on parent session"
+	parentKey, skip := r.readyParentKey()
+	if skip != "" {
 		return
 	}
 
@@ -584,8 +595,7 @@ func (r *Runner) maybeReflection() {
 	}
 
 	// Check availability (rate limit + mana)
-	if canFire, reason := r.agent.CanFire(context.Background(), r.agent.SessionKey()); !canFire {
-		skip = reason
+	if skip = r.checkCanFire(context.Background()); skip != "" {
 		return
 	}
 
@@ -668,19 +678,12 @@ func (r *Runner) maybeConsolidation() {
 	}
 
 	// Check availability (rate limit + mana)
-	if canFire, reason := r.agent.CanFire(context.Background(), r.agent.SessionKey()); !canFire {
-		skip = reason
+	if skip = r.checkCanFire(context.Background()); skip != "" {
 		return
 	}
 
-	parentKey := r.defaultParentKey()
-	if parentKey == "" {
-		skip = "no default session"
-		return
-	}
-
-	if r.parentTurnInFlight(parentKey) {
-		skip = "turn in flight on parent session"
+	parentKey, skip := r.readyParentKey()
+	if skip != "" {
 		return
 	}
 
@@ -777,14 +780,8 @@ func (r *Runner) maybeReset(ctx context.Context) {
 		return
 	}
 
-	parentKey := r.defaultParentKey()
-	if parentKey == "" {
-		skip = "no default session"
-		return
-	}
-
-	if r.parentTurnInFlight(parentKey) {
-		skip = "turn in flight on parent session"
+	parentKey, skip := r.readyParentKey()
+	if skip != "" {
 		return
 	}
 
