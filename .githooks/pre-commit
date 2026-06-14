@@ -1,9 +1,23 @@
 #!/bin/bash
-# Pre-commit hook that runs tests, linting, and coverage checks
-
+# Pre-commit hook: run `make lint` when the commit touches Go source.
+#
+# Scoped to lint — not the full `make check`, which also runs the multi-minute
+# coverage + persistence suite — so it stays affordable on every commit. And
+# gated on staged Go files (incl. go.mod/go.sum) so the constant
+# memory/stewardship/cron auto-commits, which touch only markdown/config, skip
+# it entirely and aren't blocked by an unrelated lint state.
+#
+# Activate with `make setup-hooks` (sets core.hooksPath to .githooks).
 set -e
 
-echo "Running pre-commit checks..."
-make check
+# Names staged in this commit (includes deletions: removing a .go file can
+# create new deadcode / disconnected-test failures that lint must catch).
+staged_go=$(git diff --cached --name-only | grep -E '\.go$|^go\.(mod|sum)$' || true)
 
-echo "✅ All pre-commit checks passed"
+if [ -z "$staged_go" ]; then
+	exit 0
+fi
+
+echo "Running pre-commit lint (staged Go changes detected)..."
+make lint
+echo "✅ pre-commit lint passed"
