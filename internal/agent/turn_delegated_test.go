@@ -35,10 +35,8 @@ func TestDelegatedTransport_NoOps(t *testing.T) {
 	}
 	unlock := tr.AcquireTurnLock(ts)
 	unlock() // should not panic
-	dec := tr.IncrementProcessing(ts)
-	dec() // should not panic
 	unreg := tr.RegisterTurn(ts)
-	unreg() // should not panic
+	unreg() // should not panic (registers + unregisters a TurnDetail)
 
 	// Phase 2 no-ops.
 	if err := tr.LoadAndRepairSession(ts); err != nil {

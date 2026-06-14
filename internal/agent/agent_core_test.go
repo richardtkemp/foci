@@ -288,9 +288,9 @@ func TestHandleMessageCancellation(t *testing.T) {
 
 	// Cancel after a short delay
 	go func() {
-		// Wait for tool to start
-		for !ag.IsProcessing() {
-			// spin until processing starts
+		// Wait for the turn to start
+		for !ag.IsTurnInFlight(session.SessionKeyBase("test/icancel/1000000000")) {
+			// spin until the turn is in flight
 		}
 		cancel()
 	}()
@@ -304,9 +304,9 @@ func TestHandleMessageCancellation(t *testing.T) {
 	}
 }
 
-func TestIsProcessing(t *testing.T) {
-	// Proves that IsProcessing returns false both before and after a HandleMessage call,
-	// confirming the processing flag is correctly cleared on completion.
+func TestTurnInFlight_ClearedAfterHandleMessage(t *testing.T) {
+	// Proves the per-session in-flight flag is false both before and after a
+	// HandleMessage call, confirming it's correctly cleared on completion.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -327,14 +327,16 @@ func TestIsProcessing(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	if ag.IsProcessing() {
-		t.Error("should not be processing before HandleMessage")
+	const sk = "test/iproc/1000000000"
+	base := session.SessionKeyBase(sk)
+	if ag.IsTurnInFlight(base) {
+		t.Error("should not be in flight before HandleMessage")
 	}
 
-	ag.hmTest(context.Background(), "test/iproc/1000000000", "Hi")
+	ag.hmTest(context.Background(), sk, "Hi")
 
-	if ag.IsProcessing() {
-		t.Error("should not be processing after HandleMessage returns")
+	if ag.IsTurnInFlight(base) {
+		t.Error("should not be in flight after HandleMessage returns")
 	}
 }
 

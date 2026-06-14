@@ -29,7 +29,6 @@ func (h *mockHandler) HandleMessage(_ context.Context, _ string, texts []string,
 	return nil
 }
 
-func (h *mockHandler) IsProcessing() bool               { return false }
 func (h *mockHandler) TransformMessage(t string) string { return t }
 func (h *mockHandler) Warnings() *warnings.Queue        { return nil }
 

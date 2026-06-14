@@ -1524,8 +1524,8 @@ func TestL2_Cron_WakeReminderRoutesToOriginatingSession(t *testing.T) {
 	}
 }
 
-// TestL2_Cron_WakeReminderWaitsForActiveTurn proves the
-// IsProcessing() spin in wakeScheduleFn: when the wake delay elapses
+// TestL2_Cron_WakeReminderWaitsForActiveTurn proves the per-session
+// in-flight wait in wakeScheduleFn: when the wake delay elapses
 // while a user turn is still being processed on the target session,
 // the injection waits rather than racing the active turn. Test
 // schedules a 1s wake, immediately sends a Telegram message that
@@ -1575,10 +1575,10 @@ func TestL2_Cron_WakeReminderWaitsForActiveTurn(t *testing.T) {
 
 	// Second turn: pin the session by sending a message whose Bash
 	// tool_use sleeps 6s. This holds the turn in-flight while the
-	// 4s wake delay elapses; wakeScheduleFn's IsProcessing spin should
-	// defer the injection until this turn completes. The 6s > 4s gap
+	// 4s wake delay elapses; wakeScheduleFn's per-session in-flight wait
+	// should defer the injection until this turn completes. The 6s > 4s gap
 	// ensures the wake's timer fires while we're still in-flight, so
-	// the IsProcessing spin (2s poll cadence) actually engages.
+	// the in-flight wait actually engages.
 	hangBash := fmt.Sprintf(`echo %s; sleep 6`, hangMarker)
 	hangBody, err := json.Marshal(map[string]any{
 		"text": "holding turn",
@@ -1631,7 +1631,7 @@ func TestL2_Cron_WakeReminderWaitsForActiveTurn(t *testing.T) {
 		t.Fatalf("SCHEDULED WAKE never recorded\n%s", recorderTail(t, h.RecorderPath()))
 	}
 	if !wakeTS.After(holdTS) {
-		t.Errorf("wake fired (%s) before/equal to hold-turn user_message (%s) — IsProcessing spin not respected",
+		t.Errorf("wake fired (%s) before/equal to hold-turn user_message (%s) — in-flight wait not respected",
 			wakeTS.Format(time.RFC3339Nano), holdTS.Format(time.RFC3339Nano))
 	}
 }

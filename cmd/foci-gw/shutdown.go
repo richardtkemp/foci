@@ -105,7 +105,7 @@ func gracefulShutdown(agents map[string]*agentInstance, timeout time.Duration) {
 	for {
 		var anyBusy bool
 		for _, inst := range agents {
-			if inst.ag.IsProcessing() {
+			if inst.ag.IsAnyTurnInFlight() {
 				anyBusy = true
 				break
 			}

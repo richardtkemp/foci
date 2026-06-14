@@ -36,14 +36,9 @@ type TurnContract interface {
 	// Delegated: no-op (CC serializes internally).
 	AcquireTurnLock(ts *TurnState) (unlock func())
 
-	// IncrementProcessing bumps the atomic processing counter.
-	// Returns a decrement func.
-	// Delegated: no-op (delegated turns are fire-and-forget from foci's view).
-	IncrementProcessing(ts *TurnState) (decrement func())
-
-	// RegisterTurn adds a TurnDetail for shutdown diagnostics.
-	// Returns an unregister func.
-	// Delegated: no-op.
+	// RegisterTurn adds a TurnDetail for shutdown diagnostics. Returns an
+	// unregister func. Implemented by both transports (per-session in-flight
+	// tracking is handled separately by markInFlight in the orchestrator).
 	RegisterTurn(ts *TurnState) (unregister func())
 
 	// CheckStaleContext returns ctx.Err() if the context was cancelled

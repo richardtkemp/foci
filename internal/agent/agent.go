@@ -142,7 +142,6 @@ type Agent struct {
 
 	rateLimitGates     map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
 	rateLimitGatesMu   sync.RWMutex              // protects rateLimitGates map access
-	processing         int32                     // atomic: number of in-flight HandleMessage calls (API path only — see IsProcessing)
 	inFlightMu         sync.Mutex                // protects inFlight + inFlightDelivering + inFlightChanged map access
 	inFlight           map[string]int32          // per-session-base count of in-flight OrchestrateFullTurn calls (key = SessionKeyBase) — see IsTurnInFlight
 	inFlightDelivering map[string]int32          // per-session-base count of in-flight turns whose sink reports DeliversToPlatform=true — see IsInFlightDelivering
@@ -229,11 +228,6 @@ type TurnDetail struct {
 	StartTime  time.Time
 }
 
-// IsProcessing returns true if the agent is currently handling a message.
-func (a *Agent) IsProcessing() bool {
-	return atomic.LoadInt32(&a.processing) > 0
-}
-
 // ProcessingDetails returns detail for every in-flight turn.
 func (a *Agent) ProcessingDetails() []TurnDetail {
 	a.turnDetailsMu.Lock()
@@ -243,11 +237,6 @@ func (a *Agent) ProcessingDetails() []TurnDetail {
 		out = append(out, *d)
 	}
 	return out
-}
-
-// SetProcessingForTest sets the processing counter directly. Test-only.
-func (a *Agent) SetProcessingForTest(n int32) {
-	atomic.StoreInt32(&a.processing, n)
 }
 
 // isSystemMessage returns true if the message is from a system source

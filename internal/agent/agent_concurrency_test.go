@@ -252,41 +252,35 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 	}
 }
 
-func TestProcessingCounter(t *testing.T) {
-	// Proves IsProcessing reflects the atomic counter set by SetProcessingForTest:
-	// false when zero, true when non-zero.
+func TestTurnInFlight_PerSession(t *testing.T) {
+	// Proves per-session busy state is isolated: marking session A in-flight
+	// must not make session B report busy, while the agent-wide aggregate
+	// (IsAnyTurnInFlight, used only by shutdown) reflects either. This is the
+	// core regression the per-session refactor fixes — the old agent-wide
+	// counter conflated unrelated sessions.
 	ag := &Agent{}
-	if ag.IsProcessing() {
-		t.Fatal("new agent should not be processing")
+	const a, b = "bot/cA/1000", "bot/cB/1000"
+
+	if ag.IsAnyTurnInFlight() {
+		t.Fatal("new agent should have nothing in flight")
 	}
 
-	ag.SetProcessingForTest(1)
-	if !ag.IsProcessing() {
-		t.Fatal("agent should be processing after SetProcessingForTest(1)")
+	ag.SetTurnInFlightForTest(a, true)
+	if !ag.IsTurnInFlight(session.SessionKeyBase(a)) {
+		t.Error("session A should be in flight")
+	}
+	if ag.IsTurnInFlight(session.SessionKeyBase(b)) {
+		t.Error("session B must NOT be in flight just because A is")
+	}
+	if !ag.IsAnyTurnInFlight() {
+		t.Error("aggregate should be true while A is in flight")
 	}
 
-	ag.SetProcessingForTest(0)
-	if ag.IsProcessing() {
-		t.Fatal("agent should not be processing after SetProcessingForTest(0)")
+	ag.SetTurnInFlightForTest(a, false)
+	if ag.IsTurnInFlight(session.SessionKeyBase(a)) {
+		t.Error("session A should be idle after clear")
 	}
-}
-
-func TestProcessingCounter_Multiple(t *testing.T) {
-	// Proves IsProcessing remains true while the counter is above zero and
-	// transitions to false only once the counter reaches exactly zero.
-	ag := &Agent{}
-	ag.SetProcessingForTest(2)
-	if !ag.IsProcessing() {
-		t.Fatal("should be processing with count 2")
-	}
-
-	ag.SetProcessingForTest(1)
-	if !ag.IsProcessing() {
-		t.Fatal("should still be processing with count 1")
-	}
-
-	ag.SetProcessingForTest(0)
-	if ag.IsProcessing() {
-		t.Fatal("should not be processing with count 0")
+	if ag.IsAnyTurnInFlight() {
+		t.Error("aggregate should be false once all sessions idle")
 	}
 }

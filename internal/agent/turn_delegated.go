@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"foci/internal/agent/turnevent"
@@ -24,11 +23,21 @@ import (
 
 func (t *DelegatedTransport) RateLimitGate(ts *TurnState) error    { return nil }       // CC has its own rate limiting
 func (t *DelegatedTransport) AcquireTurnLock(ts *TurnState) func() { return func() {} } // CC serializes internally
-func (t *DelegatedTransport) IncrementProcessing(ts *TurnState) func() { // tracks IsProcessing() for shutdown/reset gating
-	atomic.AddInt32(&t.agent.processing, 1)
-	return func() { atomic.AddInt32(&t.agent.processing, -1) }
+
+// RegisterTurn adds a TurnDetail so shutdown diagnostics (logBusyAgents) can
+// report in-flight delegated turns by session/trigger/tool, same as the API
+// path. Per-session in-flight tracking itself is handled by markInFlight in
+// the orchestrator.
+func (t *DelegatedTransport) RegisterTurn(ts *TurnState) func() {
+	td := &TurnDetail{
+		SessionKey: ts.SessionKey,
+		Trigger:    ts.Trigger,
+		StartTime:  time.Now(),
+	}
+	ts.TurnDetail = td
+	ts.TurnID = t.agent.registerTurn(td)
+	return func() { t.agent.unregisterTurn(ts.TurnID) }
 }
-func (t *DelegatedTransport) RegisterTurn(ts *TurnState) func() { return func() {} } // not tracked externally
 
 // --- Phase 2: Turn preparation ---
 

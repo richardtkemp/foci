@@ -36,11 +36,9 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	}
 	unlock := tc.AcquireTurnLock(ts)
 	defer unlock()
-	dec := tc.IncrementProcessing(ts)
-	defer dec()
-	// markInFlight covers both API and delegated transports — sibling to
-	// IncrementProcessing (which is API-only). Keyed by SessionKeyBase so the
-	// gate can ask "is *this* session in-flight?" — branches and sub-agents
+	// markInFlight is the sole in-flight tracker; it covers both API and
+	// delegated transports. Keyed by SessionKeyBase so the gate can ask
+	// "is *this* session in-flight?" — branches and sub-agents
 	// have distinct bases (sub-agents) or share the parent's base (branches),
 	// matching the granularity the activity gate cares about. Released when
 	// OrchestrateFullTurn returns, which for delegated turns is after

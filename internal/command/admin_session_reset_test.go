@@ -91,8 +91,8 @@ func TestResetCommand_HardSubcommand(t *testing.T) {
 		Sessions:  store,
 		Bootstrap: bs,
 	}
-	// Simulate an in-flight turn — the soft path would return an error here.
-	ag.SetProcessingForTest(1)
+	// Simulate an in-flight turn on this session — the soft path would error here.
+	ag.SetTurnInFlightForTest(reqKey, true)
 
 	cc := CommandContext{
 		Agent:     ag,

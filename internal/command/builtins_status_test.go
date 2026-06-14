@@ -74,7 +74,7 @@ func TestStatusCommandBusy(t *testing.T) {
 	store := session.NewStore(sessDir)
 
 	ag := &agent.Agent{Model: "claude-haiku-4-5"}
-	ag.SetProcessingForTest(1) // mark agent as busy
+	ag.SetTurnInFlightForTest(sk, true) // mark this session as busy
 
 	cc := CommandContext{
 		Agent:       ag,

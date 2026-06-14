@@ -339,7 +339,6 @@ type AgentInfo struct {
 	ID           string
 	SessionKey   string
 	Model        string
-	Busy         bool
 	MessageCount int
 	LastActivity string
 }
@@ -373,23 +372,17 @@ func AgentsCommand() *Command {
 			}
 
 			type agentRow struct {
-				id, session, status, model, msgs string
+				id, session, model, msgs string
 			}
 			rows := make([]agentRow, len(agents))
 			for i, a := range agents {
 				r := agentRow{id: a.ID}
 				if a.SessionKey == "" {
 					r.session = "—"
-					r.status = "—"
 					r.model = "—"
 					r.msgs = "—"
 				} else {
 					r.session = a.SessionKey
-					if a.Busy {
-						r.status = "busy"
-					} else {
-						r.status = "idle"
-					}
 					r.model = a.Model
 					r.msgs = fmt.Sprintf("%d", a.MessageCount)
 				}
@@ -399,13 +392,12 @@ func AgentsCommand() *Command {
 			cols := []display.Column{
 				{Header: "ID"},
 				{Header: "Session"},
-				{Header: "Status"},
 				{Header: "Model"},
 				{Header: "Messages", Align: display.AlignRight},
 			}
 			tableRows := make([][]string, len(rows))
 			for i, r := range rows {
-				tableRows[i] = []string{r.id, r.session, r.status, r.model, r.msgs}
+				tableRows[i] = []string{r.id, r.session, r.model, r.msgs}
 			}
 			return Response{Text: "Agents\n\n" + display.MarkdownTable(cols, tableRows)}, nil
 		},

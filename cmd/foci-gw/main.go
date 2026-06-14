@@ -251,7 +251,6 @@ Subcommands:
 				ID:           id,
 				SessionKey:   sk,
 				Model:        inst.ag.Model,
-				Busy:         inst.ag.IsProcessing(),
 				MessageCount: mc,
 				LastActivity: lastAct,
 			})

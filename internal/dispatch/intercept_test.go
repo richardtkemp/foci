@@ -30,10 +30,6 @@ func (h *fakeHandler) HandleMessage(_ context.Context, _ string, _ []string, _ [
 	panic("not used by Interceptor")
 }
 
-func (h *fakeHandler) IsProcessing() bool {
-	panic("not used by Interceptor")
-}
-
 func (h *fakeHandler) TransformMessage(text string) string {
 	return h.transform(text)
 }

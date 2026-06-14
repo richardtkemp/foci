@@ -3,6 +3,8 @@ package agent
 import (
 	"fmt"
 	"time"
+
+	"foci/internal/session"
 )
 
 // sessionMetaLastActivity is the session_metadata key holding the unix
@@ -40,6 +42,39 @@ func (a *Agent) IsTurnInFlight(base string) bool {
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
 	return a.inFlight[base] > 0
+}
+
+// IsAnyTurnInFlight reports whether any session under this agent currently has
+// a turn executing. This is the one place that genuinely needs an agent-wide
+// aggregate rather than a per-session check: graceful shutdown drains all
+// in-flight work before exit. Everything else should ask IsTurnInFlight(base).
+func (a *Agent) IsAnyTurnInFlight() bool {
+	a.inFlightMu.Lock()
+	defer a.inFlightMu.Unlock()
+	for _, n := range a.inFlight {
+		if n > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// SetTurnInFlightForTest marks a session's base as in-flight (inFlight=true) or
+// clears it, so tests can exercise the in-flight guards without driving a real
+// turn. Test-only.
+func (a *Agent) SetTurnInFlightForTest(sessionKey string, inFlight bool) {
+	base := session.SessionKeyBase(sessionKey)
+	a.inFlightMu.Lock()
+	defer a.inFlightMu.Unlock()
+	if a.inFlight == nil {
+		a.inFlight = make(map[string]int32)
+	}
+	if inFlight {
+		a.inFlight[base] = 1
+	} else {
+		delete(a.inFlight, base)
+	}
+	a.notifyInFlightChangedLocked(base)
 }
 
 // IsInFlightDelivering returns true if at least one in-flight turn under base

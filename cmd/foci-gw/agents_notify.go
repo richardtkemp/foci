@@ -286,10 +286,12 @@ func buildWakeScheduler(
 					log.Warnf("remind", "no session for agent %s, skipping", agentID)
 					return
 				}
-				// Wait for any active agent turn to finish before injecting.
-				for getAgent().IsProcessing() {
+				// Wait for an active turn on THIS session to finish before
+				// injecting — a turn on another session must not delay us.
+				base := session.SessionKeyBase(sk)
+				for getAgent().IsTurnInFlight(base) {
 					select {
-					case <-time.After(2 * time.Second):
+					case <-getAgent().InFlightWaitCh(base):
 					case <-wakeCtx.Done():
 						_ = reminderStore.Dismiss(id)
 						return
