@@ -404,8 +404,15 @@ func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
 
 // sendMediaFile is a generic helper for sending media files to Discord.
 // If caption is non-empty, it's set as the message Content alongside the
-// attachment — Discord renders both inline as a single message.
+// attachment — Discord renders both inline as a single message. Discord
+// already renders markdown natively, so no conversion is needed; the only
+// special handling is the 2000-char content cap: an over-length caption is
+// detached and sent as a follow-up chunked message after the file. The
+// follow-up is sent only after the synchronous file send returns, which
+// guarantees the attachment lands before the overflow text.
 func (b *Bot) sendMediaFile(chatID int64, filePath, caption string) error {
+	head, overflow := platform.SplitCaption(caption, platform.DiscordCaptionLimit)
+
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
@@ -414,7 +421,7 @@ func (b *Bot) sendMediaFile(chatID int64, filePath, caption string) error {
 
 	channelIDStr := strconv.FormatInt(chatID, 10)
 	_, err = b.api.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
-		Content: caption,
+		Content: head,
 		Files: []*discordgo.File{
 			{
 				Name:   filepath.Base(filePath),
@@ -424,6 +431,10 @@ func (b *Bot) sendMediaFile(chatID int64, filePath, caption string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("send file: %w", err)
+	}
+
+	if strings.TrimSpace(overflow) != "" {
+		b.sendMarkdownChunks(channelIDStr, overflow)
 	}
 	return nil
 }
