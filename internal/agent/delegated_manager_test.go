@@ -1083,6 +1083,7 @@ func TestClose_DoesNotHoldManagerLockDuringBackendClose(t *testing.T) {
 	lockAcquired := make(chan struct{})
 	go func() {
 		mgr.mu.Lock()
+		_ = len(mgr.backends) // touch mu-guarded state to prove the lock is free
 		mgr.mu.Unlock()
 		close(lockAcquired)
 	}()

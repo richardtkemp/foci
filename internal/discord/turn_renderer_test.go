@@ -26,12 +26,12 @@ func rendererBackend(t *testing.T) (*discordBackend, *fakeSession) {
 func TestComposeBody(t *testing.T) {
 	backend, _ := rendererBackend(t)
 
-	body, hasButton, thinking := backend.ComposeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "full"})
+	body, hasButton, _ := backend.ComposeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "full"})
 	if !strings.Contains(body, "thought") || !strings.Contains(body, "answer") || hasButton {
 		t.Errorf("full: body=%q hasButton=%v", body, hasButton)
 	}
 
-	body, hasButton, thinking = backend.ComposeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "compact"})
+	body, hasButton, thinking := backend.ComposeBody(turn.Payload{Text: "answer", ThinkingText: "thought", ThinkingMode: "compact"})
 	if body != "answer" || !hasButton || thinking != "thought" {
 		t.Errorf("compact: body=%q hasButton=%v thinking=%q", body, hasButton, thinking)
 	}
