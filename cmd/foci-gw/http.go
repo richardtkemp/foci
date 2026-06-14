@@ -79,55 +79,37 @@ func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
 		return isSessionActive(in.SessionBase, within)
 	}
 
-	if in.IfUserActive != "" {
-		dur, err := time.ParseDuration(in.IfUserActive)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("bad if_user_active duration: %v", err), http.StatusBadRequest)
-			return false
-		}
-		if !userActiveWithin(dur) {
-			log.Debugf(in.LogTag, "POST %s: skipping (no user activity within %s for agent %s)", in.Endpoint, in.IfUserActive, in.AgentID)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
-			return false
-		}
+	// The four if_(user_)?(in)?active gates share one shape: parse the duration,
+	// 400 on a bad value, else skip (with a canned JSON reply) when the activity
+	// state matches. They differ only in which activity check applies, whether
+	// "active" or "inactive" triggers the skip, and the skip message. Evaluated
+	// in declaration order; the first gate that says skip wins.
+	gates := []struct {
+		value          string
+		label          string
+		subject        string
+		skipResp       string
+		active         func(time.Duration) bool
+		skipWhenActive bool
+	}{
+		{in.IfUserActive, "if_user_active", in.AgentID, "skipped: no recent user activity", userActiveWithin, false},
+		{in.IfUserInactive, "if_user_inactive", in.AgentID, "skipped: user recently active", userActiveWithin, true},
+		{in.IfActive, "if_active", in.SessionBase, "skipped: no recent activity", sessionActiveWithin, false},
+		{in.IfInactive, "if_inactive", in.SessionBase, "skipped: session recently active", sessionActiveWithin, true},
 	}
-	if in.IfUserInactive != "" {
-		dur, err := time.ParseDuration(in.IfUserInactive)
+	for _, g := range gates {
+		if g.value == "" {
+			continue
+		}
+		dur, err := time.ParseDuration(g.value)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("bad if_user_inactive duration: %v", err), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("bad %s duration: %v", g.label, err), http.StatusBadRequest)
 			return false
 		}
-		if userActiveWithin(dur) {
-			log.Debugf(in.LogTag, "POST %s: skipping (user active within %s for agent %s)", in.Endpoint, in.IfUserInactive, in.AgentID)
+		if g.active(dur) == g.skipWhenActive {
+			log.Debugf(in.LogTag, "POST %s: skipping %s=%s (subject %s)", in.Endpoint, g.label, g.value, g.subject)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: user recently active"})
-			return false
-		}
-	}
-	if in.IfActive != "" {
-		dur, err := time.ParseDuration(in.IfActive)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("bad if_active duration: %v", err), http.StatusBadRequest)
-			return false
-		}
-		if !sessionActiveWithin(dur) {
-			log.Debugf(in.LogTag, "POST %s: skipping (no activity within %s for session %s)", in.Endpoint, in.IfActive, in.SessionBase)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent activity"})
-			return false
-		}
-	}
-	if in.IfInactive != "" {
-		dur, err := time.ParseDuration(in.IfInactive)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("bad if_inactive duration: %v", err), http.StatusBadRequest)
-			return false
-		}
-		if sessionActiveWithin(dur) {
-			log.Debugf(in.LogTag, "POST %s: skipping (session active within %s for session %s)", in.Endpoint, in.IfInactive, in.SessionBase)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"response": g.skipResp})
 			return false
 		}
 	}

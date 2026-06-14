@@ -285,24 +285,25 @@ func (b *Backend) SessionFilePath() string {
 	return ""
 }
 
-func (b *Backend) SendKeystroke(ctx context.Context, key string) error {
+// withPane resolves the active pane under the lock and invokes fn with it, or
+// returns a "backend not started" error if no pane exists yet. Shared by the
+// keystroke/special-key/command send paths.
+func (b *Backend) withPane(fn func(p *tmuxPane) error) error {
 	b.mu.Lock()
 	pane := b.pane
 	b.mu.Unlock()
 	if pane == nil {
 		return fmt.Errorf("claude-code-tmux backend not started")
 	}
-	return pane.sendKeystroke(ctx, key)
+	return fn(pane)
+}
+
+func (b *Backend) SendKeystroke(ctx context.Context, key string) error {
+	return b.withPane(func(p *tmuxPane) error { return p.sendKeystroke(ctx, key) })
 }
 
 func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
-	b.mu.Lock()
-	pane := b.pane
-	b.mu.Unlock()
-	if pane == nil {
-		return fmt.Errorf("claude-code-tmux backend not started")
-	}
-	return pane.sendSpecial(ctx, key)
+	return b.withPane(func(p *tmuxPane) error { return p.sendSpecial(ctx, key) })
 }
 
 // Interrupt cancels the current agent turn by sending Escape×2 (cancel
@@ -332,14 +333,7 @@ func (b *Backend) IsTurnInFlight() bool {
 // stream-based re-arm. Called from Inject for the follow-up, steer, and
 // slash-command paths.
 func (b *Backend) sendCommand(ctx context.Context, command string) error {
-	b.mu.Lock()
-	pane := b.pane
-	b.mu.Unlock()
-
-	if pane == nil {
-		return fmt.Errorf("claude-code-tmux backend not started")
-	}
-	return pane.sendText(ctx, command)
+	return b.withPane(func(p *tmuxPane) error { return p.sendText(ctx, command) })
 }
 
 // Inject is the canonical entry point for delivering a user-role event to
