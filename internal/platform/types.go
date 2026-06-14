@@ -356,7 +356,6 @@ type SetupResult struct {
 // StreamingSink for per-turn rendering.
 type MessageHandler interface {
 	HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []Attachment) error
-	IsProcessing() bool
 	TransformMessage(text string) string
 	Warnings() *warnings.Queue
 }

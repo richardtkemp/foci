@@ -154,9 +154,9 @@ func TestResetSession_APIPath(t *testing.T) {
 }
 
 func TestResetSessionHard_APIPath_RotatesEvenWhenProcessing(t *testing.T) {
-	// Proves that ResetSessionHard does NOT check IsProcessing and always
+	// Proves that ResetSessionHard does NOT check the in-flight gate and always
 	// proceeds to rotate the key. The whole point of /reset hard is to
-	// recover from a stuck turn — it must never refuse on the IsProcessing
+	// recover from a stuck turn — it must never refuse on the in-flight
 	// gate that ResetSession uses.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -173,8 +173,8 @@ func TestResetSessionHard_APIPath_RotatesEvenWhenProcessing(t *testing.T) {
 		Sessions:  store,
 		Bootstrap: bootstrap,
 	}
-	// Simulate an in-flight turn — ResetSession would refuse here.
-	ag.SetProcessingForTest(1)
+	// Simulate an in-flight turn on this session — ResetSession would refuse here.
+	ag.SetTurnInFlightForTest(sessionKey, true)
 
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
@@ -288,10 +288,10 @@ func TestResetSessionHard_DelegatedPath_NoMemoryFormation(t *testing.T) {
 }
 
 func TestResetSession_ErrorWhenProcessing(t *testing.T) {
-	// Proves that ResetSession returns an error when the agent is currently
-	// processing a message, so the user must stop the turn first.
+	// Proves that ResetSession returns an error when THIS session is currently
+	// processing a turn, so the user must stop it first.
 	ag := &Agent{}
-	ag.SetProcessingForTest(1)
+	ag.SetTurnInFlightForTest("test/busy/1", true)
 
 	_, err := ag.ResetSession(context.Background(), "test/busy/1")
 	if err == nil {

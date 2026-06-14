@@ -12,6 +12,7 @@ import (
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/mana"
+	"foci/internal/session"
 	"foci/internal/timeutil"
 	"foci/internal/tools"
 )
@@ -78,7 +79,7 @@ func StatusCommand() *Command {
 			model := cc.Agent.SessionModel(sk)
 
 			status := "idle"
-			if cc.Agent.IsProcessing() {
+			if cc.Agent.IsTurnInFlight(session.SessionKeyBase(sk)) {
 				status = "processing"
 			}
 

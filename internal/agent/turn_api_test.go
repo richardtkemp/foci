@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,30 +14,6 @@ import (
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
-
-// TestAPITransport_IncrementProcessing verifies the atomic counter goes up and back down.
-func TestAPITransport_IncrementProcessing(t *testing.T) {
-	a := &Agent{}
-	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
-
-	if a.IsProcessing() {
-		t.Fatal("should not be processing before IncrementProcessing")
-	}
-
-	dec := tr.IncrementProcessing(ts)
-	if !a.IsProcessing() {
-		t.Fatal("should be processing after IncrementProcessing")
-	}
-	if got := atomic.LoadInt32(&a.processing); got != 1 {
-		t.Fatalf("processing = %d, want 1", got)
-	}
-
-	dec()
-	if a.IsProcessing() {
-		t.Fatal("should not be processing after decrement")
-	}
-}
 
 // TestAPITransport_RegisterTurn verifies turn detail registration and cleanup.
 func TestAPITransport_RegisterTurn(t *testing.T) {

@@ -112,14 +112,15 @@ func TestToolsCommandEmpty(t *testing.T) {
 	}
 }
 
-// TestAgentsCommand verifies agents list renders with all agent info and statuses.
+// TestAgentsCommand verifies the agents list renders id, session, model, and
+// message count for each agent (the status column was removed).
 func TestAgentsCommand(t *testing.T) {
 	cmd := AgentsCommand()
 	cc := CommandContext{
 		AgentListFn: func() []AgentInfo {
 			return []AgentInfo{
-				{ID: "main", SessionKey: "agent:main:main", Model: "opus-4", Busy: false, MessageCount: 31},
-				{ID: "scout", SessionKey: "agent:scout:main", Model: "haiku-4", Busy: true, MessageCount: 12},
+				{ID: "main", SessionKey: "agent:main:main", Model: "opus-4", MessageCount: 31},
+				{ID: "scout", SessionKey: "agent:scout:main", Model: "haiku-4", MessageCount: 12},
 			}
 		},
 	}
@@ -135,20 +136,17 @@ func TestAgentsCommand(t *testing.T) {
 	if !strings.Contains(result.Text, "ID") || !strings.Contains(result.Text, "Session") || !strings.Contains(result.Text, "Messages") {
 		t.Errorf("missing table headers in:\n%s", result.Text)
 	}
+	if strings.Contains(result.Text, "Status") {
+		t.Errorf("status column should be gone, found it in:\n%s", result.Text)
+	}
 	if !strings.Contains(result.Text, "---") {
 		t.Errorf("missing separator line in:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, "agent:main:main") {
-		t.Errorf("missing main session in:\n%s", result.Text)
+	if !strings.Contains(result.Text, "agent:main:main") || !strings.Contains(result.Text, "agent:scout:main") {
+		t.Errorf("missing sessions in:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, "agent:scout:main") {
-		t.Errorf("missing scout session in:\n%s", result.Text)
-	}
-	if !strings.Contains(result.Text, "idle") {
-		t.Errorf("missing idle status in:\n%s", result.Text)
-	}
-	if !strings.Contains(result.Text, "busy") {
-		t.Errorf("missing busy status in:\n%s", result.Text)
+	if !strings.Contains(result.Text, "opus-4") || !strings.Contains(result.Text, "31") {
+		t.Errorf("missing model/message-count in:\n%s", result.Text)
 	}
 }
 

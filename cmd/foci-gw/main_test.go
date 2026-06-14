@@ -31,8 +31,9 @@ func TestGracefulShutdown_AllIdle(t *testing.T) {
 }
 
 func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
+	const sk = "a/c1/1"
 	ag := &agent.Agent{}
-	ag.SetProcessingForTest(1)
+	ag.SetTurnInFlightForTest(sk, true)
 
 	agents := map[string]*agentInstance{
 		"a": {id: "a", ag: ag},
@@ -41,7 +42,7 @@ func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
 	// Complete the "turn" after 300ms
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		ag.SetProcessingForTest(0)
+		ag.SetTurnInFlightForTest(sk, false)
 	}()
 
 	start := time.Now()
@@ -57,8 +58,9 @@ func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
 }
 
 func TestGracefulShutdown_TimesOut(t *testing.T) {
+	const sk = "a/c1/1"
 	ag := &agent.Agent{}
-	ag.SetProcessingForTest(1) // never cleared — simulates stuck agent
+	ag.SetTurnInFlightForTest(sk, true) // never cleared — simulates stuck agent
 
 	agents := map[string]*agentInstance{
 		"a": {id: "a", ag: ag},
@@ -72,7 +74,7 @@ func TestGracefulShutdown_TimesOut(t *testing.T) {
 		t.Errorf("shutdown took %v, expected ~500ms timeout", elapsed)
 	}
 
-	ag.SetProcessingForTest(0)
+	ag.SetTurnInFlightForTest(sk, false)
 }
 
 func TestReadAndConsumeWelcomeFile(t *testing.T) {

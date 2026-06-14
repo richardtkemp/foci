@@ -113,9 +113,14 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	var warningDispatcher *warnings.Dispatcher
 	if hasAgentWarnings {
 		warningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
-			Queue:          inst.ag.Warnings(),
-			PeerQueues:     []*warnings.Queue{inst.ag.ChatWarnings()},
-			IsProcessingFn: inst.ag.IsProcessing,
+			Queue:      inst.ag.Warnings(),
+			PeerQueues: []*warnings.Queue{inst.ag.ChatWarnings()},
+			// Defer proactive warnings only while the session they'd be injected
+			// into (the most recent one) is mid-turn — not agent-wide.
+			IsProcessingFn: func() bool {
+				sk := mostRecentSessionKey(inst.ag, p.connMgr, agentID)
+				return sk != "" && inst.ag.IsTurnInFlight(session.SessionKeyBase(sk))
+			},
 			FormatFn: func(body string) string {
 				return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
 			},

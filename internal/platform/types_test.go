@@ -28,7 +28,6 @@ func TestConnectionInterface(t *testing.T) {
 func TestMessageHandlerInterface(t *testing.T) {
 	var h MessageHandler = &mockHandler{}
 	_ = h.HandleMessage(context.Background(), "", nil, nil)
-	_ = h.IsProcessing()
 	_ = h.TransformMessage("")
 	_ = h.Warnings()
 }
@@ -84,7 +83,6 @@ type mockHandler struct{}
 func (m *mockHandler) HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []Attachment) error {
 	return nil
 }
-func (m *mockHandler) IsProcessing() bool                  { return false }
 func (m *mockHandler) TransformMessage(text string) string { return text }
 func (m *mockHandler) Warnings() *warnings.Queue           { return nil }
 

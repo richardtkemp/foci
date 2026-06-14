@@ -54,15 +54,7 @@ func (t *APITransport) AcquireTurnLock(ts *TurnState) func() {
 	return sessionLock.Unlock
 }
 
-// IncrementProcessing bumps the atomic processing counter.
-// Extracted from agent.go:318-319.
-func (t *APITransport) IncrementProcessing(ts *TurnState) func() {
-	atomic.AddInt32(&t.agent.processing, 1)
-	return func() { atomic.AddInt32(&t.agent.processing, -1) }
-}
-
 // RegisterTurn adds a TurnDetail for shutdown diagnostics.
-// Extracted from agent.go:321-327.
 func (t *APITransport) RegisterTurn(ts *TurnState) func() {
 	td := &TurnDetail{
 		SessionKey: ts.SessionKey,

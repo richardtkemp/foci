@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"foci/internal/log"
+	"foci/internal/session"
 )
 
 // reloadAfterMutation reloads the bootstrap (system prompt files from disk),
@@ -53,8 +54,8 @@ func (a *Agent) ReloadSystem() int {
 //
 // Returns the new session key on success.
 func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (string, error) {
-	if a.IsProcessing() {
-		return "", fmt.Errorf("agent is processing — send stop first, then reset")
+	if a.IsTurnInFlight(session.SessionKeyBase(sessionKey)) {
+		return "", fmt.Errorf("session is processing — send stop first, then reset")
 	}
 
 	if a.DelegatedManager != nil {
