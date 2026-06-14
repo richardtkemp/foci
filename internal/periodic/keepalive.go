@@ -679,8 +679,8 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
-	if sinceLastInteraction > time.Hour {
-		skip = fmt.Sprintf("idle %s > 1h", sinceLastInteraction.Round(time.Second))
+	if maxIdle, ok := r.parseDuration("consolidation_max_idle", r.maintCfg.ConsolidationMaxIdle); ok && maxIdle > 0 && sinceLastInteraction > maxIdle {
+		skip = fmt.Sprintf("idle %s > %s", sinceLastInteraction.Round(time.Second), maxIdle)
 		return
 	}
 

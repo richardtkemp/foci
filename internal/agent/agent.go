@@ -23,6 +23,7 @@ import (
 	"foci/internal/tools"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
+	"foci/shared/prompts"
 )
 
 // NoResponseSentinel is the marker that prompts instruct the model to emit
@@ -251,11 +252,15 @@ func (a *Agent) SetProcessingForTest(n int32) {
 }
 
 // isSystemMessage returns true if the message is from a system source
-// (keepalive, scheduled wake, proactive warnings) rather than a human user.
+// (keepalive, scheduled wake, proactive warnings, …) rather than a human user.
+//
+// Most injected messages (proactive warnings, scheduled wake, notifications,
+// inter-session) are wrapped by prompts.FormatInjectedMessage and so carry the
+// "[SYSTEM INJECTION …" note prefix — prompts.IsInjected matches those. Keepalive
+// is the exception: its text comes from a template starting with a bare
+// "[KEEPALIVE]" tag, so it needs its own prefix check.
 func isSystemMessage(msg string) bool {
-	return strings.HasPrefix(msg, "[KEEPALIVE]") ||
-		strings.HasPrefix(msg, "[SCHEDULED WAKE]") ||
-		strings.HasPrefix(msg, "[proactive system warnings]")
+	return prompts.IsInjected(msg) || strings.HasPrefix(msg, "[KEEPALIVE]")
 }
 
 // turnLock returns a per-session mutex that serializes HandleMessage calls.

@@ -981,6 +981,7 @@ type MaintenanceConfig struct {
 	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"curate MEMORY.md periodically"`                                          // curate MEMORY.md periodically
 	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"when to consolidate: HH:MM daily or a duration like 20h"`                // "HH:MM" daily or duration
 	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"consolidation prompt file path"`                                         // prompt override (nil = embedded, "none" = disabled)
+	ConsolidationMaxIdle *string `toml:"consolidation_max_idle" default:"1h" desc:"skip consolidation if no user activity within this window" type:"duration"` // skip if idle longer than this
 	ResetTime            *string `toml:"reset_time"            default:""     desc:"daily session reset: HH:MM, a duration, or empty to disable"`            // "HH:MM" daily, duration, or "" = never
 	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"skip scheduled reset if user active within this window" type:"duration"` // skip reset if recently active
 }
