@@ -38,7 +38,7 @@ sqlite3 ~/data/api.db "SELECT SUM(cost_usd) FROM api_calls WHERE ts > '2026-03-0
 ```
 
 ### Payload Logs (JSONL)
-Full request/response payloads per API call. Only written when `full_payload = true` in config. Large file — filter with jq, don't cat.
+Full request/response payloads per API call. Written whenever `payload_file` is non-empty — it defaults to `logs/api-payload.jsonl`, so payload logging is **on by default**; set `payload_file = ""` in `[logging]` to disable. (A separate `full_payload` bool exists in `[logging]` but does NOT gate writing.) Large file — filter with jq, don't cat.
 
 **Path:** `logs/api-payload.jsonl` (default, configurable via `payload_file`)
 **Archives:** `logs/archive/api-payload-*.jsonl.gz`
@@ -60,9 +60,9 @@ tail -200 ~/logs/api-payload.jsonl | jq -c '
 ### Session Files (JSONL)
 Per-session conversation history. No timestamps — just role + content.
 
-**Path:** `~/data/sessions/<AGENT_ID>/<SESSION_TYPE_ID>/<VERSION_TS>/root.jsonl`
+**Path:** `~/data/sessions/<AGENT_ID>/<CHAT_OR_FACET_ID>/<VERSION_TS>/root.jsonl` — the middle segment is `c<chat-id>` for a chat session (e.g. `c5970082313`) or `i<epoch>` for an independent/facet session.
 
-Branch files have a `branch_meta` first line. Pre-compaction backups: `root.1.jsonl`, `root.2.jsonl` etc.
+Branch files have a `branch_meta` first line. Pre-compaction backups use timestamped names: `root.<ISO8601>.jsonl` (e.g. `root.2026-03-04T02-30-00Z.jsonl`), with a `.<N>` counter appended on collision.
 
 ```bash
 # Last few messages
@@ -76,7 +76,7 @@ tail -5 /path/to/root.jsonl | jq -r '.role + ": " + (.content[]? | tostring)'
 
 When foci runs on the Claude Code backend, the raw CC transcript is richer than foci's own session store above: per-block `thinking`/`text`/`tool_use`/`tool_result`, RFC3339 `timestamp`, and a thinking `signature`. Use this (not the foci store) when you need turn-level *structure* — e.g. distinguishing thinking from output, or diagnosing why a turn's text arrived oddly.
 
-**Path:** `~/.claude/projects/<workspace-cwd-slug>/*.jsonl`, where the slug is the agent's workspace path with `/` → `-` (workspace `/home/foci/clutch` → `-home-foci-clutch`). Keyed by workspace cwd, NOT the agent's home `.claude/` (which doesn't exist for foci agents). Most recent session = newest mtime.
+**Path:** `<foci-os-user-home>/.claude/projects/<workspace-cwd-slug>/*.jsonl`. The `.claude/` dir lives under the **foci OS user's home** (e.g. `/home/foci`), shared across all agents — NOT inside the agent's own workspace. The project *subdir* is the agent's workspace path slugified (`/` → `-`): workspace `/home/foci/clutch` → `/home/foci/.claude/projects/-home-foci-clutch/`. Most recent session = newest mtime.
 
 ```bash
 # Map a turn's block structure (the key move)
@@ -157,11 +157,11 @@ sqlite3 ~/data/api.db "SELECT ts, cost_usd, cache_write FROM api_calls WHERE cac
 
 ### Session Compaction
 ```bash
-# When did compaction happen?
-grep 'compacting session\|compacted from' ~/logs/foci.log | tail -10
+# When did compaction happen? (rotation to a fresh session key)
+grep 'compaction rotated' ~/logs/foci.log | tail -10
 
-# What triggered it?
-grep 'should_compact.*result=true' ~/logs/foci.log | tail -10
+# Compaction start (message count at trigger)
+grep 'compacting (' ~/logs/foci.log | tail -10
 ```
 
 ### Background Cron Sessions
