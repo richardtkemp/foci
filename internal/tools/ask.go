@@ -30,6 +30,7 @@ type graderConfig struct {
 	path    string        // absolute path to an executable; empty disables grading
 	timeout time.Duration // 0 ⇒ defaultGraderTimeout
 	onError string        // graderOnErrorFallback (default) | graderOnErrorReport
+	args    []string      // extra argv passed AFTER request_id (e.g. source filename)
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +301,11 @@ func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string,
 
 	// procx.Spawn (not raw exec): strips the foci-secrets supplementary group so
 	// the grader cannot inherit secret-file access from the foci process.
-	cmd := procx.Spawn(ctx, p.grader.path, p.requestID)
+	// argv = [request_id, ...grader_args]: request_id stays at the stable argv[1]
+	// slot; any agent-supplied grader_args follow as a pure vector (no shell, so
+	// no injection surface), letting the grader learn context like the source file.
+	spawnArgs := append([]string{p.requestID}, p.grader.args...)
+	cmd := procx.Spawn(ctx, p.grader.path, spawnArgs...)
 	cmd.Stdin = bytes.NewReader(payload)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -349,9 +354,10 @@ type askInput struct {
 	// Grader, if set, is an absolute path to an executable. When the user finishes
 	// answering, foci runs it with {request_id, questions, answers} as JSON on stdin
 	// and delivers its stdout to the agent instead of the raw answers.
-	Grader               string `json:"grader,omitempty"`
-	GraderTimeoutSeconds int    `json:"grader_timeout_seconds,omitempty"`
-	GraderOnError        string `json:"grader_on_error,omitempty"`
+	Grader               string   `json:"grader,omitempty"`
+	GraderArgs           []string `json:"grader_args,omitempty"`
+	GraderTimeoutSeconds int      `json:"grader_timeout_seconds,omitempty"`
+	GraderOnError        string   `json:"grader_on_error,omitempty"`
 }
 
 // AskRouter exposes the typed-answer routing hooks so the inbound-message path
@@ -404,6 +410,7 @@ func NewAskTool(present AskPresentFn, deliver AskDeliverFn) (*Tool, *AskRouter) 
 					}
 				},
 				"grader": {"type": "string", "description": "Optional absolute path to an executable. When the user finishes answering, foci runs it with {request_id, questions, answers} as JSON on stdin; its stdout is delivered to you INSTEAD of the raw answers. Use for deterministic post-processing (quiz grading, answer normalization, lookups)."},
+				"grader_args": {"type": "array", "items": {"type": "string"}, "description": "Optional extra argv for the grader, appended AFTER request_id: the grader is run as [path, request_id, ...grader_args]. Pure vector (no shell), so safe for arbitrary strings — use it to pass context the grader needs, e.g. the source quiz filename. Ignored if 'grader' is unset."},
 				"grader_timeout_seconds": {"type": "integer", "description": "Hard timeout for the grader in seconds (default 15). Past it the grader is killed and the user's raw answers are delivered instead."},
 				"grader_on_error": {"type": "string", "enum": ["fallback", "report"], "description": "What to deliver if the grader fails (non-zero exit / timeout / launch error). 'fallback' (default): the raw answers plus a brief note. 'report': a failure report plus the raw answers. The user's answers are never lost either way."}
 			},
@@ -445,6 +452,7 @@ func NewAskTool(present AskPresentFn, deliver AskDeliverFn) (*Tool, *AskRouter) 
 					return ToolResult{}, fmt.Errorf("ask: grader %q is not an executable file", in.Grader)
 				}
 				grader.path = in.Grader
+				grader.args = in.GraderArgs
 				if in.GraderTimeoutSeconds > 0 {
 					grader.timeout = time.Duration(in.GraderTimeoutSeconds) * time.Second
 				}
@@ -455,6 +463,8 @@ func NewAskTool(present AskPresentFn, deliver AskDeliverFn) (*Tool, *AskRouter) 
 					}
 					grader.onError = in.GraderOnError
 				}
+			} else if len(in.GraderArgs) > 0 {
+				return ToolResult{}, fmt.Errorf("ask: grader_args set but no grader executable given")
 			}
 
 			reqID := state.start(sessionKey, in.Questions, params, grader)
