@@ -45,9 +45,24 @@ func TestPayloadEnabled(t *testing.T) {
 	}
 
 	dir := t.TempDir()
+
+	// PayloadFile set but full_payload off → still disabled (the file path has
+	// a non-empty default, so full_payload is the real opt-in gate).
+	if err := Init(Config{
+		Level:       "INFO",
+		PayloadFile: filepath.Join(dir, "payload.jsonl"),
+	}); err != nil {
+		t.Fatalf("Init (gate off): %v", err)
+	}
+	if PayloadEnabled() {
+		t.Error("PayloadEnabled() should be false when full_payload is unset")
+	}
+	Close()
+
 	err := Init(Config{
 		Level:       "INFO",
 		PayloadFile: filepath.Join(dir, "payload.jsonl"),
+		FullPayload: true,
 	})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
@@ -55,7 +70,7 @@ func TestPayloadEnabled(t *testing.T) {
 	defer Close()
 
 	if !PayloadEnabled() {
-		t.Error("PayloadEnabled() should be true after Init with PayloadFile")
+		t.Error("PayloadEnabled() should be true after Init with PayloadFile + full_payload")
 	}
 }
 
@@ -71,6 +86,7 @@ func TestPayloadLog(t *testing.T) {
 	err := Init(Config{
 		Level:       "INFO",
 		PayloadFile: payloadPath,
+		FullPayload: true,
 	})
 	if err != nil {
 		t.Fatalf("Init: %v", err)

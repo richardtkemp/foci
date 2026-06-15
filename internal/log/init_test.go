@@ -71,7 +71,7 @@ func TestInitBadPayloadPath(t *testing.T) {
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
-	err := Init(Config{PayloadFile: "/nonexistent/dir/payload.jsonl"})
+	err := Init(Config{PayloadFile: "/nonexistent/dir/payload.jsonl", FullPayload: true})
 	if err == nil {
 		t.Fatal("expected error for bad payload file path")
 	}
@@ -93,6 +93,7 @@ func TestFilePaths(t *testing.T) {
 		EventFile:   eventPath,
 		APIFile:     apiPath,
 		PayloadFile: payloadPath,
+		FullPayload: true,
 	})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
@@ -154,7 +155,7 @@ func TestInitPayloadFileOpenError(t *testing.T) {
 	badPath := filepath.Join(dir, "payload.jsonl")
 	os.MkdirAll(badPath, 0755)
 
-	err := Init(Config{PayloadFile: badPath})
+	err := Init(Config{PayloadFile: badPath, FullPayload: true})
 	if err == nil {
 		Close()
 		t.Fatal("expected error when payload path is a directory")
@@ -177,6 +178,7 @@ func TestReopenAllFiles(t *testing.T) {
 		EventFile:   eventPath,
 		APIFile:     apiPath,
 		PayloadFile: payloadPath,
+		FullPayload: true,
 	})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
@@ -280,7 +282,7 @@ func TestReopenPayloadError(t *testing.T) {
 	dir := t.TempDir()
 	payloadPath := filepath.Join(dir, "payload.jsonl")
 
-	err := Init(Config{Level: "INFO", PayloadFile: payloadPath})
+	err := Init(Config{Level: "INFO", PayloadFile: payloadPath, FullPayload: true})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}

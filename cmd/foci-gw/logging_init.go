@@ -23,6 +23,7 @@ func initLogging(cfg *config.Config) func() {
 		EventFile:   cfg.Logging.EventFile,
 		APIFile:     cfg.Logging.APIFile,
 		PayloadFile: cfg.Logging.PayloadFile,
+		FullPayload: cfg.Logging.FullPayload,
 		FileMode:    logFileMode,
 	}); err != nil {
 		log.Fatalf("main", "init logging: %v", err)
