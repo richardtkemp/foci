@@ -1,17 +1,36 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/procx"
 	"foci/internal/question"
 )
+
+// Grader defaults and bounds.
+const (
+	defaultGraderTimeout  = 15 * time.Second
+	maxGraderOutput       = 256 * 1024 // cap grader stdout delivered to the agent
+	graderOnErrorFallback = "fallback" // deliver raw answers + note on failure (default)
+	graderOnErrorReport   = "report"   // deliver a failure report (+ raw answers) instead
+)
+
+// graderConfig carries the optional answer-grader settings for one ask.
+type graderConfig struct {
+	path    string        // absolute path to an executable; empty disables grading
+	timeout time.Duration // 0 ⇒ defaultGraderTimeout
+	onError string        // graderOnErrorFallback (default) | graderOnErrorReport
+}
 
 // ---------------------------------------------------------------------------
 // foci-native `ask` / `foci_ask` tool
@@ -56,6 +75,7 @@ type pendingAsk struct {
 	acc           *question.Accumulator
 	originalInput json.RawMessage
 	createdAt     time.Time
+	grader        graderConfig
 }
 
 // askState is the in-memory registry of in-flight asks. Keyed by requestID for
@@ -88,7 +108,7 @@ func (a *askState) nextRequestID() string {
 }
 
 // start registers a new ask and presents its first question.
-func (a *askState) start(sessionKey string, qs []question.Question, originalInput json.RawMessage) string {
+func (a *askState) start(sessionKey string, qs []question.Question, originalInput json.RawMessage, grader graderConfig) string {
 	reqID := a.nextRequestID()
 	p := &pendingAsk{
 		requestID:     reqID,
@@ -96,6 +116,7 @@ func (a *askState) start(sessionKey string, qs []question.Question, originalInpu
 		acc:           question.NewAccumulator(qs),
 		originalInput: originalInput,
 		createdAt:     time.Now(),
+		grader:        grader,
 	}
 	a.mu.Lock()
 	a.byReqID[reqID] = p
@@ -170,7 +191,18 @@ func (a *askState) handleResponse(requestID, data string) {
 	a.mu.Lock()
 	a.removeLocked(p)
 	a.mu.Unlock()
-	a.deliverMsg(p.sessionKey, formatAnswerBatch(p.acc.Questions(), p.acc.Answers()))
+
+	if p.grader.path == "" {
+		a.deliverMsg(p.sessionKey, formatAnswerBatch(p.acc.Questions(), p.acc.Answers()))
+		return
+	}
+	// A grader is set: it may run for up to its timeout. Run it (and deliver
+	// its result) off the caller's goroutine so neither the platform button
+	// callback nor a typed-answer turn blocks on the subprocess.
+	go func() {
+		raw := formatAnswerBatch(p.acc.Questions(), p.acc.Answers())
+		a.deliverMsg(p.sessionKey, runGrader(p, p.acc.Questions(), p.acc.Answers(), raw))
+	}()
 }
 
 // removeLocked deletes a pending ask from both indexes. Caller holds a.mu.
@@ -210,17 +242,116 @@ func formatAnswerBatch(qs []question.Question, answers map[string]string) string
 		}
 		fmt.Fprintf(&b, "\n• %s → %s", label, ans)
 	}
-	if js, err := json.Marshal(map[string]any{"answers": answers}); err == nil {
+	payload := map[string]any{"answers": answers}
+	if byID := answersByID(qs, answers); len(byID) > 0 {
+		payload["answers_by_id"] = byID
+	}
+	if js, err := json.Marshal(payload); err == nil {
 		b.WriteString("\n\n")
 		b.Write(js)
 	}
 	return b.String()
 }
 
+// answersByID maps each question's optional opaque ID to its answer, including
+// only questions that supplied an id. Empty when no question carried one.
+func answersByID(qs []question.Question, answers map[string]string) map[string]string {
+	byID := make(map[string]string, len(qs))
+	for _, q := range qs {
+		if q.ID != "" {
+			byID[q.ID] = answers[q.Question]
+		}
+	}
+	return byID
+}
+
+// graderInput is the JSON document handed to a grader executable on stdin. It
+// carries the full question objects (for context: headers, offered options) plus
+// the user's answers keyed by question text. request_id is also passed as argv[1].
+type graderInput struct {
+	RequestID   string              `json:"request_id"`
+	Questions   []question.Question `json:"questions"`
+	Answers     map[string]string   `json:"answers"`
+	AnswersByID map[string]string   `json:"answers_by_id,omitempty"`
+}
+
+// runGrader executes the configured grader with the answers as JSON on stdin and
+// returns the message to deliver to the asking agent. On success the grader's
+// stdout (verbatim, capped) replaces the raw answer batch. On any failure —
+// missing/blank output is allowed; non-zero exit, timeout, or launch error is not
+// — it applies the on-error policy so the user's real answers are never lost.
+func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string, rawBatch string) string {
+	payload, err := json.Marshal(graderInput{
+		RequestID:   p.requestID,
+		Questions:   qs,
+		Answers:     answers,
+		AnswersByID: answersByID(qs, answers),
+	})
+	if err != nil {
+		return graderErrorMsg(p, rawBatch, fmt.Sprintf("encode grader input: %v", err))
+	}
+
+	timeout := p.grader.timeout
+	if timeout <= 0 {
+		timeout = defaultGraderTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// procx.Spawn (not raw exec): strips the foci-secrets supplementary group so
+	// the grader cannot inherit secret-file access from the foci process.
+	cmd := procx.Spawn(ctx, p.grader.path, p.requestID)
+	cmd.Stdin = bytes.NewReader(payload)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return graderErrorMsg(p, rawBatch, fmt.Sprintf("grader timed out after %s", timeout))
+	}
+	if runErr != nil {
+		msg := fmt.Sprintf("grader failed: %v", runErr)
+		if se := strings.TrimSpace(stderr.String()); se != "" {
+			msg += "; stderr: " + truncateStr(se, 1024)
+		}
+		return graderErrorMsg(p, rawBatch, msg)
+	}
+
+	out := truncateStr(strings.TrimRight(stdout.String(), "\n"), maxGraderOutput)
+	return fmt.Sprintf("[SYSTEM: graded result for your `ask` request (req %s) — act on this.]\n%s", p.requestID, out)
+}
+
+// graderErrorMsg builds the delivery message when a grader cannot produce a valid
+// result. Default ("fallback") delivers the raw answer batch plus a brief note;
+// "report" leads with the failure so the agent can decide, still including the raw
+// answers. Either way the user's selections survive a broken grader.
+func graderErrorMsg(p *pendingAsk, rawBatch, reason string) string {
+	log.Warnf("ask", "session=%s req=%s grader failure: %s", p.sessionKey, p.requestID, reason)
+	if p.grader.onError == graderOnErrorReport {
+		return fmt.Sprintf("[SYSTEM: your `ask` grader FAILED (%s). The user's raw answers follow — decide how to proceed.]\n\n%s", reason, rawBatch)
+	}
+	return fmt.Sprintf("%s\n\n[note: ask grader could not run (%s); showing raw answers.]", rawBatch, reason)
+}
+
+// truncateStr caps s at max bytes, appending an elision marker when it cuts.
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "\n…[truncated]"
+}
+
 // askInput is the tool's input — identical shape to AskUserQuestion, minus any
 // item cap.
 type askInput struct {
 	Questions []question.Question `json:"questions"`
+	// Grader, if set, is an absolute path to an executable. When the user finishes
+	// answering, foci runs it with {request_id, questions, answers} as JSON on stdin
+	// and delivers its stdout to the agent instead of the raw answers.
+	Grader               string `json:"grader,omitempty"`
+	GraderTimeoutSeconds int    `json:"grader_timeout_seconds,omitempty"`
+	GraderOnError        string `json:"grader_on_error,omitempty"`
 }
 
 // AskRouter exposes the typed-answer routing hooks so the inbound-message path
@@ -253,6 +384,7 @@ func NewAskTool(present AskPresentFn, deliver AskDeliverFn) (*Tool, *AskRouter) 
 						"type": "object",
 						"properties": {
 							"question": {"type": "string", "description": "The question text shown to the user"},
+							"id": {"type": "string", "description": "Optional opaque identifier, NOT shown to the user. If supplied it is preserved in the output under \"answers_by_id\" (id → answer) so you can correlate answers deterministically without matching on question text."},
 							"header": {"type": "string", "description": "Short label/category for the question (used as the prompt summary)"},
 							"multiSelect": {"type": "boolean", "description": "Reserved; currently single-select only"},
 							"options": {
@@ -270,7 +402,10 @@ func NewAskTool(present AskPresentFn, deliver AskDeliverFn) (*Tool, *AskRouter) 
 						},
 						"required": ["question", "options"]
 					}
-				}
+				},
+				"grader": {"type": "string", "description": "Optional absolute path to an executable. When the user finishes answering, foci runs it with {request_id, questions, answers} as JSON on stdin; its stdout is delivered to you INSTEAD of the raw answers. Use for deterministic post-processing (quiz grading, answer normalization, lookups)."},
+				"grader_timeout_seconds": {"type": "integer", "description": "Hard timeout for the grader in seconds (default 15). Past it the grader is killed and the user's raw answers are delivered instead."},
+				"grader_on_error": {"type": "string", "enum": ["fallback", "report"], "description": "What to deliver if the grader fails (non-zero exit / timeout / launch error). 'fallback' (default): the raw answers plus a brief note. 'report': a failure report plus the raw answers. The user's answers are never lost either way."}
 			},
 			"required": ["questions"]
 		}`),
@@ -295,7 +430,34 @@ func NewAskTool(present AskPresentFn, deliver AskDeliverFn) (*Tool, *AskRouter) 
 				}
 			}
 
-			reqID := state.start(sessionKey, in.Questions, params)
+			// Validate the optional grader up front so the agent learns about a bad
+			// path now (at call time), not later when the answers arrive.
+			var grader graderConfig
+			if in.Grader != "" {
+				if !filepath.IsAbs(in.Grader) {
+					return ToolResult{}, fmt.Errorf("ask: grader must be an absolute path, got %q", in.Grader)
+				}
+				fi, err := os.Stat(in.Grader)
+				if err != nil {
+					return ToolResult{}, fmt.Errorf("ask: grader %q: %w", in.Grader, err)
+				}
+				if fi.IsDir() || fi.Mode()&0o111 == 0 {
+					return ToolResult{}, fmt.Errorf("ask: grader %q is not an executable file", in.Grader)
+				}
+				grader.path = in.Grader
+				if in.GraderTimeoutSeconds > 0 {
+					grader.timeout = time.Duration(in.GraderTimeoutSeconds) * time.Second
+				}
+				grader.onError = graderOnErrorFallback
+				if in.GraderOnError != "" {
+					if in.GraderOnError != graderOnErrorFallback && in.GraderOnError != graderOnErrorReport {
+						return ToolResult{}, fmt.Errorf("ask: grader_on_error must be %q or %q, got %q", graderOnErrorFallback, graderOnErrorReport, in.GraderOnError)
+					}
+					grader.onError = in.GraderOnError
+				}
+			}
+
+			reqID := state.start(sessionKey, in.Questions, params, grader)
 			out, _ := json.Marshal(map[string]any{
 				"status":     "asked",
 				"request_id": reqID,
