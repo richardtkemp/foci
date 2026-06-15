@@ -26,6 +26,11 @@ type Question struct {
 	Header      string   `json:"header"`
 	Options     []Option `json:"options"`
 	MultiSelect bool     `json:"multiSelect"`
+	// ID is an optional opaque identifier supplied by the agent. It is never
+	// shown to the user; it is preserved in the answer output (keyed under
+	// "answers_by_id") so the agent can correlate answers deterministically
+	// without matching on question text.
+	ID string `json:"id,omitempty"`
 }
 
 // Option is one selectable option within a question.

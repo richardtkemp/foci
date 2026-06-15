@@ -3,9 +3,12 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/question"
 )
@@ -253,6 +256,144 @@ func TestAsk_ManyQuestionsNoCap(t *testing.T) {
 	}
 	if _, ok := d.last(); !ok {
 		t.Error("batch should deliver after all 7 questions answered")
+	}
+}
+
+// writeGrader writes an executable grader script and returns its absolute path.
+func writeGrader(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "grader.sh")
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("write grader: %v", err)
+	}
+	return path
+}
+
+// waitDeliver polls for a delivered message (the grader path delivers from a
+// goroutine, so delivery is not synchronous with the final answer).
+func waitDeliver(t *testing.T, d *fakeDeliver) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if msg, ok := d.last(); ok {
+			return msg
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no message delivered within timeout")
+	return ""
+}
+
+func TestAsk_GraderTransformsAnswers(t *testing.T) {
+	t.Parallel()
+	tool, _, p, d := newAskFixture()
+	// Grader echoes a verdict derived from the answer (proves stdin plumbing)
+	// and the request id from argv[1].
+	grader := writeGrader(t, "#!/bin/sh\ninput=\"$(cat)\"\ncase \"$input\" in\n  *skylos*) echo \"correct ($1)\" ;;\n  *) echo wrong ;;\nesac\n")
+	raw := `{"questions":[{"question":"dog?","options":[{"label":"skylos"},{"label":"gata"}]}],"grader":"` + grader + `"}`
+	execAsk(t, tool, raw)
+	p.answer("qa:0") // selects "skylos"
+
+	msg := waitDeliver(t, d)
+	if !strings.Contains(msg, "correct (ask-") {
+		t.Errorf("expected grader stdout with request id, got: %q", msg)
+	}
+	// Success path replaces the raw batch — no answer list / JSON tail.
+	if strings.Contains(msg, `"answers"`) || strings.Contains(msg, "act on them") {
+		t.Errorf("graded success must not include the raw answer batch, got: %q", msg)
+	}
+}
+
+func TestAsk_GraderFailureFallsBackToRawAnswers(t *testing.T) {
+	t.Parallel()
+	tool, _, p, d := newAskFixture()
+	grader := writeGrader(t, "#!/bin/sh\necho boom >&2\nexit 3\n")
+	raw := `{"questions":[{"question":"color?","header":"Color","options":[{"label":"Red"}]}],"grader":"` + grader + `"}`
+	execAsk(t, tool, raw)
+	p.answer("qa:0")
+
+	msg := waitDeliver(t, d)
+	if !strings.Contains(msg, "Red") {
+		t.Errorf("fallback must include the user's raw answer, got: %q", msg)
+	}
+	if !strings.Contains(msg, "grader could not run") {
+		t.Errorf("fallback must note the grader failure, got: %q", msg)
+	}
+}
+
+func TestAsk_GraderOnErrorReport(t *testing.T) {
+	t.Parallel()
+	tool, _, p, d := newAskFixture()
+	grader := writeGrader(t, "#!/bin/sh\nexit 1\n")
+	raw := `{"questions":[{"question":"color?","header":"Color","options":[{"label":"Red"}]}],"grader":"` + grader + `","grader_on_error":"report"}`
+	execAsk(t, tool, raw)
+	p.answer("qa:0")
+
+	msg := waitDeliver(t, d)
+	if !strings.Contains(msg, "grader FAILED") {
+		t.Errorf("report mode must lead with the failure, got: %q", msg)
+	}
+	if !strings.Contains(msg, "Red") {
+		t.Errorf("report mode must still include raw answers, got: %q", msg)
+	}
+}
+
+func TestAsk_GraderInvalidPathRejectedAtCallTime(t *testing.T) {
+	t.Parallel()
+	tool, _, _, _ := newAskFixture()
+	for _, bad := range []string{
+		`"grader":"/nonexistent/grader-xyz"`, // missing
+		`"grader":"relative/path"`,           // not absolute
+	} {
+		raw := `{"questions":[{"question":"q?","options":[{"label":"A"}]}],` + bad + `}`
+		if _, err := tool.Execute(askCtx(), json.RawMessage(raw)); err == nil {
+			t.Errorf("expected call-time error for %s", bad)
+		}
+	}
+}
+
+func TestAsk_GraderOnErrorInvalidValueRejected(t *testing.T) {
+	t.Parallel()
+	tool, _, _, _ := newAskFixture()
+	grader := writeGrader(t, "#!/bin/sh\necho ok\n")
+	raw := `{"questions":[{"question":"q?","options":[{"label":"A"}]}],"grader":"` + grader + `","grader_on_error":"explode"}`
+	if _, err := tool.Execute(askCtx(), json.RawMessage(raw)); err == nil {
+		t.Error("expected error for invalid grader_on_error value")
+	}
+}
+
+func TestAsk_QuestionIDPreservedInOutput(t *testing.T) {
+	t.Parallel()
+	tool, _, p, d := newAskFixture()
+	raw := `{"questions":[{"id":"q_color","question":"color?","header":"Color","options":[{"label":"Red"},{"label":"Blue"}]}]}`
+	execAsk(t, tool, raw)
+	p.answer("qa:1") // Blue
+
+	msg, ok := d.last() // non-grader path delivers synchronously
+	if !ok {
+		t.Fatal("no delivery")
+	}
+	// The id must be NOT shown in the question text but preserved in the output.
+	if !strings.Contains(msg, `"answers_by_id"`) {
+		t.Errorf("expected answers_by_id in output, got: %q", msg)
+	}
+	if !strings.Contains(msg, `"q_color":"Blue"`) {
+		t.Errorf("expected id-keyed answer q_color→Blue, got: %q", msg)
+	}
+	if strings.Contains(p.lastText, "q_color") {
+		t.Errorf("question id must not appear in presented text: %q", p.lastText)
+	}
+}
+
+func TestAsk_NoIDMeansNoAnswersByID(t *testing.T) {
+	t.Parallel()
+	tool, _, p, d := newAskFixture()
+	raw := `{"questions":[{"question":"color?","header":"Color","options":[{"label":"Red"}]}]}`
+	execAsk(t, tool, raw)
+	p.answer("qa:0")
+	msg, _ := d.last()
+	if strings.Contains(msg, "answers_by_id") {
+		t.Errorf("no id supplied → no answers_by_id, got: %q", msg)
 	}
 }
 
