@@ -1,9 +1,9 @@
 ---
-name: foci-internals
-description: Debug and investigate foci platform internals. API logs, payload logs, session files, cache diagnosis, service logs, and common investigation patterns.
+name: foci-debugging
+description: Debug and investigate foci platform internals. API logs, payload logs, session files, CC backend transcripts, cache diagnosis, service logs, and common investigation patterns.
 ---
 
-# Foci Internals — Debugging & Investigation
+# Foci Debugging — Internals & Investigation
 
 ## Auth
 
@@ -71,6 +71,19 @@ tail -5 /path/to/root.jsonl | jq -r '.role + ": " + (.content[]? | select(.type=
 # All content (not just text)
 tail -5 /path/to/root.jsonl | jq -r '.role + ": " + (.content[]? | tostring)'
 ```
+
+### CC Backend Transcripts (JSONL)
+
+When foci runs on the Claude Code backend, the raw CC transcript is richer than foci's own session store above: per-block `thinking`/`text`/`tool_use`/`tool_result`, RFC3339 `timestamp`, and a thinking `signature`. Use this (not the foci store) when you need turn-level *structure* — e.g. distinguishing thinking from output, or diagnosing why a turn's text arrived oddly.
+
+**Path:** `~/.claude/projects/<workspace-cwd-slug>/*.jsonl`, where the slug is the agent's workspace path with `/` → `-` (workspace `/home/foci/clutch` → `-home-foci-clutch`). Keyed by workspace cwd, NOT the agent's home `.claude/` (which doesn't exist for foci agents). Most recent session = newest mtime.
+
+```bash
+# Map a turn's block structure (the key move)
+tail -30 SESS.jsonl | jq -rc 'select(.type=="assistant" or .type=="user") | {ts:.timestamp, type, blocks:((.message.content // []) | if type=="array" then map(if .type=="thinking" then "think("+((.thinking|length)|tostring)+")" elif .type=="text" then "text:"+(.text[0:50]) elif .type=="tool_use" then "tool_use:"+.name else .type end) else ["str"] end)}'
+```
+
+**Gotcha:** a redacted/summarised thinking block has `thinking` length 0 but a non-empty `signature` — it's still a thinking block, just with content stripped. Don't mistake an empty thinking block for "no thinking happened." Conversely, conversational preamble before a tool call is a real `text` (output) block, not thinking — foci joins all of a turn's text blocks into one delivered message with **no separator**.
 
 ### Global SQLite Databases (`~/data/`)
 
