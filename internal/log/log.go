@@ -93,6 +93,7 @@ type Config struct {
 	EventFile   string      // path to foci.log
 	APIFile     string      // path to api.jsonl
 	PayloadFile string      // path to api-payload.jsonl (empty = disabled)
+	FullPayload bool        // opt-in gate: payloads are written only when true (and PayloadFile set)
 	FileMode    os.FileMode // permission bits for log files (default 0600)
 }
 
@@ -146,9 +147,11 @@ func Init(cfg Config) error {
 		apiFile = f
 	}
 
-	// Payload log (full request/response bodies)
+	// Payload log (full request/response bodies). Opt-in: written only when
+	// full_payload is set (and a path is configured). The path has a non-empty
+	// default, so full_payload is the real on/off switch.
 	var payloadFile *os.File
-	if cfg.PayloadFile != "" {
+	if cfg.FullPayload && cfg.PayloadFile != "" {
 		if err := os.MkdirAll(filepath.Dir(cfg.PayloadFile), 0755); err != nil {
 			return fmt.Errorf("create log dir for %s: %w", cfg.PayloadFile, err)
 		}
