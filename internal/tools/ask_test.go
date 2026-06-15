@@ -397,6 +397,35 @@ func TestAsk_NoIDMeansNoAnswersByID(t *testing.T) {
 	}
 }
 
+func TestAsk_GraderArgsPassedAsArgv(t *testing.T) {
+	t.Parallel()
+	tool, _, p, d := newAskFixture()
+	// Grader echoes argv: $1 is request_id, $2 is the first grader_arg. This
+	// proves the contract argv = [request_id, ...grader_args] — the filename
+	// lands at argv[2].
+	grader := writeGrader(t, "#!/bin/sh\ncat >/dev/null\necho \"req=$1 file=$2\"\n")
+	raw := `{"questions":[{"question":"q?","options":[{"label":"A"}]}],"grader":"` + grader + `","grader_args":["/data/quiz_01.json"]}`
+	execAsk(t, tool, raw)
+	p.answer("qa:0")
+
+	msg := waitDeliver(t, d)
+	if !strings.Contains(msg, "req=ask-") {
+		t.Errorf("request_id must stay at argv[1], got: %q", msg)
+	}
+	if !strings.Contains(msg, "file=/data/quiz_01.json") {
+		t.Errorf("grader_args[0] must land at argv[2], got: %q", msg)
+	}
+}
+
+func TestAsk_GraderArgsWithoutGraderRejected(t *testing.T) {
+	t.Parallel()
+	tool, _, _, _ := newAskFixture()
+	raw := `{"questions":[{"question":"q?","options":[{"label":"A"}]}],"grader_args":["x"]}`
+	if _, err := tool.Execute(askCtx(), json.RawMessage(raw)); err == nil {
+		t.Error("expected error when grader_args set without a grader")
+	}
+}
+
 func TestAsk_ShellFuncGeneration(t *testing.T) {
 	// The hand-rolled `ask` shell func must pass schema-parity validation
 	// (questions is positional, so skipped) and offer JSON-only input.

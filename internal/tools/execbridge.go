@@ -920,16 +920,17 @@ func generateShellFunc(t *Tool) string {
 		return fmt.Sprintf(`%s() {
 %s
 %s
-  local json="" grader="" grader_timeout="" grader_on_error=""
+  local json="" grader="" grader_args="" grader_timeout="" grader_on_error=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) json="$2"; shift 2 ;;
       --grader) grader="$2"; shift 2 ;;
+      --grader-args) grader_args="$2"; shift 2 ;;
       --grader-timeout-seconds) grader_timeout="$2"; shift 2 ;;
       --grader-on-error) grader_on_error="$2"; shift 2 ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid: --json --grader --grader-timeout-seconds --grader-on-error (or pass JSON positionally, or pipe it on stdin)" >&2
+        echo "valid: --json --grader --grader-args --grader-timeout-seconds --grader-on-error (or pass JSON positionally, or pipe it on stdin)" >&2
         return 1 ;;
       *) json="$1"; shift ;;
     esac
@@ -943,6 +944,7 @@ func generateShellFunc(t *Tool) string {
     return 1
   fi
   if [ -n "$grader" ]; then json="$(echo "$json" | jq --arg g "$grader" '. + {grader:$g}')"; fi
+  if [ -n "$grader_args" ]; then json="$(echo "$json" | jq --argjson a "$grader_args" '. + {grader_args:$a}')"; fi
   if [ -n "$grader_timeout" ]; then json="$(echo "$json" | jq --argjson t "$grader_timeout" '. + {grader_timeout_seconds:$t}')"; fi
   if [ -n "$grader_on_error" ]; then json="$(echo "$json" | jq --arg e "$grader_on_error" '. + {grader_on_error:$e}')"; fi
   foci-call "$(jq -nc --argjson p "$json" '{"tool":"ask","params":$p}')"
