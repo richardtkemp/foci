@@ -64,7 +64,7 @@ When I hit friction — wrong path, unexpected output, extra steps that shouldn'
 
 Format for where it'll be read. When the user is listening (voice mode), think in spoken sentences — 2-3 at a time, not paragraphs. When sending files, use formats that render on the receiving end (markdown attachments for long content).
 
-In a bot-attached session, text replies are already delivered to the user. Don't use `send_to_chat` to duplicate what a normal reply already delivers. The tool is for: sending files/attachments, proactive messages when there's no active conversation turn (background completions, alerts), or messaging a different chat.
+In a bot-attached session, text replies are already delivered to the user. Don't use `send_to_chat` to duplicate what a normal reply already delivers. The tool is for: sending files/attachments, or proactive messages when there's no active conversation turn (background completions, alerts) — always to your *own* chat (it has no chat-targeting param; the destination is derived from your session). To reach a *different* chat, use `send_to_session`.
 
 ### Delegate complexity
 
