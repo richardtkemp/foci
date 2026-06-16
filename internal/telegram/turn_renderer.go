@@ -113,13 +113,9 @@ func (b *telegramBackend) ComposeBody(p turn.Payload) (body string, hasButton bo
 // SendChunk sends a single (already-chunked) HTML body as one message, falling
 // back to plain text on HTML error; ok=false on a (logged) send failure.
 func (b *telegramBackend) SendChunk(html string) (string, bool) {
-	msg, err := b.bot.client.SendMessage(b.chatID, html, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
-	if err != nil {
-		msg, err = b.bot.client.SendMessage(b.chatID, html, nil)
-		if err != nil {
-			b.bot.logger().Errorf("send error: %s", b.bot.sanitizeError(err))
-			return "", false
-		}
+	msg, ok := sendHTMLWithFallback(b.bot, b.bot.client, b.chatID, html)
+	if !ok {
+		return "", false
 	}
 	b.bot.refreshTyping()
 	return formatTelegramMsgID(msg.MessageId), true
@@ -239,13 +235,10 @@ func (s *telegramStreamSink) setLastSent(i int, content string) {
 
 // sendStream sends one HTML chunk as a new message, falling back to plain text.
 func (s *telegramStreamSink) sendStream(html string) (int64, bool) {
-	msg, err := s.client.SendMessage(s.chatID, html, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	msg, ok := sendHTMLWithFallback(s.bot, s.client, s.chatID, html)
 	s.bot.refreshTyping()
-	if err != nil {
-		msg, err = s.client.SendMessage(s.chatID, html, nil)
-		if err != nil {
-			return 0, false
-		}
+	if !ok {
+		return 0, false
 	}
 	return msg.MessageId, true
 }
@@ -258,11 +251,15 @@ func (s *telegramStreamSink) editStream(id int64, html string) {
 		ParseMode: "HTML",
 	})
 	if err != nil {
+		s.bot.logger().Warnf("stream edit: HTML attempt failed (%s); retrying as plain text", s.bot.sanitizeError(err))
 		// Fallback: edit as plain text. Ignore "message is not modified".
-		_, _, _ = s.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
+		if _, _, err2 := s.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
 			ChatId:    s.chatID,
 			MessageId: id,
-		})
+		}); err2 != nil {
+			// Often the harmless "message is not modified"; keep at debug.
+			s.bot.logger().Debugf("stream edit: plain-text fallback also failed: %s", s.bot.sanitizeError(err2))
+		}
 	}
 	s.bot.refreshTyping()
 }

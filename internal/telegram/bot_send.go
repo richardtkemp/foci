@@ -13,15 +13,31 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
+// sendHTMLWithFallback sends html to chatID with HTML parse mode, retrying as a
+// plain-text send if the HTML attempt errors. It logs the HTML-attempt failure
+// so an ambiguous timeout — where Telegram may already have delivered the
+// message, producing a duplicate (rendered HTML first, raw tags second) — is
+// diagnosable. The client is passed explicitly so the streaming sink can supply
+// its own (test-injectable) client. Returns the delivered message, or ok=false
+// if both attempts fail.
+func sendHTMLWithFallback(b *Bot, client botClient, chatID int64, html string) (*gotgbot.Message, bool) {
+	msg, err := client.SendMessage(chatID, html, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	if err != nil {
+		b.logger().Warnf("send: HTML attempt failed (%s); retrying as plain text — if this was a timeout, Telegram may already have delivered, producing a duplicate", b.sanitizeError(err))
+		msg, err = client.SendMessage(chatID, html, nil)
+		if err != nil {
+			b.logger().Errorf("send: plain-text fallback also failed: %s", b.sanitizeError(err))
+			return nil, false
+		}
+	}
+	return msg, true
+}
+
 // sendHTMLChunks sends pre-converted HTML to a chat, splitting into chunks
 // and falling back to plain text if HTML parsing fails.
 func (b *Bot) sendHTMLChunks(chatID int64, html string) {
 	for _, chunk := range splitMessage(html, 4096) {
-		if _, err := b.client.SendMessage(chatID, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
-			if _, err := b.client.SendMessage(chatID, chunk, nil); err != nil {
-				b.logger().Errorf("send error: %s", b.sanitizeError(err))
-			}
-		}
+		sendHTMLWithFallback(b, b.client, chatID, chunk)
 	}
 	// Telegram auto-cancels typing when a message is sent.
 	// Re-establish it immediately if a turn is still active.
