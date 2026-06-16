@@ -19,14 +19,40 @@ type ButtonCallback func(choice ButtonChoice) string
 // before the user responded.
 const expiredInteractiveText = "⌛ This request expired."
 
+// ConnResolver lazily resolves the live Connection for a prompt at fire time.
+// Storing a resolver — rather than a Connection captured at registration — keeps
+// an interactive callback correct when the connection comes and goes: a platform
+// reconnect, or a restart where the callback is re-registered (from persisted
+// state) before the platform connection is back up. It is re-invoked on each
+// proactive edit, so a prompt that lives up to its 24h expiry never edits through
+// a stale handle. A resolver may legitimately return nil (no connection yet); the
+// caller treats that as "skip the proactive edit", never as a fatal error.
+type ConnResolver func() Connection
+
 // interactiveMsg stores the state for an active interactive message.
 type interactiveMsg struct {
-	bs       ButtonSender // who to call to edit the message later (e.g. for cancellation)
-	msgID    string       // platform-side message ID, used by CancelInteractiveMessage
+	resolve  ConnResolver // lazily resolves the connection for later proactive edits; nil = none
+	msgID    string       // platform-side message ID, used by CancelInteractiveMessage / expiry
 	buttons  []ButtonChoice
 	callback ButtonCallback
 	onExpire func() // resolves the upstream waiter on expiry (e.g. deny to CC); nil = no-op
 	created  time.Time
+}
+
+// buttonSender resolves the current connection and returns it as a ButtonSender,
+// or nil when there is no live connection or it can't render buttons. Proactive
+// edits (cancel/expiry) call this at fire time so they act on the connection that
+// is live now, not one captured when the prompt was first registered.
+func (m *interactiveMsg) buttonSender() ButtonSender {
+	if m.resolve == nil {
+		return nil
+	}
+	if c := m.resolve(); c != nil {
+		if bs, ok := c.(ButtonSender); ok {
+			return bs
+		}
+	}
+	return nil
 }
 
 var (
@@ -34,10 +60,18 @@ var (
 	imStore = make(map[string]*interactiveMsg) // promptID → msg
 )
 
-// SendInteractiveMessageWithID sends a message with buttons via the connection,
-// keyed by the caller-supplied id. When a button is pressed, cb is called and
-// the message is edited with the return value. Falls back to plain text if the
-// connection doesn't support ButtonSender. Callback is auto-expired after 24h.
+// SendInteractiveMessageWithID sends a message with buttons via the connection
+// resolve returns, keyed by the caller-supplied id. When a button is pressed, cb
+// is called and the message is edited with the return value. Falls back to plain
+// text if the connection doesn't support ButtonSender. Callback is auto-expired
+// after 24h. Returns the platform-side message id of the posted message (empty on
+// the plain-text fallback), so the caller can persist it and address the message
+// for later cancel/expiry edits — including after a restart.
+//
+// resolve is stored, not its result: later proactive edits re-invoke it so they
+// act on the connection that is live then (see ConnResolver). It is called once
+// here for the initial send; if it returns nil there is no connection to post
+// through and an error is returned.
 //
 // The caller is responsible for uniqueness of id — typically a CC requestID (a
 // UUID), which both ensures uniqueness and lets later CancelInteractiveMessage
@@ -49,7 +83,11 @@ var (
 // onExpire (may be nil) is invoked if the prompt auto-expires unanswered (see
 // CleanupExpiredInteractive) — callers use it to resolve the upstream waiter,
 // e.g. send a denial to CC, so an unanswered prompt doesn't orphan the turn.
-func SendInteractiveMessageWithID(conn Connection, id string, text string, buttons []ButtonChoice, cb ButtonCallback, onExpire func()) error {
+func SendInteractiveMessageWithID(resolve ConnResolver, id string, text string, buttons []ButtonChoice, cb ButtonCallback, onExpire func()) (string, error) {
+	conn := resolve()
+	if conn == nil {
+		return "", fmt.Errorf("no connection to present interactive message %q", id)
+	}
 	bs, ok := conn.(ButtonSender)
 	if !ok {
 		// Fallback: plain text with numbered choices.
@@ -57,7 +95,7 @@ func SendInteractiveMessageWithID(conn Connection, id string, text string, butto
 		for i, b := range buttons {
 			lines = append(lines, fmt.Sprintf("%d. %s", i+1, b.Label))
 		}
-		return conn.SendText(text + "\n\n" + strings.Join(lines, "\n") + "\n\nReply with your choice.")
+		return "", conn.SendText(text + "\n\n" + strings.Join(lines, "\n") + "\n\nReply with your choice.")
 	}
 
 	// Reserve the slot before sending so the callback router can find it
@@ -65,7 +103,7 @@ func SendInteractiveMessageWithID(conn Connection, id string, text string, butto
 	// backfilled below once SendTextWithButtons returns it.
 	imMu.Lock()
 	imStore[id] = &interactiveMsg{
-		bs:       bs,
+		resolve:  resolve,
 		buttons:  buttons,
 		callback: cb,
 		onExpire: onExpire,
@@ -88,7 +126,7 @@ func SendInteractiveMessageWithID(conn Connection, id string, text string, butto
 		imMu.Lock()
 		delete(imStore, id)
 		imMu.Unlock()
-		return err
+		return "", err
 	}
 
 	// Backfill msgID for later edits (e.g. CancelInteractiveMessage).
@@ -97,7 +135,7 @@ func SendInteractiveMessageWithID(conn Connection, id string, text string, butto
 		m.msgID = msgID
 	}
 	imMu.Unlock()
-	return nil
+	return msgID, nil
 }
 
 // RestoreInteractiveCallback re-registers an interactive message's callback after
@@ -111,16 +149,20 @@ func SendInteractiveMessageWithID(conn Connection, id string, text string, butto
 // msgID is the platform-side message id, used ONLY for proactive edits
 // (CancelInteractiveMessage / expiry); pass "" if unknown — click-driven edits use
 // the message reference carried by the incoming callback, so routing and the
-// "✅ <label>" edit both work without it. bs may be nil (proactive edits are then
-// skipped). created carries the original post time so the existing expiry sweep
-// measures the 24h lifetime from the real start, not from the restart.
+// "✅ <label>" edit both work without it. When the original msgID is persisted and
+// passed here, a restored prompt is fully first-class: cancel and expiry can edit
+// it too. resolve lazily provides the connection for those proactive edits and may
+// be nil (edits are then skipped) or return nil at restore time (the connection
+// isn't up yet) — it is re-invoked at fire time, by then the connection is live.
+// created carries the original post time so the existing expiry sweep measures the
+// 24h lifetime from the real start, not from the restart.
 //
 // If id collides with an existing entry it is overwritten (matching the
 // send-path's last-writer-wins semantics).
-func RestoreInteractiveCallback(id, msgID string, bs ButtonSender, buttons []ButtonChoice, cb ButtonCallback, onExpire func(), created time.Time) {
+func RestoreInteractiveCallback(id, msgID string, resolve ConnResolver, buttons []ButtonChoice, cb ButtonCallback, onExpire func(), created time.Time) {
 	imMu.Lock()
 	imStore[id] = &interactiveMsg{
-		bs:       bs,
+		resolve:  resolve,
 		msgID:    msgID,
 		buttons:  buttons,
 		callback: cb,
@@ -152,10 +194,11 @@ func CancelInteractiveMessage(id string, finalText string) error {
 	// The store entry is gone (so future clicks are no-ops), but we
 	// can't edit the message because we don't have its ID yet. The
 	// orphan keyboard window is bounded by SendTextWithButtons latency.
-	if msg.bs == nil || msg.msgID == "" {
+	bs := msg.buttonSender()
+	if bs == nil || msg.msgID == "" {
 		return nil
 	}
-	return msg.bs.EditMessageText(msg.msgID, finalText)
+	return bs.EditMessageText(msg.msgID, finalText)
 }
 
 // HandleInteractiveCallback processes a button press for an interactive message.
@@ -216,8 +259,8 @@ func CleanupExpiredInteractive(maxAge time.Duration) {
 		if msg.onExpire != nil {
 			msg.onExpire()
 		}
-		if msg.bs != nil && msg.msgID != "" {
-			if err := msg.bs.EditMessageText(msg.msgID, expiredInteractiveText); err != nil {
+		if bs := msg.buttonSender(); bs != nil && msg.msgID != "" {
+			if err := bs.EditMessageText(msg.msgID, expiredInteractiveText); err != nil {
 				log.Warnf("interactive", "edit expired message %s: %v", msg.msgID, err)
 			}
 		}

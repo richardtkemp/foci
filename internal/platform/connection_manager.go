@@ -106,10 +106,12 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 	}
 	// Platform-aware primary: if we know which platform owns this chat,
 	// prefer that platform's primary bot over the first-match fallback.
+	claimed := false
 	if a.chatPlatformFn != nil {
 		_, chatID := extractSessionInfo(sessionKey)
 		if chatID != 0 {
 			if platName := a.chatPlatformFn(agentID, chatID); platName != "" {
+				claimed = true
 				if mgr, ok := a.named[platName]; ok {
 					if c := mgr.Primary(agentID); c != nil {
 						return c
@@ -118,7 +120,16 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 			}
 		}
 	}
-	log.Warnf("platform", "ambiguous routing for session %s agent %s: no platform claim, falling back to first primary", sessionKey, agentID)
+	if claimed {
+		// A platform DID claim this chat, but neither its live session
+		// connection nor its primary is registered yet. This is a benign
+		// startup transient — typically a callback re-registered from
+		// persisted state before the platform's connection comes up — not
+		// genuine routing ambiguity, so it doesn't warrant a WARN.
+		log.Debugf("platform", "session %s agent %s: platform claimed the chat but its connection isn't up yet; using first available primary", sessionKey, agentID)
+	} else {
+		log.Warnf("platform", "ambiguous routing for session %s agent %s: no platform claim, falling back to first primary", sessionKey, agentID)
+	}
 	return a.Primary(agentID)
 }
 

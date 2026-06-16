@@ -15,17 +15,19 @@ import (
 // fakeRestore captures reattach calls so a test can drive a "button click" on a
 // question whose callback was rebuilt after a simulated restart.
 type fakeRestore struct {
-	mu         sync.Mutex
-	calls      int
-	lastMsgID  string
-	onResponse func(string)
+	mu                sync.Mutex
+	calls             int
+	lastMsgID         string
+	lastPlatformMsgID string
+	onResponse        func(string)
 }
 
-func (f *fakeRestore) restore(sessionKey, msgID string, choices []question.Choice, onResponse func(data string)) {
+func (f *fakeRestore) restore(sessionKey, msgID, platformMsgID string, choices []question.Choice, onResponse func(data string)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	f.lastMsgID = msgID
+	f.lastPlatformMsgID = platformMsgID
 	f.onResponse = onResponse
 }
 
@@ -163,6 +165,38 @@ func TestAskRestoreRoundTrip(t *testing.T) {
 	_ = json.Unmarshal([]byte(raw), &saved)
 	if len(saved) != 0 {
 		t.Errorf("persisted asks after restored completion = %d, want 0", len(saved))
+	}
+}
+
+// TestAskRestorePersistsPlatformMsgID verifies the platform-side message id the
+// presenter reports is persisted and handed back to restore after a restart, so a
+// restored ask can address its on-screen message for cancel/expiry edits.
+func TestAskRestorePersistsPlatformMsgID(t *testing.T) {
+	idx := newStateDB(t)
+
+	// Instance 1: the presenter reports a platform message id for each question.
+	p1 := &fakePresenter{platformMsgID: "tg-42"}
+	d1 := &fakeDeliver{}
+	tool1, _ := NewAskTool(p1.present, nil, d1.deliver, idx, "test")
+	execAsk(t, tool1, twoQuestionAsk)
+
+	// It must be captured in the durable set, not just held in memory.
+	raw, _ := idx.GetAgentMetadata("test", "ask_pending")
+	var saved []persistedAsk
+	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved) != 1 || saved[0].PlatformMsgID != "tg-42" {
+		t.Fatalf("persisted platform_msg_id = %+v, want one entry with tg-42", saved)
+	}
+
+	// Instance 2 (restart): restore must receive the persisted platform msgID.
+	fr := &fakeRestore{}
+	p2 := &fakePresenter{}
+	d2 := &fakeDeliver{}
+	_, _ = NewAskTool(p2.present, fr.restore, d2.deliver, idx, "test")
+	if fr.lastPlatformMsgID != "tg-42" {
+		t.Errorf("restore platformMsgID = %q, want tg-42", fr.lastPlatformMsgID)
 	}
 }
 

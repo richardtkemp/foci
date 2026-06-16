@@ -16,15 +16,16 @@ import (
 // fakePresenter records presented questions and exposes the latest onResponse
 // callback so a test can simulate the user answering.
 type fakePresenter struct {
-	mu          sync.Mutex
-	presents    int
-	lastMsgID   string
-	lastText    string
-	lastChoices []question.Choice
-	onResponse  func(string)
+	mu            sync.Mutex
+	presents      int
+	lastMsgID     string
+	lastText      string
+	lastChoices   []question.Choice
+	onResponse    func(string)
+	platformMsgID string // returned from present (simulates the platform-side message id)
 }
 
-func (f *fakePresenter) present(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) {
+func (f *fakePresenter) present(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.presents++
@@ -32,6 +33,7 @@ func (f *fakePresenter) present(sessionKey, msgID, text, summary string, choices
 	f.lastText = text
 	f.lastChoices = choices
 	f.onResponse = onResponse
+	return f.platformMsgID
 }
 
 func (f *fakePresenter) answer(data string) {
