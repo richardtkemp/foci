@@ -182,6 +182,20 @@ func NewAccumulator(questions []Question) *Accumulator {
 	}
 }
 
+// NewAccumulatorAt rebuilds an Accumulator positioned at idx with answers already
+// collected — used to restore a persisted, partially-answered flow after a
+// restart. A nil answers map is replaced with an empty one so Record stays safe.
+func NewAccumulatorAt(questions []Question, idx int, answers map[string]string) *Accumulator {
+	if answers == nil {
+		answers = make(map[string]string)
+	}
+	return &Accumulator{
+		questions: questions,
+		idx:       idx,
+		answers:   answers,
+	}
+}
+
 // Current returns the question currently awaiting an answer, or nil if all
 // questions have been answered (Done).
 func (a *Accumulator) Current() *Question {
