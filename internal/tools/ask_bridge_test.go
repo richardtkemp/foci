@@ -19,12 +19,13 @@ type capturePresenter struct {
 	onResponse func(string)
 }
 
-func (c *capturePresenter) present(sessionKey, _ /*msgID*/, _ /*text*/, _ /*summary*/ string, _ []question.Choice, onResponse func(string)) {
+func (c *capturePresenter) present(sessionKey, _ /*msgID*/, _ /*text*/, _ /*summary*/ string, _ []question.Choice, onResponse func(string)) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls++
 	c.sessionKey = sessionKey
 	c.onResponse = onResponse
+	return ""
 }
 
 func (c *capturePresenter) answer(data string) {

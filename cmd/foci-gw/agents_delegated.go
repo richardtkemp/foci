@@ -158,7 +158,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			Env: backendConfigEnv(backendConfig),
 		},
 		PermissionPromptFunc: func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice) {
-			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+			resolve := connResolver(connMgr, sessionKey, agentID)
+			conn := resolve()
 			if conn == nil {
 				log.Warnf("agent/"+agentID, "permission prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)
 				return
@@ -172,8 +173,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// Use the requestID as the platform prompt ID so the cancel
 			// listener (registered below) can find and edit this exact
 			// message later if CC cancels the request before the user
-			// responds.
-			_ = platform.SendInteractiveMessageWithID(conn, requestID, text, buttons, func(choice platform.ButtonChoice) string {
+			// responds. The resolver (not the conn grabbed above) is stored for
+			// those later edits so they survive a reconnect.
+			_, _ = platform.SendInteractiveMessageWithID(resolve, requestID, text, buttons, func(choice platform.ButtonChoice) string {
 				log.Debugf("agent/"+agentID, "permission button pressed: sk=%s reqID=%s choice=%q", sessionKey, reqID, choice.Data)
 				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data); err != nil {
 					log.Errorf("agent/"+agentID, "SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, reqID, choice.Data, err)

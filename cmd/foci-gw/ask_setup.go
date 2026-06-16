@@ -15,17 +15,12 @@ import (
 // with the chosen button data when the user clicks. Non-blocking: the tool's
 // Execute returns immediately; this fires later on the platform callback.
 func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.AskPresentFn {
-	return func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) {
-		conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
-		if conn == nil {
-			log.Warnf("ask", "no connection for session=%s; question %q dropped", sessionKey, msgID)
-			return
-		}
+	return func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string {
 		buttons := make([]platform.ButtonChoice, len(choices))
 		for i, c := range choices {
 			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
 		}
-		err := platform.SendInteractiveMessageWithID(conn, msgID, text, buttons, func(choice platform.ButtonChoice) string {
+		platformMsgID, err := platform.SendInteractiveMessageWithID(connResolver(connMgr, sessionKey, agentID), msgID, text, buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"
@@ -38,7 +33,9 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 		})
 		if err != nil {
 			log.Warnf("ask", "present question for session=%s failed: %v", sessionKey, err)
+			return ""
 		}
+		return platformMsgID
 	}
 }
 
@@ -51,18 +48,17 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 // edits (cancel/expiry) can't touch the message; click-driven routing and the
 // "✅ <label>" edit work regardless, since those use the callback's own message.
 func newAskRestoreFn(agentID string, connMgr platform.ConnectionManager) tools.AskRestoreFn {
-	return func(sessionKey, msgID string, choices []question.Choice, onResponse func(data string)) {
-		var bs platform.ButtonSender
-		if conn := connMgr.ForSessionOrPrimary(sessionKey, agentID); conn != nil {
-			if b, ok := conn.(platform.ButtonSender); ok {
-				bs = b
-			}
-		}
+	return func(sessionKey, msgID, platformMsgID string, choices []question.Choice, onResponse func(data string)) {
 		buttons := make([]platform.ButtonChoice, len(choices))
 		for i, c := range choices {
 			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
 		}
-		platform.RestoreInteractiveCallback(msgID, "", bs, buttons, func(choice platform.ButtonChoice) string {
+		// Store the resolver, not a connection grabbed now: at restore time the
+		// platform connection usually isn't up yet (this runs early in startup),
+		// so an eager lookup would capture nil. The resolver re-queries at edit
+		// time, by when the connection is live. platformMsgID (persisted across
+		// the restart) lets cancel/expiry edit the on-screen message too.
+		platform.RestoreInteractiveCallback(msgID, platformMsgID, connResolver(connMgr, sessionKey, agentID), buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"

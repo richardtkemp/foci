@@ -19,6 +19,20 @@ import (
 	"foci/shared/prompts"
 )
 
+// connResolver returns a platform.ConnResolver — a thunk that re-resolves the
+// live connection for (sessionKey, agentID) every time it is called. Interactive
+// prompts (ask, permission/AskUserQuestion) store this rather than a connection
+// captured up front, so a callback registered now stays correct across the
+// connection coming and going: a platform reconnect, or a restart where a
+// persisted prompt is re-registered before the platform connection is back up.
+// Resolving lazily at fire time is the same pattern the notify path already uses
+// (see newSessionNotifyFn); this is the one canonical builder for it.
+func connResolver(connMgr platform.ConnectionManager, sessionKey, agentID string) platform.ConnResolver {
+	return func() platform.Connection {
+		return connMgr.ForSessionOrPrimary(sessionKey, agentID)
+	}
+}
+
 // sharedAgentSetup holds resolved config and helpers shared by both the
 // traditional API agent path and the delegated transport path.
 type sharedAgentSetup struct {

@@ -63,7 +63,12 @@ type graderConfig struct {
 //
 // It must be non-blocking. msgID is a unique, colon-free identifier for the
 // interactive message (the platform uses it to route the click back).
-type AskPresentFn func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string))
+//
+// It returns the platform-side message id of the posted message (empty if it
+// could not be posted, or the platform has no addressable id). The ask layer
+// persists this so a restart can address the same message for cancel/expiry
+// edits — see AskRestoreFn.
+type AskPresentFn func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string
 
 // AskDeliverFn delivers the assembled answer batch into sessionKey as a new
 // inbound user message, waking the agent. Backend-agnostic (delegated + API).
@@ -74,7 +79,13 @@ type AskDeliverFn func(sessionKey, message string)
 // the buttons still live on the platform (the message survived the restart), so
 // this only rebinds onResponse to the existing buttons identified by msgID. The
 // arguments mirror AskPresentFn minus the text/summary (nothing is rendered).
-type AskRestoreFn func(sessionKey, msgID string, choices []question.Choice, onResponse func(data string))
+//
+// platformMsgID is the platform-side message id captured by AskPresentFn when the
+// question was first posted (empty if it was never captured); passing it through
+// lets proactive cancel/expiry edits reach the restored message, so a restored
+// ask behaves identically to a fresh one. msgID remains the colon-free routing id
+// the on-screen buttons carry.
+type AskRestoreFn func(sessionKey, msgID, platformMsgID string, choices []question.Choice, onResponse func(data string))
 
 // pendingAsk is one in-flight ask: a sequential accumulator plus the context
 // needed to present follow-up questions and deliver the final answers.
@@ -85,6 +96,10 @@ type pendingAsk struct {
 	originalInput json.RawMessage
 	createdAt     time.Time
 	grader        graderConfig
+	// platformMsgID is the platform-side message id of the CURRENTLY displayed
+	// question, captured from AskPresentFn and refreshed on each presentCurrent.
+	// Persisted so a restart can address the on-screen message for cancel/expiry.
+	platformMsgID string
 }
 
 // askState is the registry of in-flight asks. Keyed by requestID for click
@@ -175,9 +190,17 @@ func (a *askState) presentCurrent(p *pendingAsk) {
 	// colon-free id derived from the request id and the question index.
 	msgID := fmt.Sprintf("%s-q%d", p.requestID, idx)
 	if a.present != nil {
-		a.present(p.sessionKey, msgID, text, summary, question.Choices(q), func(data string) {
+		platformMsgID := a.present(p.sessionKey, msgID, text, summary, question.Choices(q), func(data string) {
 			a.handleResponse(p.requestID, data)
 		})
+		// Record where this question landed so a restart can address it for
+		// cancel/expiry edits, then checkpoint. (If the ask was already
+		// resolved by a racing click, p is gone from byReqID and persistLocked
+		// simply won't include it — harmless.)
+		a.mu.Lock()
+		p.platformMsgID = platformMsgID
+		a.persistLocked()
+		a.mu.Unlock()
 	}
 }
 
@@ -260,6 +283,7 @@ type persistedAsk struct {
 	OriginalInput json.RawMessage     `json:"original_input,omitempty"`
 	CreatedAt     time.Time           `json:"created_at"`
 	Grader        persistedGrader     `json:"grader,omitempty"`
+	PlatformMsgID string              `json:"platform_msg_id,omitempty"`
 }
 
 // persistedGrader mirrors graderConfig with exported, JSON-friendly fields
@@ -295,6 +319,7 @@ func (a *askState) persistLocked() {
 				OnError:     p.grader.onError,
 				Args:        p.grader.args,
 			},
+			PlatformMsgID: p.platformMsgID,
 		})
 	}
 	data, err := json.Marshal(out)
@@ -348,6 +373,7 @@ func (a *askState) restorePending() {
 				onError: s.Grader.OnError,
 				args:    s.Grader.Args,
 			},
+			platformMsgID: s.PlatformMsgID,
 		}
 		a.byReqID[p.requestID] = p
 		a.bySession[p.sessionKey] = p.requestID
@@ -378,7 +404,7 @@ func (a *askState) reattach(p *pendingAsk) {
 		return
 	}
 	msgID := fmt.Sprintf("%s-q%d", p.requestID, p.acc.Index())
-	a.restore(p.sessionKey, msgID, question.Choices(q), func(data string) {
+	a.restore(p.sessionKey, msgID, p.platformMsgID, question.Choices(q), func(data string) {
 		a.handleResponse(p.requestID, data)
 	})
 }
