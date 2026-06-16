@@ -26,3 +26,13 @@ When you want a turn to fire on a schedule you define — a daily check, a weekl
 Foci expands `shared/crontab.template` per-agent (substituting the agent ID and home dir, with a stagger offset so agents don't all fire at once) and installs the result into the foci user's crontab. Each entry invokes the `foci` CLI to run a prompt as a one-shot branch session — authenticated over foci's local Unix socket by same-user kernel peer credentials, so no API key sits in the crontab. Editing the crontab is the way to add your own ad-hoc scheduled task; for anything durable, always prefer it over a backend scheduler.
 
 A scheduled turn reaches the user the same way any turn does: reply with text and it's delivered to the platform; reply `[[NO_RESPONSE]]` for a silent check. For a check that should stay quiet unless it trips, have the scheduled command itself decide whether to invoke you at all (see the `silent-cron` skill) rather than waking you every time only to say nothing.
+
+### Editing the crontab safely
+
+The crontab is shared across **all** agents (~100 lines), so a botched edit has platform-wide blast radius. The classic wipe: piping a `sed`/transform straight into `crontab -` — if the transform errors or emits nothing, `crontab -` silently installs an **empty** crontab, dropping every job. So never pipe an unverified transform into `crontab -`. Instead:
+
+1. **Back up first:** `crontab -l > /tmp/crontab.bak`.
+2. **Transform with assertions**, not a blind `sed` pipe — e.g. a short Python pass that asserts the target line exists and that the line count changed by exactly the expected delta (removing a job is usually **two** lines: its `# comment` and the job line, so delta `-2`).
+3. **Install only the verified file:** `crontab /tmp/crontab.new`.
+4. **Verify:** `crontab -l | wc -l` matches expectation, and the changed lines are present/absent as intended.
+5. **Restore instantly** if anything looks off: `crontab /tmp/crontab.bak`.
