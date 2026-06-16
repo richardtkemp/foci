@@ -85,6 +85,10 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 	return compactor, compactionThreshold
 }
 
+// nudgeExtractMaxAttempts bounds how many times nudge rule extraction is re-run
+// when it fails (e.g. the model returns malformed JSON). See #830.
+const nudgeExtractMaxAttempts = 3
+
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
 func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, connMgr platform.ConnectionManager, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
 	nudgeEnabled := nc.NudgeEnable
@@ -193,14 +197,16 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		if needed {
 			go func() {
 				ctx := context.Background()
+
+				// Select the extraction attempt; branch setup (API path) happens
+				// once, outside the retry loop, so only the extraction itself is
+				// re-run.
+				var attempt func() error
 				if ag.DelegatedManager != nil {
 					// Delegated: use claude --print for one-shot extraction.
 					// No interactive session, no platform delivery, no session index.
 					log.Infof("nudge", "agent %s: delegated extraction via RunOnce", acfg.ID)
-					if err := extractor.ExtractViaRunOnce(ctx, ag.DelegatedManager); err != nil {
-						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
-						return
-					}
+					attempt = func() error { return extractor.ExtractViaRunOnce(ctx, ag.DelegatedManager) }
 				} else {
 					// API: branch from the most recent session.
 					parentKey := mostRecentSessionKey(ag, connMgr, acfg.ID)
@@ -217,10 +223,26 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 						return
 					}
 					ag.SetSessionNoCompact(branchKey, true)
-					if err := extractor.Extract(ctx, ag, branchKey); err != nil {
-						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
-						return
+					attempt = func() error { return extractor.Extract(ctx, ag, branchKey) }
+				}
+
+				// Re-run the extractor up to nudgeExtractMaxAttempts times: the
+				// model occasionally returns malformed JSON, and a fresh sample
+				// usually parses. Early failures log at info; the final one at
+				// error (#830).
+				var err error
+				for i := 1; i <= nudgeExtractMaxAttempts; i++ {
+					if err = attempt(); err == nil {
+						break
 					}
+					if i < nudgeExtractMaxAttempts {
+						log.Infof("nudge", "agent %s: extraction attempt %d/%d failed: %v; retrying", acfg.ID, i, nudgeExtractMaxAttempts, err)
+					} else {
+						log.Errorf("nudge", "agent %s: extraction failed after %d attempts: %v", acfg.ID, nudgeExtractMaxAttempts, err)
+					}
+				}
+				if err != nil {
+					return
 				}
 				nudgeReloadFromDisk()
 				log.Infof("nudge", "agent %s: refreshed rules after extraction", acfg.ID)
