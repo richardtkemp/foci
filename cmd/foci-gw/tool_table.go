@@ -258,7 +258,11 @@ var toolTable = []toolEntry{
 	}},
 
 	{name: "ask", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
-		t, router := tools.NewAskTool(newAskPresentFn(d.p.acfg.ID, d.connMgr), tools.AskDeliverFn(d.sessionNotify))
+		t, router := tools.NewAskTool(
+			newAskPresentFn(d.p.acfg.ID, d.connMgr),
+			newAskRestoreFn(d.p.acfg.ID, d.connMgr),
+			tools.AskDeliverFn(d.sessionNotify),
+			d.p.sessionIndex, d.p.acfg.ID)
 		d.out.askRouter = router
 		return t
 	}},

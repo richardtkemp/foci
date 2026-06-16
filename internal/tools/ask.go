@@ -15,6 +15,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/procx"
 	"foci/internal/question"
+	"foci/internal/session"
 )
 
 // Grader defaults and bounds.
@@ -68,6 +69,13 @@ type AskPresentFn func(sessionKey, msgID, text, summary string, choices []questi
 // inbound user message, waking the agent. Backend-agnostic (delegated + API).
 type AskDeliverFn func(sessionKey, message string)
 
+// AskRestoreFn re-attaches the interactive callback for ONE already-displayed
+// question after a restart. Unlike AskPresentFn it must NOT send a new message:
+// the buttons still live on the platform (the message survived the restart), so
+// this only rebinds onResponse to the existing buttons identified by msgID. The
+// arguments mirror AskPresentFn minus the text/summary (nothing is rendered).
+type AskRestoreFn func(sessionKey, msgID string, choices []question.Choice, onResponse func(data string))
+
 // pendingAsk is one in-flight ask: a sequential accumulator plus the context
 // needed to present follow-up questions and deliver the final answers.
 type pendingAsk struct {
@@ -79,33 +87,55 @@ type pendingAsk struct {
 	grader        graderConfig
 }
 
-// askState is the in-memory registry of in-flight asks. Keyed by requestID for
-// click routing and by sessionKey for typed-answer routing (latest ask wins).
-// Purely in-memory: a foci restart drops pending asks (acceptable — the buttons
-// also live in the platform's in-memory store with the same 24h lifetime).
+// askState is the registry of in-flight asks. Keyed by requestID for click
+// routing and by sessionKey for typed-answer routing (latest ask wins).
+//
+// Pending asks are persisted to the session index (agent_metadata) on every
+// change and restored on startup — mirroring the tmux tool's persist-on-change →
+// restore-verify-reattach pattern. After a restart the maps are rehydrated and
+// each ask's interactive callback is re-attached to the buttons the platform
+// still displays (see restorePending), so both button clicks and typed replies
+// survive. store==nil disables persistence (in-memory only).
 type askState struct {
 	mu        sync.Mutex
 	byReqID   map[string]*pendingAsk
 	bySession map[string]string // sessionKey → latest requestID
 	present   AskPresentFn
+	restore   AskRestoreFn
 	deliver   AskDeliverFn
 	seq       atomic.Int64
+	store     *session.SessionIndex // nil = no persistence
+	agentID   string
 }
 
-func newAskState(present AskPresentFn, deliver AskDeliverFn) *askState {
+// askMetaKey is the agent_metadata key under which pending asks are persisted.
+const askMetaKey = "ask_pending"
+
+// pendingAskTTL bounds how stale a persisted ask may be before restore drops it
+// rather than re-attaching it. Matches the interactive prompt lifetime
+// (agent.DefaultIdleTimeout); anything that crosses the threshold while running
+// is still cleaned up by the periodic interactive-expiry sweep.
+const pendingAskTTL = 24 * time.Hour
+
+func newAskState(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, store *session.SessionIndex, agentID string) *askState {
 	return &askState{
 		byReqID:   make(map[string]*pendingAsk),
 		bySession: make(map[string]string),
 		present:   present,
+		restore:   restore,
 		deliver:   deliver,
+		store:     store,
+		agentID:   agentID,
 	}
 }
 
-// nextRequestID returns a unique, colon-free request id. Colon-free matters:
-// the platform encodes button data as "<id>:<index>" and splits on the first
-// colon, so an id containing ':' would break click routing.
+// nextRequestID returns a unique, colon-free request id. Colon-free matters: the
+// platform encodes button data as "<id>:<index>" and splits on the first colon,
+// so an id containing ':' would break click routing. The agentID is included
+// because the platform's interactive store is process-global: without it two
+// agents' independent counters would both mint "ask-1" and collide there.
 func (a *askState) nextRequestID() string {
-	return fmt.Sprintf("ask-%d", a.seq.Add(1))
+	return fmt.Sprintf("ask-%s-%d", a.agentID, a.seq.Add(1))
 }
 
 // start registers a new ask and presents its first question.
@@ -122,6 +152,7 @@ func (a *askState) start(sessionKey string, qs []question.Question, originalInpu
 	a.mu.Lock()
 	a.byReqID[reqID] = p
 	a.bySession[sessionKey] = reqID
+	a.persistLocked()
 	a.mu.Unlock()
 
 	a.presentCurrent(p)
@@ -173,6 +204,7 @@ func (a *askState) handleResponse(requestID, data string) {
 	}
 	if cancelled {
 		a.removeLocked(p)
+		a.persistLocked()
 		a.mu.Unlock()
 		a.deliverMsg(p.sessionKey, fmt.Sprintf(
 			"[SYSTEM: the user CANCELLED your `ask` request after %d of %d answers. Do not retry unless they ask.]",
@@ -181,6 +213,7 @@ func (a *askState) handleResponse(requestID, data string) {
 	}
 	p.acc.Record(answer)
 	done := p.acc.Done()
+	a.persistLocked() // checkpoint the advanced index / new answer
 	a.mu.Unlock()
 
 	if !done {
@@ -191,6 +224,7 @@ func (a *askState) handleResponse(requestID, data string) {
 	// All answered — assemble and deliver the batch.
 	a.mu.Lock()
 	a.removeLocked(p)
+	a.persistLocked()
 	a.mu.Unlock()
 
 	if p.grader.path == "" {
@@ -212,6 +246,141 @@ func (a *askState) removeLocked(p *pendingAsk) {
 	if a.bySession[p.sessionKey] == p.requestID {
 		delete(a.bySession, p.sessionKey)
 	}
+}
+
+// persistedAsk is the JSON-serialisable form of one in-flight ask. The
+// Accumulator's progress is flattened to (Questions, Idx, Answers); the grader's
+// config travels alongside so a restored ask still grades.
+type persistedAsk struct {
+	RequestID     string              `json:"request_id"`
+	SessionKey    string              `json:"session_key"`
+	Questions     []question.Question `json:"questions"`
+	Idx           int                 `json:"idx"`
+	Answers       map[string]string   `json:"answers,omitempty"`
+	OriginalInput json.RawMessage     `json:"original_input,omitempty"`
+	CreatedAt     time.Time           `json:"created_at"`
+	Grader        persistedGrader     `json:"grader,omitempty"`
+}
+
+// persistedGrader mirrors graderConfig with exported, JSON-friendly fields
+// (timeout as whole seconds).
+type persistedGrader struct {
+	Path        string   `json:"path,omitempty"`
+	TimeoutSecs int      `json:"timeout_secs,omitempty"`
+	OnError     string   `json:"on_error,omitempty"`
+	Args        []string `json:"args,omitempty"`
+}
+
+// persistLocked writes the full set of in-flight asks to the session index.
+// Caller holds a.mu. No-op when persistence is disabled. Best-effort: a write
+// failure is logged, never propagated — persistence is a convenience, and an
+// ask still works in-memory for the life of the process without it.
+func (a *askState) persistLocked() {
+	if a.store == nil {
+		return
+	}
+	out := make([]persistedAsk, 0, len(a.byReqID))
+	for _, p := range a.byReqID {
+		out = append(out, persistedAsk{
+			RequestID:     p.requestID,
+			SessionKey:    p.sessionKey,
+			Questions:     p.acc.Questions(),
+			Idx:           p.acc.Index(),
+			Answers:       p.acc.Answers(),
+			OriginalInput: p.originalInput,
+			CreatedAt:     p.createdAt,
+			Grader: persistedGrader{
+				Path:        p.grader.path,
+				TimeoutSecs: int(p.grader.timeout / time.Second),
+				OnError:     p.grader.onError,
+				Args:        p.grader.args,
+			},
+		})
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		log.Warnf("ask", "marshal pending asks: %v", err)
+		return
+	}
+	if err := a.store.SetAgentMetadata(a.agentID, askMetaKey, string(data)); err != nil {
+		log.Warnf("ask", "persist pending asks: %v", err)
+	}
+}
+
+// restorePending rehydrates asks saved before a restart and re-attaches each
+// one's interactive callback to the buttons the platform still displays. Stale
+// asks (older than pendingAskTTL) and malformed/complete entries are dropped, and
+// the cleaned set is re-persisted. Best-effort throughout: any decode failure
+// leaves the tool empty rather than blocking startup.
+func (a *askState) restorePending() {
+	if a.store == nil {
+		return
+	}
+	raw, err := a.store.GetAgentMetadata(a.agentID, askMetaKey)
+	if err != nil || raw == "" {
+		return
+	}
+	var saved []persistedAsk
+	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
+		log.Warnf("ask", "unmarshal pending asks: %v", err)
+		return
+	}
+
+	now := time.Now()
+	restored := make([]*pendingAsk, 0, len(saved))
+	a.mu.Lock()
+	for _, s := range saved {
+		if now.Sub(s.CreatedAt) > pendingAskTTL {
+			continue // stale — its buttons have expired on the platform too
+		}
+		if len(s.Questions) == 0 || s.Idx < 0 || s.Idx >= len(s.Questions) {
+			continue // malformed or already complete — nothing to wait on
+		}
+		p := &pendingAsk{
+			requestID:     s.RequestID,
+			sessionKey:    s.SessionKey,
+			acc:           question.NewAccumulatorAt(s.Questions, s.Idx, s.Answers),
+			originalInput: s.OriginalInput,
+			createdAt:     s.CreatedAt,
+			grader: graderConfig{
+				path:    s.Grader.Path,
+				timeout: time.Duration(s.Grader.TimeoutSecs) * time.Second,
+				onError: s.Grader.OnError,
+				args:    s.Grader.Args,
+			},
+		}
+		a.byReqID[p.requestID] = p
+		a.bySession[p.sessionKey] = p.requestID
+		restored = append(restored, p)
+	}
+	a.persistLocked() // drop stale entries from the durable set
+	a.mu.Unlock()
+
+	// Re-attach outside the lock: the restore fn reaches into the platform layer.
+	for _, p := range restored {
+		a.reattach(p)
+	}
+	if len(restored) > 0 {
+		log.Debugf("ask", "restored %d pending ask(s) from state", len(restored))
+	}
+}
+
+// reattach rebinds the interactive callback for p's CURRENT question to the
+// buttons already on screen. It uses the same msgID presentCurrent first sent the
+// question with, so the existing buttons' "im:<msgID>:<idx>" data still routes
+// here. No new message is sent.
+func (a *askState) reattach(p *pendingAsk) {
+	if a.restore == nil {
+		return
+	}
+	q := p.acc.Current()
+	if q == nil {
+		return
+	}
+	msgID := fmt.Sprintf("%s-q%d", p.requestID, p.acc.Index())
+	a.restore(p.sessionKey, msgID, question.Choices(q), func(data string) {
+		a.handleResponse(p.requestID, data)
+	})
 }
 
 func (a *askState) deliverMsg(sessionKey, msg string) {
@@ -370,11 +539,17 @@ type AskRouter struct {
 }
 
 // NewAskTool builds the `ask` / `foci_ask` tool. present shows questions to the
-// user; deliver injects the answer batch back into the calling session. Both
-// are supplied by cmd/foci-gw where the platform + agent wiring lives. The
-// returned AskRouter is wired into the inbound path for typed ("Other") answers.
-func NewAskTool(present AskPresentFn, deliver AskDeliverFn) (*Tool, *AskRouter) {
-	state := newAskState(present, deliver)
+// user; restore re-attaches a pending question's buttons after a restart; deliver
+// injects the answer batch back into the calling session. All are supplied by
+// cmd/foci-gw where the platform + agent wiring lives. store+agentID persist
+// in-flight asks across restarts (store may be nil to disable). The returned
+// AskRouter is wired into the inbound path for typed ("Other") answers.
+//
+// Construction rehydrates any asks that were in flight before a restart and
+// re-binds their interactive callbacks, so an outstanding question keeps working.
+func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, store *session.SessionIndex, agentID string) (*Tool, *AskRouter) {
+	state := newAskState(present, restore, deliver, store, agentID)
+	state.restorePending()
 	t := &Tool{
 		Name:        "ask",
 		ExecExport:  true,

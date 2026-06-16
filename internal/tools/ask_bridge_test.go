@@ -60,7 +60,7 @@ func TestAsk_ExecBridgeRoundTrip(t *testing.T) {
 	}
 
 	reg := NewRegistry()
-	tool, _ := NewAskTool(pres.present, deliver)
+	tool, _ := NewAskTool(pres.present, nil, deliver, nil, "test")
 	reg.Register(tool)
 
 	bridge, err := NewExecBridge(reg, WithSessionKey(context.Background(), sk))

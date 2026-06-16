@@ -69,7 +69,7 @@ func (d *fakeDeliver) last() (string, bool) {
 func newAskFixture() (*Tool, *AskRouter, *fakePresenter, *fakeDeliver) {
 	p := &fakePresenter{}
 	d := &fakeDeliver{}
-	tool, router := NewAskTool(p.present, d.deliver)
+	tool, router := NewAskTool(p.present, nil, d.deliver, nil, "test")
 	return tool, router, p, d
 }
 
@@ -430,7 +430,7 @@ func TestAsk_ShellFuncGeneration(t *testing.T) {
 	// The hand-rolled `ask` shell func must pass schema-parity validation
 	// (questions is positional, so skipped) and offer JSON-only input.
 	t.Parallel()
-	tool, _ := NewAskTool(nil, nil)
+	tool, _ := NewAskTool(nil, nil, nil, nil, "test")
 	if err := validateShellFuncSchemaParity(tool); err != nil {
 		t.Fatalf("ask shell func failed parity: %v", err)
 	}

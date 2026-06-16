@@ -100,6 +100,36 @@ func SendInteractiveMessageWithID(conn Connection, id string, text string, butto
 	return nil
 }
 
+// RestoreInteractiveCallback re-registers an interactive message's callback after
+// a restart, binding it to buttons the platform already displays (the message and
+// its inline keyboard survive on the platform's servers across a foci restart;
+// only foci's in-memory routing entry was lost). id must equal the promptID the
+// buttons were originally created with so their "im:<id>:<idx>" callback data
+// routes back here, and buttons must be the same slice in the same order so the
+// index carried by each button still resolves to the right choice.
+//
+// msgID is the platform-side message id, used ONLY for proactive edits
+// (CancelInteractiveMessage / expiry); pass "" if unknown — click-driven edits use
+// the message reference carried by the incoming callback, so routing and the
+// "✅ <label>" edit both work without it. bs may be nil (proactive edits are then
+// skipped). created carries the original post time so the existing expiry sweep
+// measures the 24h lifetime from the real start, not from the restart.
+//
+// If id collides with an existing entry it is overwritten (matching the
+// send-path's last-writer-wins semantics).
+func RestoreInteractiveCallback(id, msgID string, bs ButtonSender, buttons []ButtonChoice, cb ButtonCallback, onExpire func(), created time.Time) {
+	imMu.Lock()
+	imStore[id] = &interactiveMsg{
+		bs:       bs,
+		msgID:    msgID,
+		buttons:  buttons,
+		callback: cb,
+		onExpire: onExpire,
+		created:  created,
+	}
+	imMu.Unlock()
+}
+
 // CancelInteractiveMessage edits the message identified by id to finalText
 // (with no buttons) and removes its callback so subsequent clicks become
 // no-ops. Idempotent: returns nil if id is unknown (already responded to,
