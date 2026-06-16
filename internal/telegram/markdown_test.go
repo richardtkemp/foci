@@ -46,6 +46,21 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			want: "this is <i>italic</i> text",
 		},
 		{
+			name: "italic nested inside bold",
+			in:   "**1. The actual *fix* here.**",
+			want: "<b>1. The actual <i>fix</i> here.</b>",
+		},
+		{
+			name: "bold nested inside italic",
+			in:   "*a **b** c*",
+			want: "<i>a <b>b</b> c</i>",
+		},
+		{
+			name: "two bolds with italic between",
+			in:   "**one** *mid* **two**",
+			want: "<b>one</b> <i>mid</i> <b>two</b>",
+		},
+		{
 			name: "italic underscore",
 			in:   "this is _italic_ text",
 			want: "this is <i>italic</i> text",

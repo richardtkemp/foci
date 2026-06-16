@@ -14,7 +14,7 @@ var (
 	reInlineCode       = regexp.MustCompile("`([^`]+)`")
 	reLink             = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
 	reSpoiler          = regexp.MustCompile(`\|\|([^\|]+)\|\|`)
-	reBold             = regexp.MustCompile(`\*\*([^\*]+)\*\*`)
+	reBold             = regexp.MustCompile(`(?s)\*\*(.+?)\*\*`)
 	reStrikethrough    = regexp.MustCompile(`~~([^~]+)~~`)
 	reUnderline        = regexp.MustCompile(`__([^_]+)__`)
 	reItalicStar       = regexp.MustCompile(`\*([^\*\n]+)\*`)
