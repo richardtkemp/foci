@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -673,4 +675,43 @@ func extractRef(t *testing.T, snapshot, roleKeyword string) string {
 		return ref
 	}
 	return ""
+}
+
+// TestBrowserPersistentProfile verifies that a non-incognito start with a
+// configured UserDataDir launches into that dir (creating it if missing) and
+// does not fall back to the host's default chromium profile.
+func TestBrowserPersistentProfile(t *testing.T) {
+	skipIfNoBrowser(t)
+
+	// Own the temp dir (not t.TempDir) so cleanup runs strictly after Stop and
+	// tolerates chromium's async shutdown writes ("directory not empty").
+	base, err := os.MkdirTemp("", "foci-persist-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(base, "browser-profile")
+	mgr := NewBrowserManager(&config.ResolvedBrowser{
+		Headless:     true,
+		TimeoutSec:   10,
+		DOMStableSec: 0.1,
+		UserDataDir:  profile,
+	}, 0640)
+	t.Cleanup(func() { mgr.Stop(); _ = os.RemoveAll(base) })
+	tool := NewBrowserTool(mgr)
+
+	// incognito=false so the configured persistent profile is used.
+	params := marshalParams(t, map[string]any{"action": "start", "incognito": false})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !mgr.IsConnected() {
+		t.Fatal("expected browser to be connected")
+	}
+	// The configured profile dir must have been created and populated.
+	if _, err := os.Stat(profile); err != nil {
+		t.Fatalf("configured profile dir not created: %v", err)
+	}
+	if mgr.profileDir != "" {
+		t.Errorf("owned temp profileDir set (%q) despite configured persistent dir", mgr.profileDir)
+	}
 }

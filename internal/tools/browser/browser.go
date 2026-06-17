@@ -28,6 +28,7 @@ type BrowserManager struct {
 	generation int
 	FileMode   os.FileMode // permission bits for saved files (screenshots, PDFs)
 	incognito  bool        // runtime-toggleable; default true
+	profileDir string      // owned temp user-data-dir; created on Start, removed on Stop
 }
 
 // NewBrowserManager creates a new browser manager with the given config.
@@ -60,8 +61,25 @@ func (m *BrowserManager) Start() error {
 	if m.config.ExecutablePath != "" {
 		l = l.Bin(m.config.ExecutablePath)
 	}
+	// Always launch with an explicit, isolated user-data-dir. Relying on
+	// go-rod's implicit default is unreliable on some hosts (notably the Linux
+	// Mint chromium wrapper): the implicit flag fails to take and chromium falls
+	// back to the host's real profile (~/.config/chromium). That both risks
+	// corrupting the user's actual browser data and causes SingletonLock
+	// collisions when two instances run concurrently. A configured persistent
+	// dir is honored only for non-incognito sessions that must retain state.
 	if m.config.UserDataDir != "" && !m.incognito {
+		if err := os.MkdirAll(m.config.UserDataDir, 0o700); err != nil {
+			return fmt.Errorf("create browser profile dir: %w", err)
+		}
 		l = l.UserDataDir(m.config.UserDataDir)
+	} else {
+		dir, err := os.MkdirTemp("", "foci-browser-*")
+		if err != nil {
+			return fmt.Errorf("create browser profile dir: %w", err)
+		}
+		m.profileDir = dir
+		l = l.UserDataDir(dir)
 	}
 
 	url, err := l.Launch()
@@ -89,6 +107,12 @@ func (m *BrowserManager) Stop() error {
 	m.browser = nil
 	m.page = nil
 	m.snapshot = nil
+	if m.profileDir != "" {
+		if err := os.RemoveAll(m.profileDir); err != nil {
+			m.logger.Warnf("Error removing browser profile dir %s: %v", m.profileDir, err)
+		}
+		m.profileDir = ""
+	}
 	m.logger.Infof("Browser stopped")
 	return nil
 }
