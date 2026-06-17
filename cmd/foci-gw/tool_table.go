@@ -155,6 +155,13 @@ var toolTable = []toolEntry{
 	{name: "browser", paths: pathAPI, enabled: func(d *toolDeps) bool { return d.p.resolved.Browser.Enabled },
 		build: func(d *toolDeps) *tools.Tool {
 			bc := d.p.resolved.Browser
+			// Default the persistent profile to a per-agent dir under the
+			// workspace's gitignored .data/ (alongside the agent's databases),
+			// so non-incognito sessions retain state without colliding with
+			// other agents. An explicitly-configured UserDataDir overrides this.
+			if bc.UserDataDir == "" {
+				bc.UserDataDir = filepath.Join(d.p.acfg.Workspace, ".data", "browser-profile")
+			}
 			fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
 			return browser.NewBrowserTool(browser.NewBrowserManager(&bc, fileMode))
 		}},
