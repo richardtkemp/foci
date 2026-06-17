@@ -29,6 +29,10 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 					"type": "string",
 					"description": "Text for the todo item (required for 'add', optional for 'edit')"
 				},
+				"append": {
+					"type": "boolean",
+					"description": "Used with 'edit': append 'text' to the item's existing text (newline-joined) instead of replacing it. Default false. No effect without 'text'."
+				},
 				"priority": {
 					"type": "string",
 					"enum": ["high", "medium", "low"],
@@ -79,6 +83,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			p, err := UnmarshalParams[struct {
 				Action   string  `json:"action"`
 				Text     string  `json:"text"`
+				Append   bool    `json:"append"`
 				Priority string  `json:"priority"`
 				Tag      string  `json:"tag"`
 				ID       int64   `json:"id"`
@@ -122,7 +127,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				// New callers should use 'complete' or 'drop'.
 				return todoTransition(store, agentID, p.ID, p.IDs, p.State, p.Reason)
 			case "edit":
-				return todoEdit(store, agentID, p.ID, p.IDs, p.Text, p.Priority, p.Tag, params)
+				return todoEdit(store, agentID, p.ID, p.IDs, p.Text, p.Append, p.Priority, p.Tag, params)
 			case "remove":
 				return todoRemove(store, agentID, p.ID, p.IDs)
 			default:
@@ -434,7 +439,7 @@ func todoTransition(store *memory.TodoStore, agentID string, id int64, ids []int
 	return TextResult(strings.Join(results, "\n")), nil
 }
 
-func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, text, priority, tag string, params json.RawMessage) (ToolResult, error) {
+func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, text string, appendText bool, priority, tag string, params json.RawMessage) (ToolResult, error) {
 	resolved, err := resolveIDs(id, ids)
 	if err != nil {
 		return ToolResult{}, err
@@ -448,10 +453,13 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 	if text == "" && priority == "" && !setTags {
 		return ToolResult{}, fmt.Errorf("edit requires at least one of: text, priority, tag")
 	}
+	if appendText && text == "" {
+		return ToolResult{}, fmt.Errorf("edit: append requires text")
+	}
 	var results []string
 	for _, rid := range resolved {
 		oldItem, getErr := store.Get(agentID, rid)
-		item, err := store.Edit(agentID, rid, text, priority, tag, setTags)
+		item, err := store.Edit(agentID, rid, text, priority, tag, setTags, appendText)
 		if err != nil {
 			results = append(results, fmt.Sprintf("#%d: error: %v", rid, err))
 			continue

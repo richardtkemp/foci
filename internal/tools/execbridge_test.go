@@ -858,7 +858,7 @@ func TestTodoShellFunc_UnknownFlagErrorScopedToAction(t *testing.T) {
 		t.Error("expected 'no flags for this action' branch")
 	}
 	// Master fallback for unknown-action context must still exist.
-	if !strings.Contains(body, "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --sort --reverse --limit") {
+	if !strings.Contains(body, "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --append --append-text --add --sort --reverse --limit") {
 		t.Error("expected master flag list as fallback when action is unknown")
 	}
 }
@@ -899,14 +899,12 @@ func TestTodoShellFunc_CloseReasonAliases(t *testing.T) {
 
 	// On complete/drop, --text falls back to reason when --reason absent.
 	// Tested by checking the post-parse case block exists.
-	if !strings.Contains(body, `case "$action" in
-    complete|drop)
+	if !strings.Contains(body, `    complete|drop)
       if [ -z "$reason" ] && [ -n "$text" ]; then
         reason="$text"
         text=""
       fi
-      ;;
-  esac`) {
+      ;;`) {
 		t.Error("expected post-parse text→reason fallback for complete/drop")
 	}
 
@@ -1262,6 +1260,131 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	if got != todoText {
 		t.Errorf("captured text = %q, want %q\nbash output: %s", got, todoText, out)
 	}
+}
+
+// TestTodoShellFunc_AppendAliasesResolve runs the generated foci_todo through
+// real bash and asserts every ergonomic append spelling — --note, --append-text,
+// --add, the bare --append boolean, the `update` action alias, and a numeric
+// positional id — collapses to the one canonical bare-tool shape
+// {action:edit, id, text, append:true}. The replace path (no append flag) is
+// the control, and supplying both replace and append text is rejected.
+func TestTodoShellFunc_AppendAliasesResolve(t *testing.T) {
+	t.Parallel()
+	if _, err := osexec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := osexec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	binDir := t.TempDir()
+	binPath := binDir + "/foci-call"
+	build := osexec.Command("go", "build", "-o", binPath, "foci/cmd/foci-call")
+	build.Dir = findModuleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build foci-call: %v\n%s", err, out)
+	}
+
+	var mu sync.Mutex
+	var captured string
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		Positional: []string{"action"},
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"integer"},"text":{"type":"string"},"append":{"type":"boolean"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			mu.Lock()
+			captured = string(params)
+			mu.Unlock()
+			return TextResult("ok"), nil
+		},
+	})
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	run := func(cmdline string) (map[string]any, error) {
+		mu.Lock()
+		captured = ""
+		mu.Unlock()
+		script := fmt.Sprintf("set -o pipefail -o nounset; shopt -s failglob; source %s; %s", bridge.FuncsPath(), cmdline)
+		cmd := osexec.Command("bash", "-c", script)
+		cmd.Env = append(os.Environ(), "FOCI_SOCK="+bridge.SockPath(), "PATH="+binDir+":"+os.Getenv("PATH"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("%v: %s", err, out)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		var got map[string]any
+		if err := json.Unmarshal([]byte(captured), &got); err != nil {
+			return nil, fmt.Errorf("unmarshal captured %q: %w", captured, err)
+		}
+		return got, nil
+	}
+
+	want := func(t *testing.T, got map[string]any, text string, append bool) {
+		t.Helper()
+		if got["action"] != "edit" {
+			t.Errorf("action = %v, want edit", got["action"])
+		}
+		if got["id"] != float64(6) {
+			t.Errorf("id = %v, want 6", got["id"])
+		}
+		if got["text"] != text {
+			t.Errorf("text = %v, want %q", got["text"], text)
+		}
+		if append {
+			if got["append"] != true {
+				t.Errorf("append = %v, want true", got["append"])
+			}
+		} else if _, present := got["append"]; present {
+			t.Errorf("append present (%v), want absent", got["append"])
+		}
+	}
+
+	t.Run("note alias + positional id", func(t *testing.T) {
+		got, err := run(`foci_todo edit 6 --note "hello world"`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want(t, got, "hello world", true)
+	})
+	t.Run("update action alias + append-text", func(t *testing.T) {
+		got, err := run(`foci_todo update 6 --append-text "appended"`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want(t, got, "appended", true)
+	})
+	t.Run("add alias with --id", func(t *testing.T) {
+		got, err := run(`foci_todo edit --id 6 --add "added"`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want(t, got, "added", true)
+	})
+	t.Run("bare --append boolean with --text", func(t *testing.T) {
+		got, err := run(`foci_todo edit --id 6 --append --text "viatext"`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want(t, got, "viatext", true)
+	})
+	t.Run("replace path (control, no append)", func(t *testing.T) {
+		got, err := run(`foci_todo edit --id 6 --text "replaced"`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want(t, got, "replaced", false)
+	})
+	t.Run("replace and append both → error", func(t *testing.T) {
+		if _, err := run(`foci_todo edit 6 --text "a" --note "b"`); err == nil {
+			t.Error("expected error when both replace --text and append flag given")
+		}
+	})
 }
 
 func TestGenerateGenericShellFuncFlatSchema(t *testing.T) {

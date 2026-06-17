@@ -478,6 +478,7 @@ func generateHelpText(t *Tool) string {
 // convention as `list-all`, which is shell-only and not in the schema).
 var todoActionAliases = map[string]string{
 	"create": "add",
+	"update": "edit",
 }
 
 // resolveTodoAction returns the canonical action for an input action,
@@ -534,7 +535,7 @@ var todoActions = []struct {
 	{"get", "get <id>", ""},
 	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
-	{"edit", "edit --id N [--text TEXT] [--priority P] [--tag T]", "--id --ids --text --priority --tag"},
+	{"edit", "edit <id> [--text TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T]   (alias: update; or --id N / --ids 1,2,3)", "--id --ids --text --append --append-text --add --note --notes --priority --tag"},
 	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids"},
 }
 
@@ -659,7 +660,7 @@ func generateShellFunc(t *Tool) string {
     fi
     return 0
   fi
-  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit=""
+  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --text) text="$2"; shift 2 ;;
@@ -672,6 +673,9 @@ func generateShellFunc(t *Tool) string {
       --reason) reason="$2"; shift 2 ;;
       --notes) reason="$2"; shift 2 ;;
       --note) reason="$2"; shift 2 ;;
+      --append-text) append_text="$2"; shift 2 ;;
+      --add) append_text="$2"; shift 2 ;;
+      --append) append=true; shift ;;
       --sort) sort="$2"; shift 2 ;;
       --limit) limit="$2"; shift 2 ;;
       --reverse) reverse=true; shift ;;
@@ -682,14 +686,21 @@ func generateShellFunc(t *Tool) string {
         elif [ -n "$action" ]; then
           echo "'$action' takes no flags" >&2
         else
-          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --sort --reverse --limit" >&2
+          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --append --append-text --add --sort --reverse --limit" >&2
         fi
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
         case "$action" in
-          add|edit) text="$text $1" ;;
+          add) text="$text $1" ;;
           search) query="$query $1" ;;
           get|complete|drop|remove) id="$1" ;;
+          edit)
+            # A numeric positional is the item id (so "update 6 ..." works like
+            # complete/drop); anything else falls back to text for back-compat.
+            case "$1" in
+              ''|*[!0-9]*) text="$text $1" ;;
+              *) if [ -z "$id" ]; then id="$1"; else text="$text $1"; fi ;;
+            esac ;;
         esac
         shift ;;
     esac
@@ -704,6 +715,23 @@ func generateShellFunc(t *Tool) string {
       if [ -z "$reason" ] && [ -n "$text" ]; then
         reason="$text"
         text=""
+      fi
+      ;;
+    edit)
+      # Append content arrives via --append-text/--add directly, or via
+      # --note/--notes (parsed into reason above) as an ergonomic alias on edit.
+      # --append is the bare boolean form, paired with --text.
+      if [ -z "$append_text" ] && [ -n "$reason" ]; then
+        append_text="$reason"
+        reason=""
+      fi
+      if [ -n "$append_text" ]; then
+        if [ -n "$text" ]; then
+          echo "error: edit: use --text (replace) OR --append-text/--note/--add (append), not both" >&2
+          return 1
+        fi
+        text="$append_text"
+        append=true
       fi
       ;;
   esac
@@ -774,6 +802,7 @@ func generateShellFunc(t *Tool) string {
       [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
       [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
       [ -n "$text" ] && params="$(echo "$params" | jq --arg t "$text" '. + {text: $t}')"
+      [ -n "$append" ] && params="$(echo "$params" | jq '. + {append: true}')"
       [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
       [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"

@@ -316,13 +316,26 @@ func (s *TodoStore) Remove(agentID string, id int64) error {
 // Edit updates fields on an existing todo item. Only non-empty text and priority
 // are applied. Tags are updated only when setTags is true (allowing clearing to "").
 // Returns the updated item.
-func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, setTags bool) (*TodoItem, error) {
+// Edit updates an item's fields. Empty text/priority leave those columns
+// untouched; tags are set only when setTags is true (so "" can clear them).
+// When appendText is true and text is non-empty, text is appended to the
+// existing value (newline-joined) instead of replacing it; the concatenation
+// happens in SQL so it's atomic against concurrent edits. appendText has no
+// effect when text is empty.
+func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, setTags, appendText bool) (*TodoItem, error) {
 	var setClauses []string
 	var args []any
 
 	if text != "" {
-		setClauses = append(setClauses, "text = ?")
-		args = append(args, text)
+		if appendText {
+			// Atomic append: newline-join only when existing text is non-empty,
+			// so an empty/NULL item gets the text with no leading separator.
+			setClauses = append(setClauses, "text = CASE WHEN COALESCE(text, '') = '' THEN ? ELSE text || ? END")
+			args = append(args, text, "\n"+text)
+		} else {
+			setClauses = append(setClauses, "text = ?")
+			args = append(args, text)
+		}
 	}
 	if priority != "" {
 		setClauses = append(setClauses, "priority = ?")

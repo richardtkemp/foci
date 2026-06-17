@@ -429,7 +429,7 @@ func todoEditCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respon
 	if args.text == "" && args.priority == "" && !args.setTag {
 		return Response{Text: "Nothing to change. Use p:PRIORITY, t:TAG, or provide new text."}, nil
 	}
-	item, err := store.Edit(agentID, id, args.text, args.priority, strings.Join(args.tags, ","), args.setTag)
+	item, err := store.Edit(agentID, id, args.text, args.priority, strings.Join(args.tags, ","), args.setTag, false)
 	if err != nil {
 		return Response{}, fmt.Errorf("edit todo: %w", err)
 	}
