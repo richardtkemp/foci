@@ -22,6 +22,7 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/session"
+	"foci/internal/skills"
 
 	"foci/internal/tools"
 	"foci/internal/voice"
@@ -96,6 +97,7 @@ type setupParams struct {
 	sttMap              map[string]voice.STT
 	braveKey            string
 	gwSocketPath        string // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
+	skillLoader         *skills.Loader // shared across all agents so the shared skills dir is scanned/warned once, not once per agent
 
 	startTime       time.Time
 	ctx             context.Context
