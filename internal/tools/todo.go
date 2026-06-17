@@ -172,7 +172,7 @@ func formatTodoLineOpts(item memory.TodoItem, showMarker bool) string {
 			}
 		}
 		if len(tags) > 0 {
-			meta = append(meta, fmt.Sprintf("`%s`", strings.Join(tags, "/")))
+			meta = append(meta, fmt.Sprintf("`%s`", strings.Join(tags, ", ")))
 		}
 	}
 	line := strings.Join(meta, " ")
