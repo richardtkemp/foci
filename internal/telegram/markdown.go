@@ -178,7 +178,13 @@ func convertStarEmphasis(s string) string {
 		star   bool
 	}
 
-	isSpace := func(b byte) bool { return b == 0 || b == ' ' || b == '\t' || b == '\n' || b == '\r' }
+	// NUL is deliberately NOT whitespace here: code spans are extracted to
+	// NUL-delimited placeholders before this pass, so a '*' run adjacent to a
+	// placeholder sits next to a NUL. Emphasis must bind to that content
+	// (e.g. **`code`** → <b><code>code</code></b>), so the NUL must read as a
+	// non-space character. String-boundary handling (no char before/after) is
+	// done separately via hasPrev/hasNext, not by a NUL sentinel.
+	isSpace := func(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }
 
 	// Tokenize into star-run nodes and literal-text nodes.
 	var nodes []emit
@@ -215,15 +221,20 @@ func convertStarEmphasis(s string) string {
 			if n.star {
 				runLen := n.litPre
 				var prev, next byte
-				if pos > 0 {
+				hasPrev := pos > 0
+				if hasPrev {
 					prev = s[pos-1]
 				}
-				if pos+runLen < len(s) {
+				hasNext := pos+runLen < len(s)
+				if hasNext {
 					next = s[pos+runLen]
 				}
 				rem[idx] = runLen
-				canOpen[idx] = !isSpace(next)
-				canClose[idx] = !isSpace(prev)
+				// A run can open only with a non-space char after it, and close
+				// only with a non-space char before it. At a string boundary
+				// there is no such char, so the direction is disallowed.
+				canOpen[idx] = hasNext && !isSpace(next)
+				canClose[idx] = hasPrev && !isSpace(prev)
 				nodes[idx].litPre = 0 // reset; becomes true leftover count below
 				pos += runLen
 			} else {

@@ -509,6 +509,46 @@ func TestConvertToTelegramHTMLNestedEmphasis(t *testing.T) {
 	}
 }
 
+// TestConvertToTelegramHTMLEmphasisAroundCode pins the fix for emphasis markers
+// sitting directly against an inline-code span. Code spans are extracted to
+// NUL-delimited placeholders before the emphasis pass, so a '*' run adjacent to
+// one lands next to a NUL byte. The flanking check used to treat NUL as
+// whitespace, so **`code`** never paired and the asterisks leaked to the user
+// as literal text. NUL must read as content (a code span is a word), while
+// string boundaries are handled separately. The sibling `_`/`~~`/`__` passes
+// are regex-based (not flanking-based) and were never affected; they're
+// included here as a guard.
+func TestConvertToTelegramHTMLEmphasisAroundCode(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bold around code", "**`code`**", "<b><code>code</code></b>"},
+		{"italic around code", "*`code`*", "<i><code>code</code></i>"},
+		{"bold-italic around code", "***`code`***", "<i><b><code>code</code></b></i>"},
+		{"bold spanning text then code", "**bold `code`**", "<b>bold <code>code</code></b>"},
+		{"bold spanning code then text", "**`code` bold**", "<b><code>code</code> bold</b>"},
+		{"code abutting bold no space", "a `x`**b** c", "a <code>x</code><b>b</b> c"},
+		{"two bold-code spans on a line", "**`a`** and **`b`**", "<b><code>a</code></b> and <b><code>b</code></b>"},
+		{"bold-code then trailing code (real msg)", "**`a/b.go`**: uses `Load`", "<b><code>a/b.go</code></b>: uses <code>Load</code>"},
+		{"underscore italic around code", "_`code`_", "<i><code>code</code></i>"},
+		{"strikethrough around code", "~~`code`~~", "<s><code>code</code></s>"},
+		{"underline around code", "__`code`__", "<u><code>code</code></u>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ConvertToTelegramHTML(tt.in)
+			if got != tt.want {
+				t.Errorf("ConvertToTelegramHTML(%q)\n  got  = %q\n  want = %q", tt.in, got, tt.want)
+			}
+			if err := checkTagNesting(got); err != nil {
+				t.Errorf("ConvertToTelegramHTML(%q) = %q: %v", tt.in, got, err)
+			}
+		})
+	}
+}
+
 // TestConvertToTelegramHTMLEmphasisWellFormed is the structural backstop: for a
 // corpus of emphasis-heavy inputs, the converter's output must contain only
 // properly-nested formatting tags (no crossed or unclosed tags). This catches
@@ -530,6 +570,14 @@ func TestConvertToTelegramHTMLEmphasisWellFormed(t *testing.T) {
 		"**bold** and *italic* and ~~strike~~",
 		"***",      // bare triple — must not emit unbalanced tags
 		"****word**", // stray marker — must still be well-formed
+		// emphasis abutting inline-code placeholders (NUL-delimited)
+		"**`code`**",
+		"*`code`*",
+		"***`code`***",
+		"**bold `code` more**",
+		"a `x`**b** `y`*c* d",
+		"**`a/b.go`** — see `Load([]string)`",
+		"~~`gone`~~ and __`u`__ and _`i`_",
 	}
 
 	for _, in := range corpus {
