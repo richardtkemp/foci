@@ -585,7 +585,7 @@ func TestTodoEdit(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Original text", "high", "work")
-	item, err := store.Edit("agent1", id, "Updated text", "", "", false)
+	item, err := store.Edit("agent1", id, "Updated text", "", "", false, false)
 	if err != nil {
 		t.Fatalf("Edit text: %v", err)
 	}
@@ -606,7 +606,7 @@ func TestTodoEditPriority(t *testing.T) {
 
 	id, _ := store.Add("agent1", "My task", "high", "")
 
-	item, err := store.Edit("agent1", id, "", "low", "", false)
+	item, err := store.Edit("agent1", id, "", "low", "", false, false)
 	if err != nil {
 		t.Fatalf("Edit priority: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestTodoEditTags(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Tagged task", "medium", "old")
-	item, err := store.Edit("agent1", id, "", "", "new", true)
+	item, err := store.Edit("agent1", id, "", "", "new", true, false)
 	if err != nil {
 		t.Fatalf("Edit tags: %v", err)
 	}
@@ -632,7 +632,7 @@ func TestTodoEditTags(t *testing.T) {
 	}
 
 	// Clear tags by setting to empty with setTags=true.
-	item, err = store.Edit("agent1", id, "", "", "", true)
+	item, err = store.Edit("agent1", id, "", "", "", true, false)
 	if err != nil {
 		t.Fatalf("Edit clear tags: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestTodoEditMultipleFields(t *testing.T) {
 
 	id, _ := store.Add("agent1", "Original", "low", "a")
 
-	item, err := store.Edit("agent1", id, "New text", "high", "b,c", true)
+	item, err := store.Edit("agent1", id, "New text", "high", "b,c", true, false)
 	if err != nil {
 		t.Fatalf("Edit multiple: %v", err)
 	}
@@ -662,11 +662,75 @@ func TestTodoEditMultipleFields(t *testing.T) {
 	}
 }
 
+func TestTodoEditAppendText(t *testing.T) {
+	// Verifies appendText=true appends (newline-joined) to existing text rather
+	// than replacing it.
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "First line", "medium", "")
+	item, err := store.Edit("agent1", id, "Second line", "", "", false, true)
+	if err != nil {
+		t.Fatalf("Edit append: %v", err)
+	}
+	if want := "First line\nSecond line"; item.Text != want {
+		t.Errorf("text = %q, want %q", item.Text, want)
+	}
+
+	// A second append stacks again.
+	item, err = store.Edit("agent1", id, "Third line", "", "", false, true)
+	if err != nil {
+		t.Fatalf("Edit append 2: %v", err)
+	}
+	if want := "First line\nSecond line\nThird line"; item.Text != want {
+		t.Errorf("text = %q, want %q", item.Text, want)
+	}
+}
+
+func TestTodoEditAppendToEmpty(t *testing.T) {
+	// Appending to an item whose text was cleared sets it with no leading
+	// separator (the COALESCE/CASE branch).
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "x", "medium", "")
+	// Clear text via a direct UPDATE so the existing value is empty.
+	if _, err := store.db.Exec("UPDATE todos SET text = '' WHERE id = ?", id); err != nil {
+		t.Fatalf("clear text: %v", err)
+	}
+	item, err := store.Edit("agent1", id, "Only line", "", "", false, true)
+	if err != nil {
+		t.Fatalf("Edit append to empty: %v", err)
+	}
+	if item.Text != "Only line" {
+		t.Errorf("text = %q, want %q (no leading newline)", item.Text, "Only line")
+	}
+}
+
+func TestTodoEditAppendPreservesOtherFields(t *testing.T) {
+	// append affects text only; priority/tags set in the same call still
+	// replace as normal.
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Base", "low", "a")
+	item, err := store.Edit("agent1", id, "More", "high", "b", true, true)
+	if err != nil {
+		t.Fatalf("Edit append+fields: %v", err)
+	}
+	if want := "Base\nMore"; item.Text != want {
+		t.Errorf("text = %q, want %q", item.Text, want)
+	}
+	if item.Priority != "high" {
+		t.Errorf("priority = %q, want high", item.Priority)
+	}
+	if item.Tags != "b" {
+		t.Errorf("tags = %q, want b", item.Tags)
+	}
+}
+
 func TestTodoEditNotFound(t *testing.T) {
 	// Verifies that Edit returns an error for a nonexistent todo ID.
 	store := newTestTodoStore(t)
 
-	_, err := store.Edit("agent1", 999, "text", "", "", false)
+	_, err := store.Edit("agent1", 999, "text", "", "", false, false)
 	if err == nil {
 		t.Error("expected error for nonexistent todo")
 	}
@@ -677,7 +741,7 @@ func TestTodoCrossAgentEdit(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Agent 1 only", "medium", "")
-	_, err := store.Edit("agent2", id, "hacked", "", "", false)
+	_, err := store.Edit("agent2", id, "hacked", "", "", false, false)
 	if err == nil {
 		t.Error("expected error when editing another agent's todo")
 	}
@@ -689,7 +753,7 @@ func TestTodoEditNothingToUpdate(t *testing.T) {
 
 	id, _ := store.Add("agent1", "Task", "medium", "")
 
-	_, err := store.Edit("agent1", id, "", "", "", false)
+	_, err := store.Edit("agent1", id, "", "", "", false, false)
 	if err == nil {
 		t.Error("expected error when nothing to update")
 	}
@@ -733,7 +797,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 	items, _ := store.List("agent1", "", nil, "", "", false, 0)
 	originalUpdatedAt := items[0].UpdatedAt
 
-	_, err := store.Edit("agent1", id, "Updated", "", "", false)
+	_, err := store.Edit("agent1", id, "Updated", "", "", false, false)
 	if err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
@@ -898,7 +962,7 @@ func TestTodoSortByUpdated(t *testing.T) {
 	id2, _ := store.Add("agent1", "Task 2", "medium", "")
 	id3, _ := store.Add("agent1", "Task 3", "medium", "")
 
-	store.Edit("agent1", id1, "Updated task 1", "", "", false)
+	store.Edit("agent1", id1, "Updated task 1", "", "", false, false)
 
 	items, err := store.List("agent1", "", nil, "", "updated", false, 0)
 	if err != nil {
@@ -1005,7 +1069,7 @@ func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
 	store.Transition("agent1", id3, "done", "completed")
 
 	// Update id1 to make it most recently updated
-	store.Edit("agent1", id1, "Updated task 1", "", "", false)
+	store.Edit("agent1", id1, "Updated task 1", "", "", false, false)
 
 	// List with sort=updated should ignore status and sort purely by updated time (newest first)
 	items, err := store.List("agent1", "", nil, "", "updated", false, 0)

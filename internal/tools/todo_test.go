@@ -72,6 +72,66 @@ func TestTodoToolBatchEdit(t *testing.T) {
 	}
 }
 
+func TestTodoToolEditAppend(t *testing.T) {
+	// Canonical bare-tool path: action=edit with append=true appends to text.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "First", "medium", "")
+	params := map[string]interface{}{
+		"action": "edit",
+		"id":     id,
+		"text":   "Second",
+		"append": true,
+	}
+	if _, err := executeTodoTool(tool, params); err != nil {
+		t.Fatalf("edit append: %v", err)
+	}
+	item, _ := store.Get("agent1", id)
+	if want := "First\nSecond"; item.Text != want {
+		t.Errorf("text = %q, want %q", item.Text, want)
+	}
+}
+
+func TestTodoToolEditAppendDefaultsReplace(t *testing.T) {
+	// Without append (default false), text replaces — zero behaviour change.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "First", "medium", "")
+	params := map[string]interface{}{
+		"action": "edit",
+		"id":     id,
+		"text":   "Replaced",
+	}
+	if _, err := executeTodoTool(tool, params); err != nil {
+		t.Fatalf("edit replace: %v", err)
+	}
+	item, _ := store.Get("agent1", id)
+	if item.Text != "Replaced" {
+		t.Errorf("text = %q, want %q", item.Text, "Replaced")
+	}
+}
+
+func TestTodoToolEditAppendRequiresText(t *testing.T) {
+	// append=true with no text is rejected.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "First", "medium", "")
+	params := map[string]interface{}{
+		"action": "edit",
+		"id":     id,
+		"append": true,
+	}
+	if _, err := executeTodoTool(tool, params); err == nil {
+		t.Error("expected error: append requires text")
+	}
+}
+
 func TestTodoToolBatchRemove(t *testing.T) {
 	// Proves that batch remove deletes only the specified items, leaving others intact.
 	t.Parallel()
@@ -569,7 +629,7 @@ func TestTodoToolListWithSort(t *testing.T) {
 
 	// Test sort by updated (edit one task to make it most recent)
 	time.Sleep(time.Millisecond)
-	store.Edit("agent1", id1, "Updated First", "", "", false)
+	store.Edit("agent1", id1, "Updated First", "", "", false, false)
 	params = map[string]interface{}{
 		"action": "list",
 		"sort":   "updated",

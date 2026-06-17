@@ -906,7 +906,7 @@ func TestBleveTodoSearchIntegration(t *testing.T) {
 	}
 
 	// Edit should update the bleve index
-	ts.Edit(agentID, 1, "Fix the session token bug", "", "", false)
+	ts.Edit(agentID, 1, "Fix the session token bug", "", "", false, false)
 	items, err = ts.Search(agentID, "login", nil)
 	if err != nil {
 		t.Fatalf("Search after edit: %v", err)
@@ -920,6 +920,24 @@ func TestBleveTodoSearchIntegration(t *testing.T) {
 	}
 	if len(items) != 1 {
 		t.Fatalf("expected 1 result for 'session token', got %d", len(items))
+	}
+
+	// Append (appendText=true) should also reindex: the appended word becomes
+	// searchable while the original text still matches.
+	ts.Edit(agentID, 1, "regression coverage", "", "", false, true)
+	items, err = ts.Search(agentID, "regression", nil)
+	if err != nil {
+		t.Fatalf("Search after append: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 result for appended 'regression', got %d", len(items))
+	}
+	items, err = ts.Search(agentID, "session token", nil)
+	if err != nil {
+		t.Fatalf("Search original after append: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected original 'session token' to still match after append, got %d", len(items))
 	}
 
 	// Remove should update the bleve index
