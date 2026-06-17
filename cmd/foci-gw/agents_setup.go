@@ -39,7 +39,9 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 
 	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.System.SystemFiles)
 	bootstrap.SetSecretNames(agentStore.Names(), p.bwStore != nil)
-	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
+	maxFileChars := acfg.Sessions.EffectiveMaxSystemPromptFile(p.cfg.Sessions.MaxSystemPromptFile)
+	maxTotalChars := acfg.Sessions.EffectiveMaxSystemPromptTotal(p.cfg.Sessions.MaxSystemPromptTotal)
+	checkSystemPromptSizes(bootstrap, maxFileChars, maxTotalChars, acfg.ID)
 
 	home := filepath.Dir(acfg.Workspace)
 	skillsDirs := skills.ResolveDirs(home, acfg.Workspace, p.cfg.Skills.Dir, acfg.SkillsDir)

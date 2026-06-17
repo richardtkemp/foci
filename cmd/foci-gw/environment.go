@@ -16,8 +16,9 @@ import (
 )
 
 // checkSystemPromptSizes logs warnings if system prompt files exceed thresholds.
-func checkSystemPromptSizes(bootstrap *workspace.Bootstrap, sess config.SessionsConfig, agentID string) {
-	for _, w := range bootstrap.CheckSizes(sess.MaxSystemPromptFile, sess.MaxSystemPromptTotal) {
+// The thresholds are the per-agent effective values (override → global).
+func checkSystemPromptSizes(bootstrap *workspace.Bootstrap, maxFileChars, maxTotalChars int, agentID string) {
+	for _, w := range bootstrap.CheckSizes(maxFileChars, maxTotalChars) {
 		log.Warnf(agentID, "%s", w)
 	}
 }

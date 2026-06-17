@@ -435,3 +435,60 @@ id = "inherits"
 		t.Errorf("inherits agent: resolved threshold = %d, want 15", DerefInt(resolved.NudgeDefaultBraindeadThreshold))
 	}
 }
+
+func TestMaxSystemPromptCharsPerAgentOverride(t *testing.T) {
+	// Proves that max_system_prompt_chars_file / _total can be overridden per agent
+	// in [agents.sessions], that an unset override decodes to nil (inherit global),
+	// and that the Effective* resolvers pick override-then-global correctly.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[sessions]
+max_system_prompt_chars_file = 20000
+max_system_prompt_chars_total = 80000
+
+[[agents]]
+id = "coach"
+[agents.sessions]
+max_system_prompt_chars_file = 24000
+
+[[agents]]
+id = "plain"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	coach := cfg.Agents[0].Sessions
+	plain := cfg.Agents[1].Sessions
+
+	// coach: file overridden, total left to inherit.
+	if coach.MaxSystemPromptFile == nil || *coach.MaxSystemPromptFile != 24000 {
+		t.Errorf("coach MaxSystemPromptFile = %v, want 24000", coach.MaxSystemPromptFile)
+	}
+	if coach.MaxSystemPromptTotal != nil {
+		t.Errorf("coach MaxSystemPromptTotal should be nil (inherit), got %v", coach.MaxSystemPromptTotal)
+	}
+	if got := coach.EffectiveMaxSystemPromptFile(cfg.Sessions.MaxSystemPromptFile); got != 24000 {
+		t.Errorf("coach EffectiveMaxSystemPromptFile = %d, want 24000 (override)", got)
+	}
+	if got := coach.EffectiveMaxSystemPromptTotal(cfg.Sessions.MaxSystemPromptTotal); got != 80000 {
+		t.Errorf("coach EffectiveMaxSystemPromptTotal = %d, want 80000 (inherit global)", got)
+	}
+
+	// plain: no override block → both nil → both inherit global.
+	if plain.MaxSystemPromptFile != nil || plain.MaxSystemPromptTotal != nil {
+		t.Errorf("plain agent should have nil overrides, got file=%v total=%v", plain.MaxSystemPromptFile, plain.MaxSystemPromptTotal)
+	}
+	if got := plain.EffectiveMaxSystemPromptFile(cfg.Sessions.MaxSystemPromptFile); got != 20000 {
+		t.Errorf("plain EffectiveMaxSystemPromptFile = %d, want 20000 (inherit global)", got)
+	}
+	if got := plain.EffectiveMaxSystemPromptTotal(cfg.Sessions.MaxSystemPromptTotal); got != 80000 {
+		t.Errorf("plain EffectiveMaxSystemPromptTotal = %d, want 80000 (inherit global)", got)
+	}
+}

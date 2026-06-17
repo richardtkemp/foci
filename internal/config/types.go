@@ -317,6 +317,26 @@ type AgentSessionsOverride struct {
 	CompactionConfig
 	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"`
+	MaxSystemPromptFile             *int    `toml:"max_system_prompt_chars_file"  desc:"per-file char warning threshold (overrides global [sessions])"`
+	MaxSystemPromptTotal            *int    `toml:"max_system_prompt_chars_total" desc:"total system prompt char warning threshold (overrides global [sessions])"`
+}
+
+// EffectiveMaxSystemPromptFile returns the per-agent per-file char warning
+// threshold if the agent overrides it, else the global [sessions] value.
+func (a AgentSessionsOverride) EffectiveMaxSystemPromptFile(global int) int {
+	if a.MaxSystemPromptFile != nil {
+		return *a.MaxSystemPromptFile
+	}
+	return global
+}
+
+// EffectiveMaxSystemPromptTotal returns the per-agent total system-prompt char
+// warning threshold if the agent overrides it, else the global [sessions] value.
+func (a AgentSessionsOverride) EffectiveMaxSystemPromptTotal(global int) int {
+	if a.MaxSystemPromptTotal != nil {
+		return *a.MaxSystemPromptTotal
+	}
+	return global
 }
 
 // AgentToolsOverride groups the config groups whose global home is [tools].
