@@ -72,7 +72,7 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				},
 				"files": {
 					"type": "array",
-					"description": "File attachments for multipart/form-data upload. When files are present, the request is sent as multipart/form-data. Mutually exclusive with body.",
+					"description": "File attachments for multipart/form-data upload. When files are present, the request is sent as multipart/form-data. Mutually exclusive with body. JSON array of objects: [{\"field_name\": \"file\" (required), \"file_path\": \"/path\" (required), \"filename\": \"override.pdf\" (optional, defaults to basename of file_path)}].",
 					"items": {
 						"type": "object",
 						"properties": {
