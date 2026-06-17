@@ -1,8 +1,11 @@
 package telegram
 
 import (
-	"foci/internal/display"
+	"fmt"
+	"strings"
 	"testing"
+
+	"foci/internal/display"
 )
 
 func TestHTMLEscape(t *testing.T) {
@@ -422,6 +425,171 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConvertToTelegramHTMLNestedEmphasis pins the triple-marker / overlapping
+// emphasis family. These are the cases the sequential bold-then-italic regex
+// passes get wrong: a leading "***" or a "***" closing across an open italic
+// produces crossed tags like "<b><i>x</b> y</i>", which Telegram's parser
+// rejects with "Unmatched end tag ... expected </i>, found </b>".
+//
+// Real-world repro (helen, 2026-06-17): the markdown "***Όποιος** θέλει*"
+// was emitted as "<b><i>Όποιος</b> θέλει</i>" → Telegram 400 → plain-text
+// fallback leaked raw tags to the user. Correct output keeps italic as the
+// outer span: "<i><b>Όποιος</b> θέλει</i>".
+//
+// Expected outputs follow CommonMark emphasis semantics (the inner-most marker
+// binds tightest; when "***" wraps a whole span the emphasis is outer and the
+// strong is inner).
+func TestConvertToTelegramHTMLNestedEmphasis(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "triple marker bold span then italic tail (helen repro)",
+			in:   "***Όποιος** θέλει*",
+			want: "<i><b>Όποιος</b> θέλει</i>",
+		},
+		{
+			name: "triple marker bold span then italic tail ascii",
+			in:   "***bold** rest*",
+			want: "<i><b>bold</b> rest</i>",
+		},
+		{
+			name: "triple marker whole span ascii",
+			in:   "***word***",
+			want: "<i><b>word</b></i>",
+		},
+		{
+			name: "triple marker whole span unicode",
+			in:   "***Όποιος***",
+			want: "<i><b>Όποιος</b></i>",
+		},
+		{
+			name: "italic open then bold tail closing with triple",
+			in:   "*lead **bold***",
+			want: "<i>lead <b>bold</b></i>",
+		},
+		{
+			name: "bold open then italic tail closing with triple",
+			in:   "**lead *italic***",
+			want: "<b>lead <i>italic</i></b>",
+		},
+		{
+			name: "triple marker italic span then bold tail",
+			in:   "*italic* then **bold**",
+			want: "<i>italic</i> then <b>bold</b>",
+		},
+		{
+			name: "bold with underscore italic inside",
+			in:   "**_word_**",
+			want: "<b><i>word</i></b>",
+		},
+		{
+			name: "control: italic wrapping bold (already valid)",
+			in:   "*a **b** c*",
+			want: "<i>a <b>b</b> c</i>",
+		},
+		{
+			name: "control: bold wrapping italic (already valid)",
+			in:   "**a *b* c**",
+			want: "<b>a <i>b</i> c</b>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ConvertToTelegramHTML(tt.in)
+			if got != tt.want {
+				t.Errorf("ConvertToTelegramHTML(%q)\n  got  = %q\n  want = %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestConvertToTelegramHTMLEmphasisWellFormed is the structural backstop: for a
+// corpus of emphasis-heavy inputs, the converter's output must contain only
+// properly-nested formatting tags (no crossed or unclosed tags). This catches
+// the crossed-nesting failure mode generally — Telegram rejects ANY mis-nested
+// tag, not just the specific strings enumerated above — so it guards against
+// regressions in inputs we didn't think to spell out.
+func TestConvertToTelegramHTMLEmphasisWellFormed(t *testing.T) {
+	corpus := []string{
+		"***Όποιος** θέλει*",
+		"***word***",
+		"*lead **bold***",
+		"**lead *italic***",
+		"***a** b **c***",
+		"*a **b** c*",
+		"**a *b* c**",
+		"~~strike *italic* end~~",
+		"__under **bold** line__",
+		"a ***b*** c ***d** e*",
+		"**bold** and *italic* and ~~strike~~",
+		"***",      // bare triple — must not emit unbalanced tags
+		"****word**", // stray marker — must still be well-formed
+	}
+
+	for _, in := range corpus {
+		t.Run(in, func(t *testing.T) {
+			got := ConvertToTelegramHTML(in)
+			if err := checkTagNesting(got); err != nil {
+				t.Errorf("ConvertToTelegramHTML(%q) = %q: %v", in, got, err)
+			}
+		})
+	}
+}
+
+// checkTagNesting verifies that the Telegram formatting tags in s are properly
+// nested using a stack: every closing tag must match the most-recently-opened
+// tag, and all tags must be closed. Only the inline formatting tags Telegram
+// supports are tracked; other "<...>" are ignored (body text is HTML-escaped
+// upstream, so real tag-like text won't appear).
+func checkTagNesting(s string) error {
+	tracked := map[string]bool{"b": true, "i": true, "u": true, "s": true, "tg-spoiler": true, "code": true, "pre": true}
+	var stack []string
+	for i := 0; i < len(s); i++ {
+		if s[i] != '<' {
+			continue
+		}
+		end := strings.IndexByte(s[i:], '>')
+		if end < 0 {
+			break
+		}
+		inner := s[i+1 : i+end]
+		i += end
+		closing := false
+		if strings.HasPrefix(inner, "/") {
+			closing = true
+			inner = inner[1:]
+		}
+		// Strip attributes (e.g. `a href="..."`); we only track bare formatting tags.
+		name := inner
+		if sp := strings.IndexByte(name, ' '); sp >= 0 {
+			name = name[:sp]
+		}
+		if !tracked[name] {
+			continue
+		}
+		if closing {
+			if len(stack) == 0 {
+				return fmt.Errorf("closing </%s> with no open tag", name)
+			}
+			top := stack[len(stack)-1]
+			if top != name {
+				return fmt.Errorf("crossed tags: expected </%s>, found </%s>", top, name)
+			}
+			stack = stack[:len(stack)-1]
+		} else {
+			stack = append(stack, name)
+		}
+	}
+	if len(stack) > 0 {
+		return fmt.Errorf("unclosed tags: %v", stack)
+	}
+	return nil
 }
 
 func TestConvertToTelegramHTMLTableWrapping(t *testing.T) {
