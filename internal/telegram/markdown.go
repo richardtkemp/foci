@@ -14,10 +14,8 @@ var (
 	reInlineCode       = regexp.MustCompile("`([^`]+)`")
 	reLink             = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
 	reSpoiler          = regexp.MustCompile(`\|\|([^\|]+)\|\|`)
-	reBold             = regexp.MustCompile(`(?s)\*\*(.+?)\*\*`)
 	reStrikethrough    = regexp.MustCompile(`~~([^~]+)~~`)
 	reUnderline        = regexp.MustCompile(`__([^_]+)__`)
-	reItalicStar       = regexp.MustCompile(`\*([^\*\n]+)\*`)
 	reItalicUnderscore = regexp.MustCompile(`(^|[^a-z0-9])_([^_\n]+?)_([^a-z0-9]|$)`)
 	reHRule            = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`)
 	reBulletList       = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`)
@@ -104,17 +102,18 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 	// Spoilers: ||text||
 	text = reSpoiler.ReplaceAllString(text, "<tg-spoiler>$1</tg-spoiler>")
 
-	// Bold: **text**
-	text = reBold.ReplaceAllString(text, "<b>$1</b>")
+	// Bold (**), italic (*) and overlapping/triple runs (***): handled together
+	// by a delimiter-stack parser so closing tags always match the
+	// most-recently-opened tag. Independent regex passes cannot do this — they
+	// produced crossed tags like "<b><i>x</b> y</i>" on input "***x** y*",
+	// which Telegram's HTML parser rejects.
+	text = convertStarEmphasis(text)
 
 	// Strikethrough: ~~text~~
 	text = reStrikethrough.ReplaceAllString(text, "<s>$1</s>")
 
 	// Underline: __text__
 	text = reUnderline.ReplaceAllString(text, "<u>$1</u>")
-
-	// Italic: *text* (avoid bold markers which are **)
-	text = reItalicStar.ReplaceAllString(text, "<i>$1</i>")
 
 	// Italic: _text_ (but not when part of snake_case identifiers like word_word_word)
 	// Only matches single-word content between underscores (no additional underscores inside)
@@ -145,6 +144,162 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 	}
 
 	return text
+}
+
+// convertStarEmphasis converts asterisk emphasis — *italic*, **bold**, and
+// overlapping/triple runs like ***x***, ***x** y*, **x *y*** — into properly
+// nested <b>/<i> tags. It uses a delimiter stack so a closing run always
+// matches the most-recently-opened tag, guaranteeing well-formed output. The
+// previous independent bold-then-italic regex passes could not do this: on
+// "***x** y*" they emitted the crossed "<b><i>x</b> y</i>", which Telegram's
+// HTML parser rejects ("Unmatched end tag ... expected </i>, found </b>"),
+// forcing a plain-text fallback that leaked raw tags to the user.
+//
+// Only '*' runs are handled here; '_' italic and '__' underline keep their own
+// passes. Unmatched markers stay literal (preserving "2 * 3", a dangling
+// "**bold", a "* item" bullet, and a standalone "***" rule for later passes).
+//
+// Emphasis pairing follows CommonMark's flanking rules in simplified form: a
+// run can open only if the char after it is non-space, and can close only if
+// the char before it is non-space. When a run wraps a whole span (odd length),
+// italic is the outer tag and bold the inner (matching "<em><strong>").
+func convertStarEmphasis(s string) string {
+	type openTag struct {
+		typ  byte // 'b' or 'i'
+		node int  // index into nodes of the opening run
+		seq  int  // index into that node's opens slice
+	}
+	type emit struct {
+		closes []byte // tag types closed here, in order (inner→outer)
+		litPre int    // literal stars emitted before opens (unmatched leftovers)
+		opens  []byte // tag types opened here, in order (outer→inner)
+		commit []bool // parallel to opens: whether each open was matched
+		text   string // literal text (for non-star nodes)
+		star   bool
+	}
+
+	isSpace := func(b byte) bool { return b == 0 || b == ' ' || b == '\t' || b == '\n' || b == '\r' }
+
+	// Tokenize into star-run nodes and literal-text nodes.
+	var nodes []emit
+	for i := 0; i < len(s); {
+		if s[i] == '*' {
+			j := i
+			for j < len(s) && s[j] == '*' {
+				j++
+			}
+			nodes = append(nodes, emit{star: true})
+			// store run length transiently in litPre; resolved during matching
+			nodes[len(nodes)-1].litPre = j - i
+			// flanking flags packed via text field is ugly; compute inline below
+			i = j
+		} else {
+			j := i
+			for j < len(s) && s[j] != '*' {
+				j++
+			}
+			nodes = append(nodes, emit{text: s[i:j]})
+			i = j
+		}
+	}
+
+	// Second walk: matching. We need flanking context, so recompute run bounds.
+	var stack []openTag
+	// Recover per-node remaining-star counts (stored in litPre at tokenize time).
+	rem := make([]int, len(nodes))
+	canOpen := make([]bool, len(nodes))
+	canClose := make([]bool, len(nodes))
+	{
+		pos := 0
+		for idx, n := range nodes {
+			if n.star {
+				runLen := n.litPre
+				var prev, next byte
+				if pos > 0 {
+					prev = s[pos-1]
+				}
+				if pos+runLen < len(s) {
+					next = s[pos+runLen]
+				}
+				rem[idx] = runLen
+				canOpen[idx] = !isSpace(next)
+				canClose[idx] = !isSpace(prev)
+				nodes[idx].litPre = 0 // reset; becomes true leftover count below
+				pos += runLen
+			} else {
+				pos += len(n.text)
+			}
+		}
+	}
+
+	for idx := range nodes {
+		if !nodes[idx].star {
+			continue
+		}
+		r := rem[idx]
+		// Closing phase: consume open tags from the top of the stack.
+		if canClose[idx] {
+			for r > 0 && len(stack) > 0 {
+				top := stack[len(stack)-1]
+				need := 1
+				if top.typ == 'b' {
+					need = 2
+				}
+				if r < need {
+					break
+				}
+				r -= need
+				stack = stack[:len(stack)-1]
+				nodes[top.node].commit[top.seq] = true
+				nodes[idx].closes = append(nodes[idx].closes, top.typ)
+			}
+		}
+		// Opening phase: italic outer (if odd), then bold pairs.
+		if canOpen[idx] {
+			if r%2 == 1 {
+				nodes[idx].opens = append(nodes[idx].opens, 'i')
+				nodes[idx].commit = append(nodes[idx].commit, false)
+				stack = append(stack, openTag{typ: 'i', node: idx, seq: len(nodes[idx].opens) - 1})
+				r--
+			}
+			for r >= 2 {
+				nodes[idx].opens = append(nodes[idx].opens, 'b')
+				nodes[idx].commit = append(nodes[idx].commit, false)
+				stack = append(stack, openTag{typ: 'b', node: idx, seq: len(nodes[idx].opens) - 1})
+				r -= 2
+			}
+		}
+		nodes[idx].litPre = r // whatever stars neither closed nor opened
+	}
+
+	// Emit. Committed opens/closes become tags; uncommitted opens revert to
+	// literal stars (i=1 star, b=2 stars). Order within a run: closes, then any
+	// pure-leftover stars, then opens.
+	tagOpen := map[byte]string{'b': "<b>", 'i': "<i>"}
+	tagClose := map[byte]string{'b': "</b>", 'i': "</i>"}
+	var b strings.Builder
+	for _, n := range nodes {
+		if !n.star {
+			b.WriteString(n.text)
+			continue
+		}
+		for _, t := range n.closes {
+			b.WriteString(tagClose[t])
+		}
+		if n.litPre > 0 {
+			b.WriteString(strings.Repeat("*", n.litPre))
+		}
+		for k, t := range n.opens {
+			if n.commit[k] {
+				b.WriteString(tagOpen[t])
+			} else if t == 'b' {
+				b.WriteString("**")
+			} else {
+				b.WriteString("*")
+			}
+		}
+	}
+	return b.String()
 }
 
 // Placeholder format for code extraction. We use NUL-byte delimiters rather
