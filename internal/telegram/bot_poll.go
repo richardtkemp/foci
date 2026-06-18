@@ -24,6 +24,16 @@ const ipv4SwitchThreshold = 3
 // recovery (so a sustained outage is one ERROR per bot, not one per poll).
 const errorEscalateThreshold = 5
 
+// maxIPv4Reverts bounds how many times the bot will revert IPv4→dual-stack to
+// retry IPv6 after a switch. The 2026-06-07 blackhole (#809) self-healed in
+// ~34 min, so the v6 path is worth retrying once polling recovers — but a
+// genuinely persistent blackhole would otherwise flap forever (revert → re-
+// blackhole → re-switch). After this many flap cycles with no healthy
+// dual-stack poll in between, we latch IPv4 for the process. A successful
+// dual-stack poll restores the full budget, so unrelated future incidents
+// aren't starved by earlier flapping. Per-pollUpdates-invocation.
+const maxIPv4Reverts = 3
+
 // isTimeoutErr reports whether a getUpdates error is a timeout — the signature
 // of the IPv6 read-stall (TODO #809). Covers both the http.Client deadline
 // ("context deadline exceeded") and the underlying socket read timeout
@@ -54,20 +64,22 @@ type pollErrorAction struct {
 //
 //   - onIPv4: whether the bot has already latched to IPv4-only.
 //   - isTimeout: whether the error is a timeout (the IPv6-blackhole signature).
-//   - consecutiveErrors: failure count including this one.
+//   - consecutiveTimeouts: run of consecutive *timeout* failures (reset by any
+//     non-timeout error) — the actual blackhole signature.
+//   - consecutiveErrors: run of consecutive failures of any kind, for escalation.
 //
-// While still dual-stack, a run of timeouts is the suspected IPv6 blackhole: we
-// switch to IPv4 and stay quiet — the switch IS the recovery, so there is
-// nothing to alarm about (Dick's rule: "the switch-to-4 process does not error
-// or warn"). Once on IPv4 — or for any non-timeout error — normal escalation
-// applies, so an ERROR fires only if IPv4 itself keeps failing ("only error or
-// warn if we still get failures on 4").
-func classifyPollError(onIPv4, isTimeout bool, consecutiveErrors int) pollErrorAction {
-	if !onIPv4 && isTimeout {
-		if consecutiveErrors >= ipv4SwitchThreshold {
-			return pollErrorAction{switchToIPv4: true}
-		}
-		return pollErrorAction{} // keep counting on IPv6, silently
+// The switch gates on consecutiveTimeouts, NOT consecutiveErrors: the
+// 2026-06-07 blackhole (#809) was an unbroken run of read timeouts, whereas a
+// mix of 429/502/timeout is ordinary Telegram-side noise that IPv4 can't fix.
+// While still dual-stack, a sustained run of timeouts is the suspected IPv6
+// blackhole: we switch to IPv4 and stay quiet — the switch IS the recovery
+// (Dick's rule: "the switch-to-4 process does not error or warn"). Once on
+// IPv4 — or for any non-timeout-dominated failure run — normal escalation
+// applies, so an ERROR fires only if failures persist ("only error or warn if
+// we still get failures on 4").
+func classifyPollError(onIPv4, isTimeout bool, consecutiveTimeouts, consecutiveErrors int) pollErrorAction {
+	if !onIPv4 && isTimeout && consecutiveTimeouts >= ipv4SwitchThreshold {
+		return pollErrorAction{switchToIPv4: true}
 	}
 	return pollErrorAction{escalate: consecutiveErrors == errorEscalateThreshold}
 }
@@ -75,8 +87,9 @@ func classifyPollError(onIPv4, isTimeout bool, consecutiveErrors int) pollErrorA
 // switchToIPv4 latches the bot's transport to IPv4-only and drops pooled IPv6
 // sockets so the next dial takes the IPv4 path. Idempotent and safe on
 // test-constructed bots (nil forceIPv4). Logs at INFO — not WARN/ERROR —
-// because the switch is a successful self-heal, not a fault.
-func (b *Bot) switchToIPv4(afterFailures int) {
+// because the switch is a successful self-heal, not a fault. The poll loop may
+// later revert to dual-stack on recovery (see revertToDualStack).
+func (b *Bot) switchToIPv4(afterTimeouts int) {
 	if b.forceIPv4 == nil {
 		return // test-constructed bot without transport wiring
 	}
@@ -86,7 +99,27 @@ func (b *Bot) switchToIPv4(afterFailures int) {
 	if b.transport != nil {
 		b.transport.CloseIdleConnections()
 	}
-	b.logger().Infof("switched Telegram API to IPv4-only after %d consecutive IPv6 timeouts (suspected IPv6 blackhole to api.telegram.org — TODO #809); will not revert this process", afterFailures)
+	b.logger().Infof("switched Telegram API to IPv4-only after %d consecutive IPv6 read timeouts (suspected IPv6 blackhole to api.telegram.org — TODO #809); will retry dual-stack on recovery", afterTimeouts)
+}
+
+// revertToDualStack clears the IPv4-only latch so the next dial re-races
+// dual-stack (v6-preferred), and drops pooled IPv4 sockets so the next dial
+// actually re-resolves. The counterpart to switchToIPv4: the 2026-06-07
+// blackhole (#809) self-healed in ~34 min, so the v6 path is worth retrying
+// once polling recovers on IPv4. Bounded by maxIPv4Reverts in the caller so a
+// persistent blackhole eventually latches IPv4 for good rather than flapping.
+// Idempotent and nil-safe on test-constructed bots.
+func (b *Bot) revertToDualStack(revertCount int) {
+	if b.forceIPv4 == nil {
+		return // test-constructed bot without transport wiring
+	}
+	if !b.forceIPv4.Swap(false) {
+		return // already dual-stack
+	}
+	if b.transport != nil {
+		b.transport.CloseIdleConnections()
+	}
+	b.logger().Infof("reverted Telegram API to dual-stack after recovery (revert %d/%d; retrying IPv6 — TODO #809)", revertCount, maxIPv4Reverts)
 }
 
 // RegisterCommands registers the bot's slash commands with Telegram via setMyCommands.
@@ -177,6 +210,15 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 
 	var offset int64
 	var consecutiveErrors int
+	// consecutiveTimeouts tracks the run of *timeout* failures (reset by any
+	// non-timeout error). This — not consecutiveErrors — gates the IPv4 switch,
+	// so a mix of 429/502/timeout (ordinary Telegram-side noise) can't trip it.
+	var consecutiveTimeouts int
+	// IPv4 revert accounting (see maxIPv4Reverts). ipv4Reverts counts flap
+	// cycles since the last healthy dual-stack poll; ipv4Permanent latches once
+	// the budget is spent so we stop retrying IPv6 for this process.
+	var ipv4Reverts int
+	var ipv4Permanent bool
 	// Error backoff: exponential from baseBackoff, doubling per consecutive
 	// failure, capped at maxBackoff, reset on first success. This stops a
 	// fast-failing error (e.g. a 502 that returns immediately instead of
@@ -244,29 +286,36 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 		case res := <-ch:
 			if res.err != nil {
 				consecutiveErrors++
+				timeout := isTimeoutErr(res.err)
+				if timeout {
+					consecutiveTimeouts++
+				} else {
+					consecutiveTimeouts = 0
+				}
 				sanitized := b.sanitizeError(res.err)
-				// Decide how to react. While dual-stack, a run of timeouts is
+				// Decide how to react. While dual-stack, a run of *timeouts* is
 				// the suspected IPv6 blackhole (TODO #809): switch to IPv4-only
 				// silently — the switch is the self-heal. Otherwise (already on
-				// IPv4, or a non-timeout error) escalate to ERROR exactly once,
-				// on the poll that crosses the threshold; every failure before
-				// and after stays at DEBUG so a sustained outage produces a
-				// single ERROR per bot rather than one per poll. Recovery is
+				// IPv4, or a non-timeout-dominated run) escalate to ERROR exactly
+				// once, on the poll that crosses the threshold; every failure
+				// before and after stays at DEBUG so a sustained outage produces
+				// a single ERROR per bot rather than one per poll. Recovery is
 				// logged once on the next success (see below).
-				action := classifyPollError(b.ipv4Latched(), isTimeoutErr(res.err), consecutiveErrors)
+				action := classifyPollError(b.ipv4Latched(), timeout, consecutiveTimeouts, consecutiveErrors)
 				switch {
 				case action.switchToIPv4:
-					b.switchToIPv4(consecutiveErrors)
+					b.switchToIPv4(consecutiveTimeouts)
 					// Restart escalation accounting on the new IPv4 path, so an
 					// ERROR fires only if IPv4 *also* racks up failures.
 					consecutiveErrors = 0
+					consecutiveTimeouts = 0
 				case action.escalate:
 					b.logger().Errorf("get updates failing (%d consecutive failures; further failures logged at debug until recovery): %s", consecutiveErrors, sanitized)
 				default:
 					b.logger().Debugf("get updates (failure #%d): %s", consecutiveErrors, sanitized)
 				}
-				b.logger().Extra("poll_error consecutive=%d on_ipv4=%v is_timeout=%v action_switch=%v action_escalate=%v err=%s",
-					consecutiveErrors, b.ipv4Latched(), isTimeoutErr(res.err), action.switchToIPv4, action.escalate, sanitized)
+				b.logger().Extra("poll_error consecutive=%d timeouts=%d on_ipv4=%v is_timeout=%v action_switch=%v action_escalate=%v err=%s",
+					consecutiveErrors, consecutiveTimeouts, b.ipv4Latched(), timeout, action.switchToIPv4, action.escalate, sanitized)
 
 				// Exponential backoff, capped.
 				wait := baseBackoff
@@ -297,7 +346,29 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			if consecutiveErrors >= errorEscalateThreshold {
 				b.logger().Infof("get updates recovered after %d consecutive failures", consecutiveErrors)
 			}
+			// IPv4 latch management. A successful poll while latched means the
+			// v6 blackhole that triggered the switch may have healed (it did on
+			// 2026-06-07, #809) — so retry dual-stack rather than abandon IPv6
+			// for the whole process. Bounded by maxIPv4Reverts: in a flap the
+			// post-revert poll fails on the still-dead v6 path (no success
+			// between reverts), so the budget is spent and we eventually latch
+			// IPv4 permanently. A genuine recovery yields a *dual-stack* success
+			// (the else branch), which restores the full budget.
+			if b.ipv4Latched() {
+				if !ipv4Permanent {
+					if ipv4Reverts < maxIPv4Reverts {
+						ipv4Reverts++
+						b.revertToDualStack(ipv4Reverts)
+					} else {
+						ipv4Permanent = true
+						b.logger().Infof("keeping Telegram API on IPv4-only for this process: %d dual-stack reverts kept re-hitting the IPv6 blackhole (#809)", ipv4Reverts)
+					}
+				}
+			} else if ipv4Reverts > 0 {
+				ipv4Reverts = 0
+			}
 			consecutiveErrors = 0
+			consecutiveTimeouts = 0
 
 			for _, update := range res.updates {
 				if update.UpdateId >= offset {
