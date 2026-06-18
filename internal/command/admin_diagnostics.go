@@ -78,9 +78,12 @@ func StatusCommand() *Command {
 			sk := tools.SessionKeyFromContext(ctx)
 			model := cc.Agent.SessionModel(sk)
 
+			compacting := cc.Agent.IsCompacting(sk)
 			status := "idle"
 			if cc.Agent.IsTurnInFlight(session.SessionKeyBase(sk)) {
 				status = "processing"
+			} else if compacting {
+				status = "compacting"
 			}
 
 			// Query all session stats from api.db — works for both API
@@ -148,7 +151,7 @@ func StatusCommand() *Command {
 
 			// Backend liveness for delegated agents.
 			if cc.Agent.DelegatedManager != nil {
-				if info := cc.Agent.DelegatedManager.BackendInfo(sk); info != "" {
+				if info := cc.Agent.DelegatedManager.BackendInfo(sk, compacting); info != "" {
 					fmt.Fprintf(&sb, "\n\n🔌 Backend: %s", info)
 				}
 			}
