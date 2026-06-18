@@ -727,8 +727,11 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 }
 
 // BackendInfo returns a human-readable status line for the backend serving
-// the given session key. Returns "" if no backend exists.
-func (m *DelegatedManager) BackendInfo(sessionKey string) string {
+// the given session key. Returns "" if no backend exists. compacting is the
+// agent-level compaction-in-flight state (see Agent.IsCompacting) — passed in
+// because compaction is a fire-and-forget slash command that never sets the
+// backend's turn-in-flight flag (#725).
+func (m *DelegatedManager) BackendInfo(sessionKey string, compacting bool) string {
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		return ""
@@ -742,6 +745,10 @@ func (m *DelegatedManager) BackendInfo(sessionKey string) string {
 		status = "dead"
 	} else if inFlight {
 		status = "processing"
+	} else if compacting {
+		// Compaction is a fire-and-forget slash command: it never sets the
+		// in-flight flag, so without this the backend reads "idle" mid-compact (#725).
+		status = "compacting"
 	}
 
 	info := status

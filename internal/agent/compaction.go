@@ -10,10 +10,41 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/provider"
+	"foci/internal/session"
 	"foci/shared/prompts"
 )
 
 const delegatedCompactTimeout = 5 * time.Minute
+
+// markCompacting / clearCompacting / IsCompacting latch whether a compaction
+// is in flight for a session, so /status can show "compacting" instead of
+// "idle" (#725). The key is normalised to SessionKeyBase because compaction
+// rotates the session version mid-flight — set and clear would otherwise miss
+// each other. The stored deadline is a self-heal backstop: if a compaction
+// errors between mark and clear (so the defer-clear is skipped only on a
+// panic that unwinds past it), the latch expires rather than wedging forever.
+func (a *Agent) markCompacting(sessionKey string) {
+	a.compacting.Store(session.SessionKeyBase(sessionKey), time.Now().Add(delegatedCompactTimeout))
+}
+
+func (a *Agent) clearCompacting(sessionKey string) {
+	a.compacting.Delete(session.SessionKeyBase(sessionKey))
+}
+
+// IsCompacting reports whether a compaction is currently in flight for the
+// session (keyed by SessionKeyBase). Expired latches self-heal on read.
+func (a *Agent) IsCompacting(sessionKey string) bool {
+	base := session.SessionKeyBase(sessionKey)
+	v, ok := a.compacting.Load(base)
+	if !ok {
+		return false
+	}
+	if time.Now().After(v.(time.Time)) {
+		a.compacting.Delete(base)
+		return false
+	}
+	return true
+}
 
 // CompactResult holds the outcome of a compaction operation.
 type CompactResult struct {
@@ -29,6 +60,10 @@ type CompactResult struct {
 // memory formation) and post-compaction cleanup (bootstrap reload, cache
 // invalidation) since those differ between auto-compaction and manual compaction.
 func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provider.SystemBlock, oldCount int, dryRun bool) (CompactResult, error) {
+	if !dryRun {
+		a.markCompacting(sessionKey)
+		defer a.clearCompacting(sessionKey)
+	}
 	if dryRun {
 		for _, fn := range a.CompactionStartFunc {
 			fn(sessionKey, "⏳ Running compaction dry-run...")
@@ -94,6 +129,12 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	if summaryPrompt == "" {
 		return fmt.Errorf("compaction summary prompt is empty")
 	}
+
+	// Latch compaction-in-flight for /status; cleared on every return path
+	// (success, error, timeout). The defer is the load-bearing clear — the
+	// deadline stored by markCompacting is only a backstop (#725).
+	a.markCompacting(sessionKey)
+	defer a.clearCompacting(sessionKey)
 
 	cctx, cancel := context.WithTimeout(ctx, delegatedCompactTimeout)
 	defer cancel()

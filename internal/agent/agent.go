@@ -154,6 +154,13 @@ type Agent struct {
 	metaMu             sync.Mutex
 	meta               map[string]*sessionMeta // per-session metadata
 
+	// compacting latches compaction-in-flight per session so /status reports
+	// "compacting" rather than "idle" while a summary turn runs. Keyed by
+	// SessionKeyBase (compaction-invariant — the version rotates mid-compact)
+	// → time.Time deadline for self-heal. Set/cleared around the compaction
+	// brackets in compaction.go; read via IsCompacting (#725).
+	compacting sync.Map
+
 	// Inbox subsystem (Phase 6 — TODO #739): per-session message queue
 	// + worker. Bot calls Enqueue(envelope) after filtering; agent owns
 	// queueing, batching, steer dispatch, and turn execution via the
