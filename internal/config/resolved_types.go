@@ -359,6 +359,7 @@ type ResolvedDisplay struct {
 	DisplayWidth          int
 	ReceivedFilesDir      string
 	InjectedMessageHeader string
+	Statusline            string
 }
 
 func resolveDisplay(m DisplayConfig) ResolvedDisplay {
@@ -379,6 +380,7 @@ func resolveDisplay(m DisplayConfig) ResolvedDisplay {
 		DisplayWidth:          DerefInt(m.DisplayWidth),
 		ReceivedFilesDir:      DerefStr(m.ReceivedFilesDir),
 		InjectedMessageHeader: DerefStr(m.InjectedMessageHeader),
+		Statusline:            DerefStr(m.Statusline),
 	}
 }
 

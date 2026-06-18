@@ -127,6 +127,7 @@ type Agent struct {
 	FirstRunMessage                         atomic.Value                            // string; prepended as separate content block on first HandleMessage, then cleared
 	TurnLockWarnThreshold                   time.Duration                           // warn if turn lock wait exceeds this (default 3m)
 	ShowToolCalls                           string                                  // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
+	Statusline                              string                                  // per-agent [meta]/[state] header template; "" = DefaultStatuslineTemplate (#831)
 	Streaming                               bool                                    // use streaming API when provider supports it
 	ModelMetaFn                             func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
 	ModelDefaultsFn                         func(model string) config.ModelDefaults // returns per-model defaults from [models.*] config; nil = no model defaults

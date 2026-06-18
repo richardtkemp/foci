@@ -83,6 +83,7 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		PromptSearchDirs:  s.promptSearchDirs,
 		Reflection:        s.p.resolved.Reflection,
 		ShowToolCalls:     resolveShowToolCalls(s.p.resolved),
+		Statusline:        s.p.resolved.Display.Statusline,
 	}
 }
 

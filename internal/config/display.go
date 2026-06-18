@@ -96,6 +96,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Display.InjectedMessageHeader != nil && *cfg.Display.InjectedMessageHeader != "" {
 		add("display", "injected_message_header", *cfg.Display.InjectedMessageHeader)
 	}
+	if cfg.Display.Statusline != nil && *cfg.Display.Statusline != "" {
+		add("display", "statusline", *cfg.Display.Statusline)
+	}
 	if len(cfg.System.SystemFiles) > 0 {
 		add("system", "system_files", cfg.System.SystemFiles)
 	}
@@ -433,6 +436,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if agent.Display.InjectedMessageHeader != nil && *agent.Display.InjectedMessageHeader != "" {
 		add("injected_message_header", *agent.Display.InjectedMessageHeader)
+	}
+	if agent.Display.Statusline != nil && *agent.Display.Statusline != "" {
+		add("statusline", *agent.Display.Statusline)
 	}
 	if tg != nil && len(tg.Access.AllowedUsers) > 0 {
 		add("platforms.telegram.allowed_users", tg.Access.AllowedUsers)

@@ -38,9 +38,26 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 
 	var p turnTextParts
 
-	p.MetaPrefix = buildMetaPrefix(now, turnModel, platName, manaStr, manaGood, sm)
+	// The statusline template owns both the [meta] and [state] lines (#831).
+	// Empty config falls back to the default template, which reproduces the
+	// historical two-line header byte-for-byte. The whole rendered block goes
+	// into MetaPrefix; StateDashboard stays empty (the [state] line, if any, is
+	// inside the rendered template).
+	tmpl := a.Statusline
+	if tmpl == "" {
+		tmpl = DefaultStatuslineTemplate
+	}
+	p.MetaPrefix = a.renderStatusline(ctx, tmpl, statuslineInputs{
+		now:        now,
+		model:      turnModel,
+		platform:   platName,
+		manaStr:    manaStr,
+		manaGood:   manaGood,
+		sm:         sm,
+		agent:      a,
+		sessionKey: sessionKey,
+	})
 	p.Reminders = a.collectReminders(sessionKey)
-	p.StateDashboard = a.collectStateDashboard(sessionKey)
 
 	// Attachment path annotations.
 	var attachParts []string

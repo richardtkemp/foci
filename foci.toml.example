@@ -50,6 +50,7 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # [defaults.display]
 # streaming = false                        # use streaming API
 # injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
+# statusline = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens} {mana}\n[state] {state}"  # per-message [meta]/[state] header template; see docs/CONFIG.md for the field list and ${cmd} embedding
 
 # [defaults.notify]
 # inject_agent_warnings = "off"            # inject warnings into agent session: "all", "errors", "off"
