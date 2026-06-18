@@ -131,17 +131,19 @@ type Bot struct {
 	mediaGroupMu sync.Mutex
 	mediaGroups  map[string]*mediaGroupEntry
 
-	// forceIPv4, once latched true, makes the bot's HTTP transport dial
-	// api.telegram.org over IPv4 only. It is set once by switchToIPv4 after a
-	// sustained run of IPv6 read timeouts (TODO #809) and never reverted for
-	// the process lifetime. Pointer (not value) so the dialer closure — built
-	// in NewBot before this struct exists — and the poll loop share one flag
-	// without copying an atomic. nil on test-constructed bots (struct literal);
-	// always read via ipv4Latched(), never directly.
+	// forceIPv4, when latched true, makes the bot's HTTP transport dial
+	// api.telegram.org over IPv4 only. switchToIPv4 sets it after a sustained
+	// run of IPv6 read timeouts (TODO #809); revertToDualStack clears it again
+	// once polling recovers, so a transient blackhole doesn't abandon IPv6 for
+	// the process lifetime (bounded by maxIPv4Reverts to stop flapping).
+	// Pointer (not value) so the dialer closure — built in NewBot before this
+	// struct exists — and the poll loop share one flag without copying an
+	// atomic. nil on test-constructed bots (struct literal); always read via
+	// ipv4Latched(), never directly.
 	forceIPv4 *atomic.Bool
-	// transport is the bot's HTTP transport. switchToIPv4 calls
-	// CloseIdleConnections on it so pooled IPv6 sockets are dropped and the
-	// next dial takes the IPv4-only path. nil on test-constructed bots.
+	// transport is the bot's HTTP transport. switchToIPv4/revertToDualStack call
+	// CloseIdleConnections on it so pooled sockets for the abandoned address
+	// family are dropped and the next dial re-resolves. nil on test bots.
 	transport *http.Transport
 }
 
@@ -275,9 +277,11 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 	// runtime. Normal operation dials dual-stack ("tcp", v6-preferred). When the
 	// poll loop sees the timeout signature (see classifyPollError / switchToIPv4
 	// in bot_poll.go) it latches forceIPv4, and every subsequent dial uses
-	// "tcp4" — IPv4 only. The latch is one-way and never reverts for the process
-	// lifetime: v4 has been reliable, and not flapping back avoids re-entering
-	// the blackhole. A fresh process starts dual-stack again.
+	// "tcp4" — IPv4 only. The latch is NOT permanent: revertToDualStack clears
+	// it once polling recovers, because the observed blackhole self-healed in
+	// ~34 min (#809) and v6 is the preferred path. A persistent blackhole that
+	// keeps re-tripping the switch latches IPv4 for the process after
+	// maxIPv4Reverts flap cycles. A fresh process always starts dual-stack.
 	forceIPv4 := &atomic.Bool{}
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
