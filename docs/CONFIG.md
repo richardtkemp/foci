@@ -112,6 +112,7 @@ auto_thread = true
 | `streaming` | bool | `false` | Use streaming API. Per-platform override for `[display] streaming`. |
 | `received_files_dir` | string | `""` | Save received files to this directory. Empty disables. |
 | `injected_message_header` | string | `"[[ System message ]]"` | Header prepended to injected/system messages. Empty disables. |
+| `statusline` | string | `""` | Template for the per-message `[meta]`/`[state]` header. Empty uses the built-in default. See [Statusline template](#statusline-template). |
 
 #### Notify fields (`[platforms.notify]`)
 
@@ -856,6 +857,40 @@ Supported keys: `show_tool_calls`, `show_thinking`, `stream_output`, `display_wi
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). Overridable at runtime via `/display`. |
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped), `"compact"` (toggle button), `"true"` (always shown). Accepts bool (`true` → `"true"`, `false` → `"off"`). Overridable at runtime via `/display`. |
 | `injected_message_header` | string | `"[[ System message ]]"` | Header prepended to injected/system messages (keepalive, async notifier, HTTP API, proactive warnings) so users can distinguish them from agent replies. Empty string disables the header. |
+| `statusline` | string | `""` | Template for the per-message `[meta]`/`[state]` header the agent receives. Empty uses the built-in default. See [Statusline template](#statusline-template). |
+
+#### Statusline template
+
+The `statusline` controls the `[meta]`/`[state]` header prepended to every message an agent receives. When empty, the built-in default reproduces the historical two-line header:
+
+```
+[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens} {mana}
+[state] {state}
+```
+
+Two interpolation forms:
+
+- `{field}` — a built-in field (below). Unknown names are left verbatim so typos are visible.
+- `${command}` — runs `sh -c command` and embeds its stdout. Runs on **every turn**, bounded by a 3s timeout and a 4KB output cap; any failure embeds nothing and never blocks the turn. Stdout newlines are flattened to spaces. The command runs as trusted config — but note its **output** is injected into the prompt, so a script pulling in untrusted data is a prompt-injection vector.
+
+Rendering rules: conditional fields self-omit to empty; runs of spaces are collapsed and each line trimmed; a line whose every placeholder rendered empty is dropped (this is what makes the `[state]` line vanish when all stores are empty).
+
+Available fields:
+
+| Field | Renders | Notes |
+|-------|---------|-------|
+| `{time}` | message timestamp (RFC3339) | always |
+| `{gap}` | time since last message, or `none` | always |
+| `{model}` | resolved model | always |
+| `{via}` | platform (`telegram`/`api`/`cron`/…) | always |
+| `{cost}` | `prev_cost=$X` | empty on first message |
+| `{tokens}` | `prev_tokens=in:…/out:…/cR:…/cW:…` | empty on first message |
+| `{mana}` | `mana=NN% 🟢`/`🔴` | empty when mana unavailable |
+| `{state}` | `tasks: … \| todos: … \| scratchpad: …` | composite; empty when all stores empty |
+| `{todos}` / `{tasks}` / `{scratchpad}` | individual labelled state part | self-omit when empty |
+| `{cost_raw}` | `$X` | bare value, always |
+| `{tokens_in}` / `{tokens_out}` / `{cache_read}` / `{cache_write}` | token count | bare value, always |
+| `{mana_pct}` / `{mana_flag}` | `NN%` / `🟢`\|`🔴` | bare; `{mana_flag}` empty when unavailable |
 
 ### Message Handling
 

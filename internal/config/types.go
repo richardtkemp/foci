@@ -493,6 +493,7 @@ type DisplayConfig struct {
 	DisplayWidth          *int             `toml:"display_width"           desc:"display width for dividers"`                                       // display width for dividers
 	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"save received files to this directory"`                            // save received files to this directory
 	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"header prepended to injected messages"`                            // header prepended to injected messages
+	Statusline            *string          `toml:"statusline"              desc:"template for the per-message [meta]/[state] header; empty = built-in default"` // per-message header template (#831)
 }
 
 // AccessConfig holds access control settings that can be set at any level

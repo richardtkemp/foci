@@ -55,7 +55,7 @@ All of this works unchanged when you delegate to CC:
 
 - **Reminders, scratchpad, todos, task list** — Foci-side state, injected into each prompt as text blocks.
 - **Nudges** — regex and every-N-turn triggers prepend to the user message.
-- **Message metadata** — `[meta]` / `[reminders]` / `[state]` prefix is composed by `composeTurnText` and joined into flat text via `JoinPrompt()` (instead of rich content blocks).
+- **Message metadata** — the `[meta]`/`[state]` statusline block (rendered from the `statusline` template; default reproduces the historical two lines) plus any `[reminders]` block is composed by `composeTurnText` and joined into flat text via `JoinPrompt()` (instead of rich content blocks).
 - **Platform connections** — Telegram, Discord, Android, HTTP, voice — the reply stream is the same.
 - **Command dispatch** — `/sessions`, `/config`, `/mana`, `/stop`, `/reset`, `/facet`, etc. Foci handles them normally. `/model` goes via the ControlSender pattern. `/compact` — both manual (`/compact` command) and auto (threshold / mana-refresh) — dispatches through `Agent.runDelegatedCompact`, which sends `/compact <foci-summary-prompt>` to CC and waits for the `compact_boundary` stream event. `/pass` and a small set of other forward-only commands (e.g. unhandled CC slash commands) are sent to the backend via `Backend.Inject(SourcePass)` — a fire-and-forget send that bypasses the turn handler so a forwarded `/context` doesn't get treated as a user turn.
 - **Attachments** — images and documents become `[Image saved to: ...]` path annotations so CC can `Read` them from disk.

@@ -145,7 +145,7 @@ Converted text is subject to the tool result size guard (`max_result_chars`): ov
 
 ### Message Metadata
 
-Each user message injected into the conversation carries metadata the agent can see. This is NOT in the system prompt (that would bust cache) — it's prepended to the user message content.
+Each user message injected into the conversation carries metadata the agent can see. This is NOT in the system prompt (that would bust cache) — it's prepended to the user message content. The exact lines are produced by the per-agent `statusline` template (the default reproduces the `[meta]`/`[state]` layout shown below); see `docs/CONFIG.md` for the field list and `${cmd}` embedding.
 
 ```
 [meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 prev_cost=$0.043 prev_tokens=in:2400/out:312/cR:18000/cW:200

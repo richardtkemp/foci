@@ -517,7 +517,7 @@ Used by permission prompts (delegated backends), config selection menus, and oth
 
 ```
 1. sessions.LoadFull(sessionKey)          ← parent[:branchPoint] + own msgs
-2. buildMetaPrefix() + prepend to user message text
+2. renderStatusline() + prepend to user message text   ← statusline template ([meta]/[state]); buildMetaPrefix removed (#831)
 3. build content blocks: image/document block(s) first, then text block (with metadata)
 4. append user message
 4b. nudge StartTurn + prepend regex/every_n_turns nudge ContentBlocks to user message (if any triggers fire)
@@ -759,9 +759,9 @@ The agent can defer thoughts for later via the `remind` tool. Reminders are stor
 **Example injected message:**
 ```
 [meta] time=2026-02-21T05:30:00Z gap=45m0s
+[state] task: 3/7 "Boil an egg" → Bring water to rolling boil | todos: 2 open (1 high) | scratchpad: 1 entry
 [reminders]
 - Look into FTS5 phrase boosting (set 2h, due: 2026-02-21 05:00)
-[state] task: 3/7 "Boil an egg" → Bring water to rolling boil | todos: 2 open (1 high) | scratchpad: 1 entry
 Hello, what should I work on?
 ```
 
@@ -796,7 +796,7 @@ CRUD task tracker. Individual tasks with auto-incrementing IDs per agent (not pe
 
 **Compaction survival:** When compaction fires, active tasks are serialized and appended to the handoff message as a `[task list]` block, similar to scratchpad.
 
-**State dashboard:** A `[state]` line is injected into every user message (in `prepareUserMessage`, after `[reminders]`) showing a one-line summary of active stores. Components shown only when non-empty: task progress (`tasks: 2/5 → first active`), open todo count, scratchpad entry count. Queries `TaskListStore`, `TodoStore`, and `ScratchpadStore` on the Agent struct.
+**State dashboard:** A `[state]` line is rendered as the second line of the statusline template (`[state] {state}` in the default), so it now sits with `[meta]` *before* any `[reminders]` block (#831 merged the old separate `[state]` generator into the template). The `{state}` field calls `stateDashboardBody`, joining components shown only when non-empty: task progress (`tasks: 2/5 → first active`), open todo count, scratchpad entry count. Queries `TaskListStore`, `TodoStore`, and `ScratchpadStore` on the Agent struct. The whole line self-omits when every store is empty (statusline rule 3). The granular `{todos}`, `{tasks}`, `{scratchpad}` fields render these individually — see the `statusline` config in `docs/CONFIG.md`.
 
 **Example task list display:**
 ```

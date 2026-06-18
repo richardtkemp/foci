@@ -56,65 +56,95 @@ func (a *Agent) collectReminders(sessionKey string) string {
 	return block
 }
 
-// collectStateDashboard builds a one-line state summary from all active stores.
-// Returns empty string if all stores are empty/nil.
-func (a *Agent) collectStateDashboard(sessionKey string) string {
+// stateDashboardBody builds the state summary body (without the "[state] "
+// prefix, which lives in the statusline template) by joining the per-store
+// fields. Returns "" if all stores are empty/nil. Backs the {state} field.
+func (a *Agent) stateDashboardBody(sessionKey string) string {
 	var parts []string
-
-	// Tasks: "2/5" or "2/5 → first in_progress subject"
-	if a.TaskListStore != nil {
-		if tasks, err := a.TaskListStore.List(a.AgentID); err != nil {
-			a.logger().Warnf("session=%s state dashboard: tasks: %v", sessionKey, err)
-		} else if len(tasks) > 0 {
-			completed, total := 0, len(tasks)
-			var firstActive string
-			for _, t := range tasks {
-				if t.Status == "completed" {
-					completed++
-				} else if firstActive == "" && t.Status == "in_progress" {
-					firstActive = t.Subject
-				}
-			}
-			part := fmt.Sprintf("%d/%d", completed, total)
-			if firstActive != "" {
-				part += " → " + firstActive
-			}
-			parts = append(parts, "tasks: "+part)
-		}
+	if s := a.statusTasks(sessionKey); s != "" {
+		parts = append(parts, s)
 	}
-
-	// Todos: "2 open (1 high)"
-	if a.TodoStore != nil {
-		if items, err := a.TodoStore.List(a.AgentID, "open", nil, "", "", false, 0); err != nil {
-			a.logger().Warnf("session=%s state dashboard: todos: %v", sessionKey, err)
-		} else if len(items) > 0 {
-			highCount := 0
-			for _, item := range items {
-				if item.Priority == "high" {
-					highCount++
-				}
-			}
-			part := fmt.Sprintf("%d open", len(items))
-			if highCount > 0 {
-				part += fmt.Sprintf(" (%d high)", highCount)
-			}
-			parts = append(parts, "todos: "+part)
-		}
+	if s := a.statusTodos(sessionKey); s != "" {
+		parts = append(parts, s)
 	}
-
-	// Scratchpad: "N entries"
-	if a.ScratchpadStore != nil {
-		if entries, err := a.ScratchpadStore.List(a.AgentID); err != nil {
-			a.logger().Warnf("session=%s state dashboard: scratchpad: %v", sessionKey, err)
-		} else if len(entries) > 0 {
-			parts = append(parts, fmt.Sprintf("scratchpad: %d entries", len(entries)))
-		}
+	if s := a.statusScratchpad(sessionKey); s != "" {
+		parts = append(parts, s)
 	}
+	return strings.Join(parts, " | ")
+}
 
-	if len(parts) == 0 {
+// statusTasks renders the tasks field: "tasks: 2/5" or "tasks: 2/5 → subject",
+// or "" when there are no tasks. Backs the {tasks} field.
+func (a *Agent) statusTasks(sessionKey string) string {
+	if a.TaskListStore == nil {
 		return ""
 	}
-	return "[state] " + strings.Join(parts, " | ")
+	tasks, err := a.TaskListStore.List(a.AgentID)
+	if err != nil {
+		a.logger().Warnf("session=%s state dashboard: tasks: %v", sessionKey, err)
+		return ""
+	}
+	if len(tasks) == 0 {
+		return ""
+	}
+	completed, total := 0, len(tasks)
+	var firstActive string
+	for _, t := range tasks {
+		if t.Status == "completed" {
+			completed++
+		} else if firstActive == "" && t.Status == "in_progress" {
+			firstActive = t.Subject
+		}
+	}
+	part := fmt.Sprintf("%d/%d", completed, total)
+	if firstActive != "" {
+		part += " → " + firstActive
+	}
+	return "tasks: " + part
+}
+
+// statusTodos renders the todos field: "todos: 2 open (1 high)" or "todos: 2 open",
+// or "" when there are no open todos. Backs the {todos} field.
+func (a *Agent) statusTodos(sessionKey string) string {
+	if a.TodoStore == nil {
+		return ""
+	}
+	items, err := a.TodoStore.List(a.AgentID, "open", nil, "", "", false, 0)
+	if err != nil {
+		a.logger().Warnf("session=%s state dashboard: todos: %v", sessionKey, err)
+		return ""
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	highCount := 0
+	for _, item := range items {
+		if item.Priority == "high" {
+			highCount++
+		}
+	}
+	part := fmt.Sprintf("%d open", len(items))
+	if highCount > 0 {
+		part += fmt.Sprintf(" (%d high)", highCount)
+	}
+	return "todos: " + part
+}
+
+// statusScratchpad renders the scratchpad field: "scratchpad: N entries", or ""
+// when empty. Backs the {scratchpad} field.
+func (a *Agent) statusScratchpad(sessionKey string) string {
+	if a.ScratchpadStore == nil {
+		return ""
+	}
+	entries, err := a.ScratchpadStore.List(a.AgentID)
+	if err != nil {
+		a.logger().Warnf("session=%s state dashboard: scratchpad: %v", sessionKey, err)
+		return ""
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("scratchpad: %d entries", len(entries))
 }
 
 // buildSystemBlocks assembles the system prompt blocks from bootstrap,

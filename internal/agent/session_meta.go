@@ -7,12 +7,10 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/mana"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
-	"foci/internal/timeutil"
 )
 
 // sessionMeta tracks per-session state for metadata injection.
@@ -732,35 +730,6 @@ func parseMetaTime(text string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return t, true
-}
-
-// buildMetaPrefix creates the metadata line prepended to user messages.
-func buildMetaPrefix(now time.Time, model, platform string, mana string, manaGood bool, sm *sessionMeta) string {
-	gap := "none"
-	if !sm.lastMessageTime.IsZero() {
-		gap = display.FormatDuration(now.Sub(sm.lastMessageTime))
-	}
-
-	manaFlag := ""
-	if mana != "" {
-		indicator := "🔴"
-		if manaGood {
-			indicator = "🟢"
-		}
-		manaFlag = " mana=" + mana + " " + indicator
-	}
-
-	if sm.prevCost == 0 && sm.prevInput == 0 {
-		// First message in session — no previous turn data
-		return fmt.Sprintf("[meta] time=%s gap=%s model=%s via=%s%s", timeutil.Format(now), gap, model, platform, manaFlag)
-	}
-
-	return fmt.Sprintf("[meta] time=%s gap=%s model=%s via=%s prev_cost=%s prev_tokens=in:%d/out:%d/cR:%d/cW:%d%s",
-		timeutil.Format(now), gap, model,
-		platform,
-		formatCost(sm.prevCost),
-		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite,
-		manaFlag)
 }
 
 // formatCost formats a dollar cost, trimming unnecessary trailing zeros.
