@@ -1,6 +1,9 @@
 package delegator
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // Constructor creates a Delegator from backend-specific config.
 // The config map comes from [agents.backend_config] in TOML.
@@ -37,4 +40,20 @@ func IsRegistered(name string) bool {
 	defer registryMu.Unlock()
 	_, ok := constructors[name]
 	return ok
+}
+
+// RegisteredNames returns the names of all registered backends, sorted. Used
+// to offer the live set of delegated backends in the /agents new wizard rather
+// than a hardcoded list — a newly registered backend appears automatically.
+// Only populated once the backend packages' init() functions have run (i.e. in
+// the assembled foci-gw binary); returns empty if none are imported.
+func RegisteredNames() []string {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	names := make([]string, 0, len(constructors))
+	for name := range constructors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"foci/internal/provision"
@@ -18,8 +19,27 @@ type AgentNewDeps struct {
 	ListFn       func() []AgentInfo
 	PreFlightFn  func(agentID string) []string // platform pre-flight warnings
 	ResolveModel func(string) string
-	Registry     *Registry // for setting wizard
+	// AvailableBackends is the live set of registered delegated backend names
+	// (e.g. "claude-code", "claude-code-tmux"), injected from the delegator
+	// registry. Empty → the wizard falls back to offering just "claude-code".
+	AvailableBackends []string
+	Registry          *Registry // for setting wizard
 }
+
+// Wizard step indices. The flow is name → model → backend → character mode.
+const (
+	stepName = iota
+	stepModel
+	stepBackend
+	stepCharMode
+)
+
+// defaultBackend is the backend offered (and used on empty input) when it is
+// available — most agents want Claude Code delegation.
+const defaultBackend = "claude-code"
+
+// apiBackend is the explicit value for an in-process (non-delegated) agent.
+const apiBackend = "api"
 
 // agentWizard implements WizardHandler for interactive agent creation.
 type agentWizard struct {
@@ -28,6 +48,8 @@ type agentWizard struct {
 
 	// Collected values:
 	id, display, model string
+	modelRaw           string // raw model input (alias) for backend_config.model
+	backend            string // "api" or a registered backend name
 	charMode, copyFrom string
 
 	// Overridable for testing:
@@ -45,11 +67,13 @@ func (w *agentWizard) Handle(text string) (response string, done bool) {
 	text = strings.TrimSpace(text)
 
 	switch w.step {
-	case 0: // Name
+	case stepName:
 		return w.handleName(text)
-	case 1: // Model
+	case stepModel:
 		return w.handleModel(text)
-	case 2: // Character mode
+	case stepBackend:
+		return w.handleBackend(text)
+	case stepCharMode:
 		return w.handleCharMode(text)
 	default:
 		return "Unexpected state.", true
@@ -75,7 +99,7 @@ func (w *agentWizard) handleName(text string) (string, bool) {
 
 	w.display = text
 	w.id = id
-	w.step = 1
+	w.step = stepModel
 	return "Model — `opus`, `sonnet`, `haiku`, or full model ID (default: `sonnet`):", false
 }
 
@@ -84,9 +108,16 @@ func (w *agentWizard) handleModel(text string) (string, bool) {
 	if resolve == nil {
 		resolve = provision.ResolveModelAlias
 	}
+	// Keep the raw alias (e.g. "opus") for backend_config.model — delegated
+	// backends pass it straight to CC's --model. The resolved developer/model_id
+	// form is kept for display and the (future) API path.
+	w.modelRaw = text
+	if strings.TrimSpace(text) == "" {
+		w.modelRaw = "sonnet"
+	}
 	w.model = resolve(text)
 
-	// Run platform pre-flight checks
+	// Run platform pre-flight checks — surfaced on the next prompt.
 	var warning string
 	if w.deps.PreFlightFn != nil {
 		if warnings := w.deps.PreFlightFn(w.id); len(warnings) > 0 {
@@ -94,8 +125,63 @@ func (w *agentWizard) handleModel(text string) (string, bool) {
 		}
 	}
 
-	w.step = 2
-	return fmt.Sprintf("Character files — `defaults` (recommended), `openclaw`, `copy <agent-id>`, or `blank` (default: `defaults`):%s", warning), false
+	w.step = stepBackend
+	return w.backendPrompt() + warning, false
+}
+
+// availableBackends returns the registered backend names, falling back to just
+// the default when none were injected (e.g. in unit tests, or if no backend
+// package is linked).
+func (w *agentWizard) availableBackends() []string {
+	if len(w.deps.AvailableBackends) > 0 {
+		return w.deps.AvailableBackends
+	}
+	return []string{defaultBackend}
+}
+
+// backendPrompt builds the execution-mode prompt listing the live backends plus
+// the in-process `api` option.
+func (w *agentWizard) backendPrompt() string {
+	backends := w.availableBackends()
+	opts := make([]string, 0, len(backends)+1)
+	for _, b := range backends {
+		if b == defaultBackend {
+			opts = append(opts, "`"+b+"` (default)")
+		} else {
+			opts = append(opts, "`"+b+"`")
+		}
+	}
+	opts = append(opts, "`api` (in-process, no delegation)")
+	return "Backend — " + strings.Join(opts, ", ") + ":"
+}
+
+// handleBackend records the execution mode: a registered delegated backend, or
+// "api" for the traditional in-process loop. Empty input picks the default
+// backend (claude-code) — the common case, and the fix for agents previously
+// created with no backend at all (silent API fallback).
+func (w *agentWizard) handleBackend(text string) (string, bool) {
+	choice := strings.ToLower(strings.TrimSpace(text))
+	backends := w.availableBackends()
+
+	if choice == "" {
+		// Prefer the default backend if offered, else the first available.
+		choice = defaultBackend
+		if !slices.Contains(backends, defaultBackend) {
+			choice = backends[0]
+		}
+	}
+
+	switch {
+	case choice == apiBackend:
+		w.backend = apiBackend
+	case slices.Contains(backends, choice):
+		w.backend = choice
+	default:
+		return fmt.Sprintf("Must be one of: %s, or `api`. Try again:", strings.Join(backends, ", ")), false
+	}
+
+	w.step = stepCharMode
+	return "Character files — `defaults` (recommended), `openclaw`, `copy <agent-id>`, or `blank` (default: `defaults`):", false
 }
 
 func (w *agentWizard) handleCharMode(text string) (string, bool) {
@@ -150,6 +236,8 @@ func createAgent(w *agentWizard) (string, error) {
 		CharMode:    w.charMode,
 		CopyFrom:    w.copyFrom,
 		FileMode:    w.deps.FileMode,
+		Backend:     w.backend,
+		Model:       w.modelRaw,
 	}
 
 	// Count existing agents for crontab staggering
@@ -180,6 +268,13 @@ func createAgent(w *agentWizard) (string, error) {
 		fmt.Fprintf(&sb, "✅ Character files: copied from %s\n", w.copyFrom)
 	case "blank":
 		sb.WriteString("✅ Character files: blank templates created\n")
+	}
+
+	// Backend summary.
+	if w.backend == apiBackend || w.backend == "" {
+		sb.WriteString("✅ Backend: api (in-process)\n")
+	} else {
+		fmt.Fprintf(&sb, "✅ Backend: %s (model: %s)\n", w.backend, w.modelRaw)
 	}
 
 	// Append to foci.toml

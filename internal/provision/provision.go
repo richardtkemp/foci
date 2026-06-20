@@ -40,6 +40,16 @@ type AgentSpec struct {
 	CopyFrom    string      // source agent ID when CharMode=="copy"
 	SystemFiles []string    // nil → DefaultSystemFiles
 	FileMode    os.FileMode // permission bits for created files (0 → 0640)
+
+	// Backend selects how turns run. "" or "api" = traditional in-process
+	// agent loop; a registered backend name (e.g. "claude-code") delegates to
+	// an external subprocess. Empty is written as an explicit `backend = "api"`
+	// so the choice is recorded rather than left to silent fallback.
+	Backend string
+	// Model is the model alias/id for a delegated backend, written as
+	// backend_config.model (e.g. "opus"). Ignored for api backends, whose model
+	// resolves globally via [groups]/[models].
+	Model string
 }
 
 // Result holds the outputs of a successful Provision call.
