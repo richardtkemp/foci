@@ -4,6 +4,8 @@ package integration
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +72,19 @@ func userMessagesIn(entries []recorderEntry, workdirSubstr string) []recorderEnt
 	var out []recorderEntry
 	for _, e := range entries {
 		if e.Kind == "user_message" && strings.Contains(e.Workdir, workdirSubstr) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// initSystemsIn returns the init_system entries whose workdir contains the
+// given substring, preserving order. Each is one initialize handshake — i.e.
+// one spawn that received a system prompt.
+func initSystemsIn(entries []recorderEntry, workdirSubstr string) []recorderEntry {
+	var out []recorderEntry
+	for _, e := range entries {
+		if e.Kind == "init_system" && strings.Contains(e.Workdir, workdirSubstr) {
 			out = append(out, e)
 		}
 	}
@@ -227,6 +242,84 @@ func TestL2_SessionLifecycle_ResetSoftRotatesSessionKey(t *testing.T) {
 	}
 	if secondSession == firstSession {
 		t.Errorf("session_id did not rotate across /reset: %q == %q", firstSession, secondSession)
+	}
+}
+
+// TestL2_SessionLifecycle_ResetRebuildsSystemPromptFromDisk proves Part A
+// (#828 / #706): editing a character file on disk and then /reset causes the
+// fresh CC session to receive a *rebuilt* system prompt — SystemPromptFunc
+// reads from disk at session-start — rather than the prompt frozen at agent
+// setup. Mechanism: prime a turn (records init_system #1 with a baseline
+// prompt hash + length); append a distinctive marker to character/CRAFT.md;
+// /reset; prime another turn; assert the post-reset init_system prompt hash
+// differs and its length grew by exactly the appended bytes. A frozen prompt
+// would re-send an identical hash — which is precisely the #706 bug this guards.
+func TestL2_SessionLifecycle_ResetRebuildsSystemPromptFromDisk(t *testing.T) {
+	testharness.ParallelHeavy(t)
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9201},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, 9201, 9201, "prime")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "prime", 15*time.Second) {
+		t.Fatalf("prime turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	initsBefore := initSystemsIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	if len(initsBefore) < 1 {
+		t.Fatalf("no init_system entry after prime; recorder:\n%s", recorderTail(t, h.RecorderPath()))
+	}
+	before := initsBefore[len(initsBefore)-1]
+
+	// Edit a character file on disk AFTER agent setup. A frozen prompt would
+	// never see this; Part A's SystemPromptFunc re-reads it at session-start.
+	marker := "\n\nMARKER-PART-A-RELOAD-3f8c2a1e distinctive reload sentinel line.\n"
+	craft := filepath.Join(h.AgentWorkspace("alpha"), "character", "CRAFT.md")
+	existing, err := os.ReadFile(craft)
+	if err != nil {
+		t.Fatalf("read CRAFT.md: %v", err)
+	}
+	if err := os.WriteFile(craft, append(existing, []byte(marker)...), 0o600); err != nil {
+		t.Fatalf("append marker to CRAFT.md: %v", err)
+	}
+
+	sendText(h, token, 9201, 9201, "/reset")
+	if got := waitForSendMessageContaining(h, token, "Session reset", 10*time.Second); got == "" {
+		t.Fatalf("never saw soft-reset confirmation; sent calls:\n%s\nstderr tail:\n%s",
+			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+	}
+
+	sendText(h, token, 9201, 9201, "after reset")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after reset", 15*time.Second) {
+		t.Fatalf("post-reset turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Wait for the post-reset spawn's init_system to land.
+	var after recorderEntry
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		inits := initSystemsIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+		if len(inits) > len(initsBefore) {
+			after = inits[len(inits)-1]
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no new init_system after reset; have %d (had %d); recorder:\n%s",
+				len(inits), len(initsBefore), recorderTail(t, h.RecorderPath()))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if after.PromptSHA256 == before.PromptSHA256 {
+		t.Errorf("system prompt hash unchanged across /reset (%s) — prompt was NOT rebuilt from disk; the CRAFT.md edit was ignored (#706 regression)",
+			before.PromptSHA256)
+	}
+	if wantLen := before.PromptLen + len(marker); after.PromptLen != wantLen {
+		t.Errorf("post-reset PromptLen = %d, want %d (before %d + %d marker bytes); something other than the marker changed",
+			after.PromptLen, wantLen, before.PromptLen, len(marker))
 	}
 }
 

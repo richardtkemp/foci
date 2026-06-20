@@ -272,7 +272,7 @@ type ContextUsageQuerier interface {
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
 	WorkDir          string            // agent workspace directory (becomes cwd)
-	SystemPrompt     string            // concatenated character/system files
+	SystemPrompt     string            // concatenated character/system files (static fallback; see SystemPromptFunc)
 	Model            string            // initial model (e.g. "opus", "sonnet")
 	AgentID          string            // foci agent ID
 	Label            string            // unique label for this instance (used for tmux window naming); falls back to AgentID
@@ -290,6 +290,14 @@ type StartOptions struct {
 	// cmd/foci-gw/agents_delegated.go. Used by integration tests to
 	// point at bin/cc-stub.
 	ClaudeBinary string
+
+	// SystemPromptFunc, when non-nil, is called at each session Start to
+	// produce a fresh system prompt from disk. Its result (when non-empty)
+	// takes precedence over the static SystemPrompt string. This makes the
+	// delegated prompt lazy rather than frozen at agent setup, so a fresh
+	// session (reset, idle-respawn, emulated compaction) picks up
+	// character-file edits. See #828 / #706.
+	SystemPromptFunc func() string
 }
 
 // SessionEvents are the session-scoped, always-callable delivery callbacks.
