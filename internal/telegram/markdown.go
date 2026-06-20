@@ -5,29 +5,27 @@ import (
 	"foci/internal/display"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Precompiled regexes for markdown → HTML conversion.
 // These are called ~4/s during streaming; compiling once avoids repeated work.
 var (
-	reCodeBlock        = regexp.MustCompile("(?m)^```(?:[a-z]+)?\n([\\s\\S]*?)\n```")
-	reInlineCode       = regexp.MustCompile("`([^`]+)`")
-	reLink             = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
-	reSpoiler          = regexp.MustCompile(`\|\|([^\|]+)\|\|`)
-	reStrikethrough    = regexp.MustCompile(`~~([^~]+)~~`)
-	reUnderline        = regexp.MustCompile(`__([^_]+)__`)
-	// Boundary class excludes letters (both cases), digits and underscore so
-	// snake_case identifiers — including UPPER_SNAKE like MAX_TOKEN_LEN — never
-	// open an italic run. A bare _x_ delimited by whitespace/punctuation still
-	// italicises because the boundary is the delimiter, not the content. (#709)
-	reItalicUnderscore = regexp.MustCompile(`(^|[^a-zA-Z0-9_])_([^_\n]+?)_([^a-zA-Z0-9_]|$)`)
-	reHRule            = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`)
-	reBulletList       = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`)
-	reOrderedList      = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`)
-	reH1               = regexp.MustCompile(`(?m)^#\s+(.+)$`)
-	reH2               = regexp.MustCompile(`(?m)^##\s+(.+)$`)
-	reH3Plus           = regexp.MustCompile(`(?m)^###+ (.+)$`)
-	reBlockquote       = regexp.MustCompile(`^> ?(.*)$`)
+	reCodeBlock  = regexp.MustCompile("(?m)^```(?:[a-z]+)?\n([\\s\\S]*?)\n```")
+	reInlineCode = regexp.MustCompile("`([^`]+)`")
+	reLink       = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
+	// Spoiler (||), strikethrough (~~), underline (__) and italic (_) are no
+	// longer regex passes — they share emphasizeRuns, a zero-width flanking
+	// scanner that protects snake_case/dunders and fixes adjacent-span overlap
+	// (#709). Asterisk emphasis keeps its own delimiter-stack parser.
+	reHRule       = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`)
+	reBulletList  = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`)
+	reOrderedList = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`)
+	reH1          = regexp.MustCompile(`(?m)^#\s+(.+)$`)
+	reH2          = regexp.MustCompile(`(?m)^##\s+(.+)$`)
+	reH3Plus      = regexp.MustCompile(`(?m)^###+ (.+)$`)
+	reBlockquote  = regexp.MustCompile(`^> ?(.*)$`)
 )
 
 // ConvertToTelegramHTML converts standard markdown to Telegram's HTML format.
@@ -103,8 +101,9 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 	// Links: [text](url)
 	text = reLink.ReplaceAllString(text, "<a href=\"$2\">$1</a>")
 
-	// Spoilers: ||text||
-	text = reSpoiler.ReplaceAllString(text, "<tg-spoiler>$1</tg-spoiler>")
+	// Spoilers: ||text|| — flanking scanner stops "a || b || c" (logical OR)
+	// from spoilering the middle term.
+	text = emphasizeRuns(text, '|', 2, "<tg-spoiler>", "</tg-spoiler>", nil)
 
 	// Bold (**), italic (*) and overlapping/triple runs (***): handled together
 	// by a delimiter-stack parser so closing tags always match the
@@ -113,16 +112,19 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 	// which Telegram's HTML parser rejects.
 	text = convertStarEmphasis(text)
 
-	// Strikethrough: ~~text~~
-	text = reStrikethrough.ReplaceAllString(text, "<s>$1</s>")
+	// Strikethrough: ~~text~~ — flanking scanner leaves "a~~b~~c" literal.
+	text = emphasizeRuns(text, '~', 2, "<s>", "</s>", nil)
 
-	// Underline: __text__
-	text = reUnderline.ReplaceAllString(text, "<u>$1</u>")
+	// Underline: __text__ — flanking scanner leaves intra-identifier dunders
+	// like "a__b__c" literal (runs before italic so __x__ binds to underline).
+	// Common dunders (__init__, __main__, …) are exempted so identifiers
+	// survive even when space/punctuation-flanked.
+	text = emphasizeRuns(text, '_', 2, "<u>", "</u>", isCommonDunder)
 
-	// Italic: _text_ (but not when part of snake_case identifiers like word_word_word)
-	// Only matches single-word content between underscores (no additional underscores inside)
-	// Uses capture groups to preserve surrounding characters
-	text = reItalicUnderscore.ReplaceAllString(text, "$1<i>$2</i>$3")
+	// Italic: _text_ — flanking scanner protects snake_case (foo_bar_baz) and
+	// UPPER_SNAKE (MAX_TOKEN_LEN), and converts adjacent spans (_a_ _b_) that
+	// the old consuming regex dropped. The runLen=1 pass ignores leftover __.
+	text = emphasizeRuns(text, '_', 1, "<i>", "</i>", nil)
 
 	// Headings: relative hierarchy rendering based on levels actually used
 	text = convertHeadings(text)
@@ -149,6 +151,145 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 
 	return text
 }
+
+// emphasizeRuns wraps spans delimited by an exact runLen-length run of delim
+// (e.g. "_", "__", "~~", "||") in open/close tags, using zero-width
+// CommonMark-style flanking. A run forms a span boundary only when:
+//
+//   - the inner neighbour (content side) is non-space — the flanking rule, so
+//     "a || b || c" (logical OR, spaces inside) never opens a spoiler; and
+//   - the outer neighbour is a non-word rune or a string/HTML boundary — the
+//     intraword rule, so snake_case ("foo_bar"), UPPER_SNAKE ("MAX_TOKEN_LEN")
+//     and intra-identifier dunders ("a__b__c") never emphasise.
+//
+// Word runes are letters, digits and '_' (Unicode-aware via unicode.IsLetter /
+// IsDigit), so accented identifiers like "café_var" are not mis-split. Because
+// neighbour runes are inspected and never consumed, adjacent spans like
+// "_a_ _b_" both convert — the previous consuming-regex approach ate the shared
+// delimiter and dropped the second span (#709).
+//
+// Runs whose maximal length differs from runLen are left literal, so the
+// runLen=1 italic pass ignores leftover "__" and vice-versa. NUL bytes (code
+// placeholders) read as non-word, non-space, so emphasis binds across an
+// extracted code span (e.g. _`code`_ → <i><code>…</code></i>).
+//
+// skipContent, when non-nil, is consulted for each candidate pair with the
+// literal text between the delimiters; returning true leaves that span literal
+// (no tags). The underline pass uses it to exempt common dunders like
+// "__init__"/"__main__", which are almost always identifiers, not a request to
+// underline the inner word.
+func emphasizeRuns(s string, delim byte, runLen int, openTag, closeTag string, skipContent func(content string) bool) string {
+	if !strings.ContainsRune(s, rune(delim)) {
+		return s
+	}
+	isWordRune := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
+
+	type drun struct {
+		start, end        int
+		canOpen, canClose bool
+	}
+	var runs []drun
+	for i := 0; i < len(s); {
+		if s[i] != delim {
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && s[j] == delim {
+			j++
+		}
+		if j-i == runLen {
+			hasBefore := i > 0
+			hasAfter := j < len(s)
+			beforeWord, beforeSpace := false, false
+			afterWord, afterSpace := false, false
+			if hasBefore {
+				rb, _ := utf8.DecodeLastRuneInString(s[:i])
+				beforeWord, beforeSpace = isWordRune(rb), unicode.IsSpace(rb)
+			}
+			if hasAfter {
+				ra, _ := utf8.DecodeRuneInString(s[j:])
+				afterWord, afterSpace = isWordRune(ra), unicode.IsSpace(ra)
+			}
+			// Open: inner (after) non-space AND outer (before) non-word/boundary.
+			canOpen := hasAfter && !afterSpace && (!hasBefore || !beforeWord)
+			// Close: inner (before) non-space AND outer (after) non-word/boundary.
+			canClose := hasBefore && !beforeSpace && (!hasAfter || !afterWord)
+			runs = append(runs, drun{i, j, canOpen, canClose})
+		}
+		i = j
+	}
+
+	// Pair runs by simple left-to-right alternation with one pending open. An
+	// unpaired open stays literal, guaranteeing balanced tags.
+	openAt := make(map[int]bool)
+	closeAt := make(map[int]bool)
+	pending := -1
+	for k := range runs {
+		if pending == -1 {
+			if runs[k].canOpen {
+				pending = k
+			}
+			continue
+		}
+		if runs[k].canClose {
+			if skipContent != nil && skipContent(s[runs[pending].end:runs[k].start]) {
+				// Exempt span (e.g. a common dunder) — abandon this open,
+				// leave both delimiter runs literal.
+				pending = -1
+				continue
+			}
+			openAt[runs[pending].start] = true
+			closeAt[runs[k].start] = true
+			pending = -1
+		}
+		// If it can't close, keep the existing pending open (no same-type nesting).
+	}
+	if len(openAt) == 0 {
+		return s
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != delim {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && s[j] == delim {
+			j++
+		}
+		switch {
+		case openAt[i]:
+			b.WriteString(openTag)
+		case closeAt[i]:
+			b.WriteString(closeTag)
+		default:
+			b.WriteString(s[i:j])
+		}
+		i = j
+	}
+	return b.String()
+}
+
+// commonDunders holds the inner names of well-known Python __dunder__
+// identifiers. The underline pass consults this to leave "__init__"/"__main__"
+// and friends literal: in practice these are nearly always code identifiers,
+// not a request to underline the inner word. Users who genuinely want underline
+// can pick a non-dunder word.
+var commonDunders = map[string]bool{
+	"init": true, "main": true, "name": true, "file": true, "doc": true,
+	"dict": true, "class": true, "module": true, "repr": true, "str": true,
+	"call": true, "len": true, "new": true, "del": true, "iter": true,
+	"next": true, "enter": true, "exit": true, "all": true, "version": true,
+	"getitem": true, "setitem": true, "eq": true, "hash": true, "bases": true,
+}
+
+// isCommonDunder reports whether content is the inner name of a common dunder,
+// i.e. the underline pass is looking at "__<content>__". Used as the skipContent
+// predicate for the '__' → <u> pass.
+func isCommonDunder(content string) bool { return commonDunders[content] }
 
 // convertStarEmphasis converts asterisk emphasis — *italic*, **bold**, and
 // overlapping/triple runs like ***x***, ***x** y*, **x *y*** — into properly
