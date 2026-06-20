@@ -82,7 +82,16 @@ func (m *BotManager) SharedPool() *Pool {
 }
 
 // BotForSession returns the bot whose SessionKey matches, or nil.
+//
+// An empty sessionKey matches no specific session: idle facet bots also carry
+// an empty SessionKey, so a "" lookup would return whichever idle facet happens
+// to come first in m.all — an agent-less bot (agentID="") with no default chat.
+// Returning nil here lets BotForSessionOrPrimary fall through to the agent's
+// primary bot, which owns the persisted default chat (#843).
 func (m *BotManager) BotForSession(sessionKey string) *Bot {
+	if sessionKey == "" {
+		return nil
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

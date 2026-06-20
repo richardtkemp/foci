@@ -132,7 +132,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// reports "unavailable" rather than mis-driving the wrong backend.
 	claudeBin, _ := backendConfig["claude_binary"].(string)
 	workDir := p.acfg.Workspace
-	triggerRelogin := func(reason string) bool {
+	triggerRelogin := func(reason, sessionKey string) bool {
 		if !relogin.G.Start() {
 			return false
 		}
@@ -143,11 +143,18 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			ClaudeBin: claudeBin,
 			Gate:      relogin.G,
 			SendMessage: func(text string) error {
-				conn := connMgr.ForSessionOrPrimary("", agentID)
+				// Resolve via the triggering session key so the login URL reaches
+				// the chat that asked for it. An empty key falls back to the
+				// agent's primary bot (which owns the persisted default chat) —
+				// NOT an arbitrary idle facet, now that BotForSession("") returns
+				// nil. SendToSession reads the chat ID straight from the key, so
+				// delivery works whichever bot resolves, even agent-less facets
+				// (the #843 "no chat ID — no default chat configured" bug).
+				conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 				if conn == nil {
 					return fmt.Errorf("no connection for agent %s", agentID)
 				}
-				return conn.SendText(text)
+				return conn.SendToSession(sessionKey, text)
 			},
 		})
 		return true
@@ -170,7 +177,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				// On a 401, run the automated re-login (#843) via the shared
 				// trigger built above (same path as the manual /login command).
 				sb.SetOnAuthFailure(func(detail string) {
-					triggerRelogin("401 auth failure: " + firstLine(detail))
+					// Auto-401 has no triggering chat; "" → the agent's default chat.
+					triggerRelogin("401 auth failure: "+firstLine(detail), "")
 				})
 			}
 			return be, nil
