@@ -220,6 +220,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	// Stop / done
 	cmds.Register(command.StopCommand())
+	cmds.Register(command.LoginCommand())
 	cmds.Register(command.DoneCommand())
 
 	// Stop aliases (e.g. "wait" → same as "stop")
