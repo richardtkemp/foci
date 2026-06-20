@@ -326,6 +326,61 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			in:   "set _X_ now",
 			want: "set <i>X</i> now",
 		},
+		{
+			// #709: adjacent italics separated by a single space. The old
+			// consuming regex ate the shared space and dropped the 2nd span;
+			// the zero-width flanking scanner converts both.
+			name: "adjacent italics both convert",
+			in:   "_a_ _b_",
+			want: "<i>a</i> <i>b</i>",
+		},
+		{
+			// #709: intra-identifier dunders must not underline. "a__b__c" has
+			// word runes flanking each __ run, so neither can open.
+			name: "intra-identifier dunder not underlined",
+			in:   "call a__b__c here",
+			want: "call a__b__c here",
+		},
+		{
+			// #709: ~~ between word chars is not strikethrough.
+			name: "intraword double-tilde not strikethrough",
+			in:   "use a~~b~~c tilde",
+			want: "use a~~b~~c tilde",
+		},
+		{
+			// #709: logical-OR with spaces must not spoiler the middle term —
+			// the inner-space (flanking) check blocks the opening ||.
+			name: "logical or not spoilered",
+			in:   "if (a || b || c)",
+			want: "if (a || b || c)",
+		},
+		{
+			// #709: Unicode-letter neighbour must count as a word rune so an
+			// accented identifier is not mis-split.
+			name: "accented snake_case identifier protected",
+			in:   "the café_var_x value",
+			want: "the café_var_x value",
+		},
+		{
+			// #709: common dunders (__init__, __main__, …) are exempted from the
+			// underline pass even when space/punctuation-flanked, since they're
+			// nearly always identifiers rather than intended underline.
+			name: "common dunder __init__ stays literal",
+			in:   "the __init__ method",
+			want: "the __init__ method",
+		},
+		{
+			name: "common dunder __main__ stays literal",
+			in:   `run if __name__ == "__main__" now`,
+			want: `run if __name__ == "__main__" now`,
+		},
+		{
+			// A non-dunder __token__ still underlines — the exemption is scoped to
+			// the known-dunder allowlist, so genuine __underline__ requests work.
+			name: "non-dunder double-underscore still underlines",
+			in:   "the __keyword__ here",
+			want: "the <u>keyword</u> here",
+		},
 		// HTML escaping in body text
 		{
 			name: "angle brackets in text escaped",
