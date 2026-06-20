@@ -930,6 +930,103 @@ func TestL2_SessionLifecycle_CompactCommandRoutesToBackend(t *testing.T) {
 	}
 }
 
+// TestL2_SessionLifecycle_ReloadOnCompactBouncesSession proves the #828
+// Part B reload-on-compact bounce end-to-end: a completed delegated
+// compaction closes the CC session (keeping its resume ID) so the next
+// message respawns with --resume AND rebuilds the system prompt from disk.
+//
+// Mechanism: CCSTUB_EMIT_COMPACT_BOUNDARY makes cc-stub answer a "/compact"
+// user message with the real CC compaction envelopes (status "compacting"
+// then compact_boundary). That drives foci's compaction waiters to
+// COMPLETION (the "✅ Context compacted" reply, distinct from the "⏳
+// Compacting" start) and triggers BounceSession. The bounce doesn't respawn
+// immediately; the follow-up message does — and that respawn must carry
+// --resume <original session> (same conversation, now compacted) plus a
+// fresh init_system handshake (prompt rebuilt from disk). reload_on_compact
+// defaults on, so no override is needed.
+//
+// Without cc-stub emitting compact_boundary this path is untestable at L2:
+// the compaction waiter would time out, the bounce would never fire, and a
+// respawn (if any) would be a fresh session rather than a resume. This is
+// the gap #844 filled.
+func TestL2_SessionLifecycle_ReloadOnCompactBouncesSession(t *testing.T) {
+	testharness.ParallelWait(t)
+	const userID = 10027
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:       "alpha",
+			UserID:   userID,
+			ExtraEnv: map[string]string{"CCSTUB_EMIT_COMPACT_BOUNDARY": "1"},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Prime one normal turn → invocation 1 (fresh, no resume) + init_system 1.
+	sendText(h, token, userID, userID, "prime")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "prime", 15*time.Second) {
+		t.Fatalf("prime turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	preEntries := readRecorderEntries(t, h.RecorderPath())
+	preInitCount := len(initSystemsIn(preEntries, "workspaces/alpha"))
+	// The priming session id is the resume target the bounce must reuse.
+	var primeSID string
+	for _, e := range preEntries {
+		if e.Kind == "user_message" && strings.Contains(e.TextPrefix, "prime") {
+			primeSID = e.SessionID
+		}
+	}
+	if primeSID == "" {
+		t.Fatalf("no prime session id in recorder:\n%s", recorderTail(t, h.RecorderPath()))
+	}
+
+	// "/compact run" (the run subcommand) compacts directly; bare "/compact"
+	// would only open a confirmation menu that never reaches the backend. The
+	// stub then emits status=compacting then compact_boundary. Wait for the
+	// COMPLETION reply ("compacted"), not the start ("⏳ Compacting"), to prove
+	// the compact_boundary was consumed and the bounce ran.
+	sendText(h, token, userID, userID, "/compact run")
+	if got := waitForSendMessageContaining(h, token, "compacted", 15*time.Second); got == "" {
+		t.Fatalf("never saw compaction-complete reply; sent calls:\n%s\nstderr tail:\n%s",
+			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+	}
+
+	// The bounce closed the session keeping the resume ID; the next message
+	// respawns CC with --resume. Wait for invocation 2 to land.
+	sendText(h, token, userID, userID, "after-compact")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after-compact", 30*time.Second) {
+		t.Fatalf("post-bounce turn never processed; recorder:\n%s\nstderr tail:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if _, ok := waitForInvocationCount(t, h, "workspaces/alpha", 2, 15*time.Second); !ok {
+		t.Fatalf("compact bounce never produced a respawn invocation; recorder:\n%s",
+			recorderTail(t, h.RecorderPath()))
+	}
+
+	entries := readRecorderEntries(t, h.RecorderPath())
+	// The respawn must carry --resume <primeSID> — the bounce resumes the
+	// compacted conversation, it does not start fresh.
+	invs := invocationsByWorkdir(entries, "workspaces/alpha")
+	sawResume := false
+	for _, inv := range invs {
+		if inv.ResumeID == primeSID {
+			sawResume = true
+			break
+		}
+	}
+	if !sawResume {
+		t.Errorf("post-compact respawn never carried --resume %s (bounce didn't resume the session); invocations:\n%s",
+			primeSID, invocationsTail(invs))
+	}
+	// And the respawn rebuilt the system prompt from disk → a SECOND
+	// init_system handshake. This is the whole point of bouncing (#828 Part B):
+	// character/skill edits reload after compaction.
+	if postInit := len(initSystemsIn(entries, "workspaces/alpha")); postInit <= preInitCount {
+		t.Errorf("no new init_system after compact bounce (pre=%d post=%d); prompt was not rebuilt from disk",
+			preInitCount, postInit)
+	}
+}
+
 // TestL2_SessionLifecycle_ResetWhileProcessingRefused proves a bare
 // /reset (the soft variant) is refused while the agent is mid-turn,
 // preserving in-flight memory formation guarantees. Mechanism: script

@@ -30,6 +30,14 @@
 //	                               spawn exits, subsequent spawns proceed normally
 //	CCSTUB_FAIL_ON_RESUME — if "1"/"true" and --resume is set, exit 1 (simulates missing JSONL)
 //	CCSTUB_HANG           — duration to sleep before the handshake (e.g. "5s")
+//	CCSTUB_EMIT_COMPACT_BOUNDARY — if truthy, a "/compact ..." user message is
+//	                        handled as a compaction turn: emit system/status
+//	                        "compacting" then system/compact_boundary then a
+//	                        result (no assistant text), mirroring real CC's
+//	                        /compact. Drives foci's onCompactionStart/Done and
+//	                        the #828 Part B reload-on-compact bounce.
+//	CCSTUB_COMPACT_PRE_TOKENS — pre_tokens reported in compact_boundary
+//	                        (default 50000); only meaningful with the above.
 //	CCSTUB_RESPONSE       — assistant reply text; default echoes the user prompt
 //	CCSTUB_SCRIPT_DIR     — directory holding per-workdir scripts; the file
 //	                        named after the basename of $CWD (e.g. "fotini.json")
@@ -502,6 +510,21 @@ func main() {
 	if resume == "" {
 		panicOnMatch = os.Getenv("CCSTUB_PANIC_ON_USER_MESSAGE")
 	}
+	// CCSTUB_EMIT_COMPACT_BOUNDARY: when truthy, a user message whose text
+	// begins with "/compact" is handled as a compaction turn instead of a
+	// normal assistant turn — the stub emits a system/status "compacting"
+	// envelope (foci's onCompactionStart) followed by a system/compact_boundary
+	// envelope (foci's onCompactionDone), then a result to close the turn.
+	// This mirrors real CC's /compact handling and lets an L2 test exercise
+	// the #828 Part B reload-on-compact bounce end-to-end. pre_tokens comes
+	// from CCSTUB_COMPACT_PRE_TOKENS (default 50000).
+	emitCompactBoundary := isTruthy(os.Getenv("CCSTUB_EMIT_COMPACT_BOUNDARY"))
+	compactPreTokens := 50000
+	if v := os.Getenv("CCSTUB_COMPACT_PRE_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			compactPreTokens = n
+		}
+	}
 	turnCount := 0
 	for in.Scan() {
 		var env map[string]any
@@ -520,6 +543,43 @@ func main() {
 			if panicOnMatch != "" && strings.Contains(userText, panicOnMatch) {
 				fmt.Fprintf(os.Stderr, "panic: cc-stub forced crash on user message matching %q\n\ngoroutine 1 [running]:\nmain.main()\n\t/cc-stub/main.go:0 +0x0\n", panicOnMatch)
 				os.Exit(2)
+			}
+			// CCSTUB_EMIT_COMPACT_BOUNDARY: a "/compact ..." user message is
+			// CC's compaction trigger (foci injects it via SourceCompact). Emit
+			// the same system envelopes real CC produces — status "compacting"
+			// then compact_boundary — so foci's compaction waiters fire and the
+			// #828 Part B reload bounce runs. No assistant text: real CC emits
+			// none for /compact. The result envelope closes the turn cleanly.
+			if emitCompactBoundary && strings.HasPrefix(strings.TrimSpace(userText), "/compact") {
+				compacting := "compacting"
+				emit(out, map[string]any{
+					"type":       "system",
+					"subtype":    "status",
+					"status":     compacting,
+					"session_id": sessionID,
+				})
+				_ = out.Flush()
+				emit(out, map[string]any{
+					"type":    "system",
+					"subtype": "compact_boundary",
+					"compact_metadata": map[string]any{
+						"trigger":    "manual",
+						"pre_tokens": compactPreTokens,
+					},
+					"session_id": sessionID,
+				})
+				emit(out, map[string]any{
+					"type":       "result",
+					"result":     "",
+					"session_id": sessionID,
+					"usage": map[string]any{
+						"input_tokens":  0,
+						"output_tokens": 0,
+					},
+				})
+				_ = out.Flush()
+				turnCount++
+				continue
 			}
 			script := loadScript()
 			reply := respText
@@ -1289,6 +1349,8 @@ Env vars (all optional):
   CCSTUB_EXIT_CODE      exit with this code before handshake (lifecycle tests)
   CCSTUB_FAIL_ON_RESUME if truthy and --resume is set, exit 1
   CCSTUB_HANG           sleep this duration before handshake (e.g. "5s")
+  CCSTUB_EMIT_COMPACT_BOUNDARY  if truthy, "/compact" emits status+compact_boundary
+  CCSTUB_COMPACT_PRE_TOKENS     pre_tokens in compact_boundary (default 50000)
   CCSTUB_RESPONSE       assistant reply text (default echoes user prompt)
 
 Flags accepted (most ignored — stub only cares about --resume, --model):
