@@ -222,6 +222,13 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		}
 	}
 
+	// Resolve the launch effort fresh for this session so a post-/effort
+	// bounce relaunches at the latest level (apply_flag_settings is runtime-
+	// only and resets on relaunch). Per-session, mirroring SystemPromptFunc. (#840)
+	if opts.EffortFunc != nil {
+		opts.Effort = opts.EffortFunc(sessionKey)
+	}
+
 	// Create the exec bridge so shell functions (foci_todo, foci_send_to_chat, etc.)
 	// are available in the backend's shell environment. The bridge is created here
 	// (not in individual backends) so all backend types get it automatically.

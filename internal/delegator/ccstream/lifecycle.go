@@ -48,6 +48,15 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
+	// Cold-launch effort injection (#840). apply_flag_settings (the /effort
+	// runtime path) is session-local and resets to the model default on a
+	// bounce (post-compaction reload, idle respawn). Passing --effort at
+	// launch re-establishes the level every Start, so the persisted session
+	// effort survives. Empty/"off" → omit the flag (CC uses the model
+	// default). foci validates the level before it reaches here.
+	if eff := opts.Effort; eff != "" && eff != "off" {
+		args = append(args, "--effort", eff)
+	}
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}

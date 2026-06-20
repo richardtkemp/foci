@@ -298,6 +298,21 @@ type StartOptions struct {
 	// session (reset, idle-respawn, emulated compaction) picks up
 	// character-file edits. See #828 / #706.
 	SystemPromptFunc func() string
+
+	// Effort is the effort level to apply at launch (e.g. "high", "max").
+	// Backends that support it (ccstream → `claude --effort <level>`) inject
+	// it so the level survives a session bounce — apply_flag_settings is
+	// runtime-only and resets to the model default on relaunch. Empty or
+	// "off" means inject nothing (CC uses the model default). (#840)
+	Effort string
+
+	// EffortFunc, when non-nil, is called at each session Start with the
+	// session key to resolve the launch effort fresh — mirroring
+	// SystemPromptFunc but parameterized by session. Reading it per-start
+	// (rather than freezing Effort at setup) keeps a post-/effort bounce on
+	// the latest level and lets each session carry its own. Its result
+	// populates Effort for that Start. (#840)
+	EffortFunc func(sessionKey string) string
 }
 
 // SessionEvents are the session-scoped, always-callable delivery callbacks.

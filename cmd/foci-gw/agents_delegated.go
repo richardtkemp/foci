@@ -210,7 +210,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				}
 				return buildDelegatedSystemPrompt(bs.SystemBlocks(), extra)
 			},
-			Model:            model,
+			Model: model,
+			// Re-inject the session's effort at every launch so a bounce
+			// (post-compaction reload, idle respawn) keeps the level the user
+			// set via /effort — apply_flag_settings is runtime-only. Returns
+			// "" when no override is set (CC uses the model default). (#840)
+			EffortFunc:       func(sk string) string { return ag.SessionEffort(sk) },
 			AgentID:          agentID,
 			ExecRegistry:     registry,
 			TmuxCols:         p.cfg.Tools.TmuxCols,
