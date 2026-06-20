@@ -76,6 +76,17 @@ type Caps struct {
 // Fetcher fetches the full catalogue, keyed by bare (normalized) model id.
 type Fetcher func(ctx context.Context) (map[string]Caps, error)
 
+// Persister optionally persists a backend's catalogue across process restarts.
+// Injected at startup (SetPersister) so this package stays a leaf with no DB
+// dependency — the sqlite-backed implementation lives in cmd/foci-gw. Both
+// methods are best-effort: errors are logged, never block a fetch or a lookup.
+// Save replaces the backend's persisted set; Load returns the last-persisted
+// set and the time it was fetched (zero entries = nothing persisted yet).
+type Persister interface {
+	Save(backend string, entries map[string]Caps, fetchedAt time.Time) error
+	Load(backend string) (entries map[string]Caps, fetchedAt time.Time, err error)
+}
+
 // registry holds one store per backend type.
 var (
 	registryMu sync.RWMutex
@@ -87,6 +98,7 @@ type store struct {
 	backend   string
 	entries   map[string]Caps
 	fetcher   Fetcher
+	persister Persister // nil = no cross-restart persistence
 	ttl       time.Duration
 	lastFetch time.Time
 	fetching  bool // single-flight guard
@@ -122,6 +134,52 @@ func SetFetcher(backend string, f Fetcher) {
 	s.mu.Lock()
 	s.fetcher = f
 	s.mu.Unlock()
+}
+
+// SetPersister installs the cross-restart persister for a backend (called once
+// at startup, before Restore). A nil persister is a no-op. Installing it does
+// not itself load — call Restore to seed the cache from the DB.
+func SetPersister(backend string, p Persister) {
+	if p == nil {
+		return
+	}
+	s := getStore(backend)
+	s.mu.Lock()
+	s.persister = p
+	s.mu.Unlock()
+}
+
+// Restore seeds a backend's cache from its persister, making the last-persisted
+// catalogue available immediately at startup — covering the gap before the
+// first background fetch lands (without it, LookupFor falls back to the static
+// modelinfo registry until the network responds). Best-effort: a miss or error
+// leaves the cache cold. Call synchronously at startup BEFORE kicking off the
+// background Refresh so a fast network result isn't clobbered by stale DB data;
+// Restore also declines to overwrite a cache a fetch has already populated.
+func Restore(backend string) {
+	s := getStore(backend)
+	s.mu.RLock()
+	p := s.persister
+	s.mu.RUnlock()
+	if p == nil {
+		return
+	}
+	entries, fetchedAt, err := p.Load(backend)
+	if err != nil {
+		log.Warnf(logComponent, "[%s] restore from db failed: %v", backend, err)
+		return
+	}
+	if len(entries) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.entries == nil { // don't clobber a fetch that already won the race
+		s.entries = entries
+		s.lastFetch = fetchedAt
+	}
+	s.mu.Unlock()
+	log.Infof(logComponent, "[%s] restored %d models from db (fetched %s)",
+		backend, len(entries), fetchedAt.Format(time.RFC3339))
 }
 
 // LookupFor returns the cached caps for a (backend, model) and whether a fresh
@@ -187,14 +245,27 @@ func Refresh(ctx context.Context, backend string) error {
 func (s *store) doFetch(ctx context.Context, fetcher Fetcher) error {
 	entries, err := fetcher(ctx)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.fetching = false
 	if err != nil {
-		log.Warnf(logComponent, "[%s] catalogue refresh failed (keeping %d cached entries): %v", s.backend, len(s.entries), err)
+		n := len(s.entries)
+		s.mu.Unlock()
+		log.Warnf(logComponent, "[%s] catalogue refresh failed (keeping %d cached entries): %v", s.backend, n, err)
 		return err
 	}
 	s.entries = entries
 	s.lastFetch = time.Now()
+	fetchedAt := s.lastFetch
+	persister := s.persister
+	s.mu.Unlock()
 	log.Infof(logComponent, "[%s] catalogue refreshed: %d models", s.backend, len(entries))
+
+	// Persist outside the store lock — DB I/O must not block lookups. Safe to
+	// pass entries by reference: doFetch is single-flighted and the next fetch
+	// builds a fresh map rather than mutating this one.
+	if persister != nil {
+		if err := persister.Save(s.backend, entries, fetchedAt); err != nil {
+			log.Warnf(logComponent, "[%s] persist to db failed: %v", s.backend, err)
+		}
+	}
 	return nil
 }
