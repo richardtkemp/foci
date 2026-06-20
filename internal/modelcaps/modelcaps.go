@@ -29,6 +29,7 @@ package modelcaps
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -201,6 +202,33 @@ func LookupFor(backend, model string) (Caps, bool) {
 		s.triggerRefresh()
 	}
 	return c, ok
+}
+
+// ModelsFor returns the bare model ids the backend's catalogue currently knows,
+// sorted for stable presentation. Like LookupFor it kicks off a background
+// refresh on a cold or stale cache and returns the current (possibly empty)
+// snapshot immediately — never blocking on the network. A cold cache returns
+// nil, so callers (e.g. the /model keyboard) fall back to type-the-name.
+func ModelsFor(backend string) []string {
+	s := getStore(backend)
+
+	s.mu.RLock()
+	models := make([]string, 0, len(s.entries))
+	for m := range s.entries {
+		models = append(models, m)
+	}
+	stale := time.Since(s.lastFetch) > s.ttl
+	hasFetcher := s.fetcher != nil
+	s.mu.RUnlock()
+
+	if (stale || len(models) == 0) && hasFetcher {
+		s.triggerRefresh()
+	}
+	if len(models) == 0 {
+		return nil
+	}
+	sort.Strings(models)
+	return models
 }
 
 // triggerRefresh starts a background refresh unless one is already running or

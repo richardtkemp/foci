@@ -50,8 +50,25 @@ func ModelCommand() *Command {
 			}
 			return Response{Text: fmt.Sprintf("Model switched to: %s", display)}, nil
 		},
-		KeyboardOptions: func(_ context.Context, cc CommandContext) []KeyboardOption {
-			return nil
+		KeyboardOptions: func(ctx context.Context, cc CommandContext) []KeyboardOption {
+			if cc.Agent == nil {
+				return nil
+			}
+			models := cc.Agent.BackendModels()
+			if len(models) == 0 {
+				// Cold catalogue — no buttons; the user types the model name.
+				return nil
+			}
+			current := cc.Agent.SessionModel(tools.SessionKeyFromContext(ctx))
+			opts := make([]KeyboardOption, 0, len(models))
+			for i, m := range models {
+				label := m
+				if current == m || strings.HasSuffix(current, "/"+m) {
+					label = "✓ " + m
+				}
+				opts = append(opts, KeyboardOption{Label: label, Data: m, Row: i})
+			}
+			return opts
 		},
 	}
 }
