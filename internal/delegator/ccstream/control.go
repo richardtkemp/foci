@@ -22,6 +22,11 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 			Subtype: "set_permission_mode",
 			Mode:    r.Mode,
 		})
+	case *delegator.ApplyFlagSettingsRequest:
+		return b.writer.SendControl(newRequestID(), &ApplyFlagSettingsRequest{
+			Subtype:  "apply_flag_settings",
+			Settings: r.Settings,
+		})
 	default:
 		return fmt.Errorf("ccstream: unsupported control request type %T", req)
 	}

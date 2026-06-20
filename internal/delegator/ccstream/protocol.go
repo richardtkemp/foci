@@ -223,6 +223,14 @@ type SetPermissionModeRequest struct {
 	Mode    string `json:"mode"`
 }
 
+// ApplyFlagSettingsRequest merges settings into CC's runtime flag-settings
+// layer (e.g. {"effortLevel":"max"}). Fire-and-forget — CC replies with a
+// control_response that the reader logs but no one waits on.
+type ApplyFlagSettingsRequest struct {
+	Subtype  string         `json:"subtype"` // always "apply_flag_settings"
+	Settings map[string]any `json:"settings"`
+}
+
 // ---------------------------------------------------------------------------
 // Permission response payloads (used inside ControlResponse.Response)
 // ---------------------------------------------------------------------------

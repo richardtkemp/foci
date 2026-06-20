@@ -167,9 +167,31 @@ func (a *Agent) SessionEffort(sessionKey string) string {
 	return a.getStringSetting(sessionKey, settingEffort)
 }
 
-// SetSessionEffort sets the per-session effort override and persists it.
+// SetSessionEffort sets the per-session effort override and persists it. For a
+// delegated (ccstream) session it also pushes the level to the live CC process
+// via apply_flag_settings so the next turn runs at the new effort with no
+// session bounce — mirroring SetPermissionMode's optimistic fire-and-forget.
+// API-loop sessions apply effort at turn time via the request output_config, so
+// no control is sent (SendBackendControl is a no-op without a delegated
+// backend). Concrete levels only: clear/off ("" / "off") skip the live push and
+// take effect on the next launch (see launch-time effort injection).
 func (a *Agent) SetSessionEffort(sessionKey, value string) {
 	a.setStringSetting(sessionKey, value, settingEffort)
+	if value == "" || value == "off" {
+		return
+	}
+	if a.DelegatedManager == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := a.SendBackendControl(ctx, sessionKey, &delegator.ApplyFlagSettingsRequest{
+			Settings: map[string]any{"effortLevel": value},
+		}); err != nil {
+			log.Warnf("agent", "session=%s apply_flag_settings effortLevel=%q failed: %v", sessionKey, value, err)
+		}
+	}()
 }
 
 // SessionThinking returns the effective thinking mode for the session.
