@@ -176,7 +176,10 @@ func CompactCommand() *Command {
 				},
 			},
 		},
-		// Bare /compact (no args) runs compaction directly.
+		// Fallback for non-empty args that match no subcommand (e.g. `/compact foo`):
+		// run compaction rather than print usage. Bare `/compact` (no args) does NOT
+		// reach here — it shows the run/dry-run confirmation keyboard instead (unlike
+		// /reset, which suppresses its keyboard to run directly).
 		DefaultExecute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			return compactExec(ctx, req, cc, false)
 		},
