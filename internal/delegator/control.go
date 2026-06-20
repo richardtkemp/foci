@@ -17,6 +17,18 @@ type SetModelRequest struct {
 
 func (*SetModelRequest) controlRequest() {}
 
+// ApplyFlagSettingsRequest asks the backend to merge settings into its runtime
+// flag-settings layer mid-session. For ccstream this maps to CC's
+// apply_flag_settings control; e.g. {"effortLevel": "max"} changes the effort
+// applied to the next turn with no session bounce. Fire-and-forget — backends
+// MUST NOT block on a control_response. CC does NOT validate the values, so the
+// command layer must reject invalid settings before constructing this.
+type ApplyFlagSettingsRequest struct {
+	Settings map[string]any
+}
+
+func (*ApplyFlagSettingsRequest) controlRequest() {}
+
 // SetPermissionModeRequest asks the backend to switch its permission mode
 // mid-session. Mode is the backend-native value (for ccstream:
 // "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions" |
