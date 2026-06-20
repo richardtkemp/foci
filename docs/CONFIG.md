@@ -920,6 +920,7 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `autocompact_before_mana_refresh_preserve_pct` | float | `0.5` | Fraction of messages to preserve during mana-refresh compaction (0.0–1.0). Default 0.5 preserves 50% of messages, summarising the older half. Only used when `autocompact_before_mana_refresh_preserve` is unset. |
 | `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `shared/prompts/branch-orientation-facet.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `shared/prompts/branch-orientation-headless.md`. |
+| `reload_on_compact` | bool | `true` | For delegated (Claude Code) backends, reload the system prompt from disk at compaction so character-file and skill edits take effect. The reload is a CC session bounce (restart + resume), so it only fires when the prompt rebuilt from disk **differs** from the one the running session launched with — fingerprinted by a hash of the character files plus the skill list. An unchanged prompt means no bounce and no interruption to the flow. It catches character-file edits and skill add/remove (the skill list is in the prompt), but **not** skill body-content edits (skill bodies load on demand and never appear in the prompt). |
 
 #### Mana-Refresh Compaction
 

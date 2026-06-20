@@ -59,7 +59,7 @@ api_key = "sk-or-..."
 
 ## Claude Code Fallback (Anthropic only)
 
-If no Anthropic API key is configured, foci falls back to Claude Code's credentials at `~/.claude/.credentials.json`. This is read-only — foci never writes to Claude Code's file.
+If no Anthropic API key is configured, foci falls back to Claude Code's credentials at `~/.claude/.credentials.json`. This is read-only — foci never writes to Claude Code's file. When the OAuth token expires beyond refresh, the subprocess returns a 401; foci detects this and starts an automated re-login (see [Automated Re-login](#automated-re-login)).
 
 ### `foci auth` flags
 
@@ -81,3 +81,17 @@ If the gateway isn't running, `foci auth` prints a note and the new credentials 
 ## Auto-Refresh
 
 When using Claude Code credentials fallback, foci refreshes the token ~5 minutes before expiry. The refresh runs in the background — no manual intervention needed. API keys are static and do not need refresh.
+
+## Automated Re-login
+
+When the shared Claude Code OAuth credential can no longer be refreshed, the subprocess returns a 401 (`Failed to authenticate` / `Invalid authentication credentials`). Foci detects this and runs an automated re-login that re-authenticates the Claude Code OAuth credentials — no human has to run `claude /login` on the host.
+
+The flow is also triggered manually with the `/login` command (ccstream backend only; see COMMANDS.md), useful for exercising it without waiting for a real token expiry.
+
+What you see:
+
+1. The URL message arrives in the chat that triggered the re-login — the chat that ran `/login` for the manual path, or the agent's default chat for the auto-401 path: `🔐 Sign in to re-authenticate Claude Code, then paste the code back to me:` followed by the sign-in URL.
+2. You sign in via the browser and reply with the code from the page.
+3. On success: `✅ Login completed.`
+
+While a re-login is in progress, message processing for delegated agents is paused; it resumes once login completes, fails, or times out. If it fails, foci tells you to run `claude /login` on the host to recover.

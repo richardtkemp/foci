@@ -115,20 +115,21 @@ Manage tmux sessions. **CLI-only** (the `tmux` tool is the agent-facing equivale
 
 ### `/model [alias-or-id]`
 Show or switch the model for the current session.
-- `/model` — show current model
+- `/model` — shows a keyboard with one button per model the agent's backend advertises (live catalogue), the current model marked with a ✓. Cold catalogue (no models known) falls back to type-the-name.
 - `/model anthropic/claude-haiku-4-5` — switch to a specific model using `developer/model_id` format
 - `/model gemini:flash` — switch with explicit endpoint via `endpoint:name` syntax
 
 ### `/effort [level]`
-Show or set the thinking effort level. Only visible when the current model supports effort.
-- `/effort` — show current level
+Show or set the thinking effort level. Only visible when the current model supports effort. Levels are sourced live from the model catalogue, so e.g. opus-4-8 offers `low`/`medium`/`high`/`xhigh`/`max` rather than a fixed set; a cold/unknown catalogue falls back to the static `low`/`medium`/`high`. Numeric aliases follow catalogue order (`1` = first level).
+- `/effort` — show current level (bare invocation also shows the level keyboard)
 - `/effort low` — set to low (alias: `1`)
 - `/effort medium` — set to medium (alias: `2`)
 - `/effort high` — set to high (alias: `3`)
 - `/effort none` or `/effort off` — clear override
+- On a ccstream (CC) session, setting a concrete level pushes live to the running CC via `apply_flag_settings` — the next turn runs at the new effort with no session bounce. The level also persists across bounces/restarts: it's re-injected at cold launch via CC's `--effort` flag. (`clear`/`off` skip the live push and take effect on next launch.)
 
 ### `/thinking [mode]`
-Show or set extended thinking mode. Only visible when the current model supports thinking.
+Show or set extended thinking mode. Only visible when the current model supports thinking. Hidden and rejected on the ccstream (CC) backend — CC has no thinking control (unsupported since ~4.5/4.6) and effort subsumes it; api agents keep it.
 - `/thinking` — show current mode
 - `/thinking off` — disable (alias: `0`)
 - `/thinking adaptive` — enable adaptive thinking (alias: `1`)
@@ -158,11 +159,15 @@ Clear session history.
 
 ### `/compact [dry-run]`
 Trigger manual context compaction.
-- `/compact` — compact now
+- `/compact` — bare invocation shows a run/dry-run confirmation keyboard (does NOT compact directly); pick an option to proceed
 - `/compact dry-run` — show what would happen and send the summary as a document without compacting
+- Any other non-empty unmatched args (e.g. `/compact foo`) run compaction directly via the default handler
 
 ### `/pass <command>`
 Forward a raw command directly to the delegated backend (Claude Code), bypassing foci's command dispatch. Useful for running CC slash commands that foci would otherwise intercept (e.g. `/pass /context`, `/pass /model opus`, `/pass /help`). Only available for agents with a delegated backend — returns an error for API-mode agents. For tmux backends, waits for output stabilisation and returns the captured pane content. For stream backends, returns immediately (CC's response arrives asynchronously via the stdout reader).
+
+### `/login`
+Manually trigger Claude Code re-authentication. Drives a `claude /login` TUI in tmux, relays the login URL back to the chat that ran `/login`, then treats your next message as the login code — message processing is paused throughout. Normally this flow fires automatically on a 401 auth failure; this command exposes the same trigger on demand. ccstream backend only (reports unavailable on cctmux/API); returns "already in progress" if a re-login is already running.
 
 ### `/reload`
 Reload workspace files (system prompt) and skills from disk. **CLI-only**. Config file (`foci.toml`) changes still require a full service restart.
@@ -231,7 +236,7 @@ List and manage per-chat sessions.
 ### `/agents [new]`
 List active agent sessions.
 - `/agents` — all agents with ID, session key, status, model, message count
-- `/agents new` — interactive 3-step wizard to create a new agent (name → model → character files), appends to `foci.toml` and sets up workspace
+- `/agents new` — interactive wizard to create a new agent (name → model → backend → character mode). The backend step offers the live set of registered delegated backends (claude-code, claude-code-tmux, …) plus `api` for the in-process loop; empty input picks `claude-code`. The choice is written explicitly to `foci.toml` (delegated → `backend = "<name>"` + `backend_config.model = "<alias>"`; api → `backend = "api"`), and the workspace is set up
 
 ### `/tools`
 List all registered tools (name and description).
