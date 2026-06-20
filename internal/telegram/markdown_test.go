@@ -572,6 +572,31 @@ func TestConvertToTelegramHTMLNestedEmphasis(t *testing.T) {
 			in:   "**a *b* c**",
 			want: "<b>a <i>b</i> c</b>",
 		},
+		{
+			// #842: the underscore italic pass runs after convertStarEmphasis and
+			// was blind to the <b> tags it emitted, so this crossed to
+			// "<b>alpha <i>beta</b> gamma</i>" — invalid nesting Telegram rejects.
+			// Crossed emphasis has no valid HTML form, so the straddling '_' is
+			// left literal; the bold stays well-formed.
+			name: "crossed star-bold and underscore-italic stays well-formed (#842)",
+			in:   "**alpha _beta** gamma_",
+			want: "<b>alpha _beta</b> gamma_",
+		},
+		{
+			name: "crossed underscore-italic and star-bold mirror (#842)",
+			in:   "_alpha **beta_ gamma**",
+			want: "_alpha <b>beta_ gamma</b>",
+		},
+		{
+			name: "crossed strikethrough straddling bold stays well-formed (#842)",
+			in:   "~~a **b~~ c**",
+			want: "~~a <b>b~~ c</b>",
+		},
+		{
+			name: "control: underscore italic wrapping a whole bold span (valid)",
+			in:   "_a **b** c_",
+			want: "<i>a <b>b</b> c</i>",
+		},
 	}
 
 	for _, tt := range tests {
