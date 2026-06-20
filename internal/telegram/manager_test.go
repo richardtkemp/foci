@@ -34,6 +34,37 @@ func TestBotManagerPrimary(t *testing.T) {
 	}
 }
 
+func TestBotForSession_EmptyKeyFallsThroughToPrimary(t *testing.T) {
+	// Regression for #843: an idle facet bot also carries an empty SessionKey,
+	// so BotForSession("") used to return the facet (agentID="", no default
+	// chat) instead of nil — and BotForSessionOrPrimary therefore never reached
+	// the agent's primary. The login URL then had nowhere to go. Register the
+	// facet FIRST so it precedes the primary in m.all (the original bug order).
+	mgr := NewBotManager()
+
+	facet, _ := testBot(nil, command.NewRegistry())
+	facet.SetSessionKeyDirect("") // idle facet: empty SessionKey, agentID=="" → SessionKey()==""
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddFacet("clutch", facet)
+	mgr.AddPrimary("clutch", primary)
+
+	// Sanity: the idle facet really does report an empty session key (the
+	// collision the guard defends against). If this ever changes, the
+	// regression below would pass trivially.
+	if facet.SessionKey() != "" {
+		t.Fatalf("idle facet SessionKey() = %q, want \"\" (test no longer reproduces #843)", facet.SessionKey())
+	}
+
+	// An empty key matches no specific session.
+	if got := mgr.BotForSession(""); got != nil {
+		t.Errorf("BotForSession(\"\") = %v, want nil", got)
+	}
+	// So the OrPrimary fallback must return the agent's primary, not the facet.
+	if got := mgr.BotForSessionOrPrimary("", "clutch"); got != primary {
+		t.Errorf("BotForSessionOrPrimary(\"\", clutch) = %v, want primary", got)
+	}
+}
+
 func TestBotManagerFacet(t *testing.T) {
 	// Verifies that AddFacet adds bots to the per-agent pool, marks them as
 	// secondary, and that Pool() returns the correct pool with the right size.

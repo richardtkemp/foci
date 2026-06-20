@@ -23,11 +23,13 @@ func LoginCommand() *Command {
 		Description: "Manually trigger Claude Code re-login (ccstream only)",
 		Category:    "operations",
 		Requires:    RequiresBackend,
-		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			if cc.Agent == nil || cc.Agent.ReloginTrigger == nil {
 				return Response{Text: "Re-login is only available on the ccstream backend."}, nil
 			}
-			if !cc.Agent.ReloginTrigger("manual /login command") {
+			// req.SessionKey targets the chat that ran /login, so the login URL
+			// goes back to whoever triggered it — not the agent's default chat.
+			if !cc.Agent.ReloginTrigger("manual /login command", req.SessionKey) {
 				return Response{Text: "A re-login is already in progress."}, nil
 			}
 			return Response{Text: "🔐 Re-login started. Message processing is paused — watch for the login URL, then reply with the code from the browser."}, nil
