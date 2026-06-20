@@ -189,9 +189,15 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	// conversation, so character/skill edits reload. Per-agent gated
 	// (reload_on_compact, default on). The SystemPromptFunc closure re-reads
 	// Bootstrap itself, so no Bootstrap.Reload() is needed here.
+	// Bounce only when the on-disk system prompt actually changed (character
+	// edits or a skill added/removed); an unchanged prompt means the running
+	// session is already current, so the restart would interrupt the flow for
+	// nothing. The resume nudge is gated on an actual bounce: with no restart
+	// there is no interruption to recover from (pre-#828 compaction is seamless).
 	if a.ReloadOnCompact && a.DelegatedManager != nil {
-		a.DelegatedManager.BounceSession(sessionKey)
-		a.maybeInjectCompactionResume(sessionKey)
+		if a.DelegatedManager.BounceSessionIfPromptChanged(sessionKey) {
+			a.maybeInjectCompactionResume(sessionKey)
+		}
 	}
 	return nil
 }
