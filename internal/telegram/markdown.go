@@ -233,9 +233,12 @@ func emphasizeRuns(s string, delim byte, runLen int, openTag, closeTag string, s
 			continue
 		}
 		if runs[k].canClose {
-			if skipContent != nil && skipContent(s[runs[pending].end:runs[k].start]) {
-				// Exempt span (e.g. a common dunder) — abandon this open,
-				// leave both delimiter runs literal.
+			content := s[runs[pending].end:runs[k].start]
+			// Exempt span (common dunder), or one that would straddle a tag
+			// emitted by an earlier pass (#842): abandon this open, leave both
+			// delimiter runs literal. Crossed emphasis has no valid HTML form,
+			// so a literal delimiter beats malformed nesting Telegram rejects.
+			if (skipContent != nil && skipContent(content)) || spanWouldCrossTags(content) {
 				pending = -1
 				continue
 			}
@@ -271,6 +274,40 @@ func emphasizeRuns(s string, delim byte, runLen int, openTag, closeTag string, s
 		i = j
 	}
 	return b.String()
+}
+
+// spanWouldCrossTags reports whether wrapping content in a fresh emphasis tag
+// would produce crossed (improperly nested) HTML. The emphasis passes run after
+// convertStarEmphasis and after each other, so a '_'/'__'/'~~'/'||' span can
+// land across a boundary of a tag an earlier pass already emitted
+// (<b>/<i>/<a>/<s>/<u>/<tg-spoiler>). content crosses when it holds a closing
+// tag whose opener sits outside the span (running depth goes negative) or an
+// opener whose closer sits outside (depth ends non-zero); either way the new
+// wrapper would straddle that boundary — the exact invalid nesting Telegram's
+// HTML parser rejects with "Unmatched end tag" (#842). NUL-delimited code
+// placeholders carry no '<', so they never count here.
+func spanWouldCrossTags(content string) bool {
+	depth := 0
+	for i := 0; i < len(content); {
+		if content[i] != '<' {
+			i++
+			continue
+		}
+		end := strings.IndexByte(content[i:], '>')
+		if end < 0 {
+			break // unterminated '<' — treat the remainder as literal text
+		}
+		if i+1 < len(content) && content[i+1] == '/' {
+			depth--
+			if depth < 0 {
+				return true // close without its open inside the span
+			}
+		} else {
+			depth++
+		}
+		i += end + 1
+	}
+	return depth != 0 // leftover open without its close inside the span
 }
 
 // commonDunders holds the inner names of well-known Python __dunder__
