@@ -36,7 +36,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 				"file": {
 					"type": "string",
 					"format": "filepath",
-					"description": "Path to a file to send as a document attachment. Relative paths are resolved against the caller's working directory; absolute paths are passed through unchanged."
+					"description": "Path to a file to send as a document attachment. Relative paths are resolved against the caller's working directory; absolute paths are passed through unchanged. Pass '-' to read the attachment body from stdin (e.g. pipe a file in: cat plan.md | foci_send_to_chat 'caption' --file - ); pair with --filename to set the display name."
 				},
 				"filename": {
 					"type": "string",

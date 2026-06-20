@@ -80,6 +80,77 @@ func TestSendToChat_ShellFuncResolutionExecutesCorrectly(t *testing.T) {
 	}
 }
 
+func TestSendToChat_ShellFuncFileDashReadsStdin(t *testing.T) {
+	// `--file -` must read the attachment body from stdin into a temp file
+	// rather than treating "-" as a literal path (TODO #814). Guard the
+	// structural emit so a refactor can't silently drop it.
+	t.Parallel()
+	tool := NewSendToChatTool(nil, nil)
+	body := generateShellFunc(tool)
+
+	for _, want := range []string{
+		`if [ "$file" = "-" ]; then`,
+		`__foci_stdin_file="$(mktemp)"`,
+		`cat > "$__foci_stdin_file"`,
+		`file="$__foci_stdin_file"`,
+		// The text stdin reader must skip when a file already drained stdin.
+		`[ -z "$__foci_stdin_file" ]; then`,
+		// Temp file is cleaned up after the call.
+		`rm -f "$__foci_stdin_file"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("generated send_to_chat shell function missing stdin-file snippet\nwant substring: %s\n---body---\n%s", want, body)
+		}
+	}
+
+	// The "-"-to-tempfile block must appear BEFORE the relative-path resolver,
+	// otherwise "-" would become "$PWD/-" and never reach the stdin branch.
+	dashIdx := strings.Index(body, `if [ "$file" = "-" ]; then`)
+	resolverIdx := strings.Index(body, `case "$file" in /*)`)
+	if dashIdx < 0 || resolverIdx < 0 || dashIdx > resolverIdx {
+		t.Errorf("stdin-file block (%d) must precede the relative-path resolver (%d)", dashIdx, resolverIdx)
+	}
+}
+
+// disconnected-test-ok: black-box test — execs bash to validate the
+// stdin-to-tempfile logic; the sibling TestSendToChat_ShellFuncFileDashReadsStdin
+// guards drift of the real generated snippet.
+func TestSendToChat_ShellFuncFileDashStdinExecutes(t *testing.T) {
+	// End-to-end of the bash fragment: pipe content with file="-" and assert
+	// the temp file receives stdin and the file var points at it.
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	// Inline the production logic (structural test above guards drift).
+	script := `file="$1"
+__foci_stdin_file=""
+if [ "$file" = "-" ]; then
+  __foci_stdin_file="$(mktemp)"
+  cat > "$__foci_stdin_file"
+  file="$__foci_stdin_file"
+fi
+printf 'FILE=%s\n' "$file"
+printf 'CONTENT=%s' "$(cat "$file")"
+rm -f "$__foci_stdin_file"`
+
+	cmd := exec.Command(bash, "-c", script, "_", "-")
+	cmd.Stdin = strings.NewReader("hello from stdin")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("bash exec failed: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "CONTENT=hello from stdin") {
+		t.Errorf("temp file did not capture stdin\ngot: %q", got)
+	}
+	if !strings.Contains(got, "FILE=/") {
+		t.Errorf("file var should point at an absolute temp path\ngot: %q", got)
+	}
+}
+
 func TestSendToChat_ShellFuncFilenameFlagNotResolved(t *testing.T) {
 	// --filename is a display label, not a path. Must NOT be resolved as
 	// filepath (would produce an absolute label like "/cwd/report.md"
