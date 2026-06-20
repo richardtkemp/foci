@@ -188,6 +188,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// empty. ag is a pointer; ReloadSystemFn is wired later in finalize,
 			// but this closure only runs at runtime session-start, by when it's set.
 			SystemPromptFunc: func() string {
+				// Re-read character files from disk so this fresh session reflects
+				// edits since setup, independent of whether the caller reloaded
+				// (the compaction-bounce path #828 does not). bs is shared
+				// per-agent; Reload mutates it in place under its own lock.
+				// ReloadSystemFn re-loads skills from disk too.
+				bs.Reload()
 				extra := br.extraSystemBlocks
 				if ag.ReloadSystemFn != nil {
 					if fresh, _ := ag.ReloadSystemFn(); fresh != nil {

@@ -500,17 +500,41 @@ func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) e
 // Close itself has bounded timeouts (see ccstream Close), so even in the
 // pathological case this method returns within ~10s.
 func (m *DelegatedManager) ResetSession(sessionKey string) {
+	if m.closeManaged(sessionKey, true) {
+		log.Infof("delegated", "reset session %s (closed, resume ID cleared)", sessionKey)
+	}
+}
+
+// BounceSession closes the backend for sessionKey but KEEPS its saved resume
+// ID, so the next message respawns CC with --resume <same session> — picking up
+// the same (now compacted) conversation while rebuilding the system prompt from
+// disk via StartOptions.SystemPromptFunc. Used after a delegated compaction so
+// character/skill file edits reload without losing context (#828 Part B). The
+// real-CC behaviour this relies on — --resume honours a freshly-sent initialize
+// systemPrompt — is verified (clutch docs/resume_prompt_probe.py).
+func (m *DelegatedManager) BounceSession(sessionKey string) {
+	if m.closeManaged(sessionKey, false) {
+		log.Infof("delegated", "bounced session %s (closed, resume ID kept — prompt reloads on respawn)", sessionKey)
+	}
+}
+
+// closeManaged closes and unmaps the backend for sessionKey, returning whether
+// one was present. When clearResume is true the saved CC resume ID is dropped
+// (next session starts fresh); when false it is kept (next session resumes the
+// same CC conversation). The unmap and optional resume-ID clear happen under
+// m.mu so a concurrent Get() observes consistent state; the slow Close() calls
+// run after unlock.
+func (m *DelegatedManager) closeManaged(sessionKey string, clearResume bool) bool {
 	m.mu.Lock()
 	mb, ok := m.backends[sessionKey]
 	if !ok {
 		m.mu.Unlock()
-		return
+		return false
 	}
 	delete(m.backends, sessionKey)
-	// Clear any saved resume ID so next session starts fresh — done while
-	// the lock is held so a concurrent Get() observes a consistent state
-	// (no entry in m.backends, no resume ID to load).
-	m.clearResumeID(sessionKey)
+	if clearResume {
+		m.clearResumeID(sessionKey)
+	}
 	m.mu.Unlock()
 
 	mb.clearPermission()
@@ -518,7 +542,7 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 	if mb.bridge != nil {
 		mb.bridge.Close()
 	}
-	log.Infof("delegated", "reset session %s (closed, resume ID cleared)", sessionKey)
+	return true
 }
 
 // Close shuts down all managed delegated backends and the idle reaper.

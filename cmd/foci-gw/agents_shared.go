@@ -98,6 +98,7 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	ag.Compactor = compactor
 	ag.CompactionSummaryPromptPath = cpc.CompactionSummaryPrompt
 	ag.CompactionHandoffMsg = cpc.CompactionHandoffMsg
+	ag.ReloadOnCompact = cpc.ReloadOnCompact
 	ag.AutocompactBeforeManaRefresh = cpc.AutocompactBeforeManaRefresh
 	ag.AutocompactBeforeManaRefreshThreshold = cpc.AutocompactBeforeManaRefreshThreshold
 	ag.AutocompactBeforeManaRefreshFactor = cpc.AutocompactBeforeManaRefreshFactor

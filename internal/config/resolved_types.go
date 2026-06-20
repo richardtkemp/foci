@@ -161,6 +161,7 @@ type ResolvedCompaction struct {
 	CompactionPreserveMessages              int
 	CompactionEffort                        string
 	FacetNoCompact                          bool
+	ReloadOnCompact                         bool
 	AutocompactBeforeManaRefresh            bool
 	AutocompactBeforeManaRefreshThreshold   string
 	AutocompactBeforeManaRefreshFactor      float64
@@ -176,6 +177,7 @@ func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 		CompactionPreserveMessages:              DerefInt(m.CompactionPreserveMessages),
 		CompactionEffort:                        DerefStr(m.CompactionEffort),
 		FacetNoCompact:                          DerefBool(m.FacetNoCompact),
+		ReloadOnCompact:                         m.ReloadOnCompact == nil || *m.ReloadOnCompact, // default ON
 		AutocompactBeforeManaRefresh:            DerefBool(m.AutocompactBeforeManaRefresh),
 		AutocompactBeforeManaRefreshThreshold:   DerefStr(m.AutocompactBeforeManaRefreshThreshold),
 		AutocompactBeforeManaRefreshFactor:      DerefFloat(m.AutocompactBeforeManaRefreshFactor),

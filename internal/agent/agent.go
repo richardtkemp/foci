@@ -98,6 +98,7 @@ type Agent struct {
 	ManaWarnFunc                            HookList[func(string)]                  // callbacks for mana threshold warnings (e.g. platform notification)
 	MaxTokensWarnFunc                       HookList[func(string)]                  // callbacks when stop_reason=max_tokens (response truncated)
 	RateLimitFunc                           HookList[func(resetTime time.Time)]     // callbacks when API returns 429 (rate limited)
+	ReloadOnCompact                         bool                                    // delegated: after compaction, bounce the CC session (resume) so character/skill files reload from disk (#828)
 	AutocompactBeforeManaRefresh            bool                                    // master switch for mana-refresh compaction
 	AutocompactBeforeManaRefreshThreshold   string                                  // trigger mana-refresh when reset this soon (e.g. "5m")
 	AutocompactBeforeManaRefreshFactor      float64                                 // secondary threshold = main threshold × factor (e.g. 0.5)
