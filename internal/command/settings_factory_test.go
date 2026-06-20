@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/modelcaps"
 	"foci/internal/tools"
 )
 
@@ -372,6 +373,80 @@ func TestNewSessionSettingCommandKeyboardHeaderModelDefault(t *testing.T) {
 	want = "/effort — Effort: low"
 	if header != want {
 		t.Errorf("header with session override:\ngot  %q\nwant %q", header, want)
+	}
+}
+
+// TestEffortDynamicChoicesFromCatalogue verifies that /effort sources its levels
+// from the live model catalogue (modelcaps): a model advertising all five levels
+// offers xhigh and max, the keyboard and numeric aliases follow catalogue order,
+// the options hint stays in sync, and a model absent from the catalogue falls
+// back to the static low/medium/high set. (#840)
+func TestEffortDynamicChoicesFromCatalogue(t *testing.T) {
+	// Seed the process-wide catalogue with an opus that supports all five levels.
+	// Other models (e.g. sonnet) are deliberately absent → Lookup misses → static.
+	modelcaps.SetFetcher(func(_ context.Context) (map[string]modelcaps.Caps, error) {
+		return map[string]modelcaps.Caps{
+			"claude-opus-4-8": {Effort: []string{"low", "medium", "high", "xhigh", "max"}},
+		}, nil
+	})
+	if err := modelcaps.Refresh(context.Background()); err != nil {
+		t.Fatalf("seed catalogue: %v", err)
+	}
+
+	ag := &agent.Agent{}
+	sk := "test-session"
+	cc := modelCC(ag)
+	skCtx := tools.WithSessionKey(context.Background(), sk)
+	cmd := EffortCommand()
+
+	// Model present in catalogue → dynamic levels.
+	ag.SetSessionModel(sk, "anthropic/claude-opus-4-8", "", "", nil)
+
+	opts := cmd.KeyboardOptions(skCtx, cc)
+	gotLabels := make([]string, len(opts))
+	for i, o := range opts {
+		gotLabels[i] = o.Label
+	}
+	wantLabels := []string{"low", "medium", "high", "xhigh", "max"}
+	if len(gotLabels) != len(wantLabels) {
+		t.Fatalf("keyboard labels = %v, want %v", gotLabels, wantLabels)
+	}
+	for i := range wantLabels {
+		if gotLabels[i] != wantLabels[i] {
+			t.Errorf("keyboard label[%d] = %q, want %q", i, gotLabels[i], wantLabels[i])
+		}
+	}
+
+	// xhigh accepted by label.
+	resp, _ := cmd.Execute(skCtx, Request{Args: "xhigh", SessionKey: sk}, cc)
+	if ag.SessionEffort(sk) != "xhigh" || resp.Text != "Effort set to: xhigh" {
+		t.Errorf("set xhigh: stored=%q resp=%q", ag.SessionEffort(sk), resp.Text)
+	}
+
+	// Numeric alias 5 → max (catalogue order).
+	resp, _ = cmd.Execute(skCtx, Request{Args: "5", SessionKey: sk}, cc)
+	if ag.SessionEffort(sk) != "max" || resp.Text != "Effort set to: max" {
+		t.Errorf("set 5→max: stored=%q resp=%q", ag.SessionEffort(sk), resp.Text)
+	}
+
+	// No-args show carries the dynamic hint (all five levels).
+	ag.SetSessionEffort(sk, "")
+	resp, _ = cmd.Execute(skCtx, Request{SessionKey: sk}, cc)
+	wantHint := "Options: 1) low  2) medium  3) high  4) xhigh  5) max"
+	if want := "Effort: not set\n" + wantHint; resp.Text != want {
+		t.Errorf("dynamic show:\ngot  %q\nwant %q", resp.Text, want)
+	}
+
+	// Model absent from catalogue → static fallback (low/medium/high only).
+	ag.SetSessionModel(sk, "anthropic/claude-sonnet-4-6", "", "", nil)
+	opts = cmd.KeyboardOptions(skCtx, cc)
+	if len(opts) != 3 {
+		t.Errorf("fallback keyboard = %d options, want 3 (low/medium/high)", len(opts))
+	}
+	// And the static hint returns.
+	resp, _ = cmd.Execute(skCtx, Request{SessionKey: sk}, cc)
+	if want := "Effort: not set\nOptions: 1) low  2) medium  3) high"; resp.Text != want {
+		t.Errorf("fallback show:\ngot  %q\nwant %q", resp.Text, want)
 	}
 }
 
