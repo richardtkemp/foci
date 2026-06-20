@@ -609,6 +609,51 @@ func TestConvertToTelegramHTMLNestedEmphasis(t *testing.T) {
 	}
 }
 
+// TestConvertToTelegramHTMLStarStraddlesEarlierTags pins #846: convertStarEmphasis
+// runs AFTER the link (reLink) and spoiler (||) passes and treated < > as literal
+// text, so a **…** pair could straddle an <a>/<tg-spoiler> boundary an earlier
+// pass emitted, e.g. "||a **b|| c**" → "<tg-spoiler>a <b>b</tg-spoiler> c</b>" —
+// the crossed nesting Telegram rejects. Like the sibling #842 fix, a straddling
+// star run is left literal: crossed emphasis has no valid HTML form. Valid cases
+// where the whole tag sits inside (or outside) the star span are unaffected.
+func TestConvertToTelegramHTMLStarStraddlesEarlierTags(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "bold straddling a spoiler boundary stays literal",
+			in:   "||a **b|| c**",
+			want: "<tg-spoiler>a **b</tg-spoiler> c**",
+		},
+		{
+			name: "bold straddling a link boundary stays literal",
+			in:   "[**a](http://x) b**",
+			want: "<a href=\"http://x\">**a</a> b**",
+		},
+		{
+			name: "control: bold wholly inside a spoiler (valid)",
+			in:   "||a **b** c||",
+			want: "<tg-spoiler>a <b>b</b> c</tg-spoiler>",
+		},
+		{
+			name: "control: spoiler wholly inside bold (valid)",
+			in:   "**a ||b|| c**",
+			want: "<b>a <tg-spoiler>b</tg-spoiler> c</b>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ConvertToTelegramHTML(tt.in)
+			if got != tt.want {
+				t.Errorf("ConvertToTelegramHTML(%q)\n  got  = %q\n  want = %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestConvertToTelegramHTMLEmphasisAroundCode pins the fix for emphasis markers
 // sitting directly against an inline-code span. Code spans are extracted to
 // NUL-delimited placeholders before the emphasis pass, so a '*' run adjacent to

@@ -397,9 +397,15 @@ func convertStarEmphasis(s string) string {
 	rem := make([]int, len(nodes))
 	canOpen := make([]bool, len(nodes))
 	canClose := make([]bool, len(nodes))
+	// startPos[idx]/origRun[idx]: source offset and original length of each star
+	// run, kept so the closing phase can extract the text a pair would wrap and
+	// reject straddles of earlier-pass tags (#846).
+	startPos := make([]int, len(nodes))
+	origRun := make([]int, len(nodes))
 	{
 		pos := 0
 		for idx, n := range nodes {
+			startPos[idx] = pos
 			if n.star {
 				runLen := n.litPre
 				var prev, next byte
@@ -412,6 +418,7 @@ func convertStarEmphasis(s string) string {
 					next = s[pos+runLen]
 				}
 				rem[idx] = runLen
+				origRun[idx] = runLen
 				// A run can open only with a non-space char after it, and close
 				// only with a non-space char before it. At a string boundary
 				// there is no such char, so the direction is disallowed.
@@ -439,6 +446,14 @@ func convertStarEmphasis(s string) string {
 					need = 2
 				}
 				if r < need {
+					break
+				}
+				// #846: the span this close would wrap runs from just after the
+				// opening run to the start of this run. If it straddles a tag an
+				// earlier pass emitted (a <a>/<tg-spoiler> opened or closed
+				// outside the span), pairing would cross — leave both runs
+				// literal instead, like the sibling emphasizeRuns guard.
+				if spanWouldCrossTags(s[startPos[top.node]+origRun[top.node] : startPos[idx]]) {
 					break
 				}
 				r -= need
