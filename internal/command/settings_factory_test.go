@@ -469,3 +469,48 @@ func TestNewSessionSettingCommandNilCapability(t *testing.T) {
 		t.Error("Visible should be nil when Capability is nil")
 	}
 }
+
+// TestBackendGate verifies that BackendGate hides the command (Visible=false)
+// and rejects it in Execute on backends where the gate returns false, while
+// leaving it fully available on permitted backends. /thinking uses this to
+// disappear on ccstream while api agents keep it. (#840)
+func TestBackendGate(t *testing.T) {
+	var stored string
+	def := sessionSettingDef{
+		Name:        "test",
+		Description: "test",
+		OptionsHint: "Options: a",
+		InvalidName: "test value",
+		// Permit only the API backend; ccstream is gated off.
+		BackendGate: func(bt string) bool { return bt == modelcaps.BackendAPI },
+		Get:         func(_ CommandContext, _ string) string { return stored },
+		Set:         func(_ CommandContext, _, v string) { stored = v },
+		Choices:     []settingChoice{{Label: "a", SetValue: "a", Response: "Set: a"}},
+	}
+	cmd := newSessionSettingCommand(def)
+	if cmd.Visible == nil {
+		t.Fatal("Visible should be set when BackendGate is provided")
+	}
+
+	sk := "test-session"
+	skCtx := tools.WithSessionKey(context.Background(), sk)
+
+	// API backend (bare Agent, no DelegatedManager) → permitted.
+	apiCC := modelCC(&agent.Agent{})
+	if !cmd.Visible(skCtx, Request{}, apiCC) {
+		t.Error("should be visible on api backend")
+	}
+	if resp, _ := cmd.Execute(skCtx, Request{Args: "a", SessionKey: sk}, apiCC); resp.Text != "Set: a" {
+		t.Errorf("api Execute: got %q, want %q", resp.Text, "Set: a")
+	}
+
+	// ccstream backend (non-nil DelegatedManager) → hidden and rejected.
+	ccCC := modelCC(&agent.Agent{DelegatedManager: &agent.DelegatedManager{}})
+	if cmd.Visible(skCtx, Request{}, ccCC) {
+		t.Error("should be hidden on ccstream backend")
+	}
+	resp, _ := cmd.Execute(skCtx, Request{Args: "a", SessionKey: sk}, ccCC)
+	if resp.Text != "/test is not supported on this backend" {
+		t.Errorf("ccstream Execute: got %q, want rejection", resp.Text)
+	}
+}
