@@ -212,6 +212,16 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	opts.ResumeSessionID = resumeID
 	opts.SessionKey = sessionKey
 
+	// Rebuild the system prompt from disk at every session-start, so a fresh
+	// session (reset, idle-respawn, emulated compaction) picks up character-
+	// file edits instead of the prompt frozen at agent setup. Non-empty result
+	// wins over the static SystemPrompt. See #828 / #706.
+	if opts.SystemPromptFunc != nil {
+		if p := opts.SystemPromptFunc(); p != "" {
+			opts.SystemPrompt = p
+		}
+	}
+
 	// Create the exec bridge so shell functions (foci_todo, foci_send_to_chat, etc.)
 	// are available in the backend's shell environment. The bridge is created here
 	// (not in individual backends) so all backend types get it automatically.

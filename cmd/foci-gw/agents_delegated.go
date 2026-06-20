@@ -176,8 +176,26 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			return be, nil
 		},
 		StartOpts: delegator.StartOptions{
-			WorkDir:          p.acfg.Workspace,
-			SystemPrompt:     systemPrompt,
+			WorkDir:      p.acfg.Workspace,
+			SystemPrompt: systemPrompt,
+			// Rebuild the prompt from disk at every session-start so a fresh
+			// session (reset, idle-respawn, emulated compaction #828) picks up
+			// character-file AND skill edits — instead of the prompt frozen at
+			// setup (the #706 / #828 bug). bs.SystemBlocks() reflects in-place
+			// Bootstrap.Reload(); ReloadSystemFn re-loads skills from disk
+			// (side-effect-free — it does NOT mutate ag.ExtraSystemBlocks).
+			// Falls back to the setup-time snapshot (systemPrompt) if it yields
+			// empty. ag is a pointer; ReloadSystemFn is wired later in finalize,
+			// but this closure only runs at runtime session-start, by when it's set.
+			SystemPromptFunc: func() string {
+				extra := br.extraSystemBlocks
+				if ag.ReloadSystemFn != nil {
+					if fresh, _ := ag.ReloadSystemFn(); fresh != nil {
+						extra = fresh
+					}
+				}
+				return buildDelegatedSystemPrompt(bs.SystemBlocks(), extra)
+			},
 			Model:            model,
 			AgentID:          agentID,
 			ExecRegistry:     registry,

@@ -1468,6 +1468,52 @@ func TestGet_StartOptionsPassthrough(t *testing.T) {
 	}
 }
 
+func TestGet_SystemPromptFuncOverridesStatic(t *testing.T) {
+	// Part A (#828/#706): a non-nil SystemPromptFunc returning a non-empty
+	// string takes precedence over the static SystemPrompt at session-start,
+	// so a fresh session picks up character-file edits made after agent setup.
+	mgr, mocks := newTestManager(t, nil)
+	calls := 0
+	mgr.StartOpts = delegator.StartOptions{
+		WorkDir:      "/workspace",
+		SystemPrompt: "STALE prompt frozen at setup",
+		SystemPromptFunc: func() string {
+			calls++
+			return "FRESH prompt rebuilt from disk"
+		},
+	}
+
+	_, err := mgr.Get(context.Background(), "agent/c1/v1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("SystemPromptFunc called %d times, want 1 (once per session-start)", calls)
+	}
+	if got := (*mocks)[0].startOpts.SystemPrompt; got != "FRESH prompt rebuilt from disk" {
+		t.Errorf("SystemPrompt = %q, want the rebuilt prompt (func should win over static)", got)
+	}
+}
+
+func TestGet_SystemPromptFuncEmptyFallsBackToStatic(t *testing.T) {
+	// If SystemPromptFunc yields empty (e.g. a transient disk read failure),
+	// the static SystemPrompt is preserved rather than shipping an empty prompt.
+	mgr, mocks := newTestManager(t, nil)
+	mgr.StartOpts = delegator.StartOptions{
+		WorkDir:          "/workspace",
+		SystemPrompt:     "STATIC fallback prompt",
+		SystemPromptFunc: func() string { return "" },
+	}
+
+	_, err := mgr.Get(context.Background(), "agent/c1/v1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := (*mocks)[0].startOpts.SystemPrompt; got != "STATIC fallback prompt" {
+		t.Errorf("SystemPrompt = %q, want the static fallback (empty func result must not clobber)", got)
+	}
+}
+
 func TestLoadResumeID_NilIndex(t *testing.T) {
 	// Proves that loadResumeID returns empty string when SessionIndex is nil.
 	mgr := &DelegatedManager{}
