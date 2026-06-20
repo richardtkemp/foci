@@ -551,11 +551,16 @@ func (m *DelegatedManager) BounceSession(sessionKey string) {
 // back to an unconditional bounce when no SystemPromptFunc is configured (the
 // prompt can't be fingerprinted).
 func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool {
+	// Every return path emits one "compaction reload gate:" DEBUG line with an
+	// explicit restart=yes/no token, so a single grep over the log confirms both
+	// outcomes (restart and no-restart) actually occur in practice.
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
+		log.Debugf("delegated", "compaction reload gate: session=%s restart=no reason=no-live-backend", sessionKey)
 		return false // no live backend → nothing to reload
 	}
 	if m.StartOpts.SystemPromptFunc == nil {
+		log.Debugf("delegated", "compaction reload gate: session=%s restart=yes reason=no-prompt-fingerprint (no SystemPromptFunc)", sessionKey)
 		m.BounceSession(sessionKey)
 		return true
 	}
@@ -565,10 +570,10 @@ func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool 
 	}
 	live := log.SystemHash([]string{p})
 	if live == mb.systemPromptHash {
-		log.Infof("delegated", "session=%s system prompt unchanged across compaction (%s) — skipping reload bounce", sessionKey, live)
+		log.Debugf("delegated", "compaction reload gate: session=%s restart=no reason=prompt-unchanged hash=%s", sessionKey, live)
 		return false
 	}
-	log.Infof("delegated", "session=%s system prompt changed across compaction (%s→%s) — bouncing to reload", sessionKey, mb.systemPromptHash, live)
+	log.Debugf("delegated", "compaction reload gate: session=%s restart=yes reason=prompt-changed hash=%s->%s", sessionKey, mb.systemPromptHash, live)
 	m.BounceSession(sessionKey)
 	return true
 }
