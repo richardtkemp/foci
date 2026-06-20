@@ -13,6 +13,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/internal/platform"
@@ -121,6 +122,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			}
 			return resolved.Developer + "/" + resolved.ModelID
 		},
+		AvailableBackends: delegator.RegisteredNames(),
 	}
 
 	// Construct the CommandContext

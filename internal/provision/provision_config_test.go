@@ -34,6 +34,44 @@ func TestGenerateAgentBlock(t *testing.T) {
 	}
 }
 
+func TestGenerateAgentBlockDelegatedBackend(t *testing.T) {
+	// A delegated backend writes backend + backend_config.model, and those
+	// top-level keys must precede the [agents.system] sub-table header.
+	spec := AgentSpec{
+		ID:      "tutor",
+		HomeDir: "/home/foci",
+		Backend: "claude-code",
+		Model:   "opus",
+	}
+
+	result := GenerateAgentBlock(spec)
+
+	for _, check := range []string{`backend = "claude-code"`, `backend_config.model = "opus"`} {
+		if !strings.Contains(result, check) {
+			t.Errorf("missing %q in:\n%s", check, result)
+		}
+	}
+	// Ordering: backend keys before the [agents.system] sub-table.
+	if bi, si := strings.Index(result, "backend ="), strings.Index(result, "[agents.system]"); bi < 0 || si < 0 || bi > si {
+		t.Errorf("backend keys (%d) must precede [agents.system] (%d):\n%s", bi, si, result)
+	}
+}
+
+func TestGenerateAgentBlockAPIBackend(t *testing.T) {
+	// Empty backend is written as explicit "api" (no silent fallback) and emits
+	// no backend_config.model (API agents resolve their model via [groups]).
+	spec := AgentSpec{ID: "apibot", HomeDir: "/home/foci"}
+
+	result := GenerateAgentBlock(spec)
+
+	if !strings.Contains(result, `backend = "api"`) {
+		t.Errorf("empty backend should render as api:\n%s", result)
+	}
+	if strings.Contains(result, "backend_config.model") {
+		t.Errorf("api backend should not emit backend_config.model:\n%s", result)
+	}
+}
+
 func TestGenerateAgentBlockCustomSystemFiles(t *testing.T) {
 	// Verifies system_files array in agent block.
 	spec := AgentSpec{

@@ -42,7 +42,8 @@ func TestAgentWizardHappyPath(t *testing.T) {
 		contains string
 	}{
 		{"Greek Tutor", false, "Model"},
-		{"opus", false, "Character files"},
+		{"opus", false, "Backend"},
+		{"claude-code", false, "Character files"},
 		{"defaults", true, "Created!"},
 	}
 
@@ -67,6 +68,12 @@ func TestAgentWizardHappyPath(t *testing.T) {
 	}
 	if captured.model != "anthropic/claude-opus-4-6" {
 		t.Errorf("model = %q", captured.model)
+	}
+	if captured.modelRaw != "opus" {
+		t.Errorf("modelRaw = %q, want opus", captured.modelRaw)
+	}
+	if captured.backend != "claude-code" {
+		t.Errorf("backend = %q, want claude-code", captured.backend)
 	}
 	if captured.charMode != "defaults" {
 		t.Errorf("charMode = %q", captured.charMode)
@@ -128,6 +135,7 @@ func TestAgentWizardSlugFromName(t *testing.T) {
 
 	w.Handle("My Cool Agent")
 	w.Handle("sonnet")
+	w.Handle("claude-code")
 	w.Handle("defaults")
 
 	if captured.id != "my-cool-agent" {
@@ -148,7 +156,7 @@ func TestAgentWizardPreFlightWarning(t *testing.T) {
 
 	w.Handle("New Agent") // name → id="new-agent"
 
-	// Model step — pre-flight returns a warning
+	// Model step — pre-flight returns a warning, surfaced on the backend prompt.
 	resp, done := w.Handle("sonnet")
 	if done {
 		t.Error("should not be done after model step")
@@ -156,8 +164,8 @@ func TestAgentWizardPreFlightWarning(t *testing.T) {
 	if !strings.Contains(resp, "not found") {
 		t.Errorf("expected pre-flight warning, got %q", resp)
 	}
-	if !strings.Contains(resp, "Character files") {
-		t.Errorf("should still prompt for next step, got %q", resp)
+	if !strings.Contains(resp, "Backend") {
+		t.Errorf("should still prompt for next step (backend), got %q", resp)
 	}
 }
 
@@ -190,6 +198,7 @@ func TestAgentWizardCharModeCopy(t *testing.T) {
 
 	w.Handle("newagent")
 	w.Handle("sonnet")
+	w.Handle("claude-code")
 
 	resp, done := w.Handle("copy clutch")
 	if !done {
@@ -209,6 +218,7 @@ func TestAgentWizardCharModeCopyNonexistent(t *testing.T) {
 
 	w.Handle("newagent")
 	w.Handle("sonnet")
+	w.Handle("claude-code")
 
 	resp, done := w.Handle("copy nonexistent")
 	if done {
@@ -231,6 +241,7 @@ func TestAgentWizardCharModeOpenclaw(t *testing.T) {
 
 	w.Handle("OC Agent")
 	w.Handle("sonnet")
+	w.Handle("claude-code")
 	w.Handle("openclaw")
 	if mode != "openclaw" {
 		t.Errorf("charMode = %q, want openclaw", mode)
@@ -250,6 +261,7 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 	}
 	w.Handle("agent1")
 	w.Handle("")
+	w.Handle("") // backend → default
 	w.Handle("blank")
 	if mode != "blank" {
 		t.Errorf("charMode = %q, want blank", mode)
@@ -263,6 +275,7 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 	}
 	w2.Handle("agent2")
 	w2.Handle("")
+	w2.Handle("") // backend → default
 	w2.Handle("")
 	if mode != "defaults" {
 		t.Errorf("charMode = %q, want defaults", mode)
@@ -273,12 +286,83 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 	w3.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 	w3.Handle("agent3")
 	w3.Handle("")
+	w3.Handle("") // backend → default
 	resp, done := w3.Handle("invalid")
 	if done {
 		t.Error("invalid char mode should not advance")
 	}
 	if !strings.Contains(resp, "Must be") {
 		t.Errorf("expected usage hint, got %q", resp)
+	}
+}
+
+// Verifies empty backend input selects the default (claude-code) — the fix for
+// agents previously created with no backend at all.
+func TestAgentWizardBackendDefault(t *testing.T) {
+	deps := testDeps(nil, nil)
+	w := newAgentWizard(deps)
+	var captured *agentWizard
+	w.createFn = func(wiz *agentWizard) (string, error) { captured = wiz; return "ok", nil }
+
+	w.Handle("backend-default")
+	w.Handle("opus")
+	resp, done := w.Handle("") // backend step, empty → default
+	if done {
+		t.Fatalf("should not be done after backend step, resp=%q", resp)
+	}
+	w.Handle("defaults")
+
+	if captured.backend != "claude-code" {
+		t.Errorf("backend = %q, want claude-code", captured.backend)
+	}
+	if captured.modelRaw != "opus" {
+		t.Errorf("modelRaw = %q, want opus", captured.modelRaw)
+	}
+}
+
+// Verifies the "api" choice produces an in-process (non-delegated) agent.
+func TestAgentWizardBackendAPI(t *testing.T) {
+	deps := testDeps(nil, nil)
+	w := newAgentWizard(deps)
+	var captured *agentWizard
+	w.createFn = func(wiz *agentWizard) (string, error) { captured = wiz; return "ok", nil }
+
+	w.Handle("api-agent")
+	w.Handle("sonnet")
+	w.Handle("api")
+	w.Handle("defaults")
+
+	if captured.backend != "api" {
+		t.Errorf("backend = %q, want api", captured.backend)
+	}
+}
+
+// Verifies a backend from the injected available-list can be selected, and that
+// an unrecognised backend is rejected with a re-prompt.
+func TestAgentWizardBackendSelectionAndInvalid(t *testing.T) {
+	deps := testDeps(nil, nil)
+	deps.AvailableBackends = []string{"claude-code", "claude-code-tmux"}
+	w := newAgentWizard(deps)
+	var captured *agentWizard
+	w.createFn = func(wiz *agentWizard) (string, error) { captured = wiz; return "ok", nil }
+
+	w.Handle("tmux-agent")
+	w.Handle("opus")
+
+	// Unrecognised backend → re-prompt, no advance.
+	resp, done := w.Handle("nonsense")
+	if done {
+		t.Error("invalid backend should not advance")
+	}
+	if !strings.Contains(resp, "Must be one of") {
+		t.Errorf("expected re-prompt, got %q", resp)
+	}
+
+	// Valid non-default backend from the injected list.
+	w.Handle("claude-code-tmux")
+	w.Handle("defaults")
+	if captured.backend != "claude-code-tmux" {
+		t.Errorf("backend = %q, want claude-code-tmux", captured.backend)
 	}
 }
 
@@ -312,6 +396,8 @@ func TestCreateWorkspace(t *testing.T) {
 		id:       "test-agent",
 		display:  "Test Agent",
 		model:    "anthropic/claude-sonnet-4-6",
+		modelRaw: "sonnet",
+		backend:  "claude-code",
 		charMode: "defaults",
 	}
 
@@ -349,6 +435,12 @@ func TestCreateWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(config, `id = "test-agent"`) {
 		t.Error("missing agent ID in config")
+	}
+	if !strings.Contains(config, `backend = "claude-code"`) {
+		t.Errorf("missing backend in config:\n%s", config)
+	}
+	if !strings.Contains(config, `backend_config.model = "sonnet"`) {
+		t.Errorf("missing backend_config.model in config:\n%s", config)
 	}
 
 	// Check result message
