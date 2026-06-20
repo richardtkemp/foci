@@ -344,4 +344,37 @@ func TestResolve_PermissionsSafeWriteCascade(t *testing.T) {
 	}
 }
 
+func TestResolve_ReloadOnCompactDefaultTrue(t *testing.T) {
+	// Proves reload_on_compact defaults to true when neither agent nor global
+	// set it (#828 Part B — default on).
+	rc := Resolve(&Config{}, AgentConfig{})
+	if !rc.Compaction.ReloadOnCompact {
+		t.Error("ReloadOnCompact should default to true")
+	}
+}
+
+func TestResolve_ReloadOnCompactAgentOverride(t *testing.T) {
+	// Proves an agent can opt OUT even when global leaves it on (default).
+	cfg := &Config{}
+	acfg := AgentConfig{Sessions: AgentSessionsOverride{
+		CompactionConfig: CompactionConfig{ReloadOnCompact: Ptr(false)},
+	}}
+	rc := Resolve(cfg, acfg)
+	if rc.Compaction.ReloadOnCompact {
+		t.Error("ReloadOnCompact should be false (agent override)")
+	}
+}
+
+func TestResolve_ReloadOnCompactGlobalFalseInherits(t *testing.T) {
+	// Proves a global reload_on_compact=false is inherited by an agent that
+	// doesn't set it (nil = inherit, not = default-true).
+	cfg := &Config{Sessions: SessionsConfig{
+		CompactionConfig: CompactionConfig{ReloadOnCompact: Ptr(false)},
+	}}
+	rc := Resolve(cfg, AgentConfig{})
+	if rc.Compaction.ReloadOnCompact {
+		t.Error("ReloadOnCompact should be false (inherited from global)")
+	}
+}
+
 func ptrFloat(v float64) *float64 { return &v }

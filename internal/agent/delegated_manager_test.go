@@ -734,6 +734,52 @@ func TestResetSession_NoBackend(t *testing.T) {
 	mgr.ResetSession("test-agent/nonexistent") // should not panic
 }
 
+func TestBounceSession_ClosesButKeepsResumeID(t *testing.T) {
+	// Proves that BounceSession (#828 Part B) closes the backend and unmaps it
+	// BUT keeps the saved resume ID — so the next Get respawns CC with --resume
+	// <same session>, picking up the now-compacted conversation while Part A's
+	// SystemPromptFunc rebuilds the prompt from disk. The opposite of
+	// ResetSession, which clears the resume ID for a genuinely fresh session.
+	idx := newTestSessionIndex(t)
+	mgr, mocks := newTestManager(t, idx)
+
+	sk := "test-agent/c1"
+	if err := idx.SetSessionMetadata(sk, "cc_resume_id", "keep-this-uuid"); err != nil {
+		t.Fatalf("SetSessionMetadata: %v", err)
+	}
+
+	if _, err := mgr.Get(context.Background(), sk); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	firstMock := (*mocks)[0]
+
+	mgr.BounceSession(sk)
+
+	if !firstMock.wasClosed() {
+		t.Error("expected backend to be closed by bounce")
+	}
+	if mgr.Count() != 0 {
+		t.Errorf("Count = %d, want 0 after bounce", mgr.Count())
+	}
+	// Resume ID must be PRESERVED — the key difference from ResetSession.
+	if val, _ := idx.GetSessionMetadata(sk, "cc_resume_id"); val != "keep-this-uuid" {
+		t.Errorf("resume ID = %q, want %q preserved across bounce", val, "keep-this-uuid")
+	}
+	// And the next Get must respawn resuming that same session.
+	if _, err := mgr.Get(context.Background(), sk); err != nil {
+		t.Fatalf("Get after bounce: %v", err)
+	}
+	if got := (*mocks)[1].startOpts.ResumeSessionID; got != "keep-this-uuid" {
+		t.Errorf("post-bounce ResumeSessionID = %q, want %q (respawn must resume the kept session)", got, "keep-this-uuid")
+	}
+}
+
+func TestBounceSession_NoBackend(t *testing.T) {
+	// Proves that BounceSession is a no-op when no backend exists (no panic).
+	mgr, _ := newTestManager(t, nil)
+	mgr.BounceSession("test-agent/nonexistent") // should not panic
+}
+
 func TestResetSession_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 	// Regression for the 2026-05-06 deadlock. ResetSession used to hold m.mu
 	// across be.Close(), so a single stuck backend froze the entire agent —

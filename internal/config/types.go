@@ -353,6 +353,7 @@ type CompactionConfig struct {
 	CompactionPreserveMessages              *int     `toml:"compaction_preserve_messages"          desc:"preserve last N messages through compaction" min:"0"`
 	CompactionEffort                        *string  `toml:"compaction_effort"                     desc:"compaction effort level"`
 	FacetNoCompact                          *bool    `toml:"facet_no_compact"                      desc:"set no_compact on facet sessions (default true)"`
+	ReloadOnCompact                         *bool    `toml:"reload_on_compact"                     desc:"delegated agents: after compaction, bounce the CC session (resume) so character/skill files reload from disk (default true)"`
 	AutocompactBeforeManaRefresh            *bool    `toml:"autocompact_before_mana_refresh"       desc:"autocompact before mana refresh"`
 	AutocompactBeforeManaRefreshThreshold   *string  `toml:"autocompact_before_mana_refresh_threshold" desc:"mana threshold to trigger autocompact" type:"duration"`
 	AutocompactBeforeManaRefreshFactor      *float64 `toml:"autocompact_before_mana_refresh_factor" desc:"compaction threshold factor for mana refresh"`
@@ -464,8 +465,8 @@ type ToolConfig struct {
 	ExecAutoBackground  *int    `toml:"exec_auto_background"  default:"10"        desc:"seconds before auto-backgrounding exec"`
 	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns" default:"3"         desc:"max concurrent spawn sessions"`
 	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       desc:"max tool loops for explore spawn"`
-	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"max upload file size in bytes"`                        // 50MB
-	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  desc:"max file size the read/edit tools will load in bytes"` // 50MB
+	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"max upload file size in bytes"`                                                                                   // 50MB
+	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  desc:"max file size the read/edit tools will load in bytes"`                                                            // 50MB
 	HTTPMaxSpillBytes   *int64  `toml:"http_max_spill_bytes"  default:"52428800"  desc:"max http_request response bytes retained; full body spills to disk past the inline preview (remote DoS ceiling)"` // 50MB
 	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"      desc:"auto-unwatch on inactivity"`
 	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"       desc:"default watch threshold duration" type:"duration"`
@@ -485,14 +486,14 @@ type AnthropicConfig struct {
 // of the configuration cascade. All fields are pointer types so Merge can
 // distinguish "not set" from "set to zero value".
 type DisplayConfig struct {
-	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         desc:"tool call display: off, preview, full" choices:"off,preview,full"` // tool call display: off, preview, full
-	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"thinking display: off, compact, true" choices:"off,compact,true"`  // thinking display: off, compact, true
-	StreamOutput          *bool            `toml:"stream_output"           desc:"stream model output"`                                              // stream model output in real-time
-	StreamInterval        *string          `toml:"stream_interval"         desc:"interval between stream edits" type:"duration"`                    // duration between message edits during streaming
-	Streaming             *bool            `toml:"streaming"               desc:"use streaming API"`                                                // use streaming API
-	DisplayWidth          *int             `toml:"display_width"           desc:"display width for dividers"`                                       // display width for dividers
-	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"save received files to this directory"`                            // save received files to this directory
-	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"header prepended to injected messages"`                            // header prepended to injected messages
+	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         desc:"tool call display: off, preview, full" choices:"off,preview,full"`             // tool call display: off, preview, full
+	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"thinking display: off, compact, true" choices:"off,compact,true"`              // thinking display: off, compact, true
+	StreamOutput          *bool            `toml:"stream_output"           desc:"stream model output"`                                                          // stream model output in real-time
+	StreamInterval        *string          `toml:"stream_interval"         desc:"interval between stream edits" type:"duration"`                                // duration between message edits during streaming
+	Streaming             *bool            `toml:"streaming"               desc:"use streaming API"`                                                            // use streaming API
+	DisplayWidth          *int             `toml:"display_width"           desc:"display width for dividers"`                                                   // display width for dividers
+	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"save received files to this directory"`                                        // save received files to this directory
+	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"header prepended to injected messages"`                                        // header prepended to injected messages
 	Statusline            *string          `toml:"statusline"              desc:"template for the per-message [meta]/[state] header; empty = built-in default"` // per-message header template (#831)
 }
 
@@ -1000,12 +1001,12 @@ type SchedulerConfig struct {
 // (fixed interval since the last run). All fields are pointer types for
 // Merge-based resolution (per-agent → global).
 type MaintenanceConfig struct {
-	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"curate MEMORY.md periodically"`                                          // curate MEMORY.md periodically
-	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"when to consolidate: HH:MM daily or a duration like 20h"`                // "HH:MM" daily or duration
-	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"consolidation prompt file path"`                                         // prompt override (nil = embedded, "none" = disabled)
+	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"curate MEMORY.md periodically"`                                            // curate MEMORY.md periodically
+	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"when to consolidate: HH:MM daily or a duration like 20h"`                  // "HH:MM" daily or duration
+	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"consolidation prompt file path"`                                           // prompt override (nil = embedded, "none" = disabled)
 	ConsolidationMaxIdle *string `toml:"consolidation_max_idle" default:"1h" desc:"skip consolidation if no user activity within this window" type:"duration"` // skip if idle longer than this
-	ResetTime            *string `toml:"reset_time"            default:""     desc:"daily session reset: HH:MM, a duration, or empty to disable"`            // "HH:MM" daily, duration, or "" = never
-	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"skip scheduled reset if user active within this window" type:"duration"` // skip reset if recently active
+	ResetTime            *string `toml:"reset_time"            default:""     desc:"daily session reset: HH:MM, a duration, or empty to disable"`              // "HH:MM" daily, duration, or "" = never
+	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"skip scheduled reset if user active within this window" type:"duration"`   // skip reset if recently active
 }
 
 // BackgroundConfig controls the mana-gated background work timer.

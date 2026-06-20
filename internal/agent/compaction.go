@@ -179,9 +179,18 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		fn(sessionKey, "✅ Context compacted (delegated).")
 	}
 
-	// CC owns the system prompt for delegated agents — don't reload Bootstrap.
 	if a.NudgeReloadFunc != nil {
 		a.NudgeReloadFunc()
+	}
+
+	// #828 Part B: bounce the CC session (close, keep resume ID) so the next
+	// message respawns with --resume — rebuilding the system prompt from disk
+	// via StartOptions.SystemPromptFunc while resuming the now-compacted
+	// conversation, so character/skill edits reload. Per-agent gated
+	// (reload_on_compact, default on). The SystemPromptFunc closure re-reads
+	// Bootstrap itself, so no Bootstrap.Reload() is needed here.
+	if a.ReloadOnCompact && a.DelegatedManager != nil {
+		a.DelegatedManager.BounceSession(sessionKey)
 	}
 	return nil
 }
