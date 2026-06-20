@@ -107,6 +107,12 @@ type managedBackend struct {
 	lastActive time.Time
 	sessionKey string // full session key from last message (for reply routing)
 
+	// systemPromptHash fingerprints the system prompt this CC session was
+	// launched with (SystemHash of the effective StartOptions.SystemPrompt).
+	// Set once at creation; immutable for the backend's lifetime. Lets a later
+	// compaction skip the reload-bounce when the on-disk prompt is unchanged.
+	systemPromptHash string
+
 	// Permission prompt gating. When a permission prompt is outstanding,
 	// incoming messages and injections must wait — the backend cannot
 	// process new input until the prompt is resolved.
@@ -221,6 +227,9 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 			opts.SystemPrompt = p
 		}
 	}
+	// Fingerprint the effective prompt this session launches with, so a later
+	// compaction can skip the reload-bounce when nothing on disk changed.
+	promptHash := log.SystemHash([]string{opts.SystemPrompt})
 
 	// Resolve the launch effort fresh for this session so a post-/effort
 	// bounce relaunches at the latest level (apply_flag_settings is runtime-
@@ -265,10 +274,11 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 
 	// Create the managedBackend early so callbacks can reference it.
 	mb := &managedBackend{
-		be:         be,
-		bridge:     bridge,
-		lastActive: time.Now(),
-		sessionKey: sessionKey,
+		be:               be,
+		bridge:           bridge,
+		lastActive:       time.Now(),
+		sessionKey:       sessionKey,
+		systemPromptHash: promptHash,
 	}
 	m.setBackendCallbacks(mb)
 
@@ -523,6 +533,44 @@ func (m *DelegatedManager) BounceSession(sessionKey string) {
 	if m.closeManaged(sessionKey, false) {
 		log.Infof("delegated", "bounced session %s (closed, resume ID kept — prompt reloads on respawn)", sessionKey)
 	}
+}
+
+// BounceSessionIfPromptChanged bounces the session only when the system prompt
+// rebuilt from disk now differs from the one the running CC session launched
+// with. Returns true if it bounced. This is the optimisation over the
+// unconditional #828 post-compaction bounce: when character files are unchanged
+// and no skill has been added or removed, the running session's prompt is
+// already current, so the restart — and the flow interruption it causes — is
+// pure cost.
+//
+// The fingerprint is the same string getOrCreate launches with:
+// buildDelegatedSystemPrompt(character files, skill blocks) via
+// SystemPromptFunc. It therefore captures character-file edits AND skill
+// add/remove (the skill list lives in the prompt) but NOT skill body-content
+// edits (skill bodies are read on demand and never appear in the prompt). Falls
+// back to an unconditional bounce when no SystemPromptFunc is configured (the
+// prompt can't be fingerprinted).
+func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return false // no live backend → nothing to reload
+	}
+	if m.StartOpts.SystemPromptFunc == nil {
+		m.BounceSession(sessionKey)
+		return true
+	}
+	p := m.StartOpts.SystemPromptFunc()
+	if p == "" {
+		p = m.StartOpts.SystemPrompt
+	}
+	live := log.SystemHash([]string{p})
+	if live == mb.systemPromptHash {
+		log.Infof("delegated", "session=%s system prompt unchanged across compaction (%s) — skipping reload bounce", sessionKey, live)
+		return false
+	}
+	log.Infof("delegated", "session=%s system prompt changed across compaction (%s→%s) — bouncing to reload", sessionKey, mb.systemPromptHash, live)
+	m.BounceSession(sessionKey)
+	return true
 }
 
 // closeManaged closes and unmaps the backend for sessionKey, returning whether
