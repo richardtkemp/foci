@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/modelcaps"
 	"foci/internal/provider"
 	"foci/internal/tools"
 )
@@ -79,6 +80,62 @@ type sessionSettingDef struct {
 	Get          func(CommandContext, string) string
 	Set          func(CommandContext, string, string)
 	Choices      []settingChoice
+	// DynamicChoices, when set and returning a non-empty slice, supplies the
+	// choice set for this call instead of the static Choices — e.g. /effort
+	// builds its levels from the live model catalogue (modelcaps) so the
+	// keyboard and accepted inputs match exactly what the current model
+	// supports. Returns nil on a cache miss; the static Choices are the fallback.
+	DynamicChoices func(cc CommandContext, sessionKey string) []settingChoice
+}
+
+// resolveChoices returns the active choice set for a call and whether it came
+// from DynamicChoices (true) or the static fallback (false). The dynamic flag
+// lets callers derive a matching options hint without disturbing static
+// commands' hand-written hints (which may number differently, e.g. /thinking's
+// "0) off").
+func resolveChoices(def *sessionSettingDef, cc CommandContext, sessionKey string) ([]settingChoice, bool) {
+	if def.DynamicChoices != nil {
+		if dyn := def.DynamicChoices(cc, sessionKey); len(dyn) > 0 {
+			return dyn, true
+		}
+	}
+	return def.Choices, false
+}
+
+// effectiveHint renders the options hint. For static choice sets it returns the
+// hand-written def.OptionsHint unchanged; for a dynamic set it builds the hint
+// from the visible choices so it stays in sync with the live levels.
+func effectiveHint(def *sessionSettingDef, choices []settingChoice, dynamic bool) string {
+	if !dynamic {
+		return def.OptionsHint
+	}
+	parts := make([]string, 0, len(choices))
+	n := 0
+	for _, c := range choices {
+		if c.Hidden {
+			continue
+		}
+		n++
+		parts = append(parts, fmt.Sprintf("%d) %s", n, c.Label))
+	}
+	if len(parts) == 0 {
+		return def.OptionsHint
+	}
+	return "Options: " + strings.Join(parts, "  ")
+}
+
+// choiceMapFrom builds the input→choice lookup (label + every alias) for a
+// choice set.
+func choiceMapFrom(choices []settingChoice) map[string]*settingChoice {
+	m := make(map[string]*settingChoice, len(choices)*2)
+	for i := range choices {
+		c := &choices[i]
+		m[c.Label] = c
+		for _, alias := range c.Aliases {
+			m[alias] = c
+		}
+	}
+	return m
 }
 
 // effectiveDisplay computes the display string and source annotation for a
@@ -108,16 +165,6 @@ func effectiveDisplay(def *sessionSettingDef, cc CommandContext, sessionKey stri
 // newSessionSettingCommand builds a Command from a sessionSettingDef, eliminating
 // the boilerplate shared by /effort, /thinking, /speed, and similar commands.
 func newSessionSettingCommand(def sessionSettingDef) *Command {
-	// Build input→choice lookup for O(1) matching.
-	choiceMap := make(map[string]*settingChoice, len(def.Choices)*2)
-	for i := range def.Choices {
-		c := &def.Choices[i]
-		choiceMap[c.Label] = c
-		for _, alias := range c.Aliases {
-			choiceMap[alias] = c
-		}
-	}
-
 	cmd := &Command{
 		Name:        def.Name,
 		Description: def.Description,
@@ -148,26 +195,30 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 			}
 		}
 
+		choices, dynamic := resolveChoices(&def, cc, sk)
+		hint := effectiveHint(&def, choices, dynamic)
+
 		// No args: show effective value (session override → model default → empty).
 		if req.Args == "" {
 			display, source := effectiveDisplay(&def, cc, sk)
 			title := strings.ToUpper(def.Name[:1]) + def.Name[1:]
-			return Response{Text: fmt.Sprintf("%s: %s%s\n%s", title, display, source, def.OptionsHint)}, nil
+			return Response{Text: fmt.Sprintf("%s: %s%s\n%s", title, display, source, hint)}, nil
 		}
 
 		// Normalize and match input.
 		arg := strings.ToLower(strings.TrimSpace(req.Args))
-		if c, ok := choiceMap[arg]; ok {
+		if c, ok := choiceMapFrom(choices)[arg]; ok {
 			def.Set(cc, sk, c.SetValue)
 			return Response{Text: c.Response}, nil
 		}
 
-		return Response{Text: fmt.Sprintf("Invalid %s: %q\n%s", def.InvalidName, req.Args, def.OptionsHint)}, nil
+		return Response{Text: fmt.Sprintf("Invalid %s: %q\n%s", def.InvalidName, req.Args, hint)}, nil
 	}
 
-	cmd.KeyboardOptions = func(_ context.Context, _ CommandContext) []KeyboardOption {
-		opts := make([]KeyboardOption, 0, len(def.Choices))
-		for _, c := range def.Choices {
+	cmd.KeyboardOptions = func(ctx context.Context, cc CommandContext) []KeyboardOption {
+		choices, _ := resolveChoices(&def, cc, tools.SessionKeyFromContext(ctx))
+		opts := make([]KeyboardOption, 0, len(choices))
+		for _, c := range choices {
 			if !c.Hidden {
 				opts = append(opts, KeyboardOption{Label: c.Label, Data: c.Label})
 			}
@@ -185,17 +236,21 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 }
 
 // EffortCommand returns a /effort command to show or set the effort level.
+// The available levels are sourced live from the model catalogue (modelcaps),
+// so a model that supports xhigh/max (e.g. opus-4-8) offers them, while the
+// static low/medium/high set is the fallback on a catalogue miss. (#840)
 func EffortCommand() *Command {
 	return newSessionSettingCommand(sessionSettingDef{
-		Name:         "effort",
-		Description:  "Show or set effort level (low/medium/high)",
-		OptionsHint:  "Options: 1) low  2) medium  3) high",
-		Capability:   func(c config.ModelCaps) bool { return c.Effort },
-		ModelDefault: func(md config.ModelDefaults) string { return md.Effort },
-		EmptyShow:    "not set",
-		InvalidName:  "effort level",
-		Get:          func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
-		Set:          func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
+		Name:           "effort",
+		Description:    "Show or set effort level",
+		OptionsHint:    "Options: 1) low  2) medium  3) high",
+		Capability:     func(c config.ModelCaps) bool { return c.Effort },
+		ModelDefault:   func(md config.ModelDefaults) string { return md.Effort },
+		EmptyShow:      "not set",
+		InvalidName:    "effort level",
+		Get:            func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
+		Set:            func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
+		DynamicChoices: dynamicEffortChoices,
 		Choices: []settingChoice{
 			{Label: "low", Aliases: []string{"1"}, SetValue: "low", Response: "Effort set to: low"},
 			{Label: "medium", Aliases: []string{"2"}, SetValue: "medium", Response: "Effort set to: medium"},
@@ -204,6 +259,38 @@ func EffortCommand() *Command {
 			{Label: "none", Aliases: []string{"clear", "reset", ""}, SetValue: "", Response: "Effort cleared (using model default)", Hidden: true},
 		},
 	})
+}
+
+// dynamicEffortChoices builds the /effort choice set from the live model
+// catalogue (modelcaps) for the session's current model, so the keyboard and
+// accepted inputs reflect exactly the effort levels that model supports — e.g.
+// opus-4-8 adds xhigh and max beyond low/medium/high. Numeric aliases follow
+// catalogue order (1=first level). Returns nil on a cache miss or when the
+// model advertises no effort levels, so the caller falls back to the static
+// low/medium/high set. (#840)
+func dynamicEffortChoices(cc CommandContext, sessionKey string) []settingChoice {
+	if cc.Agent == nil {
+		return nil
+	}
+	caps, ok := modelcaps.Lookup(cc.Agent.SessionModel(sessionKey))
+	if !ok || len(caps.Effort) == 0 {
+		return nil
+	}
+	choices := make([]settingChoice, 0, len(caps.Effort)+2)
+	for i, level := range caps.Effort {
+		choices = append(choices, settingChoice{
+			Label:    level,
+			Aliases:  []string{strconv.Itoa(i + 1)},
+			SetValue: level,
+			Response: "Effort set to: " + level,
+		})
+	}
+	// Hidden clear options, always accepted (mirror the static set).
+	choices = append(choices,
+		settingChoice{Label: "off", Aliases: []string{"0"}, SetValue: "off", Response: "Effort: off (overrides model default)", Hidden: true},
+		settingChoice{Label: "none", Aliases: []string{"clear", "reset", ""}, SetValue: "", Response: "Effort cleared (using model default)", Hidden: true},
+	)
+	return choices
 }
 
 // ThinkingCommand returns a /thinking command to show or set the thinking mode.
