@@ -37,3 +37,8 @@ func (b *Backend) SetOnAgentStatus(fn func(string)) { b.agents.OnStatus = fn }
 // SetRateLimitState sets the shared rate limit state that OnRateLimit writes to.
 // Must be called before Start. The state is shared across all backends for an agent.
 func (b *Backend) SetRateLimitState(s *RateLimitState) { b.rateLimitState = s }
+
+// SetOnAuthFailure registers a hook fired when CC reports an authentication
+// failure (a 401). Used to trigger automated re-login (#843). Must be set
+// before Start.
+func (b *Backend) SetOnAuthFailure(fn func(detail string)) { b.onAuthFailure = fn }

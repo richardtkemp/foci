@@ -13,6 +13,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/relogin"
 	"foci/internal/secrets"
 	"foci/internal/tools"
 	"foci/internal/voice"
@@ -131,6 +132,30 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// Inject shared rate limit state into ccstream backends.
 			if sb, ok := be.(*ccstream.Backend); ok {
 				sb.SetRateLimitState(rateLimitState)
+				// On a 401, run an automated re-login (#843). The gate
+				// single-flights across all agents (shared OAuth credential),
+				// so only the first 401 launches the driver.
+				claudeBin, _ := backendConfig["claude_binary"].(string)
+				workDir := p.acfg.Workspace
+				sb.SetOnAuthFailure(func(detail string) {
+					if !relogin.G.Start() {
+						return
+					}
+					log.Warnf("agent/"+agentID, "CC auth failure — starting re-login: %s", firstLine(detail))
+					go relogin.Run(context.Background(), relogin.Config{
+						AgentID:   agentID,
+						WorkDir:   workDir,
+						ClaudeBin: claudeBin,
+						Gate:      relogin.G,
+						SendMessage: func(text string) error {
+							conn := connMgr.ForSessionOrPrimary("", agentID)
+							if conn == nil {
+								return fmt.Errorf("no connection for agent %s", agentID)
+							}
+							return conn.SendText(text)
+						},
+					})
+				})
 			}
 			return be, nil
 		},
@@ -247,6 +272,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 //
 // Empty inputs are handled cleanly — no leading or trailing separator if
 // either side is empty.
+// firstLine returns the first line of s, for compact single-line logging of a
+// multi-line error detail.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 func buildDelegatedSystemPrompt(workspaceBlocks, extraBlocks []provider.SystemBlock) string {
 	var b strings.Builder
 	write := func(blocks []provider.SystemBlock) {

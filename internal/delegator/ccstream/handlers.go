@@ -200,6 +200,13 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		text = msg.Result
 	}
 
+	// Detect a 401 auth failure surfaced as an error result and trigger
+	// automated re-login (#843). Firing here and on the subprocess exit path is
+	// safe — the re-login gate single-flights.
+	if msg.IsError && isAuthFailure(text) {
+		b.fireAuthFailure(text)
+	}
+
 	// Determine model from lastModel (set by OnAssistant, filtered to top-level
 	// messages only — subagent models are excluded). Use per-call usage from
 	// the last assistant message (not the result's accumulated total) — this

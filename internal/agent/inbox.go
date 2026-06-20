@@ -34,6 +34,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/relogin"
 	"foci/internal/session"
 	"foci/internal/turn"
 )
@@ -288,6 +289,23 @@ func (a *Agent) Enqueue(env Envelope) {
 		a.logger().Warnf("inbox: enqueue with empty session key, dropping (text=%dB)", len(env.Text))
 		return
 	}
+
+	// CC re-login gate (#843). A 401 on the shared OAuth credential pauses every
+	// delegated agent while an automated re-login runs. DelegatedManager != nil
+	// is the cheap "this is a delegated (CC) agent" test — it avoids spinning up
+	// a backend just to classify. While the gate is active these messages are
+	// dropped, except the one capture window where the triggering agent's next
+	// message is the pasted-back login code.
+	if a.DelegatedManager != nil && relogin.G.Active() {
+		if relogin.G.ShouldCapture(a.AgentID) {
+			relogin.G.SubmitCode(env.Text)
+			a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
+		} else {
+			a.logger().Infof("inbox: dropping message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
+		}
+		return
+	}
+
 	inb := a.getOrCreateInbox(env.SessionKey)
 
 	isActive := inb.turnActive.Load()
