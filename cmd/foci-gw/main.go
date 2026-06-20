@@ -479,6 +479,14 @@ Subcommands:
 			// backend would register its own fetcher under its own key).
 			for _, backend := range []string{modelcaps.BackendCCStream, modelcaps.BackendAPI} {
 				modelcaps.SetFetcher(backend, fetcher)
+				// Persist across restarts via state.db, and restore the last
+				// catalogue synchronously now so lookups have real caps during
+				// the ~1s before the background fetch lands (#840). Restore
+				// before the go-Refresh so a fast network result isn't clobbered.
+				if si.sessionIndex != nil {
+					modelcaps.SetPersister(backend, modelCapsPersister{idx: si.sessionIndex})
+					modelcaps.Restore(backend)
+				}
 				go func(b string) {
 					if err := modelcaps.Refresh(context.Background(), b); err != nil {
 						log.Warnf("modelcaps", "[%s] initial catalogue fetch failed (using static registry until next refresh): %v", b, err)

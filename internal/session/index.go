@@ -98,6 +98,20 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 			key   TEXT PRIMARY KEY,
 			value TEXT
 		)`,
+		// Per-backend live model-capability catalogue (#840), persisted so a
+		// restart restores the last-known caps immediately instead of waiting
+		// for the first background fetch. Process-wide (keyed by backend type,
+		// not agent). effort/thinking are JSON-encoded string arrays.
+		`CREATE TABLE IF NOT EXISTS model_caps (
+			backend        TEXT NOT NULL,
+			model          TEXT NOT NULL,
+			context_window INTEGER NOT NULL DEFAULT 0,
+			max_output     INTEGER NOT NULL DEFAULT 0,
+			effort_json    TEXT NOT NULL DEFAULT '',
+			thinking_json  TEXT NOT NULL DEFAULT '',
+			fetched_at     TEXT NOT NULL,
+			PRIMARY KEY (backend, model)
+		)`,
 	)
 	if err != nil {
 		return nil, err

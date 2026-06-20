@@ -101,6 +101,107 @@ func TestNoFetcherIsSafe(t *testing.T) {
 	}
 }
 
+// fakePersister is an in-memory Persister for tests, recording Save calls and
+// serving a preloaded set from Load.
+type fakePersister struct {
+	mu         sync.Mutex
+	saved      map[string]Caps
+	savedAt    time.Time
+	saveCalls  int
+	loadReturn map[string]Caps
+	loadAt     time.Time
+	loadErr    error
+}
+
+func (p *fakePersister) Save(_ string, entries map[string]Caps, fetchedAt time.Time) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.saveCalls++
+	p.saved = entries
+	p.savedAt = fetchedAt
+	return nil
+}
+
+func (p *fakePersister) Load(_ string) (map[string]Caps, time.Time, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.loadReturn, p.loadAt, p.loadErr
+}
+
+func TestRestoreSeedsCacheFromPersister(t *testing.T) {
+	// Proves Restore makes the persisted catalogue available immediately —
+	// LookupFor hits before any fetcher runs.
+	reset()
+	fp := &fakePersister{
+		loadReturn: map[string]Caps{"claude-opus-4-8": {ContextWindow: 999, Effort: []string{"low", "max"}}},
+		loadAt:     time.Now().Add(-time.Hour),
+	}
+	SetPersister(tb, fp)
+	Restore(tb)
+
+	c, ok := LookupFor(tb, "anthropic/claude-opus-4-8-20260528")
+	if !ok || c.ContextWindow != 999 || len(c.Effort) != 2 {
+		t.Errorf("restore did not seed cache: ok=%v caps=%+v", ok, c)
+	}
+}
+
+func TestRestoreEmptyIsColdMiss(t *testing.T) {
+	// Proves an empty persisted set leaves the cache cold (caller falls back).
+	reset()
+	SetPersister(tb, &fakePersister{loadReturn: nil})
+	Restore(tb)
+	if _, ok := LookupFor(tb, "claude-opus-4-8"); ok {
+		t.Error("empty restore should leave a cold cache")
+	}
+}
+
+func TestDoFetchPersists(t *testing.T) {
+	// Proves a successful Refresh persists the fetched catalogue via the
+	// installed Persister (so it survives a restart).
+	reset()
+	fp := &fakePersister{}
+	SetPersister(tb, fp)
+	SetFetcher(tb, func(_ context.Context) (map[string]Caps, error) {
+		return map[string]Caps{"claude-opus-4-8": {ContextWindow: 1000000, Effort: []string{"high", "max"}}}, nil
+	})
+	if err := Refresh(context.Background(), tb); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
+	if fp.saveCalls != 1 {
+		t.Errorf("Save called %d times, want 1", fp.saveCalls)
+	}
+	if c, ok := fp.saved["claude-opus-4-8"]; !ok || c.ContextWindow != 1000000 {
+		t.Errorf("persisted entries wrong: %+v", fp.saved)
+	}
+	if fp.savedAt.IsZero() {
+		t.Error("fetchedAt not stamped on persist")
+	}
+}
+
+func TestRestoreDoesNotClobberFetched(t *testing.T) {
+	// Proves Restore declines to overwrite entries a fetch already populated
+	// (the startup race guard).
+	reset()
+	SetFetcher(tb, func(_ context.Context) (map[string]Caps, error) {
+		return map[string]Caps{"claude-opus-4-8": {ContextWindow: 1000000}}, nil
+	})
+	if err := Refresh(context.Background(), tb); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	// A persister offering different (older) data must not win.
+	SetPersister(tb, &fakePersister{
+		loadReturn: map[string]Caps{"claude-opus-4-8": {ContextWindow: 1}},
+		loadAt:     time.Now().Add(-48 * time.Hour),
+	})
+	Restore(tb)
+	if c, _ := LookupFor(tb, "claude-opus-4-8"); c.ContextWindow != 1000000 {
+		t.Errorf("restore clobbered live cache: %+v", c)
+	}
+}
+
 func TestBackgroundRefreshSingleFlight(t *testing.T) {
 	// Proves a cold LookupFor triggers exactly one background fetch even under
 	// concurrent callers, and the result lands.
