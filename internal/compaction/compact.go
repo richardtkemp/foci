@@ -24,14 +24,15 @@ type Compactor struct {
 	threshold        float64 // fraction of context window (e.g. 0.8)
 	maxTokens        int
 	minMessages      int
-	preserveMessages int                                     // preserve last N messages through compaction (0 disables)
-	ModelMetaFn      func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
-	ModelDefaultsFn  func(model string) config.ModelDefaults // per-model defaults from [models.*] config
-	Scratchpad       *memory.Scratchpad                      // nil disables scratchpad injection
-	TaskListStore    *memory.TaskListStore                   // nil disables task list injection
-	AgentID          string                                  // agent ID for per-agent store queries
-	FallbackFunc     provider.FallbackFunc                   // nil disables automatic model fallback
-	ClientProvider   provider.ClientProvider                 // resolves clients for fallback models; nil = reuse caller's client
+	preserveMessages int                                       // preserve last N messages through compaction (0 disables)
+	ModelMetaFn      func(model string) modelinfo.ModelMeta    // per-model meta from config (context window)
+	ModelCapsFn      func(model string) (modelcaps.Caps, bool) // live caps from this agent's backend record; nil disables
+	ModelDefaultsFn  func(model string) config.ModelDefaults   // per-model defaults from [models.*] config
+	Scratchpad       *memory.Scratchpad                        // nil disables scratchpad injection
+	TaskListStore    *memory.TaskListStore                     // nil disables task list injection
+	AgentID          string                                    // agent ID for per-agent store queries
+	FallbackFunc     provider.FallbackFunc                     // nil disables automatic model fallback
+	ClientProvider   provider.ClientProvider                   // resolves clients for fallback models; nil = reuse caller's client
 }
 
 // NewCompactor creates a new Compactor with defaults.
@@ -70,8 +71,10 @@ func (c *Compactor) ContextLimit(model string) int {
 			return meta.ContextWindow
 		}
 	}
-	if mc, ok := modelcaps.Lookup(model); ok && mc.ContextWindow > 0 {
-		return mc.ContextWindow
+	if c.ModelCapsFn != nil {
+		if mc, ok := c.ModelCapsFn(model); ok && mc.ContextWindow > 0 {
+			return mc.ContextWindow
+		}
 	}
 	return modelinfo.ContextWindow(model)
 }

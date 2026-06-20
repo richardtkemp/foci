@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"foci/internal/config"
-	"foci/internal/modelcaps"
 	"foci/internal/provider"
 	"foci/internal/tools"
 )
@@ -272,7 +271,7 @@ func dynamicEffortChoices(cc CommandContext, sessionKey string) []settingChoice 
 	if cc.Agent == nil {
 		return nil
 	}
-	caps, ok := modelcaps.Lookup(cc.Agent.SessionModel(sessionKey))
+	caps, ok := cc.Agent.ModelCaps(cc.Agent.SessionModel(sessionKey))
 	if !ok || len(caps.Effort) == 0 {
 		return nil
 	}

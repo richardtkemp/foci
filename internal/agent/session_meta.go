@@ -197,6 +197,25 @@ func (a *Agent) SessionModel(sessionKey string) string {
 	return a.getStringSetting(sessionKey, settingModel)
 }
 
+// BackendType returns the modelcaps backend-type key for this agent — the live
+// delegated backend (ccstream) when a DelegatedManager is wired, otherwise the
+// traditional API loop. Used to read the per-backend capability record so each
+// agent sees only its own backend's caps (a future codex backend would key
+// differently).
+func (a *Agent) BackendType() string {
+	if a.DelegatedManager != nil {
+		return modelcaps.BackendCCStream
+	}
+	return modelcaps.BackendAPI
+}
+
+// ModelCaps returns the live capabilities for a model on this agent's backend,
+// read from the per-backend record. ok=false on a cache miss — callers fall
+// back to the static modelinfo registry.
+func (a *Agent) ModelCaps(model string) (modelcaps.Caps, bool) {
+	return modelcaps.LookupFor(a.BackendType(), model)
+}
+
 // SessionContextLimit returns the context window size for the session's model.
 // Checks backend-reported context limit first (from get_context_usage),
 // then ModelMetaFn (config-defined), falls back to modelinfo registry.
@@ -214,7 +233,7 @@ func (a *Agent) SessionContextLimit(sessionKey string) int {
 			return meta.ContextWindow
 		}
 	}
-	if c, ok := modelcaps.Lookup(model); ok && c.ContextWindow > 0 {
+	if c, ok := a.ModelCaps(model); ok && c.ContextWindow > 0 {
 		return c.ContextWindow
 	}
 	return modelinfo.ContextWindow(model)

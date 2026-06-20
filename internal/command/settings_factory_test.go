@@ -384,12 +384,14 @@ func TestNewSessionSettingCommandKeyboardHeaderModelDefault(t *testing.T) {
 func TestEffortDynamicChoicesFromCatalogue(t *testing.T) {
 	// Seed the process-wide catalogue with an opus that supports all five levels.
 	// Other models (e.g. sonnet) are deliberately absent → Lookup misses → static.
-	modelcaps.SetFetcher(func(_ context.Context) (map[string]modelcaps.Caps, error) {
+	// A bare Agent has no DelegatedManager → BackendType() == BackendAPI, so
+	// seed the api backend's record.
+	modelcaps.SetFetcher(modelcaps.BackendAPI, func(_ context.Context) (map[string]modelcaps.Caps, error) {
 		return map[string]modelcaps.Caps{
 			"claude-opus-4-8": {Effort: []string{"low", "medium", "high", "xhigh", "max"}},
 		}, nil
 	})
-	if err := modelcaps.Refresh(context.Background()); err != nil {
+	if err := modelcaps.Refresh(context.Background(), modelcaps.BackendAPI); err != nil {
 		t.Fatalf("seed catalogue: %v", err)
 	}
 
