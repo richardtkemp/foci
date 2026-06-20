@@ -238,6 +238,12 @@ func (a *Agent) ModelCaps(model string) (modelcaps.Caps, bool) {
 	return modelcaps.LookupFor(a.BackendType(), model)
 }
 
+// BackendModels returns the model ids this agent's backend catalogue advertises,
+// sorted. Empty on a cold cache — callers fall back to typing the model name.
+func (a *Agent) BackendModels() []string {
+	return modelcaps.ModelsFor(a.BackendType())
+}
+
 // SessionContextLimit returns the context window size for the session's model.
 // Checks backend-reported context limit first (from get_context_usage),
 // then ModelMetaFn (config-defined), falls back to modelinfo registry.

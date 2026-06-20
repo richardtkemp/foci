@@ -44,6 +44,29 @@ func TestRefreshAndLookup(t *testing.T) {
 	}
 }
 
+func TestModelsFor(t *testing.T) {
+	// Proves ModelsFor returns the catalogue model ids sorted, and an unknown
+	// backend yields nil (a cold cache → callers fall back to type-the-name).
+	reset()
+	SetFetcher(tb, func(_ context.Context) (map[string]Caps, error) {
+		return map[string]Caps{
+			"claude-sonnet-4-6": {ContextWindow: 200000},
+			"claude-opus-4-8":   {ContextWindow: 1000000},
+		}, nil
+	})
+	if err := Refresh(context.Background(), tb); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	got := ModelsFor(tb)
+	want := []string{"claude-opus-4-8", "claude-sonnet-4-6"} // sorted
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("ModelsFor = %v, want %v", got, want)
+	}
+	if m := ModelsFor("never-fetched"); m != nil {
+		t.Errorf("cold backend should be nil, got %v", m)
+	}
+}
+
 func TestPerBackendIsolation(t *testing.T) {
 	// Proves two backends keep separate records — a model fetched for one
 	// backend does not leak into another.
