@@ -138,8 +138,6 @@ func Run(ctx context.Context, c Config) {
 		}
 	}()
 
-	notify("🔐 Claude Code authentication expired — starting automatic re-login…")
-
 	// Step 2: let the TUI settle.
 	c.sleep(c.SettleDelay)
 
