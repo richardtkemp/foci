@@ -9,6 +9,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/mana"
+	"foci/internal/modelcaps"
 	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/secrets"
@@ -145,6 +146,19 @@ func (r *AnthropicResolver) ResolveUsageClient(endpointName, apiKeyName string) 
 	// No CC credentials available — usage API not supported.
 	log.Debugf("anthropic", "no usage client for %q: requires Claude Code credentials with OAuth scopes", endpointName)
 	return nil, fmt.Errorf("usage API requires Claude Code credentials (OAuth with user:profile scope)")
+}
+
+// ModelCapsFetcher returns a modelcaps.Fetcher backed by Claude Code OAuth
+// credentials, or nil if no CC token source is available (e.g. API-key-only
+// deployments, where the static modelinfo registry remains the source). The
+// returned fetcher GETs the live /v1/models catalogue on each call; the caller
+// (internal/modelcaps) caches and refreshes it process-wide.
+func (r *AnthropicResolver) ModelCapsFetcher(httpTimeout time.Duration) modelcaps.Fetcher {
+	if r.ccSrc == nil {
+		return nil
+	}
+	c := NewClient(r.ccSrc.Token, httpTimeout)
+	return c.FetchModelCaps
 }
 
 // GetReloadFunc implements CredentialResolver.GetReloadFunc.

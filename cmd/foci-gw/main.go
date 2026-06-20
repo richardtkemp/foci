@@ -24,6 +24,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/modelcaps"
 	"foci/internal/platform"
 	"foci/internal/provision"
 	"foci/internal/skills"
@@ -464,6 +465,21 @@ Subcommands:
 	if reloadCreds == nil {
 		reloadCreds = func() error {
 			return fmt.Errorf("credential reload not supported")
+		}
+	}
+
+	// Wire the live model-capabilities catalogue (context window, effort levels,
+	// thinking modes) from /v1/models into the process-wide modelcaps cache. The
+	// static modelinfo registry remains the fallback when CC creds are absent or
+	// the API is unreachable. Seed once in the background — never block startup.
+	if anthropicResolver != nil {
+		if fetcher := anthropicResolver.ModelCapsFetcher(15 * time.Second); fetcher != nil {
+			modelcaps.SetFetcher(fetcher)
+			go func() {
+				if err := modelcaps.Refresh(context.Background()); err != nil {
+					log.Warnf("modelcaps", "initial catalogue fetch failed (using static registry until next refresh): %v", err)
+				}
+			}()
 		}
 	}
 
