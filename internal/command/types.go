@@ -10,6 +10,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/mana"
 	"foci/internal/memory"
+	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -189,6 +190,9 @@ func resolveContextLimit(cc CommandContext, model string) int {
 		if meta := cc.ModelMetaFn(model); meta.ContextWindow > 0 {
 			return meta.ContextWindow
 		}
+	}
+	if c, ok := modelcaps.Lookup(model); ok && c.ContextWindow > 0 {
+		return c.ContextWindow
 	}
 	return modelinfo.ContextWindow(model)
 }

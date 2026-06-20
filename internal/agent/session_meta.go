@@ -9,6 +9,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/mana"
+	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
@@ -212,6 +213,9 @@ func (a *Agent) SessionContextLimit(sessionKey string) int {
 		if meta := a.ModelMetaFn(model); meta.ContextWindow > 0 {
 			return meta.ContextWindow
 		}
+	}
+	if c, ok := modelcaps.Lookup(model); ok && c.ContextWindow > 0 {
+		return c.ContextWindow
 	}
 	return modelinfo.ContextWindow(model)
 }

@@ -9,6 +9,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/messages"
+	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -68,6 +69,9 @@ func (c *Compactor) ContextLimit(model string) int {
 		if meta := c.ModelMetaFn(model); meta.ContextWindow > 0 {
 			return meta.ContextWindow
 		}
+	}
+	if mc, ok := modelcaps.Lookup(model); ok && mc.ContextWindow > 0 {
+		return mc.ContextWindow
 	}
 	return modelinfo.ContextWindow(model)
 }

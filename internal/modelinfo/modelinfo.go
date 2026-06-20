@@ -111,6 +111,14 @@ func normalize(model string) string {
 	return stripDateSuffix(stripPrefix(model))
 }
 
+// Normalize strips provider prefixes and date suffixes from a model string,
+// yielding the bare registry key (e.g. "anthropic/claude-opus-4-8-20260528" →
+// "claude-opus-4-8"). Exported so other packages (e.g. modelcaps) key their
+// caches the same way the registry does.
+func Normalize(model string) string {
+	return normalize(model)
+}
+
 // ContextWindow returns the context window for a model.
 // Falls back to family defaults: gemini-1.5-* → 2M, gemini-* → 1M,
 // everything else (including claude) → 200k.
