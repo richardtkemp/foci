@@ -426,6 +426,38 @@ func TestGet_ResumePath(t *testing.T) {
 	}
 }
 
+func TestGet_EffortFuncResolvedPerSession(t *testing.T) {
+	// Proves the cold-launch effort plumbing (#840): EffortFunc is invoked with
+	// the session key at each Start and its result populates opts.Effort, so a
+	// relaunch re-establishes the level (apply_flag_settings is runtime-only).
+	// Per-session — each key resolves its own effort.
+	mgr, mocks := newTestManager(t, nil)
+	mgr.StartOpts.EffortFunc = func(sk string) string {
+		switch sk {
+		case "test-agent/c1":
+			return "max"
+		case "test-agent/c2":
+			return "" // no override → empty, backend omits --effort
+		default:
+			return "high"
+		}
+	}
+
+	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
+		t.Fatalf("Get c1: %v", err)
+	}
+	if _, err := mgr.Get(context.Background(), "test-agent/c2"); err != nil {
+		t.Fatalf("Get c2: %v", err)
+	}
+
+	if got := (*mocks)[0].startOpts.Effort; got != "max" {
+		t.Errorf("c1 effort = %q, want %q", got, "max")
+	}
+	if got := (*mocks)[1].startOpts.Effort; got != "" {
+		t.Errorf("c2 effort = %q, want empty", got)
+	}
+}
+
 func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 	// Proves that when Start with a resume ID fails, the manager retries
 	// without the resume ID and succeeds.
