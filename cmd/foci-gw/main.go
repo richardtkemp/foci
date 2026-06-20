@@ -474,12 +474,17 @@ Subcommands:
 	// the API is unreachable. Seed once in the background — never block startup.
 	if anthropicResolver != nil {
 		if fetcher := anthropicResolver.ModelCapsFetcher(15 * time.Second); fetcher != nil {
-			modelcaps.SetFetcher(fetcher)
-			go func() {
-				if err := modelcaps.Refresh(context.Background()); err != nil {
-					log.Warnf("modelcaps", "initial catalogue fetch failed (using static registry until next refresh): %v", err)
-				}
-			}()
+			// Both Anthropic-backed backends (ccstream, api) pull the same
+			// catalogue but keep separate per-backend records (a future codex
+			// backend would register its own fetcher under its own key).
+			for _, backend := range []string{modelcaps.BackendCCStream, modelcaps.BackendAPI} {
+				modelcaps.SetFetcher(backend, fetcher)
+				go func(b string) {
+					if err := modelcaps.Refresh(context.Background(), b); err != nil {
+						log.Warnf("modelcaps", "[%s] initial catalogue fetch failed (using static registry until next refresh): %v", b, err)
+					}
+				}(backend)
+			}
 		}
 	}
 

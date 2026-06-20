@@ -12,6 +12,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/modelcaps"
 	"foci/internal/nudge"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -87,6 +88,10 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 	)
 	compactor.ModelDefaultsFn = modelDefaultsFn(p.cfg.Models)
 	compactor.ModelMetaFn = modelMetaFn(p.cfg.Models)
+	compactorBackend := modelcaps.BackendKey(p.acfg.Backend)
+	compactor.ModelCapsFn = func(model string) (modelcaps.Caps, bool) {
+		return modelcaps.LookupFor(compactorBackend, model)
+	}
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.TaskListStore = p.taskListStore
 	compactor.AgentID = p.acfg.ID
