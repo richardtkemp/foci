@@ -123,11 +123,12 @@ Search memory files and conversation history.
 foci_memory_search "database migration"
 ```
 
-#### `foci_send_to_chat <text>`
-Send a Telegram message. Reads from stdin when no arguments (pipe-friendly).
+#### `foci_send_to_chat <text> [--file -] [--filename NAME]`
+Send a Telegram message. Reads message text from stdin when no arguments (pipe-friendly). To send piped output as a *document attachment* (rather than as message text), pass `--file -`: this reads the attachment body from stdin into a temp file, so no temp file is needed on disk. Pair with `--filename` to set the display name.
 ```bash
 foci_send_to_chat "Build completed successfully"
 echo "Pipeline results: all green" | foci_send_to_chat
+git diff | foci_send_to_chat "diff for review" --file - --filename review.diff
 ```
 
 #### `foci_todo <action> [args...]`

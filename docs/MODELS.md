@@ -77,8 +77,14 @@ Switch the session model interactively:
 
 ```
 /model anthropic/claude-opus-4-6   # switch to a specific model
-/model                              # show current model
+/model                              # show keyboard / current model
 ```
+
+Bare `/model` shows a keyboard with one button per model the agent's backend
+advertises in the [live capability catalogue](#live-model-capability-catalogue),
+with the current model marked by a check. If the catalogue is still cold (no
+fetch has landed and nothing was restored from `state.db`), it falls back to
+asking you to type the `developer/model_id` name.
 
 ### `--model` CLI flag
 
@@ -101,6 +107,44 @@ Agents can specify a model when spawning sub-agents:
 ```json
 {"tool": "spawn", "input": {"mode": "raw", "model": "anthropic/claude-haiku-4-5", "task": "..."}}
 ```
+
+### `/effort` command (Telegram)
+
+The effort levels offered by `/effort` are sourced live from the
+[capability catalogue](#live-model-capability-catalogue): a model advertises its
+own set, so e.g. `opus-4-8` offers `low/medium/high/xhigh/max`. When the model
+is unknown or the catalogue is cold, `/effort` falls back to the static
+`low/medium/high` set. See [COMMANDS.md](COMMANDS.md) for usage detail.
+
+---
+
+## Live Model Capability Catalogue
+
+Foci keeps a live, per-backend catalogue of model capabilities — context window,
+max output, valid effort levels, and thinking modes — fetched from the backend's
+`GET /v1/models` endpoint rather than hardcoded.
+
+- **Per backend, not per model.** Capabilities are a property of the backend
+  *type*, so each backend (`ccstream` for the Claude Code delegated loops, `api`
+  for the direct Anthropic API loop) owns its own record. Both Anthropic-backed
+  backends fill from `/v1/models`, but the records stay separate so a future
+  non-Anthropic backend can carry its own capability source. Caps are read
+  through the agent's backend (`Agent.ModelCaps`), never via a global lookup, so
+  each agent sees only its own backend's record (`modelcaps.LookupFor(backend,
+  model)`).
+- **Where caps come from.** The fetch is seeded in the background at startup from
+  the CC OAuth credentials. The catalogue is persisted to the `model_caps` table
+  in `state.db` and restored synchronously on startup, so lookups don't miss the
+  live caps during the brief gap before the first fetch lands. It re-fetches on
+  every startup and then every 48h.
+- **Fallback.** The static `internal/modelinfo` registry remains the fallback
+  whenever credentials are absent, the API is unreachable, or a model isn't in
+  the catalogue. First-ever runs (no persisted rows, cold cache) behave exactly
+  as before the catalogue existed. Pricing and the speed/fast flag are not in the
+  catalogue — the models API doesn't expose them — and stay in `modelinfo`.
+
+Context-window and effort consumers prefer the live caps when present, sitting
+between any explicit config override and the static registry.
 
 ---
 
@@ -176,5 +220,6 @@ FOCI_MODEL=cheap foci send "routine check"
 ## See Also
 
 - [CONFIG.md](CONFIG.md) — full configuration reference (`[groups]`, `[endpoints]`)
+- [COMMANDS.md](COMMANDS.md) — Telegram command reference (`/model`, `/effort`, `/thinking`)
 - [CLI.md](CLI.md) — CLI command reference (`--model` flag)
 - [WIRING.md](WIRING.md) — architecture and startup flow

@@ -73,6 +73,13 @@ config.Load(path)                                        ← validates values; l
   → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store (main.go, after setupAgent)
   → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
+  → modelcaps wiring (#840)                               ← main.go, once after the agent loop
+    → anthropicResolver.ModelCapsFetcher(15s)             ← /v1/models fetcher (nil if CC OAuth creds absent)
+    → for backend in {ccstream, api}:
+      → modelcaps.SetFetcher(backend, fetcher)
+      → modelcaps.SetPersister(backend, modelCapsPersister{sessionIndex})  ← state.db model_caps table (modelcaps_persist.go)
+      → modelcaps.Restore(backend)                        ← seed cache from DB synchronously (bridges the ~1s fetch gap)
+      → go modelcaps.Refresh(ctx, backend)                ← background; on error, serve-stale / static modelinfo fallback
   → setupKeepalive(inst, acfg, params)                    ← keepalive_setup.go (per-agent)
   → plat.SetupSharedFacet(...)                         ← shared facet bots (via messaging facade)
   → setupWarningHooks(agents, cfg)                         ← post_agent_setup.go
@@ -167,6 +174,7 @@ main
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
  ├── prompts       (top-level package, not internal) → log (embedded .md files + ResolveOrientationTemplate helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
+ ├── modelcaps     → modelinfo, log (leaf — per-backend live capability cache; Fetcher + Persister seams injected at startup so it imports no anthropic/session/DB)
  ├── compaction    → log, memory, modelinfo, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
@@ -188,7 +196,7 @@ main
                     (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo`, `messages`, `timeutil`, `turn`, `dispatch` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `timeutil`, `turn`, `dispatch` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
 
 **`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
 
@@ -316,6 +324,8 @@ The agent exposes three lifecycle methods that encapsulate multi-step sequences 
 
 All three call `reloadAfterMutation()` internally, which reloads bootstrap, refreshes nudges, and invalidates all per-session system prompt caches.
 
+**Delegated system prompt rebuilt from disk at session start (#828 Part A, fixes #706):** the delegated CC system prompt was previously built once at agent setup and frozen into `StartOpts.SystemPrompt` for the process lifetime, so `/reset` and idle respawn never picked up character-file or skill edits. `StartOptions.SystemPromptFunc` fixes this: when set, `DelegatedManager.getOrCreate` calls it at every session start and its non-empty result wins over the static prompt. The closure (wired in `agents_delegated.go`) reloads `Bootstrap` from disk itself and re-runs the skill load, so every respawn — reset, idle, compaction-bounce — gets a fresh prompt regardless of caller. Empty result falls back to the setup snapshot.
+
 ### Steer Mode Differences (API vs Delegated)
 
 When `steer_mode` is enabled and a turn is active, user messages are buffered as "steers" and injected mid-turn rather than waiting for completion:
@@ -365,6 +375,20 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 **/reset:** Rotates to a fresh session immediately and returns — it does not block on memory formation. In the background it runs the reflection pass on the old CC session, then destroys that backend (kills tmux pane or closes stream subprocess). The old CC resume ID is cleared before rotation so the rotated-to key does not resume the previous conversation; a new CC session spawns lazily on the next message. See `agent/lifecycle.go:resetDelegatedSession`.
 
 **/stop:** Interrupts the current turn. Tmux backend: sends Escape×2 + Ctrl-C via `send-keys`. Stream backend: sends an `interrupt` control message over stdin. Both halt the in-flight inference/tool execution inside Claude Code.
+
+**Compaction reload-bounce + resume nudge (#828 Part B / #845):** after a delegated `/compact`, CC keeps the same frozen system prompt, so memory/skill edits made during the session never reach the post-compaction context. `runDelegatedCompact` (`agent/compaction.go`) fixes this by bouncing the CC session after a successful compaction (gated on the per-agent `ReloadOnCompact` flag, default on):
+
+- **`DelegatedManager.BounceSession(sessionKey)`** closes the backend but *keeps* the saved resume ID (factored out of `ResetSession` via the shared `closeManaged(sessionKey, clearResume=false)` helper), so the next message respawns CC with `--resume <same session>` — resuming the now-compacted conversation. Part A's `SystemPromptFunc` then rebuilds the prompt from disk on that respawn.
+- **Prompt-change gate (#828 follow-up):** every CC session start fingerprints the prompt it launched with — `log.SystemHash` of the effective prompt (`buildDelegatedSystemPrompt`: character files + skill blocks) — stored as `systemPromptHash` on the per-session `managedBackend` record in `m.backends[sessionKey]`. At compaction, `BounceSessionIfPromptChanged(sessionKey)` recomputes the hash from disk and bounces *only* when it differs (returns whether it bounced). This catches character-file edits and skill add/remove (the skill list is in the prompt) but **not** skill body edits (bodies load on demand, never in the prompt). With no `SystemPromptFunc` configured it falls back to an unconditional bounce. Unchanged prompt → no restart → seamless compaction (pre-#828 behaviour).
+- **Self-injected resume nudge (#845):** a mid-task flow has no next message to drive the post-bounce respawn, so it would silently stall. `maybeInjectCompactionResume(sessionKey)` synthesises one — `compactionResumePrompt` instructs the model to resume if mid-task or emit the `NoResponseSentinel` if idle — injected via `AsyncNotifier.InjectToAgent`. It is gated twice: it fires **only** when `BounceSessionIfPromptChanged` actually bounced (no restart → nothing to recover from), and is suppressed when `Agent.InboxHasPendingInput(sessionKey)` reports queued/steer input (the user's own follow-up will drive continuation with real intent) or async self-injection is unavailable.
+
+**Automated CC re-login on 401 (`internal/relogin`, #843):** when the shared CC OAuth credential can no longer be refreshed, the subprocess returns a 401 ("Failed to authenticate") and every CC agent is dead until a human runs `claude /login`. The relogin package automates recovery:
+
+- **Detection (ccstream only).** `isAuthFailure` (`ccstream/authfail.go`) matches a 401 at two sites — the error `result` in `OnResult` (`handlers.go`) and the subprocess stderr/exit path (`lifecycle.go`) — since a dead token can surface either way. The backend fires `onAuthFailure(detail)`, wired via `Backend.SetOnAuthFailure` in `agents_delegated.go` to the agent's `triggerRelogin(reason, sessionKey)` closure.
+- **Gate (`relogin/gate.go`).** `relogin.G` is a process-wide single-flight drop gate. The first 401 claims it (`G.Start()`); while active, `Agent.Enqueue` drops inbound messages for delegated agents (the `DelegatedManager != nil` check is the cheap "is delegated" test) — *except* a one-shot capture window (`ShouldCapture(agentID)`) where the triggering agent's next message is treated as the pasted-back login code (`SubmitCode`). Every driver exit path releases the gate (`defer G.Release()`), so a failed or timed-out login can never wedge message processing — the backstop, not the happy path.
+- **Driver (`relogin/driver.go`).** `relogin.Run` drives an interactive `claude /login` in a dedicated tmux pane (regular TUI, not stream-json; standalone tmux helper, no cctmux dep), extracts the sign-in URL (`extract.go`), relays it to the user, awaits the code through the capture window, feeds it back, and confirms success. Aborts log at ERROR (surface in `/errors`); the just-submitted one-time code is redacted from any diagnostic screen dump.
+- **URL routing (`ba3cd05c`).** The triggering session key threads through `ReloginTrigger(reason, sessionKey)` into the relogin `Config`; the URL is delivered via `conn.SendToSession(sessionKey, ...)` (reads the chat ID straight from the key). Manual `/login` passes `req.SessionKey` so the URL returns to whoever ran it; the auto-401 path passes `""` → the agent's primary/default chat. A hardening fix makes `BotForSession("")` return nil in both telegram and discord so an empty key never matches an idle facet bot and correctly falls through to the agent's primary.
+- **Manual trigger (`563bac86`).** `/login` (a `RequiresBackend` command, `command/login.go`) invokes the same flow on demand for testing without waiting for a real 401. The trigger is built once in `configureDelegated` and shared between the 401 callback and the command via `Agent.ReloginTrigger` — wired only for ccstream (nil for cctmux; the command reports unavailability otherwise).
 
 **Bounded shutdown contract.** `Backend.Close` (ccstream) returns within ~9s in the worst case: graceful wait → SIGTERM → SIGKILL → bounded final wait on the waiter goroutine. The final wait *also* has a timeout — if the waiter goroutine stalls (observed when `finalizeExit` callbacks block), the OS still reaps the SIGKILL'd process and `Close` abandons the goroutine rather than hanging forever. `DelegatedManager.ResetSession` and `DelegatedManager.Get` consequently mutate `m.backends` under `m.mu` but call `be.Close()` *after* releasing the lock, so a slow shutdown can never freeze inbound message processing for the whole agent. Regression tests: `TestClose_BoundedWaitWhenWaiterStalls`, `TestResetSession_DoesNotHoldManagerLockDuringClose`.
 
@@ -900,6 +924,23 @@ Agents can switch endpoints at runtime via `/model endpoint:name` (e.g. `/model 
 
 **Compaction:** `Compactor.Compact()` receives the client, model, and format as parameters (not stored on the struct). The caller resolves these via `agent.ResolveCallSite(config.CallCompaction, sessionKey)`, so compaction uses the group-appropriate model in multi-model mode or the session's active client in single-model mode.
 
+### Live Model Capabilities (`modelcaps`, #840)
+
+`internal/modelcaps` is a leaf cache of `Caps{ContextWindow, MaxOutput, Effort, Thinking}` advertised by the backend's `/v1/models` (the capabilities the SDK's typed `Model` drops). It is the live layer between the per-model config override and the static `modelinfo` registry: context-window and effort lookups prefer it, falling back to the static registry on a cold/empty cache so behaviour is never worse than before.
+
+- **Per-backend registry.** Capabilities are a property of the backend *type*, not the model alone, so the cache is a registry of per-backend stores keyed by backend type (`BackendCCStream`, `BackendAPI`, future `codex`). `BackendKey(configBackend)` maps the config backend string (`""`/`"api"`/`"ccstream"`) to a key. Public API: `LookupFor(backend, model) (Caps, ok)`, `ModelsFor(backend) []string` (sorted ids, cold→nil), `SetFetcher(backend, fn)`, `Refresh(ctx, backend)`. Background single-flight refresh; serve-stale on fetch error; TTL grows 6h→48h.
+- **Fetcher seam.** `anthropic.FetchModelCaps` (raw `GET /v1/models`) is injected via `SetFetcher` so the package stays a DB/anthropic-free leaf. `AnthropicResolver.ModelCapsFetcher` supplies it from CC OAuth creds; nil creds → no fetcher → static fallback.
+- **DB persistence (`e301379b`).** `SetPersister` + `Restore` bridge the cold-start gap. `session` gains a `model_caps` table (`backend, model, context_window, max_output, effort_json, thinking_json, fetched_at`) with `SaveModelCaps`/`LoadModelCaps` on `SessionIndex`; saves are transactional (delete+insert) so a reader never sees a half-written catalogue. `cmd/foci-gw/modelcaps_persist.go`'s `modelCapsPersister` adapts `SessionIndex`↔`Caps` (the one place that knows both types). `doFetch` persists after each swap (DB write outside the store lock so it never blocks a lookup); `Restore` declines to clobber a cache a fetch already populated (startup race guard). Restart always re-fetches; the DB restore only covers the in-flight gap.
+- **Agent routing.** `Agent.BackendType()`, `Agent.ModelCaps(model)`, and `Agent.BackendModels()` route caps reads through the agent's own backend; consumers (session context limit, command context-limit resolver, `/effort` choices, `/model` keyboard) read via the agent. Compaction takes an injected `ModelCapsFn` bound to the agent's backend.
+
+**Effort plumbing.** `/effort`'s level set is resolved per call: `newSessionSettingCommand`'s optional `DynamicChoices` hook reads `modelcaps.LookupFor`, building levels in catalogue order (e.g. opus-4-8: low/medium/high/xhigh/max) with matching numeric aliases; a catalogue miss falls back to the static low/medium/high. Two delivery paths make effort both instant and durable:
+- **Live push (`39581989`).** `Agent.SetSessionEffort` persists, then for a delegated session fires `delegator.ApplyFlagSettingsRequest{Settings: {"effortLevel": value}}` in the background → ccstream's `SendControl` emits `{"subtype":"apply_flag_settings","settings":{...}}` so the next turn runs at the new effort with no bounce (mirrors `SetPermissionMode`'s optimistic fire-and-forget). The command layer must reject invalid settings first — CC does not validate. API-loop sessions apply effort at turn time via `output_config`, so no control is sent. `clear`/`off` skip the live push.
+- **Cold-launch flag (`1aacc877`).** `apply_flag_settings` is session-local: a bounce (post-compaction reload, idle respawn) drops the override. `StartOptions.Effort` + `EffortFunc(sessionKey)` (mirrors `SystemPromptFunc` — resolved fresh per session start in `getOrCreate`, bound to `ag.SessionEffort`) make ccstream `Start` append `--effort <level>` (empty/`off` omits it). The control is the happy path; the launch flag is the backstop.
+
+**`/thinking` backend gate (`22b3fa19`).** CC exposes no thinking control and effort subsumes it, so `/thinking` is hidden on ccstream via a backend-keyed `BackendGate` on `sessionSettingDef` (distinct from the model-keyed `Capability`), consulted in both `Visible` (hide) and `Execute` (reject). API agents keep it.
+
+**`/model` keyboard (`275b492a`).** `/model`'s `KeyboardOptions` now offers one button per model `Agent.BackendModels()` (→ `modelcaps.ModelsFor`) advertises, marking the current model with a check. A cold catalogue falls back to typing the name.
+
 **Keepalive:** For Anthropic endpoints, the keepalive fires on a configurable interval (default 55m, just under the 1h cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected by developer name via `config.ResolveModelKeepalive()` — these developers have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s. Gemini's `CacheManager` handles its own TTL extension independently.
 
 ## Anthropic API Client (`anthropic/`)
@@ -1101,9 +1142,10 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`, `/pass`
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`, `/pass`, `/login`
    - `/mana` — check quota remaining (`/usage` is a hidden alias)
    - `/reload` — reload workspace files, skills, and system blocks from disk
+   - `/login` (`RequiresBackend`, ccstream only) — manually trigger the automated CC re-login flow (see [Automated CC re-login on 401](#backend-session-lifecycle)); URL returns to the chat that ran it
    - `/pass` — forward a command directly to the delegated backend (e.g. `/pass /context`, `/pass /model opus`). Bypasses foci's command dispatch so CC slash commands that would otherwise be intercepted by foci can be sent through. For tmux backends, captures and returns pane output after stabilisation. For stream backends, output arrives normally via the stdout reader. Only available for delegated agents — returns an error for API-mode agents.
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
@@ -1478,6 +1520,8 @@ Checks token usage against threshold (default 80% of context window). When trigg
 **Async-pending guard:** Compaction is skipped when the session has pending async tool results (`AsyncNotifier.HasPending()`). Tools call `MarkPending()` before dispatching async work (spawn clone, auto-backgrounded exec/http) and `MarkDone()` when the result is delivered via `Notify()`. This prevents compacting away the context that the pending result relates to — compaction fires naturally on a later turn once all results have been delivered.
 
 **No-compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, the context percentage is logged but no compaction or warning occurs. These sessions are expected to be short-lived.
+
+**Delegated (CC) compaction:** for delegated agents, compaction runs inside CC (`runDelegatedCompact` sends `/compact`), not via this API pipeline. After a successful CC compaction, foci conditionally bounces the CC session so character/skill edits reload, then self-injects a resume nudge — see [Compaction reload-bounce + resume nudge](#backend-session-lifecycle). The per-agent `reload_on_compact` config (`CompactionConfig`, default ON, overridable at agent or global level) gates the bounce.
 
 
 **Branch compaction:** When `Replace()` is called on a branch session (e.g., during compaction), it preserves the `branch_meta` header with `branch_point=0`. The compacted messages are self-contained (the summary includes parent context), so subsequent `LoadFull()` loads `parent[:0] + compacted_msgs` = just the compacted messages.
