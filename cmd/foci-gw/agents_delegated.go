@@ -121,6 +121,41 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		}
 	}
 
+	// Automated re-login trigger (#843). Built once here so both the 401
+	// auth-failure callback and the manual /login command invoke the same
+	// path. The gate single-flights across all agents (shared OAuth
+	// credential), so only the first caller launches the driver; a second
+	// caller (concurrent 401, or /login while one is running) gets false.
+	// ccstream-only: the driver drives a `claude /login` TUI in tmux, which
+	// has no meaning for the API transport. The /login command is gated by
+	// RequiresBackend; this field stays nil for cctmux so that command
+	// reports "unavailable" rather than mis-driving the wrong backend.
+	claudeBin, _ := backendConfig["claude_binary"].(string)
+	workDir := p.acfg.Workspace
+	triggerRelogin := func(reason string) bool {
+		if !relogin.G.Start() {
+			return false
+		}
+		log.Warnf("agent/"+agentID, "CC re-login starting: %s", reason)
+		go relogin.Run(context.Background(), relogin.Config{
+			AgentID:   agentID,
+			WorkDir:   workDir,
+			ClaudeBin: claudeBin,
+			Gate:      relogin.G,
+			SendMessage: func(text string) error {
+				conn := connMgr.ForSessionOrPrimary("", agentID)
+				if conn == nil {
+					return fmt.Errorf("no connection for agent %s", agentID)
+				}
+				return conn.SendText(text)
+			},
+		})
+		return true
+	}
+	if backendName == "claude-code" {
+		ag.ReloginTrigger = triggerRelogin
+	}
+
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
@@ -132,29 +167,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// Inject shared rate limit state into ccstream backends.
 			if sb, ok := be.(*ccstream.Backend); ok {
 				sb.SetRateLimitState(rateLimitState)
-				// On a 401, run an automated re-login (#843). The gate
-				// single-flights across all agents (shared OAuth credential),
-				// so only the first 401 launches the driver.
-				claudeBin, _ := backendConfig["claude_binary"].(string)
-				workDir := p.acfg.Workspace
+				// On a 401, run the automated re-login (#843) via the shared
+				// trigger built above (same path as the manual /login command).
 				sb.SetOnAuthFailure(func(detail string) {
-					if !relogin.G.Start() {
-						return
-					}
-					log.Warnf("agent/"+agentID, "CC auth failure — starting re-login: %s", firstLine(detail))
-					go relogin.Run(context.Background(), relogin.Config{
-						AgentID:   agentID,
-						WorkDir:   workDir,
-						ClaudeBin: claudeBin,
-						Gate:      relogin.G,
-						SendMessage: func(text string) error {
-							conn := connMgr.ForSessionOrPrimary("", agentID)
-							if conn == nil {
-								return fmt.Errorf("no connection for agent %s", agentID)
-							}
-							return conn.SendText(text)
-						},
-					})
+					triggerRelogin("401 auth failure: " + firstLine(detail))
 				})
 			}
 			return be, nil

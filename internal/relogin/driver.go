@@ -10,6 +10,11 @@ import (
 
 const logComponent = "relogin"
 
+// maxScreenDump caps how much of a captured TUI screen we write to the log on a
+// failure path. Enough to diagnose which state the login screen was actually in
+// without flooding the log with the full scrollback.
+const maxScreenDump = 4000
+
 // Config parameterises a single re-login run.
 type Config struct {
 	AgentID   string // the agent whose 401 triggered this; owns the capture window
@@ -64,28 +69,60 @@ func (c *Config) defaults() {
 	}
 }
 
+// comp returns the per-run log component, namespaced by agent so a re-login's
+// log lines are filterable (`relogin/clutch`).
+func (c *Config) comp() string {
+	if c.AgentID == "" {
+		return logComponent
+	}
+	return logComponent + "/" + c.AgentID
+}
+
 // Run executes the interactive re-login flow (Dick's 12 steps). It always
 // releases the gate and kills the login pane before returning, so a failed or
 // timed-out login can never leave delegated agents permanently paused. Intended
 // to run in its own goroutine.
+//
+// The flow is inherently flake-prone — it drives a real TUI by screen-scraping,
+// and its anchors come from Claude Code's login UI which we don't control — so
+// every unexpected outcome is logged at WARN/ERROR, and anchor timeouts dump the
+// captured screen so a future session can see exactly what state the TUI was in.
 func Run(ctx context.Context, c Config) {
 	c.defaults()
+	comp := c.comp()
 	g := c.Gate
 	// Backstop: resume message processing no matter how we exit (#843). This is
 	// the load-bearing safety net — every failure path below relies on it.
 	defer g.Release()
 
+	log.Infof(comp, "re-login starting (workdir=%q binary=%q anchorTimeout=%s codeTimeout=%s)",
+		c.WorkDir, c.ClaudeBin, c.AnchorTimeout, c.CodeTimeout)
+
 	notify := func(text string) {
 		if c.SendMessage == nil {
+			log.Warnf(comp, "no SendMessage configured — user will not see: %q", firstLineOf(text))
 			return
 		}
 		if err := c.SendMessage(text); err != nil {
-			log.Warnf(logComponent, "send message failed: %v", err)
+			log.Errorf(comp, "send message to user failed (%q): %v", firstLineOf(text), err)
 		}
 	}
 	fail := func(reason string) {
-		log.Warnf(logComponent, "re-login aborted: %s", reason)
+		log.Errorf(comp, "re-login ABORTED: %s", reason)
 		notify("🔐 Claude Code re-login failed: " + reason + "\nRun `claude /login` on the host to recover.")
+	}
+	// dumpScreen writes a captured TUI screen to the log on a failure path so the
+	// reason an anchor never appeared is diagnosable after the fact.
+	dumpScreen := func(label, screen string) {
+		s := strings.TrimSpace(screen)
+		if s == "" {
+			log.Warnf(comp, "%s: captured screen was EMPTY (tmux pane gone, or claude never rendered?)", label)
+			return
+		}
+		if len(s) > maxScreenDump {
+			s = s[len(s)-maxScreenDump:] // keep the most recent (bottom) of the scrollback
+		}
+		log.Warnf(comp, "%s — last captured screen follows:\n%s", label, s)
 	}
 
 	pn := c.newPane(&c)
@@ -95,7 +132,11 @@ func Run(ctx context.Context, c Config) {
 		fail("could not start login session: " + err.Error())
 		return
 	}
-	defer func() { _ = pn.kill(context.Background()) }()
+	defer func() {
+		if err := pn.kill(context.Background()); err != nil {
+			log.Warnf(comp, "kill login pane failed (may leak a tmux session): %v", err)
+		}
+	}()
 
 	notify("🔐 Claude Code authentication expired — starting automatic re-login…")
 
@@ -118,24 +159,37 @@ func Run(ctx context.Context, c Config) {
 	// Steps 5–6: wait for the URL prompt, extract and relay the URL.
 	screen, ok := c.waitFor(ctx, pn, anchorPaste)
 	if !ok {
+		dumpScreen("login prompt anchor never appeared", screen)
 		fail("login prompt did not appear in time")
 		return
 	}
 	url := extractLoginURL(screen)
 	if url == "" {
+		dumpScreen("paste anchor present but no URL extracted", screen)
 		fail("could not read the login URL from the screen")
 		return
 	}
+	log.Infof(comp, "login URL extracted (%d chars); opening capture window", len(url))
 
-	// Step 7: open the capture window and ask the user to sign in.
+	// Step 7: open the capture window and ask the user to sign in. A failure to
+	// relay the URL is fatal — the user can never complete login without it.
 	g.OpenCapture(c.AgentID)
-	notify("🔐 Sign in to re-authenticate Claude Code, then paste the code back to me:\n\n" + url)
+	if c.SendMessage != nil {
+		if err := c.SendMessage("🔐 Sign in to re-authenticate Claude Code, then paste the code back to me:\n\n" + url); err != nil {
+			fail("could not send the login URL to you: " + err.Error())
+			return
+		}
+	} else {
+		log.Errorf(comp, "no SendMessage configured — cannot relay login URL; aborting")
+		return
+	}
 
 	code, ok := g.AwaitCode(c.CodeTimeout)
 	if !ok {
 		fail("timed out waiting for the login code")
 		return
 	}
+	log.Infof(comp, "login code received (%d chars); submitting", len(code))
 
 	if err := pn.sendLine(ctx, code); err != nil {
 		fail("could not enter the login code: " + err.Error())
@@ -143,26 +197,37 @@ func Run(ctx context.Context, c Config) {
 	}
 
 	// Step 8: wait for confirmation.
-	if _, ok := c.waitFor(ctx, pn, anchorSuccess); !ok {
+	if successScreen, ok := c.waitFor(ctx, pn, anchorSuccess); !ok {
+		// Redact the just-submitted one-time code in case the TUI echoed it —
+		// auth codes must never reach the log.
+		redacted := successScreen
+		if code != "" {
+			redacted = strings.ReplaceAll(successScreen, code, "[redacted-code]")
+		}
+		dumpScreen("success anchor never appeared after code submit", redacted)
 		fail("login did not complete (no confirmation on screen)")
 		return
 	}
 
 	// Steps 9–11: pane killed by defer, gate released by defer.
 	notify("✅ Login completed.")
-	log.Infof(logComponent, "re-login completed for agent %s", c.AgentID)
+	log.Infof(comp, "re-login completed for agent %s", c.AgentID)
 }
 
 // waitFor polls the pane until anchor appears in the captured screen or
 // AnchorTimeout elapses. Returns the last captured screen and whether the
 // anchor was found.
 func (c *Config) waitFor(ctx context.Context, pn pane, anchor string) (string, bool) {
+	comp := c.comp()
 	deadline := time.Now().Add(c.AnchorTimeout)
+	start := time.Now()
 	var last string
+	captureErrs := 0
 	for {
 		screen, err := pn.capture(ctx)
 		if err != nil {
-			log.Warnf(logComponent, "capture failed while waiting for %q: %v", anchor, err)
+			captureErrs++
+			log.Warnf(comp, "capture failed while waiting for %q (err #%d): %v", anchor, captureErrs, err)
 		} else {
 			last = screen
 			if strings.Contains(screen, anchor) {
@@ -170,8 +235,17 @@ func (c *Config) waitFor(ctx context.Context, pn pane, anchor string) (string, b
 			}
 		}
 		if time.Now().After(deadline) {
+			log.Warnf(comp, "gave up waiting for %q after %s (%d capture errors)", anchor, time.Since(start).Round(time.Second), captureErrs)
 			return last, false
 		}
 		c.sleep(c.PollInterval)
 	}
+}
+
+// firstLineOf returns the first line of s, for compact single-line logging.
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

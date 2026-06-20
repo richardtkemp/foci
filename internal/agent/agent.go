@@ -134,6 +134,7 @@ type Agent struct {
 	ManaInvestInterval                      time.Duration                           // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                             []provider.ToolDef                      // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DelegatedManager                        *DelegatedManager                       // nil = traditional agent loop; non-nil = lazy per-session delegated transport management
+	ReloginTrigger                          func(reason string) bool                // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight
 	Reflection                              config.ResolvedReflection               // resolved reflection config (agent+global merged)
 	ResetOrientTemplateFn                   func() string                           // resolves orientation template for session reset; nil = no orientation
 	ReloadSystemFn                          func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op
