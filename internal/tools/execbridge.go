@@ -1060,6 +1060,19 @@ func generateGenericShellFunc(t *Tool) string {
 		reqSet[r] = true
 	}
 
+	// filepathParams are string params with format:filepath. They gain
+	// "-"-means-stdin support: passing `--file -` reads the attachment body
+	// from stdin into a temp file rather than trying to open a literal file
+	// named "-" (TODO #814). Only emitted when the tool actually has such a
+	// param, so non-file tools (http_request is custom anyway) are untouched.
+	var filepathParams []string
+	for _, k := range paramNames {
+		if schema.Properties[k].Format == "filepath" && schema.Properties[k].Type == "string" {
+			filepathParams = append(filepathParams, k)
+		}
+	}
+	hasStdinFile := len(filepathParams) > 0
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s() {\n%s\n%s\n", name, helpCheck, guard)
 
@@ -1069,6 +1082,11 @@ func generateGenericShellFunc(t *Tool) string {
 		fmt.Fprintf(&b, " %s=\"\"", k)
 	}
 	b.WriteString("\n")
+	// Helper locals for the "-"-means-stdin file path (cleaned up after the
+	// call). Declared only when a filepath param exists.
+	if hasStdinFile {
+		b.WriteString("  local __foci_stdin_file=\"\" __foci_rc=0\n")
+	}
 
 	// Flag-parsing while-loop. Positional params still get a --flag arm so
 	// callers can use either `foci_X --query foo` or `foci_X foo`. The
@@ -1122,6 +1140,26 @@ func generateGenericShellFunc(t *Tool) string {
 		fmt.Fprintf(&b, "  %s=\"${%s# }\"\n", p, p)
 	}
 
+	// Stdin-to-tempfile for filepath params: `--file -` reads the attachment
+	// body from stdin into a temp file (TODO #814). Must run BEFORE the
+	// relative-path resolver below, so "-" is replaced by the tempfile's
+	// absolute path and never becomes "$PWD/-". mktemp returns an absolute
+	// path, so the resolver's /*) arm then leaves it unchanged.
+	for _, k := range filepathParams {
+		fmt.Fprintf(&b,
+			"  if [ \"$%s\" = \"-\" ]; then\n"+
+				"    if [ -n \"$__foci_stdin_file\" ]; then\n"+
+				"      echo \"error: only one '-' (stdin) file argument is supported\" >&2\n"+
+				"      return 1\n"+
+				"    fi\n"+
+				"    __foci_stdin_file=\"$(mktemp)\"\n"+
+				"    cat > \"$__foci_stdin_file\"\n"+
+				"    %s=\"$__foci_stdin_file\"\n"+
+				"  fi\n",
+			k, k,
+		)
+	}
+
 	// Resolve relative paths for params with format: filepath. The shell
 	// function inherits the caller's cwd; foci-gw's cwd is unrelated, so
 	// relative paths sent verbatim fail with confusing "no such file" errors
@@ -1148,7 +1186,13 @@ func generateGenericShellFunc(t *Tool) string {
 		if _, ok := schema.Properties[t.StdinParam]; !ok {
 			return fmt.Sprintf("# error: tool %q StdinParam=%q not in schema\n", t.Name, t.StdinParam)
 		}
-		fmt.Fprintf(&b, "  if [ -z \"$%s\" ] && [ ! -t 0 ]; then\n    %s=\"$(cat)\"\n  fi\n", t.StdinParam, t.StdinParam)
+		// When a filepath param already consumed stdin (`--file -`), don't
+		// also drain it into the StdinParam — stdin is single-use.
+		extraGuard := ""
+		if hasStdinFile {
+			extraGuard = " && [ -z \"$__foci_stdin_file\" ]"
+		}
+		fmt.Fprintf(&b, "  if [ -z \"$%s\" ] && [ ! -t 0 ]%s; then\n    %s=\"$(cat)\"\n  fi\n", t.StdinParam, extraGuard, t.StdinParam)
 	}
 
 	// Required-param usage check.
@@ -1212,10 +1256,21 @@ func generateGenericShellFunc(t *Tool) string {
 		}
 	}
 
-	fmt.Fprintf(&b,
-		"  foci-call \"$(jq -nc --argjson p \"$params\" '{\"tool\":\"%s\",\"params\":$p}')\"\n}\n",
-		t.Name,
-	)
+	if hasStdinFile {
+		// Capture the call's exit, remove any stdin tempfile, then propagate
+		// the original exit code.
+		fmt.Fprintf(&b,
+			"  foci-call \"$(jq -nc --argjson p \"$params\" '{\"tool\":\"%s\",\"params\":$p}')\" || __foci_rc=$?\n"+
+				"  [ -n \"$__foci_stdin_file\" ] && rm -f \"$__foci_stdin_file\"\n"+
+				"  return $__foci_rc\n}\n",
+			t.Name,
+		)
+	} else {
+		fmt.Fprintf(&b,
+			"  foci-call \"$(jq -nc --argjson p \"$params\" '{\"tool\":\"%s\",\"params\":$p}')\"\n}\n",
+			t.Name,
+		)
+	}
 
 	return b.String()
 }
