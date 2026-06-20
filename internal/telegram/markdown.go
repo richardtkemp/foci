@@ -16,7 +16,11 @@ var (
 	reSpoiler          = regexp.MustCompile(`\|\|([^\|]+)\|\|`)
 	reStrikethrough    = regexp.MustCompile(`~~([^~]+)~~`)
 	reUnderline        = regexp.MustCompile(`__([^_]+)__`)
-	reItalicUnderscore = regexp.MustCompile(`(^|[^a-z0-9])_([^_\n]+?)_([^a-z0-9]|$)`)
+	// Boundary class excludes letters (both cases), digits and underscore so
+	// snake_case identifiers — including UPPER_SNAKE like MAX_TOKEN_LEN — never
+	// open an italic run. A bare _x_ delimited by whitespace/punctuation still
+	// italicises because the boundary is the delimiter, not the content. (#709)
+	reItalicUnderscore = regexp.MustCompile(`(^|[^a-zA-Z0-9_])_([^_\n]+?)_([^a-zA-Z0-9_]|$)`)
 	reHRule            = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`)
 	reBulletList       = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`)
 	reOrderedList      = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`)

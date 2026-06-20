@@ -306,6 +306,26 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			in:   "use v2_api_endpoint here",
 			want: "use v2_api_endpoint here",
 		},
+		{
+			// TODO #709: UPPER_SNAKE with 2+ underscores leaked into italic
+			// because the old boundary class [^a-z0-9] treated uppercase
+			// neighbours as word breaks, opening "_TOKEN_" inside MAX_TOKEN_LEN.
+			name: "uppercase snake_case identifier protected",
+			in:   "set MAX_TOKEN_LEN and HTTP_PROXY_HOST values",
+			want: "set MAX_TOKEN_LEN and HTTP_PROXY_HOST values",
+		},
+		{
+			name: "single-underscore uppercase identifier protected",
+			in:   "emit NO_RESPONSE only",
+			want: "emit NO_RESPONSE only",
+		},
+		{
+			// Guard against over-correction: a bare _X_ delimited by spaces is
+			// still intentional italic even when the content is uppercase.
+			name: "uppercase content still italicises when space-delimited",
+			in:   "set _X_ now",
+			want: "set <i>X</i> now",
+		},
 		// HTML escaping in body text
 		{
 			name: "angle brackets in text escaped",
