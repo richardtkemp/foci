@@ -377,6 +377,26 @@ func (a *Agent) InboxTurnActive(sk string) bool {
 	return inb.turnActive.Load()
 }
 
+// InboxHasPendingInput reports whether the session has user input waiting —
+// either queued envelopes on the channel or buffered steer text not yet
+// drained. Used by the #845 compaction-resume nudge to avoid self-injecting
+// when the user already queued a follow-up (which drives continuation itself).
+//
+// Best-effort: a message racing in just after this check is harmless — it
+// simply queues behind the resume nudge and runs next.
+func (a *Agent) InboxHasPendingInput(sk string) bool {
+	inb := a.lookupInbox(sk)
+	if inb == nil {
+		return false
+	}
+	if len(inb.ch) > 0 {
+		return true
+	}
+	inb.steerMu.Lock()
+	defer inb.steerMu.Unlock()
+	return len(inb.steer) > 0
+}
+
 // DrainInboxSteerTexts returns and clears the API-mode mid-turn buffer for
 // the given session. Used as the Steerer for that session's RunTurn call.
 // Returns nil for unknown sessions.

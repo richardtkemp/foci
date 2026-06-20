@@ -191,8 +191,37 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	// Bootstrap itself, so no Bootstrap.Reload() is needed here.
 	if a.ReloadOnCompact && a.DelegatedManager != nil {
 		a.DelegatedManager.BounceSession(sessionKey)
+		a.maybeInjectCompactionResume(sessionKey)
 	}
 	return nil
+}
+
+// compactionResumePrompt is the self-injected nudge sent after a compaction
+// bounce (#845). The bounce closes the CC session (keeping the resume ID) so
+// the next message respawns it — but a mid-task flow has no next message and
+// would silently stall. This synthesises one: the agent resumes if it was
+// mid-task, or emits the no-response sentinel if it was idle.
+const compactionResumePrompt = "[system: your context was just compacted and your CC session restarted, interrupting any work in progress. If you were in the middle of a task when this happened, resume it now from where you left off. If you were NOT mid-task (idle, or the previous turn fully completed), reply with " + NoResponseSentinel + " and nothing else — do not narrate this message.]"
+
+// maybeInjectCompactionResume self-injects the resume nudge after a compaction
+// bounce so an interrupted flow continues autonomously (#845). It is suppressed
+// when:
+//   - async self-injection is unavailable (AsyncNotifier nil), or
+//   - the user already queued a follow-up message — that message will respawn
+//     CC and drive continuation with the user's actual intent, so our generic
+//     nudge would be redundant (and could race a second turn).
+//
+// Runs from the post-turn worker goroutine (auto-compaction) or the command
+// handler (manual /compact); both serialise with the inbox check below.
+func (a *Agent) maybeInjectCompactionResume(sessionKey string) {
+	if a.AsyncNotifier == nil {
+		return
+	}
+	if a.InboxHasPendingInput(sessionKey) {
+		a.logger().Debugf("session=%s skip compaction-resume nudge: user input already queued", sessionKey)
+		return
+	}
+	a.AsyncNotifier.InjectToAgent(sessionKey, compactionResumePrompt, "", "compaction-resume")
 }
 
 // maybeCompact checks whether context compaction is needed and performs it.
