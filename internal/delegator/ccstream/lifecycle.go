@@ -490,6 +490,12 @@ func (b *Backend) captureStderr(r io.Reader) {
 		} else {
 			log.Debugf(component, "stderr: %s", line)
 		}
+		// Secondary 401 detection: a dead token can surface on stderr rather
+		// than as an error result. The re-login gate single-flights, so firing
+		// alongside OnResult is harmless (#843).
+		if isAuthFailure(line) {
+			b.fireAuthFailure(line)
+		}
 	}
 	// Surface scanner-level errors (e.g. ErrTooLong on a >1MB line). Without
 	// this the goroutine exited silently and the subprocess's stderr pipe

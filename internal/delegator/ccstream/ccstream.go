@@ -160,6 +160,7 @@ type Backend struct {
 	typingFunc        func(typing bool)
 	onCompactionStart func()              // fired when status="compacting"
 	onCompactionDone  func(preTokens int) // fired on compact_boundary
+	onAuthFailure     func(detail string) // fired when CC reports a 401 auth failure (#843)
 
 	// outstanding tracks every prompt awaiting a user response (permissions,
 	// AskUserQuestion sequences, MCP elicitations) under one lifecycle layer.
