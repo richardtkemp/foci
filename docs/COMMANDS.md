@@ -236,7 +236,7 @@ List and manage per-chat sessions.
 ### `/agents [new]`
 List active agent sessions.
 - `/agents` — all agents with ID, session key, status, model, message count
-- `/agents new` — interactive wizard to create a new agent (name → model → backend → character mode). The backend step offers the live set of registered delegated backends (claude-code, claude-code-tmux, …) plus `api` for the in-process loop; empty input picks `claude-code`. The choice is written explicitly to `foci.toml` (delegated → `backend = "<name>"` + `backend_config.model = "<alias>"`; api → `backend = "api"`), and the workspace is set up
+- `/agents new` — interactive wizard to create a new agent (name → backend → model → character mode). The backend step offers the live set of registered delegated backends (claude-code, claude-code-tmux, …) plus `api` for the in-process loop; empty input picks `claude-code`. The model step is **skipped for `api`** — API agents have no per-agent model (it resolves globally via `[groups]`/`[models]`), so the wizard goes straight from backend to character mode. The choice is written explicitly to `foci.toml` (delegated → `backend = "<name>"` + `backend_config.model = "<alias>"`; api → `backend = "api"`), and the workspace is set up
 
 ### `/tools`
 List all registered tools (name and description).
