@@ -631,7 +631,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 			}
 			for i, q := range in.Questions {
 				if q.Question == "" {
-					return ToolResult{}, fmt.Errorf("ask: question %d has empty text", i+1)
+					return ToolResult{}, fmt.Errorf("ask: question %d has an empty %q field", i+1, "question")
 				}
 				if len(q.Options) == 0 {
 					return ToolResult{}, fmt.Errorf("ask: question %d (%q) has no options", i+1, q.Question)
