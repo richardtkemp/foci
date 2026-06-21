@@ -86,6 +86,8 @@ func (m *mockBackendDM) WaitForTurn(ctx context.Context) error {
 
 func (m *mockBackendDM) IsTurnInFlight() bool { return m.turnInFlight }
 
+func (m *mockBackendDM) CheckReady(_ context.Context) (bool, error) { return true, nil }
+
 func (m *mockBackendDM) SendCommand(ctx context.Context, cmd string) error {
 	if m.sendCommandFn != nil {
 		return m.sendCommandFn(ctx, cmd)

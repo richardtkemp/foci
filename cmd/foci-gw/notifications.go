@@ -14,6 +14,53 @@ import (
 	"foci/shared/prompts"
 )
 
+// checkDelegatedReadiness probes each delegated agent's backend readiness at
+// startup and triggers recovery (re-login) for any that are not ready.
+//
+// Backends are created lazily per-session, so none exists yet at startup; the
+// probe builds a throwaway backend via the manager's NewBackend factory, which
+// carries the same claude_binary config and onAuthFailure (re-login) wiring the
+// real per-session backend will. For ccstream this runs `claude auth status`
+// and, if not authenticated, fires the interactive re-login flow (whose gate
+// then pauses delegated message processing on its own). cctmux backends report
+// ready unconditionally; API agents (no DelegatedManager) are skipped.
+//
+// Probes run concurrently but the pass waits for all to settle before
+// returning, so a not-authenticated agent's re-login gate is reliably active
+// before handleRestartAndFirstRun injects any startup turns. The per-probe
+// auth-status check is near-instant; its 15s timeout only bites on a wedged
+// binary.
+func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstance, agentOrder []string) {
+	var wg sync.WaitGroup
+	for _, agentID := range agentOrder {
+		inst := agents[agentID]
+		dm := inst.ag.DelegatedManager
+		if dm == nil || dm.NewBackend == nil {
+			continue // API agent, or no backend factory wired
+		}
+		wg.Add(1)
+		agentID := agentID
+		go func() {
+			defer wg.Done()
+			be, err := dm.NewBackend()
+			if err != nil {
+				log.Warnf("main", "[%s] readiness probe: build backend: %v", agentID, err)
+				return
+			}
+			ready, err := be.CheckReady(ctx)
+			switch {
+			case err != nil:
+				log.Warnf("main", "[%s] readiness check could not be performed: %v", agentID, err)
+			case ready:
+				log.Infof("main", "[%s] backend ready", agentID)
+			default:
+				log.Warnf("main", "[%s] backend not ready — recovery initiated (see relogin logs)", agentID)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 // handleRestartAndFirstRun delivers restart notifications (with optional
 // welcome/changelog content) and first-run onboarding prompts.
 //

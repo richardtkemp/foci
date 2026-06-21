@@ -301,7 +301,7 @@ func (a *Agent) Enqueue(env Envelope) {
 			relogin.G.SubmitCode(env.Text)
 			a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
 		} else {
-			a.logger().Infof("inbox: dropping message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
+			a.logger().Warnf("inbox: dropping message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
 		}
 		return
 	}

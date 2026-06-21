@@ -79,6 +79,13 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 	}
 }
 
+// CheckReady reports the tmux backend as always ready. It drives an
+// interactive `claude` TUI whose own login flow is handled out of band, so foci
+// performs no programmatic auth gate here. See delegator.Delegator.CheckReady.
+func (b *Backend) CheckReady(_ context.Context) (bool, error) {
+	return true, nil
+}
+
 // sendToPane is the internal begin-turn primitive on the tmux backend.
 // Pastes the prompt into the Claude Code pane and installs the per-turn
 // TurnEvents (bookkeeping). Delivery flows asynchronously through the watcher
