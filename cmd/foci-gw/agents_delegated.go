@@ -42,8 +42,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	br := setupBootstrapAndSkills(p, agentStore)
 	bs := br.bootstrap
 
-	systemPrompt := buildDelegatedSystemPrompt(bs.SystemBlocks(), br.extraSystemBlocks)
-
 	// Model for the backend — from backend_config, not from the group resolver.
 	model := ""
 	if v, ok := backendConfig["model"].(string); ok {
@@ -92,15 +90,18 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Build auto-approve rules from resolved config.
 	autoApproveRules := buildAutoApproveRules(p, registry.ExportedNames())
 
-	// Per-agent environment block for delegated backends.
+	// Per-agent environment block for delegated backends ("" when disabled).
+	// Captured below by the SystemPromptFunc closure so it is re-prepended on
+	// every per-session rebuild — NOT just baked into the static SystemPrompt.
+	// The rebuild wins over the static prompt at each session start (#828/#706),
+	// and that rebuild path previously dropped the env block (and with it the
+	// "Foci Shell Tools" list), so CC agents never saw foci_todo etc.
+	envBlock := ""
 	if p.resolved.Environment.Enabled {
-		envBlock := buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, p.plat.ActivePlatformNames(), registry.ExportedTools())
-		if systemPrompt != "" {
-			systemPrompt = envBlock + "\n\n" + systemPrompt
-		} else {
-			systemPrompt = envBlock
-		}
+		crontabCount := countCrontabJobs()
+		envBlock = buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools())
 	}
+	systemPrompt := delegatedSystemPrompt(envBlock, bs.SystemBlocks(), br.extraSystemBlocks)
 
 	// Override model display name to show the backend name.
 	ag.Model = backendName
@@ -195,21 +196,23 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// Falls back to the setup-time snapshot (systemPrompt) if it yields
 			// empty. ag is a pointer; ReloadSystemFn is wired later in finalize,
 			// but this closure only runs at runtime session-start, by when it's set.
-			SystemPromptFunc: func() string {
+			// The env block is re-prepended via newDelegatedSystemPromptFunc so it
+			// survives this rebuild (the #828/#706 rebuild used to drop it).
+			SystemPromptFunc: newDelegatedSystemPromptFunc(envBlock, func() (ws, extra []provider.SystemBlock) {
 				// Re-read character files from disk so this fresh session reflects
 				// edits since setup, independent of whether the caller reloaded
 				// (the compaction-bounce path #828 does not). bs is shared
 				// per-agent; Reload mutates it in place under its own lock.
 				// ReloadSystemFn re-loads skills from disk too.
 				bs.Reload()
-				extra := br.extraSystemBlocks
+				extra = br.extraSystemBlocks
 				if ag.ReloadSystemFn != nil {
 					if fresh, _ := ag.ReloadSystemFn(); fresh != nil {
 						extra = fresh
 					}
 				}
-				return buildDelegatedSystemPrompt(bs.SystemBlocks(), extra)
-			},
+				return bs.SystemBlocks(), extra
+			}),
 			Model: model,
 			// Re-inject the session's effort at every launch so a bounce
 			// (post-compaction reload, idle respawn) keeps the level the user
@@ -347,6 +350,40 @@ func buildDelegatedSystemPrompt(workspaceBlocks, extraBlocks []provider.SystemBl
 	write(workspaceBlocks)
 	write(extraBlocks)
 	return b.String()
+}
+
+// delegatedSystemPrompt assembles the single concatenated system-prompt string
+// a CC-backend agent launches with: the per-agent environment block (envBlock,
+// "" when disabled) prepended ahead of the workspace identity + skills blocks.
+// Both the static setup-time prompt and the per-session SystemPromptFunc
+// rebuild route through here so the environment block (and its "Foci Shell
+// Tools" list) is present on every session — the rebuild wins over the static
+// prompt at each start (#828/#706) and used to drop the env block.
+func delegatedSystemPrompt(envBlock string, workspaceBlocks, extraBlocks []provider.SystemBlock) string {
+	base := buildDelegatedSystemPrompt(workspaceBlocks, extraBlocks)
+	switch {
+	case envBlock == "":
+		return base
+	case base == "":
+		return envBlock
+	default:
+		return envBlock + "\n\n" + base
+	}
+}
+
+// newDelegatedSystemPromptFunc builds the StartOptions.SystemPromptFunc closure
+// that rebuilds a delegated agent's prompt from disk at every session start
+// (#828/#706 — so character-file and skill edits take effect on a fresh
+// session). reload re-reads the workspace and skill blocks; the captured
+// envBlock is re-prepended each time so the environment context survives the
+// rebuild. This closure's result wins over the static StartOptions.SystemPrompt
+// whenever non-empty (see delegated_manager.go), which is why the env block
+// MUST be re-applied here and not only baked into the static prompt.
+func newDelegatedSystemPromptFunc(envBlock string, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock)) func() string {
+	return func() string {
+		ws, extra := reload()
+		return delegatedSystemPrompt(envBlock, ws, extra)
+	}
 }
 
 // buildAutoApproveRules assembles the foci-level auto-approve rules for a

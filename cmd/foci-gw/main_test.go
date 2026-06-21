@@ -284,7 +284,7 @@ func TestBuildEnvironmentDelegated(t *testing.T) {
 		{Name: "foci_web_search", Description: "Search the web using Brave Search API."},
 	}
 
-	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, []string{"telegram"}, shellTools)
+	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, 3, []string{"telegram"}, shellTools)
 
 	// Core sections present
 	if !strings.Contains(block, "You are running on **foci**") {
@@ -313,10 +313,12 @@ func TestBuildEnvironmentDelegated(t *testing.T) {
 		}
 	}
 
-	// Should NOT have API-specific sections
-	if strings.Contains(block, "crontab") {
-		t.Error("delegated block should not mention crontab")
+	// Crontab awareness present (shared with API path); job count rendered.
+	if !strings.Contains(block, "3 jobs scheduled") {
+		t.Error("expected crontab job count in delegated block")
 	}
+
+	// Should NOT have the API-only Task List section (CC uses native task tools)
 	if strings.Contains(block, "Task List") {
 		t.Error("delegated block should not mention Task List")
 	}
