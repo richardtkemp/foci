@@ -22,7 +22,7 @@ func testDeps(agents []AgentInfo, preFlightFn func(string) []string) AgentNewDep
 	}
 }
 
-// Verifies the full wizard flow: name → model → character mode, collecting all values correctly.
+// Verifies the full wizard flow: name → backend → model → character mode, collecting all values correctly.
 func TestAgentWizardHappyPath(t *testing.T) {
 	deps := testDeps(
 		[]AgentInfo{{ID: "existing"}},
@@ -41,9 +41,9 @@ func TestAgentWizardHappyPath(t *testing.T) {
 		wantDone bool
 		contains string
 	}{
-		{"Greek Tutor", false, "Model"},
-		{"opus", false, "Backend"},
-		{"claude-code", false, "Character files"},
+		{"Greek Tutor", false, "Backend"},
+		{"claude-code", false, "Model"},
+		{"opus", false, "Character files"},
 		{"defaults", true, "Created!"},
 	}
 
@@ -134,8 +134,8 @@ func TestAgentWizardSlugFromName(t *testing.T) {
 	}
 
 	w.Handle("My Cool Agent")
-	w.Handle("sonnet")
 	w.Handle("claude-code")
+	w.Handle("sonnet")
 	w.Handle("defaults")
 
 	if captured.id != "my-cool-agent" {
@@ -146,7 +146,7 @@ func TestAgentWizardSlugFromName(t *testing.T) {
 	}
 }
 
-// Verifies that pre-flight warnings appear after the model step.
+// Verifies that pre-flight warnings appear after the name step, on the backend prompt.
 func TestAgentWizardPreFlightWarning(t *testing.T) {
 	deps := testDeps(nil, func(agentID string) []string {
 		return []string{"Secret `platform." + agentID + "` not found"}
@@ -154,12 +154,10 @@ func TestAgentWizardPreFlightWarning(t *testing.T) {
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
-	w.Handle("New Agent") // name → id="new-agent"
-
-	// Model step — pre-flight returns a warning, surfaced on the backend prompt.
-	resp, done := w.Handle("sonnet")
+	// Name step — pre-flight returns a warning, surfaced on the backend prompt.
+	resp, done := w.Handle("New Agent") // name → id="new-agent"
 	if done {
-		t.Error("should not be done after model step")
+		t.Error("should not be done after name step")
 	}
 	if !strings.Contains(resp, "not found") {
 		t.Errorf("expected pre-flight warning, got %q", resp)
@@ -175,11 +173,9 @@ func TestAgentWizardNoPreFlightWarning(t *testing.T) {
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
-	w.Handle("myagent")
-
-	resp, done := w.Handle("sonnet")
+	resp, done := w.Handle("myagent")
 	if done {
-		t.Error("should not be done after model step")
+		t.Error("should not be done after name step")
 	}
 	if strings.Contains(resp, "⚠️") {
 		t.Errorf("should NOT show warnings, got %q", resp)
@@ -197,8 +193,8 @@ func TestAgentWizardCharModeCopy(t *testing.T) {
 	}
 
 	w.Handle("newagent")
-	w.Handle("sonnet")
 	w.Handle("claude-code")
+	w.Handle("sonnet")
 
 	resp, done := w.Handle("copy clutch")
 	if !done {
@@ -217,8 +213,8 @@ func TestAgentWizardCharModeCopyNonexistent(t *testing.T) {
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
 	w.Handle("newagent")
-	w.Handle("sonnet")
 	w.Handle("claude-code")
+	w.Handle("sonnet")
 
 	resp, done := w.Handle("copy nonexistent")
 	if done {
@@ -240,8 +236,8 @@ func TestAgentWizardCharModeOpenclaw(t *testing.T) {
 	}
 
 	w.Handle("OC Agent")
-	w.Handle("sonnet")
 	w.Handle("claude-code")
+	w.Handle("sonnet")
 	w.Handle("openclaw")
 	if mode != "openclaw" {
 		t.Errorf("charMode = %q, want openclaw", mode)
@@ -260,8 +256,8 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 		return "ok", nil
 	}
 	w.Handle("agent1")
-	w.Handle("")
 	w.Handle("") // backend → default
+	w.Handle("") // model → default
 	w.Handle("blank")
 	if mode != "blank" {
 		t.Errorf("charMode = %q, want blank", mode)
@@ -274,8 +270,8 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 		return "ok", nil
 	}
 	w2.Handle("agent2")
-	w2.Handle("")
 	w2.Handle("") // backend → default
+	w2.Handle("") // model → default
 	w2.Handle("")
 	if mode != "defaults" {
 		t.Errorf("charMode = %q, want defaults", mode)
@@ -285,8 +281,8 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 	w3 := newAgentWizard(deps)
 	w3.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 	w3.Handle("agent3")
-	w3.Handle("")
 	w3.Handle("") // backend → default
+	w3.Handle("") // model → default
 	resp, done := w3.Handle("invalid")
 	if done {
 		t.Error("invalid char mode should not advance")
@@ -305,11 +301,11 @@ func TestAgentWizardBackendDefault(t *testing.T) {
 	w.createFn = func(wiz *agentWizard) (string, error) { captured = wiz; return "ok", nil }
 
 	w.Handle("backend-default")
-	w.Handle("opus")
 	resp, done := w.Handle("") // backend step, empty → default
 	if done {
 		t.Fatalf("should not be done after backend step, resp=%q", resp)
 	}
+	w.Handle("opus")
 	w.Handle("defaults")
 
 	if captured.backend != "claude-code" {
@@ -320,7 +316,9 @@ func TestAgentWizardBackendDefault(t *testing.T) {
 	}
 }
 
-// Verifies the "api" choice produces an in-process (non-delegated) agent.
+// Verifies the "api" choice produces an in-process (non-delegated) agent, and
+// that the model step is SKIPPED for api — the backend answer is followed
+// directly by the character-files prompt (API model resolves globally).
 func TestAgentWizardBackendAPI(t *testing.T) {
 	deps := testDeps(nil, nil)
 	w := newAgentWizard(deps)
@@ -328,12 +326,26 @@ func TestAgentWizardBackendAPI(t *testing.T) {
 	w.createFn = func(wiz *agentWizard) (string, error) { captured = wiz; return "ok", nil }
 
 	w.Handle("api-agent")
-	w.Handle("sonnet")
-	w.Handle("api")
+
+	// Selecting api must skip straight to character files, not ask for a model.
+	resp, done := w.Handle("api")
+	if done {
+		t.Fatalf("should not be done after backend step, resp=%q", resp)
+	}
+	if strings.Contains(resp, "Model") {
+		t.Errorf("api backend should skip the model question, got %q", resp)
+	}
+	if !strings.Contains(resp, "Character files") {
+		t.Errorf("api backend should advance to character files, got %q", resp)
+	}
+
 	w.Handle("defaults")
 
 	if captured.backend != "api" {
 		t.Errorf("backend = %q, want api", captured.backend)
+	}
+	if captured.modelRaw != "" {
+		t.Errorf("modelRaw = %q, want empty (model skipped for api)", captured.modelRaw)
 	}
 }
 
@@ -347,7 +359,6 @@ func TestAgentWizardBackendSelectionAndInvalid(t *testing.T) {
 	w.createFn = func(wiz *agentWizard) (string, error) { captured = wiz; return "ok", nil }
 
 	w.Handle("tmux-agent")
-	w.Handle("opus")
 
 	// Unrecognised backend → re-prompt, no advance.
 	resp, done := w.Handle("nonsense")
@@ -358,8 +369,9 @@ func TestAgentWizardBackendSelectionAndInvalid(t *testing.T) {
 		t.Errorf("expected re-prompt, got %q", resp)
 	}
 
-	// Valid non-default backend from the injected list.
+	// Valid non-default backend from the injected list, then model.
 	w.Handle("claude-code-tmux")
+	w.Handle("opus")
 	w.Handle("defaults")
 	if captured.backend != "claude-code-tmux" {
 		t.Errorf("backend = %q, want claude-code-tmux", captured.backend)

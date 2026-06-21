@@ -26,13 +26,23 @@ type AgentNewDeps struct {
 	Registry          *Registry // for setting wizard
 }
 
-// Wizard step indices. The flow is name → model → backend → character mode.
+// Wizard step indices. The flow is name → backend → model → character mode.
+// Backend is chosen before model so the model question is asked in the context
+// of the selected execution mode (delegated backend vs in-process api) rather
+// than implicitly assuming Claude Code. The model step is SKIPPED entirely for
+// the `api` backend: API agents have no per-agent model field — their model
+// resolves globally via [groups]/[models], and provision silently discards
+// backend_config.model for api backends. So asking would be dead UI.
 const (
 	stepName = iota
-	stepModel
 	stepBackend
+	stepModel
 	stepCharMode
 )
+
+// charModePrompt is the character-files question, shared by the two steps that
+// can precede it (model for delegated backends, backend for api).
+const charModePrompt = "Character files — `defaults` (recommended), `openclaw`, `copy <agent-id>`, or `blank` (default: `defaults`):"
 
 // defaultBackend is the backend offered (and used on empty input) when it is
 // available — most agents want Claude Code delegation.
@@ -69,10 +79,10 @@ func (w *agentWizard) Handle(text string) (response string, done bool) {
 	switch w.step {
 	case stepName:
 		return w.handleName(text)
-	case stepModel:
-		return w.handleModel(text)
 	case stepBackend:
 		return w.handleBackend(text)
+	case stepModel:
+		return w.handleModel(text)
 	case stepCharMode:
 		return w.handleCharMode(text)
 	default:
@@ -99,8 +109,18 @@ func (w *agentWizard) handleName(text string) (string, bool) {
 
 	w.display = text
 	w.id = id
-	w.step = stepModel
-	return "Model — `opus`, `sonnet`, `haiku`, or full model ID (default: `sonnet`):", false
+
+	// Run platform pre-flight checks (keyed on the agent id) — surfaced on the
+	// backend prompt, the next step.
+	var warning string
+	if w.deps.PreFlightFn != nil {
+		if warnings := w.deps.PreFlightFn(w.id); len(warnings) > 0 {
+			warning = "\n⚠️  " + strings.Join(warnings, "\n⚠️  ")
+		}
+	}
+
+	w.step = stepBackend
+	return w.backendPrompt() + warning, false
 }
 
 func (w *agentWizard) handleModel(text string) (string, bool) {
@@ -117,16 +137,8 @@ func (w *agentWizard) handleModel(text string) (string, bool) {
 	}
 	w.model = resolve(text)
 
-	// Run platform pre-flight checks — surfaced on the next prompt.
-	var warning string
-	if w.deps.PreFlightFn != nil {
-		if warnings := w.deps.PreFlightFn(w.id); len(warnings) > 0 {
-			warning = "\n⚠️  " + strings.Join(warnings, "\n⚠️  ")
-		}
-	}
-
-	w.step = stepBackend
-	return w.backendPrompt() + warning, false
+	w.step = stepCharMode
+	return charModePrompt, false
 }
 
 // availableBackends returns the registered backend names, falling back to just
@@ -180,8 +192,16 @@ func (w *agentWizard) handleBackend(text string) (string, bool) {
 		return fmt.Sprintf("Must be one of: %s, or `api`. Try again:", strings.Join(backends, ", ")), false
 	}
 
-	w.step = stepCharMode
-	return "Character files — `defaults` (recommended), `openclaw`, `copy <agent-id>`, or `blank` (default: `defaults`):", false
+	// API agents resolve their model globally via [groups]/[models]; there is no
+	// per-agent model field, and provision discards backend_config.model for api
+	// backends. Skip the (dead) model question and go straight to character files.
+	if w.backend == apiBackend {
+		w.step = stepCharMode
+		return charModePrompt, false
+	}
+
+	w.step = stepModel
+	return "Model — `opus`, `sonnet`, `haiku`, or full model ID (default: `sonnet`):", false
 }
 
 func (w *agentWizard) handleCharMode(text string) (string, bool) {
@@ -273,6 +293,7 @@ func createAgent(w *agentWizard) (string, error) {
 	// Backend summary.
 	if w.backend == apiBackend || w.backend == "" {
 		sb.WriteString("✅ Backend: api (in-process)\n")
+		sb.WriteString("   ↳ Model resolves via global [groups]/[models] — edit those to change it.\n")
 	} else {
 		fmt.Fprintf(&sb, "✅ Backend: %s (model: %s)\n", w.backend, w.modelRaw)
 	}
