@@ -83,7 +83,11 @@ if [ ! -f "$CONFIG_FILE" ]; then
 		exit 1
 	fi
 
-	echo "[foci] Running: foci first-run $SETUP_ARGS"
+	# Redact secret-bearing flag values before logging. The bot token and API
+	# key would otherwise land verbatim in the container logs — a leak surface
+	# for anyone with log access. Keep a short prefix for debuggability.
+	SAFE_ARGS="$(printf '%s' "$SETUP_ARGS" | sed -E 's/(--telegram-bot-token|--discord-bot-token|--api-key) ([^ ]{0,6})[^ ]*/\1 \2…(redacted)/g')"
+	echo "[foci] Running: foci first-run $SAFE_ARGS"
 	# shellcheck disable=SC2086
 	run_as_foci foci first-run $SETUP_ARGS
 	echo "[foci] First-run complete — config written to $CONFIG_FILE"

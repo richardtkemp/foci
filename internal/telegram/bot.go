@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -474,6 +475,46 @@ func (b *Bot) SetSessionIndex(idx platform.SessionIndex) {
 	if b.chatmeta != nil {
 		b.chatmeta.Index = idx
 	}
+	b.seedDefaultChatFromAllowedUser()
+}
+
+// seedDefaultChatFromAllowedUser persists a default chat when none exists yet
+// and the agent has exactly one allowed user.
+//
+// The default chat is normally recorded on the first inbound message
+// (bot_receive.go). On a fresh install nobody has messaged the bot yet, so no
+// default chat exists — which leaves proactive sends (a startup re-login URL,
+// keepalive, cron) with nowhere to go (#853: the login URL was extracted but
+// "no chat ID for session and no default chat", so onboarding stalled).
+//
+// For a Telegram private chat the chat ID equals the user's ID, so a single
+// allowed user unambiguously identifies the owner's DM. With zero or multiple
+// allowed users, or a non-numeric (@username) entry, we cannot safely guess —
+// we skip and behaviour is unchanged. The DefaultChatForAgent==0 guard makes
+// this a no-op on any install that already has a default chat.
+func (b *Bot) seedDefaultChatFromAllowedUser() {
+	if b.agentID == "" || b.sessionIndex == nil {
+		return // secondary/facet bot, or no persistence
+	}
+	if len(b.allowedUsers) != 1 {
+		return // ambiguous (zero or many) — cannot choose an owner
+	}
+	if b.sessionIndex.DefaultChatForAgent(b.agentID, platformName) != 0 {
+		return // a default chat already exists
+	}
+	var only string
+	for u := range b.allowedUsers {
+		only = u
+	}
+	chatID, err := strconv.ParseInt(only, 10, 64)
+	if err != nil || chatID == 0 {
+		return // non-numeric entry (e.g. @username) — not usable as a chat ID
+	}
+	if err := b.sessionIndex.SetDefaultChat(b.agentID, platformName, chatID); err != nil {
+		b.logger().Errorf("seed default chat from allowed user: %v", err)
+		return
+	}
+	b.logger().Infof("seeded default chat %d from sole allowed user — no prior default; enables proactive delivery before first inbound message", chatID)
 }
 
 // SetSecondary marks this bot as a secondary bot in the given pool.
