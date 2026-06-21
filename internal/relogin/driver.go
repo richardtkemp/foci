@@ -109,7 +109,7 @@ func Run(ctx context.Context, c Config) {
 	}
 	fail := func(reason string) {
 		log.Errorf(comp, "re-login ABORTED: %s", reason)
-		notify("🔐 Claude Code re-login failed: " + reason + "\nRun `claude /login` on the host to recover.")
+		notify("🔐 Claude Code re-login failed: " + reason + "\nSend /login here to try again.")
 	}
 	// dumpScreen writes a captured TUI screen to the log on a failure path so the
 	// reason an anchor never appeared is diagnosable after the fact.
