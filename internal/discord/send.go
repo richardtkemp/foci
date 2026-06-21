@@ -192,19 +192,26 @@ func (b *Bot) sendNotificationImmediate(text string) string {
 		return ""
 	}
 
+	// Chunk to respect Discord's 2000-char content cap — an over-length
+	// notification (e.g. startup proactive-warnings) is otherwise rejected with
+	// HTTP 400 (#810). Returns the first chunk's message ID as the anchor.
 	channelIDStr := strconv.FormatInt(channelID, 10)
-	msg, err := b.api.ChannelMessageSend(channelIDStr, text)
-	if err != nil {
-		b.logger().Errorf("send notification (channel=%s): %s", channelIDStr, b.sanitizeError(err))
-		if isUnknownChannel(err) {
-			b.clearStaleChannel(channelIDStr)
+	var firstID string
+	for _, chunk := range splitMessage(text, discordMaxChars) {
+		msg, err := b.api.ChannelMessageSend(channelIDStr, chunk)
+		if err != nil {
+			b.logger().Errorf("send notification (channel=%s): %s", channelIDStr, b.sanitizeError(err))
+			if isUnknownChannel(err) {
+				b.clearStaleChannel(channelIDStr)
+				break // no point sending remaining chunks
+			}
+			continue
 		}
-		return ""
+		if firstID == "" && msg != nil {
+			firstID = msg.ID
+		}
 	}
-	if msg != nil {
-		return msg.ID
-	}
-	return ""
+	return firstID
 }
 
 // drainPendingNotifications sends all buffered notifications to the default channel.
@@ -239,13 +246,11 @@ func (b *Bot) SendStartupNotification(agentID string) {
 	}
 	text := fmt.Sprintf("%s restarted at %s", botName, time.Now().Format("15:04:05"))
 
+	// Route through chunking so an over-length startup banner respects the
+	// 2000-char cap (#810); sendMarkdownChunks logs errors and handles the
+	// unknown-channel case.
 	channelIDStr := strconv.FormatInt(channelID, 10)
-	if _, err := b.api.ChannelMessageSend(channelIDStr, text); err != nil {
-		b.logger().Errorf("send startup notification (channel=%s): %s", channelIDStr, b.sanitizeError(err))
-		if isUnknownChannel(err) {
-			b.clearStaleChannel(channelIDStr)
-		}
-	}
+	b.sendMarkdownChunks(channelIDStr, text)
 }
 
 // SendText sends a text message to the default channel without any header.
