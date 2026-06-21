@@ -460,3 +460,51 @@ func TestSendReply(t *testing.T) {
 		t.Errorf("unexpected reply %+v", got)
 	}
 }
+
+// TestSendNotificationImmediateChunksLongText verifies that an over-length
+// notification (e.g. startup proactive-warnings) is split into multiple sends
+// within Discord's 2000-char cap rather than sent raw and rejected with HTTP
+// 400 (#810). The returned anchor ID is the first chunk's message ID.
+func TestSendNotificationImmediateChunksLongText(t *testing.T) {
+	b, fs, _ := newTestBot(t, "a")
+	b.SetChatID(42)
+	long := strings.Repeat("warning line\n", 400) // ~5200 chars
+
+	id := b.SendNotificationDirect(long)
+
+	if fs.sendCount() < 3 {
+		t.Fatalf("expected at least 3 chunked sends, got %d", fs.sendCount())
+	}
+	var rebuilt strings.Builder
+	for _, s := range fs.sends {
+		if len(s.content) > discordMaxChars {
+			t.Errorf("notification chunk exceeds limit: %d chars", len(s.content))
+		}
+		if s.channelID != "42" {
+			t.Errorf("chunk sent to wrong channel %q", s.channelID)
+		}
+		rebuilt.WriteString(s.content)
+	}
+	if rebuilt.String() != long {
+		t.Error("concatenated notification chunks do not reproduce original text")
+	}
+	if id != "1" {
+		t.Errorf("expected first chunk's message ID %q, got %q", "1", id)
+	}
+}
+
+// TestSendNotificationImmediateShortReturnsID verifies the common single-chunk
+// path is unchanged: one send, and the message ID is returned.
+func TestSendNotificationImmediateShortReturnsID(t *testing.T) {
+	b, fs, _ := newTestBot(t, "a")
+	b.SetChatID(42)
+
+	id := b.SendNotificationDirect("short notice")
+
+	if fs.sendCount() != 1 {
+		t.Fatalf("expected exactly 1 send, got %d", fs.sendCount())
+	}
+	if id != "1" {
+		t.Errorf("expected message ID %q, got %q", "1", id)
+	}
+}
