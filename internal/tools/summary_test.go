@@ -20,7 +20,7 @@ func testGroupResolver(model string) *config.GroupResolver {
 		"powerful": model,
 		"fast":     model,
 		"cheap":    model,
-	}}, nil)
+	}}, nil, true)
 }
 
 func TestSummaryTool_MissingParams(t *testing.T) {
@@ -163,7 +163,7 @@ func TestSummaryTool_Success(t *testing.T) {
 		"powerful": "anthropic/claude-haiku-4-5",
 		"fast":     "anthropic/claude-haiku-4-5",
 		"cheap":    "anthropic/claude-haiku-4-5",
-	}}, nil)
+	}}, nil, true)
 	tool := NewSummaryTool(nil, NewAPISummariser(client, nil, gr, nil, 0), "")
 
 	params, _ := json.Marshal(map[string]string{
@@ -231,7 +231,7 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 		"powerful": "anthropic/claude-haiku-4-5-custom",
 		"fast":     "anthropic/claude-haiku-4-5-custom",
 		"cheap":    "anthropic/claude-haiku-4-5-custom",
-	}}, nil)
+	}}, nil, true)
 	tool := NewSummaryTool(nil, NewAPISummariser(client, nil, gr, nil, 0), "")
 
 	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})

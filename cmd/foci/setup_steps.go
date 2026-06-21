@@ -22,7 +22,17 @@ type llmProviderInfo struct {
 	Endpoint     string // endpoint override (empty = auto-detect from developer)
 	HasAliases   bool   // opus/sonnet/haiku aliases work
 	HasDiscovery bool   // Anthropic API model discovery works
+	// Backend names a delegated foci backend (e.g. "claude-code"). Empty means
+	// the standard API backend, which talks to a remote endpoint with an API
+	// key. A non-empty Backend is a *local* backend: it shells out to a tool on
+	// the host (the `claude` CLI for "claude-code") and needs no API key — auth
+	// is the host's own Claude Code OAuth login, exercised via /login.
+	Backend string
 }
+
+// IsLocalBackend reports whether the provider is a delegated local backend
+// (no API key; auth via the host tool's own login) rather than a remote API.
+func (p *llmProviderInfo) IsLocalBackend() bool { return p.Backend != "" }
 
 var llmProviders = []llmProviderInfo{
 	{Name: "Anthropic (Claude)", Key: "anthropic", SecretKey: "anthropic.api_key", DefaultModel: "anthropic/claude-sonnet-4-6", HasAliases: true, HasDiscovery: true},
@@ -30,6 +40,7 @@ var llmProviders = []llmProviderInfo{
 	{Name: "OpenAI", Key: "openai", SecretKey: "openai.api_key", DefaultModel: "openai/gpt-4o"},
 	{Name: "OpenRouter (multi-provider)", Key: "openrouter", SecretKey: "openrouter.api_key", DefaultModel: "anthropic/claude-sonnet-4-6", Endpoint: "openrouter"},
 	{Name: "Custom endpoint", Key: "custom"},
+	{Name: "Claude Code (local, uses your Claude login — no API key)", Key: "claude-code", DefaultModel: "sonnet", HasAliases: true, Backend: "claude-code"},
 }
 
 // providerByKey returns the provider info for a key, or nil if not found.
@@ -46,9 +57,25 @@ func providerByKey(key string) *llmProviderInfo {
 func stepProvider(reader *bufio.Reader, _ string, total int) (providerKey string, back bool) {
 	fmt.Println()
 	fmt.Printf("Step 1/%d: LLM Provider\n", total)
-	fmt.Println("  Choose your LLM provider:")
+	fmt.Println("  Choose how foci reaches an LLM.")
+	fmt.Println()
+	fmt.Println("  API providers — talk to a remote endpoint with an API key:")
 	for i, p := range llmProviders {
-		fmt.Printf("  [%d] %s\n", i+1, p.Name)
+		if !p.IsLocalBackend() {
+			fmt.Printf("    [%d] %s\n", i+1, p.Name)
+		}
+	}
+	localShown := false
+	for i, p := range llmProviders {
+		if !p.IsLocalBackend() {
+			continue
+		}
+		if !localShown {
+			fmt.Println()
+			fmt.Println("  Local backend — delegates to a tool on this host, no API key:")
+			localShown = true
+		}
+		fmt.Printf("    [%d] %s\n", i+1, p.Name)
 	}
 	fmt.Println()
 
@@ -77,6 +104,13 @@ func stepAPIKey(reader *bufio.Reader, providerKey string, store *secrets.Store, 
 	fmt.Printf("Step 2/%d: API Key\n", total)
 
 	prov := providerByKey(providerKey)
+	if prov != nil && prov.IsLocalBackend() {
+		// Local backends (e.g. claude-code) authenticate via the host tool's
+		// own login (run /login after setup), so there is no API key to enter.
+		fmt.Printf("  %s needs no API key — it uses your local Claude Code login.\n", prov.Name)
+		fmt.Println("  After setup, run /login in chat to authenticate.")
+		return false
+	}
 	if prov == nil || providerKey == "custom" {
 		// Custom provider handles credentials in stepCustomEndpoint
 		fmt.Println("  (API key will be configured with the endpoint.)")
@@ -248,7 +282,12 @@ func stepModel(reader *bufio.Reader, current, providerKey string, store *secrets
 
 	prov := providerByKey(providerKey)
 
-	if prov != nil && prov.HasAliases {
+	if prov != nil && prov.IsLocalBackend() {
+		// Local backend: the alias is passed through verbatim to the host tool
+		// (e.g. claude-code understands "opus"/"sonnet"/"haiku" natively), so no
+		// alias resolution or API model discovery applies.
+		fmt.Println("  Choose a model the backend understands: opus, sonnet, haiku.")
+	} else if prov != nil && prov.HasAliases {
 		// Anthropic: show aliases
 		fmt.Println("  Choose a model: fable, opus, sonnet, haiku, or enter a full model ID.")
 	} else if providerKey == "custom" {
@@ -285,6 +324,12 @@ func stepModel(reader *bufio.Reader, current, providerKey string, store *secrets
 	if input == "" {
 		fmt.Println("  Model is required.")
 		return stepModel(reader, current, providerKey, store, total)
+	}
+
+	// Local backend: pass the alias through verbatim (the host tool resolves it).
+	if prov != nil && prov.IsLocalBackend() {
+		fmt.Printf("  Model: %s\n", input)
+		return input, false
 	}
 
 	// For Anthropic with aliases, try API discovery

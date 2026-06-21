@@ -15,11 +15,19 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN make all
+# Build only the production binaries the runtime image ships. `make all` also
+# builds dev-only tooling (find-disconnected-tests) whose separate go.mod
+# requires a newer Go toolchain than this pinned builder, which would break the
+# image build.
+RUN make build cli foci-call foci-cc-hook
 
 # Stage 2: Minimal runtime image
 FROM debian:bookworm-slim
 
+# The claude-code (ccstream) backend is installed on demand by the entrypoint
+# using the native single-binary installer (https://claude.ai/install.sh), which
+# needs only `curl` (below) — no Node.js/npm tree. API-only deployments pull
+# nothing extra.
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates sqlite3 tmux jq curl \
 	&& rm -rf /var/lib/apt/lists/*
@@ -32,10 +40,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd --system --home-dir /home/foci --create-home --shell /bin/bash foci \
 	&& groupadd foci-secrets
 
-# Install binaries
+# Install binaries. foci-cc-hook must sit beside foci-gw so the ccstream
+# backend can resolve it (sibling-of-executable lookup) for OnToolEnd hooks.
 COPY --from=builder /src/bin/foci-gw /usr/local/bin/foci-gw
 COPY --from=builder /src/bin/foci /usr/local/bin/foci
 COPY --from=builder /src/bin/foci-call /usr/local/bin/foci-call
+COPY --from=builder /src/bin/foci-cc-hook /usr/local/bin/foci-cc-hook
 
 # Stage shared files outside /home/foci so they can be synced into
 # the persistent volume on every container start (not just first run).

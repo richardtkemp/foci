@@ -48,6 +48,30 @@ var reservedAgentIDs = map[string]bool{
 	"shared":     true,
 }
 
+// IsDelegated reports whether this agent uses a delegated (non-API) backend
+// such as claude-code. Delegated agents route ALL LLM work — turns, compaction,
+// summaries, memory — through the backend itself and never touch the model
+// groups, so they need no GroupResolver, no API client, and no anthropic
+// credentials. The empty backend defaults to "api".
+func (a AgentConfig) IsDelegated() bool {
+	return a.Backend != "" && a.Backend != "api"
+}
+
+// HasAPIAgent reports whether any configured agent uses an API backend.
+// API agents resolve their turns (and foci's auxiliary calls — compaction,
+// summaries, memory) through the model groups; delegated backends
+// (claude-code, etc.) route ALL of that through the backend itself and never
+// touch the groups. A deployment with no API agent should therefore never
+// resolve a model group at all — see GroupResolver's guard.
+func (cfg *Config) HasAPIAgent() bool {
+	for _, a := range cfg.Agents {
+		if !a.IsDelegated() {
+			return true
+		}
+	}
+	return false
+}
+
 func (cfg *Config) Validate() error {
 	// Validate agent IDs don't collide with reserved directory names
 	for _, a := range cfg.Agents {
@@ -83,13 +107,21 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
-	// Validate groups.powerful is set and resolves successfully
+	// Validate groups.powerful. It is REQUIRED only when at least one agent uses
+	// an API backend: API agents resolve their turns (and foci's auxiliary calls
+	// — compaction, summaries, memory) through the model groups. Delegated
+	// backends (claude-code, etc.) route ALL of that through the backend itself
+	// and never touch the groups, so a pure-delegated deployment needs none.
+	// (If a group IS defined we still validate it resolves, whatever the backends.)
+	needsGroups := cfg.HasAPIAgent()
 	powerful := cfg.Groups.Groups[GroupPowerful]
-	if powerful == "" {
-		return fmt.Errorf("[groups] powerful is required — set it in foci.toml")
+	if needsGroups && powerful == "" {
+		return fmt.Errorf("[groups] powerful is required (an API-backed agent is configured) — set it in foci.toml")
 	}
-	if _, err := ResolveModel(powerful, "", cfg.Models); err != nil {
-		return fmt.Errorf("[groups] powerful = %q: %w", powerful, err)
+	if powerful != "" {
+		if _, err := ResolveModel(powerful, "", cfg.Models); err != nil {
+			return fmt.Errorf("[groups] powerful = %q: %w", powerful, err)
+		}
 	}
 
 	// Validate endpoint configs

@@ -59,8 +59,10 @@ Flags:
   --non-interactive      Non-interactive mode (all required flags must be set)
   --agent-id <id>        Agent identifier (default: main)
   --display-name <name>  Display name for agent (default: titlecased agent ID)
-  --provider <name>      LLM provider: anthropic, gemini, openai, openrouter (default: interactive prompt)
-  --api-key <key>        API key for the chosen provider
+  --provider <name>      LLM backend: anthropic, gemini, openai, openrouter (API providers),
+                         or claude-code (local backend — uses your Claude login, no API key)
+                         (default: interactive prompt)
+  --api-key <key>        API key for the chosen provider (not needed for claude-code)
   --model <model>        Model alias or full ID: opus, sonnet, haiku, or developer/model_id (default: sonnet)
   --char-mode <mode>     Character mode: defaults, openclaw, import, blank (default: defaults)
   --char-import-dir <path>  Directory to import character .md files from (requires --char-mode import)
@@ -259,7 +261,7 @@ func runSetupNonInteractive(f setupFlags) error {
 	}
 	prov := providerByKey(provider)
 	if prov == nil && provider != "custom" {
-		return fmt.Errorf("unknown provider %q; use: anthropic, gemini, openai, openrouter", provider)
+		return fmt.Errorf("unknown provider %q; use: anthropic, gemini, openai, openrouter, claude-code", provider)
 	}
 
 	// Resolve model
@@ -267,9 +269,13 @@ func runSetupNonInteractive(f setupFlags) error {
 	if model == "" && prov != nil {
 		model = prov.DefaultModel
 	}
-	if prov != nil && prov.HasAliases {
+	switch {
+	case prov != nil && prov.IsLocalBackend():
+		// Local backend (claude-code): the alias is passed through verbatim to
+		// the host tool, which resolves it. No API alias resolution.
+	case prov != nil && prov.HasAliases:
 		model = provision.ResolveModelAlias(model)
-	} else if model != "" && !strings.Contains(model, "/") {
+	case model != "" && !strings.Contains(model, "/"):
 		// Non-Anthropic: aliases don't apply, but still resolve if it happens to be one
 		model = provision.ResolveModelAlias(model)
 	}
@@ -337,6 +343,12 @@ func runSetupNonInteractive(f setupFlags) error {
 		DefaultsDir: defaultsDir,
 		CharMode:    f.charMode,
 	}
+	// Local backends carry their model in backend_config.model (set on the
+	// agent block by provision), not in a shared [models.default] group.
+	if prov != nil && prov.IsLocalBackend() {
+		spec.Backend = prov.Backend
+		spec.Model = model
+	}
 
 	result, err := provision.Provision(spec)
 	if err != nil {
@@ -367,6 +379,17 @@ func runSetupNonInteractive(f setupFlags) error {
 		AgentBlock: result.ConfigBlock,
 		Model:      model,
 		Endpoint:   endpoint,
+	}
+	// Local backends (claude-code, etc.) route EVERYTHING through the host tool —
+	// agent turns AND foci's auxiliary calls (compaction → /compact, summaries →
+	// CLISummariser, memory → backend turn). They never touch the model groups,
+	// so we write NO [groups]/[models.default]/[endpoints.anthropic] at all.
+	// Emitting an anthropic group here only caused a spurious startup "no
+	// Anthropic credentials" error and a missing-secret warning on keyless
+	// (login-only) deployments. The backend's model lives in backend_config.
+	if prov != nil && prov.IsLocalBackend() {
+		configOpts.Model = ""
+		configOpts.Endpoint = ""
 	}
 
 	return writeSetupFiles(f, configOpts, store, result, providerConfigFragments, providerSecrets)
@@ -523,6 +546,13 @@ func runSetupInteractive(f setupFlags) error {
 				DefaultsDir: defaultsDir,
 				CharMode:    state.charMode,
 			}
+			prov := providerByKey(state.provider)
+			// Local backends carry their model in backend_config.model on the
+			// agent block, not in a shared [models.default] group.
+			if prov != nil && prov.IsLocalBackend() {
+				spec.Backend = prov.Backend
+				spec.Model = state.model
+			}
 
 			provResult, err := provision.Provision(spec)
 			if err != nil {
@@ -544,7 +574,6 @@ func runSetupInteractive(f setupFlags) error {
 			}
 
 			// Determine endpoint override from provider
-			prov := providerByKey(state.provider)
 			endpoint := ""
 			if prov != nil {
 				endpoint = prov.Endpoint
@@ -558,6 +587,15 @@ func runSetupInteractive(f setupFlags) error {
 				Model:          state.model,
 				Endpoint:       endpoint,
 				CustomEndpoint: state.customEndpoint,
+			}
+			// Local backends route everything through the host tool (turns +
+			// foci's auxiliary calls) and never touch the model groups, so we
+			// write NO [groups]/[models.default]/[endpoints.anthropic]. See the
+			// non-interactive path above for the full rationale. The backend's
+			// model lives in backend_config.
+			if prov != nil && prov.IsLocalBackend() {
+				configOpts.Model = ""
+				configOpts.Endpoint = ""
 			}
 
 			fmt.Println()

@@ -55,38 +55,61 @@ func NewCLISummariser(binary, model string, maxInputChars int) *CLISummariser {
 	}
 }
 
-// Summarise spawns `claude --print ...` with stdin = content+prompt envelope
-// and returns the captured stdout. Errors include the subprocess's stderr to
-// aid debugging when the CLI fails (auth, model unavailable, etc.).
-func (s *CLISummariser) Summarise(ctx context.Context, content []byte, prompt, filePath string) (string, error) {
-	content = CapInputChars(content, s.maxInputChars)
-
-	cmd := procx.Spawn(ctx, s.binary,
+// CLIOneShot runs `claude --print` as a one-shot and returns its trimmed
+// stdout. It reuses the parent claude process's subscription auth (OAuth), so
+// the call charges mana rather than separate API spend — this is how delegated
+// (claude-code) agents make cheap auxiliary LLM calls (summaries, prompt diffs)
+// with no API client, model resolver, or anthropic credentials.
+//
+// binary "" → "claude" (PATH lookup); model "" → "haiku". systemPrompt replaces
+// the default system prompt (skipping CLAUDE.md auto-discovery and the dynamic
+// cwd/env/git sections); userMessage is piped to stdin. Errors include the
+// subprocess's stderr to aid debugging (auth, model unavailable, etc.).
+//
+// Do NOT add --bare: it disables OAuth and forces ANTHROPIC_API_KEY, defeating
+// the subscription-auth purpose.
+func CLIOneShot(ctx context.Context, binary, model, systemPrompt string, userMessage []byte) (string, error) {
+	if binary == "" {
+		binary = "claude"
+	}
+	if model == "" {
+		model = "haiku"
+	}
+	cmd := procx.Spawn(ctx, binary,
 		"--print",
 		"--no-session-persistence",
-		"--model", s.model,
-		"--system-prompt", summarySystemPrompt,
+		"--model", model,
+		"--system-prompt", systemPrompt,
 	)
-	cmd.Stdin = bytes.NewReader([]byte(summaryUserMessage(content, prompt, filePath)))
+	cmd.Stdin = bytes.NewReader(userMessage)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// Surface stderr in the error so call sites can debug auth/model issues.
-		stderrStr := strings.TrimSpace(stderr.String())
-		if stderrStr != "" {
+		if stderrStr := strings.TrimSpace(stderr.String()); stderrStr != "" {
 			return "", fmt.Errorf("claude --print failed: %w (stderr: %s)", err, stderrStr)
 		}
 		return "", fmt.Errorf("claude --print failed: %w", err)
 	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// Summarise spawns `claude --print ...` with stdin = content+prompt envelope
+// and returns the captured stdout.
+func (s *CLISummariser) Summarise(ctx context.Context, content []byte, prompt, filePath string) (string, error) {
+	content = CapInputChars(content, s.maxInputChars)
+
+	text, err := CLIOneShot(ctx, s.binary, s.model, summarySystemPrompt, []byte(summaryUserMessage(content, prompt, filePath)))
+	if err != nil {
+		return "", err
+	}
 
 	sessionKey := SessionKeyFromContext(ctx)
 	log.Infof("summary", "session=%s transport=cli model=%s input_bytes=%d output_bytes=%d",
-		sessionKey, s.model, len(content), stdout.Len())
+		sessionKey, s.model, len(content), len(text))
 
-	text := strings.TrimSpace(stdout.String())
 	if text == "" {
 		return "(empty response)", nil
 	}

@@ -13,7 +13,7 @@ func TestPowerfulDefault(t *testing.T) {
 		Groups: map[string]string{
 			"powerful": "anthropic/claude-sonnet-4-10-20250514",
 		},
-	}, nil)
+	}, nil, true)
 
 	if names := gr.GroupNames(); len(names) != 1 {
 		t.Fatalf("expected 1 group name, got %v", names)
@@ -64,7 +64,7 @@ func TestThreeGroupsResolution(t *testing.T) {
 			"fast":     "anthropic/claude-sonnet-4-10-20250514",
 			"cheap":    "anthropic/claude-haiku-4-5-20251001",
 		},
-	}, nil)
+	}, nil, true)
 
 	tests := []struct {
 		callSite string
@@ -112,7 +112,7 @@ func TestMissingFastCheapDefaultsToPowerful(t *testing.T) {
 		Groups: map[string]string{
 			"powerful": "anthropic/claude-opus-4-6",
 		},
-	}, nil)
+	}, nil, true)
 
 	// Fast call site should resolve to powerful model (fast group undefined, falls through)
 	r := gr.ResolveCall(CallSpawnRaw)
@@ -141,7 +141,7 @@ func TestCallOverrides(t *testing.T) {
 		Calls: map[string]string{
 			CallCompaction: GroupFast, // move compaction from powerful -> fast
 		},
-	}, nil)
+	}, nil, true)
 
 	r := gr.ResolveCall(CallCompaction)
 	if r == nil {
@@ -172,7 +172,7 @@ func TestInvalidOverrideGroupReturnsNil(t *testing.T) {
 		Calls: map[string]string{
 			CallCompaction: "nonexistent-group",
 		},
-	}, nil)
+	}, nil, true)
 
 	r := gr.ResolveCall(CallCompaction)
 	if r != nil {
@@ -187,7 +187,7 @@ func TestUngroupedCallsReturnNil(t *testing.T) {
 		Groups: map[string]string{
 			"powerful": "anthropic/claude-opus-4-6",
 		},
-	}, nil)
+	}, nil, true)
 
 	for _, cs := range []string{CallKeepalive, CallCountTokens} {
 		if r := gr.ResolveCall(cs); r != nil {
@@ -205,7 +205,7 @@ func TestResolveGroupByName(t *testing.T) {
 			"fast":     "google/gemini-2.5-flash",
 			"cheap":    "anthropic/claude-haiku-4-5-20251001",
 		},
-	}, nil)
+	}, nil, true)
 
 	tests := []struct {
 		group      string
@@ -249,7 +249,7 @@ func TestGroupNamesReturnsAllGroups(t *testing.T) {
 			"fast":     "anthropic/claude-sonnet-4-10-20250514",
 			"cheap":    "anthropic/claude-haiku-4-5-20251001",
 		},
-	}, nil)
+	}, nil, true)
 
 	names := gr.GroupNames()
 	sort.Strings(names)
@@ -273,7 +273,7 @@ func TestMixedDevelopers(t *testing.T) {
 			"fast":     "google/gemini-2.5-flash",
 			"cheap":    "openai/gpt-4o-mini",
 		},
-	}, nil)
+	}, nil, true)
 
 	tests := []struct {
 		callSite      string

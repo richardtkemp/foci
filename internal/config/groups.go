@@ -1,5 +1,7 @@
 package config
 
+import "foci/internal/log"
+
 // Call site names — each identifies a specific LLM call site in the codebase.
 const (
 	// Powerful group (default)
@@ -59,15 +61,23 @@ type GroupResolver struct {
 	callOverrides map[string]string
 	// models for ResolveModel (carries settings through)
 	models map[string]ModelConfig
+	// apiAgentsPresent is true when the deployment has at least one API-backed
+	// agent. When false, no model group should ever resolve to a concrete model
+	// (delegated backends route everything through the backend) — resolveGroup
+	// logs a loud error if it does, surfacing the regression in normal use.
+	apiAgentsPresent bool
 }
 
 // NewGroupResolver creates a GroupResolver from config.
 // groups maps group name → model name. calls maps call site → group override.
-func NewGroupResolver(gc GroupsConfig, models map[string]ModelConfig) *GroupResolver {
+// apiAgentsPresent should be cfg.HasAPIAgent(): when no API agent is configured,
+// any successful group resolution is a bug and is logged loudly.
+func NewGroupResolver(gc GroupsConfig, models map[string]ModelConfig, apiAgentsPresent bool) *GroupResolver {
 	return &GroupResolver{
-		models:        models,
-		callOverrides: gc.Calls,
-		groups:        gc.Groups,
+		models:           models,
+		callOverrides:    gc.Calls,
+		groups:           gc.Groups,
+		apiAgentsPresent: apiAgentsPresent,
 	}
 }
 
@@ -83,6 +93,8 @@ func (gr *GroupResolver) GroupNames() []string {
 // ResolveCall resolves a call site to a concrete model.
 // Returns nil for ungrouped calls.
 func (gr *GroupResolver) ResolveCall(callSite string) *ResolvedModel {
+	gr.warnIfNoAPIAgent("call=" + callSite)
+
 	// Check if this call site has a group assignment
 	groupName, ok := defaultCallGroups[callSite]
 	if !ok {
@@ -102,6 +114,7 @@ func (gr *GroupResolver) ResolveCall(callSite string) *ResolvedModel {
 // ResolveGroup resolves a group name to a concrete model.
 // Returns nil if the group name is unknown — use for user-provided group names.
 func (gr *GroupResolver) ResolveGroup(groupName string) *ResolvedModel {
+	gr.warnIfNoAPIAgent("group=" + groupName)
 	return gr.resolveGroup(groupName)
 }
 
@@ -117,4 +130,18 @@ func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 		return nil
 	}
 	return resolved
+}
+
+// warnIfNoAPIAgent logs a loud error if the resolver is invoked at all in a
+// deployment with no API-backed agent. Delegated backends (claude-code, etc.)
+// route ALL LLM work through the backend and must never touch the model groups,
+// so any resolver call — whether or not it resolves to a model — means a caller
+// is doing work it shouldn't (and is likely about to reach for credentials that
+// don't exist). Surfacing it loudly lets the offending call site be found and
+// guarded in normal use rather than as a confusing downstream
+// "no Anthropic credentials" error.
+func (gr *GroupResolver) warnIfNoAPIAgent(what string) {
+	if !gr.apiAgentsPresent {
+		log.Errorf("config", "BUG: model resolver invoked (%s) but no API-backed agent is configured — claude-code-only deployments must never touch the model groups; this call site should be guarded", what)
+	}
 }

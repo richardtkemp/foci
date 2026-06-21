@@ -211,7 +211,10 @@ func manualUserID(ui platform.SetupUI) (string, bool) {
 }
 
 func buildResult(agentID, botToken, userID string) *platform.WizardResult {
-	configTOML := fmt.Sprintf("[[platforms]]\nid = \"telegram\"\nallowed_users = [\"%s\"]\n", userID)
+	// allowed_users lives under the [platforms.access] subsection (AccessConfig),
+	// not directly on the platform table. Emitting it flat makes the loader treat
+	// it as an unknown key and silently drop the allow-list at startup.
+	configTOML := fmt.Sprintf("[[platforms]]\nid = \"telegram\"\n\n[platforms.access]\nallowed_users = [\"%s\"]\n", userID)
 
 	secrets := map[string]string{}
 	if agentID != "" {

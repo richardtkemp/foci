@@ -35,7 +35,7 @@ func TestSpawnContextRaw(t *testing.T) {
 			"fast":     "anthropic/claude-sonnet-4-6",
 			"cheap":    "anthropic/claude-haiku-4-5",
 		},
-	}, nil)
+	}, nil, true)
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -97,7 +97,7 @@ func TestSpawnContextCharacter(t *testing.T) {
 		Groups: map[string]string{
 			"powerful": "anthropic/claude-opus-4-6",
 		},
-	}, nil)
+	}, nil, true)
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -282,7 +282,7 @@ func TestSpawnExploreMode(t *testing.T) {
 			"fast":     "anthropic/claude-sonnet-4-6",
 			"cheap":    "anthropic/claude-haiku-4-5",
 		},
-	}, nil)
+	}, nil, true)
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,
