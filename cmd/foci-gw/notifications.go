@@ -163,23 +163,24 @@ func handleRestartAndFirstRun(
 		}()
 	}
 
-	// First-run onboarding — store the prompt so it gets prepended to the
-	// first inbound message as a separate content block. The agent clears it
-	// after consumption, and we mark first_run_completed via OnActivity.
+	// First-run onboarding — store the prompt so it gets prepended to the first
+	// turn that builds a message (API or claude-code). We mark
+	// first_run_completed only when the message is ACTUALLY consumed
+	// (OnFirstRunConsumed), not on generic activity: a generic OnActivity
+	// callback fired on any first turn, including internal ones that never
+	// delivered the onboarding, marking it done while it was still pending —
+	// silently losing onboarding on claude-code agents (#853).
 	for _, agentID := range agentOrder {
 		inst := agents[agentID]
 		if msg := checkFirstRun(sessionIndex, inst.agentCfg); msg != "" {
 			inst.ag.FirstRunMessage.Store(msg)
 			agentID := agentID
-			var once sync.Once
-			inst.ag.OnActivity.Add(func(_ string) {
-				once.Do(func() {
-					if err := sessionIndex.SetAgentMetadata(agentID, "first_run_completed", "true"); err != nil {
-						log.Errorf("main", "set first_run_completed for %s: %v", agentID, err)
-					}
-					log.Infof("main", "first-run onboarding completed for %s", agentID)
-				})
-			})
+			inst.ag.OnFirstRunConsumed = func() {
+				if err := sessionIndex.SetAgentMetadata(agentID, "first_run_completed", "true"); err != nil {
+					log.Errorf("main", "set first_run_completed for %s: %v", agentID, err)
+				}
+				log.Infof("main", "first-run onboarding completed for %s", agentID)
+			}
 		}
 	}
 }
