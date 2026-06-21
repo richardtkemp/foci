@@ -129,7 +129,7 @@ func setupAgent(p setupParams) *agentInstance {
 	shared.wakeScheduleFn = buildWakeScheduler(agLazy, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
 	// Transport-specific configuration
-	isDelegated := acfg.Backend != "" && acfg.Backend != "api"
+	isDelegated := acfg.IsDelegated()
 	var fp finalizeParams
 	var ok bool
 

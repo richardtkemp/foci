@@ -128,6 +128,11 @@ func TestRunSetupNonInteractive(t *testing.T) {
 			if !strings.Contains(res.ConfigTOML, `allowed_users = ["12345678"]`) {
 				t.Errorf("config TOML missing allowed user: %s", res.ConfigTOML)
 			}
+			// allowed_users must be nested under [platforms.access]; a flat key
+			// on the platform table is silently dropped by the config loader.
+			if !strings.Contains(res.ConfigTOML, "[platforms.access]") {
+				t.Errorf("config TOML missing [platforms.access] nesting: %s", res.ConfigTOML)
+			}
 			if res.Secrets["telegram.scout"] != testValidToken {
 				t.Errorf("secret telegram.scout = %q, want token", res.Secrets["telegram.scout"])
 			}

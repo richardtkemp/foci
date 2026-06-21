@@ -213,7 +213,7 @@ func TestSpawnModelGroups(t *testing.T) {
 			"fast":     "anthropic/claude-sonnet-4-6",
 			"cheap":    "anthropic/claude-haiku-4-5",
 		},
-	}, nil)
+	}, nil, true)
 
 	for _, tt := range tests {
 		var receivedModel string
@@ -263,7 +263,7 @@ func TestSpawnModelDefault(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-token")
 	// Powerful defaults all groups to the same model
-	gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{"powerful": "anthropic/claude-sonnet-4-5"}}, nil)
+	gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{"powerful": "anthropic/claude-sonnet-4-5"}}, nil, true)
 	deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-sonnet-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
@@ -335,7 +335,7 @@ func TestSpawnModelOpenRouter(t *testing.T) {
 			defer server.Close()
 
 			client := newTestOpenAIClient(server.URL, "test-key")
-			gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{"powerful": tt.config}}, nil)
+			gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{"powerful": tt.config}}, nil, true)
 			deps := SpawnDeps{
 				Client:         client,
 				GroupResolver:  gr,

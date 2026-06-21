@@ -150,3 +150,32 @@ id = "main"
 		t.Error("missing api_key in custom endpoint")
 	}
 }
+
+func TestGenerateConfig_LocalBackendOmitsGroupsAndEndpoint(t *testing.T) {
+	// A claude-code (local/delegated) agent routes everything through the
+	// backend, so first-run sets Model="" and GenerateConfig must emit NO
+	// [groups]/[models.default] and no anthropic reference at all. This pins the
+	// generation half of the fix for the spurious startup "no Anthropic
+	// credentials" error (the load half is in claude_code_only_test.go).
+	agentBlock := `[[agents]]
+id = "cctest"
+backend = "claude-code"
+
+[agents.backend_config]
+model = "sonnet"
+`
+	result := GenerateConfig(SetupOptions{Model: "", AgentBlock: agentBlock})
+
+	var parsed map[string]any
+	if _, err := tomlParser.Decode(result, &parsed); err != nil {
+		t.Fatalf("generated config is not valid TOML: %v\nOutput:\n%s", err, result)
+	}
+	for _, banned := range []string{"[groups]", "[models.default]", "powerful =", "[endpoints", "anthropic"} {
+		if strings.Contains(result, banned) {
+			t.Errorf("local-backend config must not contain %q\nOutput:\n%s", banned, result)
+		}
+	}
+	if !strings.Contains(result, `backend = "claude-code"`) {
+		t.Errorf("agent block missing from generated config\nOutput:\n%s", result)
+	}
+}

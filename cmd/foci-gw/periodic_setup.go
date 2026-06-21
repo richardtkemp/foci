@@ -29,21 +29,27 @@ type periodicParams struct {
 // setupPeriodic creates and starts a periodic runner for an agent instance.
 // Returns the runner (also set on inst.kaRunner), or nil if not needed.
 func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParams) *periodic.Runner {
-	gc := inst.resolved.Groups
-
-	// Resolve model from chat call site to get endpoint information
-	groupResolver := config.NewGroupResolver(gc, p.cfg.Models)
-	resolved := groupResolver.ResolveCall(config.CallChat)
-	var endpoint string
-	var client provider.Client
-	if resolved != nil {
-		endpoint = resolved.Endpoint
-		client = p.resolveEndpointClient(endpoint, resolved.Format)
+	// The chat-call model resolution exists ONLY to find the API client + model
+	// for keepalive cache-warming pings, which is an API-agent concern. Delegated
+	// backends (claude-code, etc.) manage their own caching and route everything
+	// through the backend — they need no resolver, no API client, and resolving
+	// one would reach for anthropic credentials that don't exist on a
+	// keyless/login-only deployment. So skip resolution entirely for them and
+	// leave `resolved` nil; the `if resolved != nil` guards below handle it.
+	var resolved *config.ResolvedModel
+	if inst.ag.DelegatedManager == nil {
+		groupResolver := config.NewGroupResolver(inst.resolved.Groups, p.cfg.Models, p.cfg.HasAPIAgent())
+		resolved = groupResolver.ResolveCall(config.CallChat)
 	}
 
-	// Check if keepalive should be enabled, considering both:
-	// 1. Per-model auto-detection (OpenAI/DeepSeek have auto caching)
-	// 2. Client-reported caching availability (Anthropic/Gemini)
+	var client provider.Client
+	if resolved != nil {
+		client = p.resolveEndpointClient(resolved.Endpoint, resolved.Format)
+	}
+
+	// Check if keepalive should be enabled. Per-model keepalive config can force
+	// it on (cachingOverride); otherwise caching is assumed available — see the
+	// FIXME(#848) block below for why the old client-probe was removed.
 	var cachingOverride *bool
 	ka := inst.resolved.Keepalive
 	if resolved != nil {
@@ -62,11 +68,19 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	refl := inst.resolved.Reflection
 	maint := inst.resolved.Maintenance
 
+	// ┌──────────────────────────────────────────────────────────────────────┐
+	// │ FIXME(#848): caching-availability is determined the WRONG WAY.         │
+	// │ It used to call client.IsCachingAvailable(), which forces an API       │
+	// │ client to be instantiated just to ask a static capability question —  │
+	// │ and for delegated/claude-code agents that meant reaching for anthropic │
+	// │ credentials that don't exist, logging a spurious startup error.        │
+	// │ Caching capability belongs in model metadata (modelcaps), not in a     │
+	// │ live client. UNTIL THAT EXISTS we assume caching is available.         │
+	// │ Per-model keepalive config (cachingOverride) still wins when set.      │
+	// └──────────────────────────────────────────────────────────────────────┘
 	cachingAvailable := true
 	if cachingOverride != nil {
 		cachingAvailable = *cachingOverride
-	} else if client != nil {
-		cachingAvailable = client.IsCachingAvailable()
 	}
 	kaEnabled := ka.Enabled && cachingAvailable
 

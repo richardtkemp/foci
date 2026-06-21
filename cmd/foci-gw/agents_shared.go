@@ -56,7 +56,16 @@ func resolveSharedSetup(p setupParams) *sharedAgentSetup {
 		filepath.Join(filepath.Dir(p.acfg.Workspace), "shared", "prompts"),
 	}
 
-	groupResolver := config.NewGroupResolver(p.resolved.Groups, p.cfg.Models)
+	// Delegated agents (claude-code, etc.) route all LLM work through the
+	// backend and never resolve a model group — so they get no resolver at all.
+	// A nil groupResolver cascades cleanly: configureAPI never runs for them,
+	// command/tool deps see nil (their call sites are nil-guarded), and the
+	// prompt-diff command falls back to a one-shot `claude --print`. Building one
+	// here would also trip the resolver's no-API-agent guard on every use.
+	var groupResolver *config.GroupResolver
+	if !p.acfg.IsDelegated() {
+		groupResolver = config.NewGroupResolver(p.resolved.Groups, p.cfg.Models, p.cfg.HasAPIAgent())
+	}
 
 	return &sharedAgentSetup{
 		p:                p,

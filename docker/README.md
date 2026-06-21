@@ -105,10 +105,27 @@ Required on first startup only, to seed the config file. At least one platform (
 | `FOCI_TELEGRAM_USER` | Platform | Your Telegram user ID |
 | `FOCI_DISCORD_TOKEN` | Platform | Discord bot token from the Developer Portal |
 | `FOCI_DISCORD_USER` | Platform | Your Discord user ID |
-| `FOCI_PROVIDER` | No | LLM provider: `anthropic`, `gemini`, `openai`, `openrouter` (default: `anthropic`) |
-| `FOCI_API_KEY` | No | API key for the chosen provider |
+| `FOCI_PROVIDER` | No | LLM backend: `anthropic`, `gemini`, `openai`, `openrouter` (API providers), or `claude-code` (local backend — uses Claude Code's own login, no API key) (default: `anthropic`) |
+| `FOCI_API_KEY` | No | API key for the chosen provider (not needed for `claude-code`) |
 | `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
 | `FOCI_CHAR_MODE` | No | Character mode: `defaults`, `openclaw`, `import`, `blank` |
+
+## Claude Code Backend (no API key)
+
+Set `FOCI_PROVIDER=claude-code` (and leave `FOCI_API_KEY` blank) to run agents on
+the local Claude Code (ccstream) backend instead of a remote API. On first run:
+
+1. The entrypoint detects the `claude-code` backend and installs the Claude Code
+   CLI into the container automatically using the native single-binary installer
+   (`https://claude.ai/install.sh` — no Node.js/npm).
+2. foci-gw starts. The agent has no credentials yet.
+3. In chat, run `/login` — foci replies with a sign-in URL. Open it, sign in, and
+   paste the code back. No browser is needed on the host.
+
+The `claude-code` backend still writes a `[models.default]` group (used for
+foci's own auxiliary calls like compaction); add an Anthropic key later with
+`foci auth` if you want those to work, but the agent's own turns need only the
+`/login` credential.
 
 ## Importing Character and Memory Files
 

@@ -656,12 +656,25 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 // applyModelOverride resolves a model value (group name, alias, or developer/model_id)
 // and sets it as a per-session override on the agent instance.
 func applyModelOverride(inst *agentInstance, sessionKey, value string, models map[string]config.ModelConfig) error {
-	// Check if value is a group name (built-in or user-defined)
-	if resolved := inst.ag.GroupResolver.ResolveGroup(value); resolved != nil {
-		client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
-		model := resolved.Developer + "/" + resolved.ModelID
-		inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
-		return nil
+	// Per-session model override is an API-agent feature: it resolves through the
+	// model groups / aliases and swaps the provider client. Delegated
+	// (claude-code) agents route all LLM work through the backend, have no
+	// GroupResolver, and carry no resolvable models — so the override has no
+	// meaning for them. Reject cleanly rather than fall through to a confusing
+	// "model not found" resolver error.
+	if inst.ag.DelegatedManager != nil {
+		log.Infof("http", "model override rejected for delegated agent %q (session=%s, value=%q): not supported for claude-code backends", inst.id, sessionKey, value)
+		return fmt.Errorf("per-session model override is not supported for claude-code (delegated) agents")
+	}
+
+	// Check if value is a group name (built-in or user-defined).
+	if inst.ag.GroupResolver != nil {
+		if resolved := inst.ag.GroupResolver.ResolveGroup(value); resolved != nil {
+			client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+			model := resolved.Developer + "/" + resolved.ModelID
+			inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
+			return nil
+		}
 	}
 
 	// Resolve as alias or developer/model_id

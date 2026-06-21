@@ -89,6 +89,30 @@ if [ ! -f "$CONFIG_FILE" ]; then
 	echo "[foci] First-run complete — config written to $CONFIG_FILE"
 fi
 
+# ── Install Claude Code for the claude-code (ccstream) backend ──
+# The ccstream backend shells out to the `claude` CLI. Install it on demand when
+# any agent is configured with backend = "claude-code" and it isn't already on
+# PATH. We use the native single-binary installer (https://claude.ai/install.sh),
+# NOT npm: it pulls one platform binary with no Node.js/npm dependency tree —
+# smaller, faster, and matches how a bare-metal foci host installs `claude`.
+#
+# The installer is HOME-based (it runs `claude install` → $HOME/.local/bin). We
+# point HOME at /opt/claude (outside the /home/foci volume) and symlink the
+# result into /usr/local/bin so the binary is on PATH for foci-gw and its
+# children. After install, authenticate from chat with /login — no API key
+# required.
+if grep -q 'backend = "claude-code"' "$CONFIG_FILE" 2>/dev/null && ! command -v claude >/dev/null 2>&1; then
+	echo "[foci] claude-code backend detected — installing Claude Code (native, no Node)..."
+	CLAUDE_HOME=/opt/claude
+	mkdir -p "$CLAUDE_HOME"
+	if curl -fsSL https://claude.ai/install.sh | HOME="$CLAUDE_HOME" bash; then
+		ln -sf "$CLAUDE_HOME/.local/bin/claude" /usr/local/bin/claude
+		echo "[foci] Claude Code installed: $(command -v claude || echo '?') ($(/usr/local/bin/claude --version 2>/dev/null || echo 'version unknown'))"
+	else
+		echo "[foci] WARNING: Claude Code install failed — ccstream agents will not start until 'claude' is on PATH."
+	fi
+fi
+
 # ── Harden secrets.toml ──
 # Replicate the systemd security model: secrets.toml is owned by
 # root:foci-secrets with mode 0660. The foci-gw process is granted the
@@ -110,6 +134,10 @@ fi
 #                           set so children can't inherit CAP_SETGID across exec)
 #   --no-new-privs: block setuid sg/newgrp/sudo for the whole process tree
 echo "[foci] Starting foci-gw..."
+# A capability can only be raised into the ambient set if it is also in the
+# inheritable set, so --inh-caps=+setgid must accompany --ambient-caps=+setgid.
+# Without it setpriv silently leaves CapAmb empty (exit 0), foci-gw cannot drop
+# foci-secrets from children, and the security self-check aborts startup.
 exec env HOME=/home/foci setpriv --reuid=foci --regid=foci --groups foci-secrets \
-	--ambient-caps=+setgid --no-new-privs \
+	--inh-caps=+setgid --ambient-caps=+setgid --no-new-privs \
 	-- foci-gw -config "$CONFIG_FILE"
