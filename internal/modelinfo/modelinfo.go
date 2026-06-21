@@ -11,6 +11,7 @@ type Model struct {
 	Effort          bool    // supports output_config.effort
 	Thinking        bool    // supports thinking (adaptive/enabled)
 	Speed           bool    // supports fast mode (speed: "fast")
+	Caching         bool    // supports explicit, TTL-bounded prompt caching that keepalive pings warm
 	InputPer1M      float64 // cost per 1M input tokens
 	OutputPer1M     float64 // cost per 1M output tokens
 	CacheReadPer1M  float64 // cost per 1M cache-read tokens
@@ -22,30 +23,31 @@ var registry = map[string]Model{
 	// Anthropic
 	"claude-haiku-4-5": {
 		ContextWindow: 200_000,
+		Caching:       true,
 		InputPer1M:    1.00, OutputPer1M: 5.00,
 		CacheReadPer1M: 0.10, CacheWritePer1M: 1.25,
 	},
 	"claude-sonnet-4-5": {
 		ContextWindow: 200_000,
-		Effort:        true, Thinking: true,
+		Effort:        true, Thinking: true, Caching: true,
 		InputPer1M: 3.00, OutputPer1M: 15.00,
 		CacheReadPer1M: 0.30, CacheWritePer1M: 3.75,
 	},
 	"claude-opus-4-6": {
 		ContextWindow: 1_000_000, // 1M with Claude Max subscription
-		Effort:        true, Thinking: true, Speed: true,
+		Effort:        true, Thinking: true, Speed: true, Caching: true,
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
 	},
 	"claude-opus-4-6[1m]": { // CC reports model with [1m] suffix for Max subscription
 		ContextWindow: 1_000_000,
-		Effort:        true, Thinking: true, Speed: true,
+		Effort:        true, Thinking: true, Speed: true, Caching: true,
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
 	},
 	"claude-fable-5": { // Mythos-class, GA 2026-06-09; tier above Opus
 		ContextWindow: 1_000_000, // full 1M at standard pricing
-		Effort:        true, Thinking: true,
+		Effort:        true, Thinking: true, Caching: true,
 		InputPer1M: 10.00, OutputPer1M: 50.00,
 		CacheReadPer1M: 1.00, CacheWritePer1M: 12.50,
 	},
@@ -55,9 +57,11 @@ var registry = map[string]Model{
 	// FinalModel feedback in UpdateSessionMeta corrects this downward if needed.
 	"claude-code-tmux": {
 		ContextWindow: 1_000_000,
+		Caching:       true,
 	},
 	"claude-code": {
 		ContextWindow: 1_000_000,
+		Caching:       true,
 	},
 
 	// Gemini
@@ -160,6 +164,23 @@ func Capabilities(model string) (effort, thinking, speed bool) {
 		return true, true, false
 	}
 	return false, false, false
+}
+
+// Caching reports whether a model supports the explicit, TTL-bounded prompt
+// cache that foci's keepalive pings warm. Only Anthropic (claude) models do:
+// Gemini caching is implicit/automatic (no ping warms it) and OpenAI's is
+// automatic too. Falls back to the claude family so unregistered/dated claude
+// variants still resolve true.
+//
+// This answers a STATIC capability question for API agents (resolved.ModelID).
+// Delegated/claude-code agents have no resolved model and are handled at the
+// call site (they keep keepalive — their backend has its own prompt cache).
+func Caching(model string) bool {
+	bare := strings.ToLower(normalize(model))
+	if m, ok := registry[bare]; ok {
+		return m.Caching
+	}
+	return strings.Contains(bare, "claude")
 }
 
 // Cost returns the estimated cost in USD for an API request.
