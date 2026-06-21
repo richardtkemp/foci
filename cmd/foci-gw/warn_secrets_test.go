@@ -13,6 +13,34 @@ func (m mapStore) Get(key string) (string, bool) {
 	return v, ok
 }
 
+func TestMissingOptionalSecretDowngradedToInfo(t *testing.T) {
+	// Proves that a missing optional secret (brave.api_key — search_provider
+	// defaults to "brave", but the web-search tool self-gates on the key) is
+	// downgraded to INFO rather than emitting a startup WARN on every boot (#852).
+	brave := "brave"
+	cfg := &config.Config{
+		Agents: []config.AgentConfig{
+			{ID: "a1", Tools: config.AgentToolsOverride{ToolConfig: config.ToolConfig{SearchProvider: &brave}}},
+		},
+	}
+	store := mapStore{} // no brave.api_key
+
+	var braveMissing *missingSecret
+	results := checkMissingSecrets(cfg, store)
+	for i, ms := range results {
+		if ms.ref.Key == "brave.api_key" {
+			braveMissing = &results[i]
+			break
+		}
+	}
+	if braveMissing == nil {
+		t.Fatal("expected brave.api_key to be reported as missing")
+	}
+	if !braveMissing.downgraded {
+		t.Error("expected brave.api_key (optional) to be downgraded to INFO, not WARN")
+	}
+}
+
 func TestMissingPlatformSecretDowngradedWhenAlternativeExists(t *testing.T) {
 	// Proves that when an agent has both Telegram and Discord configured and
 	// only one secret is present, the missing platform secret is downgraded

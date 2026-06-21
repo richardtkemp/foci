@@ -199,7 +199,12 @@ func TestConventionBraveSearch(t *testing.T) {
 				{ID: "a1", Tools: AgentToolsOverride{ToolConfig: ToolConfig{SearchProvider: Ptr[string]("brave")}}},
 			},
 		}
-		assertHasKey(t, RequiredSecrets(&cfg), "brave.api_key")
+		ref := assertHasKeyReturn(t, RequiredSecrets(&cfg), "brave.api_key")
+		// Brave self-gates on the key at runtime, so its key is optional: a missing
+		// key disables search rather than signalling misconfiguration.
+		if !ref.Optional {
+			t.Error("brave.api_key should be marked Optional")
+		}
 	})
 
 	t.Run("default brave via tools", func(t *testing.T) {
