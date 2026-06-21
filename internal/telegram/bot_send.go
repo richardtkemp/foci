@@ -161,12 +161,21 @@ func (b *Bot) sendNotificationImmediate(text string) string {
 		return ""
 	}
 
-	msg, err := b.client.SendMessage(chatID, text, nil)
-	if err != nil {
-		b.logger().Errorf("send notification: %s", b.sanitizeError(err))
-		return ""
+	// Chunk to respect Telegram's 4096-char cap — an over-length notification
+	// (e.g. startup proactive-warnings) is otherwise rejected (#810). Returns the
+	// first chunk's message ID as the anchor.
+	var firstID string
+	for _, chunk := range splitMessage(text, 4096) {
+		msg, err := b.client.SendMessage(chatID, chunk, nil)
+		if err != nil {
+			b.logger().Errorf("send notification: %s", b.sanitizeError(err))
+			continue
+		}
+		if firstID == "" {
+			firstID = strconv.FormatInt(msg.MessageId, 10)
+		}
 	}
-	return strconv.FormatInt(msg.MessageId, 10)
+	return firstID
 }
 
 // drainPendingNotifications sends all buffered notifications to the default chat.
@@ -219,8 +228,11 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 		}
 	}
 
-	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
-		b.logger().Errorf("send startup notification: %s", b.sanitizeError(err))
+	// Chunk so an over-length diagnosis body respects Telegram's 4096-char cap (#810).
+	for _, chunk := range splitMessage(text, 4096) {
+		if _, err := b.client.SendMessage(chatID, chunk, nil); err != nil {
+			b.logger().Errorf("send startup notification: %s", b.sanitizeError(err))
+		}
 	}
 }
 

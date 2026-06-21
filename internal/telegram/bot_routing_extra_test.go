@@ -271,3 +271,36 @@ func TestDownloadFile_404FailsWithoutRetry(t *testing.T) {
 		t.Errorf("err = %v, want status 404", err)
 	}
 }
+
+func TestSendNotificationImmediate_ChunksLongText(t *testing.T) {
+	// Proves an over-length notification (e.g. startup proactive-warnings) is
+	// split into multiple sends within Telegram's 4096-char cap rather than sent
+	// raw and rejected (#810). The returned anchor ID is the first chunk's ID.
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	b.SetChatID(12345)
+	long := strings.Repeat("warning line\n", 500) // ~6500 chars > 4096
+
+	id := b.SendNotificationDirect(long)
+
+	if mock.sentCount() < 2 {
+		t.Fatalf("expected chunked sends (>=2), got %d", mock.sentCount())
+	}
+	if id != "1" {
+		t.Errorf("anchor id = %q, want first chunk's id 1", id)
+	}
+}
+
+func TestSendNotificationImmediate_ShortSingleSend(t *testing.T) {
+	// Proves the common single-chunk path is unchanged: one send, ID returned.
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	b.SetChatID(12345)
+
+	id := b.SendNotificationDirect("short notice")
+
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected exactly 1 send, got %d", mock.sentCount())
+	}
+	if id != "1" {
+		t.Errorf("id = %q, want 1", id)
+	}
+}
