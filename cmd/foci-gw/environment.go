@@ -156,9 +156,11 @@ func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config
 // buildEnvironmentDelegated generates the environment block for delegated
 // (CC backend) agents. These agents use Claude Code's built-in tools plus
 // foci shell functions exposed via the exec bridge.
-func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, activePlatforms []string, shellTools []tools.ExportedTool) string {
+func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, shellTools []tools.ExportedTool) string {
 	var b strings.Builder
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms)
+
+	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 
 	// Backend description
 	b.WriteString("\n## Backend\n")
