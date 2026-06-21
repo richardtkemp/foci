@@ -12,6 +12,32 @@ import (
 	"foci/internal/provider"
 )
 
+// consumeFirstRunMessage atomically returns and clears the first-run onboarding
+// message, firing OnFirstRunConsumed exactly once when a non-empty message is
+// actually consumed. Returns "" if there is no pending onboarding.
+//
+// Both turn paths call this: the API path (prepareUserMessage) and the
+// delegated/claude-code path (ComposePrompt). Previously only the API path
+// consumed it, so onboarding was silently dropped on every claude-code agent —
+// and first_run_completed was marked anyway by a generic OnActivity callback,
+// losing the onboarding for good. Tying the completion marker to the actual
+// consumption (this method) keeps the two in lockstep regardless of backend.
+//
+// The CompareAndSwap makes consumption exactly-once under concurrent turns.
+func (a *Agent) consumeFirstRunMessage() string {
+	frm, ok := a.FirstRunMessage.Load().(string)
+	if !ok || frm == "" {
+		return ""
+	}
+	if !a.FirstRunMessage.CompareAndSwap(frm, "") {
+		return "" // another turn consumed it first
+	}
+	if a.OnFirstRunConsumed != nil {
+		a.OnFirstRunConsumed()
+	}
+	return frm
+}
+
 // prepareUserMessage builds the user message with separate content blocks for
 // metadata, reminders, state dashboard, attachments, orientation, and user text.
 // Multiple texts produce separate content blocks: texts[0] gets the full
@@ -69,8 +95,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 	}
 
 	// First-run onboarding: prepend as a separate content block, then clear.
-	if frm, ok := a.FirstRunMessage.Load().(string); ok && frm != "" {
-		a.FirstRunMessage.Store("")
+	if frm := a.consumeFirstRunMessage(); frm != "" {
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: frm})
 	}
 

@@ -60,6 +60,14 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 	parts := a.composeTurnText(ts.Ctx, ts.SessionKey, ts.TurnModel, "", false, ts.Texts, ts.Attachments)
 	ts.Prompt = parts.JoinPrompt()
 
+	// First-run onboarding: prepend as a delimited block, then clear. The API
+	// path does the equivalent in prepareUserMessage; without this the
+	// claude-code backend never delivered onboarding at all (#853).
+	if frm := a.consumeFirstRunMessage(); frm != "" {
+		ts.Prompt = frm + "\n\n" + ts.Prompt
+		log.Infof("delegated", "session=%s injected first-run onboarding (%d chars)", ts.SessionKey, len(frm))
+	}
+
 	// Consume branch orientation. ConsumeOrientation is atomic — returns the
 	// orientation once and marks it consumed in the DB, same as API transport.
 	if a.Sessions != nil {
