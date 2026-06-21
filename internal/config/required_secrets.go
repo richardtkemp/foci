@@ -12,6 +12,12 @@ type SecretRef struct {
 	Context  string // human-readable context for warning messages
 	AgentID  string // which agent this belongs to ("" for global)
 	Platform bool   // true for platform secrets (telegram/discord bots)
+	// Optional marks a secret whose absence gracefully disables a best-effort
+	// feature rather than breaking anything. Missing optional secrets are
+	// reported at INFO, not WARN — e.g. brave.api_key, where the web-search tool
+	// simply isn't registered without it (see tool_table.go), so a missing key
+	// means "brave search not enabled", not "misconfiguration".
+	Optional bool
 }
 
 // RequiredSecrets returns all secret keys that the current configuration expects
@@ -188,13 +194,18 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 	}
 
 	// --- Brave search ---
-	// If any agent effectively uses brave search, brave.api_key is needed.
+	// search_provider defaults to "brave", so nearly every agent matches here even
+	// when it never searches. Brave search self-gates on the key at runtime (the
+	// web-search tool isn't registered without it — tool_table.go), so a missing
+	// brave.api_key means "brave search not enabled", not a misconfiguration.
+	// Mark it Optional → reported at INFO, not WARN.
 	for _, agent := range cfg.Agents {
 		tc := Merge(agent.Tools.ToolConfig, cfg.Tools.ToolConfig)
 		if DerefStr(tc.SearchProvider) == "brave" {
 			refs = append(refs, SecretRef{
-				Key:     "brave.api_key",
-				Context: "brave search",
+				Key:      "brave.api_key",
+				Context:  "brave search",
+				Optional: true,
 			})
 			break
 		}

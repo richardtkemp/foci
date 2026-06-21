@@ -48,7 +48,13 @@ func checkMissingSecrets(cfg *config.Config, store config.SecretGetter) []missin
 			continue
 		}
 		ms := missingSecret{ref: ref}
-		if ref.Platform && ref.AgentID != "" && agentHasWorkingPlatform[ref.AgentID] {
+		switch {
+		case ref.Optional:
+			// Best-effort feature: absence just disables it (e.g. brave search
+			// self-gates on the key at runtime). INFO, not WARN.
+			ms.downgraded = true
+			ms.explanation = "optional — feature stays disabled until set"
+		case ref.Platform && ref.AgentID != "" && agentHasWorkingPlatform[ref.AgentID]:
 			ms.downgraded = true
 			ms.explanation = "agent has another working platform"
 		}
