@@ -63,6 +63,14 @@ func (d *Dispatcher) DispatchText(ctx context.Context, text string, chatID int64
 	name = strings.ToLower(strings.TrimSpace(name))
 	args := extractArgs(body)
 
+	// A leading-slash token that contains a further slash is a filesystem path
+	// (e.g. "/home/foci/x", "/etc/hosts"), not a command — no command name
+	// contains "/". Fall through as normal text so paths aren't swallowed as
+	// "unknown command". (#770)
+	if isSlash && strings.Contains(name, "/") {
+		return Result{}
+	}
+
 	// Dot commands must match a registered command — otherwise fall through
 	// as normal text (e.g. ".something" in a sentence).
 	if isDot && d.registry.Get(name) == nil {

@@ -100,6 +100,41 @@ func TestDispatchTextPlainText(t *testing.T) {
 	}
 }
 
+// TestDispatchTextSlashPathFallsThrough verifies that a leading-slash filesystem
+// path (whose first token contains a further "/") is treated as normal text, not
+// dispatched as an unknown command. (#770)
+func TestDispatchTextSlashPathFallsThrough(t *testing.T) {
+	reg := command.NewRegistry()
+	// Register a command whose name collides with the first path segment, to
+	// prove the "/" in the token — not the leading slash — is what disqualifies it.
+	reg.Register(&command.Command{
+		Name: "home",
+		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "should not run"}, nil
+		},
+	})
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+
+	for _, path := range []string{"/home/foci/notes.md", "/etc/hosts", "/var/log/foci.log"} {
+		result := d.DispatchText(context.Background(), path, 123, "user1")
+		if result.Handled {
+			t.Errorf("path %q should fall through as text, not be dispatched", path)
+		}
+	}
+
+	// A genuine slash command with a path argument must still dispatch: only the
+	// command-name token is inspected, not the args.
+	reg.Register(&command.Command{
+		Name: "cat",
+		Execute: func(_ context.Context, req command.Request, _ command.CommandContext) (command.Response, error) {
+			return command.Response{Text: req.Args}, nil
+		},
+	})
+	if result := d.DispatchText(context.Background(), "/cat /etc/hosts", 123, "user1"); !result.Handled {
+		t.Error("/cat with a path arg should still be handled")
+	}
+}
+
 // TestDispatchCallback verifies that DispatchCallback routes a /command text
 // correctly (as used by button/callback interactions).
 func TestDispatchCallback(t *testing.T) {
