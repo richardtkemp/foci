@@ -84,7 +84,7 @@ When using Claude Code credentials fallback, foci refreshes the token ~5 minutes
 
 ## Automated Re-login
 
-When the shared Claude Code OAuth credential can no longer be refreshed, the subprocess returns a 401 (`Failed to authenticate` / `Invalid authentication credentials`). Foci detects this and runs an automated re-login that re-authenticates the Claude Code OAuth credentials — no human has to run `claude /login` on the host.
+When the shared Claude Code OAuth credential can no longer be refreshed, the subprocess returns a 401 (`Failed to authenticate` / `Invalid authentication credentials`). Foci detects this and runs an automated re-login that re-authenticates the Claude Code OAuth credentials — no human has to manually re-authenticate. The same flow also runs proactively at startup if a backend's credential is already dead (see the startup readiness probe in WIRING.md), so a boot with an expired token recovers without waiting for the first turn to fail.
 
 The flow is also triggered manually with the `/login` command (ccstream backend only; see COMMANDS.md), useful for exercising it without waiting for a real token expiry.
 
@@ -94,4 +94,4 @@ What you see:
 2. You sign in via the browser and reply with the code from the page.
 3. On success: `✅ Login completed.`
 
-While a re-login is in progress, message processing for delegated agents is paused; it resumes once login completes, fails, or times out. If it fails, foci tells you to run `claude /login` on the host to recover.
+While a re-login is in progress, message processing for delegated agents is paused; it resumes once login completes, fails, or times out. If it fails, foci tells you to send `/login` in the chat to try again.
