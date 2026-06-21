@@ -132,6 +132,27 @@ type Delegator interface {
 	// Respects context cancellation/deadline.
 	WaitReady(ctx context.Context) error
 
+	// CheckReady verifies the backend is functionally ready to run turns and
+	// self-heals if it is not. This is distinct from WaitReady, which only
+	// waits for an already-started subprocess to present its input prompt.
+	// CheckReady is called once at delegated-agent startup, before any turn,
+	// and must not assume a running subprocess (it may be called on a freshly
+	// constructed, un-Started backend).
+	//
+	// For the ccstream (Claude Code) backend this means verifying the CLI is
+	// authenticated (`claude auth status` → loggedIn); if it is not, CheckReady
+	// triggers the interactive re-login flow (posting a login URL to the
+	// agent's default chat) and reports ready=false. Backends with no
+	// readiness gate (cctmux, whose TUI handles its own login out of band)
+	// return (true, nil).
+	//
+	// ready=false with err==nil means "not ready, recovery has been initiated"
+	// (e.g. re-login is now in flight). A non-nil err means the readiness check
+	// itself could not be performed (e.g. the auth-status probe failed to run);
+	// callers should log it but must not treat an indeterminate probe as
+	// not-authenticated (avoids spuriously launching a login flow).
+	CheckReady(ctx context.Context) (ready bool, err error)
+
 	// Close shuts down the agent subprocess gracefully.
 	Close() error
 }

@@ -556,6 +556,13 @@ Subcommands:
 	}
 	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
+	// ========== Backend readiness ==========
+	// Verify delegated (claude-code) backends are authenticated before any
+	// startup turns are injected; a not-ready backend triggers re-login here
+	// (whose gate then pauses delegated processing). Runs before the welcome/
+	// first-run pass so the gate is active when those turns would fire.
+	checkDelegatedReadiness(ctx, agents, agentOrder)
+
 	// ========== Welcome & first-run ==========
 	handleRestartAndFirstRun(agents, agentOrder, si.sessionIndex, cfg, ctx, connMgr, diagnosis)
 
