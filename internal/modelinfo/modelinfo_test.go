@@ -73,6 +73,39 @@ func TestCapabilities(t *testing.T) {
 	}
 }
 
+func TestCaching(t *testing.T) {
+	// Proves Anthropic models report caching=true (registered + dated/prefixed +
+	// unregistered claude variants via family fallback), and non-claude models
+	// (gemini/openai/unknown) report false.
+	t.Parallel()
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"claude-haiku-4-5", true},
+		{"claude-sonnet-4-5", true},
+		{"claude-opus-4-6", true},
+		{"claude-opus-4-6[1m]", true},
+		{"claude-fable-5", true},
+		{"anthropic/claude-opus-4-6", true},          // prefix stripped
+		{"claude-opus-4-6-20260101", true},           // date suffix stripped
+		{"CLAUDE-SONNET-4-5", true},                  // case-insensitive
+		{"claude-opus-99", true},                     // unregistered claude → family fallback
+		{"claude-code", true},                        // delegated backend key still claude-family
+		{"gemini-2.5-flash", false},
+		{"gemini-2.5-pro", false},
+		{"gpt-4o", false},
+		{"unknown", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := Caching(tt.model); got != tt.want {
+				t.Errorf("Caching(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCost(t *testing.T) {
 	// Proves exact model pricing, family fallbacks (unknown gemini → flash,
 	// OpenAI → approximate, unknown → haiku), and correct arithmetic.

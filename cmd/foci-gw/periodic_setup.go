@@ -7,6 +7,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/modelinfo"
 	"foci/internal/periodic"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -68,17 +69,21 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	refl := inst.resolved.Reflection
 	maint := inst.resolved.Maintenance
 
-	// ┌──────────────────────────────────────────────────────────────────────┐
-	// │ FIXME(#848): caching-availability is determined the WRONG WAY.         │
-	// │ It used to call client.IsCachingAvailable(), which forces an API       │
-	// │ client to be instantiated just to ask a static capability question —  │
-	// │ and for delegated/claude-code agents that meant reaching for anthropic │
-	// │ credentials that don't exist, logging a spurious startup error.        │
-	// │ Caching capability belongs in model metadata (modelcaps), not in a     │
-	// │ live client. UNTIL THAT EXISTS we assume caching is available.         │
-	// │ Per-model keepalive config (cachingOverride) still wins when set.      │
-	// └──────────────────────────────────────────────────────────────────────┘
+	// Caching availability gates keepalive cache-warming. It's a STATIC model
+	// capability, so we read it from the registry (#848) rather than forcing an
+	// API client to be instantiated just to ask — which for delegated/claude-code
+	// agents would reach for anthropic credentials that don't exist.
+	//   - Delegated agents (resolved == nil): default true. The cache-warming is
+	//     agent.Branch(), which runs a real turn through their backend (CC) and
+	//     warms ITS prompt cache. So keepalive applies; it's gated purely by the
+	//     existing [keepalive] enabled toggle below.
+	//   - API agents (resolved != nil): derive from model metadata. Only Anthropic
+	//     models have the explicit, TTL-bounded cache that pings warm.
+	//   - Per-model keepalive config (cachingOverride) still wins, applied last.
 	cachingAvailable := true
+	if resolved != nil {
+		cachingAvailable = modelinfo.Caching(resolved.ModelID)
+	}
 	if cachingOverride != nil {
 		cachingAvailable = *cachingOverride
 	}
