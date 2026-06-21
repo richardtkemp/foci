@@ -7,7 +7,7 @@
 # Run this script first, then ./setup.sh --install will succeed.
 #
 # This script is distro-agnostic and idempotent (safe to re-run).
-# Detects package manager and installs: git, Go 1.23+, gcc, make, curl, jq, sqlite3
+# Detects package manager and installs: git, Go 1.23+, gcc, make, curl, jq, sqlite3, cron
 #
 # Usage:
 #   ./prerequisites.sh                # Show what would be installed (dry-run)
@@ -60,6 +60,7 @@ DEPENDENCIES INSTALLED:
     - curl (HTTP client)
     - jq (JSON processor)
     - sqlite3 (database)
+    - cron (provides the crontab group the foci service needs; cronie on RHEL/Arch/SUSE/Alpine)
 
 SUPPORTED SYSTEMS:
     - Ubuntu/Debian (apt)
@@ -163,6 +164,7 @@ case "$PKG_MANAGER" in
             [curl]="curl"
             [jq]="jq"
             [sqlite]="sqlite3"
+            [cron]="cron"
         )
         ;;
     dnf|yum)
@@ -173,6 +175,7 @@ case "$PKG_MANAGER" in
             [curl]="curl"
             [jq]="jq"
             [sqlite]="sqlite"
+            [cron]="cronie"
         )
         ;;
     pacman)
@@ -183,6 +186,7 @@ case "$PKG_MANAGER" in
             [curl]="curl"
             [jq]="jq"
             [sqlite]="sqlite"
+            [cron]="cronie"
         )
         ;;
     apk)
@@ -193,6 +197,7 @@ case "$PKG_MANAGER" in
             [curl]="curl"
             [jq]="jq"
             [sqlite]="sqlite"
+            [cron]="cronie"
         )
         ;;
     zypper)
@@ -203,6 +208,7 @@ case "$PKG_MANAGER" in
             [curl]="curl"
             [jq]="jq"
             [sqlite]="sqlite3"
+            [cron]="cronie"
         )
         ;;
     brew)
@@ -213,6 +219,7 @@ case "$PKG_MANAGER" in
             [curl]=""  # macOS has curl by default
             [jq]="jq"
             [sqlite]="sqlite3"
+            [cron]=""  # macOS uses launchd; cron is built in
         )
         ;;
 esac
@@ -220,7 +227,7 @@ esac
 # Install system packages
 info "Installing system packages..."
 
-for pkg_type in git gcc make curl jq sqlite; do
+for pkg_type in git gcc make curl jq sqlite cron; do
     pkg_name="${PACKAGES[$pkg_type]}"
 
     if [[ -z "$pkg_name" ]]; then

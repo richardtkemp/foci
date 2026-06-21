@@ -216,7 +216,7 @@ sudo chmod 660 /home/foci/config/secrets.toml
 Ensure Go 1.24+: `go version`. Setup downloads Go automatically if needed. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
 
 ### "unknown command: setup"
-Make sure you're running the updated `foci` binary from `/usr/local/bin/foci`. Re-run `setup.sh` to rebuild.
+Older `setup.sh` versions emitted a `foci setup` call in the generated root-install script, but the wizard command is `foci first-run`. The bad call aborted the install before the systemd service was created. Pull the latest repo and re-run `./setup.sh --install`.
 
 ## Next Steps
 

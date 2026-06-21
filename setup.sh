@@ -435,6 +435,25 @@ if $NEED_GROUPADD; then
     emit "groupadd \"$SECRETS_GROUP\""
 fi
 
+# --- Ensure crontab group exists ---
+# foci.service lists `crontab` in SupplementaryGroups so foci-gw and its CC
+# children can manage their own user crontab. If the group is missing (minimal
+# host with no cron package), systemd fails the unit with status=216/GROUP.
+# Install cron via the available package manager; fall back to a bare group.
+emit_comment "Ensure crontab group exists (foci.service grants it; missing group => status=216/GROUP)"
+cat >> "$INSTALL_SCRIPT" << 'EMIT_CRON'
+if ! getent group crontab >/dev/null 2>&1; then
+    if   command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y cron || true
+    elif command -v dnf     >/dev/null 2>&1; then dnf install -y cronie || true
+    elif command -v yum     >/dev/null 2>&1; then yum install -y cronie || true
+    elif command -v pacman  >/dev/null 2>&1; then pacman -S --noconfirm cronie || true
+    elif command -v zypper  >/dev/null 2>&1; then zypper install -y cronie || true
+    elif command -v apk     >/dev/null 2>&1; then apk add cronie || true
+    fi
+    getent group crontab >/dev/null 2>&1 || groupadd crontab
+fi
+EMIT_CRON
+
 # --- Group membership ---
 # Do NOT add $FOCI_USER to $SECRETS_GROUP in /etc/group — that grant is
 # re-acquirable via sg/newgrp (P0-1). The foci-gw process gets the group
@@ -472,7 +491,7 @@ fi
 # --- Config wizard (only if no config and not self-mode) ---
 if ! $HAS_CONFIG && ! $IS_SELF; then
     emit_comment "Run config wizard (runuser instead of sudo — always available, no PAM/sudoers needed)"
-    emit "runuser -u \"$FOCI_USER\" -- \"$INSTALL_DIR/foci\" setup $SETUP_WIZARD_ARGS"
+    emit "runuser -u \"$FOCI_USER\" -- \"$INSTALL_DIR/foci\" first-run $SETUP_WIZARD_ARGS"
     # Wizard may create secrets.toml — harden it if so
     emit "[ -f \"$SECRETS_FILE\" ] && chown \"root:$SECRETS_GROUP\" \"$SECRETS_FILE\" && chmod 0660 \"$SECRETS_FILE\""
 fi
