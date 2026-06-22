@@ -25,7 +25,15 @@ func IsRoutableCommand(text string, r *command.Registry) bool {
 		return false
 	}
 	if text[0] == '/' {
-		return true
+		// A leading-slash token containing a further slash is a filesystem path
+		// (e.g. "/home/foci/x:12 - error"), not a command — no command name
+		// contains "/". Don't divert it to the command worker; return false so
+		// it falls through to the agent as normal text. Mirrors the same guard
+		// in DispatchText (#770) so the routing gate and the dispatcher agree —
+		// otherwise a path passes this gate, gets declined by DispatchText as
+		// NotHandled, and is silently dropped instead of reaching the agent.
+		name, _, _ := strings.Cut(text[1:], " ")
+		return !strings.Contains(name, "/")
 	}
 	if text[0] == '.' && r != nil {
 		return r.IsKnownCommand(text)

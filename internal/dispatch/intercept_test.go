@@ -51,6 +51,43 @@ func newTestInterceptor(reg *command.Registry) *Interceptor {
 	}
 }
 
+// TestIsRoutableCommand verifies the routing gate: real slash commands route,
+// but leading-slash filesystem paths (which contain a further "/") do NOT —
+// they must fall through to the agent as normal text. This mirrors the #770
+// guard in DispatchText; without it a path passes the gate, gets declined by
+// the dispatcher as NotHandled, and is silently dropped (the scout bug where
+// "/home/rich/.../chroma.py:75 - error: why?" got no response).
+func TestIsRoutableCommand(t *testing.T) {
+	t.Parallel()
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{
+		Name:    "status",
+		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) { return command.Response{}, nil },
+	})
+	tests := []struct {
+		text string
+		want bool
+	}{
+		{"/status", true},                                  // real command
+		{"/status arg", true},                              // command with args
+		{"/", true},                                        // bare slash → empty name, routes
+		{"/home/rich/git/embed/chroma.py:75 - why?", false}, // the scout bug: path, not command
+		{"/etc/hosts", false},                              // path
+		{"/usr/local/bin/foci is broken", false},           // path with trailing words
+		{".status", true},                                  // known dot command
+		{".sigh", false},                                   // unknown dot → falls through as text
+		{"hello world", false},                             // plain text
+		{"", false},                                        // empty
+	}
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			if got := IsRoutableCommand(tt.text, reg); got != tt.want {
+				t.Errorf("IsRoutableCommand(%q) = %v, want %v", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestTryInterceptWizardActive verifies that when a wizard is active on the
 // registry, all text messages are routed to the wizard and the result is
 // returned as a consumed WizardReply.
