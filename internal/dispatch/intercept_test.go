@@ -88,6 +88,33 @@ func TestIsRoutableCommand(t *testing.T) {
 	}
 }
 
+// TestIsSlashPath verifies the shared path-vs-command predicate used by both
+// IsRoutableCommand and DispatchText (#770).
+func TestIsSlashPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		text string
+		want bool
+	}{
+		{"/status", false},                                 // command, no embedded slash
+		{"/status arg", false},                             // command with args
+		{"/", false},                                       // bare slash → empty name
+		{"/home/rich/git/embed/chroma.py:75 - why?", true}, // the scout bug
+		{"/etc/hosts", true},                               // path
+		{"/usr/local/bin/foci is broken", true},            // path with trailing words
+		{"  /etc/hosts", true},                             // leading whitespace trimmed
+		{"hello world", false},                             // not slash-prefixed
+		{"", false},                                        // empty
+	}
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			if got := isSlashPath(tt.text); got != tt.want {
+				t.Errorf("isSlashPath(%q) = %v, want %v", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestTryInterceptWizardActive verifies that when a wizard is active on the
 // registry, all text messages are routed to the wizard and the result is
 // returned as a consumed WizardReply.

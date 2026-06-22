@@ -25,20 +25,34 @@ func IsRoutableCommand(text string, r *command.Registry) bool {
 		return false
 	}
 	if text[0] == '/' {
-		// A leading-slash token containing a further slash is a filesystem path
-		// (e.g. "/home/foci/x:12 - error"), not a command — no command name
-		// contains "/". Don't divert it to the command worker; return false so
-		// it falls through to the agent as normal text. Mirrors the same guard
-		// in DispatchText (#770) so the routing gate and the dispatcher agree —
-		// otherwise a path passes this gate, gets declined by DispatchText as
-		// NotHandled, and is silently dropped instead of reaching the agent.
-		name, _, _ := strings.Cut(text[1:], " ")
-		return !strings.Contains(name, "/")
+		// A leading-slash filesystem path is not a command — don't divert it to
+		// the command worker; let it fall through to the agent as normal text.
+		// Shares isSlashPath with DispatchText so the routing gate and the
+		// dispatcher can't drift apart (#770): if only one applied the guard, a
+		// path would pass this gate, get declined by DispatchText as NotHandled,
+		// and be silently dropped instead of reaching the agent.
+		return !isSlashPath(text)
 	}
 	if text[0] == '.' && r != nil {
 		return r.IsKnownCommand(text)
 	}
 	return false
+}
+
+// isSlashPath reports whether text is a leading-slash filesystem path rather
+// than a slash command. A real command is a single token with no embedded
+// slash ("/status"); a path has a further slash in its first token
+// ("/home/foci/x:12 - error", "/etc/hosts"). Both the routing gate
+// (IsRoutableCommand) and the dispatcher (DispatchText) call this so they
+// agree — a path must reach the agent as normal text, never be swallowed as an
+// unknown command or dropped in the gap between the two predicates (#770).
+func isSlashPath(text string) bool {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") {
+		return false
+	}
+	name, _, _ := strings.Cut(text[1:], " ")
+	return strings.Contains(name, "/")
 }
 
 // Interceptor implements the shared message interception pipeline used by
