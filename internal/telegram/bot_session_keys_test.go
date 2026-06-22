@@ -99,7 +99,10 @@ func TestDefaultChatAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	// Two allowed users so #853's sole-user default-chat seeding does NOT fire
+	// (this test exercises first-message default assignment, not seeding — the
+	// seeding path has its own test in bot_seed_default_chat_test.go).
+	b, _ := testBot([]string{"111", "222"}, command.NewRegistry())
 	b.agentID = "test-agent"
 	b.chatmeta.AgentID = "test-agent"
 	b.SetSessionIndex(idx)
@@ -138,7 +141,9 @@ func TestDefaultSessionKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	// Two allowed users so #853's sole-user default-chat seeding does NOT fire
+	// (see bot_seed_default_chat_test.go for the seeding path's own coverage).
+	b, _ := testBot([]string{"111", "222"}, command.NewRegistry())
 	b.agentID = "test-agent"
 	b.chatmeta.AgentID = "test-agent"
 	b.SetSessionIndex(idx)
