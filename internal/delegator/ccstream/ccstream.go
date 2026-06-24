@@ -19,6 +19,7 @@ import (
 
 func init() {
 	delegator.Register("claude-code", newFromConfig, true)
+	delegator.RegisterPlan("claude-code", planDelivery)
 }
 
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {

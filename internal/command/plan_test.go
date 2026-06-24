@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,42 +11,62 @@ import (
 	"foci/internal/tools"
 )
 
+// okDelivery is a no-op PlanDelivery that records what the command passed it.
+func okDelivery(rec *deliveryRecord) delegator.PlanDelivery {
+	return func(_ context.Context, deps delegator.PlanDeps, args string) (string, error) {
+		rec.called = true
+		rec.args = args
+		rec.sessionKey = deps.SessionKey
+		rec.hasNotifier = deps.Notifier != nil
+		rec.hasBackendThunk = deps.Backend != nil
+		return "delivered: " + args, nil
+	}
+}
+
+type deliveryRecord struct {
+	called          bool
+	args            string
+	sessionKey      string
+	hasNotifier     bool
+	hasBackendThunk bool
+}
+
 // TestPlanCommandMetadata verifies PlanCommand returns a command with the
-// expected name, description, and category regardless of mode.
+// expected name, description, and category.
 func TestPlanCommandMetadata(t *testing.T) {
-	for _, mode := range []PlanMode{PlanNativeSlash, PlanEnterTool} {
-		cmd := PlanCommand(mode)
-		if cmd.Name != "plan" {
-			t.Errorf("mode %d: Name = %q, want %q", mode, cmd.Name, "plan")
-		}
-		if cmd.Description == "" {
-			t.Errorf("mode %d: Description should not be empty", mode)
-		}
-		if cmd.Category != "operations" {
-			t.Errorf("mode %d: Category = %q, want %q", mode, cmd.Category, "operations")
-		}
+	cmd := PlanCommand(okDelivery(&deliveryRecord{}))
+	if cmd.Name != "plan" {
+		t.Errorf("Name = %q, want %q", cmd.Name, "plan")
+	}
+	if cmd.Description == "" {
+		t.Error("Description should not be empty")
+	}
+	if cmd.Category != "operations" {
+		t.Errorf("Category = %q, want %q", cmd.Category, "operations")
 	}
 }
 
 // TestPlanExecuteNoDelegatedManager verifies /plan errors for API-mode agents
-// (no delegated backend), in either mode.
+// (no delegated backend), before the delivery is ever consulted.
 func TestPlanExecuteNoDelegatedManager(t *testing.T) {
-	for _, mode := range []PlanMode{PlanNativeSlash, PlanEnterTool} {
-		cmd := PlanCommand(mode)
-		cc := CommandContext{Agent: &agent.Agent{}}
-		_, err := cmd.Execute(context.Background(), Request{Args: "do a thing"}, cc)
-		if err == nil {
-			t.Fatalf("mode %d: expected error for nil DelegatedManager", mode)
-		}
-		if !strings.Contains(err.Error(), "delegated") {
-			t.Errorf("mode %d: error = %q, want mention of 'delegated'", mode, err)
-		}
+	rec := &deliveryRecord{}
+	cmd := PlanCommand(okDelivery(rec))
+	cc := CommandContext{Agent: &agent.Agent{}}
+	_, err := cmd.Execute(context.Background(), Request{Args: "do a thing"}, cc)
+	if err == nil {
+		t.Fatal("expected error for nil DelegatedManager")
+	}
+	if !strings.Contains(err.Error(), "delegated") {
+		t.Errorf("error = %q, want mention of 'delegated'", err)
+	}
+	if rec.called {
+		t.Error("delivery should not be called when DelegatedManager is nil")
 	}
 }
 
 // TestPlanExecuteNoArgs verifies /plan with empty args returns a usage error.
 func TestPlanExecuteNoArgs(t *testing.T) {
-	cmd := PlanCommand(PlanEnterTool)
+	cmd := PlanCommand(okDelivery(&deliveryRecord{}))
 	cc := CommandContext{Agent: &agent.Agent{DelegatedManager: &agent.DelegatedManager{}}}
 	_, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
 	if err == nil {
@@ -56,81 +77,86 @@ func TestPlanExecuteNoArgs(t *testing.T) {
 	}
 }
 
-// TestPlanExecuteNativeSlash_ForwardsVerbatim verifies the cctmux path forwards
-// "/plan <args>" verbatim to the backend as a SourcePass slash command.
-func TestPlanExecuteNativeSlash_ForwardsVerbatim(t *testing.T) {
-	cmd := PlanCommand(PlanNativeSlash)
-
-	mb := &mockPassBackendNoCapturer{}
-	dm := &agent.DelegatedManager{
-		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
+// TestPlanExecuteNoSession verifies /plan errors when no session key can be
+// resolved from context or request.
+func TestPlanExecuteNoSession(t *testing.T) {
+	cmd := PlanCommand(okDelivery(&deliveryRecord{}))
+	cc := CommandContext{Agent: &agent.Agent{DelegatedManager: &agent.DelegatedManager{}}}
+	_, err := cmd.Execute(context.Background(), Request{Args: "x"}, cc)
+	if err == nil {
+		t.Fatal("expected error when no session key is present")
 	}
-	cc := CommandContext{Agent: &agent.Agent{DelegatedManager: dm}}
-
-	ctx := tools.WithSessionKey(context.Background(), "agent:test:main")
-	if _, err := dm.Get(ctx, "agent:test:main"); err != nil { // pre-seed backend
-		t.Fatalf("seeding backend: %v", err)
-	}
-
-	resp, err := cmd.Execute(ctx, Request{Args: "add caching to the API"}, cc)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if mb.sentCommand != "/plan add caching to the API" {
-		t.Errorf("sentCommand = %q, want %q", mb.sentCommand, "/plan add caching to the API")
-	}
-	if !strings.Contains(resp.Text, "Sent to CC") {
-		t.Errorf("response = %q, want 'Sent to CC' confirmation", resp.Text)
+	if !strings.Contains(err.Error(), "session") {
+		t.Errorf("error = %q, want mention of 'session'", err)
 	}
 }
 
-// TestPlanExecuteEnterTool_InjectsEnterPlanModePrompt verifies the ccstream path
-// injects a fresh turn whose prompt instructs CC to invoke EnterPlanMode for the
-// user's request, via AsyncNotifier.
-func TestPlanExecuteEnterTool_InjectsEnterPlanModePrompt(t *testing.T) {
-	cmd := PlanCommand(PlanEnterTool)
+// TestPlanExecuteInvokesDelivery verifies the command resolves the session,
+// wires deps, and forwards args to the injected delivery, returning its text.
+func TestPlanExecuteInvokesDelivery(t *testing.T) {
+	rec := &deliveryRecord{}
+	cmd := PlanCommand(okDelivery(rec))
 
-	var gotSession, gotMessage, gotTrigger string
-	notifier := tools.NewAsyncNotifier(func(targetSession, message, _ /*replyTo*/, trigger string) {
-		gotSession, gotMessage, gotTrigger = targetSession, message, trigger
-	})
+	notifier := tools.NewAsyncNotifier(func(string, string, string, string) {})
 	cc := CommandContext{Agent: &agent.Agent{
 		DelegatedManager: &agent.DelegatedManager{},
 		AsyncNotifier:    notifier,
 	}}
-
 	ctx := tools.WithSessionKey(context.Background(), "agent:test:main")
+
 	resp, err := cmd.Execute(ctx, Request{Args: "design the cache layer"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	wantMsg := "please invoke EnterPlanMode tool for:\ndesign the cache layer"
-	if gotMessage != wantMsg {
-		t.Errorf("injected message = %q, want %q", gotMessage, wantMsg)
+	if !rec.called {
+		t.Fatal("delivery was not called")
 	}
-	if gotSession != "agent:test:main" {
-		t.Errorf("injected session = %q, want %q", gotSession, "agent:test:main")
+	if rec.args != "design the cache layer" {
+		t.Errorf("delivery args = %q, want %q", rec.args, "design the cache layer")
 	}
-	if gotTrigger != "plan-command" {
-		t.Errorf("trigger = %q, want %q", gotTrigger, "plan-command")
+	if rec.sessionKey != "agent:test:main" {
+		t.Errorf("deps.SessionKey = %q, want %q", rec.sessionKey, "agent:test:main")
 	}
-	if resp.Text == "" {
-		t.Error("expected a confirmation response")
+	if !rec.hasNotifier {
+		t.Error("deps.Notifier should be set when the agent has an AsyncNotifier")
+	}
+	if !rec.hasBackendThunk {
+		t.Error("deps.Backend thunk should always be set")
+	}
+	if resp.Text != "delivered: design the cache layer" {
+		t.Errorf("response = %q, want delivery's text", resp.Text)
 	}
 }
 
-// TestPlanExecuteEnterTool_NoNotifier verifies the ccstream path errors cleanly
-// when async injection isn't configured (rather than silently no-op'ing).
-func TestPlanExecuteEnterTool_NoNotifier(t *testing.T) {
-	cmd := PlanCommand(PlanEnterTool)
+// TestPlanExecuteNoNotifierLeavesDepsNil verifies that an agent without an
+// AsyncNotifier yields a nil deps.Notifier (not a non-nil interface wrapping a
+// nil pointer), so a delivery's nil-guard works.
+func TestPlanExecuteNoNotifierLeavesDepsNil(t *testing.T) {
+	rec := &deliveryRecord{}
+	cmd := PlanCommand(okDelivery(rec))
 	cc := CommandContext{Agent: &agent.Agent{DelegatedManager: &agent.DelegatedManager{}}}
-
 	ctx := tools.WithSessionKey(context.Background(), "agent:test:main")
-	_, err := cmd.Execute(ctx, Request{Args: "x"}, cc)
-	if err == nil {
-		t.Fatal("expected error when AsyncNotifier is nil")
+
+	if _, err := cmd.Execute(ctx, Request{Args: "x"}, cc); err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(err.Error(), "async injection") {
-		t.Errorf("error = %q, want mention of 'async injection'", err)
+	if rec.hasNotifier {
+		t.Error("deps.Notifier should be nil when the agent has no AsyncNotifier")
+	}
+}
+
+// TestPlanExecutePropagatesDeliveryError verifies a delivery error surfaces from
+// Execute unchanged.
+func TestPlanExecutePropagatesDeliveryError(t *testing.T) {
+	delivery := func(context.Context, delegator.PlanDeps, string) (string, error) {
+		return "", fmt.Errorf("boom")
+	}
+	cmd := PlanCommand(delivery)
+	cc := CommandContext{Agent: &agent.Agent{DelegatedManager: &agent.DelegatedManager{}}}
+	ctx := tools.WithSessionKey(context.Background(), "agent:test:main")
+
+	_, err := cmd.Execute(ctx, Request{Args: "x"}, cc)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("error = %v, want delivery error to propagate", err)
 	}
 }

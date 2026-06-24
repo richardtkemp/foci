@@ -8,36 +8,16 @@ import (
 	"foci/internal/tools"
 )
 
-// PlanMode selects how PlanCommand delivers the request to the coding-agent
-// backend. It is chosen at registration time (cmd/foci-gw/commands.go) from
-// the agent's configured backend, so the command never has to detect the
-// backend kind at runtime.
-type PlanMode int
-
-const (
-	// PlanNativeSlash forwards "/plan <args>" verbatim to a TUI backend
-	// (cctmux / claude-code-tmux), whose CC instance handles the native
-	// /plan slash command itself.
-	PlanNativeSlash PlanMode = iota
-
-	// PlanEnterTool sends a natural-language prompt asking CC to invoke the
-	// EnterPlanMode tool. Used for the ccstream (claude-code) headless
-	// backend, where the native /plan slash command "opens an interactive
-	// panel and isn't available in this environment".
-	PlanEnterTool
-)
-
-// PlanCommand creates a /plan command that puts Claude Code into plan mode for
-// the user's request. It is only registered for delegated (CC) backends; API
-// agents never see it.
+// PlanCommand creates a /plan command that puts the coding-agent backend into
+// plan mode for the user's request. It is only registered for delegated (CC)
+// backends that supplied a plan delivery via delegator.RegisterPlan; API agents
+// and plan-less backends never see it (cmd/foci-gw/commands.go).
 //
-// Delivery depends on mode (fixed per backend at registration):
-//   - PlanNativeSlash (cctmux): forwards "/plan <args>" verbatim — exactly what
-//     the user typed, unmanipulated — as a fire-and-forget slash command.
-//   - PlanEnterTool (ccstream): injects a fresh turn carrying a natural-language
-//     prompt that instructs CC to invoke EnterPlanMode for <args>, since the
-//     native /plan slash command is unavailable in the headless stream.
-func PlanCommand(mode PlanMode) *Command {
+// The command owns the generic concerns — delegated-only, non-empty args, a
+// resolved session, and deps wiring — and delegates the backend-specific
+// mechanism to the injected delivery: a verbatim "/plan" slash command (cctmux)
+// or an EnterPlanMode turn (ccstream). The behaviour lives with each backend.
+func PlanCommand(delivery delegator.PlanDelivery) *Command {
 	return &Command{
 		Name:        "plan",
 		Description: "Start Claude Code plan mode for the given request",
@@ -58,37 +38,24 @@ func PlanCommand(mode PlanMode) *Command {
 				return Response{}, fmt.Errorf("no active session")
 			}
 
-			switch mode {
-			case PlanNativeSlash:
-				be, err := cc.Agent.DelegatedManager.Get(ctx, sk)
-				if err != nil {
-					return Response{}, fmt.Errorf("get backend: %w", err)
-				}
-				// Forward verbatim — exactly what the user sent, no manipulation.
-				cmd := "/plan " + req.Args
-				if err := be.Inject(ctx, delegator.Inject{
-					Source: delegator.SourcePass,
-					Text:   cmd,
-				}); err != nil {
-					return Response{}, fmt.Errorf("send command: %w", err)
-				}
-				return Response{Text: fmt.Sprintf("↗ Sent to CC: `%s`", cmd)}, nil
-
-			case PlanEnterTool:
-				// The native /plan slash command is unavailable headless, so drive
-				// a fresh turn that asks CC to invoke the EnterPlanMode tool. Use
-				// AsyncNotifier (the #845 proper-turn injection path) rather than a
-				// raw Inject so the turn gets full post-turn bookkeeping.
-				if cc.Agent.AsyncNotifier == nil {
-					return Response{}, fmt.Errorf("/plan unavailable: async injection not configured")
-				}
-				prompt := "please invoke EnterPlanMode tool for:\n" + req.Args
-				cc.Agent.AsyncNotifier.InjectToAgent(sk, prompt, "", "plan-command")
-				return Response{Text: "📋 Entering plan mode…"}, nil
-
-			default:
-				return Response{}, fmt.Errorf("/plan: unknown plan mode %d", mode)
+			deps := delegator.PlanDeps{
+				SessionKey: sk,
+				Backend: func() (delegator.Delegator, error) {
+					return cc.Agent.DelegatedManager.Get(ctx, sk)
+				},
 			}
+			// Typed-nil check: assign Notifier only when the concrete pointer is
+			// non-nil, so the delivery's interface-nil guard works (a nil
+			// *AsyncNotifier boxed in an interface is itself non-nil).
+			if cc.Agent.AsyncNotifier != nil {
+				deps.Notifier = cc.Agent.AsyncNotifier
+			}
+
+			text, err := delivery(ctx, deps, req.Args)
+			if err != nil {
+				return Response{}, err
+			}
+			return Response{Text: text}, nil
 		},
 	}
 }

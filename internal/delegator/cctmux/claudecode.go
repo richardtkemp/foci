@@ -14,6 +14,7 @@ import (
 
 func init() {
 	delegator.Register("claude-code-tmux", newFromConfig, false)
+	delegator.RegisterPlan("claude-code-tmux", planDelivery)
 }
 
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
