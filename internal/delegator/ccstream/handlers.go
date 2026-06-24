@@ -240,8 +240,9 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		}
 	}
 
-	// Prefer per-call usage from last assistant message; fall back to
-	// result usage (which is cumulative) if no assistant messages seen.
+	// Input/cache come from the last assistant message — the FINAL call's
+	// context fill, which compaction needs (not a sum of all calls). Fall back
+	// to the result's accumulated usage if no assistant messages were seen.
 	var turnUsage *delegator.TurnUsage
 	if lastUsage != nil {
 		turnUsage = &delegator.TurnUsage{
@@ -257,6 +258,25 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 			CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     msg.Usage.CacheReadInputTokens,
 		}
+	}
+
+	// OUTPUT tokens must NOT be trusted from lastUsage: the last assistant
+	// message's usage in the live stream is an early/partial snapshot (often
+	// output_tokens≈1) that is never refreshed to the final count before this
+	// result arrives, so lastUsage.OutputTokens massively undercounts a
+	// substantive reply — a ~2000-token answer logged as output=4 (#721),
+	// undercounting api.db delegated-turn cost. The result's per-model
+	// accounting (msg.ModelUsage[resultModel]) is CC's authoritative end-of-turn
+	// total for the primary model — subagent models are separate keys, so they
+	// stay excluded from the primary's cost. On a key miss, fall back to the
+	// result's accumulated total (msg.Usage, all models). Apply as a floor so
+	// it can only correct an undercount, never regress a good value.
+	authoritativeOutput := msg.Usage.OutputTokens
+	if mu, ok := msg.ModelUsage[resultModel]; ok {
+		authoritativeOutput = mu.OutputTokens
+	}
+	if authoritativeOutput > turnUsage.OutputTokens {
+		turnUsage.OutputTokens = authoritativeOutput
 	}
 
 	result := &delegator.TurnResult{

@@ -1426,6 +1426,91 @@ func TestOnResult_BasicTurnCompletion(t *testing.T) {
 	}
 }
 
+func TestOnResult_OutputTokensFromModelUsage(t *testing.T) {
+	// Regression for #721: lastUsage carries an early/partial output_tokens
+	// snapshot from the live stream (e.g. ≈1) that never refreshes to the
+	// final count. OnResult must correct OUTPUT from the authoritative
+	// per-model result accounting (ModelUsage[resultModel]), while keeping
+	// input/cache from lastUsage (the final call's context fill).
+	t.Parallel()
+
+	var completedResult *delegator.TurnResult
+	b := &Backend{}
+	handler := &testHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
+	}
+	applyHandler(b, handler)
+
+	b.mu.Lock()
+	b.lastModel = "claude-opus-4-20250514"
+	b.lastUsage = &TokenUsage{
+		InputTokens:          131,
+		OutputTokens:         4, // partial snapshot — the bug value
+		CacheReadInputTokens: 90000,
+	}
+	b.mu.Unlock()
+
+	result := &ResultMessage{
+		Subtype: "success",
+		Result:  "a long substantive reply",
+		Usage:   TokenUsage{OutputTokens: 99}, // all-model fallback (unused: key matches)
+		ModelUsage: map[string]ModelUsage{
+			"claude-opus-4-20250514":  {OutputTokens: 2187, ContextWindow: 200000},
+			"claude-haiku-4-20250514": {OutputTokens: 50}, // subagent — must be excluded
+		},
+	}
+	b.OnResult(result)
+
+	if completedResult == nil || completedResult.Usage == nil {
+		t.Fatal("no result usage")
+	}
+	// Output corrected to the primary model's authoritative total.
+	if completedResult.Usage.OutputTokens != 2187 {
+		t.Errorf("OutputTokens = %d, want 2187 (from ModelUsage[primary])", completedResult.Usage.OutputTokens)
+	}
+	// Input/cache untouched — still the final call's context fill.
+	if completedResult.Usage.InputTokens != 131 {
+		t.Errorf("InputTokens = %d, want 131 (preserved from lastUsage)", completedResult.Usage.InputTokens)
+	}
+	if completedResult.Usage.CacheReadInputTokens != 90000 {
+		t.Errorf("CacheReadInputTokens = %d, want 90000 (preserved from lastUsage)", completedResult.Usage.CacheReadInputTokens)
+	}
+}
+
+func TestOnResult_OutputFloorFromResultUsageOnKeyMiss(t *testing.T) {
+	// When resultModel has no ModelUsage entry, fall back to the result's
+	// accumulated all-model total (msg.Usage) as a floor — still far better
+	// than the partial lastUsage snapshot.
+	t.Parallel()
+
+	var completedResult *delegator.TurnResult
+	b := &Backend{}
+	handler := &testHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
+	}
+	applyHandler(b, handler)
+
+	b.mu.Lock()
+	b.lastModel = "claude-opus-4-20250514"
+	b.lastUsage = &TokenUsage{InputTokens: 131, OutputTokens: 4}
+	b.mu.Unlock()
+
+	result := &ResultMessage{
+		Subtype:    "success",
+		Result:     "reply",
+		Usage:      TokenUsage{OutputTokens: 1500},
+		ModelUsage: map[string]ModelUsage{"some-other-model": {OutputTokens: 10}},
+	}
+	b.OnResult(result)
+
+	if completedResult == nil || completedResult.Usage == nil {
+		t.Fatal("no result usage")
+	}
+	if completedResult.Usage.OutputTokens != 1500 {
+		t.Errorf("OutputTokens = %d, want 1500 (msg.Usage floor on key miss)", completedResult.Usage.OutputTokens)
+	}
+}
+
 func TestOnResult_UsesResultTextWhenPresent(t *testing.T) {
 	// Verifies OnResult prefers the result message's Result field over
 	// accumulated turnText when both are available.
