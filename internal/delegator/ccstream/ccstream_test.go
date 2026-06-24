@@ -91,13 +91,13 @@ func TestCallbackSetters(t *testing.T) {
 
 	// SetPermissionPromptFunc
 	var permCalled bool
-	b.SetPermissionPromptFunc(func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.SetPermissionPromptFunc(func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		permCalled = true
 	})
 	if b.permPromptFn == nil {
 		t.Error("permPromptFn is nil after SetPermissionPromptFunc")
 	}
-	b.permPromptFn("", "", "", nil)
+	b.permPromptFn("", "", "", "", nil)
 	if !permCalled {
 		t.Error("permPromptFn was not called")
 	}

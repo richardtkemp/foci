@@ -42,7 +42,7 @@ func TestElicitationURLMode(t *testing.T) {
 	var mu sync.Mutex
 	var prompts []recordedPrompt
 	b := newTestBackend(&buf)
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		mu.Lock()
 		defer mu.Unlock()
 		prompts = append(prompts, recordedPrompt{reqID, text, summary, choices})
@@ -104,7 +104,7 @@ func TestElicitationFormSingleField(t *testing.T) {
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
 	var prompts []recordedPrompt
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		prompts = append(prompts, recordedPrompt{reqID, text, summary, choices})
 	}
 
@@ -156,7 +156,7 @@ func TestElicitationFormMultiField(t *testing.T) {
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
 	var prompts []recordedPrompt
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		prompts = append(prompts, recordedPrompt{reqID, text, summary, choices})
 	}
 
@@ -214,7 +214,7 @@ func TestElicitationFormEnum(t *testing.T) {
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
 	var prompts []recordedPrompt
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		prompts = append(prompts, recordedPrompt{reqID, text, summary, choices})
 	}
 
@@ -264,7 +264,7 @@ func TestElicitationFormBoolean(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	schema := json.RawMessage(`{
 		"type":"object",
@@ -294,7 +294,7 @@ func TestElicitationDecline(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	schema := json.RawMessage(`{
 		"type":"object",
@@ -328,7 +328,7 @@ func TestElicitationCancel(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	b.OnElicitationRequest(&ElicitationRequest{
 		RequestID: "elic-can",
@@ -352,7 +352,7 @@ func TestElicitationURLCompletionNotification(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	b.OnElicitationRequest(&ElicitationRequest{
 		RequestID: "elic-auto",
@@ -389,7 +389,7 @@ func TestElicitationURLCompletionIgnoredForUnknownID(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	b.OnElicitationRequest(&ElicitationRequest{
 		RequestID: "elic-keep",
@@ -426,7 +426,7 @@ func TestElicitationUnparsableSchema(t *testing.T) {
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
 	var prompts []recordedPrompt
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		prompts = append(prompts, recordedPrompt{reqID, text, summary, choices})
 	}
 
@@ -468,7 +468,7 @@ func TestElicitationFreeTextCoercionError(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	schema := json.RawMessage(`{
 		"type":"object",
@@ -550,7 +550,7 @@ func TestElicitationOnPromptsClearedFiresOnce(t *testing.T) {
 	var cleared int
 	b := newTestBackend(&buf)
 	b.SetOnPromptsCleared(func() { cleared++ })
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	// Two URL-mode elicitations outstanding.
 	b.OnElicitationRequest(&ElicitationRequest{

@@ -3,6 +3,8 @@ package ccstream
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -260,7 +262,7 @@ func TestHandlePermissionRequest_AutoApprove(t *testing.T) {
 		pendingPerms:     make(map[string]*pendingPermission),
 		outstanding:      NewOutstandingRegistry(),
 		autoApproveRules: parseAutoApproveRules([]string{"Read"}),
-		permPromptFn: func(reqID, text, summary string, choices []delegator.PromptChoice) {
+		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			promptCalled = true
 		},
 	}
@@ -303,7 +305,7 @@ func TestHandlePermissionRequest_NoMatch_ForwardsToPrompt(t *testing.T) {
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
 		outstanding:  NewOutstandingRegistry(),
-		permPromptFn: func(reqID, text, summary string, choices []delegator.PromptChoice) {
+		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			gotReqID = reqID
 			gotText = text
 			gotSummary = summary
@@ -1003,4 +1005,135 @@ func parseControlResponse(t *testing.T, raw string) map[string]any {
 	}
 
 	return resp
+}
+
+// TestPlanAttachmentPath covers the ExitPlanMode plan-file resolver: it returns
+// the on-disk path CC wrote (input.planFilePath) when readable, and "" in every
+// degraded case so the caller falls back to the generic prompt rendering.
+func TestPlanAttachmentPath(t *testing.T) {
+	dir := t.TempDir()
+	planFile := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan\n\nstep one"), 0o600); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"existing file", `{"plan":"# Plan","planFilePath":"` + planFile + `"}`, planFile},
+		{"missing file", `{"plan":"# Plan","planFilePath":"` + filepath.Join(dir, "nope.md") + `"}`, ""},
+		{"no planFilePath", `{"plan":"# Plan"}`, ""},
+		{"empty planFilePath", `{"plan":"# Plan","planFilePath":""}`, ""},
+		{"path is a directory", `{"planFilePath":"` + dir + `"}`, ""},
+		{"malformed json", `not json`, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := planAttachmentPath(json.RawMessage(tc.input)); got != tc.want {
+				t.Errorf("planAttachmentPath() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHandlePermissionRequest_ExitPlanMode_AttachesPlanFile proves that an
+// ExitPlanMode request is forwarded to permPromptFn with the plan file as an
+// attachment and a clean caption (not the truncated-JSON generic rendering),
+// while keeping the standard Allow/Deny choices.
+func TestHandlePermissionRequest_ExitPlanMode_AttachesPlanFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	planFile := filepath.Join(dir, "plan-trivial.md")
+	if err := os.WriteFile(planFile, []byte("# Plan\n\ndo the thing"), 0o600); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	var buf bytes.Buffer
+	var gotText, gotSummary, gotAttachment string
+	var gotChoices []delegator.PromptChoice
+	b := &Backend{
+		writer:       NewWriter(nopWriteCloser{&buf}),
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
+		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+			gotText = text
+			gotSummary = summary
+			gotAttachment = attachmentPath
+			gotChoices = choices
+		},
+	}
+
+	input := json.RawMessage(`{"plan":"# Plan\n\ndo the thing","planFilePath":"` + planFile + `"}`)
+	msg := &PermissionRequest{
+		RequestID: "req-plan",
+		Request: PermissionRequestPayload{
+			ToolName:  "ExitPlanMode",
+			ToolUseID: "toolu_PLAN",
+			Input:     input,
+		},
+	}
+
+	b.handleToolRequest(msg)
+
+	if gotAttachment != planFile {
+		t.Errorf("attachmentPath = %q, want %q", gotAttachment, planFile)
+	}
+	if !strings.Contains(gotText, "Plan ready") {
+		t.Errorf("text = %q, want a clean caption containing %q (not truncated JSON)", gotText, "Plan ready")
+	}
+	if strings.Contains(gotText, "planFilePath") {
+		t.Errorf("text leaked raw JSON input: %q", gotText)
+	}
+	if gotSummary != "Plan" {
+		t.Errorf("summary = %q, want %q", gotSummary, "Plan")
+	}
+	// Choices unchanged: plain binary Allow/Deny over the stdio protocol.
+	if len(gotChoices) != 2 || gotChoices[0].Data != "allow" || gotChoices[1].Data != "deny" {
+		t.Errorf("choices = %+v, want [Allow Deny]", gotChoices)
+	}
+	if b.PendingPermissions() != 1 {
+		t.Errorf("pending = %d, want 1", b.PendingPermissions())
+	}
+}
+
+// TestHandlePermissionRequest_ExitPlanMode_MissingFileFallsBack proves that when
+// the plan file is absent, no attachment is set and the prompt falls back to the
+// generic rendering (graceful degradation rather than an empty/broken prompt).
+func TestHandlePermissionRequest_ExitPlanMode_MissingFileFallsBack(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	var gotText, gotAttachment string
+	b := &Backend{
+		writer:       NewWriter(nopWriteCloser{&buf}),
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
+		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+			gotText = text
+			gotAttachment = attachmentPath
+		},
+	}
+
+	input := json.RawMessage(`{"plan":"# Plan","planFilePath":"/no/such/plan.md"}`)
+	msg := &PermissionRequest{
+		RequestID: "req-plan-missing",
+		Request: PermissionRequestPayload{
+			ToolName:  "ExitPlanMode",
+			ToolUseID: "toolu_PLAN2",
+			Input:     input,
+		},
+	}
+
+	b.handleToolRequest(msg)
+
+	if gotAttachment != "" {
+		t.Errorf("attachmentPath = %q, want empty (missing file)", gotAttachment)
+	}
+	// Falls back to generic DisplayText, which includes the tool name.
+	if !strings.Contains(gotText, "ExitPlanMode") {
+		t.Errorf("fallback text = %q, want generic rendering mentioning the tool", gotText)
+	}
 }

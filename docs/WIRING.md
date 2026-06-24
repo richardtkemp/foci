@@ -526,6 +526,8 @@ Callback data format: `im:<promptID>:<buttonIndex>`. Prompt IDs are atomic uint6
 
 Used by permission prompts (delegated backends), config selection menus, and other platform interactions that need structured user choices.
 
+**Permission-prompt attachments (`PermissionPromptFunc` `attachmentPath`):** the `delegator.PermissionPromptFunc` carries an optional `attachmentPath` — a file the platform closure (`agents_delegated.go`) sends via `conn.SendDocument` *before* drawing the keyboard. Populated only by ccstream's `handleToolRequest` for **ExitPlanMode**: the generic formatter would truncate `input.plan` to a 200-char JSON blob, so instead foci attaches the full plan markdown that CC already wrote to `input.planFilePath` (under `~/.claude/plans/`) and replaces the prompt body with a short caption. Allow/Deny choices are unchanged — over the `--permission-prompt-tool stdio` protocol ExitPlanMode is a plain binary gate (the auto-accept/manual/keep-planning menu is CC-TUI-only and not exposed as `permission_suggestions`). Falls back to the generic rendering when the file is absent (`planAttachmentPath` returns `""`).
+
 ### Ask Tool (`ask` / `foci_ask`) and shared `internal/question`
 
 `ask` is a foci-native, **backend-agnostic** equivalent of Claude Code's `AskUserQuestion`, with **no 4-item cap** and an **async** delivery model. It works for delegated (CC) and API agents alike.

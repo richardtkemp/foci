@@ -74,7 +74,7 @@ type DelegatedManager struct {
 	// at the same time it sends the interactive UI, so the UI is cleaned up
 	// if CC cancels the prompt before the user responds (e.g. follow-up
 	// message aborted the in-flight tool).
-	PermissionPromptFunc func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice)
+	PermissionPromptFunc func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice)
 
 	// TypingFunc controls the platform typing indicator for a session.
 	// Called with true when CC starts working, false on turn complete.
@@ -659,10 +659,10 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 		return mb.sessionKey
 	}
 	if m.PermissionPromptFunc != nil {
-		mb.be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {
+		mb.be.SetPermissionPromptFunc(func(requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			key := sk()
 			m.SetPermissionPending(key, true)
-			m.PermissionPromptFunc(key, requestID, text, summary, choices)
+			m.PermissionPromptFunc(key, requestID, text, summary, attachmentPath, choices)
 		})
 	}
 	mb.be.SetOnPromptsCleared(func() {

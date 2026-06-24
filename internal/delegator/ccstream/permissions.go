@@ -3,6 +3,7 @@ package ccstream
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -50,6 +51,25 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	text := msg.Request.DisplayText()
 	choices := msg.Request.Choices()
 
+	// ExitPlanMode: the plan markdown is large, and the generic formatter would
+	// truncate input.plan to a 200-char JSON blob. CC already writes the full
+	// plan to input.planFilePath (under ~/.claude/plans); attach that file and
+	// replace the prompt body with a short caption. If the file is missing or
+	// unreadable, attachmentPath stays "" and we fall back to the generic
+	// (truncated) rendering. The Allow/Deny choices are unchanged: over the
+	// stdio permission protocol ExitPlanMode is a plain binary gate — the
+	// auto-accept/manual/keep-planning menu is a CC-TUI-only feature and is not
+	// exposed here (verified empirically: the can_use_tool request carries no
+	// permission_suggestions/choices).
+	var attachmentPath string
+	if msg.Request.ToolName == "ExitPlanMode" {
+		if p := planAttachmentPath(msg.Request.Input); p != "" {
+			attachmentPath = p
+			text = "📋 **Plan ready** — see the attached file.\n\nApprove to exit plan mode and proceed?"
+			summary = "Plan"
+		}
+	}
+
 	pp := &pendingPermission{
 		requestID:   msg.RequestID,
 		toolName:    msg.Request.ToolName,
@@ -64,7 +84,7 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 
 	if b.permPromptFn != nil {
 		log.Debugf("ccstream/perm", "calling permPromptFn for req_id=%s", msg.RequestID)
-		b.permPromptFn(msg.RequestID, text, summary, choices)
+		b.permPromptFn(msg.RequestID, text, summary, attachmentPath, choices)
 	} else {
 		log.Warnf("ccstream/perm", "permPromptFn nil for req_id=%s, prompt stored but not displayed", msg.RequestID)
 	}
@@ -277,6 +297,26 @@ func formatToolInput(toolName string, input json.RawMessage) string {
 		s = s[:200] + "…"
 	}
 	return fencedBlock(s)
+}
+
+// planAttachmentPath returns a readable file path holding the full plan
+// markdown for an ExitPlanMode request, or "" if none is available. CC writes
+// the plan to input.planFilePath itself (under ~/.claude/plans), so we attach
+// that file directly — there is no temp file for foci to create or clean up.
+// Returns "" when the field is absent or the file is missing/unreadable, in
+// which case the caller falls back to the generic prompt rendering.
+func planAttachmentPath(input json.RawMessage) string {
+	var p struct {
+		PlanFilePath string `json:"planFilePath"`
+	}
+	if err := json.Unmarshal(input, &p); err != nil || p.PlanFilePath == "" {
+		return ""
+	}
+	st, err := os.Stat(p.PlanFilePath)
+	if err != nil || st.IsDir() {
+		return ""
+	}
+	return p.PlanFilePath
 }
 
 // fencedBlock wraps s in a triple-backtick markdown code fence. The fence
