@@ -122,6 +122,11 @@ func setupImpl() {
 	}
 	secretsGID, err := strconv.ParseUint(secretsGrp.Gid, 10, 32)
 	if err != nil {
+		log.Warnf("exec", "cannot parse %s group GID %q: %v", SecurityGroupName, secretsGrp.Gid, err)
+		// Can't compute the GID to filter out, so we can't verify we've
+		// dropped foci-secrets from children — fail closed rather than risk
+		// leaking the group. (Mirrors the Getgroups failure branch below.)
+		setupErr = fmt.Errorf("cannot parse %s group GID %q to verify drop: %w", SecurityGroupName, secretsGrp.Gid, err)
 		return
 	}
 
