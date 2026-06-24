@@ -133,6 +133,13 @@ type SteerEntry struct {
 // blocking the receive path.
 const inboxChanSize = 64
 
+// compactionHoldPoll is how often the session worker re-checks IsCompacting
+// while holding a dequeued envelope during a /compact turn (#856). Poll, not
+// event-wait: clearCompacting has no broadcast and the IsCompacting latch
+// self-heals, so a poll cannot miss-wake-wedge. Compaction is brief, so the
+// added dispatch latency is bounded by one interval.
+const compactionHoldPoll = 100 * time.Millisecond
+
 // sessionInbox is one session's intake — channel, steer buffer, in-flight
 // flag, worker goroutine lifecycle. Lazy-created in Agent.getOrCreateInbox
 // on first Enqueue for that session key.
@@ -309,7 +316,13 @@ func (a *Agent) Enqueue(env Envelope) {
 	inb := a.getOrCreateInbox(env.SessionKey)
 
 	isActive := inb.turnActive.Load()
-	steerEligible := a.inboxSteerMode && isActive && env.Text != "" && len(env.Attachments) == 0
+	// Compaction hold (#856): a /compact turn is rewriting CC's transcript.
+	// Steering or folding a message now makes CC absorb the raw text into the
+	// compaction turn (it arrives unframed — no [meta] header). Route to the
+	// channel instead; the worker dispatches it as a clean fresh turn once
+	// compaction completes.
+	compacting := a.IsCompacting(env.SessionKey)
+	steerEligible := a.inboxSteerMode && isActive && !compacting && env.Text != "" && len(env.Attachments) == 0
 
 	if steerEligible {
 		be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey)
@@ -482,6 +495,23 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 					return
 				case <-wait:
 					// State changed — re-check the predicate.
+				}
+			}
+			// Compaction hold (#856). While a /compact turn is in flight,
+			// dispatching a fresh turn writes CC's stdin mid-compaction and the
+			// text folds into the compaction transcript unframed. Hold until it
+			// clears, then dispatch as a clean turn — further arrivals accumulate
+			// in inb.ch and batch via drainAvailable once the gate opens (same as
+			// the #767 gate above). Poll rather than event-wait: clearCompacting
+			// has no broadcast and the IsCompacting latch self-heals (5-min
+			// expiry), so a poll cannot miss-wake-wedge. Compaction is rare and
+			// brief; in the common auto path the worker is already past compaction
+			// by the time it dequeues, so this never spins.
+			for a.IsCompacting(env.SessionKey) {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(compactionHoldPoll):
 				}
 			}
 			// turnActive flips true only after the transport has written

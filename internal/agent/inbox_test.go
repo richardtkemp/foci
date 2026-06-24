@@ -318,6 +318,88 @@ func TestInbox_Enqueue_SteerMode_Disabled_PushesToChannel(t *testing.T) {
 	}
 }
 
+// TestInbox_Enqueue_Compacting_DoesNotSteer verifies that while a compaction
+// is in flight, a steer-eligible mid-turn message is NOT injected into CC's
+// stdin (which would fold it into the compaction transcript unframed). It must
+// route to the channel instead, to be dispatched as a clean turn afterwards
+// (#856).
+func TestInbox_Enqueue_Compacting_DoesNotSteer(t *testing.T) {
+	a := newTestAgent(t)
+	a.SetInboxSteerMode(true)
+
+	be := &recordingBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true) // would normally make the message steer-eligible
+	a.markCompacting("test/s")
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "deploy"})
+
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("expected 0 injects during compaction, got %d (%+v)", len(injects), injects)
+	}
+	if got := inb.drainAvailable(); len(got) != 1 || got[0].Text != "deploy" {
+		t.Errorf("expected the message on the channel, got %+v", got)
+	}
+}
+
+// TestInbox_Enqueue_AfterCompaction_ResumesSteer verifies the compaction gate
+// is scoped to the compaction window, not a blanket steer disable: once
+// compaction clears, a steer-eligible message injects normally (#856).
+func TestInbox_Enqueue_AfterCompaction_ResumesSteer(t *testing.T) {
+	a := newTestAgent(t)
+	a.SetInboxSteerMode(true)
+
+	be := &recordingBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+	a.markCompacting("test/s")
+	a.clearCompacting("test/s")
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "after"})
+
+	injects := be.Injects()
+	if len(injects) != 1 {
+		t.Fatalf("expected 1 inject after compaction cleared, got %d", len(injects))
+	}
+	if injects[0].Source != delegator.SourceSteer || injects[0].Text != "after" {
+		t.Errorf("inject = %+v, want SourceSteer %q", injects[0], "after")
+	}
+}
+
+// TestInbox_Worker_HoldsDuringCompaction verifies the worker-side backstop:
+// a channel-queued message is held (no turn dispatched) while compaction is in
+// flight, then dispatched once it clears. Covers the manual-/compact case
+// where the worker is free rather than blocked on the compacting turn (#856).
+func TestInbox_Worker_HoldsDuringCompaction(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
+
+	a.markCompacting("test/s")
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "held", Driver: d})
+
+	// While compacting, the worker must hold the message — no dispatch.
+	if waitFor(300*time.Millisecond, func() bool { return d.NumCalls() > 0 }) {
+		t.Fatalf("worker dispatched during compaction; calls=%d", d.NumCalls())
+	}
+
+	// Once compaction clears, the held message dispatches within a few polls.
+	a.clearCompacting("test/s")
+	if !waitFor(time.Second, func() bool { return d.NumCalls() == 1 }) {
+		t.Fatalf("worker did not dispatch after compaction cleared; calls=%d", d.NumCalls())
+	}
+}
+
 // TestInbox_Enqueue_EmptySessionKey_Drops verifies that envelopes with
 // no session key are dropped (logged) rather than crashing.
 func TestInbox_Enqueue_EmptySessionKey_Drops(t *testing.T) {
