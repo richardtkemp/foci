@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -157,6 +158,13 @@ func UnknownKeys(md toml.MetaData, groupNames map[string]string) []string {
 			if _, ok := groupNames[key[1]]; ok {
 				continue
 			}
+		}
+		// Skip backend_config.* descendants. BackendConfig is a free-form
+		// map[string]any (backend-specific settings), so nested tables under
+		// it — e.g. [agents.backend_config.env] — always report as undecoded
+		// even though they are intentional, not unknown keys.
+		if slices.Contains(key, "backend_config") {
+			continue
 		}
 		keys = append(keys, path)
 	}
