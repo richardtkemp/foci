@@ -107,6 +107,7 @@ func (d *Dispatcher) MaybeFire() {
 // Called after an agent turn ends to flush warnings that were deferred.
 func (d *Dispatcher) FlushPending() {
 	if d.queue == nil || d.dispatchFn == nil {
+		log.Warnf("warnings", "FlushPending: dispatcher not fully wired (queue=%v dispatchFn=%v) — pending warnings dropped", d.queue != nil, d.dispatchFn != nil)
 		return
 	}
 	if !d.queue.Pending() {

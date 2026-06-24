@@ -150,6 +150,7 @@ func (b *BleveIndex) Reindex() error {
 
 			data, err := os.ReadFile(path)
 			if err != nil {
+				log.Warnf("memory", "bleve reindex: skipping unreadable file %s: %v", path, err)
 				return nil // skip unreadable
 			}
 			if len(data) == 0 {

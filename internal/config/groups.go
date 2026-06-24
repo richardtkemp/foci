@@ -127,6 +127,7 @@ func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 	}
 	resolved, err := ResolveModel(model, "", gr.models)
 	if err != nil {
+		log.Warnf("config", "group %q is configured but its model failed to resolve: %v", groupName, err)
 		return nil
 	}
 	return resolved
