@@ -100,6 +100,11 @@ type pendingAsk struct {
 	// question, captured from AskPresentFn and refreshed on each presentCurrent.
 	// Persisted so a restart can address the on-screen message for cancel/expiry.
 	platformMsgID string
+	// paused, when true, suspends typed-answer capture for this ask: the inbound
+	// path lets the user's replies run as normal turns instead of feeding them to
+	// the ask. Buttons still resolve it. Toggled by /pause and /resume; persisted
+	// so the pause survives a restart mid-ask.
+	paused bool
 }
 
 // askState is the registry of in-flight asks. Keyed by requestID for click
@@ -284,6 +289,7 @@ type persistedAsk struct {
 	CreatedAt     time.Time           `json:"created_at"`
 	Grader        persistedGrader     `json:"grader,omitempty"`
 	PlatformMsgID string              `json:"platform_msg_id,omitempty"`
+	Paused        bool                `json:"paused,omitempty"`
 }
 
 // persistedGrader mirrors graderConfig with exported, JSON-friendly fields
@@ -320,6 +326,7 @@ func (a *askState) persistLocked() {
 				Args:        p.grader.args,
 			},
 			PlatformMsgID: p.platformMsgID,
+			Paused:        p.paused,
 		})
 	}
 	data, err := json.Marshal(out)
@@ -374,6 +381,7 @@ func (a *askState) restorePending() {
 				args:    s.Grader.Args,
 			},
 			platformMsgID: s.PlatformMsgID,
+			paused:        s.Paused,
 		}
 		a.byReqID[p.requestID] = p
 		a.bySession[p.sessionKey] = p.requestID
@@ -422,6 +430,39 @@ func (a *askState) pendingForSession(sessionKey string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.bySession[sessionKey]
+}
+
+// setPaused toggles the pause flag on the latest in-flight ask for a session and
+// checkpoints it. Returns false (a no-op) when no ask is pending — the caller
+// uses this to report "no active question". While paused, the inbound path's
+// answer-capture guard is skipped so the user's typed replies run as normal turns.
+func (a *askState) setPaused(sessionKey string, paused bool) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	reqID := a.bySession[sessionKey]
+	if reqID == "" {
+		return false
+	}
+	p := a.byReqID[reqID]
+	if p == nil {
+		return false
+	}
+	p.paused = paused
+	a.persistLocked()
+	return true
+}
+
+// isPaused reports whether the latest in-flight ask for a session is paused.
+// False when nothing is pending (so a stale flag can never strand a session).
+func (a *askState) isPaused(sessionKey string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	reqID := a.bySession[sessionKey]
+	if reqID == "" {
+		return false
+	}
+	p := a.byReqID[reqID]
+	return p != nil && p.paused
 }
 
 // formatAnswerBatch renders the collected answers as the inbound user message
@@ -562,6 +603,15 @@ type askInput struct {
 type AskRouter struct {
 	PendingForSession func(sessionKey string) string
 	HandleResponse    func(requestID, data string)
+	// PauseSession / ResumeSession toggle answer-capture for a session's pending
+	// ask. While paused, the inbound routing guard skips answer-capture so the
+	// user's typed replies run as normal turns; buttons still resolve the ask.
+	// Both return false when no ask is pending (the command reports a no-op).
+	PauseSession  func(sessionKey string) bool
+	ResumeSession func(sessionKey string) bool
+	// IsPaused reports whether the session's pending ask is paused. Read by the
+	// inbound routing guard (run_turn.go) and the statusline paused-reminder field.
+	IsPaused func(sessionKey string) bool
 }
 
 // NewAskTool builds the `ask` / `foci_ask` tool. present shows questions to the
@@ -681,6 +731,9 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 	router := &AskRouter{
 		PendingForSession: state.pendingForSession,
 		HandleResponse:    state.handleResponse,
+		PauseSession:      func(sk string) bool { return state.setPaused(sk, true) },
+		ResumeSession:     func(sk string) bool { return state.setPaused(sk, false) },
+		IsPaused:          state.isPaused,
 	}
 	return t, router
 }

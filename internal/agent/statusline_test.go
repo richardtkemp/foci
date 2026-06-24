@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/tools"
 )
 
 // renderTmpl is a small helper to render an arbitrary template against a bare
@@ -61,6 +63,29 @@ func TestStatuslineLineDrop(t *testing.T) {
 	want := "[meta] m\n[lit] no placeholders here"
 	if got != want {
 		t.Errorf("line-drop:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// TestStatuslinePausedAsk proves the default template's [ask] line renders only
+// while an ask is paused, names the ask id, and is dropped (rule 3) otherwise.
+func TestStatuslinePausedAsk(t *testing.T) {
+	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
+	paused := true
+	a := &Agent{AskRouter: &tools.AskRouter{
+		IsPaused:          func(string) bool { return paused },
+		PendingForSession: func(string) string { return "ask-test-7" },
+	}}
+	in := statuslineInputs{now: now, model: "m", platform: "api", sm: &sessionMeta{}, agent: a, sessionKey: "s"}
+
+	got := a.renderStatusline(context.Background(), DefaultStatuslineTemplate, in)
+	if !strings.Contains(got, "[ask] ") || !strings.Contains(got, "ask-test-7") {
+		t.Errorf("paused statusline should carry an [ask] line naming the ask id:\n%s", got)
+	}
+
+	paused = false
+	got = a.renderStatusline(context.Background(), DefaultStatuslineTemplate, in)
+	if strings.Contains(got, "[ask]") {
+		t.Errorf("[ask] line should be dropped when no ask is paused:\n%s", got)
 	}
 }
 

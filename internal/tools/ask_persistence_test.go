@@ -235,6 +235,47 @@ func TestAskRestoreDropsStale(t *testing.T) {
 	}
 }
 
+// TestAskPausePersistsAcrossRestart verifies a /pause set on one instance
+// survives a simulated restart: the rehydrated ask is still paused.
+func TestAskPausePersistsAcrossRestart(t *testing.T) {
+	idx := newStateDB(t)
+
+	// Instance 1: post an ask and pause it.
+	p1 := &fakePresenter{}
+	d1 := &fakeDeliver{}
+	tool1, router1 := NewAskTool(p1.present, nil, d1.deliver, idx, "test")
+	execAsk(t, tool1, twoQuestionAsk)
+	if !router1.PauseSession(askSession) {
+		t.Fatal("PauseSession should succeed for the pending ask")
+	}
+
+	// The durable set must carry the paused flag.
+	raw, _ := idx.GetAgentMetadata("test", "ask_pending")
+	var saved []persistedAsk
+	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved) != 1 || !saved[0].Paused {
+		t.Fatalf("persisted paused flag = %+v, want one entry with paused=true", saved)
+	}
+
+	// Instance 2 (restart) over the same store: the ask is restored paused.
+	fr := &fakeRestore{}
+	p2 := &fakePresenter{}
+	d2 := &fakeDeliver{}
+	_, router2 := NewAskTool(p2.present, fr.restore, d2.deliver, idx, "test")
+	if !router2.IsPaused(askSession) {
+		t.Error("restored ask should still be paused after restart")
+	}
+	// And /resume on the restored instance clears it.
+	if !router2.ResumeSession(askSession) {
+		t.Fatal("ResumeSession should succeed for the restored ask")
+	}
+	if router2.IsPaused(askSession) {
+		t.Error("ask should not be paused after ResumeSession")
+	}
+}
+
 // TestAskNoPersistenceWithoutStore verifies a nil store keeps the tool working
 // purely in-memory (no panic, no persistence side effects).
 func TestAskNoPersistenceWithoutStore(t *testing.T) {
