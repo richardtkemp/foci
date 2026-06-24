@@ -261,13 +261,44 @@ func TestAsk_Validation(t *testing.T) {
 	cases := []string{
 		`{"questions":[]}`,
 		`{"questions":[{"question":"","options":[{"label":"A"}]}]}`,
-		`{"questions":[{"question":"Q?","options":[]}]}`,
 		`not json`,
 	}
 	for _, c := range cases {
 		if _, err := tool.Execute(askCtx(), json.RawMessage(c)); err == nil {
 			t.Errorf("expected error for input %q", c)
 		}
+	}
+}
+
+// TestAsk_OptionlessQuestionTypedAnswer proves a question with no options is
+// accepted (typed-answer-only) and a typed reply routed via the AskRouter
+// completes and delivers it.
+func TestAsk_OptionlessQuestionTypedAnswer(t *testing.T) {
+	t.Parallel()
+	tool, router, p, d := newAskFixture()
+
+	// No options at all — must NOT error, and must present a question.
+	execAsk(t, tool, `{"questions":[{"question":"What should I name it?"}]}`)
+	if p.presents != 1 {
+		t.Fatalf("option-less question should be presented (presents=%d)", p.presents)
+	}
+	// The only button offered is Cancel (no option buttons).
+	if len(p.lastChoices) != 1 || p.lastChoices[0].Data != question.CancelData {
+		t.Errorf("option-less question should offer only a Cancel button, got %+v", p.lastChoices)
+	}
+
+	reqID := router.PendingForSession(askSession)
+	if reqID == "" {
+		t.Fatal("option-less ask should be pending for the session")
+	}
+	router.HandleResponse(reqID, "Aristotle")
+
+	msg, ok := d.last()
+	if !ok {
+		t.Fatal("typed answer to an option-less question should deliver the batch")
+	}
+	if !strings.Contains(msg, "Aristotle") {
+		t.Errorf("delivered batch should contain the typed answer:\n%s", msg)
 	}
 }
 

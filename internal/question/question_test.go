@@ -103,6 +103,28 @@ func TestFormatText_NoHeaderNoDescription(t *testing.T) {
 	}
 }
 
+func TestFormatText_NoOptionsHintsTyping(t *testing.T) {
+	t.Parallel()
+	q := &Question{Question: "What should I name it?"}
+	text := FormatText(q, 0, 1)
+	if !strings.HasPrefix(text, "What should I name it?") {
+		t.Errorf("should start with question text, got:\n%s", text)
+	}
+	if !strings.Contains(text, "_Reply with your answer._") {
+		t.Errorf("option-less question should hint at typing, got:\n%s", text)
+	}
+}
+
+// TestChoices_NoOptionsCancelOnly proves an option-less question offers only the
+// Cancel button (it is answered by typing).
+func TestChoices_NoOptionsCancelOnly(t *testing.T) {
+	t.Parallel()
+	choices := Choices(&Question{Question: "Open?"})
+	if len(choices) != 1 || choices[0].Data != CancelData {
+		t.Errorf("option-less question should yield only a Cancel choice, got %+v", choices)
+	}
+}
+
 func TestChoices(t *testing.T) {
 	t.Parallel()
 	q := &Question{Options: []Option{{Label: "Alpha"}, {Label: "Beta"}, {Label: "Gamma"}}}
