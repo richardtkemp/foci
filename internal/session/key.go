@@ -239,6 +239,54 @@ func SessionKeyBase(key string) string {
 	return parts[0] + "/" + parts[1]
 }
 
+// SessionInFlightKey returns the identity used for runtime in-flight turn
+// tracking. Like SessionKeyBase it collapses version rotation (compaction) so a
+// root session's in-flight state survives a version bump — but UNLIKE
+// SessionKeyBase it PRESERVES the child suffix, so a branch/facet tracks its
+// in-flight status separately from its parent root.
+//
+// This distinction matters because facets are independent conversations running
+// on their own backend (separate CC process), reached via a separate bot. They
+// are minted as 'b' branch children only to inherit the parent's history at the
+// fork point — they are NOT a continuation of the root turn. Collapsing them
+// onto the parent base (as SessionKeyBase does) wrongly couples the two: a busy
+// or permission-blocked facet would make the root read as in-flight and suppress
+// its keepalive/reflection. See TODO #719.
+//
+// Root-injected periodic turns (reflection, compaction-memory, session-end-
+// memory, keepalive — see branchTypesForMainSession) run under the *parent* key
+// with no child suffix, so they continue to mark the root base and the #760/#767
+// gates that rely on that are unaffected.
+//
+// Examples:
+//
+//	clutch/c123/v1        → clutch/c123          (root; version collapsed)
+//	clutch/c123/v2        → clutch/c123          (post-compaction root; same)
+//	clutch/c123/v1/b1700  → clutch/c123/b1700    (facet/branch; distinct from root)
+//	clutch/c123/v2/b1900  → clutch/c123/b1900    (distinct per child, version-stable)
+//
+// IDEMPOTENT: an already-derived identity ("clutch/c123" or "clutch/c123/b1700")
+// does not parse as a full session key, so it is returned unchanged rather than
+// re-collapsed. This means callers may pass either a full session key or an
+// already-derived identity safely — important because the Agent in-flight
+// methods derive internally, so a caller that pre-derives must not have its key
+// mangled a second time.
+func SessionInFlightKey(key string) string {
+	sk, err := ParseSessionKey(key)
+	if err != nil {
+		// Not a full session key (already-derived identity, base, or malformed):
+		// return as-is so derivation is idempotent. Do NOT call SessionKeyBase
+		// here — that would strip the child suffix off an already-derived
+		// branch/facet identity and wrongly collapse it onto the root.
+		return key
+	}
+	base := sk.AgentID + "/" + string(sk.Type) + sk.ID
+	if sk.ChildType == 0 {
+		return base
+	}
+	return base + "/" + string(sk.ChildType) + strconv.FormatInt(sk.ChildTS, 10)
+}
+
 // branchFromSession creates a branch child key from a parent session key string.
 func branchFromSession(parentKey string) (string, error) {
 	parent, err := ParseSessionKey(parentKey)

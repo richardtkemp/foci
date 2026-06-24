@@ -37,10 +37,15 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	unlock := tc.AcquireTurnLock(ts)
 	defer unlock()
 	// markInFlight is the sole in-flight tracker; it covers both API and
-	// delegated transports. Keyed by SessionKeyBase so the gate can ask
-	// "is *this* session in-flight?" — branches and sub-agents
-	// have distinct bases (sub-agents) or share the parent's base (branches),
-	// matching the granularity the activity gate cares about. Released when
+	// delegated transports. Pass the FULL session key — markInFlight derives
+	// the in-flight identity via session.SessionInFlightKey, which collapses
+	// version rotation but PRESERVES the child suffix. So a root and its
+	// post-compaction versions share one identity, while a facet/branch (a 'b'
+	// child on its own backend, an independent conversation) tracks separately
+	// rather than wrongly coupling to the parent root (TODO #719). Root-injected
+	// periodic turns (reflection/keepalive/memory) run under the parent key with
+	// no child suffix, so they still register under the root identity — the
+	// granularity the activity gate cares about. Released when
 	// OrchestrateFullTurn returns, which for delegated turns is after
 	// runPostTurn unblocks on CompletionChan. A permission-blocked CC turn
 	// keeps inFlight=1 until the user decides; that's exactly the gate
@@ -53,9 +58,8 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// reflection's no-sink ctx, see TODO #767), the in-flight turn is
 	// non-delivering and the inbox worker waits for it to clear before
 	// dispatching a new envelope, avoiding the discarded-response bug.
-	sessionBase := session.SessionKeyBase(ts.SessionKey)
 	delivering := turnevent.SinkFromContext(ctx).DeliversToPlatform()
-	doneInFlight := a.markInFlight(sessionBase, delivering)
+	doneInFlight := a.markInFlight(ts.SessionKey, delivering)
 	defer doneInFlight()
 	unreg := tc.RegisterTurn(ts)
 	defer unreg()
@@ -76,6 +80,14 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// last_user_activity write (telegram/discord) is deliberately separate —
 	// it tracks user attention, not agent activity, and lives in
 	// agent_metadata rather than session_metadata.
+	//
+	// NOTE: this deliberately stays on SessionKeyBase (root-collapsed) while
+	// in-flight tracking above uses the child-preserving SessionInFlightKey.
+	// last_activity feeds DefaultSessionKeyForAgent's most-recently-active
+	// ordering; promoting facet/branch keys into that ordering is a separate
+	// question from the in-flight coupling fixed in TODO #719, so it is left
+	// root-collapsed pending its own analysis.
+	sessionBase := session.SessionKeyBase(ts.SessionKey)
 	a.touchLastActivity(sessionBase)
 
 	// Phase 2: Preparation

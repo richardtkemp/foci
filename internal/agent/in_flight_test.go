@@ -112,6 +112,53 @@ func TestInFlight_DistinctBases(t *testing.T) {
 	}
 }
 
+// TestInFlight_FacetDecoupledFromRoot is the #719 regression: a facet/branch
+// ('b' child, its own backend, an independent conversation) must track in-flight
+// status separately from its parent root. A busy facet must NOT make the root
+// read as in-flight (which would suppress the root's keepalive/reflection),
+// while a root-injected periodic turn (runs under the parent key, no child)
+// must still register under the root identity.
+func TestInFlight_FacetDecoupledFromRoot(t *testing.T) {
+	a := &Agent{}
+
+	root := "test-agent/cTEST/1700000000"
+	facet := "test-agent/cTEST/1700000000/b1700050000"
+	rotatedRoot := "test-agent/cTEST/1700100000" // post-compaction version of root
+
+	// A turn on the facet must not couple the root.
+	doneFacet := a.markInFlight(facet, true)
+	if !a.IsTurnInFlight(facet) {
+		t.Fatalf("IsTurnInFlight(facet=%s) after mark: got false, want true", facet)
+	}
+	if a.IsTurnInFlight(root) {
+		t.Fatalf("#719 coupling: facet turn made root=%s read in-flight; must stay false", root)
+	}
+
+	// A root-injected periodic turn (parent key, no child) registers on root.
+	doneRoot := a.markInFlight(root, false)
+	if !a.IsTurnInFlight(root) {
+		t.Fatalf("IsTurnInFlight(root=%s) after mark: got false, want true", root)
+	}
+	// And a post-compaction version of the root shares the root identity.
+	if !a.IsTurnInFlight(rotatedRoot) {
+		t.Fatalf("rotated root %s must share in-flight identity with %s", rotatedRoot, root)
+	}
+
+	// Releasing the facet must not clear the root.
+	doneFacet()
+	if a.IsTurnInFlight(facet) {
+		t.Fatalf("IsTurnInFlight(facet) after release: got true, want false")
+	}
+	if !a.IsTurnInFlight(root) {
+		t.Fatalf("releasing facet wrongly cleared root in-flight")
+	}
+
+	doneRoot()
+	if a.IsTurnInFlight(root) {
+		t.Fatalf("IsTurnInFlight(root) after release: got true, want false")
+	}
+}
+
 // TestInFlight_RaceSafe runs concurrent mark/done pairs across two bases to
 // verify the map-keyed counter doesn't drift under -race. Each goroutine
 // increments and decrements once; each base must end with no in-flight.
