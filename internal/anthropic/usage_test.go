@@ -42,7 +42,7 @@ func TestGetUsageSuccess(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc:  StaticToken("test-oauth-token"),
+		tokenFunc:  func() (string, error) { return "test-oauth-token", nil },
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   defaultCacheTTL,
@@ -94,7 +94,7 @@ func TestGetUsageAPIError(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc:  StaticToken("bad-token"),
+		tokenFunc:  func() (string, error) { return "bad-token", nil },
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   defaultCacheTTL,
@@ -123,7 +123,7 @@ func TestGetUsageCacheHit(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc:  StaticToken("tok"),
+		tokenFunc:  func() (string, error) { return "tok", nil },
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -168,7 +168,7 @@ func TestGetUsageCacheExpiry(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc:  StaticToken("tok"),
+		tokenFunc:  func() (string, error) { return "tok", nil },
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   1 * time.Millisecond,
@@ -210,7 +210,7 @@ func TestInvalidateForcesFetch(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc:  StaticToken("tok"),
+		tokenFunc:  func() (string, error) { return "tok", nil },
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -244,7 +244,7 @@ func TestErrorBackoff(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc:  StaticToken("tok"),
+		tokenFunc:  func() (string, error) { return "tok", nil },
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   100 * time.Millisecond, // short for testing
@@ -305,7 +305,7 @@ func TestErrorBackoffResetsOnSuccess(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc:  StaticToken("tok"),
+		tokenFunc:  func() (string, error) { return "tok", nil },
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   1 * time.Millisecond,
@@ -359,7 +359,7 @@ func TestInvalidateClearsErrorBackoff(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc:  StaticToken("tok"),
+		tokenFunc:  func() (string, error) { return "tok", nil },
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -395,7 +395,7 @@ func TestInvalidateClearsErrorBackoff(t *testing.T) {
 
 func TestSetCacheTTL(t *testing.T) {
 	// Proves that SetCacheTTL updates the cache TTL field and that NewUsageClient initialises it to the default TTL.
-	client := NewUsageClient(StaticToken("tok"))
+	client := NewUsageClient(func() (string, error) { return "tok", nil })
 	if client.cacheTTL != defaultCacheTTL {
 		t.Fatalf("default cacheTTL = %v, want %v", client.cacheTTL, defaultCacheTTL)
 	}
@@ -557,7 +557,7 @@ func TestUsageClientSetBaseURLAndPostFetchHook(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewUsageClient(StaticToken("tok"))
+	client := NewUsageClient(func() (string, error) { return "tok", nil })
 	client.SetBaseURL(server.URL)
 
 	var hookCalls atomic.Int32
@@ -598,7 +598,7 @@ func TestGetUsageMalformedJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewUsageClient(StaticToken("tok"))
+	client := NewUsageClient(func() (string, error) { return "tok", nil })
 	client.SetBaseURL(server.URL)
 
 	_, err := client.GetUsage(context.Background())

@@ -12,14 +12,17 @@ type Constructor func(cfg map[string]any) (Delegator, error)
 var (
 	registryMu   sync.Mutex
 	constructors = make(map[string]Constructor)
+	supported    = make(map[string]bool)
 )
 
 // Register registers a named backend constructor.
 // Typically called from a backend package's init() function.
-func Register(name string, c Constructor) {
+// supported indicates whether this backend should be offered in the setup wizard.
+func Register(name string, c Constructor, isSupported bool) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	constructors[name] = c
+	supported[name] = isSupported
 }
 
 // New creates a Delegator by name using the registered constructor.
@@ -42,17 +45,21 @@ func IsRegistered(name string) bool {
 	return ok
 }
 
-// RegisteredNames returns the names of all registered backends, sorted. Used
-// to offer the live set of delegated backends in the /agents new wizard rather
-// than a hardcoded list — a newly registered backend appears automatically.
-// Only populated once the backend packages' init() functions have run (i.e. in
-// the assembled foci-gw binary); returns empty if none are imported.
-func RegisteredNames() []string {
+// SupportedNames returns the names of all registered backends that are marked
+// as supported (i.e. suitable for presentation in setup wizards), sorted. Used
+// to offer the live set of delegated backends in the /agents new wizard and the
+// first-run setup rather than a hardcoded list — a newly registered backend
+// appears automatically. Only populated once the backend packages' init()
+// functions have run (i.e. in the assembled foci-gw binary); returns empty if
+// none are imported.
+func SupportedNames() []string {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	names := make([]string, 0, len(constructors))
 	for name := range constructors {
-		names = append(names, name)
+		if supported[name] {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names)
 	return names

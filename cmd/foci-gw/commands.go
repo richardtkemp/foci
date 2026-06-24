@@ -122,7 +122,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			}
 			return resolved.Developer + "/" + resolved.ModelID
 		},
-		AvailableBackends: delegator.RegisteredNames(),
+		AvailableBackends: delegator.SupportedNames(),
 	}
 
 	// Construct the CommandContext

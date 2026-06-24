@@ -37,7 +37,8 @@ type setupFlags struct {
 
 // setupState tracks wizard state for back navigation.
 type setupState struct {
-	provider        string // "anthropic", "gemini", "openai", "openrouter", "custom"
+	provider        string // "api", "claude-code", etc.
+	apiKey          string // captured API key for "api" provider (stored after model resolution)
 	agentID         string
 	displayName     string
 	model           string
@@ -459,23 +460,12 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 2:
-			if state.provider == "custom" {
-				ce, back, err := stepCustomEndpoint(reader, store, totalSteps)
-				if err != nil {
-					return err
-				}
-				if back {
-					step--
-					continue
-				}
-				state.customEndpoint = ce
-			} else {
-				back := stepAPIKey(reader, state.provider, store, totalSteps)
-				if back {
-					step--
-					continue
-				}
+			apiKey, back := stepAPIKey(reader, state.provider, totalSteps)
+			if back {
+				step--
+				continue
 			}
+			state.apiKey = apiKey
 			step++
 
 		case 3:
@@ -497,7 +487,7 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 5:
-			model, back := stepModel(reader, state.model, state.provider, store, totalSteps)
+			model, back := stepModel(reader, state.model, state.provider, totalSteps)
 			if back {
 				step--
 				continue
@@ -570,6 +560,15 @@ func runSetupInteractive(f setupFlags) error {
 				memDir := filepath.Join(provResult.Workspace, "memory")
 				if err := importMemoryFiles(reader, state.memoryImportDir, memDir); err != nil {
 					return fmt.Errorf("import memory files: %w", err)
+				}
+			}
+
+			// For "api" provider, resolve the model to find its endpoint and
+			// store the API key under the endpoint-scoped secret key.
+			if state.provider == "api" && state.apiKey != "" && state.model != "" {
+				rm, err := config.ResolveModel(state.model, "", nil)
+				if err == nil && rm != nil {
+					store.Set(rm.Endpoint+".api_key", state.apiKey)
 				}
 			}
 

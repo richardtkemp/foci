@@ -15,7 +15,6 @@ import (
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/anthropics/anthropic-sdk-go/packages/param"
 )
 
 // Client is an Anthropic API client with prompt caching support.
@@ -34,11 +33,6 @@ type Client struct {
 	sdkClient *sdk.Client
 }
 
-// StaticToken wraps a fixed API key as a token function for NewClient.
-func StaticToken(key string) func() (string, error) {
-	return func() (string, error) { return key, nil }
-}
-
 // resolveToken returns the token to use for API requests.
 func (c *Client) resolveToken() (string, error) {
 	return c.tokenFunc()
@@ -46,7 +40,6 @@ func (c *Client) resolveToken() (string, error) {
 
 // NewClient creates a new Anthropic API client.
 // tokenFunc is called on each request to get the current Bearer token.
-// Use StaticToken to wrap a fixed API key.
 func NewClient(tokenFunc func() (string, error), timeout time.Duration) *Client {
 	return &Client{
 		tokenFunc: tokenFunc,
@@ -263,29 +256,4 @@ func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, err
 // IsCachingAvailable returns true as Anthropic prompt caching is always available.
 func (c *Client) IsCachingAvailable() bool {
 	return true
-}
-
-// ListModels calls the /v1/models endpoint to list available models.
-func (c *Client) ListModels() ([]ModelInfo, error) {
-	token, err := c.resolveToken()
-	if err != nil {
-		return nil, fmt.Errorf("resolve token: %w", err)
-	}
-
-	sc := c.ensureSDKClient()
-	page, err := sc.Models.List(context.Background(), sdk.ModelListParams{
-		Limit: param.NewOpt(int64(100)),
-	}, sdkRequestOptions(token, "")...)
-	if err != nil {
-		return nil, classifySDKError(err)
-	}
-
-	var models []ModelInfo
-	for _, m := range page.Data {
-		models = append(models, ModelInfo{
-			ID:        m.ID,
-			CreatedAt: m.CreatedAt,
-		})
-	}
-	return models, nil
 }

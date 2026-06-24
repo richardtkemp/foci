@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	delegator.Register("claude-code-tmux", newFromConfig)
+	delegator.Register("claude-code-tmux", newFromConfig, false)
 }
 
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {

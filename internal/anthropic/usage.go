@@ -81,7 +81,6 @@ type UsageClient struct {
 
 // NewUsageClient creates a new usage API client.
 // tokenFunc is called on each request to get the current OAuth token.
-// Use StaticToken to wrap a fixed token.
 func NewUsageClient(tokenFunc func() (string, error)) *UsageClient {
 	return &UsageClient{
 		tokenFunc:  tokenFunc,

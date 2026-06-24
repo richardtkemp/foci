@@ -51,7 +51,7 @@ func TestBranchCacheSharing(t *testing.T) {
 	}()
 
 	// Create components
-	client := anthropic.NewClient(anthropic.StaticToken(apiKey), 60*time.Second)
+	client := anthropic.NewClient(func() (string, error) { return apiKey, nil }, 60*time.Second)
 	sessions := session.NewStore(sessionsDir)
 	bootstrap := workspace.NewBootstrap(workspaceDir, nil)
 	registry := tools.NewRegistry()
