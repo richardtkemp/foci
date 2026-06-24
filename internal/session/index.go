@@ -433,15 +433,26 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	// scheduling for all sessions.
 	savedReflection := make(map[string]string)
 	rows, err := idx.db.Query(`SELECT session_key, last_reflection FROM session_index WHERE last_reflection IS NOT NULL`)
-	if err == nil {
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var key, stamp string
-			if rows.Scan(&key, &stamp) == nil {
-				savedReflection[key] = stamp
-			}
-		}
+	if err != nil {
+		// Fail closed: if we can't read the timestamps we're about to clear,
+		// don't proceed to DELETE — that would silently wipe every session's
+		// last_reflection (unreconstructable from disk). Abort and keep the
+		// existing index intact for this cycle.
+		return 0, fmt.Errorf("preserve last_reflection: %w", err)
 	}
+	for rows.Next() {
+		var key, stamp string
+		if err := rows.Scan(&key, &stamp); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("preserve last_reflection (scan): %w", err)
+		}
+		savedReflection[key] = stamp
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("preserve last_reflection (rows): %w", err)
+	}
+	_ = rows.Close()
 
 	tx, err := idx.db.Begin()
 	if err != nil {

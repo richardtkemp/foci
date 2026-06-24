@@ -403,6 +403,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 	case "init":
 		var init InitMessage
 		if err := json.Unmarshal(raw, &init); err != nil {
+			log.Warnf("ccstream", "drop init message (unmarshal failed): %v — WaitReady will stall", err)
 			return
 		}
 		b.mu.Lock()
@@ -418,6 +419,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 	case "status":
 		var status StatusMessage
 		if err := json.Unmarshal(raw, &status); err != nil {
+			log.Warnf("ccstream", "drop status message (unmarshal failed): %v — compaction-start waiter may stall", err)
 			return
 		}
 		if status.Status != nil && *status.Status == "compacting" {
@@ -440,6 +442,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 	case "compact_boundary":
 		var cb CompactBoundaryMessage
 		if err := json.Unmarshal(raw, &cb); err != nil {
+			log.Warnf("ccstream", "drop compact_boundary message (unmarshal failed): %v — compaction-done waiter may stall", err)
 			return
 		}
 		if b.onCompactionDone != nil {
@@ -464,6 +467,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 	case "task_started", "task_progress", "task_notification":
 		var task TaskEvent
 		if err := json.Unmarshal(raw, &task); err != nil {
+			log.Warnf("ccstream", "drop %s message (unmarshal failed): %v — task tracker may not clear", subtype, err)
 			return
 		}
 		switch subtype {
@@ -502,6 +506,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		// Done after already finishing in the browser.
 		var done ElicitationCompleteMessage
 		if err := json.Unmarshal(raw, &done); err != nil {
+			log.Warnf("ccstream", "drop elicitation_complete message (unmarshal failed): %v — URL elicitation will not auto-resolve", err)
 			return
 		}
 		b.OnElicitationComplete(&done)
