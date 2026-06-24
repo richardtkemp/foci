@@ -8,11 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
-
-	"foci/internal/anthropic"
-	"foci/internal/provision"
-	"foci/internal/secrets"
 )
 
 // consoleUI wraps a bufio.Reader for interactive console prompts.
@@ -120,58 +115,6 @@ func (c *consoleUI) MultiSelect(prompt string, options []string) (selected []int
 
 func (c *consoleUI) Print(text string) {
 	fmt.Println(text)
-}
-
-// discoverModelFamily queries the Anthropic API to find the latest model in a family.
-// Falls back to provision.ResolveModelAlias on failure.
-func discoverModelFamily(store *secrets.Store, alias string) string {
-	fallback := provision.ResolveModelAlias(alias)
-
-	// Determine which family to search for
-	family := strings.ToLower(strings.TrimSpace(alias))
-	switch family {
-	case "opus", "sonnet", "haiku", "fable":
-		// proceed with API query
-	default:
-		// Full model ID or unknown alias — just use static resolution
-		return fallback
-	}
-
-	// Get a token for the API call
-	token, ok := store.Get("anthropic.api_key")
-	if !ok || token == "" {
-		return fallback
-	}
-
-	fmt.Printf("  Querying Anthropic API for latest %s model... ", family)
-
-	client := anthropic.NewClient(anthropic.StaticToken(token), 5*time.Second)
-	models, err := client.ListModels()
-	if err != nil {
-		fmt.Printf("(using default: %s)\n", fallback)
-		return fallback
-	}
-
-	// Find the latest model in the requested family
-	var bestID string
-	var bestTime time.Time
-	for _, m := range models {
-		if !strings.Contains(strings.ToLower(m.ID), family) {
-			continue
-		}
-		if m.CreatedAt.After(bestTime) {
-			bestTime = m.CreatedAt
-			bestID = m.ID
-		}
-	}
-
-	if bestID == "" {
-		fmt.Printf("(not found, using default: %s)\n", fallback)
-		return fallback
-	}
-
-	fmt.Printf("  %s\n", bestID)
-	return "anthropic/" + bestID
 }
 
 // mdImportOptions configures the importMDFiles file picker.

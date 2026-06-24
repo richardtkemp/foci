@@ -17,20 +17,20 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client := NewClient(StaticToken("test-key"), 10*time.Second)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 10*time.Second)
 	client.SetBaseURL(server.URL)
 	return client
 }
 
 func TestSignalRecoveryNoOp(t *testing.T) {
 	// Proves that signalRecovery is safe to call when no recovery channel has been configured — it should be a no-op that does not panic.
-	client := NewClient(StaticToken("test-key"), 60*time.Second)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 60*time.Second)
 	client.signalRecovery() // no-op, no panic
 }
 
 func TestNewClientDefaults(t *testing.T) {
 	// Proves that NewClient sets the production Anthropic API base URL.
-	client := NewClient(StaticToken("my-key"), 60*time.Second)
+	client := NewClient(func() (string, error) { return "my-key", nil }, 60*time.Second)
 	if client.baseURL != "https://api.anthropic.com" {
 		t.Errorf("baseURL = %q", client.baseURL)
 	}
@@ -38,7 +38,7 @@ func TestNewClientDefaults(t *testing.T) {
 
 func TestSetBaseURL(t *testing.T) {
 	// Proves that SetBaseURL overrides the base URL, enabling tests to point the client at a local mock server.
-	client := NewClient(StaticToken("test-key"), 60*time.Second)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 60*time.Second)
 	client.SetBaseURL("http://localhost:8080")
 	if client.baseURL != "http://localhost:8080" {
 		t.Errorf("baseURL = %q", client.baseURL)
@@ -237,53 +237,6 @@ func TestCountTokensErrors(t *testing.T) {
 	}
 }
 
-func TestListModelsSuccess(t *testing.T) {
-	// Proves ListModels fetches /v1/models and maps each entry to a ModelInfo with its ID.
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" {
-			t.Errorf("path = %q, want /v1/models", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
-			"data": [
-				{"type": "model", "id": "claude-opus-4-6", "display_name": "Opus", "created_at": "2026-01-01T00:00:00Z"},
-				{"type": "model", "id": "claude-haiku-4-5", "display_name": "Haiku", "created_at": "2025-10-01T00:00:00Z"}
-			],
-			"has_more": false, "first_id": "claude-opus-4-6", "last_id": "claude-haiku-4-5"
-		}`)
-	})
-
-	models, err := client.ListModels()
-	if err != nil {
-		t.Fatalf("ListModels: %v", err)
-	}
-	if len(models) != 2 {
-		t.Fatalf("models = %d, want 2", len(models))
-	}
-	if models[0].ID != "claude-opus-4-6" || models[1].ID != "claude-haiku-4-5" {
-		t.Errorf("model IDs = %q, %q", models[0].ID, models[1].ID)
-	}
-}
-
-func TestListModelsErrors(t *testing.T) {
-	// Proves ListModels surfaces token resolution failures and classifies API error responses into APIError.
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"type":"error","error":{"type":"api_error","message":"boom"}}`)
-	})
-
-	_, err := client.ListModels()
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != 500 {
-		t.Errorf("err = %v, want *APIError with status 500", err)
-	}
-
-	client.tokenFunc = func() (string, error) { return "", fmt.Errorf("no creds") }
-	if _, err := client.ListModels(); err == nil || !strings.Contains(err.Error(), "no creds") {
-		t.Errorf("err = %v, want token error", err)
-	}
-}
-
 func TestEndpoint(t *testing.T) {
 	// Proves Endpoint names the official API "Anthropic API" and derives a readable name from the host for other base URLs.
 	tests := []struct {
@@ -295,7 +248,7 @@ func TestEndpoint(t *testing.T) {
 		{"https://llm.example.com", "Example API"},
 	}
 	for _, tt := range tests {
-		client := NewClient(StaticToken("k"), time.Second)
+		client := NewClient(func() (string, error) { return "k", nil }, time.Second)
 		client.SetBaseURL(tt.baseURL)
 		if got := client.Endpoint(); got != tt.want {
 			t.Errorf("Endpoint(%q) = %q, want %q", tt.baseURL, got, tt.want)
@@ -305,14 +258,14 @@ func TestEndpoint(t *testing.T) {
 
 func TestIsCachingAvailable(t *testing.T) {
 	// Proves the Anthropic client always reports prompt caching as available — the provider layer relies on this to enable cache markers.
-	if !NewClient(StaticToken("k"), time.Second).IsCachingAvailable() {
+	if !NewClient(func() (string, error) { return "k", nil }, time.Second).IsCachingAvailable() {
 		t.Error("IsCachingAvailable = false, want true")
 	}
 }
 
 func TestRetryDelayKnobs(t *testing.T) {
 	// Proves the retry timing accessors return production defaults when unset, and scale proportionally in test mode (retryBaseDelay < 1s) so retry tests run fast.
-	prod := NewClient(StaticToken("k"), time.Second)
+	prod := NewClient(func() (string, error) { return "k", nil }, time.Second)
 	if got := prod.RetryBaseDelay(); got != 2*time.Second {
 		t.Errorf("RetryBaseDelay default = %v, want 2s", got)
 	}
@@ -326,7 +279,7 @@ func TestRetryDelayKnobs(t *testing.T) {
 		t.Errorf("ServerErrorMaxDuration default = %v, want 5m", got)
 	}
 
-	fast := NewClient(StaticToken("k"), time.Second)
+	fast := NewClient(func() (string, error) { return "k", nil }, time.Second)
 	fast.SetRetryBaseDelay(2 * time.Millisecond)
 	if got := fast.RetryBaseDelay(); got != 2*time.Millisecond {
 		t.Errorf("RetryBaseDelay set = %v, want 2ms", got)
@@ -344,7 +297,7 @@ func TestRetryDelayKnobs(t *testing.T) {
 
 func TestWaitForRecoverySignaling(t *testing.T) {
 	// Proves WaitForRecovery hands out a shared channel that OnRetrySuccess closes, waking overload waiters; a second wait gets a fresh, still-open channel.
-	client := NewClient(StaticToken("k"), time.Second)
+	client := NewClient(func() (string, error) { return "k", nil }, time.Second)
 
 	ch1 := client.WaitForRecovery()
 	ch2 := client.WaitForRecovery()

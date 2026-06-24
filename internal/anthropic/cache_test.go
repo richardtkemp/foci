@@ -25,7 +25,7 @@ func TestCacheSharing(t *testing.T) {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
 
-	client := anthropic.NewClient(anthropic.StaticToken(apiKey), 60*time.Second)
+	client := anthropic.NewClient(func() (string, error) { return apiKey, nil }, 60*time.Second)
 	ctx := context.Background()
 
 	// Build a large system prompt. Haiku requires >= 2048 tokens for caching.

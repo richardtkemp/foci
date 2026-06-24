@@ -18,7 +18,6 @@ type (
 	Usage           = provider.Usage
 	MessageResponse = provider.MessageResponse
 	APIError        = provider.APIError
-	ModelInfo       = provider.ModelInfo
 )
 
 // Re-export constructors and helpers so anthropic-internal code compiles unchanged.

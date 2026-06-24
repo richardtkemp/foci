@@ -7,10 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/provision"
-	"foci/internal/secrets"
 )
 
 // llmProviderInfo describes an LLM provider for the setup wizard.
@@ -21,7 +20,6 @@ type llmProviderInfo struct {
 	DefaultModel string // default model: "anthropic/claude-sonnet-4-6"
 	Endpoint     string // endpoint override (empty = auto-detect from developer)
 	HasAliases   bool   // opus/sonnet/haiku aliases work
-	HasDiscovery bool   // Anthropic API model discovery works
 	// Backend names a delegated foci backend (e.g. "claude-code"). Empty means
 	// the standard API backend, which talks to a remote endpoint with an API
 	// key. A non-empty Backend is a *local* backend: it shells out to a tool on
@@ -35,7 +33,8 @@ type llmProviderInfo struct {
 func (p *llmProviderInfo) IsLocalBackend() bool { return p.Backend != "" }
 
 var llmProviders = []llmProviderInfo{
-	{Name: "Anthropic (Claude)", Key: "anthropic", SecretKey: "anthropic.api_key", DefaultModel: "anthropic/claude-sonnet-4-6", HasAliases: true, HasDiscovery: true},
+	{Name: "API (self-configured)", Key: "api"},
+	{Name: "Anthropic (Claude)", Key: "anthropic", SecretKey: "anthropic.api_key", DefaultModel: "anthropic/claude-sonnet-4-6", HasAliases: true},
 	{Name: "Google Gemini", Key: "gemini", SecretKey: "gemini.api_key", DefaultModel: "google/gemini-2.5-flash"},
 	{Name: "OpenAI", Key: "openai", SecretKey: "openai.api_key", DefaultModel: "openai/gpt-4o"},
 	{Name: "OpenRouter (multi-provider)", Key: "openrouter", SecretKey: "openrouter.api_key", DefaultModel: "anthropic/claude-sonnet-4-6", Endpoint: "openrouter"},
@@ -44,38 +43,56 @@ var llmProviders = []llmProviderInfo{
 }
 
 // providerByKey returns the provider info for a key, or nil if not found.
+// If the key is not in the static llmProviders list but is a registered
+// supported backend, a synthesized entry is returned.
 func providerByKey(key string) *llmProviderInfo {
 	for i := range llmProviders {
 		if llmProviders[i].Key == key {
 			return &llmProviders[i]
 		}
 	}
+	// Fallback: if the key is a registered supported backend not explicitly
+	// listed, synthesize an entry for it.
+	for _, name := range delegator.SupportedNames() {
+		if name == key {
+			return &llmProviderInfo{Name: name, Key: name, Backend: name}
+		}
+	}
 	return nil
 }
 
 // stepProvider prompts for LLM provider selection.
+// The menu is built dynamically: first the generic "API (self-configured)"
+// option, then one entry per supported registered backend.
 func stepProvider(reader *bufio.Reader, _ string, total int) (providerKey string, back bool) {
 	fmt.Println()
 	fmt.Printf("Step 1/%d: LLM Provider\n", total)
 	fmt.Println("  Choose how foci reaches an LLM.")
 	fmt.Println()
-	fmt.Println("  API providers — talk to a remote endpoint with an API key:")
-	for i, p := range llmProviders {
-		if !p.IsLocalBackend() {
-			fmt.Printf("    [%d] %s\n", i+1, p.Name)
-		}
+
+	// Build the menu: [1] API (self-configured), then one per supported backend.
+	type menuItem struct {
+		name string
+		key  string
 	}
-	localShown := false
-	for i, p := range llmProviders {
-		if !p.IsLocalBackend() {
-			continue
+	var items []menuItem
+	items = append(items, menuItem{name: "API (self-configured)", key: "api"})
+	for _, backendName := range delegator.SupportedNames() {
+		displayName := backendName
+		if p := providerByKey(backendName); p != nil && p.Name != "" {
+			displayName = p.Name
 		}
-		if !localShown {
-			fmt.Println()
-			fmt.Println("  Local backend — delegates to a tool on this host, no API key:")
-			localShown = true
+		items = append(items, menuItem{name: displayName, key: backendName})
+	}
+
+	fmt.Println("  API (self-configured) — enter your model string and API key:")
+	fmt.Printf("    [1] %s\n", items[0].name)
+	if len(items) > 1 {
+		fmt.Println()
+		fmt.Println("  Local backend — delegates to a tool on this host, no API key:")
+		for i, item := range items[1:] {
+			fmt.Printf("    [%d] %s\n", i+2, item.name)
 		}
-		fmt.Printf("    [%d] %s\n", i+1, p.Name)
 	}
 	fmt.Println()
 
@@ -89,17 +106,19 @@ func stepProvider(reader *bufio.Reader, _ string, total int) (providerKey string
 		}
 
 		var idx int
-		if _, err := fmt.Sscanf(input, "%d", &idx); err == nil && idx >= 1 && idx <= len(llmProviders) {
-			p := llmProviders[idx-1]
-			fmt.Printf("  Provider: %s\n", p.Name)
-			return p.Key, false
+		if _, err := fmt.Sscanf(input, "%d", &idx); err == nil && idx >= 1 && idx <= len(items) {
+			item := items[idx-1]
+			fmt.Printf("  Provider: %s\n", item.name)
+			return item.key, false
 		}
-		fmt.Printf("  Enter a number between 1 and %d.\n", len(llmProviders))
+		fmt.Printf("  Enter a number between 1 and %d.\n", len(items))
 	}
 }
 
-// stepAPIKey prompts for the API key and stores it in the secrets store.
-func stepAPIKey(reader *bufio.Reader, providerKey string, store *secrets.Store, total int) (back bool) {
+// stepAPIKey prompts for the API key for the chosen provider.
+// For "api" (self-configured), it prompts and returns the key (caller stores it
+// once the model endpoint is resolved). For local backends, no key is needed.
+func stepAPIKey(reader *bufio.Reader, providerKey string, total int) (apiKey string, back bool) {
 	fmt.Println()
 	fmt.Printf("Step 2/%d: API Key\n", total)
 
@@ -109,15 +128,12 @@ func stepAPIKey(reader *bufio.Reader, providerKey string, store *secrets.Store, 
 		// own login (run /login after setup), so there is no API key to enter.
 		fmt.Printf("  %s needs no API key — it uses your local Claude Code login.\n", prov.Name)
 		fmt.Println("  After setup, run /login in chat to authenticate.")
-		return false
-	}
-	if prov == nil || providerKey == "custom" {
-		// Custom provider handles credentials in stepCustomEndpoint
-		fmt.Println("  (API key will be configured with the endpoint.)")
-		return false
+		return "", false
 	}
 
-	fmt.Printf("  Enter your %s API key:\n", prov.Name)
+	// For "api" (self-configured), prompt for the key and return it to the
+	// caller — we don't know the secret key name until the model is resolved.
+	fmt.Println("  Enter your API key:")
 	fmt.Println()
 
 	for {
@@ -125,98 +141,17 @@ func stepAPIKey(reader *bufio.Reader, providerKey string, store *secrets.Store, 
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
 		if input == "back" {
-			return true
+			return "", true
 		}
 		if input == "" {
 			fmt.Println("  API key cannot be empty.")
 			continue
 		}
-		store.Set(prov.SecretKey, input)
-		fmt.Println("  API key saved.")
-		return false
+		fmt.Println("  API key noted (will be stored after model selection).")
+		return input, false
 	}
 }
 
-// stepCustomEndpoint collects custom endpoint details.
-func stepCustomEndpoint(reader *bufio.Reader, store *secrets.Store, total int) (ce *config.CustomEndpointSetup, back bool, err error) {
-	fmt.Println()
-	fmt.Printf("Step 2/%d: Custom Endpoint\n", total)
-	fmt.Println("  Configure your custom LLM endpoint.")
-	fmt.Println()
-
-	// Endpoint name
-	fmt.Print("  Endpoint name (e.g. local, vllm): ")
-	name, _ := reader.ReadString('\n')
-	name = strings.TrimSpace(name)
-	if name == "back" {
-		return nil, true, nil
-	}
-	if name == "" {
-		name = "custom"
-	}
-
-	// Base URL
-	fmt.Print("  Base URL (e.g. http://localhost:8000/v1): ")
-	url, _ := reader.ReadString('\n')
-	url = strings.TrimSpace(url)
-	if url == "back" {
-		return nil, true, nil
-	}
-	if url == "" {
-		return nil, false, fmt.Errorf("base URL is required")
-	}
-
-	// Wire format
-	fmt.Println("  Wire format:")
-	fmt.Println("  [1] OpenAI (most common)")
-	fmt.Println("  [2] Anthropic")
-	fmt.Println("  [3] Gemini")
-	fmt.Println()
-	var format string
-	for {
-		fmt.Print("> ")
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-		if input == "back" {
-			return nil, true, nil
-		}
-		switch input {
-		case "1", "":
-			format = "openai"
-		case "2":
-			format = "anthropic"
-		case "3":
-			format = "gemini"
-		default:
-			fmt.Println("  Enter 1, 2, or 3.")
-			continue
-		}
-		break
-	}
-
-	// API key (optional)
-	secretKey := name + ".api_key"
-	fmt.Print("  API key (blank to skip): ")
-	apiKey, _ := reader.ReadString('\n')
-	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "back" {
-		return nil, true, nil
-	}
-	if apiKey != "" {
-		store.Set(secretKey, apiKey)
-		fmt.Println("  API key saved.")
-	} else {
-		secretKey = "" // no secret needed
-	}
-
-	fmt.Printf("  Custom endpoint %q configured (%s format, %s)\n", name, format, url)
-	return &config.CustomEndpointSetup{
-		Name:      name,
-		URL:       url,
-		Format:    format,
-		SecretKey: secretKey,
-	}, false, nil
-}
 
 // stepAgentID prompts for an agent identifier.
 func stepAgentID(reader *bufio.Reader, current string, total int) (agentID string, back bool) {
@@ -276,22 +211,20 @@ func stepDisplayName(reader *bufio.Reader, agentID, current string, total int) (
 }
 
 // stepModel prompts for a model selection, aware of the chosen provider.
-func stepModel(reader *bufio.Reader, current, providerKey string, store *secrets.Store, total int) (model string, back bool) {
+func stepModel(reader *bufio.Reader, current, providerKey string, total int) (model string, back bool) {
 	fmt.Println()
 	fmt.Printf("Step 5/%d: Model\n", total)
 
 	prov := providerByKey(providerKey)
 
-	if prov != nil && prov.IsLocalBackend() {
+	if providerKey == "api" {
+		// Generic self-configured API: user enters the full developer/model_id verbatim.
+		fmt.Println("  Enter a full model ID (developer/model_id, e.g. anthropic/claude-sonnet-4-6).")
+	} else if prov != nil && prov.IsLocalBackend() {
 		// Local backend: the alias is passed through verbatim to the host tool
 		// (e.g. claude-code understands "opus"/"sonnet"/"haiku" natively), so no
 		// alias resolution or API model discovery applies.
 		fmt.Println("  Choose a model the backend understands: opus, sonnet, haiku.")
-	} else if prov != nil && prov.HasAliases {
-		// Anthropic: show aliases
-		fmt.Println("  Choose a model: fable, opus, sonnet, haiku, or enter a full model ID.")
-	} else if providerKey == "custom" {
-		fmt.Println("  Enter a full model ID (developer/model_id, e.g. openai/my-model).")
 	} else {
 		fmt.Println("  Enter a full model ID (developer/model_id).")
 		if prov != nil && prov.DefaultModel != "" {
@@ -323,23 +256,16 @@ func stepModel(reader *bufio.Reader, current, providerKey string, store *secrets
 	}
 	if input == "" {
 		fmt.Println("  Model is required.")
-		return stepModel(reader, current, providerKey, store, total)
+		return stepModel(reader, current, providerKey, total)
 	}
 
-	// Local backend: pass the alias through verbatim (the host tool resolves it).
-	if prov != nil && prov.IsLocalBackend() {
+	// "api" and local backends: pass through verbatim (no alias resolution).
+	if providerKey == "api" || (prov != nil && prov.IsLocalBackend()) {
 		fmt.Printf("  Model: %s\n", input)
 		return input, false
 	}
 
-	// For Anthropic with aliases, try API discovery
-	if prov != nil && prov.HasDiscovery {
-		resolved := discoverModelFamily(store, input)
-		fmt.Printf("  Model: %s\n", resolved)
-		return resolved, false
-	}
-
-	// For non-Anthropic, resolve alias or use as-is
+	// For other providers, resolve alias or use as-is.
 	resolved := provision.ResolveModelAlias(input)
 	fmt.Printf("  Model: %s\n", resolved)
 	return resolved, false

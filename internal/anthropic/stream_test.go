@@ -31,7 +31,7 @@ data: {"type":"message_start","message":{"id":"msg_x","type":"message","role":"a
 	defer server.Close()
 
 	// Short idle window so the stall trips the watchdog quickly.
-	client := NewClient(StaticToken("test-key"), 300*time.Millisecond)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 300*time.Millisecond)
 	client.SetBaseURL(server.URL)
 
 	done := make(chan error, 1)
@@ -93,7 +93,7 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := NewClient(StaticToken("test-key"), 120*time.Second)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 120*time.Second)
 	client.SetBaseURL(server.URL)
 
 	var textDeltas []string
@@ -174,7 +174,7 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := NewClient(StaticToken("test-key"), 120*time.Second)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 120*time.Second)
 	client.SetBaseURL(server.URL)
 
 	var thinkingDeltas []string
@@ -243,7 +243,7 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := NewClient(StaticToken("test-key"), 120*time.Second)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 120*time.Second)
 	client.SetBaseURL(server.URL)
 
 	resp, err := client.StreamMessage(context.Background(), &MessageRequest{
@@ -276,7 +276,7 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}
 	}))
 	defer server.Close()
 
-	client := NewClient(StaticToken("test-key"), 10*time.Second)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 10*time.Second)
 	client.SetBaseURL(server.URL)
 
 	_, err := client.StreamMessage(context.Background(), &MessageRequest{
@@ -324,7 +324,7 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}
 	}))
 	defer server.Close()
 
-	client := NewClient(StaticToken("test-key"), 10*time.Second)
+	client := NewClient(func() (string, error) { return "test-key", nil }, 10*time.Second)
 	client.SetBaseURL(server.URL)
 
 	var deltas []string
