@@ -113,6 +113,7 @@ func wireAgentPlatformCallbacks(
 			if c != nil {
 				if bs, ok := c.(platform.ButtonSender); ok {
 					if err := bs.EditMessageText(msgID, msg); err == nil {
+						log.Debugf("agent", "compaction edit delivered for session=%s msgID=%s", sk, msgID)
 						return
 					}
 					log.Debugf("agent", "compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
