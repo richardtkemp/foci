@@ -1137,3 +1137,104 @@ func TestHandlePermissionRequest_ExitPlanMode_MissingFileFallsBack(t *testing.T)
 		t.Errorf("fallback text = %q, want generic rendering mentioning the tool", gotText)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Plan-cancel-by-message (HasPendingPlanPermission / CancelPlanWithFeedback)
+// ---------------------------------------------------------------------------
+
+// TestHasPendingPlanPermission proves it returns the requestID of a pending
+// ExitPlanMode permission and "" for non-plan permissions or none.
+func TestHasPendingPlanPermission(t *testing.T) {
+	t.Parallel()
+
+	b := &Backend{
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
+	}
+	if got := b.HasPendingPlanPermission(); got != "" {
+		t.Errorf("empty backend: got %q, want \"\"", got)
+	}
+	// A non-plan permission must not match.
+	b.storePendingPerm(&pendingPermission{requestID: "req-bash", toolName: "Bash"})
+	if got := b.HasPendingPlanPermission(); got != "" {
+		t.Errorf("only a Bash perm pending: got %q, want \"\"", got)
+	}
+	// An ExitPlanMode permission matches.
+	b.storePendingPerm(&pendingPermission{requestID: "req-plan", toolName: "ExitPlanMode"})
+	if got := b.HasPendingPlanPermission(); got != "req-plan" {
+		t.Errorf("plan perm pending: got %q, want %q", got, "req-plan")
+	}
+	b.removePendingPerm("req-plan")
+	if got := b.HasPendingPlanPermission(); got != "" {
+		t.Errorf("after removing plan perm: got %q, want \"\"", got)
+	}
+}
+
+// TestCancelPlanWithFeedback proves it denies the plan with the user's feedback
+// as the message, clears the pending permission, and fires the prompt's cancel
+// listener (which edits the Allow/Deny buttons away).
+func TestCancelPlanWithFeedback(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:       NewWriter(nopWriteCloser{&buf}),
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
+	}
+	b.storePendingPerm(&pendingPermission{requestID: "req-plan", toolUseID: "toolu_PLAN", toolName: "ExitPlanMode"})
+	b.outstanding.Register("req-plan", OutstandingPermission)
+	cancelled := 0
+	var cancelReason string
+	b.RegisterPromptCancelListener("req-plan", func(reason string) {
+		cancelled++
+		cancelReason = reason
+	})
+
+	if err := b.CancelPlanWithFeedback("req-plan", "use postgres not sqlite"); err != nil {
+		t.Fatalf("CancelPlanWithFeedback: %v", err)
+	}
+
+	resp := parseControlResponse(t, buf.String())
+	inner := resp["response"].(map[string]any)
+	if inner["behavior"] != "deny" {
+		t.Errorf("behavior = %v, want %q", inner["behavior"], "deny")
+	}
+	if inner["message"] != "use postgres not sqlite" {
+		t.Errorf("message = %v, want the user's feedback", inner["message"])
+	}
+	if inner["toolUseID"] != "toolu_PLAN" {
+		t.Errorf("toolUseID = %v, want %q", inner["toolUseID"], "toolu_PLAN")
+	}
+	if b.PendingPermissions() != 0 {
+		t.Errorf("pending = %d, want 0", b.PendingPermissions())
+	}
+	if cancelled != 1 {
+		t.Errorf("cancel listener fired %d times, want 1 (buttons edited away)", cancelled)
+	}
+	if !strings.Contains(cancelReason, "follow-up") {
+		t.Errorf("cancel reason = %q, want mention of 'follow-up'", cancelReason)
+	}
+	if b.outstanding.Has("req-plan") {
+		t.Error("outstanding entry should be cleared after cancel")
+	}
+}
+
+// TestCancelPlanWithFeedback_UnknownID proves an unknown request id errors and
+// writes nothing on the wire.
+func TestCancelPlanWithFeedback_UnknownID(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:       NewWriter(nopWriteCloser{&buf}),
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
+	}
+	if err := b.CancelPlanWithFeedback("nope", "feedback"); err == nil {
+		t.Fatal("expected error for unknown request id")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no wire output, got %q", buf.String())
+	}
+}

@@ -198,6 +198,86 @@ func TestInbox_Enqueue_InFlight_CCBackend_InjectsSteer(t *testing.T) {
 	}
 }
 
+// planResponderBackend is a fake CC backend implementing delegator.PlanResponder
+// for the plan-cancel-by-message intercept. HasPendingPlanPermission returns
+// planReqID; CancelPlanWithFeedback records the feedback. Steer Injects are
+// recorded via the embedded recordingBackend so a test can prove the intercept
+// short-circuited normal routing.
+type planResponderBackend struct {
+	recordingBackend
+	planReqID   string
+	cancelCalls int
+	cancelText  string
+}
+
+func (p *planResponderBackend) HasPendingPlanPermission() string { return p.planReqID }
+
+func (p *planResponderBackend) CancelPlanWithFeedback(_, feedback string) error {
+	p.cancelCalls++
+	p.cancelText = feedback
+	return nil
+}
+
+// TestInbox_Enqueue_PendingPlan_CancelsWithFeedback verifies that a typed
+// message arriving while an ExitPlanMode permission is pending is converted to a
+// plan denial carrying the text as feedback — and is NOT steered or queued.
+func TestInbox_Enqueue_PendingPlan_CancelsWithFeedback(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.SetInboxSteerMode(true)
+
+	be := &planResponderBackend{planReqID: "req-plan"}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "use postgres instead"})
+
+	if be.cancelCalls != 1 {
+		t.Fatalf("CancelPlanWithFeedback called %d times, want 1", be.cancelCalls)
+	}
+	if be.cancelText != "use postgres instead" {
+		t.Errorf("feedback = %q, want the typed text", be.cancelText)
+	}
+	// The message must NOT have been steered (it became the plan denial).
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("expected no steer inject, got %d", len(injects))
+	}
+	if entries := inb.drainSteer(); len(entries) != 0 {
+		t.Errorf("steer buffer should be empty, got %d entries", len(entries))
+	}
+}
+
+// TestInbox_Enqueue_NoPendingPlan_NormalSteer is the regression guard: with no
+// pending plan permission, the intercept is skipped and a mid-turn message
+// steers normally — proving non-plan turns are unaffected.
+func TestInbox_Enqueue_NoPendingPlan_NormalSteer(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.SetInboxSteerMode(true)
+
+	be := &planResponderBackend{planReqID: ""} // no pending plan
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "normal mid-turn ping"})
+
+	if be.cancelCalls != 0 {
+		t.Errorf("CancelPlanWithFeedback called %d times, want 0 (no pending plan)", be.cancelCalls)
+	}
+	injects := be.Injects()
+	if len(injects) != 1 || injects[0].Source != delegator.SourceSteer || injects[0].Text != "normal mid-turn ping" {
+		t.Errorf("expected one normal steer inject, got %+v", injects)
+	}
+}
+
 // errTurnNotInFlightBackend always declines an Inject with
 // ErrTurnNotInFlight, modelling the race where the turn completed between the
 // inbox's turnActive check and the inject landing.
