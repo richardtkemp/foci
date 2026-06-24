@@ -218,6 +218,14 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		cmds.Register(command.TmuxCommand())
 	}
 
+	// /pause and /resume toggle answer-capture for a pending foci_ask. Only
+	// meaningful when the ask tool is wired (AskRouter set), which covers both API
+	// and delegated/CC agents.
+	if p.ag.AskRouter != nil {
+		cmds.Register(command.PauseCommand())
+		cmds.Register(command.ResumeCommand())
+	}
+
 	// Stop / done
 	cmds.Register(command.StopCommand())
 	cmds.Register(command.LoginCommand())

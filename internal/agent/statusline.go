@@ -42,7 +42,7 @@ import (
 // an agent has no `statusline` configured. The labels live here (editable);
 // the conditional fields self-omit, rule 2 cleans the spacing, and rule 3 drops
 // the "[state]" line when empty.
-const DefaultStatuslineTemplate = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens} {mana}\n[state] {state}"
+const DefaultStatuslineTemplate = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens} {mana}\n[state] {state}\n[ask] {ask}"
 
 // Statusline command execution bounds. The command runs synchronously before
 // every turn, so these are deliberately tight.
@@ -109,6 +109,22 @@ var statuslineFields = map[string]func(statuslineInputs) string{
 		return "mana=" + in.manaStr + " " + manaIndicator(in.manaGood)
 	},
 	"state": func(in statuslineInputs) string { return in.agent.stateDashboardBody(in.sessionKey) },
+	// Paused-ask reminder (addressed to the agent, who reads the statusline):
+	// renders only while an ask is paused, so rule 3 drops its template line
+	// otherwise. Names the ask id so the agent knows what's still waiting.
+	"ask": func(in statuslineInputs) string {
+		if in.agent == nil || in.agent.AskRouter == nil || in.agent.AskRouter.IsPaused == nil {
+			return ""
+		}
+		if !in.agent.AskRouter.IsPaused(in.sessionKey) {
+			return ""
+		}
+		reqID := ""
+		if in.agent.AskRouter.PendingForSession != nil {
+			reqID = in.agent.AskRouter.PendingForSession(in.sessionKey)
+		}
+		return fmt.Sprintf("⏸ ask %s paused — user replies routing to you as normal turns, not answering it (/resume to restore)", reqID)
+	},
 
 	// Granular per-store fields (label baked in; self-omit individually).
 	"todos":      func(in statuslineInputs) string { return in.agent.statusTodos(in.sessionKey) },

@@ -211,6 +211,42 @@ func TestAsk_TypedAnswerViaRouter(t *testing.T) {
 	}
 }
 
+// TestAsk_PauseResumeRouting verifies the pause flag toggles via the router and
+// that pause/resume are no-ops (return false) when no ask is pending.
+func TestAsk_PauseResumeRouting(t *testing.T) {
+	t.Parallel()
+	tool, router, _, _ := newAskFixture()
+
+	// No ask yet: every pause-path call is a no-op.
+	if router.IsPaused(askSession) {
+		t.Error("IsPaused should be false with no pending ask")
+	}
+	if router.PauseSession(askSession) {
+		t.Error("PauseSession with no pending ask should return false")
+	}
+	if router.ResumeSession(askSession) {
+		t.Error("ResumeSession with no pending ask should return false")
+	}
+
+	execAsk(t, tool, `{"questions":[{"question":"What name?","options":[{"label":"Default"}]}]}`)
+
+	if router.IsPaused(askSession) {
+		t.Error("a fresh ask should not be paused")
+	}
+	if !router.PauseSession(askSession) {
+		t.Fatal("PauseSession should return true for a pending ask")
+	}
+	if !router.IsPaused(askSession) {
+		t.Error("IsPaused should be true after PauseSession")
+	}
+	if !router.ResumeSession(askSession) {
+		t.Fatal("ResumeSession should return true for a pending ask")
+	}
+	if router.IsPaused(askSession) {
+		t.Error("IsPaused should be false after ResumeSession")
+	}
+}
+
 func TestAsk_NoSessionErrors(t *testing.T) {
 	t.Parallel()
 	tool, _, _, _ := newAskFixture()

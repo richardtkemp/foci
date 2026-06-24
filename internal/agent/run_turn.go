@@ -117,8 +117,12 @@ func (a *Agent) RunTurn(
 	// inbound message. Gating on RunTurn (the platform-message path) means this
 	// never eats system injects (keepalive, reflection, session_notify), which
 	// reach HandleMessage directly and bypass this function.
+	// A paused ask (via /pause) skips answer-capture: the user's replies fall
+	// through to a normal turn while the ask stays pending (buttons still resolve
+	// it; /resume restores capture).
 	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 {
-		if reqID := a.AskRouter.PendingForSession(sk); reqID != "" {
+		if reqID := a.AskRouter.PendingForSession(sk); reqID != "" &&
+			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(sk)) {
 			answer := strings.TrimSpace(texts[0])
 			if answer != "" {
 				log.Debugf("ask", "session=%s routing typed text to pending ask req=%s: %q", sk, reqID, answer)
