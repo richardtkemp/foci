@@ -630,7 +630,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 		Name:        "ask",
 		ExecExport:  true,
 		Positional:  []string{"questions"},
-		Description: "Ask the user one or more questions with selectable options, and receive their answers. Mirrors the built-in AskUserQuestion but with NO limit on the number of questions or options. ASYNC: this call returns immediately after posting the first question — it does NOT block waiting for an answer. End your turn after calling it; the user's answers arrive later as a new message. Input is JSON only: pass {\"questions\":[...]} as a positional arg, via --json, or piped on stdin.",
+		Description: "Ask the user one or more questions with selectable options, and receive their answers. Mirrors the built-in AskUserQuestion but with NO limit on the number of questions or options. Options are OPTIONAL per question: omit them for an open-ended, typed-answer-only prompt (presented with just a Cancel button; the user types their reply). ASYNC: this call returns immediately after posting the first question — it does NOT block waiting for an answer. End your turn after calling it; the user's answers arrive later as a new message. Input is JSON only: pass {\"questions\":[...]} as a positional arg, via --json, or piped on stdin.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -646,7 +646,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 							"multiSelect": {"type": "boolean", "description": "Reserved; currently single-select only"},
 							"options": {
 								"type": "array",
-								"description": "Selectable options. No cap on count.",
+								"description": "Selectable options, shown as buttons. No cap on count. OPTIONAL: omit (or pass an empty array) for a typed-answer-only question — it is presented with just a Cancel button and the user answers by typing their reply.",
 								"items": {
 									"type": "object",
 									"properties": {
@@ -657,7 +657,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 								}
 							}
 						},
-						"required": ["question", "options"]
+						"required": ["question"]
 					}
 				},
 				"grader": {"type": "string", "description": "Optional absolute path to an executable. When the user finishes answering, foci runs it with {request_id, questions, answers} as JSON on stdin; its stdout is delivered to you INSTEAD of the raw answers. Use for deterministic post-processing (quiz grading, answer normalization, lookups)."},
@@ -683,9 +683,10 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 				if q.Question == "" {
 					return ToolResult{}, fmt.Errorf("ask: question %d has an empty %q field", i+1, "question")
 				}
-				if len(q.Options) == 0 {
-					return ToolResult{}, fmt.Errorf("ask: question %d (%q) has no options", i+1, q.Question)
-				}
+				// A question with no options is allowed: it is presented with only a
+				// Cancel button and answered by typing (the typed-answer path resolves
+				// the freeform reply). Use this for open-ended prompts where buttons
+				// don't fit.
 			}
 
 			// Validate the optional grader up front so the agent learns about a bad

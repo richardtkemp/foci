@@ -89,7 +89,8 @@ func FormatText(q *Question, index, total int) string {
 
 	b.WriteString(q.Question)
 
-	// List options with descriptions.
+	// List options with descriptions. With no options the question is
+	// typed-answer-only, so hint that the user should reply by typing.
 	if len(q.Options) > 0 {
 		b.WriteString("\n")
 		for i, opt := range q.Options {
@@ -100,6 +101,8 @@ func FormatText(q *Question, index, total int) string {
 				b.WriteString(fmt.Sprintf("%d. **%s**", i+1, opt.Label))
 			}
 		}
+	} else {
+		b.WriteString("\n\n_Reply with your answer._")
 	}
 
 	return b.String()
