@@ -465,12 +465,18 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// than baked into a single overloaded predicate. While we wait,
 			// further envelopes accumulate in inb.ch (buffered) and will
 			// be batched together via drainAvailable once the gate opens.
-			base := session.SessionKeyBase(env.SessionKey)
-			if a.IsTurnInFlight(base) && !a.IsInFlightDelivering(base) {
-				log.Extra("inbox", "gate_wait sk=%s base=%s reason=in_flight_non_delivering — holding fresh turn until non-delivering turn clears (#767)", env.SessionKey, base)
+			// Pass the FULL env.SessionKey — the in-flight methods derive the
+			// child-preserving identity (SessionInFlightKey). A facet envelope
+			// must gate on the facet's OWN in-flight turn, not the parent root's
+			// (a facet runs on its own backend; coupling it to root would be the
+			// #719 bug). Root-injected reflection/memory turns still register
+			// under the root identity, so a root envelope still sees them.
+			ifk := session.SessionInFlightKey(env.SessionKey)
+			if a.IsTurnInFlight(env.SessionKey) && !a.IsInFlightDelivering(env.SessionKey) {
+				log.Extra("inbox", "gate_wait sk=%s ifk=%s reason=in_flight_non_delivering — holding fresh turn until non-delivering turn clears (#767)", env.SessionKey, ifk)
 			}
-			for a.IsTurnInFlight(base) && !a.IsInFlightDelivering(base) {
-				wait := a.InFlightWaitCh(base)
+			for a.IsTurnInFlight(env.SessionKey) && !a.IsInFlightDelivering(env.SessionKey) {
+				wait := a.InFlightWaitCh(env.SessionKey)
 				select {
 				case <-ctx.Done():
 					return

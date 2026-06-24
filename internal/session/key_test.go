@@ -294,6 +294,57 @@ func TestSessionKeyBase(t *testing.T) {
 	}
 }
 
+func TestSessionInFlightKey(t *testing.T) {
+	// Proves that SessionInFlightKey collapses version rotation (like
+	// SessionKeyBase) but PRESERVES the child suffix, so a facet/branch tracks
+	// in-flight state separately from its parent root (TODO #719). Also proves
+	// idempotency: an already-derived identity is returned unchanged, never
+	// re-collapsed onto the root.
+	tests := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{name: "root key", key: "main/c123/1700000000", want: "main/c123"},
+		{name: "rotated root shares identity", key: "main/c123/1700100000", want: "main/c123"},
+		{name: "branch preserves child", key: "main/c123/1700000000/b1700050000", want: "main/c123/b1700050000"},
+		{name: "branch from rotated version, same child", key: "main/c123/1700100000/b1700050000", want: "main/c123/b1700050000"},
+		{name: "distinct child distinct identity", key: "main/c123/1700000000/b1700099999", want: "main/c123/b1700099999"},
+		{name: "independent root", key: "main/i1700000000/1700000000", want: "main/i1700000000"},
+		// Idempotency: derived identities don't parse as full keys, returned as-is.
+		{name: "idempotent root identity", key: "main/c123", want: "main/c123"},
+		{name: "idempotent branch identity", key: "main/c123/b1700050000", want: "main/c123/b1700050000"},
+		{name: "empty", key: "", want: ""},
+		{name: "single segment", key: "main", want: "main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SessionInFlightKey(tt.key); got != tt.want {
+				t.Errorf("SessionInFlightKey(%q) = %q, want %q", tt.key, got, tt.want)
+			}
+			// Idempotency: feeding the result back must not change it.
+			if got := SessionInFlightKey(tt.want); got != tt.want {
+				t.Errorf("SessionInFlightKey not idempotent: SessionInFlightKey(%q) = %q, want %q", tt.want, got, tt.want)
+			}
+		})
+	}
+
+	// A facet and its parent root must NOT share an in-flight identity — the
+	// core #719 invariant.
+	root := "main/c123/1700000000"
+	facet := "main/c123/1700000000/b1700050000"
+	if SessionInFlightKey(root) == SessionInFlightKey(facet) {
+		t.Errorf("facet %q and root %q must have distinct in-flight identities, both got %q",
+			facet, root, SessionInFlightKey(root))
+	}
+	// But a root-injected periodic turn (runs under the parent key, no child)
+	// MUST share the root identity so the #760/#767 gates still see it.
+	if SessionInFlightKey(root) != SessionKeyBase(root) {
+		t.Errorf("root in-flight identity %q must equal SessionKeyBase %q (root-injected turns gate correctly)",
+			SessionInFlightKey(root), SessionKeyBase(root))
+	}
+}
+
 func TestAgentIDFromKey(t *testing.T) {
 	// Proves that AgentIDFromKey returns the first segment of a session key,
 	// or the empty string for malformed input. Mirrors ChatIDFromKey/

@@ -288,10 +288,12 @@ func buildWakeScheduler(
 				}
 				// Wait for an active turn on THIS session to finish before
 				// injecting — a turn on another session must not delay us.
-				base := session.SessionKeyBase(sk)
-				for getAgent().IsTurnInFlight(base) {
+				// Pass the full key: the in-flight methods derive the
+				// child-preserving identity, so a reminder targeting a facet
+				// gates on the facet's own turn, not the parent root's (#719).
+				for getAgent().IsTurnInFlight(sk) {
 					select {
-					case <-getAgent().InFlightWaitCh(base):
+					case <-getAgent().InFlightWaitCh(sk):
 					case <-wakeCtx.Done():
 						_ = reminderStore.Dismiss(id)
 						return

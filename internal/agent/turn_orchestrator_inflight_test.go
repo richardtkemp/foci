@@ -44,9 +44,12 @@ func (s *rateLimitedStubContract) LogConversationSent(*TurnState) {}
 func (s *rateLimitedStubContract) TouchActivityPost(*TurnState)   {}
 
 // orchestratorTestKey is a representative session key for orchestrator
-// integration tests. SessionKeyBase strips the trailing version segment, so
-// the in-flight counter and last_activity row use "test-agent/cTEST".
-const orchestratorTestKey = "test-agent/cTEST/v1"
+// integration tests. The version segment is a real (integer) unix timestamp so
+// it parses as a full session key — SessionInFlightKey/SessionKeyBase then
+// collapse it to "test-agent/cTEST" for the in-flight counter and last_activity
+// row. (A non-integer version like "v1" would fail to parse and, under the
+// idempotent SessionInFlightKey fallback, be returned unchanged.)
+const orchestratorTestKey = "test-agent/cTEST/1700000000"
 
 var orchestratorTestBase = session.SessionKeyBase(orchestratorTestKey)
 

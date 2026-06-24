@@ -27,18 +27,25 @@ import (
 const sessionMetaLastActivity = "last_activity"
 
 // IsTurnInFlight returns true if any turn is currently executing under
-// OrchestrateFullTurn for the given session base — covers both API and
-// delegated transports. Distinct from IsProcessing, which only reflects the
-// API path's internal counter and is per-agent rather than per-session.
+// OrchestrateFullTurn for the in-flight identity of the given session key —
+// covers both API and delegated transports. Distinct from IsProcessing, which
+// only reflects the API path's internal counter and is per-agent rather than
+// per-session.
 //
-// `base` is SessionKeyBase(ts.SessionKey) — the stable {agentID}/{type}{id}
-// prefix. Branches of a session share the parent's base, so a turn running
-// in a branch correctly registers as in-flight under the main session.
+// Pass the FULL session key; the identity is derived via
+// session.SessionInFlightKey, which collapses version rotation (compaction)
+// but PRESERVES the child suffix. So a root session and its post-compaction
+// versions share one identity, while a facet/branch (a 'b' child on its own
+// backend) tracks separately — collapsing a facet onto the parent would wrongly
+// couple two independent conversations (TODO #719). Root-injected periodic
+// turns (reflection/keepalive/memory) run under the parent key with no child,
+// so they still register under the root identity as the #760/#767 gates expect.
 //
 // This is the runtime signal used by the activity gate to short-circuit
 // keepalive sends while a turn is mid-flight (e.g. blocked waiting for a
 // permission decision in the delegated path).
-func (a *Agent) IsTurnInFlight(base string) bool {
+func (a *Agent) IsTurnInFlight(key string) bool {
+	base := session.SessionInFlightKey(key)
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
 	return a.inFlight[base] > 0
@@ -63,7 +70,7 @@ func (a *Agent) IsAnyTurnInFlight() bool {
 // clears it, so tests can exercise the in-flight guards without driving a real
 // turn. Test-only.
 func (a *Agent) SetTurnInFlightForTest(sessionKey string, inFlight bool) {
-	base := session.SessionKeyBase(sessionKey)
+	base := session.SessionInFlightKey(sessionKey)
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
 	if a.inFlight == nil {
@@ -86,7 +93,8 @@ func (a *Agent) SetTurnInFlightForTest(sessionKey string, inFlight bool) {
 // Counts mirror inFlight: a turn is delivering iff its sink reports true at
 // markInFlight time; the bookkeeping is exact across nested/concurrent turns
 // on the same base.
-func (a *Agent) IsInFlightDelivering(base string) bool {
+func (a *Agent) IsInFlightDelivering(key string) bool {
+	base := session.SessionInFlightKey(key)
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
 	return a.inFlightDelivering[base] > 0
@@ -111,7 +119,8 @@ func (a *Agent) IsInFlightDelivering(base string) bool {
 // Safe under concurrent waiters and concurrent state changes: close-and-replace
 // happens under inFlightMu, so every waiter that fetched the channel before
 // the change observes the close.
-func (a *Agent) InFlightWaitCh(base string) <-chan struct{} {
+func (a *Agent) InFlightWaitCh(key string) <-chan struct{} {
+	base := session.SessionInFlightKey(key)
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
 	if a.inFlightChanged == nil {
@@ -149,11 +158,13 @@ func (a *Agent) notifyInFlightChangedLocked(base string) {
 // counter tracks delivering turns so callers can distinguish "any turn in
 // flight" from "an in-flight turn whose output reaches the user."
 //
+// Pass the FULL session key — markInFlight derives the in-flight identity via
+// session.SessionInFlightKey (child-preserving; see IsTurnInFlight).
+//
 // Usage at call sites:
 //
-//	base := session.SessionKeyBase(ts.SessionKey)
 //	delivering := turnevent.SinkFromContext(ctx).DeliversToPlatform()
-//	done := a.markInFlight(base, delivering)
+//	done := a.markInFlight(ts.SessionKey, delivering)
 //	defer done()
 //
 // The orchestrator pairs this with touchLastActivity at turn entry so that
@@ -163,7 +174,8 @@ func (a *Agent) notifyInFlightChangedLocked(base string) {
 // Both increment and decrement notify InFlightWaitCh listeners by
 // close-and-replace, so the inbox's wait loop wakes on any state change and
 // re-evaluates its predicate.
-func (a *Agent) markInFlight(base string, delivering bool) func() {
+func (a *Agent) markInFlight(key string, delivering bool) func() {
+	base := session.SessionInFlightKey(key)
 	a.inFlightMu.Lock()
 	if a.inFlight == nil {
 		a.inFlight = make(map[string]int32)
