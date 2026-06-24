@@ -213,14 +213,13 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.PassCommand())
 	cmds.Register(command.TodoCommand())
 
-	// /plan — put Claude Code into plan mode. Only for CC backends; delivery
-	// differs by backend because the native /plan slash command works in the
-	// tmux TUI but is unavailable in the headless stream (#857).
-	switch p.acfg.Backend {
-	case "claude-code":
-		cmds.Register(command.PlanCommand(command.PlanEnterTool))
-	case "claude-code-tmux":
-		cmds.Register(command.PlanCommand(command.PlanNativeSlash))
+	// /plan — put the coding-agent backend into plan mode. Registered iff the
+	// configured backend contributed a plan delivery via delegator.RegisterPlan
+	// (only delegated CC backends do). The delivery mechanism — verbatim slash
+	// command (cctmux) vs EnterPlanMode turn (ccstream) — lives with each
+	// backend, not as a string switch here (#857).
+	if delivery, ok := delegator.PlanDeliveryFor(p.acfg.Backend); ok {
+		cmds.Register(command.PlanCommand(delivery))
 	}
 
 	// Tmux command (only if tool is available)
