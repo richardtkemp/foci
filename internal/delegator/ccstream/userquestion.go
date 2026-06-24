@@ -113,7 +113,7 @@ func (b *Backend) presentCurrentQuestion(pp *pendingPermission) {
 	choices := questionChoices(q)
 
 	if b.permPromptFn != nil {
-		b.permPromptFn(pp.requestID, text, summary, choices)
+		b.permPromptFn(pp.requestID, text, summary, "", choices)
 	} else {
 		log.Warnf("ccstream/question", "permPromptFn nil for question req_id=%s, not displayed", pp.requestID)
 	}

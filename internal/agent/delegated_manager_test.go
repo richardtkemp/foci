@@ -1345,13 +1345,14 @@ func TestGet_TypingFuncReturnsImmediatelyWhenFast(t *testing.T) {
 func TestGet_PermissionPromptFuncRouting(t *testing.T) {
 	// Proves that SetPermissionPromptFunc is called on the backend, and when
 	// invoked it both sets permission pending and calls the manager's func.
-	var gotKey, gotReqID, gotText, gotSummary string
+	var gotKey, gotReqID, gotText, gotSummary, gotAttachment string
 	mgr, mocks := newTestManager(t, nil)
-	mgr.PermissionPromptFunc = func(sk, reqID, text, summary string, choices []delegator.PromptChoice) {
+	mgr.PermissionPromptFunc = func(sk, reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		gotKey = sk
 		gotReqID = reqID
 		gotText = text
 		gotSummary = summary
+		gotAttachment = attachmentPath
 	}
 
 	sk := "test-agent/c1"
@@ -1368,7 +1369,7 @@ func TestGet_PermissionPromptFuncRouting(t *testing.T) {
 		t.Fatal("permissionPromptFunc not set on backend")
 	}
 
-	ppf("req-1", "Allow edit?", "Edit foo.go", nil)
+	ppf("req-1", "Allow edit?", "Edit foo.go", "plan.md", nil)
 
 	if gotKey != sk {
 		t.Errorf("sessionKey = %q, want %q", gotKey, sk)
@@ -1381,6 +1382,9 @@ func TestGet_PermissionPromptFuncRouting(t *testing.T) {
 	}
 	if gotSummary != "Edit foo.go" {
 		t.Errorf("summary = %q, want %q", gotSummary, "Edit foo.go")
+	}
+	if gotAttachment != "plan.md" {
+		t.Errorf("attachmentPath = %q, want %q", gotAttachment, "plan.md")
 	}
 
 	// Permission should now be pending.

@@ -238,7 +238,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// bridge's BASH_ENV/FOCI_SOCK so both layers survive.
 			Env: backendConfigEnv(backendConfig),
 		},
-		PermissionPromptFunc: func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice) {
+		PermissionPromptFunc: func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			resolve := connResolver(connMgr, sessionKey, agentID)
 			conn := resolve()
 			if conn == nil {
@@ -246,6 +246,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				return
 			}
 			log.Debugf("agent/"+agentID, "permission prompt: sending via %s for session=%s summary=%q reqID=%s", conn.PlatformName(), sessionKey, summary, requestID)
+			// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
+			// document before the keyboard so the user sees the content, then the
+			// Allow/Deny buttons. A send failure is non-fatal — fall through to
+			// the prompt so the permission gate still resolves.
+			if attachmentPath != "" {
+				if err := conn.SendDocument(attachmentPath, ""); err != nil {
+					log.Warnf("agent/"+agentID, "permission prompt: SendDocument(%q) failed for session=%s: %v", attachmentPath, sessionKey, err)
+				}
+			}
 			var buttons []platform.ButtonChoice
 			for _, c := range choices {
 				buttons = append(buttons, platform.ButtonChoice{Label: c.Label, Data: c.Data})

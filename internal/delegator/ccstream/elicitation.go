@@ -395,7 +395,7 @@ func elicFieldChoices(prop elicProperty) []delegator.PromptChoice {
 // warning style for parity.
 func (b *Backend) callPrompt(requestID, text, summary string, choices []delegator.PromptChoice) {
 	if b.permPromptFn != nil {
-		b.permPromptFn(requestID, text, summary, choices)
+		b.permPromptFn(requestID, text, summary, "", choices)
 		return
 	}
 	log.Warnf("ccstream/elic", "permPromptFn nil for elicitation req_id=%s, prompt not displayed", requestID)

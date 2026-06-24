@@ -320,7 +320,7 @@ func (b *Backend) checkPermissionPrompt() {
 				Data:  c.Number,
 			})
 		}
-		promptFn("", "⚠️ Permission required:\n\n"+prompt.Description, prompt.Summary, choices)
+		promptFn("", "⚠️ Permission required:\n\n"+prompt.Description, prompt.Summary, "", choices)
 	} else if se := b.sessionEvents.Load(); se != nil && se.OnText != nil {
 		se.OnText("⚠️ Claude Code needs permission:\n\n" + prompt.Raw + "\n\nReply with your choice (1, 2, 3, etc.)")
 	}

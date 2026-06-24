@@ -223,7 +223,11 @@ type PromptChoice struct {
 // requestID is the CC protocol request ID (empty for tmux backends).
 // summary is a short description for post-action display (e.g.
 // "Edit memory/2026-03-27.md"). If nil, the backend falls back to plain text.
-type PermissionPromptFunc func(requestID, text, summary string, choices []PromptChoice)
+// attachmentPath, when non-empty, is a file the platform layer should send as
+// a document before drawing the keyboard (e.g. the full plan markdown for an
+// ExitPlanMode prompt — see ccstream handleToolRequest). Empty for the common
+// case; the platform layer ignores it then.
+type PermissionPromptFunc func(requestID, text, summary, attachmentPath string, choices []PromptChoice)
 
 // QuestionResponder is optionally implemented by backends that support
 // the AskUserQuestion tool. It allows the agent layer to route user

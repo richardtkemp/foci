@@ -561,7 +561,7 @@ func TestCheckPermissionPrompt_FullPipeline(t *testing.T) {
 	}
 	var prompts []dispatched
 	cleared := 0
-	b.SetPermissionPromptFunc(func(_, _, summary string, choices []delegator.PromptChoice) {
+	b.SetPermissionPromptFunc(func(_, _, summary, _ string, choices []delegator.PromptChoice) {
 		prompts = append(prompts, dispatched{summary, len(choices)})
 	})
 	b.SetOnPromptsCleared(func() { cleared++ })

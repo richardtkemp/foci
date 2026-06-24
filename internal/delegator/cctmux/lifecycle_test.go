@@ -127,7 +127,7 @@ func TestCheckPermissionPrompt_StructuredCallback(t *testing.T) {
 	var gotText, gotSummary string
 	var gotChoices []delegator.PromptChoice
 	b.replyMu.Lock()
-	b.permPromptFunc = func(requestID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFunc = func(requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		gotText = text
 		gotSummary = summary
 		gotChoices = choices
@@ -155,7 +155,7 @@ func TestCheckPermissionPrompt_StructuredCallback(t *testing.T) {
 	b.replyMu.Unlock()
 
 	if promptFn != nil && len(prompt.Choices) > 0 {
-		promptFn("", "\u26a0\ufe0f Permission required:\n\n"+prompt.Description, prompt.Summary, choices)
+		promptFn("", "\u26a0\ufe0f Permission required:\n\n"+prompt.Description, prompt.Summary, "", choices)
 	}
 
 	if gotText == "" {
@@ -424,7 +424,7 @@ func TestSetPermissionPromptFunc(t *testing.T) {
 	b := &Backend{}
 
 	called := false
-	b.SetPermissionPromptFunc(func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.SetPermissionPromptFunc(func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		called = true
 	})
 
@@ -434,7 +434,7 @@ func TestSetPermissionPromptFunc(t *testing.T) {
 	if fn == nil {
 		t.Fatal("permPromptFunc should not be nil")
 	}
-	fn("", "test", "summary", nil)
+	fn("", "test", "summary", "", nil)
 	if !called {
 		t.Error("permPromptFunc was not called")
 	}
@@ -618,7 +618,7 @@ func TestPermissionPipeline_EndToEnd(t *testing.T) {
 	b := &Backend{}
 
 	var dispatched bool
-	b.SetPermissionPromptFunc(func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.SetPermissionPromptFunc(func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		dispatched = true
 		if summary != prompt.Summary {
 			t.Errorf("dispatched summary = %q, want %q", summary, prompt.Summary)
@@ -643,7 +643,7 @@ func TestPermissionPipeline_EndToEnd(t *testing.T) {
 		for _, c := range prompt.Choices {
 			choices = append(choices, delegator.PromptChoice{Label: c.Label, Data: c.Number})
 		}
-		promptFn("", "\u26a0\ufe0f Permission required:\n\n"+prompt.Description, prompt.Summary, choices)
+		promptFn("", "\u26a0\ufe0f Permission required:\n\n"+prompt.Description, prompt.Summary, "", choices)
 	}
 
 	if !dispatched {

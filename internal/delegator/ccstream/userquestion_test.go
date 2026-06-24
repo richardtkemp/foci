@@ -300,7 +300,7 @@ func TestRespondToQuestion_SingleQuestion(t *testing.T) {
 		summary string
 		choices []delegator.PromptChoice
 	}
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		promptCalls = append(promptCalls, struct {
 			reqID   string
 			text    string
@@ -393,7 +393,7 @@ func TestRespondToQuestion_SequentialMultiQuestion(t *testing.T) {
 	b, buf := testBackend(t)
 
 	var promptCalls int
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		promptCalls++
 	}
 
@@ -469,7 +469,7 @@ func TestRespondToQuestion_CustomText(t *testing.T) {
 	t.Parallel()
 
 	b, buf := testBackend(t)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -517,7 +517,7 @@ func TestCancelQuestion(t *testing.T) {
 	t.Parallel()
 
 	b, buf := testBackend(t)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -562,7 +562,7 @@ func TestCancelQuestion_MidSequence(t *testing.T) {
 	t.Parallel()
 
 	b, buf := testBackend(t)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -607,7 +607,7 @@ func TestHasPendingQuestion(t *testing.T) {
 	t.Parallel()
 
 	b, _ := testBackend(t)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	// No pending question initially.
 	if got := b.HasPendingQuestion(); got != "" {
@@ -643,7 +643,7 @@ func TestRespondToQuestion_AlreadyAnswered(t *testing.T) {
 	t.Parallel()
 
 	b, _ := testBackend(t)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -674,7 +674,7 @@ func TestRespondToQuestion_InvalidOptionIndex(t *testing.T) {
 	t.Parallel()
 
 	b, _ := testBackend(t)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -702,7 +702,7 @@ func TestHandleToolRequest_DetectsAskUserQuestion(t *testing.T) {
 	b, _ := testBackend(t)
 
 	var questionHandled bool
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		// If this is the question handler, text should NOT contain "Permission Required".
 		if !strings.Contains(text, "Permission Required") {
 			questionHandled = true
@@ -743,7 +743,7 @@ func TestHandleToolRequest_RegularPermission(t *testing.T) {
 	b, _ := testBackend(t)
 
 	var gotText string
-	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 		gotText = text
 	}
 
@@ -771,7 +771,7 @@ func TestRespondToQuestion_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
 	b, _ := testBackend(t)
-	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
