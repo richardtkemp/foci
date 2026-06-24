@@ -45,6 +45,27 @@ func (f *fakePresenter) answer(data string) {
 	}
 }
 
+// fakeCloser records (msgID, finalText) pairs passed to the AskCloseFn so a test
+// can assert that an answered question's on-screen message was closed.
+type fakeCloser struct {
+	mu     sync.Mutex
+	msgIDs []string
+	texts  []string
+}
+
+func (c *fakeCloser) close(msgID, finalText string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.msgIDs = append(c.msgIDs, msgID)
+	c.texts = append(c.texts, finalText)
+}
+
+func (c *fakeCloser) calls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.msgIDs)
+}
+
 // fakeDeliver records messages delivered back into the session.
 type fakeDeliver struct {
 	mu       sync.Mutex
@@ -71,8 +92,18 @@ func (d *fakeDeliver) last() (string, bool) {
 func newAskFixture() (*Tool, *AskRouter, *fakePresenter, *fakeDeliver) {
 	p := &fakePresenter{}
 	d := &fakeDeliver{}
-	tool, router := NewAskTool(p.present, nil, d.deliver, nil, "test")
+	tool, router := NewAskTool(p.present, nil, d.deliver, nil, nil, "test")
 	return tool, router, p, d
+}
+
+// newAskFixtureWithCloser is newAskFixture plus a fakeCloser wired as the
+// AskCloseFn, for tests that assert answered questions are closed on screen.
+func newAskFixtureWithCloser() (*Tool, *AskRouter, *fakePresenter, *fakeDeliver, *fakeCloser) {
+	p := &fakePresenter{}
+	d := &fakeDeliver{}
+	c := &fakeCloser{}
+	tool, router := NewAskTool(p.present, nil, d.deliver, c.close, nil, "test")
+	return tool, router, p, d, c
 }
 
 const askSession = "clutch/c123/1000"
@@ -208,6 +239,54 @@ func TestAsk_TypedAnswerViaRouter(t *testing.T) {
 	}
 	if router.PendingForSession(askSession) != "" {
 		t.Error("pending ask should be cleared after completion")
+	}
+}
+
+// TestAsk_TypedAnswerClosesMessage proves that answering a question by TYPING
+// closes its on-screen message (edits it shut, dropping the stale buttons) — the
+// gap the button path covers itself but the typed path previously left open,
+// most visibly for option-less questions whose only button is Cancel.
+func TestAsk_TypedAnswerClosesMessage(t *testing.T) {
+	t.Parallel()
+	tool, router, _, _, c := newAskFixtureWithCloser()
+	execAsk(t, tool, `{"questions":[{"question":"What name?"}]}`) // option-less
+
+	reqID := router.PendingForSession(askSession)
+	if reqID == "" {
+		t.Fatal("router should report a pending ask")
+	}
+	router.HandleResponse(reqID, "Aristotle")
+
+	if c.calls() != 1 {
+		t.Fatalf("close called %d times, want 1", c.calls())
+	}
+	if want := questionMsgID(reqID, 0); c.msgIDs[0] != want {
+		t.Errorf("closed msgID = %q, want %q", c.msgIDs[0], want)
+	}
+	if !strings.HasPrefix(c.texts[0], "✅ ") || !strings.Contains(c.texts[0], "Aristotle") {
+		t.Errorf("closed text = %q, want a ✅ confirmation echoing the answer", c.texts[0])
+	}
+}
+
+// TestAsk_EachAnsweredQuestionCloses proves every question in a sequence closes
+// as it is answered, each addressed by its own per-index message id.
+func TestAsk_EachAnsweredQuestionCloses(t *testing.T) {
+	t.Parallel()
+	tool, _, p, _, c := newAskFixtureWithCloser()
+	execAsk(t, tool, `{"questions":[
+		{"question":"Q1?","options":[{"label":"A1"}]},
+		{"question":"Q2?"}
+	]}`)
+
+	p.answer("qa:0") // Q1 via button
+	p.answer("typed reply") // Q2 via typing
+
+	if c.calls() != 2 {
+		t.Fatalf("close called %d times, want 2 (one per question)", c.calls())
+	}
+	// The two closes must address distinct, index-derived message ids.
+	if c.msgIDs[0] == c.msgIDs[1] {
+		t.Errorf("both closes hit the same msgID %q; want per-question ids", c.msgIDs[0])
 	}
 }
 
@@ -499,7 +578,7 @@ func TestAsk_ShellFuncGeneration(t *testing.T) {
 	// The hand-rolled `ask` shell func must pass schema-parity validation
 	// (questions is positional, so skipped) and offer JSON-only input.
 	t.Parallel()
-	tool, _ := NewAskTool(nil, nil, nil, nil, "test")
+	tool, _ := NewAskTool(nil, nil, nil, nil, nil, "test")
 	if err := validateShellFuncSchemaParity(tool); err != nil {
 		t.Fatalf("ask shell func failed parity: %v", err)
 	}

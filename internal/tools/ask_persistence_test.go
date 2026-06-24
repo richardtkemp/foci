@@ -61,7 +61,7 @@ func TestAskPersistOnStart(t *testing.T) {
 	idx := newStateDB(t)
 	p := &fakePresenter{}
 	d := &fakeDeliver{}
-	tool, _ := NewAskTool(p.present, nil, d.deliver, idx, "test")
+	tool, _ := NewAskTool(p.present, nil, d.deliver, nil, idx, "test")
 
 	execAsk(t, tool, twoQuestionAsk)
 
@@ -98,7 +98,7 @@ func TestAskPersistClearedOnComplete(t *testing.T) {
 	idx := newStateDB(t)
 	p := &fakePresenter{}
 	d := &fakeDeliver{}
-	tool, _ := NewAskTool(p.present, nil, d.deliver, idx, "test")
+	tool, _ := NewAskTool(p.present, nil, d.deliver, nil, idx, "test")
 
 	execAsk(t, tool, twoQuestionAsk)
 	p.answer("qa:0") // Q1
@@ -125,7 +125,7 @@ func TestAskRestoreRoundTrip(t *testing.T) {
 	// Instance 1: post a 2-question ask and answer the first.
 	p1 := &fakePresenter{}
 	d1 := &fakeDeliver{}
-	tool1, _ := NewAskTool(p1.present, nil, d1.deliver, idx, "test")
+	tool1, _ := NewAskTool(p1.present, nil, d1.deliver, nil, idx, "test")
 	execAsk(t, tool1, twoQuestionAsk)
 	p1.answer("qa:0") // Q1 → A1a; now positioned on Q2
 
@@ -134,7 +134,7 @@ func TestAskRestoreRoundTrip(t *testing.T) {
 	fr := &fakeRestore{}
 	p2 := &fakePresenter{}
 	d2 := &fakeDeliver{}
-	_, router2 := NewAskTool(p2.present, fr.restore, d2.deliver, idx, "test")
+	_, router2 := NewAskTool(p2.present, fr.restore, d2.deliver, nil, idx, "test")
 
 	// Typed-answer routing restored: the session has a pending ask again.
 	reqID := router2.PendingForSession(askSession)
@@ -177,7 +177,7 @@ func TestAskRestorePersistsPlatformMsgID(t *testing.T) {
 	// Instance 1: the presenter reports a platform message id for each question.
 	p1 := &fakePresenter{platformMsgID: "tg-42"}
 	d1 := &fakeDeliver{}
-	tool1, _ := NewAskTool(p1.present, nil, d1.deliver, idx, "test")
+	tool1, _ := NewAskTool(p1.present, nil, d1.deliver, nil, idx, "test")
 	execAsk(t, tool1, twoQuestionAsk)
 
 	// It must be captured in the durable set, not just held in memory.
@@ -194,7 +194,7 @@ func TestAskRestorePersistsPlatformMsgID(t *testing.T) {
 	fr := &fakeRestore{}
 	p2 := &fakePresenter{}
 	d2 := &fakeDeliver{}
-	_, _ = NewAskTool(p2.present, fr.restore, d2.deliver, idx, "test")
+	_, _ = NewAskTool(p2.present, fr.restore, d2.deliver, nil, idx, "test")
 	if fr.lastPlatformMsgID != "tg-42" {
 		t.Errorf("restore platformMsgID = %q, want tg-42", fr.lastPlatformMsgID)
 	}
@@ -219,7 +219,7 @@ func TestAskRestoreDropsStale(t *testing.T) {
 	fr := &fakeRestore{}
 	p := &fakePresenter{}
 	d := &fakeDeliver{}
-	_, router := NewAskTool(p.present, fr.restore, d.deliver, idx, "test")
+	_, router := NewAskTool(p.present, fr.restore, d.deliver, nil, idx, "test")
 
 	if reqID := router.PendingForSession(askSession); reqID != "" {
 		t.Errorf("stale ask restored (reqID=%q), want dropped", reqID)
@@ -243,7 +243,7 @@ func TestAskPausePersistsAcrossRestart(t *testing.T) {
 	// Instance 1: post an ask and pause it.
 	p1 := &fakePresenter{}
 	d1 := &fakeDeliver{}
-	tool1, router1 := NewAskTool(p1.present, nil, d1.deliver, idx, "test")
+	tool1, router1 := NewAskTool(p1.present, nil, d1.deliver, nil, idx, "test")
 	execAsk(t, tool1, twoQuestionAsk)
 	if !router1.PauseSession(askSession) {
 		t.Fatal("PauseSession should succeed for the pending ask")
@@ -263,7 +263,7 @@ func TestAskPausePersistsAcrossRestart(t *testing.T) {
 	fr := &fakeRestore{}
 	p2 := &fakePresenter{}
 	d2 := &fakeDeliver{}
-	_, router2 := NewAskTool(p2.present, fr.restore, d2.deliver, idx, "test")
+	_, router2 := NewAskTool(p2.present, fr.restore, d2.deliver, nil, idx, "test")
 	if !router2.IsPaused(askSession) {
 		t.Error("restored ask should still be paused after restart")
 	}
@@ -281,7 +281,7 @@ func TestAskPausePersistsAcrossRestart(t *testing.T) {
 func TestAskNoPersistenceWithoutStore(t *testing.T) {
 	p := &fakePresenter{}
 	d := &fakeDeliver{}
-	tool, _ := NewAskTool(p.present, nil, d.deliver, nil, "test")
+	tool, _ := NewAskTool(p.present, nil, d.deliver, nil, nil, "test")
 	execAsk(t, tool, twoQuestionAsk)
 	p.answer("qa:0")
 	p.answer("qa:1")
