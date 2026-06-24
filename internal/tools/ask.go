@@ -74,6 +74,14 @@ type AskPresentFn func(sessionKey, msgID, text, summary string, choices []questi
 // inbound user message, waking the agent. Backend-agnostic (delegated + API).
 type AskDeliverFn func(sessionKey, message string)
 
+// AskCloseFn edits an already-displayed question message to finalText and
+// removes its buttons. The button-click path closes the message itself (the
+// platform edits it to "✅ <label>" / "❌ Cancelled"); this hook exists for the
+// TYPED-answer path, where no button was pressed so nothing else clears the
+// now-stale Cancel/option buttons. Must be idempotent and nil-safe: closing a
+// message the button path already removed is a harmless no-op.
+type AskCloseFn func(msgID, finalText string)
+
 // AskRestoreFn re-attaches the interactive callback for ONE already-displayed
 // question after a restart. Unlike AskPresentFn it must NOT send a new message:
 // the buttons still live on the platform (the message survived the restart), so
@@ -123,6 +131,7 @@ type askState struct {
 	present   AskPresentFn
 	restore   AskRestoreFn
 	deliver   AskDeliverFn
+	closeMsg  AskCloseFn
 	seq       atomic.Int64
 	store     *session.SessionIndex // nil = no persistence
 	agentID   string
@@ -137,16 +146,36 @@ const askMetaKey = "ask_pending"
 // is still cleaned up by the periodic interactive-expiry sweep.
 const pendingAskTTL = 24 * time.Hour
 
-func newAskState(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, store *session.SessionIndex, agentID string) *askState {
+func newAskState(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, closeMsg AskCloseFn, store *session.SessionIndex, agentID string) *askState {
 	return &askState{
 		byReqID:   make(map[string]*pendingAsk),
 		bySession: make(map[string]string),
 		present:   present,
 		restore:   restore,
 		deliver:   deliver,
+		closeMsg:  closeMsg,
 		store:     store,
 		agentID:   agentID,
 	}
+}
+
+// questionMsgID is the colon-free interactive-message id for question idx of an
+// ask. Derived from the request id + index so present, reattach, and close all
+// address the same on-screen message.
+func questionMsgID(requestID string, idx int) string {
+	return fmt.Sprintf("%s-q%d", requestID, idx)
+}
+
+// answerEcho renders a typed answer for the closed-message confirmation: a
+// single line, rune-safely capped, so a long or multi-line answer doesn't bloat
+// the edited prompt.
+func answerEcho(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	const max = 80
+	if r := []rune(s); len(r) > max {
+		return string(r[:max-1]) + "…"
+	}
+	return s
 }
 
 // nextRequestID returns a unique, colon-free request id. Colon-free matters: the
@@ -193,7 +222,7 @@ func (a *askState) presentCurrent(p *pendingAsk) {
 	}
 	// Each question is its own one-shot interactive message; give it a unique,
 	// colon-free id derived from the request id and the question index.
-	msgID := fmt.Sprintf("%s-q%d", p.requestID, idx)
+	msgID := questionMsgID(p.requestID, idx)
 	if a.present != nil {
 		platformMsgID := a.present(p.sessionKey, msgID, text, summary, question.Choices(q), func(data string) {
 			a.handleResponse(p.requestID, data)
@@ -239,10 +268,19 @@ func (a *askState) handleResponse(requestID, data string) {
 			p.acc.Index(), p.acc.Total()))
 		return
 	}
+	answeredIdx := p.acc.Index()
 	p.acc.Record(answer)
 	done := p.acc.Done()
 	a.persistLocked() // checkpoint the advanced index / new answer
 	a.mu.Unlock()
+
+	// Close the just-answered question's on-screen message so its buttons can't
+	// be re-clicked. On the button path the platform already edited it (so this
+	// no-ops); on the TYPED path nothing else would clear the stale Cancel /
+	// option buttons, so this is what makes a typed-answered question "close".
+	if a.closeMsg != nil {
+		a.closeMsg(questionMsgID(p.requestID, answeredIdx), "✅ "+answerEcho(answer))
+	}
 
 	if !done {
 		a.presentCurrent(p)
@@ -411,7 +449,7 @@ func (a *askState) reattach(p *pendingAsk) {
 	if q == nil {
 		return
 	}
-	msgID := fmt.Sprintf("%s-q%d", p.requestID, p.acc.Index())
+	msgID := questionMsgID(p.requestID, p.acc.Index())
 	a.restore(p.sessionKey, msgID, p.platformMsgID, question.Choices(q), func(data string) {
 		a.handleResponse(p.requestID, data)
 	})
@@ -616,15 +654,17 @@ type AskRouter struct {
 
 // NewAskTool builds the `ask` / `foci_ask` tool. present shows questions to the
 // user; restore re-attaches a pending question's buttons after a restart; deliver
-// injects the answer batch back into the calling session. All are supplied by
-// cmd/foci-gw where the platform + agent wiring lives. store+agentID persist
+// injects the answer batch back into the calling session; closeMsg edits a
+// question's message shut when it is answered by typing (the button path closes
+// itself). All are supplied by cmd/foci-gw where the platform + agent wiring
+// lives. store+agentID persist
 // in-flight asks across restarts (store may be nil to disable). The returned
 // AskRouter is wired into the inbound path for typed ("Other") answers.
 //
 // Construction rehydrates any asks that were in flight before a restart and
 // re-binds their interactive callbacks, so an outstanding question keeps working.
-func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, store *session.SessionIndex, agentID string) (*Tool, *AskRouter) {
-	state := newAskState(present, restore, deliver, store, agentID)
+func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, closeMsg AskCloseFn, store *session.SessionIndex, agentID string) (*Tool, *AskRouter) {
+	state := newAskState(present, restore, deliver, closeMsg, store, agentID)
 	state.restorePending()
 	t := &Tool{
 		Name:        "ask",

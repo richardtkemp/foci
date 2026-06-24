@@ -269,6 +269,7 @@ var toolTable = []toolEntry{
 			newAskPresentFn(d.p.acfg.ID, d.connMgr),
 			newAskRestoreFn(d.p.acfg.ID, d.connMgr),
 			tools.AskDeliverFn(d.sessionNotify),
+			func(msgID, finalText string) { _ = platform.CancelInteractiveMessage(msgID, finalText) },
 			d.p.sessionIndex, d.p.acfg.ID)
 		d.out.askRouter = router
 		return t
