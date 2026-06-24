@@ -175,6 +175,7 @@ func ManaAndReset(usageClient UsageClient, investInterval time.Duration) (pct, r
 
 	w, err := usageClient.GetUsage(context.Background())
 	if err != nil {
+		log.Warnf("mana", "usage API: %v", err)
 		return "", "", false
 	}
 

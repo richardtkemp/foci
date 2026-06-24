@@ -110,6 +110,7 @@ func (idx *Index) Reindex() error {
 
 			data, err := os.ReadFile(path)
 			if err != nil {
+				log.Warnf("memory", "fts5 reindex: skipping unreadable file %s: %v", path, err)
 				return nil // skip unreadable files
 			}
 			if len(data) == 0 {

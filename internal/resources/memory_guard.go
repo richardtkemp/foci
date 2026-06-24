@@ -65,6 +65,7 @@ func NewMemoryGuard(cfg MemoryGuardConfig, warnFn WarnFunc) *MemoryGuard {
 // Start launches the background check goroutine.
 func (g *MemoryGuard) Start(ctx context.Context) {
 	if g.cfg.Interval <= 0 {
+		log.Warnf("resources", "memory guard not started: interval=%v (<=0, disabled)", g.cfg.Interval)
 		return
 	}
 	monCtx, cancel := context.WithCancel(ctx)

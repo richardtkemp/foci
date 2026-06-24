@@ -39,6 +39,7 @@ func NewGoroutineMonitor(cfg GoroutineMonitorConfig) *GoroutineMonitor {
 // Start launches the background monitoring goroutine.
 func (m *GoroutineMonitor) Start(ctx context.Context) {
 	if m.cfg.Interval <= 0 {
+		log.Warnf("resources", "goroutine monitor not started: interval=%v (<=0, disabled)", m.cfg.Interval)
 		return
 	}
 	monCtx, cancel := context.WithCancel(ctx)

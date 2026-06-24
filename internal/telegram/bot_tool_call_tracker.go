@@ -104,7 +104,12 @@ func (b *telegramTrackerBackend) EditWithButton(msgID, text, btnLabel, btnData s
 
 func (b *telegramTrackerBackend) Delete(msgID string) error {
 	id, _ := strconv.ParseInt(msgID, 10, 64)
-	_, _ = b.bot.client.DeleteMessage(b.chatID, id, nil)
+	if _, err := b.bot.client.DeleteMessage(b.chatID, id, nil); err != nil {
+		// Best-effort cleanup of a tool-call indicator message. Failures are
+		// usually benign (message too old / already gone), so log at debug
+		// rather than surfacing — but no longer fully silent.
+		b.bot.logger().Debugf("delete tracked tool-call message %s: %v", msgID, err)
+	}
 	return nil
 }
 
