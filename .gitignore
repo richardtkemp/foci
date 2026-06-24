@@ -34,3 +34,6 @@ COVERAGE-PROGRESS.md
 /cc-stub
 ARCHITECTURE-REVIEW-2026-06.md
 SECURITY_REVIEW_2026-06.md
+# Orphan from a bare `go build` in scripts/find-disconnected-tests/ (module
+# name = foci-find-disconnected-tests). The real build output goes to bin/.
+scripts/find-disconnected-tests/foci-find-disconnected-tests
