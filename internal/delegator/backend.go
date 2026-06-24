@@ -270,6 +270,22 @@ type ElicitationResponder interface {
 	HasPendingElicitation() string
 }
 
+// PlanResponder is optionally implemented by backends that support cancelling a
+// pending ExitPlanMode (plan-approval) permission in favour of typed revision
+// feedback. Unlike a normal tool permission — which a follow-up message queues
+// behind — a plan request is cancelled by the message: the text is delivered to
+// the model as rejection feedback so it revises the plan and re-presents it.
+// ccstream implements this; other backends don't.
+type PlanResponder interface {
+	// HasPendingPlanPermission returns the request ID of a pending ExitPlanMode
+	// permission, or "" if none.
+	HasPendingPlanPermission() string
+
+	// CancelPlanWithFeedback denies the plan permission, passing feedback to the
+	// backend as the rejection message and editing the prompt's buttons away.
+	CancelPlanWithFeedback(requestID, feedback string) error
+}
+
 // ContextUsage holds context window usage data returned by a backend's
 // get_context_usage control request. Zero-cost (no API call).
 type ContextUsage struct {

@@ -126,6 +126,50 @@ func (b *Backend) RespondToPermission(requestID string, allow bool, message stri
 	return nil
 }
 
+// HasPendingPlanPermission returns the request ID of a pending ExitPlanMode
+// (plan-approval) permission, or "" if none. Used by the inbound path to detect
+// when a typed message should cancel the plan (delivering the text as revision
+// feedback) instead of queuing behind it. Distinct from HasPendingQuestion: a
+// plan permission has toolName "ExitPlanMode" and no question state.
+func (b *Backend) HasPendingPlanPermission() string {
+	b.permMu.Lock()
+	defer b.permMu.Unlock()
+	for _, pp := range b.pendingPerms {
+		if pp.toolName == "ExitPlanMode" {
+			return pp.requestID
+		}
+	}
+	return ""
+}
+
+// CancelPlanWithFeedback denies a pending ExitPlanMode permission, passing the
+// user's typed text to CC as the rejection message. CC stays in plan mode and
+// revises the plan using the feedback (its native plan-revise loop), then
+// re-presents. The prompt's registered cancel listener is fired via
+// outstanding.Cancel so the now-stale Allow/Deny buttons are edited away, and
+// clearing the outstanding entry (→ onEmpty) unblocks any worker parked in
+// WaitForPermission. Only valid for an ExitPlanMode request.
+func (b *Backend) CancelPlanWithFeedback(requestID, feedback string) error {
+	pp, ok := b.removePendingPerm(requestID)
+	if !ok {
+		return fmt.Errorf("ccstream: no pending plan permission with request ID %q", requestID)
+	}
+	resp := &PermissionDeny{
+		Behavior:               "deny",
+		Message:                feedback,
+		Interrupt:              false,
+		ToolUseID:              pp.toolUseID,
+		DecisionClassification: "user_reject",
+	}
+	if err := b.writer.SendControlResponse(requestID, resp); err != nil {
+		return err
+	}
+	// Use Cancel, not Resolve: only Cancel notifies the prompt's cancel listener,
+	// which performs the button edit ("❌ Plan cancelled by follow-up message").
+	b.outstanding.Cancel(requestID, "plan revised by follow-up message")
+	return nil
+}
+
 // RespondToPermissionWithRule responds with "always allow" for a given prefix,
 // including the permission suggestion in updatedPermissions.
 func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) error {

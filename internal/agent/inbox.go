@@ -322,6 +322,30 @@ func (a *Agent) Enqueue(env Envelope) {
 	// channel instead; the worker dispatches it as a clean fresh turn once
 	// compaction completes.
 	compacting := a.IsCompacting(env.SessionKey)
+
+	// Plan-cancel-by-message (#858). A pending ExitPlanMode permission blocks the
+	// session: CC waits for Allow/Deny and ignores stdin until it answers. UNLIKE
+	// normal permissions — which keep queuing behind WaitForPermission — a typed
+	// message during plan approval is revision feedback: deny the plan with the
+	// text so CC revises and re-presents, and edit the buttons away (handled by
+	// the prompt's cancel listener). Runs before steer/queue routing so it catches
+	// the message whether steer mode is on (would otherwise hit ignored stdin) or
+	// off (would otherwise queue). Attachments / empty text fall through.
+	if isActive && env.Text != "" && len(env.Attachments) == 0 {
+		if be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey); err == nil && be != nil {
+			if pr, ok := be.(delegator.PlanResponder); ok {
+				if reqID := pr.HasPendingPlanPermission(); reqID != "" {
+					if err := pr.CancelPlanWithFeedback(reqID, env.Text); err != nil {
+						a.logger().Warnf("inbox: plan-cancel-by-message failed sk=%s reqID=%s: %v (falling through)", env.SessionKey, reqID, err)
+					} else {
+						a.logger().Infof("inbox: plan approval cancelled by follow-up message sk=%s reqID=%s", env.SessionKey, reqID)
+						return
+					}
+				}
+			}
+		}
+	}
+
 	steerEligible := a.inboxSteerMode && isActive && !compacting && env.Text != "" && len(env.Attachments) == 0
 
 	if steerEligible {
