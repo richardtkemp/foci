@@ -326,6 +326,109 @@ func TestAsk_PauseResumeRouting(t *testing.T) {
 	}
 }
 
+// TestAsk_CompletePartial proves /complete delivers only the answered questions
+// (with a partial preamble), drops the unanswered ones, clears the pending ask,
+// and closes the still-displayed current question.
+func TestAsk_CompletePartial(t *testing.T) {
+	t.Parallel()
+	tool, router, p, d, c := newAskFixtureWithCloser()
+	execAsk(t, tool, `{"questions":[
+		{"question":"Q1?","header":"H1","options":[{"label":"A1"},{"label":"B1"}]},
+		{"question":"Q2?","header":"H2","options":[{"label":"A2"},{"label":"B2"}]},
+		{"question":"Q3?","header":"H3","options":[{"label":"A3"},{"label":"B3"}]}
+	]}`)
+	p.answer("qa:0") // answer Q1 → A1; now positioned on Q2
+
+	answered, total, ok := router.CompleteSession(askSession)
+	if !ok || answered != 1 || total != 3 {
+		t.Fatalf("CompleteSession = (%d,%d,%v), want (1,3,true)", answered, total, ok)
+	}
+	msg, got := d.last()
+	if !got {
+		t.Fatal("a partial batch should be delivered")
+	}
+	// Includes the answered question, excludes the unanswered ones, and signals partiality.
+	if !strings.Contains(msg, `"Q1?":"A1"`) {
+		t.Errorf("partial batch missing answered Q1:\n%s", msg)
+	}
+	if strings.Contains(msg, "Q2?") || strings.Contains(msg, "Q3?") {
+		t.Errorf("partial batch must not mention unanswered questions:\n%s", msg)
+	}
+	if !strings.Contains(msg, "early") || !strings.Contains(msg, "1 of 3") {
+		t.Errorf("partial batch should flag it as an early completion (1 of 3):\n%s", msg)
+	}
+	// Pending ask cleared.
+	if router.PendingForSession(askSession) != "" {
+		t.Error("pending ask should be cleared after /complete")
+	}
+	// The current (still-displayed) Q2 message is closed; plus the close for Q1's
+	// answered message = 2 total.
+	if c.calls() < 1 {
+		t.Errorf("the current question should be closed on /complete (closes=%d)", c.calls())
+	}
+}
+
+// TestAsk_CompleteZeroAnswered proves /complete before any answer is a no-op:
+// nothing is delivered and the ask stays pending.
+func TestAsk_CompleteZeroAnswered(t *testing.T) {
+	t.Parallel()
+	tool, router, _, d := newAskFixture()
+	execAsk(t, tool, `{"questions":[
+		{"question":"Q1?","options":[{"label":"A1"}]},
+		{"question":"Q2?","options":[{"label":"A2"}]}
+	]}`)
+
+	answered, total, ok := router.CompleteSession(askSession)
+	if ok || answered != 0 || total != 2 {
+		t.Fatalf("CompleteSession with nothing answered = (%d,%d,%v), want (0,2,false)", answered, total, ok)
+	}
+	if _, got := d.last(); got {
+		t.Error("nothing should be delivered when no question is answered")
+	}
+	if router.PendingForSession(askSession) == "" {
+		t.Error("ask should remain pending after a no-op /complete")
+	}
+}
+
+// TestAsk_CompleteNoPending proves /complete with no pending ask reports the
+// no-active-question no-op (total==0).
+func TestAsk_CompleteNoPending(t *testing.T) {
+	t.Parallel()
+	_, router, _, d := newAskFixture()
+	answered, total, ok := router.CompleteSession(askSession)
+	if ok || answered != 0 || total != 0 {
+		t.Fatalf("CompleteSession with no ask = (%d,%d,%v), want (0,0,false)", answered, total, ok)
+	}
+	if _, got := d.last(); got {
+		t.Error("nothing should be delivered with no pending ask")
+	}
+}
+
+// TestAsk_CompleteRunsGraderOnPartial proves a configured grader still runs when
+// the ask is completed early, and is told the set is partial (partial:true plus
+// the answered/total counts in its stdin payload).
+func TestAsk_CompleteRunsGraderOnPartial(t *testing.T) {
+	t.Parallel()
+	tool, router, p, d := newAskFixture()
+	// Grader echoes whether it saw partial:true and the answered/total counts.
+	grader := writeGrader(t, "#!/bin/sh\ninput=\"$(cat)\"\ncase \"$input\" in\n  *'\"partial\":true'*) echo \"graded-partial $1\" ;;\n  *) echo graded-full ;;\nesac\n")
+	raw := `{"questions":[
+		{"question":"Q1?","options":[{"label":"A1"},{"label":"B1"}]},
+		{"question":"Q2?","options":[{"label":"A2"},{"label":"B2"}]}
+	],"grader":"` + grader + `"}`
+	execAsk(t, tool, raw)
+	p.answer("qa:0") // answer Q1 only
+
+	answered, total, ok := router.CompleteSession(askSession)
+	if !ok || answered != 1 || total != 2 {
+		t.Fatalf("CompleteSession = (%d,%d,%v), want (1,2,true)", answered, total, ok)
+	}
+	msg := waitDeliver(t, d)
+	if !strings.Contains(msg, "graded-partial ask-") {
+		t.Errorf("grader should run on the partial set and see partial:true, got: %q", msg)
+	}
+}
+
 func TestAsk_NoSessionErrors(t *testing.T) {
 	t.Parallel()
 	tool, _, _, _ := newAskFixture()

@@ -302,7 +302,8 @@ func (a *askState) handleResponse(requestID, data string) {
 	// callback nor a typed-answer turn blocks on the subprocess.
 	go func() {
 		raw := formatAnswerBatch(p.acc.Questions(), p.acc.Answers())
-		a.deliverMsg(p.sessionKey, runGrader(p, p.acc.Questions(), p.acc.Answers(), raw))
+		total := p.acc.Total()
+		a.deliverMsg(p.sessionKey, runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
 	}()
 }
 
@@ -503,19 +504,95 @@ func (a *askState) isPaused(sessionKey string) bool {
 	return p != nil && p.paused
 }
 
+// completeSession ends the session's pending ask early, delivering ONLY the
+// already-answered questions to the agent and dropping the unanswered ones.
+// Returns (answered, total, true) on success; (0, 0, false) when no ask is
+// pending (caller reports "no active question"); (0, total, false) when an ask
+// is pending but nothing has been answered yet (caller nudges — delivering an
+// empty batch would wake the agent for nothing). A configured grader still runs,
+// told the set is partial so it can grade a short answer set.
+func (a *askState) completeSession(sessionKey string) (answered, total int, ok bool) {
+	a.mu.Lock()
+	reqID := a.bySession[sessionKey]
+	if reqID == "" {
+		a.mu.Unlock()
+		return 0, 0, false
+	}
+	p := a.byReqID[reqID]
+	if p == nil {
+		a.mu.Unlock()
+		return 0, 0, false
+	}
+	idx := p.acc.Index()
+	total = p.acc.Total()
+	if idx == 0 {
+		a.mu.Unlock()
+		return 0, total, false // nothing answered yet
+	}
+	// Snapshot the answered subset under the lock. acc isn't mutated after the
+	// ask is removed, so these stay safe to read from the grader goroutine below.
+	answeredQs := p.acc.Questions()[:idx]
+	answers := p.acc.Answers()
+	sess := p.sessionKey
+	curMsgID := questionMsgID(p.requestID, idx) // the still-displayed question
+	hasGrader := p.grader.path != ""
+	a.removeLocked(p)
+	a.persistLocked()
+	a.mu.Unlock()
+
+	// Close the still-live current question so its Cancel/option buttons can't be
+	// clicked now that the ask is gone (the button/typed paths self-close; a
+	// /complete is neither, so it must close explicitly).
+	if a.closeMsg != nil {
+		a.closeMsg(curMsgID, "⏹ Completed early")
+	}
+
+	raw := formatPartialBatch(answeredQs, answers, idx, total)
+	if !hasGrader {
+		a.deliverMsg(sess, raw)
+		return idx, total, true
+	}
+	// Grader configured: run it on the partial set off the caller's goroutine
+	// (mirrors the full-answer path) so the slash-command handler returns at once;
+	// the graded result is delivered to the agent when ready.
+	go func() {
+		a.deliverMsg(sess, runGrader(p, answeredQs, answers, raw, true, idx, total))
+	}()
+	return idx, total, true
+}
+
 // formatAnswerBatch renders the collected answers as the inbound user message
 // the asking agent receives. Includes a readable Q→A list plus a compact JSON
 // line so the agent can parse the result deterministically if it wants to.
 func formatAnswerBatch(qs []question.Question, answers map[string]string) string {
 	var b strings.Builder
 	b.WriteString("[SYSTEM: the user answered your `ask` request. These are their selections — act on them.]\n")
+	writeAnswerBody(&b, qs, answers)
+	return b.String()
+}
+
+// formatPartialBatch renders the inbound message for an ask completed EARLY (via
+// /complete): the same Q→A body + JSON payload as a full batch, but a preamble
+// that tells the agent the remaining questions were left unanswered on purpose,
+// so it acts on what it has rather than re-asking the rest.
+func formatPartialBatch(qs []question.Question, answers map[string]string, answered, total int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[SYSTEM: the user completed your `ask` request early, answering %d of %d questions. Only the answered selections follow; the remaining %d were left unanswered on purpose — act on what you have, don't re-ask the rest unless genuinely needed.]\n", answered, total, total-answered)
+	writeAnswerBody(&b, qs, answers)
+	return b.String()
+}
+
+// writeAnswerBody appends the human-readable "• header → answer" lines and the
+// compact JSON payload (answers + optional answers_by_id) to b. Shared by the
+// full and partial batch formatters so their body shape can't drift.
+func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[string]string) {
 	for _, q := range qs {
 		ans := answers[q.Question]
 		label := q.Header
 		if label == "" {
 			label = q.Question
 		}
-		fmt.Fprintf(&b, "\n• %s → %s", label, ans)
+		fmt.Fprintf(b, "\n• %s → %s", label, ans)
 	}
 	payload := map[string]any{"answers": answers}
 	if byID := answersByID(qs, answers); len(byID) > 0 {
@@ -525,7 +602,6 @@ func formatAnswerBatch(qs []question.Question, answers map[string]string) string
 		b.WriteString("\n\n")
 		b.Write(js)
 	}
-	return b.String()
 }
 
 // answersByID maps each question's optional opaque ID to its answer, including
@@ -543,11 +619,20 @@ func answersByID(qs []question.Question, answers map[string]string) map[string]s
 // graderInput is the JSON document handed to a grader executable on stdin. It
 // carries the full question objects (for context: headers, offered options) plus
 // the user's answers keyed by question text. request_id is also passed as argv[1].
+//
+// When the ask was completed EARLY (via /complete) only the answered questions
+// are present and Partial is true, with Answered/Total describing how short the
+// set is — a grader is expected to handle this (e.g. score only what was given).
+// For a fully-answered ask Partial is false and the count fields are omitted, so
+// existing graders see an unchanged payload.
 type graderInput struct {
 	RequestID   string              `json:"request_id"`
 	Questions   []question.Question `json:"questions"`
 	Answers     map[string]string   `json:"answers"`
 	AnswersByID map[string]string   `json:"answers_by_id,omitempty"`
+	Partial     bool                `json:"partial,omitempty"`
+	Answered    int                 `json:"answered,omitempty"`
+	Total       int                 `json:"total,omitempty"`
 }
 
 // runGrader executes the configured grader with the answers as JSON on stdin and
@@ -555,12 +640,15 @@ type graderInput struct {
 // stdout (verbatim, capped) replaces the raw answer batch. On any failure —
 // missing/blank output is allowed; non-zero exit, timeout, or launch error is not
 // — it applies the on-error policy so the user's real answers are never lost.
-func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string, rawBatch string) string {
+func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string, rawBatch string, partial bool, answered, total int) string {
 	payload, err := json.Marshal(graderInput{
 		RequestID:   p.requestID,
 		Questions:   qs,
 		Answers:     answers,
 		AnswersByID: answersByID(qs, answers),
+		Partial:     partial,
+		Answered:    answered,
+		Total:       total,
 	})
 	if err != nil {
 		return graderErrorMsg(p, rawBatch, fmt.Sprintf("encode grader input: %v", err))
@@ -650,6 +738,11 @@ type AskRouter struct {
 	// IsPaused reports whether the session's pending ask is paused. Read by the
 	// inbound routing guard (run_turn.go) and the statusline paused-reminder field.
 	IsPaused func(sessionKey string) bool
+	// CompleteSession ends the session's pending ask early, delivering only the
+	// already-answered questions to the agent (a grader still runs, told the set
+	// is partial). Returns (answered, total, true) on success; ok=false with
+	// total==0 when no ask is pending, or total>0 when nothing is answered yet.
+	CompleteSession func(sessionKey string) (answered, total int, ok bool)
 }
 
 // NewAskTool builds the `ask` / `foci_ask` tool. present shows questions to the
@@ -775,6 +868,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 		PauseSession:      func(sk string) bool { return state.setPaused(sk, true) },
 		ResumeSession:     func(sk string) bool { return state.setPaused(sk, false) },
 		IsPaused:          state.isPaused,
+		CompleteSession:   state.completeSession,
 	}
 	return t, router
 }
