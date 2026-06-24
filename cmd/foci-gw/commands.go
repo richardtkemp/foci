@@ -213,6 +213,16 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.PassCommand())
 	cmds.Register(command.TodoCommand())
 
+	// /plan — put Claude Code into plan mode. Only for CC backends; delivery
+	// differs by backend because the native /plan slash command works in the
+	// tmux TUI but is unavailable in the headless stream (#857).
+	switch p.acfg.Backend {
+	case "claude-code":
+		cmds.Register(command.PlanCommand(command.PlanEnterTool))
+	case "claude-code-tmux":
+		cmds.Register(command.PlanCommand(command.PlanNativeSlash))
+	}
+
 	// Tmux command (only if tool is available)
 	if p.tmuxTool != nil {
 		cmds.Register(command.TmuxCommand())
