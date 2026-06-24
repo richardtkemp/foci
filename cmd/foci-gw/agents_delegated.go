@@ -494,6 +494,15 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	if agLazy != nil {
 		if a := agLazy(); a != nil {
 			a.AskRouter = out.askRouter
+			// Mirror the API path (agents.go), which sets AsyncNotifier on the
+			// agent. The delegated path built the notifier and wired it into
+			// tools but never stored it here, leaving a.AsyncNotifier nil. That
+			// disabled two things for delegated agents: the /plan EnterPlanMode
+			// injection (command/plan.go) and the #845 compaction-resume nudge,
+			// which is invoked from runDelegatedCompact (compaction.go:199) but
+			// suppressed by the nil guard. notifier is non-nil here (agLazy !=
+			// nil, so it was constructed above).
+			a.AsyncNotifier = notifier
 		}
 	}
 

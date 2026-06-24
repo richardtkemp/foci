@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/memory"
 	"foci/internal/provider"
@@ -31,6 +32,24 @@ func minimalSetupParams(t *testing.T, agentID string) setupParams {
 		cfg:      &config.Config{},
 		resolved: &config.ResolvedAgentConfig{},
 		connMgr:  stubConnMgr{},
+	}
+}
+
+// TestBuildExecRegistryWiresAsyncNotifier guards the delegated setup against
+// regressing the AsyncNotifier assignment. A nil AsyncNotifier on a delegated
+// agent silently disables the /plan EnterPlanMode injection (command/plan.go)
+// and the #845 compaction-resume nudge (compaction.go:199, on the delegated
+// path). The bug it locks down: the delegated path built the notifier and
+// wired it into tools but never stored it on the agent, unlike the API path.
+func TestBuildExecRegistryWiresAsyncNotifier(t *testing.T) {
+	t.Parallel()
+
+	p := minimalSetupParams(t, "test")
+	ag := &agent.Agent{}
+	buildExecRegistry(p, stubWakeFn, func() *agent.Agent { return ag })
+
+	if ag.AsyncNotifier == nil {
+		t.Error("delegated agent's AsyncNotifier is nil; /plan injection and #845 compaction-resume need it set (mirror the API path)")
 	}
 }
 
