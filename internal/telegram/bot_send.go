@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,6 +14,51 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
+// Telegram send-side flood-control (429) retry bounds. A 429 carries a
+// server-instructed Retry-After; rather than silently dropping the message
+// (the old behaviour — #795), the send waits and retries up to maxFloodRetries.
+const (
+	maxFloodRetries = 3
+	maxFloodWait    = 30 * time.Second
+)
+
+// floodSleep is the sleep used between flood-control retries; a package var so
+// tests can stub it out and not actually block.
+var floodSleep = time.Sleep
+
+// retryOn429 runs send and, on a Telegram 429 flood-control error, waits the
+// server-instructed Retry-After (padded 1s for clock/roundtrip slack, capped at
+// maxFloodWait) and retries, up to maxFloodRetries times. Non-429 errors and
+// success return immediately, so callers keep their existing handling (e.g. the
+// HTML→plain-text fallback) for everything except rate limiting.
+//
+// send MUST be safe to invoke more than once: media callers reopen the file on
+// each attempt (see sendMedia's contract). This mirrors the poll path's
+// Retry-After honour (bot_poll.go) so a throttled send queues-and-retries
+// instead of dropping the user's message.
+func (b *Bot) retryOn429(op string, send func() error) error {
+	for attempt := 0; ; attempt++ {
+		err := send()
+		if err == nil {
+			return nil
+		}
+		var tgErr *gotgbot.TelegramError
+		if !errors.As(err, &tgErr) || tgErr.ResponseParams == nil || tgErr.ResponseParams.RetryAfter <= 0 {
+			return err // not flood control — let the caller handle it
+		}
+		if attempt >= maxFloodRetries {
+			b.logger().Errorf("%s: still flood-limited after %d retries, giving up: %s", op, maxFloodRetries, b.sanitizeError(err))
+			return err
+		}
+		wait := time.Duration(tgErr.ResponseParams.RetryAfter)*time.Second + time.Second
+		if wait > maxFloodWait {
+			wait = maxFloodWait
+		}
+		b.logger().Warnf("%s: Telegram 429 flood control, waiting %v then retrying (attempt %d/%d)", op, wait, attempt+1, maxFloodRetries)
+		floodSleep(wait)
+	}
+}
+
 // sendHTMLWithFallback sends html to chatID with HTML parse mode, retrying as a
 // plain-text send if the HTML attempt errors. It logs the HTML-attempt failure
 // so an ambiguous timeout — where Telegram may already have delivered the
@@ -21,10 +67,19 @@ import (
 // its own (test-injectable) client. Returns the delivered message, or ok=false
 // if both attempts fail.
 func sendHTMLWithFallback(b *Bot, client botClient, chatID int64, html string) (*gotgbot.Message, bool) {
-	msg, err := client.SendMessage(chatID, html, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	var msg *gotgbot.Message
+	err := b.retryOn429("send", func() error {
+		var e error
+		msg, e = client.SendMessage(chatID, html, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return e
+	})
 	if err != nil {
 		b.logger().Warnf("send: HTML attempt failed (%s); retrying as plain text — if this was a timeout, Telegram may already have delivered, producing a duplicate", b.sanitizeError(err))
-		msg, err = client.SendMessage(chatID, html, nil)
+		err = b.retryOn429("send", func() error {
+			var e error
+			msg, e = client.SendMessage(chatID, html, nil)
+			return e
+		})
 		if err != nil {
 			b.logger().Errorf("send: plain-text fallback also failed: %s", b.sanitizeError(err))
 			return nil, false

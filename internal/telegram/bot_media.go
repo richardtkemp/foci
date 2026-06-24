@@ -63,8 +63,11 @@ func (b *Bot) SendVoiceData(audioData []byte) error {
 
 // SendVoiceDataToChat sends audio bytes as a Telegram voice note to a specific chat.
 func (b *Bot) SendVoiceDataToChat(chatID int64, audioData []byte) error {
-	_, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader("voice.mp3", bytes.NewReader(audioData)), nil)
-	return err
+	// Fresh reader per attempt so a flood-control retry re-reads the bytes.
+	return b.retryOn429("send voice data", func() error {
+		_, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader("voice.mp3", bytes.NewReader(audioData)), nil)
+		return err
+	})
 }
 
 // lastChatID returns the last known chat ID, or an error if none has been set.
@@ -131,11 +134,13 @@ func (b *Bot) sendMedia(chatID int64, caption string, send func(captionText, par
 	var err error
 	if strings.TrimSpace(head) == "" {
 		// No caption to attach (none given, or detached as overflow).
-		err = send("", "")
-	} else if err = send(ConvertToTelegramHTML(head, b.tableOpts()), "HTML"); err != nil {
+		err = b.retryOn429("send media", func() error { return send("", "") })
+	} else if err = b.retryOn429("send media", func() error {
+		return send(ConvertToTelegramHTML(head, b.tableOpts()), "HTML")
+	}); err != nil {
 		// Malformed HTML entities reject the whole send — retry once with the
 		// raw caption and no parse mode so the file still goes out (as plaintext).
-		err = send(head, "")
+		err = b.retryOn429("send media", func() error { return send(head, "") })
 	}
 	if err != nil {
 		return err
@@ -177,15 +182,19 @@ func (b *Bot) SendDocumentToChat(chatID int64, filePath, caption string) error {
 
 // SendVoiceToChat sends a voice note from a file to a specific chat ID.
 func (b *Bot) SendVoiceToChat(chatID int64, filePath string) error {
-	in, f, err := openMediaFile(filePath, "voice")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	if _, err := b.client.SendVoice(chatID, in, nil); err != nil {
-		return fmt.Errorf("send voice: %w", err)
-	}
-	return nil
+	// Reopen the file on each attempt: a failed send consumes the upload reader,
+	// so a flood-control retry needs a rewound file.
+	return b.retryOn429("send voice", func() error {
+		in, f, err := openMediaFile(filePath, "voice")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := b.client.SendVoice(chatID, in, nil); err != nil {
+			return fmt.Errorf("send voice: %w", err)
+		}
+		return nil
+	})
 }
 
 // SendVideoToChat sends a video file to a specific chat ID.
