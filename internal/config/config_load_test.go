@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	tomlParser "github.com/BurntSushi/toml"
@@ -357,6 +358,9 @@ func TestUnknownKeysDetected(t *testing.T) {
 id = "main"
 bogus_field = "oops"
 
+[agents.backend_config.env]
+FOO = "bar"
+
 [unknown_section]
 foo = "bar"
 some_key = "value"
@@ -370,6 +374,13 @@ some_key = "value"
 	keys := UnknownKeys(md, nil)
 	if len(keys) == 0 {
 		t.Fatal("expected unknown keys, got none")
+	}
+
+	// backend_config.* descendants are free-form and must NOT be flagged.
+	for _, k := range keys {
+		if strings.Contains(k, "backend_config") {
+			t.Errorf("backend_config descendant %q should be skipped, not flagged", k)
+		}
 	}
 
 	sort.Strings(keys)
