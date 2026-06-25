@@ -572,7 +572,8 @@ func (m *mockSecretsStore) Names() []string {
 	}
 	return names
 }
-func (m *mockSecretsStore) Set(name, value string) { m.data[name] = value }
+func (m *mockSecretsStore) Get(name string) (string, bool) { v, ok := m.data[name]; return v, ok }
+func (m *mockSecretsStore) Set(name, value string)         { m.data[name] = value }
 func (m *mockSecretsStore) Remove(name string) bool {
 	if _, ok := m.data[name]; !ok {
 		return false

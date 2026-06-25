@@ -5,6 +5,34 @@ import (
 	"testing"
 )
 
+func TestIsGeneratedPassphrase(t *testing.T) {
+	// A freshly generated passphrase must be recognised.
+	gen, err := GeneratePassphrase(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsGeneratedPassphrase(gen) {
+		t.Errorf("generated passphrase %q should be recognised", gen)
+	}
+	// All-EFF-words joined by hyphens (any count ≥ 2) → recognised.
+	if !IsGeneratedPassphrase("acid-acorn") {
+		t.Error("two EFF words should be recognised")
+	}
+	// Negatives: empty, single token, non-wordlist token, user-style keys.
+	for _, s := range []string{
+		"",
+		"acid",                 // single token
+		"acid-zzzzznotaword",   // one non-EFF token
+		"sk-1234567890abcdef",  // typical API key
+		"correcthorsebattery",  // no hyphens
+		"acid acorn acre",      // spaces, not hyphens
+	} {
+		if IsGeneratedPassphrase(s) {
+			t.Errorf("%q should NOT be recognised as a generated passphrase", s)
+		}
+	}
+}
+
 func TestGeneratePassphrase(t *testing.T) {
 	// Proves the full contract of GeneratePassphrase: it produces
 	// the requested number of words joined by hyphens, every word comes from the EFF
