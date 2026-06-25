@@ -66,10 +66,14 @@ type fcmPusher struct {
 	ctx       context.Context
 	tokens    *pushTokens
 	window    time.Duration // coalescing window (one wake push per conv per window)
+	baseURL   string        // FCM v1 endpoint base; overridable in tests
 
 	mu       sync.Mutex
 	lastPush map[string]time.Time // convID → last push time (coalescing)
 }
+
+// fcmBaseURL is the production FCM v1 send endpoint base.
+const fcmBaseURL = "https://fcm.googleapis.com"
 
 // newFCMPusher builds a pusher from a service-account JSON file. Returns nil (push
 // disabled, gracefully) if path is empty or the credentials can't be loaded.
@@ -153,7 +157,11 @@ func (p *fcmPusher) send(token, convID, preview string) {
 	if err != nil {
 		return
 	}
-	url := fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", p.projectID)
+	base := p.baseURL
+	if base == "" {
+		base = fcmBaseURL
+	}
+	url := fmt.Sprintf("%s/v1/projects/%s/messages:send", base, p.projectID)
 	req, err := http.NewRequestWithContext(p.ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return
