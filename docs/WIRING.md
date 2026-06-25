@@ -1389,7 +1389,11 @@ resume point's `seq > ack`); `conversation.open`→bind socket to agent;
 `message`→`routeUserTurn`→`ensureBinding`→`agent.Enqueue(Envelope{Driver:
 appConn})`; `conversation.open`→`handleConversationOpen` (server mints a
 conversationId, binds it, optionally adopts a named `sessionKey`, replies with an
-updated roster the app upserts); `command`→`routeCommand`→ the agent's
+updated roster the app upserts); `conversation.rename`→`handleConversationRename`
+(persists a user-friendly session alias in the session index's `chat_metadata`,
+keyed by the stable app `chatID` so it survives session-key rotation/restart;
+`agentRoster` surfaces it via `aliasFor` as `ConversationInfo.Title`, replacing the
+raw conversationId the app would otherwise show); `command`→`routeCommand`→ the agent's
 `command.Registry.Dispatch` (captured from `AgentConnectionParams` in
 `setupAgent`), response parts sent back as `message` frames. Inbound `voice`
 attachments are transcribed by the agent's `voice.STT` (`transcribeVoice`, also

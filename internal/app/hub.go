@@ -566,7 +566,9 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	// conversations and any the app resumes are re-attached on hello).
 	byAgent := make(map[string][]fap.ConversationInfo)
 	for _, b := range h.convs {
-		byAgent[b.agentID] = append(byAgent[b.agentID], b.info())
+		ci := b.info()
+		ci.Title = h.aliasFor(b)
+		byAgent[b.agentID] = append(byAgent[b.agentID], ci)
 	}
 	out := make([]fap.AgentInfo, 0, len(order))
 	for _, id := range order {
@@ -655,6 +657,20 @@ func (h *Hub) agentDisplay(id string) (name, emoji string) {
 		}
 	}
 	return name, ""
+}
+
+// aliasFor returns the user-set conversation alias persisted in the session index's
+// chat_metadata (keyed by the stable app chatID), or "" if none / unavailable.
+func (h *Hub) aliasFor(b *convBinding) string {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return ""
+	}
+	v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, "alias")
+	if err != nil {
+		return ""
+	}
+	return v
 }
 
 // adoptSession re-points a conversation at an explicit session key (e.g. a

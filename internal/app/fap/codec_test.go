@@ -113,6 +113,21 @@ func TestDecode_ClientMessage(t *testing.T) {
 	}
 }
 
+func TestDecode_ConversationRename(t *testing.T) {
+	wire := `{"t":"conversation.rename","id":"r1","seq":3,"ack":1,"v":1,"d":{"conversationId":"c1","title":"Holiday plans"}}`
+	in, err := Decode(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rn, ok := in.Frame.(ConversationRename)
+	if !ok {
+		t.Fatalf("frame type = %T, want ConversationRename", in.Frame)
+	}
+	if rn.ConversationID != "c1" || rn.Title != "Holiday plans" {
+		t.Errorf("decoded rename wrong: %+v", rn)
+	}
+}
+
 func TestDecode_PayloadlessFrames(t *testing.T) {
 	for _, tc := range []struct {
 		wire string
