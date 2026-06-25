@@ -884,6 +884,27 @@ func registerBareAgent(h *Hub, agentID string) {
 	h.agentOrder = append(h.agentOrder, agentID)
 }
 
+func TestRoster_AdvertisesNonHiddenCommands(t *testing.T) {
+	h := newTestHub()
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{Name: "pause", Description: "Pause the active question", Category: "session"})
+	reg.Register(&command.Command{Name: "secret", Description: "internal", Hidden: true})
+	h.agents["ag"] = &appConn{hub: h, agentID: "ag", commands: reg}
+	h.agentOrder = append(h.agentOrder, "ag")
+
+	roster := h.agentRoster()
+	if len(roster) != 1 {
+		t.Fatalf("roster = %d agents, want 1", len(roster))
+	}
+	cmds := roster[0].Commands
+	if len(cmds) != 1 {
+		t.Fatalf("advertised commands = %+v, want 1 (hidden excluded)", cmds)
+	}
+	if cmds[0].Name != "pause" || cmds[0].Description != "Pause the active question" || cmds[0].Category != "session" {
+		t.Errorf("command info = %+v, want pause/description/session", cmds[0])
+	}
+}
+
 func TestConversationOpen_MintsAndAdvertises(t *testing.T) {
 	h := newTestHub()
 	registerBareAgent(h, "ag")
