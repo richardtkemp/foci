@@ -138,7 +138,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	}
 
 	if deps.Ctx != nil {
-		go h.blobs.reaper(deps.Ctx)
+		safeGo("blob-reaper", func() { h.blobs.reaper(deps.Ctx) })
 		// Offline wake-push via FCM. The service-account JSON path comes from
 		// [platforms.app].fcm_credentials, falling back to the app.fcm_credentials
 		// secret; absent (or push=false) → push stays disabled gracefully.
@@ -1122,7 +1122,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		h.evictOtherDeviceSockets(client, dev.DeviceID)
 	}
 	log.Infof("app", "device connected")
-	go client.writePump()
+	safeGo("ws-writepump", client.writePump)
 	client.readPump() // blocks until the socket closes
 	log.Infof("app", "device disconnected")
 }

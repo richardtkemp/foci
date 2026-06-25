@@ -211,7 +211,7 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 		UserID:     deviceID,
 		ChatID:     b.chatID,
 	}
-	go h.dispatchCommand(conn, b, req)
+	safeGo("dispatch-command", func() { h.dispatchCommand(conn, b, req) })
 }
 
 func (h *Hub) dispatchCommand(conn *appConn, b *convBinding, req command.Request) {

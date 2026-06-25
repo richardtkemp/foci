@@ -1346,6 +1346,20 @@ publishes it to the HTTP layer via `setActiveHub`.
 no shared middleware) then upgrades via gorilla/websocket. Exposed publicly via
 Traefik TLS; foci's bind stays localhost.
 
+**Panic isolation (`safe.go`):** the app provider runs in the same process as
+telegram/discord, so a panic must not crash the gateway (in Go an unrecovered
+panic in ANY goroutine kills the process). `recoverApp(where)` is a deferred
+recover-and-log helper; `safeGo(where, fn)` wraps it around a goroutine. All
+four app goroutines launch via `safeGo` (blob reaper, ws-writepump, fcm-push,
+dispatch-command); `withHub` (endpoint.go) `defer recoverApp`s so all HTTP
+routes + the synchronous `readPump`/dispatch are covered. **First-run safety:**
+`Init` recovers any panic in `newHub` and returns nil, leaving the provider
+inert (nil hub → `Enabled()` false → endpoints 503, `disabledConnMgr` as a
+no-op `ConnectionManager`) — so a bug in this new subsystem degrades the app
+feature instead of aborting startup of the whole gateway (`InitMessaging` treats
+a returned `Init` error as fatal). The decode path itself is panic-safe by
+construction (JSON `Unmarshal`, no raw-byte indexing, mutex-guarded maps).
+
 **Hub (`hub.go`)** owns: per-agent `appConn` registry, `convs` (durable
 per-conversation state keyed by conversationId), `bySession` binding map, live
 sockets, and `prompts` (live interactive promptId→binding). Implements
