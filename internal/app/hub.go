@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"hash/fnv"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -46,11 +48,13 @@ const (
 // sockets. It implements platform.ConnectionSource[*appConn] so the generic
 // adapter can expose it as a platform.ConnectionManager.
 type Hub struct {
-	deps   platform.ProviderDeps
-	apiKey string
-	blobs  *blobStore
-	tokens *pushTokens
-	pusher *fcmPusher
+	deps    platform.ProviderDeps
+	apiKey  string
+	blobs   *blobStore
+	tokens  *pushTokens
+	pusher  *fcmPusher
+	devices *deviceStore
+	authLim *authLimiter
 
 	mu         sync.RWMutex
 	agents     map[string]*appConn     // agentID → its connection
@@ -72,11 +76,17 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		log.Warnf("app", "no app.api_key secret — /app/ws endpoint will reject all connections until one is set")
 	}
 	tokens := newPushTokens()
+	devicePath := ""
+	if deps.Config != nil && deps.Config.DataDir != "" {
+		devicePath = filepath.Join(deps.Config.DataDir, "app-devices.json")
+	}
 	h := &Hub{
 		deps:      deps,
 		apiKey:    key,
 		blobs:     newBlobStore(),
 		tokens:    tokens,
+		devices:   newDeviceStore(devicePath),
+		authLim:   newAuthLimiter(authFailMax, authFailWindow),
 		agents:    make(map[string]*appConn),
 		convs:     make(map[string]*convBinding),
 		bySession: make(map[string]*convBinding),
@@ -129,6 +139,158 @@ func bearerToken(r *http.Request) string {
 		return auth[len("Bearer "):]
 	}
 	return ""
+}
+
+// authToken validates a credential. Returns (nil, true) for the master key,
+// (device, true) for a valid per-device token, or (nil, false) otherwise.
+func (h *Hub) authToken(token string) (*device, bool) {
+	if token == "" {
+		return nil, false
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(h.apiKey)) == 1 {
+		return nil, true
+	}
+	if h.devices != nil {
+		if d, ok := h.devices.validToken(token); ok {
+			return d, true
+		}
+	}
+	return nil, false
+}
+
+// authenticate gates a request on the master key OR a device token, with
+// per-IP failure lockout. On success it returns the device (nil for the master
+// key) and true; on failure it writes the HTTP error and returns false.
+func (h *Hub) authenticate(w http.ResponseWriter, r *http.Request) (*device, bool) {
+	if h.apiKey == "" {
+		http.Error(w, "app endpoint not configured", http.StatusServiceUnavailable)
+		return nil, false
+	}
+	ip := remoteIP(r)
+	if h.authLim.blocked(ip) {
+		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
+		return nil, false
+	}
+	token := bearerToken(r)
+	if token == "" {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return nil, false
+	}
+	d, ok := h.authToken(token)
+	if !ok {
+		h.authLim.fail(ip)
+		http.Error(w, "invalid credentials", http.StatusForbidden)
+		return nil, false
+	}
+	h.authLim.reset(ip)
+	return d, true
+}
+
+// authMaster gates a request on the master key ONLY (pairing/management),
+// rate-limited. Device tokens cannot mint or revoke other devices.
+func (h *Hub) authMaster(w http.ResponseWriter, r *http.Request) bool {
+	if h.apiKey == "" {
+		http.Error(w, "app endpoint not configured", http.StatusServiceUnavailable)
+		return false
+	}
+	ip := remoteIP(r)
+	if h.authLim.blocked(ip) {
+		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
+		return false
+	}
+	token := bearerToken(r)
+	if token == "" {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(h.apiKey)) != 1 {
+		h.authLim.fail(ip)
+		http.Error(w, "invalid credentials", http.StatusForbidden)
+		return false
+	}
+	h.authLim.reset(ip)
+	return true
+}
+
+// ServePair handles POST /app/pair: the master key mints a per-device token.
+func (h *Hub) ServePair(w http.ResponseWriter, r *http.Request) {
+	if !h.authMaster(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		DeviceID  string `json:"deviceId"`
+		Label     string `json:"label"`
+		PushToken string `json:"pushToken"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || req.DeviceID == "" {
+		http.Error(w, "bad pairing request", http.StatusBadRequest)
+		return
+	}
+	d := h.devices.pair(req.DeviceID, req.Label)
+	if req.PushToken != "" {
+		h.tokens.set(req.DeviceID, req.PushToken)
+	}
+	log.Infof("app", "paired device %q (label %q)", req.DeviceID, req.Label)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"deviceToken": d.Token, "label": d.Label})
+}
+
+// ServeDevices handles GET /app/devices: the master key lists paired devices
+// (tokens omitted).
+func (h *Hub) ServeDevices(w http.ResponseWriter, r *http.Request) {
+	if !h.authMaster(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(h.devices.list())
+}
+
+// ServeRevoke handles POST /app/pair/revoke: the master key revokes a device's
+// token and closes its live socket(s) with 4403.
+func (h *Hub) ServeRevoke(w http.ResponseWriter, r *http.Request) {
+	if !h.authMaster(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		DeviceID string `json:"deviceId"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || req.DeviceID == "" {
+		http.Error(w, "bad revoke request", http.StatusBadRequest)
+		return
+	}
+	if _, ok := h.devices.revoke(req.DeviceID); !ok {
+		http.Error(w, "device not found", http.StatusNotFound)
+		return
+	}
+	h.closeDeviceSockets(req.DeviceID)
+	log.Infof("app", "revoked device %q", req.DeviceID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// closeDeviceSockets force-closes every live socket for a deviceID with 4403.
+func (h *Hub) closeDeviceSockets(deviceID string) {
+	h.mu.RLock()
+	var victims []*wsClient
+	for c := range h.clients {
+		c.mu.Lock()
+		dev := c.deviceID
+		c.mu.Unlock()
+		if dev == deviceID {
+			victims = append(victims, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range victims {
+		c.closeWithCode(fap.CloseForbidden, "device revoked")
+	}
 }
 
 // setupAgent registers an agent's connection and starts its inbox. Returns nil
@@ -634,6 +796,17 @@ func (c *wsClient) close() {
 	})
 }
 
+// closeWithCode sends a WebSocket close frame with the given code/reason (so the
+// client knows e.g. it was revoked vs a transient drop) then tears down.
+func (c *wsClient) closeWithCode(code int, reason string) {
+	_ = c.ws.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(code, reason),
+		time.Now().Add(writeWait),
+	)
+	c.close()
+}
+
 func (c *wsClient) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer ticker.Stop()
@@ -703,17 +876,8 @@ func checkOrigin(r *http.Request) bool {
 // ServeWS authenticates (Bearer app.api_key, constant-time) and upgrades the
 // connection, then runs the socket's read/write pumps.
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
-	if h.apiKey == "" {
-		http.Error(w, "app endpoint not configured", http.StatusServiceUnavailable)
-		return
-	}
-	token := bearerToken(r)
-	if token == "" {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return
-	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(h.apiKey)) != 1 {
-		http.Error(w, "invalid credentials", http.StatusForbidden)
+	dev, ok := h.authenticate(w, r)
+	if !ok {
 		return
 	}
 
@@ -723,6 +887,13 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := newWsClient(ws, h)
+	if dev != nil {
+		// Authenticated with a device token: the deviceId is authoritative (the
+		// client hello's is advisory and should match).
+		client.mu.Lock()
+		client.deviceID = dev.DeviceID
+		client.mu.Unlock()
+	}
 	h.addClient(client)
 	log.Infof("app", "device connected")
 	go client.writePump()
