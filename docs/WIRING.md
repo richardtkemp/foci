@@ -1419,24 +1419,42 @@ out a remote IP (`remoteIP`, X-Forwarded-For-aware) after repeated auth failures
 
 **Push (`push.go`, slice 5):** offline wake via FCM v1 data-messages. `fcmPusher`
 authenticates with a service-account token source (`golang.org/x/oauth2/google`,
-auto-refreshing); the service-account JSON path comes from secret
-`app.fcm_credentials` (absent → push disabled; proper `[platforms.app]` config
-lands with the config slice). The client registers its FCM token in `ClientHello`
+auto-refreshing); the service-account JSON path comes from
+`[platforms.app].fcm_credentials` config, falling back to secret
+`app.fcm_credentials` (absent or `push=false` → push disabled). The client
+registers its FCM token in `ClientHello` (or out-of-band via
+`POST /app/push/register` after an OS token rotation)
 → `pushTokens` (in-memory deviceId→token, repopulated each connect). When
 `convBinding.send` runs with no attached socket, it buffers the frame and — for
 user-visible frames only (`pushPreview` classifies; control/streaming frames are
 skipped) — fires `notifyOffline` → `pusher.notify`, which coalesces (≤1 push per
-conversation per 15s window) and sends a hint (`conversationId` + short preview,
-never full text). The app wakes, reconnects, and replays for content. `hello.caps.push`
-advertises `["fcm"]` when enabled.
+conversation per `push_coalesce` window, default 15s) and sends a hint
+(`conversationId` + short preview, never full text). The app wakes, reconnects,
+and replays for content. `hello.caps.push` advertises `["fcm"]` when enabled.
 
 **Streaming (`sink.go`):** `appConn.NewTurnSink` builds an `appSink`
 (`turnevent.Sink`) per turn, bound to the conversation. `TurnStart`→`typing on`;
 first `TextDelta` lazily emits `turn.start`, then `text.delta` per chunk (native
 streaming, no edit-rate limits); `TurnComplete`→`text.end` (streamed) or a
 single `message` (non-streamed), then a `meta` status frame (model/cost/tokens
-from the turn usage) and `typing off`. Per-conversation outbound `seq` is
-stamped (atomic); replay/ack buffering is a later slice.
+from the turn usage; mana%/state + gap via `Agent.MetaStatus`, threaded as the
+sink's `statusFn`) and `typing off`. Per-conversation outbound `seq` is stamped,
+buffered, and replayed on reconnect (slice 3).
+
+**Config + reconnect/restart wiring (gap-closure):** the typed
+`[platforms.app]` config subsection (`config.AppSpecific`: `host`, `push`,
+`replay_buffer`, `replay_ttl`, `max_blob_mb`, `blob_ttl`, `push_coalesce`,
+`fcm_credentials`, `devices_path`, `allowed_devices`) is read in `newHub` and
+threaded to the blob store, each `convBinding` (replay depth/TTL), the pusher
+window, and `hello.caps.host`. `allowed_devices` (when set) gates `ServePair`.
+The `/app/ws` upgrade now negotiates the `fap.v1` subprotocol. On reconnect,
+`evictOtherDeviceSockets` closes any older socket for the same deviceID with
+`4409` (exactly-once render). `GET /app/history?conversationId=` returns the
+server-side `seq` high-water (0 after a restart drops the in-memory buffers) so
+the offline-first app reconciles against its local Room DB. `conversation.open`
+with a known `sessionKey` reuses the existing conversation instead of minting a
+duplicate. Interactive prompts carry a 24h advisory `expiresAt`; the roster
+advertises each agent's config display name + emoji avatar.
 
 ## Voice (`voice/`, `telegram/bot.go`)
 
