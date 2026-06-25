@@ -70,6 +70,19 @@ type graderConfig struct {
 // edits — see AskRestoreFn.
 type AskPresentFn func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string
 
+// AskPresentBatchFn presents ALL of an ask's questions at once as a single
+// batched prompt (native app only) and arranges for onResponse to be called once
+// with one RAW answer per question, positionally — each "qa:<index>", the
+// "qa:cancel" sentinel, or a typed string. It must be non-blocking.
+//
+// It returns true if the prompt was presented as a batch, false if the target
+// transport/client cannot batch (no live app socket, or the client did not
+// advertise the "interactiveBatch" capability). On false the caller falls back to
+// the sequential, one-question-at-a-time AskPresentFn path. Chat transports
+// (Telegram/Discord) and uncapable clients always yield false, so their behaviour
+// is byte-for-byte unchanged. promptID is the colon-free routing id for the form.
+type AskPresentBatchFn func(sessionKey, promptID string, qs []question.Question, onResponse func(answers []string)) bool
+
 // AskDeliverFn delivers the assembled answer batch into sessionKey as a new
 // inbound user message, waking the agent. Backend-agnostic (delegated + API).
 type AskDeliverFn func(sessionKey, message string)
@@ -125,16 +138,31 @@ type pendingAsk struct {
 // still displays (see restorePending), so both button clicks and typed replies
 // survive. store==nil disables persistence (in-memory only).
 type askState struct {
-	mu        sync.Mutex
-	byReqID   map[string]*pendingAsk
-	bySession map[string]string // sessionKey → latest requestID
-	present   AskPresentFn
-	restore   AskRestoreFn
-	deliver   AskDeliverFn
-	closeMsg  AskCloseFn
-	seq       atomic.Int64
-	store     *session.SessionIndex // nil = no persistence
-	agentID   string
+	mu           sync.Mutex
+	byReqID      map[string]*pendingAsk
+	bySession    map[string]string // sessionKey → latest requestID
+	present      AskPresentFn
+	presentBatch AskPresentBatchFn // app-only batched presentation; nil = always sequential
+	restore      AskRestoreFn
+	deliver      AskDeliverFn
+	closeMsg     AskCloseFn
+	seq          atomic.Int64
+	store        *session.SessionIndex // nil = no persistence
+	agentID      string
+}
+
+// AskOption customises the ask tool at construction — used to wire optional,
+// transport-specific behaviour without widening the core NewAskTool signature
+// (and so without churning the many existing callers/tests).
+type AskOption func(*askState)
+
+// WithBatchPresent enables app-only batched presentation: when the answering
+// client is the native app and advertised the "interactiveBatch" capability, all
+// questions are shown as one form and answered together. Every other transport,
+// and any app client without the capability, keeps the sequential flow untouched.
+// Nil-safe (a nil fn just leaves batching disabled).
+func WithBatchPresent(fn AskPresentBatchFn) AskOption {
+	return func(s *askState) { s.presentBatch = fn }
 }
 
 // askMetaKey is the agent_metadata key under which pending asks are persisted.
@@ -204,8 +232,36 @@ func (a *askState) start(sessionKey string, qs []question.Question, originalInpu
 	a.persistLocked()
 	a.mu.Unlock()
 
+	// Native app clients that advertised the capability get ALL questions as one
+	// batched form; everything else (and any uncapable client) falls through to the
+	// unchanged sequential path.
+	if a.tryPresentBatch(p) {
+		return reqID
+	}
 	a.presentCurrent(p)
 	return reqID
+}
+
+// tryPresentBatch presents p's whole question set as a single batched prompt via
+// presentBatch, returning whether it was batched. The promptID reuses question
+// index 0's id so a restart's re-present idempotently UPSERTs the same on-screen
+// form rather than duplicating it. Records the platform msg id on success.
+func (a *askState) tryPresentBatch(p *pendingAsk) bool {
+	if a.presentBatch == nil {
+		return false
+	}
+	promptID := questionMsgID(p.requestID, 0)
+	reqID := p.requestID
+	if !a.presentBatch(p.sessionKey, promptID, p.acc.Questions(), func(answers []string) {
+		a.handleBatchResponse(reqID, answers)
+	}) {
+		return false
+	}
+	a.mu.Lock()
+	p.platformMsgID = promptID
+	a.persistLocked()
+	a.mu.Unlock()
+	return true
 }
 
 // presentCurrent shows the question the accumulator is currently positioned on.
@@ -293,6 +349,14 @@ func (a *askState) handleResponse(requestID, data string) {
 	a.persistLocked()
 	a.mu.Unlock()
 
+	a.deliverBatch(p)
+}
+
+// deliverBatch assembles the final answers (running the grader if one is set) and
+// delivers them into the session as a new inbound message. Shared by the
+// sequential done-branch and the app's batched path so the two cannot drift.
+// Caller has already removed p from the registry.
+func (a *askState) deliverBatch(p *pendingAsk) {
 	if p.grader.path == "" {
 		a.deliverMsg(p.sessionKey, formatAnswerBatch(p.acc.Questions(), p.acc.Answers()))
 		return
@@ -305,6 +369,56 @@ func (a *askState) handleResponse(requestID, data string) {
 		total := p.acc.Total()
 		a.deliverMsg(p.sessionKey, runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
 	}()
+}
+
+// handleBatchResponse records every answer of a batched (app) ask at once and
+// delivers the result. answers are positional RAW choice tokens (one per
+// question, in order): "qa:<index>", the "qa:cancel" sentinel, or typed text. A
+// cancel in any slot cancels the whole ask, mirroring the sequential Cancel
+// button. This is the batched counterpart to handleResponse.
+func (a *askState) handleBatchResponse(requestID string, answers []string) {
+	a.mu.Lock()
+	p := a.byReqID[requestID]
+	if p == nil {
+		a.mu.Unlock()
+		return
+	}
+	for _, raw := range answers {
+		q := p.acc.Current()
+		if q == nil {
+			break // more answers than questions — ignore extras defensively
+		}
+		answer, cancelled, err := question.ResolveAnswer(q, raw)
+		if err != nil {
+			a.mu.Unlock()
+			log.Warnf("ask", "session=%s req=%s invalid batched response %q: %v", p.sessionKey, requestID, raw, err)
+			return
+		}
+		if cancelled {
+			a.removeLocked(p)
+			a.persistLocked()
+			a.mu.Unlock()
+			a.deliverMsg(p.sessionKey, fmt.Sprintf(
+				"[SYSTEM: the user CANCELLED your `ask` request after %d of %d answers. Do not retry unless they ask.]",
+				p.acc.Index(), p.acc.Total()))
+			return
+		}
+		p.acc.Record(answer)
+	}
+	if !p.acc.Done() {
+		// Fewer answers than questions. The app gates Submit on all-answered, so
+		// this is not expected; don't deliver a partial batch — keep it pending
+		// (a later complete submit, or the 24h expiry, resolves it).
+		a.persistLocked()
+		a.mu.Unlock()
+		log.Warnf("ask", "session=%s req=%s batched response had %d of %d answers; awaiting rest",
+			p.sessionKey, requestID, p.acc.Index(), p.acc.Total())
+		return
+	}
+	a.removeLocked(p)
+	a.persistLocked()
+	a.mu.Unlock()
+	a.deliverBatch(p)
 }
 
 // removeLocked deletes a pending ask from both indexes. Caller holds a.mu.
@@ -443,6 +557,14 @@ func (a *askState) restorePending() {
 // question with, so the existing buttons' "im:<msgID>:<idx>" data still routes
 // here. No new message is sent.
 func (a *askState) reattach(p *pendingAsk) {
+	// An un-advanced ask against a now-batch-capable app client (re)presents as a
+	// single batched form. Reusing promptID q0 makes the client UPSERT the same
+	// on-screen form rather than duplicate it. If the client can't batch (offline,
+	// or no capability), tryPresentBatch returns false and we fall through to the
+	// sequential reattach below — so a batch ask degrades gracefully to one-at-a-time.
+	if p.acc.Index() == 0 && a.tryPresentBatch(p) {
+		return
+	}
 	if a.restore == nil {
 		return
 	}
@@ -756,8 +878,11 @@ type AskRouter struct {
 //
 // Construction rehydrates any asks that were in flight before a restart and
 // re-binds their interactive callbacks, so an outstanding question keeps working.
-func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, closeMsg AskCloseFn, store *session.SessionIndex, agentID string) (*Tool, *AskRouter) {
+func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, closeMsg AskCloseFn, store *session.SessionIndex, agentID string, opts ...AskOption) (*Tool, *AskRouter) {
 	state := newAskState(present, restore, deliver, closeMsg, store, agentID)
+	for _, opt := range opts {
+		opt(state)
+	}
 	state.restorePending()
 	t := &Tool{
 		Name:        "ask",

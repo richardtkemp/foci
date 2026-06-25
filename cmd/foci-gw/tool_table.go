@@ -270,7 +270,8 @@ var toolTable = []toolEntry{
 			newAskRestoreFn(d.p.acfg.ID, d.connMgr),
 			tools.AskDeliverFn(d.sessionNotify),
 			func(msgID, finalText string) { _ = platform.CancelInteractiveMessage(msgID, finalText) },
-			d.p.sessionIndex, d.p.acfg.ID)
+			d.p.sessionIndex, d.p.acfg.ID,
+			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr)))
 		d.out.askRouter = router
 		return t
 	}},

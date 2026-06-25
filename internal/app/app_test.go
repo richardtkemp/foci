@@ -217,16 +217,17 @@ func TestAppSink_SilentFinalSuppressed(t *testing.T) {
 
 func newTestHub() *Hub {
 	return &Hub{
-		deps:      platform.ProviderDeps{},
-		blobs:     newBlobStore(),
-		tokens:    newPushTokens(),
-		devices:   newDeviceStore(""),
-		authLim:   newAuthLimiter(authFailMax, authFailWindow),
-		agents:    make(map[string]*appConn),
-		convs:     make(map[string]*convBinding),
-		bySession: make(map[string]*convBinding),
-		clients:   make(map[*wsClient]struct{}),
-		prompts:   make(map[string]*convBinding),
+		deps:         platform.ProviderDeps{},
+		blobs:        newBlobStore(),
+		tokens:       newPushTokens(),
+		devices:      newDeviceStore(""),
+		authLim:      newAuthLimiter(authFailMax, authFailWindow),
+		agents:       make(map[string]*appConn),
+		convs:        make(map[string]*convBinding),
+		bySession:    make(map[string]*convBinding),
+		clients:      make(map[*wsClient]struct{}),
+		prompts:      make(map[string]*convBinding),
+		batchPrompts: make(map[string]*batchPrompt),
 	}
 }
 
@@ -371,6 +372,54 @@ func TestInteractive_ButtonRoundTrip(t *testing.T) {
 	}
 	if h.bindingForPrompt("req-rt") != nil {
 		t.Errorf("registration should be cleared after resolution")
+	}
+}
+
+// TestInteractive_BatchRoundTrip: a capable client (advertised "interactiveBatch")
+// gets ONE Interactive frame carrying all questions, and its single Answers reply
+// fires the registered callback with every answer at once.
+func TestInteractive_BatchRoundTrip(t *testing.T) {
+	h, c, _, conn := boundConn(t)
+	c.features = map[string]struct{}{featureInteractiveBatch: {}}
+
+	var got []string
+	batched, err := conn.SendInteractiveBatch("req-b",
+		[]platform.BatchQuestion{
+			{Text: "Color?", Choices: []platform.ButtonChoice{{Label: "Red", Data: "qa:0"}}},
+			{Text: "Size?", Choices: []platform.ButtonChoice{{Label: "Large", Data: "qa:1"}}},
+		},
+		func(answers []string) { got = answers })
+	if err != nil || !batched {
+		t.Fatalf("SendInteractiveBatch: batched=%v err=%v; want true,nil", batched, err)
+	}
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeInteractive {
+		t.Fatalf("present frames = %v, want [interactive]", types(ds))
+	}
+
+	// The app submits both answers positionally in one frame.
+	h.handleInteractiveResponse(c, fap.InteractiveResponse{ConversationID: "c1", PromptID: "req-b", Answers: []string{"qa:0", "qa:1"}})
+
+	if len(got) != 2 || got[0] != "qa:0" || got[1] != "qa:1" {
+		t.Errorf("callback answers = %v, want [qa:0 qa:1]", got)
+	}
+	if _, ok := h.batchPromptByID("req-b"); ok {
+		t.Errorf("batch registration should be cleared after the reply")
+	}
+}
+
+// A client that did NOT advertise the capability declines batching, so the ask
+// layer falls back to sequential presentation. No frame is emitted here.
+func TestInteractive_BatchDeclinedWhenUncapable(t *testing.T) {
+	_, c, _, conn := boundConn(t)
+	// c.features left nil (no capability advertised).
+	batched, err := conn.SendInteractiveBatch("req-x",
+		[]platform.BatchQuestion{{Text: "Q?", Choices: []platform.ButtonChoice{{Label: "A", Data: "qa:0"}}}}, func([]string) {})
+	if err != nil || batched {
+		t.Fatalf("uncapable client: batched=%v err=%v; want false,nil", batched, err)
+	}
+	if ds := drain(t, c); len(ds) != 0 {
+		t.Fatalf("declined batch must emit nothing, got %v", types(ds))
 	}
 }
 
