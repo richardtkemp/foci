@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "foci/internal/app"                // register app (FAP WebSocket) messaging provider
 	_ "foci/internal/delegator/ccstream" // register claude-code backend (stream-json)
 	_ "foci/internal/delegator/cctmux"   // register claude-code-tmux backend
 	_ "foci/internal/discord"            // register discord messaging provider
