@@ -677,6 +677,22 @@ func TestAuthMiddleware(t *testing.T) {
 			bearer:     apiKey,
 			wantStatus: http.StatusOK,
 		},
+		{
+			// /app/* self-authenticates downstream (Hub.authMaster / ServeWS
+			// against app.api_key), so the outer http.api_key gate must NOT run
+			// for it — even with no bearer the request reaches the backend.
+			name:       "app path bypasses outer gate (no auth)",
+			path:       "/app/pair",
+			wantStatus: http.StatusOK,
+		},
+		{
+			// A wrong outer key on /app/* must also pass through — the real
+			// credential is app.api_key, checked by the downstream handler.
+			name:       "app path bypasses outer gate (wrong key)",
+			path:       "/app/ws",
+			bearer:     "wrong-key",
+			wantStatus: http.StatusOK,
+		},
 	}
 
 	for _, tt := range tests {

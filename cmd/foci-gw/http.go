@@ -126,6 +126,17 @@ func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
 // comparison.
 func authMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /app/* endpoints self-authenticate against app.api_key (Hub.authMaster
+		// for the JSON handlers, ServeWS for the socket), each with its own
+		// per-IP rate limiting. The outer http.api_key gate would shadow them:
+		// app.api_key != http.api_key, so every app bearer would 403 here before
+		// reaching the handler (and never log). Skip the outer gate for /app/.
+		if strings.HasPrefix(r.URL.Path, "/app/") {
+			log.Debugf("http", "auth: %s %s from %s — /app/ self-authenticates downstream, skipping outer gate", r.Method, r.URL.Path, r.RemoteAddr)
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Check Authorization: Bearer header
 		token := ""
 		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
@@ -137,16 +148,22 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 			token = r.URL.Query().Get("api_key")
 		}
 
+		// Per-request trace at DEBUG. NEVER log the token value — only its
+		// presence and length, enough to tell "no credential" from "wrong
+		// credential" (the distinction that made the /app/ 403 hard to diagnose).
 		if token == "" {
+			log.Debugf("http", "auth: %s %s from %s — no credential, 401", r.Method, r.URL.Path, r.RemoteAddr)
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
 
 		if subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) != 1 {
+			log.Debugf("http", "auth: %s %s from %s — bearer (len %d) does not match http.api_key, 403", r.Method, r.URL.Path, r.RemoteAddr, len(token))
 			http.Error(w, "invalid credentials", http.StatusForbidden)
 			return
 		}
 
+		log.Debugf("http", "auth: %s %s from %s — http.api_key OK", r.Method, r.URL.Path, r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
 }
