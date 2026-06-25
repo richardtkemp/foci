@@ -95,23 +95,94 @@ func TestAppSink_StreamingTranslation(t *testing.T) {
 	s.Emit(ctx, turnevent.TurnComplete{FinalText: "Hello"})
 
 	got := drain(t, c)
-	want := []string{
-		fap.TypeTyping,    // TurnStart → typing on
-		fap.TypeTurnStart, // first delta lazily opens the turn
-		fap.TypeTextDelta,
-		fap.TypeTextDelta,
-		fap.TypeTextEnd, // TurnComplete finalizes the streamed message
-		fap.TypeTyping,  // typing off
+	// Bookended by typing on/off. Deltas may be batched by the stream pump, so
+	// this asserts invariants rather than an exact frame count: one turn.start,
+	// one text.end (sharing the turnId), ≥1 delta forming a prefix of the final
+	// text, and no whole-message frame (a streamed reply is never re-sent).
+	if len(got) < 4 || got[0].t != fap.TypeTyping || got[0].d["on"] != true {
+		t.Fatalf("first frame must be typing-on, got %v", types(got))
 	}
-	if g := types(got); !equal(g, want) {
-		t.Fatalf("frame sequence = %v, want %v", g, want)
+	if last := got[len(got)-1]; last.t != fap.TypeTyping || last.d["on"] != false {
+		t.Fatalf("last frame must be typing-off, got %v", types(got))
 	}
-	// turn.start and text.end must share the turnId.
-	if got[1].d["turnId"] != got[4].d["turnId"] {
-		t.Errorf("turnId mismatch between turn.start and text.end")
+	var turnStarts, textEnds int
+	var startTurnID, endTurnID, deltaText, deltaTurnID, finalText string
+	for _, d := range got {
+		switch d.t {
+		case fap.TypeTurnStart:
+			turnStarts++
+			startTurnID, _ = d.d["turnId"].(string)
+		case fap.TypeTextDelta:
+			s, _ := d.d["text"].(string)
+			deltaText += s
+			deltaTurnID, _ = d.d["turnId"].(string)
+		case fap.TypeTextEnd:
+			textEnds++
+			endTurnID, _ = d.d["turnId"].(string)
+			finalText, _ = d.d["finalText"].(string)
+		case fap.TypeMessage:
+			t.Errorf("streamed reply must not also emit a whole message frame")
+		}
 	}
-	if got[4].d["finalText"] != "Hello" {
-		t.Errorf("text.end finalText = %v, want Hello", got[4].d["finalText"])
+	if turnStarts != 1 || textEnds != 1 {
+		t.Fatalf("want one turn.start + one text.end, got %d/%d (%v)", turnStarts, textEnds, types(got))
+	}
+	if startTurnID == "" || startTurnID != endTurnID {
+		t.Errorf("turn.start/text.end turnId mismatch: %q vs %q", startTurnID, endTurnID)
+	}
+	if deltaText == "" || !strings.HasPrefix("Hello", deltaText) {
+		t.Errorf("streamed deltas %q must be a non-empty prefix of Hello", deltaText)
+	}
+	if deltaTurnID != "" && deltaTurnID != startTurnID {
+		t.Errorf("delta turnId %q != stream turnId %q", deltaTurnID, startTurnID)
+	}
+	if finalText != "Hello" {
+		t.Errorf("text.end finalText = %q, want Hello", finalText)
+	}
+}
+
+// TestAppSink_MultiReplyNoDoubleDelivery is the regression test for the
+// double-delivery bug: a turn with two replies (reply → tool → reply) must
+// render as two distinct finalized bubbles, never re-sending a streamed reply as
+// a separate whole-message frame. The CC delegated path fires
+// TextBlock{Intermediate} for every reply (including the last), then repeats the
+// last reply as TurnComplete.FinalText — which the shared delivered-flag must
+// suppress.
+func TestAppSink_MultiReplyNoDoubleDelivery(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	s.Emit(ctx, turnevent.TurnStart{})
+	// reply 1: streams, then completes as an intermediate block.
+	s.Emit(ctx, turnevent.TextDelta{Delta: "first"})
+	s.Emit(ctx, turnevent.TextBlock{Text: "first", Phase: turnevent.PhaseIntermediate})
+	// (a tool call happens here — ignored by the app sink)
+	// reply 2: streams, then completes as an intermediate block.
+	s.Emit(ctx, turnevent.TextDelta{Delta: "second"})
+	s.Emit(ctx, turnevent.TextBlock{Text: "second", Phase: turnevent.PhaseIntermediate})
+	// TurnComplete repeats the last reply — must be suppressed, not re-delivered.
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "second"})
+
+	got := drain(t, c)
+	var ends []decoded
+	for _, d := range got {
+		if d.t == fap.TypeMessage {
+			t.Fatalf("double delivery: a streamed reply was re-sent as a whole message (%v)", types(got))
+		}
+		if d.t == fap.TypeTextEnd {
+			ends = append(ends, d)
+		}
+	}
+	if len(ends) != 2 {
+		t.Fatalf("want 2 text.end frames (one finalized bubble per reply), got %d (%v)", len(ends), types(got))
+	}
+	if ends[0].d["turnId"] == ends[1].d["turnId"] {
+		t.Errorf("the two replies must use distinct turnIds, both %v", ends[0].d["turnId"])
+	}
+	if ends[0].d["finalText"] != "first" || ends[1].d["finalText"] != "second" {
+		t.Errorf("text.end finalTexts = %q,%q want first,second", ends[0].d["finalText"], ends[1].d["finalText"])
 	}
 }
 

@@ -2,134 +2,83 @@ package app
 
 import (
 	"context"
-	"fmt"
-	"sync"
 
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
-	"foci/internal/platform"
+	"foci/internal/turn"
 )
 
-// appSink translates a turnevent.Event stream into FAP frames for one turn on
-// one conversation. It is the app's native-streaming sink: text.delta per
-// chunk (no message-edit rate limits), bracketed by turn.start / text.end.
+// appSink is the app provider's per-turn turnevent.Sink. It is a thin wrapper
+// around the shared turn.StreamingSink (the same delivery coordination Telegram
+// and Discord use): all text streaming, intermediate-vs-final dedup, and
+// per-segment stream reset are handled by StreamingSink + TurnRenderer driving
+// an appBackend (see render.go). The wrapper adds only what is genuinely
+// app-specific and has no home in the platform renderer:
 //
-// One appSink per turn. Concurrency: Emit is called from the turn goroutine;
-// the started/delivered flags are guarded by mu, and the binding's send is
-// itself goroutine-safe (atomic seq + buffered channel).
+//   - the typing indicator, driven off the turn boundary as structured
+//     fap.Typing frames (the renderer's SendTyping is a no-op for the app);
+//   - the structured fap.Meta frame on turn completion (model/cost/tokens/mana —
+//     the typed replacement for the [meta] text blob the Telegram bridge injects);
+//   - dropping SubagentText, which the app has no surface for yet. Forwarding it
+//     would route through OnReply and prematurely finalize the in-flight reply
+//     stream, fragmenting the main message.
+//
+// One appSink per turn on one conversation.
 type appSink struct {
-	b      *convBinding
-	turnID string
+	b     *convBinding
+	inner *turn.StreamingSink
+
+	// cleanup finishes the renderer's stream buffer (stops the pump goroutine).
+	// Returned from NewTurnSink for the agent to defer, so an abandoned turn
+	// (no TurnComplete) doesn't leak the pump.
+	cleanup func()
 
 	// statusFn supplies the meta-frame status chips (mana%, mana state, gap).
 	// nil = those fields are omitted (e.g. a sink with no agent context).
 	statusFn func() (manaPct *int, manaState, gap string)
-
-	mu        sync.Mutex
-	started   bool // turn.start emitted (lazy — only once real text streams)
-	delivered bool // any content shown this turn
 }
 
+// newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
+// by a TurnRenderer and StreamingSink, all driving FAP frames on the binding.
+// Typing is owned by appSink (conn passed as nil to StreamingSink), so the
+// indicator tracks the turn boundary as structured frames.
 func newAppSink(b *convBinding) *appSink {
-	return &appSink{b: b, turnID: fap.NewULID()}
+	backend := newAppBackend(b)
+	d := turn.TurnDisplay{StreamOutput: true, ShowThinking: "off", ShowToolCalls: "off"}
+	tracker := noopTracker{}
+	newSB := func() *turn.StreamBuffer {
+		return turn.NewStreamBuffer(backend.OpenStream(), appStreamInterval, d.StreamOutput)
+	}
+	renderer := turn.NewTurnRenderer(backend, tracker, d, newSB)
+	inner := turn.NewStreamingSink(renderer, tracker, nil)
+	return &appSink{b: b, inner: inner, cleanup: renderer.Cleanup}
 }
 
 // DeliversToPlatform implements turnevent.Sink — output is always user-facing.
 func (s *appSink) DeliversToPlatform() bool { return true }
 
-func (s *appSink) ensureStarted() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.started {
-		return
-	}
-	s.started = true
-	s.b.send(fap.TurnStart{ConversationID: s.b.convID, TurnID: s.turnID})
-}
-
-func (s *appSink) isStarted() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.started
-}
-
-func (s *appSink) markDelivered() {
-	s.mu.Lock()
-	s.delivered = true
-	s.mu.Unlock()
-}
-
-// Emit implements turnevent.Sink.
+// Emit implements turnevent.Sink. It forwards to the shared StreamingSink for all
+// text coordination and layers on the app-specific typing + meta frames.
 func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
 	case turnevent.TurnStart:
 		s.b.send(fap.Typing{ConversationID: s.b.convID, On: true})
+		s.inner.Emit(ctx, ev)
 
-	case turnevent.TextDelta:
-		if e.Delta == "" {
-			return
-		}
-		s.ensureStarted()
-		s.b.send(fap.TextDelta{ConversationID: s.b.convID, TurnID: s.turnID, Text: e.Delta})
-		s.markDelivered()
-
-	case turnevent.TextBlock:
-		// Intermediate blocks (tool-loop replies) are complete mid-turn
-		// messages — deliver each as its own message row. Final-phase text is
-		// carried by TurnComplete, handled below.
-		if e.Phase != turnevent.PhaseIntermediate {
-			return
-		}
-		clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.Text))
-		if clean == "" {
-			return
-		}
-		s.b.send(fap.ServerMessage{
-			ConversationID: s.b.convID,
-			MessageID:      fap.NewULID(),
-			Role:           "agent",
-			Text:           clean,
-		})
-		s.markDelivered()
+	case turnevent.SubagentText:
+		// No app surface for subagent progress yet; dropping it avoids OnReply
+		// prematurely finalizing the in-flight reply stream. See type doc.
 
 	case turnevent.TurnComplete:
-		s.finish(ctx, e)
+		// Forward first so the final text is delivered (TextEnd / ServerMessage),
+		// then bracket with typing-off and the structured meta frame.
+		s.inner.Emit(ctx, ev)
+		s.b.send(fap.Typing{ConversationID: s.b.convID, On: false})
+		s.emitMeta(e)
+
+	default:
+		s.inner.Emit(ctx, ev)
 	}
-}
-
-func (s *appSink) finish(ctx context.Context, e turnevent.TurnComplete) {
-	defer s.b.send(fap.Typing{ConversationID: s.b.convID, On: false})
-
-	text := e.FinalText
-	if e.Err != nil && ctx.Err() == nil {
-		text = fmt.Sprintf("Error: %s", e.Err.Error())
-	}
-	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
-
-	if s.isStarted() {
-		// Streaming deltas already shown — finalize the streamed message.
-		var final *string
-		if clean != "" {
-			final = &clean
-		}
-		s.b.send(fap.TextEnd{
-			ConversationID: s.b.convID,
-			TurnID:         s.turnID,
-			MessageID:      fap.NewULID(),
-			FinalText:      final,
-		})
-	} else if clean != "" {
-		// No streaming happened (non-streamed turn). Deliver the final text as
-		// a single message.
-		s.b.send(fap.ServerMessage{
-			ConversationID: s.b.convID,
-			MessageID:      fap.NewULID(),
-			Role:           "agent",
-			Text:           clean,
-		})
-	}
-
-	s.emitMeta(e)
 }
 
 // emitMeta sends the user-facing status chips (model, cost, tokens) the app
