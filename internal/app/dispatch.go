@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"time"
 
 	"foci/internal/agent"
@@ -73,7 +74,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		})
 
 	case fap.ClientMessage:
-		h.routeUserText(client, f.ConversationID, f.Text)
+		h.routeUserTurn(client, f.ConversationID, f.Text, h.resolveAttachments(f.Attachments))
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
@@ -149,10 +150,10 @@ func inboundConvID(frame any) string {
 	}
 }
 
-// routeUserText resolves the agent + conversation binding and enqueues a user
-// turn. Empty text is ignored.
-func (h *Hub) routeUserText(client *wsClient, convID, text string) {
-	if text == "" || convID == "" {
+// routeUserTurn resolves the agent + conversation binding and enqueues a user
+// turn. A turn with neither text nor attachments, or no conversation, is ignored.
+func (h *Hub) routeUserTurn(client *wsClient, convID, text string, atts []platform.Attachment) {
+	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
 	client.mu.Lock()
@@ -182,12 +183,53 @@ func (h *Hub) routeUserText(client *wsClient, convID, text string) {
 
 	b := h.ensureBinding(client, agentID, convID)
 	conn.agentRef.Enqueue(agent.Envelope{
-		SessionKey: b.sessionKey,
-		Text:       text,
-		UserID:     deviceID,
-		ChatID:     b.chatID,
-		ReceivedAt: time.Now(),
-		Original:   convID,
-		Driver:     conn,
+		SessionKey:  b.sessionKey,
+		Text:        text,
+		Attachments: atts,
+		UserID:      deviceID,
+		ChatID:      b.chatID,
+		ReceivedAt:  time.Now(),
+		Original:    convID,
+		Driver:      conn,
 	})
+}
+
+// resolveAttachments turns a message's blob references into platform
+// attachments, reading each blob from the store. Small blobs are loaded into
+// Data (for in-memory consumers like vision); SavedPath always points at the
+// on-disk blob. Unknown/unreadable blobs are skipped with a warning.
+func (h *Hub) resolveAttachments(refs []fap.AttachmentRef) []platform.Attachment {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]platform.Attachment, 0, len(refs))
+	for _, r := range refs {
+		meta, ok := h.blobs.get(r.BlobID)
+		if !ok {
+			log.Warnf("app", "inbound attachment blob %q not found", r.BlobID)
+			continue
+		}
+		var data []byte
+		if meta.size <= inlineAttachmentMax {
+			if d, err := os.ReadFile(meta.path); err == nil {
+				data = d
+			} else {
+				log.Warnf("app", "read attachment blob %q: %v", r.BlobID, err)
+			}
+		}
+		out = append(out, platform.Attachment{
+			Type:      firstNonEmpty(r.Kind, meta.kind),
+			Data:      data,
+			MimeType:  firstNonEmpty(r.MIME, meta.mime),
+			SavedPath: meta.path,
+		})
+	}
+	return out
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

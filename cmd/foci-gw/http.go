@@ -172,8 +172,10 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	// registered whenever the app provider is configured with a key.
 	if app.Enabled() {
 		mux.HandleFunc("/app/ws", app.WSHandler())
-		endpointList += ", /app/ws (ws)"
-		log.Infof("http", "/app/ws WebSocket endpoint enabled")
+		mux.HandleFunc("/app/blob", app.BlobUploadHandler())   // POST: upload
+		mux.HandleFunc("/app/blob/", app.BlobDownloadHandler()) // GET /app/blob/<id>
+		endpointList += ", /app/ws (ws), /app/blob"
+		log.Infof("http", "/app/ws + /app/blob endpoints enabled")
 	}
 
 	if d.reloadCredentials != nil {

@@ -1,8 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/internal/agent/turnevent"
@@ -136,6 +143,7 @@ func TestAppSink_SilentFinalSuppressed(t *testing.T) {
 func newTestHub() *Hub {
 	return &Hub{
 		deps:      platform.ProviderDeps{},
+		blobs:     newBlobStore(),
 		agents:    make(map[string]*appConn),
 		convs:     make(map[string]*convBinding),
 		bySession: make(map[string]*convBinding),
@@ -502,6 +510,137 @@ func TestReliability_BufferTrimsByDepth(t *testing.T) {
 	}
 	if first != 51 { // seq 1..50 dropped, 51..1050 retained
 		t.Errorf("oldest retained seq = %d, want 51", first)
+	}
+}
+
+// --- slice 4: media / blobs ---
+
+func TestBlobStore_PutGetRoundTrip(t *testing.T) {
+	s := newBlobStore()
+	meta, err := s.putBytes([]byte("hello"), "document", "f.txt", "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.size != 5 || meta.kind != "document" || meta.mime != "text/plain" {
+		t.Errorf("meta = %+v", meta)
+	}
+	got, ok := s.get(meta.id)
+	if !ok || got != meta {
+		t.Errorf("get(%q) failed", meta.id)
+	}
+	data, err := os.ReadFile(meta.path)
+	if err != nil || string(data) != "hello" {
+		t.Errorf("blob file = %q (%v)", data, err)
+	}
+}
+
+func TestBlobStore_SizeCap(t *testing.T) {
+	s := newBlobStore()
+	s.maxBytes = 4
+	if _, err := s.put(bytes.NewReader([]byte("12345")), "document", "x", "text/plain"); !errors.Is(err, errBlobTooLarge) {
+		t.Fatalf("over-cap put error = %v, want errBlobTooLarge", err)
+	}
+	if _, err := s.put(bytes.NewReader([]byte("1234")), "document", "x", "text/plain"); err != nil {
+		t.Fatalf("at-cap put: %v", err)
+	}
+}
+
+func TestSendPhoto_StoresBlobAndEmitsMedia(t *testing.T) {
+	h, c, _, conn := boundConn(t)
+	tmp := filepath.Join(t.TempDir(), "pic.png")
+	if err := os.WriteFile(tmp, []byte("PNGDATA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SendPhoto(tmp, "nice pic"); err != nil {
+		t.Fatal(err)
+	}
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeMedia {
+		t.Fatalf("frames = %v, want [media]", types(ds))
+	}
+	d := ds[0].d
+	if d["kind"] != "photo" || d["caption"] != "nice pic" {
+		t.Errorf("media payload = %v", d)
+	}
+	blobID, _ := d["blobId"].(string)
+	meta, ok := h.blobs.get(blobID)
+	if !ok || meta.size != 7 {
+		t.Errorf("blob not stored: ok=%v meta=%+v", ok, meta)
+	}
+}
+
+func TestResolveAttachments_ReadsBlob(t *testing.T) {
+	h := newTestHub()
+	meta, err := h.blobs.putBytes([]byte("hello"), "document", "f.txt", "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	atts := h.resolveAttachments([]fap.AttachmentRef{{BlobID: meta.id, Kind: "document", MIME: "text/plain", Name: "f.txt"}})
+	if len(atts) != 1 {
+		t.Fatalf("want 1 attachment, got %d", len(atts))
+	}
+	if string(atts[0].Data) != "hello" || atts[0].MimeType != "text/plain" || atts[0].SavedPath != meta.path {
+		t.Errorf("attachment = %+v", atts[0])
+	}
+	if got := h.resolveAttachments([]fap.AttachmentRef{{BlobID: "nope"}}); len(got) != 0 {
+		t.Errorf("unknown blob must be skipped, got %v", got)
+	}
+}
+
+func TestBlobHTTP_UploadThenDownload(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "secret-key"
+
+	up := httptest.NewRequest(http.MethodPost, "/app/blob", strings.NewReader("filedata"))
+	up.Header.Set("Authorization", "Bearer secret-key")
+	up.Header.Set("Content-Type", "image/png")
+	up.Header.Set("X-Filename", "p.png")
+	uw := httptest.NewRecorder()
+	h.ServeBlobPost(uw, up)
+	if uw.Code != http.StatusOK {
+		t.Fatalf("upload code = %d", uw.Code)
+	}
+	var res struct {
+		BlobID string `json:"blobId"`
+		Size   int64  `json:"size"`
+		Mime   string `json:"mime"`
+	}
+	if err := json.Unmarshal(uw.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.BlobID == "" || res.Size != 8 || res.Mime != "image/png" {
+		t.Fatalf("upload result = %+v", res)
+	}
+
+	dn := httptest.NewRequest(http.MethodGet, "/app/blob/"+res.BlobID, nil)
+	dn.Header.Set("Authorization", "Bearer secret-key")
+	dw := httptest.NewRecorder()
+	h.ServeBlobGet(dw, dn)
+	if dw.Code != http.StatusOK || dw.Body.String() != "filedata" {
+		t.Fatalf("download code=%d body=%q", dw.Code, dw.Body.String())
+	}
+	if ct := dw.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("content-type = %q, want image/png", ct)
+	}
+}
+
+func TestBlobHTTP_Auth(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "secret-key"
+
+	noAuth := httptest.NewRequest(http.MethodPost, "/app/blob", strings.NewReader("x"))
+	nw := httptest.NewRecorder()
+	h.ServeBlobPost(nw, noAuth)
+	if nw.Code != http.StatusUnauthorized {
+		t.Fatalf("no-bearer code = %d, want 401", nw.Code)
+	}
+
+	wrong := httptest.NewRequest(http.MethodGet, "/app/blob/abc", nil)
+	wrong.Header.Set("Authorization", "Bearer nope")
+	ww := httptest.NewRecorder()
+	h.ServeBlobGet(ww, wrong)
+	if ww.Code != http.StatusForbidden {
+		t.Fatalf("wrong-key code = %d, want 403", ww.Code)
 	}
 }
 

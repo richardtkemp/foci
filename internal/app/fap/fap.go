@@ -129,6 +129,16 @@ type AttachmentRef struct {
 	Name   string `json:"name,omitempty"`
 }
 
+// Media kinds (wire-protocol §9), mirroring Kotlin MediaKind.
+const (
+	MediaPhoto     = "photo"
+	MediaDocument  = "document"
+	MediaVoice     = "voice"
+	MediaAudio     = "audio"
+	MediaVideo     = "video"
+	MediaAnimation = "animation"
+)
+
 // Choice is one button on an interactive prompt (permission / ask / plan
 // approval). Maps 1:1 onto platform.ButtonChoice. Data is opaque to the app —
 // it echoes it back verbatim in InteractiveResponse.data; foci routes on it.
@@ -208,6 +218,24 @@ type Typing struct {
 }
 
 func (Typing) Type() string { return TypeTyping }
+
+// Media references an out-of-band blob the app fetches via GET /app/blob/<id>.
+// The bytes never travel over the WebSocket — only this reference does.
+type Media struct {
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+	BlobID         string `json:"blobId"`
+	Kind           string `json:"kind"`
+	MIME           string `json:"mime"`
+	Name           string `json:"name,omitempty"`
+	Caption        string `json:"caption,omitempty"`
+	Size           int64  `json:"size,omitempty"`
+	W              *int   `json:"w,omitempty"`
+	H              *int   `json:"h,omitempty"`
+	DurationMs     *int64 `json:"durationMs,omitempty"`
+}
+
+func (Media) Type() string { return TypeMedia }
 
 // Interactive presents a prompt with buttons (permission / ask / plan approval).
 // The app renders choices, and on tap echoes the chosen Choice.Data back in an

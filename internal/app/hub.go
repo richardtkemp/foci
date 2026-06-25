@@ -47,6 +47,7 @@ const (
 type Hub struct {
 	deps   platform.ProviderDeps
 	apiKey string
+	blobs  *blobStore
 
 	mu         sync.RWMutex
 	agents     map[string]*appConn     // agentID → its connection
@@ -67,15 +68,28 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	if key == "" {
 		log.Warnf("app", "no app.api_key secret — /app/ws endpoint will reject all connections until one is set")
 	}
-	return &Hub{
+	h := &Hub{
 		deps:      deps,
 		apiKey:    key,
+		blobs:     newBlobStore(),
 		agents:    make(map[string]*appConn),
 		convs:     make(map[string]*convBinding),
 		bySession: make(map[string]*convBinding),
 		clients:   make(map[*wsClient]struct{}),
 		prompts:   make(map[string]*convBinding),
 	}
+	if deps.Ctx != nil {
+		go h.blobs.reaper(deps.Ctx)
+	}
+	return h
+}
+
+// bearerToken extracts the Bearer credential from a request, or "" if absent.
+func bearerToken(r *http.Request) string {
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return auth[len("Bearer "):]
+	}
+	return ""
 }
 
 // setupAgent registers an agent's connection and starts its inbox. Returns nil
@@ -597,10 +611,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "app endpoint not configured", http.StatusServiceUnavailable)
 		return
 	}
-	token := ""
-	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-		token = auth[len("Bearer "):]
-	}
+	token := bearerToken(r)
 	if token == "" {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
