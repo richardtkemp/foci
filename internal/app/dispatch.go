@@ -78,6 +78,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 			Agents:  h.agentRoster(),
 		})
 
+	case fap.ConversationRename:
+		h.handleConversationRename(client, f)
+
 	case fap.ClientMessage:
 		h.routeUserTurn(client, f.ConversationID, f.Text, h.resolveAttachments(f.Attachments))
 
@@ -184,6 +187,30 @@ func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
 	})
 }
 
+// handleConversationRename sets (or clears, when Title is empty) the user-friendly
+// alias for a conversation. The alias persists in the session index's chat_metadata
+// keyed by the stable app chatID — so it survives session-key rotation and restarts —
+// and the updated roster is pushed back to this socket (other devices refresh on their
+// next hello/conversation.list).
+func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRename) {
+	h.mu.RLock()
+	b := h.convs[f.ConversationID]
+	h.mu.RUnlock()
+	if b == nil {
+		return
+	}
+	if idx := h.deps.SessionIndex; idx != nil {
+		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, "alias", strings.TrimSpace(f.Title)); err != nil {
+			log.Warnf("app", "rename %s: persist alias: %v", f.ConversationID, err)
+		}
+	}
+	client.sendRaw(fap.HelloServer{
+		Version: fap.ProtocolVersion,
+		Caps:    h.caps(),
+		Agents:  h.agentRoster(),
+	})
+}
+
 // routeCommand dispatches a slash command through the agent's command registry,
 // returning its response as message frame(s). Dispatch runs off the read pump
 // because some commands do real work.
@@ -262,6 +289,8 @@ func inboundConvID(frame any) string {
 	case fap.ClientTyping:
 		return f.ConversationID
 	case fap.Read:
+		return f.ConversationID
+	case fap.ConversationRename:
 		return f.ConversationID
 	default:
 		return ""

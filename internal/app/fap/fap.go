@@ -49,6 +49,7 @@ const (
 	TypeInteractiveResponse = "interactive.response"
 	TypeConversationOpen    = "conversation.open"
 	TypeConversationList    = "conversation.list"
+	TypeConversationRename  = "conversation.rename"
 	TypeRead                = "read"
 	TypePing                = "ping"
 )
@@ -372,6 +373,13 @@ type ClientTyping struct {
 type Read struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
+}
+
+// ConversationRename sets (or clears, when Title is empty) a user-friendly alias
+// for a conversation. Persisted server-side; echoed back in ConversationInfo.Title.
+type ConversationRename struct {
+	ConversationID string `json:"conversationId"`
+	Title          string `json:"title"`
 }
 
 // ConversationList re-requests the roster (payload-less).
