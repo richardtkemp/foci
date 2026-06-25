@@ -50,9 +50,11 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		client.mu.Lock()
 		client.deviceID = f.Client.DeviceID
 		client.mu.Unlock()
+		// Register the device's FCM token for offline wake pushes.
+		h.tokens.set(f.Client.DeviceID, f.PushToken)
 		client.sendRaw(fap.HelloServer{
 			Version: fap.ProtocolVersion,
-			Caps:    fap.Caps{Versions: []int{fap.ProtocolVersion}},
+			Caps:    h.caps(),
 			Agents:  h.agentRoster(),
 		})
 		// Reconnect resume: re-attach + replay each conversation the client still
@@ -69,7 +71,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.ConversationList:
 		client.sendRaw(fap.HelloServer{
 			Version: fap.ProtocolVersion,
-			Caps:    fap.Caps{Versions: []int{fap.ProtocolVersion}},
+			Caps:    h.caps(),
 			Agents:  h.agentRoster(),
 		})
 

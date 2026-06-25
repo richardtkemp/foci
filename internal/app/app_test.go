@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
@@ -144,6 +145,7 @@ func newTestHub() *Hub {
 	return &Hub{
 		deps:      platform.ProviderDeps{},
 		blobs:     newBlobStore(),
+		tokens:    newPushTokens(),
 		agents:    make(map[string]*appConn),
 		convs:     make(map[string]*convBinding),
 		bySession: make(map[string]*convBinding),
@@ -641,6 +643,95 @@ func TestBlobHTTP_Auth(t *testing.T) {
 	h.ServeBlobGet(ww, wrong)
 	if ww.Code != http.StatusForbidden {
 		t.Fatalf("wrong-key code = %d, want 403", ww.Code)
+	}
+}
+
+// --- slice 5: push (offline wake) ---
+
+func TestPushTokens_SetAndAll(t *testing.T) {
+	p := newPushTokens()
+	p.set("dev1", "tokA")
+	p.set("dev2", "tokB")
+	p.set("", "ignored")
+	p.set("dev3", "")
+	if all := p.all(); len(all) != 2 {
+		t.Fatalf("tokens = %v, want 2 (empty deviceId/token ignored)", all)
+	}
+}
+
+func TestPushPreview_Classification(t *testing.T) {
+	final := "the answer"
+	cases := []struct {
+		f      fap.ServerFrame
+		wantOK bool
+		want   string
+	}{
+		{fap.ServerMessage{Text: "hello"}, true, "hello"},
+		{fap.TextEnd{FinalText: &final}, true, "the answer"},
+		{fap.TextEnd{}, true, "New message"},
+		{fap.Media{Kind: "photo"}, true, "Sent photo"},
+		{fap.Media{Kind: "photo", Caption: "cap"}, true, "cap"},
+		{fap.Notification{Text: "note"}, true, "note"},
+		{fap.Interactive{Text: "approve?"}, true, "approve?"},
+		{fap.Typing{On: true}, false, ""},
+		{fap.Meta{}, false, ""},
+		{fap.TextDelta{Text: "x"}, false, ""},
+	}
+	for _, c := range cases {
+		got, ok := pushPreview(c.f)
+		if ok != c.wantOK || got != c.want {
+			t.Errorf("pushPreview(%T) = (%q,%v), want (%q,%v)", c.f, got, ok, c.want, c.wantOK)
+		}
+	}
+}
+
+func TestTruncatePreview(t *testing.T) {
+	if got := truncatePreview("  hi  "); got != "hi" {
+		t.Errorf("trim = %q, want hi", got)
+	}
+	got := truncatePreview(strings.Repeat("a", 100))
+	if !strings.HasSuffix(got, "…") || len(got) != pushPreviewMax+len("…") {
+		t.Errorf("truncated len = %d, want %d with ellipsis", len(got), pushPreviewMax+len("…"))
+	}
+}
+
+func TestOfflineSend_FiresPushForVisibleFramesOnly(t *testing.T) {
+	var got []string
+	b := &convBinding{
+		convID:        "conv-1",
+		seen:          make(map[string]struct{}),
+		notifyOffline: func(_, preview string) { got = append(got, preview) },
+	} // client nil → offline
+	b.send(fap.ServerMessage{ConversationID: "conv-1", MessageID: "m", Role: "agent", Text: "hello there"})
+	b.send(fap.Typing{ConversationID: "conv-1", On: true}) // control frame → no push
+	if len(got) != 1 || got[0] != "hello there" {
+		t.Fatalf("offline previews = %v, want [hello there]", got)
+	}
+}
+
+func TestOnlineSend_NoPush(t *testing.T) {
+	c := fakeClient()
+	var got []string
+	b := &convBinding{
+		convID:        "c1",
+		client:        c,
+		seen:          make(map[string]struct{}),
+		notifyOffline: func(_, preview string) { got = append(got, preview) },
+	}
+	b.send(fap.ServerMessage{ConversationID: "c1", MessageID: "m", Role: "agent", Text: "hi"})
+	drain(t, c)
+	if len(got) != 0 {
+		t.Fatalf("online send must not push, got %v", got)
+	}
+}
+
+func TestPusher_Coalesces(t *testing.T) {
+	p := &fcmPusher{tokens: newPushTokens(), lastPush: make(map[string]time.Time)}
+	p.notify("conv-1", "a") // no tokens → no network; updates lastPush
+	first := p.lastPush["conv-1"]
+	p.notify("conv-1", "b") // within window → coalesced, lastPush unchanged
+	if !p.lastPush["conv-1"].Equal(first) {
+		t.Errorf("second notify within window must be coalesced")
 	}
 }
 
