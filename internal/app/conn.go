@@ -9,6 +9,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
+	"foci/internal/command"
 	"foci/internal/platform"
 )
 
@@ -25,6 +26,8 @@ type appConn struct {
 	hub      *Hub
 	agentID  string
 	agentRef *agent.Agent
+	commands *command.Registry
+	cmdCtx   command.CommandContext
 
 	mu             sync.Mutex
 	defaultSession string

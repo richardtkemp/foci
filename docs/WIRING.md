@@ -1318,9 +1318,10 @@ like telegram/discord, but a `Connection` is the server end of one device's
 WebSocket rather than a vendor-API client. Built: slice 1 ("echo": text + native
 streaming + status `meta`), slice 2 (interactive buttons → permission/ask/plan),
 slice 3 (reliability: per-conversation seq/ack/replay + reconnect resume + inbound
-dedup), slice 4 (media/blobs over HTTP), slice 5 (FCM offline wake-push).
-Multi-agent roster, per-device pairing tokens, and voice are later slices
-(`foci-android/docs/02-foci-server-changes.md` §11).
+dedup), slice 4 (media/blobs over HTTP), slice 5 (FCM offline wake-push), slice 6
+(multi-agent/session: server-owned conversationId, roster, conversation.open,
+named sessions, slash commands). Per-device pairing tokens (slice 7) and voice
+(slice 8) remain (`foci-android/docs/02-foci-server-changes.md` §11).
 
 **Wire layer (`internal/app/fap/`):** pure Go mirror of the client's Kotlin
 `:protocol` module. `Envelope{t,id,seq,ack,ts,v,d}` wraps a type-specific
@@ -1367,8 +1368,13 @@ trimmed; trimmed further on inbound ack), and an inbound dedup `seen` set.
 outbox entries, fold piggybacked `ack` to trim the replay buffer) → switch.
 `hello`→server hello (roster) + `resumeConversations` (re-attach + replay each
 resume point's `seq > ack`); `conversation.open`→bind socket to agent;
-`message`→`routeUserText`→`ensureBinding`→`agent.Enqueue(Envelope{Driver:
-appConn})`; `interactive.response`→`handleInteractiveResponse`
+`message`→`routeUserTurn`→`ensureBinding`→`agent.Enqueue(Envelope{Driver:
+appConn})`; `conversation.open`→`handleConversationOpen` (server mints a
+conversationId, binds it, optionally adopts a named `sessionKey`, replies with an
+updated roster the app upserts); `command`→`routeCommand`→ the agent's
+`command.Registry.Dispatch` (captured from `AgentConnectionParams` in
+`setupAgent`), response parts sent back as `message` frames;
+`interactive.response`→`handleInteractiveResponse`
 (`platform.HandleInteractiveCallback` on the echoed `<promptId>:<index>` data →
 `interactive.edit` resolution, suppressed when a follow-up question advanced the
 binding's seq); `ping`→`pong`; unknown→ignored. No agent → `error` frame.
