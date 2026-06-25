@@ -18,13 +18,18 @@ type AndroidDeps struct {
 }
 
 // androidWizard step indices. The flow adapts to current state:
-//   - app provider disabled        → ConfirmEnable → KeyDelivery → Host
+//   - app provider disabled        → ConfirmEnable → KeyDelivery → Host → ConfirmRestart
 //   - enabled, auto-generated key  → KeyDelivery → Host
 //   - enabled, user-set key        → Host (the user already knows their key)
+//
+// ConfirmRestart only runs when the wizard enabled the app provider this run
+// (justEnabled): the running server loaded its config before the [[platforms]]
+// id="app" line was appended, so the /app endpoints aren't live until a restart.
 const (
 	androidStepConfirmEnable = iota
 	androidStepKeyDelivery
 	androidStepHost
+	androidStepConfirmRestart
 )
 
 const androidKeyDeliveryPrompt = "Your master API key is auto-generated. Show it here in chat, or read it yourself from the secrets file?\nReply `show` or `read`:"
@@ -116,6 +121,8 @@ func (w *androidWizard) Handle(text string) (string, bool) {
 		return w.handleKeyDelivery(text)
 	case androidStepHost:
 		return w.handleHost(text)
+	case androidStepConfirmRestart:
+		return w.handleConfirmRestart(text)
 	default:
 		return "Unexpected state.", true
 	}
@@ -175,7 +182,30 @@ func (w *androidWizard) handleHost(text string) (string, bool) {
 		return "Host can't be empty. Enter the server host (e.g. `app.richardkemp.uk` or `192.168.1.50:18792`):", false
 	}
 	w.host = host
-	return w.finalSummary(), true
+	summary := w.finalSummary()
+	// If we enabled the app provider this run, the /app endpoints aren't live
+	// until foci reloads its config. Offer to restart now rather than leaving
+	// the user to discover the 403.
+	if w.justEnabled {
+		w.step = androidStepConfirmRestart
+		return summary + "\n\n🔄 foci needs to restart to enable this. Okay to restart now? (`yes`/`no`)", false
+	}
+	return summary, true
+}
+
+func (w *androidWizard) handleConfirmRestart(text string) (string, bool) {
+	switch strings.ToLower(text) {
+	case "yes", "y":
+		msg, err := restartFunc()
+		if err != nil {
+			return fmt.Sprintf("Restart failed: %s\nRestart manually with `/restart` to bring up the `/app` endpoints before pairing.", err), true
+		}
+		return "🔄 " + msg, true
+	case "no", "n":
+		return "Okay — restart later with `/restart` to bring up the `/app` endpoints before pairing.", true
+	default:
+		return "Restart foci now? Reply `yes` or `no`:", false
+	}
 }
 
 // secretsPath derives the secrets.toml path from the config path (they live in
@@ -206,10 +236,6 @@ func (w *androidWizard) finalSummary() string {
 	sb.WriteString("1. Install the debug APK on your device.\n")
 	sb.WriteString("2. In the app, enter the host + key (or scan the pairing string).\n")
 	sb.WriteString("3. Tap pair — the device swaps the master key for its own revocable token.\n")
-
-	if w.justEnabled {
-		sb.WriteString("\n⚠️ You just enabled the app provider — restart foci (`/restart`) to bring up the `/app` endpoints before pairing.")
-	}
 	return sb.String()
 }
 

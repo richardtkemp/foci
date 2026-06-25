@@ -129,14 +129,66 @@ func TestAndroidWizard_ConfirmEnableYes(t *testing.T) {
 		t.Errorf("response should confirm enablement; got: %q", resp)
 	}
 
-	// Finishing the flow should carry the restart warning (justEnabled).
+	// After enabling, the host step must NOT finish — it advances to the
+	// restart-confirm step (the /app endpoints aren't live until a restart).
 	_, _ = w.Handle("show")
-	final, done := w.Handle("app.example.com")
-	if !done {
-		t.Fatal("should finish after host")
+	afterHost, done := w.Handle("app.example.com")
+	if done {
+		t.Fatal("should advance to restart-confirm after host when justEnabled, not finish")
 	}
-	if !strings.Contains(final, "/restart") {
-		t.Errorf("final summary should warn to restart after enabling; got: %q", final)
+	if w.step != androidStepConfirmRestart {
+		t.Fatalf("expected step ConfirmRestart, got %d", w.step)
+	}
+	if !strings.Contains(strings.ToLower(afterHost), "restart") {
+		t.Errorf("host step should ask to restart after enabling; got: %q", afterHost)
+	}
+}
+
+func TestAndroidWizard_ConfirmRestartYes(t *testing.T) {
+	// Restore the package restart hook after the test.
+	orig := restartFunc
+	defer func() { restartFunc = orig }()
+	called := false
+	restartFunc = func() (string, error) {
+		called = true
+		return "Restarting via systemctl...", nil
+	}
+
+	w := newTestAndroidWizard(&mockSecretsStore{data: map[string]string{}}, "/c/foci.toml")
+	w.justEnabled = true
+	w.step = androidStepConfirmRestart
+
+	resp, done := w.Handle("yes")
+	if !done {
+		t.Fatal("'yes' should finish the wizard")
+	}
+	if !called {
+		t.Error("restartFunc should have been invoked on 'yes'")
+	}
+	if !strings.Contains(resp, "Restarting") {
+		t.Errorf("response should carry the restart message; got: %q", resp)
+	}
+}
+
+func TestAndroidWizard_ConfirmRestartNo(t *testing.T) {
+	orig := restartFunc
+	defer func() { restartFunc = orig }()
+	called := false
+	restartFunc = func() (string, error) { called = true; return "", nil }
+
+	w := newTestAndroidWizard(&mockSecretsStore{data: map[string]string{}}, "/c/foci.toml")
+	w.justEnabled = true
+	w.step = androidStepConfirmRestart
+
+	resp, done := w.Handle("no")
+	if !done {
+		t.Fatal("'no' should finish the wizard")
+	}
+	if called {
+		t.Error("restartFunc must NOT be invoked on 'no'")
+	}
+	if !strings.Contains(strings.ToLower(resp), "/restart") {
+		t.Errorf("'no' should point at manual /restart; got: %q", resp)
 	}
 }
 
