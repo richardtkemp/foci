@@ -272,6 +272,12 @@ type AgentConfig struct {
 	Name      string `toml:"name"`  // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
 	Emoji     string `toml:"emoji"` // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
 	Workspace string `toml:"workspace"`
+	// Avatar is an image file for the agent, served to the native app. An
+	// absolute path, or a path relative to the foci home dir, is used as-is
+	// (resolved via ResolvePath). When empty, it is auto-detected at load from
+	// $workspace/avatar.{png,jpg,jpeg,webp,gif} then $workspace/.data/avatar.{ext}.
+	// After Load() this holds "" (no avatar) or an absolute path to an existing file.
+	Avatar string `toml:"avatar"`
 
 	Memory    MemoryConfig     `toml:"memory"`    // per-agent memory overrides (sources combined with global [memory])
 	Platforms []PlatformConfig `toml:"platforms"` // per-agent platform configurations

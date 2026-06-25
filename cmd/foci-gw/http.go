@@ -196,8 +196,9 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		mux.HandleFunc("/app/devices", app.DevicesHandler())            // GET: list devices (master key)
 		mux.HandleFunc("/app/push/register", app.PushRegisterHandler()) // POST: refresh FCM token
 		mux.HandleFunc("/app/history", app.HistoryHandler())            // GET: restart reconciliation
-		endpointList += ", /app/ws (ws), /app/blob, /app/pair, /app/devices, /app/push/register, /app/history"
-		log.Infof("http", "/app/ws + /app/blob + /app/pair + /app/devices + /app/push/register + /app/history endpoints enabled")
+		mux.HandleFunc("/app/avatar/", app.AvatarHandler())             // GET /app/avatar/<agentId>: agent avatar image
+		endpointList += ", /app/ws (ws), /app/blob, /app/pair, /app/devices, /app/push/register, /app/history, /app/avatar"
+		log.Infof("http", "/app/ws + /app/blob + /app/pair + /app/devices + /app/push/register + /app/history + /app/avatar endpoints enabled")
 	}
 
 	if d.reloadCredentials != nil {

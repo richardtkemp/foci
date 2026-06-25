@@ -96,6 +96,28 @@ func AgentDataPath(workspace, filename string) string {
 	return filepath.Join(workspace, ".data", filename)
 }
 
+// avatarExts is the image extension search order for agent avatar auto-detection.
+// Mirrors the image MIME set the platforms accept (png/jpeg/gif/webp), plus jpg.
+var avatarExts = []string{".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+// detectAvatar returns the first existing avatar image for an agent workspace,
+// preferring $workspace/avatar.{ext} over $workspace/.data/avatar.{ext}, in the
+// avatarExts order. Returns "" (absolute path otherwise) when none exists.
+func detectAvatar(workspace string) string {
+	if workspace == "" {
+		return ""
+	}
+	for _, dir := range []string{workspace, filepath.Join(workspace, ".data")} {
+		for _, ext := range avatarExts {
+			p := filepath.Join(dir, "avatar"+ext)
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
 // ResolveAllPaths resolves all path config fields in one place.
 // Called at the end of Load(), before Validate().
 func (c *Config) ResolveAllPaths() {

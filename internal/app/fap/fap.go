@@ -91,7 +91,9 @@ type Caps struct {
 type AgentInfo struct {
 	ID            string             `json:"id"`
 	Name          string             `json:"name"`
-	Avatar        string             `json:"avatar,omitempty"`
+	Avatar        string             `json:"avatar,omitempty"`    // emoji fallback (e.g. "🥔")
+	AvatarURL     string             `json:"avatarUrl,omitempty"` // path to fetch the avatar image (e.g. "/app/avatar/clutch"); empty if none
+	AvatarVer     string             `json:"avatarVer,omitempty"` // image fingerprint (mtime+size); changes when the file changes, drives client cache invalidation
 	Conversations []ConversationInfo `json:"conversations,omitempty"`
 }
 

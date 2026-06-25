@@ -252,3 +252,73 @@ dir = "/var/sessions"
 		t.Errorf("WelcomeFile = %q, want /opt/welcome.md", cfg.WelcomeFile)
 	}
 }
+
+func TestDetectAvatar(t *testing.T) {
+	// Precedence: $workspace/avatar.{ext} (in avatarExts order) beats
+	// $workspace/.data/avatar.{ext}; "" when nothing matches.
+	t.Run("none", func(t *testing.T) {
+		if got := detectAvatar(t.TempDir()); got != "" {
+			t.Errorf("detectAvatar(empty ws) = %q, want \"\"", got)
+		}
+		if got := detectAvatar(""); got != "" {
+			t.Errorf("detectAvatar(\"\") = %q, want \"\"", got)
+		}
+	})
+
+	t.Run("workspace png", func(t *testing.T) {
+		ws := t.TempDir()
+		want := filepath.Join(ws, "avatar.png")
+		if err := os.WriteFile(want, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := detectAvatar(ws); got != want {
+			t.Errorf("detectAvatar = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("ext precedence png over webp", func(t *testing.T) {
+		ws := t.TempDir()
+		if err := os.WriteFile(filepath.Join(ws, "avatar.webp"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		png := filepath.Join(ws, "avatar.png")
+		if err := os.WriteFile(png, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := detectAvatar(ws); got != png {
+			t.Errorf("detectAvatar = %q, want png (precedence) %q", got, png)
+		}
+	})
+
+	t.Run("dir precedence workspace over .data", func(t *testing.T) {
+		ws := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(ws, ".data"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, ".data", "avatar.png"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// A lower-precedence ext in the workspace dir still beats .data.
+		topJpg := filepath.Join(ws, "avatar.jpg")
+		if err := os.WriteFile(topJpg, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := detectAvatar(ws); got != topJpg {
+			t.Errorf("detectAvatar = %q, want workspace jpg %q (dir precedence)", got, topJpg)
+		}
+	})
+
+	t.Run("dotdata fallback", func(t *testing.T) {
+		ws := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(ws, ".data"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(ws, ".data", "avatar.jpeg")
+		if err := os.WriteFile(want, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := detectAvatar(ws); got != want {
+			t.Errorf("detectAvatar = %q, want .data fallback %q", got, want)
+		}
+	})
+}

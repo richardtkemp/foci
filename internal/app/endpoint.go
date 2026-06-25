@@ -68,3 +68,6 @@ func PushRegisterHandler() http.HandlerFunc { return withHub((*Hub).ServePushReg
 
 // HistoryHandler returns the GET /app/history handler (restart reconciliation).
 func HistoryHandler() http.HandlerFunc { return withHub((*Hub).ServeHistory) }
+
+// AvatarHandler returns the GET /app/avatar/<agentId> handler (agent avatar image).
+func AvatarHandler() http.HandlerFunc { return withHub((*Hub).ServeAvatar) }

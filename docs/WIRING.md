@@ -1422,6 +1422,17 @@ Inbound: the app uploads via `POST /app/blob` (`ServeBlobPost`, returns
 (small ones into `Data`, `SavedPath` always set). Both endpoints share the
 `bearerToken` + `app.api_key` gate; registered in `http.go` alongside `/app/ws`.
 
+**Agent avatars (`avatar.go`):** each agent may have an avatar image, served to
+the app at `GET /app/avatar/<agentId>` (`ServeAvatar`, same Bearer gate as blobs,
+range-capable `http.ServeContent`, Content-Type from extension). Unlike blobs the
+file is persistent (keyed by agent ID, no TTL/reaper). The path comes from
+`AgentConfig.Avatar` (toml `avatar`): a configured absolute/foci-home-relative path
+(`ResolvePath`), else auto-detected at load (`config.detectAvatar`) from
+`$workspace/avatar.{png,jpg,jpeg,webp,gif}` then `$workspace/.data/avatar.{ext}`.
+The `hello` roster (`agentRoster` → `fap.AgentInfo`) advertises `avatarUrl`
+(`/app/avatar/<id>`) + `avatarVer` (a mtime+size fingerprint, drives client cache
+invalidation) when the file exists; `avatar` still carries the emoji fallback.
+
 **Auth hardening (`devices.go`, slice 7):** the shared master key (`app.api_key`)
 remains the bootstrap, but a device pairs once (`POST /app/pair`, master-key only)
 to mint a revocable per-device token (`deviceStore`, 256-bit random, persisted to
