@@ -100,6 +100,9 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		Store:    p.store,
 	}
 
+	// Build AndroidDeps (registry reference for the /android onboarding wizard)
+	androidDeps := &command.AndroidDeps{Registry: cmds}
+
 	// Build AgentNewDeps
 	cmdFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
 	agentNewDeps := &command.AgentNewDeps{
@@ -163,6 +166,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		ConfigSetDeps:       configSetDeps,
 		AgentNewDeps:        agentNewDeps,
 		SecretsDeps:         secretsDeps,
+		AndroidDeps:         androidDeps,
 		SkillsDirs:          p.skillsDirs,
 		TokenCountCache:     command.NewTokenCountCache(),
 		ConfigureFacet:      p.configureFacet,
@@ -209,6 +213,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.BitwardenCommand())
 	cmds.Register(command.SessionsCommand())
 	cmds.Register(command.AgentsCommand())
+	cmds.Register(command.AndroidCommand())
 	cmds.Register(command.RepeatCommand())
 	cmds.Register(command.PassCommand())
 	cmds.Register(command.TodoCommand())

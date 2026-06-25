@@ -12,6 +12,7 @@ import (
 // SecretsStore is the interface for managing secrets.
 type SecretsStore interface {
 	Names() []string
+	Get(name string) (string, bool)
 	Set(name, value string)
 	Remove(name string) bool
 	Save() error

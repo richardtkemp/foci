@@ -116,6 +116,7 @@ type CommandContext struct {
 	ConfigSetDeps *ConfigSetDeps
 	AgentNewDeps  *AgentNewDeps
 	SecretsDeps   *SecretsDeps
+	AndroidDeps   *AndroidDeps
 
 	// Todo store (for /todo command)
 	TodoStore *memory.TodoStore
