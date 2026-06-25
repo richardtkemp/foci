@@ -11,6 +11,7 @@ import (
 	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/platform"
+	"foci/internal/voice"
 )
 
 // appConn is the per-agent platform.Connection for the app provider. One
@@ -28,6 +29,7 @@ type appConn struct {
 	agentRef *agent.Agent
 	commands *command.Registry
 	cmdCtx   command.CommandContext
+	stt      voice.STT // inbound voice transcription; nil = unsupported
 
 	mu             sync.Mutex
 	defaultSession string

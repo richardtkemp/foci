@@ -837,6 +837,77 @@ func TestRouteCommand_NoCommandsErrors(t *testing.T) {
 	}
 }
 
+// --- slice 8: voice (inbound STT) ---
+
+type fakeSTT struct {
+	text string
+	err  error
+}
+
+func (f fakeSTT) Transcribe(_ context.Context, _ []byte, _ string) (string, error) {
+	return f.text, f.err
+}
+
+func TestTranscribeVoice_MergesAndDropsVoiceAttachment(t *testing.T) {
+	h := newTestHub()
+	conn := &appConn{hub: h, agentID: "ag", stt: fakeSTT{text: "hello world"}}
+	atts := []platform.Attachment{
+		{Type: "voice", Data: []byte("audio"), MimeType: "audio/ogg"},
+		{Type: "document", Data: []byte("doc"), MimeType: "text/plain"},
+	}
+	text, kept := h.transcribeVoice(conn, "", atts)
+	if text != "hello world" {
+		t.Errorf("text = %q, want transcript", text)
+	}
+	if len(kept) != 1 || kept[0].Type != "document" {
+		t.Errorf("voice attachment should be dropped, kept = %v", kept)
+	}
+}
+
+func TestTranscribeVoice_AppendsToTypedText(t *testing.T) {
+	h := newTestHub()
+	conn := &appConn{hub: h, stt: fakeSTT{text: "spoken"}}
+	text, _ := h.transcribeVoice(conn, "typed", []platform.Attachment{{Type: "voice", Data: []byte("a"), MimeType: "audio/ogg"}})
+	if text != "typed\nspoken" {
+		t.Errorf("text = %q, want typed+spoken", text)
+	}
+}
+
+func TestTranscribeVoice_NoSTTUnchanged(t *testing.T) {
+	h := newTestHub()
+	conn := &appConn{hub: h} // no transcriber
+	atts := []platform.Attachment{{Type: "voice", Data: []byte("a"), MimeType: "audio/ogg"}}
+	text, kept := h.transcribeVoice(conn, "x", atts)
+	if text != "x" || len(kept) != 1 {
+		t.Errorf("without STT must pass through: %q %v", text, kept)
+	}
+}
+
+func TestTranscribeVoice_ErrorKeepsAttachment(t *testing.T) {
+	h := newTestHub()
+	conn := &appConn{hub: h, stt: fakeSTT{err: errors.New("boom")}}
+	atts := []platform.Attachment{{Type: "voice", Data: []byte("a"), MimeType: "audio/ogg"}}
+	text, kept := h.transcribeVoice(conn, "", atts)
+	if text != "" || len(kept) != 1 {
+		t.Errorf("transcription error must keep the audio: %q %v", text, kept)
+	}
+}
+
+func TestVoiceFilename(t *testing.T) {
+	cases := map[string]string{
+		"audio/ogg":                "voice.ogg",
+		"audio/mp4":                "voice.m4a",
+		"audio/mpeg":               "voice.mp3",
+		"audio/wav":                "voice.wav",
+		"application/octet-stream": "voice.ogg",
+	}
+	for mime, want := range cases {
+		if got := voiceFilename(platform.Attachment{MimeType: mime}); got != want {
+			t.Errorf("voiceFilename(%q) = %q, want %q", mime, got, want)
+		}
+	}
+}
+
 func equal(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

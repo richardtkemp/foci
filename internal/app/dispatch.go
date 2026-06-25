@@ -280,6 +280,10 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, text string, atts []platfo
 	client.mu.Unlock()
 
 	b := h.ensureBinding(client, agentID, convID)
+	text, atts = h.transcribeVoice(conn, text, atts)
+	if text == "" && len(atts) == 0 {
+		return // voice transcription yielded nothing and there's no other content
+	}
 	conn.agentRef.Enqueue(agent.Envelope{
 		SessionKey:  b.sessionKey,
 		Text:        text,
@@ -290,6 +294,63 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, text string, atts []platfo
 		Original:    convID,
 		Driver:      conn,
 	})
+}
+
+// transcribeVoice replaces voice attachments with their STT transcript, merged
+// into the turn text. Non-voice attachments pass through. With no transcriber,
+// or on a transcription error, the voice attachment is kept as-is (the agent can
+// still see the audio bytes). Mirrors telegram's inbound voice-note handling.
+func (h *Hub) transcribeVoice(conn *appConn, text string, atts []platform.Attachment) (string, []platform.Attachment) {
+	if conn.stt == nil || len(atts) == 0 {
+		return text, atts
+	}
+	ctx := h.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	kept := make([]platform.Attachment, 0, len(atts))
+	var transcripts []string
+	for _, a := range atts {
+		if a.Type != fap.MediaVoice || len(a.Data) == 0 {
+			kept = append(kept, a)
+			continue
+		}
+		tr, err := conn.stt.Transcribe(ctx, a.Data, voiceFilename(a))
+		if err != nil {
+			log.Warnf("app", "voice transcribe: %v", err)
+			kept = append(kept, a) // fall back to passing the audio through
+			continue
+		}
+		if tr = strings.TrimSpace(tr); tr != "" {
+			transcripts = append(transcripts, tr)
+		}
+	}
+	if len(transcripts) > 0 {
+		joined := strings.Join(transcripts, " ")
+		if text == "" {
+			text = joined
+		} else {
+			text += "\n" + joined
+		}
+	}
+	return text, kept
+}
+
+// voiceFilename derives a filename (the STT backend may use its extension for
+// format detection) from a voice attachment's MIME type.
+func voiceFilename(a platform.Attachment) string {
+	switch {
+	case strings.Contains(a.MimeType, "ogg"), strings.Contains(a.MimeType, "opus"):
+		return "voice.ogg"
+	case strings.Contains(a.MimeType, "mp4"), strings.Contains(a.MimeType, "m4a"), strings.Contains(a.MimeType, "aac"):
+		return "voice.m4a"
+	case strings.Contains(a.MimeType, "mpeg"), strings.Contains(a.MimeType, "mp3"):
+		return "voice.mp3"
+	case strings.Contains(a.MimeType, "wav"):
+		return "voice.wav"
+	default:
+		return "voice.ogg"
+	}
 }
 
 // resolveAttachments turns a message's blob references into platform

@@ -112,6 +112,14 @@ func (h *Hub) caps() fap.Caps {
 	if h.pusher != nil {
 		c.Push = []string{"fcm"}
 	}
+	h.mu.RLock()
+	for _, conn := range h.agents {
+		if conn.stt != nil {
+			c.Features = append(c.Features, "voice")
+			break
+		}
+	}
+	h.mu.RUnlock()
 	return c
 }
 
@@ -138,6 +146,7 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 	if cc, ok := params.CommandContext.(command.CommandContext); ok {
 		conn.cmdCtx = cc
 	}
+	conn.stt = params.STT
 
 	h.mu.Lock()
 	if _, exists := h.agents[params.AgentID]; !exists {
