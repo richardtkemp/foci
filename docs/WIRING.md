@@ -1315,10 +1315,11 @@ Same architecture as Telegram (receiver + agentMessagePump + commandWorker + per
 Server side of the **Foci App Protocol (FAP v1)** the native Android client
 speaks (`github.com/richardtkemp/foci-android`). A `platform.MessagingProvider`
 like telegram/discord, but a `Connection` is the server end of one device's
-WebSocket rather than a vendor-API client. Slice 1 ("echo": text + native
-streaming + status `meta`) is built; interactive buttons, reliability replay,
-media/blobs, push, and per-device pairing tokens are later slices
-(`foci-android/docs/02-foci-server-changes.md` §11).
+WebSocket rather than a vendor-API client. Built: slice 1 ("echo": text + native
+streaming + status `meta`), slice 2 (interactive buttons → permission/ask/plan),
+slice 3 (reliability: per-conversation seq/ack/replay + reconnect resume + inbound
+dedup). Media/blobs, push, multi-agent roster, per-device pairing tokens, and
+voice are later slices (`foci-android/docs/02-foci-server-changes.md` §11).
 
 **Wire layer (`internal/app/fap/`):** pure Go mirror of the client's Kotlin
 `:protocol` module. `Envelope{t,id,seq,ack,ts,v,d}` wraps a type-specific
@@ -1341,27 +1342,45 @@ publishes it to the HTTP layer via `setActiveHub`.
 no shared middleware) then upgrades via gorilla/websocket. Exposed publicly via
 Traefik TLS; foci's bind stays localhost.
 
-**Hub (`hub.go`)** owns: per-agent `appConn` registry, `bySession` binding map,
-live sockets. Implements `ConnectionSource[*appConn]`. Each socket runs a
-`readPump` (dispatch) + `writePump` (buffered `send` chan + ping ticker,
-pongWait dead-socket detection). A FAP **conversationId** ↔ a foci **session
-key**: `chatIDForConv` FNV-hashes the conversationId to a stable int64 chatID,
-`sessionKeyForChat` resolves+persists the session key via `SessionIndex`
-chat-meta (key `"session"`, platform `"app"`) so history survives reconnects.
+**Hub (`hub.go`)** owns: per-agent `appConn` registry, `convs` (durable
+per-conversation state keyed by conversationId), `bySession` binding map, live
+sockets, and `prompts` (live interactive promptId→binding). Implements
+`ConnectionSource[*appConn]`. Each socket runs a `readPump` (dispatch) +
+`writePump` (buffered `send` chan + ping ticker, pongWait dead-socket detection).
+A FAP **conversationId** ↔ a foci **session key**: `chatIDForConv` FNV-hashes the
+conversationId to a stable int64 chatID, `sessionKeyForChat` resolves+persists
+the session key via `SessionIndex` chat-meta (key `"session"`, platform `"app"`)
+so history survives reconnects.
 
-**Inbound (`dispatch.go`):** decode → switch. `hello`→server hello (roster);
-`conversation.open`→bind socket to agent; `message`/`interactive.response`→
-`routeUserText`→`ensureBinding`→`agent.Enqueue(Envelope{Driver: appConn})`;
-`ping`→`pong`; unknown→ignored. No agent → `error` frame.
+**Durable conversation state (`convBinding`, slice 3):** the wire scopes seq per
+conversation, not per socket — so `convBinding` is keyed by conversationId in
+`convs` and OUTLIVES sockets. It holds the outbound `seq` high-water, the
+`clientSeqHW` (stamped into outbound `ack`), a replay `buffer` (depth+TTL
+trimmed; trimmed further on inbound ack), and an inbound dedup `seen` set.
+`client` is the currently-attached socket (nil = offline; sends still buffer).
+`attach`/`detachIf` move it between the sockets a phone churns through;
+`removeClient` detaches but RETAINS state for reconnect.
 
-**Outbound — `appConn` (`conn.go`)** implements `platform.Connection` +
-`agent.Driver`. `SendToSession`/`SendText`→`message` frame on the bound socket;
+**Inbound (`dispatch.go`):** decode → **reliability gate** (`inboundConvID` →
+`convForReliability`: dedup by `(conversationId, envelope id)`, drop resent
+outbox entries, fold piggybacked `ack` to trim the replay buffer) → switch.
+`hello`→server hello (roster) + `resumeConversations` (re-attach + replay each
+resume point's `seq > ack`); `conversation.open`→bind socket to agent;
+`message`→`routeUserText`→`ensureBinding`→`agent.Enqueue(Envelope{Driver:
+appConn})`; `interactive.response`→`handleInteractiveResponse`
+(`platform.HandleInteractiveCallback` on the echoed `<promptId>:<index>` data →
+`interactive.edit` resolution, suppressed when a follow-up question advanced the
+binding's seq); `ping`→`pong`; unknown→ignored. No agent → `error` frame.
+
+**Outbound — `appConn` (`conn.go`)** implements `platform.Connection`,
+`platform.ButtonSender`, and `agent.Driver`. `SendToSession`/`SendText`→`message`;
 `SetTyping`→`typing`; `SendNotification`→`notification`;
-`UpdateChatSessionKey`→remap binding + `session.update`. Media methods return
-`errMediaUnsupported` (later slice). **Deliberately NOT a `ButtonSender`** in
-slice 1 — so ask/permission/plan prompts fall back to text (answered by a typed
-`message`) instead of hanging on an unwired button-callback path; native buttons
-are slice 2.
+`UpdateChatSessionKey`→remap binding + `session.update`. `SendTextWithButtons`→
+`interactive` (foci pre-encodes each button's Data as `<promptId>:<index>`, so the
+app echoes it back for routing); `EditMessageText`/`EditMessageWithButtons`→
+`interactive.edit` (addressed via the hub `prompts` map). Media methods return
+`errMediaUnsupported` (later slice). All sends go through `convBinding.send`,
+which assigns seq + ack, buffers for replay, and enqueues iff a socket is attached.
 
 **Streaming (`sink.go`):** `appConn.NewTurnSink` builds an `appSink`
 (`turnevent.Sink`) per turn, bound to the conversation. `TurnStart`→`typing on`;

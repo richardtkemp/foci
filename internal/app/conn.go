@@ -100,11 +100,10 @@ func (c *appConn) UpdateChatSessionKey(chatID int64, newKey string) {
 	for old, b := range c.hub.bySession {
 		if b.chatID == chatID && b.agentID == c.agentID {
 			delete(c.hub.bySession, old)
+			b.mu.Lock()
 			b.sessionKey = newKey
+			b.mu.Unlock()
 			c.hub.bySession[newKey] = b
-			b.client.mu.Lock()
-			b.client.convByID[b.convID] = b
-			b.client.mu.Unlock()
 			rotated = append(rotated, b)
 		}
 	}

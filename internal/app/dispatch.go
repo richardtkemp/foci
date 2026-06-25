@@ -1,7 +1,6 @@
 package app
 
 import (
-	"sync/atomic"
 	"time"
 
 	"foci/internal/agent"
@@ -31,6 +30,20 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		return
 	}
 
+	// Reliability gate (§3): for conversation-scoped frames whose durable state
+	// already exists, dedup by (conversationId, envelope id) — dropping a resent
+	// outbox entry after reconnect — and fold the piggybacked ack to trim our
+	// replay buffer. The first message of a brand-new conversation has no state
+	// yet; its binding is created downstream in routeUserText.
+	if convID := inboundConvID(in.Frame); convID != "" {
+		if b := h.convForReliability(convID); b != nil {
+			if !b.acceptInbound(in.ID, in.Seq) {
+				return
+			}
+			b.ackInbound(in.Ack)
+		}
+	}
+
 	switch f := in.Frame.(type) {
 	case fap.ClientHello:
 		client.mu.Lock()
@@ -41,6 +54,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 			Caps:    fap.Caps{Versions: []int{fap.ProtocolVersion}},
 			Agents:  h.agentRoster(),
 		})
+		// Reconnect resume: re-attach + replay each conversation the client still
+		// has unrendered frames for.
+		h.resumeConversations(client, f.Resume)
 
 	case fap.ConversationOpen:
 		if h.PrimaryBot(f.AgentID) != nil {
@@ -93,7 +109,7 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 
 	var seqBefore int64
 	if b != nil {
-		seqBefore = atomic.LoadInt64(&b.seq)
+		seqBefore = b.currentSeq()
 	}
 
 	edit, _, ok := platform.HandleInteractiveCallback(f.Data)
@@ -103,13 +119,33 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 		h.deletePrompt(f.PromptID)
 		return
 	}
-	if b != nil && atomic.LoadInt64(&b.seq) != seqBefore {
+	if b != nil && b.currentSeq() != seqBefore {
 		// A follow-up question re-rendered + re-registered this promptID; keep both.
 		return
 	}
 	h.deletePrompt(f.PromptID)
 	if edit != "" && b != nil {
 		b.send(fap.InteractiveEdit{ConversationID: f.ConversationID, PromptID: f.PromptID, Text: edit})
+	}
+}
+
+// inboundConvID returns the conversationId a client frame is scoped to, or ""
+// for socket-level frames (hello / conversation.open / list / ping) that carry
+// no conversation and bypass the reliability gate.
+func inboundConvID(frame any) string {
+	switch f := frame.(type) {
+	case fap.ClientMessage:
+		return f.ConversationID
+	case fap.InteractiveResponse:
+		return f.ConversationID
+	case fap.Command:
+		return f.ConversationID
+	case fap.ClientTyping:
+		return f.ConversationID
+	case fap.Read:
+		return f.ConversationID
+	default:
+		return ""
 	}
 }
 

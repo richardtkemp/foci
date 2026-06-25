@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -31,6 +30,16 @@ const (
 	sendBuffer   = 64      // per-socket outbound queue depth
 )
 
+// Reliability tuning (wire-protocol §3). The replay buffer + inbound dedup
+// window turn at-least-once delivery into effectively exactly-once rendering on
+// a phone that drops the socket constantly. Defaults; config wiring (replay_buffer
+// / replay_ttl) lands with the config slice.
+const (
+	replayBufferDepth = 1000           // max retained server frames per conversation
+	replayTTL         = 24 * time.Hour // max age of a retained frame
+	maxSeenInbound    = 4096           // per-conversation inbound dedup window (mirrors client)
+)
+
 // Hub multiplexes all live app WebSockets. It owns the per-agent appConn
 // registry, the sessionKey→conversation binding map, and the set of physical
 // sockets. It implements platform.ConnectionSource[*appConn] so the generic
@@ -42,6 +51,7 @@ type Hub struct {
 	mu         sync.RWMutex
 	agents     map[string]*appConn     // agentID → its connection
 	agentOrder []string                // registration order (for default-agent resolution)
+	convs      map[string]*convBinding // conversationId → durable conversation state (outlives sockets)
 	bySession  map[string]*convBinding // sessionKey → conversation binding
 	clients    map[*wsClient]struct{}  // live sockets
 	prompts    map[string]*convBinding // promptID → binding (live interactive prompts)
@@ -61,6 +71,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		deps:      deps,
 		apiKey:    key,
 		agents:    make(map[string]*appConn),
+		convs:     make(map[string]*convBinding),
 		bySession: make(map[string]*convBinding),
 		clients:   make(map[*wsClient]struct{}),
 		prompts:   make(map[string]*convBinding),
@@ -187,22 +198,63 @@ func (h *Hub) sessionKeyForChat(agentID string, chatID int64) string {
 	return sk
 }
 
+// ensureBinding resolves the durable conversation state for (agent, convID),
+// (re)attaching it to the calling socket. The state is keyed by conversationId
+// and outlives sockets, so a reconnect resumes the same seq stream + replay
+// buffer rather than starting fresh.
 func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBinding {
-	client.mu.Lock()
-	if b := client.convByID[convID]; b != nil {
-		client.mu.Unlock()
+	h.mu.RLock()
+	b := h.convs[convID]
+	h.mu.RUnlock()
+	if b != nil {
+		b.attach(client)
 		return b
 	}
+
+	// New conversation: resolve its session key (may touch SessionIndex) outside
+	// the hub lock, then publish — re-checking under the lock to lose a race
+	// gracefully.
 	chatID := chatIDForConv(convID)
 	sk := h.sessionKeyForChat(agentID, chatID)
-	b := &convBinding{convID: convID, sessionKey: sk, agentID: agentID, client: client, chatID: chatID}
-	client.convByID[convID] = b
-	client.mu.Unlock()
 
 	h.mu.Lock()
+	if existing := h.convs[convID]; existing != nil {
+		h.mu.Unlock()
+		existing.attach(client)
+		return existing
+	}
+	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, seen: make(map[string]struct{})}
+	h.convs[convID] = b
 	h.bySession[sk] = b
 	h.mu.Unlock()
+
+	b.attach(client)
 	return b
+}
+
+// resumeConversations re-attaches each durable conversation named in a client
+// hello's resume points to the new socket and replays buffered frames the client
+// has not yet acked (seq > ack), restoring the live stream after a reconnect.
+func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
+	for _, rp := range points {
+		h.mu.RLock()
+		b := h.convs[rp.ConversationID]
+		h.mu.RUnlock()
+		if b == nil {
+			continue
+		}
+		b.attach(client)
+		b.replayTo(client, rp.Ack)
+	}
+}
+
+// convForReliability returns the durable conversation state for a frame's
+// conversationId, or nil if none exists yet (e.g. the very first message — the
+// binding is created downstream in routeUserText).
+func (h *Hub) convForReliability(convID string) *convBinding {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.convs[convID]
 }
 
 func (h *Hub) bindingForSession(sessionKey string) *convBinding {
@@ -243,48 +295,190 @@ func (h *Hub) addClient(c *wsClient) {
 }
 
 func (h *Hub) removeClient(c *wsClient) {
-	h.mu.Lock()
-	delete(h.clients, c)
 	c.mu.Lock()
-	for _, b := range c.convByID {
-		// Only drop the global mapping if it still points at this socket.
-		if h.bySession[b.sessionKey] == b {
-			delete(h.bySession, b.sessionKey)
-		}
-	}
-	// Drop any live prompts bound to this socket — their buttons die with it.
-	for id, b := range h.prompts {
-		if b.client == c {
-			delete(h.prompts, id)
-		}
+	bindings := make([]*convBinding, 0, len(c.convByID))
+	convIDs := make(map[string]struct{}, len(c.convByID))
+	for id, b := range c.convByID {
+		bindings = append(bindings, b)
+		convIDs[id] = struct{}{}
 	}
 	c.mu.Unlock()
+
+	h.mu.Lock()
+	delete(h.clients, c)
+	// Durable conversation state survives a disconnect (reconnect resumes its seq
+	// stream + replay buffer), so bySession is NOT cleared. Only drop live
+	// interactive prompts whose conversation lived on this socket — their buttons
+	// die with it.
+	for pid, b := range h.prompts {
+		if _, ok := convIDs[b.convID]; ok {
+			delete(h.prompts, pid)
+		}
+	}
 	h.mu.Unlock()
+
+	// Detach this socket from its conversations; the durable state is retained.
+	for _, b := range bindings {
+		b.detachIf(c)
+	}
 }
 
-// --- convBinding: one (conversation ⇔ session) on one socket ---
+// --- convBinding: durable per-conversation state (outlives sockets) ---
 
+// bufferedFrame is one sent server frame retained for replay after a reconnect.
+type bufferedFrame struct {
+	seq  int64
+	wire string
+	sent time.Time
+}
+
+// convBinding is the durable state for one conversation (⇔ one session key). It
+// is keyed by conversationId in the hub and survives socket reconnects: the
+// wire protocol scopes seq per conversation (§3), so the outbound seq counter
+// and replay buffer must persist across the sockets a phone churns through.
+// `client` is the currently-attached socket, nil when the device is offline
+// (sends still buffer for later replay / push).
 type convBinding struct {
 	convID     string
 	sessionKey string
 	agentID    string
-	client     *wsClient
 	chatID     int64
-	seq        int64 // server→app outbound sequence (atomic)
+
+	mu          sync.Mutex
+	client      *wsClient           // current socket; nil when offline
+	seq         int64               // server→app outbound seq high-water
+	clientSeqHW int64               // highest client→server seq seen (stamped into outbound ack)
+	buffer      []bufferedFrame     // sent frames retained for replay (trimmed by ack/depth/TTL)
+	seen        map[string]struct{} // inbound dedup by envelope id
+	seenOrder   []string            // FIFO eviction order for seen
 }
 
-func (b *convBinding) nextSeq() int64 { return atomic.AddInt64(&b.seq, 1) }
+// attach points the durable state at a (re)connected socket and registers it in
+// the socket's per-conversation map so inbound frames resolve back to it.
+func (b *convBinding) attach(client *wsClient) {
+	b.mu.Lock()
+	b.client = client
+	b.mu.Unlock()
+	client.mu.Lock()
+	client.convByID[b.convID] = b
+	client.mu.Unlock()
+}
 
-// send encodes a server frame with the next per-conversation seq and queues it
-// on the binding's socket. Best-effort: a full/closed socket drops the frame
-// (reconnect + replay — a later slice — heals the gap).
+// detachIf clears the attached socket iff it is still `client` (a newer socket
+// may already have taken over). The durable state itself is retained.
+func (b *convBinding) detachIf(client *wsClient) {
+	b.mu.Lock()
+	if b.client == client {
+		b.client = nil
+	}
+	b.mu.Unlock()
+}
+
+// currentSeq returns the outbound seq high-water (used by the interactive
+// seq-advance ordering guard).
+func (b *convBinding) currentSeq() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.seq
+}
+
+// send encodes a server frame with the next per-conversation seq and the
+// current inbound ack, retains it in the replay buffer, and enqueues it on the
+// attached socket (if any). Offline (no socket) it buffers only — reconnect
+// replay (and push, a later slice) heal the gap.
 func (b *convBinding) send(frame fap.ServerFrame) {
-	wire, err := fap.Encode(frame, b.nextSeq(), 0, "", "")
+	b.mu.Lock()
+	b.seq++
+	seq, ack := b.seq, b.clientSeqHW
+	wire, err := fap.Encode(frame, seq, ack, "", "")
 	if err != nil {
+		b.mu.Unlock()
 		log.Errorf("app", "encode %s: %v", frame.Type(), err)
 		return
 	}
-	b.client.enqueue(wire)
+	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: time.Now()})
+	b.trimBufferLocked()
+	client := b.client
+	b.mu.Unlock()
+
+	if client != nil {
+		client.enqueue(wire)
+	}
+}
+
+// trimBufferLocked bounds the replay buffer by depth and TTL. Caller holds b.mu.
+func (b *convBinding) trimBufferLocked() {
+	if n := len(b.buffer); n > replayBufferDepth {
+		b.buffer = append(b.buffer[:0:0], b.buffer[n-replayBufferDepth:]...)
+	}
+	cutoff := time.Now().Add(-replayTTL)
+	drop := 0
+	for drop < len(b.buffer) && b.buffer[drop].sent.Before(cutoff) {
+		drop++
+	}
+	if drop > 0 {
+		b.buffer = append(b.buffer[:0:0], b.buffer[drop:]...)
+	}
+}
+
+// ackInbound trims the replay buffer to frames the client has not yet confirmed
+// (envelope.ack high-water from an inbound frame).
+func (b *convBinding) ackInbound(ack int64) {
+	if ack <= 0 {
+		return
+	}
+	b.mu.Lock()
+	drop := 0
+	for drop < len(b.buffer) && b.buffer[drop].seq <= ack {
+		drop++
+	}
+	if drop > 0 {
+		b.buffer = append(b.buffer[:0:0], b.buffer[drop:]...)
+	}
+	b.mu.Unlock()
+}
+
+// acceptInbound dedups an inbound frame by envelope id and advances the client
+// seq high-water. Returns false if the frame is a duplicate (a resent outbox
+// entry after reconnect) and must be dropped.
+func (b *convBinding) acceptInbound(id string, seq int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.seen == nil {
+		b.seen = make(map[string]struct{})
+	}
+	if id != "" {
+		if _, dup := b.seen[id]; dup {
+			return false
+		}
+		b.seen[id] = struct{}{}
+		b.seenOrder = append(b.seenOrder, id)
+		if len(b.seenOrder) > maxSeenInbound {
+			old := b.seenOrder[0]
+			b.seenOrder = b.seenOrder[1:]
+			delete(b.seen, old)
+		}
+	}
+	if seq > b.clientSeqHW {
+		b.clientSeqHW = seq
+	}
+	return true
+}
+
+// replayTo re-sends buffered frames with seq > fromSeq to the socket, in seq
+// order — the reconnect resume path.
+func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
+	b.mu.Lock()
+	pending := make([]string, 0, len(b.buffer))
+	for _, bf := range b.buffer {
+		if bf.seq > fromSeq {
+			pending = append(pending, bf.wire)
+		}
+	}
+	b.mu.Unlock()
+	for _, wire := range pending {
+		client.enqueue(wire)
+	}
 }
 
 // --- wsClient: one physical socket ---
