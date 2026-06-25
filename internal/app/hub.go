@@ -14,6 +14,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/app/fap"
+	"foci/internal/command"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
@@ -131,6 +132,12 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 		return nil
 	}
 	conn := &appConn{hub: h, agentID: params.AgentID, agentRef: ag}
+	if reg, ok := params.Commands.(*command.Registry); ok {
+		conn.commands = reg
+	}
+	if cc, ok := params.CommandContext.(command.CommandContext); ok {
+		conn.cmdCtx = cc
+	}
 
 	h.mu.Lock()
 	if _, exists := h.agents[params.AgentID]; !exists {
@@ -202,11 +209,43 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	defer h.mu.RUnlock()
 	order := append([]string(nil), h.agentOrder...)
 	sort.Strings(order)
+
+	// Group live conversations by agent (the app's Room DB is the durable source
+	// of its full thread list; the roster advertises agents + currently-bound
+	// conversations and any the app resumes are re-attached on hello).
+	byAgent := make(map[string][]fap.ConversationInfo)
+	for _, b := range h.convs {
+		byAgent[b.agentID] = append(byAgent[b.agentID], b.info())
+	}
 	out := make([]fap.AgentInfo, 0, len(order))
 	for _, id := range order {
-		out = append(out, fap.AgentInfo{ID: id, Name: id})
+		convs := byAgent[id]
+		sort.Slice(convs, func(i, j int) bool { return convs[i].ID < convs[j].ID })
+		out = append(out, fap.AgentInfo{ID: id, Name: id, Conversations: convs})
 	}
 	return out
+}
+
+// adoptSession re-points a conversation at an explicit session key (e.g. a
+// named/independent session named in conversation.open), updating the routing
+// map and persisting the mapping. The key must belong to the binding's agent.
+func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
+	if sessionKey == "" || session.AgentIDFromKey(sessionKey) != b.agentID {
+		return
+	}
+	b.mu.Lock()
+	old := b.sessionKey
+	b.sessionKey = sessionKey
+	b.mu.Unlock()
+	h.mu.Lock()
+	if h.bySession[old] == b {
+		delete(h.bySession, old)
+	}
+	h.bySession[sessionKey] = b
+	h.mu.Unlock()
+	if idx := h.deps.SessionIndex; idx != nil {
+		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "session", sessionKey)
+	}
 }
 
 // --- session-key + binding bookkeeping ---
@@ -426,6 +465,13 @@ func (b *convBinding) currentSeq() int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.seq
+}
+
+// info snapshots the conversation for the roster.
+func (b *convBinding) info() fap.ConversationInfo {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq}
 }
 
 // send encodes a server frame with the next per-conversation seq and the

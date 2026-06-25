@@ -15,7 +15,9 @@ import (
 
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
+	"foci/internal/command"
 	"foci/internal/platform"
+	"foci/internal/session"
 )
 
 // fakeClient is a wsClient whose send channel we drain in tests.
@@ -732,6 +734,106 @@ func TestPusher_Coalesces(t *testing.T) {
 	p.notify("conv-1", "b") // within window → coalesced, lastPush unchanged
 	if !p.lastPush["conv-1"].Equal(first) {
 		t.Errorf("second notify within window must be coalesced")
+	}
+}
+
+// --- slice 6: multi-agent / session ---
+
+// registerBareAgent registers an appConn without a real *agent.Agent — enough
+// for PrimaryBot/roster/binding tests that don't drive a turn.
+func registerBareAgent(h *Hub, agentID string) {
+	h.agents[agentID] = &appConn{hub: h, agentID: agentID}
+	h.agentOrder = append(h.agentOrder, agentID)
+}
+
+func TestConversationOpen_MintsAndAdvertises(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	c := fakeClient()
+	c.hub = h
+
+	h.dispatchInbound(c, []byte(`{"t":"conversation.open","id":"x","d":{"agentId":"ag"}}`))
+
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeHello {
+		t.Fatalf("want [hello] roster reply, got %v", types(ds))
+	}
+	agents, _ := ds[0].d["agents"].([]any)
+	if len(agents) != 1 {
+		t.Fatalf("roster agents = %v", ds[0].d["agents"])
+	}
+	convs, _ := agents[0].(map[string]any)["conversations"].([]any)
+	if len(convs) != 1 {
+		t.Fatalf("agent conversations = %v", agents[0])
+	}
+	conv := convs[0].(map[string]any)
+	if conv["id"] == "" || conv["sessionKey"] == "" {
+		t.Errorf("conversation info incomplete: %v", conv)
+	}
+	if len(h.convs) != 1 {
+		t.Errorf("expected 1 durable conversation, got %d", len(h.convs))
+	}
+}
+
+func TestConversationOpen_AdoptsNamedSession(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	c := fakeClient()
+	c.hub = h
+	sk, err := session.NamedIndependentSessionKey("ag", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.dispatchInbound(c, []byte(`{"t":"conversation.open","id":"x","d":{"agentId":"ag","sessionKey":"`+sk+`"}}`))
+
+	var b *convBinding
+	for _, bb := range h.convs {
+		b = bb
+	}
+	if b == nil || b.sessionKey != sk {
+		t.Fatalf("adopted sessionKey = %v, want %q", b, sk)
+	}
+	if h.bySession[sk] != b {
+		t.Errorf("bySession not repointed to the named key")
+	}
+}
+
+func TestAdoptSession_RejectsForeignAgentKey(t *testing.T) {
+	h := newTestHub()
+	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1/9", seen: map[string]struct{}{}}
+	h.convs["c1"] = b
+	h.bySession["ag/c1/9"] = b
+	h.adoptSession(b, "other/iwork/0") // belongs to a different agent
+	if b.sessionKey != "ag/c1/9" {
+		t.Errorf("foreign-agent key must be rejected, sessionKey = %q", b.sessionKey)
+	}
+}
+
+func TestCommandParts(t *testing.T) {
+	if got := commandParts(command.Response{Text: "hi"}); len(got) != 1 || got[0] != "hi" {
+		t.Errorf("text-only = %v", got)
+	}
+	if got := commandParts(command.Response{Parts: []string{"a", "b"}}); len(got) != 2 {
+		t.Errorf("parts = %v", got)
+	}
+	if got := commandParts(command.Response{Text: "   "}); got != nil {
+		t.Errorf("blank text must yield nil, got %v", got)
+	}
+}
+
+func TestRouteCommand_NoCommandsErrors(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag") // bare appConn → commands registry nil
+	c := fakeClient()
+	c.hub = h
+	c.agentID = "ag"
+
+	h.routeCommand(c, fap.Command{ConversationID: "c1", Name: "help"})
+
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeError || ds[0].d["code"] != "no_commands" {
+		t.Fatalf("want no_commands error, got %v / %v", types(ds), ds)
 	}
 }
 

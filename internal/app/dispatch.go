@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
 	"os"
+	"strings"
 	"time"
 
 	"foci/internal/agent"
 	"foci/internal/app/fap"
+	"foci/internal/command"
 	"foci/internal/log"
 	"foci/internal/platform"
 )
@@ -62,11 +65,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.resumeConversations(client, f.Resume)
 
 	case fap.ConversationOpen:
-		if h.PrimaryBot(f.AgentID) != nil {
-			client.mu.Lock()
-			client.agentID = f.AgentID
-			client.mu.Unlock()
-		}
+		h.handleConversationOpen(client, f)
 
 	case fap.ConversationList:
 		client.sendRaw(fap.HelloServer{
@@ -81,12 +80,15 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
 
+	case fap.Command:
+		h.routeCommand(client, f)
+
 	case fap.Ping:
 		client.sendRaw(fap.Pong{})
 
-	case fap.ClientTyping, fap.Read, fap.Command:
-		// typing: ignored (no upstream surface); read: reliability slice;
-		// command: slice 2 (command-registry routing).
+	case fap.ClientTyping, fap.Read:
+		// typing: no upstream surface; read: ack/unread handled by the
+		// reliability gate above.
 
 	default:
 		// nil Frame (unknown t) — forward-compat, ignore.
@@ -130,6 +132,100 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 	if edit != "" && b != nil {
 		b.send(fap.InteractiveEdit{ConversationID: f.ConversationID, PromptID: f.PromptID, Text: edit})
 	}
+}
+
+// handleConversationOpen creates a server-assigned conversation for an agent
+// (the server owns conversationId; the app learns it from the roster reply). A
+// supplied sessionKey resumes a specific named/independent session for it.
+func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
+	agentID := f.AgentID
+	if agentID == "" || h.PrimaryBot(agentID) == nil {
+		agentID = h.defaultAgentID()
+	}
+	if h.PrimaryBot(agentID) == nil {
+		client.sendRaw(fap.ErrorFrame{Code: "no_agent", Message: "no agent available"})
+		return
+	}
+	client.mu.Lock()
+	client.agentID = agentID
+	client.mu.Unlock()
+
+	convID := fap.NewULID()
+	b := h.ensureBinding(client, agentID, convID)
+	if f.SessionKey != "" {
+		h.adoptSession(b, f.SessionKey)
+	}
+	// Advertise the new conversation (+ its session key) via an updated roster;
+	// the app upserts it from the hello frame.
+	client.sendRaw(fap.HelloServer{
+		Version: fap.ProtocolVersion,
+		Caps:    h.caps(),
+		Agents:  h.agentRoster(),
+	})
+}
+
+// routeCommand dispatches a slash command through the agent's command registry,
+// returning its response as message frame(s). Dispatch runs off the read pump
+// because some commands do real work.
+func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
+	if f.ConversationID == "" || f.Name == "" {
+		return
+	}
+	client.mu.Lock()
+	agentID := client.agentID
+	deviceID := client.deviceID
+	client.mu.Unlock()
+	if agentID == "" {
+		agentID = h.defaultAgentID()
+	}
+	conn := h.PrimaryBot(agentID)
+	if conn == nil || conn.commands == nil {
+		client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "no_commands", Message: "commands unavailable"})
+		return
+	}
+	b := h.ensureBinding(client, agentID, f.ConversationID)
+	req := command.Request{
+		Name:       strings.ToLower(strings.TrimPrefix(f.Name, "/")),
+		Args:       f.Args,
+		SessionKey: b.sessionKey,
+		UserID:     deviceID,
+		ChatID:     b.chatID,
+	}
+	go h.dispatchCommand(conn, b, req)
+}
+
+func (h *Hub) dispatchCommand(conn *appConn, b *convBinding, req command.Request) {
+	ctx := h.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resp, handled, err := conn.commands.Dispatch(ctx, req, conn.cmdCtx)
+	switch {
+	case err != nil:
+		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system", Text: "command error: " + err.Error()})
+		return
+	case !handled:
+		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system", Text: "unknown command: /" + req.Name})
+		return
+	}
+	for _, part := range commandParts(resp) {
+		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system", Text: part})
+	}
+	if resp.DocPath != "" {
+		_ = conn.SendDocumentToChat(b.chatID, resp.DocPath, "")
+	}
+}
+
+// commandParts returns the message parts of a command response (multi-part when
+// Parts is set, else the single Text).
+func commandParts(resp command.Response) []string {
+	if len(resp.Parts) > 0 {
+		return resp.Parts
+	}
+	if strings.TrimSpace(resp.Text) != "" {
+		return []string{resp.Text}
+	}
+	return nil
 }
 
 // inboundConvID returns the conversationId a client frame is scoped to, or ""
