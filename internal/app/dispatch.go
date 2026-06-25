@@ -1,11 +1,13 @@
 package app
 
 import (
+	"sync/atomic"
 	"time"
 
 	"foci/internal/agent"
 	"foci/internal/app/fap"
 	"foci/internal/log"
+	"foci/internal/platform"
 )
 
 // sendRaw queues a socket-level (non-conversation-scoped) server frame, such as
@@ -58,10 +60,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.routeUserText(client, f.ConversationID, f.Text)
 
 	case fap.InteractiveResponse:
-		// Slice 1 has no native buttons; a typed answer to a text prompt
-		// arrives here only if a client sends one — treat the data as message
-		// text so it still reaches the agent.
-		h.routeUserText(client, f.ConversationID, f.Data)
+		h.handleInteractiveResponse(client, f)
 
 	case fap.Ping:
 		client.sendRaw(fap.Pong{})
@@ -72,6 +71,45 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	default:
 		// nil Frame (unknown t) — forward-compat, ignore.
+	}
+}
+
+// handleInteractiveResponse routes a button tap back into foci's interactive
+// machinery. f.Data is foci's pre-encoded "<promptID>:<index>" token (the app
+// echoes Choice.Data verbatim), so it goes straight to HandleInteractiveCallback,
+// which fires the registered callback (allow / deny / answer → CC) and returns
+// the resolution edit text.
+//
+// Ordering guard: a tap that advances a multi-question ask re-presents the next
+// question — a fresh `interactive` frame on the same binding, re-registering the
+// same promptID — *synchronously* inside HandleInteractiveCallback. Emitting the
+// "✅ <label>" edit (or deleting the registration) afterward would clobber that
+// new question. So if the binding's seq advanced during the callback, we leave
+// the prompt and its registration untouched.
+func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveResponse) {
+	client.mu.Lock()
+	b := client.convByID[f.ConversationID]
+	client.mu.Unlock()
+
+	var seqBefore int64
+	if b != nil {
+		seqBefore = atomic.LoadInt64(&b.seq)
+	}
+
+	edit, _, ok := platform.HandleInteractiveCallback(f.Data)
+	if !ok {
+		// Unknown / expired / already-resolved prompt: no callback fired, so no
+		// re-registration could have happened — safe to drop any stale entry.
+		h.deletePrompt(f.PromptID)
+		return
+	}
+	if b != nil && atomic.LoadInt64(&b.seq) != seqBefore {
+		// A follow-up question re-rendered + re-registered this promptID; keep both.
+		return
+	}
+	h.deletePrompt(f.PromptID)
+	if edit != "" && b != nil {
+		b.send(fap.InteractiveEdit{ConversationID: f.ConversationID, PromptID: f.PromptID, Text: edit})
 	}
 }
 
