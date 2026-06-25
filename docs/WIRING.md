@@ -1448,14 +1448,40 @@ conversation per `push_coalesce` window, default 15s) and sends a hint
 (`conversationId` + short preview, never full text). The app wakes, reconnects,
 and replays for content. `hello.caps.push` advertises `["fcm"]` when enabled.
 
-**Streaming (`sink.go`):** `appConn.NewTurnSink` builds an `appSink`
-(`turnevent.Sink`) per turn, bound to the conversation. `TurnStart`→`typing on`;
-first `TextDelta` lazily emits `turn.start`, then `text.delta` per chunk (native
-streaming, no edit-rate limits); `TurnComplete`→`text.end` (streamed) or a
-single `message` (non-streamed), then a `meta` status frame (model/cost/tokens
-from the turn usage; mana%/state + gap via `Agent.MetaStatus`, threaded as the
-sink's `statusFn`) and `typing off`. Per-conversation outbound `seq` is stamped,
-buffered, and replayed on reconnect (slice 3).
+**Streaming (`sink.go` + `render.go`):** `appConn.NewTurnSink` builds an
+`appSink` (`turnevent.Sink`) per turn, bound to the conversation. The app
+**reuses the shared delivery coordination** rather than re-implementing it:
+`appSink` is a thin wrapper around `turn.StreamingSink` + `TurnRenderer` (the
+same machinery Telegram/Discord use), driving an `appBackend` (`turn.Platform`)
++ `appStreamSink` (`turn.StreamSink`) defined in `render.go`. The renderer owns
+the *coordination* — the `delivered`-flag dedup of streamed deltas vs the
+intermediate `TextBlock` vs the final text, and `resetStream()` per reply
+segment (so a multi-reply turn renders as distinct `turnId` bubbles, not one
+appended bubble). Only the *output shape* is app-specific: where Telegram edits
+a message with a full snapshot, `appStreamSink.Update` diffs the snapshot and
+emits the new suffix as `text.delta`; `appBackend.Deliver` finalizes each
+segment with `text.end` (streamed) or a fresh `message` (non-streamed). A
+no-op `SinkTracker` (no tool-preview/retry surface) and `ShowThinking="off"`
+keep those event paths inert. `appSink` layers on only what has no home in the
+renderer: the `typing on`/`off` frames bracketing the turn boundary, dropping
+`SubagentText` (no app surface yet — forwarding would prematurely finalize the
+in-flight stream), and the structured `meta` status frame on `TurnComplete`
+(model/cost/tokens from the turn usage; mana%/state + gap via `Agent.MetaStatus`,
+threaded as the sink's `statusFn`). Deltas are batched by the stream pump
+(`appStreamInterval`, 50ms) — beneficial: it keeps a fast token stream from
+flooding the socket. Per-conversation outbound `seq` is stamped, buffered, and
+replayed on reconnect (slice 3).
+
+> **Why a separate sink, not just "different output functions"?** The
+> `turnevent.Sink` seam *is* the reuse boundary, and both the app and the
+> platforms sit on it. Below it, the renderer's *coordination* is shared
+> (above), but its *streaming model* is not: Telegram is edit-a-message
+> (snapshot `Update`, rate-limited pump, char-cap rollover, markdown), the app
+> is append-a-delta + structured frames. The app implements `turn.Platform`/
+> `turn.StreamSink` to express that output shape while reusing everything above
+> it. The earlier hand-rolled `appSink` forked the *coordination* too, and got
+> it wrong — streamed deltas and the intermediate `TextBlock` were delivered
+> independently (double delivery; both replies sharing one `turnId`).
 
 **Config + reconnect/restart wiring (gap-closure):** the typed
 `[platforms.app]` config subsection (`config.AppSpecific`: `host`, `push`,

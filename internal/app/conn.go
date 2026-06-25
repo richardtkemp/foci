@@ -398,7 +398,7 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 		sk := env.SessionKey
 		sink.statusFn = func() (*int, string, string) { return c.agentRef.MetaStatus(sk) }
 	}
-	return sink, func() {}
+	return sink, sink.cleanup
 }
 
 func (c *appConn) Connection() platform.Connection { return c }
