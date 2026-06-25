@@ -40,10 +40,11 @@ type Hub struct {
 	apiKey string
 
 	mu         sync.RWMutex
-	agents     map[string]*appConn      // agentID → its connection
-	agentOrder []string                 // registration order (for default-agent resolution)
-	bySession  map[string]*convBinding  // sessionKey → conversation binding
-	clients    map[*wsClient]struct{}   // live sockets
+	agents     map[string]*appConn     // agentID → its connection
+	agentOrder []string                // registration order (for default-agent resolution)
+	bySession  map[string]*convBinding // sessionKey → conversation binding
+	clients    map[*wsClient]struct{}  // live sockets
+	prompts    map[string]*convBinding // promptID → binding (live interactive prompts)
 }
 
 func newHub(deps platform.ProviderDeps) *Hub {
@@ -62,6 +63,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		agents:    make(map[string]*appConn),
 		bySession: make(map[string]*convBinding),
 		clients:   make(map[*wsClient]struct{}),
+		prompts:   make(map[string]*convBinding),
 	}
 }
 
@@ -209,6 +211,31 @@ func (h *Hub) bindingForSession(sessionKey string) *convBinding {
 	return h.bySession[sessionKey]
 }
 
+// --- interactive prompt registry (slice 2) ---
+//
+// Maps a live prompt's ID to its conversation binding so foci's proactive
+// edits (cancel/expiry, addressed only by the promptID returned from
+// SendTextWithButtons) reach the right socket. Click-driven resolution carries
+// its own conversationId, so it does not consult this map.
+
+func (h *Hub) registerPrompt(promptID string, b *convBinding) {
+	h.mu.Lock()
+	h.prompts[promptID] = b
+	h.mu.Unlock()
+}
+
+func (h *Hub) bindingForPrompt(promptID string) *convBinding {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.prompts[promptID]
+}
+
+func (h *Hub) deletePrompt(promptID string) {
+	h.mu.Lock()
+	delete(h.prompts, promptID)
+	h.mu.Unlock()
+}
+
 func (h *Hub) addClient(c *wsClient) {
 	h.mu.Lock()
 	h.clients[c] = struct{}{}
@@ -223,6 +250,12 @@ func (h *Hub) removeClient(c *wsClient) {
 		// Only drop the global mapping if it still points at this socket.
 		if h.bySession[b.sessionKey] == b {
 			delete(h.bySession, b.sessionKey)
+		}
+	}
+	// Drop any live prompts bound to this socket — their buttons die with it.
+	for id, b := range h.prompts {
+		if b.client == c {
+			delete(h.prompts, id)
 		}
 	}
 	c.mu.Unlock()

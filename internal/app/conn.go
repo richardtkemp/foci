@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	"foci/internal/agent"
@@ -20,11 +21,10 @@ var errMediaUnsupported = errors.New("app: media send not yet supported")
 // socket via the hub's binding map, and acts as the agent.Driver that builds
 // the per-turn streaming sink.
 //
-// Slice 1 intentionally does NOT implement platform.ButtonSender: without it,
-// foci's ask/permission/plan machinery falls back to a text prompt that the
-// app shows as a normal message and the user answers by typing — which routes
-// back through the inbound message path. Native buttons + callback routing are
-// slice 2.
+// It implements platform.ButtonSender (slice 2): foci's permission / ask / plan
+// machinery renders native buttons via `interactive` frames and routes taps back
+// through platform.HandleInteractiveCallback — see dispatch.go and the
+// SendTextWithButtons/EditMessage* methods below.
 type appConn struct {
 	hub      *Hub
 	agentID  string
@@ -36,9 +36,16 @@ type appConn struct {
 }
 
 var (
-	_ platform.Connection = (*appConn)(nil)
-	_ agent.Driver        = (*appConn)(nil)
+	_ platform.Connection   = (*appConn)(nil)
+	_ platform.ButtonSender = (*appConn)(nil)
+	_ agent.Driver          = (*appConn)(nil)
 )
+
+// errNoBinding is returned by ButtonSender sends when the prompt's conversation
+// has no live socket (the device dropped mid-turn). Offline buffering + push is
+// a later slice; until then foci treats the send as failed and the prompt's
+// 24h expiry (onExpire → deny) eventually unblocks the turn.
+var errNoBinding = errors.New("app: no live socket for conversation")
 
 // --- identity ---
 
@@ -53,10 +60,10 @@ func (c *appConn) SessionKey() string {
 	return c.defaultSession
 }
 
-func (c *appConn) DefaultSessionKey() string         { return c.SessionKey() }
-func (c *appConn) DefaultSessionKeyOrEmpty() string  { return c.SessionKey() }
-func (c *appConn) SetSessionKey(key string)          { c.setDefault(key) }
-func (c *appConn) SetSessionKeyDirect(key string)    { c.setDefault(key) }
+func (c *appConn) DefaultSessionKey() string        { return c.SessionKey() }
+func (c *appConn) DefaultSessionKeyOrEmpty() string { return c.SessionKey() }
+func (c *appConn) SetSessionKey(key string)         { c.setDefault(key) }
+func (c *appConn) SetSessionKeyDirect(key string)   { c.setDefault(key) }
 
 func (c *appConn) setDefault(key string) {
 	c.mu.Lock()
@@ -196,6 +203,87 @@ func (c *appConn) SendPhotoToChat(int64, string, string) error     { return errM
 func (c *appConn) SendAudioToChat(int64, string, string) error     { return errMediaUnsupported }
 func (c *appConn) SendAnimationToChat(int64, string, string) error { return errMediaUnsupported }
 func (c *appConn) SendVoiceDataToChat(int64, []byte) error         { return errMediaUnsupported }
+
+// --- platform.ButtonSender (slice 2: interactive prompts) ---
+
+// SendTextWithButtons emits an `interactive` frame for the in-flight turn's
+// conversation. foci pre-encodes each button's Data as "<promptID>:<index>"
+// (platform.SendInteractiveMessageWithID), so we carry it verbatim and the app
+// echoes it back in InteractiveResponse.data for routing — no app-side button
+// registry needed. The returned msgID is the promptID, which proactive edits
+// (cancel/expiry) pass to EditMessageText to address the prompt.
+func (c *appConn) SendTextWithButtons(text string, buttons []platform.ButtonChoice, _ string) (string, error) {
+	b := c.hub.bindingForSession(c.SessionKey())
+	if b == nil {
+		return "", errNoBinding
+	}
+	promptID := promptIDFromButtons(buttons)
+	c.hub.registerPrompt(promptID, b)
+	b.send(fap.Interactive{
+		ConversationID: b.convID,
+		PromptID:       promptID,
+		Text:           text,
+		Choices:        toChoices(buttons),
+	})
+	return promptID, nil
+}
+
+// EditMessageText replaces a prompt's text and removes its buttons. Terminal:
+// the resolution / cancel / expiry edit. msgID is the promptID returned by
+// SendTextWithButtons. Idempotent — an unknown promptID (already resolved) is a
+// no-op.
+func (c *appConn) EditMessageText(msgID, text string) error {
+	b := c.hub.bindingForPrompt(msgID)
+	if b == nil {
+		return nil
+	}
+	c.hub.deletePrompt(msgID)
+	b.send(fap.InteractiveEdit{ConversationID: b.convID, PromptID: msgID, Text: text})
+	return nil
+}
+
+// EditMessageWithButtons replaces a prompt's text and buttons (non-terminal).
+// foci core never calls this today — multi-question asks re-present via a fresh
+// SendInteractiveMessageWithID (same promptID, last-writer-wins) rather than an
+// edit — but the ButtonSender contract requires it, so it mirrors the send path.
+func (c *appConn) EditMessageWithButtons(msgID, text string, buttons []platform.ButtonChoice, _ string) error {
+	b := c.hub.bindingForPrompt(msgID)
+	if b == nil {
+		return nil
+	}
+	b.send(fap.InteractiveEdit{
+		ConversationID: b.convID,
+		PromptID:       msgID,
+		Text:           text,
+		Choices:        toChoices(buttons),
+	})
+	return nil
+}
+
+// promptIDFromButtons recovers the promptID foci encoded into each button's
+// Data ("<promptID>:<index>", colon-free promptID). All buttons share it; the
+// first suffices. Falls back to a fresh ULID if buttons are absent (defensive —
+// a prompt always carries at least Allow/Deny).
+func promptIDFromButtons(buttons []platform.ButtonChoice) string {
+	if len(buttons) > 0 {
+		if i := strings.IndexByte(buttons[0].Data, ':'); i >= 0 {
+			return buttons[0].Data[:i]
+		}
+	}
+	return fap.NewULID()
+}
+
+// toChoices maps foci's ButtonChoice slice onto the wire Choice slice.
+func toChoices(buttons []platform.ButtonChoice) []fap.Choice {
+	if len(buttons) == 0 {
+		return nil
+	}
+	out := make([]fap.Choice, 0, len(buttons))
+	for _, b := range buttons {
+		out = append(out, fap.Choice{Label: b.Label, Data: b.Data, Row: b.Row})
+	}
+	return out
+}
 
 // --- agent.Driver ---
 

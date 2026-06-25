@@ -51,13 +51,13 @@ const (
 
 // WebSocket close codes (wire-protocol §7).
 const (
-	CloseNormal       = 1000
-	CloseAuthRequired = 4401
-	CloseForbidden    = 4403
-	CloseIdleTimeout  = 4408
-	CloseReplaced     = 4409
-	CloseRateLimited  = 4429
-	CloseServerError  = 1011
+	CloseNormal        = 1000
+	CloseAuthRequired  = 4401
+	CloseForbidden     = 4403
+	CloseIdleTimeout   = 4408
+	CloseReplaced      = 4409
+	CloseRateLimited   = 4429
+	CloseServerError   = 1011
 	CloseServerRestart = 1012
 )
 
@@ -101,10 +101,10 @@ type ConversationInfo struct {
 
 // Tokens is the token accounting carried by `meta`.
 type Tokens struct {
-	In int64 `json:"in"`
+	In  int64 `json:"in"`
 	Out int64 `json:"out"`
-	CR int64 `json:"cR"`
-	CW int64 `json:"cW"`
+	CR  int64 `json:"cR"`
+	CW  int64 `json:"cW"`
 }
 
 // ClientInfo is the client identity sent in the client `hello`.
@@ -127,6 +127,15 @@ type AttachmentRef struct {
 	Kind   string `json:"kind"`
 	MIME   string `json:"mime"`
 	Name   string `json:"name,omitempty"`
+}
+
+// Choice is one button on an interactive prompt (permission / ask / plan
+// approval). Maps 1:1 onto platform.ButtonChoice. Data is opaque to the app —
+// it echoes it back verbatim in InteractiveResponse.data; foci routes on it.
+type Choice struct {
+	Label string `json:"label"`
+	Data  string `json:"data"`
+	Row   int    `json:"row,omitempty"`
 }
 
 // --- Server -> App frame payloads (mirror Kotlin Frames.kt) ---
@@ -199,6 +208,32 @@ type Typing struct {
 }
 
 func (Typing) Type() string { return TypeTyping }
+
+// Interactive presents a prompt with buttons (permission / ask / plan approval).
+// The app renders choices, and on tap echoes the chosen Choice.Data back in an
+// InteractiveResponse. ExpiresAt (RFC3339) is advisory for the app's UI; foci
+// owns the authoritative 24h expiry.
+type Interactive struct {
+	ConversationID string   `json:"conversationId"`
+	PromptID       string   `json:"promptId"`
+	Text           string   `json:"text"`
+	Choices        []Choice `json:"choices,omitempty"`
+	ExpiresAt      string   `json:"expiresAt,omitempty"`
+}
+
+func (Interactive) Type() string { return TypeInteractive }
+
+// InteractiveEdit replaces a live prompt's text and buttons — used to show the
+// resolution ("✅ Approved"), advance a multi-question ask, or disable a
+// cancelled/expired prompt (empty Choices = buttons removed).
+type InteractiveEdit struct {
+	ConversationID string   `json:"conversationId"`
+	PromptID       string   `json:"promptId"`
+	Text           string   `json:"text"`
+	Choices        []Choice `json:"choices,omitempty"`
+}
+
+func (InteractiveEdit) Type() string { return TypeInteractiveEdit }
 
 // Meta carries the user-facing status chips (model, mana, cost, tokens).
 type Meta struct {
