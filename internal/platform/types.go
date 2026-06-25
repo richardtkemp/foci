@@ -302,9 +302,10 @@ type Connection interface {
 
 // ButtonChoice represents an inline keyboard button for interactive prompts.
 type ButtonChoice struct {
-	Label string // button text shown to user
-	Data  string // callback data sent when pressed
-	Row   int    // which row this button goes in (0-indexed)
+	Label       string // button text shown to user
+	Data        string // callback data sent when pressed
+	Row         int    // which row this button goes in (0-indexed)
+	Description string // optional sub-label (batched-app ask options only)
 }
 
 // ButtonSender is optionally implemented by Connection types that support
@@ -321,11 +322,13 @@ type ButtonSender interface {
 }
 
 // BatchQuestion is one question within a batched interactive prompt. Text is the
-// already-formatted question markdown; Choices are the option buttons (empty ⇒
-// typed-answer-only). The button Data carries the unprefixed "qa:<index>" token —
-// the answer's POSITION in the reply identifies its question.
+// RAW question (the app renders its own layout); Header is an optional bold title;
+// Choices are the option buttons (empty ⇒ typed-answer-only) with NO Cancel — the
+// app's full-screen form supplies its own. The button Data carries the unprefixed
+// "qa:<index>" token — the answer's POSITION in the reply identifies its question.
 type BatchQuestion struct {
 	Text    string
+	Header  string
 	Choices []ButtonChoice
 }
 

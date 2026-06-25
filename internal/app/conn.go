@@ -335,7 +335,7 @@ func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.Bat
 	c.hub.registerBatchPrompt(promptID, b, onResponse)
 	qs := make([]fap.Question, len(questions))
 	for i, q := range questions {
-		qs[i] = fap.Question{Text: q.Text, Choices: toChoices(q.Choices)}
+		qs[i] = fap.Question{Text: q.Text, Header: q.Header, Choices: toChoices(q.Choices)}
 	}
 	b.send(fap.Interactive{
 		ConversationID: b.convID,
@@ -398,7 +398,7 @@ func toChoices(buttons []platform.ButtonChoice) []fap.Choice {
 	}
 	out := make([]fap.Choice, 0, len(buttons))
 	for _, b := range buttons {
-		out = append(out, fap.Choice{Label: b.Label, Data: b.Data, Row: b.Row})
+		out = append(out, fap.Choice{Label: b.Label, Data: b.Data, Row: b.Row, Description: b.Description})
 	}
 	return out
 }
