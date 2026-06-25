@@ -1310,6 +1310,67 @@ Same architecture as Telegram (receiver + agentMessagePump + commandWorker + per
 
 **Config:** `[discord]` for global settings, `[agents.platforms.discord]` for per-agent overrides. See [CONFIG.md](CONFIG.md).
 
+## App Provider — FAP WebSocket (`internal/app/`)
+
+Server side of the **Foci App Protocol (FAP v1)** the native Android client
+speaks (`github.com/richardtkemp/foci-android`). A `platform.MessagingProvider`
+like telegram/discord, but a `Connection` is the server end of one device's
+WebSocket rather than a vendor-API client. Slice 1 ("echo": text + native
+streaming + status `meta`) is built; interactive buttons, reliability replay,
+media/blobs, push, and per-device pairing tokens are later slices
+(`foci-android/docs/02-foci-server-changes.md` §11).
+
+**Wire layer (`internal/app/fap/`):** pure Go mirror of the client's Kotlin
+`:protocol` module. `Envelope{t,id,seq,ack,ts,v,d}` wraps a type-specific
+payload selected by `t`. `fap.Encode(ServerFrame, seq, ack, id, ts)` →
+wire string; `fap.Decode(text)` → `Inbound{…, Frame}` (a concrete `Client*`
+value, or nil for an unknown `t` — forward-compat). Field names are the
+contract and MUST stay byte-compatible with the Kotlin types. Includes a
+dependency-free Crockford `NewULID()`.
+
+**Registration:** `init()` in `provider.go` calls
+`platform.RegisterMessagingProvider("app", …)` + `agent.RegisterPlatformTrigger`.
+`IsConfigured` = an `[[platforms]] id="app"` entry exists. `Init` resolves the
+shared key (secret `app.api_key`), builds the `Hub`, wraps it as a
+`ConnectionManager` via the generic `NewConnectionManagerAdapter[*appConn]`, and
+publishes it to the HTTP layer via `setActiveHub`.
+
+**HTTP endpoint:** `cmd/foci-gw/http.go registerHTTPHandlers` mounts
+`/app/ws` when `app.Enabled()` (hub present + key set). `app.WSHandler()` →
+`Hub.ServeWS`, which does its OWN Bearer auth (constant-time vs `app.api_key`,
+no shared middleware) then upgrades via gorilla/websocket. Exposed publicly via
+Traefik TLS; foci's bind stays localhost.
+
+**Hub (`hub.go`)** owns: per-agent `appConn` registry, `bySession` binding map,
+live sockets. Implements `ConnectionSource[*appConn]`. Each socket runs a
+`readPump` (dispatch) + `writePump` (buffered `send` chan + ping ticker,
+pongWait dead-socket detection). A FAP **conversationId** ↔ a foci **session
+key**: `chatIDForConv` FNV-hashes the conversationId to a stable int64 chatID,
+`sessionKeyForChat` resolves+persists the session key via `SessionIndex`
+chat-meta (key `"session"`, platform `"app"`) so history survives reconnects.
+
+**Inbound (`dispatch.go`):** decode → switch. `hello`→server hello (roster);
+`conversation.open`→bind socket to agent; `message`/`interactive.response`→
+`routeUserText`→`ensureBinding`→`agent.Enqueue(Envelope{Driver: appConn})`;
+`ping`→`pong`; unknown→ignored. No agent → `error` frame.
+
+**Outbound — `appConn` (`conn.go`)** implements `platform.Connection` +
+`agent.Driver`. `SendToSession`/`SendText`→`message` frame on the bound socket;
+`SetTyping`→`typing`; `SendNotification`→`notification`;
+`UpdateChatSessionKey`→remap binding + `session.update`. Media methods return
+`errMediaUnsupported` (later slice). **Deliberately NOT a `ButtonSender`** in
+slice 1 — so ask/permission/plan prompts fall back to text (answered by a typed
+`message`) instead of hanging on an unwired button-callback path; native buttons
+are slice 2.
+
+**Streaming (`sink.go`):** `appConn.NewTurnSink` builds an `appSink`
+(`turnevent.Sink`) per turn, bound to the conversation. `TurnStart`→`typing on`;
+first `TextDelta` lazily emits `turn.start`, then `text.delta` per chunk (native
+streaming, no edit-rate limits); `TurnComplete`→`text.end` (streamed) or a
+single `message` (non-streamed), then a `meta` status frame (model/cost/tokens
+from the turn usage) and `typing off`. Per-conversation outbound `seq` is
+stamped (atomic); replay/ack buffering is a later slice.
+
 ## Voice (`voice/`, `telegram/bot.go`)
 
 **Inbound (Whisper transcription):**

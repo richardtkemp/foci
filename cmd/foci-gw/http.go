@@ -12,6 +12,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
+	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -165,6 +166,14 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
 		endpointList += ", /voice (ws)"
 		log.Infof("http", "/voice WebSocket endpoint enabled")
+	}
+
+	// App provider WebSocket (FAP v1). Self-authenticating (Bearer app.api_key);
+	// registered whenever the app provider is configured with a key.
+	if app.Enabled() {
+		mux.HandleFunc("/app/ws", app.WSHandler())
+		endpointList += ", /app/ws (ws)"
+		log.Infof("http", "/app/ws WebSocket endpoint enabled")
 	}
 
 	if d.reloadCredentials != nil {
