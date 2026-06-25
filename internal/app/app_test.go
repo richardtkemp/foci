@@ -866,6 +866,117 @@ func TestConversationOpen_AdoptsNamedSession(t *testing.T) {
 	}
 }
 
+func TestConversationOpen_ReusesExistingNamedSession(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	c := fakeClient()
+	c.hub = h
+	sk, err := session.NamedIndependentSessionKey("ag", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	open := []byte(`{"t":"conversation.open","id":"x","d":{"agentId":"ag","sessionKey":"` + sk + `"}}`)
+	h.dispatchInbound(c, open)
+	if len(h.convs) != 1 {
+		t.Fatalf("first open: convs = %d, want 1", len(h.convs))
+	}
+	var firstConvID string
+	for id := range h.convs {
+		firstConvID = id
+	}
+
+	// Reopening the SAME named session must reuse the conversation, not mint a
+	// duplicate that races the existing binding in bySession.
+	h.dispatchInbound(c, open)
+	if len(h.convs) != 1 {
+		t.Errorf("reopen minted a duplicate conversation: convs = %d, want 1", len(h.convs))
+	}
+	if _, ok := h.convs[firstConvID]; !ok {
+		t.Errorf("original conversation %q was replaced", firstConvID)
+	}
+}
+
+func TestServePushRegister_UpdatesToken(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	d := h.devices.pair("dev1", "")
+	req := httptest.NewRequest(http.MethodPost, "/app/push/register", strings.NewReader(`{"pushToken":"fresh-tok"}`))
+	req.Header.Set("Authorization", "Bearer "+d.Token) // device authenticates as itself
+	w := httptest.NewRecorder()
+	h.ServePushRegister(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("push register code = %d, want 204", w.Code)
+	}
+	if got := h.tokens.all(); len(got) != 1 || got[0] != "fresh-tok" {
+		t.Errorf("token not registered: %v", got)
+	}
+}
+
+func TestServeHistory_ReportsSeqHighWater(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1/9", seq: 42, seen: map[string]struct{}{}}
+	h.convs["c1"] = b
+
+	req := httptest.NewRequest(http.MethodGet, "/app/history?conversationId=c1", nil)
+	req.Header.Set("Authorization", "Bearer master")
+	w := httptest.NewRecorder()
+	h.ServeHistory(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("history code = %d", w.Code)
+	}
+	var res struct {
+		LastSeq int64 `json:"lastSeq"`
+		Present bool  `json:"present"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if !res.Present || res.LastSeq != 42 {
+		t.Errorf("history = %+v, want present lastSeq 42", res)
+	}
+
+	// An unknown conversation reports present=false, lastSeq 0 (server restarted
+	// / never seen) rather than erroring.
+	req = httptest.NewRequest(http.MethodGet, "/app/history?conversationId=ghost", nil)
+	req.Header.Set("Authorization", "Bearer master")
+	w = httptest.NewRecorder()
+	h.ServeHistory(w, req)
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if res.Present || res.LastSeq != 0 {
+		t.Errorf("unknown conv = %+v, want absent lastSeq 0", res)
+	}
+}
+
+func TestSink_EmitsStatusChips(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+	pct := 73
+	s.statusFn = func() (*int, string, string) { return &pct, "good", "5m" }
+	s.emitMeta(turnevent.TurnComplete{Model: "claude"})
+
+	got := drain(t, c)
+	if len(got) != 1 || got[0].t != fap.TypeMeta {
+		t.Fatalf("frames = %v, want [meta]", types(got))
+	}
+	if got[0].d["manaPct"] != float64(73) || got[0].d["manaState"] != "good" || got[0].d["gap"] != "5m" {
+		t.Errorf("meta status chips = %v", got[0].d)
+	}
+}
+
+func TestSendTextWithButtons_SetsExpiresAt(t *testing.T) {
+	_, c, _, conn := boundConn(t)
+	_, err := conn.SendTextWithButtons("Allow?",
+		[]platform.ButtonChoice{{Label: "Y", Data: "r:0"}}, "im:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].d["expiresAt"] == nil || ds[0].d["expiresAt"] == "" {
+		t.Errorf("interactive must carry expiresAt, got %v", ds[0].d["expiresAt"])
+	}
+}
+
 func TestAdoptSession_RejectsForeignAgentKey(t *testing.T) {
 	h := newTestHub()
 	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1/9", seen: map[string]struct{}{}}

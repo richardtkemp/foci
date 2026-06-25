@@ -154,6 +154,22 @@ func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
 	client.agentID = agentID
 	client.mu.Unlock()
 
+	// Reopening a named session that already has a durable conversation must
+	// reuse it, not mint a duplicate that races the existing binding in
+	// bySession. Only a fresh open (no session key, or an unknown one) creates a
+	// new conversation.
+	if f.SessionKey != "" {
+		if existing := h.bindingForSession(f.SessionKey); existing != nil {
+			existing.attach(client)
+			client.sendRaw(fap.HelloServer{
+				Version: fap.ProtocolVersion,
+				Caps:    h.caps(),
+				Agents:  h.agentRoster(),
+			})
+			return
+		}
+	}
+
 	convID := fap.NewULID()
 	b := h.ensureBinding(client, agentID, convID)
 	if f.SessionKey != "" {

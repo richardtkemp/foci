@@ -353,6 +353,75 @@ func (h *Hub) ServeRevoke(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ServePushRegister handles POST /app/push/register: a device refreshes its FCM
+// registration token out-of-band (wire §6). The OS can rotate the token while
+// the app is offline, so relying on the next ClientHello is not enough — this
+// lets the app push the new token immediately. Authenticated as any valid
+// credential (master or device token).
+func (h *Hub) ServePushRegister(w http.ResponseWriter, r *http.Request) {
+	d, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		DeviceID  string `json:"deviceId"`
+		PushToken string `json:"pushToken"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || req.PushToken == "" {
+		http.Error(w, "bad push register request", http.StatusBadRequest)
+		return
+	}
+	// A device token authenticates as itself; prefer its authoritative id.
+	deviceID := req.DeviceID
+	if d != nil {
+		deviceID = d.DeviceID
+	}
+	if deviceID == "" {
+		http.Error(w, "deviceId required", http.StatusBadRequest)
+		return
+	}
+	h.tokens.set(deviceID, req.PushToken)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ServeHistory handles GET /app/history?conversationId=<id>: restart
+// reconciliation (wire §9). The server's replay buffers are in-memory, so after
+// a restart they are gone and a reconnect's resume points cannot be replayed.
+// This returns the conversation's current server-side seq high-water (0 after a
+// restart) so the offline-first client can detect the reset — if its locally
+// rendered seq exceeds what the server reports, the server restarted and the
+// app's Room DB is authoritative. Full message bodies live in the app's local
+// store by design; this endpoint carries reconciliation state, not content.
+func (h *Hub) ServeHistory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authenticate(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	convID := r.URL.Query().Get("conversationId")
+	if convID == "" {
+		http.Error(w, "conversationId required", http.StatusBadRequest)
+		return
+	}
+	resp := map[string]any{"conversationId": convID, "lastSeq": int64(0), "present": false}
+	if b := h.convForReliability(convID); b != nil {
+		b.mu.Lock()
+		resp["lastSeq"] = b.seq
+		resp["present"] = true
+		resp["agentId"] = b.agentID
+		resp["sessionKey"] = b.sessionKey
+		b.mu.Unlock()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // closeDeviceSockets force-closes every live socket for a deviceID with 4403.
 func (h *Hub) closeDeviceSockets(deviceID string) {
 	h.mu.RLock()
@@ -501,9 +570,28 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	for _, id := range order {
 		convs := byAgent[id]
 		sort.Slice(convs, func(i, j int) bool { return convs[i].ID < convs[j].ID })
-		out = append(out, fap.AgentInfo{ID: id, Name: id, Conversations: convs})
+		name, emoji := h.agentDisplay(id)
+		out = append(out, fap.AgentInfo{ID: id, Name: name, Avatar: emoji, Conversations: convs})
 	}
 	return out
+}
+
+// agentDisplay resolves an agent's human-readable name + emoji avatar from
+// config, falling back to the agent ID when no config entry / name is set.
+func (h *Hub) agentDisplay(id string) (name, emoji string) {
+	name = id
+	if h.deps.Config == nil {
+		return name, ""
+	}
+	for i := range h.deps.Config.Agents {
+		if a := &h.deps.Config.Agents[i]; a.ID == id {
+			if a.Name != "" {
+				name = a.Name
+			}
+			return name, a.Emoji
+		}
+	}
+	return name, ""
 }
 
 // adoptSession re-points a conversation at an explicit session key (e.g. a
@@ -989,6 +1077,10 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
 	CheckOrigin:     checkOrigin,
+	// Echo the fap.v1 subprotocol the client offers (wire §1). gorilla only
+	// echoes a Sec-WebSocket-Protocol it is told to support; a strict proxy
+	// (Traefik) or future client may assert the negotiated protocol.
+	Subprotocols: []string{fap.Subprotocol},
 }
 
 // checkOrigin accepts the native client (no Origin header) and same-host

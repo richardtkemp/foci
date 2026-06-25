@@ -60,3 +60,10 @@ func DevicesHandler() http.HandlerFunc { return withHub((*Hub).ServeDevices) }
 
 // RevokeHandler returns the POST /app/pair/revoke handler (revoke a device).
 func RevokeHandler() http.HandlerFunc { return withHub((*Hub).ServeRevoke) }
+
+// PushRegisterHandler returns the POST /app/push/register handler (refresh a
+// device's FCM token out-of-band, e.g. after the OS rotates it while offline).
+func PushRegisterHandler() http.HandlerFunc { return withHub((*Hub).ServePushRegister) }
+
+// HistoryHandler returns the GET /app/history handler (restart reconciliation).
+func HistoryHandler() http.HandlerFunc { return withHub((*Hub).ServeHistory) }

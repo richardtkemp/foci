@@ -21,6 +21,10 @@ import (
 // ProtocolVersion is the FAP major version this server speaks.
 const ProtocolVersion = 1
 
+// Subprotocol is the WebSocket subprotocol token negotiated on the /app/ws
+// handshake (wire §1: Sec-WebSocket-Protocol: fap.v1).
+const Subprotocol = "fap.v1"
+
 // Frame type strings — the canonical `t` envelope values (wire-protocol §4/§5).
 // One source of truth, mirroring Kotlin FrameType.
 const (

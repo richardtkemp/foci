@@ -21,6 +21,10 @@ type appSink struct {
 	b      *convBinding
 	turnID string
 
+	// statusFn supplies the meta-frame status chips (mana%, mana state, gap).
+	// nil = those fields are omitted (e.g. a sink with no agent context).
+	statusFn func() (manaPct *int, manaState, gap string)
+
 	mu        sync.Mutex
 	started   bool // turn.start emitted (lazy — only once real text streams)
 	delivered bool // any content shown this turn
@@ -145,7 +149,11 @@ func (s *appSink) emitMeta(e turnevent.TurnComplete) {
 			CW:  int64(e.Usage.CacheCreationInputTokens),
 		}
 	}
-	if meta.Model == "" && meta.PrevCostUsd == nil && meta.Tokens == nil {
+	if s.statusFn != nil {
+		meta.ManaPct, meta.ManaState, meta.Gap = s.statusFn()
+	}
+	if meta.Model == "" && meta.PrevCostUsd == nil && meta.Tokens == nil &&
+		meta.ManaPct == nil && meta.ManaState == "" && meta.Gap == "" {
 		return
 	}
 	s.b.send(meta)

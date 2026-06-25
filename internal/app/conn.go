@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
@@ -13,6 +14,11 @@ import (
 	"foci/internal/platform"
 	"foci/internal/voice"
 )
+
+// defaultPromptTTL is the advisory expiry advertised on an interactive prompt
+// (wire §8). Foci core owns real expiry; this only tells the app's UI when to
+// grey out stale buttons.
+const defaultPromptTTL = 24 * time.Hour
 
 // appConn is the per-agent platform.Connection for the app provider. One
 // instance per agent; it routes session-scoped sends to the right physical
@@ -297,6 +303,7 @@ func (c *appConn) SendTextWithButtons(text string, buttons []platform.ButtonChoi
 		PromptID:       promptID,
 		Text:           text,
 		Choices:        toChoices(buttons),
+		ExpiresAt:      time.Now().Add(defaultPromptTTL).Format(time.RFC3339),
 	})
 	return promptID, nil
 }
@@ -378,7 +385,12 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	c.defaultSession = env.SessionKey
 	c.lastChatID = env.ChatID
 	c.mu.Unlock()
-	return newAppSink(b), func() {}
+	sink := newAppSink(b)
+	if c.agentRef != nil {
+		sk := env.SessionKey
+		sink.statusFn = func() (*int, string, string) { return c.agentRef.MetaStatus(sk) }
+	}
+	return sink, func() {}
 }
 
 func (c *appConn) Connection() platform.Connection { return c }
