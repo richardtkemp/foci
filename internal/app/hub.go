@@ -293,6 +293,37 @@ func (h *Hub) closeDeviceSockets(deviceID string) {
 	}
 }
 
+// evictOtherDeviceSockets closes any OTHER live socket carrying the same
+// deviceID as keep, using close code 4409 (wire §9: "on a second socket for the
+// same device, close the older with 4409"). A phone that reconnects while its
+// previous socket is still half-open (pre-pong-timeout) would otherwise leave
+// two sockets attached to the same conversation bindings, double-delivering
+// frames and breaking the exactly-once-render guarantee the reliability layer
+// exists for. deviceID=="" (un-helloed socket) evicts nothing.
+func (h *Hub) evictOtherDeviceSockets(keep *wsClient, deviceID string) {
+	if deviceID == "" {
+		return
+	}
+	h.mu.RLock()
+	var victims []*wsClient
+	for c := range h.clients {
+		if c == keep {
+			continue
+		}
+		c.mu.Lock()
+		dev := c.deviceID
+		c.mu.Unlock()
+		if dev == deviceID {
+			victims = append(victims, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range victims {
+		log.Infof("app", "evicting older socket for device (replaced by new connection)")
+		c.closeWithCode(fap.CloseReplaced, "replaced by newer connection")
+	}
+}
+
 // setupAgent registers an agent's connection and starts its inbox. Returns nil
 // if the handler is not an *agent.Agent (the app provider only serves the
 // in-process agent core).
@@ -791,19 +822,25 @@ func (c *wsClient) enqueue(wire string) {
 func (c *wsClient) close() {
 	c.closeMu.Do(func() {
 		close(c.done)
-		_ = c.ws.Close()
-		c.hub.removeClient(c)
+		if c.ws != nil { // nil only for in-memory test clients
+			_ = c.ws.Close()
+		}
+		if c.hub != nil {
+			c.hub.removeClient(c)
+		}
 	})
 }
 
 // closeWithCode sends a WebSocket close frame with the given code/reason (so the
 // client knows e.g. it was revoked vs a transient drop) then tears down.
 func (c *wsClient) closeWithCode(code int, reason string) {
-	_ = c.ws.WriteControl(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(code, reason),
-		time.Now().Add(writeWait),
-	)
+	if c.ws != nil {
+		_ = c.ws.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(code, reason),
+			time.Now().Add(writeWait),
+		)
+	}
 	c.close()
 }
 
@@ -895,6 +932,12 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		client.mu.Unlock()
 	}
 	h.addClient(client)
+	if dev != nil {
+		// Device-token auth gives the deviceId up front, so we can evict a stale
+		// prior socket immediately. Master-key sockets learn their deviceId from
+		// the hello frame and are evicted in the ClientHello handler instead.
+		h.evictOtherDeviceSockets(client, dev.DeviceID)
+	}
 	log.Infof("app", "device connected")
 	go client.writePump()
 	client.readPump() // blocks until the socket closes
