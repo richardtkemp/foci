@@ -1320,9 +1320,10 @@ streaming + status `meta`), slice 2 (interactive buttons → permission/ask/plan
 slice 3 (reliability: per-conversation seq/ack/replay + reconnect resume + inbound
 dedup), slice 4 (media/blobs over HTTP), slice 5 (FCM offline wake-push), slice 6
 (multi-agent/session: server-owned conversationId, roster, conversation.open,
-named sessions, slash commands), slice 8 (voice: inbound STT transcription).
-Per-device pairing tokens (slice 7) remain
-(`foci-android/docs/02-foci-server-changes.md` §11).
+named sessions, slash commands), slice 7 (auth hardening: pairing + per-device
+tokens + revocation + rate-limited auth), slice 8 (voice: inbound STT
+transcription). The full §11 build order is implemented
+(`foci-android/docs/02-foci-server-changes.md`).
 
 **Wire layer (`internal/app/fap/`):** pure Go mirror of the client's Kotlin
 `:protocol` module. `Envelope{t,id,seq,ack,ts,v,d}` wraps a type-specific
@@ -1404,6 +1405,17 @@ Inbound: the app uploads via `POST /app/blob` (`ServeBlobPost`, returns
 `resolveAttachments` reads each blob back into a `platform.Attachment`
 (small ones into `Data`, `SavedPath` always set). Both endpoints share the
 `bearerToken` + `app.api_key` gate; registered in `http.go` alongside `/app/ws`.
+
+**Auth hardening (`devices.go`, slice 7):** the shared master key (`app.api_key`)
+remains the bootstrap, but a device pairs once (`POST /app/pair`, master-key only)
+to mint a revocable per-device token (`deviceStore`, 256-bit random, persisted to
+`<DataDir>/app-devices.json` so pairings survive deploys). Thereafter `/app/ws`
+and `/app/blob` accept the master key OR a device token (`Hub.authenticate` →
+`authToken`; device-token auth seeds `client.deviceID`). `POST /app/pair/revoke`
+(master-key) drops the token and force-closes the device's live socket(s) with
+`4403`; `GET /app/devices` lists pairings (tokens omitted). An `authLimiter` locks
+out a remote IP (`remoteIP`, X-Forwarded-For-aware) after repeated auth failures
+— the endpoint is internet-facing.
 
 **Push (`push.go`, slice 5):** offline wake via FCM v1 data-messages. `fcmPusher`
 authenticates with a service-account token source (`golang.org/x/oauth2/google`,

@@ -51,3 +51,12 @@ func BlobUploadHandler() http.HandlerFunc { return withHub((*Hub).ServeBlobPost)
 
 // BlobDownloadHandler returns the GET /app/blob/<id> handler.
 func BlobDownloadHandler() http.HandlerFunc { return withHub((*Hub).ServeBlobGet) }
+
+// PairHandler returns the POST /app/pair handler (mint a device token).
+func PairHandler() http.HandlerFunc { return withHub((*Hub).ServePair) }
+
+// DevicesHandler returns the GET /app/devices handler (list paired devices).
+func DevicesHandler() http.HandlerFunc { return withHub((*Hub).ServeDevices) }
+
+// RevokeHandler returns the POST /app/pair/revoke handler (revoke a device).
+func RevokeHandler() http.HandlerFunc { return withHub((*Hub).ServeRevoke) }

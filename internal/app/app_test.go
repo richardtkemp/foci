@@ -148,6 +148,8 @@ func newTestHub() *Hub {
 		deps:      platform.ProviderDeps{},
 		blobs:     newBlobStore(),
 		tokens:    newPushTokens(),
+		devices:   newDeviceStore(""),
+		authLim:   newAuthLimiter(authFailMax, authFailWindow),
 		agents:    make(map[string]*appConn),
 		convs:     make(map[string]*convBinding),
 		bySession: make(map[string]*convBinding),
@@ -905,6 +907,157 @@ func TestVoiceFilename(t *testing.T) {
 		if got := voiceFilename(platform.Attachment{MimeType: mime}); got != want {
 			t.Errorf("voiceFilename(%q) = %q, want %q", mime, got, want)
 		}
+	}
+}
+
+// --- slice 7: auth hardening (pairing / per-device tokens) ---
+
+func TestDeviceStore_PairValidateRevoke(t *testing.T) {
+	s := newDeviceStore("")
+	d := s.pair("dev1", "Phone")
+	if d.Token == "" {
+		t.Fatal("no token minted")
+	}
+	if got, ok := s.validToken(d.Token); !ok || got.DeviceID != "dev1" {
+		t.Fatal("validToken failed for minted token")
+	}
+	if _, ok := s.validToken("bogus"); ok {
+		t.Error("bogus token accepted")
+	}
+	// Re-pairing replaces the token.
+	d2 := s.pair("dev1", "Phone")
+	if _, ok := s.validToken(d.Token); ok {
+		t.Error("old token still valid after re-pair")
+	}
+	if _, ok := s.validToken(d2.Token); !ok {
+		t.Error("new token invalid after re-pair")
+	}
+	// Revoke invalidates.
+	if _, ok := s.revoke("dev1"); !ok {
+		t.Error("revoke failed")
+	}
+	if _, ok := s.validToken(d2.Token); ok {
+		t.Error("token valid after revoke")
+	}
+}
+
+func TestDeviceStore_Persistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "devices.json")
+	d := newDeviceStore(path).pair("dev1", "Phone")
+	if _, ok := newDeviceStore(path).validToken(d.Token); !ok {
+		t.Error("token did not survive store reload")
+	}
+}
+
+func TestAuthToken_MasterAndDevice(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	d := h.devices.pair("dev1", "")
+	if _, ok := h.authToken("master"); !ok {
+		t.Error("master key rejected")
+	}
+	if dev, ok := h.authToken(d.Token); !ok || dev.DeviceID != "dev1" {
+		t.Error("device token rejected")
+	}
+	if _, ok := h.authToken("nope"); ok {
+		t.Error("bad token accepted")
+	}
+}
+
+func TestPairHTTP_MasterMintsDeviceToken(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	req := httptest.NewRequest(http.MethodPost, "/app/pair", strings.NewReader(`{"deviceId":"dev1","label":"Phone","pushToken":"ptok"}`))
+	req.Header.Set("Authorization", "Bearer master")
+	w := httptest.NewRecorder()
+	h.ServePair(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("pair code = %d", w.Code)
+	}
+	var res struct {
+		DeviceToken string `json:"deviceToken"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || res.DeviceToken == "" {
+		t.Fatalf("pair result = %s", w.Body.String())
+	}
+	if _, ok := h.authToken(res.DeviceToken); !ok {
+		t.Error("minted token does not authenticate")
+	}
+	if len(h.tokens.all()) != 1 {
+		t.Error("push token not registered during pairing")
+	}
+}
+
+func TestPairHTTP_DeviceTokenCannotPair(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	d := h.devices.pair("dev1", "")
+	req := httptest.NewRequest(http.MethodPost, "/app/pair", strings.NewReader(`{"deviceId":"dev2"}`))
+	req.Header.Set("Authorization", "Bearer "+d.Token) // a device token, not the master key
+	w := httptest.NewRecorder()
+	h.ServePair(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("device-token pair code = %d, want 403", w.Code)
+	}
+}
+
+func TestBlobAuth_AcceptsDeviceToken(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	d := h.devices.pair("dev1", "")
+	meta, _ := h.blobs.putBytes([]byte("x"), "document", "f", "text/plain")
+	req := httptest.NewRequest(http.MethodGet, "/app/blob/"+meta.id, nil)
+	req.Header.Set("Authorization", "Bearer "+d.Token)
+	w := httptest.NewRecorder()
+	h.ServeBlobGet(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("device-token blob GET code = %d", w.Code)
+	}
+}
+
+func TestRevokeHTTP_InvalidatesToken(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	d := h.devices.pair("dev1", "")
+	req := httptest.NewRequest(http.MethodPost, "/app/pair/revoke", strings.NewReader(`{"deviceId":"dev1"}`))
+	req.Header.Set("Authorization", "Bearer master")
+	w := httptest.NewRecorder()
+	h.ServeRevoke(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("revoke code = %d", w.Code)
+	}
+	if _, ok := h.authToken(d.Token); ok {
+		t.Error("token still valid after revoke")
+	}
+}
+
+func TestAuthLimiter_Lockout(t *testing.T) {
+	l := newAuthLimiter(3, time.Minute)
+	for i := 0; i < 3; i++ {
+		if l.blocked("1.2.3.4") {
+			t.Fatalf("blocked after %d fails, too early", i)
+		}
+		l.fail("1.2.3.4")
+	}
+	if !l.blocked("1.2.3.4") {
+		t.Error("should be locked out after 3 failures")
+	}
+	l.reset("1.2.3.4")
+	if l.blocked("1.2.3.4") {
+		t.Error("reset should clear the lockout")
+	}
+}
+
+func TestRemoteIP(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Forwarded-For", "9.9.9.9, 10.0.0.1")
+	if got := remoteIP(r); got != "9.9.9.9" {
+		t.Errorf("XFF ip = %q, want 9.9.9.9", got)
+	}
+	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	r2.RemoteAddr = "5.5.5.5:1234"
+	if got := remoteIP(r2); got != "5.5.5.5" {
+		t.Errorf("RemoteAddr ip = %q, want 5.5.5.5", got)
 	}
 }
 

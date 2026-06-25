@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -234,21 +233,9 @@ func (h *Hub) ServeBlobPost(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"blobId": meta.id, "size": meta.size, "mime": meta.mime})
 }
 
-// authBlob enforces the shared Bearer key on a blob request, writing the error
-// response and returning false on failure.
+// authBlob enforces the master key OR a valid device token on a blob request
+// (rate-limited), writing the error response and returning false on failure.
 func (h *Hub) authBlob(w http.ResponseWriter, r *http.Request) bool {
-	if h.apiKey == "" {
-		http.Error(w, "app endpoint not configured", http.StatusServiceUnavailable)
-		return false
-	}
-	token := bearerToken(r)
-	if token == "" {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return false
-	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(h.apiKey)) != 1 {
-		http.Error(w, "invalid credentials", http.StatusForbidden)
-		return false
-	}
-	return true
+	_, ok := h.authenticate(w, r)
+	return ok
 }
