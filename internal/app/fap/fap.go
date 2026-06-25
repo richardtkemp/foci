@@ -80,6 +80,7 @@ type Caps struct {
 	Versions []int    `json:"versions"`
 	Push     []string `json:"push,omitempty"`
 	Features []string `json:"features,omitempty"`
+	Host     string   `json:"host,omitempty"` // public host the app reconnects to (§2.1/§6)
 }
 
 // AgentInfo is one agent the credential may talk to, with its roster.

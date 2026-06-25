@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	fcmScope           = "https://www.googleapis.com/auth/firebase.messaging"
-	pushCoalesceWindow = 15 * time.Second // at most one wake push per conversation per window
-	pushPreviewMax     = 80               // hard cap on the preview hint length
-	fcmSendTimeout     = 10 * time.Second
+	fcmScope            = "https://www.googleapis.com/auth/firebase.messaging"
+	defaultPushCoalesce = 15 * time.Second // at most one wake push per conversation per window
+	pushPreviewMax      = 80               // hard cap on the preview hint length
+	fcmSendTimeout      = 10 * time.Second
 )
 
 // pushTokens is the in-memory deviceId→FCM-token registry. The client re-sends
@@ -65,6 +65,7 @@ type fcmPusher struct {
 	http      *http.Client
 	ctx       context.Context
 	tokens    *pushTokens
+	window    time.Duration // coalescing window (one wake push per conv per window)
 
 	mu       sync.Mutex
 	lastPush map[string]time.Time // convID → last push time (coalescing)
@@ -72,9 +73,12 @@ type fcmPusher struct {
 
 // newFCMPusher builds a pusher from a service-account JSON file. Returns nil (push
 // disabled, gracefully) if path is empty or the credentials can't be loaded.
-func newFCMPusher(ctx context.Context, path string, tokens *pushTokens) *fcmPusher {
+func newFCMPusher(ctx context.Context, path string, tokens *pushTokens, window time.Duration) *fcmPusher {
 	if path == "" {
 		return nil
+	}
+	if window <= 0 {
+		window = defaultPushCoalesce
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -105,6 +109,7 @@ func newFCMPusher(ctx context.Context, path string, tokens *pushTokens) *fcmPush
 		http:      &http.Client{Timeout: fcmSendTimeout},
 		ctx:       ctx,
 		tokens:    tokens,
+		window:    window,
 		lastPush:  make(map[string]time.Time),
 	}
 }
@@ -117,7 +122,7 @@ func (p *fcmPusher) notify(convID, preview string) {
 		return
 	}
 	p.mu.Lock()
-	if time.Since(p.lastPush[convID]) < pushCoalesceWindow {
+	if time.Since(p.lastPush[convID]) < p.window {
 		p.mu.Unlock()
 		return
 	}

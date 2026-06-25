@@ -587,6 +587,7 @@ type PlatformConfig struct {
 	// Platform-specific subsections (at most one non-nil, must match ID)
 	Telegram *TelegramSpecific `toml:"telegram"`
 	Discord  *DiscordSpecific  `toml:"discord"`
+	App      *AppSpecific      `toml:"app"`
 }
 
 // Platform returns the PlatformConfig with the given ID, or nil.
@@ -652,6 +653,25 @@ type DiscordSpecific struct {
 	GuildID    string `toml:"guild_id"`
 }
 
+// AppSpecific holds app-provider-only config (the native-app WebSocket platform,
+// FAP v1). All tuning knobs are optional pointers so the agent→global→code
+// cascade can resolve them; nil falls back to the code default.
+type AppSpecific struct {
+	Host           string `toml:"host"             desc:"public host the app reconnects to (advertised in hello.caps.host)"`
+	Push           *bool  `toml:"push"             desc:"enable FCM offline wake pushes (requires app.fcm_credentials secret)"`
+	ReplayBuffer   *int   `toml:"replay_buffer"    desc:"max retained server frames per conversation for reconnect replay"`
+	ReplayTTL      string `toml:"replay_ttl"       desc:"max age of a retained replay frame" type:"duration"`
+	MaxBlobMB      *int   `toml:"max_blob_mb"      desc:"upload size cap for /app/blob in MB"`
+	BlobTTL        string `toml:"blob_ttl"         desc:"time-to-live for stored blobs" type:"duration"`
+	PushCoalesce   string `toml:"push_coalesce"    desc:"min interval between wake pushes per conversation" type:"duration"`
+	FCMCredentials string `toml:"fcm_credentials"  desc:"path to the FCM service-account JSON (overrides the app.fcm_credentials secret)"`
+	DevicesPath    string `toml:"devices_path"     desc:"paired-device store path, relative to data_dir (default app-devices.json)"`
+	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows
+	// any). A slice → set in the TOML file, not via /config set, so no desc tag
+	// (mirrors AccessConfig.AllowedUsers).
+	AllowedDevices []string `toml:"allowed_devices"`
+}
+
 // ApplyDefaults fills zero-value fields from the given defaults.
 func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 	p.Notify = Merge(p.Notify, defaults.Notify)
@@ -688,6 +708,41 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 		}
 		if p.Discord.GuildID == "" {
 			p.Discord.GuildID = defaults.Discord.GuildID
+		}
+	}
+	if p.App == nil && defaults.App != nil {
+		cp := *defaults.App
+		p.App = &cp
+	} else if p.App != nil && defaults.App != nil {
+		if p.App.Host == "" {
+			p.App.Host = defaults.App.Host
+		}
+		if p.App.Push == nil {
+			p.App.Push = defaults.App.Push
+		}
+		if p.App.ReplayBuffer == nil {
+			p.App.ReplayBuffer = defaults.App.ReplayBuffer
+		}
+		if p.App.ReplayTTL == "" {
+			p.App.ReplayTTL = defaults.App.ReplayTTL
+		}
+		if p.App.MaxBlobMB == nil {
+			p.App.MaxBlobMB = defaults.App.MaxBlobMB
+		}
+		if p.App.BlobTTL == "" {
+			p.App.BlobTTL = defaults.App.BlobTTL
+		}
+		if p.App.PushCoalesce == "" {
+			p.App.PushCoalesce = defaults.App.PushCoalesce
+		}
+		if p.App.FCMCredentials == "" {
+			p.App.FCMCredentials = defaults.App.FCMCredentials
+		}
+		if p.App.DevicesPath == "" {
+			p.App.DevicesPath = defaults.App.DevicesPath
+		}
+		if p.App.AllowedDevices == nil {
+			p.App.AllowedDevices = defaults.App.AllowedDevices
 		}
 	}
 }

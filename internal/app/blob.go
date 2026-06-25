@@ -19,13 +19,15 @@ import (
 	"foci/internal/tempdir"
 )
 
-// Blob store tuning (wire-protocol §9). Defaults; config wiring (max_blob_mb /
-// blob_ttl) lands with the config slice.
+// Blob store tuning (wire-protocol §9). These are the code defaults;
+// [platforms.app] max_blob_mb / blob_ttl override them via the config cascade.
 const (
-	maxBlobBytes        = 50 << 20 // upload cap
-	blobTTL             = 24 * time.Hour
-	blobReapInterval    = time.Hour
-	inlineAttachmentMax = 16 << 20 // inbound attachments below this are loaded into Attachment.Data
+	defaultMaxBlobMB    = 50                     // upload cap, MB
+	maxBlobBytes        = defaultMaxBlobMB << 20 // upload cap, bytes
+	defaultBlobTTL      = 24 * time.Hour         // blob time-to-live
+	blobTTL             = defaultBlobTTL         // default store TTL
+	blobReapInterval    = time.Hour              // reaper tick
+	inlineAttachmentMax = 16 << 20               // inbound attachments below this are loaded into Attachment.Data
 )
 
 var errBlobTooLarge = errors.New("app: blob exceeds size limit")

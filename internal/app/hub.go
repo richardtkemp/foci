@@ -17,6 +17,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
+	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
@@ -35,12 +36,13 @@ const (
 
 // Reliability tuning (wire-protocol §3). The replay buffer + inbound dedup
 // window turn at-least-once delivery into effectively exactly-once rendering on
-// a phone that drops the socket constantly. Defaults; config wiring (replay_buffer
-// / replay_ttl) lands with the config slice.
+// a phone that drops the socket constantly. These are the code defaults;
+// [platforms.app] replay_buffer / replay_ttl override them per the config cascade.
 const (
-	replayBufferDepth = 1000           // max retained server frames per conversation
-	replayTTL         = 24 * time.Hour // max age of a retained frame
-	maxSeenInbound    = 4096           // per-conversation inbound dedup window (mirrors client)
+	defaultReplayBufferDepth = 1000           // max retained server frames per conversation
+	defaultReplayTTL         = 24 * time.Hour // max age of a retained frame
+	maxSeenInbound           = 4096           // per-conversation inbound dedup window (mirrors client)
+	defaultDevicesFile       = "app-devices.json"
 )
 
 // Hub multiplexes all live app WebSockets. It owns the per-agent appConn
@@ -55,6 +57,11 @@ type Hub struct {
 	pusher  *fcmPusher
 	devices *deviceStore
 	authLim *authLimiter
+
+	host           string          // advertised in hello.caps.host (config [platforms.app].host)
+	replayDepth    int             // config-driven replay buffer depth (0 = default)
+	replayTTL      time.Duration   // config-driven replay buffer TTL (0 = default)
+	allowedDevices map[string]bool // non-empty = pairing allowlist
 
 	mu         sync.RWMutex
 	agents     map[string]*appConn     // agentID → its connection
@@ -75,15 +82,38 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	if key == "" {
 		log.Warnf("app", "no app.api_key secret — /app/ws endpoint will reject all connections until one is set")
 	}
+
+	// Resolve the typed [platforms.app] config (nil = all code defaults).
+	var appCfg *config.AppSpecific
+	if deps.Config != nil {
+		if p := deps.Config.Platform("app"); p != nil {
+			appCfg = p.App
+		}
+	}
+
 	tokens := newPushTokens()
+
+	devicesFile := defaultDevicesFile
+	if appCfg != nil && appCfg.DevicesPath != "" {
+		devicesFile = appCfg.DevicesPath
+	}
 	devicePath := ""
 	if deps.Config != nil && deps.Config.DataDir != "" {
-		devicePath = filepath.Join(deps.Config.DataDir, "app-devices.json")
+		devicePath = filepath.Join(deps.Config.DataDir, devicesFile)
 	}
+
+	blobs := newBlobStore()
+	if appCfg != nil {
+		if appCfg.MaxBlobMB != nil && *appCfg.MaxBlobMB > 0 {
+			blobs.maxBytes = int64(*appCfg.MaxBlobMB) << 20
+		}
+		blobs.ttl = durationOr(appCfg.BlobTTL, blobs.ttl)
+	}
+
 	h := &Hub{
 		deps:      deps,
 		apiKey:    key,
-		blobs:     newBlobStore(),
+		blobs:     blobs,
 		tokens:    tokens,
 		devices:   newDeviceStore(devicePath),
 		authLim:   newAuthLimiter(authFailMax, authFailWindow),
@@ -93,20 +123,63 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		clients:   make(map[*wsClient]struct{}),
 		prompts:   make(map[string]*convBinding),
 	}
+	if appCfg != nil {
+		h.host = appCfg.Host
+		if appCfg.ReplayBuffer != nil && *appCfg.ReplayBuffer > 0 {
+			h.replayDepth = *appCfg.ReplayBuffer
+		}
+		h.replayTTL = durationOr(appCfg.ReplayTTL, 0)
+		if len(appCfg.AllowedDevices) > 0 {
+			h.allowedDevices = make(map[string]bool, len(appCfg.AllowedDevices))
+			for _, id := range appCfg.AllowedDevices {
+				h.allowedDevices[id] = true
+			}
+		}
+	}
+
 	if deps.Ctx != nil {
 		go h.blobs.reaper(deps.Ctx)
-		// Offline wake-push via FCM. The service-account JSON path is read from
-		// the secret app.fcm_credentials; absent → push stays disabled. (Proper
-		// [platforms.app] config lands with the config slice.)
+		// Offline wake-push via FCM. The service-account JSON path comes from
+		// [platforms.app].fcm_credentials, falling back to the app.fcm_credentials
+		// secret; absent (or push=false) → push stays disabled gracefully.
+		pushEnabled := appCfg == nil || appCfg.Push == nil || *appCfg.Push
 		fcmPath := ""
-		if deps.SecretStore != nil {
+		if appCfg != nil {
+			fcmPath = appCfg.FCMCredentials
+		}
+		if fcmPath == "" && deps.SecretStore != nil {
 			if v, ok := deps.SecretStore.Get("app.fcm_credentials"); ok {
 				fcmPath = strings.TrimSpace(v)
 			}
 		}
-		h.pusher = newFCMPusher(deps.Ctx, fcmPath, tokens)
+		if !pushEnabled {
+			fcmPath = "" // disabled → newFCMPusher returns nil
+		}
+		window := durationOr(appCfgPushCoalesce(appCfg), defaultPushCoalesce)
+		h.pusher = newFCMPusher(deps.Ctx, fcmPath, tokens, window)
 	}
 	return h
+}
+
+// appCfgPushCoalesce returns the configured push-coalesce duration string, or "".
+func appCfgPushCoalesce(c *config.AppSpecific) string {
+	if c == nil {
+		return ""
+	}
+	return c.PushCoalesce
+}
+
+// durationOr parses a duration string, returning fallback on empty or parse error.
+func durationOr(s string, fallback time.Duration) time.Duration {
+	if s == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		log.Warnf("app", "bad duration %q: %v — using %s", s, err, fallback)
+		return fallback
+	}
+	return d
 }
 
 // pushNotify fires a coalesced offline wake push for a conversation (no-op when
@@ -118,7 +191,7 @@ func (h *Hub) pushNotify(convID, preview string) {
 // caps reports the server capability set advertised in `hello`, including the
 // push transports available.
 func (h *Hub) caps() fap.Caps {
-	c := fap.Caps{Versions: []int{fap.ProtocolVersion}}
+	c := fap.Caps{Versions: []int{fap.ProtocolVersion}, Host: h.host}
 	if h.pusher != nil {
 		c.Push = []string{"fcm"}
 	}
@@ -228,6 +301,11 @@ func (h *Hub) ServePair(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || req.DeviceID == "" {
 		http.Error(w, "bad pairing request", http.StatusBadRequest)
+		return
+	}
+	if h.allowedDevices != nil && !h.allowedDevices[req.DeviceID] {
+		log.Warnf("app", "pairing rejected: device %q not in allowed_devices", req.DeviceID)
+		http.Error(w, "device not allowed", http.StatusForbidden)
 		return
 	}
 	d := h.devices.pair(req.DeviceID, req.Label)
@@ -508,7 +586,7 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		existing.attach(client)
 		return existing
 	}
-	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
+	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
 	h.convs[convID] = b
 	h.bySession[sk] = b
 	h.mu.Unlock()
@@ -629,6 +707,9 @@ type convBinding struct {
 	agentID    string
 	chatID     int64
 
+	replayDepth int           // config-driven buffer depth; 0 = code default
+	replayTTL   time.Duration // config-driven buffer TTL; 0 = code default
+
 	notifyOffline func(convID, preview string) // fires a wake push for offline visible frames; nil = no push
 
 	mu          sync.Mutex
@@ -710,11 +791,21 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 }
 
 // trimBufferLocked bounds the replay buffer by depth and TTL. Caller holds b.mu.
+// depth/ttl come from the binding (config-driven); a zero value falls back to the
+// code default so directly-constructed bindings (tests) still bound their buffer.
 func (b *convBinding) trimBufferLocked() {
-	if n := len(b.buffer); n > replayBufferDepth {
-		b.buffer = append(b.buffer[:0:0], b.buffer[n-replayBufferDepth:]...)
+	depth := b.replayDepth
+	if depth <= 0 {
+		depth = defaultReplayBufferDepth
 	}
-	cutoff := time.Now().Add(-replayTTL)
+	ttl := b.replayTTL
+	if ttl <= 0 {
+		ttl = defaultReplayTTL
+	}
+	if n := len(b.buffer); n > depth {
+		b.buffer = append(b.buffer[:0:0], b.buffer[n-depth:]...)
+	}
+	cutoff := time.Now().Add(-ttl)
 	drop := 0
 	for drop < len(b.buffer) && b.buffer[drop].sent.Before(cutoff) {
 		drop++

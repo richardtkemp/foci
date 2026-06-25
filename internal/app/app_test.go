@@ -16,6 +16,7 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
+	"foci/internal/config"
 	"foci/internal/platform"
 	"foci/internal/session"
 )
@@ -568,15 +569,15 @@ func TestReliability_AckTrimsBuffer(t *testing.T) {
 func TestReliability_BufferTrimsByDepth(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
-	for i := 0; i < replayBufferDepth+50; i++ {
+	for i := 0; i < defaultReplayBufferDepth+50; i++ {
 		b.send(fap.Typing{ConversationID: "c1", On: true})
 	}
 	drainEnv(t, c)
 	b.mu.Lock()
 	n, first := len(b.buffer), b.buffer[0].seq
 	b.mu.Unlock()
-	if n != replayBufferDepth {
-		t.Errorf("buffer depth = %d, want %d", n, replayBufferDepth)
+	if n != defaultReplayBufferDepth {
+		t.Errorf("buffer depth = %d, want %d", n, defaultReplayBufferDepth)
 	}
 	if first != 51 { // seq 1..50 dropped, 51..1050 retained
 		t.Errorf("oldest retained seq = %d, want 51", first)
@@ -794,7 +795,7 @@ func TestOnlineSend_NoPush(t *testing.T) {
 }
 
 func TestPusher_Coalesces(t *testing.T) {
-	p := &fcmPusher{tokens: newPushTokens(), lastPush: make(map[string]time.Time)}
+	p := &fcmPusher{tokens: newPushTokens(), window: defaultPushCoalesce, lastPush: make(map[string]time.Time)}
 	p.notify("conv-1", "a") // no tokens → no network; updates lastPush
 	first := p.lastPush["conv-1"]
 	p.notify("conv-1", "b") // within window → coalesced, lastPush unchanged
@@ -1063,6 +1064,89 @@ func TestPairHTTP_DeviceTokenCannotPair(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("device-token pair code = %d, want 403", w.Code)
 	}
+}
+
+func TestServePair_AllowlistRejectsUnknownDevice(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	h.allowedDevices = map[string]bool{"dev-ok": true}
+
+	// A device NOT on the allowlist is rejected.
+	req := httptest.NewRequest(http.MethodPost, "/app/pair", strings.NewReader(`{"deviceId":"dev-bad"}`))
+	req.Header.Set("Authorization", "Bearer master")
+	w := httptest.NewRecorder()
+	h.ServePair(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("disallowed device pair code = %d, want 403", w.Code)
+	}
+
+	// A device ON the allowlist pairs normally.
+	req = httptest.NewRequest(http.MethodPost, "/app/pair", strings.NewReader(`{"deviceId":"dev-ok"}`))
+	req.Header.Set("Authorization", "Bearer master")
+	w = httptest.NewRecorder()
+	h.ServePair(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("allowed device pair code = %d, want 200", w.Code)
+	}
+}
+
+func TestNewHub_AppliesPlatformConfig(t *testing.T) {
+	maxMB := 7
+	depth := 42
+	pushOff := false
+	cfg := &config.Config{
+		Platforms: []config.PlatformConfig{{
+			ID: "app",
+			App: &config.AppSpecific{
+				Host:           "app.example.com",
+				Push:           &pushOff,
+				ReplayBuffer:   &depth,
+				ReplayTTL:      "1h",
+				MaxBlobMB:      &maxMB,
+				BlobTTL:        "2h",
+				PushCoalesce:   "5s",
+				DevicesPath:    "custom-devices.json",
+				AllowedDevices: []string{"d1", "d2"},
+			},
+		}},
+	}
+	h := newHub(platform.ProviderDeps{Config: cfg}) // Ctx nil → no reaper/pusher goroutine
+
+	if h.host != "app.example.com" {
+		t.Errorf("host = %q, want app.example.com", h.host)
+	}
+	if h.replayDepth != 42 {
+		t.Errorf("replayDepth = %d, want 42", h.replayDepth)
+	}
+	if h.replayTTL != time.Hour {
+		t.Errorf("replayTTL = %v, want 1h", h.replayTTL)
+	}
+	if h.blobs.maxBytes != int64(7)<<20 {
+		t.Errorf("blob cap = %d, want %d", h.blobs.maxBytes, int64(7)<<20)
+	}
+	if h.blobs.ttl != 2*time.Hour {
+		t.Errorf("blob ttl = %v, want 2h", h.blobs.ttl)
+	}
+	if !h.allowedDevices["d1"] || !h.allowedDevices["d2"] || h.allowedDevices["d3"] {
+		t.Errorf("allowedDevices = %v, want {d1,d2}", h.allowedDevices)
+	}
+	// host should propagate into advertised caps.
+	if h.caps().Host != "app.example.com" {
+		t.Errorf("caps.host = %q, want app.example.com", h.caps().Host)
+	}
+	// A new binding inherits the configured replay depth.
+	b := h.ensureBinding(fakeClientForHub(h), "ag", "conv-x")
+	if b.replayDepth != 42 || b.replayTTL != time.Hour {
+		t.Errorf("binding inherited depth=%d ttl=%v, want 42/1h", b.replayDepth, b.replayTTL)
+	}
+}
+
+// fakeClientForHub is a fakeClient bound to h (needed because ensureBinding's
+// attach registers the conversation on the socket).
+func fakeClientForHub(h *Hub) *wsClient {
+	c := fakeClient()
+	c.hub = h
+	return c
 }
 
 func TestBlobAuth_AcceptsDeviceToken(t *testing.T) {
