@@ -53,6 +53,10 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		client.mu.Lock()
 		client.deviceID = f.Client.DeviceID
 		client.mu.Unlock()
+		// A master-key socket learns its deviceId here; evict any older socket for
+		// the same device (wire §9, close 4409) so a reconnecting phone never ends
+		// up with two live sockets on one conversation.
+		h.evictOtherDeviceSockets(client, f.Client.DeviceID)
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
 		client.sendRaw(fap.HelloServer{

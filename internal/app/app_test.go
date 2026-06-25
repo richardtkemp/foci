@@ -366,6 +366,70 @@ func TestRemoveClient_PurgesPrompts(t *testing.T) {
 	}
 }
 
+// hubClient makes an in-memory wsClient bound to a hub and registered, for
+// transport-adjacent tests that don't need a real websocket.
+func hubClient(h *Hub, deviceID string) *wsClient {
+	c := &wsClient{
+		send:     make(chan []byte, 8),
+		done:     make(chan struct{}),
+		convByID: make(map[string]*convBinding),
+		hub:      h,
+		deviceID: deviceID,
+	}
+	h.addClient(c)
+	return c
+}
+
+func isClosed(done chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestEvictOtherDeviceSockets_ClosesStaleSameDevice(t *testing.T) {
+	h := newTestHub()
+	old := hubClient(h, "dev-A")
+	keep := hubClient(h, "dev-A")
+	other := hubClient(h, "dev-B")
+
+	h.evictOtherDeviceSockets(keep, "dev-A")
+
+	if !isClosed(old.done) {
+		t.Error("stale same-device socket should be evicted (4409)")
+	}
+	if isClosed(keep.done) {
+		t.Error("the new socket must NOT be evicted")
+	}
+	if isClosed(other.done) {
+		t.Error("a different device's socket must NOT be evicted")
+	}
+
+	h.mu.RLock()
+	_, oldLive := h.clients[old]
+	_, keepLive := h.clients[keep]
+	_, otherLive := h.clients[other]
+	h.mu.RUnlock()
+	if oldLive {
+		t.Error("evicted socket should be removed from hub.clients")
+	}
+	if !keepLive || !otherLive {
+		t.Error("surviving sockets should remain in hub.clients")
+	}
+}
+
+func TestEvictOtherDeviceSockets_EmptyDeviceIDNoOp(t *testing.T) {
+	h := newTestHub()
+	a := hubClient(h, "")
+	b := hubClient(h, "")
+	h.evictOtherDeviceSockets(a, "")
+	if isClosed(a.done) || isClosed(b.done) {
+		t.Error("empty deviceID must evict nothing (un-helloed sockets)")
+	}
+}
+
 // --- slice 3: reliability (seq / ack / replay / dedup) ---
 
 type envFrame struct {
