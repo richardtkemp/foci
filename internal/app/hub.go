@@ -65,13 +65,26 @@ type Hub struct {
 	replayTTL      time.Duration   // config-driven replay buffer TTL (0 = default)
 	allowedDevices map[string]bool // non-empty = pairing allowlist
 
-	mu         sync.RWMutex
-	agents     map[string]*appConn     // agentID → its connection
-	agentOrder []string                // registration order (for default-agent resolution)
-	convs      map[string]*convBinding // conversationId → durable conversation state (outlives sockets)
-	bySession  map[string]*convBinding // sessionKey → conversation binding
-	clients    map[*wsClient]struct{}  // live sockets
-	prompts    map[string]*convBinding // promptID → binding (live interactive prompts)
+	mu           sync.RWMutex
+	agents       map[string]*appConn     // agentID → its connection
+	agentOrder   []string                // registration order (for default-agent resolution)
+	convs        map[string]*convBinding // conversationId → durable conversation state (outlives sockets)
+	bySession    map[string]*convBinding // sessionKey → conversation binding
+	clients      map[*wsClient]struct{}  // live sockets
+	prompts      map[string]*convBinding // promptID → binding (live interactive prompts)
+	batchPrompts map[string]*batchPrompt // promptID → batched-ask callback (app-only multi-question form)
+}
+
+// featureInteractiveBatch is the ClientHello capability a client advertises to
+// receive multi-question asks as one batched form (vs sequential prompts).
+const featureInteractiveBatch = "interactiveBatch"
+
+// batchPrompt holds the in-flight callback for one batched (multi-question) ask.
+// The app returns all answers in a single InteractiveResponse.Answers; onResp
+// feeds them back into the ask layer (tools.AskPresentBatchFn's onResponse).
+type batchPrompt struct {
+	b      *convBinding
+	onResp func(answers []string)
 }
 
 func newHub(deps platform.ProviderDeps) *Hub {
@@ -113,17 +126,18 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	}
 
 	h := &Hub{
-		deps:      deps,
-		apiKey:    key,
-		blobs:     blobs,
-		tokens:    tokens,
-		devices:   newDeviceStore(devicePath),
-		authLim:   newAuthLimiter(authFailMax, authFailWindow),
-		agents:    make(map[string]*appConn),
-		convs:     make(map[string]*convBinding),
-		bySession: make(map[string]*convBinding),
-		clients:   make(map[*wsClient]struct{}),
-		prompts:   make(map[string]*convBinding),
+		deps:         deps,
+		apiKey:       key,
+		blobs:        blobs,
+		tokens:       tokens,
+		devices:      newDeviceStore(devicePath),
+		authLim:      newAuthLimiter(authFailMax, authFailWindow),
+		agents:       make(map[string]*appConn),
+		convs:        make(map[string]*convBinding),
+		bySession:    make(map[string]*convBinding),
+		clients:      make(map[*wsClient]struct{}),
+		prompts:      make(map[string]*convBinding),
+		batchPrompts: make(map[string]*batchPrompt),
 	}
 	if appCfg != nil {
 		h.host = appCfg.Host
@@ -818,6 +832,37 @@ func (h *Hub) deletePrompt(promptID string) {
 	h.mu.Unlock()
 }
 
+// --- batched interactive prompt registry (multi-question asks, app only) ---
+//
+// A batched ask registers ONE callback keyed by the form's promptID; the app's
+// single InteractiveResponse.Answers reply fires it with every answer at once.
+// Distinct from the single-prompt registry above (which routes through the
+// process-global platform imStore); batched callbacks live only here.
+//
+// Entries survive a socket disconnect on purpose: the app replays the buffered
+// form on reconnect and a later submit must still route. An ask that is never
+// answered leaks its entry until process exit — bounded by the (rare) count of
+// unanswered batched asks, which the ask layer's 24h TTL caps in practice.
+
+func (h *Hub) registerBatchPrompt(promptID string, b *convBinding, onResp func(answers []string)) {
+	h.mu.Lock()
+	h.batchPrompts[promptID] = &batchPrompt{b: b, onResp: onResp}
+	h.mu.Unlock()
+}
+
+func (h *Hub) batchPromptByID(promptID string) (*batchPrompt, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	bp, ok := h.batchPrompts[promptID]
+	return bp, ok
+}
+
+func (h *Hub) deleteBatchPrompt(promptID string) {
+	h.mu.Lock()
+	delete(h.batchPrompts, promptID)
+	h.mu.Unlock()
+}
+
 func (h *Hub) addClient(c *wsClient) {
 	h.mu.Lock()
 	h.clients[c] = struct{}{}
@@ -1054,7 +1099,37 @@ type wsClient struct {
 	mu       sync.Mutex
 	agentID  string                  // socket's bound agent (set on conversation.open / first message)
 	deviceID string                  // from the client hello
+	features map[string]struct{}     // advertised client capabilities (from the hello)
 	convByID map[string]*convBinding // conversationId → binding
+}
+
+// hasFeature reports whether this socket's client advertised feat in its hello.
+func (c *wsClient) hasFeature(feat string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.features[feat]
+	return ok
+}
+
+// clientHasFeature reports whether the binding's currently-attached socket
+// advertised feat. False when offline (no socket) — callers treat that as "can't".
+func (b *convBinding) clientHasFeature(feat string) bool {
+	b.mu.Lock()
+	c := b.client
+	b.mu.Unlock()
+	return c != nil && c.hasFeature(feat)
+}
+
+// featureSet builds a lookup set from the hello's advertised feature list.
+func featureSet(feats []string) map[string]struct{} {
+	if len(feats) == 0 {
+		return nil
+	}
+	m := make(map[string]struct{}, len(feats))
+	for _, f := range feats {
+		m[f] = struct{}{}
+	}
+	return m
 }
 
 func newWsClient(ws *websocket.Conn, h *Hub) *wsClient {

@@ -52,6 +52,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.ClientHello:
 		client.mu.Lock()
 		client.deviceID = f.Client.DeviceID
+		client.features = featureSet(f.Features)
 		client.mu.Unlock()
 		// A master-key socket learns its deviceId here; evict any older socket for
 		// the same device (wire §9, close 4409) so a reconnecting phone never ends
@@ -115,6 +116,17 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 // new question. So if the binding's seq advanced during the callback, we leave
 // the prompt and its registration untouched.
 func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveResponse) {
+	// Batched (multi-question) reply: the app returns every answer at once in
+	// Answers. Route it to the batched-ask callback and skip the single-prompt
+	// machinery (no per-question edit; the app resolves its own form on submit).
+	if len(f.Answers) > 0 {
+		if bp, ok := h.batchPromptByID(f.PromptID); ok {
+			h.deleteBatchPrompt(f.PromptID)
+			bp.onResp(f.Answers)
+		}
+		return
+	}
+
 	client.mu.Lock()
 	b := client.convByID[f.ConversationID]
 	client.mu.Unlock()

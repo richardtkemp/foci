@@ -320,6 +320,29 @@ type ButtonSender interface {
 	EditMessageWithButtons(msgID string, text string, buttons []ButtonChoice, callbackPrefix string) error
 }
 
+// BatchQuestion is one question within a batched interactive prompt. Text is the
+// already-formatted question markdown; Choices are the option buttons (empty ⇒
+// typed-answer-only). The button Data carries the unprefixed "qa:<index>" token —
+// the answer's POSITION in the reply identifies its question.
+type BatchQuestion struct {
+	Text    string
+	Choices []ButtonChoice
+}
+
+// BatchButtonSender is optionally implemented by Connection types that can render
+// MULTIPLE questions as a single interactive form and return all answers at once
+// (currently only the native app). It is the batched counterpart to ButtonSender;
+// transports that do not implement it keep the sequential one-question-at-a-time
+// flow unchanged.
+type BatchButtonSender interface {
+	// SendInteractiveBatch presents every question as one form under promptID and
+	// arranges onResponse to fire ONCE with one raw answer per question
+	// (positional). It returns batched=false when the live client cannot batch
+	// (offline, or it did not advertise the "interactiveBatch" capability), so the
+	// caller falls back to sequential presentation.
+	SendInteractiveBatch(promptID string, questions []BatchQuestion, onResponse func(answers []string)) (batched bool, err error)
+}
+
 // ConnectionManager manages platform connection instances and facet pools.
 type ConnectionManager interface {
 	Primary(agentID string) Connection

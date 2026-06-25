@@ -51,9 +51,10 @@ type appConn struct {
 }
 
 var (
-	_ platform.Connection   = (*appConn)(nil)
-	_ platform.ButtonSender = (*appConn)(nil)
-	_ agent.Driver          = (*appConn)(nil)
+	_ platform.Connection        = (*appConn)(nil)
+	_ platform.ButtonSender      = (*appConn)(nil)
+	_ platform.BatchButtonSender = (*appConn)(nil)
+	_ agent.Driver               = (*appConn)(nil)
 )
 
 // errNoBinding is returned by ButtonSender sends when the prompt's conversation
@@ -314,6 +315,36 @@ func (c *appConn) SendTextWithButtons(text string, buttons []platform.ButtonChoi
 		ExpiresAt:      time.Now().Add(defaultPromptTTL).Format(time.RFC3339),
 	})
 	return promptID, nil
+}
+
+// SendInteractiveBatch emits ONE `interactive` frame carrying every question of
+// a multi-question ask, for clients that advertised the "interactiveBatch"
+// capability. The app renders a single form and replies with one
+// InteractiveResponse.Answers (all answers, positional), routed back via the
+// hub's batched-prompt registry. Returns batched=false when it can't batch — no
+// live socket, or the client didn't advertise the capability — so the ask layer
+// falls back to the sequential SendTextWithButtons path. Implements
+// platform.BatchButtonSender.
+func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.BatchQuestion, onResponse func(answers []string)) (bool, error) {
+	b := c.hub.bindingForSession(c.SessionKey())
+	if b == nil {
+		return false, nil // offline → caller uses the sequential path
+	}
+	if !b.clientHasFeature(featureInteractiveBatch) {
+		return false, nil // legacy/uncapable client → sequential one-at-a-time
+	}
+	c.hub.registerBatchPrompt(promptID, b, onResponse)
+	qs := make([]fap.Question, len(questions))
+	for i, q := range questions {
+		qs[i] = fap.Question{Text: q.Text, Choices: toChoices(q.Choices)}
+	}
+	b.send(fap.Interactive{
+		ConversationID: b.convID,
+		PromptID:       promptID,
+		Questions:      qs,
+		ExpiresAt:      time.Now().Add(defaultPromptTTL).Format(time.RFC3339),
+	})
+	return true, nil
 }
 
 // EditMessageText replaces a prompt's text and removes its buttons. Terminal:

@@ -174,6 +174,18 @@ type Choice struct {
 	Row   int    `json:"row,omitempty"`
 }
 
+// Question is one question within a BATCHED interactive prompt (app only). When
+// Interactive.Questions is non-empty the app renders every question as a single
+// form and returns one answer per question, positionally, in
+// InteractiveResponse.Answers. Text is the already-formatted markdown; Choices
+// carry the same "qa:<index>" data the single-question path uses, but unprefixed
+// — the answer's POSITION identifies its question, so no per-prompt routing token
+// is needed. Empty Choices ⇒ typed-answer-only question.
+type Question struct {
+	Text    string   `json:"text"`
+	Choices []Choice `json:"choices,omitempty"`
+}
+
 // --- Server -> App frame payloads (mirror Kotlin Frames.kt) ---
 
 // ServerFrame is implemented by every server->app payload. Type returns the
@@ -273,6 +285,12 @@ type Interactive struct {
 	Text           string   `json:"text"`
 	Choices        []Choice `json:"choices,omitempty"`
 	ExpiresAt      string   `json:"expiresAt,omitempty"`
+	// Questions, when non-empty, makes this a BATCHED prompt: the app renders all
+	// questions as one form and replies with one InteractiveResponse carrying an
+	// answer per question in Answers (positional). Only sent to clients that
+	// advertised the "interactiveBatch" feature in their ClientHello; Text/Choices
+	// stay empty in that case. Legacy/uncapable clients never receive this field.
+	Questions []Question `json:"questions,omitempty"`
 }
 
 func (Interactive) Type() string { return TypeInteractive }
@@ -333,6 +351,12 @@ type ClientHello struct {
 	Client    ClientInfo    `json:"client"`
 	Resume    []ResumePoint `json:"resume,omitempty"`
 	PushToken string        `json:"pushToken,omitempty"`
+	// Features are the optional client capabilities the app supports, mirroring
+	// the server's Caps.Features. "interactiveBatch" ⇒ the app can render a
+	// batched multi-question prompt and return all answers at once; absent ⇒ the
+	// server keeps presenting questions one at a time (back-compat). Any unknown
+	// feature is ignored.
+	Features []string `json:"features,omitempty"`
 }
 
 // ClientMessage is a user message from the app.
@@ -350,11 +374,17 @@ type Command struct {
 	Args           string `json:"args,omitempty"`
 }
 
-// InteractiveResponse is a button tap / typed answer to a prompt.
+// InteractiveResponse is a button tap / typed answer to a prompt. For a single
+// question the answer is in Data. For a BATCHED prompt (server sent
+// Interactive.Questions) the app instead fills Answers with one entry per
+// question, in the same order — each the chosen Choice.Data ("qa:<index>") or a
+// typed string. Data stays empty for batched replies; Answers stays empty for
+// single ones, so the server routes on which is set.
 type InteractiveResponse struct {
-	ConversationID string `json:"conversationId"`
-	PromptID       string `json:"promptId"`
-	Data           string `json:"data"`
+	ConversationID string   `json:"conversationId"`
+	PromptID       string   `json:"promptId"`
+	Data           string   `json:"data,omitempty"`
+	Answers        []string `json:"answers,omitempty"`
 }
 
 // ConversationOpen creates/opens a conversation for an agent.

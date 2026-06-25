@@ -39,6 +39,43 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 	}
 }
 
+// newAskPresentBatchFn builds the BATCHED presenter for the foci-native `ask`
+// tool: when the answering connection is the native app (a platform.BatchButtonSender)
+// AND that client advertised the "interactiveBatch" capability, it posts EVERY
+// question as one on-screen form and invokes onResponse once with all answers.
+// It returns false — telling the ask layer to fall back to the sequential
+// presenter — for any other transport (Telegram/Discord don't implement
+// BatchButtonSender) or when the app client is offline/uncapable. So chat
+// platforms and legacy app clients keep the one-question-at-a-time flow unchanged.
+func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager) tools.AskPresentBatchFn {
+	return func(sessionKey, promptID string, qs []question.Question, onResponse func(answers []string)) bool {
+		conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+		bs, ok := conn.(platform.BatchButtonSender)
+		if !ok {
+			return false // not the app (or no addressable conn) — sequential
+		}
+		questions := make([]platform.BatchQuestion, len(qs))
+		for i := range qs {
+			q := &qs[i]
+			choices := question.Choices(q)
+			buttons := make([]platform.ButtonChoice, len(choices))
+			for j, c := range choices {
+				buttons[j] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
+			}
+			questions[i] = platform.BatchQuestion{
+				Text:    question.FormatText(q, i, len(qs)),
+				Choices: buttons,
+			}
+		}
+		batched, err := bs.SendInteractiveBatch(promptID, questions, onResponse)
+		if err != nil {
+			log.Warnf("ask", "present batched questions for session=%s failed: %v", sessionKey, err)
+			return false
+		}
+		return batched
+	}
+}
+
 // newAskRestoreFn builds the restore hook for the foci-native `ask` tool. After a
 // restart the question's buttons still live on the platform (the message survived
 // in the chat), but foci's in-memory routing entry was lost. This re-registers
