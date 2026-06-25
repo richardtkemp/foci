@@ -1432,6 +1432,17 @@ file is persistent (keyed by agent ID, no TTL/reaper). The path comes from
 The `hello` roster (`agentRoster` → `fap.AgentInfo`) advertises `avatarUrl`
 (`/app/avatar/<id>`) + `avatarVer` (a mtime+size fingerprint, drives client cache
 invalidation) when the file exists; `avatar` still carries the emoji fallback.
+Each `AgentInfo` also carries `commands` (`[]fap.CommandInfo`: `name`,
+`description`, `category`) — the agent's slash-command palette, built by
+`commandInfos(conn)` from the connection's `command.Registry.All()`, skipping
+`Hidden` commands. This mirrors the Telegram `setMyCommands` menu
+(`bot_poll.go:RegisterCommands`): the server is authoritative for the
+descriptions, so the app renders what it receives rather than hardcoding its
+own copies. Dynamic `Visible` gating is intentionally not evaluated (no
+per-session request context at roster-build time) — the full non-hidden set is
+advertised and each command no-ops when invoked out of context, exactly as on
+Telegram. The list rides the existing `hello`/`conversation.open` roster
+frames, so it refreshes whenever the roster does; no dedicated frame type.
 
 **Auth hardening (`devices.go`, slice 7):** the shared master key (`app.api_key`)
 remains the bootstrap, but a device pairs once (`POST /app/pair`, master-key only)

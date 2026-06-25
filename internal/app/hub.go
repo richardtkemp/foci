@@ -578,6 +578,32 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 			ID: id, Name: name, Avatar: emoji,
 			AvatarURL: avatarURL, AvatarVer: avatarVer,
 			Conversations: convs,
+			Commands:      commandInfos(h.agents[id]),
+		})
+	}
+	return out
+}
+
+// commandInfos builds the app-facing command palette for an agent connection:
+// every non-hidden command's name, description and category, mirroring the
+// Telegram setMyCommands menu (bot_poll.go RegisterCommands). It is lock-free —
+// the caller (agentRoster) already holds h.mu, and a Registry's command set is
+// populated once at startup and never mutated, so All() is safe to read here.
+// Returns nil for a connection with no registry (e.g. bare test agents), which
+// JSON-omits the field.
+func commandInfos(conn *appConn) []fap.CommandInfo {
+	if conn == nil || conn.commands == nil {
+		return nil
+	}
+	var out []fap.CommandInfo
+	for _, c := range conn.commands.All() {
+		if c.Hidden {
+			continue
+		}
+		out = append(out, fap.CommandInfo{
+			Name:        c.Name,
+			Description: c.Description,
+			Category:    c.Category,
 		})
 	}
 	return out
