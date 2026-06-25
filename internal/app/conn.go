@@ -29,10 +29,18 @@ const defaultPromptTTL = 24 * time.Hour
 // machinery renders native buttons via `interactive` frames and routes taps back
 // through platform.HandleInteractiveCallback — see dispatch.go and the
 // SendTextWithButtons/EditMessage* methods below.
+// agentCore is the slice of *agent.Agent the app provider drives. Narrowing it
+// to an interface keeps the inbound dispatch path (routeUserTurn) and the meta
+// status chips testable with a fake, without constructing a full Agent.
+type agentCore interface {
+	Enqueue(agent.Envelope)
+	MetaStatus(sessionKey string) (manaPct *int, manaState, gap string)
+}
+
 type appConn struct {
 	hub      *Hub
 	agentID  string
-	agentRef *agent.Agent
+	agentRef agentCore
 	commands *command.Registry
 	cmdCtx   command.CommandContext
 	stt      voice.STT // inbound voice transcription; nil = unsupported

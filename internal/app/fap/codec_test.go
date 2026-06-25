@@ -147,6 +147,70 @@ func TestDecode_InteractiveResponse(t *testing.T) {
 	}
 }
 
+func TestDecode_ClientHello(t *testing.T) {
+	wire := `{"t":"hello","id":"h1","d":{"client":{"app":"foci","os":"android","version":"1.0","deviceId":"dev-9"},"pushToken":"ptok","resume":[{"conversationId":"c1","ack":7}]}}`
+	in, err := Decode(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hello, ok := in.Frame.(ClientHello)
+	if !ok {
+		t.Fatalf("frame type = %T, want ClientHello", in.Frame)
+	}
+	if hello.Client.DeviceID != "dev-9" || hello.PushToken != "ptok" {
+		t.Errorf("client/pushToken wrong: %+v", hello)
+	}
+	if len(hello.Resume) != 1 || hello.Resume[0].ConversationID != "c1" || hello.Resume[0].Ack != 7 {
+		t.Errorf("resume points wrong: %+v", hello.Resume)
+	}
+}
+
+func TestDecode_Command(t *testing.T) {
+	in, err := Decode(`{"t":"command","id":"x","d":{"conversationId":"c1","name":"help","args":"foo"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd, ok := in.Frame.(Command)
+	if !ok {
+		t.Fatalf("frame type = %T, want Command", in.Frame)
+	}
+	if cmd.Name != "help" || cmd.Args != "foo" || cmd.ConversationID != "c1" {
+		t.Errorf("command decoded wrong: %+v", cmd)
+	}
+}
+
+func TestDecode_ConversationOpen(t *testing.T) {
+	in, err := Decode(`{"t":"conversation.open","id":"x","d":{"agentId":"ag","sessionKey":"ag/work/1"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	co, ok := in.Frame.(ConversationOpen)
+	if !ok {
+		t.Fatalf("frame type = %T, want ConversationOpen", in.Frame)
+	}
+	if co.AgentID != "ag" || co.SessionKey != "ag/work/1" {
+		t.Errorf("conversation.open decoded wrong: %+v", co)
+	}
+}
+
+func TestDecode_ClientTypingAndRead(t *testing.T) {
+	in, err := Decode(`{"t":"typing","id":"x","d":{"conversationId":"c1","on":true}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ty, ok := in.Frame.(ClientTyping); !ok || !ty.On || ty.ConversationID != "c1" {
+		t.Errorf("typing decoded wrong: %#v", in.Frame)
+	}
+
+	in, err = Decode(`{"t":"read","id":"x","d":{"conversationId":"c1","messageId":"m9"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rd, ok := in.Frame.(Read); !ok || rd.MessageID != "m9" || rd.ConversationID != "c1" {
+		t.Errorf("read decoded wrong: %#v", in.Frame)
+	}
+}
+
 func TestDecode_UnknownFrameIsIgnoredNotFatal(t *testing.T) {
 	in, err := Decode(`{"t":"future.frame","id":"a","d":{"whatever":1}}`)
 	if err != nil {
@@ -212,7 +276,10 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ServerMessage{ConversationID: "c", MessageID: "m", Role: "agent", Text: "hi"},
 		Notification{ConversationID: "c", Text: "n", Level: "info"},
 		Typing{ConversationID: "c", On: true},
-		Meta{ConversationID: "c", Model: "opus", ManaPct: &mana, PrevCostUsd: &cost, Tokens: &Tokens{In: 1}},
+		Media{ConversationID: "c", MessageID: "m", BlobID: "b", Kind: MediaPhoto, MIME: "image/png"},
+		Interactive{ConversationID: "c", PromptID: "p", Text: "ok?", Choices: []Choice{{Label: "Y", Data: "p:0"}}, ExpiresAt: "2026-01-01T00:00:00Z"},
+		InteractiveEdit{ConversationID: "c", PromptID: "p", Text: "done"},
+		Meta{ConversationID: "c", Model: "opus", ManaPct: &mana, ManaState: "good", Gap: "5m", PrevCostUsd: &cost, Tokens: &Tokens{In: 1}},
 		SessionUpdate{ConversationID: "c", SessionKey: "ag/capp1/9", Reason: "compaction"},
 		ErrorFrame{Code: "boom", Message: "bad"},
 		Pong{},
