@@ -66,8 +66,8 @@ func (p *appProvider) SetupAgentConnection(params platform.AgentConnectionParams
 
 // The app provider does not (yet) support shared facets, facet restore, or
 // per-agent lifecycle callbacks — these are no-ops.
-func (p *appProvider) SetupSharedFacet(platform.SharedFacetParams)                {}
-func (p *appProvider) RestoreFacetSessions(platform.RestoreParams)                {}
+func (p *appProvider) SetupSharedFacet(platform.SharedFacetParams)                  {}
+func (p *appProvider) RestoreFacetSessions(platform.RestoreParams)                  {}
 func (p *appProvider) SetLifecycleCallback(string, platform.LifecycleEvent, func()) {}
 
 func (p *appProvider) ToolDetailStore() platform.ToolDetailStore { return nil }
@@ -82,7 +82,7 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 	streamOn := true
 	startupNotify := false
 	return config.PlatformConfig{
-		ID: "app",
+		ID:     "app",
 		Notify: config.NotifyConfig{StartupNotify: &startupNotify},
 		Display: config.DisplayConfig{
 			ShowToolCalls: &off,

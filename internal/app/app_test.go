@@ -137,6 +137,7 @@ func newTestHub() *Hub {
 	return &Hub{
 		deps:      platform.ProviderDeps{},
 		agents:    make(map[string]*appConn),
+		convs:     make(map[string]*convBinding),
 		bySession: make(map[string]*convBinding),
 		clients:   make(map[*wsClient]struct{}),
 		prompts:   make(map[string]*convBinding),
@@ -348,6 +349,159 @@ func TestRemoveClient_PurgesPrompts(t *testing.T) {
 	h.removeClient(c)
 	if h.bindingForPrompt("p1") != nil {
 		t.Errorf("prompt registration should be purged on disconnect")
+	}
+}
+
+// --- slice 3: reliability (seq / ack / replay / dedup) ---
+
+type envFrame struct {
+	t   string
+	seq int64
+	ack int64
+}
+
+// drainEnv decodes queued frames capturing envelope seq/ack (not just payload).
+func drainEnv(t *testing.T, c *wsClient) []envFrame {
+	t.Helper()
+	var out []envFrame
+	for {
+		select {
+		case b := <-c.send:
+			var env struct {
+				T   string `json:"t"`
+				Seq int64  `json:"seq"`
+				Ack int64  `json:"ack"`
+			}
+			if err := json.Unmarshal(b, &env); err != nil {
+				t.Fatalf("bad wire frame: %v", err)
+			}
+			out = append(out, envFrame{t: env.T, seq: env.Seq, ack: env.Ack})
+		default:
+			return out
+		}
+	}
+}
+
+func TestReliability_SeqSurvivesReconnect(t *testing.T) {
+	h := newTestHub()
+	c1 := fakeClient()
+	c1.hub = h
+	b := h.ensureBinding(c1, "ag", "conv-1")
+	b.send(fap.Typing{ConversationID: "conv-1", On: true})  // seq 1
+	b.send(fap.Typing{ConversationID: "conv-1", On: false}) // seq 2
+	drainEnv(t, c1)
+
+	h.removeClient(c1) // disconnect; durable state survives
+	c2 := fakeClient()
+	c2.hub = h
+	b2 := h.ensureBinding(c2, "ag", "conv-1")
+	if b2 != b {
+		t.Fatalf("reconnect must reuse the durable binding")
+	}
+	b2.send(fap.Typing{ConversationID: "conv-1", On: true}) // seq must continue at 3
+	ds := drainEnv(t, c2)
+	if len(ds) != 1 || ds[0].seq != 3 {
+		t.Fatalf("post-reconnect frames = %v, want one frame at seq 3", ds)
+	}
+}
+
+func TestReliability_ReplayOnResume(t *testing.T) {
+	h := newTestHub()
+	c1 := fakeClient()
+	c1.hub = h
+	b := h.ensureBinding(c1, "ag", "conv-1")
+	for i := 0; i < 3; i++ {
+		b.send(fap.Typing{ConversationID: "conv-1", On: true}) // seq 1,2,3
+	}
+	drainEnv(t, c1)
+	h.removeClient(c1)
+
+	// Reconnect: the client rendered up to seq 1, so resume replays 2 and 3.
+	c2 := fakeClient()
+	c2.hub = h
+	h.resumeConversations(c2, []fap.ResumePoint{{ConversationID: "conv-1", Ack: 1}})
+	ds := drainEnv(t, c2)
+	if len(ds) != 2 || ds[0].seq != 2 || ds[1].seq != 3 {
+		t.Fatalf("replay = %v, want frames at seq [2 3]", ds)
+	}
+}
+
+func TestReliability_OfflineBuffersThenReplays(t *testing.T) {
+	h := newTestHub()
+	c1 := fakeClient()
+	c1.hub = h
+	b := h.ensureBinding(c1, "ag", "conv-1")
+	h.removeClient(c1) // offline: binding detached but retained
+
+	b.send(fap.ServerMessage{ConversationID: "conv-1", MessageID: "m1", Role: "agent", Text: "queued offline"})
+
+	c2 := fakeClient()
+	c2.hub = h
+	h.resumeConversations(c2, []fap.ResumePoint{{ConversationID: "conv-1", Ack: 0}})
+	ds := drain(t, c2)
+	if len(ds) != 1 || ds[0].t != fap.TypeMessage || ds[0].d["text"] != "queued offline" {
+		t.Fatalf("offline frame must replay on resume, got %v", types(ds))
+	}
+}
+
+func TestReliability_InboundDedup(t *testing.T) {
+	b := &convBinding{convID: "c1", seen: make(map[string]struct{})}
+	if !b.acceptInbound("id-1", 1) {
+		t.Fatal("first frame must be accepted")
+	}
+	if b.acceptInbound("id-1", 1) {
+		t.Fatal("duplicate id must be rejected")
+	}
+	if !b.acceptInbound("id-2", 2) {
+		t.Fatal("new id must be accepted")
+	}
+	if b.clientSeqHW != 2 {
+		t.Errorf("clientSeqHW = %d, want 2", b.clientSeqHW)
+	}
+}
+
+func TestReliability_OutboundAckStampsClientSeq(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
+	b.acceptInbound("u1", 7) // client's outbound seq high-water is 7
+	b.send(fap.Typing{ConversationID: "c1", On: true})
+	ds := drainEnv(t, c)
+	if len(ds) != 1 || ds[0].ack != 7 {
+		t.Fatalf("outbound ack = %v, want 7 (client seq high-water)", ds)
+	}
+}
+
+func TestReliability_AckTrimsBuffer(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
+	for i := 0; i < 5; i++ {
+		b.send(fap.Typing{ConversationID: "c1", On: true}) // seq 1..5
+	}
+	drainEnv(t, c)
+	b.ackInbound(3)
+	b.mu.Lock()
+	n, first := len(b.buffer), b.buffer[0].seq
+	b.mu.Unlock()
+	if n != 2 || first != 4 {
+		t.Errorf("after ack(3): %d frames starting seq %d, want 2 frames from seq 4", n, first)
+	}
+}
+
+func TestReliability_BufferTrimsByDepth(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
+	for i := 0; i < replayBufferDepth+50; i++ {
+		b.send(fap.Typing{ConversationID: "c1", On: true})
+	}
+	drainEnv(t, c)
+	b.mu.Lock()
+	n, first := len(b.buffer), b.buffer[0].seq
+	b.mu.Unlock()
+	if n != replayBufferDepth {
+		t.Errorf("buffer depth = %d, want %d", n, replayBufferDepth)
+	}
+	if first != 51 { // seq 1..50 dropped, 51..1050 retained
+		t.Errorf("oldest retained seq = %d, want 51", first)
 	}
 }
 
