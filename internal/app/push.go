@@ -134,7 +134,7 @@ func (p *fcmPusher) notify(convID, preview string) {
 	p.mu.Unlock()
 
 	for _, tok := range p.tokens.all() {
-		go p.send(tok, convID, preview)
+		safeGo("fcm-push", func() { p.send(tok, convID, preview) })
 	}
 }
 
