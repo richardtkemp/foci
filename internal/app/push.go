@@ -197,7 +197,7 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 		if f.Caption != "" {
 			return truncatePreview(f.Caption), true
 		}
-		return "Sent " + f.Kind, true
+		return "Sent " + mediaNoun(f.MIME), true
 	case fap.Notification:
 		return truncatePreview(f.Text), true
 	case fap.Interactive:
@@ -205,6 +205,21 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 	default:
 		// typing, meta, turn.start, text.delta, session.update, error, pong
 		return "", false
+	}
+}
+
+// mediaNoun returns a short human noun for a media MIME, for push previews.
+// Derived from the MIME top-level type — the Media frame no longer carries a kind.
+func mediaNoun(mime string) string {
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return "a photo"
+	case strings.HasPrefix(mime, "audio/"):
+		return "audio"
+	case strings.HasPrefix(mime, "video/"):
+		return "a video"
+	default:
+		return "a file"
 	}
 }
 

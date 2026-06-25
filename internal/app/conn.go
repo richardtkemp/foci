@@ -284,7 +284,6 @@ func (c *appConn) emitMedia(b *convBinding, meta *blobMeta, caption string) {
 		ConversationID: b.convID,
 		MessageID:      fap.NewULID(),
 		BlobID:         meta.id,
-		Kind:           meta.kind,
 		MIME:           meta.mime,
 		Name:           meta.name,
 		Caption:        caption,

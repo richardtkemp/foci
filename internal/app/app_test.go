@@ -750,7 +750,7 @@ func TestSendPhoto_StoresBlobAndEmitsMedia(t *testing.T) {
 		t.Fatalf("frames = %v, want [media]", types(ds))
 	}
 	d := ds[0].d
-	if d["kind"] != "photo" || d["caption"] != "nice pic" {
+	if d["mime"] != "image/png" || d["caption"] != "nice pic" {
 		t.Errorf("media payload = %v", d)
 	}
 	blobID, _ := d["blobId"].(string)
@@ -858,8 +858,9 @@ func TestPushPreview_Classification(t *testing.T) {
 		{fap.ServerMessage{Text: "hello"}, true, "hello"},
 		{fap.TextEnd{FinalText: &final}, true, "the answer"},
 		{fap.TextEnd{}, true, "New message"},
-		{fap.Media{Kind: "photo"}, true, "Sent photo"},
-		{fap.Media{Kind: "photo", Caption: "cap"}, true, "cap"},
+		{fap.Media{MIME: "image/png"}, true, "Sent a photo"},
+		{fap.Media{MIME: "image/png", Caption: "cap"}, true, "cap"},
+		{fap.Media{MIME: "application/pdf"}, true, "Sent a file"},
 		{fap.Notification{Text: "note"}, true, "note"},
 		{fap.Interactive{Text: "approve?"}, true, "approve?"},
 		{fap.Typing{On: true}, false, ""},

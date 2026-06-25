@@ -1420,7 +1420,8 @@ assigns seq + ack, buffers for replay, and enqueues iff a socket is attached.
 **Media / blobs (`blob.go`, slice 4):** binary payloads never cross the
 WebSocket. `blobStore` keeps blobs on disk under `tempdir.Dir()/app-blobs`
 (metadata in memory; size-capped + TTL-reaped). Outbound: a `Send*` media call
-→ `putFile`/`putBytes` → `media {blobId,kind,mime,…}`; the app fetches bytes via
+→ `putFile`/`putBytes` → `media {blobId,mime,…}` (no `kind` — app clients derive
+presentation from `mime`; kind is an internal blob/Telegram-method label only); the app fetches bytes via
 `GET /app/blob/<id>` (`ServeBlobGet`, range-capable `http.ServeContent`).
 Inbound: the app uploads via `POST /app/blob` (`ServeBlobPost`, returns
 `{blobId,size,mime}`), then references the blobId in `message.attachments`;

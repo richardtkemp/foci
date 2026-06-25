@@ -155,7 +155,10 @@ type AttachmentRef struct {
 	Name   string `json:"name,omitempty"`
 }
 
-// Media kinds (wire-protocol §9), mirroring Kotlin MediaKind.
+// Media kinds: internal labels for blob storage and for selecting the Telegram
+// send-method (sendPhoto/sendDocument/sendVoice/…). These are NOT part of the app
+// wire protocol — the Media frame carries only `mime`, and app clients derive
+// presentation from that. Kind is a delivery-sink concern, not a content type.
 const (
 	MediaPhoto     = "photo"
 	MediaDocument  = "document"
@@ -263,7 +266,6 @@ type Media struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
 	BlobID         string `json:"blobId"`
-	Kind           string `json:"kind"`
 	MIME           string `json:"mime"`
 	Name           string `json:"name,omitempty"`
 	Caption        string `json:"caption,omitempty"`
