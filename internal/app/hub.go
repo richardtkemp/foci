@@ -48,6 +48,8 @@ type Hub struct {
 	deps   platform.ProviderDeps
 	apiKey string
 	blobs  *blobStore
+	tokens *pushTokens
+	pusher *fcmPusher
 
 	mu         sync.RWMutex
 	agents     map[string]*appConn     // agentID → its connection
@@ -68,10 +70,12 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	if key == "" {
 		log.Warnf("app", "no app.api_key secret — /app/ws endpoint will reject all connections until one is set")
 	}
+	tokens := newPushTokens()
 	h := &Hub{
 		deps:      deps,
 		apiKey:    key,
 		blobs:     newBlobStore(),
+		tokens:    tokens,
 		agents:    make(map[string]*appConn),
 		convs:     make(map[string]*convBinding),
 		bySession: make(map[string]*convBinding),
@@ -80,8 +84,34 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	}
 	if deps.Ctx != nil {
 		go h.blobs.reaper(deps.Ctx)
+		// Offline wake-push via FCM. The service-account JSON path is read from
+		// the secret app.fcm_credentials; absent → push stays disabled. (Proper
+		// [platforms.app] config lands with the config slice.)
+		fcmPath := ""
+		if deps.SecretStore != nil {
+			if v, ok := deps.SecretStore.Get("app.fcm_credentials"); ok {
+				fcmPath = strings.TrimSpace(v)
+			}
+		}
+		h.pusher = newFCMPusher(deps.Ctx, fcmPath, tokens)
 	}
 	return h
+}
+
+// pushNotify fires a coalesced offline wake push for a conversation (no-op when
+// push is unconfigured). Used as convBinding.notifyOffline.
+func (h *Hub) pushNotify(convID, preview string) {
+	h.pusher.notify(convID, preview)
+}
+
+// caps reports the server capability set advertised in `hello`, including the
+// push transports available.
+func (h *Hub) caps() fap.Caps {
+	c := fap.Caps{Versions: []int{fap.ProtocolVersion}}
+	if h.pusher != nil {
+		c.Push = []string{"fcm"}
+	}
+	return c
 }
 
 // bearerToken extracts the Bearer credential from a request, or "" if absent.
@@ -237,7 +267,7 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		existing.attach(client)
 		return existing
 	}
-	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, seen: make(map[string]struct{})}
+	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
 	h.convs[convID] = b
 	h.bySession[sk] = b
 	h.mu.Unlock()
@@ -358,6 +388,8 @@ type convBinding struct {
 	agentID    string
 	chatID     int64
 
+	notifyOffline func(convID, preview string) // fires a wake push for offline visible frames; nil = no push
+
 	mu          sync.Mutex
 	client      *wsClient           // current socket; nil when offline
 	seq         int64               // server→app outbound seq high-water
@@ -413,10 +445,19 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: time.Now()})
 	b.trimBufferLocked()
 	client := b.client
+	notify := b.notifyOffline
 	b.mu.Unlock()
 
 	if client != nil {
 		client.enqueue(wire)
+		return
+	}
+	// Offline: the frame is buffered for replay. Fire a coalesced wake push for
+	// user-visible content so the device reconnects and replays it.
+	if notify != nil {
+		if preview, ok := pushPreview(frame); ok {
+			notify(b.convID, preview)
+		}
 	}
 }
 

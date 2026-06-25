@@ -1318,8 +1318,8 @@ like telegram/discord, but a `Connection` is the server end of one device's
 WebSocket rather than a vendor-API client. Built: slice 1 ("echo": text + native
 streaming + status `meta`), slice 2 (interactive buttons → permission/ask/plan),
 slice 3 (reliability: per-conversation seq/ack/replay + reconnect resume + inbound
-dedup), slice 4 (media/blobs over HTTP). Push, multi-agent roster, per-device
-pairing tokens, and voice are later slices
+dedup), slice 4 (media/blobs over HTTP), slice 5 (FCM offline wake-push).
+Multi-agent roster, per-device pairing tokens, and voice are later slices
 (`foci-android/docs/02-foci-server-changes.md` §11).
 
 **Wire layer (`internal/app/fap/`):** pure Go mirror of the client's Kotlin
@@ -1394,6 +1394,19 @@ Inbound: the app uploads via `POST /app/blob` (`ServeBlobPost`, returns
 `resolveAttachments` reads each blob back into a `platform.Attachment`
 (small ones into `Data`, `SavedPath` always set). Both endpoints share the
 `bearerToken` + `app.api_key` gate; registered in `http.go` alongside `/app/ws`.
+
+**Push (`push.go`, slice 5):** offline wake via FCM v1 data-messages. `fcmPusher`
+authenticates with a service-account token source (`golang.org/x/oauth2/google`,
+auto-refreshing); the service-account JSON path comes from secret
+`app.fcm_credentials` (absent → push disabled; proper `[platforms.app]` config
+lands with the config slice). The client registers its FCM token in `ClientHello`
+→ `pushTokens` (in-memory deviceId→token, repopulated each connect). When
+`convBinding.send` runs with no attached socket, it buffers the frame and — for
+user-visible frames only (`pushPreview` classifies; control/streaming frames are
+skipped) — fires `notifyOffline` → `pusher.notify`, which coalesces (≤1 push per
+conversation per 15s window) and sends a hint (`conversationId` + short preview,
+never full text). The app wakes, reconnects, and replays for content. `hello.caps.push`
+advertises `["fcm"]` when enabled.
 
 **Streaming (`sink.go`):** `appConn.NewTurnSink` builds an `appSink`
 (`turnevent.Sink`) per turn, bound to the conversation. `TurnStart`→`typing on`;
