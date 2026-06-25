@@ -291,7 +291,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ServerMessage{ConversationID: "c", MessageID: "m", Role: "agent", Text: "hi"},
 		Notification{ConversationID: "c", Text: "n", Level: "info"},
 		Typing{ConversationID: "c", On: true},
-		Media{ConversationID: "c", MessageID: "m", BlobID: "b", Kind: MediaPhoto, MIME: "image/png"},
+		Media{ConversationID: "c", MessageID: "m", BlobID: "b", MIME: "image/png"},
 		Interactive{ConversationID: "c", PromptID: "p", Text: "ok?", Choices: []Choice{{Label: "Y", Data: "p:0"}}, ExpiresAt: "2026-01-01T00:00:00Z"},
 		InteractiveEdit{ConversationID: "c", PromptID: "p", Text: "done"},
 		Meta{ConversationID: "c", Model: "opus", ManaPct: &mana, ManaState: "good", Gap: "5m", PrevCostUsd: &cost, Tokens: &Tokens{In: 1}},
