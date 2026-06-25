@@ -108,6 +108,11 @@ func FormatText(q *Question, index, total int) string {
 	return b.String()
 }
 
+// OptionData returns the button-data token for the option at index i ("qa:<i>").
+// The batched-app presenter uses it to build option-only choices (no Cancel),
+// keeping the "qa:" convention in one place.
+func OptionData(i int) string { return dataPrefix + strconv.Itoa(i) }
+
 // Choices builds button choices for a question's options. Each option gets data
 // "qa:<index>"; a Cancel button (CancelData) is appended.
 func Choices(q *Question) []Choice {

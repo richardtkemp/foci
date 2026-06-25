@@ -175,17 +175,23 @@ type Choice struct {
 	Label string `json:"label"`
 	Data  string `json:"data"`
 	Row   int    `json:"row,omitempty"`
+	// Description is an optional sub-label for an ask option (mirrors
+	// AskUserQuestion's per-option description). Batched-app prompts only; the
+	// app renders it under the choice. Empty for permission/plan-approval buttons.
+	Description string `json:"description,omitempty"`
 }
 
 // Question is one question within a BATCHED interactive prompt (app only). When
 // Interactive.Questions is non-empty the app renders every question as a single
 // form and returns one answer per question, positionally, in
-// InteractiveResponse.Answers. Text is the already-formatted markdown; Choices
-// carry the same "qa:<index>" data the single-question path uses, but unprefixed
-// — the answer's POSITION identifies its question, so no per-prompt routing token
-// is needed. Empty Choices ⇒ typed-answer-only question.
+// InteractiveResponse.Answers. Text is the RAW question (the app renders its own
+// layout — header, counter, option buttons — rather than receiving pre-rendered
+// markdown). Header is an optional bold title. Choices carry "qa:<index>" data
+// (positional answers, so no per-prompt routing token) and NO Cancel button (the
+// app's full-screen form has its own Cancel). Empty Choices ⇒ typed-answer-only.
 type Question struct {
 	Text    string   `json:"text"`
+	Header  string   `json:"header,omitempty"`
 	Choices []Choice `json:"choices,omitempty"`
 }
 

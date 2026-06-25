@@ -54,26 +54,41 @@ func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager) to
 		if !ok {
 			return false // not the app (or no addressable conn) — sequential
 		}
-		questions := make([]platform.BatchQuestion, len(qs))
-		for i := range qs {
-			q := &qs[i]
-			choices := question.Choices(q)
-			buttons := make([]platform.ButtonChoice, len(choices))
-			for j, c := range choices {
-				buttons[j] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
-			}
-			questions[i] = platform.BatchQuestion{
-				Text:    question.FormatText(q, i, len(qs)),
-				Choices: buttons,
-			}
-		}
-		batched, err := bs.SendInteractiveBatch(promptID, questions, onResponse)
+		batched, err := bs.SendInteractiveBatch(promptID, batchQuestionsFor(qs), onResponse)
 		if err != nil {
 			log.Warnf("ask", "present batched questions for session=%s failed: %v", sessionKey, err)
 			return false
 		}
 		return batched
 	}
+}
+
+// batchQuestionsFor maps the ask layer's questions onto the app's batched-prompt
+// payload. The app renders its own layout, so each question carries STRUCTURED
+// fields — raw text, optional header, and per-option label+description — rather
+// than pre-rendered markdown. Option buttons get "qa:<index>" data and NO Cancel
+// button: the app's full-screen ask form supplies its own Cancel (chat platforms,
+// which DO need a per-question Cancel, take a separate sequential path via
+// question.Choices). An option-less question yields empty Choices (typed-only).
+func batchQuestionsFor(qs []question.Question) []platform.BatchQuestion {
+	questions := make([]platform.BatchQuestion, len(qs))
+	for i := range qs {
+		q := &qs[i]
+		buttons := make([]platform.ButtonChoice, len(q.Options))
+		for j, opt := range q.Options {
+			buttons[j] = platform.ButtonChoice{
+				Label:       opt.Label,
+				Data:        question.OptionData(j),
+				Description: opt.Description,
+			}
+		}
+		questions[i] = platform.BatchQuestion{
+			Text:    q.Question,
+			Header:  q.Header,
+			Choices: buttons,
+		}
+	}
+	return questions
 }
 
 // newAskRestoreFn builds the restore hook for the foci-native `ask` tool. After a
