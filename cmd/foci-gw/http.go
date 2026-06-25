@@ -172,13 +172,15 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	// registered whenever the app provider is configured with a key.
 	if app.Enabled() {
 		mux.HandleFunc("/app/ws", app.WSHandler())
-		mux.HandleFunc("/app/blob", app.BlobUploadHandler())    // POST: upload
-		mux.HandleFunc("/app/blob/", app.BlobDownloadHandler()) // GET /app/blob/<id>
-		mux.HandleFunc("/app/pair", app.PairHandler())          // POST: mint device token (master key)
-		mux.HandleFunc("/app/pair/revoke", app.RevokeHandler()) // POST: revoke a device (master key)
-		mux.HandleFunc("/app/devices", app.DevicesHandler())    // GET: list devices (master key)
-		endpointList += ", /app/ws (ws), /app/blob, /app/pair, /app/devices"
-		log.Infof("http", "/app/ws + /app/blob + /app/pair + /app/devices endpoints enabled")
+		mux.HandleFunc("/app/blob", app.BlobUploadHandler())            // POST: upload
+		mux.HandleFunc("/app/blob/", app.BlobDownloadHandler())         // GET /app/blob/<id>
+		mux.HandleFunc("/app/pair", app.PairHandler())                  // POST: mint device token (master key)
+		mux.HandleFunc("/app/pair/revoke", app.RevokeHandler())         // POST: revoke a device (master key)
+		mux.HandleFunc("/app/devices", app.DevicesHandler())            // GET: list devices (master key)
+		mux.HandleFunc("/app/push/register", app.PushRegisterHandler()) // POST: refresh FCM token
+		mux.HandleFunc("/app/history", app.HistoryHandler())            // GET: restart reconciliation
+		endpointList += ", /app/ws (ws), /app/blob, /app/pair, /app/devices, /app/push/register, /app/history"
+		log.Infof("http", "/app/ws + /app/blob + /app/pair + /app/devices + /app/push/register + /app/history endpoints enabled")
 	}
 
 	if d.reloadCredentials != nil {

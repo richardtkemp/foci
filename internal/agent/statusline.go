@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"foci/internal/display"
+	"foci/internal/mana"
 	"foci/internal/procx"
 	"foci/internal/timeutil"
 )
@@ -151,6 +152,30 @@ func manaIndicator(good bool) string {
 		return "🟢"
 	}
 	return "🔴"
+}
+
+// MetaStatus returns the status chips for a session that platforms with a
+// structured meta channel (the app provider's `meta` frame) render instead of
+// the text [meta] header: the mana percentage, a "good"/"low" mana state, and
+// the human-readable gap since the previous message. manaPct is nil when usage
+// data is unavailable (e.g. no UsageClient), so the field self-omits.
+func (a *Agent) MetaStatus(sessionKey string) (manaPct *int, manaState, gap string) {
+	pctStr, _, good := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
+	if pctStr != "" {
+		if v, err := strconv.ParseFloat(strings.TrimSuffix(pctStr, "%"), 64); err == nil {
+			p := int(v + 0.5)
+			manaPct = &p
+		}
+		if good {
+			manaState = "good"
+		} else {
+			manaState = "low"
+		}
+	}
+	if sm := a.getSessionMeta(sessionKey); sm != nil && !sm.lastMessageTime.IsZero() {
+		gap = display.FormatDuration(time.Since(sm.lastMessageTime))
+	}
+	return
 }
 
 // warnedStatuslineFields tracks unknown field names already logged, so an
