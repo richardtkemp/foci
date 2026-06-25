@@ -133,6 +133,54 @@ func TestAPIDB(t *testing.T) {
 	}
 }
 
+func TestReadAPIDBLog(t *testing.T) {
+	// Verifies ReadAPIDBLog returns all rows in chronological order with fields
+	// mapped, and that the timestamp round-trips through the RFC3339 storage.
+	// This is the durable source the /cost command reads so it survives restarts
+	// (api.jsonl is reset on each restart).
+	dbPath := filepath.Join(t.TempDir(), "test_api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	// Insert out of order to confirm ORDER BY ts ASC.
+	t1 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 3, 2, 11, 0, 0, 0, time.UTC)
+	apiLog.insert(APIEntry{Timestamp: t2, Session: "s/c/2", Model: "m", Input: 20, Output: 4, CostUSD: 0.02, CallType: "delegated_turn"})
+	apiLog.insert(APIEntry{Timestamp: t1, Session: "s/c/1", Model: "m", Input: 10, Output: 2, CacheRead: 5, CostUSD: 0.01, CallType: "conversation"})
+
+	got := ReadAPIDBLog()
+	if len(got) != 2 {
+		t.Fatalf("ReadAPIDBLog len = %d, want 2", len(got))
+	}
+	// Chronological order: t1 first.
+	if !got[0].Timestamp.Equal(t1) {
+		t.Errorf("entry[0].Timestamp = %v, want %v", got[0].Timestamp, t1)
+	}
+	if !got[1].Timestamp.Equal(t2) {
+		t.Errorf("entry[1].Timestamp = %v, want %v", got[1].Timestamp, t2)
+	}
+	if got[0].Session != "s/c/1" || got[0].Input != 10 || got[0].CacheRead != 5 || got[0].CostUSD != 0.01 {
+		t.Errorf("entry[0] fields mismatched: %+v", got[0])
+	}
+	if got[1].CostUSD != 0.02 || got[1].CallType != "delegated_turn" {
+		t.Errorf("entry[1] fields mismatched: %+v", got[1])
+	}
+}
+
+func TestReadAPIDBLogNilDB(t *testing.T) {
+	// When the db is not initialised, ReadAPIDBLog returns nil so callers fall
+	// back to the JSONL reader.
+	old := apiLog
+	apiLog = nil
+	defer func() { apiLog = old }()
+
+	if got := ReadAPIDBLog(); got != nil {
+		t.Errorf("ReadAPIDBLog() with nil db = %v, want nil", got)
+	}
+}
+
 func TestAPIDBDisabled(t *testing.T) {
 	// Verifies that API() is a no-op (no panic) when no DB is initialized.
 	old := apiLog
