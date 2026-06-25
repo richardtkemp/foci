@@ -1318,8 +1318,9 @@ like telegram/discord, but a `Connection` is the server end of one device's
 WebSocket rather than a vendor-API client. Built: slice 1 ("echo": text + native
 streaming + status `meta`), slice 2 (interactive buttons → permission/ask/plan),
 slice 3 (reliability: per-conversation seq/ack/replay + reconnect resume + inbound
-dedup). Media/blobs, push, multi-agent roster, per-device pairing tokens, and
-voice are later slices (`foci-android/docs/02-foci-server-changes.md` §11).
+dedup), slice 4 (media/blobs over HTTP). Push, multi-agent roster, per-device
+pairing tokens, and voice are later slices
+(`foci-android/docs/02-foci-server-changes.md` §11).
 
 **Wire layer (`internal/app/fap/`):** pure Go mirror of the client's Kotlin
 `:protocol` module. `Envelope{t,id,seq,ack,ts,v,d}` wraps a type-specific
@@ -1378,9 +1379,21 @@ binding's seq); `ping`→`pong`; unknown→ignored. No agent → `error` frame.
 `UpdateChatSessionKey`→remap binding + `session.update`. `SendTextWithButtons`→
 `interactive` (foci pre-encodes each button's Data as `<promptId>:<index>`, so the
 app echoes it back for routing); `EditMessageText`/`EditMessageWithButtons`→
-`interactive.edit` (addressed via the hub `prompts` map). Media methods return
-`errMediaUnsupported` (later slice). All sends go through `convBinding.send`,
-which assigns seq + ack, buffers for replay, and enqueues iff a socket is attached.
+`interactive.edit` (addressed via the hub `prompts` map). The `Send{Photo,Document,
+Voice,…}` media methods store the payload in the `blobStore` and emit a `media`
+frame referencing the blobId. All sends go through `convBinding.send`, which
+assigns seq + ack, buffers for replay, and enqueues iff a socket is attached.
+
+**Media / blobs (`blob.go`, slice 4):** binary payloads never cross the
+WebSocket. `blobStore` keeps blobs on disk under `tempdir.Dir()/app-blobs`
+(metadata in memory; size-capped + TTL-reaped). Outbound: a `Send*` media call
+→ `putFile`/`putBytes` → `media {blobId,kind,mime,…}`; the app fetches bytes via
+`GET /app/blob/<id>` (`ServeBlobGet`, range-capable `http.ServeContent`).
+Inbound: the app uploads via `POST /app/blob` (`ServeBlobPost`, returns
+`{blobId,size,mime}`), then references the blobId in `message.attachments`;
+`resolveAttachments` reads each blob back into a `platform.Attachment`
+(small ones into `Data`, `SavedPath` always set). Both endpoints share the
+`bearerToken` + `app.api_key` gate; registered in `http.go` alongside `/app/ws`.
 
 **Streaming (`sink.go`):** `appConn.NewTurnSink` builds an `appSink`
 (`turnevent.Sink`) per turn, bound to the conversation. `TurnStart`→`typing on`;

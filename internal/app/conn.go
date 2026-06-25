@@ -12,10 +12,6 @@ import (
 	"foci/internal/platform"
 )
 
-// errMediaUnsupported is returned by the media-send methods. Media is a later
-// slice (docs/02 §11.4); until then the app is text + streaming only.
-var errMediaUnsupported = errors.New("app: media send not yet supported")
-
 // appConn is the per-agent platform.Connection for the app provider. One
 // instance per agent; it routes session-scoped sends to the right physical
 // socket via the hub's binding map, and acts as the agent.Driver that builds
@@ -185,23 +181,96 @@ func (c *appConn) SetTyping(typing bool) {
 	}
 }
 
-// --- media (later slice) ---
+// --- media (slice 4) ---
+//
+// Each Sender method stores the payload as a blob (decoupling it from the
+// caller's temp file) and emits a `media` frame referencing it; the app fetches
+// the bytes out-of-band via GET /app/blob/<id>. Offline (no live socket) the
+// media frame buffers like any other and replays on reconnect — the blob
+// survives independently under its own TTL.
 
-func (c *appConn) SendDocument(string, string) error  { return errMediaUnsupported }
-func (c *appConn) SendVoice(string) error             { return errMediaUnsupported }
-func (c *appConn) SendVideo(string, string) error     { return errMediaUnsupported }
-func (c *appConn) SendPhoto(string, string) error     { return errMediaUnsupported }
-func (c *appConn) SendAudio(string, string) error     { return errMediaUnsupported }
-func (c *appConn) SendAnimation(string, string) error { return errMediaUnsupported }
-func (c *appConn) SendVoiceData([]byte) error         { return errMediaUnsupported }
+func (c *appConn) SendDocument(path, caption string) error {
+	return c.sendMediaFile(c.SessionKey(), path, caption, fap.MediaDocument)
+}
+func (c *appConn) SendVoice(path string) error {
+	return c.sendMediaFile(c.SessionKey(), path, "", fap.MediaVoice)
+}
+func (c *appConn) SendVideo(path, caption string) error {
+	return c.sendMediaFile(c.SessionKey(), path, caption, fap.MediaVideo)
+}
+func (c *appConn) SendPhoto(path, caption string) error {
+	return c.sendMediaFile(c.SessionKey(), path, caption, fap.MediaPhoto)
+}
+func (c *appConn) SendAudio(path, caption string) error {
+	return c.sendMediaFile(c.SessionKey(), path, caption, fap.MediaAudio)
+}
+func (c *appConn) SendAnimation(path, caption string) error {
+	return c.sendMediaFile(c.SessionKey(), path, caption, fap.MediaAnimation)
+}
+func (c *appConn) SendVoiceData(audioData []byte) error {
+	return c.sendMediaBytes(c.SessionKey(), audioData, fap.MediaVoice, "voice.mp3", "audio/mpeg")
+}
 
-func (c *appConn) SendDocumentToChat(int64, string, string) error  { return errMediaUnsupported }
-func (c *appConn) SendVoiceToChat(int64, string) error             { return errMediaUnsupported }
-func (c *appConn) SendVideoToChat(int64, string, string) error     { return errMediaUnsupported }
-func (c *appConn) SendPhotoToChat(int64, string, string) error     { return errMediaUnsupported }
-func (c *appConn) SendAudioToChat(int64, string, string) error     { return errMediaUnsupported }
-func (c *appConn) SendAnimationToChat(int64, string, string) error { return errMediaUnsupported }
-func (c *appConn) SendVoiceDataToChat(int64, []byte) error         { return errMediaUnsupported }
+func (c *appConn) SendDocumentToChat(chatID int64, path, caption string) error {
+	return c.sendMediaFile(c.SessionKeyForChat(chatID), path, caption, fap.MediaDocument)
+}
+func (c *appConn) SendVoiceToChat(chatID int64, path string) error {
+	return c.sendMediaFile(c.SessionKeyForChat(chatID), path, "", fap.MediaVoice)
+}
+func (c *appConn) SendVideoToChat(chatID int64, path, caption string) error {
+	return c.sendMediaFile(c.SessionKeyForChat(chatID), path, caption, fap.MediaVideo)
+}
+func (c *appConn) SendPhotoToChat(chatID int64, path, caption string) error {
+	return c.sendMediaFile(c.SessionKeyForChat(chatID), path, caption, fap.MediaPhoto)
+}
+func (c *appConn) SendAudioToChat(chatID int64, path, caption string) error {
+	return c.sendMediaFile(c.SessionKeyForChat(chatID), path, caption, fap.MediaAudio)
+}
+func (c *appConn) SendAnimationToChat(chatID int64, path, caption string) error {
+	return c.sendMediaFile(c.SessionKeyForChat(chatID), path, caption, fap.MediaAnimation)
+}
+func (c *appConn) SendVoiceDataToChat(chatID int64, audioData []byte) error {
+	return c.sendMediaBytes(c.SessionKeyForChat(chatID), audioData, fap.MediaVoice, "voice.mp3", "audio/mpeg")
+}
+
+func (c *appConn) sendMediaFile(sessionKey, path, caption, kind string) error {
+	b := c.hub.bindingForSession(sessionKey)
+	if b == nil {
+		return nil
+	}
+	meta, err := c.hub.blobs.putFile(path, kind)
+	if err != nil {
+		return err
+	}
+	c.emitMedia(b, meta, caption)
+	return nil
+}
+
+func (c *appConn) sendMediaBytes(sessionKey string, data []byte, kind, name, mimeType string) error {
+	b := c.hub.bindingForSession(sessionKey)
+	if b == nil {
+		return nil
+	}
+	meta, err := c.hub.blobs.putBytes(data, kind, name, mimeType)
+	if err != nil {
+		return err
+	}
+	c.emitMedia(b, meta, "")
+	return nil
+}
+
+func (c *appConn) emitMedia(b *convBinding, meta *blobMeta, caption string) {
+	b.send(fap.Media{
+		ConversationID: b.convID,
+		MessageID:      fap.NewULID(),
+		BlobID:         meta.id,
+		Kind:           meta.kind,
+		MIME:           meta.mime,
+		Name:           meta.name,
+		Caption:        caption,
+		Size:           meta.size,
+	})
+}
 
 // --- platform.ButtonSender (slice 2: interactive prompts) ---
 

@@ -27,9 +27,10 @@ func Enabled() bool {
 	return activeHub != nil && activeHub.apiKey != ""
 }
 
-// WSHandler returns the /app/ws HTTP handler. It authenticates each upgrade
-// (Bearer app.api_key) inside ServeWS, so it needs no shared auth middleware.
-func WSHandler() http.HandlerFunc {
+// withHub returns an http.HandlerFunc that resolves the active hub (503 if
+// unconfigured) and delegates to fn. Each hub method does its own Bearer auth,
+// so no shared middleware is needed.
+func withHub(fn func(*Hub, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		activeMu.RLock()
 		h := activeHub
@@ -38,6 +39,15 @@ func WSHandler() http.HandlerFunc {
 			http.Error(w, "app endpoint not configured", http.StatusServiceUnavailable)
 			return
 		}
-		h.ServeWS(w, r)
+		fn(h, w, r)
 	}
 }
+
+// WSHandler returns the /app/ws handler (authenticates inside ServeWS).
+func WSHandler() http.HandlerFunc { return withHub((*Hub).ServeWS) }
+
+// BlobUploadHandler returns the POST /app/blob handler.
+func BlobUploadHandler() http.HandlerFunc { return withHub((*Hub).ServeBlobPost) }
+
+// BlobDownloadHandler returns the GET /app/blob/<id> handler.
+func BlobDownloadHandler() http.HandlerFunc { return withHub((*Hub).ServeBlobGet) }
