@@ -250,6 +250,14 @@ func Load(path string) (*Config, error) {
 			r[0] = unicode.ToUpper(r[0])
 			cfg.Agents[i].Name = string(r)
 		}
+		// Avatar: a configured path (absolute, or relative to foci home) is used
+		// as-is; otherwise auto-detect from the workspace. Resolved to "" or an
+		// absolute path to an existing file.
+		if cfg.Agents[i].Avatar != "" {
+			cfg.Agents[i].Avatar = ResolvePath(cfg.Agents[i].Avatar)
+		} else {
+			cfg.Agents[i].Avatar = detectAvatar(cfg.Agents[i].Workspace)
+		}
 		// Memory sources: prepend global sources, then agent-specific (or default).
 		// Per docstring, agent sources are "combined with global [memory] sources."
 		agentSources := cfg.Agents[i].Memory.Sources

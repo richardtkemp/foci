@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -571,9 +573,44 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		convs := byAgent[id]
 		sort.Slice(convs, func(i, j int) bool { return convs[i].ID < convs[j].ID })
 		name, emoji := h.agentDisplay(id)
-		out = append(out, fap.AgentInfo{ID: id, Name: name, Avatar: emoji, Conversations: convs})
+		avatarURL, avatarVer := h.agentAvatarRef(id)
+		out = append(out, fap.AgentInfo{
+			ID: id, Name: name, Avatar: emoji,
+			AvatarURL: avatarURL, AvatarVer: avatarVer,
+			Conversations: convs,
+		})
 	}
 	return out
+}
+
+// agentAvatarPath returns the resolved absolute path to an agent's avatar image
+// (config.AgentConfig.Avatar, set at load), or "" if the agent has none.
+func (h *Hub) agentAvatarPath(id string) string {
+	if h.deps.Config == nil {
+		return ""
+	}
+	for i := range h.deps.Config.Agents {
+		if a := &h.deps.Config.Agents[i]; a.ID == id {
+			return a.Avatar
+		}
+	}
+	return ""
+}
+
+// agentAvatarRef returns the roster fields for an agent's avatar image: the
+// fetch path ("/app/avatar/<id>") and a fingerprint (mtime+size) that changes
+// when the file changes. Both are "" when the agent has no avatar or the file
+// is missing.
+func (h *Hub) agentAvatarRef(id string) (url, ver string) {
+	p := h.agentAvatarPath(id)
+	if p == "" {
+		return "", ""
+	}
+	fi, err := os.Stat(p)
+	if err != nil || fi.IsDir() {
+		return "", ""
+	}
+	return "/app/avatar/" + id, fmt.Sprintf("%x-%x", fi.ModTime().UnixNano(), fi.Size())
 }
 
 // agentDisplay resolves an agent's human-readable name + emoji avatar from
