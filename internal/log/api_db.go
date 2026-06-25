@@ -132,6 +132,56 @@ func QuerySessionStats(sessionKey string) (*SessionStats, error) {
 	return &stats, nil
 }
 
+// ReadAPIDBLog returns all API call entries from the SQLite api.db in
+// chronological order (ts ASC), mapped to []APIEntry.
+//
+// Unlike ReadAPILog — which reads the api.jsonl file that is reset on every
+// service restart — this draws on the durable database, so cost summaries span
+// restarts. The db is a superset of the JSONL (both are written per call at
+// insert time), so callers should prefer it. Returns nil if the db is not
+// initialised (e.g. in tests), letting callers fall back to ReadAPILog.
+func ReadAPIDBLog() []APIEntry {
+	if apiLog == nil || apiLog.db == nil {
+		return nil
+	}
+
+	apiLog.mu.Lock()
+	defer apiLog.mu.Unlock()
+
+	rows, err := apiLog.db.Query(`
+		SELECT ts, COALESCE(provider, ''), session, model,
+		       COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
+		       COALESCE(cache_read_tokens, 0), COALESCE(cache_write_tokens, 0),
+		       COALESCE(cost_usd, 0), COALESCE(duration_ms, 0),
+		       COALESCE(stop_reason, ''), call_type,
+		       COALESCE(session_file, ''), COALESCE(session_line, 0),
+		       COALESCE(pre_messages, 0), COALESCE(new_session, '')
+		FROM api_calls ORDER BY ts ASC`)
+	if err != nil {
+		std.event(ERROR, "api_db", "read log query error: %v", err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	var entries []APIEntry
+	for rows.Next() {
+		var e APIEntry
+		var tsStr string
+		if err := rows.Scan(
+			&tsStr, &e.Provider, &e.Session, &e.Model,
+			&e.Input, &e.Output, &e.CacheRead, &e.CacheWrite,
+			&e.CostUSD, &e.DurationMS, &e.StopReason, &e.CallType,
+			&e.SessionFile, &e.SessionLine, &e.PreMessages, &e.NewSession,
+		); err != nil {
+			continue
+		}
+		// ts is written via timeutil.Format (RFC3339), so it round-trips here.
+		e.Timestamp, _ = time.Parse(time.RFC3339, tsStr)
+		entries = append(entries, e)
+	}
+	return entries
+}
+
 func (a *apiDB) insert(entry APIEntry) {
 	ts := timeutil.Format(entry.Timestamp)
 
