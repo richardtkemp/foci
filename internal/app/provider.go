@@ -81,6 +81,9 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 	thinkOff := config.ShowThinkingOff
 	streamOn := true
 	startupNotify := false
+	pushOn := true
+	replayBuf := defaultReplayBufferDepth
+	maxBlobMB := defaultMaxBlobMB
 	return config.PlatformConfig{
 		ID:     "app",
 		Notify: config.NotifyConfig{StartupNotify: &startupNotify},
@@ -90,6 +93,15 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 			StreamOutput:  &streamOn,
 		},
 		MessageQueueSize: 64,
+		App: &config.AppSpecific{
+			Push:         &pushOn,
+			ReplayBuffer: &replayBuf,
+			ReplayTTL:    defaultReplayTTL.String(),
+			MaxBlobMB:    &maxBlobMB,
+			BlobTTL:      defaultBlobTTL.String(),
+			PushCoalesce: defaultPushCoalesce.String(),
+			DevicesPath:  defaultDevicesFile,
+		},
 	}
 }
 
