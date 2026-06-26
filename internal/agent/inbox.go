@@ -26,6 +26,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -342,6 +343,28 @@ func (a *Agent) Enqueue(env Envelope) {
 						return
 					}
 				}
+			}
+		}
+	}
+
+	// Pending-ask-by-message (#884). When a foci_ask is pending (and not /paused)
+	// for this session, a typed reply is an ANSWER to it — even while a turn is in
+	// flight. Without this, an active turn makes the message steer-eligible below
+	// and it folds into the running turn (SourceSteer) instead of answering the
+	// ask: the answer-capture in run_turn.go only fires on the IDLE path of a NEW
+	// turn, so a pending ask would otherwise lose to ANY in-flight turn (e.g. the
+	// user multitasking with the agent while a quiz ask waits). Runs before steer
+	// routing, mirroring plan-cancel above; /pause is the escape hatch to steer
+	// mid-ask. Idle messages fall through to the channel → run_turn's own capture
+	// (gated on isActive here so we don't double-handle the idle case).
+	if isActive && env.Text != "" && len(env.Attachments) == 0 &&
+		a.AskRouter != nil && a.AskRouter.PendingForSession != nil && a.AskRouter.HandleResponse != nil {
+		if reqID := a.AskRouter.PendingForSession(env.SessionKey); reqID != "" &&
+			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(env.SessionKey)) {
+			if answer := strings.TrimSpace(env.Text); answer != "" {
+				a.logger().Debugf("inbox: routing mid-turn typed reply to pending ask sk=%s req=%s", env.SessionKey, reqID)
+				a.AskRouter.HandleResponse(reqID, answer)
+				return
 			}
 		}
 	}

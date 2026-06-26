@@ -11,6 +11,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/tools"
 )
 
 // --- Test fixtures ---
@@ -275,6 +276,83 @@ func TestInbox_Enqueue_NoPendingPlan_NormalSteer(t *testing.T) {
 	injects := be.Injects()
 	if len(injects) != 1 || injects[0].Source != delegator.SourceSteer || injects[0].Text != "normal mid-turn ping" {
 		t.Errorf("expected one normal steer inject, got %+v", injects)
+	}
+}
+
+// TestInbox_Enqueue_PendingAsk_RoutesToAsk (#884) verifies that a typed reply
+// arriving WHILE A TURN IS IN FLIGHT, with an unpaused foci_ask pending for the
+// session, is routed to the ask's HandleResponse — NOT folded into the running
+// turn as a steer. This is the bug: answer-capture in run_turn.go only fires on
+// the idle path, so without the inbox intercept a pending ask loses to any
+// in-flight turn (e.g. the user answering a quiz while the agent is mid-turn).
+func TestInbox_Enqueue_PendingAsk_RoutesToAsk(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.SetInboxSteerMode(true)
+
+	var gotReqID, gotAnswer string
+	a.AskRouter = &tools.AskRouter{
+		PendingForSession: func(string) string { return "ask-1" },
+		IsPaused:          func(string) bool { return false },
+		HandleResponse:    func(reqID, data string) { gotReqID = reqID; gotAnswer = data },
+	}
+
+	// A backend is registered so we can prove the message did NOT steer.
+	be := &recordingBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "  5 σπίτι  "})
+
+	if gotReqID != "ask-1" {
+		t.Errorf("HandleResponse reqID = %q, want ask-1", gotReqID)
+	}
+	if gotAnswer != "5 σπίτι" { // trimmed, mirroring run_turn.go
+		t.Errorf("HandleResponse answer = %q, want trimmed %q", gotAnswer, "5 σπίτι")
+	}
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("expected no steer inject (ask wins), got %d", len(injects))
+	}
+	if entries := inb.drainSteer(); len(entries) != 0 {
+		t.Errorf("steer buffer should be empty, got %d entries", len(entries))
+	}
+}
+
+// TestInbox_Enqueue_PausedAsk_NormalSteer is the regression guard: when the
+// pending ask is /paused, the intercept is skipped and a mid-turn message steers
+// normally — /pause is the escape hatch to steer mid-ask.
+func TestInbox_Enqueue_PausedAsk_NormalSteer(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.SetInboxSteerMode(true)
+
+	var handled bool
+	a.AskRouter = &tools.AskRouter{
+		PendingForSession: func(string) string { return "ask-1" },
+		IsPaused:          func(string) bool { return true }, // paused → do not capture
+		HandleResponse:    func(string, string) { handled = true },
+	}
+
+	be := &recordingBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "talk to the agent"})
+
+	if handled {
+		t.Errorf("HandleResponse called despite paused ask — should have steered")
+	}
+	injects := be.Injects()
+	if len(injects) != 1 || injects[0].Source != delegator.SourceSteer || injects[0].Text != "talk to the agent" {
+		t.Errorf("expected one normal steer inject (paused ask), got %+v", injects)
 	}
 }
 
