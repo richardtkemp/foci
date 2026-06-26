@@ -214,12 +214,17 @@ func (l *authLimiter) reset(ip string) {
 	l.mu.Unlock()
 }
 
-// remoteIP extracts the client IP for rate-limiting, honouring the proxy's
-// X-Forwarded-For (foci sits behind Traefik) and falling back to RemoteAddr.
+// remoteIP extracts the client IP for rate-limiting. foci sits behind Traefik,
+// which APPENDS the downstream socket address to the right of X-Forwarded-For;
+// everything to the left of that final hop is attacker-controlled. We therefore
+// trust the RIGHTMOST entry (Traefik's appended hop = the real client). Taking
+// the leftmost would let an attacker rotate a spoofed XFF to land in a fresh
+// rate-limit bucket each request, defeating the brute-force lockout. Falls back
+// to RemoteAddr when no proxy header is present (direct/local connections).
 func remoteIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
+		if i := strings.LastIndexByte(xff, ','); i >= 0 {
+			return strings.TrimSpace(xff[i+1:])
 		}
 		return strings.TrimSpace(xff)
 	}
