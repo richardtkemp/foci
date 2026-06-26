@@ -83,7 +83,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleConversationRename(client, f)
 
 	case fap.ClientMessage:
-		h.routeUserTurn(client, f.ConversationID, f.Text, h.resolveAttachments(f.Attachments))
+		h.routeUserTurn(client, f.ConversationID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq)
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
@@ -311,7 +311,15 @@ func inboundConvID(frame any) string {
 
 // routeUserTurn resolves the agent + conversation binding and enqueues a user
 // turn. A turn with neither text nor attachments, or no conversation, is ignored.
-func (h *Hub) routeUserTurn(client *wsClient, convID, text string, atts []platform.Attachment) {
+//
+// inID/inSeq are the inbound frame's envelope id/seq. The reliability gate in
+// dispatchInbound only dedups frames whose binding already exists; the first
+// message of a brand-new conversation creates its binding *here*, so the gate
+// skipped it. We seed the freshly created binding's dedup set below so a copy
+// replayed from the client outbox after a reconnect is dropped (the image
+// double-send bug). A warm binding was already recorded by the gate, so we
+// only seed when we just created it.
+func (h *Hub) routeUserTurn(client *wsClient, convID, text string, atts []platform.Attachment, inID string, inSeq int64) {
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
@@ -340,7 +348,15 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, text string, atts []platfo
 	}
 	client.mu.Unlock()
 
+	h.mu.RLock()
+	existed := h.convs[convID] != nil
+	h.mu.RUnlock()
 	b := h.ensureBinding(client, agentID, convID)
+	if !existed {
+		// First message on a cold binding: record its envelope id so the gate
+		// drops the replayed copy after a reconnect.
+		b.acceptInbound(inID, inSeq)
+	}
 	text, atts = h.transcribeVoice(conn, text, atts)
 	if text == "" && len(atts) == 0 {
 		return // voice transcription yielded nothing and there's no other content

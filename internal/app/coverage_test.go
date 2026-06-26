@@ -40,7 +40,7 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 	c.agentID = "ag"
 	c.deviceID = "dev-1"
 
-	h.routeUserTurn(c, "conv-1", "hello world", nil)
+	h.routeUserTurn(c, "conv-1", "hello world", nil, "env-1", 1)
 
 	if fa.env == nil {
 		t.Fatal("no envelope enqueued")
@@ -62,13 +62,38 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 	}
 }
 
+// The first message on a cold binding bypasses the reliability gate (no binding
+// exists yet) and creates the binding in routeUserTurn. It must seed the binding's
+// dedup set so a copy replayed from the client outbox after a reconnect is dropped
+// — otherwise the turn is delivered twice (the image double-send bug).
+func TestRouteUserTurn_SeedsDedupForReplay(t *testing.T) {
+	h := newTestHub()
+	registerFakeAgent(h, "ag")
+	c := fakeClient()
+	c.hub = h
+	c.agentID = "ag"
+	c.deviceID = "dev-1"
+
+	// First delivery on a brand-new conversation: creates + seeds the binding.
+	h.routeUserTurn(c, "conv-dup", "hello", nil, "env-A", 1)
+
+	b := h.convForReliability("conv-dup")
+	if b == nil {
+		t.Fatal("binding not created by first message")
+	}
+	// A replayed copy carries the same envelope id; the gate must now drop it.
+	if b.acceptInbound("env-A", 1) {
+		t.Error("replayed first message accepted — dedup set was not seeded")
+	}
+}
+
 func TestRouteUserTurn_NoAgentEmitsError(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
 	c.hub = h
 	c.agentID = "ghost" // not registered
 
-	h.routeUserTurn(c, "conv-1", "hi", nil)
+	h.routeUserTurn(c, "conv-1", "hi", nil, "env-1", 1)
 
 	got := drain(t, c)
 	if len(got) != 1 || got[0].t != fap.TypeError {
@@ -85,7 +110,7 @@ func TestRouteUserTurn_EmptyContentNoOp(t *testing.T) {
 	c := fakeClient()
 	c.hub = h
 	c.agentID = "ag"
-	h.routeUserTurn(c, "conv-1", "", nil)
+	h.routeUserTurn(c, "conv-1", "", nil, "env-1", 1)
 	if fa.env != nil {
 		t.Error("empty text + no attachments must not enqueue")
 	}
