@@ -33,7 +33,11 @@ const (
 	pongWait     = 60 * time.Second
 	pingPeriod   = (pongWait * 9) / 10
 	maxFrameSize = 1 << 20 // 1 MiB inbound frame cap
-	sendBuffer   = 64      // per-socket outbound queue depth
+	sendBuffer   = 256     // per-socket outbound queue depth
+	// How long enqueue blocks for queue space before giving up on a stalled socket
+	// and closing it (so the client reconnects and replays). Bounded so a slow
+	// consumer can't wedge the producing turn indefinitely.
+	enqueueBlockWait = 2 * time.Second
 )
 
 // Reliability tuning (wire-protocol §3). The replay buffer + inbound dedup
@@ -1147,12 +1151,29 @@ func newWsClient(ws *websocket.Conn, h *Hub) *wsClient {
 }
 
 func (c *wsClient) enqueue(wire string) {
+	// Fast path: space available (or already closed).
+	select {
+	case c.send <- []byte(wire):
+		return
+	case <-c.done:
+		return
+	default:
+	}
+	// Queue full. Dropping here would punch an unrecoverable hole *below* the
+	// client's resume high-water: the replay buffer holds the frame, but the
+	// client acks past it and never asks for it again (see
+	// docs/app-message-fragmentation.md). So never drop a live frame — block
+	// briefly for space, and if the socket still won't drain it's stalled/dead:
+	// close it so the client reconnects and replays from its true contiguous
+	// mark, healing the gap.
+	t := time.NewTimer(enqueueBlockWait)
+	defer t.Stop()
 	select {
 	case c.send <- []byte(wire):
 	case <-c.done:
-	default:
-		// Outbound queue full — drop and warn rather than block the turn.
-		log.Warnf("app", "outbound queue full, dropping frame")
+	case <-t.C:
+		log.Warnf("app", "outbound queue stalled %s, closing slow client to force resume", enqueueBlockWait)
+		go c.close() // async: close locks the hub; don't reenter from the send path
 	}
 }
 
