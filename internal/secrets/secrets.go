@@ -30,38 +30,6 @@ func GeneratePassphrase(wordCount int) (string, error) {
 	return strings.Join(words, "-"), nil
 }
 
-// effWordSet is a lazily-built lookup set over effShortWordlist, for
-// IsGeneratedPassphrase. Built once at init, read-only thereafter.
-var effWordSet = func() map[string]struct{} {
-	m := make(map[string]struct{}, len(effShortWordlist))
-	for _, w := range effShortWordlist {
-		m[w] = struct{}{}
-	}
-	return m
-}()
-
-// IsGeneratedPassphrase reports whether s looks like a passphrase produced by
-// GeneratePassphrase: two or more hyphen-joined tokens that are ALL words from
-// the EFF Short Wordlist. Lets callers distinguish an auto-generated secret from
-// a human-set one without storing any marker — a user-chosen key only matches if
-// it happens to be all-EFF-words joined by hyphens, which is vanishingly
-// unlikely. Word-count-agnostic so it holds regardless of the entropy chosen.
-func IsGeneratedPassphrase(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	parts := strings.Split(s, "-")
-	if len(parts) < 2 {
-		return false
-	}
-	for _, p := range parts {
-		if _, ok := effWordSet[p]; !ok {
-			return false
-		}
-	}
-	return true
-}
 
 // Default paths that the exec tool should refuse to read.
 var defaultBlockedPaths = []string{

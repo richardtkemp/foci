@@ -14,14 +14,16 @@ import (
 // pngBytes is a minimal 1x1 PNG (enough for Content-Type + body assertions).
 var pngBytes = []byte("\x89PNG\r\n\x1a\n-fake-png-body-")
 
-func hubWithAvatar(t *testing.T, agentID, avatarPath string) *Hub {
+// hubWithAvatar builds a hub with one configured agent avatar and one paired
+// device, returning the hub and that device's token for authenticated requests.
+func hubWithAvatar(t *testing.T, agentID, avatarPath string) (*Hub, string) {
 	t.Helper()
 	h := newTestHub()
-	h.apiKey = "secret-key"
+	d := h.devices.pair("av", "")
 	h.deps = platform.ProviderDeps{Config: &config.Config{
 		Agents: []config.AgentConfig{{ID: agentID, Avatar: avatarPath}},
 	}}
-	return h
+	return h, d.Token
 }
 
 func TestServeAvatar_OK(t *testing.T) {
@@ -30,10 +32,10 @@ func TestServeAvatar_OK(t *testing.T) {
 	if err := os.WriteFile(path, pngBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := hubWithAvatar(t, "clutch", path)
+	h, tok := hubWithAvatar(t, "clutch", path)
 
 	req := httptest.NewRequest(http.MethodGet, "/app/avatar/clutch", nil)
-	req.Header.Set("Authorization", "Bearer secret-key")
+	req.Header.Set("Authorization", "Bearer "+tok)
 	w := httptest.NewRecorder()
 	h.ServeAvatar(w, req)
 
@@ -49,9 +51,9 @@ func TestServeAvatar_OK(t *testing.T) {
 }
 
 func TestServeAvatar_NoneConfigured(t *testing.T) {
-	h := hubWithAvatar(t, "clutch", "") // agent exists, no avatar
+	h, tok := hubWithAvatar(t, "clutch", "") // agent exists, no avatar
 	req := httptest.NewRequest(http.MethodGet, "/app/avatar/clutch", nil)
-	req.Header.Set("Authorization", "Bearer secret-key")
+	req.Header.Set("Authorization", "Bearer "+tok)
 	w := httptest.NewRecorder()
 	h.ServeAvatar(w, req)
 	if w.Code != http.StatusNotFound {
@@ -60,9 +62,9 @@ func TestServeAvatar_NoneConfigured(t *testing.T) {
 }
 
 func TestServeAvatar_UnknownAgent(t *testing.T) {
-	h := hubWithAvatar(t, "clutch", "/nonexistent")
+	h, tok := hubWithAvatar(t, "clutch", "/nonexistent")
 	req := httptest.NewRequest(http.MethodGet, "/app/avatar/ghost", nil)
-	req.Header.Set("Authorization", "Bearer secret-key")
+	req.Header.Set("Authorization", "Bearer "+tok)
 	w := httptest.NewRecorder()
 	h.ServeAvatar(w, req)
 	if w.Code != http.StatusNotFound {
@@ -74,7 +76,7 @@ func TestServeAvatar_NoAuth(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "avatar.png")
 	_ = os.WriteFile(path, pngBytes, 0o644)
-	h := hubWithAvatar(t, "clutch", path)
+	h, _ := hubWithAvatar(t, "clutch", path)
 
 	req := httptest.NewRequest(http.MethodGet, "/app/avatar/clutch", nil) // no Bearer
 	w := httptest.NewRecorder()
@@ -92,13 +94,13 @@ func TestServeAvatar_RosterRef(t *testing.T) {
 	if err := os.WriteFile(path, pngBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := hubWithAvatar(t, "clutch", path)
+	h, _ := hubWithAvatar(t, "clutch", path)
 	url, ver := h.agentAvatarRef("clutch")
 	if url != "/app/avatar/clutch" || ver == "" {
 		t.Fatalf("ref = (%q, %q), want url=/app/avatar/clutch and non-empty ver", url, ver)
 	}
 
-	h2 := hubWithAvatar(t, "clutch", "")
+	h2, _ := hubWithAvatar(t, "clutch", "")
 	if url, ver := h2.agentAvatarRef("clutch"); url != "" || ver != "" {
 		t.Fatalf("ref with no avatar = (%q, %q), want empty", url, ver)
 	}
