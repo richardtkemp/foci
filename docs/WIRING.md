@@ -1323,7 +1323,7 @@ WebSocket rather than a vendor-API client. Built: slice 1 ("echo": text + native
 streaming + status `meta`), slice 2 (interactive buttons → permission/ask/plan),
 slice 3 (reliability: per-conversation seq/ack/replay + reconnect resume + inbound
 dedup), slice 4 (media/blobs over HTTP), slice 5 (FCM offline wake-push), slice 6
-(multi-agent/session: server-owned conversationId, roster, conversation.open,
+(multi-agent/session: client- or server-assigned conversationId, roster, conversation.open,
 named sessions, slash commands), slice 7 (auth hardening: pairing + per-device
 tokens + revocation + rate-limited auth), slice 8 (voice: inbound STT
 transcription). The full §11 build order is implemented
@@ -1389,9 +1389,12 @@ outbox entries, fold piggybacked `ack` to trim the replay buffer) → switch.
 `hello`→server hello (roster) + `resumeConversations` (re-attach + replay each
 resume point's `seq > ack`); `conversation.open`→bind socket to agent;
 `message`→`routeUserTurn`→`ensureBinding`→`agent.Enqueue(Envelope{Driver:
-appConn})`; `conversation.open`→`handleConversationOpen` (server mints a
-conversationId, binds it, optionally adopts a named `sessionKey`, replies with an
-updated roster the app upserts); `conversation.rename`→`handleConversationRename`
+appConn})`; `conversation.open`→`handleConversationOpen` (adopts a client-assigned
+`conversationId` when the frame carries one — so the app creates + opens the
+conversation locally and instantly — else mints one; binds it, optionally adopts
+a named `sessionKey`, replies with an updated roster the app upserts; idempotent
+via `ensureBinding`, so a reopen of an id the first message already created
+reuses it); `conversation.rename`→`handleConversationRename`
 (persists a user-friendly session alias in the session index's `chat_metadata`,
 keyed by the stable app `chatID` so it survives session-key rotation/restart;
 `agentRoster` surfaces it via `aliasFor` as `ConversationInfo.Title`, replacing the
@@ -1524,7 +1527,9 @@ The `/app/ws` upgrade now negotiates the `fap.v1` subprotocol. On reconnect,
 server-side `seq` high-water (0 after a restart drops the in-memory buffers) so
 the offline-first app reconciles against its local Room DB. `conversation.open`
 with a known `sessionKey` reuses the existing conversation instead of minting a
-duplicate. Interactive prompts carry a 24h advisory `expiresAt`; the roster
+duplicate; with a client-assigned `conversationId` it adopts that id (the app
+creates + opens the conversation locally and instantly, and any message sent
+before the server confirms carries the same id and auto-creates the binding). Interactive prompts carry a 24h advisory `expiresAt`; the roster
 advertises each agent's config display name + emoji avatar.
 
 ## Voice (`voice/`, `telegram/bot.go`)

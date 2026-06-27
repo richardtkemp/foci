@@ -182,7 +182,15 @@ func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
 		}
 	}
 
-	convID := fap.NewULID()
+	// Adopt a client-assigned id when supplied (#new-conv-instant) so the app can
+	// create + open the conversation locally without waiting to learn the id;
+	// otherwise mint one. ensureBinding is idempotent, so a reopen of an id that
+	// already has a binding (e.g. after the first message already created it)
+	// reuses it rather than minting a duplicate.
+	convID := f.ConversationID
+	if convID == "" {
+		convID = fap.NewULID()
+	}
 	b := h.ensureBinding(client, agentID, convID)
 	if f.SessionKey != "" {
 		h.adoptSession(b, f.SessionKey)
