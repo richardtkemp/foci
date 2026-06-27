@@ -68,6 +68,27 @@ type Envelope struct {
 	Driver Driver
 }
 
+// platformApp is the PlatformName reported by the native-app connection
+// (internal/app.appConn.PlatformName). The app answers asks via interactive
+// frames, so its typed messages bypass the typed-text ask-capture gates.
+const platformApp = "app"
+
+// platformName returns the originating platform ("telegram"/"discord"/"app")
+// via the Driver's Connection, or "" when unavailable — a nil Driver or a
+// Driver exposing no Connection (system-injected envelopes, non-interactive
+// drivers, test stubs). "" never matches platformApp, so the default behaviour
+// (capture typed answers) is preserved whenever the source can't be resolved.
+func (e Envelope) platformName() string {
+	if e.Driver == nil {
+		return ""
+	}
+	conn := e.Driver.Connection()
+	if conn == nil {
+		return ""
+	}
+	return conn.PlatformName()
+}
+
 // Driver is the platform-side handle the per-session worker uses to set up
 // rendering and lifecycle for a turn. Each platform bot supplies its own
 // implementation (see telegram/discord packages).
@@ -357,7 +378,14 @@ func (a *Agent) Enqueue(env Envelope) {
 	// routing, mirroring plan-cancel above; /pause is the escape hatch to steer
 	// mid-ask. Idle messages fall through to the channel → run_turn's own capture
 	// (gated on isActive here so we don't double-handle the idle case).
-	if isActive && env.Text != "" && len(env.Attachments) == 0 &&
+	//
+	// Platform carve-out: the native app delivers ask-answers out-of-band via
+	// interactive-form frames (InteractiveResponse → handleBatchResponse), so a
+	// typed message there is ALWAYS meant for the agent, never an answer. Skip
+	// typed-text capture for app-sourced turns so quizzes don't swallow ordinary
+	// app messages (telegram/discord still capture, since their only "Other"
+	// free-text answer channel IS a typed reply).
+	if isActive && env.Text != "" && len(env.Attachments) == 0 && env.platformName() != platformApp &&
 		a.AskRouter != nil && a.AskRouter.PendingForSession != nil && a.AskRouter.HandleResponse != nil {
 		if reqID := a.AskRouter.PendingForSession(env.SessionKey); reqID != "" &&
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(env.SessionKey)) {
