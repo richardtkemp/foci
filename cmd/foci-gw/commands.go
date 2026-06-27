@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/app"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/delegator"
@@ -100,8 +101,10 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		Store:    p.store,
 	}
 
-	// Build AndroidDeps (registry reference for the /android onboarding wizard)
-	androidDeps := &command.AndroidDeps{Registry: cmds}
+	// Build AndroidDeps (registry reference for the /android onboarding wizard).
+	// MintPairKey reaches the live app hub at call time (#862): a single-use,
+	// in-memory pairing key replaces the old persisted master key.
+	androidDeps := &command.AndroidDeps{Registry: cmds, MintPairKey: app.MintActivePairKey}
 
 	// Build AgentNewDeps
 	cmdFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
@@ -214,6 +217,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.SessionsCommand())
 	cmds.Register(command.AgentsCommand())
 	cmds.Register(command.AndroidCommand())
+	cmds.Register(command.PairKeyCommand())
 	cmds.Register(command.RepeatCommand())
 	cmds.Register(command.PassCommand())
 	cmds.Register(command.TodoCommand())

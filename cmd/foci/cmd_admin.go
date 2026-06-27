@@ -119,6 +119,19 @@ func cmdCommand(base string, args []string) error {
 	return postJSON(base+"/command", body)
 }
 
+func pairKeyUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: foci pair-key [-a agent] [host]
+
+Mint a single-use, short-TTL Android pairing key (#862) and print it. The device
+exchanges this key at POST /app/pair for its own revocable token — there is no
+persisted master key. Pass an optional host to also print a foci://pair string.
+
+Requires the app provider to be running (the key lives in the gateway's memory).
+Use this for headless onboarding when there's no telegram/discord chat to run the
+/android wizard in.
+`)
+}
+
 func pingUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: foci ping [-a agent]
 

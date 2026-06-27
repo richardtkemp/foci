@@ -126,10 +126,10 @@ func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
 // comparison.
 func authMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /app/* endpoints self-authenticate against app.api_key (Hub.authMaster
+		// /app/* endpoints self-authenticate against per-device tokens (the app hub's
 		// for the JSON handlers, ServeWS for the socket), each with its own
 		// per-IP rate limiting. The outer http.api_key gate would shadow them:
-		// app.api_key != http.api_key, so every app bearer would 403 here before
+		// app device tokens != http.api_key, so every app bearer would 403 here before
 		// reaching the handler (and never log). Skip the outer gate for /app/.
 		if strings.HasPrefix(r.URL.Path, "/app/") {
 			log.Debugf("http", "auth: %s %s from %s — /app/ self-authenticates downstream, skipping outer gate", r.Method, r.URL.Path, r.RemoteAddr)
@@ -185,15 +185,15 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		log.Infof("http", "/voice WebSocket endpoint enabled")
 	}
 
-	// App provider WebSocket (FAP v1). Self-authenticating (Bearer app.api_key);
+	// App provider WebSocket (FAP v1). Self-authenticating (Bearer device token);
 	// registered whenever the app provider is configured with a key.
 	if app.Enabled() {
 		mux.HandleFunc("/app/ws", app.WSHandler())
 		mux.HandleFunc("/app/blob", app.BlobUploadHandler())            // POST: upload
 		mux.HandleFunc("/app/blob/", app.BlobDownloadHandler())         // GET /app/blob/<id>
-		mux.HandleFunc("/app/pair", app.PairHandler())                  // POST: mint device token (master key)
-		mux.HandleFunc("/app/pair/revoke", app.RevokeHandler())         // POST: revoke a device (master key)
-		mux.HandleFunc("/app/devices", app.DevicesHandler())            // GET: list devices (master key)
+		mux.HandleFunc("/app/pair", app.PairHandler())                  // POST: mint device token (single-use pairing key)
+		mux.HandleFunc("/app/pair/revoke", app.RevokeHandler())         // POST: revoke a device (device token)
+		mux.HandleFunc("/app/devices", app.DevicesHandler())            // GET: list devices (device token)
 		mux.HandleFunc("/app/push/register", app.PushRegisterHandler()) // POST: refresh FCM token
 		mux.HandleFunc("/app/history", app.HistoryHandler())            // GET: restart reconciliation
 		mux.HandleFunc("/app/replay", app.ReplayHandler())              // GET: durable content backfill

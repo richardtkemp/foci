@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// ServeAvatar handles GET /app/avatar/<agentId>: authenticates (master key OR a
+// ServeAvatar handles GET /app/avatar/<agentId>: authenticates (a valid device
 // valid device token, same gate as /app/blob), then serves the agent's avatar
 // image range-capably via http.ServeContent. The file's mtime gives
 // Last-Modified / conditional-GET / range support for free. Avatars are

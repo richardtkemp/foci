@@ -6,7 +6,7 @@
 //
 // Slice 1 (this file set) is the "echo slice" from docs/02-foci-server-changes
 // §11: provider + hub + appConn for text + streaming + interactive buttons over
-// /app/ws, authenticated by a shared key (secret app.api_key). Reliability
+// /app/ws, authenticated by per-device tokens (minted via single-use pairing
 // replay, media/blobs, push, and per-device pairing tokens are later slices.
 package app
 
@@ -35,9 +35,9 @@ type appProvider struct {
 func (p *appProvider) Name() string { return "app" }
 
 // IsConfigured reports whether an [[platforms]] id="app" entry exists. The
-// shared API key (secret app.api_key) is resolved at Init; a missing key
-// disables the WebSocket endpoint with a logged warning rather than aborting
-// startup of the other providers.
+// app provider is enabled by the [[platforms]] entry alone; per-device tokens
+// (and single-use pairing keys) are minted at runtime — there is no shared key
+// to configure (#862).
 func (p *appProvider) IsConfigured(cfg *config.Config) (bool, string) {
 	if cfg.Platform("app") == nil {
 		return false, "no [[platforms]] entry with id=\"app\""
