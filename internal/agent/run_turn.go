@@ -120,7 +120,11 @@ func (a *Agent) RunTurn(
 	// A paused ask (via /pause) skips answer-capture: the user's replies fall
 	// through to a normal turn while the ask stays pending (buttons still resolve
 	// it; /resume restores capture).
-	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 {
+	// Platform carve-out (mirrors inbox.go): the native app answers asks via
+	// interactive-form frames, so a typed app message is always meant for the
+	// agent — never capture it as an answer. platformName is resolved above from
+	// driver.Connection(); "" (unknown source) falls through to capture as before.
+	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 && platformName != platformApp {
 		if reqID := a.AskRouter.PendingForSession(sk); reqID != "" &&
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(sk)) {
 			answer := strings.TrimSpace(texts[0])
