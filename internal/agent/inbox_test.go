@@ -66,6 +66,24 @@ func (d *recordingDriver) NewTurnSink(_ Envelope) (turnevent.Sink, func()) { ret
 // Connection returns nil — these tests don't exercise platform-side ops.
 func (d *recordingDriver) Connection() platform.Connection { return nil }
 
+// appConnStub reports the native-app platform name. Everything else inherits
+// recordingConn's no-op/panic surface — unused by the ask-capture carve-out,
+// which only reads PlatformName and returns before any send.
+type appConnStub struct{ *recordingConn }
+
+func (appConnStub) PlatformName() string { return "app" }
+
+// appSourceDriver is a recordingDriver whose Connection reports the native app,
+// exercising the typed-text ask-capture carve-out: app turns answer asks via
+// interactive frames, so typed app messages must pass through to the agent
+// rather than being eaten as quiz answers.
+type appSourceDriver struct {
+	recordingDriver
+	conn platform.Connection
+}
+
+func (d *appSourceDriver) Connection() platform.Connection { return d.conn }
+
 func (d *recordingDriver) Calls() [][]Envelope {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -353,6 +371,60 @@ func TestInbox_Enqueue_PausedAsk_NormalSteer(t *testing.T) {
 	injects := be.Injects()
 	if len(injects) != 1 || injects[0].Source != delegator.SourceSteer || injects[0].Text != "talk to the agent" {
 		t.Errorf("expected one normal steer inject (paused ask), got %+v", injects)
+	}
+}
+
+// TestInbox_Enqueue_PendingAsk_AppSource_PassesThrough is the carve-out: the
+// native app answers asks via interactive-form frames, so a typed app message
+// is ALWAYS meant for the agent — even with a pending (unpaused) ask. The
+// typed-text capture must be skipped and the message steered normally, unlike
+// telegram/discord where a typed reply is the "Other" free-text answer channel.
+func TestInbox_Enqueue_PendingAsk_AppSource_PassesThrough(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.SetInboxSteerMode(true)
+
+	var handled bool
+	a.AskRouter = &tools.AskRouter{
+		PendingForSession: func(string) string { return "ask-1" },
+		IsPaused:          func(string) bool { return false }, // NOT paused
+		HandleResponse:    func(string, string) { handled = true },
+	}
+
+	be := &recordingBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	d := &appSourceDriver{conn: appConnStub{&recordingConn{}}}
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "talk to the agent", Driver: d})
+
+	if handled {
+		t.Errorf("HandleResponse called for app-sourced message — app answers asks out-of-band, message should pass through to the agent")
+	}
+	injects := be.Injects()
+	if len(injects) != 1 || injects[0].Source != delegator.SourceSteer || injects[0].Text != "talk to the agent" {
+		t.Errorf("expected one normal steer inject (app pass-through), got %+v", injects)
+	}
+}
+
+// TestEnvelope_platformName covers the source-resolution helper used by both
+// ask-capture gates: nil Driver and nil Connection degrade to "" (so the
+// default capture behaviour is preserved), and an app-backed driver reports
+// "app" (so the carve-out fires).
+func TestEnvelope_platformName(t *testing.T) {
+	if got := (Envelope{}).platformName(); got != "" {
+		t.Errorf("nil Driver: got %q, want empty", got)
+	}
+	if got := (Envelope{Driver: &recordingDriver{}}).platformName(); got != "" {
+		t.Errorf("nil Connection: got %q, want empty", got)
+	}
+	d := &appSourceDriver{conn: appConnStub{&recordingConn{}}}
+	if got := (Envelope{Driver: d}).platformName(); got != platformApp {
+		t.Errorf("app driver: got %q, want %q", got, platformApp)
 	}
 }
 
