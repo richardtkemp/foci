@@ -1376,8 +1376,18 @@ func (c *wsClient) readPump() {
 	for {
 		mt, data, err := c.ws.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+			// 1006/EOF is how a mobile client normally vanishes — cell<->wifi
+			// handoff, backgrounding, doze, tunnel drop: the socket dies with no
+			// close frame, so there's never a clean 1000/1001. Treat it (and the
+			// clean closes) as expected; only genuinely anomalous close codes
+			// (protocol error, oversize frame, ...) warrant a WARN.
+			if websocket.IsUnexpectedCloseError(err,
+				websocket.CloseGoingAway,
+				websocket.CloseNormalClosure,
+				websocket.CloseAbnormalClosure) {
 				log.Warnf("app", "read error: %v", err)
+			} else {
+				log.Debugf("app", "client disconnected: %v", err)
 			}
 			return
 		}
