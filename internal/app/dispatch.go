@@ -83,7 +83,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleConversationRename(client, f)
 
 	case fap.ClientMessage:
-		h.routeUserTurn(client, f.ConversationID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq)
+		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq)
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
@@ -165,9 +165,6 @@ func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
 		client.sendRaw(fap.ErrorFrame{Code: "no_agent", Message: "no agent available"})
 		return
 	}
-	client.mu.Lock()
-	client.agentID = agentID
-	client.mu.Unlock()
 
 	// Reopening a named session that already has a durable conversation must
 	// reuse it, not mint a duplicate that races the existing binding in
@@ -231,18 +228,26 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 		return
 	}
 	client.mu.Lock()
-	agentID := client.agentID
 	deviceID := client.deviceID
 	client.mu.Unlock()
+	// Agent comes from the frame (the conversation's owner), not a socket-wide
+	// focus; bind first so b.agentID stays authoritative for a warm conversation.
+	agentID := f.AgentID
 	if agentID == "" {
 		agentID = h.defaultAgentID()
 	}
-	conn := h.PrimaryBot(agentID)
+	h.mu.RLock()
+	existed := h.convs[f.ConversationID] != nil
+	h.mu.RUnlock()
+	b := h.ensureBinding(client, agentID, f.ConversationID)
+	if existed && f.AgentID != "" && f.AgentID != b.agentID {
+		log.Warnf("app", "frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", f.AgentID, b.agentID, f.ConversationID)
+	}
+	conn := h.PrimaryBot(b.agentID)
 	if conn == nil || conn.commands == nil {
 		client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "no_commands", Message: "commands unavailable"})
 		return
 	}
-	b := h.ensureBinding(client, agentID, f.ConversationID)
 	req := command.Request{
 		Name:       strings.ToLower(strings.TrimPrefix(f.Name, "/")),
 		Args:       f.Args,
@@ -319,21 +324,43 @@ func inboundConvID(frame any) string {
 // replayed from the client outbox after a reconnect is dropped (the image
 // double-send bug). A warm binding was already recorded by the gate, so we
 // only seed when we just created it.
-func (h *Hub) routeUserTurn(client *wsClient, convID, text string, atts []platform.Attachment, inID string, inSeq int64) {
+func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, inID string, inSeq int64) {
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
 	client.mu.Lock()
-	agentID := client.agentID
 	deviceID := client.deviceID
 	client.mu.Unlock()
 
+	// The conversation determines its agent. A warm binding records the owning
+	// agent (fixed at creation) and its session key is prefixed with it; the
+	// frame's agentId is authoritative only to seed a cold binding (e.g. after a
+	// server restart evicted it from memory). Either way we route to b.agentID —
+	// never a socket-wide "current agent", which on a multi-agent socket could
+	// disagree with the conversation, enqueue to the wrong agent carrying this
+	// conversation's session key, and get the turn silently dropped by the
+	// ownership invariant (#906/#907). agentId empty (legacy/forward-compat) only
+	// seeds the default agent when minting a brand-new conversation.
+	frameAgent := agentID
 	if agentID == "" {
 		agentID = h.defaultAgentID()
 	}
-	conn := h.PrimaryBot(agentID)
+	h.mu.RLock()
+	existed := h.convs[convID] != nil
+	h.mu.RUnlock()
+	b := h.ensureBinding(client, agentID, convID)
+
+	// Tripwire: a well-behaved client derives agentId from the conversation row,
+	// so it can never disagree with the owning binding. If it does, a client has
+	// regressed — route to the owner (b.agentID, authoritative) but make the
+	// mismatch loud so we catch it instead of silently correcting (#906/#907).
+	if existed && frameAgent != "" && frameAgent != b.agentID {
+		log.Warnf("app", "frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", frameAgent, b.agentID, convID)
+	}
+
+	conn := h.PrimaryBot(b.agentID)
 	if conn == nil {
-		log.Warnf("app", "no agent for inbound message (agent=%q)", agentID)
+		log.Warnf("app", "no agent for inbound message (agent=%q conv=%q)", b.agentID, convID)
 		client.sendRaw(fap.ErrorFrame{
 			ConversationID: convID,
 			Code:           "no_agent",
@@ -341,17 +368,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, text string, atts []platfo
 		})
 		return
 	}
-	// Stick the resolved agent to the socket for subsequent messages.
-	client.mu.Lock()
-	if client.agentID == "" {
-		client.agentID = agentID
-	}
-	client.mu.Unlock()
 
-	h.mu.RLock()
-	existed := h.convs[convID] != nil
-	h.mu.RUnlock()
-	b := h.ensureBinding(client, agentID, convID)
 	if !existed {
 		// First message on a cold binding: record its envelope id so the gate
 		// drops the replayed copy after a reconnect.

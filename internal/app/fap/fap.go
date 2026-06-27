@@ -369,15 +369,22 @@ type ClientHello struct {
 
 // ClientMessage is a user message from the app.
 type ClientMessage struct {
-	ConversationID string          `json:"conversationId"`
-	Text           string          `json:"text"`
-	Attachments    []AttachmentRef `json:"attachments,omitempty"`
-	ReplyTo        string          `json:"replyTo,omitempty"`
+	ConversationID string `json:"conversationId"`
+	// AgentID names the agent that owns ConversationID. The turn is self-
+	// describing: the server binds + routes by it rather than any socket-wide
+	// "current agent" (one socket multiplexes every agent's conversations). For a
+	// warm conversation the binding stays authoritative; AgentID seeds a cold one.
+	AgentID     string          `json:"agentId,omitempty"`
+	Text        string          `json:"text"`
+	Attachments []AttachmentRef `json:"attachments,omitempty"`
+	ReplyTo     string          `json:"replyTo,omitempty"`
 }
 
-// Command is a slash-command invocation from the app.
+// Command is a slash-command invocation from the app. AgentID names the owning
+// agent (as on ClientMessage) so command dispatch needs no socket-wide focus.
 type Command struct {
 	ConversationID string `json:"conversationId"`
+	AgentID        string `json:"agentId,omitempty"`
 	Name           string `json:"name"`
 	Args           string `json:"args,omitempty"`
 }

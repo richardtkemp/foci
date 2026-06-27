@@ -37,10 +37,9 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 	fa := registerFakeAgent(h, "ag")
 	c := fakeClient()
 	c.hub = h
-	c.agentID = "ag"
 	c.deviceID = "dev-1"
 
-	h.routeUserTurn(c, "conv-1", "hello world", nil, "env-1", 1)
+	h.routeUserTurn(c, "conv-1", "ag", "hello world", nil, "env-1", 1)
 
 	if fa.env == nil {
 		t.Fatal("no envelope enqueued")
@@ -71,11 +70,10 @@ func TestRouteUserTurn_SeedsDedupForReplay(t *testing.T) {
 	registerFakeAgent(h, "ag")
 	c := fakeClient()
 	c.hub = h
-	c.agentID = "ag"
 	c.deviceID = "dev-1"
 
 	// First delivery on a brand-new conversation: creates + seeds the binding.
-	h.routeUserTurn(c, "conv-dup", "hello", nil, "env-A", 1)
+	h.routeUserTurn(c, "conv-dup", "ag", "hello", nil, "env-A", 1)
 
 	b := h.convForReliability("conv-dup")
 	if b == nil {
@@ -87,13 +85,49 @@ func TestRouteUserTurn_SeedsDedupForReplay(t *testing.T) {
 	}
 }
 
+// One socket multiplexes multiple agents' conversations. A turn's agent is the
+// conversation's owner: once a binding exists, it stays authoritative even if a
+// later frame names the *wrong* agent (e.g. a stale/confused client). Routing by
+// the frame's agentId instead would enqueue to helen carrying clutch's session
+// key, which the ownership invariant rejects and the turn is silently dropped
+// (#906/#907). There is no socket-wide "current agent".
+func TestRouteUserTurn_BindingOwnerWinsOverFrameAgent(t *testing.T) {
+	h := newTestHub()
+	clutch := registerFakeAgent(h, "clutch")
+	helen := registerFakeAgent(h, "helen")
+
+	// 1) conv-x is created owned by clutch (the frame names clutch).
+	c := fakeClient()
+	c.hub = h
+	c.deviceID = "dev-1"
+	h.routeUserTurn(c, "conv-x", "clutch", "first", nil, "env-1", 1)
+	if clutch.env == nil {
+		t.Fatal("clutch did not receive the first turn")
+	}
+	ownerKey := clutch.env.SessionKey
+
+	// 2) a later turn for conv-x wrongly carries agentId=helen. It must still land
+	// on clutch (the binding owner), not helen, and must not be dropped.
+	clutch.env, helen.env = nil, nil
+	h.routeUserTurn(c, "conv-x", "helen", "second", nil, "env-2", 2)
+
+	if helen.env != nil {
+		t.Fatalf("turn wrongly routed to helen (frame agentId) — sk=%q", helen.env.SessionKey)
+	}
+	if clutch.env == nil {
+		t.Fatal("turn was dropped — not routed to the conversation owner")
+	}
+	if clutch.env.Text != "second" || clutch.env.SessionKey != ownerKey {
+		t.Errorf("clutch env = {Text:%q SessionKey:%q}, want {second %q}", clutch.env.Text, clutch.env.SessionKey, ownerKey)
+	}
+}
+
 func TestRouteUserTurn_NoAgentEmitsError(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
 	c.hub = h
-	c.agentID = "ghost" // not registered
 
-	h.routeUserTurn(c, "conv-1", "hi", nil, "env-1", 1)
+	h.routeUserTurn(c, "conv-1", "ghost", "hi", nil, "env-1", 1) // agent not registered
 
 	got := drain(t, c)
 	if len(got) != 1 || got[0].t != fap.TypeError {
@@ -109,8 +143,7 @@ func TestRouteUserTurn_EmptyContentNoOp(t *testing.T) {
 	fa := registerFakeAgent(h, "ag")
 	c := fakeClient()
 	c.hub = h
-	c.agentID = "ag"
-	h.routeUserTurn(c, "conv-1", "", nil, "env-1", 1)
+	h.routeUserTurn(c, "conv-1", "ag", "", nil, "env-1", 1)
 	if fa.env != nil {
 		t.Error("empty text + no attachments must not enqueue")
 	}
