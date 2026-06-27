@@ -82,6 +82,7 @@ type Hub struct {
 	clients      map[*wsClient]struct{}  // live sockets
 	prompts      map[string]*convBinding // promptID → binding (live interactive prompts)
 	batchPrompts map[string]*batchPrompt // promptID → batched-ask callback (app-only multi-question form)
+	notifs       map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
 }
 
 // featureInteractiveBatch is the ClientHello capability a client advertises to
@@ -169,6 +170,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		clients:      make(map[*wsClient]struct{}),
 		prompts:      make(map[string]*convBinding),
 		batchPrompts: make(map[string]*batchPrompt),
+		notifs:       make(map[string]*convBinding),
 	}
 	if appCfg != nil {
 		h.host = appCfg.Host
@@ -946,6 +948,34 @@ func (h *Hub) bindingForPrompt(promptID string) *convBinding {
 func (h *Hub) deletePrompt(promptID string) {
 	h.mu.Lock()
 	delete(h.prompts, promptID)
+	h.mu.Unlock()
+}
+
+// --- notification edit registry (compaction ⏳→✅) ---
+//
+// Maps a notification's messageID to its binding so a later EditMessageText
+// (the in-place compaction-complete edit) can re-send the notification with the
+// same messageID to the right socket. Entries survive a socket disconnect (like
+// batchPrompts) so the edit still lands after a reconnect+replay; an edit that
+// never arrives leaks one entry, bounded by the rare count of un-completed
+// compactions. The binding outlives its socket (convs map), so no disconnect
+// cleanup is needed here.
+
+func (h *Hub) registerNotification(msgID string, b *convBinding) {
+	h.mu.Lock()
+	h.notifs[msgID] = b
+	h.mu.Unlock()
+}
+
+func (h *Hub) bindingForNotification(msgID string) *convBinding {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.notifs[msgID]
+}
+
+func (h *Hub) deleteNotification(msgID string) {
+	h.mu.Lock()
+	delete(h.notifs, msgID)
 	h.mu.Unlock()
 }
 

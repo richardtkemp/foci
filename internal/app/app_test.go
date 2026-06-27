@@ -228,6 +228,7 @@ func newTestHub() *Hub {
 		clients:      make(map[*wsClient]struct{}),
 		prompts:      make(map[string]*convBinding),
 		batchPrompts: make(map[string]*batchPrompt),
+		notifs:       make(map[string]*convBinding),
 	}
 }
 
@@ -388,6 +389,46 @@ func TestInteractive_ButtonRoundTrip(t *testing.T) {
 	}
 	if h.bindingForPrompt("req-rt") != nil {
 		t.Errorf("registration should be cleared after resolution")
+	}
+}
+
+// TestNotification_EditInPlace drives the compaction ⏳→✅ flow: a direct
+// notification returns a stable messageID, and EditMessageText re-sends a
+// notification carrying the SAME messageID so the client replaces the row in
+// place (one message, not two — the #899 bug). The registration is consumed.
+func TestNotification_EditInPlace(t *testing.T) {
+	h, c, _, conn := boundConn(t)
+
+	msgID := conn.SendNotificationDirect("⏳ Compacting context...")
+	if msgID == "" {
+		t.Fatal("SendNotificationDirect returned empty messageID; cannot edit in place")
+	}
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeNotification {
+		t.Fatalf("start frames = %v, want [notification]", types(ds))
+	}
+	if ds[0].d["messageId"] != msgID {
+		t.Errorf("start messageId = %v, want %q", ds[0].d["messageId"], msgID)
+	}
+	if h.bindingForNotification(msgID) == nil {
+		t.Errorf("notification not registered for later edit")
+	}
+
+	if err := conn.EditMessageText(msgID, "✅ Context compacted"); err != nil {
+		t.Fatal(err)
+	}
+	ds = drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeNotification {
+		t.Fatalf("edit frames = %v, want [notification] (same id replaces the row)", types(ds))
+	}
+	if ds[0].d["messageId"] != msgID {
+		t.Errorf("edit messageId = %v, want %q (must match to replace in place)", ds[0].d["messageId"], msgID)
+	}
+	if ds[0].d["text"] != "✅ Context compacted" {
+		t.Errorf("edit text = %v", ds[0].d["text"])
+	}
+	if h.bindingForNotification(msgID) != nil {
+		t.Errorf("registration should be cleared after the edit is consumed")
 	}
 }
 
