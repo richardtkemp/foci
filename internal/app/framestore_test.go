@@ -172,7 +172,7 @@ func TestReplayTo_NoStoreBackfillWhenMemoryCovers(t *testing.T) {
 // with `more` signalling pagination when the page hits the limit.
 func TestServeReplay_ReturnsStoredFrames(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
+	d := h.devices.pair("dev", "")
 	s := tempFrameStore(t)
 	h.frames = s
 	now := time.Now().UnixMilli()
@@ -182,7 +182,7 @@ func TestServeReplay_ReturnsStoredFrames(t *testing.T) {
 
 	// Page from seq 2 with limit 2 → frames 3,4 and more=true.
 	req := httptest.NewRequest(http.MethodGet, "/app/replay?conversationId=c1&fromSeq=2&limit=2", nil)
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+d.Token)
 	w := httptest.NewRecorder()
 	h.ServeReplay(w, req)
 	if w.Code != http.StatusOK {
@@ -210,7 +210,7 @@ func TestServeReplay_ReturnsStoredFrames(t *testing.T) {
 
 	// Final page returns the tail and more=false.
 	req = httptest.NewRequest(http.MethodGet, "/app/replay?conversationId=c1&fromSeq=4&limit=2", nil)
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+d.Token)
 	w = httptest.NewRecorder()
 	h.ServeReplay(w, req)
 	_ = json.Unmarshal(w.Body.Bytes(), &res)

@@ -1,8 +1,10 @@
 package app
 
 import (
+	"errors"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // activeHub is the hub of the configured app provider, set at Init. The HTTP
@@ -20,11 +22,29 @@ func setActiveHub(h *Hub) {
 }
 
 // Enabled reports whether the app provider is configured and able to serve the
-// WebSocket endpoint (a hub exists with a non-empty API key).
+// app endpoints (a hub exists). Authentication is per-device-token (#862); there
+// is no shared key whose presence gates the endpoint.
 func Enabled() bool {
 	activeMu.RLock()
 	defer activeMu.RUnlock()
-	return activeHub != nil && activeHub.apiKey != ""
+	return activeHub != nil
+}
+
+// MintActivePairKey mints a single-use, short-TTL pairing key on the live app
+// hub (#862) and returns it with its expiry. A device exchanges this key at
+// POST /app/pair for its own revocable token. The key lives only in memory and
+// is delivered to the user out-of-band (the /android wizard or the `foci` CLI);
+// it is never persisted or logged. Returns an error if the app provider is not
+// running (pairing requires a live gateway).
+func MintActivePairKey(ttl time.Duration) (string, time.Time, error) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return "", time.Time{}, errors.New("app provider is not running")
+	}
+	key, exp := h.pairKeys.mint(ttl)
+	return key, exp, nil
 }
 
 // withHub returns an http.HandlerFunc that resolves the active hub (503 if

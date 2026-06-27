@@ -68,24 +68,11 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 		log.Infof("main", "generated HTTP API key (for remote/cross-user access): %s", httpAPIKey)
 	}
 
-	// Auto-generate the app provider's master API key when the app platform is
-	// configured but no key is set — so [[platforms]] id="app" is enough to bring
-	// the endpoint up, with no hand-written secret. Same human-readable passphrase
-	// scheme as http.api_key (EFF short wordlist). Gated on the platform entry so a
-	// host that hasn't enabled the app provider doesn't accrue a stray secret.
-	if cfg.Platform("app") != nil {
-		if appAPIKey, _ := store.Get("app.api_key"); appAPIKey == "" {
-			generated, err := secrets.GeneratePassphrase(5)
-			if err != nil {
-				log.Fatalf("main", "generate app API key: %v", err)
-			}
-			store.Set("app.api_key", generated)
-			if err := store.Save(); err != nil {
-				log.Fatalf("main", "save app API key: %v", err)
-			}
-			log.Infof("main", "generated app provider API key (pair a device with this): %s", generated)
-		}
-	}
+	// The app provider no longer uses a persisted shared "master" key (#862):
+	// devices authenticate with per-device tokens, minted by exchanging a
+	// single-use, in-memory pairing key (the /android wizard or `foci app
+	// pair-key`) at POST /app/pair. So there is nothing to auto-generate here —
+	// [[platforms]] id="app" brings the endpoint up with no shared secret.
 
 	// Initialise the child-credential drop (probes CAP_SETGID, stashes a
 	// Credential that filters foci-secrets out of child processes' groups).

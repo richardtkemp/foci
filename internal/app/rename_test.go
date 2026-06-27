@@ -43,7 +43,6 @@ func TestAliasFor_RoundTrip(t *testing.T) {
 func TestHandleConversationRename_Persists(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
-	h.apiKey = "k"
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	b := &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
 	h.convs["c1"] = b

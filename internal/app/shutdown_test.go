@@ -23,7 +23,7 @@ import (
 
 func TestHubClose_ClosesClientsWithServerRestart(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master-secret"
+	d := h.devices.pair("dev", "")
 	h.deps = platform.ProviderDeps{Config: &config.Config{}}
 	setActiveHub(h)
 	t.Cleanup(func() { setActiveHub(nil) })
@@ -35,7 +35,7 @@ func TestHubClose_ClosesClientsWithServerRestart(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/app/ws"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{
-		"Authorization":          {"Bearer master-secret"},
+		"Authorization":          {"Bearer " + d.Token},
 		"Sec-WebSocket-Protocol": {fap.Subprotocol},
 	})
 	if err != nil {

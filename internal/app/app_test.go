@@ -221,6 +221,7 @@ func newTestHub() *Hub {
 		blobs:        newBlobStore(),
 		tokens:       newPushTokens(),
 		devices:      newDeviceStore(""),
+		pairKeys:     newPairKeyStore(),
 		authLim:      newAuthLimiter(authFailMax, authFailWindow),
 		agents:       make(map[string]*appConn),
 		convs:        make(map[string]*convBinding),
@@ -837,10 +838,10 @@ func TestResolveAttachments_ReadsBlob(t *testing.T) {
 
 func TestBlobHTTP_UploadThenDownload(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "secret-key"
+	d := h.devices.pair("dev", "")
 
 	up := httptest.NewRequest(http.MethodPost, "/app/blob", strings.NewReader("filedata"))
-	up.Header.Set("Authorization", "Bearer secret-key")
+	up.Header.Set("Authorization", "Bearer "+d.Token)
 	up.Header.Set("Content-Type", "image/png")
 	up.Header.Set("X-Filename", "p.png")
 	uw := httptest.NewRecorder()
@@ -861,7 +862,7 @@ func TestBlobHTTP_UploadThenDownload(t *testing.T) {
 	}
 
 	dn := httptest.NewRequest(http.MethodGet, "/app/blob/"+res.BlobID, nil)
-	dn.Header.Set("Authorization", "Bearer secret-key")
+	dn.Header.Set("Authorization", "Bearer "+d.Token)
 	dw := httptest.NewRecorder()
 	h.ServeBlobGet(dw, dn)
 	if dw.Code != http.StatusOK || dw.Body.String() != "filedata" {
@@ -874,7 +875,6 @@ func TestBlobHTTP_UploadThenDownload(t *testing.T) {
 
 func TestBlobHTTP_Auth(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "secret-key"
 
 	noAuth := httptest.NewRequest(http.MethodPost, "/app/blob", strings.NewReader("x"))
 	nw := httptest.NewRecorder()
@@ -1098,7 +1098,6 @@ func TestConversationOpen_ReusesExistingNamedSession(t *testing.T) {
 
 func TestServePushRegister_UpdatesToken(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
 	d := h.devices.pair("dev1", "")
 	req := httptest.NewRequest(http.MethodPost, "/app/push/register", strings.NewReader(`{"pushToken":"fresh-tok"}`))
 	req.Header.Set("Authorization", "Bearer "+d.Token) // device authenticates as itself
@@ -1114,12 +1113,12 @@ func TestServePushRegister_UpdatesToken(t *testing.T) {
 
 func TestServeHistory_ReportsSeqHighWater(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
+	d := h.devices.pair("dev", "")
 	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1/9", seq: 42, seen: map[string]struct{}{}}
 	h.convs["c1"] = b
 
 	req := httptest.NewRequest(http.MethodGet, "/app/history?conversationId=c1", nil)
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+d.Token)
 	w := httptest.NewRecorder()
 	h.ServeHistory(w, req)
 	if w.Code != http.StatusOK {
@@ -1137,7 +1136,7 @@ func TestServeHistory_ReportsSeqHighWater(t *testing.T) {
 	// An unknown conversation reports present=false, lastSeq 0 (server restarted
 	// / never seen) rather than erroring.
 	req = httptest.NewRequest(http.MethodGet, "/app/history?conversationId=ghost", nil)
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+d.Token)
 	w = httptest.NewRecorder()
 	h.ServeHistory(w, req)
 	_ = json.Unmarshal(w.Body.Bytes(), &res)
@@ -1323,26 +1322,27 @@ func TestDeviceStore_Persistence(t *testing.T) {
 	}
 }
 
-func TestAuthToken_MasterAndDevice(t *testing.T) {
+// authToken validates per-device tokens only; there is no shared master key
+// (#862). A valid device token authenticates; anything else is rejected.
+func TestAuthToken_DeviceTokenOnly(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
 	d := h.devices.pair("dev1", "")
-	if _, ok := h.authToken("master"); !ok {
-		t.Error("master key rejected")
-	}
 	if dev, ok := h.authToken(d.Token); !ok || dev.DeviceID != "dev1" {
 		t.Error("device token rejected")
 	}
 	if _, ok := h.authToken("nope"); ok {
 		t.Error("bad token accepted")
 	}
+	if _, ok := h.authToken(""); ok {
+		t.Error("empty token accepted")
+	}
 }
 
-func TestPairHTTP_MasterMintsDeviceToken(t *testing.T) {
+func TestPairHTTP_PairKeyMintsDeviceToken(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
+	pk, _ := h.pairKeys.mint(time.Minute)
 	req := httptest.NewRequest(http.MethodPost, "/app/pair", strings.NewReader(`{"deviceId":"dev1","label":"Phone","pushToken":"ptok"}`))
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+pk)
 	w := httptest.NewRecorder()
 	h.ServePair(w, req)
 	if w.Code != http.StatusOK {
@@ -1364,10 +1364,9 @@ func TestPairHTTP_MasterMintsDeviceToken(t *testing.T) {
 
 func TestPairHTTP_DeviceTokenCannotPair(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
 	d := h.devices.pair("dev1", "")
 	req := httptest.NewRequest(http.MethodPost, "/app/pair", strings.NewReader(`{"deviceId":"dev2"}`))
-	req.Header.Set("Authorization", "Bearer "+d.Token) // a device token, not the master key
+	req.Header.Set("Authorization", "Bearer "+d.Token) // a device token, not a pairing key
 	w := httptest.NewRecorder()
 	h.ServePair(w, req)
 	if w.Code != http.StatusForbidden {
@@ -1377,21 +1376,22 @@ func TestPairHTTP_DeviceTokenCannotPair(t *testing.T) {
 
 func TestServePair_AllowlistRejectsUnknownDevice(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
 	h.allowedDevices = map[string]bool{"dev-ok": true}
 
-	// A device NOT on the allowlist is rejected.
+	// A device NOT on the allowlist is rejected (with a valid, fresh pairing key).
+	pk, _ := h.pairKeys.mint(time.Minute)
 	req := httptest.NewRequest(http.MethodPost, "/app/pair", strings.NewReader(`{"deviceId":"dev-bad"}`))
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+pk)
 	w := httptest.NewRecorder()
 	h.ServePair(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("disallowed device pair code = %d, want 403", w.Code)
 	}
 
-	// A device ON the allowlist pairs normally.
+	// A device ON the allowlist pairs normally (fresh key — pairing keys are single-use).
+	pk, _ = h.pairKeys.mint(time.Minute)
 	req = httptest.NewRequest(http.MethodPost, "/app/pair", strings.NewReader(`{"deviceId":"dev-ok"}`))
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+pk)
 	w = httptest.NewRecorder()
 	h.ServePair(w, req)
 	if w.Code != http.StatusOK {
@@ -1460,7 +1460,6 @@ func fakeClientForHub(h *Hub) *wsClient {
 
 func TestBlobAuth_AcceptsDeviceToken(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
 	d := h.devices.pair("dev1", "")
 	meta, _ := h.blobs.putBytes([]byte("x"), "document", "f", "text/plain")
 	req := httptest.NewRequest(http.MethodGet, "/app/blob/"+meta.id, nil)
@@ -1474,10 +1473,10 @@ func TestBlobAuth_AcceptsDeviceToken(t *testing.T) {
 
 func TestRevokeHTTP_InvalidatesToken(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
 	d := h.devices.pair("dev1", "")
+	admin := h.devices.pair("admin", "") // any paired device can revoke (#862)
 	req := httptest.NewRequest(http.MethodPost, "/app/pair/revoke", strings.NewReader(`{"deviceId":"dev1"}`))
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+admin.Token)
 	w := httptest.NewRecorder()
 	h.ServeRevoke(w, req)
 	if w.Code != http.StatusNoContent {

@@ -38,8 +38,8 @@ type deviceInfo struct {
 }
 
 // deviceStore holds per-device pairing tokens (auth hardening, §4). The shared
-// master key mints these once over TLS (POST /app/pair); thereafter a device
-// authenticates with its own revocable token. Persisted to a JSON file so
+// A single-use pairing key mints these over TLS (POST /app/pair); thereafter a
+// device authenticates with its own revocable token. Persisted to a JSON file so
 // pairings survive restarts (foci restarts on every deploy). path == "" keeps
 // the store purely in-memory.
 type deviceStore struct {

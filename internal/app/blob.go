@@ -177,7 +177,7 @@ func kindForMIME(m string) string {
 	}
 }
 
-// --- HTTP handlers (Bearer app.api_key, same gate as /app/ws) ---
+// --- HTTP handlers (Bearer device token, same gate as /app/ws) ---
 
 // ServeBlobGet handles GET /app/blob/<id>: authenticates, then serves the blob
 // range-capably (http.ServeContent) so the client can resume partial fetches.
@@ -235,7 +235,7 @@ func (h *Hub) ServeBlobPost(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"blobId": meta.id, "size": meta.size, "mime": meta.mime})
 }
 
-// authBlob enforces the master key OR a valid device token on a blob request
+// authBlob enforces a valid device token on a blob request
 // (rate-limited), writing the error response and returning false on failure.
 func (h *Hub) authBlob(w http.ResponseWriter, r *http.Request) bool {
 	_, ok := h.authenticate(w, r)
