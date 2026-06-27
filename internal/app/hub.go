@@ -646,7 +646,13 @@ func (h *Hub) Close() error {
 	}
 	h.mu.Unlock()
 	for _, c := range clients {
-		c.close()
+		// Hub.Close runs only on graceful shutdown (the deploy/restart path: a
+		// crash or kill -9 skips the main defer that leads here). Close with
+		// 1012 ServerRestart so app clients can distinguish a deliberate bounce
+		// from a network drop and use the fast restart-reconnect regime (wait
+		// 5s, then retry every 1s for ~30s) instead of generic exponential
+		// backoff (#900).
+		c.closeWithCode(fap.CloseServerRestart, "server restarting")
 	}
 	// Drain + flush the durable replay store so a graceful shutdown (the deploy
 	// path) persists every in-flight frame before exit.
