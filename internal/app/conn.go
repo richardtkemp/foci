@@ -166,30 +166,40 @@ func (c *appConn) SendTextToChat(chatID int64, text string) error {
 
 func (c *appConn) SendNotification(text string) { c.notify(text) }
 
+// SendNotificationDirect returns the delivered notification's messageID so the
+// caller can later edit it in place via EditMessageText (the compaction ⏳→✅
+// flow). Empty when nothing was delivered or this is the unbound fan-out
+// instance (agent-wide notices like rate-limit warnings are not edited).
 func (c *appConn) SendNotificationDirect(text string) string {
-	c.notify(text)
-	return ""
+	return c.notify(text)
 }
 
-// notify delivers an agent notification. A bound view targets its pinned
-// session; the unbound stored instance (used by NotifyAgent and the
-// AllForAgent fallback in the compaction/tasklist hooks) has no single session,
-// so it fans out to every live binding for the agent rather than guessing a
-// "default" — that guess was the wrong-chat compaction-notice bug.
-func (c *appConn) notify(text string) {
+// notify delivers an agent notification and returns its messageID. A bound view
+// targets its pinned session, stamps a stable messageID, and registers it so a
+// later EditMessageText can re-send with the same id (replace in place). The
+// unbound stored instance (used by NotifyAgent and the AllForAgent fallback in
+// the compaction/tasklist hooks) has no single session, so it fans out to every
+// live binding rather than guessing a "default" — that guess was the wrong-chat
+// compaction-notice bug — and returns "" (a fan-out has no single id to edit).
+func (c *appConn) notify(text string) string {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
-		return
+		return ""
 	}
 	if c.bound != "" {
-		if b := c.hub.bindingForSession(c.bound); b != nil {
-			b.send(fap.Notification{ConversationID: b.convID, Text: clean, Level: "info"})
+		b := c.hub.bindingForSession(c.bound)
+		if b == nil {
+			return ""
 		}
-		return
+		msgID := fap.NewULID()
+		c.hub.registerNotification(msgID, b)
+		b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info"})
+		return msgID
 	}
 	for _, b := range c.hub.bindingsForAgent(c.agentID) {
-		b.send(fap.Notification{ConversationID: b.convID, Text: clean, Level: "info"})
+		b.send(fap.Notification{ConversationID: b.convID, MessageID: fap.NewULID(), Text: clean, Level: "info"})
 	}
+	return ""
 }
 
 // SetTyping is intentionally a no-op for the app. The app's typing indicator is
@@ -347,17 +357,26 @@ func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.Bat
 	return true, nil
 }
 
-// EditMessageText replaces a prompt's text and removes its buttons. Terminal:
-// the resolution / cancel / expiry edit. msgID is the promptID returned by
-// SendTextWithButtons. Idempotent — an unknown promptID (already resolved) is a
-// no-op.
+// EditMessageText edits a previously-sent message in place. msgID is either a
+// promptID (from SendTextWithButtons → replace text, drop buttons) or a
+// notification messageID (from SendNotificationDirect → re-send the notification
+// with the same id so the client replaces the row, e.g. compaction ⏳→✅).
+// Idempotent — an unknown id (already resolved/consumed) is a no-op.
 func (c *appConn) EditMessageText(msgID, text string) error {
-	b := c.hub.bindingForPrompt(msgID)
-	if b == nil {
+	if b := c.hub.bindingForPrompt(msgID); b != nil {
+		c.hub.deletePrompt(msgID)
+		b.send(fap.InteractiveEdit{ConversationID: b.convID, PromptID: msgID, Text: text})
 		return nil
 	}
-	c.hub.deletePrompt(msgID)
-	b.send(fap.InteractiveEdit{ConversationID: b.convID, PromptID: msgID, Text: text})
+	if b := c.hub.bindingForNotification(msgID); b != nil {
+		c.hub.deleteNotification(msgID)
+		clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
+		if clean != "" {
+			// Same messageID → the client upserts (replaces) the existing row.
+			b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info"})
+		}
+		return nil
+	}
 	return nil
 }
 

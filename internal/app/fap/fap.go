@@ -252,8 +252,12 @@ func (ServerMessage) Type() string { return TypeMessage }
 // Notification is a system-styled notice (Direct bypasses turn buffering).
 type Notification struct {
 	ConversationID string `json:"conversationId"`
-	Text           string `json:"text"`
-	Level          string `json:"level,omitempty"`
+	// MessageID is the notification's stable application-level id. Re-sending a
+	// notification with the same MessageID replaces it in place on the client
+	// (the compaction ⏳→✅ edit), so it occupies one row, not two.
+	MessageID string `json:"messageId,omitempty"`
+	Text      string `json:"text"`
+	Level     string `json:"level,omitempty"`
 }
 
 func (Notification) Type() string { return TypeNotification }
