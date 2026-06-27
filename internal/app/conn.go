@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"time"
 
 	"foci/internal/agent"
@@ -12,6 +11,7 @@ import (
 	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/platform"
+	"foci/internal/session"
 	"foci/internal/voice"
 )
 
@@ -45,9 +45,13 @@ type appConn struct {
 	cmdCtx   command.CommandContext
 	stt      voice.STT // inbound voice transcription; nil = unsupported
 
-	mu             sync.Mutex
-	defaultSession string
-	lastChatID     int64
+	// bound is the session this view is pinned to. The stored per-agent instance
+	// (PrimaryBot) leaves it empty; hub.BotForSession mints a shallow copy with
+	// bound set, so a session-blind send (SendText/SendNotification/media) routes
+	// to the right socket without a mutable "default session". An empty bound is
+	// the agent-wide instance: session-blind notifications fan out to every live
+	// binding rather than guessing whoever-spoke-last (the wrong-chat bug).
+	bound string
 }
 
 var (
@@ -70,34 +74,20 @@ func (c *appConn) Username() string     { return c.agentID }
 
 // --- session management ---
 
-func (c *appConn) SessionKey() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.defaultSession
-}
+func (c *appConn) SessionKey() string { return c.bound }
 
-func (c *appConn) DefaultSessionKey() string        { return c.SessionKey() }
-func (c *appConn) DefaultSessionKeyOrEmpty() string { return c.SessionKey() }
-func (c *appConn) SetSessionKey(key string)         { c.setDefault(key) }
-func (c *appConn) SetSessionKeyDirect(key string)   { c.setDefault(key) }
+func (c *appConn) DefaultSessionKey() string        { return c.bound }
+func (c *appConn) DefaultSessionKeyOrEmpty() string { return c.bound }
 
-func (c *appConn) setDefault(key string) {
-	c.mu.Lock()
-	c.defaultSession = key
-	c.mu.Unlock()
-}
+// SetSessionKey / SetSessionKeyDirect / SetChatID satisfy platform.Connection
+// but are no-ops for the app: a view's session is fixed at mint time (the
+// immutable bound field), never mutated in place. Only the /fork facet path
+// calls these, and the app has no facets yet (AcquireFacet returns false).
+func (c *appConn) SetSessionKey(string)       {}
+func (c *appConn) SetSessionKeyDirect(string) {}
+func (c *appConn) SetChatID(int64)            {}
 
-func (c *appConn) SetChatID(chatID int64) {
-	c.mu.Lock()
-	c.lastChatID = chatID
-	c.mu.Unlock()
-}
-
-func (c *appConn) ChatID() int64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lastChatID
-}
+func (c *appConn) ChatID() int64 { return session.ChatIDFromKey(c.bound) }
 
 func (c *appConn) SessionKeyForChat(chatID int64) string {
 	return c.hub.sessionKeyForChat(c.agentID, chatID)
@@ -174,25 +164,32 @@ func (c *appConn) SendTextToChat(chatID int64, text string) error {
 	return c.SendToSession(c.SessionKeyForChat(chatID), text)
 }
 
-func (c *appConn) SendNotification(text string) {
-	c.deliverNotification(c.SessionKey(), text)
-}
+func (c *appConn) SendNotification(text string) { c.notify(text) }
 
 func (c *appConn) SendNotificationDirect(text string) string {
-	c.deliverNotification(c.SessionKey(), text)
+	c.notify(text)
 	return ""
 }
 
-func (c *appConn) deliverNotification(sessionKey, text string) {
+// notify delivers an agent notification. A bound view targets its pinned
+// session; the unbound stored instance (used by NotifyAgent and the
+// AllForAgent fallback in the compaction/tasklist hooks) has no single session,
+// so it fans out to every live binding for the agent rather than guessing a
+// "default" — that guess was the wrong-chat compaction-notice bug.
+func (c *appConn) notify(text string) {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
 		return
 	}
-	b := c.hub.bindingForSession(sessionKey)
-	if b == nil {
+	if c.bound != "" {
+		if b := c.hub.bindingForSession(c.bound); b != nil {
+			b.send(fap.Notification{ConversationID: b.convID, Text: clean, Level: "info"})
+		}
 		return
 	}
-	b.send(fap.Notification{ConversationID: b.convID, Text: clean, Level: "info"})
+	for _, b := range c.hub.bindingsForAgent(c.agentID) {
+		b.send(fap.Notification{ConversationID: b.convID, Text: clean, Level: "info"})
+	}
 }
 
 // SetTyping is intentionally a no-op for the app. The app's typing indicator is
@@ -423,10 +420,10 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	if b == nil {
 		return nil, nil
 	}
-	c.mu.Lock()
-	c.defaultSession = env.SessionKey
-	c.lastChatID = env.ChatID
-	c.mu.Unlock()
+	// No per-turn "default session" stamp here: the sink is bound directly to
+	// this envelope's binding (b), and async notifications resolve their own
+	// session via hub.BotForSession. Stamping a shared default was last-speaker-
+	// wins and misrouted compaction notices to whoever spoke most recently.
 	sink := newAppSink(b)
 	if c.agentRef != nil {
 		sk := env.SessionKey
