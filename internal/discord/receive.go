@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/dispatch"
 	"foci/internal/platform"
+	"foci/internal/timeutil"
 	"foci/internal/toolformat"
 
 	"github.com/bwmarrin/discordgo"
@@ -140,7 +141,8 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 
 	// Handle reply context
 	if msg.ReferencedMessage != nil && msg.ReferencedMessage.Content != "" {
-		text = fmt.Sprintf("[Replying to: %s]\n\n%s", msg.ReferencedMessage.Content, text)
+		ts := " (" + timeutil.Format(msg.ReferencedMessage.Timestamp) + ")"
+		text = fmt.Sprintf("[Replying to%s: %s]\n\n%s", ts, msg.ReferencedMessage.Content, text)
 	}
 
 	// Download attachments

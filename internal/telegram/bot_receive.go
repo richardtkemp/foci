@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/dispatch"
 	"foci/internal/platform"
+	"foci/internal/timeutil"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -141,15 +142,23 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	// Include quoted message context when user replies to a specific message.
 	// Prefer the specific quote text (user highlighted a portion) over the
 	// full replied-to message, which may be very long.
+	// origTS renders the replied-to message's send time (a quote is always part
+	// of a reply, so ReplyToMessage carries the original's Date for both cases).
+	origTS := func() string {
+		if msg.ReplyToMessage == nil {
+			return ""
+		}
+		return " (" + timeutil.Format(time.Unix(msg.ReplyToMessage.Date, 0)) + ")"
+	}
 	if msg.Quote != nil && msg.Quote.Text != "" {
-		text = fmt.Sprintf("[Quoting: %s]\n\n%s", msg.Quote.Text, text)
+		text = fmt.Sprintf("[Quoting%s: %s]\n\n%s", origTS(), msg.Quote.Text, text)
 	} else if msg.ReplyToMessage != nil {
 		quoted := msg.ReplyToMessage.Text
 		if quoted == "" {
 			quoted = msg.ReplyToMessage.Caption
 		}
 		if quoted != "" {
-			text = fmt.Sprintf("[Replying to: %s]\n\n%s", quoted, text)
+			text = fmt.Sprintf("[Replying to%s: %s]\n\n%s", origTS(), quoted, text)
 		}
 	}
 
