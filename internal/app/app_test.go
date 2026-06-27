@@ -1147,9 +1147,8 @@ func TestRouteCommand_NoCommandsErrors(t *testing.T) {
 	registerBareAgent(h, "ag") // bare appConn → commands registry nil
 	c := fakeClient()
 	c.hub = h
-	c.agentID = "ag"
 
-	h.routeCommand(c, fap.Command{ConversationID: "c1", Name: "help"})
+	h.routeCommand(c, fap.Command{ConversationID: "c1", AgentID: "ag", Name: "help"})
 
 	ds := drain(t, c)
 	if len(ds) != 1 || ds[0].t != fap.TypeError || ds[0].d["code"] != "no_commands" {

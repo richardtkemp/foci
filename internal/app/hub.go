@@ -1213,8 +1213,10 @@ type wsClient struct {
 	done    chan struct{}
 	closeMu sync.Once
 
-	mu       sync.Mutex
-	agentID  string                  // socket's bound agent (set on conversation.open / first message)
+	mu sync.Mutex
+	// No socket-wide "current agent": one socket multiplexes every agent's
+	// conversations concurrently. Each inbound frame names its agent (or its
+	// conversation's binding does), so the agent is resolved per-frame.
 	deviceID string                  // from the client hello
 	features map[string]struct{}     // advertised client capabilities (from the hello)
 	convByID map[string]*convBinding // conversationId → binding
