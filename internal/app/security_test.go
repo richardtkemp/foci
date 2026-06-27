@@ -72,6 +72,7 @@ func restEndpoints(h *Hub) []endpoint {
 		{"devices", http.MethodGet, "/app/devices", "", h.ServeDevices},
 		{"push-register", http.MethodPost, "/app/push/register", `{"deviceId":"d","pushToken":"t"}`, h.ServePushRegister},
 		{"history", http.MethodGet, "/app/history?conversationId=c", "", h.ServeHistory},
+		{"replay", http.MethodGet, "/app/replay?conversationId=c", "", h.ServeReplay},
 		{"blob-post", http.MethodPost, "/app/blob", "x", h.ServeBlobPost},
 		{"blob-get", http.MethodGet, "/app/blob/abc", "", h.ServeBlobGet},
 		{"avatar", http.MethodGet, "/app/avatar/clutch", "", h.ServeAvatar},
@@ -84,6 +85,11 @@ func restEndpoints(h *Hub) []endpoint {
 func TestSecurity_AuthMatrix_RejectsUnauthenticated(t *testing.T) {
 	h, _ := secHub(t)
 	for _, e := range restEndpoints(h) {
+		// Per-endpoint auth semantics only — reset the brute-force limiter so the
+		// shared per-IP bucket doesn't trip (429) partway through enumeration as
+		// the endpoint list grows. Cumulative lockout is covered by test 5.
+		h.authLim = newAuthLimiter(authFailMax, authFailWindow)
+
 		// No Authorization header → 401.
 		w := httptest.NewRecorder()
 		e.handler(w, secReq(e.method, e.path, e.body, ""))
@@ -133,6 +139,7 @@ func TestSecurity_UseEndpoints_AcceptDeviceToken(t *testing.T) {
 	h, devTok := secHub(t)
 	use := []endpoint{
 		{"history", http.MethodGet, "/app/history?conversationId=c", "", h.ServeHistory},
+		{"replay", http.MethodGet, "/app/replay?conversationId=c", "", h.ServeReplay},
 		{"push-register", http.MethodPost, "/app/push/register", `{"pushToken":"t"}`, h.ServePushRegister},
 		{"blob-post", http.MethodPost, "/app/blob", "x", h.ServeBlobPost},
 	}
@@ -320,6 +327,7 @@ func TestSecurity_MethodEnforcement(t *testing.T) {
 		{"GET-pair", http.MethodGet, "/app/pair", "", h.ServePair, http.StatusMethodNotAllowed},
 		{"GET-revoke", http.MethodGet, "/app/pair/revoke", "", h.ServeRevoke, http.StatusMethodNotAllowed},
 		{"POST-history", http.MethodPost, "/app/history?conversationId=c", "", h.ServeHistory, http.StatusMethodNotAllowed},
+		{"POST-replay", http.MethodPost, "/app/replay?conversationId=c", "", h.ServeReplay, http.StatusMethodNotAllowed},
 		{"POST-pushreg", http.MethodGet, "/app/push/register", "", h.ServePushRegister, http.StatusMethodNotAllowed},
 		{"DELETE-blob", http.MethodDelete, "/app/blob", "x", h.ServeBlobPost, http.StatusMethodNotAllowed},
 		{"POST-avatar", http.MethodPost, "/app/avatar/clutch", "", h.ServeAvatar, http.StatusMethodNotAllowed},
