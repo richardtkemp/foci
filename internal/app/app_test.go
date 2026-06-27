@@ -339,6 +339,22 @@ func TestSendTextWithButtons_OfflineReturnsErr(t *testing.T) {
 	}
 }
 
+// TestAppConn_SetTypingIsNoOp guards the typing-indicator contract: the platform
+// TypingFunc path (refresh-and-auto-expire, built for Telegram/Discord) must NOT
+// drive the app. appConn.SetTyping is a no-op; the app's typing is owned solely by
+// appSink, which brackets each turn exactly once (TurnStart on, TurnComplete off).
+// If SetTyping ever emits a frame again, the platform path's periodic re-asserts
+// and intermediate cancels leak back as redundant frames and mid-session flicker.
+func TestAppConn_SetTypingIsNoOp(t *testing.T) {
+	_, c, _, conn := boundConn(t)
+	conn.SetTyping(true)
+	conn.SetTyping(false)
+	conn.SetTyping(true)
+	if got := drain(t, c); len(got) != 0 {
+		t.Fatalf("appConn.SetTyping must not emit frames (typing owned by appSink), got %v", types(got))
+	}
+}
+
 // TestInteractive_ButtonRoundTrip drives the real platform interactive
 // machinery: present a permission prompt, simulate the app echoing the chosen
 // Choice.Data, and assert the callback fired and a resolution edit was emitted.
