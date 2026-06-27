@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -470,6 +471,49 @@ func (h *Hub) ServeHistory(w http.ResponseWriter, r *http.Request) {
 		resp["agentId"] = b.agentID
 		resp["sessionKey"] = b.sessionKey
 		b.mu.Unlock()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ServeReplay handles GET /app/replay?conversationId=<id>&fromSeq=<n>&limit=<n>:
+// the content-bearing backfill path (wire §9). It returns the durably-stored
+// frames with seq > fromSeq, in seq order, as their verbatim encoded wires — the
+// app decodes and renders them exactly as live frames (idempotent: its inbound
+// tracker dedups by seq). This is what closes the gap reconnect replay cannot
+// when the in-memory buffer was trimmed or wiped by a restart. `more` is true
+// when the page hit the limit, signalling the client to page again from the last
+// returned seq. Distinct from /app/history (which carries reconciliation state,
+// not content).
+func (h *Hub) ServeReplay(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authenticate(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	convID := r.URL.Query().Get("conversationId")
+	if convID == "" {
+		http.Error(w, "conversationId required", http.StatusBadRequest)
+		return
+	}
+	fromSeq, _ := strconv.ParseInt(r.URL.Query().Get("fromSeq"), 10, 64)
+	limit := maxReplayPage
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v < maxReplayPage {
+		limit = v
+	}
+
+	frames := h.frames.Range(convID, fromSeq, limit)
+	out := make([]map[string]any, 0, len(frames))
+	for _, f := range frames {
+		out = append(out, map[string]any{"seq": f.seq, "wire": f.wire})
+	}
+	resp := map[string]any{
+		"conversationId": convID,
+		"fromSeq":        fromSeq,
+		"frames":         out,
+		"more":           len(frames) == limit,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)

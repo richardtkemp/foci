@@ -1,6 +1,9 @@
 package app
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -162,5 +165,56 @@ func TestReplayTo_NoStoreBackfillWhenMemoryCovers(t *testing.T) {
 	ds := drainEnv(t, c)
 	if len(ds) != 1 || ds[0].seq != 5 {
 		t.Fatalf("replay = %v, want only seq 5 from memory", ds)
+	}
+}
+
+// GET /app/replay returns the durably-stored frames > fromSeq as verbatim wires,
+// with `more` signalling pagination when the page hits the limit.
+func TestServeReplay_ReturnsStoredFrames(t *testing.T) {
+	h := newTestHub()
+	h.apiKey = "master"
+	s := tempFrameStore(t)
+	h.frames = s
+	now := time.Now().UnixMilli()
+	for i := int64(1); i <= 5; i++ {
+		s.insert(frameWrite{convID: "c1", seq: i, wire: mkWire(t, "c1", i), sentMs: now, visible: true})
+	}
+
+	// Page from seq 2 with limit 2 → frames 3,4 and more=true.
+	req := httptest.NewRequest(http.MethodGet, "/app/replay?conversationId=c1&fromSeq=2&limit=2", nil)
+	req.Header.Set("Authorization", "Bearer master")
+	w := httptest.NewRecorder()
+	h.ServeReplay(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("replay code = %d", w.Code)
+	}
+	var res struct {
+		Frames []struct {
+			Seq  int64  `json:"seq"`
+			Wire string `json:"wire"`
+		} `json:"frames"`
+		More bool `json:"more"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(res.Frames) != 2 || res.Frames[0].Seq != 3 || res.Frames[1].Seq != 4 {
+		t.Fatalf("frames = %+v, want seq 3,4", res.Frames)
+	}
+	if !res.More {
+		t.Errorf("more = false, want true (seq 5 still pending)")
+	}
+	if res.Frames[0].Wire == "" {
+		t.Errorf("frame wire empty — app cannot render it")
+	}
+
+	// Final page returns the tail and more=false.
+	req = httptest.NewRequest(http.MethodGet, "/app/replay?conversationId=c1&fromSeq=4&limit=2", nil)
+	req.Header.Set("Authorization", "Bearer master")
+	w = httptest.NewRecorder()
+	h.ServeReplay(w, req)
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if len(res.Frames) != 1 || res.Frames[0].Seq != 5 || res.More {
+		t.Fatalf("final page = %+v more=%v, want [seq 5] more=false", res.Frames, res.More)
 	}
 }
