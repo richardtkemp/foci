@@ -172,3 +172,46 @@ func TestGoroutineMonitor_ExactThreshold(t *testing.T) {
 		t.Error("expected no warning when count equals threshold exactly")
 	}
 }
+
+func TestGoroutineMonitor_DynamicExtra_RaisesThreshold(t *testing.T) {
+	// A count above the static base but within base+DynamicExtra must NOT warn:
+	// the dynamic headroom (e.g. live app sockets) accounts for it.
+	m, count := newTestMonitor(100)
+	*count = 130
+	extra := 50
+	m.cfg.DynamicExtra = func() int { return extra } // effective threshold = 150
+
+	m.checkOnce()
+
+	m.mu.Lock()
+	if m.warnFired {
+		t.Error("expected no warning: count 130 within static 100 + dynamic 50")
+	}
+	m.mu.Unlock()
+
+	// Drop the dynamic headroom to 0 and the same count now exceeds the base.
+	extra = 0
+	m.checkOnce()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.warnFired {
+		t.Error("expected warning: count 130 exceeds static 100 with no dynamic headroom")
+	}
+}
+
+func TestGoroutineMonitor_DynamicExtra_StillCatchesLeak(t *testing.T) {
+	// A count above base+DynamicExtra must warn — a leak still trips even when
+	// the dynamic term grants headroom.
+	m, count := newTestMonitor(100)
+	*count = 200
+	m.cfg.DynamicExtra = func() int { return 50 } // effective threshold = 150
+
+	m.checkOnce()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.warnFired {
+		t.Error("expected warning: count 200 exceeds static 100 + dynamic 50")
+	}
+}

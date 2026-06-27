@@ -632,6 +632,17 @@ func (h *Hub) Close() error {
 	return nil
 }
 
+// ConnCount returns the number of live app sockets. The goroutine monitor uses
+// it to budget its threshold dynamically: each socket runs a writePump
+// goroutine plus its accept goroutine (readPump runs inline), and spawns
+// transient per-turn goroutines, none of which the static startup formula can
+// know — phones connect and disconnect freely.
+func (h *Hub) ConnCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients)
+}
+
 // defaultAgentID returns the first-registered agent — the binding target for a
 // socket that has not explicitly opened a conversation for a named agent.
 func (h *Hub) defaultAgentID() string {

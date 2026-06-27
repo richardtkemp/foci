@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"time"
 
+	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -136,6 +137,20 @@ func countTelegramBots(cfg *config.Config) int {
 	return count
 }
 
+// countDiscordBots returns the number of Discord bots that will be started:
+// one primary bot per agent whose discord platform config names a bot. Discord
+// has no facet pool, so it is one bot per configured agent (mirrors the guard
+// in setupDiscordBots, which bails when dc == nil || dc.Bot == "").
+func countDiscordBots(cfg *config.Config) int {
+	count := 0
+	for _, acfg := range cfg.Agents {
+		if dc := acfg.Platform("discord"); dc != nil && dc.Bot != "" {
+			count++
+		}
+	}
+	return count
+}
+
 // setupGoroutineMonitor starts the goroutine count monitor if configured. Returns a stop function (may be nil).
 func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Context) func() {
 	interval, _ := time.ParseDuration(cfg.Resources.GoroutineMonitorInterval)
@@ -147,12 +162,19 @@ func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Contex
 		// 30 base (global infra + tool-execution headroom)
 		// + 25 per agent (DB pools, bleve, housekeeping goroutines)
 		// + 5 per telegram bot (poll loop, worker, HTTP/2 read/write)
+		// + 5 per discord bot (gateway ws read/write, heartbeat, event worker)
 		numBots := countTelegramBots(cfg)
-		threshold = 30 + 25*numAgents + 5*numBots
+		numDiscord := countDiscordBots(cfg)
+		threshold = 30 + 25*numAgents + 5*numBots + 5*numDiscord
 	}
 	mon := resources.NewGoroutineMonitor(resources.GoroutineMonitorConfig{
 		Interval:  interval,
 		Threshold: threshold,
+		// App (FAP) sockets are dynamic — phones connect/disconnect at will, so
+		// the static formula cannot budget them. Each live socket runs a
+		// writePump goroutine + its accept goroutine (readPump inline), plus
+		// transient per-turn goroutines: budget 4 each, recomputed per tick.
+		DynamicExtra: func() int { return 4 * app.ActiveConnCount() },
 	})
 	mon.Start(ctx)
 	return mon.Stop
