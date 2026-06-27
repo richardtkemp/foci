@@ -287,7 +287,7 @@ func boundConn(t *testing.T) (*Hub, *wsClient, *convBinding, *appConn) {
 	b := &convBinding{convID: "c1", sessionKey: "ag/capp1/9", client: c, chatID: 7}
 	h.bySession[b.sessionKey] = b
 	c.convByID["c1"] = b
-	conn := &appConn{hub: h, agentID: "ag", defaultSession: b.sessionKey}
+	conn := &appConn{hub: h, agentID: "ag", bound: b.sessionKey}
 	return h, c, b, conn
 }
 
@@ -333,7 +333,7 @@ func TestSendTextWithButtons_EmitsInteractive(t *testing.T) {
 
 func TestSendTextWithButtons_OfflineReturnsErr(t *testing.T) {
 	h := newTestHub()
-	conn := &appConn{hub: h, agentID: "ag", defaultSession: "ag/capp1/9"} // no binding
+	conn := &appConn{hub: h, agentID: "ag", bound: "ag/capp1/9"} // no binding
 	if _, err := conn.SendTextWithButtons("x", []platform.ButtonChoice{{Label: "Allow", Data: "r:0"}}, "im:"); err == nil {
 		t.Errorf("offline SendTextWithButtons must return an error")
 	}

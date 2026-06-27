@@ -606,11 +606,23 @@ func (h *Hub) PrimaryBot(agentID string) *appConn {
 	return h.agents[agentID]
 }
 
+// BotForSession returns a view of the agent's connection pinned to sessionKey.
+// The stored per-agent instance is unbound (bound==""); this mints a shallow
+// copy with bound set so session-blind sends (SendText/SendNotification/media)
+// route to the right socket without a mutable shared "default session". The
+// copy is a transient throwaway — nobody stores it — and is copy-safe now that
+// appConn carries no mutex.
 func (h *Hub) BotForSession(sessionKey string) *appConn {
 	if sessionKey == "" {
 		return nil
 	}
-	return h.PrimaryBot(session.AgentIDFromKey(sessionKey))
+	base := h.PrimaryBot(session.AgentIDFromKey(sessionKey))
+	if base == nil {
+		return nil
+	}
+	view := *base
+	view.bound = sessionKey
+	return &view
 }
 
 func (h *Hub) BotForSessionOrPrimary(sessionKey, agentID string) *appConn {
@@ -889,6 +901,21 @@ func (h *Hub) bindingForSession(sessionKey string) *convBinding {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.bySession[sessionKey]
+}
+
+// bindingsForAgent returns every live conversation binding for an agent. The
+// unbound appConn (PrimaryBot) uses this to fan a session-blind notification
+// out to all the agent's conversations instead of guessing a default session.
+func (h *Hub) bindingsForAgent(agentID string) []*convBinding {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	var out []*convBinding
+	for _, b := range h.convs {
+		if b.agentID == agentID {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // --- interactive prompt registry (slice 2) ---
