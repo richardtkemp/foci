@@ -30,6 +30,20 @@ func Enabled() bool {
 	return activeHub != nil
 }
 
+// ActiveConnCount returns the number of live app sockets on the configured hub,
+// or 0 if the app provider is not running. The goroutine monitor calls it each
+// sample tick to grow its threshold with the live connection count (dynamic
+// headroom for a quantity the startup formula cannot predict).
+func ActiveConnCount() int {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return 0
+	}
+	return h.ConnCount()
+}
+
 // MintActivePairKey mints a single-use, short-TTL pairing key on the live app
 // hub (#862) and returns it with its expiry. A device exchanges this key at
 // POST /app/pair for its own revocable token. The key lives only in memory and

@@ -12,7 +12,13 @@ import (
 // GoroutineMonitorConfig holds parsed configuration for the goroutine monitor.
 type GoroutineMonitorConfig struct {
 	Interval  time.Duration
-	Threshold int // warn when goroutine count exceeds this
+	Threshold int // static base: warn when goroutine count exceeds this
+
+	// DynamicExtra, if set, is added to Threshold on every check. It lets the
+	// budget track quantities unknown at startup — e.g. live app sockets, each
+	// of which costs a couple of goroutines that come and go with the phone.
+	// Returns 0 when there is nothing dynamic to account for.
+	DynamicExtra func() int
 }
 
 // GoroutineMonitor periodically logs the current goroutine count and warns
@@ -83,14 +89,21 @@ func (m *GoroutineMonitor) checkOnce() {
 	count := getCount()
 	log.Debugf("goroutine_monitor", "goroutines=%d", count)
 
-	if count > m.cfg.Threshold {
+	// Effective threshold = static base + any dynamic headroom (live app
+	// sockets etc.), recomputed each tick so the budget tracks reality.
+	threshold := m.cfg.Threshold
+	if m.cfg.DynamicExtra != nil {
+		threshold += m.cfg.DynamicExtra()
+	}
+
+	if count > threshold {
 		m.mu.Lock()
 		alreadyWarned := m.warnFired
 		m.warnFired = true
 		m.mu.Unlock()
 
 		if !alreadyWarned {
-			log.Warnf("goroutine_monitor", "goroutine count %d exceeds threshold %d — possible leak", count, m.cfg.Threshold)
+			log.Warnf("goroutine_monitor", "goroutine count %d exceeds threshold %d — possible leak", count, threshold)
 		}
 		return
 	}
@@ -98,7 +111,7 @@ func (m *GoroutineMonitor) checkOnce() {
 	// Back below threshold — reset dedup
 	m.mu.Lock()
 	if m.warnFired {
-		log.Infof("goroutine_monitor", "goroutine count %d back below threshold %d", count, m.cfg.Threshold)
+		log.Infof("goroutine_monitor", "goroutine count %d back below threshold %d", count, threshold)
 	}
 	m.warnFired = false
 	m.mu.Unlock()
