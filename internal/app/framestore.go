@@ -1,0 +1,231 @@
+package app
+
+import (
+	"database/sql"
+	"sync"
+	"time"
+
+	"foci/internal/log"
+	"foci/internal/sqlite"
+)
+
+// frameStore is the durable, content-bearing backstop for the per-conversation
+// in-memory replay buffer (convBinding.buffer). Every server→app frame is also
+// persisted here verbatim as its encoded wire blob, keyed (conv_id, seq). This
+// closes the eventual-consistency gap the in-memory buffer cannot: it survives a
+// server restart (every update.sh deploy) and retains frames far longer than the
+// in-memory depth/TTL bound, so a long-offline phone can backfill what it missed
+// via reconnect replay (replayTo) and the GET /app/replay endpoint.
+//
+// Two properties fall out of persisting frames here:
+//   - Persistent seqs. On binding (re)creation the hub seeds b.seq from MaxSeq,
+//     so the per-conversation seq counter no longer resets to 0 on restart. That
+//     removes the renumbering ambiguity that would otherwise make a reconnecting
+//     client drop the fresh low-seq stream as stale.
+//   - Byte-faithful replay. The stored value is the exact wire the live path
+//     sent (fap.Encode output), so replay re-emits it unchanged.
+//
+// Writes are async (a single writer goroutine drains a buffered channel) to keep
+// the send hot path latency-free; the in-memory buffer already guarantees
+// immediate replay, so the durable write may lag a few ms. Close() drains the
+// queue, so a graceful shutdown (SIGTERM — what update.sh does) loses nothing; a
+// hard crash can lose only the last few in-flight frames (bounded; the offline
+// push + history reconcile cover the worst case).
+type frameStore struct {
+	db      *sql.DB
+	ttl     time.Duration
+	writeCh chan frameWrite
+	done    chan struct{}
+	wg      sync.WaitGroup
+}
+
+// frameWrite is one pending durable append.
+type frameWrite struct {
+	convID  string
+	seq     int64
+	wire    string
+	sentMs  int64
+	visible bool
+}
+
+// storedFrame is one frame read back for replay/backfill.
+type storedFrame struct {
+	seq  int64
+	wire string
+}
+
+const frameWriteQueue = 256 // async write backlog before Append falls back to sync
+
+// newFrameStore opens (or creates) the durable frame DB and starts its writer.
+func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
+	db, err := sqlite.OpenInit(path,
+		`CREATE TABLE IF NOT EXISTS app_frames (
+			conv_id  TEXT    NOT NULL,
+			seq      INTEGER NOT NULL,
+			wire     TEXT    NOT NULL,
+			sent_ms  INTEGER NOT NULL,
+			visible  INTEGER NOT NULL DEFAULT 1,
+			PRIMARY KEY (conv_id, seq)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_app_frames_sent ON app_frames(sent_ms)`,
+		`PRAGMA auto_vacuum = INCREMENTAL`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	s := &frameStore{
+		db:      db,
+		ttl:     ttl,
+		writeCh: make(chan frameWrite, frameWriteQueue),
+		done:    make(chan struct{}),
+	}
+	s.wg.Add(1)
+	go s.writer()
+	return s, nil
+}
+
+// Append durably persists one sent frame. Non-blocking in the common case; if the
+// writer is saturated it writes synchronously rather than drop (durability beats
+// latency here). nil receiver is a no-op so a store-less hub (no data_dir) is safe.
+func (s *frameStore) Append(convID string, seq int64, wire string, sentMs int64, visible bool) {
+	if s == nil {
+		return
+	}
+	w := frameWrite{convID: convID, seq: seq, wire: wire, sentMs: sentMs, visible: visible}
+	select {
+	case s.writeCh <- w:
+	default:
+		s.insert(w) // queue full — write inline so nothing is lost
+	}
+}
+
+// writer drains the queue until Close, then flushes whatever remains.
+func (s *frameStore) writer() {
+	defer s.wg.Done()
+	for {
+		select {
+		case w := <-s.writeCh:
+			s.insert(w)
+		case <-s.done:
+			for {
+				select {
+				case w := <-s.writeCh:
+					s.insert(w)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+// insert writes one frame. INSERT OR REPLACE keeps the latest wire for a
+// (conv_id, seq) — defensive against a seq reused across an edge-case rehydrate.
+func (s *frameStore) insert(w frameWrite) {
+	v := 0
+	if w.visible {
+		v = 1
+	}
+	if _, err := s.db.Exec(
+		`INSERT OR REPLACE INTO app_frames (conv_id, seq, wire, sent_ms, visible) VALUES (?, ?, ?, ?, ?)`,
+		w.convID, w.seq, w.wire, w.sentMs, v,
+	); err != nil {
+		log.Errorf("app", "frame store insert (conv=%s seq=%d): %v", w.convID, w.seq, err)
+	}
+}
+
+// MaxSeq returns the highest persisted seq for a conversation (0 if none). Used
+// to rehydrate b.seq on binding creation so seqs survive a restart. Safe to call
+// at binding creation: the prior process drained its writes on shutdown, and a
+// new process issues no sends for the conversation before the binding exists.
+func (s *frameStore) MaxSeq(convID string) int64 {
+	if s == nil {
+		return 0
+	}
+	var seq sql.NullInt64
+	if err := s.db.QueryRow(`SELECT MAX(seq) FROM app_frames WHERE conv_id = ?`, convID).Scan(&seq); err != nil {
+		log.Errorf("app", "frame store MaxSeq (conv=%s): %v", convID, err)
+		return 0
+	}
+	if seq.Valid {
+		return seq.Int64
+	}
+	return 0
+}
+
+// Range returns up to limit frames with seq > fromSeq, in ascending seq order —
+// the backfill source for replayTo and GET /app/replay.
+func (s *frameStore) Range(convID string, fromSeq int64, limit int) []storedFrame {
+	if s == nil {
+		return nil
+	}
+	rows, err := s.db.Query(
+		`SELECT seq, wire FROM app_frames WHERE conv_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`,
+		convID, fromSeq, limit,
+	)
+	if err != nil {
+		log.Errorf("app", "frame store Range (conv=%s from=%d): %v", convID, fromSeq, err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	var out []storedFrame
+	for rows.Next() {
+		var f storedFrame
+		if err := rows.Scan(&f.seq, &f.wire); err != nil {
+			log.Errorf("app", "frame store Range scan: %v", err)
+			return out
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// TrimOlderThan deletes frames older than cutoffMs and returns the rows removed.
+func (s *frameStore) TrimOlderThan(cutoffMs int64) int64 {
+	if s == nil {
+		return 0
+	}
+	res, err := s.db.Exec(`DELETE FROM app_frames WHERE sent_ms < ?`, cutoffMs)
+	if err != nil {
+		log.Errorf("app", "frame store trim: %v", err)
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		// Reclaim freed pages incrementally (auto_vacuum=INCREMENTAL).
+		_, _ = s.db.Exec(`PRAGMA incremental_vacuum`)
+	}
+	return n
+}
+
+// janitor periodically trims frames past the TTL until ctx is cancelled.
+func (s *frameStore) janitor(done <-chan struct{}) {
+	if s == nil || s.ttl <= 0 {
+		return
+	}
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			cutoff := time.Now().Add(-s.ttl).UnixMilli()
+			if n := s.TrimOlderThan(cutoff); n > 0 {
+				log.Infof("app", "frame store: trimmed %d frame(s) older than %s", n, s.ttl)
+			}
+		}
+	}
+}
+
+// Close stops the writer, flushes pending writes, and closes the DB.
+func (s *frameStore) Close() {
+	if s == nil {
+		return
+	}
+	close(s.done)
+	s.wg.Wait()
+	if err := s.db.Close(); err != nil {
+		log.Errorf("app", "frame store close: %v", err)
+	}
+}
