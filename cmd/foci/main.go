@@ -238,6 +238,12 @@ func main() {
 		} else {
 			err = cmdCommand(base, append(args, "/ping"))
 		}
+	case "pair-key", "pairkey":
+		if wantsHelp(args) {
+			pairKeyUsage()
+		} else {
+			err = cmdCommand(base, append([]string{"/pairkey"}, args...))
+		}
 	case "auth":
 		// Already handled above main dispatch, but list here for completeness.
 		err = cmdAuth(args)

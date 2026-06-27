@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -60,13 +59,13 @@ const (
 // sockets. It implements platform.ConnectionSource[*appConn] so the generic
 // adapter can expose it as a platform.ConnectionManager.
 type Hub struct {
-	deps    platform.ProviderDeps
-	apiKey  string
-	blobs   *blobStore
-	tokens  *pushTokens
-	pusher  *fcmPusher
-	devices *deviceStore
-	authLim *authLimiter
+	deps     platform.ProviderDeps
+	pairKeys *pairKeyStore
+	blobs    *blobStore
+	tokens   *pushTokens
+	pusher   *fcmPusher
+	devices  *deviceStore
+	authLim  *authLimiter
 
 	host           string          // advertised in hello.caps.host (config [platforms.app].host)
 	replayDepth    int             // config-driven replay buffer depth (0 = default)
@@ -98,16 +97,6 @@ type batchPrompt struct {
 }
 
 func newHub(deps platform.ProviderDeps) *Hub {
-	key := ""
-	if deps.SecretStore != nil {
-		if v, ok := deps.SecretStore.Get("app.api_key"); ok {
-			key = strings.TrimSpace(v)
-		}
-	}
-	if key == "" {
-		log.Warnf("app", "no app.api_key secret — /app/ws endpoint will reject all connections until one is set")
-	}
-
 	// Resolve the typed [platforms.app] config (nil = all code defaults).
 	var appCfg *config.AppSpecific
 	if deps.Config != nil {
@@ -159,7 +148,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	h := &Hub{
 		frames:       frames,
 		deps:         deps,
-		apiKey:       key,
+		pairKeys:     newPairKeyStore(),
 		blobs:        blobs,
 		tokens:       tokens,
 		devices:      newDeviceStore(devicePath),
@@ -266,14 +255,13 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-// authToken validates a credential. Returns (nil, true) for the master key,
-// (device, true) for a valid per-device token, or (nil, false) otherwise.
+// authToken validates a per-device token, returning the device and true, or
+// (nil, false). There is no longer a shared master key (#862): every credential
+// is a revocable per-device token (or, for pairing only, a single-use key —
+// handled separately in ServePair).
 func (h *Hub) authToken(token string) (*device, bool) {
 	if token == "" {
 		return nil, false
-	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(h.apiKey)) == 1 {
-		return nil, true
 	}
 	if h.devices != nil {
 		if d, ok := h.devices.validToken(token); ok {
@@ -283,14 +271,10 @@ func (h *Hub) authToken(token string) (*device, bool) {
 	return nil, false
 }
 
-// authenticate gates a request on the master key OR a device token, with
-// per-IP failure lockout. On success it returns the device (nil for the master
-// key) and true; on failure it writes the HTTP error and returns false.
+// authenticate gates a request on a valid device token, with per-IP failure
+// lockout. On success it returns the device and true; on failure it writes the
+// HTTP error and returns false. (The active-hub nil check lives in withHub.)
 func (h *Hub) authenticate(w http.ResponseWriter, r *http.Request) (*device, bool) {
-	if h.apiKey == "" {
-		http.Error(w, "app endpoint not configured", http.StatusServiceUnavailable)
-		return nil, false
-	}
 	ip := remoteIP(r)
 	if h.authLim.blocked(ip) {
 		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
@@ -311,41 +295,25 @@ func (h *Hub) authenticate(w http.ResponseWriter, r *http.Request) (*device, boo
 	return d, true
 }
 
-// authMaster gates a request on the master key ONLY (pairing/management),
-// rate-limited. Device tokens cannot mint or revoke other devices.
-func (h *Hub) authMaster(w http.ResponseWriter, r *http.Request) bool {
-	if h.apiKey == "" {
-		http.Error(w, "app endpoint not configured", http.StatusServiceUnavailable)
-		return false
-	}
-	ip := remoteIP(r)
-	if h.authLim.blocked(ip) {
-		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
-		return false
-	}
-	token := bearerToken(r)
-	if token == "" {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return false
-	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(h.apiKey)) != 1 {
-		h.authLim.fail(ip)
-		http.Error(w, "invalid credentials", http.StatusForbidden)
-		return false
-	}
-	h.authLim.reset(ip)
-	return true
-}
-
-// ServePair handles POST /app/pair: the master key mints a per-device token.
+// ServePair handles POST /app/pair: a single-use, short-TTL pairing key (minted
+// by the /android wizard or `foci` CLI, held in memory) is exchanged for a
+// long-lived revocable per-device token. The pairing key is consumed on use.
 func (h *Hub) ServePair(w http.ResponseWriter, r *http.Request) {
-	if !h.authMaster(w, r) {
-		return
-	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	ip := remoteIP(r)
+	if h.authLim.blocked(ip) {
+		http.Error(w, "too many auth failures", http.StatusTooManyRequests)
+		return
+	}
+	if !h.pairKeys.consume(bearerToken(r)) {
+		h.authLim.fail(ip)
+		http.Error(w, "invalid or expired pairing key", http.StatusForbidden)
+		return
+	}
+	h.authLim.reset(ip)
 	var req struct {
 		DeviceID  string `json:"deviceId"`
 		Label     string `json:"label"`
@@ -369,10 +337,11 @@ func (h *Hub) ServePair(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"deviceToken": d.Token, "label": d.Label})
 }
 
-// ServeDevices handles GET /app/devices: the master key lists paired devices
-// (tokens omitted).
+// ServeDevices handles GET /app/devices: any paired device (its own token)
+// lists the paired devices (tokens omitted). #862: management no longer needs a
+// master key — a device manages from the token it already holds.
 func (h *Hub) ServeDevices(w http.ResponseWriter, r *http.Request) {
-	if !h.authMaster(w, r) {
+	if _, ok := h.authenticate(w, r); !ok {
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -383,10 +352,11 @@ func (h *Hub) ServeDevices(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(h.devices.list())
 }
 
-// ServeRevoke handles POST /app/pair/revoke: the master key revokes a device's
-// token and closes its live socket(s) with 4403.
+// ServeRevoke handles POST /app/pair/revoke: any paired device (its own token)
+// revokes a device's token and closes its live socket(s) with 4403. A device
+// may revoke itself or any other paired device (#862).
 func (h *Hub) ServeRevoke(w http.ResponseWriter, r *http.Request) {
-	if !h.authMaster(w, r) {
+	if _, ok := h.authenticate(w, r); !ok {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -1456,7 +1426,7 @@ func checkOrigin(r *http.Request) bool {
 	return strings.Contains(origin, r.Host)
 }
 
-// ServeWS authenticates (Bearer app.api_key, constant-time) and upgrades the
+// ServeWS authenticates (Bearer device token) and upgrades the
 // connection, then runs the socket's read/write pumps.
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	dev, ok := h.authenticate(w, r)

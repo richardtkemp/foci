@@ -324,11 +324,10 @@ func TestBlobReaper_EvictsExpired(t *testing.T) {
 
 func TestServeDevices_ListsWithoutTokens(t *testing.T) {
 	h := newTestHub()
-	h.apiKey = "master"
-	h.devices.pair("dev-1", "Phone")
+	d := h.devices.pair("dev-1", "Phone")
 
 	req := httptest.NewRequest(http.MethodGet, "/app/devices", nil)
-	req.Header.Set("Authorization", "Bearer master")
+	req.Header.Set("Authorization", "Bearer "+d.Token)
 	w := httptest.NewRecorder()
 	h.ServeDevices(w, req)
 	if w.Code != http.StatusOK {
