@@ -191,7 +191,15 @@ func LastCommand() *Command {
 // CostCommand returns a /cost command showing aggregated costs.
 func CostCommand() *Command {
 	readEntries := func(cc CommandContext) ([]log.APIEntry, error) {
-		entries := log.ReadAPILog(cc.APILogPath)
+		// Prefer the durable SQLite db: api.jsonl is reset on every service
+		// restart, so a JSONL-only read under-reports cost after a restart
+		// (e.g. yesterday shows $0). The db accumulates across restarts and is
+		// a superset of the JSONL. Fall back to the JSONL only if the db is not
+		// initialised (e.g. in tests).
+		entries := log.ReadAPIDBLog()
+		if len(entries) == 0 {
+			entries = log.ReadAPILog(cc.APILogPath)
+		}
 		if len(entries) == 0 {
 			return nil, fmt.Errorf("No API calls logged yet.")
 		}
