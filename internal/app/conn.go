@@ -195,11 +195,15 @@ func (c *appConn) deliverNotification(sessionKey, text string) {
 	b.send(fap.Notification{ConversationID: b.convID, Text: clean, Level: "info"})
 }
 
-func (c *appConn) SetTyping(typing bool) {
-	if b := c.hub.bindingForSession(c.SessionKey()); b != nil {
-		b.send(fap.Typing{ConversationID: b.convID, On: typing})
-	}
-}
+// SetTyping is intentionally a no-op for the app. The app's typing indicator is
+// owned exclusively by appSink, which brackets each turn with a single
+// fap.Typing{On:true} at TurnStart and {On:false} at TurnComplete (guaranteed via
+// defer, even on error). The platform TypingFunc path — designed for Telegram/
+// Discord's refresh-and-auto-expire SetChatAction — must NOT drive the app, or its
+// periodic re-asserts (refresh `true`s) and intermediate cancels (round-end `false`s)
+// leak through as redundant frames and mid-session flicker. App clients have no
+// auto-expire, so every frame is literal and must be paired exactly once per turn.
+func (c *appConn) SetTyping(bool) {}
 
 // --- media (slice 4) ---
 //
