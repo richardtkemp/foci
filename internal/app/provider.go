@@ -121,13 +121,15 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 		},
 		MessageQueueSize: 64,
 		App: &config.AppSpecific{
-			Push:         &pushOn,
-			ReplayBuffer: &replayBuf,
-			ReplayTTL:    defaultReplayTTL.String(),
-			MaxBlobMB:    &maxBlobMB,
-			BlobTTL:      defaultBlobTTL.String(),
-			PushCoalesce: defaultPushCoalesce.String(),
-			DevicesPath:  defaultDevicesFile,
+			Push:            &pushOn,
+			ReplayBuffer:    &replayBuf,
+			ReplayTTL:       defaultReplayTTL.String(),
+			ReplayStoreTTL:  defaultReplayStoreTTL.String(),
+			ReplayStorePath: defaultReplayStoreFile,
+			MaxBlobMB:       &maxBlobMB,
+			BlobTTL:         defaultBlobTTL.String(),
+			PushCoalesce:    defaultPushCoalesce.String(),
+			DevicesPath:     defaultDevicesFile,
 		},
 	}
 }

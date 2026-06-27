@@ -45,10 +45,13 @@ const (
 // a phone that drops the socket constantly. These are the code defaults;
 // [platforms.app] replay_buffer / replay_ttl override them per the config cascade.
 const (
-	defaultReplayBufferDepth = 1000           // max retained server frames per conversation
-	defaultReplayTTL         = 24 * time.Hour // max age of a retained frame
-	maxSeenInbound           = 4096           // per-conversation inbound dedup window (mirrors client)
+	defaultReplayBufferDepth = 1000                // max retained server frames per conversation (in-memory)
+	defaultReplayTTL         = 24 * time.Hour      // max age of a retained in-memory frame
+	defaultReplayStoreTTL    = 30 * 24 * time.Hour // max age of a durably-stored frame (backfill DB)
+	defaultReplayStoreFile   = "app-frames.db"     // durable replay-frame DB, relative to data_dir
+	maxSeenInbound           = 4096                // per-conversation inbound dedup window (mirrors client)
 	defaultDevicesFile       = "app-devices.json"
+	maxReplayPage            = 2000 // max frames returned per durable-store backfill read
 )
 
 // Hub multiplexes all live app WebSockets. It owns the per-agent appConn
@@ -67,6 +70,7 @@ type Hub struct {
 	host           string          // advertised in hello.caps.host (config [platforms.app].host)
 	replayDepth    int             // config-driven replay buffer depth (0 = default)
 	replayTTL      time.Duration   // config-driven replay buffer TTL (0 = default)
+	frames         *frameStore     // durable replay-frame backstop (nil when no data_dir)
 	allowedDevices map[string]bool // non-empty = pairing allowlist
 
 	mu           sync.RWMutex
@@ -129,7 +133,29 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		blobs.ttl = durationOr(appCfg.BlobTTL, blobs.ttl)
 	}
 
+	// Durable replay-frame store (server-side backfill DB). Needs a data_dir;
+	// absent → frames stays nil and every frameStore method no-ops, so the hub
+	// degrades to the in-memory-only buffer it had before.
+	var frames *frameStore
+	if deps.Config != nil && deps.Config.DataDir != "" {
+		storeFile := defaultReplayStoreFile
+		storeTTL := defaultReplayStoreTTL
+		if appCfg != nil {
+			if appCfg.ReplayStorePath != "" {
+				storeFile = appCfg.ReplayStorePath
+			}
+			storeTTL = durationOr(appCfg.ReplayStoreTTL, defaultReplayStoreTTL)
+		}
+		storePath := filepath.Join(deps.Config.DataDir, storeFile)
+		if fs, err := newFrameStore(storePath, storeTTL); err != nil {
+			log.Errorf("app", "durable replay store %s: %v — falling back to in-memory replay only", storePath, err)
+		} else {
+			frames = fs
+		}
+	}
+
 	h := &Hub{
+		frames:       frames,
 		deps:         deps,
 		apiKey:       key,
 		blobs:        blobs,
@@ -159,6 +185,9 @@ func newHub(deps platform.ProviderDeps) *Hub {
 
 	if deps.Ctx != nil {
 		safeGo("blob-reaper", func() { h.blobs.reaper(deps.Ctx) })
+		if h.frames != nil {
+			safeGo("frame-store-janitor", func() { h.frames.janitor(deps.Ctx.Done()) })
+		}
 		// Offline wake-push via FCM. The service-account JSON path comes from
 		// [platforms.app].fcm_credentials, falling back to the app.fcm_credentials
 		// secret; absent (or push=false) → push stays disabled gracefully.
@@ -563,6 +592,9 @@ func (h *Hub) Close() error {
 	for _, c := range clients {
 		c.close()
 	}
+	// Drain + flush the durable replay store so a graceful shutdown (the deploy
+	// path) persists every in-flight frame before exit.
+	h.frames.Close()
 	return nil
 }
 
@@ -775,7 +807,7 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		existing.attach(client)
 		return existing
 	}
-	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
+	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
 	h.convs[convID] = b
 	h.bySession[sk] = b
 	h.mu.Unlock()
@@ -929,6 +961,7 @@ type convBinding struct {
 
 	replayDepth int           // config-driven buffer depth; 0 = code default
 	replayTTL   time.Duration // config-driven buffer TTL; 0 = code default
+	store       *frameStore   // durable replay backstop (nil = in-memory only)
 
 	notifyOffline func(convID, preview string) // fires a wake push for offline visible frames; nil = no push
 
@@ -991,11 +1024,21 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 		log.Errorf("app", "encode %s: %v", frame.Type(), err)
 		return
 	}
-	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: time.Now()})
+	now := time.Now()
+	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: now})
 	b.trimBufferLocked()
 	client := b.client
 	notify := b.notifyOffline
+	store := b.store
 	b.mu.Unlock()
+
+	// Persist verbatim to the durable backstop (async; survives restart + the
+	// in-memory depth/TTL bound, so a long-offline phone can backfill it). The
+	// visible flag marks user-facing content vs transient frames (typing).
+	if store != nil {
+		_, visible := pushPreview(frame)
+		store.Append(b.convID, seq, wire, now.UnixMilli(), visible)
+	}
 
 	if client != nil {
 		client.enqueue(wire)
@@ -1083,13 +1126,35 @@ func (b *convBinding) acceptInbound(id string, seq int64) bool {
 // order — the reconnect resume path.
 func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 	b.mu.Lock()
+	hasMem := len(b.buffer) > 0
+	memFloor := int64(0) // lowest seq the in-memory buffer still holds
+	if hasMem {
+		memFloor = b.buffer[0].seq
+	}
 	pending := make([]string, 0, len(b.buffer))
 	for _, bf := range b.buffer {
 		if bf.seq > fromSeq {
 			pending = append(pending, bf.wire)
 		}
 	}
+	store := b.store
+	convID := b.convID
 	b.mu.Unlock()
+
+	// Backfill the gap the in-memory buffer can't cover — frames trimmed by
+	// depth/TTL, or lost when this process restarted — from the durable store,
+	// before the in-memory frames. memFloor is where memory takes over: store
+	// frames at seq >= memFloor would duplicate `pending`, so stop there. No
+	// in-memory frames (hasMem == false) → the store supplies everything > fromSeq.
+	// A gap larger than maxReplayPage is finished by the client via GET /app/replay.
+	if store != nil && (!hasMem || fromSeq < memFloor-1) {
+		for _, sf := range store.Range(convID, fromSeq, maxReplayPage) {
+			if hasMem && sf.seq >= memFloor {
+				break
+			}
+			client.enqueue(sf.wire)
+		}
+	}
 	for _, wire := range pending {
 		client.enqueue(wire)
 	}

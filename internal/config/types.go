@@ -666,7 +666,9 @@ type AppSpecific struct {
 	Host           string `toml:"host"             desc:"public host the app reconnects to (advertised in hello.caps.host)"`
 	Push           *bool  `toml:"push"             desc:"enable FCM offline wake pushes (requires app.fcm_credentials secret)"`
 	ReplayBuffer   *int   `toml:"replay_buffer"    desc:"max retained server frames per conversation for reconnect replay"`
-	ReplayTTL      string `toml:"replay_ttl"       desc:"max age of a retained replay frame" type:"duration"`
+	ReplayTTL      string `toml:"replay_ttl"       desc:"max age of a retained in-memory replay frame" type:"duration"`
+	ReplayStoreTTL string `toml:"replay_store_ttl" desc:"max age of a durably-stored replay frame (server-side backfill DB)" type:"duration"`
+	ReplayStorePath string `toml:"replay_store_path" desc:"durable replay-frame DB path, relative to data_dir (default app-frames.db)"`
 	MaxBlobMB      *int   `toml:"max_blob_mb"      desc:"upload size cap for /app/blob in MB"`
 	BlobTTL        string `toml:"blob_ttl"         desc:"time-to-live for stored blobs" type:"duration"`
 	PushCoalesce   string `toml:"push_coalesce"    desc:"min interval between wake pushes per conversation" type:"duration"`
@@ -731,6 +733,12 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 		}
 		if p.App.ReplayTTL == "" {
 			p.App.ReplayTTL = defaults.App.ReplayTTL
+		}
+		if p.App.ReplayStoreTTL == "" {
+			p.App.ReplayStoreTTL = defaults.App.ReplayStoreTTL
+		}
+		if p.App.ReplayStorePath == "" {
+			p.App.ReplayStorePath = defaults.App.ReplayStorePath
 		}
 		if p.App.MaxBlobMB == nil {
 			p.App.MaxBlobMB = defaults.App.MaxBlobMB
