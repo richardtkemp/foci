@@ -406,6 +406,10 @@ type InteractiveResponse struct {
 type ConversationOpen struct {
 	AgentID    string `json:"agentId"`
 	SessionKey string `json:"sessionKey,omitempty"`
+	// ConversationID, when set, is a client-assigned id the server adopts instead
+	// of minting its own — lets the app create + open a conversation locally and
+	// instantly. Idempotent: reopening an id that already has a binding reuses it.
+	ConversationID string `json:"conversationId,omitempty"`
 }
 
 // ClientTyping signals the user is typing.
