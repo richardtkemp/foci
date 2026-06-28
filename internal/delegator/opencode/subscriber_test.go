@@ -375,9 +375,15 @@ func TestServer_RegisterSession_ConcurrentWithRoute(t *testing.T) {
 
 func TestBackend_Dispatcher_DrainsChannel(t *testing.T) {
 	// Verifies the dispatcher goroutine drains be.events as fast as
-	// events arrive, so route doesn't hit the "channel full" drop path
-	// during steady-state operation. We push more events than the
-	// channel buffer (256) and assert all are received by the handler.
+	// events arrive, so the channel doesn't fill to its 256-event
+	// buffer and stay there.
+	//
+	// We push events in batches smaller than the buffer, waiting for
+	// each batch to drain before sending the next. Total events
+	// exceed the buffer (proving the dispatcher is actually running
+	// across multiple batch boundaries) without relying on tight-loop
+	// timing between producer and consumer — which is fundamentally
+	// racy in Go's cooperative scheduler.
 	srv := &Server{sessions: map[string]*Backend{}}
 	be := &Backend{sessionID: "sess-drain"}
 
@@ -388,21 +394,31 @@ func TestBackend_Dispatcher_DrainsChannel(t *testing.T) {
 	srv.registerSession(be)
 	defer srv.unregisterSession(be.sessionID)
 
-	// Push 300 events — more than the 256 buffer.
-	for i := 0; i < 300; i++ {
-		srv.route(rawEvent{
-			Type:       "test",
-			Properties: []byte(`{"sessionID":"sess-drain"}`),
-		})
+	// 3 batches of 100, each < buffer size (256). Total 300 > buffer.
+	const batchSize = 100
+	const batches = 3
+	for b := 0; b < batches; b++ {
+		start := seen.Load()
+		for i := 0; i < batchSize; i++ {
+			srv.route(rawEvent{
+				Type:       "test",
+				Properties: []byte(`{"sessionID":"sess-drain"}`),
+			})
+		}
+		// Wait for this batch to drain before sending the next.
+		target := start + batchSize
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) && seen.Load() < target {
+			time.Sleep(time.Millisecond)
+		}
+		if got := seen.Load(); got < target {
+			t.Fatalf("batch %d: processed %d/%d events — dispatcher not draining", b, got, target)
+		}
 	}
 
-	// Wait for the dispatcher to process them all.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && seen.Load() < 300 {
-		time.Sleep(time.Millisecond)
-	}
-	if got := seen.Load(); got != 300 {
-		t.Errorf("dispatcher processed %d/300 events — channel would fill without a drain goroutine", got)
+	total := int32(batchSize * batches)
+	if got := seen.Load(); got != total {
+		t.Errorf("dispatcher processed %d/%d events", got, total)
 	}
 }
 

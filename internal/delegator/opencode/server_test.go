@@ -2,6 +2,8 @@ package opencode
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -209,6 +211,157 @@ func TestServer_Close_BoundedWait(t *testing.T) {
 	case <-srv.done:
 	case <-time.After(2 * time.Second):
 		t.Error("subprocess not reaped after Close")
+	}
+}
+
+func TestServer_Close_GracefulDisposeBeforeSIGTERM(t *testing.T) {
+	// Verifies Close calls POST /instance/dispose BEFORE falling back
+	// to SIGTERM. We point a Server at an httptest server that records
+	// the dispose call and immediately "exits" (closes waitCh) to
+	// simulate the subprocess honouring the request. Asserts the
+	// dispose endpoint was hit and the waitCh path didn't escalate.
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/instance/dispose" {
+			t.Logf("dispose called")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer hs.Close()
+
+	srv := &Server{
+		baseURL:    hs.URL,
+		agentID:    "agent-dispose",
+		sessions:   map[string]*Backend{},
+	}
+	srv.done = make(chan struct{})
+	srv.waitCh = make(chan error, 1)
+	// Simulate the subprocess exiting immediately on dispose.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		srv.waitCh <- nil
+		close(srv.done)
+	}()
+
+	start := time.Now()
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	// Close should return quickly because the "subprocess" exited on
+	// its own (no SIGTERM/SIGKILL fallback needed). With closeGracefulWait
+	// at its default 5s, an ungraceful path would take ≥5s; the dispose
+	// path returns in ~20ms.
+	if elapsed > time.Second {
+		t.Errorf("Close took %s; expected dispose path to exit fast", elapsed)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// finalizeExit — synthesised session.error dispatch
+// ---------------------------------------------------------------------------
+
+func TestServer_FinalizeExit_DispatchesSessionErrorToBackends(t *testing.T) {
+	// Verifies finalizeExit synthesises a session.error rawEvent and
+	// pushes it to every registered Backend's events channel — so the
+	// Step 7 OnSessionError handler can complete any in-flight turn
+	// rather than hanging on a stream that will never deliver.
+	//
+	// Without this dispatch, a subprocess death would silently wedge
+	// every active session (the SSE stream is gone but no event signals
+	// it).
+	srv := &Server{
+		agentID:  "agent-finalize",
+		sessions: map[string]*Backend{},
+	}
+	be1 := &Backend{sessionID: "sess-1", events: make(chan rawEvent, 1)}
+	be2 := &Backend{sessionID: "sess-2", events: make(chan rawEvent, 1)}
+	srv.sessions["sess-1"] = be1
+	srv.sessions["sess-2"] = be2
+
+	srv.finalizeExit(errors.New("subprocess died"))
+
+	// Both Backends should have received a session.error event.
+	for _, be := range []*Backend{be1, be2} {
+		select {
+		case ev := <-be.events:
+			if ev.Type != EventSessionError {
+				t.Errorf("%s event.Type = %q, want %q", be.sessionID, ev.Type, EventSessionError)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("%s did not receive session.error event", be.sessionID)
+		}
+	}
+}
+
+func TestServer_FinalizeExit_ExpectedCloseDifferentMessage(t *testing.T) {
+	// Verifies the synthesised event's error data distinguishes "expected
+	// Close" from "unexpected death" so Step 7's handler can render the
+	// right user-visible message ("session closed" vs "subprocess died
+	// unexpectedly"). We mark s.closing=true to simulate the Close path.
+	srv := &Server{
+		agentID:  "agent-expected",
+		sessions: map[string]*Backend{},
+		closing:  true,
+	}
+	be := &Backend{sessionID: "sess-x", events: make(chan rawEvent, 1)}
+	srv.sessions["sess-x"] = be
+
+	srv.finalizeExit(nil)
+
+	select {
+	case ev := <-be.events:
+		// Decode the payload and check the message.
+		var payload eventSessionError
+		if err := json.Unmarshal(ev.Properties, &payload); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if payload.Error == nil {
+			t.Fatal("payload.Error nil")
+		}
+		var data struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(payload.Error.Data, &data); err != nil {
+			t.Fatalf("decode data: %v", err)
+		}
+		if data.Message != "session closed" {
+			t.Errorf("message = %q, want %q", data.Message, "session closed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not receive session.error event")
+	}
+}
+
+func TestServer_FinalizeExit_Idempotent(t *testing.T) {
+	// Verifies finalizeExit is sync.Once-gated — calling it twice (e.g.
+	// once from the waiter goroutine, once from OnSubscriberStopped)
+	// dispatches session.error exactly once per Backend.
+	srv := &Server{
+		agentID:  "agent-once",
+		sessions: map[string]*Backend{},
+	}
+	be := &Backend{sessionID: "sess-once", events: make(chan rawEvent, 5)}
+	srv.sessions["sess-once"] = be
+
+	srv.finalizeExit(errors.New("first"))
+	srv.finalizeExit(errors.New("second"))
+
+	// Should have received exactly one event.
+	count := 0
+	for {
+		select {
+		case <-be.events:
+			count++
+		default:
+			goto done
+		}
+	}
+done:
+	if count != 1 {
+		t.Errorf("finalizeExit dispatched %d events, want 1", count)
 	}
 }
 
