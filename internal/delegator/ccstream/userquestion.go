@@ -97,7 +97,7 @@ func (b *Backend) handleUserQuestion(msg *PermissionRequest) {
 	}
 
 	b.storePendingPerm(pp)
-	b.outstanding.Register(msg.RequestID, OutstandingPermission)
+	b.outstanding.Register(msg.RequestID, delegator.OutstandingPermission)
 
 	b.presentCurrentQuestion(pp)
 }

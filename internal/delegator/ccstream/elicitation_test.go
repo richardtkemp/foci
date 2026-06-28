@@ -19,7 +19,7 @@ func newTestBackend(buf *bytes.Buffer) *Backend {
 		writer:         NewWriter(nopWriteCloser{buf}),
 		pendingPerms:   make(map[string]*pendingPermission),
 		pendingElicits: make(map[string]*pendingElicitation),
-		outstanding:    NewOutstandingRegistry(),
+		outstanding:    delegator.NewOutstandingRegistry(),
 	}
 }
 

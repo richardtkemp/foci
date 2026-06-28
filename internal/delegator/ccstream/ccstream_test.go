@@ -86,7 +86,7 @@ func TestCallbackSetters(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	// SetPermissionPromptFunc
@@ -102,12 +102,12 @@ func TestCallbackSetters(t *testing.T) {
 		t.Error("permPromptFn was not called")
 	}
 
-	// SetOnPromptsCleared — registered via the OutstandingRegistry's onEmpty
+	// SetOnPromptsCleared — registered via the delegator.OutstandingRegistry's onEmpty
 	// hook. We exercise it by registering+resolving a prompt and asserting the
 	// hook fired exactly once.
 	var clearedCalled bool
 	b.SetOnPromptsCleared(func() { clearedCalled = true })
-	b.outstanding.Register("test-req", OutstandingPermission)
+	b.outstanding.Register("test-req", delegator.OutstandingPermission)
 	b.outstanding.Resolve("test-req")
 	if !clearedCalled {
 		t.Error("SetOnPromptsCleared callback was not fired when the registry emptied")
@@ -1981,7 +1981,7 @@ func TestOnSystem_Init(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnSessionReady(func(id string) { readySessID = id })
 
@@ -2032,7 +2032,7 @@ func TestOnSystem_InitIdempotent(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	raw := json.RawMessage(`{
@@ -2060,7 +2060,7 @@ func TestOnSystem_InitBadJSON(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	b.OnSystem("init", json.RawMessage(`{invalid json`))
@@ -3078,7 +3078,7 @@ func TestOnControlCancelRequest(t *testing.T) {
 	var clearedCalled bool
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnPromptsCleared(func() { clearedCalled = true })
 
@@ -3088,7 +3088,7 @@ func TestOnControlCancelRequest(t *testing.T) {
 		requestID: "req-1",
 		toolName:  "Bash",
 	}
-	b.outstanding.Register("req-1", OutstandingPermission)
+	b.outstanding.Register("req-1", delegator.OutstandingPermission)
 
 	b.OnControlCancelRequest("req-1")
 
@@ -3112,14 +3112,14 @@ func TestOnControlCancelRequest_StillPending(t *testing.T) {
 	var clearedCalled bool
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnPromptsCleared(func() { clearedCalled = true })
 
 	b.pendingPerms["req-1"] = &pendingPermission{requestID: "req-1"}
 	b.pendingPerms["req-2"] = &pendingPermission{requestID: "req-2"}
-	b.outstanding.Register("req-1", OutstandingPermission)
-	b.outstanding.Register("req-2", OutstandingPermission)
+	b.outstanding.Register("req-1", delegator.OutstandingPermission)
+	b.outstanding.Register("req-2", delegator.OutstandingPermission)
 
 	b.OnControlCancelRequest("req-1")
 
@@ -3191,7 +3191,7 @@ func TestWaitReady_UnblockedByInit(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	done := make(chan error, 1)
@@ -3229,7 +3229,7 @@ func TestWaitReady_UnblockedByInitControlResponse(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 		initReqID:    "init-42",
 	}
 
@@ -3275,7 +3275,7 @@ func TestWaitReady_ControlResponseIgnoresNonInit(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 		initReqID:    "init-42",
 	}
 

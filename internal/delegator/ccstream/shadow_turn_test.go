@@ -181,7 +181,7 @@ func TestSteerFold_WatchdogDefersWhileOutstandingPrompt(t *testing.T) {
 	b := &Backend{
 		writer:             NewWriter(nopWriteCloser{&buf}),
 		reArmWatchdogBound: 60 * time.Millisecond,
-		outstanding:        NewOutstandingRegistry(),
+		outstanding:        delegator.NewOutstandingRegistry(),
 	}
 	b.typingFunc = func(bool) {}
 
@@ -207,7 +207,7 @@ func TestSteerFold_WatchdogDefersWhileOutstandingPrompt(t *testing.T) {
 	// Re-arm + arm the watchdog, then immediately register an outstanding prompt
 	// (the steered reply called AskUserQuestion and is now blocked on the human).
 	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
-	b.outstanding.Register("req-q", OutstandingPermission)
+	b.outstanding.Register("req-q", delegator.OutstandingPermission)
 
 	// Well past 2× the bound with the prompt still outstanding: the turn must NOT
 	// be force-completed, even though no activity is touched (the human is thinking).

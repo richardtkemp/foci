@@ -18,7 +18,7 @@ func TestSendControl_SetModel(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(pw),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	done := make(chan struct{})
@@ -78,7 +78,7 @@ func TestSendControl_SetPermissionMode(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(pw),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	done := make(chan struct{})
@@ -138,7 +138,7 @@ func TestSendControl_ApplyFlagSettings(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(pw),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	done := make(chan struct{})

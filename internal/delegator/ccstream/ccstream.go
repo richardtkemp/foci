@@ -27,7 +27,7 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 		readyCh:        make(chan struct{}),
 		pendingPerms:   make(map[string]*pendingPermission),
 		pendingElicits: make(map[string]*pendingElicitation),
-		outstanding:    NewOutstandingRegistry(),
+		outstanding:    delegator.NewOutstandingRegistry(),
 	}
 	b.cfg = cfg
 	return b, nil
@@ -168,7 +168,7 @@ type Backend struct {
 	// The kind-specific stores (pendingPerms, pendingElicits) keep their own
 	// state — the registry coordinates registration, resolution, cancellation,
 	// and the "all clear" drain hook used by DelegatedManager.WaitForPermission.
-	outstanding *OutstandingRegistry
+	outstanding *delegator.OutstandingRegistry
 }
 
 // newRequestID generates a simple unique request ID for control messages.
