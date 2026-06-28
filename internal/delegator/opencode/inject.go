@@ -132,6 +132,9 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		return errors.New("opencode: Inject before Start (no session)")
 	}
 
+	log.Debugf(b.logComponent(), "Inject: source=%s textLen=%d turnInFlight=%v hasTurn=%v",
+		inj.Source, len(inj.Text), b.IsTurnInFlight(), inj.Turn != nil)
+
 	switch inj.Source {
 	case delegator.SourceUser:
 		return b.injectUser(ctx, inj)
@@ -276,10 +279,12 @@ func (b *Backend) postMessage(ctx context.Context, suffix string, body []byte) e
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := b.httpClient().Do(req)
 	if err != nil {
+		log.Warnf(b.logComponent(), "POST %s: %v", suffix, err)
 		return fmt.Errorf("POST %s: %w", suffix, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b.checkHTTP401(resp.StatusCode, suffix)
+	log.Debugf(b.logComponent(), "POST %s: %d", suffix, resp.StatusCode)
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("POST %s: HTTP %d: %s", suffix, resp.StatusCode, string(respBody))
