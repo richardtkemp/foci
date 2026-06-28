@@ -256,94 +256,9 @@ func (b *Backend) SetOnAgentStatus(fn func(text string)) {
 	b.agents.OnStatus = fn
 }
 
-// AttachSessionEvents installs the session-scoped delivery sink. Step 6.
-func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
-	b.sessionEvents.Store(events)
-}
-
-// beginTurn sets per-turn bookkeeping under turnMu. Resets accumulated
-// state from any prior turn so a fresh turn starts clean — part of the
-// beginTurn contract asserted by TestBeginTurnResetsState. Step 6
-// implements the full real turn lifecycle on top of this baseline.
-//
-// Called from Inject in the real implementation; the Step 1.4 Inject
-// stub below calls it so production-code usage is recorded.
-func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	b.turnActive = true
-	b.turnEvents = turn
-	b.turnText.Reset()
-	b.turnTools = 0
-	b.turnResultCh = make(chan *ResultMessage, 1)
-
-	// lastUsage is reset under b.mu (it's read by OnResult on the next turn
-	// to build TurnResult — a stale value would leak across turns).
-	b.mu.Lock()
-	b.lastUsage = nil
-	b.mu.Unlock()
-}
-
-// cancelTurn reverses beginTurn. Called from production paths in Step 6
-// (Inject's writer-error recovery) and Step 8 (Interrupt).
-//
-//nolint:unused // wired up in Step 6
-func (b *Backend) cancelTurn() {
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	b.turnActive = false
-	b.turnEvents = nil
-}
-
-// IsTurnInFlight reports whether a turn callback is registered but
-// hasn't fired yet.
-func (b *Backend) IsTurnInFlight() bool {
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	return b.turnActive
-}
-
-// WaitForTurn blocks until the next turn completion or context cancel.
-// Returns immediately if no turn is in progress.
-func (b *Backend) WaitForTurn(ctx context.Context) error {
-	b.turnMu.Lock()
-	ch := b.turnResultCh
-	b.turnMu.Unlock()
-	if ch == nil {
-		return nil
-	}
-	select {
-	case <-ch:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// ArmCompactionWait resets compactDoneCh for the next /compact cycle.
-// Step 8.2.
-func (b *Backend) ArmCompactionWait() {
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	b.compactDoneCh = make(chan struct{}, 1)
-}
-
-// WaitForCompaction blocks on compactDoneCh or ctx. Returns immediately
-// (nil) if not armed — matches ccstream's no-arm semantics.
-func (b *Backend) WaitForCompaction(ctx context.Context) error {
-	b.turnMu.Lock()
-	ch := b.compactDoneCh
-	b.turnMu.Unlock()
-	if ch == nil {
-		return nil
-	}
-	select {
-	case <-ch:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
+// Turn-lifecycle methods (AttachSessionEvents, beginTurn, cancelTurn,
+// IsTurnInFlight, WaitForTurn, ArmCompactionWait, WaitForCompaction)
+// live in inject.go per plan §6.2.
 
 
 
