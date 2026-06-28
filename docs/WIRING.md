@@ -75,7 +75,7 @@ config.Load(path)                                        ← validates values; l
 
   → modelcaps wiring (#840)                               ← main.go, once after the agent loop
     → anthropicResolver.ModelCapsFetcher(15s)             ← /v1/models fetcher (nil if CC OAuth creds absent)
-    → for backend in {ccstream, api}:
+    → for backend in {ccstream, api, opencode}:
       → modelcaps.SetFetcher(backend, fetcher)
       → modelcaps.SetPersister(backend, modelCapsPersister{sessionIndex})  ← state.db model_caps table (modelcaps_persist.go)
       → modelcaps.Restore(backend)                        ← seed cache from DB synchronously (bridges the ~1s fetch gap)
@@ -185,8 +185,9 @@ main
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── delegator     (no deps — Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
- │   ├── delegator/cctmux     → delegator, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
- │   └── delegator/ccstream   → delegator, log (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/cctmux     → delegator, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
+  │   ├── delegator/ccstream   → delegator, log (stream-json Claude Code; registers "claude-code" via init())
+  │   └── delegator/opencode   → delegator, log (HTTP/SSE OpenCode; registers "opencode" via init())
  ├── agent         → delegator, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
  ├── dispatch      → command, session (shared command dispatch logic; platform wrappers delegate here)
@@ -596,6 +597,54 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 ### Cache Stability Invariant
 
 Conversation history sent to the API must be a strict append-only extension of the previous request — inserting a message in the middle invalidates all cached tokens after that point. `HandleMessage` enforces this via a per-session turn lock that serializes all callers (Telegram, `AsyncNotifier`, scheduled wakes, HTTP `/send`). Different sessions run concurrently. See [CACHING.md](CACHING.md) for the full cache stability contract.
+
+### OpenCode Backend (`internal/delegator/opencode/`)
+
+The opencode backend drives OpenCode as a coding agent via its HTTP server API. Unlike ccstream (one subprocess per session with NDJSON over stdin/stdout), opencode runs **one `opencode serve` subprocess per foci agent**, shared across all of that agent's sessions. The Backend is its HTTP/SSE client. Registered as `"opencode"` via `delegator.Register` in `init()`.
+
+**Architecture — Server vs Backend split:**
+
+- **`Server`** (one per agent, package-level pool keyed by agentID): owns the `opencode serve` subprocess, the `*http.Client`, and a single SSE subscriber goroutine reading `GET /event`. Refcounted — spawned lazily on first `acquireServer`, killed when the last `releaseServer` hits zero. Bounded-shutdown Close mirrors ccstream's kill-ladder (POST /instance/dispose → SIGTERM → SIGKILL → abandon).
+- **`Backend`** (one per foci session): holds the opencode sessionID (created via `POST /session`), a buffered events channel (256), and the per-session/per-turn state (SessionEvents, TurnEvents, turnText, steerBuf). The Server's SSE goroutine routes events to the right Backend by sessionID; the Backend's own dispatcher goroutine drains its channel and calls handlers serially.
+
+**Protocol:** HTTP REST for outbound (`POST /session/:id/prompt_async`, `POST /session/:id/command`, `POST /session/:id/permissions/:permID`, `PATCH /config`, `POST /session/:id/abort`) + SSE for inbound (`GET /event` with `Accept: text/event-stream`). The SSE stream is shared — one subscriber per Server, routing to per-Backend channels via `sessionID` extracted from event Properties.
+
+**Event mapping — SSE → SessionEvents/TurnEvents:**
+
+| SSE Event | Handler | SessionEvents/TurnEvents callback |
+|-----------|---------|-----------------------------------|
+| `message.part.updated` (text, delta) | `onMessagePartUpdated` | `OnTextDelta` (streaming) |
+| `message.part.updated` (text, complete) | `onMessagePartUpdated` | `OnText` + accumulate `turnText` |
+| `message.part.updated` (reasoning) | `onMessagePartUpdated` | `OnThinkingDelta` |
+| `message.part.updated` (tool, running) | `onMessagePartUpdated` | `OnToolStart` + increment `turnTools` |
+| `message.part.updated` (tool, completed/error) | `onMessagePartUpdated` | `OnToolEnd` |
+| `message.part.updated` (subtask) | `onMessagePartUpdated` | `OnSubagentText` (blockquote) |
+| `message.updated` (assistant) | `onMessageUpdated` | Store `lastModel`/`lastUsage` (no callback) |
+| `session.idle` | `onSessionIdle` | `OnTurnComplete` + flush `steerBuf` |
+| `session.status` (busy) | `onSessionStatus` | `typingFunc(true)` |
+| `session.compacted` | `onSessionCompacted` | `onCompactionDone(0)` + close `compactDoneCh` |
+| `session.error` (ProviderAuthError) | `onSessionError` | `fanOutAuthFailure` |
+| `permission.updated` | `onPermissionUpdated` | `permPromptFn` (Allow/Deny/Always) |
+| `permission.updated` (type:question) | `handleQuestionPermission` | `permPromptFn` (option buttons) |
+| `permission.replied` | `onPermissionReplied` | cancel-listener fanout |
+
+**Divergences from ccstream:**
+
+- **Steer buffering:** opencode has no mid-turn queue (CC's `priority:"now"` fold has no equivalent). SourceSteer arriving mid-turn is buffered in `steerBuf` and flushed as a follow-up turn on `session.idle`. The follow-up uses a nil TurnEvents (no `OnTurnComplete`); text arrives via `SessionEvents.OnText`.
+- **Question tool:** opencode's built-in `question` tool surfaces as `permission.updated` with `type:"question"`. Metadata carries the question schema (header, text, options). `RespondToQuestion` POSTs the option label or typed text.
+- **Plan delivery:** Uses the prompt body's per-request `agent:"plan"` field (no `PATCH /config`, no swap-back). Simpler than ccstream's `EnterPlanMode` turn.
+- **No PostToolUse hooks:** opencode emits tool parts directly on its event bus — no external hook-helper binary needed.
+- **No elicitation:** opencode's MCP client doesn't advertise the elicitation capability (commented out, issue #23066). `ElicitationResponder` not implemented.
+- **Shared-server auth fanout:** A `ProviderAuthError` on one session fans to all Backends on the same Server (account-wide). `fireAuthFailure` is CAS-gated per-Backend (fires once per lifetime).
+- **No RateLimitState:** opencode has no `rate_limit` system message. Cost/token data is per-`AssistantMessage`. `RateLimitState` injection in `agents_delegated.go` is ccstream-only.
+- **No automated relogin:** `/login` reports "unavailable" for opencode agents. Auth recovery is per-provider (`opencode auth login <provider>`).
+
+**Lifecycle:**
+1. `Start`: acquireServer (lazy pool), POST /session, registerSession (starts dispatcher), inject system prompt (noReply:true), PATCH /config for default_permission.
+2. `Inject(SourceUser)` at idle: beginTurn + POST /prompt_async.
+3. SSE events arrive → Server.route by sessionID → Backend.dispatchLoop → handleEvent → SessionEvents/TurnEvents callbacks.
+4. `session.idle`: build TurnResult from accumulated state, fire OnTurnComplete, flush steerBuf.
+5. `Close`: unregisterSession (stops dispatcher), DELETE /session/:id, releaseServer (refcount-- → shutdown if zero).
 
 ## Message Metadata
 

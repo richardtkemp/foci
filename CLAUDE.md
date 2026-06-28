@@ -95,6 +95,7 @@ gh codeql query run query.ql --database=codeql-db
 ## Key Constraints
 
 - **No circular imports.** `log` and `config` are leaf packages. Check the dependency graph in WIRING.md.
+- **Three delegated backends:** `ccstream` (Claude Code via NDJSON stdin/stdout), `cctmux` (Claude Code via tmux pane), and `opencode` (OpenCode via HTTP/SSE server). All implement `delegator.Delegator`. The `OutstandingRegistry` lives in the `delegator` package (shared by all three). See WIRING.md for each backend's architecture.
 - **Cache sharing depends on byte-identical system prompts.** Don't modify workspace bootstrap behavior without understanding this.
 - **Sessions are append-only JSONL.** Branch files have a `branch_meta` first line.
 - **Secrets stay out of agent context.** Credentials are in Go structs, never in messages.
