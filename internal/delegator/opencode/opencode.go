@@ -182,6 +182,7 @@ type Backend struct {
 	typingFunc        func(typing bool)
 	onCompactionStart func()
 	onCompactionDone  func(preTokens int)
+	onAuthFailure     func(detail string)
 
 	// Agent spawn tracking — shared with ccstream via delegator.AgentTracker.
 	agents delegator.AgentTracker
@@ -257,6 +258,14 @@ func (b *Backend) SetOnCompactionDone(fn func(preTokens int)) {
 // SetOnAgentStatus stores the callback on the shared AgentTracker.
 func (b *Backend) SetOnAgentStatus(fn func(text string)) {
 	b.agents.OnStatus = fn
+}
+
+// SetOnAuthFailure stores the auth-failure callback. Fired by the Step 7
+// handlers when a ProviderAuthError surfaces via message.updated or
+// session.error SSE events. Step 11 wires the Server-level fanout +
+// relogin gate.
+func (b *Backend) SetOnAuthFailure(fn func(detail string)) {
+	b.onAuthFailure = fn
 }
 
 // Turn-lifecycle methods (AttachSessionEvents, beginTurn, cancelTurn,

@@ -301,8 +301,15 @@ func (b *Backend) handleMessageError(err *MessageError) {
 		var data ProviderAuthErrorData
 		if json.Unmarshal(err.Data, &data) == nil {
 			log.Warnf(component, "auth failure: %s", data.Message)
+			b.mu.Lock()
+			fn := b.onAuthFailure
+			b.mu.Unlock()
+			if fn != nil {
+				fn(data.Message)
+			}
+		} else {
+			log.Warnf(component, "auth failure (unparsable data)")
 		}
-		// Step 11 wires onAuthFailure; for Step 7 we just log.
 	case ErrMessageAborted:
 		log.Debugf(component, "message aborted (expected on /reset hard)")
 	default:
@@ -462,10 +469,15 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 		var data ProviderAuthErrorData
 		if json.Unmarshal(err.Data, &data) == nil {
 			log.Warnf(component, "session error (auth): %s: %s", data.ProviderID, data.Message)
+			b.mu.Lock()
+			fn := b.onAuthFailure
+			b.mu.Unlock()
+			if fn != nil {
+				fn(data.Message)
+			}
 		} else {
 			log.Warnf(component, "session error (auth): %s", err.Name)
 		}
-		// Step 11 wires onAuthFailure; for Step 7 we just log.
 	case ErrMessageAborted:
 		log.Debugf(component, "session error (aborted — expected on /reset hard)")
 	default:
