@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -343,7 +344,8 @@ func TestServer_RegisterUnregisterSession(t *testing.T) {
 
 func TestServer_RegisterSession_ConcurrentWithRoute(t *testing.T) {
 	// Verifies register and route can race safely — route's RLock and
-	// register's Lock serialise correctly.
+	// register's Lock serialise correctly. Also exercises the
+	// dispatcher-launch side-effect under concurrency.
 	srv := &Server{sessions: map[string]*Backend{}}
 	var wg sync.WaitGroup
 	const goroutines = 16
@@ -360,4 +362,155 @@ func TestServer_RegisterSession_ConcurrentWithRoute(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	// Clean up any dispatcher that got started.
+	if be, ok := srv.sessions["sess-race"]; ok && be.stopDispatcher != nil {
+		be.stopDispatcher()
+		be.dispatchWg.Wait()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Backend dispatcher (drain) — Step 4
+// ---------------------------------------------------------------------------
+
+func TestBackend_Dispatcher_DrainsChannel(t *testing.T) {
+	// Verifies the dispatcher goroutine drains be.events as fast as
+	// events arrive, so route doesn't hit the "channel full" drop path
+	// during steady-state operation. We push more events than the
+	// channel buffer (256) and assert all are received by the handler.
+	srv := &Server{sessions: map[string]*Backend{}}
+	be := &Backend{sessionID: "sess-drain"}
+
+	var seen atomic.Int32
+	be.SetDispatchHandler(func(rawEvent) {
+		seen.Add(1)
+	})
+	srv.registerSession(be)
+	defer srv.unregisterSession(be.sessionID)
+
+	// Push 300 events — more than the 256 buffer.
+	for i := 0; i < 300; i++ {
+		srv.route(rawEvent{
+			Type:       "test",
+			Properties: []byte(`{"sessionID":"sess-drain"}`),
+		})
+	}
+
+	// Wait for the dispatcher to process them all.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && seen.Load() < 300 {
+		time.Sleep(time.Millisecond)
+	}
+	if got := seen.Load(); got != 300 {
+		t.Errorf("dispatcher processed %d/300 events — channel would fill without a drain goroutine", got)
+	}
+}
+
+func TestBackend_Dispatcher_HandsEventsToHandler(t *testing.T) {
+	// Verifies the dispatcher invokes the registered handler with each
+	// event's content (not just the count). Pins the call shape Step 7
+	// will rely on: handler(rawEvent).
+	srv := &Server{sessions: map[string]*Backend{}}
+	be := &Backend{sessionID: "sess-handler"}
+
+	var (
+		mu     sync.Mutex
+		got    []string
+	)
+	be.SetDispatchHandler(func(ev rawEvent) {
+		mu.Lock()
+		got = append(got, ev.Type)
+		mu.Unlock()
+	})
+	srv.registerSession(be)
+	defer srv.unregisterSession(be.sessionID)
+
+	srv.route(rawEvent{Type: "session.idle", Properties: []byte(`{"sessionID":"sess-handler"}`)})
+	srv.route(rawEvent{Type: "session.status", Properties: []byte(`{"sessionID":"sess-handler","status":{"type":"busy"}}`)})
+	srv.route(rawEvent{Type: "message.updated", Properties: []byte(`{"info":{"sessionID":"sess-handler"}}`)})
+
+	// Poll for completion. Take the lock only to read the count, never
+	// hold it across the time.Sleep — the dispatcher goroutine also
+	// needs to acquire it.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n == 3 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 3 {
+		t.Fatalf("handler saw %d events, want 3: %v", len(got), got)
+	}
+	want := []string{"session.idle", "session.status", "message.updated"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestBackend_Dispatcher_StopOnUnregister(t *testing.T) {
+	// Verifies unregisterSession stops the dispatcher goroutine and
+	// waits for it to exit before returning. Without this contract, a
+	// Backend teardown would race against in-flight handler calls.
+	srv := &Server{sessions: map[string]*Backend{}}
+	be := &Backend{sessionID: "sess-stop"}
+
+	var stopped atomic.Bool
+	be.SetDispatchHandler(func(rawEvent) {
+		// Slow handler so we can prove unregister waits for it.
+		time.Sleep(50 * time.Millisecond)
+	})
+	srv.registerSession(be)
+
+	// Push an event so the dispatcher has work in flight when we
+	// unregister.
+	srv.route(rawEvent{Type: "slow", Properties: []byte(`{"sessionID":"sess-stop"}`)})
+	time.Sleep(10 * time.Millisecond) // let the handler start
+
+	// unregisterSession must wait for the handler to finish.
+	start := time.Now()
+	srv.unregisterSession(be.sessionID)
+	elapsed := time.Since(start)
+	if elapsed < 40*time.Millisecond {
+		t.Errorf("unregister returned in %s; should have waited for the slow handler", elapsed)
+	}
+	stopped.Store(true)
+
+	// Pushing another event must not panic or block — the Backend is
+	// no longer registered so route drops silently.
+	srv.route(rawEvent{Type: "after-stop", Properties: []byte(`{"sessionID":"sess-stop"}`)})
+
+	if be.stopDispatcher != nil {
+		t.Error("be.stopDispatcher should be nil after unregister")
+	}
+}
+
+func TestBackend_Dispatcher_DefaultHandlerIsNoOp(t *testing.T) {
+	// Verifies a Backend with no explicit handler (Step 4 production
+	// default — Step 7 sets the real one) still drains without panicking.
+	// The default logs at DEBUG; we just verify the channel empties.
+	srv := &Server{sessions: map[string]*Backend{}}
+	be := &Backend{sessionID: "sess-default"}
+	// No SetDispatchHandler — defaultDispatchHandler is used.
+	srv.registerSession(be)
+	defer srv.unregisterSession(be.sessionID)
+
+	for i := 0; i < 10; i++ {
+		srv.route(rawEvent{Type: "default", Properties: []byte(`{"sessionID":"sess-default"}`)})
+	}
+
+	// Wait briefly for the dispatcher to drain.
+	time.Sleep(50 * time.Millisecond)
+
+	// Channel should be empty (drained).
+	if len(be.events) != 0 {
+		t.Errorf("events channel has %d undrained events with default handler", len(be.events))
+	}
 }
