@@ -186,6 +186,11 @@ type Backend struct {
 	onCompactionDone  func(preTokens int)
 	onAuthFailure     func(detail string)
 
+	// authFailureFired gates onAuthFailure so a flaky 401 loop doesn't
+	// spam repeated notifications. CAS'd to true on first fire; resets
+	// when the Backend is recreated (session restart).
+	authFailureFired atomic.Bool
+
 	// Agent spawn tracking — shared with ccstream via delegator.AgentTracker.
 	agents delegator.AgentTracker
 }
