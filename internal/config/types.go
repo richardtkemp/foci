@@ -1149,6 +1149,7 @@ type Config struct {
 	Maintenance        MaintenanceConfig         `toml:"maintenance"`
 	Permissions        PermissionsConfig         `toml:"permissions"`
 	CCBackend          CCBackendConfig           `toml:"cc_backend"` // shared defaults for Claude Code delegator backends
+	OpencodeBackend    OpencodeBackendConfig     `toml:"opencode_backend"` // shared defaults for opencode delegator backend
 	Commands           []CommandConfig           `toml:"commands"`
 	MessageTransforms  []MessageTransform        `toml:"message_transforms"`                             // regex find/replace rules applied to inbound messages
 	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`                                  // path prefixes that write/edit tools refuse (with rebuke message)

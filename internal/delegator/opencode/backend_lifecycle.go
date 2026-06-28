@@ -63,7 +63,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.startOpts = opts
 
 	if b.server == nil {
-		srv, err := acquireServer(opts.AgentID, serverConfigFromOpts(opts))
+		srv, err := acquireServer(opts.AgentID, b.serverConfigFromOpts(opts))
 		if err != nil {
 			return fmt.Errorf("opencode: acquire server: %w", err)
 		}
@@ -277,12 +277,31 @@ func resolveSystemPrompt(opts delegator.StartOptions) string {
 	return opts.SystemPrompt
 }
 
-// serverConfigFromOpts builds a serverConfig from StartOptions + sane
-// defaults. Step 14 will merge [opencode_backend] TOML into opts.Cfg;
-// for Step 5 the defaults suffice (loopback hostname, free port, no
-// auth, opencode resolved via $PATH).
-func serverConfigFromOpts(opts delegator.StartOptions) serverConfig {
-	return defaultServerConfig(opts.WorkDir)
+// serverConfigFromOpts builds a serverConfig from StartOptions + the
+// Backend's cfg map (populated from [opencode_backend] + per-agent
+// backend_config by cmd/foci-gw/agents_delegated.go). Per-agent values
+// override the defaults.
+func (b *Backend) serverConfigFromOpts(opts delegator.StartOptions) serverConfig {
+	cfg := defaultServerConfig(opts.WorkDir)
+	if v, ok := b.cfg["opencode_binary"].(string); ok && v != "" {
+		cfg.binaryPath = v
+	}
+	if v, ok := b.cfg["hostname"].(string); ok && v != "" {
+		cfg.hostname = v
+	}
+	if v, ok := b.cfg["server_auth"].(string); ok {
+		cfg.serverPassword = v
+	}
+	// Port can be int or int64 depending on TOML unmarshalling.
+	switch v := b.cfg["port"].(type) {
+	case int:
+		cfg.port = v
+	case int64:
+		cfg.port = int(v)
+	case float64:
+		cfg.port = int(v)
+	}
+	return cfg
 }
 
 // httpClient returns the Server's shared HTTP client if available,
