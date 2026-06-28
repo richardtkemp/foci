@@ -289,6 +289,44 @@ func TestBackend_Start_SessionCreateFailure(t *testing.T) {
 	}
 }
 
+func TestBackend_Start_Idempotent(t *testing.T) {
+	// Verifies calling Start twice on the same Backend is a no-op:
+	// the second call returns nil without re-POSTing /session,
+	// re-closing readyCh (which would panic), or re-firing
+	// onSessionReady. DelegatedManager creates a fresh Backend per
+	// session so this doesn't occur in production, but the guard
+	// prevents a footgun for tests and future callers.
+	var (
+		sessionPosts  atomic.Int32
+		readyFires    atomic.Int32
+	)
+	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session" && r.Method == http.MethodPost {
+			sessionPosts.Add(1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"sess-once"}`))
+			return
+		}
+		http.NotFound(w, r)
+	})
+	b.SetOnSessionReady(func(string) { readyFires.Add(1) })
+
+	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-agent"}); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-agent"}); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+
+	if got := sessionPosts.Load(); got != 1 {
+		t.Errorf("POST /session fired %d times, want 1 (second Start should be no-op)", got)
+	}
+	if got := readyFires.Load(); got != 1 {
+		t.Errorf("onSessionReady fired %d times, want 1", got)
+	}
+	_ = b.Close()
+}
+
 // ---------------------------------------------------------------------------
 // Close
 // ---------------------------------------------------------------------------
@@ -354,22 +392,46 @@ func TestBackend_Close_DeregistersAndReleases(t *testing.T) {
 }
 
 func TestBackend_Close_LastReleaseShutsDownServer(t *testing.T) {
-	// Verifies that when a Backend's agent is in the package-level
-	// serverPool, Close releases the refcount and triggers shutdown
-	// when it hits zero. We don't actually spawn a subprocess — the
-	// Server is inserted into the pool via the test helper, then
-	// pointed at an httptest URL for the DELETE.
+	// Verifies the full chain: Backend.Close → releaseServer →
+	// (refcount→0) → Server.Close (in goroutine) → subprocess killed.
+	// Uses a real opc-stub subprocess so the kill is observable, not
+	// just the pool-entry removal.
+	//
+	// Step 3's TestServer_Pool_RefcountShutdown covers pool semantics
+	// without a subprocess; this test pins the Backend → release → kill
+	// composition end-to-end.
+	prevGrace, prevKill, prevTerm := closeGracefulWait, closeSigkillWait, closeSigtermWait
+	closeGracefulWait = 200 * time.Millisecond
+	closeSigkillWait = 200 * time.Millisecond
+	closeSigtermWait = 200 * time.Millisecond
+	defer func() {
+		closeGracefulWait = prevGrace
+		closeSigkillWait = prevKill
+		closeSigtermWait = prevTerm
+	}()
+
 	resetTestPool(t)
-	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK) // accept everything
-	}))
-	defer hs.Close()
 
-	// Insert a Server for the agent, baseURL pointed at httptest.
-	srv := insertLiveServerForTest("agent-shutdown")
-	srv.baseURL = hs.URL
-	srv.http = hs.Client()
+	// Spawn a real stub subprocess via the same helper Step 3 uses.
+	srv := newServer("agent-shutdown", serverConfig{
+		workDir:    t.TempDir(),
+		binaryPath: stubBinary(t),
+		hostname:   "127.0.0.1",
+	})
+	if err := launchStubDirectly(t, srv); err != nil {
+		t.Fatalf("launchStubDirectly: %v", err)
+	}
 
+	// Insert into the pool with refcount=1 so releaseServer will
+	// trigger shutdown when this Backend closes.
+	serverPoolMu.Lock()
+	serverPool["agent-shutdown"] = srv
+	srv.refCount = 1
+	serverPoolMu.Unlock()
+
+	// Construct a Backend that "owns" this Server reference. Manually
+	// mark running so Close's no-op-on-not-running guard passes, and
+	// register so the dispatcher is started (Close will stop it).
 	b := &Backend{
 		server:      srv,
 		agentID:     "agent-shutdown",
@@ -377,14 +439,17 @@ func TestBackend_Close_LastReleaseShutsDownServer(t *testing.T) {
 		readyCh:     make(chan struct{}),
 		outstanding: NewOutstandingRegistry(),
 	}
-	// Manually mark running so Close's no-op-on-not-running guard passes.
 	b.mu.Lock()
 	b.running = true
 	b.mu.Unlock()
-	// Register so the dispatcher is started (Close will stop it).
 	srv.registerSession(b)
 
-	// Pre-condition: agent is in the pool.
+	// Pre-condition: subprocess is alive.
+	if srv.cmd.Process == nil {
+		t.Fatal("subprocess has no Process handle")
+	}
+
+	// Pre-condition: agent in pool.
 	if _, ok := lookupTestPool("agent-shutdown"); !ok {
 		t.Fatal("agent not in pool before Close")
 	}
@@ -393,12 +458,21 @@ func TestBackend_Close_LastReleaseShutsDownServer(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Post-condition: agent removed from pool (refcount was 1 → 0).
-	// releaseServer spawns Close in a goroutine; the pool entry is
-	// removed synchronously under the mutex, so we can assert
-	// immediately.
+	// Post-condition 1: pool entry removed synchronously (releaseServer
+	// removes under the mutex before spawning the Close goroutine).
 	if _, ok := lookupTestPool("agent-shutdown"); ok {
-		t.Error("agent still in pool after Close — refcount wasn't decremented to zero")
+		t.Error("agent still in pool after Close — refcount wasn't decremented")
+	}
+
+	// Post-condition 2: subprocess killed. releaseServer spawns Close
+	// in a goroutine; with shrunk timeouts, the kill ladder completes
+	// in <1s. srv.done is the authoritative "subprocess reaped" signal
+	// (launchStubDirectly closes it after cmd.Wait() returns).
+	select {
+	case <-srv.done:
+		// subprocess reaped
+	case <-time.After(2 * time.Second):
+		t.Fatal("subprocess not killed within 2s of Backend.Close")
 	}
 }
 
