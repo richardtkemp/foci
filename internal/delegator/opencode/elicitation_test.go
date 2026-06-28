@@ -1,5 +1,10 @@
 //go:build ignore
 // Content below is fully disabled (no kept tests); Step 9+ replaces with fresh tests.
+//
+// Elicitation investigation (Step 10): opencode does NOT support MCP
+// elicitation. The MCP client capability list in packages/opencode/src/mcp/index.ts
+// has elicitation commented out (issue #23066). These tests stay disabled
+// until opencode adds elicitation support.
 package opencode
 
 import (
