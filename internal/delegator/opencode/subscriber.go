@@ -219,6 +219,7 @@ func (s *Server) runSubscriber(ctx context.Context) {
 
 	onEvent := func(ev rawEvent) {
 		s.lastActivity.Store(time.Now().UnixNano())
+		log.Debugf(component, "SSE event: %s session=%s", ev.Type, extractSessionID(ev.Properties))
 		s.route(ev)
 	}
 	onHeartbeat := func() {

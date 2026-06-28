@@ -26,6 +26,7 @@ import (
 // appropriate On* handler. Unknown events are logged at DEBUG and
 // dropped — forward-compatible against new opencode event types.
 func (b *Backend) handleEvent(ev rawEvent) {
+	log.Debugf(b.logComponent(), "handleEvent: %s", ev.Type)
 	switch ev.Type {
 	case EventMessagePartUpdated:
 		var p eventMessagePartUpdated
@@ -333,8 +334,11 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	// always match, but the check is cheap insurance against a routing
 	// bug.
 	if sessionID != b.sessionID {
+		log.Debugf(b.logComponent(), "onSessionIdle: ignored (session=%s, ours=%s)", sessionID, b.sessionID)
 		return
 	}
+
+	log.Debugf(b.logComponent(), "onSessionIdle: building turn result")
 
 	// Snapshot accumulated turn state.
 	b.turnMu.Lock()

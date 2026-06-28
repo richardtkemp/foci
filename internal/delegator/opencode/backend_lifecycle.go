@@ -56,6 +56,8 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		return nil
 	}
 
+	log.Infof(b.logComponent(), "Start: agentID=%s workDir=%s", opts.AgentID, opts.WorkDir)
+
 	// keep newRequestID reachable for deadcode (Step 6 wires real callers).
 	_ = newRequestID()
 
@@ -77,6 +79,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		return fmt.Errorf("opencode: create session: %w", err)
 	}
 	b.sessionID = sessionID
+	log.Infof(b.logComponent(), "Start: session created id=%s", sessionID)
 
 	// Register with the Server so SSE events route to us. Side effect:
 	// launches the dispatcher goroutine (Step 4) which drains b.events
@@ -87,6 +90,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// handler is captured at goroutine-start time.
 	b.SetDispatchHandler(b.handleEvent)
 	b.server.registerSession(b)
+	log.Debugf(b.logComponent(), "Start: registered with server, dispatcher started")
 
 	// Apply default permission mode if configured. opencode's defaults
 	// are permissive (most tools "allow"); foci wants "ask" for side-
