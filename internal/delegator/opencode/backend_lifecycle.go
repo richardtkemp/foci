@@ -88,6 +88,18 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.SetDispatchHandler(b.handleEvent)
 	b.server.registerSession(b)
 
+	// Apply default permission mode if configured. opencode's defaults
+	// are permissive (most tools "allow"); foci wants "ask" for side-
+	// effecting tools so the user gets prompted via the permission
+	// keyboard. Per-agent backend_config.default_permission overrides.
+	if dp, ok := b.cfg["default_permission"].(string); ok && dp != "" {
+		if err := b.patchConfig(ctx, map[string]any{
+			"permission": map[string]string{"*": dp},
+		}); err != nil {
+			log.Warnf(b.logComponent(), "default_permission PATCH failed: %v — using opencode defaults", err)
+		}
+	}
+
 	// Inject system prompt if provided. noReply:true so opencode treats
 	// it as context-only and doesn't trigger an AI response — mirrors
 	// ccstream's --append-system-prompt flag. Best-effort: a failure
