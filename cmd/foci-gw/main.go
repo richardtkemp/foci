@@ -410,8 +410,12 @@ Subcommands:
 	if stop := setupGoroutineMonitor(cfg, len(agents), ctx); stop != nil {
 		defer stop()
 	}
+	// Prompt TTL = min(configured prompt_ttl, idle timeout). An unanswered
+	// prompt must never outlive the backend waiting on it — the idle reaper
+	// clears the prompt anyway when it closes the backend. promptTTL starts at
+	// the idle default and the config override only lowers it (d < promptTTL).
 	promptTTL := agent.DefaultIdleTimeout
-	if d, err := time.ParseDuration(cfg.Permissions.PromptTTL); err == nil && d > 0 {
+	if d, err := time.ParseDuration(cfg.Permissions.PromptTTL); err == nil && d > 0 && d < promptTTL {
 		promptTTL = d
 	}
 	setupInteractiveCleanup(ctx, promptTTL)
