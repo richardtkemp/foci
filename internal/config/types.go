@@ -876,8 +876,10 @@ type PermissionsConfig struct {
 	// PromptTTL is how long an unanswered interactive prompt (permission
 	// request, AskUserQuestion) stays live before it auto-expires. On expiry
 	// the prompt is resolved as a denial/cancel so the waiting backend doesn't
-	// orphan, and its message is edited to show it expired. Aligns with the
-	// delegated-backend idle_timeout default. Parsed via time.ParseDuration.
+	// orphan, and its message is edited to show it expired. The effective TTL
+	// is capped at the delegated-backend idle timeout — min(prompt_ttl,
+	// idle_timeout) — since a prompt can't outlive the backend that's waiting
+	// on it (the idle reaper clears it). Parsed via time.ParseDuration.
 	PromptTTL string `toml:"prompt_ttl" default:"24h" desc:"lifetime of an unanswered permission/question prompt before it auto-denies"`
 }
 
