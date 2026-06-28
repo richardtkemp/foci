@@ -173,8 +173,8 @@ func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Contex
 		// App (FAP) sockets are dynamic — phones connect/disconnect at will, so
 		// the static formula cannot budget them. Each live socket runs a
 		// writePump goroutine + its accept goroutine (readPump inline), plus
-		// transient per-turn goroutines: budget 4 each, recomputed per tick.
-		DynamicExtra: func() int { return 4 * app.ActiveConnCount() },
+		// transient per-turn goroutines: budget 5 each, recomputed per tick.
+		DynamicExtra: func() int { return 5 * app.ActiveConnCount() },
 	})
 	mon.Start(ctx)
 	return mon.Stop

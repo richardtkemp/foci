@@ -20,7 +20,7 @@ import (
 )
 
 // DefaultIdleTimeout is the default duration after which idle delegated backends are closed.
-const DefaultIdleTimeout = 24 * time.Hour
+const DefaultIdleTimeout = 3 * time.Hour
 
 // defaultBackendReadyTimeout is the wall-clock budget WaitReady gets to see
 // the coding-agent backend complete its init handshake before foci moves on.
