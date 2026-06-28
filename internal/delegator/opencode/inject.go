@@ -106,30 +106,7 @@ func (b *Backend) WaitForTurn(ctx context.Context) error {
 	}
 }
 
-// ArmCompactionWait resets compactDoneCh for the next /compact cycle.
-// Step 8.2.
-func (b *Backend) ArmCompactionWait() {
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	b.compactDoneCh = make(chan struct{}, 1)
-}
-
-// WaitForCompaction blocks on compactDoneCh or ctx. Returns immediately
-// (nil) if not armed — matches ccstream's no-arm semantics.
-func (b *Backend) WaitForCompaction(ctx context.Context) error {
-	b.turnMu.Lock()
-	ch := b.compactDoneCh
-	b.turnMu.Unlock()
-	if ch == nil {
-		return nil
-	}
-	select {
-	case <-ch:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
+// ArmCompactionWait and WaitForCompaction live in compaction.go (Step 8).
 
 // ---------------------------------------------------------------------------
 // Inject routing matrix (plan §6)

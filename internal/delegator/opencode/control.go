@@ -107,6 +107,14 @@ func (b *Backend) patchConfig(ctx context.Context, body map[string]any) error {
 // For v1 we apply a coarse mapping: "bypassPermissions" → allow all;
 // "acceptEdits" → allow edits + ask for bash; "plan" → deny edits;
 // default → ask for everything.
+
+// TODO(opencode): ContextUsageQuerier — opencode has no get_context_usage
+// equivalent. GET /session/:id returns summary stats (no token count).
+// The interface is optional; skipping for v1 means foci's /context
+// command shows "unavailable" for opencode agents. Revisit if opencode
+// adds a context-usage endpoint or if we decide to compute heuristically
+// from AssistantMessage.tokens (misleading — per-message, not context
+// window fraction). See OPENCODE_DELEGATOR_PLAN.md §8.3.
 func mapPermissionMode(mode string) map[string]any {
 	switch mode {
 	case "bypassPermissions", "auto":
