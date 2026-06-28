@@ -63,7 +63,7 @@ type Server struct {
 	subscriberCancel context.CancelFunc // Step 4 SSE subscriber
 
 	// Activity — updated on every inbound SSE frame (Step 12).
-	lastActivity atomic.Int64 //nolint:unused // Step 12 activity tracker (unix nanos)
+	lastActivity atomic.Int64 // unix nanos
 }
 
 // newServer constructs a Server from cfg without starting it. Step 3's
