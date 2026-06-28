@@ -10,6 +10,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
+	"foci/internal/delegator/opencode"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -74,6 +75,32 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			if injectClaudeBin {
 				backendConfig["claude_binary"] = p.cfg.CCBackend.ClaudeBinary
 			}
+		}
+	}
+
+	// For opencode-backed agents, fold global [opencode_backend] settings
+	// into the per-agent backend_config map so the Backend reads them via
+	// the same cfg key as ccstream does. Per-agent values always win.
+	if backendName == "opencode" {
+		copied := false
+		ensure := func(key string, val any) {
+			if _, set := backendConfig[key]; !set && val != "" && val != 0 {
+				if !copied {
+					dup := make(map[string]any, len(backendConfig)+4)
+					for k, v := range backendConfig {
+						dup[k] = v
+					}
+					backendConfig = dup
+					copied = true
+				}
+				backendConfig[key] = val
+			}
+		}
+		ensure("opencode_binary", p.cfg.OpencodeBackend.OpencodeBinary)
+		ensure("hostname", p.cfg.OpencodeBackend.Hostname)
+		ensure("server_auth", p.cfg.OpencodeBackend.ServerAuth)
+		if p.cfg.OpencodeBackend.Port != 0 {
+			ensure("port", p.cfg.OpencodeBackend.Port)
 		}
 	}
 
@@ -180,6 +207,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				sb.SetOnAuthFailure(func(detail string) {
 					// Auto-401 has no triggering chat; "" → the agent's default chat.
 					triggerRelogin("401 auth failure: "+firstLine(detail), "")
+				})
+			}
+			// Inject auth-failure callback into opencode backends. No
+			// automated relogin for v1 (per-provider auth); just log.
+			if ob, ok := be.(*opencode.Backend); ok {
+				ob.SetOnAuthFailure(func(detail string) {
+					log.Warnf("agent/"+agentID, "opencode auth failure: %s", detail)
 				})
 			}
 			return be, nil

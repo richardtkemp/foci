@@ -98,7 +98,7 @@ func releaseServer(agentID string) {
 // registration (with plan delivery etc.) lands in Step 14; for now this
 // keeps the package importable in tests without side effects.
 func init() {
-	delegator.Register("opencode", newFromConfig, false)
+	delegator.Register("opencode", newFromConfig, true)
 	delegator.RegisterPlan("opencode", planDelivery)
 }
 
