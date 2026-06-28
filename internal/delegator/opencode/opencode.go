@@ -32,15 +32,13 @@ var (
 )
 
 // acquireServer returns the live Server for agentID, constructing and
-// starting one if none exists yet. Step 5's Backend.Start calls this.
-//
-// Start runs OUTSIDE the pool mutex — slow subprocess startup must not
-// block acquireServer for unrelated agents. DelegatedManager serialises
-// Backend.Start per-agent in production so the new-server race window
-// (two concurrent acquires for a brand-new agent both reaching the
-// Start call) does not occur in practice; if that changes, add a
-// per-agent sync.Once.
-func acquireServer(agentID string, cfg serverConfig) (*Server, error) {
+// starting one if none exists yet. env carries optional environment
+// variables (BASH_ENV, FOCI_SOCK from the exec bridge) that are applied
+// to the subprocess on first launch. Only the first session's env vars
+// take effect — the subprocess is shared across all sessions on this
+// agent (documented limitation for v1; see OPENCODE_DELEGATOR_PLAN.md
+// Step 17).
+func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Server, error) {
 	serverPoolMu.Lock()
 	if s, ok := serverPool[agentID]; ok {
 		s.refCount++
@@ -50,6 +48,7 @@ func acquireServer(agentID string, cfg serverConfig) (*Server, error) {
 	serverPoolMu.Unlock()
 
 	s := newServer(agentID, cfg)
+	s.extraEnv = env
 	if err := s.Start(context.Background()); err != nil {
 		return nil, err
 	}

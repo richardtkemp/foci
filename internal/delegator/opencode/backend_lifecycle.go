@@ -63,7 +63,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.startOpts = opts
 
 	if b.server == nil {
-		srv, err := acquireServer(opts.AgentID, b.serverConfigFromOpts(opts))
+		srv, err := acquireServer(opts.AgentID, b.serverConfigFromOpts(opts), opts.Env)
 		if err != nil {
 			return fmt.Errorf("opencode: acquire server: %w", err)
 		}

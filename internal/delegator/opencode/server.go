@@ -64,6 +64,13 @@ type Server struct {
 
 	// Activity — updated on every inbound SSE frame (Step 12).
 	lastActivity atomic.Int64 // unix nanos
+
+	// extraEnv carries optional environment variables (BASH_ENV,
+	// FOCI_SOCK from the exec bridge) applied to the subprocess on
+	// first launch. Set by acquireServer from the first Backend's
+	// StartOptions.Env. Only the first session's env takes effect —
+	// the subprocess is shared (v1 limitation, Step 17).
+	extraEnv map[string]string
 }
 
 // newServer constructs a Server from cfg without starting it. Step 3's
