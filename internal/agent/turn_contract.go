@@ -181,9 +181,20 @@ type TurnState struct {
 	// --- Phase 3 outputs ---
 
 	FinalText  string          // response text from the completed turn
-	FinalUsage *provider.Usage // token usage from the completed turn
-	FinalCost  float64         // calculated cost from logAPIResponse
+	FinalUsage *provider.Usage // token usage from the LAST terminal call (= current context size); never a fold of prior rounds
+	FinalCost  float64         // calculated cost from logAPIResponse (turn-total: sum across all terminal calls)
 	FinalModel string          // model used (delegated: from JSONL; API: from TurnModel)
+
+	// PriorCallUsages holds usage from terminal API calls that preceded the
+	// final one within a single turn, in chronological order. The delegated
+	// pre-answer nudge gate runs two terminal Anthropic calls per turn (round 1
+	// answers, the gate fires, round 2 re-answers); round-1 usage is appended
+	// here while FinalUsage stays = round 2. Normal turns leave this empty.
+	// Each entry becomes its own api.db ledger row so per-call cache_read is
+	// recorded un-summed (cache_read is cumulative per call — summing two
+	// rounds double-counts the same context as a size signal). Generalises to
+	// >2 terminal rounds if a future feature produces them.
+	PriorCallUsages []*provider.Usage
 
 	// --- Async coordination ---
 
@@ -227,6 +238,39 @@ func (ts *TurnState) UserMessageTime() time.Time {
 		return ts.ReceivedAt
 	}
 	return ts.StartedAt
+}
+
+// DisplayUsage returns per-turn token totals for header / chip display.
+// input, output and cache_write are SUMMED across all terminal calls (each is
+// a distinct per-call delta — round 2's new input is the round-1 answer + the
+// nudge, its output is a separate generation, its cache_write is a fresh
+// delta). cache_read is taken from the LAST call ONLY: it is cumulative per
+// call (every call re-reads the whole cached prefix), so summing the
+// pre-answer gate's two rounds would double-count the same ~context twice.
+//
+// This is the single source of truth for the summable-vs-cumulative rule, so
+// the Telegram prev_tokens header and the FAP/TurnComplete chips stay
+// consistent. Display-only: bill from the per-call api.db ledger and size the
+// context from FinalUsage directly (compaction trigger). Returns nil when the
+// turn produced no usage; non-gated turns have no PriorCallUsages, so it
+// returns FinalUsage's values unchanged.
+func (ts *TurnState) DisplayUsage() *provider.Usage {
+	if ts.FinalUsage == nil {
+		return nil
+	}
+	u := &provider.Usage{
+		InputTokens:              ts.FinalUsage.InputTokens,
+		OutputTokens:             ts.FinalUsage.OutputTokens,
+		CacheCreationInputTokens: ts.FinalUsage.CacheCreationInputTokens,
+		CacheReadInputTokens:     ts.FinalUsage.CacheReadInputTokens, // last call only — never summed
+	}
+	for _, p := range ts.PriorCallUsages {
+		u.InputTokens += p.InputTokens
+		u.OutputTokens += p.OutputTokens
+		u.CacheCreationInputTokens += p.CacheCreationInputTokens
+		// cache_read deliberately omitted — cumulative; summing double-counts.
+	}
+	return u
 }
 
 // sharedTurnOps holds shared method implementations inherited by both
