@@ -33,6 +33,104 @@ import (
 	"foci/internal/log"
 )
 
+// ---------------------------------------------------------------------------
+// Turn-lifecycle primitives (plan §6.2: "identical semantics to ccstream")
+// ---------------------------------------------------------------------------
+
+// AttachSessionEvents installs the session-scoped delivery sink. Called
+// once by the agent layer when the Backend is acquired for a session;
+// text/tool events flow through it regardless of whether a per-turn
+// TurnEvents handler is armed. Mirrors ccstream's implementation.
+func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
+	b.sessionEvents.Store(events)
+}
+
+// beginTurn sets per-turn bookkeeping under turnMu. Resets accumulated
+// state from any prior turn so a fresh turn starts clean — part of the
+// beginTurn contract asserted by TestBeginTurnResetsState. Called from
+// injectUser / injectSteer / flushSteerBuf before sendPrompt, so events
+// arriving in response to the POST find an active turn.
+func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	b.turnActive = true
+	b.turnEvents = turn
+	b.turnText.Reset()
+	b.turnTools = 0
+	b.turnResultCh = make(chan *ResultMessage, 1)
+
+	// lastUsage is reset under b.mu (it's read by OnResult on the next
+	// turn to build TurnResult — a stale value would leak across turns).
+	b.mu.Lock()
+	b.lastUsage = nil
+	b.mu.Unlock()
+}
+
+// cancelTurn reverses beginTurn. Called from Close and Step 8's
+// Interrupt (via the Delegator interface).
+func (b *Backend) cancelTurn() {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	b.turnActive = false
+	b.turnEvents = nil
+}
+
+// IsTurnInFlight reports whether a turn is registered but hasn't
+// completed. Inject consults this to route between begin-turn and the
+// steerBuf-queue path.
+func (b *Backend) IsTurnInFlight() bool {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	return b.turnActive
+}
+
+// WaitForTurn blocks until the next turn completion (turnResultCh
+// receives) or ctx expires. Returns immediately if no turn is in
+// progress (turnResultCh == nil). Mirrors ccstream.
+func (b *Backend) WaitForTurn(ctx context.Context) error {
+	b.turnMu.Lock()
+	ch := b.turnResultCh
+	b.turnMu.Unlock()
+	if ch == nil {
+		return nil
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// ArmCompactionWait resets compactDoneCh for the next /compact cycle.
+// Step 8.2.
+func (b *Backend) ArmCompactionWait() {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	b.compactDoneCh = make(chan struct{}, 1)
+}
+
+// WaitForCompaction blocks on compactDoneCh or ctx. Returns immediately
+// (nil) if not armed — matches ccstream's no-arm semantics.
+func (b *Backend) WaitForCompaction(ctx context.Context) error {
+	b.turnMu.Lock()
+	ch := b.compactDoneCh
+	b.turnMu.Unlock()
+	if ch == nil {
+		return nil
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Inject routing matrix (plan §6)
+// ---------------------------------------------------------------------------
+
 // Inject delivers a user-role event to opencode. Routes based on
 // inj.Source and IsTurnInFlight per the plan's matrix:
 //
@@ -84,7 +182,7 @@ func (b *Backend) injectUser(ctx context.Context, inj delegator.Inject) error {
 	}
 	// Idle — begin a fresh turn.
 	b.beginTurn(inj.Turn)
-	return b.sendPrompt(ctx, inj.Text, inj.Attachments, inj.Turn)
+	return b.sendPrompt(ctx, inj.Text, inj.Attachments)
 }
 
 // injectSteer handles SourceSteer. At idle + Turn present it degrades
@@ -113,7 +211,7 @@ func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 	// Steer-at-idle with Turn present — degrade to User-idle.
 	log.Debugf(b.logComponent(), "inject: steer at idle — degrading to user-idle")
 	b.beginTurn(inj.Turn)
-	return b.sendPrompt(ctx, inj.Text, inj.Attachments, inj.Turn)
+	return b.sendPrompt(ctx, inj.Text, inj.Attachments)
 }
 
 // injectCommand handles SourceCompact and SourcePass — slash commands
@@ -160,10 +258,14 @@ func splitSlashCommand(text string) (name, rest string) {
 // attachments. The async endpoint returns 204 No Content immediately;
 // turn completion arrives as session.idle SSE events (Step 7).
 //
+// Callers must call beginTurn BEFORE sendPrompt so events arriving in
+// response to the POST find an active turn. sendPrompt itself is purely
+// the HTTP call — it doesn't touch turn state.
+//
 // Attachments become file parts with data: URLs (per §6.1). opencode
 // treats them as first-class multimodal content — same as if the user
 // had pasted an image into the TUI.
-func (b *Backend) sendPrompt(ctx context.Context, text string, attachments []delegator.Attachment, turn *delegator.TurnEvents) error {
+func (b *Backend) sendPrompt(ctx context.Context, text string, attachments []delegator.Attachment) error {
 	body := buildPromptBody(text, attachments, false)
 	return b.postMessage(ctx, "/prompt_async", body)
 }
@@ -275,5 +377,5 @@ func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegat
 	turn := turnFactory()
 	b.beginTurn(turn)
 	log.Infof(b.logComponent(), "flushSteerBuf: sending %d queued message(s) as follow-up turn", len(buf))
-	return b.sendPrompt(ctx, combined, nil, turn)
+	return b.sendPrompt(ctx, combined, nil)
 }
