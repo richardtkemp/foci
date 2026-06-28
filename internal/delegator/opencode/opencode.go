@@ -130,8 +130,14 @@ type Backend struct {
 	readyCh       chan struct{}     // closed when POST /session returns
 	pendingPerms  map[string]*pendingPermission
 	outstanding   *OutstandingRegistry
-	compactDoneCh chan struct{} // buffered(1); closed by OnSessionCompacted
+	compactDoneCh chan struct{}     // buffered(1); closed by OnSessionCompacted
 	sessionID     string
+
+	// Per-session event channel — Server.route pushes decoded rawEvents
+	// here; Backend.dispatchLoop drains and invokes handlers (Step 7).
+	// nil until Backend registers with its Server (Step 5); buffered
+	// eventBufferSize so a transient dispatcher stall doesn't drop.
+	events chan rawEvent
 
 	// Lifecycle — Step 5.
 	mu      sync.Mutex

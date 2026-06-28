@@ -111,6 +111,16 @@ func (s *Server) Start(ctx context.Context) error {
 	// auth-failure detection happens in Step 11; for Step 3 we just log.
 	go s.captureStderr(stderrPipe)
 
+	// SSE subscriber goroutine. Started BEFORE the health probe finishes
+	// so we don't miss the server.connected event or any early per-session
+	// events (sessions aren't created until Step 5 anyway, but having the
+	// subscriber ready avoids a race). The subscriber's own GET /event may
+	// fail until the server is ready — it'll reconnect-retry in Step 4.2's
+	// future work; for v1 it surfaces the failure via OnSubscriberStopped.
+	subscriberCtx, subscriberCancel := context.WithCancel(context.Background())
+	s.subscriberCancel = subscriberCancel
+	go s.runSubscriber(subscriberCtx)
+
 	// Process waiter goroutine — reaps the subprocess and is the AUTHORITATIVE
 	// source of "process is dead" (cmd.Wait cannot lie). The SSE subscriber
 	// (Step 4) and stderr capture may exit silently; this goroutine still
