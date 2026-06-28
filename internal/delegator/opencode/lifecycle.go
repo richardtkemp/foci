@@ -83,6 +83,12 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.serverPassword != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+s.serverPassword)
 	}
+	// Apply exec bridge env vars (BASH_ENV, FOCI_SOCK) so the LLM can
+	// call foci_todo etc. via the bash tool — same mechanism ccstream
+	// uses. Only the first session's vars take effect (shared subprocess).
+	for k, v := range s.extraEnv {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 
 	// Stdin/stdout aren't used (HTTP transport); just inherit /dev/null.
 	// Stderr we capture for diagnostics + secondary auth-failure detection.
