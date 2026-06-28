@@ -58,11 +58,15 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnText.Reset()
 	b.turnTools = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
+	b.seenToolCalls = make(map[string]bool)
+	b.seenTextParts = make(map[string]bool)
 
-	// lastUsage is reset under b.mu (it's read by OnResult on the next
-	// turn to build TurnResult — a stale value would leak across turns).
+	// lastUsage/lastModel are reset under b.mu (they're read by
+	// onSessionIdle on the next turn to build TurnResult — a stale
+	// value would leak across turns).
 	b.mu.Lock()
 	b.lastUsage = nil
+	b.lastModel = ""
 	b.mu.Unlock()
 }
 
