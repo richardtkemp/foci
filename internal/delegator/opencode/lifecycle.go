@@ -187,24 +187,46 @@ func (s *Server) closeInner() {
 		s.subscriberCancel()
 	}
 
-	// Graceful: SIGTERM by default for opencode (no "interrupt" stdin
-	// channel like ccstream has). Then SIGKILL if it doesn't exit.
-	if s.cmd.Process != nil {
-		_ = s.cmd.Process.Signal(syscall.SIGTERM)
+	// Graceful shutdown ladder, mirroring ccstream's contract:
+	//   1. POST /instance/dispose (opencode's documented shutdown path)
+	//   2. wait closeGracefulWait for clean exit
+	//   3. SIGTERM
+	//   4. wait closeSigtermWait
+	//   5. SIGKILL
+	//   6. wait closeSigkillWait
+	//   7. abandon the waiter goroutine (liveness backstop)
+	//
+	// Each rung has a bounded timeout so worst-case Close returns in
+	// ~9s regardless of subprocess behaviour — same invariant as
+	// ccstream's Close.
+	if s.baseURL != "" {
+		// Best-effort; if the POST fails (network already gone, server
+		// unresponsive), we fall through to SIGTERM. Short client timeout
+		// so the POST itself doesn't eat into the graceful-wait budget.
+		client := &http.Client{Timeout: 1 * time.Second}
+		resp, err := client.Post(s.baseURL+"/instance/dispose", "application/json", nil)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
 	}
-	select {
-	case <-s.waitCh:
-		// Clean exit.
-	case <-time.After(closeGracefulWait):
-		log.Warnf(component, "subprocess did not exit after %s, sending SIGKILL", closeGracefulWait)
+
+	exitSeen := waitForExit(s.waitCh, closeGracefulWait)
+	if !exitSeen {
+		log.Warnf(component, "subprocess did not exit after %s, sending SIGTERM", closeGracefulWait)
+		if s.cmd.Process != nil {
+			_ = s.cmd.Process.Signal(syscall.SIGTERM)
+		}
+		exitSeen = waitForExit(s.waitCh, closeSigtermWait)
+	}
+	if !exitSeen {
+		log.Warnf(component, "subprocess did not exit after SIGTERM, sending SIGKILL")
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Kill()
 		}
-		select {
-		case <-s.waitCh:
-		case <-time.After(closeSigkillWait):
-			log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
-		}
+		exitSeen = waitForExit(s.waitCh, closeSigkillWait)
+	}
+	if !exitSeen {
+		log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
 	}
 
 	// Cancel the cmd ctx (releases any outstanding cmd resources).
@@ -218,6 +240,24 @@ func (s *Server) closeInner() {
 	case <-s.done:
 	case <-time.After(closeSigtermWait):
 		log.Warnf(component, "waiter goroutine did not close done channel within %s — abandoning", closeSigtermWait)
+	}
+}
+
+// waitForExit returns true if waitCh reported within timeout. Helper
+// factored out of closeInner so each rung of the kill ladder reads the
+// same. Reads from a buffered(1) channel, so the second+ read after the
+// first already received is a no-op (returns true immediately) — that's
+// the desired behaviour: once we know the subprocess has exited, every
+// subsequent rung is a no-op.
+func waitForExit(waitCh <-chan error, timeout time.Duration) bool {
+	if waitCh == nil {
+		return false
+	}
+	select {
+	case <-waitCh:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }
 
@@ -292,10 +332,11 @@ func (s *Server) OnSubscriberStopped(err error) {
 // for safety). sync.Once-gated: whichever of {waiter goroutine, SSE
 // subscriber} notices first wins; the other is a no-op.
 //
-// Step 3 scope: mark running=false, surface to each registered Backend
-// via a synthesised session.error event (Step 4 will route real events).
-// Step 7 will hook OnSessionError on each Backend to fire its
-// OnTurnComplete with the error.
+// For each registered Backend, synthesises a session.error event and
+// pushes it onto the Backend's events channel — so its Step 7 handlers
+// can complete any in-flight turn with an error rather than hanging
+// forever waiting for events that will never arrive. Without this, the
+// SSE stream going away would silently wedge every active session.
 func (s *Server) finalizeExit(reason error) {
 	s.finalizeOnce.Do(func() {
 		component := s.logComponent()
@@ -313,16 +354,69 @@ func (s *Server) finalizeExit(reason error) {
 		// "dead" timestamp rather than the last SSE frame time.
 		s.lastActivity.Store(time.Now().UnixNano())
 
-		// Step 4 will replace this with real event dispatch. For Step 3
-		// we just log the count so a race between waiter and subscriber
-		// is observable in tests.
+		// Synthesise a session.error event for each registered Backend.
+		// The payload matches the wire shape opencode would emit on a
+		// real auth/transient failure — Step 7's OnSessionError handler
+		// treats synthesised and real events identically. The handler
+		// fires OnTurnComplete with the error text and clears turn state.
+		//
+		// If reason was the expected Close path (s.closing), the message
+		// reflects that so the user sees "session closed" rather than
+		// "subprocess died unexpectedly".
+		s.mu.Lock()
+		expected := s.closing
+		s.mu.Unlock()
+
 		s.sessionsMu.RLock()
-		n := len(s.sessions)
+		backends := make([]*Backend, 0, len(s.sessions))
+		for _, be := range s.sessions {
+			backends = append(backends, be)
+		}
 		s.sessionsMu.RUnlock()
-		if n > 0 {
-			log.Warnf(component, "finalizeExit: %d session(s) registered; Step 4 will dispatch session.error to each", n)
+
+		if len(backends) > 0 {
+			msg := "subprocess exited unexpectedly"
+			if expected {
+				msg = "session closed"
+			} else if reason != nil {
+				msg = reason.Error()
+			}
+			payload, _ := json.Marshal(struct {
+				Error *MessageError `json:"error"`
+			}{
+				Error: &MessageError{
+					Name: ErrUnknown,
+					Data: mustMarshalJSON(map[string]string{"message": msg}),
+				},
+			})
+			syntheticEvent := rawEvent{
+				Type:       EventSessionError,
+				Properties: payload,
+			}
+			for _, be := range backends {
+				// Non-blocking push — if the dispatcher is wedged the
+				// channel may be full; the WARN route already fires for
+				// drops, so this is consistent with steady-state drops.
+				select {
+				case be.events <- syntheticEvent:
+				default:
+					log.Warnf(component, "finalizeExit: %s events channel full; cannot deliver session.error", be.sessionID)
+				}
+			}
+			log.Warnf(component, "finalizeExit: dispatched session.error to %d session(s)", len(backends))
 		}
 	})
+}
+
+// mustMarshalJSON encodes v as JSON, panicking on failure. Used only
+// for fixed-shape synthesised payloads where marshal failure would be a
+// programmer error (not a runtime condition).
+func mustMarshalJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("opencode: mustMarshalJSON: %v", err))
+	}
+	return b
 }
 
 // captureStderr reads the subprocess stderr line by line and logs it.
