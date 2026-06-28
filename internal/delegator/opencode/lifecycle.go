@@ -79,16 +79,7 @@ func (s *Server) Start(ctx context.Context) error {
 	cmdCtx, cmdCancel := context.WithCancel(context.Background())
 	cmd := procx.Spawn(cmdCtx, binary, args...)
 	cmd.Dir = s.workDir
-	cmd.Env = os.Environ()
-	if s.serverPassword != "" {
-		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+s.serverPassword)
-	}
-	// Apply exec bridge env vars (BASH_ENV, FOCI_SOCK) so the LLM can
-	// call foci_todo etc. via the bash tool — same mechanism ccstream
-	// uses. Only the first session's vars take effect (shared subprocess).
-	for k, v := range s.extraEnv {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = s.buildCmdEnv()
 
 	// Stdin/stdout aren't used (HTTP transport); just inherit /dev/null.
 	// Stderr we capture for diagnostics + secondary auth-failure detection.
@@ -478,4 +469,20 @@ func pickFreePort(hostname string) (int, error) {
 	}
 	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// buildCmdEnv assembles the environment for the opencode subprocess.
+// Starts with the parent process's environment, adds OPENCODE_SERVER_
+// PASSWORD (if set), then applies extraEnv (BASH_ENV, FOCI_SOCK from
+// the exec bridge). Extracted from Start so tests can verify the env
+// composition without spawning a subprocess.
+func (s *Server) buildCmdEnv() []string {
+	env := os.Environ()
+	if s.serverPassword != "" {
+		env = append(env, "OPENCODE_SERVER_PASSWORD="+s.serverPassword)
+	}
+	for k, v := range s.extraEnv {
+		env = append(env, k+"="+v)
+	}
+	return env
 }
