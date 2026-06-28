@@ -155,6 +155,57 @@ func TestServer_HealthProbe_SubprocessDeath(t *testing.T) {
 // Close
 // ---------------------------------------------------------------------------
 
+func TestServer_buildCmdEnv_IncludesExtraEnv(t *testing.T) {
+	// Verifies the subprocess environment includes the exec bridge's
+	// BASH_ENV + FOCI_SOCK so the LLM can call foci_todo etc. via the
+	// bash tool. Also verifies OPENCODE_SERVER_PASSWORD is present when
+	// set. Tests the env-building logic without spawning a subprocess.
+	srv := &Server{
+		serverPassword: "s3cret",
+		extraEnv: map[string]string{
+			"BASH_ENV":  "/tmp/foci_funcs.sh",
+			"FOCI_SOCK": "/tmp/foci_sock",
+		},
+	}
+	env := srv.buildCmdEnv()
+
+	has := func(prefix string) bool {
+		for _, e := range env {
+			if strings.HasPrefix(e, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !has("BASH_ENV=/tmp/foci_funcs.sh") {
+		t.Error("BASH_ENV missing from subprocess env — exec bridge won't work")
+	}
+	if !has("FOCI_SOCK=/tmp/foci_sock") {
+		t.Error("FOCI_SOCK missing from subprocess env — exec bridge won't work")
+	}
+	if !has("OPENCODE_SERVER_PASSWORD=s3cret") {
+		t.Error("OPENCODE_SERVER_PASSWORD missing from subprocess env")
+	}
+}
+
+func TestServer_buildCmdEnv_NoExtraEnv(t *testing.T) {
+	// Verifies buildCmdEnv works with no extraEnv (the default — no exec
+	// bridge configured, or pre-Step-17 behaviour).
+	srv := &Server{}
+	env := srv.buildCmdEnv()
+	// Should have at least the parent process's env (PATH etc.).
+	if len(env) == 0 {
+		t.Error("buildCmdEnv returned empty env")
+	}
+	// Should NOT have BASH_ENV or FOCI_SOCK.
+	for _, e := range env {
+		if strings.HasPrefix(e, "BASH_ENV=") || strings.HasPrefix(e, "FOCI_SOCK=") {
+			t.Errorf("unexpected exec bridge env var in default buildCmdEnv: %s", e)
+		}
+	}
+}
+
 func TestServer_Close_NotStarted(t *testing.T) {
 	// Verifies Close on a never-Started Server is a no-op (no panic).
 	srv := newTestServer(t, "agent-nostart")
