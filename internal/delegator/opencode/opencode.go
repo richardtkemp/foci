@@ -165,6 +165,12 @@ type Backend struct {
 	turnTools    int
 	lastUsage    *TokenUsage
 
+	// Steer buffer (plan §6 divergence). opencode has no mid-turn
+	// queue, so SourceUser / SourceSteer arriving during an in-flight
+	// turn are buffered here and flushed by flushSteerBuf when the
+	// dispatcher's OnSessionIdle fires. Guarded by turnMu.
+	steerBuf []string
+
 	// Callbacks — set before Start, read-only after. Each is referenced
 	// by the matching Set* method below; that's enough production-code
 	// use for the unused linter (which excludes tests) to be satisfied.
@@ -397,16 +403,8 @@ func describeExitError(err error) string {
 	return strings.Join(parts, ", ")
 }
 
-// Inject routes user-role events to the backend. Step 6 implements the
-// full routing matrix (User/Steer/Compact/Pass × idle/in-flight);
-// Step 1.4 stub calls beginTurn so the production-code call graph
-// records beginTurn as used.
-func (b *Backend) Inject(_ context.Context, inj delegator.Inject) error {
-	if inj.Turn != nil {
-		b.beginTurn(inj.Turn)
-	}
-	panic("opencode: Backend.Inject not implemented — Step 6")
-}
+// Inject routes user-role events to the backend. Implementation lives
+// in inject.go (Step 6).
 
 // RegisterPromptCancelListener registers a per-prompt cancel callback.
 // Step 9 wires the real permission-handling path.
