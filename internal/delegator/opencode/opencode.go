@@ -31,27 +31,50 @@ var (
 	serverPool   = map[string]*Server{}
 )
 
-// acquireServer returns the live Server for agentID, constructing one if
-// none exists yet. Step 5's Backend.Start calls this; Step 3 will make
-// acquireServer also Start the subprocess on first acquisition.
+// acquireServer returns the live Server for agentID, constructing and
+// starting one if none exists yet. Step 5's Backend.Start calls this.
+//
+// Start runs OUTSIDE the pool mutex — slow subprocess startup must not
+// block acquireServer for unrelated agents. DelegatedManager serialises
+// Backend.Start per-agent in production so the new-server race window
+// (two concurrent acquires for a brand-new agent both reaching the
+// Start call) does not occur in practice; if that changes, add a
+// per-agent sync.Once.
 func acquireServer(agentID string, cfg serverConfig) (*Server, error) {
 	serverPoolMu.Lock()
-	defer serverPoolMu.Unlock()
 	if s, ok := serverPool[agentID]; ok {
 		s.refCount++
+		serverPoolMu.Unlock()
 		return s, nil
 	}
+	serverPoolMu.Unlock()
+
 	s := newServer(agentID, cfg)
+	if err := s.Start(context.Background()); err != nil {
+		return nil, err
+	}
+	serverPoolMu.Lock()
+	// Defensive: if a concurrent acquire for the same agent raced ahead
+	// and inserted a Server while we were starting this one, prefer the
+	// existing one and close ours. DelegatedManager serialises per-agent
+	// so this is unreachable in production; the check is cheap insurance.
+	if existing, ok := serverPool[agentID]; ok {
+		serverPoolMu.Unlock()
+		go func() { _ = s.Close() }() // bounded shutdown, doesn't block the caller
+		existing.refCount++
+		return existing, nil
+	}
 	serverPool[agentID] = s
 	s.refCount = 1
+	serverPoolMu.Unlock()
 	return s, nil
 }
 
 // releaseServer decrements the refcount for agentID's Server. When the
 // refcount hits zero, the Server is removed from the pool and Close is
-// called in a goroutine (Step 3 wires bounded-shutdown; for Step 2 it's
-// a no-op). Pool mutex is released before Close so a slow shutdown
-// doesn't block unrelated agents.
+// called in a goroutine. Pool mutex is released before Close so a slow
+// shutdown doesn't block unrelated agents — matches the plan's
+// concurrency note (§3.2).
 func releaseServer(agentID string) {
 	serverPoolMu.Lock()
 	s, ok := serverPool[agentID]
@@ -66,7 +89,9 @@ func releaseServer(agentID string) {
 	}
 	delete(serverPool, agentID)
 	serverPoolMu.Unlock()
-	// Step 3 will wire the real bounded-shutdown Close here.
+	// Close outside the mutex — bounded shutdown so worst-case ~9s, but
+	// we don't want to hold the pool lock for any of that.
+	go func() { _ = s.Close() }()
 }
 
 // init registers the constructor with the delegator registry. Real
