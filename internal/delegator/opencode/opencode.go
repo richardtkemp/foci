@@ -21,6 +21,54 @@ import (
 	"foci/internal/delegator"
 )
 
+// serverPool is the package-level registry of live Servers, keyed by
+// foci agent ID. One Server per agent; refcounted so the subprocess is
+// shut down when the last session closes. Step 3 introduces a real
+// bounded-shutdown Close; for Step 2 the pool just constructs Servers
+// without starting them.
+var (
+	serverPoolMu sync.Mutex
+	serverPool   = map[string]*Server{}
+)
+
+// acquireServer returns the live Server for agentID, constructing one if
+// none exists yet. Step 5's Backend.Start calls this; Step 3 will make
+// acquireServer also Start the subprocess on first acquisition.
+func acquireServer(agentID string, cfg serverConfig) (*Server, error) {
+	serverPoolMu.Lock()
+	defer serverPoolMu.Unlock()
+	if s, ok := serverPool[agentID]; ok {
+		s.refCount++
+		return s, nil
+	}
+	s := newServer(agentID, cfg)
+	serverPool[agentID] = s
+	s.refCount = 1
+	return s, nil
+}
+
+// releaseServer decrements the refcount for agentID's Server. When the
+// refcount hits zero, the Server is removed from the pool and Close is
+// called in a goroutine (Step 3 wires bounded-shutdown; for Step 2 it's
+// a no-op). Pool mutex is released before Close so a slow shutdown
+// doesn't block unrelated agents.
+func releaseServer(agentID string) {
+	serverPoolMu.Lock()
+	s, ok := serverPool[agentID]
+	if !ok {
+		serverPoolMu.Unlock()
+		return
+	}
+	s.refCount--
+	if s.refCount > 0 {
+		serverPoolMu.Unlock()
+		return
+	}
+	delete(serverPool, agentID)
+	serverPoolMu.Unlock()
+	// Step 3 will wire the real bounded-shutdown Close here.
+}
+
 // init registers the constructor with the delegator registry. Real
 // registration (with plan delivery etc.) lands in Step 14; for now this
 // keeps the package importable in tests without side effects.
@@ -52,7 +100,9 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 // their respective plan steps (workDir/agentID/label/model/etc. → Step 5).
 type Backend struct {
 	cfg           map[string]any
-	readyCh       chan struct{} // closed when POST /session returns
+	agentID       string            // acquired Server is keyed by this
+	server        *Server           // shared with sibling Backends on this agent
+	readyCh       chan struct{}     // closed when POST /session returns
 	pendingPerms  map[string]*pendingPermission
 	outstanding   *OutstandingRegistry
 	compactDoneCh chan struct{} // buffered(1); closed by OnSessionCompacted
@@ -263,6 +313,9 @@ func (b *Backend) Close() error {
 	}
 	b.cancelTurn()
 	_ = describeExitError(nil) // Step 5: describeExitError(b.exitErr)
+	if b.agentID != "" {
+		releaseServer(b.agentID)
+	}
 	return nil
 }
 
@@ -271,10 +324,20 @@ func (b *Backend) Close() error {
 // land in Steps 5 (Start/WaitReady/CheckReady), 6 (Inject), 8 (Interrupt),
 // 9 (RegisterPromptCancelListener).
 
-func (b *Backend) Start(_ context.Context, _ delegator.StartOptions) error {
+// Start launches the OpenCode subprocess and creates an opencode session.
+// Step 1.4 stub: stores opts for later, acquires a Server via the pool
+// (Step 3 wires real Start), then panics. Step 5 implements the real flow.
+func (b *Backend) Start(_ context.Context, opts delegator.StartOptions) error {
 	// Step 6 will use newRequestID for control-message correlation; the
 	// call here gives the helper a production-code caller (deadcode).
 	_ = newRequestID()
+	b.agentID = opts.AgentID
+	b.cfg = map[string]any{} // Step 5 merges real cfg
+	srv, err := acquireServer(opts.AgentID, defaultServerConfig(opts.WorkDir))
+	if err != nil {
+		return err
+	}
+	b.server = srv
 	panic("opencode: Backend.Start not implemented — Step 5")
 }
 
