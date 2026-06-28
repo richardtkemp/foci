@@ -38,13 +38,13 @@ type Server struct {
 	serverPassword string // "" = no auth (loopback only)
 
 	// Process (Step 3).
-	cmd     *exec.Cmd       //nolint:unused // Step 3 lifecycle
-	baseURL string          //nolint:unused // Step 3 lifecycle
-	http    *http.Client    //nolint:unused // Step 3 lifecycle
+	cmd     *exec.Cmd          //nolint:unused // Step 3 lifecycle
+	baseURL string             //nolint:unused // Step 3 lifecycle
+	http    *http.Client       //nolint:unused // Step 3 lifecycle
 	cancel  context.CancelFunc //nolint:unused // Step 3 lifecycle (cancels SSE subscriber + keep-alive)
-	done    chan struct{}   //nolint:unused // Step 3 lifecycle (closed when subprocess exits)
-	waitCh  chan error      //nolint:unused // Step 3 lifecycle (receives cmd.Wait() result)
-	exitErr error           //nolint:unused // Step 3 lifecycle (set by waiter goroutine)
+	done    chan struct{}      //nolint:unused // Step 3 lifecycle (closed when subprocess exits)
+	waitCh  chan error         //nolint:unused // Step 3 lifecycle (receives cmd.Wait() result)
+	exitErr error              //nolint:unused // Step 3 lifecycle (set by waiter goroutine)
 
 	// Lifecycle (Step 3).
 	mu           sync.Mutex //nolint:unused // Step 3 lifecycle
@@ -56,11 +56,11 @@ type Server struct {
 
 	// Per-session registry (Step 4). Backends register under their opencode
 	// sessionID; the SSE subscriber routes events by looking up here.
-	sessionsMu sync.RWMutex       //nolint:unused // Step 4 per-session routing
-	sessions   map[string]*Backend //nolint:unused // Step 4 per-session routing
+	sessionsMu sync.RWMutex        // Step 4 per-session routing
+	sessions   map[string]*Backend // Step 4 per-session routing
 
 	// SSE subscriber cancel (Step 4).
-	subscriberCancel context.CancelFunc //nolint:unused // Step 4 SSE subscriber
+	subscriberCancel context.CancelFunc // Step 4 SSE subscriber
 
 	// Activity — updated on every inbound SSE frame (Step 12).
 	lastActivity atomic.Int64 //nolint:unused // Step 12 activity tracker (unix nanos)
