@@ -99,6 +99,7 @@ func releaseServer(agentID string) {
 // keeps the package importable in tests without side effects.
 func init() {
 	delegator.Register("opencode", newFromConfig, false)
+	delegator.RegisterPlan("opencode", planDelivery)
 }
 
 // newFromConfig is the constructor delegator.New("opencode", cfg) calls.
