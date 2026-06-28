@@ -180,7 +180,7 @@ func (b *Backend) handleTextPart(part Part, delta string) {
 // handleReasoningPart fires OnThinkingDelta for reasoning deltas. opencode
 // sends reasoning as complete blocks (no incremental delta), so we fire
 // on the full text.
-func (b *Backend) handleReasoningPart(part Part, delta string) {
+func (b *Backend) handleReasoningPart(_ Part, delta string) {
 	if delta != "" {
 		if se := b.sessionEvents.Load(); se != nil && se.OnThinkingDelta != nil {
 			se.OnThinkingDelta(delta)
@@ -469,8 +469,10 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 	if err == nil {
 		return
 	}
-	// Note: sessionID may be empty for server-wide errors.
 	component := b.logComponent()
+	if sessionID != "" {
+		log.Debugf(component, "onSessionError: session=%s", sessionID)
+	}
 	switch err.Name {
 	case ErrProviderAuth:
 		var data ProviderAuthErrorData

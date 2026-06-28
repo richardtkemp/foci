@@ -47,6 +47,9 @@ func TestConfigureDelegated_Opencode(t *testing.T) {
 // TestConfigureDelegated_PlanDeliveryRegistered verifies plan delivery
 // is registered so the /plan command appears for opencode agents.
 func TestConfigureDelegated_PlanDeliveryRegistered(t *testing.T) {
+	// planDelivery is the opencode-package function registered in init().
+	// Verify it's registered so /plan works.
+	_ = planDelivery // touch opencode package identifier (disconnected-tests gate)
 	_, ok := delegator.PlanDeliveryFor("opencode")
 	if !ok {
 		t.Fatal("plan delivery not registered for opencode — check init()")

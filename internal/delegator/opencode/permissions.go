@@ -77,7 +77,7 @@ func (b *Backend) onPermissionReplied(sessionID, permissionID, response string) 
 	delete(b.pendingPerms, permissionID)
 	b.permMu.Unlock()
 
-	log.Debugf(b.logComponent(), "permission %s replied out-of-band: %s", permissionID, response)
+	log.Debugf(b.logComponent(), "permission %s replied out-of-band (session=%s): %s", permissionID, sessionID, response)
 }
 
 // ---------------------------------------------------------------------------
