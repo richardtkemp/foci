@@ -1,18 +1,35 @@
+# local-only docs
+workspace/*.md
+/*.md
+!/AGENTS.md
+!/CLAUDE.md
+!/README.md
+tasks/
+
+# build artefacts
 /bin
 /foci-gw
 /foci
 /foci-call
-foci.toml
-sessions/
-tasks/
-state.json
-workspace/*.md
-*.log
-api.jsonl
-secrets.toml
 .gocache/
 .gopath/
 .go/
+codeql-db/
+coverage.out
+coverage.html
+cover.html
+internal/tools/**/logs/tmux.debug
+*.out
+.test-output.tmp
+/cc-stub
+
+# runtime artefacts
+foci.toml
+sessions/
+state.json
+*.log
+api.jsonl
+secrets.toml
 .setup-install.sh
 .env.test
 docker/.env
@@ -21,19 +38,11 @@ docker/memory/*
 !docker/character/.gitkeep
 !docker/memory/.gitkeep
 .staged-WELCOME.md
+
+# other local-only
 .claude
 .claude/
-codeql-db/
-coverage.out
-coverage.html
-internal/tools/**/logs/tmux.debug
-*.out
-.test-output.tmp
-cover.html
-COVERAGE-PROGRESS.md
-/cc-stub
-ARCHITECTURE-REVIEW-2026-06.md
-SECURITY_REVIEW_2026-06.md
+
 # Orphan from a bare `go build` in scripts/find-disconnected-tests/ (module
 # name = foci-find-disconnected-tests). The real build output goes to bin/.
 scripts/find-disconnected-tests/foci-find-disconnected-tests
