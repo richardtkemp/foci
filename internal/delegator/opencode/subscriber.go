@@ -238,7 +238,8 @@ func (s *Server) runSubscriber(ctx context.Context) {
 // route delivers an event to the Backend registered under the event's
 // sessionID. Events whose sessionID has no registered Backend (early
 // race, global events, sessions we've already deregistered) are dropped
-// silently.
+// silently. Global events get a DEBUG log; server.connected gets INFO
+// (plan §4.1: "first event is server.connected — log and ignore").
 //
 // Events for a Backend whose channel is full are also dropped (with a
 // loud WARN log) rather than blocking the SSE reader — a stuck Backend
@@ -247,7 +248,16 @@ func (s *Server) runSubscriber(ctx context.Context) {
 func (s *Server) route(ev rawEvent) {
 	sid := extractSessionID(ev.Properties)
 	if sid == "" {
-		return // global event (server.connected, tui.*, etc.) — no per-session target
+		// Global event (server.connected, tui.*, file.*, vcs.*) — no
+		// per-session target. server.connected is the subscription's
+		// first frame; log it at INFO so operators see "subscribed"
+		// in the gateway log. Everything else logs at DEBUG only.
+		if ev.Type == EventServerConnected {
+			log.Infof(s.logComponent(), "subscriber: server.connected")
+		} else {
+			log.Debugf(s.logComponent(), "global event: %s", ev.Type)
+		}
+		return
 	}
 
 	s.sessionsMu.RLock()
@@ -272,27 +282,49 @@ func (s *Server) route(ev rawEvent) {
 // been created via POST /session. Safe to call concurrently with route
 // — the RWMutex is the synchronisation point.
 //
-// Returns the channel the Server will push events to; the Backend owns
-// the receive side and drains it via its dispatcher goroutine (Step 7).
+// Side effects:
+//   - allocates be.events if nil (buffered eventBufferSize)
+//   - launches be.dispatchLoop if not already running (so events start
+//     draining immediately — without this, the channel would fill to
+//     256 and route would start dropping)
+//
+// The dispatcher's handler is whatever be.dispatchHandler is at the
+// moment of registerSession. Step 7 calls SetDispatchHandler before
+// registerSession; Step 4 leaves it nil → defaultDispatchHandler logs
+// at DEBUG.
 func (s *Server) registerSession(be *Backend) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	if be.events == nil {
 		be.events = make(chan rawEvent, eventBufferSize)
 	}
+	if be.stopDispatcher == nil {
+		be.stopDispatcher = be.startDispatcher()
+	}
 	s.sessions[be.sessionID] = be
 }
 
 // unregisterSession removes the Backend registered under sessionID, if
 // any. Called by Backend.Close (Step 5) before the Backend tears down.
-// Safe to call when no session was registered (idempotent).
+// Safe to call when no session was registered (idempotent). Stops the
+// dispatcher goroutine and waits for it to exit so any in-flight
+// handler invocation completes before the caller frees the Backend.
 func (s *Server) unregisterSession(sessionID string) {
 	if sessionID == "" {
 		return
 	}
 	s.sessionsMu.Lock()
-	defer s.sessionsMu.Unlock()
+	be := s.sessions[sessionID]
 	delete(s.sessions, sessionID)
+	s.sessionsMu.Unlock()
+	if be == nil {
+		return
+	}
+	if be.stopDispatcher != nil {
+		be.stopDispatcher()
+		be.dispatchWg.Wait()
+		be.stopDispatcher = nil
+	}
 }
 
 // extractSessionID pulls the sessionID out of an event's Properties

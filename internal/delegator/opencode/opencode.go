@@ -139,6 +139,15 @@ type Backend struct {
 	// eventBufferSize so a transient dispatcher stall doesn't drop.
 	events chan rawEvent
 
+	// Dispatcher — one goroutine drains events serially. Started by
+	// Server.registerSession, stopped by Server.unregisterSession. The
+	// dispatchHandler is captured at goroutine start; Step 7 calls
+	// SetDispatchHandler before registerSession to bind the real
+	// per-Event-Type dispatch.
+	dispatchHandler eventHandler
+	stopDispatcher  func()
+	dispatchWg      sync.WaitGroup
+
 	// Lifecycle — Step 5.
 	mu      sync.Mutex
 	running bool
