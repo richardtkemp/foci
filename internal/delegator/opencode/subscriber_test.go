@@ -2,7 +2,11 @@ package opencode
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -166,6 +170,247 @@ func TestSubscriber_StopsOnCtxCancel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after ctx cancel")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// runSubscriber — initial-connect retry through the subprocess startup
+// window (the bug fix). The subscriber goroutine is launched before the
+// subprocess binds its port, so the first GET /event gets "connection
+// refused"; runSubscriber must retry rather than fire OnSubscriberStopped
+// and kill the stream permanently.
+// ---------------------------------------------------------------------------
+
+// newRetryTestServer builds a minimal Server suitable for driving
+// runSubscriber directly: a sessions registry plus the done channel that
+// runSubscriber selects on for subprocess-death. It is NOT Start()ed — we
+// only exercise runSubscriber's connect loop and routing.
+func newRetryTestServer() *Server {
+	return &Server{
+		sessions: map[string]*Backend{},
+		done:     make(chan struct{}),
+	}
+}
+
+func TestRunSubscriber_RetriesInitialConnectUntilReady(t *testing.T) {
+	// The core regression test. Target is initially unreachable (the port
+	// is reserved then closed, so connects are refused). runSubscriber must
+	// NOT immediately call OnSubscriberStopped/finalizeExit; it must retry,
+	// and once a 200 SSE endpoint comes up on that port, connect and route
+	// an event to the registered Backend.
+
+	// Reserve a port, then close the listener so the address is free but
+	// nothing is listening — connects refuse until we bind below.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+
+	srv := newRetryTestServer()
+	srv.baseURL = "http://" + addr
+
+	// Register a Backend so a routed event is observable.
+	be := &Backend{sessionID: "sess-retry", events: make(chan rawEvent, 1)}
+	srv.sessions["sess-retry"] = be
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	subDone := make(chan struct{})
+	go func() {
+		srv.runSubscriber(ctx)
+		close(subDone)
+	}()
+
+	// runSubscriber must still be retrying (not exited) while the target is
+	// down. Give it several retry intervals.
+	select {
+	case <-subDone:
+		t.Fatal("runSubscriber returned while target was unreachable — it must retry the initial connect")
+	case <-time.After(5 * subscriberConnectRetryInterval):
+		// expected — still looping
+	}
+
+	// Bring up a 200 SSE endpoint on the SAME port that emits one event.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/event", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"type\":\"session.idle\",\"properties\":{\"sessionID\":\"sess-retry\"}}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		// Hold the stream open until the request ctx is cancelled so the
+		// subscriber's Run blocks on the (now-established) stream rather
+		// than hitting EOF immediately.
+		<-r.Context().Done()
+	})
+	httpSrv := &http.Server{Addr: addr, Handler: mux}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("late listen on %s: %v", addr, err)
+	}
+	go func() { _ = httpSrv.Serve(ln) }()
+	defer func() { _ = httpSrv.Close() }()
+
+	// The event must arrive once the retry loop connects.
+	select {
+	case ev := <-be.events:
+		if ev.Type != "session.idle" {
+			t.Errorf("routed event = %q, want session.idle", ev.Type)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no event routed after the SSE endpoint came up — retry loop did not connect")
+	}
+
+	// runSubscriber should still be alive on the established stream (it
+	// only stops on EOF/ctx/done). Cancel to wind it down.
+	select {
+	case <-subDone:
+		t.Fatal("runSubscriber returned while the established stream was still open")
+	default:
+	}
+	cancel()
+	select {
+	case <-subDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("runSubscriber did not return after ctx cancel")
+	}
+}
+
+func TestRunSubscriber_StopsOnSubprocessDeath(t *testing.T) {
+	// While retrying against a dead target, closing s.done (the waiter
+	// goroutine's signal that the subprocess actually exited) must stop the
+	// loop promptly — it does not spin forever against a server that will
+	// never come up.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+
+	srv := newRetryTestServer()
+	srv.baseURL = "http://" + addr
+
+	subDone := make(chan struct{})
+	go func() {
+		srv.runSubscriber(context.Background())
+		close(subDone)
+	}()
+
+	// Confirm it's retrying, not already exited.
+	select {
+	case <-subDone:
+		t.Fatal("runSubscriber returned before subprocess death was signalled")
+	case <-time.After(3 * subscriberConnectRetryInterval):
+	}
+
+	// Simulate subprocess death.
+	close(srv.done)
+	select {
+	case <-subDone:
+		// expected — loop observed s.done and returned
+	case <-time.After(2 * time.Second):
+		t.Fatal("runSubscriber did not stop after s.done closed (spinning against dead server)")
+	}
+}
+
+func TestRunSubscriber_StopsOnCtxCancelDuringRetry(t *testing.T) {
+	// While retrying against a dead target, ctx cancellation (Close cancels
+	// the subscriber ctx when the health probe fails) must stop the loop
+	// promptly.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+
+	srv := newRetryTestServer()
+	srv.baseURL = "http://" + addr
+
+	ctx, cancel := context.WithCancel(context.Background())
+	subDone := make(chan struct{})
+	go func() {
+		srv.runSubscriber(ctx)
+		close(subDone)
+	}()
+
+	select {
+	case <-subDone:
+		t.Fatal("runSubscriber returned before ctx cancel")
+	case <-time.After(3 * subscriberConnectRetryInterval):
+	}
+
+	cancel()
+	select {
+	case <-subDone:
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("runSubscriber did not stop after ctx cancel during retry")
+	}
+}
+
+func TestRunSubscriber_RetriesOnNon200(t *testing.T) {
+	// A reachable server that returns a non-200 (e.g. 503 during boot)
+	// must also be retried, not treated as a fatal stop. We start a server
+	// that 503s, confirm the loop is still retrying, then flip it to a 200
+	// SSE endpoint and confirm it connects and routes.
+	var ready atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !ready.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"type\":\"session.idle\",\"properties\":{\"sessionID\":\"sess-503\"}}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	srv := newRetryTestServer()
+	srv.baseURL = ts.URL
+	be := &Backend{sessionID: "sess-503", events: make(chan rawEvent, 1)}
+	srv.sessions["sess-503"] = be
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subDone := make(chan struct{})
+	go func() {
+		srv.runSubscriber(ctx)
+		close(subDone)
+	}()
+
+	select {
+	case <-subDone:
+		t.Fatal("runSubscriber returned on non-200 — it must retry")
+	case <-time.After(5 * subscriberConnectRetryInterval):
+	}
+
+	ready.Store(true)
+	select {
+	case ev := <-be.events:
+		if ev.Type != "session.idle" {
+			t.Errorf("routed event = %q, want session.idle", ev.Type)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no event routed after the server returned 200 — retry-on-non-200 failed")
+	}
+
+	cancel()
+	select {
+	case <-subDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("runSubscriber did not return after ctx cancel")
 	}
 }
 

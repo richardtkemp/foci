@@ -111,9 +111,11 @@ func (s *Server) Start(ctx context.Context) error {
 	// SSE subscriber goroutine. Started BEFORE the health probe finishes
 	// so we don't miss the server.connected event or any early per-session
 	// events (sessions aren't created until Step 5 anyway, but having the
-	// subscriber ready avoids a race). The subscriber's own GET /event may
-	// fail until the server is ready — it'll reconnect-retry in Step 4.2's
-	// future work; for v1 it surfaces the failure via OnSubscriberStopped.
+	// subscriber ready avoids a race). The subscriber's own GET /event will
+	// get "connection refused" until the subprocess binds its port (~1s);
+	// runSubscriber retries the initial connect on a tick through that
+	// startup window, bounded by ctx (Close cancels subscriberCancel when
+	// the health probe fails) and s.done (subprocess death).
 	subscriberCtx, subscriberCancel := context.WithCancel(context.Background())
 	s.subscriberCancel = subscriberCancel
 	go s.runSubscriber(subscriberCtx)
@@ -177,9 +179,10 @@ func (s *Server) closeInner() {
 	}
 	component := s.logComponent()
 
-	// Cancel the SSE subscriber ctx (Step 4 stub: subscriberCancel is nil
-	// for Step 3 — no subscriber started yet). Done early so it stops
-	// touching the subprocess.
+	// Cancel the SSE subscriber ctx (nil only if Start never reached the
+	// subscriber launch). Done early so it stops touching the subprocess —
+	// and so runSubscriber's initial-connect retry loop exits promptly
+	// rather than spinning against a server that will never come up.
 	if s.subscriberCancel != nil {
 		s.subscriberCancel()
 	}

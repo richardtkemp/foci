@@ -25,7 +25,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -39,6 +38,14 @@ import (
 // and the channel fills, the subscriber drops new events for that session
 // rather than blocking the whole SSE reader.
 const eventBufferSize = 256
+
+// subscriberConnectRetryInterval is the tick between initial-connect
+// attempts in runSubscriber. The subscriber goroutine is launched before
+// the subprocess has bound its port (so we don't miss server.connected),
+// so the first GET /event reliably gets "connection refused" for the ~1s
+// the server takes to come up. We retry on this cadence until the stream
+// establishes or the loop is cancelled (ctx / subprocess death).
+const subscriberConnectRetryInterval = 100 * time.Millisecond
 
 // Subscriber parses an SSE byte stream and invokes a callback per decoded
 // event. It owns nothing besides the parser state; the caller owns the
@@ -175,47 +182,82 @@ func decodeEvent(payload string) (rawEvent, bool) {
 // ---------------------------------------------------------------------------
 
 // runSubscriber is the goroutine launched by Server.Start (Step 4) that
-// owns the GET /event HTTP connection for the Server's lifetime. It
-// connects once the subprocess is up (Start has health-probed already),
-// parses the SSE stream, and routes each decoded event via Server.route.
+// owns the GET /event HTTP connection for the Server's lifetime. It is
+// launched BEFORE the health probe completes (so we don't miss
+// server.connected), parses the SSE stream, and routes each decoded event
+// via Server.route.
 //
 // On exit (clean EOF, transport error, or ctx cancel from Close), it
 // invokes OnSubscriberStopped — which calls finalizeExit exactly once,
 // so this goroutine racing the subprocess-waiter goroutine is safe.
 //
-// Reconnect logic is intentionally absent for v1: per the plan's
-// "Steer (mid-turn injection)" + "How it works" notes, a dropped
-// subscriber means the Server is dead and the per-session turns need to
-// surface that. Auto-reconnect is future work.
+// The INITIAL connect retries through the subprocess startup window: the
+// server binds its port ~1s after launch, so the first GET /event gets
+// "connection refused" until it's ready. We retry on a fixed tick
+// (subscriberConnectRetryInterval), bounded by ctx cancellation (Close
+// cancels the subscriber ctx when the health probe fails) and s.done
+// (subprocess death — the waiter goroutine owns finalizeExit). Once the
+// SSE stream is established (HTTP 200), behaviour is unchanged.
+//
+// Mid-stream reconnect is intentionally absent: once established, a
+// dropped stream means the Server is effectively dead and the per-session
+// turns need to surface that. Auto-reconnect of an established stream is
+// deferred future work.
 func (s *Server) runSubscriber(ctx context.Context) {
 	component := s.logComponent()
 	url := s.baseURL + "/event"
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		log.Warnf(component, "subscriber: build request: %v", err)
-		s.OnSubscriberStopped(err)
-		return
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-
-	// Long timeout on the client — the SSE response is unbounded; we
-	// rely on ctx for cancellation, not the client timeout.
+	// Initial-connect retry loop. Retries on connection error OR non-200
+	// until the stream establishes, or the loop is cancelled. Quiet by
+	// design: one DEBUG on the first failure, not a WARN per attempt (the
+	// per-attempt failures during the boot window would otherwise flood
+	// the log).
 	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Warnf(component, "subscriber: connect: %v", err)
-		s.OnSubscriberStopped(err)
-		return
+	var resp *http.Response
+	loggedRetry := false
+	for {
+		req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if rerr != nil {
+			log.Warnf(component, "subscriber: build request: %v", rerr)
+			s.OnSubscriberStopped(rerr)
+			return
+		}
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Cache-Control", "no-cache")
+
+		r, derr := client.Do(req)
+		if derr == nil && r.StatusCode == http.StatusOK {
+			resp = r
+			break
+		}
+		if r != nil {
+			_ = r.Body.Close()
+		}
+		if !loggedRetry {
+			if derr != nil {
+				log.Debugf(component, "subscriber: not ready (%v), retrying every %s", derr, subscriberConnectRetryInterval)
+			} else {
+				log.Debugf(component, "subscriber: %s returned %d, retrying every %s", url, r.StatusCode, subscriberConnectRetryInterval)
+			}
+			loggedRetry = true
+		}
+
+		select {
+		case <-ctx.Done():
+			// Close cancelled us (e.g. health probe failed) — surface the
+			// ctx error and stop. Quiet exit; OnSubscriberStopped logs.
+			s.OnSubscriberStopped(ctx.Err())
+			return
+		case <-s.done:
+			// Subprocess actually died — the waiter goroutine owns
+			// finalizeExit. Surface the last connect error (nil-safe).
+			s.OnSubscriberStopped(derr)
+			return
+		case <-time.After(subscriberConnectRetryInterval):
+			// Retry.
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Warnf(component, "subscriber: %s returned %d", url, resp.StatusCode)
-		s.OnSubscriberStopped(fmt.Errorf("subscriber: HTTP %d", resp.StatusCode))
-		return
-	}
 
 	onEvent := func(ev rawEvent) {
 		s.lastActivity.Store(time.Now().UnixNano())
@@ -227,7 +269,7 @@ func (s *Server) runSubscriber(ctx context.Context) {
 	}
 
 	sub := NewSubscriber(resp.Body, onEvent, onHeartbeat)
-	err = sub.Run(ctx)
+	err := sub.Run(ctx)
 	if err == io.EOF {
 		log.Infof(component, "subscriber: end of stream")
 	} else {
