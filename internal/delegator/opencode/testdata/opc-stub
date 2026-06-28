@@ -1,0 +1,32 @@
+#!/bin/sh
+# Minimal opencode-server stub for unit tests.
+#
+# Default behaviour: sleep forever (so tests can verify the subprocess was
+# launched and exercise the kill-ladder in Server.Close). Catches SIGTERM
+# and exits cleanly so the graceful-shutdown path is testable.
+#
+# Env overrides:
+#   OPC_STUB_EXIT_CODE=<n>   exit immediately with code <n>.
+#   OPC_STUB_SLEEP_SECS=<n>  sleep <n> seconds then exit 0.
+#
+# This stub does NOT serve HTTP — that's intentional. Server.Start's health
+# probe (GET /global/health) is exercised against httptest.Server in tests
+# rather than against this stub; the subprocess itself only needs to stay
+# alive long enough to verify lifecycle (Start launches, Close kills).
+#
+# Find: required to keep go's testdata dir from being skipped.
+
+case "${OPC_STUB_EXIT_CODE:-}" in
+	''|*[!0-9]*) ;;  # not a number, fall through
+	*) exit "$OPC_STUB_EXIT_CODE" ;;
+esac
+
+if [ -n "${OPC_STUB_SLEEP_SECS:-}" ]; then
+	sleep "$OPC_STUB_SLEEP_SECS"
+	exit 0
+fi
+
+trap 'exit 0' TERM
+while true; do
+	sleep 1
+done
