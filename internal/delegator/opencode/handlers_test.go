@@ -415,22 +415,85 @@ func TestOnMessageUpdated_AssistantEmptyModelPreserved(t *testing.T) {
 	}
 }
 
-func TestOnMessageUpdated_ProviderAuthErrorLogsWarning(t *testing.T) {
-	// Verifies a ProviderAuthError in message.updated is logged as a
-	// warning. Step 11 will wire onAuthFailure; for Step 7 we verify
-	// the handler doesn't panic and classifies correctly.
-	b := newHandlerTestBackend(t)
+func TestOnMessageUpdated_ProviderAuthErrorFiresOnAuthFailure(t *testing.T) {
+	// Verifies a ProviderAuthError in message.updated fires the
+	// onAuthFailure callback with the provider's error message. This
+	// is the detection path Step 11 wires into the relogin gate.
+	var authDetail string
+	var authFired bool
+	b := &Backend{
+		sessionID:     "sess-test",
+		compactDoneCh: make(chan struct{}, 1),
+		outstanding:   NewOutstandingRegistry(),
+	}
+	b.mu.Lock()
+	b.onAuthFailure = func(d string) {
+		authFired = true
+		authDetail = d
+	}
+	b.mu.Unlock()
 
 	errData, _ := json.Marshal(ProviderAuthErrorData{
 		ProviderID: "anthropic",
-		Message:    "invalid key",
+		Message:    "invalid api key",
 	})
 	b.onMessageUpdated(Message{
 		Role:  "assistant",
 		Error: &MessageError{Name: ErrProviderAuth, Data: errData},
 	})
-	// Step 11 test will assert onAuthFailure fired; for Step 7 the
-	// important assertion is "didn't panic."
+
+	if !authFired {
+		t.Fatal("onAuthFailure was not called for ProviderAuthError")
+	}
+	if authDetail != "invalid api key" {
+		t.Errorf("authDetail = %q, want %q", authDetail, "invalid api key")
+	}
+}
+
+func TestOnSessionError_ProviderAuthErrorFiresOnAuthFailure(t *testing.T) {
+	// Verifies the same auth-failure detection path via session.error
+	// events — the other place opencode surfaces ProviderAuthError.
+	var authFired bool
+	b := &Backend{
+		sessionID:     "sess-test",
+		compactDoneCh: make(chan struct{}, 1),
+		outstanding:   NewOutstandingRegistry(),
+	}
+	b.mu.Lock()
+	b.onAuthFailure = func(d string) { authFired = true }
+	b.mu.Unlock()
+
+	errData, _ := json.Marshal(ProviderAuthErrorData{
+		ProviderID: "anthropic",
+		Message:    "expired token",
+	})
+	b.onSessionError("sess-test", &MessageError{Name: ErrProviderAuth, Data: errData})
+
+	if !authFired {
+		t.Fatal("onAuthFailure was not called for session.error ProviderAuthError")
+	}
+}
+
+func TestOnSessionError_MessageAbortedDoesNotFireAuthFailure(t *testing.T) {
+	// Verifies MessageAbortedError (expected on /reset hard) does NOT
+	// fire onAuthFailure — it's a user-initiated cancel, not an auth
+	// failure.
+	var authFired bool
+	b := &Backend{
+		sessionID:     "sess-test",
+		compactDoneCh: make(chan struct{}, 1),
+		outstanding:   NewOutstandingRegistry(),
+	}
+	b.mu.Lock()
+	b.onAuthFailure = func(d string) { authFired = true }
+	b.mu.Unlock()
+
+	errData, _ := json.Marshal(MessageAbortedErrorData{Message: "user aborted"})
+	b.onSessionError("sess-test", &MessageError{Name: ErrMessageAborted, Data: errData})
+
+	if authFired {
+		t.Error("onAuthFailure fired for MessageAbortedError — should only fire for auth failures")
+	}
 }
 
 func TestOnMessageUpdated_NonAssistantIgnored(t *testing.T) {
