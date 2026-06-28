@@ -131,7 +131,8 @@ type Backend struct {
 	readyCh       chan struct{}     // closed when POST /session returns
 	pendingPerms  map[string]*pendingPermission
 	outstanding   *OutstandingRegistry
-	compactDoneCh chan struct{}     // buffered(1); closed by OnSessionCompacted
+	compactDoneCh  chan struct{}     // buffered(1); closed by OnSessionCompacted
+	compactStartCh chan struct{}     // closed immediately by ArmCompactionStartWait
 	sessionID     string
 
 	// Per-session event channel — Server.route pushes decoded rawEvents
@@ -339,7 +340,4 @@ func (b *Backend) RegisterPromptCancelListener(_ string, _ func(reason string)) 
 	panic("opencode: Backend.RegisterPromptCancelListener not implemented — Step 9")
 }
 
-// Interrupt aborts any in-flight turn. Step 8 wires POST /session/:id/abort.
-func (b *Backend) Interrupt(_ context.Context) error {
-	panic("opencode: Backend.Interrupt not implemented — Step 8")
-}
+// Interrupt is implemented in control.go (Step 8: POST /session/:id/abort).
