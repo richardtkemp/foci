@@ -1,14 +1,38 @@
-// compaction.go — CompactionStartWaiter implementation. ArmCompactionWait
-// and WaitForCompaction are in inject.go (Step 6); the "start" waiter is
-// here because opencode has no "compacting started" event — we synthesise
-// one by immediately closing the start channel on arm.
+// compaction.go — CompactionWaiter + CompactionStartWaiter implementation.
+// All four compaction-wait methods live here per plan §8.2.
 //
-// Implements delegator.CompactionWaiter (in inject.go) +
-// delegator.CompactionStartWaiter (here).
+// Implements delegator.CompactionWaiter (ArmCompactionWait /
+// WaitForCompaction) + delegator.CompactionStartWaiter
+// (ArmCompactionStartWait / WaitForCompactionStart).
 
 package opencode
 
 import "context"
+
+// ArmCompactionWait resets compactDoneCh for the next /compact cycle.
+// Closed by onSessionCompacted (Step 7's handler).
+func (b *Backend) ArmCompactionWait() {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	b.compactDoneCh = make(chan struct{}, 1)
+}
+
+// WaitForCompaction blocks on compactDoneCh or ctx. Returns immediately
+// (nil) if not armed — matches ccstream's no-arm semantics.
+func (b *Backend) WaitForCompaction(ctx context.Context) error {
+	b.turnMu.Lock()
+	ch := b.compactDoneCh
+	b.turnMu.Unlock()
+	if ch == nil {
+		return nil
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // ArmCompactionStartWait arms the one-shot "compaction started" waiter.
 // Since opencode has no status="compacting" event, we synthesise it by
