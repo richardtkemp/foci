@@ -1306,8 +1306,36 @@ The factory default grants CC agents free read/write access to `/tmp` so they ca
 | `"api"` (default) | Traditional agent loop — Foci calls LLM API, executes tools, manages sessions. |
 | `"claude-code"` | Claude Code via stream-json protocol (ccstream). Structured NDJSON stdin/stdout; no tmux. |
 | `"claude-code-tmux"` | Claude Code running interactively in a tmux pane (cctmux). Input via paste-buffer, output via session JSONL file watcher. |
+| `"opencode"` | OpenCode via HTTP/SSE server protocol. One `opencode serve` subprocess per agent, shared across sessions. |
 
-Codex and OpenCode backends are planned but not yet implemented.
+### Global OpenCode backend defaults — `[opencode_backend]`
+
+Applies to every agent whose `backend` is `opencode`:
+
+```toml
+[opencode_backend]
+# opencode_binary — path to the opencode executable. Default "" → "opencode"
+# resolved via $PATH. Per-agent backend_config.opencode_binary overrides.
+# opencode_binary = "/usr/local/bin/opencode"
+
+# hostname — bind address for the opencode serve subprocess.
+# Default "127.0.0.1" (loopback only — never exposed to the network).
+# hostname = "127.0.0.1"
+
+# port — TCP port for the opencode server. 0 = pick a free port per
+# Server. Non-zero pins the port (useful for debugging).
+# port = 0
+
+# server_auth — HTTP basic auth password for the opencode server.
+# Empty = no auth (safe on loopback). Non-empty = requires password.
+# Passed to opencode via OPENCODE_SERVER_PASSWORD env var.
+# server_auth = ""
+
+# default_permission — opencode permission mode applied at Start via
+# PATCH /config. "ask" = prompt for side-effecting tools (foci default);
+# "allow" = auto-approve; "deny" = block.
+# default_permission = "ask"
+```
 
 ### See also
 
