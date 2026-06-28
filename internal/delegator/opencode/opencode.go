@@ -157,13 +157,16 @@ type Backend struct {
 	sessionEvents atomic.Pointer[delegator.SessionEvents]
 
 	// Turn bookkeeping — mirrors ccstream's invariants; Step 6/7.
-	turnMu       sync.Mutex
-	turnActive   bool
-	turnEvents   *delegator.TurnEvents
-	turnResultCh chan *ResultMessage
-	turnText     strings.Builder
-	turnTools    int
-	lastUsage    *TokenUsage
+	turnMu         sync.Mutex
+	turnActive     bool
+	turnEvents     *delegator.TurnEvents
+	turnResultCh   chan *ResultMessage
+	turnText       strings.Builder
+	turnTools      int
+	lastModel      string
+	lastUsage      *TokenUsage
+	seenToolCalls  map[string]bool // reset in beginTurn; dedupes OnToolStart
+	seenTextParts  map[string]bool // reset in beginTurn; dedupes OnText
 
 	// Steer buffer (plan §6 divergence). opencode has no mid-turn
 	// queue, so SourceUser / SourceSteer arriving during an in-flight

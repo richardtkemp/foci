@@ -82,6 +82,10 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// launches the dispatcher goroutine (Step 4) which drains b.events
 	// and invokes the per-Backend handler (Step 7 sets a real handler;
 	// defaultDispatchHandler logs at DEBUG until then).
+	//
+	// SetDispatchHandler MUST be called before registerSession — the
+	// handler is captured at goroutine-start time.
+	b.SetDispatchHandler(b.handleEvent)
 	b.server.registerSession(b)
 
 	// Inject system prompt if provided. noReply:true so opencode treats
