@@ -17,6 +17,7 @@ import (
 	_ "foci/internal/app"                // register app (FAP WebSocket) messaging provider
 	_ "foci/internal/delegator/ccstream" // register claude-code backend (stream-json)
 	_ "foci/internal/delegator/cctmux"   // register claude-code-tmux backend
+	_ "foci/internal/delegator/opencode" // register opencode backend (HTTP/SSE; WIP, see OPENCODE_DELEGATOR_PLAN.md)
 	_ "foci/internal/discord"            // register discord messaging provider
 	_ "foci/internal/telegram"           // register telegram messaging provider
 

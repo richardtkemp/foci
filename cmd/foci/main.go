@@ -16,6 +16,7 @@ import (
 
 	_ "foci/internal/delegator/ccstream" // register claude-code backend
 	_ "foci/internal/delegator/cctmux"   // register claude-code-tmux backend (unsupported, filtered out)
+	_ "foci/internal/delegator/opencode" // register opencode backend (HTTP/SSE; WIP, see OPENCODE_DELEGATOR_PLAN.md)
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."
