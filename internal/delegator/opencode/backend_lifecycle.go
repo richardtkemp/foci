@@ -41,10 +41,21 @@ const httpTimeout = 60 * time.Second
 // message. Fires onSessionReady once the sessionID is known, closes
 // readyCh, and marks the Backend running.
 //
+// Idempotent: a second Start on an already-running Backend is a no-op.
+// DelegatedManager creates a fresh Backend per session so double-Start
+// doesn't occur in production, but the guard prevents a panic from
+// close(b.readyCh) on an already-closed channel if a test or future
+// caller accidentally double-invokes.
+//
 // Acquire is skipped if b.server is already populated — tests use this
 // to inject a Server pointing at httptest. The production path always
 // acquires because Backend zero-value has server == nil.
 func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error {
+	// Idempotent guard — see method doc.
+	if b.IsRunning() {
+		return nil
+	}
+
 	// keep newRequestID reachable for deadcode (Step 6 wires real callers).
 	_ = newRequestID()
 
