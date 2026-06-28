@@ -1,3 +1,28 @@
+// Audit checklist (plan §9.1.a) — which test covers which invariant:
+//
+//   Happy path (Register + Has + Len):
+//     TestOutstandingRegistry_RegisterAndHas
+//
+//   Idempotent semantics (resolve/cancel unknown ID = silent no-op):
+//     TestOutstandingRegistry_CancelMissing       — Cancel unknown → false, no panic
+//     TestOutstandingRegistry_OnEmptyDoesNotFireOnEmptyResolve — resolve unknown → no state change
+//     TestOutstandingRegistry_Resolve             — resolve already-removed → false
+//     TestOutstandingRegistry_AddCancelListenerWithoutRegister — listener for unknown → dropped
+//
+//   onEmpty drain hook (fires only when ALL outstanding gone):
+//     TestOutstandingRegistry_OnEmptyFiresAfterLastResolve — two registered, resolve one → no fire, resolve both → fires
+//     TestOutstandingRegistry_OnEmptyFiresAfterCancel     — cancel empties → fires
+//     TestOutstandingRegistry_OnEmptyDoesNotFireOnEmptyResolve — resolve unknown → doesn't fire
+//     TestOutstandingRegistry_OnEmptyMixedKinds            — permission + elicitation; resolve one → no fire, resolve both → fires
+//
+//   Multi-listener cancel fanout (same requestID, registration order):
+//     TestOutstandingRegistry_CancelFiresListeners — two listeners, asserts order + reason
+//
+//   Additional coverage:
+//     TestOutstandingRegistry_RegisterReplacesListeners   — re-register drops prior listeners
+//     TestOutstandingRegistry_ResolveDoesNotFireCancelListeners — resolve never fires cancel listeners
+//     TestOutstandingRegistry_Concurrent                  — race-detector stress test
+
 package delegator
 
 import (

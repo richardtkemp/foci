@@ -181,6 +181,50 @@ func TestOnPermissionUpdated_QuestionRoutesToQuestionPath(t *testing.T) {
 	}
 }
 
+func TestOnPermissionUpdated_QuestionStoresAndPrompts(t *testing.T) {
+	// Verifies a question-type permission is STORED in pendingPerms
+	// (with the right type) AND surfaced via permPromptFn. Separate
+	// from QuestionRoutesToQuestionPath which asserts the option-based
+	// rendering; this test pins the storage + prompting contract that
+	// QuestionResponder relies on.
+	b, rec := newPermTestBackend(t)
+	meta, _ := json.Marshal(questionMetadata{
+		Header: "Test", Text: "Pick one",
+		Options: []questionOption{{Label: "A"}, {Label: "B"}},
+	})
+
+	b.onPermissionUpdated(Permission{
+		ID:        "perm-q-store",
+		Type:      PermQuestion,
+		Title:     "Pick one",
+		SessionID: "sess-perm",
+		MessageID: "msg-1",
+		Metadata:  meta,
+	})
+
+	// Stored with the right type.
+	b.permMu.Lock()
+	pp, ok := b.pendingPerms["perm-q-store"]
+	b.permMu.Unlock()
+	if !ok {
+		t.Fatal("question permission not stored in pendingPerms")
+	}
+	if pp.permType != PermQuestion {
+		t.Errorf("permType = %q, want %q", pp.permType, PermQuestion)
+	}
+
+	// Prompted.
+	id, _, _ := rec.promptInfo()
+	if id != "perm-q-store" {
+		t.Errorf("permPromptFn called with id = %q, want perm-q-store", id)
+	}
+
+	// Registered in outstanding.
+	if !b.outstanding.Has("perm-q-store") {
+		t.Error("question not registered in OutstandingRegistry")
+	}
+}
+
 func TestOnPermissionUpdated_NilPermPromptFn(t *testing.T) {
 	// Verifies nil permPromptFn doesn't panic — just logs a warning.
 	b := &Backend{
