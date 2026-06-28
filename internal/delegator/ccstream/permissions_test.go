@@ -25,7 +25,7 @@ func TestRespondToPermission_Allow(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{
 		requestID: "req-1",
@@ -63,7 +63,7 @@ func TestRespondToPermission_Deny(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{
 		requestID: "req-2",
@@ -100,7 +100,7 @@ func TestRespondToPermission_UnknownRequestID(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	err := b.RespondToPermission("nonexistent", true, "")
@@ -125,13 +125,13 @@ func TestRespondToPermission_FiresOnPromptsCleared(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnPromptsCleared(func() { cleared++ })
 	b.storePendingPerm(&pendingPermission{requestID: "req-A", toolUseID: "a"})
 	b.storePendingPerm(&pendingPermission{requestID: "req-B", toolUseID: "b"})
-	b.outstanding.Register("req-A", OutstandingPermission)
-	b.outstanding.Register("req-B", OutstandingPermission)
+	b.outstanding.Register("req-A", delegator.OutstandingPermission)
+	b.outstanding.Register("req-B", delegator.OutstandingPermission)
 
 	// Resolve first — still one pending.
 	if err := b.RespondToPermission("req-A", true, ""); err != nil {
@@ -164,7 +164,7 @@ func TestRespondToPermissionWithRule(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{
 		requestID: "req-rule",
@@ -210,7 +210,7 @@ func TestRespondToPermissionWithRule_UnknownRequestID(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	err := b.RespondToPermissionWithRule("nonexistent", "Bash:ls")
@@ -232,11 +232,11 @@ func TestRespondToPermissionWithRule_FiresOnPromptsCleared(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnPromptsCleared(func() { cleared = true })
 	b.storePendingPerm(&pendingPermission{requestID: "req-rc", toolUseID: "x"})
-	b.outstanding.Register("req-rc", OutstandingPermission)
+	b.outstanding.Register("req-rc", delegator.OutstandingPermission)
 
 	if err := b.RespondToPermissionWithRule("req-rc", "Read"); err != nil {
 		t.Fatalf("RespondToPermissionWithRule: %v", err)
@@ -260,7 +260,7 @@ func TestHandlePermissionRequest_AutoApprove(t *testing.T) {
 	b := &Backend{
 		writer:           NewWriter(nopWriteCloser{&buf}),
 		pendingPerms:     make(map[string]*pendingPermission),
-		outstanding:      NewOutstandingRegistry(),
+		outstanding:      delegator.NewOutstandingRegistry(),
 		autoApproveRules: parseAutoApproveRules([]string{"Read"}),
 		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			promptCalled = true
@@ -304,7 +304,7 @@ func TestHandlePermissionRequest_NoMatch_ForwardsToPrompt(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			gotReqID = reqID
 			gotText = text
@@ -355,7 +355,7 @@ func TestHandlePermissionRequest_NilPermPromptFn(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	msg := &PermissionRequest{
@@ -376,7 +376,7 @@ func TestHandlePermissionRequest_NilPermPromptFn(t *testing.T) {
 
 func TestHandlePermissionRequest_RegistersOutstanding(t *testing.T) {
 	// Proves that handleToolRequest registers the prompt in the
-	// OutstandingRegistry so the cancel-listener and onEmpty hooks find it.
+	// delegator.OutstandingRegistry so the cancel-listener and onEmpty hooks find it.
 	// Replaces the legacy onPermPending callback (which only existed in tests).
 	t.Parallel()
 
@@ -384,7 +384,7 @@ func TestHandlePermissionRequest_RegistersOutstanding(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	msg := &PermissionRequest{
@@ -418,11 +418,11 @@ func TestHandleControlCancel_RemovesPending(t *testing.T) {
 	cleared := false
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnPromptsCleared(func() { cleared = true })
 	b.storePendingPerm(&pendingPermission{requestID: "req-cancel"})
-	b.outstanding.Register("req-cancel", OutstandingPermission)
+	b.outstanding.Register("req-cancel", delegator.OutstandingPermission)
 
 	b.handleControlCancel("req-cancel")
 
@@ -445,7 +445,7 @@ func TestHandleControlCancel_UnknownID(t *testing.T) {
 	cleared := false
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnPromptsCleared(func() { cleared = true })
 
@@ -464,13 +464,13 @@ func TestHandleControlCancel_StillPending(t *testing.T) {
 	cleared := false
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnPromptsCleared(func() { cleared = true })
 	b.storePendingPerm(&pendingPermission{requestID: "req-stay"})
 	b.storePendingPerm(&pendingPermission{requestID: "req-go"})
-	b.outstanding.Register("req-stay", OutstandingPermission)
-	b.outstanding.Register("req-go", OutstandingPermission)
+	b.outstanding.Register("req-stay", delegator.OutstandingPermission)
+	b.outstanding.Register("req-go", delegator.OutstandingPermission)
 
 	b.handleControlCancel("req-go")
 
@@ -496,10 +496,10 @@ func TestHandleControlCancel_FiresRegisteredCancelListener(t *testing.T) {
 	)
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{requestID: "req-7", toolName: "Bash"})
-	b.outstanding.Register("req-7", OutstandingPermission)
+	b.outstanding.Register("req-7", delegator.OutstandingPermission)
 	b.RegisterPromptCancelListener("req-7", func(reason string) {
 		called++
 		gotReason = reason
@@ -524,7 +524,7 @@ func TestHandleControlCancel_NoFireForUnknownID(t *testing.T) {
 	called := 0
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	// Listener registration for an unknown ID is itself a no-op.
 	b.RegisterPromptCancelListener("ghost", func(string) { called++ })
@@ -546,11 +546,11 @@ func TestHandleControlCancel_ListenersBeforeOnEmpty(t *testing.T) {
 	var order []string
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.SetOnPromptsCleared(func() { order = append(order, "cleared") })
 	b.storePendingPerm(&pendingPermission{requestID: "req-only"})
-	b.outstanding.Register("req-only", OutstandingPermission)
+	b.outstanding.Register("req-only", delegator.OutstandingPermission)
 	b.RegisterPromptCancelListener("req-only", func(string) {
 		order = append(order, "cancel")
 	})
@@ -955,7 +955,7 @@ func TestPermissions_ConcurrentAccess(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
 	const goroutines = 20
@@ -1057,7 +1057,7 @@ func TestHandlePermissionRequest_ExitPlanMode_AttachesPlanFile(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			gotText = text
 			gotSummary = summary
@@ -1110,7 +1110,7 @@ func TestHandlePermissionRequest_ExitPlanMode_MissingFileFallsBack(t *testing.T)
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			gotText = text
 			gotAttachment = attachmentPath
@@ -1149,7 +1149,7 @@ func TestHasPendingPlanPermission(t *testing.T) {
 
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	if got := b.HasPendingPlanPermission(); got != "" {
 		t.Errorf("empty backend: got %q, want \"\"", got)
@@ -1180,10 +1180,10 @@ func TestCancelPlanWithFeedback(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{requestID: "req-plan", toolUseID: "toolu_PLAN", toolName: "ExitPlanMode"})
-	b.outstanding.Register("req-plan", OutstandingPermission)
+	b.outstanding.Register("req-plan", delegator.OutstandingPermission)
 	cancelled := 0
 	var cancelReason string
 	b.RegisterPromptCancelListener("req-plan", func(reason string) {
@@ -1229,7 +1229,7 @@ func TestCancelPlanWithFeedback_UnknownID(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	if err := b.CancelPlanWithFeedback("nope", "feedback"); err == nil {
 		t.Fatal("expected error for unknown request id")

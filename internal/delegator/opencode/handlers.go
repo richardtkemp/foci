@@ -79,12 +79,20 @@ func (b *Backend) handleEvent(ev rawEvent) {
 		b.onSessionError(p.SessionID, p.Error)
 
 	case EventPermissionUpdated:
-		// Step 9 wires permission handling.
-		log.Debugf(b.logComponent(), "handlers: permission.updated (Step 9)")
+		var p eventPermissionUpdated
+		if err := json.Unmarshal(ev.Properties, &p); err != nil {
+			log.Warnf(b.logComponent(), "handlers: decode permission.updated: %v", err)
+			return
+		}
+		b.onPermissionUpdated(p.Permission)
 
 	case EventPermissionReplied:
-		// Step 9 wires permission cancel-listener fanout.
-		log.Debugf(b.logComponent(), "handlers: permission.replied (Step 9)")
+		var p eventPermissionReplied
+		if err := json.Unmarshal(ev.Properties, &p); err != nil {
+			log.Warnf(b.logComponent(), "handlers: decode permission.replied: %v", err)
+			return
+		}
+		b.onPermissionReplied(p.SessionID, p.PermissionID, p.Response)
 
 	case EventServerConnected:
 		// Already logged by Server.route; no per-Backend action.

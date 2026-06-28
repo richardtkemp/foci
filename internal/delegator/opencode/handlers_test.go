@@ -20,7 +20,7 @@ func newHandlerTestBackend(t *testing.T) *Backend {
 	b := &Backend{
 		sessionID:     "sess-test",
 		readyCh:       make(chan struct{}),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 		compactDoneCh: make(chan struct{}, 1),
 	}
 
@@ -424,7 +424,7 @@ func TestOnMessageUpdated_ProviderAuthErrorFiresOnAuthFailure(t *testing.T) {
 	b := &Backend{
 		sessionID:     "sess-test",
 		compactDoneCh: make(chan struct{}, 1),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 	}
 	b.mu.Lock()
 	b.onAuthFailure = func(d string) {
@@ -457,7 +457,7 @@ func TestOnSessionError_ProviderAuthErrorFiresOnAuthFailure(t *testing.T) {
 	b := &Backend{
 		sessionID:     "sess-test",
 		compactDoneCh: make(chan struct{}, 1),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 	}
 	b.mu.Lock()
 	b.onAuthFailure = func(d string) { authFired = true }
@@ -482,7 +482,7 @@ func TestOnSessionError_MessageAbortedDoesNotFireAuthFailure(t *testing.T) {
 	b := &Backend{
 		sessionID:     "sess-test",
 		compactDoneCh: make(chan struct{}, 1),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 	}
 	b.mu.Lock()
 	b.onAuthFailure = func(d string) { authFired = true }
@@ -694,7 +694,7 @@ func TestOnSessionCompacted_FiresOnCompactionDone(t *testing.T) {
 	b := &Backend{
 		sessionID:     "sess-test",
 		compactDoneCh: make(chan struct{}, 1),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 	}
 	b.mu.Lock()
 	b.onCompactionDone = func(preTokens int) {

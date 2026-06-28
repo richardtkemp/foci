@@ -87,7 +87,7 @@ func newReadyBackend(t *testing.T, rec *recordingHandler) *Backend {
 		server:      srv,
 		agentID:     "test-inject",
 		readyCh:     make(chan struct{}),
-		outstanding: NewOutstandingRegistry(),
+		outstanding: delegator.NewOutstandingRegistry(),
 	}
 	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-inject"}); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -496,7 +496,7 @@ func TestInject_HTTPError(t *testing.T) {
 	}))
 	defer hs.Close()
 	srv := &Server{baseURL: hs.URL, http: hs.Client(), agentID: "test-err", sessions: map[string]*Backend{}}
-	b := &Backend{server: srv, agentID: "test-err", readyCh: make(chan struct{}), outstanding: NewOutstandingRegistry()}
+	b := &Backend{server: srv, agentID: "test-err", readyCh: make(chan struct{}), outstanding: delegator.NewOutstandingRegistry()}
 	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-err"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

@@ -109,7 +109,7 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 		cfg:           cfg,
 		readyCh:       make(chan struct{}),
 		pendingPerms:  make(map[string]*pendingPermission),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 		compactDoneCh: make(chan struct{}, 1),
 	}
 	return b, nil
@@ -130,7 +130,8 @@ type Backend struct {
 	startOpts     delegator.StartOptions // saved at Start for restart/inspection
 	readyCh       chan struct{}     // closed when POST /session returns
 	pendingPerms  map[string]*pendingPermission
-	outstanding   *OutstandingRegistry
+	permMu        sync.Mutex
+	outstanding   *delegator.OutstandingRegistry
 	compactDoneCh  chan struct{}     // buffered(1); closed by OnSessionCompacted
 	compactStartCh chan struct{}     // closed immediately by ArmCompactionStartWait
 	sessionID     string
@@ -227,7 +228,7 @@ func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
 	b.permPromptFn = fn
 }
 
-// SetOnPromptsCleared wires the OutstandingRegistry's onEmpty drain hook
+// SetOnPromptsCleared wires the delegator.OutstandingRegistry's onEmpty drain hook
 // — DelegatedManager.WaitForPermission blocks on this.
 func (b *Backend) SetOnPromptsCleared(fn func()) {
 	b.outstanding.SetOnEmpty(fn)

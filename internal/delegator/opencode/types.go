@@ -12,6 +12,8 @@
 
 package opencode
 
+import "encoding/json"
+
 // ResultMessage is a ccstream-shaped stub used by WaitForTurn tests.
 // Step 7 replaces turnResultCh with a private *turnResult struct
 // assembled from session.idle events; this type goes away.
@@ -30,6 +32,13 @@ type TokenUsage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
-// pendingPermission is the per-prompt store entry. Stub: fields get
-// added in Step 9.2 when the real permission lifecycle is implemented.
-type pendingPermission struct{}
+// pendingPermission stores a pending opencode permission request.
+// The permType distinguishes regular tool permissions ("bash", "edit",
+// etc.) from the built-in question tool ("question"), which foci
+// handles via QuestionResponder rather than the binary Allow/Deny path.
+type pendingPermission struct {
+	id       string
+	permType string          // "bash"|"edit"|"question"|...
+	title    string
+	metadata json.RawMessage // question schema for type=="question"
+}

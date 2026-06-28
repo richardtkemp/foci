@@ -80,7 +80,7 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	}
 
 	b.storePendingPerm(pp)
-	b.outstanding.Register(msg.RequestID, OutstandingPermission)
+	b.outstanding.Register(msg.RequestID, delegator.OutstandingPermission)
 
 	if b.permPromptFn != nil {
 		log.Debugf("ccstream/perm", "calling permPromptFn for req_id=%s", msg.RequestID)
@@ -202,7 +202,7 @@ func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) e
 // shows up alongside the corresponding "permission cleared" debug line and
 // makes the cause attributable.
 //
-// The OutstandingRegistry fires any per-prompt cancel listeners registered
+// The delegator.OutstandingRegistry fires any per-prompt cancel listeners registered
 // by the platform layer (e.g. to disable the orphaned inline keyboard so
 // the user can't click an already-resolved button) and the registry-wide
 // onEmpty hook if this was the last outstanding prompt.
@@ -243,7 +243,7 @@ func (b *Backend) getPendingPerm(requestID string) *pendingPermission {
 }
 
 // removePendingPerm removes and returns a pending permission. The
-// "all-clear" signal is fired by OutstandingRegistry's onEmpty hook, not
+// "all-clear" signal is fired by delegator.OutstandingRegistry's onEmpty hook, not
 // inferred locally — both perms and elicitations live in one registry, so
 // the registry's view of "empty" is the only correct one.
 func (b *Backend) removePendingPerm(requestID string) (pp *pendingPermission, found bool) {

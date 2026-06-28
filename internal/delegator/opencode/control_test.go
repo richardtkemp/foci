@@ -39,7 +39,7 @@ func newControlTestBackend(t *testing.T) (*Backend, *controlRecorder) {
 		agentID:     "ctrl-test",
 		sessionID:   "sess-ctrl",
 		readyCh:     make(chan struct{}),
-		outstanding: NewOutstandingRegistry(),
+		outstanding: delegator.NewOutstandingRegistry(),
 	}
 	return b, rec
 }
@@ -199,7 +199,7 @@ func TestCompactionWait_FiresOnSessionCompacted(t *testing.T) {
 	b := &Backend{
 		sessionID:     "sess-test",
 		compactDoneCh: make(chan struct{}, 1),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 	}
 	b.mu.Lock()
 	b.onCompactionDone = func(int) {}
@@ -227,7 +227,7 @@ func TestCompactionStartWait_FiresImmediatelyAfterArm(t *testing.T) {
 	b := &Backend{
 		sessionID:     "sess-test",
 		compactDoneCh: make(chan struct{}, 1),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 	}
 
 	b.ArmCompactionStartWait()
@@ -245,7 +245,7 @@ func TestCompactionStartWait_NotArmedReturnsNil(t *testing.T) {
 	b := &Backend{
 		sessionID:     "sess-test",
 		compactDoneCh: make(chan struct{}, 1),
-		outstanding:   NewOutstandingRegistry(),
+		outstanding:   delegator.NewOutstandingRegistry(),
 	}
 
 	if err := b.WaitForCompactionStart(context.Background()); err != nil {

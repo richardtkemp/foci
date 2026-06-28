@@ -282,7 +282,7 @@ func testBackend(t *testing.T) (*Backend, *bytes.Buffer) {
 	b := &Backend{
 		writer:       w,
 		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  NewOutstandingRegistry(),
+		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 	return b, &buf
 }

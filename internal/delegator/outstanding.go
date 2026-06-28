@@ -1,4 +1,4 @@
-package ccstream
+package delegator
 
 import (
 	"sync"

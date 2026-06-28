@@ -39,7 +39,7 @@ func newTestBackendServer(t *testing.T, handler http.HandlerFunc) (*httptest.Ser
 		server:      srv,
 		agentID:     "test-agent",
 		readyCh:     make(chan struct{}),
-		outstanding: NewOutstandingRegistry(),
+		outstanding: delegator.NewOutstandingRegistry(),
 	}
 	return hs, b
 }
@@ -437,7 +437,7 @@ func TestBackend_Close_LastReleaseShutsDownServer(t *testing.T) {
 		agentID:     "agent-shutdown",
 		sessionID:   "sess-shutdown",
 		readyCh:     make(chan struct{}),
-		outstanding: NewOutstandingRegistry(),
+		outstanding: delegator.NewOutstandingRegistry(),
 	}
 	b.mu.Lock()
 	b.running = true

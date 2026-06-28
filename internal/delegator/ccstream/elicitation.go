@@ -234,7 +234,7 @@ func (b *Backend) handleElicitation(msg *ElicitationRequest) {
 
 	if msg.Request.Mode == "url" {
 		b.storePendingElicit(pe)
-		b.outstanding.Register(msg.RequestID, OutstandingElicitation)
+		b.outstanding.Register(msg.RequestID, delegator.OutstandingElicitation)
 		b.presentElicitationURL(pe)
 		return
 	}
@@ -247,7 +247,7 @@ func (b *Backend) handleElicitation(msg *ElicitationRequest) {
 	}
 
 	b.storePendingElicit(pe)
-	b.outstanding.Register(msg.RequestID, OutstandingElicitation)
+	b.outstanding.Register(msg.RequestID, delegator.OutstandingElicitation)
 
 	if pe.schema == nil {
 		b.presentElicitationFallback(pe)
@@ -611,7 +611,7 @@ func (b *Backend) getPendingElicit(requestID string) *pendingElicitation {
 }
 
 // removePendingElicit removes and returns a pending elicitation. The
-// "all-clear" signal is fired by OutstandingRegistry's onEmpty hook, not
+// "all-clear" signal is fired by delegator.OutstandingRegistry's onEmpty hook, not
 // inferred locally — both perms and elicitations live in one registry, so
 // the registry's view of "empty" is the only correct one.
 func (b *Backend) removePendingElicit(requestID string) (pe *pendingElicitation, found bool) {
