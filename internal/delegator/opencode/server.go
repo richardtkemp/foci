@@ -69,7 +69,7 @@ type Server struct {
 // newServer constructs a Server from cfg without starting it. Step 3's
 // acquireServer calls Start after registering the first Backend.
 func newServer(agentID string, cfg serverConfig) *Server {
-	return &Server{
+	s := &Server{
 		agentID:        agentID,
 		workDir:        cfg.workDir,
 		binaryPath:     cfg.binaryPath,
@@ -79,6 +79,8 @@ func newServer(agentID string, cfg serverConfig) *Server {
 		sessions:       make(map[string]*Backend),
 		http:           &http.Client{Timeout: 30 * time.Second},
 	}
+	s.wrapAuthCheckingTransport()
+	return s
 }
 
 // serverConfig is the resolved configuration used to construct a Server.

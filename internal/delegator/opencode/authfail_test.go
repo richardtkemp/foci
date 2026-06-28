@@ -64,6 +64,7 @@ func TestSendPrompt_On401FiresAuthFailure(t *testing.T) {
 		agentID:  "test-401",
 		sessions: map[string]*Backend{},
 	}
+	srv.wrapAuthCheckingTransport()
 	b := &Backend{
 		server:      srv,
 		agentID:     "test-401",
