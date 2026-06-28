@@ -473,35 +473,54 @@ func TestBackend_Dispatcher_HandsEventsToHandler(t *testing.T) {
 
 func TestBackend_Dispatcher_StopOnUnregister(t *testing.T) {
 	// Verifies unregisterSession stops the dispatcher goroutine and
-	// waits for it to exit before returning. Without this contract, a
-	// Backend teardown would race against in-flight handler calls.
+	// waits for it to exit before returning — specifically, that it
+	// BLOCKS while a handler invocation is in flight and only returns
+	// after the handler completes. Without this contract, a Backend
+	// teardown would race against in-flight handler calls.
+	//
+	// Uses explicit channels rather than time-based assertions so the
+	// test is deterministic across scheduler timing.
 	srv := &Server{sessions: map[string]*Backend{}}
 	be := &Backend{sessionID: "sess-stop"}
 
-	var stopped atomic.Bool
+	handlerStarted := make(chan struct{})
+	handlerRelease := make(chan struct{})
 	be.SetDispatchHandler(func(rawEvent) {
-		// Slow handler so we can prove unregister waits for it.
-		time.Sleep(50 * time.Millisecond)
+		close(handlerStarted)
+		<-handlerRelease // block until the test releases us
 	})
 	srv.registerSession(be)
 
-	// Push an event so the dispatcher has work in flight when we
-	// unregister.
+	// Push an event so the dispatcher has work to do.
 	srv.route(rawEvent{Type: "slow", Properties: []byte(`{"sessionID":"sess-stop"}`)})
-	time.Sleep(10 * time.Millisecond) // let the handler start
 
-	// unregisterSession must wait for the handler to finish.
-	start := time.Now()
-	srv.unregisterSession(be.sessionID)
-	elapsed := time.Since(start)
-	if elapsed < 40*time.Millisecond {
-		t.Errorf("unregister returned in %s; should have waited for the slow handler", elapsed)
+	// Wait for the handler to start.
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start within 1s")
 	}
-	stopped.Store(true)
 
-	// Pushing another event must not panic or block — the Backend is
-	// no longer registered so route drops silently.
-	srv.route(rawEvent{Type: "after-stop", Properties: []byte(`{"sessionID":"sess-stop"}`)})
+	// unregisterSession should block until we release the handler.
+	unregisterDone := make(chan struct{})
+	go func() {
+		srv.unregisterSession(be.sessionID)
+		close(unregisterDone)
+	}()
+	select {
+	case <-unregisterDone:
+		t.Fatal("unregisterSession returned while handler was still running")
+	case <-time.After(50 * time.Millisecond):
+		// expected — unregister is blocked behind the in-flight handler
+	}
+
+	// Release the handler. unregister should now complete.
+	close(handlerRelease)
+	select {
+	case <-unregisterDone:
+	case <-time.After(time.Second):
+		t.Fatal("unregisterSession did not return after handler released")
+	}
 
 	if be.stopDispatcher != nil {
 		t.Error("be.stopDispatcher should be nil after unregister")
