@@ -279,6 +279,7 @@ func (b *Backend) postMessage(ctx context.Context, suffix string, body []byte) e
 		return fmt.Errorf("POST %s: %w", suffix, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	b.checkHTTP401(resp.StatusCode, suffix)
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("POST %s: HTTP %d: %s", suffix, resp.StatusCode, string(respBody))
