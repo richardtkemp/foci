@@ -4,10 +4,44 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"foci/internal/delegator"
 )
 
 // validate checks semantic validity of config values after parsing and defaults.
 // Returns an error describing the first invalid value found.
+
+// validateAgentBackends checks each agent's delegated backend name against the
+// set of registered backends. Empty or "api" is the traditional agent loop (no
+// delegated backend) and is always allowed; any other value must be a registered
+// backend, else the agent would otherwise fail obscurely at startup
+// (delegator.New returns nil) instead of here with a clear message listing the
+// valid names.
+//
+// known is the registered-backend set. It is empty until the backend packages'
+// init() functions have run (only in the assembled foci-gw binary), so an empty
+// `known` means "registry not populated" → skip validation rather than reject
+// every backend. Pure (takes `known` as a parameter) so it is testable without
+// mutating the global delegator registry. (#947)
+func validateAgentBackends(agents []AgentConfig, known []string) error {
+	if len(known) == 0 {
+		return nil
+	}
+	registered := make(map[string]bool, len(known))
+	for _, n := range known {
+		registered[n] = true
+	}
+	for _, a := range agents {
+		if a.Backend == "" || a.Backend == "api" {
+			continue
+		}
+		if !registered[a.Backend] {
+			return fmt.Errorf("agent %q: backend %q is not a registered backend (valid: %s, or \"api\")",
+				a.ID, a.Backend, strings.Join(known, ", "))
+		}
+	}
+	return nil
+}
 
 // validateRange checks if value is within [min, max] inclusive.
 func validateRange(value, min, max float64, fieldName string) error { //nolint:unparam
@@ -84,6 +118,11 @@ func (cfg *Config) Validate() error {
 		if reservedAgentIDs[a.ID] {
 			return fmt.Errorf("agent id %q: conflicts with reserved directory ~/%s/ — choose a different id", a.ID, a.ID)
 		}
+	}
+
+	// Validate each agent's delegated backend name is real (#947).
+	if err := validateAgentBackends(cfg.Agents, delegator.RegisteredNames()); err != nil {
+		return err
 	}
 
 	// Validate timezone if configured.
