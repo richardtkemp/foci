@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/delegator/opencode"
 	"foci/internal/gemini"
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -62,6 +63,16 @@ func runShutdown(
 		if inst.ag.DelegatedManager != nil {
 			inst.ag.DelegatedManager.Close()
 		}
+	}
+
+	// Backstop: synchronously reap any pooled opencode `serve` subprocesses.
+	// DelegatedManager.Close above releases each session's Server reference, but
+	// the actual Server shutdown is async (releaseServer's `go func`), so the
+	// process would exit before those goroutines finish and orphan the subprocess
+	// (#948). This drains the pool and WAITS for the bounded shutdown, so no
+	// `opencode serve` survives a restart. No-op when no opencode agents ran.
+	if n := opencode.CloseAllServers(); n > 0 {
+		log.Infof("main", "reaped %d opencode server(s) on shutdown", n)
 	}
 
 	// Close MCP managers
