@@ -68,14 +68,36 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		b.server = srv
 	}
 
-	// POST /session — body is `{title?: string}`. opencode returns the
-	// newly-created Session with its server-assigned ID.
-	sessionID, err := b.createSession(ctx)
-	if err != nil {
-		return fmt.Errorf("opencode: create session: %w", err)
+	// Acquire a session ID: resume the saved session if one was provided
+	// and still exists on the server, otherwise create a new one. Resume
+	// avoids orphaning sessions across foci restarts and preserves
+	// conversation context. A 404 on the GET (session evicted, opencode.db
+	// wiped, etc.) falls through to create; any other error fails Start so
+	// the manager's retry-without-resume path runs.
+	sessionID := ""
+	resumed := false
+	if opts.ResumeSessionID != "" {
+		ok, err := b.resumeSession(ctx, opts.ResumeSessionID)
+		if err != nil {
+			return fmt.Errorf("opencode: probe resume session %s: %w", opts.ResumeSessionID, err)
+		}
+		if ok {
+			sessionID = opts.ResumeSessionID
+			resumed = true
+			log.Infof(b.logComponent(), "Start: resumed session id=%s", sessionID)
+		} else {
+			log.Warnf(b.logComponent(), "Start: resume session %s not found, creating new", opts.ResumeSessionID)
+		}
+	}
+	if sessionID == "" {
+		newID, err := b.createSession(ctx)
+		if err != nil {
+			return fmt.Errorf("opencode: create session: %w", err)
+		}
+		sessionID = newID
+		log.Infof(b.logComponent(), "Start: session created id=%s", sessionID)
 	}
 	b.sessionID = sessionID
-	log.Infof(b.logComponent(), "Start: session created id=%s", sessionID)
 
 	// Register with the Server so SSE events route to us. Side effect:
 	// launches the dispatcher goroutine which drains b.events
@@ -99,14 +121,16 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		}
 	}
 
-	// Inject system prompt if provided. noReply:true so opencode treats
-	// it as context-only and doesn't trigger an AI response — mirrors
-	// ccstream's --append-system-prompt flag. Best-effort: a failure
-	// here logs but doesn't fail Start, since the session is usable
-	// without the prompt (subsequent user turns work fine).
-	if prompt := resolveSystemPrompt(opts); prompt != "" {
-		if err := b.injectSystemPrompt(ctx, prompt); err != nil {
-			log.Warnf(b.logComponent(), "system prompt injection failed: %v", err)
+	// Inject system prompt for new sessions only. A resumed session
+	// already has the prompt in its message history (injected at original
+	// creation); reinjecting would append a duplicate. If the character
+	// files changed since the session was created, the next /reset or
+	// compaction picks up the new prompt.
+	if !resumed {
+		if prompt := resolveSystemPrompt(opts); prompt != "" {
+			if err := b.injectSystemPrompt(ctx, prompt); err != nil {
+				log.Warnf(b.logComponent(), "system prompt injection failed: %v", err)
+			}
 		}
 	}
 
@@ -244,6 +268,34 @@ func (b *Backend) createSession(ctx context.Context) (string, error) {
 		return "", errors.New("POST /session returned empty id")
 	}
 	return session.ID, nil
+}
+
+// resumeSession probes whether session ID still exists on the opencode
+// server (GET /session/:id). Returns (true, nil) if present and reusable;
+// (false, nil) on 404 (evicted, db wiped, never existed); (false, err) on
+// any other status or transport error. The distinction matters: a 404
+// falls through to createSession within the same Start call, while a real
+// error fails Start so DelegatedManager's retry-without-resume path runs —
+// preventing a transient hiccup from silently discarding the resume ID.
+func (b *Backend) resumeSession(ctx context.Context, id string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.server.baseURL+"/session/"+id, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := b.httpClient().Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		return true, nil
+	case resp.StatusCode == http.StatusNotFound:
+		return false, nil
+	default:
+		respBody, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("GET /session/%s: HTTP %d: %s", id, resp.StatusCode, string(respBody))
+	}
 }
 
 // injectSystemPrompt POSTs the prompt as a noReply user message so
