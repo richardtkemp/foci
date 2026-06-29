@@ -72,6 +72,11 @@ type Hub struct {
 	replayTTL      time.Duration   // config-driven replay buffer TTL (0 = default)
 	frames         *frameStore     // durable replay-frame backstop (nil when no data_dir)
 	allowedDevices map[string]bool // non-empty = pairing allowlist
+	// reflectOnArchive fires one final reflection for a session being archived,
+	// gated by reflection's own "activity since last reflection" rule. Wired at
+	// startup (cmd/foci-gw) to the periodic Reflector; nil when no reflector exists
+	// (tests, reflection disabled). Set once before serving; read without a lock.
+	reflectOnArchive func(sessionKey string)
 
 	mu           sync.RWMutex
 	agents       map[string]*appConn     // agentID → its connection
@@ -606,8 +611,28 @@ func (h *Hub) BotForSessionOrPrimary(sessionKey, agentID string) *appConn {
 
 func (h *Hub) AcquireFacet(string) (*appConn, bool) { return nil, false } // facets: later slice
 func (h *Hub) HasFacet(string) bool                 { return false }
-func (h *Hub) StartAll(context.Context)             {}
-func (h *Hub) Wait()                                {}
+
+// StartAll rebuilds bindings for non-archived conversations at startup so an
+// unsolicited message (cron/keepalive/reflection) lands correctly BEFORE the app
+// reconnects — closing the post-restart window where bindingForSession would
+// otherwise return nil and the send would drop. The restore set is every conv
+// with a visible frame and a known agent in the durable store; archived convs
+// were purged (PurgeConv) so they are excluded by construction. ensureBinding
+// with a nil client creates the socketless durable binding; the real socket
+// re-attaches on the app's next hello/resume (#app-binding-restore).
+func (h *Hub) StartAll(context.Context) {
+	if h.frames == nil {
+		return
+	}
+	convs := h.frames.RestorableConvs()
+	for _, c := range convs {
+		h.ensureBinding(nil, c.agentID, c.convID)
+	}
+	if len(convs) > 0 {
+		log.Infof("app", "restored %d binding(s) from durable store at startup", len(convs))
+	}
+}
+func (h *Hub) Wait() {}
 
 // Close shuts every live socket.
 func (h *Hub) Close() error {
@@ -1088,6 +1113,12 @@ func (b *convBinding) attach(client *wsClient) {
 	b.mu.Lock()
 	b.client = client
 	b.mu.Unlock()
+	// A nil client is the socketless case (startup binding restore): the durable
+	// binding exists and buffers/persists, but there is no socket to register it
+	// against. Reconnect's ensureBinding re-attaches the real socket later.
+	if client == nil {
+		return
+	}
 	client.mu.Lock()
 	client.convByID[b.convID] = b
 	client.mu.Unlock()
@@ -1145,7 +1176,7 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	// visible flag marks user-facing content vs transient frames (typing).
 	if store != nil {
 		_, visible := pushPreview(frame)
-		store.Append(b.convID, seq, wire, now.UnixMilli(), visible)
+		store.Append(b.convID, b.agentID, seq, wire, now.UnixMilli(), visible)
 	}
 
 	if client != nil {

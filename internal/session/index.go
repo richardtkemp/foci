@@ -286,6 +286,26 @@ func (idx *SessionIndex) SessionsNeedingReflection(agentID string) ([]string, er
 	return keys, rows.Err()
 }
 
+// SessionNeedsReflection reports whether a single chat session is due for
+// reflection by the same rule as SessionsNeedingReflection — it has had activity
+// since its last reflection (or never reflected). Unlike the bulk query it does
+// NOT filter on status='active': its caller (the final reflection fired when an
+// app session is archived) invokes it as the session transitions out of active,
+// and the "new activity since last reflection" gate is the real condition.
+func (idx *SessionIndex) SessionNeedsReflection(sessionKey string) bool {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	var due int
+	err := idx.db.QueryRow(
+		`SELECT 1 FROM session_index
+		 WHERE session_key = ? AND session_type = 'chat'
+		   AND (last_reflection IS NULL OR unixepoch(last_activity_at) > unixepoch(last_reflection))`,
+		sessionKey,
+	).Scan(&due)
+	return err == nil && due == 1
+}
+
 // Get retrieves a session index entry by key.
 func (idx *SessionIndex) Get(sessionKey string) (SessionIndexEntry, error) {
 	idx.mu.Lock()

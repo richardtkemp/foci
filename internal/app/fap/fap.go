@@ -51,6 +51,7 @@ const (
 	TypeConversationList       = "conversation.list"
 	TypeConversationRename     = "conversation.rename"
 	TypeConversationSetDefault = "conversation.setDefault"
+	TypeConversationArchive    = "conversation.archive"
 	TypeRead                   = "read"
 	TypePing                   = "ping"
 )
@@ -448,6 +449,16 @@ type ConversationRename struct {
 type ConversationSetDefault struct {
 	ConversationID string `json:"conversationId"`
 	IsDefault      bool   `json:"isDefault"`
+}
+
+// ConversationArchive marks a conversation archived (one-directional — there is
+// no server-side unarchive; the app's unarchive is a local re-show). The server
+// purges the conversation's durable replay frames (so it is excluded from the
+// startup binding restore), drops its live binding, flips the session status to
+// archived (which also stops periodic reflection), and fires one final
+// reflection if the session is due. See docs/WIRING.md → app binding restore.
+type ConversationArchive struct {
+	ConversationID string `json:"conversationId"`
 }
 
 // ConversationList re-requests the roster (payload-less).

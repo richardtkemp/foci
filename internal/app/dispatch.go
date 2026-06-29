@@ -11,6 +11,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/session"
 )
 
 // sendRaw queues a socket-level (non-conversation-scoped) server frame, such as
@@ -84,6 +85,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.ConversationSetDefault:
 		h.handleConversationSetDefault(client, f)
+
+	case fap.ConversationArchive:
+		h.handleConversationArchive(client, f)
 
 	case fap.ClientMessage:
 		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq)
@@ -264,6 +268,43 @@ func (h *Hub) handleConversationSetDefault(client *wsClient, f fap.ConversationS
 	})
 }
 
+// handleConversationArchive archives a conversation: it purges the conversation's
+// durable replay frames (excluding it from the startup binding restore — presence
+// of frames IS the restore signal, so there is no archived flag to store), drops
+// its live binding, flips the session status to archived (which also removes it
+// from periodic reflection, whose query filters status='active'), and fires one
+// FINAL reflection if the session is due (reusing the same "activity since last
+// reflection" gate). One-directional: there is no server-side unarchive — the
+// app's unarchive is a local re-show, and the binding is recreated lazily on its
+// next use. (#app-binding-restore)
+func (h *Hub) handleConversationArchive(_ *wsClient, f fap.ConversationArchive) {
+	h.mu.Lock()
+	b := h.convs[f.ConversationID]
+	if b != nil {
+		delete(h.convs, f.ConversationID)
+		delete(h.bySession, b.sessionKey)
+	}
+	h.mu.Unlock()
+
+	purged := h.frames.PurgeConv(f.ConversationID)
+	if b == nil {
+		log.Debugf("app", "archive %s: no live binding (frames purged=%d)", f.ConversationID, purged)
+		return
+	}
+	// Final reflection BEFORE flipping status — gated by reflection's own
+	// "activity since last reflection" rule, so an already-reflected session with
+	// no new input is skipped. nil when no reflector is wired (tests, no periodic).
+	if h.reflectOnArchive != nil {
+		h.reflectOnArchive(b.sessionKey)
+	}
+	// Flip status last so the session stops being picked up by periodic reflection
+	// (its query filters status='active').
+	if idx := h.deps.SessionIndex; idx != nil {
+		idx.UpdateStatus(b.sessionKey, session.SessionStatusArchived)
+	}
+	log.Infof("app", "archived conversation %s (session %s, frames purged=%d)", f.ConversationID, b.sessionKey, purged)
+}
+
 // routeCommand dispatches a slash command through the agent's command registry,
 // returning its response as message frame(s). Dispatch runs off the read pump
 // because some commands do real work.
@@ -354,6 +395,8 @@ func inboundConvID(frame any) string {
 	case fap.ConversationRename:
 		return f.ConversationID
 	case fap.ConversationSetDefault:
+		return f.ConversationID
+	case fap.ConversationArchive:
 		return f.ConversationID
 	default:
 		return ""

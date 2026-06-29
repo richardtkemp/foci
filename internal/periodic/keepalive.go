@@ -626,6 +626,29 @@ func (r *Runner) maybeReflection() {
 	}()
 }
 
+// ReflectSessionIfDue fires a single reflection branch for sessionKey iff it is
+// due by the same "activity since last reflection" rule the periodic pass uses,
+// then stamps it. Used for the final reflection when an app session is archived
+// (#app-binding-restore) — wired into the app hub via app.SetReflectOnArchive.
+// No-op if the runner has no agent/index, the session isn't due, or no reflection
+// prompt resolves.
+func (r *Runner) ReflectSessionIfDue(sessionKey string) {
+	if r == nil || r.agent == nil || r.sessionIndex == nil {
+		return
+	}
+	if !r.sessionIndex.SessionNeedsReflection(sessionKey) {
+		return
+	}
+	promptText := prompts.ResolvePrompt(r.reflectCfg.IntervalPrompt, "reflection.md", prompts.Reflection(), r.promptSearchDirs...)
+	if promptText == "" {
+		return
+	}
+	t := time.Now()
+	if r.agent.Branch("reflection", sessionKey, promptText, true) {
+		r.sessionIndex.StampReflection(sessionKey, t)
+	}
+}
+
 func (r *Runner) maybeConsolidation() {
 	if !r.maintCfg.ConsolidationEnabled || r.agent == nil {
 		return

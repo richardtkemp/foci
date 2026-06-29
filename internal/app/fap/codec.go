@@ -96,6 +96,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &ConversationRename{}
 	case TypeConversationSetDefault:
 		dst = &ConversationSetDefault{}
+	case TypeConversationArchive:
+		dst = &ConversationArchive{}
 	case TypeTyping:
 		dst = &ClientTyping{}
 	case TypeRead:
@@ -133,6 +135,8 @@ func derefClient(dst any) any {
 	case *ConversationRename:
 		return *v
 	case *ConversationSetDefault:
+		return *v
+	case *ConversationArchive:
 		return *v
 	case *ClientTyping:
 		return *v
