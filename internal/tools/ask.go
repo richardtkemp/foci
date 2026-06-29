@@ -383,7 +383,9 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 		a.mu.Unlock()
 		return
 	}
-	for _, raw := range answers {
+	log.Debugf("ask", "session=%s req=%s batch response: %d answers, accumulator at idx=%d/%d",
+		p.sessionKey, requestID, len(answers), p.acc.Index(), p.acc.Total())
+	for ansIdx, raw := range answers {
 		q := p.acc.Current()
 		if q == nil {
 			break // more answers than questions — ignore extras defensively
@@ -391,7 +393,8 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 		answer, cancelled, err := question.ResolveAnswer(q, raw)
 		if err != nil {
 			a.mu.Unlock()
-			log.Warnf("ask", "session=%s req=%s invalid batched response %q: %v", p.sessionKey, requestID, raw, err)
+			log.Warnf("ask", "session=%s req=%s invalid batched response ans[%d]=%q against Q%d (%d options) %q: %v",
+				p.sessionKey, requestID, ansIdx, raw, p.acc.Index(), len(q.Options), answerEcho(q.Question), err)
 			return
 		}
 		if cancelled {
