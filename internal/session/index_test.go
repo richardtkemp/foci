@@ -1110,7 +1110,11 @@ func TestStampReflection(t *testing.T) {
 		Status:         SessionStatusActive,
 	})
 
-	// Before stamping: session has NULL last_reflection, so it needs reflection.
+	// New activity after the seeded last_reflection (#945: Upsert seeds it to the
+	// birth activity time) makes the session genuinely due for reflection.
+	idx.UpdateActivity("bot/c100/1000000000", now.Add(time.Minute))
+
+	// Before stamping: activity is newer than last_reflection, so it needs reflection.
 	keys, err := idx.SessionsNeedingReflection("bot")
 	if err != nil {
 		t.Fatalf("SessionsNeedingReflection: %v", err)
@@ -1120,7 +1124,7 @@ func TestStampReflection(t *testing.T) {
 	}
 
 	// Stamp reflection at or after the last activity time.
-	idx.StampReflection("bot/c100/1000000000", now)
+	idx.StampReflection("bot/c100/1000000000", now.Add(time.Minute))
 
 	// After stamping: last_reflection >= last_activity_at, so not returned.
 	keys, err = idx.SessionsNeedingReflection("bot")
@@ -1134,8 +1138,10 @@ func TestStampReflection(t *testing.T) {
 
 func TestReflectionRedundant(t *testing.T) {
 	// ReflectionRedundant backs the reset-time "no need to reflect twice" guard.
-	// It must return true only when a reflection has run AND no activity has
-	// occurred since; unknown / never-reflected sessions default to false (reflect).
+	// It returns true when last_activity <= last_reflection (nothing new to
+	// reflect). An UNKNOWN session (no row) defaults to false (reflect). A freshly
+	// created session is redundant until new activity arrives, because Upsert seeds
+	// last_reflection to its birth activity time (#945).
 	idx := tempIndex(t)
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -1155,10 +1161,13 @@ func TestReflectionRedundant(t *testing.T) {
 		t.Error("unknown session: want false, got true")
 	}
 
-	// Never reflected (last_reflection NULL) → not redundant.
+	// Freshly created, never explicitly reflected, no new activity since birth →
+	// REDUNDANT (#945). Upsert seeds last_reflection to the birth activity time, so
+	// last_activity == last_reflection and there is nothing new to reflect. (Before
+	// the fix this defaulted to NOT redundant and got reflected empty.)
 	mk("bot/c1/1000000000")
-	if idx.ReflectionRedundant("bot/c1/1000000000") {
-		t.Error("never-reflected session: want false, got true")
+	if !idx.ReflectionRedundant("bot/c1/1000000000") {
+		t.Error("fresh session, no new activity: want true (redundant), got false")
 	}
 
 	// Reflection ran, then activity since → not redundant.
@@ -1214,7 +1223,10 @@ func TestSessionsNeedingReflection(t *testing.T) {
 	})
 	idx.StampReflection("agent1/c2/1000000000", base.Add(time.Hour))
 
-	// Case 3: NULL reflection (never reflected) — should be included.
+	// Case 3: freshly created, never explicitly reflected, NO activity since
+	// creation — should be EXCLUDED (#945). Upsert seeds last_reflection to the
+	// creation/activity time, so a just-born / just-compacted session is not
+	// immediately due; it becomes due only once real new activity arrives.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "agent1/c3/1000000000",
 		FilePath:       "f3",
@@ -1223,7 +1235,19 @@ func TestSessionsNeedingReflection(t *testing.T) {
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
-	// No StampReflection call — last_reflection stays NULL.
+	// No StampReflection: last_reflection is seeded == creation, last_activity == creation → not due.
+
+	// Case 3b: same shape but with NEW activity AFTER creation — should be
+	// INCLUDED (activity advances last_activity past the seeded last_reflection).
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "agent1/c3b/1000000000",
+		FilePath:       "f3b",
+		CreatedAt:      base,
+		LastActivityAt: base,
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+	idx.UpdateActivity("agent1/c3b/1000000000", base.Add(time.Hour))
 
 	// Case 4: Non-chat session (branch) — should be excluded.
 	idx.Upsert(SessionIndexEntry{
@@ -1277,9 +1301,13 @@ func TestSessionsNeedingReflection(t *testing.T) {
 	if got["agent1/c2/1000000000"] {
 		t.Errorf("case 2 (activity older than reflection): expected excluded, present in %v", keys)
 	}
-	// Case 3: NULL reflection → included.
-	if !got["agent1/c3/1000000000"] {
-		t.Errorf("case 3 (NULL reflection): expected included, missing from %v", keys)
+	// Case 3: freshly created, no new activity since creation → excluded (#945).
+	if got["agent1/c3/1000000000"] {
+		t.Errorf("case 3 (fresh session, no new activity): expected excluded, present in %v", keys)
+	}
+	// Case 3b: freshly created but with new activity after creation → included.
+	if !got["agent1/c3b/1000000000"] {
+		t.Errorf("case 3b (fresh session with new activity): expected included, missing from %v", keys)
 	}
 	// Case 4: non-chat session → excluded.
 	if got["agent1/c1/1000000000/b2000000000"] {

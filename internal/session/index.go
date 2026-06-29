@@ -168,9 +168,18 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 	}
 	activityStr := timeutil.Format(activityAt)
 	createdStr := timeutil.Format(e.CreatedAt)
+	// Seed last_reflection to the row's activity time on INSERT so a freshly
+	// created/activated session is NOT immediately "due" for reflection. The
+	// SessionsNeedingReflection query treats last_reflection IS NULL as due, so
+	// without this a session born from compaction (a new key minted with no new
+	// content) was reflected the instant it appeared — an empty, just-rotated
+	// session (#945). With the seed, last_reflection == last_activity at birth, so
+	// the session becomes due only once REAL new activity advances past it. On
+	// CONFLICT (existing row) last_reflection is intentionally NOT touched, so a
+	// real prior reflection timestamp is preserved.
 	_, err := idx.db.Exec(
-		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, last_reflection, parent_session_key, session_type, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_key) DO UPDATE SET
 		   file_path = excluded.file_path,
 		   created_at = excluded.created_at,
@@ -185,6 +194,7 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 		e.FilePath,
 		createdStr,
 		activityStr,
+		activityStr, // last_reflection seeded = activity time at birth
 		nullableString(e.ParentSessionKey),
 		e.SessionType,
 		e.Status,
