@@ -129,6 +129,8 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 	// Answers. Route it to the batched-ask callback and skip the single-prompt
 	// machinery (no per-question edit; the app resolves its own form on submit).
 	if len(f.Answers) > 0 {
+		log.Debugf("app", "InteractiveResponse(batched): conv=%s prompt=%s answers=%v",
+			f.ConversationID, f.PromptID, f.Answers)
 		if bp, ok := h.batchPromptByID(f.PromptID); ok {
 			h.deleteBatchPrompt(f.PromptID)
 			bp.onResp(f.Answers)

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
+	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/voice"
@@ -345,9 +347,13 @@ func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.Bat
 	}
 	c.hub.registerBatchPrompt(promptID, b, onResponse)
 	qs := make([]fap.Question, len(questions))
+	choiceCounts := make([]string, len(questions))
 	for i, q := range questions {
 		qs[i] = fap.Question{Text: q.Text, Header: q.Header, Choices: toChoices(q.Choices)}
+		choiceCounts[i] = strconv.Itoa(len(q.Choices))
 	}
+	log.Debugf("app", "SendInteractiveBatch: conv=%s prompt=%s questions=%d choicesPerQ=[%s]",
+		b.convID, promptID, len(qs), strings.Join(choiceCounts, ","))
 	b.send(fap.Interactive{
 		ConversationID: b.convID,
 		PromptID:       promptID,
