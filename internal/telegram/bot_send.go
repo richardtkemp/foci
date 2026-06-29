@@ -200,13 +200,36 @@ func (b *Bot) SendNotificationDirect(text string) string {
 // sendNotificationImmediate sends a notification directly to the default chat.
 // Returns the platform message ID as a string, or "" on failure.
 func (b *Bot) sendNotificationImmediate(text string) string {
+	return b.sendNotificationToChat(b.defaultChatIDOrLast(), text)
+}
+
+// defaultChatIDOrLast resolves the bot's default chat, falling back to the last
+// known chat when no state store is configured (e.g. tests).
+func (b *Bot) defaultChatIDOrLast() int64 {
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
-		// Fall back to last known chat (e.g. when no state store is configured).
 		b.chatMu.Lock()
 		chatID = b.chatID
 		b.chatMu.Unlock()
 	}
+	return chatID
+}
+
+// chatIDForSession resolves the destination chat for a session key. The Telegram
+// chatID is embedded in the session key (clutch/c<chatID>/<instance>), so it is
+// extracted directly — no chat_metadata round-trip. Falls back to the default
+// chat when the key carries no chatID (unparseable / independent session) (#911).
+func (b *Bot) chatIDForSession(sessionKey string) int64 {
+	if id := session.ChatIDFromKey(sessionKey); id != 0 {
+		return id
+	}
+	return b.defaultChatIDOrLast()
+}
+
+// sendNotificationToChat sends a notification to a specific chat. Returns the
+// first chunk's message ID as the anchor (for later in-place edits), or "" on
+// failure / no chat.
+func (b *Bot) sendNotificationToChat(chatID int64, text string) string {
 	if chatID == 0 {
 		truncated := text
 		if len(truncated) > 40 {
@@ -231,6 +254,18 @@ func (b *Bot) sendNotificationImmediate(text string) string {
 		}
 	}
 	return firstID
+}
+
+// SendNotificationToSession sends a notification to the chat that owns
+// sessionKey, rather than the bot's default chat. This fixes multi-user
+// misrouting: when two users DM the same primary bot, a per-session notice (e.g.
+// a compaction notice for the second user) must land in THAT user's chat, not the
+// default (first user's) chat (#911). Implements platform.SessionNotifier.
+func (b *Bot) SendNotificationToSession(sessionKey, text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return b.sendNotificationToChat(b.chatIDForSession(sessionKey), text)
 }
 
 // drainPendingNotifications sends all buffered notifications to the default chat.
@@ -320,12 +355,13 @@ func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, 
 
 // EditMessageText edits an existing message's text and removes buttons.
 func (b *Bot) EditMessageText(msgID string, text string) error {
-	chatID := b.DefaultChatID()
-	if chatID == 0 {
-		b.chatMu.Lock()
-		chatID = b.chatID
-		b.chatMu.Unlock()
-	}
+	return b.editMessageInChat(b.defaultChatIDOrLast(), msgID, text)
+}
+
+// editMessageInChat edits a message in a specific chat (Telegram's
+// editMessageText needs both chatID and msgID — a msgID alone is ambiguous
+// across chats).
+func (b *Bot) editMessageInChat(chatID int64, msgID, text string) error {
 	id, _ := strconv.ParseInt(msgID, 10, 64)
 	_, _, err := b.client.EditMessageText(
 		ConvertToTelegramHTML(text, b.tableOpts()),
@@ -335,6 +371,15 @@ func (b *Bot) EditMessageText(msgID string, text string) error {
 			ParseMode: "HTML",
 		})
 	return err
+}
+
+// EditNotificationInSession edits a message in the chat that owns sessionKey,
+// rather than the default chat. The compaction flow sends a ⏳ start notice and
+// edits it in place to ✅ — both must target the session's chat, else the edit
+// hits the wrong chat (and Telegram rejects it, since the msgID belongs to the
+// session's chat) (#911). Implements platform.SessionNotifier.
+func (b *Bot) EditNotificationInSession(sessionKey, msgID, text string) error {
+	return b.editMessageInChat(b.chatIDForSession(sessionKey), msgID, text)
 }
 
 // EditMessageWithButtons edits an existing message's text and replaces its buttons.

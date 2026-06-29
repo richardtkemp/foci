@@ -321,6 +321,20 @@ type ButtonSender interface {
 	EditMessageWithButtons(msgID string, text string, buttons []ButtonChoice, callbackPrefix string) error
 }
 
+// SessionNotifier is optionally implemented by Connection types that can deliver
+// a notification to a SPECIFIC session's chat rather than the connection's default
+// chat. It exists for multi-user transports (Telegram primary bot serving several
+// DMs): a per-session notice — e.g. a compaction ⏳/✅ for a non-default user — must
+// land in that user's chat, not the default (#911). Transports that don't implement
+// it fall back to the default-chat SendNotificationDirect/EditMessageText, unchanged.
+type SessionNotifier interface {
+	// SendNotificationToSession sends text to the chat owning sessionKey,
+	// returning the platform message ID (for a later in-place edit) or "".
+	SendNotificationToSession(sessionKey, text string) string
+	// EditNotificationInSession edits message msgID in the chat owning sessionKey.
+	EditNotificationInSession(sessionKey, msgID, text string) error
+}
+
 // BatchQuestion is one question within a batched interactive prompt. Text is the
 // RAW question (the app renders its own layout); Header is an optional bold title;
 // Choices are the option buttons (empty ⇒ typed-answer-only) with NO Cancel — the

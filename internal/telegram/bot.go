@@ -27,6 +27,7 @@ import (
 
 var _ platform.Sender = (*Bot)(nil)
 var _ platform.ButtonSender = (*Bot)(nil)
+var _ platform.SessionNotifier = (*Bot)(nil) // #911: per-session compaction-notice routing
 
 // botClient abstracts Telegram API methods for testability.
 type botClient interface {

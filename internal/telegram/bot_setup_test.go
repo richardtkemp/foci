@@ -18,6 +18,7 @@ import (
 type mockClient struct {
 	mu               sync.Mutex
 	sends            int                          // counts SendMessage calls
+	lastSendChatID   int64                        // chatID of the last SendMessage call (#911 routing tests)
 	edits            int                          // counts EditMessageText calls
 	deletes          int                          // counts DeleteMessage calls
 	files            map[string]string            // fileId → filePath for GetFile mock
@@ -45,6 +46,7 @@ func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sends++
+	m.lastSendChatID = chatId
 	m.lastSendInjected = text
 	m.lastSendOpts = opts
 	if m.sendErr != nil {
