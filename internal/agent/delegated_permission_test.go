@@ -70,6 +70,36 @@ func (m *mockPermBackendNoRule) SendKeystroke(_ context.Context, key string) err
 
 func (m *mockPermBackendNoRule) IsRunning() bool { return true }
 
+// mockRememberPermBackend implements the rememberPermResponder interface
+// (opencode's signature: third arg is a `remember` bool, not a message).
+// It does NOT satisfy permResponder, so SendPermissionResponse must route
+// through the remember-protocol block, not fall to SendKeystroke.
+type mockRememberPermBackend struct {
+	delegator.Delegator
+
+	respondCalls   []rememberCall
+	keystrokeCalls []string
+	respondErr     error
+}
+
+type rememberCall struct {
+	requestID string
+	allow     bool
+	remember  bool
+}
+
+func (m *mockRememberPermBackend) RespondToPermission(requestID string, allow bool, remember bool) error {
+	m.respondCalls = append(m.respondCalls, rememberCall{requestID, allow, remember})
+	return m.respondErr
+}
+
+func (m *mockRememberPermBackend) SendKeystroke(_ context.Context, key string) error {
+	m.keystrokeCalls = append(m.keystrokeCalls, key)
+	return nil
+}
+
+func (m *mockRememberPermBackend) IsRunning() bool { return true }
+
 // mockDelegatedManagerForPerm is a minimal DelegatedManager replacement
 // that returns a pre-configured backend. Since DelegatedManager.Get requires
 // real mutex/map wiring, we set up a real DelegatedManager with a pre-seeded backend.
@@ -274,5 +304,64 @@ func TestSendPermissionResponse_RuleError(t *testing.T) {
 	}
 	if err.Error() != "rule error" {
 		t.Errorf("error = %q, want %q", err.Error(), "rule error")
+	}
+}
+
+// TestSendPermissionResponse_RememberResponder_Allow verifies an opencode-style
+// backend (remember-bool signature) routes "allow" → allow=true, remember=false,
+// and does NOT fall through to SendKeystroke (the arnix wedge: signature mismatch
+// dropped opencode to keystroke → "not supported").
+func TestSendPermissionResponse_RememberResponder_Allow(t *testing.T) {
+	be := &mockRememberPermBackend{}
+	a := setupAgentWithMockBackend(t, be)
+
+	if err := a.SendPermissionResponse(context.Background(), "test/s", "per_1", "allow"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(be.keystrokeCalls) != 0 {
+		t.Fatalf("must NOT fall to keystroke, got %v", be.keystrokeCalls)
+	}
+	if len(be.respondCalls) != 1 {
+		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))
+	}
+	c := be.respondCalls[0]
+	if c.requestID != "per_1" || !c.allow || c.remember {
+		t.Errorf("got %+v, want {per_1 allow=true remember=false}", c)
+	}
+}
+
+// TestSendPermissionResponse_RememberResponder_Always verifies "always" maps to
+// allow=true, remember=true (opencode reply "always").
+func TestSendPermissionResponse_RememberResponder_Always(t *testing.T) {
+	be := &mockRememberPermBackend{}
+	a := setupAgentWithMockBackend(t, be)
+
+	if err := a.SendPermissionResponse(context.Background(), "test/s", "per_1", "always"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(be.respondCalls) != 1 {
+		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))
+	}
+	c := be.respondCalls[0]
+	if !c.allow || !c.remember {
+		t.Errorf("got %+v, want allow=true remember=true", c)
+	}
+}
+
+// TestSendPermissionResponse_RememberResponder_Deny verifies "deny" maps to
+// allow=false, remember=false.
+func TestSendPermissionResponse_RememberResponder_Deny(t *testing.T) {
+	be := &mockRememberPermBackend{}
+	a := setupAgentWithMockBackend(t, be)
+
+	if err := a.SendPermissionResponse(context.Background(), "test/s", "per_1", "deny"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(be.respondCalls) != 1 {
+		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))
+	}
+	c := be.respondCalls[0]
+	if c.allow || c.remember {
+		t.Errorf("got %+v, want allow=false remember=false", c)
 	}
 }
