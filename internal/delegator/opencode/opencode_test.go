@@ -3503,20 +3503,6 @@ func TestClose_Idempotent(t *testing.T) {
 // 	wg.Wait()
 // }
 
-func TestNewRequestID_Unique(t *testing.T) {
-	// Verifies newRequestID generates unique values across rapid calls.
-	t.Parallel()
-
-	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
-		id := newRequestID()
-		if seen[id] {
-			t.Fatalf("duplicate request ID: %s", id)
-		}
-		seen[id] = true
-	}
-}
-
 // ---------------------------------------------------------------------------
 // logComponent
 // ---------------------------------------------------------------------------

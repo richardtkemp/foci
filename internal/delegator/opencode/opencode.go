@@ -1,10 +1,6 @@
 // Package opencode implements a delegated backend using the OpenCode server
 // (https://opencode.ai/docs/server). One opencode server process is shared
 // across all of a foci agent's sessions; this package is its HTTP/SSE client.
-//
-// This is a Step 1.4 TDD-red-bar stub: the surface compiles and the kept
-// tests fail because the methods panic or return zero values. Real
-// implementations land in Steps 2–14 of OPENCODE_DELEGATOR_PLAN.md.
 package opencode
 
 import (
@@ -16,16 +12,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	"foci/internal/delegator"
 )
 
 // serverPool is the package-level registry of live Servers, keyed by
 // foci agent ID. One Server per agent; refcounted so the subprocess is
-// shut down when the last session closes. Step 3 introduces a real
-// bounded-shutdown Close; for Step 2 the pool just constructs Servers
-// without starting them.
+// shut down when the last session closes.
 var (
 	serverPoolMu sync.Mutex
 	serverPool   = map[string]*Server{}
@@ -36,8 +29,7 @@ var (
 // variables (BASH_ENV, FOCI_SOCK from the exec bridge) that are applied
 // to the subprocess on first launch. Only the first session's env vars
 // take effect — the subprocess is shared across all sessions on this
-// agent (documented limitation for v1; see OPENCODE_DELEGATOR_PLAN.md
-// Step 17).
+// agent (documented v1 limitation).
 func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Server, error) {
 	serverPoolMu.Lock()
 	if s, ok := serverPool[agentID]; ok {
@@ -138,17 +130,14 @@ func CloseAllServers() int {
 	return len(servers)
 }
 
-// init registers the constructor with the delegator registry. Real
-// registration (with plan delivery etc.) lands in Step 14; for now this
-// keeps the package importable in tests without side effects.
+// init registers the constructor with the delegator registry.
 func init() {
 	delegator.Register("opencode", newFromConfig, true)
 	delegator.RegisterPlan("opencode", planDelivery)
 }
 
 // newFromConfig is the constructor delegator.New("opencode", cfg) calls.
-// Step 1.4 stub: returns a Backend with initialised channels/maps so KEPT
-// tests can construct one. Real session/server wiring lands in Step 5.
+// Returns a Backend with initialised channels/maps.
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{
 		cfg:           cfg,
@@ -162,61 +151,56 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 
 // Backend implements delegator.Delegator using the OpenCode HTTP server.
 // One Backend exists per foci session; all Backends for a given agent
-// share a Server (Step 3 introduces the Server layer).
-//
-// Step 1.4 stub: fields are present so KEPT tests can construct and poke
-// a Backend directly; methods panic or return zero values. Real behaviour
-// lands in later steps. Fields without an immediate user are deferred to
-// their respective plan steps (workDir/agentID/label/model/etc. → Step 5).
+// share a Server.
 type Backend struct {
-	cfg           map[string]any
-	agentID       string            // acquired Server is keyed by this
-	server        *Server           // shared with sibling Backends on this agent
-	startOpts     delegator.StartOptions // saved at Start for restart/inspection
-	readyCh       chan struct{}     // closed when POST /session returns
-	pendingPerms  map[string]*pendingPermission
-	permMu        sync.Mutex
-	outstanding   *delegator.OutstandingRegistry
-	compactDoneCh  chan struct{}     // buffered(1); closed by OnSessionCompacted
-	compactStartCh chan struct{}     // closed immediately by ArmCompactionStartWait
-	sessionID     string
+	cfg            map[string]any
+	agentID        string                 // acquired Server is keyed by this
+	server         *Server                // shared with sibling Backends on this agent
+	startOpts      delegator.StartOptions // saved at Start for restart/inspection
+	readyCh        chan struct{}          // closed when POST /session returns
+	pendingPerms   map[string]*pendingPermission
+	permMu         sync.Mutex
+	outstanding    *delegator.OutstandingRegistry
+	compactDoneCh  chan struct{} // buffered(1); closed by OnSessionCompacted
+	compactStartCh chan struct{} // closed immediately by ArmCompactionStartWait
+	sessionID      string
 
 	// Per-session event channel — Server.route pushes decoded rawEvents
-	// here; Backend.dispatchLoop drains and invokes handlers (Step 7).
-	// nil until Backend registers with its Server (Step 5); buffered
+	// here; Backend.dispatchLoop drains and invokes handlers.
+	// nil until Backend registers with its Server; buffered
 	// eventBufferSize so a transient dispatcher stall doesn't drop.
 	events chan rawEvent
 
 	// Dispatcher — one goroutine drains events serially. Started by
 	// Server.registerSession, stopped by Server.unregisterSession. The
-	// dispatchHandler is captured at goroutine start; Step 7 calls
+	// dispatchHandler is captured at goroutine start; Start calls
 	// SetDispatchHandler before registerSession to bind the real
 	// per-Event-Type dispatch.
 	dispatchHandler eventHandler
 	stopDispatcher  func()
 	dispatchWg      sync.WaitGroup
 
-	// Lifecycle — Step 5.
+	// Lifecycle.
 	mu      sync.Mutex
 	running bool
 
-	// Session-scoped delivery — Step 6/7.
+	// Session-scoped delivery.
 	sessionEvents atomic.Pointer[delegator.SessionEvents]
 
-	// Turn bookkeeping — mirrors ccstream's invariants; Step 6/7.
-	turnMu         sync.Mutex
-	turnActive     bool
-	turnEvents     *delegator.TurnEvents
-	turnResultCh   chan *ResultMessage
-	turnText       strings.Builder
-	turnTools      int
-	lastModel      string
-	lastProvider   string // paired with lastModel; required by /summarize compaction
-	lastUsage      *TokenUsage
-	ctxLimitCache  int    // cached context window from /config/providers (GetContextUsage)
-	ctxLimitModel  string // model the cached limit belongs to; re-query on model change
-	seenToolCalls  map[string]bool // reset in beginTurn; dedupes OnToolStart
-	seenTextParts  map[string]bool // reset in beginTurn; dedupes OnText
+	// Turn bookkeeping — mirrors ccstream's invariants.
+	turnMu        sync.Mutex
+	turnActive    bool
+	turnEvents    *delegator.TurnEvents
+	turnResultCh  chan *ResultMessage
+	turnText      strings.Builder
+	turnTools     int
+	lastModel     string
+	lastProvider  string // paired with lastModel; required by /summarize compaction
+	lastUsage     *TokenUsage
+	ctxLimitCache int             // cached context window from /config/providers (GetContextUsage)
+	ctxLimitModel string          // model the cached limit belongs to; re-query on model change
+	seenToolCalls map[string]bool // reset in beginTurn; dedupes OnToolStart
+	seenTextParts map[string]bool // reset in beginTurn; dedupes OnText
 
 	// Steer buffer (plan §6 divergence). opencode has no mid-turn
 	// queue, so SourceUser / SourceSteer arriving during an in-flight
@@ -243,15 +227,14 @@ type Backend struct {
 	agents delegator.AgentTracker
 }
 
-// IsRunning reports whether the OpenCode subprocess is alive. Step 1.4
-// stub: reads b.running under b.mu.
+// IsRunning reports whether the OpenCode subprocess is alive.
 func (b *Backend) IsRunning() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.running
 }
 
-// SessionID returns the OpenCode session identifier. Step 1.4 stub.
+// SessionID returns the OpenCode session identifier.
 func (b *Backend) SessionID() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -275,8 +258,8 @@ func (b *Backend) SendSpecialKey(_ context.Context, _ string) error {
 	return errors.New("opencode: SendSpecialKey not supported")
 }
 
-// SetPermissionPromptFunc stores the permission-prompt callback. Step 9
-// wires the real surfacing path.
+// SetPermissionPromptFunc stores the permission-prompt callback.
+// permissions.go surfaces pending permissions through it.
 func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
 	b.permPromptFn = fn
 }
@@ -288,7 +271,7 @@ func (b *Backend) SetOnPromptsCleared(fn func()) {
 }
 
 // SetOnSessionReady stores the callback fired once when the backend
-// discovers its session ID. Step 5 invokes it after POST /session.
+// discovers its session ID (after POST /session).
 func (b *Backend) SetOnSessionReady(fn func(sessionID string)) {
 	b.onSessionReady = fn
 }
@@ -300,7 +283,7 @@ func (b *Backend) SetTypingFunc(fn func(typing bool)) {
 
 // SetOnCompactionStart stores the callback fired when CC signals
 // compaction is underway. OpenCode has no "compacting started" event,
-// so Step 8.2 synthesises one.
+// so compaction.go synthesises one (documented divergence, plan §8.2).
 func (b *Backend) SetOnCompactionStart(fn func()) {
 	b.onCompactionStart = fn
 }
@@ -315,10 +298,9 @@ func (b *Backend) SetOnAgentStatus(fn func(text string)) {
 	b.agents.OnStatus = fn
 }
 
-// SetOnAuthFailure stores the auth-failure callback. Fired by the Step 7
-// handlers when a ProviderAuthError surfaces via message.updated or
-// session.error SSE events. Step 11 wires the Server-level fanout +
-// relogin gate.
+// SetOnAuthFailure stores the auth-failure callback. Fired by handlers.go
+// when a ProviderAuthError surfaces via message.updated or session.error
+// SSE events. authfail.go provides the Server-level fanout + relogin gate.
 func (b *Backend) SetOnAuthFailure(fn func(detail string)) {
 	b.onAuthFailure = fn
 }
@@ -326,18 +308,6 @@ func (b *Backend) SetOnAuthFailure(fn func(detail string)) {
 // Turn-lifecycle methods (AttachSessionEvents, beginTurn, cancelTurn,
 // IsTurnInFlight, WaitForTurn, ArmCompactionWait, WaitForCompaction)
 // live in inject.go per plan §6.2.
-
-
-
-// newRequestID generates a simple unique request ID for control messages.
-// Not a real UUID, but unique within a process lifetime which is
-// sufficient for request correlation. Ported from ccstream/ccstream.go.
-//
-// Wired through backend_lifecycle.go's Start (called once to keep deadcode
-// aware of the call graph); Step 6 uses it for control-message correlation.
-func newRequestID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
-}
 
 // describeExitError returns a human-readable description of a process
 // exit error including exit code, signal, and stderr snippet when
@@ -386,12 +356,12 @@ func describeExitError(err error) string {
 }
 
 // Inject routes user-role events to the backend. Implementation lives
-// in inject.go (Step 6).
+// in inject.go.
 
-// RegisterPromptCancelListener registers a per-prompt cancel callback.
-// Step 9 wires the real permission-handling path.
-func (b *Backend) RegisterPromptCancelListener(_ string, _ func(reason string)) {
-	panic("opencode: Backend.RegisterPromptCancelListener not implemented — Step 9")
+// RegisterPromptCancelListener registers a per-prompt cancel callback
+// via the OutstandingRegistry.
+func (b *Backend) RegisterPromptCancelListener(requestID string, fn func(reason string)) {
+	b.outstanding.AddCancelListener(requestID, fn)
 }
 
-// Interrupt is implemented in control.go (Step 8: POST /session/:id/abort).
+// Interrupt is implemented in control.go (POST /session/:id/abort).

@@ -52,14 +52,14 @@ const subscriberConnectRetryInterval = 100 * time.Millisecond
 // io.Reader (typically an HTTP response body) and is responsible for
 // closing it after Run returns.
 //
-// Step 4 split: Run is the parsing loop. The HTTP GET /event wiring
-// lives in Server.runSubscriber; the per-Backend channel push lives in
+// Run is the parsing loop. The HTTP GET /event wiring lives in
+// Server.runSubscriber; the per-Backend channel push lives in
 // Server.route. Subscriber stays focused on "bytes → events" so it
 // can be tested against net.Pipe / strings.Reader without spinning up
 // HTTP.
 type Subscriber struct {
-	r       io.Reader
-	onEvent func(rawEvent)
+	r           io.Reader
+	onEvent     func(rawEvent)
 	onHeartbeat func()
 }
 
@@ -181,7 +181,7 @@ func decodeEvent(payload string) (rawEvent, bool) {
 // Server-owned subscriber loop
 // ---------------------------------------------------------------------------
 
-// runSubscriber is the goroutine launched by Server.Start (Step 4) that
+// runSubscriber is the goroutine launched by Server.Start that
 // owns the GET /event HTTP connection for the Server's lifetime. It is
 // launched BEFORE the health probe completes (so we don't miss
 // server.connected), parses the SSE stream, and routes each decoded event
@@ -313,15 +313,14 @@ func (s *Server) route(ev rawEvent) {
 	select {
 	case be.events <- ev:
 	default:
-		// Channel full. Step 4.4 decision: drop rather than block. The
-		// dispatcher goroutine is wedged; Step 7's handlers will surface
-		// that via the missing-event gap in the session's state.
+		// Channel full — drop rather than block. The dispatcher goroutine
+		// is wedged; handlers.go will surface that via the missing-event
 		log.Warnf(s.logComponent(), "event channel full for session %s; dropping %s", sid, ev.Type)
 	}
 }
 
 // registerSession adds be to the per-Server session registry under
-// be.sessionID. Called by Backend.Start (Step 5) after the session has
+// be.sessionID. Called by Backend.Start after the session has
 // been created via POST /session. Safe to call concurrently with route
 // — the RWMutex is the synchronisation point.
 //
@@ -332,9 +331,9 @@ func (s *Server) route(ev rawEvent) {
 //     256 and route would start dropping)
 //
 // The dispatcher's handler is whatever be.dispatchHandler is at the
-// moment of registerSession. Step 7 calls SetDispatchHandler before
-// registerSession; Step 4 leaves it nil → defaultDispatchHandler logs
-// at DEBUG.
+// moment of registerSession. Start calls SetDispatchHandler before
+// registerSession so the real handler is bound; if left nil,
+// defaultDispatchHandler logs at DEBUG.
 func (s *Server) registerSession(be *Backend) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
@@ -348,7 +347,7 @@ func (s *Server) registerSession(be *Backend) {
 }
 
 // unregisterSession removes the Backend registered under sessionID, if
-// any. Called by Backend.Close (Step 5) before the Backend tears down.
+// any. Called by Backend.Close before the Backend tears down.
 // Safe to call when no session was registered (idempotent). Stops the
 // dispatcher goroutine and waits for it to exit so any in-flight
 // handler invocation completes before the caller frees the Backend.

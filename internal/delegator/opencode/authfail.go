@@ -2,7 +2,7 @@
 //
 // opencode surfaces auth failures (expired OAuth tokens, invalid API
 // keys) via two SSE paths: message.updated with error.name ==
-// "ProviderAuthError" (Step 7 handlers) and session.error with the same.
+// "ProviderAuthError" (handlers.go) and session.error with the same.
 // A third detection path is HTTP 401 from outbound requests — caught
 // here by wrapping the Server's HTTP transport so EVERY request goes
 // through a 401 check. This is the architecturally correct approach per

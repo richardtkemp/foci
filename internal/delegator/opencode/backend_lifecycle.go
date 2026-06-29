@@ -1,9 +1,8 @@
 // backend_lifecycle.go — Backend.Start / Close / WaitReady / CheckReady.
-// Replaces the Step 1.4 panic stubs in opencode.go with real HTTP-driven
-// implementations. Server acquisition goes through acquireServer (the
-// per-agent pool from Step 3); HTTP calls hit server.baseURL; the
-// dispatcher goroutine + per-session registry are wired via
-// server.registerSession (Step 4).
+// HTTP-driven implementations of the delegator.Delegator lifecycle methods.
+// Server acquisition goes through acquireServer (the per-agent pool);
+// HTTP calls hit server.baseURL; the dispatcher goroutine + per-session
+// registry are wired via server.registerSession.
 //
 // Tests bypass the subprocess-spawning acquireServer by setting
 // b.server directly (pointing at httptest.Server) before calling Start;
@@ -58,9 +57,6 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 
 	log.Infof(b.logComponent(), "Start: agentID=%s workDir=%s", opts.AgentID, opts.WorkDir)
 
-	// keep newRequestID reachable for deadcode (Step 6 wires real callers).
-	_ = newRequestID()
-
 	b.agentID = opts.AgentID
 	b.startOpts = opts
 
@@ -82,9 +78,8 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	log.Infof(b.logComponent(), "Start: session created id=%s", sessionID)
 
 	// Register with the Server so SSE events route to us. Side effect:
-	// launches the dispatcher goroutine (Step 4) which drains b.events
-	// and invokes the per-Backend handler (Step 7 sets a real handler;
-	// defaultDispatchHandler logs at DEBUG until then).
+	// launches the dispatcher goroutine which drains b.events
+	// and invokes the per-Backend handler (handleEvent, set above).
 	//
 	// SetDispatchHandler MUST be called before registerSession — the
 	// handler is captured at goroutine-start time.
@@ -143,7 +138,7 @@ func (b *Backend) Close() error {
 	}
 
 	// Deregister from Server — stops the dispatcher and waits for any
-	// in-flight handler call to complete (Step 4 contract). Safe to
+	// in-flight handler call to complete (dispatcher contract). Safe to
 	// call when b.server is nil (test Backend that bypassed Start).
 	if b.server != nil {
 		b.server.unregisterSession(b.sessionID)

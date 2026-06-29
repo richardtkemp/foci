@@ -9,12 +9,12 @@
 // with body {parts: [...], noReply?: true}. Attachments become file
 // parts with data: URLs. Slash commands go through POST /session/:id/
 // command. The async endpoint returns 204 immediately — turn
-// completion arrives as session.idle SSE events handled in Step 7.
+// completion arrives as session.idle SSE events handled in handlers.go.
 //
 // Steer divergence from ccstream (plan §Steer): opencode has no
 // mid-turn queue, so SourceSteer arriving mid-turn is buffered in
 // b.steerBuf and flushed via flushSteerBuf when the dispatcher's
-// OnSessionIdle fires (Step 7). ccstream's "fold into the current
+// OnSessionIdle fires (handlers.go). ccstream's "fold into the current
 // ask()" has no opencode equivalent.
 
 package opencode
@@ -72,7 +72,7 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.mu.Unlock()
 }
 
-// cancelTurn reverses beginTurn. Called from Close and Step 8's
+// cancelTurn reverses beginTurn. Called from Close and control.go's
 // Interrupt (via the Delegator interface).
 func (b *Backend) cancelTurn() {
 	b.turnMu.Lock()
@@ -108,7 +108,7 @@ func (b *Backend) WaitForTurn(ctx context.Context) error {
 	}
 }
 
-// ArmCompactionWait and WaitForCompaction live in compaction.go (Step 8).
+// ArmCompactionWait and WaitForCompaction live in compaction.go.
 
 // ---------------------------------------------------------------------------
 // Inject routing matrix (plan §6)
@@ -154,11 +154,11 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 
 // injectUser handles SourceUser — the most common path. At idle it
 // begins a fresh turn and POSTs /prompt_async; mid-turn it queues in
-// steerBuf for flushSteerBuf (Step 7's OnSessionIdle calls it).
+// steerBuf for flushSteerBuf (OnSessionIdle in handlers.go calls it).
 func (b *Backend) injectUser(ctx context.Context, inj delegator.Inject) error {
 	if b.IsTurnInFlight() {
 		// Mid-turn — queue for the follow-up flush. We don't beginTurn
-		// here; Step 7's OnSessionIdle calls flushSteerBuf which sends
+		// here; OnSessionIdle (handlers.go) calls flushSteerBuf which sends
 		// the combined message and begins a fresh turn.
 		b.turnMu.Lock()
 		b.steerBuf = append(b.steerBuf, inj.Text)
@@ -242,7 +242,7 @@ func splitSlashCommand(text string) (name, rest string) {
 
 // sendPrompt POSTs /session/:id/prompt_async with the user text + any
 // attachments. The async endpoint returns 204 No Content immediately;
-// turn completion arrives as session.idle SSE events (Step 7).
+// turn completion arrives as session.idle SSE events (handlers.go).
 //
 // Callers must call beginTurn BEFORE sendPrompt so events arriving in
 // response to the POST find an active turn. sendPrompt itself is purely
@@ -361,11 +361,11 @@ func buildPromptBody(text string, attachments []delegator.Attachment, noReply bo
 }
 
 // ---------------------------------------------------------------------------
-// Steer buffer flush (called by Step 7's OnSessionIdle)
+// Steer buffer flush (called by OnSessionIdle in handlers.go)
 // ---------------------------------------------------------------------------
 
 // flushSteerBuf drains b.steerBuf and sends the combined text as a
-// single follow-up turn. Called from Step 7's OnSessionIdle after a
+// single follow-up turn. Called from OnSessionIdle (handlers.go) after a
 // turn completes — any user/steer messages that arrived during the
 // prior turn are flushed now as a new turn.
 //
@@ -374,12 +374,12 @@ func buildPromptBody(text string, attachments []delegator.Attachment, noReply bo
 // sending N separate turns would multiply model round-trips.
 //
 // Returns nil if steerBuf was empty (no-op). Returns the sendPrompt
-// error otherwise — Step 7's caller decides whether to surface or
+// error otherwise — OnSessionIdle's caller decides whether to surface or
 // retry. A nil turnEvents means "begin a fresh turn but with no
-// completion callback"; in practice Step 7 always passes a non-nil
+// completion callback"; in practice OnSessionIdle always passes a non-nil
 // TurnEvents that fires OnTurnComplete.
 //
-// flushSteerBuf is called from Step 7's dispatcher goroutine, so it
+// flushSteerBuf is called from the dispatcher goroutine (handlers.go), so it
 // holds the same serial-execution guarantee as the rest of the
 // handler methods — no extra locking needed beyond steerBuf access.
 func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegator.TurnEvents) error {

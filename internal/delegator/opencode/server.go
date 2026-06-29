@@ -2,16 +2,6 @@
 // shared across all of that agent's sessions. Owns the opencode serve
 // subprocess, the HTTP client, the SSE subscriber goroutine, and the
 // per-session Backend registry.
-//
-// Step 2 stub: struct fields only. Methods (Start, Close, OnSubscriberStopped,
-// finalizeExit, route) land in Step 3 (lifecycle) and Step 4 (event routing).
-// The pool helpers acquireServer/releaseServer in opencode.go construct
-// Servers but don't start them yet.
-//
-// The //nolint:unused directives on the fields below silence golangci-lint's
-// unused-field check (the project's lint config runs with tests:false, so
-// test-only usage doesn't count). Each directive points at the plan step
-// that wires a production caller; Step 3+ removes them as methods land.
 
 package opencode
 
@@ -37,39 +27,39 @@ type Server struct {
 	port           int    // 0 = pick free port per Server
 	serverPassword string // "" = no auth (loopback only)
 
-	// Process (Step 3).
-	cmd     *exec.Cmd          //nolint:unused // Step 3 lifecycle
-	baseURL string             //nolint:unused // Step 3 lifecycle
-	http    *http.Client       //nolint:unused // Step 3 lifecycle
-	cancel  context.CancelFunc //nolint:unused // Step 3 lifecycle (cancels SSE subscriber + keep-alive)
-	done    chan struct{}      //nolint:unused // Step 3 lifecycle (closed when subprocess exits)
-	waitCh  chan error         //nolint:unused // Step 3 lifecycle (receives cmd.Wait() result)
-	exitErr error              //nolint:unused // Step 3 lifecycle (set by waiter goroutine)
+	// Process.
+	cmd     *exec.Cmd
+	baseURL string
+	http    *http.Client
+	cancel  context.CancelFunc // cancels SSE subscriber + keep-alive
+	done    chan struct{}      // closed when subprocess exits
+	waitCh  chan error         // receives cmd.Wait() result
+	exitErr error              // set by waiter goroutine
 
-	// Lifecycle (Step 3).
-	mu           sync.Mutex //nolint:unused // Step 3 lifecycle
-	refCount     int        // read/written by pool via acquireServer/releaseServer
-	running      bool       // set by Start/finalizeExit; read by isAlive (pool liveness check)
-	closing      bool       //nolint:unused // Step 3 lifecycle
-	finalizeOnce sync.Once  //nolint:unused // Step 3 lifecycle
-	closeOnce    sync.Once  //nolint:unused // Step 3 lifecycle
+	// Lifecycle.
+	mu           sync.Mutex
+	refCount     int  // read/written by pool via acquireServer/releaseServer
+	running      bool // set by Start/finalizeExit; read by isAlive (pool liveness check)
+	closing      bool
+	finalizeOnce sync.Once
+	closeOnce    sync.Once
 
-	// Per-session registry (Step 4). Backends register under their opencode
+	// Per-session registry. Backends register under their opencode
 	// sessionID; the SSE subscriber routes events by looking up here.
-	sessionsMu sync.RWMutex        // Step 4 per-session routing
-	sessions   map[string]*Backend // Step 4 per-session routing
+	sessionsMu sync.RWMutex
+	sessions   map[string]*Backend
 
-	// SSE subscriber cancel (Step 4).
-	subscriberCancel context.CancelFunc // Step 4 SSE subscriber
+	// SSE subscriber cancel.
+	subscriberCancel context.CancelFunc
 
-	// Activity — updated on every inbound SSE frame (Step 12).
+	// Activity — updated on every inbound SSE frame.
 	lastActivity atomic.Int64 // unix nanos
 
 	// extraEnv carries optional environment variables (BASH_ENV,
 	// FOCI_SOCK from the exec bridge) applied to the subprocess on
 	// first launch. Set by acquireServer from the first Backend's
 	// StartOptions.Env. Only the first session's env takes effect —
-	// the subprocess is shared (v1 limitation, Step 17).
+	// the subprocess is shared (v1 limitation).
 	extraEnv map[string]string
 }
 
@@ -84,7 +74,7 @@ func (s *Server) isAlive() bool {
 	return s.running
 }
 
-// newServer constructs a Server from cfg without starting it. Step 3's
+// newServer constructs a Server from cfg without starting it.
 // acquireServer calls Start after registering the first Backend.
 func newServer(agentID string, cfg serverConfig) *Server {
 	s := &Server{
@@ -102,8 +92,8 @@ func newServer(agentID string, cfg serverConfig) *Server {
 }
 
 // serverConfig is the resolved configuration used to construct a Server.
-// Built from [opencode_backend] config + per-agent overrides in Step 14;
-// Step 2 stub just carries the fields.
+// Built from [opencode_backend] config + per-agent overrides in
+// serverConfigFromOpts (backend_lifecycle.go).
 type serverConfig struct {
 	workDir        string
 	binaryPath     string
@@ -113,13 +103,14 @@ type serverConfig struct {
 }
 
 // defaultServerConfig returns a Server config with the documented defaults.
-// Step 14 overrides per [opencode_backend] / per-agent backend_config.
+// Overridden per [opencode_backend] / per-agent backend_config in
+// serverConfigFromOpts.
 func defaultServerConfig(workDir string) serverConfig {
 	return serverConfig{
 		workDir:        workDir,
-		binaryPath:     "",            // $PATH lookup
-		hostname:       "127.0.0.1",   // loopback only
-		port:           0,             // pick free
-		serverPassword: "",            // no auth on loopback
+		binaryPath:     "",          // $PATH lookup
+		hostname:       "127.0.0.1", // loopback only
+		port:           0,           // pick free
+		serverPassword: "",          // no auth on loopback
 	}
 }

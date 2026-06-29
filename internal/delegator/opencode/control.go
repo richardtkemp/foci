@@ -107,12 +107,6 @@ func (b *Backend) patchConfig(ctx context.Context, body map[string]any) error {
 // For v1 we apply a coarse mapping: "bypassPermissions" → allow all;
 // "acceptEdits" → allow edits + ask for bash; "plan" → deny edits;
 // default → ask for everything.
-
-// ContextUsageQuerier is implemented in context_usage.go: opencode has no
-// get_context_usage endpoint, but GET /config/providers carries each model's
-// real context window (models.dev-sourced). GetContextUsage returns that as
-// MaxTokens + the last turn's size as TotalTokens, so foci's compaction
-// trigger uses the true window instead of the 200k modelinfo fallback.
 func mapPermissionMode(mode string) map[string]any {
 	switch mode {
 	case "bypassPermissions", "auto":
