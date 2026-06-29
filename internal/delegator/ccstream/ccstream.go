@@ -94,11 +94,20 @@ type Backend struct {
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText       strings.Builder       // accumulates text across assistant messages
 	turnTools      int                   // tool_use count this turn
-	pendingSteer   int                   // folded steer/user injects awaiting their shadow-reply OnResult; >0 ⇒ re-arm in OnResult (#813)
-	turnGen        int                   // bumped every beginTurn; identifies the current turn instance for the re-arm watchdog
-	completing     bool                  // a completer (OnResult or the watchdog) has claimed this turn; the other must stand down. Reset by beginTurn
-	heldResult     *delegator.TurnResult // round-1 result stashed at re-arm; the watchdog delivers it if no shadow reply arrives (#813)
-	watchdog       *time.Timer           // bounded re-arm safety net; nil when not armed (#813)
+	// Shadow-turn re-arm signals (#813). A folded steer makes CC emit the
+	// current turn's result, then re-init and produce the real reply as a
+	// SEPARATE result. The trigger is now CC's own `system init` stream — init
+	// count == result count, strictly interleaved IRIR — NOT a per-steer
+	// counter (which over-counted on bursts: N steers fold into ONE re-init/
+	// result, so a counter awaited phantom results → 45s watchdog). See
+	// docs/WIRING.md → "Shadow-turn re-arm + watchdog (#813)".
+	foldPending          bool                  // a steer was written to stdin this turn; set-ONCE (bursts collapse N→1). Gates the abort result into a re-arm instead of a completion. The init-herald of the continuation arrives AFTER that abort result, so this inject-time signal is still needed to bridge it.
+	sawFirstResult       bool                  // the logical turn has produced ≥1 result; lets OnSystem(init) tell a mid-turn re-init from the turn-start init. Reset only on a GENUINE new turn, never on re-arm.
+	continuationExpected bool                  // a mid-turn `system init` was observed (CC began a continuation cycle): the next result is the genuine shadow reply, complete on it
+	turnGen              int                   // bumped every beginTurn; identifies the current turn instance for the re-arm watchdog
+	completing           bool                  // a completer (OnResult or the watchdog) has claimed this turn; the other must stand down. Reset by beginTurn
+	heldResult           *delegator.TurnResult // round-1 result stashed at re-arm; the watchdog delivers it if no shadow reply arrives (#813)
+	watchdog             *time.Timer           // bounded re-arm safety net; nil when not armed (#813)
 
 	// Re-arm instrumentation — observation only, no control-flow effect.
 	// reArmAt stamps when the shadow-reply watchdog was armed; awaitingShadow is
