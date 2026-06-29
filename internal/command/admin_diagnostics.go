@@ -110,7 +110,7 @@ func StatusCommand() *Command {
 				}
 			}
 
-			contextLimit := resolveContextLimit(cc, model)
+			contextLimit := cc.Agent.SessionContextLimit(sk)
 
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "🤖 %s — %s\n", cc.AgentConfig.ID, model)
