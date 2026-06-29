@@ -61,6 +61,11 @@ func newTestGuard(warnPct, killPct int, pressureThreshold float64) (*MemoryGuard
 			defer ms.mu.Unlock()
 			return ms.userRSSKB, nil
 		},
+		getSelfRSSFn: func() (int64, error) {
+			ms.mu.Lock()
+			defer ms.mu.Unlock()
+			return ms.selfRSSKB, nil
+		},
 		getPressureFn: func() (float64, error) {
 			ms.mu.Lock()
 			defer ms.mu.Unlock()
@@ -88,6 +93,7 @@ type mockState struct {
 	mu            sync.Mutex
 	memTotalKB    int64
 	userRSSKB     int64
+	selfRSSKB     int64
 	pressureAvg10 float64
 	largestPid    int
 	largestComm   string
@@ -682,5 +688,69 @@ func TestMemoryGuard_Multiple_Kills(t *testing.T) {
 
 	if killCount > 1 {
 		t.Errorf("expected at most 1 kill per check, got %d", killCount)
+	}
+}
+
+func TestMemoryGuard_WarnIncludesSelfRSS(t *testing.T) {
+	// Proves that the warn-threshold message includes the foci-gw process's own
+	// RSS, so logs distinguish self footprint from the aggregate user RSS.
+	g, ms := newTestGuard(25, 40, 10.0)
+	ms.userRSSKB = ms.memTotalKB * 30 / 100
+	ms.selfRSSKB = 512 * 1024 // 512MB
+	ms.pressureAvg10 = 15.0
+
+	g.checkOnce()
+
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if len(ms.warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(ms.warnings))
+	}
+	if !strings.Contains(ms.warnings[0], "self 512MB") {
+		t.Errorf("warning should contain self RSS: %q", ms.warnings[0])
+	}
+}
+
+func TestMemoryGuard_KillIncludesSelfRSS(t *testing.T) {
+	// Proves that the kill message includes self RSS alongside user total and
+	// the killed process's footprint, so the breakdown is visible post-kill.
+	g, ms := newTestGuard(25, 40, 10.0)
+	ms.userRSSKB = ms.memTotalKB * 50 / 100
+	ms.selfRSSKB = 1024 * 1024 // 1GB
+	ms.pressureAvg10 = 20.0
+	ms.largestPid = 12345
+	ms.largestComm = "node"
+	ms.largestRSS = ms.memTotalKB * 40 / 100
+
+	g.checkOnce()
+
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	foundKill := false
+	for _, w := range ms.warnings {
+		if strings.Contains(w, "KILL") && strings.Contains(w, "self 1024MB") {
+			foundKill = true
+		}
+	}
+	if !foundKill {
+		t.Errorf("expected KILL warning containing self RSS, got: %v", ms.warnings)
+	}
+}
+
+func TestReadSelfRSS(t *testing.T) {
+	// Proves that readSelfRSS reads the calling process's VmRSS from a proc tree
+	// by locating <procDir>/<getpid()>/status, and errors when that file is missing.
+	// Against the real /proc, the value should be positive.
+	got, err := readSelfRSS("/proc")
+	if err != nil {
+		t.Fatalf("readSelfRSS(/proc) error = %v", err)
+	}
+	if got <= 0 {
+		t.Errorf("readSelfRSS(/proc) = %d, want > 0", got)
+	}
+
+	// Missing <pid>/status in a fake proc dir → error.
+	if _, err := readSelfRSS(t.TempDir()); err == nil {
+		t.Error("expected error for missing self status file")
 	}
 }
