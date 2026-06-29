@@ -78,6 +78,26 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 		return err
 	}
 
+	// Remember-flag response (opencode). Distinct from permResponder above:
+	// the third arg is a `remember` bool (persist the decision), not a denial
+	// message — so opencode satisfies THIS interface, not permResponder. A
+	// backend can only satisfy one (Go matches the exact method signature), so
+	// these two blocks never both fire. opencode surfaces Allow/Deny/Always
+	// buttons with Data "allow"/"deny"/"always".
+	type rememberPermResponder interface {
+		RespondToPermission(requestID string, allow bool, remember bool) error
+	}
+	if pr, ok := be.(rememberPermResponder); ok && requestID != "" {
+		remember := choice == "always" || strings.HasPrefix(choice, "allow_always")
+		allow := remember || choice == "allow" || strings.HasPrefix(choice, "allow")
+		log.Debugf("agent/perm", "responding via remember-protocol: reqID=%s choice=%q allow=%v remember=%v", requestID, choice, allow, remember)
+		err := pr.RespondToPermission(requestID, allow, remember)
+		if err != nil {
+			log.Errorf("agent/perm", "RespondToPermission (remember) failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
+		}
+		return err
+	}
+
 	// Keystroke-based response (tmux backend).
 	return be.SendKeystroke(ctx, choice)
 }
