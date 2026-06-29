@@ -444,18 +444,18 @@ func TestServer_Pool_RefcountShutdown(t *testing.T) {
 	// against a real subprocess; here we just pin pool semantics.)
 	resetTestPool(t)
 
-	insertLiveServerForTest("agent-rc")
+	srv := insertLiveServerForTest("agent-rc")
 	// Two acquires → refcount is 2.
 	insertLiveServerForTest("agent-rc")
 
 	// First release: refcount 1, server stays.
-	releaseServer("agent-rc")
+	releaseServer("agent-rc", srv)
 	if _, ok := lookupTestPool("agent-rc"); !ok {
 		t.Error("Server removed from pool after first release (refcount was 2 → 1)")
 	}
 
 	// Second release: refcount 0, server removed (Close spawned in goroutine).
-	releaseServer("agent-rc")
+	releaseServer("agent-rc", srv)
 	if _, ok := lookupTestPool("agent-rc"); ok {
 		t.Error("Server not removed from pool after refcount hit zero")
 	}
@@ -478,10 +478,8 @@ func TestServer_Pool_ReleaseDoesNotBlockOnClose(t *testing.T) {
 		closeSigkillWait = prevKill
 		closeSigtermWait = prevTerm
 	}()
-	_ = srv
-
 	start := time.Now()
-	releaseServer("agent-slow")
+	releaseServer("agent-slow", srv)
 	elapsed := time.Since(start)
 	if elapsed > 50*time.Millisecond {
 		t.Errorf("releaseServer took %s; should return immediately (Close runs in goroutine)", elapsed)
@@ -498,6 +496,159 @@ func TestServer_Pool_ReleaseDoesNotBlockOnClose(t *testing.T) {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("acquire for agent-other blocked on slow close of agent-slow")
+	}
+}
+
+func TestServer_Pool_AcquireEvictsDeadAndRespawns(t *testing.T) {
+	// Verifies the core fix: a DEAD pooled Server is evicted and acquireServer
+	// spawns a fresh one rather than handing the corpse back. Uses the
+	// opc-stub binary so Start runs through its real launch path; the health
+	// probe fails (stub serves no HTTP), so acquireServer returns an error —
+	// but the assertion is about the POOL, not the spawn outcome: the dead
+	// entry must be gone, and a fresh *Server (≠ the dead one) must have been
+	// constructed and attempted.
+	resetTestPool(t)
+
+	// Pool a dead Server (running=false) under agent-dead.
+	dead := newServer("agent-dead", serverConfig{workDir: "/tmp"})
+	dead.refCount = 1
+	dead.running = false // dead
+	serverPoolMu.Lock()
+	serverPool["agent-dead"] = dead
+	serverPoolMu.Unlock()
+
+	if dead.isAlive() {
+		t.Fatal("precondition: dead server should report not alive")
+	}
+
+	cfg := serverConfig{
+		workDir:    t.TempDir(),
+		binaryPath: stubBinary(t),
+		hostname:   "127.0.0.1",
+		port:       0,
+	}
+	// OPC_STUB_EXIT_CODE makes the fresh subprocess exit immediately, so
+	// Start's health probe returns the subprocess-death error promptly
+	// (acquireServer passes context.Background(), so without an early death
+	// the probe would loop forever). We only need the spawn to be ATTEMPTED
+	// — the assertion is about the pool, not Start's success.
+	got, err := acquireServer("agent-dead", cfg, map[string]string{"OPC_STUB_EXIT_CODE": "1"})
+	if err == nil {
+		t.Logf("acquireServer unexpectedly succeeded (got=%p) — fine for this test", got)
+	}
+	if got == dead {
+		t.Fatal("acquireServer returned the DEAD pooled server — the bug is not fixed")
+	}
+	// The dead entry must no longer be the pooled server: it was either
+	// deleted (spawn failed before re-insert) or replaced by the fresh one.
+	if cur, ok := lookupTestPool("agent-dead"); ok && cur == dead {
+		t.Fatal("dead server still pooled after acquireServer — not evicted")
+	}
+}
+
+func TestServer_Pool_AcquireReusesLiveServer(t *testing.T) {
+	// Sanity counterpart: a LIVE pooled Server is reused (refcount bumped),
+	// never respawned. Pins the happy path so the eviction fix doesn't
+	// over-evict.
+	resetTestPool(t)
+
+	live := insertLiveServerForTest("agent-live") // running=true, refCount=1
+	got, err := acquireServer("agent-live", serverConfig{}, nil)
+	if err != nil {
+		t.Fatalf("acquireServer on live server: %v", err)
+	}
+	if got != live {
+		t.Error("acquireServer did not reuse the live pooled server")
+	}
+	if live.refCount != 2 {
+		t.Errorf("refCount = %d, want 2 after second acquire", live.refCount)
+	}
+}
+
+func TestServer_Pool_ReleaseStaleServerIsNoOp(t *testing.T) {
+	// THE CORRUPTION CASE. Server A pooled with refCount=2 (sessions S1,S2).
+	// A dies → finalizeExit evicts A. S3 acquires → fresh Server B pooled,
+	// refCount=1. Then S1 releases its stale handle on A: releaseServer must
+	// be a NO-OP — B's refCount stays 1, B is NOT closed/evicted.
+	resetTestPool(t)
+
+	// Server A, two sessions.
+	a := insertLiveServerForTest("agent-corrupt") // refCount=1
+	insertLiveServerForTest("agent-corrupt")      // refCount=2
+	if a.refCount != 2 {
+		t.Fatalf("precondition: A.refCount = %d, want 2", a.refCount)
+	}
+
+	// A dies → finalizeExit runs, clears running and evicts A from the pool.
+	a.finalizeExit(errors.New("subprocess died"))
+	if a.isAlive() {
+		t.Error("A should report not alive after finalizeExit")
+	}
+	if cur, ok := lookupTestPool("agent-corrupt"); ok && cur == a {
+		t.Fatal("finalizeExit did not evict dead server A from the pool")
+	}
+
+	// S3 acquires → a fresh Server B takes A's slot.
+	b := insertLiveServerForTest("agent-corrupt") // fresh: refCount=1
+	if b == a {
+		t.Fatal("expected a fresh Server B after A's eviction")
+	}
+	if b.refCount != 1 {
+		t.Fatalf("B.refCount = %d, want 1", b.refCount)
+	}
+
+	// S1 releases its STALE handle on A. Pool holds B≠A, so this must be a
+	// no-op: B's refcount unchanged, B still pooled (not closed).
+	releaseServer("agent-corrupt", a)
+
+	if b.refCount != 1 {
+		t.Errorf("B.refCount = %d after stale release of A; want 1 (corruption!)", b.refCount)
+	}
+	if cur, ok := lookupTestPool("agent-corrupt"); !ok || cur != b {
+		t.Error("releasing stale A evicted/replaced the live Server B from the pool (corruption!)")
+	}
+}
+
+func TestServer_FinalizeExit_EvictsFromPool(t *testing.T) {
+	// Verifies finalizeExit proactively removes the dead Server from the
+	// pool, so it's gone before the next acquireServer even runs.
+	resetTestPool(t)
+
+	s := insertLiveServerForTest("agent-evict") // pooled, running=true
+	if _, ok := lookupTestPool("agent-evict"); !ok {
+		t.Fatal("precondition: server should be pooled")
+	}
+
+	s.finalizeExit(errors.New("subprocess died"))
+
+	if _, ok := lookupTestPool("agent-evict"); ok {
+		t.Error("finalizeExit did not evict the dead server from the pool")
+	}
+}
+
+func TestServer_FinalizeExit_DoesNotEvictSuccessor(t *testing.T) {
+	// Verifies the guard in finalizeExit: if a respawn already replaced the
+	// dead server in the pool, finalizeExit must NOT delete the successor.
+	resetTestPool(t)
+
+	dead := insertLiveServerForTest("agent-succ") // pooled
+	// Simulate a respawn having already taken the slot: replace the pooled
+	// entry with a different Server sharing the same agentID.
+	successor := newServer("agent-succ", serverConfig{workDir: "/tmp"})
+	successor.running = true
+	successor.refCount = 1
+	serverPoolMu.Lock()
+	serverPool["agent-succ"] = successor
+	serverPoolMu.Unlock()
+
+	dead.finalizeExit(errors.New("subprocess died"))
+
+	cur, ok := lookupTestPool("agent-succ")
+	if !ok {
+		t.Fatal("finalizeExit evicted the successor (pool empty) — guard failed")
+	}
+	if cur != successor {
+		t.Error("pooled server is not the successor after dead.finalizeExit")
 	}
 }
 

@@ -41,9 +41,16 @@ var (
 func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Server, error) {
 	serverPoolMu.Lock()
 	if s, ok := serverPool[agentID]; ok {
-		s.refCount++
-		serverPoolMu.Unlock()
-		return s, nil
+		if s.isAlive() {
+			s.refCount++
+			serverPoolMu.Unlock()
+			return s, nil
+		}
+		// Dead pooled entry (the subprocess died but the Server was never
+		// evicted — the bug this fixes). Evict it and fall through to spawn a
+		// fresh one rather than handing back a Server whose port no longer
+		// answers ("connection refused" forever, with no respawn).
+		delete(serverPool, agentID)
 	}
 	serverPoolMu.Unlock()
 
@@ -69,15 +76,24 @@ func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Se
 	return s, nil
 }
 
-// releaseServer decrements the refcount for agentID's Server. When the
+// releaseServer decrements the refcount for the caller's Server s. When the
 // refcount hits zero, the Server is removed from the pool and Close is
 // called in a goroutine. Pool mutex is released before Close so a slow
 // shutdown doesn't block unrelated agents — matches the plan's
 // concurrency note (§3.2).
-func releaseServer(agentID string) {
+//
+// releaseServer is POINTER-AWARE: it only acts when the pooled entry for
+// agentID is still s. If s was already evicted (it died and was removed by
+// finalizeExit/acquireServer) and a fresh Server took its place, a stale
+// session releasing its old s must NOT decrement or Close the replacement —
+// doing so would corrupt the live Server's refcount and could close a server
+// other sessions are still using.
+func releaseServer(agentID string, s *Server) {
 	serverPoolMu.Lock()
-	s, ok := serverPool[agentID]
-	if !ok {
+	cur, ok := serverPool[agentID]
+	if !ok || cur != s {
+		// Our Server was already evicted/replaced. Leave the current pooled
+		// Server's refcount untouched.
 		serverPoolMu.Unlock()
 		return
 	}

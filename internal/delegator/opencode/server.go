@@ -48,8 +48,8 @@ type Server struct {
 
 	// Lifecycle (Step 3).
 	mu           sync.Mutex //nolint:unused // Step 3 lifecycle
-	refCount     int        //nolint:unused // Step 3 lifecycle (read by pool via acquireServer/releaseServer)
-	running      bool       //nolint:unused // Step 3 lifecycle
+	refCount     int        // read/written by pool via acquireServer/releaseServer
+	running      bool       // set by Start/finalizeExit; read by isAlive (pool liveness check)
 	closing      bool       //nolint:unused // Step 3 lifecycle
 	finalizeOnce sync.Once  //nolint:unused // Step 3 lifecycle
 	closeOnce    sync.Once  //nolint:unused // Step 3 lifecycle
@@ -71,6 +71,17 @@ type Server struct {
 	// StartOptions.Env. Only the first session's env takes effect —
 	// the subprocess is shared (v1 limitation, Step 17).
 	extraEnv map[string]string
+}
+
+// isAlive reports whether the Server's subprocess is believed to be running.
+// The pool consults this before handing back a pooled Server so a dead one is
+// evicted + respawned instead of reused. Backed by the running flag, which
+// finalizeExit clears on ANY death path (including subscriber-EOF, which can
+// fire before cmd.Wait reaps the process) — broader than the done channel.
+func (s *Server) isAlive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running
 }
 
 // newServer constructs a Server from cfg without starting it. Step 3's
