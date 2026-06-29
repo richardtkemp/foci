@@ -222,3 +222,47 @@ func TestAllSecretsPresent(t *testing.T) {
 		t.Errorf("expected no missing secrets, got %d", len(results))
 	}
 }
+
+func TestMissingPlatformSecretDowngradedWhenAppPlatformEnabled(t *testing.T) {
+	// Proves that when the app (Android) platform is enabled globally, an
+	// agent's missing telegram/discord bot secrets downgrade to INFO — the
+	// agent is reachable via the app even with no bot tokens. And, crucially,
+	// that without the app platform they still WARN (the check isn't vacuous —
+	// app is config-gated, not default-on).
+	cfg := &config.Config{
+		Platforms: []config.PlatformConfig{
+			{ID: "app"},
+		},
+		Agents: []config.AgentConfig{
+			{
+				ID: "arnix",
+				Platforms: []config.PlatformConfig{
+					{ID: "telegram", Bot: "arnix"},
+					{ID: "discord", Bot: "arnix"},
+				},
+			},
+		},
+	}
+	store := mapStore{} // no secrets
+
+	seen := 0
+	for _, ms := range checkMissingSecrets(cfg, store) {
+		if ms.ref.Key == "telegram.arnix" || ms.ref.Key == "discord.arnix" {
+			seen++
+			if !ms.downgraded {
+				t.Errorf("expected %q to be downgraded (app platform enabled)", ms.ref.Key)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("expected telegram.arnix + discord.arnix reported missing, saw %d", seen)
+	}
+
+	// Without the app platform, the same secrets must still WARN.
+	cfg.Platforms = nil
+	for _, ms := range checkMissingSecrets(cfg, store) {
+		if (ms.ref.Key == "telegram.arnix" || ms.ref.Key == "discord.arnix") && ms.downgraded {
+			t.Errorf("without app platform, %q should NOT be downgraded", ms.ref.Key)
+		}
+	}
+}
