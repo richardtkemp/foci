@@ -84,53 +84,53 @@ func wireAgentPlatformCallbacks(
 	// The msg ID is stored so the completion notification can edit in-place.
 	var compactionMsgIDs sync.Map // sessionKey → msgID string
 	ag.CompactionStartFunc.Add(func(sk, msg string) {
-		if c := connMgr.ForSession(sk); c != nil {
-			if resolved.PlatformNotify(c.PlatformName()).CompactionNotify {
-				if msgID := c.SendNotificationDirect(msg); msgID != "" {
-					compactionMsgIDs.Store(sk, msgID)
-				}
-			}
+		// Route to the connection owning THIS session, not a blind broadcast to the
+		// default chat. ForSessionOrPrimary is platform-aware (returns the owning
+		// platform's primary even for a non-default user), and a SessionNotifier
+		// delivers to that user's chat rather than the default one (#911).
+		c := connMgr.ForSessionOrPrimary(sk, acfg.ID)
+		if c == nil || !resolved.PlatformNotify(c.PlatformName()).CompactionNotify {
+			return
+		}
+		var msgID string
+		if sn, ok := c.(platform.SessionNotifier); ok {
+			msgID = sn.SendNotificationToSession(sk, msg)
 		} else {
-			for _, conn := range connMgr.AllForAgent(acfg.ID) {
-				if resolved.PlatformNotify(conn.PlatformName()).CompactionNotify {
-					if msgID := conn.SendNotificationDirect(msg); msgID != "" {
-						compactionMsgIDs.Store(sk, msgID)
-					}
-				}
-			}
+			msgID = c.SendNotificationDirect(msg)
+		}
+		if msgID != "" {
+			compactionMsgIDs.Store(sk, msgID)
 		}
 	})
 	ag.CompactionNotifyFunc.Add(func(sk, msg string) {
+		c := connMgr.ForSessionOrPrimary(sk, acfg.ID)
+		if c == nil || !resolved.PlatformNotify(c.PlatformName()).CompactionNotify {
+			return
+		}
 		// Try to edit the ⏳ start message in-place rather than sending a new one.
+		// The edit must target the SESSION's chat (#911): editing in the default
+		// chat would hit the wrong chat and Telegram would reject the msgID.
 		if rawID, ok := compactionMsgIDs.LoadAndDelete(sk); ok {
 			msgID := rawID.(string)
-			c := connMgr.ForSession(sk)
-			if c == nil {
-				if conns := connMgr.AllForAgent(acfg.ID); len(conns) > 0 {
-					c = conns[0]
+			if sn, ok := c.(platform.SessionNotifier); ok {
+				if err := sn.EditNotificationInSession(sk, msgID, msg); err == nil {
+					log.Debugf("agent", "compaction edit delivered for session=%s msgID=%s", sk, msgID)
+					return
 				}
-			}
-			if c != nil {
-				if bs, ok := c.(platform.ButtonSender); ok {
-					if err := bs.EditMessageText(msgID, msg); err == nil {
-						log.Debugf("agent", "compaction edit delivered for session=%s msgID=%s", sk, msgID)
-						return
-					}
-					log.Debugf("agent", "compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
+				log.Debugf("agent", "compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
+			} else if bs, ok := c.(platform.ButtonSender); ok {
+				if err := bs.EditMessageText(msgID, msg); err == nil {
+					log.Debugf("agent", "compaction edit delivered for session=%s msgID=%s", sk, msgID)
+					return
 				}
+				log.Debugf("agent", "compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
 			}
 		}
-		// Fallback: send as a new message.
-		if c := connMgr.ForSession(sk); c != nil {
-			if resolved.PlatformNotify(c.PlatformName()).CompactionNotify {
-				c.SendNotification(msg)
-			}
+		// Fallback: send as a new message, session-aware where supported.
+		if sn, ok := c.(platform.SessionNotifier); ok {
+			sn.SendNotificationToSession(sk, msg)
 		} else {
-			for _, conn := range connMgr.AllForAgent(acfg.ID) {
-				if resolved.PlatformNotify(conn.PlatformName()).CompactionNotify {
-					conn.SendNotification(msg)
-				}
-			}
+			c.SendNotification(msg)
 		}
 	})
 
