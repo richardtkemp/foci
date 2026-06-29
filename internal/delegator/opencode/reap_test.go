@@ -97,16 +97,17 @@ func splitArgs(s string) []string {
 	return out
 }
 
-func TestIsOpencodeServe(t *testing.T) {
+func TestIsOpencodeProcess(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 		want bool
 	}{
-		{"exact match", []string{"opencode", "serve"}, true},
-		{"with flags", []string{"opencode", "serve", "--port", "44095", "--hostname", "127.0.0.1"}, true},
-		{"full path", []string{"/usr/local/bin/opencode", "serve", "--port", "1234"}, true},
-		{"wrong subcommand", []string{"opencode", "chat"}, false},
+		{"serve", []string{"opencode", "serve"}, true},
+		{"serve with flags", []string{"opencode", "serve", "--port", "44095", "--hostname", "127.0.0.1"}, true},
+		{"serve full path", []string{"/usr/local/bin/opencode", "serve", "--port", "1234"}, true},
+		{"run LSP", []string{"/home/foci/.opencode/bin/opencode", "run", "/home/foci/.local/share/opencode/bin/node_modules/bash-language-server/out/cli.js", "start"}, true},
+		{"chat", []string{"opencode", "chat"}, true},
 		{"wrong binary", []string{"python3", "serve"}, false},
 		{"single arg", []string{"opencode"}, false},
 		{"empty", []string{}, false},
@@ -121,7 +122,7 @@ func TestIsOpencodeServe(t *testing.T) {
 				cl = append(cl, []byte(arg)...)
 			}
 			cl = append(cl, 0)
-			if got := isOpencodeServe(cl); got != tt.want {
+			if got := isOpencodeProcess(cl); got != tt.want {
 				t.Errorf("isOpencodeServe(%v) = %v, want %v", tt.args, got, tt.want)
 			}
 		})
@@ -160,18 +161,19 @@ func TestFindOrphanedServers(t *testing.T) {
 		{pid: 500, ppid: 1, uid: "1000", cmdline: "python3 -m http.server"},
 		{pid: 600, ppid: 1, uid: "1000", cmdline: "opencode chat"},
 		{pid: 700, ppid: 1, uid: "1000", cmdline: "opencode serve"},
+		{pid: 800, ppid: 1, uid: "1000", cmdline: "/home/foci/.opencode/bin/opencode run /home/foci/.local/share/opencode/bin/node_modules/bash-language-server/out/cli.js start"},
 	})
 
 	orphans := findOrphanedServers(dir, 1000)
-	if len(orphans) != 3 {
-		t.Fatalf("got %d orphans %v, want 3", len(orphans), orphans)
+	if len(orphans) != 5 {
+		t.Fatalf("got %d orphans %v, want 5", len(orphans), orphans)
 	}
 
 	seen := map[int]bool{}
 	for _, pid := range orphans {
 		seen[pid] = true
 	}
-	for _, want := range []int{100, 200, 700} {
+	for _, want := range []int{100, 200, 600, 700, 800} {
 		if !seen[want] {
 			t.Errorf("expected pid %d in orphans, got %v", want, orphans)
 		}
