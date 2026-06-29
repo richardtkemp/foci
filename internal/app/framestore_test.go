@@ -84,7 +84,7 @@ func TestFrameStore_AppendDrainsOnClose(t *testing.T) {
 		t.Fatalf("newFrameStore: %v", err)
 	}
 	for i := int64(1); i <= 3; i++ {
-		s.Append("c1", i, "w", time.Now().UnixMilli(), true)
+		s.Append("c1", "clutch", i, "w", time.Now().UnixMilli(), true)
 	}
 	s.Close() // drains the queue + closes
 

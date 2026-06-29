@@ -42,6 +42,7 @@ type frameStore struct {
 // frameWrite is one pending durable append.
 type frameWrite struct {
 	convID  string
+	agentID string
 	seq     int64
 	wire    string
 	sentMs  int64
@@ -65,6 +66,7 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 			wire     TEXT    NOT NULL,
 			sent_ms  INTEGER NOT NULL,
 			visible  INTEGER NOT NULL DEFAULT 1,
+			agent_id TEXT    NOT NULL DEFAULT '',
 			PRIMARY KEY (conv_id, seq)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_frames_sent ON app_frames(sent_ms)`,
@@ -73,6 +75,10 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Migrate an existing DB to carry agent_id (which conv belongs to which agent —
+	// needed to rebuild bindings at startup). Errors ignored: a "duplicate column"
+	// means it is already present (the repo's ALTER-ADD-COLUMN migration idiom).
+	_, _ = db.Exec(`ALTER TABLE app_frames ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`)
 	s := &frameStore{
 		db:      db,
 		ttl:     ttl,
@@ -87,11 +93,11 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 // Append durably persists one sent frame. Non-blocking in the common case; if the
 // writer is saturated it writes synchronously rather than drop (durability beats
 // latency here). nil receiver is a no-op so a store-less hub (no data_dir) is safe.
-func (s *frameStore) Append(convID string, seq int64, wire string, sentMs int64, visible bool) {
+func (s *frameStore) Append(convID, agentID string, seq int64, wire string, sentMs int64, visible bool) {
 	if s == nil {
 		return
 	}
-	w := frameWrite{convID: convID, seq: seq, wire: wire, sentMs: sentMs, visible: visible}
+	w := frameWrite{convID: convID, agentID: agentID, seq: seq, wire: wire, sentMs: sentMs, visible: visible}
 	select {
 	case s.writeCh <- w:
 	default:
@@ -127,11 +133,65 @@ func (s *frameStore) insert(w frameWrite) {
 		v = 1
 	}
 	if _, err := s.db.Exec(
-		`INSERT OR REPLACE INTO app_frames (conv_id, seq, wire, sent_ms, visible) VALUES (?, ?, ?, ?, ?)`,
-		w.convID, w.seq, w.wire, w.sentMs, v,
+		`INSERT OR REPLACE INTO app_frames (conv_id, seq, wire, sent_ms, visible, agent_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		w.convID, w.seq, w.wire, w.sentMs, v, w.agentID,
 	); err != nil {
 		log.Errorf("app", "frame store insert (conv=%s seq=%d): %v", w.convID, w.seq, err)
 	}
+}
+
+// restorableConv identifies a conversation to rebuild a binding for at startup.
+type restorableConv struct {
+	convID  string
+	agentID string
+}
+
+// RestorableConvs returns the conversations that should have their bindings
+// rebuilt at startup: those with at least one VISIBLE frame (a real message, not
+// transient typing) and a known agent_id. Archived conversations have had their
+// frames purged (PurgeConv), so presence here IS the "non-archived & active"
+// signal — no archived flag needed (#app-binding-restore). Legacy rows with an
+// empty agent_id (pre-migration) are skipped: their binding can't be rebuilt
+// without the agent, and they recover lazily on the app's next open.
+func (s *frameStore) RestorableConvs() []restorableConv {
+	if s == nil {
+		return nil
+	}
+	rows, err := s.db.Query(
+		`SELECT DISTINCT conv_id, agent_id FROM app_frames WHERE visible = 1 AND agent_id <> ''`,
+	)
+	if err != nil {
+		log.Errorf("app", "frame store RestorableConvs: %v", err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	var out []restorableConv
+	for rows.Next() {
+		var c restorableConv
+		if err := rows.Scan(&c.convID, &c.agentID); err != nil {
+			log.Errorf("app", "frame store RestorableConvs scan: %v", err)
+			return out
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// PurgeConv deletes every frame for a conversation. Called when a session is
+// archived: removing its durable frames is what excludes it from the startup
+// binding restore (delete-on-archive — presence of frames is the restore signal,
+// so there is no archived flag to store). Returns rows removed.
+func (s *frameStore) PurgeConv(convID string) int64 {
+	if s == nil {
+		return 0
+	}
+	res, err := s.db.Exec(`DELETE FROM app_frames WHERE conv_id = ?`, convID)
+	if err != nil {
+		log.Errorf("app", "frame store PurgeConv (conv=%s): %v", convID, err)
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return n
 }
 
 // MaxSeq returns the highest persisted seq for a conversation (0 if none). Used
