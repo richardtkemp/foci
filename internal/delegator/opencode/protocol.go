@@ -206,6 +206,24 @@ type Permission struct {
 	} `json:"time"`
 }
 
+// PermissionRequest is the wire shape carried by permission.asked SSE events
+// (opencode 1.2.x). It replaces the legacy Permission (permission.updated, absent
+// in 1.2.x): there is no Title (foci builds one from Permission + Patterns), the
+// kind moves from Type to Permission, Pattern→Patterns ([]string), and
+// MessageID/CallID nest under Tool. Verified against the live 1.2.18 OpenAPI.
+type PermissionRequest struct {
+	ID         string          `json:"id"`        // ^per.* — the requestID for /permission/{id}/reply
+	SessionID  string          `json:"sessionID"` // ^ses.*
+	Permission string          `json:"permission"` // kind: "bash"|"edit"|"question"|...
+	Patterns   []string        `json:"patterns"`
+	Metadata   json.RawMessage `json:"metadata"` // kind-specific (question schema for "question")
+	Always     []string        `json:"always"`
+	Tool       struct {
+		MessageID string `json:"messageID"`
+		CallID    string `json:"callID"`
+	} `json:"tool"`
+}
+
 // PermissionType constants — the kinds foci dispatches on. The full list
 // is at https://opencode.ai/docs/permissions/#available-permissions.
 const (
@@ -264,7 +282,8 @@ const (
 	EventMessageRemoved      = "message.removed"
 	EventMessagePartUpdated  = "message.part.updated"
 	EventMessagePartRemoved  = "message.part.removed"
-	EventPermissionUpdated   = "permission.updated"
+	EventPermissionUpdated   = "permission.updated" // legacy (older opencode)
+	EventPermissionAsked     = "permission.asked"   // opencode 1.2.x permission prompt
 	EventPermissionReplied   = "permission.replied"
 	EventFileEdited          = "file.edited"
 	EventFileWatcherUpdated  = "file.watcher.updated"

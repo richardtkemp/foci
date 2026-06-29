@@ -87,6 +87,16 @@ func (b *Backend) handleEvent(ev rawEvent) {
 		}
 		b.onPermissionUpdated(p.Permission)
 
+	case EventPermissionAsked:
+		// opencode 1.2.x: properties IS the PermissionRequest (no nested
+		// `.permission` wrapper, unlike the legacy permission.updated).
+		var req PermissionRequest
+		if err := json.Unmarshal(ev.Properties, &req); err != nil {
+			log.Warnf(b.logComponent(), "handlers: decode permission.asked: %v", err)
+			return
+		}
+		b.onPermissionAsked(req)
+
 	case EventPermissionReplied:
 		var p eventPermissionReplied
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
@@ -495,6 +505,52 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 	default:
 		log.Warnf(component, "session error: %s", err.Name)
 	}
+
+	// End any in-flight turn. A session error (including the synthetic one
+	// finalizeExit raises when the opencode subprocess dies) means no
+	// session.idle is coming, so without this the Backend's turnActive stays
+	// true forever: foci then routes every new message as a steer into the dead
+	// turn (never starting a fresh turn → never respawning the server), while the
+	// agent layer shows no in-flight turn (so /stop reports nothing to cancel).
+	// Completing the turn here re-couples the two markers and lets the session
+	// recover (#arnix-perm).
+	b.failInFlightTurn(err.Name)
+}
+
+// failInFlightTurn force-completes the current turn after an abnormal end
+// (session error / subprocess death). It mirrors onSessionIdle's completion but
+// delivers the accumulated text (or the error name) rather than waiting for a
+// session.idle that will never arrive. No-op if no turn is active.
+func (b *Backend) failInFlightTurn(reason string) {
+	b.turnMu.Lock()
+	if !b.turnActive {
+		b.turnMu.Unlock()
+		return
+	}
+	turn := b.turnEvents
+	ch := b.turnResultCh
+	text := b.turnText.String()
+	b.turnEvents = nil
+	b.turnActive = false
+	b.turnResultCh = nil
+	b.turnMu.Unlock()
+
+	if text == "" {
+		text = "⚠️ opencode session ended unexpectedly (" + reason + ")"
+	}
+	if turn != nil && turn.OnTurnComplete != nil {
+		turn.OnTurnComplete(&delegator.TurnResult{Text: text})
+	}
+	if ch != nil {
+		select {
+		case ch <- &ResultMessage{Subtype: "error", Result: text}:
+		default:
+		}
+	}
+	if b.typingFunc != nil {
+		b.typingFunc(false)
+	}
+	log.Debugf(b.logComponent(), "failInFlightTurn: completed in-flight turn after %s", reason)
 }
 
 // ---------------------------------------------------------------------------

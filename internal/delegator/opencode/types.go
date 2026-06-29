@@ -41,4 +41,10 @@ type pendingPermission struct {
 	permType string          // "bash"|"edit"|"question"|...
 	title    string
 	metadata json.RawMessage // question schema for type=="question"
+	// replyNext selects the reply transport: true for permission.asked
+	// (opencode 1.2.x — POST /permission/{id}/reply {reply:once|always|reject});
+	// false for the legacy permission.updated (POST /session/:id/permissions/:id
+	// {response:allow|deny}). Set per-event so foci handles BOTH opencode
+	// permission models (#arnix-perm).
+	replyNext bool
 }
