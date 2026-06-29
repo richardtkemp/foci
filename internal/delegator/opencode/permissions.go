@@ -63,13 +63,35 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 	// Store under permMu so RespondToPermission (caller's goroutine) and the
 	// dispatcher goroutine don't race.
 	b.permMu.Lock()
+	// Dedup: if a regular (non-question) permission for the SAME target is
+	// already pending and surfaced, mark this one an alias instead of raising a
+	// second identical prompt. opencode emits one permission object per tool
+	// call, so two calls touching the same dir produce two asks in the same
+	// instant; without this the user gets duplicate prompts. We still answer
+	// every alias (see RespondToPermission) — opencode blocks each separately.
+	if pp.permType != PermQuestion {
+		key := permDedupKey(pp)
+		for _, ex := range b.pendingPerms {
+			if ex.aliasOf == "" && ex.permType != PermQuestion && permDedupKey(*ex) == key {
+				pp.aliasOf = ex.id
+				break
+			}
+		}
+	}
 	stored := pp
 	b.pendingPerms[pp.id] = &stored
 	b.permMu.Unlock()
 
 	// Register in the OutstandingRegistry so WaitForPermission blocks and the
-	// onEmpty drain hook fires when resolved.
+	// onEmpty drain hook fires when resolved. Aliases register too — opencode
+	// is genuinely waiting on them; the turn isn't done until all are replied.
 	b.outstanding.Register(pp.id, delegator.OutstandingPermission)
+
+	// Aliased duplicate: tracked + answered with its primary, but no 2nd prompt.
+	if stored.aliasOf != "" {
+		log.Debugf(b.logComponent(), "permission %s deduped: alias of %s (target=%q)", pp.id, stored.aliasOf, pp.title)
+		return
+	}
 
 	// Route question-type permissions to the question path.
 	if pp.permType == PermQuestion {
@@ -117,17 +139,55 @@ func (b *Backend) onPermissionReplied(sessionID, permissionID, response string) 
 // RespondToPermission sends the user's permission response to opencode
 // and resolves the outstanding prompt. `allow` selects allow vs deny;
 // `remember` maps to opencode's "remember this decision" flag.
+//
+// The user only ever sees the primary prompt for a deduped group, so the
+// single decision is fanned out to the primary AND every alias pointing at it
+// — each is a distinct opencode permission object blocking its own tool call.
 func (b *Backend) RespondToPermission(permID string, allow bool, remember bool) error {
 	b.permMu.Lock()
 	pp, ok := b.pendingPerms[permID]
-	replyNext := ok && pp.replyNext
-	b.permMu.Unlock()
 	if !ok {
+		b.permMu.Unlock()
 		return fmt.Errorf("opencode: no pending permission with ID %q", permID)
 	}
+	// Resolve to the group root (in case permID is itself an alias) and gather
+	// the whole group: the root plus every alias pointing at it.
+	root := permID
+	if pp.aliasOf != "" {
+		root = pp.aliasOf
+	}
+	var group []pendingPermission
+	for id, ex := range b.pendingPerms {
+		if id == root || ex.aliasOf == root {
+			group = append(group, *ex)
+		}
+	}
+	b.permMu.Unlock()
 
-	var err error
-	if replyNext {
+	// Reply to every member with the same decision. Resolve/delete only the
+	// members that succeed, so a failed POST leaves that one tracked.
+	var firstErr error
+	for _, member := range group {
+		if err := b.sendPermissionReply(member, allow, remember); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			log.Warnf(b.logComponent(), "reply to permission %s failed: %v", member.id, err)
+			continue
+		}
+		b.outstanding.Resolve(member.id)
+		b.permMu.Lock()
+		delete(b.pendingPerms, member.id)
+		b.permMu.Unlock()
+	}
+	return firstErr
+}
+
+// sendPermissionReply POSTs a single permission decision to opencode, choosing
+// the transport from the permission's replyNext flag. Does not touch
+// outstanding/pendingPerms — the caller owns lifecycle cleanup.
+func (b *Backend) sendPermissionReply(pp pendingPermission, allow, remember bool) error {
+	if pp.replyNext {
 		// opencode 1.2.x: POST /permission/{id}/reply { reply }. allow+remember →
 		// "always" (persist the rule), allow → "once", deny → "reject".
 		reply := "reject"
@@ -137,26 +197,21 @@ func (b *Backend) RespondToPermission(permID string, allow bool, remember bool) 
 				reply = "always"
 			}
 		}
-		err = b.replyPermissionNext(permID, reply)
-	} else {
-		// Legacy: POST /session/:id/permissions/:permID { response, remember? }.
-		response := "deny"
-		if allow {
-			response = "allow"
-		}
-		err = b.postPermissionResponse(permID, response, remember)
+		return b.replyPermissionNext(pp.id, reply)
 	}
-	if err != nil {
-		return err
+	// Legacy: POST /session/:id/permissions/:permID { response, remember? }.
+	response := "deny"
+	if allow {
+		response = "allow"
 	}
+	return b.postPermissionResponse(pp.id, response, remember)
+}
 
-	// Clean up.
-	b.outstanding.Resolve(permID)
-	b.permMu.Lock()
-	delete(b.pendingPerms, permID)
-	b.permMu.Unlock()
-
-	return nil
+// permDedupKey identifies a permission's target for dedup: same type + same
+// title (the title encodes the permission patterns for permission.asked and the
+// free-form title for legacy permission.updated).
+func permDedupKey(pp pendingPermission) string {
+	return pp.permType + "\x00" + pp.title
 }
 
 // replyPermissionNext replies to a permission.asked request via opencode 1.2.x's

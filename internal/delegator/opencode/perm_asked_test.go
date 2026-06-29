@@ -94,6 +94,84 @@ func TestRespondToPermission_Asked_RepliesViaNewEndpoint(t *testing.T) {
 	}
 }
 
+// TestPermissionAsked_DedupesSameTarget proves that two distinct permission
+// objects for the SAME target (opencode raises one per tool call) surface only
+// ONE prompt, and that answering it fans the decision out to BOTH opencode
+// permissions — each blocks its own tool call, so both must be replied to.
+func TestPermissionAsked_DedupesSameTarget(t *testing.T) {
+	b, rec := newPermTestBackend(t)
+
+	var prompts int
+	rec.promptMu.Lock()
+	b.permPromptFn = func(id, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		rec.promptMu.Lock()
+		prompts++
+		rec.promptMu.Unlock()
+	}
+	rec.promptMu.Unlock()
+
+	// Two distinct IDs, identical target (kind + patterns) — the arnix runtime.
+	target := PermissionRequest{Permission: PermExternalDirectory, Patterns: []string{"/home/rich/git/foci/*"}, SessionID: "sess-perm"}
+	asked1 := target
+	asked1.ID = "per-A"
+	asked2 := target
+	asked2.ID = "per-B"
+	b.onPermissionAsked(asked1)
+	b.onPermissionAsked(asked2)
+
+	rec.promptMu.Lock()
+	gotPrompts := prompts
+	rec.promptMu.Unlock()
+	if gotPrompts != 1 {
+		t.Fatalf("surfaced %d prompts, want 1 (dedup)", gotPrompts)
+	}
+
+	// Both must still be registered as outstanding (opencode blocks each).
+	if n := b.outstanding.Len(); n != 2 {
+		t.Fatalf("outstanding = %d, want 2 (primary + alias both block)", n)
+	}
+
+	// The user answers the primary (per-A). Both opencode permissions must get a
+	// reply POST, and both must be cleared.
+	if err := b.RespondToPermission("per-A", true, true); err != nil {
+		t.Fatalf("RespondToPermission: %v", err)
+	}
+
+	rec.mu.Lock()
+	var replied []string
+	for _, req := range rec.requests {
+		if strings.HasSuffix(req.Path, "/reply") {
+			replied = append(replied, req.Path)
+		}
+	}
+	rec.mu.Unlock()
+	if len(replied) != 2 {
+		t.Fatalf("got %d reply POSTs %v, want 2 (one per group member)", len(replied), replied)
+	}
+	wantA, wantB := false, false
+	for _, p := range replied {
+		switch p {
+		case "/permission/per-A/reply":
+			wantA = true
+		case "/permission/per-B/reply":
+			wantB = true
+		}
+	}
+	if !wantA || !wantB {
+		t.Errorf("reply paths = %v, want both per-A and per-B", replied)
+	}
+
+	if n := b.outstanding.Len(); n != 0 {
+		t.Errorf("outstanding = %d after answer, want 0", n)
+	}
+	b.permMu.Lock()
+	left := len(b.pendingPerms)
+	b.permMu.Unlock()
+	if left != 0 {
+		t.Errorf("pendingPerms = %d after answer, want 0", left)
+	}
+}
+
 // TestFailInFlightTurn_CompletesStuckTurn proves an abnormal session end clears
 // turnActive and fires OnTurnComplete, so the Backend doesn't wedge with a
 // permanently in-flight turn (the no-respawn / stop-desync bug, #arnix-perm).
