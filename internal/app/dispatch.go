@@ -9,6 +9,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
+	"foci/internal/dispatch"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
@@ -438,6 +439,32 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
+
+	// Slash-command interception: if the text is a routable command, divert to
+	// the command dispatch path instead of enqueuing an agent turn. This mirrors
+	// Telegram/Discord's interception pipeline — without it, "/misc pprof on"
+	// would start a turn (firing a typing indicator) and be sent to the LLM as
+	// a user message rather than executed as a command. dispatchCommand echoes
+	// the command, dispatches it, and sends the response — no turn, no typing.
+	if text != "" && text[0] == '/' {
+		aid := agentID
+		if aid == "" {
+			aid = h.defaultAgentID()
+		}
+		if conn := h.PrimaryBot(aid); conn != nil && conn.commands != nil {
+			if dispatch.IsRoutableCommand(text, conn.commands) {
+				name, args, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
+				h.routeCommand(client, fap.Command{
+					ConversationID: convID,
+					AgentID:        agentID,
+					Name:           name,
+					Args:           args,
+				})
+				return
+			}
+		}
+	}
+
 	client.mu.Lock()
 	deviceID := client.deviceID
 	client.mu.Unlock()
