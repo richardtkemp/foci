@@ -269,7 +269,7 @@ func TestFCMSend_PostsDataMessage(t *testing.T) {
 		baseURL:   srv.URL,
 		ctx:       context.Background(),
 	}
-	p.send("device-token", "conv-1", "a preview")
+	p.send("device-token", pushPayload{ConvID: "conv-1", Preview: "a preview"})
 
 	msg, _ := gotBody["message"].(map[string]any)
 	if msg == nil || msg["token"] != "device-token" {

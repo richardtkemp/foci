@@ -947,7 +947,7 @@ func TestOfflineSend_FiresPushForVisibleFramesOnly(t *testing.T) {
 	b := &convBinding{
 		convID:        "conv-1",
 		seen:          make(map[string]struct{}),
-		notifyOffline: func(_, preview string) { got = append(got, preview) },
+		notifyOffline: func(p pushPayload) { got = append(got, p.Preview) },
 	} // client nil → offline
 	b.send(fap.ServerMessage{ConversationID: "conv-1", MessageID: "m", Role: "agent", Text: "hello there"})
 	b.send(fap.Typing{ConversationID: "conv-1", On: true}) // control frame → no push
@@ -963,7 +963,7 @@ func TestOnlineSend_NoPush(t *testing.T) {
 		convID:        "c1",
 		client:        c,
 		seen:          make(map[string]struct{}),
-		notifyOffline: func(_, preview string) { got = append(got, preview) },
+		notifyOffline: func(p pushPayload) { got = append(got, p.Preview) },
 	}
 	b.send(fap.ServerMessage{ConversationID: "c1", MessageID: "m", Role: "agent", Text: "hi"})
 	drain(t, c)
@@ -974,9 +974,9 @@ func TestOnlineSend_NoPush(t *testing.T) {
 
 func TestPusher_Coalesces(t *testing.T) {
 	p := &fcmPusher{tokens: newPushTokens(), window: defaultPushCoalesce, lastPush: make(map[string]time.Time)}
-	p.notify("conv-1", "a") // no tokens → no network; updates lastPush
+	p.notify(pushPayload{ConvID: "conv-1", Preview: "a"}) // no tokens → no network; updates lastPush
 	first := p.lastPush["conv-1"]
-	p.notify("conv-1", "b") // within window → coalesced, lastPush unchanged
+	p.notify(pushPayload{ConvID: "conv-1", Preview: "b"}) // within window → coalesced, lastPush unchanged
 	if !p.lastPush["conv-1"].Equal(first) {
 		t.Errorf("second notify within window must be coalesced")
 	}
