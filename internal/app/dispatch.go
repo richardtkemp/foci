@@ -355,6 +355,20 @@ func (h *Hub) dispatchCommand(conn *appConn, b *convBinding, req command.Request
 	// path bypasses the queue and calls Dispatch directly. Without this,
 	// /stop from the app UI returns "no active session". See TODO #88.
 	ctx = tools.WithSessionKey(ctx, req.SessionKey)
+
+	// Echo the user's command back as a user-role message BEFORE dispatch.
+	// Telegram's client renders outgoing text natively; the app relies on
+	// server-pushed frames, so without this echo the user sees only the
+	// system response (e.g. "📋 Planning…") with no indication of what they
+	// sent. Mirrors Telegram's "your command always appears" behaviour.
+	// Emitted before dispatch so it shows regardless of outcome (success,
+	// error, unknown) — same as a typed /command on Telegram.
+	userText := "/" + req.Name
+	if req.Args != "" {
+		userText += " " + req.Args
+	}
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "user", Text: userText})
+
 	resp, handled, err := conn.commands.Dispatch(ctx, req, conn.cmdCtx)
 	switch {
 	case err != nil:

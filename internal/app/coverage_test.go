@@ -163,11 +163,18 @@ func TestDispatchCommand_EmitsResponseParts(t *testing.T) {
 	h.dispatchCommand(conn, b, command.Request{Name: "ping"})
 
 	got := drain(t, b.client)
-	if len(got) != 2 || got[0].d["text"] != "one" || got[1].d["text"] != "two" {
+	// 3 frames: user echo "/ping" + two system response parts.
+	if len(got) != 3 {
 		t.Fatalf("command parts = %v", types(got))
 	}
-	if got[0].d["role"] != "system" {
-		t.Errorf("command output role = %v, want system", got[0].d["role"])
+	if got[0].d["text"] != "/ping" || got[0].d["role"] != "user" {
+		t.Errorf("first frame = %v, want user echo \"/ping\"", got[0])
+	}
+	if got[1].d["text"] != "one" || got[2].d["text"] != "two" {
+		t.Errorf("response parts = %v %v, want one two", got[1], got[2])
+	}
+	if got[1].d["role"] != "system" {
+		t.Errorf("command output role = %v, want system", got[1].d["role"])
 	}
 }
 
@@ -177,8 +184,40 @@ func TestDispatchCommand_UnknownCommand(t *testing.T) {
 	b := &convBinding{convID: "c1", client: fakeClientFor(h)}
 	h.dispatchCommand(conn, b, command.Request{Name: "nope"})
 	got := drain(t, b.client)
-	if len(got) != 1 || !strings.Contains(strings.ToLower(got[0].d["text"].(string)), "unknown command") {
-		t.Fatalf("want unknown-command message, got %v", got)
+	// 2 frames: user echo "/nope" + the unknown-command system message.
+	if len(got) != 2 {
+		t.Fatalf("want 2 frames (user echo + unknown), got %v", types(got))
+	}
+	if got[0].d["text"] != "/nope" || got[0].d["role"] != "user" {
+		t.Errorf("first frame = %v, want user echo \"/nope\"", got[0])
+	}
+	if !strings.Contains(strings.ToLower(got[1].d["text"].(string)), "unknown command") {
+		t.Errorf("second frame = %v, want unknown-command message", got[1])
+	}
+}
+
+func TestDispatchCommand_EchoesUserCommandWithArgs(t *testing.T) {
+	h := newTestHub()
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{
+		Name: "plan",
+		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "Planning…"}, nil
+		},
+	})
+	conn := &appConn{hub: h, agentID: "ag", commands: reg}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c1/9", client: fakeClientFor(h)}
+	h.dispatchCommand(conn, b, command.Request{Name: "plan", Args: "paint a room"})
+
+	got := drain(t, b.client)
+	if len(got) != 2 {
+		t.Fatalf("want 2 frames (user echo + response), got %v", types(got))
+	}
+	if got[0].d["role"] != "user" || got[0].d["text"] != "/plan paint a room" {
+		t.Errorf("user echo = %v, want role=user text=\"/plan paint a room\"", got[0])
+	}
+	if got[1].d["role"] != "system" || got[1].d["text"] != "Planning…" {
+		t.Errorf("response = %v, want role=system text=\"Planning…\"", got[1])
 	}
 }
 
