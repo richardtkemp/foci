@@ -30,10 +30,10 @@ func newTestBackendServer(t *testing.T, handler http.HandlerFunc) (*httptest.Ser
 	hs := httptest.NewServer(handler)
 	t.Cleanup(hs.Close)
 	srv := &Server{
-		baseURL:    hs.URL,
-		http:       hs.Client(),
-		agentID:    "test-agent",
-		sessions:   map[string]*Backend{},
+		baseURL:  hs.URL,
+		http:     hs.Client(),
+		agentID:  "test-agent",
+		sessions: map[string]*Backend{},
 	}
 	b := &Backend{
 		server:      srv,
@@ -125,8 +125,8 @@ func TestBackend_Start_InjectsSystemPromptAsNoReply(t *testing.T) {
 	var (
 		mu         sync.Mutex
 		gotMessage bool
-		bodyBytes   []byte
-		gotPath     string
+		bodyBytes  []byte
+		gotPath    string
 	)
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" && r.Method == http.MethodPost {
@@ -289,6 +289,166 @@ func TestBackend_Start_SessionCreateFailure(t *testing.T) {
 	}
 }
 
+func TestBackend_Start_ResumeExistingSession(t *testing.T) {
+	// Verifies: when ResumeSessionID is set and GET /session/:id returns
+	// 200, the Backend reuses that session ID. No POST /session fires,
+	// and the system prompt is NOT reinjected (the resumed session
+	// already has it from original creation).
+	var (
+		mu              sync.Mutex
+		gotSessionPost  bool
+		gotResumeGet    bool
+		gotPromptInject bool
+	)
+	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/ses-saved" && r.Method == http.MethodGet {
+			mu.Lock()
+			gotResumeGet = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"ses-saved"}`))
+			return
+		}
+		if r.URL.Path == "/session" && r.Method == http.MethodPost {
+			mu.Lock()
+			gotSessionPost = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"should-not-happen"}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/session/ses-saved/message") {
+			mu.Lock()
+			gotPromptInject = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID:         "test-agent",
+		ResumeSessionID: "ses-saved",
+		SystemPrompt:    "should-not-be-injected",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !gotResumeGet {
+		t.Error("GET /session/ses-saved was not invoked")
+	}
+	if gotSessionPost {
+		t.Error("POST /session should not fire when resume succeeds")
+	}
+	if gotPromptInject {
+		t.Error("system prompt should not be reinjected on resume")
+	}
+	if b.sessionID != "ses-saved" {
+		t.Errorf("b.sessionID = %q, want ses-saved", b.sessionID)
+	}
+	_ = b.Close()
+}
+
+func TestBackend_Start_ResumeFallsThroughOn404(t *testing.T) {
+	// Verifies: when ResumeSessionID is set but GET /session/:id returns
+	// 404 (session evicted, db wiped), Start falls through to POST /session
+	// and creates a fresh session. The system prompt IS injected for the
+	// new session.
+	var (
+		mu              sync.Mutex
+		gotResumeGet    bool
+		gotCreatePost   bool
+		gotPromptInject bool
+	)
+	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/ses-stale" && r.Method == http.MethodGet {
+			mu.Lock()
+			gotResumeGet = true
+			mu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == "/session" && r.Method == http.MethodPost {
+			mu.Lock()
+			gotCreatePost = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"sess-fresh"}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/session/sess-fresh/message") {
+			mu.Lock()
+			gotPromptInject = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID:         "test-agent",
+		ResumeSessionID: "ses-stale",
+		SystemPrompt:    "fresh-prompt",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !gotResumeGet {
+		t.Error("GET /session/ses-stale was not invoked")
+	}
+	if !gotCreatePost {
+		t.Error("POST /session should fire when resume returns 404")
+	}
+	if !gotPromptInject {
+		t.Error("system prompt should be injected for fresh session")
+	}
+	if b.sessionID != "sess-fresh" {
+		t.Errorf("b.sessionID = %q, want sess-fresh", b.sessionID)
+	}
+	_ = b.Close()
+}
+
+func TestBackend_Start_ResumeFailsOnServerError(t *testing.T) {
+	// Verifies: when GET /session/:id returns a non-404 error (e.g. 500),
+	// Start fails instead of silently falling through to create. This
+	// prevents a transient server hiccup from discarding the resume ID —
+	// the manager's retry-without-resume path handles the fallback.
+	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/ses-probe" && r.Method == http.MethodGet {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Path == "/session" && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"should-not-happen"}`))
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID:         "test-agent",
+		ResumeSessionID: "ses-probe",
+	})
+	if err == nil {
+		t.Fatal("Start should fail when resume probe returns 500")
+	}
+	if !strings.Contains(err.Error(), "probe resume session") {
+		t.Errorf("err = %v, want it to mention 'probe resume session'", err)
+	}
+	if b.IsRunning() {
+		t.Error("Backend marked running after resume probe failure")
+	}
+}
+
 func TestBackend_Start_Idempotent(t *testing.T) {
 	// Verifies calling Start twice on the same Backend is a no-op:
 	// the second call returns nil without re-POSTing /session,
@@ -297,8 +457,8 @@ func TestBackend_Start_Idempotent(t *testing.T) {
 	// session so this doesn't occur in production, but the guard
 	// prevents a footgun for tests and future callers.
 	var (
-		sessionPosts  atomic.Int32
-		readyFires    atomic.Int32
+		sessionPosts atomic.Int32
+		readyFires   atomic.Int32
 	)
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" && r.Method == http.MethodPost {
