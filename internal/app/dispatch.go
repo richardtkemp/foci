@@ -440,20 +440,22 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		return
 	}
 
-	// Slash-command interception: if the text is a routable command, divert to
-	// the command dispatch path instead of enqueuing an agent turn. This mirrors
-	// Telegram/Discord's interception pipeline — without it, "/misc pprof on"
-	// would start a turn (firing a typing indicator) and be sent to the LLM as
-	// a user message rather than executed as a command. dispatchCommand echoes
-	// the command, dispatches it, and sends the response — no turn, no typing.
-	if text != "" && text[0] == '/' {
+	// Command interception: if the text is a routable command (/cmd or .cmd),
+	// divert to the command dispatch path instead of enqueuing an agent turn.
+	// This mirrors Telegram/Discord's interception pipeline — without it,
+	// "/misc pprof on" would start a turn (firing a typing indicator) and be
+	// sent to the LLM as a user message rather than executed as a command.
+	// IsRoutableCommand already guards against file paths (/home/foci/x has an
+	// embedded slash in its first token → not a command) and only routes .cmd
+	// when the command is actually registered (so ".sigh" reaches the agent).
+	if text != "" && (text[0] == '/' || text[0] == '.') {
 		aid := agentID
 		if aid == "" {
 			aid = h.defaultAgentID()
 		}
 		if conn := h.PrimaryBot(aid); conn != nil && conn.commands != nil {
 			if dispatch.IsRoutableCommand(text, conn.commands) {
-				name, args, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
+				name, args, _ := strings.Cut(text[1:], " ")
 				h.routeCommand(client, fap.Command{
 					ConversationID: convID,
 					AgentID:        agentID,

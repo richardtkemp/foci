@@ -63,30 +63,72 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 
 // Slash commands typed as messages ("/ping") must be intercepted and routed
 // to the command dispatch path — not enqueued as an agent turn (which would
-// fire a typing indicator and send the text to the LLM).
+// fire a typing indicator and send the text to the LLM). Also covers dot-alias
+// commands (".ping") and the file-path guard ("/home/foci/x" must NOT match).
 func TestRouteUserTurn_SlashCommandIntercepted(t *testing.T) {
-	h := newTestHub()
-	fa := registerFakeAgent(h, "ag")
-	// Attach a command registry with a /ping command.
-	reg := command.NewRegistry()
-	reg.Register(&command.Command{
-		Name: "ping",
-		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
-			return command.Response{Text: "pong"}, nil
-		},
-	})
-	h.agents["ag"].commands = reg
-
-	c := fakeClient()
-	c.hub = h
-	c.deviceID = "dev-1"
-
-	h.routeUserTurn(c, "conv-1", "ag", "/ping", nil, "env-1", 1)
-
-	// The command must NOT have been enqueued as an agent turn.
-	if fa.env != nil {
-		t.Fatalf("slash command was enqueued as agent turn (text=%q) — should have been intercepted", fa.env.Text)
+	makeHub := func() (*Hub, *fakeAgent) {
+		h := newTestHub()
+		fa := registerFakeAgent(h, "ag")
+		reg := command.NewRegistry()
+		reg.Register(&command.Command{
+			Name: "ping",
+			Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
+				return command.Response{Text: "pong"}, nil
+			},
+		})
+		h.agents["ag"].commands = reg
+		return h, fa
 	}
+
+	t.Run("slash prefix", func(t *testing.T) {
+		h, fa := makeHub()
+		c := fakeClient()
+		c.hub = h
+		c.deviceID = "dev-1"
+		h.routeUserTurn(c, "conv-1", "ag", "/ping", nil, "env-1", 1)
+		if fa.env != nil {
+			t.Fatalf("slash command was enqueued as agent turn (text=%q) — should have been intercepted", fa.env.Text)
+		}
+	})
+
+	t.Run("dot prefix", func(t *testing.T) {
+		h, fa := makeHub()
+		c := fakeClient()
+		c.hub = h
+		c.deviceID = "dev-1"
+		h.routeUserTurn(c, "conv-1", "ag", ".ping", nil, "env-1", 1)
+		if fa.env != nil {
+			t.Fatalf("dot command was enqueued as agent turn (text=%q) — should have been intercepted", fa.env.Text)
+		}
+	})
+
+	t.Run("slash path not intercepted", func(t *testing.T) {
+		h, fa := makeHub()
+		c := fakeClient()
+		c.hub = h
+		c.deviceID = "dev-1"
+		h.routeUserTurn(c, "conv-1", "ag", "/home/foci/x is broken", nil, "env-1", 1)
+		if fa.env == nil {
+			t.Fatal("file path was intercepted as a command — should reach the agent as normal text")
+		}
+		if fa.env.Text != "/home/foci/x is broken" {
+			t.Errorf("env.Text = %q, want original path text", fa.env.Text)
+		}
+	})
+
+	t.Run("unknown dot not intercepted", func(t *testing.T) {
+		h, fa := makeHub()
+		c := fakeClient()
+		c.hub = h
+		c.deviceID = "dev-1"
+		h.routeUserTurn(c, "conv-1", "ag", ".sigh", nil, "env-1", 1)
+		if fa.env == nil {
+			t.Fatal("unknown .cmd was intercepted — should reach the agent as normal text")
+		}
+		if fa.env.Text != ".sigh" {
+			t.Errorf("env.Text = %q, want .sigh", fa.env.Text)
+		}
+	})
 }
 
 // The first message on a cold binding bypasses the reliability gate (no binding
