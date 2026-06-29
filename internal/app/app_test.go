@@ -920,6 +920,8 @@ func TestPushPreview_Classification(t *testing.T) {
 		{fap.Media{MIME: "application/pdf"}, true, "Sent a file"},
 		{fap.Notification{Text: "note"}, true, "note"},
 		{fap.Interactive{Text: "approve?"}, true, "approve?"},
+		{fap.Interactive{Questions: []fap.Question{{Text: "batched ask?"}}}, true, "batched ask?"},
+		{fap.Interactive{}, true, "Question from agent"},
 		{fap.Typing{On: true}, false, ""},
 		{fap.Meta{}, false, ""},
 		{fap.TextDelta{Text: "x"}, false, ""},

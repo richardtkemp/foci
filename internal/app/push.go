@@ -220,7 +220,16 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 	case fap.Notification:
 		return truncatePreview(f.Text), true
 	case fap.Interactive:
-		return truncatePreview(f.Text), true
+		// Batched asks carry their text in Questions[0].Text (f.Text is empty);
+		// sequential asks use f.Text. Fall back to a generic "Question from agent"
+		// when neither has content (shouldn't happen, but guard against empty pushes).
+		if f.Text != "" {
+			return truncatePreview(f.Text), true
+		}
+		if len(f.Questions) > 0 && f.Questions[0].Text != "" {
+			return truncatePreview(f.Questions[0].Text), true
+		}
+		return "Question from agent", true
 	default:
 		// typing, meta, turn.start, text.delta, session.update, error, pong
 		return "", false
