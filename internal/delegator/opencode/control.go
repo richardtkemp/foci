@@ -108,13 +108,11 @@ func (b *Backend) patchConfig(ctx context.Context, body map[string]any) error {
 // "acceptEdits" → allow edits + ask for bash; "plan" → deny edits;
 // default → ask for everything.
 
-// TODO(opencode): ContextUsageQuerier — opencode has no get_context_usage
-// equivalent. GET /session/:id returns summary stats (no token count).
-// The interface is optional; skipping for v1 means foci's /context
-// command shows "unavailable" for opencode agents. Revisit if opencode
-// adds a context-usage endpoint or if we decide to compute heuristically
-// from AssistantMessage.tokens (misleading — per-message, not context
-// window fraction). See OPENCODE_DELEGATOR_PLAN.md §8.3.
+// ContextUsageQuerier is implemented in context_usage.go: opencode has no
+// get_context_usage endpoint, but GET /config/providers carries each model's
+// real context window (models.dev-sourced). GetContextUsage returns that as
+// MaxTokens + the last turn's size as TotalTokens, so foci's compaction
+// trigger uses the true window instead of the 200k modelinfo fallback.
 func mapPermissionMode(mode string) map[string]any {
 	switch mode {
 	case "bypassPermissions", "auto":

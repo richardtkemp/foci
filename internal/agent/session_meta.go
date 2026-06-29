@@ -244,6 +244,16 @@ func (a *Agent) BackendModels() []string {
 	return modelcaps.ModelsFor(a.BackendType())
 }
 
+// SessionContextLimitKnown reports whether the session already has a
+// backend-reported context limit (sm.contextLimit). Used to decide whether a
+// lazy refreshContextFromBackend is worth doing before reading the limit.
+func (a *Agent) SessionContextLimitKnown(sessionKey string) bool {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return sm.contextLimit > 0
+}
+
 // SessionContextLimit returns the context window size for the session's model.
 // Checks backend-reported context limit first (from get_context_usage),
 // then ModelMetaFn (config-defined), falls back to modelinfo registry.

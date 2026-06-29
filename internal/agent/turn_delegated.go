@@ -543,6 +543,19 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	// spurious compactions. Prior-round usage lives in ts.PriorCallUsages and
 	// is only used for the per-call ledger rows, never for this size check.
 	totalTokens := ts.FinalUsage.InputTokens + ts.FinalUsage.CacheReadInputTokens + ts.FinalUsage.CacheCreationInputTokens
+
+	// Lazily learn the real context window from the backend if we don't have
+	// it yet. Backends that implement ContextUsageQuerier (CC's
+	// get_context_usage; opencode's /config/providers lookup) report the true
+	// window; without it we'd fall back to modelinfo's generic 200k, which is
+	// wrong by up to 5× for non-Anthropic models (e.g. glm-5.2 = 1M) and fires
+	// compaction far too early. Guarded so it runs at most once per session
+	// (until the limit is cached) and uses a fresh context — ts.Ctx may be
+	// cancelled by the time the post-turn hook runs.
+	if !a.SessionContextLimitKnown(ts.SessionKey) {
+		a.refreshContextFromBackend(context.Background(), ts.SessionKey)
+	}
+
 	ctxLimit := a.SessionContextLimit(ts.SessionKey)
 	if ctxLimit <= 0 {
 		return
