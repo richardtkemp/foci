@@ -660,6 +660,23 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	order := append([]string(nil), h.agentOrder...)
 	sort.Strings(order)
 
+	// Per-agent default chat (app platform), memoised so each agent's index is
+	// queried at most once per roster build. Marks the matching conversation's
+	// IsDefault for the golden pin (#app-default).
+	idx := h.deps.SessionIndex
+	defaultChatByAgent := make(map[string]int64)
+	defaultChat := func(agentID string) int64 {
+		if idx == nil {
+			return 0
+		}
+		if v, ok := defaultChatByAgent[agentID]; ok {
+			return v
+		}
+		v := idx.DefaultChatForAgent(agentID, "app")
+		defaultChatByAgent[agentID] = v
+		return v
+	}
+
 	// Group live conversations by agent (the app's Room DB is the durable source
 	// of its full thread list; the roster advertises agents + currently-bound
 	// conversations and any the app resumes are re-attached on hello).
@@ -667,6 +684,9 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	for _, b := range h.convs {
 		ci := b.info()
 		ci.Title = h.aliasFor(b)
+		if dc := defaultChat(b.agentID); dc != 0 && dc == b.chatID {
+			ci.IsDefault = true
+		}
 		byAgent[b.agentID] = append(byAgent[b.agentID], ci)
 	}
 	out := make([]fap.AgentInfo, 0, len(order))

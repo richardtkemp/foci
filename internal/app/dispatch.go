@@ -82,6 +82,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.ConversationRename:
 		h.handleConversationRename(client, f)
 
+	case fap.ConversationSetDefault:
+		h.handleConversationSetDefault(client, f)
+
 	case fap.ClientMessage:
 		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq)
 
@@ -228,6 +231,39 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 	})
 }
 
+// handleConversationSetDefault sets (f.IsDefault) or clears this conversation as
+// the agent's default chat for the app platform. The default persists in the
+// session index keyed by the stable app chatID — surviving session-key rotation
+// and restarts — and is used by keepalive/cron routing. The updated roster (with
+// ConversationInfo.IsDefault) is pushed back to this socket; other devices
+// refresh on their next hello/conversation.list. Setting a new default clears any
+// previous one for the platform (SetDefaultChat deletes-then-sets). Mirrors
+// handleConversationRename (the established per-chat-metadata round-trip).
+func (h *Hub) handleConversationSetDefault(client *wsClient, f fap.ConversationSetDefault) {
+	h.mu.RLock()
+	b := h.convs[f.ConversationID]
+	h.mu.RUnlock()
+	if b == nil {
+		return
+	}
+	if idx := h.deps.SessionIndex; idx != nil {
+		var err error
+		if f.IsDefault {
+			err = idx.SetDefaultChat(b.agentID, "app", b.chatID)
+		} else {
+			err = idx.ClearDefaultChat(b.agentID, "app")
+		}
+		if err != nil {
+			log.Warnf("app", "setDefault %s (isDefault=%v): %v", f.ConversationID, f.IsDefault, err)
+		}
+	}
+	client.sendRaw(fap.HelloServer{
+		Version: fap.ProtocolVersion,
+		Caps:    h.caps(),
+		Agents:  h.agentRoster(),
+	})
+}
+
 // routeCommand dispatches a slash command through the agent's command registry,
 // returning its response as message frame(s). Dispatch runs off the read pump
 // because some commands do real work.
@@ -316,6 +352,8 @@ func inboundConvID(frame any) string {
 	case fap.Read:
 		return f.ConversationID
 	case fap.ConversationRename:
+		return f.ConversationID
+	case fap.ConversationSetDefault:
 		return f.ConversationID
 	default:
 		return ""

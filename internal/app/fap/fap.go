@@ -45,13 +45,14 @@ const (
 	TypePong            = "pong"
 
 	// app -> server
-	TypeCommand             = "command"
-	TypeInteractiveResponse = "interactive.response"
-	TypeConversationOpen    = "conversation.open"
-	TypeConversationList    = "conversation.list"
-	TypeConversationRename  = "conversation.rename"
-	TypeRead                = "read"
-	TypePing                = "ping"
+	TypeCommand                = "command"
+	TypeInteractiveResponse    = "interactive.response"
+	TypeConversationOpen       = "conversation.open"
+	TypeConversationList       = "conversation.list"
+	TypeConversationRename     = "conversation.rename"
+	TypeConversationSetDefault = "conversation.setDefault"
+	TypeRead                   = "read"
+	TypePing                   = "ping"
 )
 
 // WebSocket close codes (wire-protocol §7).
@@ -123,6 +124,10 @@ type ConversationInfo struct {
 	Title      string `json:"title,omitempty"`
 	LastSeq    int64  `json:"lastSeq,omitempty"`
 	Unread     int    `json:"unread,omitempty"`
+	// IsDefault marks this conversation as the agent's default chat for the app
+	// platform (used by keepalive/cron routing; rendered as the golden pin in the
+	// app). Server-authoritative; set via ConversationSetDefault.
+	IsDefault bool `json:"isDefault,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.
@@ -433,6 +438,16 @@ type Read struct {
 type ConversationRename struct {
 	ConversationID string `json:"conversationId"`
 	Title          string `json:"title"`
+}
+
+// ConversationSetDefault sets (IsDefault=true) or clears (IsDefault=false) this
+// conversation as the agent's default chat for the app platform. Persisted
+// server-side via SessionIndex.SetDefaultChat/ClearDefaultChat; the updated
+// roster (with ConversationInfo.IsDefault) is echoed back. Setting a new default
+// clears any previous one for the platform (enforced by SetDefaultChat).
+type ConversationSetDefault struct {
+	ConversationID string `json:"conversationId"`
+	IsDefault      bool   `json:"isDefault"`
 }
 
 // ConversationList re-requests the roster (payload-less).
