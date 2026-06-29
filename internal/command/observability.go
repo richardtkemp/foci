@@ -594,7 +594,7 @@ func buildContextInfo(ctx context.Context, cc CommandContext) ContextInfo {
 		SessionKey:       sk,
 		Model:            model,
 		CompactionThresh: cc.CompactionThreshold,
-		ContextLimit:     resolveContextLimit(cc, model),
+		ContextLimit:     cc.Agent.SessionContextLimit(sk),
 		SystemSections:   sections,
 		EnvironmentChars: len(cc.Agent.EnvironmentBlock),
 		SkillsChars:      skillsChars,

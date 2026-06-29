@@ -182,19 +182,3 @@ func (c *TokenCountCache) Set(msgCount, sysChars int, counts *TokenCounts) {
 	c.sysChars = sysChars
 	c.counts = counts
 }
-
-// resolveContextLimit returns the context window for a model, preferring the
-// config-defined value (via ModelMetaFn) over the modelinfo registry default.
-func resolveContextLimit(cc CommandContext, model string) int {
-	if cc.ModelMetaFn != nil {
-		if meta := cc.ModelMetaFn(model); meta.ContextWindow > 0 {
-			return meta.ContextWindow
-		}
-	}
-	if cc.Agent != nil {
-		if c, ok := cc.Agent.ModelCaps(model); ok && c.ContextWindow > 0 {
-			return c.ContextWindow
-		}
-	}
-	return modelinfo.ContextWindow(model)
-}
