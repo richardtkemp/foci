@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/secrets"
 	"foci/internal/session"
 
 	"github.com/fsnotify/fsnotify"
@@ -41,6 +44,8 @@ func cmdDebug(args []string) error {
 		return cmdDebugSession(args[1:], configPath)
 	case "rebuild-index":
 		return cmdDebugRebuildIndex(configPath)
+	case "pprof":
+		return cmdDebugPprof(args[1:])
 	default:
 		return fmt.Errorf("unknown debug subcommand: %s", subcmd)
 	}
@@ -407,12 +412,91 @@ func cmdDebugRebuildIndex(configPath string) error {
 	return nil
 }
 
+// cmdDebugPprof toggles or queries the live pprof gate on a running gateway.
+// Usage: foci debug pprof on|off|status
+func cmdDebugPprof(args []string) error {
+	if len(args) == 0 || wantsHelp(args) {
+		fmt.Fprintln(os.Stderr, "Usage: foci debug pprof on|off|status")
+		fmt.Fprintln(os.Stderr, "  Toggle or query the live /debug/pprof/* gate on the running gateway.")
+		fmt.Fprintln(os.Stderr, "  No restart needed — uses the /-/pprof admin endpoint.")
+		return nil
+	}
+	action := args[0]
+	var wantEnabled *bool
+	switch action {
+	case "on":
+		t := true
+		wantEnabled = &t
+	case "off":
+		f := false
+		wantEnabled = &f
+	case "status":
+		// nil body = GET
+	default:
+		return fmt.Errorf("unknown pprof action %q: expected on, off, or status", action)
+	}
+
+	store, err := secrets.Load(resolveSecretsPath(""))
+	if err != nil {
+		return fmt.Errorf("load secrets: %w", err)
+	}
+	addr := envDefault("localhost:7420", "FOCI_ADDR")
+
+	c := &http.Client{Timeout: 3 * time.Second}
+	var u string
+	if sock := resolveGWSocket(""); sock != "" {
+		c.Transport = unixSocketTransport(sock)
+		u = "http://foci-gw/-/pprof"
+	} else {
+		u = fmt.Sprintf("http://%s/-/pprof", addr)
+		if apiKey, _ := store.Get("http.api_key"); apiKey != "" {
+			c.Transport = &authTransport{key: apiKey}
+		}
+	}
+
+	method := http.MethodGet
+	var bodyReader io.Reader
+	if wantEnabled != nil {
+		method = http.MethodPost
+		payload, _ := json.Marshal(map[string]bool{"enabled": *wantEnabled})
+		bodyReader = strings.NewReader(string(payload))
+	}
+	req, err := http.NewRequest(method, u, bodyReader)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return fmt.Errorf("gateway not reachable: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("gateway returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var result struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+	if result.Enabled {
+		fmt.Println("pprof: enabled")
+	} else {
+		fmt.Println("pprof: disabled")
+	}
+	return nil
+}
+
 func debugUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: foci debug <subcommand> [args...]
 
 Subcommands:
   session <key>        Tail a session file with formatted output
   rebuild-index        Rebuild session index from disk
+  pprof on|off|status  Toggle or query the live /debug/pprof/* gate
 
 Session key formats:
   scout                        Agent name (resolves to most recent active session)

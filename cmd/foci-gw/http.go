@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/agent"
@@ -32,6 +33,7 @@ type httpHandlerDeps struct {
 	sttMap            map[string]voice.STT
 	connMgr           platform.ConnectionManager
 	reloadCredentials func() error
+	pprofGate         *atomic.Bool // live-toggle gate for /debug/pprof/*
 }
 
 // checkActivityGate evaluates the four activity gate conditions and returns
@@ -207,17 +209,30 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		endpointList += ", /-/reload-credentials"
 	}
 
-	// pprof exposes profiling/goroutine-dump endpoints. Gated behind an explicit
-	// [debug] enable_pprof opt-in (default off) even though the server is
-	// auth-gated — profiling shouldn't be reachable on a normal deployment.
-	if config.DerefBool(d.cfg.Debug.EnablePprof) {
-		mux.HandleFunc("/debug/pprof/", pprof.Index)
-		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		endpointList += ", /debug/pprof/*"
+	// pprof endpoints are always registered but gated by a live-toggleable
+	// atomic bool (seeded from [debug] enable_pprof at startup). This avoids
+	// the ServeMux limitation that handlers can't be unregistered — the gate
+	// is checked per-request, so toggling is instant without a mux rebuild.
+	ppGate := d.pprofGate
+	if ppGate == nil {
+		ppGate = &atomic.Bool{}
 	}
+	gated := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !ppGate.Load() {
+				http.NotFound(w, r)
+				return
+			}
+			h(w, r)
+		}
+	}
+	mux.HandleFunc("/debug/pprof/", gated(pprof.Index))
+	mux.HandleFunc("/debug/pprof/cmdline", gated(pprof.Cmdline))
+	mux.HandleFunc("/debug/pprof/profile", gated(pprof.Profile))
+	mux.HandleFunc("/debug/pprof/symbol", gated(pprof.Symbol))
+	mux.HandleFunc("/debug/pprof/trace", gated(pprof.Trace))
+	mux.HandleFunc("/-/pprof", handlePprofToggle(ppGate))
+	endpointList += ", /debug/pprof/* (gated), /-/pprof"
 
 	log.Infof("http", "registered endpoints: %s", endpointList)
 }
