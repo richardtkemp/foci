@@ -289,6 +289,15 @@ func (s *Server) runSubscriber(ctx context.Context) {
 // must not wedge the whole subscription. Tune eventBufferSize if drops
 // show up in production.
 func (s *Server) route(ev rawEvent) {
+	// Learn child→parent links from session.created so a subagent's
+	// permission requests can be resolved to the owning Backend below.
+	// session.created carries the new session in .info (with .parentID) and
+	// has no top-level sessionID, so it falls through to the global-drop —
+	// we capture the link first, then let it drop as before.
+	if ev.Type == EventSessionCreated {
+		s.recordSessionParent(ev.Properties)
+	}
+
 	sid := extractSessionID(ev.Properties)
 	if sid == "" {
 		// Global event (server.connected, tui.*, file.*, vcs.*) — no
@@ -307,7 +316,25 @@ func (s *Server) route(ev rawEvent) {
 	be := s.sessions[sid]
 	s.sessionsMu.RUnlock()
 	if be == nil {
-		return
+		// No Backend for this session. opencode spawns child (subagent)
+		// sessions that foci never registers; their PERMISSION requests would
+		// otherwise be dropped here, blocking the subagent — and the parent
+		// turn waiting on it — forever. Resolve the child up its parent chain
+		// to the owning Backend and route the permission there so the human
+		// can answer it. The permission's session ID is the child's, but the
+		// reply endpoint (POST /permission/{id}/reply) is keyed by permission
+		// ID, so the parent Backend can answer it. Non-permission child events
+		// stay dropped (unchanged) — we don't want subagent text/idle surfacing
+		// on the parent session.
+		if isPermissionEvent(ev.Type) {
+			if pbe := s.resolveParentBackend(sid); pbe != nil {
+				log.Debugf(s.logComponent(), "routing child session %s %s to parent session %s", sid, ev.Type, pbe.sessionID)
+				be = pbe
+			}
+		}
+		if be == nil {
+			return
+		}
 	}
 
 	select {
@@ -317,6 +344,58 @@ func (s *Server) route(ev rawEvent) {
 		// is wedged; handlers.go will surface that via the missing-event
 		log.Warnf(s.logComponent(), "event channel full for session %s; dropping %s", sid, ev.Type)
 	}
+}
+
+// isPermissionEvent reports whether an event type is a permission lifecycle
+// event — the only child-session events route() reroutes to a parent Backend.
+func isPermissionEvent(t string) bool {
+	return t == EventPermissionAsked || t == EventPermissionUpdated || t == EventPermissionReplied
+}
+
+// recordSessionParent records a child→parent session link from a
+// session.created event's .info (a Session with .id and .parentID). No-op if
+// the payload lacks either id or parentID (top-level/root sessions have no
+// parent). Lazily allocates the map so Server literals in tests work.
+func (s *Server) recordSessionParent(props []byte) {
+	var p struct {
+		Info struct {
+			ID       string `json:"id"`
+			ParentID string `json:"parentID"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal(props, &p); err != nil || p.Info.ID == "" || p.Info.ParentID == "" {
+		return
+	}
+	s.sessionsMu.Lock()
+	if s.childToParent == nil {
+		s.childToParent = make(map[string]string)
+	}
+	s.childToParent[p.Info.ID] = p.Info.ParentID
+	s.sessionsMu.Unlock()
+}
+
+// resolveParentBackend walks a child session ID up its parent chain
+// (childToParent) and returns the first ancestor that has a registered
+// Backend, or nil if none is found. Bounded depth + a visited set guard
+// against cycles or a pathologically deep chain.
+func (s *Server) resolveParentBackend(sid string) *Backend {
+	const maxParentDepth = 16
+	s.sessionsMu.RLock()
+	defer s.sessionsMu.RUnlock()
+	seen := make(map[string]bool, maxParentDepth)
+	cur := sid
+	for i := 0; i < maxParentDepth && cur != "" && !seen[cur]; i++ {
+		seen[cur] = true
+		parent, ok := s.childToParent[cur]
+		if !ok {
+			return nil
+		}
+		if be := s.sessions[parent]; be != nil {
+			return be
+		}
+		cur = parent
+	}
+	return nil
 }
 
 // registerSession adds be to the per-Server session registry under
