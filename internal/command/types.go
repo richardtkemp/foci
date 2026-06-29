@@ -149,6 +149,11 @@ type CommandContext struct {
 	// Resolved holds the pre-merged agent+global config. Prefer reading
 	// from here instead of calling config.Merge() at runtime.
 	Resolved *config.ResolvedAgentConfig
+
+	// PprofControl toggles or queries the live pprof gate. action is one of
+	// "on", "off", "toggle", "status"; returns the resulting enabled state.
+	// Nil = pprof not available (command reports unavailable).
+	PprofControl func(action string) bool
 }
 
 // TokenCountCache caches token counting results so /context doesn't re-count every call.

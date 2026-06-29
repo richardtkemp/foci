@@ -8,6 +8,7 @@ package main
 import (
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/agent"
@@ -73,6 +74,11 @@ type cmdRegParams struct {
 	// Pre-resolved agent+global config
 	resolved *config.ResolvedAgentConfig
 }
+
+// pprofGate is the process-global live-toggle gate for /debug/pprof/*.
+// Seeded from [debug] enable_pprof at startup; toggled at runtime via
+// /misc pprof or the /-/pprof admin endpoint.
+var pprofGate atomic.Bool
 
 // registerAgentCommands creates and populates the command registry for an agent.
 func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStore) (*command.Registry, command.CommandContext) {
@@ -175,6 +181,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		ConfigureFacet:      p.configureFacet,
 		UsageClientProvider: p.usageClientProvider,
 		Resolved:            p.resolved,
+		PprofControl:        pprofControl,
 	}
 
 	// Register all commands
@@ -245,6 +252,8 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		cmds.Register(command.CompleteCommand())
 	}
 
+	cmds.Register(command.MiscCommand())
+
 	// Stop / done
 	cmds.Register(command.StopCommand())
 	cmds.Register(command.LoginCommand())
@@ -301,4 +310,19 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	}
 
 	return cmds, cc
+}
+
+// pprofControl implements command.CommandContext.PprofControl against the
+// process-global pprofGate. action is "on"/"off"/"toggle"/"status";
+// returns the resulting enabled state.
+func pprofControl(action string) bool {
+	switch action {
+	case "on":
+		pprofGate.Store(true)
+	case "off":
+		pprofGate.Store(false)
+	case "toggle":
+		pprofGate.Store(!pprofGate.Load())
+	}
+	return pprofGate.Load()
 }
