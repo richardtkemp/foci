@@ -2,9 +2,10 @@
 // bounded-shutdown contract (graceful → SIGTERM → SIGKILL → bounded final
 // wait → abandon) so a hung subprocess cannot wedge the pool.
 //
-// Step 3 scope: subprocess launch + health probe + kill-ladder Close.
-// The SSE subscriber goroutine (Step 4) is stubbed to a no-op ctx-cancel
-// hook here; OnSubscriberStopped is the entry point Step 4 will call.
+// Scope: subprocess launch + health probe + kill-ladder Close. The SSE
+// subscriber goroutine is launched from Start (runSubscriber in
+// subscriber.go); OnSubscriberStopped is the entry point the subscriber
+// calls when it exits.
 
 package opencode
 
@@ -40,8 +41,8 @@ var (
 
 // Start launches the opencode-server subprocess and blocks until the
 // /global/health probe succeeds or ctx expires. The SSE subscriber
-// goroutine is started in Step 4; here we leave subscriberCancel nil
-// and OnSubscriberStopped is the entry point Step 4 invokes.
+// goroutine is started from here (runSubscriber in subscriber.go);
+// OnSubscriberStopped is the entry point the subscriber invokes on exit.
 //
 // Start is idempotent — calling it on an already-running Server is a
 // no-op. acquireServer serialises construction per-agent so the only
@@ -60,7 +61,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("opencode: pick free port: %w", err)
 	}
 	if s.port != 0 && s.port != port {
-		// Caller asked for a specific port but it's taken. For Step 3 we
+		// Caller asked for a specific port but it's taken. We
 		// always pass 0 (free port); this branch is defensive.
 		return fmt.Errorf("opencode: requested port %d unavailable", s.port)
 	}
@@ -104,13 +105,14 @@ func (s *Server) Start(ctx context.Context) error {
 	s.done = make(chan struct{})
 	s.waitCh = make(chan error, 1)
 
-	// Stderr capture goroutine. Mirrors ccstream's captureStderr — secondary
-	// auth-failure detection happens in Step 11; for Step 3 we just log.
+	// Stderr capture goroutine. Mirrors ccstream's captureStderr — for
+	// diagnostics; primary 401 detection lives in authfail.go's transport
+	// wrapper.
 	go s.captureStderr(stderrPipe)
 
 	// SSE subscriber goroutine. Started BEFORE the health probe finishes
 	// so we don't miss the server.connected event or any early per-session
-	// events (sessions aren't created until Step 5 anyway, but having the
+	// events (sessions aren't created until POST /session anyway, but having the
 	// subscriber ready avoids a race). The subscriber's own GET /event will
 	// get "connection refused" until the subprocess binds its port (~1s);
 	// runSubscriber retries the initial connect on a tick through that
@@ -122,7 +124,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Process waiter goroutine — reaps the subprocess and is the AUTHORITATIVE
 	// source of "process is dead" (cmd.Wait cannot lie). The SSE subscriber
-	// (Step 4) and stderr capture may exit silently; this goroutine still
+	// (SSE subscriber) and stderr capture may exit silently; this goroutine still
 	// fires finalizeExit regardless.
 	go func() {
 		err := cmd.Wait()
@@ -310,10 +312,9 @@ func (s *Server) healthProbe(ctx context.Context) error {
 	}
 }
 
-// OnSubscriberStopped is called by the SSE subscriber goroutine (Step 4)
-// when it exits for any reason — clean EOF, transport error, or ctx
-// cancel. Step 3 stub: logs and calls finalizeExit so any in-flight
-// cleanup runs. Step 4 replaces this with real subscriber-driven dispatch.
+// OnSubscriberStopped is called by the SSE subscriber goroutine when it
+// exits for any reason — clean EOF, transport error, or ctx cancel. Logs
+// and calls finalizeExit so any in-flight cleanup runs.
 func (s *Server) OnSubscriberStopped(err error) {
 	component := s.logComponent()
 	s.mu.Lock()
@@ -333,7 +334,7 @@ func (s *Server) OnSubscriberStopped(err error) {
 // subscriber} notices first wins; the other is a no-op.
 //
 // For each registered Backend, synthesises a session.error event and
-// pushes it onto the Backend's events channel — so its Step 7 handlers
+// pushes it onto the Backend's events channel — so its handlers (handlers.go)
 // can complete any in-flight turn with an error rather than hanging
 // forever waiting for events that will never arrive. Without this, the
 // SSE stream going away would silently wedge every active session.
@@ -361,13 +362,13 @@ func (s *Server) finalizeExit(reason error) {
 		}
 		serverPoolMu.Unlock()
 
-		// Touch lastActivity so Step 12's LastActivity() reports a fresh
+		// Touch lastActivity so LastActivity() reports a fresh
 		// "dead" timestamp rather than the last SSE frame time.
 		s.lastActivity.Store(time.Now().UnixNano())
 
 		// Synthesise a session.error event for each registered Backend.
 		// The payload matches the wire shape opencode would emit on a
-		// real auth/transient failure — Step 7's OnSessionError handler
+		// real auth/transient failure — OnSessionError (handlers.go)
 		// treats synthesised and real events identically. The handler
 		// fires OnTurnComplete with the error text and clears turn state.
 		//
@@ -432,8 +433,8 @@ func mustMarshalJSON(v any) json.RawMessage {
 
 // captureStderr reads the subprocess stderr line by line and logs it.
 // Mirrors ccstream's captureStderr. Lines containing "error"/"fatal"/
-// "panic" log at WARN; the rest at DEBUG. Secondary 401 detection
-// happens in Step 11 (fireAuthFailure); for Step 3 we just log.
+// "panic" log at WARN; the rest at DEBUG. Primary 401 detection lives
+// in authfail.go's transport wrapper; this is diagnostics-only.
 func (s *Server) captureStderr(r io.Reader) {
 	component := s.logComponent()
 	buf := make([]byte, 4096)

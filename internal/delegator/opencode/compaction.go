@@ -10,7 +10,7 @@ package opencode
 import "context"
 
 // ArmCompactionWait resets compactDoneCh for the next /compact cycle.
-// Closed by onSessionCompacted (Step 7's handler).
+// Closed by onSessionCompacted (handlers.go).
 func (b *Backend) ArmCompactionWait() {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()

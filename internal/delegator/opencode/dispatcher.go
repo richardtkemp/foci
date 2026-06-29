@@ -5,11 +5,6 @@
 // serially — preserving ccstream's "events for one session are
 // sequential" invariant while letting different sessions progress in
 // parallel.
-//
-// Step 4 scope: drain loop + start/stop. The handler itself is a
-// pluggable field on Backend (dispatchHandler); Step 7 replaces the
-// default no-op logger with the real per-Event-Type dispatch that fires
-// SessionEvents / TurnEvents.
 
 package opencode
 
@@ -22,10 +17,11 @@ import (
 // dispatch goroutine — no internal synchronisation needed.
 type eventHandler func(ev rawEvent)
 
-// defaultDispatchHandler is the Step 4 placeholder. Step 7 replaces
-// this via Backend.SetDispatchHandler (or by direct field assignment
-// in Backend.Start) with the real per-Event-Type dispatch that fires
-// SessionEvents / TurnEvents.
+// defaultDispatchHandler is a debug-only fallback, logging every event
+// at DEBUG. Production code always overrides it via SetDispatchHandler
+// (called from Backend.Start before registerSession). Kept as a safety
+// net so a Backend with no handler installed still logs rather than
+// silently dropping events.
 //
 // Logging at DEBUG gives operators visibility into event flow without
 // the noise of ccstream's per-event reader logs.
@@ -35,11 +31,11 @@ var defaultDispatchHandler eventHandler = func(ev rawEvent) {
 
 // dispatchLoop is the per-Backend drain goroutine. Reads from b.events
 // and invokes handler. Stops when stopCh is closed (which happens in
-// unregisterSession, or in Step 5's Backend.Close).
+// unregisterSession or Backend.Close).
 //
 // The handler is read once at startup and bound for the loop's lifetime
 // — changing Backend.dispatchHandler after startDispatcher has no effect
-// until the next start. Step 7 sets the handler before calling
+// until the next start. Start sets the handler before calling
 // registerSession; tests do the same.
 func (b *Backend) dispatchLoop(handler eventHandler, stopCh <-chan struct{}) {
 	for {
@@ -72,10 +68,9 @@ func (b *Backend) startDispatcher() func() {
 	return func() { close(stopCh) }
 }
 
-// SetDispatchHandler installs the per-event handler. Step 7 calls this
-// from Backend.Start (after BeginTurn bookkeeping is initialised but
-// before registerSession, so the handler is bound before any event can
-// arrive). For Step 4 the default handler is in effect.
+// SetDispatchHandler installs the per-event handler. Start calls this
+// before registerSession so the handler is bound before any event can
+// arrive.
 //
 // Must be called BEFORE startDispatcher / registerSession — the handler
 // is captured at goroutine-start time and changes mid-flight have no

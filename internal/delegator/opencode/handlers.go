@@ -4,7 +4,7 @@
 // turn_delegated.go can drive both backends identically.
 //
 // handleEvent is wired as the Backend's dispatch handler in Start (via
-// SetDispatchHandler). The Step 4 dispatcher goroutine drains b.events
+// SetDispatchHandler). The dispatcher goroutine drains b.events
 // and calls handleEvent serially — so all On* methods run on a single
 // goroutine per Backend, no internal locking needed for the call itself
 // (though they do take turnMu / mu for shared-state access).
@@ -14,7 +14,6 @@ package opencode
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"foci/internal/delegator"
@@ -303,7 +302,7 @@ func (b *Backend) onMessageUpdated(msg Message) {
 		b.mu.Unlock()
 	}
 
-	// Error handling. ProviderAuthError fires onAuthFailure (Step 11
+	// Error handling. ProviderAuthError fires onAuthFailure (authfail.go
 	// wires the callback); MessageAbortedError is expected on /reset
 	// hard; other errors are logged.
 	if msg.Error != nil {
@@ -556,13 +555,3 @@ func (b *Backend) failInFlightTurn(reason string) {
 	}
 	log.Debugf(b.logComponent(), "failInFlightTurn: completed in-flight turn after %s", reason)
 }
-
-// ---------------------------------------------------------------------------
-// logComponent returns the log component for this Backend.
-// ---------------------------------------------------------------------------
-
-// logComponent is defined in backend_lifecycle.go; re-declared here as
-// a no-op to keep the import graph clean. (Actually it's the same
-// method — Go allows the same method to be referenced from multiple
-// files in the same package.)
-var _ = fmt.Sprintf // keep fmt import if no direct use remains

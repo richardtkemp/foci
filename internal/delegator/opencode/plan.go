@@ -39,7 +39,7 @@ func planDelivery(ctx context.Context, deps delegator.PlanDeps, args string) (st
 	// plan delivery is fire-and-forget; the response arrives via
 	// SessionEvents.OnText (the user sees it in the chat). Post-turn
 	// bookkeeping doesn't fire for plan turns in v1, same limitation
-	// as steerBuf follow-up turns (Step 7).
+	// as steerBuf follow-up turns (handlers.go).
 	if err := b.sendPromptWithAgent(ctx, args, "plan"); err != nil {
 		return "", fmt.Errorf("/plan: %w", err)
 	}

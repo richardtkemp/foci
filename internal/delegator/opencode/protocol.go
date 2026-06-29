@@ -96,10 +96,10 @@ type ProviderAuthErrorData struct {
 
 // ApiErrorData is the typed payload for MessageError.Name == ErrAPI.
 type ApiErrorData struct {
-	Message      string            `json:"message"`
-	StatusCode   int               `json:"statusCode,omitempty"`
-	IsRetryable  bool              `json:"isRetryable"`
-	ResponseBody string            `json:"responseBody,omitempty"`
+	Message      string `json:"message"`
+	StatusCode   int    `json:"statusCode,omitempty"`
+	IsRetryable  bool   `json:"isRetryable"`
+	ResponseBody string `json:"responseBody,omitempty"`
 }
 
 // MessageAbortedErrorData is the typed payload for MessageError.Name ==
@@ -132,37 +132,37 @@ const (
 // field. Discriminated by Type. Only the fields relevant to the active
 // Type are populated; the rest carry zero values.
 type Part struct {
-	ID         string          `json:"id"`
-	SessionID  string          `json:"sessionID"`
-	MessageID  string          `json:"messageID"`
-	Type       string          `json:"type"`
-	Text       string          `json:"text,omitempty"`        // text, reasoning
-	Synthetic  bool            `json:"synthetic,omitempty"`   // text
-	Ignored    bool            `json:"ignored,omitempty"`     // text
-	CallID     string          `json:"callID,omitempty"`      // tool
-	Tool       string          `json:"tool,omitempty"`        // tool
-	State      *ToolState      `json:"state,omitempty"`       // tool
-	Mime       string          `json:"mime,omitempty"`        // file
-	Filename   string          `json:"filename,omitempty"`    // file
-	URL        string          `json:"url,omitempty"`         // file
-	Prompt     string          `json:"prompt,omitempty"`      // subtask
-	Description string         `json:"description,omitempty"` // subtask
-	Agent      string          `json:"agent,omitempty"`       // subtask, agent
-	Auto       bool            `json:"auto,omitempty"`        // compaction
-	Snapshot   string          `json:"snapshot,omitempty"`    // snapshot, step-start, step-finish
-	Reason     string          `json:"reason,omitempty"`      // step-finish
-	Cost       float64         `json:"cost,omitempty"`        // step-finish
-	Tokens     *MessageTokens  `json:"tokens,omitempty"`      // step-finish
-	Time       *PartTime       `json:"time,omitempty"`        // text, tool, step-finish
-	Metadata   json.RawMessage `json:"metadata,omitempty"`    // generic
+	ID          string          `json:"id"`
+	SessionID   string          `json:"sessionID"`
+	MessageID   string          `json:"messageID"`
+	Type        string          `json:"type"`
+	Text        string          `json:"text,omitempty"`        // text, reasoning
+	Synthetic   bool            `json:"synthetic,omitempty"`   // text
+	Ignored     bool            `json:"ignored,omitempty"`     // text
+	CallID      string          `json:"callID,omitempty"`      // tool
+	Tool        string          `json:"tool,omitempty"`        // tool
+	State       *ToolState      `json:"state,omitempty"`       // tool
+	Mime        string          `json:"mime,omitempty"`        // file
+	Filename    string          `json:"filename,omitempty"`    // file
+	URL         string          `json:"url,omitempty"`         // file
+	Prompt      string          `json:"prompt,omitempty"`      // subtask
+	Description string          `json:"description,omitempty"` // subtask
+	Agent       string          `json:"agent,omitempty"`       // subtask, agent
+	Auto        bool            `json:"auto,omitempty"`        // compaction
+	Snapshot    string          `json:"snapshot,omitempty"`    // snapshot, step-start, step-finish
+	Reason      string          `json:"reason,omitempty"`      // step-finish
+	Cost        float64         `json:"cost,omitempty"`        // step-finish
+	Tokens      *MessageTokens  `json:"tokens,omitempty"`      // step-finish
+	Time        *PartTime       `json:"time,omitempty"`        // text, tool, step-finish
+	Metadata    json.RawMessage `json:"metadata,omitempty"`    // generic
 }
 
 // PartTime is the optional timestamp block on a Part. Start is always set
 // when Time is present; End is set when the part is "complete".
 // Both are unix ms (matching the wire format).
 type PartTime struct {
-	Start int64 `json:"start"`           // unix ms
-	End   int64 `json:"end,omitempty"`   // unix ms
+	Start int64 `json:"start"`         // unix ms
+	End   int64 `json:"end,omitempty"` // unix ms
 }
 
 // ToolState models Part.State for tool parts. Discriminated by Status.
@@ -191,17 +191,17 @@ const (
 // Permission is the wire shape carried by permission.updated SSE events.
 // opencode surfaces tool approvals AND the built-in `question` tool's
 // prompts through this single type, discriminated by Type. Metadata is
-// kind-specific raw JSON — Step 9 decodes per Type.
+// kind-specific raw JSON — decoded per Type in permissions.go.
 type Permission struct {
-	ID         string          `json:"id"`
-	Type       string          `json:"type"` // "bash"|"edit"|"question"|"webfetch"|"external_directory"|"doom_loop"|...
-	Pattern    json.RawMessage `json:"pattern,omitempty"` // string | []string
-	SessionID  string          `json:"sessionID"`
-	MessageID  string          `json:"messageID"`
-	CallID     string          `json:"callID,omitempty"`
-	Title      string          `json:"title"`
-	Metadata   json.RawMessage `json:"metadata"`
-	Time       struct {
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`              // "bash"|"edit"|"question"|"webfetch"|"external_directory"|"doom_loop"|...
+	Pattern   json.RawMessage `json:"pattern,omitempty"` // string | []string
+	SessionID string          `json:"sessionID"`
+	MessageID string          `json:"messageID"`
+	CallID    string          `json:"callID,omitempty"`
+	Title     string          `json:"title"`
+	Metadata  json.RawMessage `json:"metadata"`
+	Time      struct {
 		Created int64 `json:"created"` // unix ms
 	} `json:"time"`
 }
@@ -212,8 +212,8 @@ type Permission struct {
 // kind moves from Type to Permission, Pattern→Patterns ([]string), and
 // MessageID/CallID nest under Tool. Verified against the live 1.2.18 OpenAPI.
 type PermissionRequest struct {
-	ID         string          `json:"id"`        // ^per.* — the requestID for /permission/{id}/reply
-	SessionID  string          `json:"sessionID"` // ^ses.*
+	ID         string          `json:"id"`         // ^per.* — the requestID for /permission/{id}/reply
+	SessionID  string          `json:"sessionID"`  // ^ses.*
 	Permission string          `json:"permission"` // kind: "bash"|"edit"|"question"|...
 	Patterns   []string        `json:"patterns"`
 	Metadata   json.RawMessage `json:"metadata"` // kind-specific (question schema for "question")
@@ -249,10 +249,10 @@ const (
 // SessionStatus is the wire shape in session.status SSE events. Type is
 // "idle" | "busy" | "retry"; retry carries attempt/message/next.
 type SessionStatus struct {
-	Type     string `json:"type"` // "idle" | "busy" | "retry"
-	Attempt  int    `json:"attempt,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Next     int64  `json:"next,omitempty"` // unix ms
+	Type    string `json:"type"` // "idle" | "busy" | "retry"
+	Attempt int    `json:"attempt,omitempty"`
+	Message string `json:"message,omitempty"`
+	Next    int64  `json:"next,omitempty"` // unix ms
 }
 
 // SessionStatusType constants.
@@ -269,41 +269,37 @@ const (
 // EventType constants — values of rawEvent.Type. Listed at
 // https://opencode.ai/docs/server/#events.
 const (
-	EventServerConnected     = "server.connected"
-	EventSessionCreated      = "session.created"
-	EventSessionUpdated      = "session.updated"
-	EventSessionDeleted      = "session.deleted"
-	EventSessionStatus       = "session.status"
-	EventSessionIdle         = "session.idle"
-	EventSessionCompacted    = "session.compacted"
-	EventSessionError        = "session.error"
-	EventSessionDiff         = "session.diff"
-	EventMessageUpdated      = "message.updated"
-	EventMessageRemoved      = "message.removed"
-	EventMessagePartUpdated  = "message.part.updated"
-	EventMessagePartRemoved  = "message.part.removed"
-	EventPermissionUpdated   = "permission.updated" // legacy (older opencode)
-	EventPermissionAsked     = "permission.asked"   // opencode 1.2.x permission prompt
-	EventPermissionReplied   = "permission.replied"
-	EventFileEdited          = "file.edited"
-	EventFileWatcherUpdated  = "file.watcher.updated"
-	EventTodoUpdated         = "todo.updated"
-	EventCommandExecuted     = "command.executed"
-	EventVcsBranchUpdated    = "vcs.branch.updated"
-	EventTuiPromptAppend     = "tui.prompt.append"
-	EventTuiCommandExecute   = "tui.command.execute"
-	EventTuiToastShow        = "tui.toast.show"
+	EventServerConnected    = "server.connected"
+	EventSessionCreated     = "session.created"
+	EventSessionUpdated     = "session.updated"
+	EventSessionDeleted     = "session.deleted"
+	EventSessionStatus      = "session.status"
+	EventSessionIdle        = "session.idle"
+	EventSessionCompacted   = "session.compacted"
+	EventSessionError       = "session.error"
+	EventSessionDiff        = "session.diff"
+	EventMessageUpdated     = "message.updated"
+	EventMessageRemoved     = "message.removed"
+	EventMessagePartUpdated = "message.part.updated"
+	EventMessagePartRemoved = "message.part.removed"
+	EventPermissionUpdated  = "permission.updated" // legacy (older opencode)
+	EventPermissionAsked    = "permission.asked"   // opencode 1.2.x permission prompt
+	EventPermissionReplied  = "permission.replied"
+	EventFileEdited         = "file.edited"
+	EventFileWatcherUpdated = "file.watcher.updated"
+	EventTodoUpdated        = "todo.updated"
+	EventCommandExecuted    = "command.executed"
+	EventVcsBranchUpdated   = "vcs.branch.updated"
+	EventTuiPromptAppend    = "tui.prompt.append"
+	EventTuiCommandExecute  = "tui.command.execute"
+	EventTuiToastShow       = "tui.toast.show"
 )
 
 // rawEvent is the SSE wire envelope. The SSE subscriber decodes each
 // `data:` payload into this shape, switches on Type, and unmarshals
-// Properties into the matching typed payload below.
-//
-// A sessionID() helper (extracting properties.sessionID for the per-
-// session router) is intentionally absent here — Step 4 adds it when
-// the SSE subscriber actually calls it, so deadcode sees the production
-// caller.
-type rawEvent struct { //nolint:unused // decoded by Step 4 SSE subscriber
+// Properties into the matching typed payload below. Session ID is
+// extracted by extractSessionID (subscriber.go) for per-session routing.
+type rawEvent struct {
 	Type       string          `json:"type"`
 	Properties json.RawMessage `json:"properties"`
 }
@@ -311,54 +307,39 @@ type rawEvent struct { //nolint:unused // decoded by Step 4 SSE subscriber
 // Typed event payloads — one per Event* constant the dispatcher cares
 // about. Each is decoded from rawEvent.Properties by the SSE subscriber.
 
-type eventMessageUpdated struct { //nolint:unused // decoded by Step 4 SSE subscriber
+type eventMessageUpdated struct {
 	Info Message `json:"info"`
 }
 
-type eventMessageRemoved struct { //nolint:unused // decoded by Step 4 SSE subscriber
-	SessionID string `json:"sessionID"`
-	MessageID string `json:"messageID"`
-}
-
-type eventMessagePartUpdated struct { //nolint:unused // decoded by Step 4 SSE subscriber
+type eventMessagePartUpdated struct {
 	Part  Part   `json:"part"`
 	Delta string `json:"delta,omitempty"`
 }
 
-type eventMessagePartRemoved struct { //nolint:unused // decoded by Step 4 SSE subscriber
-	SessionID string `json:"sessionID"`
-	MessageID string `json:"messageID"`
-	PartID    string `json:"partID"`
-}
-
-type eventPermissionUpdated struct { //nolint:unused // decoded by Step 4 SSE subscriber
+type eventPermissionUpdated struct {
 	Permission Permission `json:"permission"`
 }
 
-type eventPermissionReplied struct { //nolint:unused // decoded by Step 4 SSE subscriber
-	SessionID     string `json:"sessionID"`
-	PermissionID  string `json:"permissionID"`
-	Response      string `json:"response"`
+type eventPermissionReplied struct {
+	SessionID    string `json:"sessionID"`
+	PermissionID string `json:"permissionID"`
+	Response     string `json:"response"`
 }
 
-type eventSessionIdle struct { //nolint:unused // decoded by Step 4 SSE subscriber
+type eventSessionIdle struct {
 	SessionID string `json:"sessionID"`
 }
 
-type eventSessionStatus struct { //nolint:unused // decoded by Step 4 SSE subscriber
-	SessionID string         `json:"sessionID"`
-	Status    SessionStatus  `json:"status"`
+type eventSessionStatus struct {
+	SessionID string        `json:"sessionID"`
+	Status    SessionStatus `json:"status"`
 }
 
-type eventSessionCompacted struct { //nolint:unused // decoded by Step 4 SSE subscriber
+type eventSessionCompacted struct {
 	SessionID string `json:"sessionID"`
 }
 
-type eventSessionCreatedUpdated struct { //nolint:unused // decoded by Step 4 SSE subscriber
-	Info Session `json:"info"`
-}
-
-type eventSessionError struct { //nolint:unused // decoded by Step 4 SSE subscriber
-	SessionID string         `json:"sessionID,omitempty"`
-	Error     *MessageError  `json:"error,omitempty"`
+type eventSessionError struct {
+	SessionID string        `json:"sessionID,omitempty"`
+	Error     *MessageError `json:"error,omitempty"`
 }
