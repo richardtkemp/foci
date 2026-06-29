@@ -16,7 +16,7 @@ import (
 
 	_ "foci/internal/delegator/ccstream" // register claude-code backend (stream-json)
 	_ "foci/internal/delegator/cctmux"   // register claude-code-tmux backend
-	_ "foci/internal/delegator/opencode" // register opencode backend (HTTP/SSE; WIP, see OPENCODE_DELEGATOR_PLAN.md)
+	"foci/internal/delegator/opencode"   // register opencode backend (HTTP/SSE)
 	_ "foci/internal/discord"            // register discord messaging provider
 	_ "foci/internal/telegram"           // register telegram messaging provider
 
@@ -220,6 +220,13 @@ Subcommands:
 
 	// Resolve the Unix socket path early so agents can inject it into child env.
 	gwSocketPath := resolveSocketPath(cfg)
+
+	// ========== Reap orphaned opencode servers ==========
+	// Previous foci-gw instances that crashed or were killed (SIGKILL, OOM)
+	// before reaching clean shutdown leave `opencode serve` subprocesses
+	// orphaned to PID 1. They hold ports and RSS until manually killed.
+	// Scan before any new servers spawn — anything found IS an orphan.
+	opencode.ReapOrphanedServers()
 
 	// ========== Per-agent setup ==========
 	agents := make(map[string]*agentInstance, len(cfg.Agents))
