@@ -61,6 +61,34 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 	}
 }
 
+// Slash commands typed as messages ("/ping") must be intercepted and routed
+// to the command dispatch path — not enqueued as an agent turn (which would
+// fire a typing indicator and send the text to the LLM).
+func TestRouteUserTurn_SlashCommandIntercepted(t *testing.T) {
+	h := newTestHub()
+	fa := registerFakeAgent(h, "ag")
+	// Attach a command registry with a /ping command.
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{
+		Name: "ping",
+		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "pong"}, nil
+		},
+	})
+	h.agents["ag"].commands = reg
+
+	c := fakeClient()
+	c.hub = h
+	c.deviceID = "dev-1"
+
+	h.routeUserTurn(c, "conv-1", "ag", "/ping", nil, "env-1", 1)
+
+	// The command must NOT have been enqueued as an agent turn.
+	if fa.env != nil {
+		t.Fatalf("slash command was enqueued as agent turn (text=%q) — should have been intercepted", fa.env.Text)
+	}
+}
+
 // The first message on a cold binding bypasses the reliability gate (no binding
 // exists yet) and creates the binding in routeUserTurn. It must seed the binding's
 // dedup set so a copy replayed from the client outbox after a reconnect is dropped
