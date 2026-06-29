@@ -642,11 +642,13 @@ The opencode backend drives OpenCode as a coding agent via its HTTP server API. 
 - **No automated relogin:** `/login` reports "unavailable" for opencode agents. Auth recovery is per-provider (`opencode auth login <provider>`).
 
 **Lifecycle:**
-1. `Start`: acquireServer (lazy pool), POST /session, registerSession (starts dispatcher), inject system prompt (noReply:true), PATCH /config for default_permission.
+1. `Start`: acquireServer (lazy pool), POST /session, **write per-session env mapping + ensure shell.env plugin** (see below), registerSession (starts dispatcher), inject system prompt (noReply:true), PATCH /config for default_permission.
 2. `Inject(SourceUser)` at idle: beginTurn + POST /prompt_async.
 3. SSE events arrive → Server.route by sessionID → Backend.dispatchLoop → handleEvent → SessionEvents/TurnEvents callbacks.
 4. `session.idle`: build TurnResult from accumulated state, fire OnTurnComplete, flush steerBuf.
-5. `Close`: unregisterSession (stops dispatcher), DELETE /session/:id, releaseServer (refcount-- → shutdown if zero).
+5. `Close`: **remove per-session env mapping**, unregisterSession (stops dispatcher), DELETE /session/:id, releaseServer (refcount-- → shutdown if zero).
+
+**Per-session exec-bridge env routing (`session_env.go`):** The shared-server model pins the subprocess env (including `FOCI_SOCK`/`BASH_ENV`) to whichever session launched it first — all subsequent sessions inherit the first session's bridge socket, misrouting session-scoped exec-bridge tools (`foci_ask`, `send_to_session`). The fix uses opencode's `shell.env` plugin hook: before every bash spawn, opencode fires `Plugin.trigger("shell.env", {sessionID}, {env:{}})`, and a foci-generated plugin (`.opencode/plugin/foci-session-env.ts`) reads a per-session JSON file from tempdir and injects the correct `FOCI_SOCK`/`BASH_ENV`. `Backend.Start` writes `{tempdir}/session-env/{sessionID}.json` with the bridge env from `opts.Env`; `Backend.Close` removes it. The plugin is idempotent (same content every time) and self-locating (`import.meta.dir + "/../session-env"`). ccstream is unaffected — each session has its own subprocess and its own bridge baked into the process env.
 
 ## Message Metadata
 

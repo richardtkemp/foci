@@ -99,6 +99,15 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	}
 	b.sessionID = sessionID
 
+	// Write the per-session env mapping and ensure the shell.env plugin
+	// exists. The plugin reads this mapping on every bash spawn and
+	// injects the correct FOCI_SOCK/BASH_ENV, overriding the shared
+	// subprocess's first-session-pinned bridge. Without this, session-
+	// scoped exec-bridge tools (foci_ask, send_to_session) route to the
+	// wrong chat on multi-session agents.
+	EnsureSessionEnvPlugin(opts.WorkDir)
+	WriteSessionEnvFile(sessionID, opts.Env)
+
 	// Register with the Server so SSE events route to us. Side effect:
 	// launches the dispatcher goroutine which drains b.events
 	// and invokes the per-Backend handler (handleEvent, set above).
@@ -160,6 +169,10 @@ func (b *Backend) Close() error {
 	if !running {
 		return nil
 	}
+
+	// Remove the per-session env mapping so the plugin doesn't read a
+	// stale entry for a closed session.
+	RemoveSessionEnvFile(b.sessionID)
 
 	// Deregister from Server — stops the dispatcher and waits for any
 	// in-flight handler call to complete (dispatcher contract). Safe to
