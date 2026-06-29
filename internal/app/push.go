@@ -55,6 +55,21 @@ func (p *pushTokens) all() []string {
 	return out
 }
 
+// pushPayload carries the full push context from the conversation binding to
+// the pusher. The pusher resolves display names (AgentName, SessionTitle) via
+// the Hub before sending, so the client can render a rich notification without
+// a local DB lookup. ChatID is internal (used for alias resolution) and never
+// sent in the FCM wire payload.
+type pushPayload struct {
+	ConvID       string
+	Preview      string
+	AgentID      string
+	AgentName    string
+	SessionKey   string
+	SessionTitle string
+	ChatID       int64 // internal; not sent to FCM
+}
+
 // fcmPusher sends data-only FCM v1 messages, authenticating with a
 // service-account token source that refreshes itself. A push is only a WAKE
 // HINT: it carries the conversationId and a short preview, never the full agent
@@ -121,24 +136,24 @@ func newFCMPusher(ctx context.Context, path string, tokens *pushTokens, window t
 // notify fires a coalesced wake push for a conversation that received offline
 // content. Coalescing drops repeat pushes for the same conversation inside the
 // quiet window — the app reconnects + replays, so a single wake suffices.
-func (p *fcmPusher) notify(convID, preview string) {
+func (p *fcmPusher) notify(payload pushPayload) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
-	if time.Since(p.lastPush[convID]) < p.window {
+	if time.Since(p.lastPush[payload.ConvID]) < p.window {
 		p.mu.Unlock()
 		return
 	}
-	p.lastPush[convID] = time.Now()
+	p.lastPush[payload.ConvID] = time.Now()
 	p.mu.Unlock()
 
 	for _, tok := range p.tokens.all() {
-		safeGo("fcm-push", func() { p.send(tok, convID, preview) })
+		safeGo("fcm-push", func() { p.send(tok, payload) })
 	}
 }
 
-func (p *fcmPusher) send(token, convID, preview string) {
+func (p *fcmPusher) send(token string, payload pushPayload) {
 	tok, err := p.ts.Token()
 	if err != nil {
 		log.Warnf("app", "fcm token: %v", err)
@@ -148,8 +163,12 @@ func (p *fcmPusher) send(token, convID, preview string) {
 		"message": map[string]any{
 			"token": token,
 			"data": map[string]string{
-				"conversationId": convID,
-				"preview":        preview,
+				"conversationId": payload.ConvID,
+				"preview":        payload.Preview,
+				"agentId":        payload.AgentID,
+				"agentName":      payload.AgentName,
+				"sessionKey":     payload.SessionKey,
+				"sessionTitle":   payload.SessionTitle,
 			},
 			"android": map[string]any{"priority": "high"},
 		},

@@ -229,9 +229,13 @@ func durationOr(s string, fallback time.Duration) time.Duration {
 }
 
 // pushNotify fires a coalesced offline wake push for a conversation (no-op when
-// push is unconfigured). Used as convBinding.notifyOffline.
-func (h *Hub) pushNotify(convID, preview string) {
-	h.pusher.notify(convID, preview)
+// push is unconfigured). Used as convBinding.notifyOffline. Resolves the agent
+// display name and session title from the payload's identity fields so the
+// client notification shows who the message is from.
+func (h *Hub) pushNotify(p pushPayload) {
+	p.AgentName, _ = h.agentDisplay(p.AgentID)
+	p.SessionTitle = h.aliasForChat(p.AgentID, p.ChatID)
+	h.pusher.notify(p)
 }
 
 // caps reports the server capability set advertised in `hello`, including the
@@ -806,11 +810,17 @@ func (h *Hub) agentDisplay(id string) (name, emoji string) {
 // aliasFor returns the user-set conversation alias persisted in the session index's
 // chat_metadata (keyed by the stable app chatID), or "" if none / unavailable.
 func (h *Hub) aliasFor(b *convBinding) string {
+	return h.aliasForChat(b.agentID, b.chatID)
+}
+
+// aliasForChat resolves the conversation alias by agent + chatID (the identity
+// fields available in the push path), without requiring a *convBinding.
+func (h *Hub) aliasForChat(agentID string, chatID int64) string {
 	idx := h.deps.SessionIndex
 	if idx == nil {
 		return ""
 	}
-	v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, "alias")
+	v, err := idx.GetChatMetadata(agentID, "app", chatID, "alias")
 	if err != nil {
 		return ""
 	}
@@ -1096,7 +1106,7 @@ type convBinding struct {
 	replayTTL   time.Duration // config-driven buffer TTL; 0 = code default
 	store       *frameStore   // durable replay backstop (nil = in-memory only)
 
-	notifyOffline func(convID, preview string) // fires a wake push for offline visible frames; nil = no push
+	notifyOffline func(p pushPayload) // fires a wake push for offline visible frames; nil = no push
 
 	mu          sync.Mutex
 	client      *wsClient           // current socket; nil when offline
@@ -1169,6 +1179,7 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	client := b.client
 	notify := b.notifyOffline
 	store := b.store
+	sessionKey := b.sessionKey
 	b.mu.Unlock()
 
 	// Persist verbatim to the durable backstop (async; survives restart + the
@@ -1187,7 +1198,13 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	// user-visible content so the device reconnects and replays it.
 	if notify != nil {
 		if preview, ok := pushPreview(frame); ok {
-			notify(b.convID, preview)
+			notify(pushPayload{
+				ConvID:     b.convID,
+				Preview:    preview,
+				AgentID:    b.agentID,
+				SessionKey: sessionKey,
+				ChatID:     b.chatID,
+			})
 		}
 	}
 }
