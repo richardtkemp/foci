@@ -109,6 +109,35 @@ func releaseServer(agentID string, s *Server) {
 	go func() { _ = s.Close() }()
 }
 
+// CloseAllServers SYNCHRONOUSLY shuts down every pooled opencode server,
+// ignoring refcounts, and returns the number closed. It is the load-bearing
+// backstop for foci's shutdown path (#948): the per-session releaseServer Close
+// is async (`go func`), so on a foci restart/shutdown the process exits before
+// those detached goroutines finish the SIGTERM→SIGKILL ladder, orphaning the
+// `opencode serve` subprocess (observed: 10h-old, ppid=1, ~130MB, one leaked per
+// deploy per opencode agent). Draining the pool here — and WAITING for each
+// bounded Close to complete before main returns — guarantees no server survives
+// the restart, regardless of whether every Backend.Close ran or the refcount
+// reached zero. Servers are closed in parallel so total wall-clock is bounded by
+// the slowest single Close, not their sum.
+func CloseAllServers() int {
+	serverPoolMu.Lock()
+	servers := make([]*Server, 0, len(serverPool))
+	for id, s := range serverPool {
+		servers = append(servers, s)
+		delete(serverPool, id)
+	}
+	serverPoolMu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, s := range servers {
+		wg.Add(1)
+		go func(s *Server) { defer wg.Done(); _ = s.Close() }(s)
+	}
+	wg.Wait()
+	return len(servers)
+}
+
 // init registers the constructor with the delegator registry. Real
 // registration (with plan delivery etc.) lands in Step 14; for now this
 // keeps the package importable in tests without side effects.
