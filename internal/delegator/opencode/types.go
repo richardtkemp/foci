@@ -47,4 +47,11 @@ type pendingPermission struct {
 	// {response:allow|deny}). Set per-event so foci handles BOTH opencode
 	// permission models (#arnix-perm).
 	replyNext bool
+	// aliasOf, when non-empty, marks this permission as a UI-duplicate of the
+	// primary with this ID. opencode can raise multiple distinct permission
+	// objects for the SAME target (one per tool call) near-simultaneously; we
+	// surface only the primary's prompt and fan the user's single answer out to
+	// the whole group. An alias is still Registered in `outstanding` (opencode
+	// genuinely blocks on it), it just doesn't get its own prompt.
+	aliasOf string
 }
