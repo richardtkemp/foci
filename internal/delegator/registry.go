@@ -64,3 +64,21 @@ func SupportedNames() []string {
 	sort.Strings(names)
 	return names
 }
+
+// RegisteredNames returns the names of ALL registered backends (supported or
+// not), sorted. Unlike SupportedNames it includes backends an agent may legally
+// use but the setup wizard doesn't offer (e.g. claude-code-tmux). Empty until the
+// backend packages' init() functions have run (i.e. in the assembled foci-gw
+// binary), so callers must treat an empty result as "registry not populated" and
+// skip name validation rather than reject every backend. Used by config
+// validation to catch a typo'd agent backend name early (#947).
+func RegisteredNames() []string {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	names := make([]string, 0, len(constructors))
+	for name := range constructors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}

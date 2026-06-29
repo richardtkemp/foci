@@ -152,3 +152,36 @@ func TestDetectBotTokenConflicts_NoPlatform(t *testing.T) {
 		t.Fatalf("expected 0 conflicts, got %d", len(conflicts))
 	}
 }
+
+// TestValidateAgentBackends covers the #947 backend-name check: a non-empty,
+// non-"api" agent backend must be a registered name. Pure (known passed in), so
+// it exercises the logic without mutating the global delegator registry.
+func TestValidateAgentBackends(t *testing.T) {
+	known := []string{"claude-code", "claude-code-tmux", "opencode"}
+
+	cases := []struct {
+		name    string
+		known   []string
+		backend string
+		wantErr bool
+	}{
+		{"registered backend", known, "claude-code", false},
+		{"unsupported-but-registered backend", known, "claude-code-tmux", false},
+		{"empty backend (traditional loop)", known, "", false},
+		{"api backend (traditional loop)", known, "api", false},
+		{"typo'd backend", known, "claude-codex", true},
+		{"unknown backend", known, "gpt5", true},
+		// Registry not populated (config-only context) → skip, never reject.
+		{"empty registry skips validation", nil, "anything-goes", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agents := []AgentConfig{{ID: "a1", Backend: tc.backend}}
+			err := validateAgentBackends(agents, tc.known)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateAgentBackends(backend=%q, known=%v) err=%v, wantErr=%v",
+					tc.backend, tc.known, err, tc.wantErr)
+			}
+		})
+	}
+}
