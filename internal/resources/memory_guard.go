@@ -47,6 +47,7 @@ type MemoryGuard struct {
 	// Overridable for testing.
 	getMemTotalFn func() (int64, error)                              // returns total RAM in kB
 	getUserRSSFn  func(uid int) (int64, error)                       // returns total RSS for user in kB
+	getSelfRSSFn  func() (int64, error)                              // returns RSS of this process (foci-gw) in kB
 	getPressureFn func() (float64, error)                            // returns PSI memory avg10
 	findLargestFn func(uid, selfPid int) (int, string, int64, error) // returns pid, comm, rssKB of largest non-self process
 	killProcessFn func(pid int) error                                // SIGTERM then SIGKILL
@@ -110,6 +111,10 @@ func (g *MemoryGuard) checkOnce() {
 	if getUserRSS == nil {
 		getUserRSS = func(uid int) (int64, error) { return readUserRSS(defaultProcDir, uid) }
 	}
+	getSelfRSS := g.getSelfRSSFn
+	if getSelfRSS == nil {
+		getSelfRSS = func() (int64, error) { return readSelfRSS(defaultProcDir) }
+	}
 	getPressure := g.getPressureFn
 	if getPressure == nil {
 		getPressure = func() (float64, error) { return readMemoryPressure(defaultProcDir) }
@@ -127,6 +132,17 @@ func (g *MemoryGuard) checkOnce() {
 		return
 	}
 
+	// Self (foci-gw) RSS. Read best-effort: a failure shouldn't gate the
+	// guard. -1 is the sentinel for "unknown", surfaced in log lines so the
+	// value isn't mistaken for a real zero.
+	selfRSSKB, selfErr := getSelfRSS()
+	selfMB := int64(-1)
+	if selfErr == nil {
+		selfMB = selfRSSKB / 1024
+	} else {
+		log.Debugf("memory_guard", "read self RSS: %v", selfErr)
+	}
+
 	pct := float64(userRSSKB) / float64(memTotalKB) * 100
 	userMB := userRSSKB / 1024
 	totalMB := memTotalKB / 1024
@@ -135,7 +151,7 @@ func (g *MemoryGuard) checkOnce() {
 	if int(pct) < g.cfg.WarnPercent {
 		g.mu.Lock()
 		if g.warnFired {
-			log.Infof("memory_guard", "user RSS %dMB (%.1f%%) back below warn threshold", userMB, pct)
+			log.Infof("memory_guard", "user RSS %dMB (%.1f%%, self %dMB) back below warn threshold", userMB, pct, selfMB)
 		}
 		g.warnFired = false
 		g.mu.Unlock()
@@ -150,8 +166,8 @@ func (g *MemoryGuard) checkOnce() {
 	}
 
 	if pressure < g.cfg.PressureThreshold {
-		log.Debugf("memory_guard", "user RSS %dMB (%.1f%%) above threshold but pressure %.2f < %.1f, no action",
-			userMB, pct, pressure, g.cfg.PressureThreshold)
+		log.Debugf("memory_guard", "user RSS %dMB (%.1f%%, self %dMB) above threshold but pressure %.2f < %.1f, no action",
+			userMB, pct, selfMB, pressure, g.cfg.PressureThreshold)
 		return
 	}
 
@@ -161,7 +177,7 @@ func (g *MemoryGuard) checkOnce() {
 		g.warnFired = true // skip separate warn
 		g.mu.Unlock()
 
-		g.doKill(userMB, totalMB, pct, pressure)
+		g.doKill(userMB, totalMB, selfMB, pct, pressure)
 		return
 	}
 
@@ -172,8 +188,8 @@ func (g *MemoryGuard) checkOnce() {
 	g.mu.Unlock()
 
 	if !alreadyWarned {
-		msg := fmt.Sprintf("system memory WARNING: foci user RSS %dMB / %dMB (%.1f%%) exceeds %d%% threshold (pressure=%.1f)",
-			userMB, totalMB, pct, g.cfg.WarnPercent, pressure)
+		msg := fmt.Sprintf("system memory WARNING: foci user RSS %dMB / %dMB (%.1f%%, self %dMB) exceeds %d%% threshold (pressure=%.1f)",
+			userMB, totalMB, pct, selfMB, g.cfg.WarnPercent, pressure)
 		log.Warnf("memory_guard", "%s", msg)
 		if g.warnFn != nil {
 			g.warnFn(msg)
@@ -182,7 +198,7 @@ func (g *MemoryGuard) checkOnce() {
 }
 
 // doKill finds and kills the largest non-foci process owned by this user.
-func (g *MemoryGuard) doKill(userMB, totalMB int64, pct, pressure float64) {
+func (g *MemoryGuard) doKill(userMB, totalMB, selfMB int64, pct, pressure float64) {
 	findLargest := g.findLargestFn
 	if findLargest == nil {
 		findLargest = func(uid, selfPid int) (int, string, int64, error) {
@@ -198,15 +214,15 @@ func (g *MemoryGuard) doKill(userMB, totalMB int64, pct, pressure float64) {
 	if err != nil {
 		log.Errorf("memory_guard", "find largest process: %v", err)
 		if g.warnFn != nil {
-			g.warnFn(fmt.Sprintf("system memory CRITICAL: user RSS %dMB / %dMB (%.1f%%), pressure=%.1f (threshold %.1f) — could not find process to kill: %v",
-				userMB, totalMB, pct, pressure, g.cfg.PressureThreshold, err))
+			g.warnFn(fmt.Sprintf("system memory CRITICAL: user RSS %dMB / %dMB (%.1f%%, self %dMB), pressure=%.1f (threshold %.1f) — could not find process to kill: %v",
+				userMB, totalMB, pct, selfMB, pressure, g.cfg.PressureThreshold, err))
 		}
 		return
 	}
 
 	rssMB := rssKB / 1024
-	msg := fmt.Sprintf("system memory KILL: user RSS %dMB / %dMB (%.1f%%), pressure=%.1f (threshold %.1f) — killing %s (pid %d, %dMB RSS)",
-		userMB, totalMB, pct, pressure, g.cfg.PressureThreshold, comm, pid, rssMB)
+	msg := fmt.Sprintf("system memory KILL: user RSS %dMB / %dMB (%.1f%%, self %dMB), pressure=%.1f (threshold %.1f) — killing %s (pid %d, %dMB RSS)",
+		userMB, totalMB, pct, selfMB, pressure, g.cfg.PressureThreshold, comm, pid, rssMB)
 	log.Errorf("memory_guard", "%s", msg)
 	if g.warnFn != nil {
 		g.warnFn(msg)
@@ -265,6 +281,32 @@ func readUserRSS(procDir string, uid int) (int64, error) {
 		}
 	}
 	return totalRSS, nil
+}
+
+// readSelfRSS reads VmRSS (in kB) for the calling process (foci-gw) from
+// procDir/<pid>/status. Returns -1 in the error path is left to callers; here
+// we surface the read error. The status file is the calling process's own, so
+// the UID ownership check is skipped.
+func readSelfRSS(procDir string) (int64, error) {
+	pidStr := strconv.Itoa(os.Getpid())
+	statusPath := filepath.Join(procDir, pidStr, "status")
+	f, err := os.Open(statusPath)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", statusPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				return strconv.ParseInt(fields[1], 10, 64)
+			}
+		}
+	}
+	return 0, fmt.Errorf("VmRSS not found in %s", statusPath)
 }
 
 // readStatusRSS reads a /proc/[pid]/status file and returns (VmRSS in kB, isOwnedByUID).
