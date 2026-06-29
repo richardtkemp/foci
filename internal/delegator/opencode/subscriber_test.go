@@ -555,6 +555,119 @@ func TestServer_Route_FullChannelDropsAndLogs(t *testing.T) {
 	}
 }
 
+// childCreated builds a session.created event linking child→parent.
+func childCreated(childID, parentID string) rawEvent {
+	return rawEvent{
+		Type:       EventSessionCreated,
+		Properties: []byte(`{"info":{"id":"` + childID + `","parentID":"` + parentID + `"}}`),
+	}
+}
+
+// askedFor builds a permission.asked event for the given (child) session.
+func askedFor(sessionID string) rawEvent {
+	return rawEvent{
+		Type:       EventPermissionAsked,
+		Properties: []byte(`{"id":"per_x","sessionID":"` + sessionID + `","permission":"external_directory"}`),
+	}
+}
+
+func TestServer_Route_ChildPermissionReroutedToParent(t *testing.T) {
+	// A subagent (child) session is never registered as a Backend. Its
+	// permission.asked must be rerouted to the parent's registered Backend
+	// (learned from session.created) — else it's dropped and the subagent,
+	// plus the parent turn waiting on it, blocks forever (#964).
+	srv := &Server{sessions: map[string]*Backend{}}
+	parent := &Backend{sessionID: "ses_parent", events: make(chan rawEvent, 2)}
+	srv.sessions["ses_parent"] = parent
+
+	srv.route(childCreated("ses_child", "ses_parent")) // learn the link
+	srv.route(askedFor("ses_child"))                   // child's permission
+
+	select {
+	case got := <-parent.events:
+		if got.Type != EventPermissionAsked {
+			t.Errorf("parent got %q, want permission.asked", got.Type)
+		}
+	default:
+		t.Fatal("parent Backend did not receive the child's permission")
+	}
+}
+
+func TestServer_Route_ChildPermissionMultiLevel(t *testing.T) {
+	// A grandchild's permission resolves up two levels to the registered root.
+	srv := &Server{sessions: map[string]*Backend{}}
+	root := &Backend{sessionID: "ses_root", events: make(chan rawEvent, 2)}
+	srv.sessions["ses_root"] = root
+
+	srv.route(childCreated("ses_child", "ses_root"))
+	srv.route(childCreated("ses_grand", "ses_child"))
+	srv.route(askedFor("ses_grand"))
+
+	select {
+	case got := <-root.events:
+		if got.Type != EventPermissionAsked {
+			t.Errorf("root got %q, want permission.asked", got.Type)
+		}
+	default:
+		t.Fatal("root Backend did not receive the grandchild's permission")
+	}
+}
+
+func TestServer_Route_ChildPermissionCorrectParent(t *testing.T) {
+	// Two registered sessions A and B share the server. A child of A's
+	// permission must reach A, never B — correct attribution, no cross-wiring.
+	srv := &Server{sessions: map[string]*Backend{}}
+	beA := &Backend{sessionID: "ses_A", events: make(chan rawEvent, 2)}
+	beB := &Backend{sessionID: "ses_B", events: make(chan rawEvent, 2)}
+	srv.sessions["ses_A"] = beA
+	srv.sessions["ses_B"] = beB
+
+	srv.route(childCreated("ses_childA", "ses_A"))
+	srv.route(askedFor("ses_childA"))
+
+	if len(beB.events) != 0 {
+		t.Errorf("B wrongly received A's child permission (cross-wiring)")
+	}
+	select {
+	case got := <-beA.events:
+		if got.Type != EventPermissionAsked {
+			t.Errorf("A got %q, want permission.asked", got.Type)
+		}
+	default:
+		t.Fatal("A did not receive its child's permission")
+	}
+}
+
+func TestServer_Route_ChildNonPermissionStillDropped(t *testing.T) {
+	// Only permission events are rerouted. A child's text/idle events stay
+	// dropped (we don't want subagent output surfacing on the parent session).
+	srv := &Server{sessions: map[string]*Backend{}}
+	parent := &Backend{sessionID: "ses_parent", events: make(chan rawEvent, 2)}
+	srv.sessions["ses_parent"] = parent
+
+	srv.route(childCreated("ses_child", "ses_parent"))
+	srv.route(rawEvent{Type: EventSessionIdle, Properties: []byte(`{"sessionID":"ses_child"}`)})
+	srv.route(rawEvent{Type: EventMessagePartUpdated, Properties: []byte(`{"part":{"sessionID":"ses_child"}}`)})
+
+	if len(parent.events) != 0 {
+		t.Errorf("parent wrongly received a non-permission child event; got %d", len(parent.events))
+	}
+}
+
+func TestServer_Route_ChildPermissionNoParentDropped(t *testing.T) {
+	// A child permission with no known parent link is dropped (not panic, not
+	// misrouted) — the pre-fix behaviour for genuinely unknown sessions.
+	srv := &Server{sessions: map[string]*Backend{}}
+	other := &Backend{sessionID: "ses_other", events: make(chan rawEvent, 2)}
+	srv.sessions["ses_other"] = other
+
+	srv.route(askedFor("ses_orphan")) // no session.created recorded
+
+	if len(other.events) != 0 {
+		t.Errorf("orphan permission must drop, not land on an unrelated Backend")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Server.registerSession / unregisterSession
 // ---------------------------------------------------------------------------

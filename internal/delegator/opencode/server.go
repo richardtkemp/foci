@@ -46,8 +46,15 @@ type Server struct {
 
 	// Per-session registry. Backends register under their opencode
 	// sessionID; the SSE subscriber routes events by looking up here.
-	sessionsMu sync.RWMutex
-	sessions   map[string]*Backend
+	// childToParent maps a subagent (child) session ID to its parent,
+	// learned from session.created events. opencode never registers child
+	// sessions as Backends, so route() uses this to walk a child's
+	// permission requests up to the owning Backend (else they'd be dropped
+	// and the subagent — and the parent turn — would block forever). Both
+	// are guarded by sessionsMu.
+	sessionsMu    sync.RWMutex
+	sessions      map[string]*Backend
+	childToParent map[string]string
 
 	// SSE subscriber cancel.
 	subscriberCancel context.CancelFunc
@@ -85,6 +92,7 @@ func newServer(agentID string, cfg serverConfig) *Server {
 		port:           cfg.port,
 		serverPassword: cfg.serverPassword,
 		sessions:       make(map[string]*Backend),
+		childToParent:  make(map[string]string),
 		http:           &http.Client{Timeout: 30 * time.Second},
 	}
 	s.wrapAuthCheckingTransport()
