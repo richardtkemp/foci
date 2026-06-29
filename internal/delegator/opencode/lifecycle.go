@@ -350,6 +350,17 @@ func (s *Server) finalizeExit(reason error) {
 		s.running = false
 		s.mu.Unlock()
 
+		// Proactively evict the dead Server from the pool so the next
+		// acquireServer spawns a fresh one instead of handing back this
+		// corpse (whose port no longer answers). Guard that the pooled entry
+		// is still us — a respawn may already have replaced it, and we must
+		// not delete a healthy successor.
+		serverPoolMu.Lock()
+		if serverPool[s.agentID] == s {
+			delete(serverPool, s.agentID)
+		}
+		serverPoolMu.Unlock()
+
 		// Touch lastActivity so Step 12's LastActivity() reports a fresh
 		// "dead" timestamp rather than the last SSE frame time.
 		s.lastActivity.Store(time.Now().UnixNano())

@@ -168,7 +168,7 @@ func (b *Backend) Close() error {
 	// directly — agentID isn't in the pool so releaseServer returns
 	// immediately). Production Backends always go through acquireServer.
 	if b.agentID != "" {
-		releaseServer(b.agentID)
+		releaseServer(b.agentID, b.server)
 	}
 
 	b.cancelTurn()
