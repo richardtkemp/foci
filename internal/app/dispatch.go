@@ -12,6 +12,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/tools"
 )
 
 // sendRaw queues a socket-level (non-conversation-scoped) server frame, such as
@@ -348,6 +349,12 @@ func (h *Hub) dispatchCommand(conn *appConn, b *convBinding, req command.Request
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Inject the session key into ctx so commands that read it via
+	// tools.SessionKeyFromContext (e.g. /stop, /reset, /plan) work in the
+	// app path. Telegram's Dispatcher does this at dispatchRequest; the app
+	// path bypasses the queue and calls Dispatch directly. Without this,
+	// /stop from the app UI returns "no active session". See TODO #88.
+	ctx = tools.WithSessionKey(ctx, req.SessionKey)
 	resp, handled, err := conn.commands.Dispatch(ctx, req, conn.cmdCtx)
 	switch {
 	case err != nil:
