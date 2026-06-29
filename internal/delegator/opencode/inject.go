@@ -61,12 +61,14 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.seenToolCalls = make(map[string]bool)
 	b.seenTextParts = make(map[string]bool)
 
-	// lastUsage/lastModel are reset under b.mu (they're read by
-	// onSessionIdle on the next turn to build TurnResult — a stale
-	// value would leak across turns).
+	// lastUsage/lastModel/lastProvider are reset under b.mu (they're read
+	// by onSessionIdle on the next turn to build TurnResult, and by
+	// sendSummarize to drive compaction — a stale value would leak across
+	// turns).
 	b.mu.Lock()
 	b.lastUsage = nil
 	b.lastModel = ""
+	b.lastProvider = ""
 	b.mu.Unlock()
 }
 
@@ -198,22 +200,22 @@ func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 	return b.sendPrompt(ctx, inj.Text, inj.Attachments)
 }
 
-// injectCommand handles SourceCompact and SourcePass — slash commands
-// fire-and-forget via POST /session/:id/command. Compact maps to
-// command:"compact"; Pass uses the first whitespace-separated token
-// of inj.Text as the command name, rest as arguments.
+// injectCommand handles SourceCompact and SourcePass.
+//
+// SourceCompact is NOT a /command: opencode's /command endpoint resolves
+// user-defined commands via Command.get(name), and "compact" is a TUI-only
+// slash command with no server-side registry entry — so the lookup returns
+// undefined and opencode crashes dereferencing command.agent (HTTP 500,
+// prompt.ts). Compaction has its own endpoint, /session/:id/summarize,
+// handled by sendSummarize.
+//
+// SourcePass — passthrough slash commands like /context, /model — keep the
+// fire-and-forget POST /session/:id/command path.
 func (b *Backend) injectCommand(ctx context.Context, inj delegator.Inject) error {
-	command := ""
-	arguments := ""
 	if inj.Source == delegator.SourceCompact {
-		// inj.Text arrives as "/compact <args>" from foci's command
-		// layer. opencode's /command endpoint wants command:"compact"
-		// + arguments:"<args>" — strip the leading slash + first token.
-		command, arguments = splitSlashCommand(inj.Text)
-	} else {
-		// SourcePass — passthrough slash command like /context, /model.
-		command, arguments = splitSlashCommand(inj.Text)
+		return b.sendSummarize(ctx)
 	}
+	command, arguments := splitSlashCommand(inj.Text)
 	return b.sendCommand(ctx, command, arguments)
 }
 
@@ -266,6 +268,41 @@ func (b *Backend) sendCommand(ctx context.Context, command, arguments string) er
 		return err
 	}
 	return b.postMessage(ctx, "/command", body)
+}
+
+// sendSummarize triggers opencode's AI compaction via POST
+// /session/:id/summarize (operationId session.summarize). This is the
+// correct endpoint for compaction — opencode has no server-side "compact"
+// command, so routing it through sendCommand crashes the server. The
+// endpoint inserts a compaction part and runs the prompt loop, which
+// summarises the session and publishes session.compacted (released by
+// onSessionCompacted → WaitForCompaction).
+//
+// The endpoint requires the provider+model to summarise with; we reuse the
+// last assistant turn's values captured in onMessageUpdated. Compaction is
+// always triggered between turns (after a completed turn, before the next
+// beginTurn resets them), so these are populated in practice. If they're
+// not, we fail loudly rather than POST an empty model that opencode would
+// reject downstream.
+func (b *Backend) sendSummarize(ctx context.Context) error {
+	b.mu.Lock()
+	modelID := b.lastModel
+	providerID := b.lastProvider
+	b.mu.Unlock()
+
+	if modelID == "" || providerID == "" {
+		return fmt.Errorf("opencode: cannot compact — no model captured yet (provider=%q model=%q)", providerID, modelID)
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"providerID": providerID,
+		"modelID":    modelID,
+		"auto":       false,
+	})
+	if err != nil {
+		return err
+	}
+	return b.postMessage(ctx, "/summarize", body)
 }
 
 // postMessage is the underlying HTTP primitive. URL is the suffix
