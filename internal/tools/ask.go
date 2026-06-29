@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"foci/internal/app/fap"
 	"foci/internal/log"
 	"foci/internal/procx"
 	"foci/internal/question"
@@ -146,7 +146,6 @@ type askState struct {
 	restore      AskRestoreFn
 	deliver      AskDeliverFn
 	closeMsg     AskCloseFn
-	seq          atomic.Int64
 	store        *session.SessionIndex // nil = no persistence
 	agentID      string
 }
@@ -208,11 +207,13 @@ func answerEcho(s string) string {
 
 // nextRequestID returns a unique, colon-free request id. Colon-free matters: the
 // platform encodes button data as "<id>:<index>" and splits on the first colon,
-// so an id containing ':' would break click routing. The agentID is included
-// because the platform's interactive store is process-global: without it two
-// agents' independent counters would both mint "ask-1" and collide there.
+// so an id containing ':' would break click routing. The id is a ULID prefixed
+// with "ask-" and the agentID (so logs and persisted state self-identify). ULID
+// is used instead of a monotonic counter because the counter was in-memory and
+// reset on every restart — colliding with prior-process asks whose promptIds
+// still lived in the app's DB, silently corrupting batched answer slots.
 func (a *askState) nextRequestID() string {
-	return fmt.Sprintf("ask-%s-%d", a.agentID, a.seq.Add(1))
+	return "ask-" + a.agentID + "-" + fap.NewULID()
 }
 
 // start registers a new ask and presents its first question.
