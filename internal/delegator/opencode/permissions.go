@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -27,30 +28,58 @@ import (
 // to handleQuestionPermission; all others get the binary Allow/Deny/
 // Always-Allow keyboard.
 func (b *Backend) onPermissionUpdated(perm Permission) {
-	// Store under permMu so RespondToPermission (caller's goroutine)
-	// and the dispatcher goroutine don't race.
-	b.permMu.Lock()
-	b.pendingPerms[perm.ID] = &pendingPermission{
-		id:       perm.ID,
-		permType: perm.Type,
-		title:    perm.Title,
-		metadata: perm.Metadata,
+	b.surfacePermission(pendingPermission{
+		id:        perm.ID,
+		permType:  perm.Type,
+		title:     perm.Title,
+		metadata:  perm.Metadata,
+		replyNext: false, // legacy: reply via POST /session/:id/permissions/:id
+	})
+}
+
+// onPermissionAsked handles a permission.asked SSE event (opencode 1.2.x). It
+// maps the PermissionRequest onto the same surfacing path as the legacy
+// permission.updated, building a human title (the request carries none) and
+// flagging the reply to go via POST /permission/{id}/reply (#arnix-perm).
+func (b *Backend) onPermissionAsked(req PermissionRequest) {
+	title := req.Permission
+	if len(req.Patterns) > 0 {
+		title = req.Permission + ": " + strings.Join(req.Patterns, ", ")
 	}
+	b.surfacePermission(pendingPermission{
+		id:        req.ID,
+		permType:  req.Permission,
+		title:     title,
+		metadata:  req.Metadata,
+		replyNext: true, // 1.2.x: reply via POST /permission/{id}/reply
+	})
+}
+
+// surfacePermission stores a pending permission, registers it for
+// WaitForPermission, and surfaces it to the user — routing question-type
+// permissions to handleQuestionPermission and everything else to the binary
+// Allow/Deny/Always keyboard. Shared by both opencode permission models.
+func (b *Backend) surfacePermission(pp pendingPermission) {
+	// Store under permMu so RespondToPermission (caller's goroutine) and the
+	// dispatcher goroutine don't race.
+	b.permMu.Lock()
+	stored := pp
+	b.pendingPerms[pp.id] = &stored
 	b.permMu.Unlock()
 
-	// Register in the OutstandingRegistry so WaitForPermission blocks
-	// and the onEmpty drain hook fires when resolved.
-	b.outstanding.Register(perm.ID, delegator.OutstandingPermission)
+	// Register in the OutstandingRegistry so WaitForPermission blocks and the
+	// onEmpty drain hook fires when resolved.
+	b.outstanding.Register(pp.id, delegator.OutstandingPermission)
 
 	// Route question-type permissions to the question path.
-	if perm.Type == PermQuestion {
-		b.handleQuestionPermission(perm)
+	if pp.permType == PermQuestion {
+		b.handleQuestionPermission(Permission{ID: pp.id, Type: pp.permType, Title: pp.title, Metadata: pp.metadata})
 		return
 	}
 
 	// Regular permission: surface via permPromptFn with Allow/Deny/Always.
 	if b.permPromptFn == nil {
-		log.Warnf(b.logComponent(), "onPermissionUpdated: permPromptFn nil — prompt %s stored but not displayed", perm.ID)
+		log.Warnf(b.logComponent(), "surfacePermission: permPromptFn nil — prompt %s stored but not displayed", pp.id)
 		return
 	}
 
@@ -59,7 +88,7 @@ func (b *Backend) onPermissionUpdated(perm Permission) {
 		{Label: "Deny", Data: "deny"},
 		{Label: "Always Allow", Data: "always"},
 	}
-	b.permPromptFn(perm.ID, perm.Title, perm.Title, "", choices)
+	b.permPromptFn(pp.id, pp.title, pp.title, "", choices)
 }
 
 // onPermissionReplied handles a permission.replied SSE event. opencode
@@ -90,19 +119,34 @@ func (b *Backend) onPermissionReplied(sessionID, permissionID, response string) 
 // `remember` maps to opencode's "remember this decision" flag.
 func (b *Backend) RespondToPermission(permID string, allow bool, remember bool) error {
 	b.permMu.Lock()
-	_, ok := b.pendingPerms[permID]
+	pp, ok := b.pendingPerms[permID]
+	replyNext := ok && pp.replyNext
 	b.permMu.Unlock()
 	if !ok {
 		return fmt.Errorf("opencode: no pending permission with ID %q", permID)
 	}
 
-	response := "deny"
-	if allow {
-		response = "allow"
+	var err error
+	if replyNext {
+		// opencode 1.2.x: POST /permission/{id}/reply { reply }. allow+remember →
+		// "always" (persist the rule), allow → "once", deny → "reject".
+		reply := "reject"
+		if allow {
+			reply = "once"
+			if remember {
+				reply = "always"
+			}
+		}
+		err = b.replyPermissionNext(permID, reply)
+	} else {
+		// Legacy: POST /session/:id/permissions/:permID { response, remember? }.
+		response := "deny"
+		if allow {
+			response = "allow"
+		}
+		err = b.postPermissionResponse(permID, response, remember)
 	}
-
-	// POST /session/:id/permissions/:permID { response, remember? }
-	if err := b.postPermissionResponse(permID, response, remember); err != nil {
+	if err != nil {
 		return err
 	}
 
@@ -112,6 +156,28 @@ func (b *Backend) RespondToPermission(permID string, allow bool, remember bool) 
 	delete(b.pendingPerms, permID)
 	b.permMu.Unlock()
 
+	return nil
+}
+
+// replyPermissionNext replies to a permission.asked request via opencode 1.2.x's
+// POST /permission/{requestID}/reply { reply } endpoint (reply ∈ once|always|
+// reject). Verified against the live 1.2.18 OpenAPI.
+func (b *Backend) replyPermissionNext(requestID, reply string) error {
+	payload, _ := json.Marshal(map[string]any{"reply": reply})
+	url := fmt.Sprintf("%s/permission/%s/reply", b.server.baseURL, requestID)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := b.httpClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("POST /permission/%s/reply: %w", requestID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("POST /permission/%s/reply: HTTP %d", requestID, resp.StatusCode)
+	}
 	return nil
 }
 
