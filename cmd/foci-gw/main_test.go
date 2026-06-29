@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -544,9 +545,8 @@ func TestReloadCredentialsEndpoint_NotRegisteredWithoutHolder(t *testing.T) {
 }
 
 func TestPprofGatedByConfig(t *testing.T) {
-	// Proves /debug/pprof/* is registered only when [debug] enable_pprof is
-	// set: off (nil/false) -> 404, on -> served. Keeps profiling endpoints off
-	// a normal deployment. (P3.)
+	// Proves /debug/pprof/* returns 404 when the gate is off and 200 when on.
+	// The gate is seeded from [debug] enable_pprof at startup (as main.go does).
 	enabled := true
 	cases := []struct {
 		name       string
@@ -558,9 +558,12 @@ func TestPprofGatedByConfig(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			gate := &atomic.Bool{}
+			gate.Store(config.DerefBool(tc.cfg.Debug.EnablePprof))
 			mux := http.NewServeMux()
 			registerHTTPHandlers(mux, httpHandlerDeps{
 				agents: map[string]*agentInstance{}, agentOrder: []string{}, cfg: tc.cfg,
+				pprofGate: gate,
 			})
 			req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 			w := httptest.NewRecorder()
@@ -569,6 +572,60 @@ func TestPprofGatedByConfig(t *testing.T) {
 				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
 			}
 		})
+	}
+}
+
+func TestPprofLiveToggle(t *testing.T) {
+	// Proves the pprof gate can be toggled at runtime via POST /-/pprof,
+	// and that the change takes effect immediately without a restart.
+	gate := &atomic.Bool{} // start disabled
+	mux := http.NewServeMux()
+	registerHTTPHandlers(mux, httpHandlerDeps{
+		agents: map[string]*agentInstance{}, agentOrder: []string{},
+		cfg:       &config.Config{},
+		pprofGate: gate,
+	})
+
+	// Initially off → 404
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("before toggle: status = %d, want 404", w.Code)
+	}
+
+	// Toggle on via POST /-/pprof
+	req = httptest.NewRequest(http.MethodPost, "/-/pprof", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("toggle POST: status = %d, want 200", w.Code)
+	}
+
+	// Now pprof is reachable → 200
+	req = httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("after toggle on: status = %d, want 200", w.Code)
+	}
+
+	// Toggle off
+	req = httptest.NewRequest(http.MethodPost, "/-/pprof", strings.NewReader(`{"enabled":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("toggle-off POST: status = %d, want 200", w.Code)
+	}
+
+	// Back to 404
+	req = httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("after toggle off: status = %d, want 404", w.Code)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/agent"
@@ -702,5 +703,33 @@ func handleReloadCredentials(d httpHandlerDeps) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "credentials reloaded"})
+	}
+}
+
+// handlePprofToggle returns the handler for GET/POST /-/pprof.
+// GET returns the current state; POST {"enabled": true/false} toggles it.
+func handlePprofToggle(gate *atomic.Bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]bool{"enabled": gate.Load()})
+		case http.MethodPost:
+			var body struct {
+				Enabled *bool `json:"enabled"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
+			}
+			if body.Enabled != nil {
+				gate.Store(*body.Enabled)
+				log.Infof("http", "pprof gate toggled: %v", *body.Enabled)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]bool{"enabled": gate.Load()})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	}
 }

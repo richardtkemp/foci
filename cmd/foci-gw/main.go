@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -514,6 +515,8 @@ Subcommands:
 	}
 
 	mux := http.NewServeMux()
+	pprofGate := &atomic.Bool{}
+	pprofGate.Store(config.DerefBool(cfg.Debug.EnablePprof))
 	registerHTTPHandlers(mux, httpHandlerDeps{
 		agents:            agents,
 		agentOrder:        agentOrder,
@@ -525,6 +528,7 @@ Subcommands:
 		sttMap:            sttMap,
 		connMgr:           connMgr,
 		reloadCredentials: reloadCreds,
+		pprofGate:         pprofGate,
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.HTTP.Bind, cfg.HTTP.Port)
