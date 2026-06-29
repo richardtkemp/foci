@@ -301,3 +301,164 @@ func TestSteerFold_WatchdogDefersWhileActive(t *testing.T) {
 		t.Fatal("watchdog never fired after activity ceased")
 	}
 }
+
+// initRaw builds a minimal system/init stream message — CC's per-continuation
+// re-init herald. session_id is fixed; the design keys off the EVENT, not the id.
+func initRaw() []byte {
+	return []byte(`{
+		"type": "system",
+		"subtype": "init",
+		"claude_code_version": "1.0.27",
+		"cwd": "/tmp",
+		"model": "claude-sonnet-4-20250514",
+		"permissionMode": "default",
+		"tools": ["Bash"],
+		"session_id": "sess-shadow-001"
+	}`)
+}
+
+// TestSteerFold_BurstFoldsToSingleReArm_NoWatchdog is the headline Phase-3
+// regression for TODO #933. The OLD trigger was a per-steer COUNTER: a BURST of
+// N steers landing in one inter-result gap incremented pendingSteer N times, but
+// CC folds them into ONE re-init / ONE shadow result — so after the abort result
+// and the single reply the counter was still > 0, re-arming to await phantom
+// results that never come → the 45s watchdog fired on a clean turn.
+//
+// The fix drives re-arm off CC's own `system init` stream (init count == result
+// count, IRIR) plus a set-ONCE foldPending gate. A burst now folds to a single
+// re-arm: abort result → re-arm; mid-turn init → continuation expected; reply →
+// COMPLETE. Exactly one completion, the turn is released synchronously on the
+// reply, and the watchdog is never needed.
+func TestSteerFold_BurstFoldsToSingleReArm_NoWatchdog(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer: NewWriter(nopWriteCloser{&buf}),
+		// Long bound: if the burst regressed into an over-re-arm, the turn would
+		// hang here (not complete synchronously below) rather than racing a timer.
+		reArmWatchdogBound: 30 * time.Second,
+		readyCh:            make(chan struct{}),
+	}
+	b.typingFunc = func(bool) {}
+
+	var completedCount int
+	var completedResult *delegator.TurnResult
+	handler := &testHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) {
+			completedCount++
+			completedResult = r
+		},
+	}
+	applyHandler(b, handler)
+
+	// A BURST: three steers land before any result separates them (the real
+	// "inbox: urgent dispatch" stacking that produced the live 24× watchdog
+	// trace). markFoldedInject sets foldPending once, regardless of count.
+	for i, txt := range []string{"reconsider A", "and B", "and also C"} {
+		if err := b.Inject(context.Background(), delegator.Inject{
+			Source: delegator.SourceSteer,
+			Text:   txt,
+		}); err != nil {
+			t.Fatalf("Inject(SourceSteer) #%d failed: %v", i+1, err)
+		}
+	}
+
+	// Abort result (output=0): CC drains the burst, emits the current ask()'s
+	// result, then re-inits for the single continuation. MUST re-arm, not complete.
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
+	if completedCount != 0 {
+		t.Fatalf("abort result must not complete the turn; completed %d times", completedCount)
+	}
+	if !b.IsTurnInFlight() {
+		t.Fatal("turn must stay in flight across the shadow window")
+	}
+
+	// CC re-initialises for the (single) continuation cycle.
+	b.OnSystem("init", initRaw())
+	b.turnMu.Lock()
+	if !b.continuationExpected {
+		t.Error("mid-turn init must mark continuationExpected")
+	}
+	b.turnMu.Unlock()
+
+	// The one folded reply (covers all three steers). This MUST complete the turn
+	// synchronously — the old counter would re-arm again and wait for phantom
+	// results (R#3/R#4), leaving completedCount==0 and the turn in flight.
+	b.turnMu.Lock()
+	b.turnText.WriteString("single reply covering A, B and C")
+	b.turnMu.Unlock()
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
+
+	if completedCount != 1 {
+		t.Errorf("burst must complete exactly once on the reply (no phantom-result re-arm); got %d", completedCount)
+	}
+	if completedResult == nil || completedResult.Text != "single reply covering A, B and C" {
+		t.Errorf("folded reply lost: %+v", completedResult)
+	}
+	if b.IsTurnInFlight() {
+		t.Error("turn must be released synchronously on the reply — the watchdog was not needed")
+	}
+}
+
+// TestSteerFold_ChainedFold_ReArmsAgain proves a steer arriving DURING the shadow
+// window (after the first re-arm, before the reply) re-arms a second time and the
+// turn still completes exactly once. The continuation result consumes the
+// mid-turn-init herald; because another fold is pending (the in-window steer), the
+// turn stays open for that steer's own abort+reinit cycle, then completes on the
+// final reply. The watchdog backstops any cycle that fails to materialise.
+func TestSteerFold_ChainedFold_ReArmsAgain(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:             NewWriter(nopWriteCloser{&buf}),
+		reArmWatchdogBound: 30 * time.Second,
+		readyCh:            make(chan struct{}),
+	}
+	b.typingFunc = func(bool) {}
+
+	var completedCount int
+	handler := &testHandler{
+		OnTurnComplete: func(_ *delegator.TurnResult) { completedCount++ },
+	}
+	applyHandler(b, handler)
+
+	// Steer A → abort A → re-arm.
+	if err := b.Inject(context.Background(), delegator.Inject{Source: delegator.SourceSteer, Text: "steer A"}); err != nil {
+		t.Fatalf("Inject A: %v", err)
+	}
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
+	if completedCount != 0 || !b.IsTurnInFlight() {
+		t.Fatalf("after abort A: completed=%d inFlight=%v, want 0/true", completedCount, b.IsTurnInFlight())
+	}
+
+	// CC re-inits for A's continuation; a NEW steer B lands during the window.
+	b.OnSystem("init", initRaw())
+	if err := b.Inject(context.Background(), delegator.Inject{Source: delegator.SourceSteer, Text: "steer B"}); err != nil {
+		t.Fatalf("Inject B (in shadow window): %v", err)
+	}
+
+	// Abort B result: consumes A's init herald, but B is pending → re-arm AGAIN.
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
+	if completedCount != 0 {
+		t.Fatalf("chained fold must re-arm again, not complete; completed %d", completedCount)
+	}
+	if !b.IsTurnInFlight() {
+		t.Fatal("turn must stay in flight for B's continuation")
+	}
+
+	// CC re-inits for B's continuation; the final reply lands → COMPLETE once.
+	b.OnSystem("init", initRaw())
+	b.turnMu.Lock()
+	b.turnText.WriteString("final reply after the chained fold")
+	b.turnMu.Unlock()
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
+
+	if completedCount != 1 {
+		t.Errorf("chained fold must complete exactly once; got %d", completedCount)
+	}
+	if b.IsTurnInFlight() {
+		t.Error("turn should be released after the final reply")
+	}
+}

@@ -23,13 +23,28 @@ func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
 // the per-turn bookkeeping callbacks (OnTurnComplete, nudges); may be nil
 // for fire-and-forget paths (slash commands, tests) that don't need
 // completion signalling.
-func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
+//
+// freshTurn distinguishes a GENUINE new logical turn (true — from sendToPane /
+// sendToPaneWithAttachments) from a #813 re-arm continuation of the current
+// logical turn (false — from reArmForContinuation). On a fresh turn the
+// shadow-turn signals (sawFirstResult / continuationExpected / foldPending) are
+// reset to a clean slate; on a re-arm they MUST persist so the in-flight
+// logical turn keeps recognising its mid-turn re-inits (sawFirstResult stays
+// true) — resetting them would break the continuation tracking.
+func (b *Backend) beginTurn(turn *delegator.TurnEvents, freshTurn bool) {
 	b.turnMu.Lock()
 	// Collision canary: a fresh turn starting while we were still awaiting a
 	// folded steer's shadow reply means the #813 re-arm protection did NOT keep
 	// this session marked in-flight — the shadow reply can be lost to this turn.
 	// Should be unreachable post-fix; logged (outside the lock) if it fires.
 	collision := b.awaitingShadow
+	if freshTurn {
+		// Clean slate for a genuine new logical turn (also clears any stale
+		// signals a collision left behind).
+		b.sawFirstResult = false
+		b.continuationExpected = false
+		b.foldPending = false
+	}
 	prevGen := b.turnGen
 	var collisionAwaitedFor time.Duration
 	var collisionHeldOutput, collisionHeldTextlen int
@@ -82,7 +97,7 @@ func (b *Backend) cancelTurn() {
 // Called from Inject's begin-turn path (SourceUser/Steer at idle); not part
 // of the public Delegator surface.
 func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.TurnEvents) error {
-	b.beginTurn(turn)
+	b.beginTurn(turn, true) // genuine new logical turn: reset shadow-turn signals
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
@@ -109,7 +124,7 @@ func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.T
 // user message containing all of them. Called from Inject's begin-turn
 // path when len(inj.Attachments) > 0.
 func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, attachments []delegator.Attachment, turn *delegator.TurnEvents) error {
-	b.beginTurn(turn)
+	b.beginTurn(turn, true) // genuine new logical turn: reset shadow-turn signals
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)

@@ -314,21 +314,38 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		}
 	}
 
-	// Folded-steer / follow-up re-arm gate. A mid-turn steer or in-flight
-	// user follow-up written to CC's stdin makes CC emit THIS result and then
-	// produce the real reply as a SEPARATE result. Re-arm the turn (same
-	// TurnEvents, same delivering sink, refcount stays held) so that reply has
-	// a live turn to land in instead of running as an untracked shadow turn
-	// that a colliding inject can lose (#813). Ordered AFTER the pre-answer
-	// gate (a verification re-prompt wins if both somehow apply) and BEFORE the
-	// normal clear. A counter: consume exactly one pending fold per result.
+	// Shadow-turn re-arm gate. A folded steer makes CC emit THIS (abort) result
+	// and then re-init + produce the real reply as a SEPARATE result. Re-arm the
+	// turn (same TurnEvents, same delivering sink, refcount stays held) so that
+	// reply lands in a live turn instead of an untracked shadow turn a colliding
+	// inject can lose (#813). Trigger = CC's own `system init` stream
+	// (continuationExpected, set by a mid-turn re-init in OnSystem) plus the
+	// inject-time foldPending gate for the abort result whose herald init has not
+	// yet arrived. NOT a per-steer counter — that over-counted on bursts (N steers
+	// fold into ONE re-init/result) and awaited phantom results → 45s watchdog.
+	// Ordered AFTER the pre-answer gate (a verification re-prompt wins if both
+	// apply) and BEFORE the normal clear.
 	//
 	// See docs/WIRING.md → "Shadow-turn re-arm + watchdog (#813)" for the
 	// full re-arm/heldResult/watchdog map (this is the steer re-arm caller).
 	b.turnMu.Lock()
-	reArm := b.pendingSteer > 0
-	if reArm {
-		b.pendingSteer--
+	b.sawFirstResult = true
+	reArm := false
+	switch {
+	case b.continuationExpected:
+		// This result was heralded by a mid-turn re-init: consume that herald.
+		// Keep the turn open only if another fold is still pending (a steer
+		// injected during this window owes its own abort+reinit cycle); otherwise
+		// this is the genuine shadow reply → complete it.
+		b.continuationExpected = false
+		reArm = b.foldPending
+		b.foldPending = false
+	case b.foldPending:
+		// Abort result of a freshly-injected steer; its continuation
+		// (init → reply) has not started yet. Hold the turn open for it. The
+		// watchdog backstops the 0-extra-results fold (no init/reply ever comes).
+		b.foldPending = false
+		reArm = true
 	}
 	b.turnMu.Unlock()
 	if reArm && turn != nil {
@@ -359,9 +376,11 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	chainDepth := b.reArmDepth
 	b.turnEvents = nil
 	b.turnActive = false
-	b.pendingSteer = 0 // turn truly ended; drop any unconsumed fold marks
-	b.heldResult = nil // no longer need the stashed re-arm result
-	b.reArmDepth = 0   // chain terminated by a real completion
+	b.foldPending = false          // turn truly ended; drop any unconsumed fold gate
+	b.continuationExpected = false // and any unmatched mid-turn-init herald
+	b.sawFirstResult = false       // next logical turn starts fresh
+	b.heldResult = nil             // no longer need the stashed re-arm result
+	b.reArmDepth = 0               // chain terminated by a real completion
 	b.turnMu.Unlock()
 	b.logger().Debugf("OnResult: turn cleared (had_turn_events=%v)", hadTurn)
 	if wasAwaitingShadow {
@@ -411,6 +430,19 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.initMsg = &init
 		b.lastModel = init.Model
 		b.mu.Unlock()
+		// Mid-turn re-init: CC re-initialises at the start of every continuation
+		// cycle (init count == result count, strictly interleaved IRIR). An init
+		// arriving while a turn is active AND after that turn's first result is
+		// CC's own signal that a shadow-reply cycle has begun — the next result
+		// is the genuine continuation reply, not the turn-start herald. Drives the
+		// #813 re-arm completion decision in OnResult. The turn-start init
+		// (sawFirstResult == false) is correctly ignored. See docs/WIRING.md →
+		// "Shadow-turn re-arm + watchdog (#813)".
+		b.turnMu.Lock()
+		if b.turnActive && b.sawFirstResult {
+			b.continuationExpected = true
+		}
+		b.turnMu.Unlock()
 		b.readyOnce.Do(func() { close(b.readyCh) })
 		if b.onSessionReady != nil {
 			b.onSessionReady(init.SessionID)

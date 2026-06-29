@@ -24,7 +24,7 @@ import (
 // cancelled and the caller should fall through to normal completion so the
 // first-round result is still delivered.
 func (b *Backend) reArmForContinuation(turn *delegator.TurnEvents, followUp string) bool {
-	b.beginTurn(turn)
+	b.beginTurn(turn, false) // re-arm: preserve shadow-turn signals of the live logical turn
 	if followUp != "" {
 		if err := b.writer.SendUser(followUp); err != nil {
 			b.logger().Errorf("re-arm continuation: send user: %v", err)
@@ -41,16 +41,22 @@ func (b *Backend) reArmForContinuation(turn *delegator.TurnEvents, followUp stri
 }
 
 // markFoldedInject records that a mid-turn steer was just written to CC's
-// stdin. CC emits an immediate result for the write and then produces the real
-// reply as a SEPARATE result; OnResult consumes one pending mark to re-arm the
-// turn across that gap so the reply lands in a live, delivering turn rather
-// than an untracked shadow turn (#813). A counter, not a bool: multiple steers
-// can fold before the first OnResult, and each owes one re-arm. (Plain
-// in-flight follow-ups are a candidate to share this — see the SourceUser
-// branch in Inject — once their fold behaviour is verified.)
+// stdin. CC emits an immediate (abort) result for the write and then re-inits
+// and produces the real reply as a SEPARATE result. OnResult uses foldPending
+// to re-arm the turn across the abort result so the reply lands in a live,
+// delivering turn rather than an untracked shadow turn (#813).
+//
+// A set-once BOOL, deliberately NOT a counter: 2+ steers landing in the same
+// inter-result gap are folded by CC into ONE re-init / ONE shadow result, so a
+// counter over-counted and awaited phantom results (→ 45s watchdog). foldPending
+// only has to gate the single abort result into a re-arm; how many shadow
+// results actually follow is then read from CC's own `system init` stream
+// (continuationExpected), not inferred from steer count. (Plain in-flight
+// follow-ups are a candidate to share this — see the SourceUser branch in
+// Inject — once their fold behaviour is verified.)
 func (b *Backend) markFoldedInject() {
 	b.turnMu.Lock()
-	b.pendingSteer++
+	b.foldPending = true
 	b.turnMu.Unlock()
 }
 
@@ -58,9 +64,7 @@ func (b *Backend) markFoldedInject() {
 // (no result will come for a message CC never received).
 func (b *Backend) unmarkFoldedInject() {
 	b.turnMu.Lock()
-	if b.pendingSteer > 0 {
-		b.pendingSteer--
-	}
+	b.foldPending = false
 	b.turnMu.Unlock()
 }
 
@@ -158,7 +162,9 @@ func (b *Backend) watchdogTick(gen int) {
 	b.turnEvents = nil
 	b.turnActive = false
 	b.awaitingShadow = false
-	b.pendingSteer = 0
+	b.foldPending = false
+	b.continuationExpected = false
+	b.sawFirstResult = false
 	b.heldResult = nil
 	b.reArmDepth = 0 // chain terminated by watchdog force-complete
 	b.watchdog = nil
