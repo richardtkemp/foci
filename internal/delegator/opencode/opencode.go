@@ -211,6 +211,7 @@ type Backend struct {
 	turnText       strings.Builder
 	turnTools      int
 	lastModel      string
+	lastProvider   string // paired with lastModel; required by /summarize compaction
 	lastUsage      *TokenUsage
 	seenToolCalls  map[string]bool // reset in beginTurn; dedupes OnToolStart
 	seenTextParts  map[string]bool // reset in beginTurn; dedupes OnText

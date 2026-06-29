@@ -377,11 +377,15 @@ func TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInject_Compact(t *testing.T) {
-	// Verifies Inject(SourceCompact) at idle POSTs /session/:id/command
-	// with command:"compact" + arguments:"<rest after /compact>".
-	// Fire-and-forget: the response flows through SSE events.
+	// Verifies Inject(SourceCompact) at idle POSTs /session/:id/summarize
+	// with the last turn's provider+model. Compaction is NOT a /command:
+	// opencode has no server-side "compact" command (Command.get returns
+	// undefined → crash), so it uses the dedicated /summarize endpoint.
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
+	// Simulate a completed assistant turn having captured the model.
+	b.lastModel = "glm-5.2"
+	b.lastProvider = "zai-coding-plan"
 
 	if err := b.Inject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact,
@@ -389,35 +393,43 @@ func TestInject_Compact(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
-	if got := rec.countPath("/session/sess-inject/command"); got != 1 {
-		t.Errorf("POST /command fired %d times, want 1", got)
+	if got := rec.countPath("/session/sess-inject/command"); got != 0 {
+		t.Errorf("POST /command fired %d times, want 0 (compaction must not use /command)", got)
 	}
-	req, ok := rec.lastPath("/session/sess-inject/command")
+	if got := rec.countPath("/session/sess-inject/summarize"); got != 1 {
+		t.Errorf("POST /summarize fired %d times, want 1", got)
+	}
+	req, ok := rec.lastPath("/session/sess-inject/summarize")
 	if !ok {
-		t.Fatal("no /command request recorded")
+		t.Fatal("no /summarize request recorded")
 	}
 	var body struct {
-		Command   string `json:"command"`
-		Arguments string `json:"arguments"`
+		ProviderID string `json:"providerID"`
+		ModelID    string `json:"modelID"`
+		Auto       bool   `json:"auto"`
 	}
 	if err := json.Unmarshal(req.Body, &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Command != "compact" {
-		t.Errorf("command = %q, want compact", body.Command)
+	if body.ProviderID != "zai-coding-plan" {
+		t.Errorf("providerID = %q, want zai-coding-plan", body.ProviderID)
 	}
-	if body.Arguments != "summarise everything" {
-		t.Errorf("arguments = %q, want %q", body.Arguments, "summarise everything")
+	if body.ModelID != "glm-5.2" {
+		t.Errorf("modelID = %q, want glm-5.2", body.ModelID)
+	}
+	if body.Auto {
+		t.Errorf("auto = true, want false (foci triggers explicit compaction)")
 	}
 }
 
 func TestInject_Compact_InFlight(t *testing.T) {
 	// Verifies /compact is callable mid-turn without disturbing turn
-	// state. /compact shouldn't normally be invoked mid-turn, but if
-	// it is, the call must succeed.
+	// state. beginTurn resets lastModel/lastProvider, so set them after.
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
 	b.beginTurn(&delegator.TurnEvents{})
+	b.lastModel = "glm-5.2"
+	b.lastProvider = "zai-coding-plan"
 
 	if err := b.Inject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact,
@@ -425,8 +437,26 @@ func TestInject_Compact_InFlight(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
-	if got := rec.countPath("/session/sess-inject/command"); got != 1 {
-		t.Errorf("POST /command fired %d times, want 1", got)
+	if got := rec.countPath("/session/sess-inject/summarize"); got != 1 {
+		t.Errorf("POST /summarize fired %d times, want 1", got)
+	}
+}
+
+func TestInject_Compact_NoModel(t *testing.T) {
+	// With no captured model (no assistant turn yet), compaction fails
+	// loudly rather than POSTing an empty model that opencode would reject.
+	rec := &recordingHandler{}
+	b := newReadyBackend(t, rec)
+
+	err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourceCompact,
+		Text:   "/compact x",
+	})
+	if err == nil {
+		t.Fatal("Inject: want error when no model captured, got nil")
+	}
+	if got := rec.countPath("/session/sess-inject/summarize"); got != 0 {
+		t.Errorf("POST /summarize fired %d times, want 0 (no model → no request)", got)
 	}
 }
 

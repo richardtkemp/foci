@@ -277,12 +277,16 @@ func (b *Backend) onMessageUpdated(msg Message) {
 		return
 	}
 
-	// Store model (guard against empty — partial/streaming messages
-	// may omit it; we don't want to overwrite a prior turn's model
-	// with an empty string).
+	// Store model + provider (guard against empty — partial/streaming
+	// messages may omit them; we don't want to overwrite a prior turn's
+	// values with empty strings). modelID/providerID arrive as a pair and
+	// are reused by sendSummarize to drive /summarize compaction.
 	if msg.ModelID != "" {
 		b.mu.Lock()
 		b.lastModel = msg.ModelID
+		if msg.ProviderID != "" {
+			b.lastProvider = msg.ProviderID
+		}
 		b.mu.Unlock()
 	}
 
