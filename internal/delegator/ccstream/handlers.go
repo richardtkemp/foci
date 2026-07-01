@@ -143,7 +143,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			}
 
 		case "thinking":
-			// Thinking blocks are informational; optionally log.
+			log.Infof(b.logComponent(), "THINKDIAG backend complete thinking block len=%d", len(block.Thinking))
 		}
 	}
 
@@ -676,6 +676,7 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 			se.OnTextDelta(env.Event.Delta.Text)
 		}
 	case "thinking_delta":
+		log.Infof(b.logComponent(), "THINKDIAG backend thinking_delta len=%d se_nil=%v cb_nil=%v", len(env.Event.Delta.Thinking), se == nil, se.OnThinkingDelta == nil)
 		if env.Event.Delta.Thinking != "" && se.OnThinkingDelta != nil {
 			se.OnThinkingDelta(env.Event.Delta.Thinking)
 		}
