@@ -466,6 +466,8 @@ func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 	idx := newTestSessionIndex(t)
 
 	var callCount int
+	var noticeKey, noticeText string
+	var noticeCalls int
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {
 			callCount++
@@ -480,6 +482,10 @@ func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 		IdleTimeout:  time.Hour,
+		SystemNoticeFunc: func(sessionKey, text string) {
+			noticeCalls++
+			noticeKey, noticeText = sessionKey, text
+		},
 	}
 	t.Cleanup(func() { mgr.Close() })
 
@@ -497,6 +503,16 @@ func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 	}
 	if callCount != 2 {
 		t.Errorf("expected 2 NewBackend calls (first fail + retry), got %d", callCount)
+	}
+	// The user must be told their old session couldn't be resumed.
+	if noticeCalls != 1 {
+		t.Errorf("expected exactly 1 resume-missed notice, got %d", noticeCalls)
+	}
+	if noticeKey != base {
+		t.Errorf("notice sessionKey = %q, want %q", noticeKey, base)
+	}
+	if !contains(noticeText, "stale-uuid") {
+		t.Errorf("notice should mention the missing resume id, got: %q", noticeText)
 	}
 }
 
