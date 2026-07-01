@@ -36,6 +36,7 @@ const (
 	TypeMessage         = "message"
 	TypeNotification    = "notification"
 	TypeTyping          = "typing"
+	TypeThinking        = "thinking"
 	TypeMedia           = "media"
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
@@ -133,6 +134,10 @@ type ConversationInfo struct {
 	// snapshot half of the typing indicator; the Typing frame carries live deltas —
 	// the same snapshot+delta pairing as SessionKey/SessionUpdate.
 	Typing bool `json:"typing,omitempty"`
+	// Thinking is true iff the model is mid extended-thinking on this conversation.
+	// Snapshot half of the thinking indicator; the Thinking frame carries live
+	// deltas. Narrower than Typing: it brackets only the reasoning phase(s).
+	Thinking bool `json:"thinking,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.
@@ -279,6 +284,15 @@ type Typing struct {
 }
 
 func (Typing) Type() string { return TypeTyping }
+
+// Thinking toggles the extended-thinking indicator. Distinct from Typing:
+// Typing brackets the whole turn; Thinking brackets only the reasoning phase(s).
+type Thinking struct {
+	ConversationID string `json:"conversationId"`
+	On             bool   `json:"on"`
+}
+
+func (Thinking) Type() string { return TypeThinking }
 
 // Media references an out-of-band blob the app fetches via GET /app/blob/<id>.
 // The bytes never travel over the WebSocket — only this reference does.

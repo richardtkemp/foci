@@ -36,6 +36,11 @@ type appSink struct {
 	// statusFn supplies the meta-frame status chips (mana%, mana state, gap).
 	// nil = those fields are omitted (e.g. a sink with no agent context).
 	statusFn func() (manaPct *int, manaState, gap string)
+
+	// thinking dedups the thinking indicator: the reasoning phase produces many
+	// ThinkingDelta events but only a state change emits a frame. Safe without a
+	// lock — the turn-event stream is single-producer and strictly ordered.
+	thinking bool
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -51,13 +56,15 @@ func newAppSink(b *convBinding) *appSink {
 	}
 	renderer := turn.NewTurnRenderer(backend, tracker, d, newSB)
 	inner := turn.NewStreamingSink(renderer, tracker, nil)
-	// A turn abandoned without TurnComplete would strand inTurn=true; cleanup is
-	// deferred by the agent on every turn, so clearing it here is the backstop.
-	cleanup := func() {
+	s := &appSink{b: b, inner: inner}
+	// A turn abandoned without TurnComplete would strand the indicators; cleanup is
+	// deferred by the agent on every turn, so clearing them here is the backstop.
+	s.cleanup = func() {
 		b.setInTurn(false)
+		s.setThinking(false)
 		renderer.Cleanup()
 	}
-	return &appSink{b: b, inner: inner, cleanup: cleanup}
+	return s
 }
 
 // DeliversToPlatform implements turnevent.Sink — output is always user-facing.
@@ -76,10 +83,19 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// No app surface for subagent progress yet; dropping it avoids OnReply
 		// prematurely finalizing the in-flight reply stream. See type doc.
 
+	case turnevent.ThinkingDelta, turnevent.ThinkingBlock:
+		s.setThinking(true)
+		s.inner.Emit(ctx, ev)
+
+	case turnevent.TextDelta, turnevent.TextBlock, turnevent.ToolCall:
+		s.setThinking(false)
+		s.inner.Emit(ctx, ev)
+
 	case turnevent.TurnComplete:
 		// Forward first so the final text is delivered (TextEnd / ServerMessage),
-		// then bracket with typing-off and the structured meta frame.
+		// then bracket with thinking-off (safety), typing-off, and the meta frame.
 		s.inner.Emit(ctx, ev)
+		s.setThinking(false)
 		s.b.setInTurn(false)
 		s.b.send(fap.Typing{ConversationID: s.b.convID, On: false})
 		s.emitMeta(e)
@@ -87,6 +103,17 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	default:
 		s.inner.Emit(ctx, ev)
 	}
+}
+
+// setThinking toggles the extended-thinking indicator, emitting the roster
+// snapshot + live delta frame only on an actual state change.
+func (s *appSink) setThinking(on bool) {
+	if s.thinking == on {
+		return
+	}
+	s.thinking = on
+	s.b.setThinkingSnapshot(on)
+	s.b.send(fap.Thinking{ConversationID: s.b.convID, On: on})
 }
 
 // emitMeta sends the user-facing status chips (model, cost, tokens) the app
