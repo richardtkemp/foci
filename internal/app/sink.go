@@ -41,6 +41,7 @@ type appSink struct {
 	// ThinkingDelta events but only a state change emits a frame. Safe without a
 	// lock — the turn-event stream is single-producer and strictly ordered.
 	thinking bool
+	warming  bool
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -62,6 +63,7 @@ func newAppSink(b *convBinding) *appSink {
 	s.cleanup = func() {
 		b.setInTurn(false)
 		s.setThinking(false)
+		s.setWarming(false)
 		renderer.Cleanup()
 	}
 	return s
@@ -76,6 +78,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
 	case turnevent.TurnStart:
 		s.b.setInTurn(true)
+		s.setWarming(true)
 		s.b.send(fap.Typing{ConversationID: s.b.convID, On: true})
 		s.inner.Emit(ctx, ev)
 
@@ -84,10 +87,12 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// prematurely finalizing the in-flight reply stream. See type doc.
 
 	case turnevent.ThinkingDelta, turnevent.ThinkingBlock:
+		s.setWarming(false)
 		s.setThinking(true)
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.TextDelta, turnevent.TextBlock, turnevent.ToolCall:
+		s.setWarming(false)
 		s.setThinking(false)
 		s.inner.Emit(ctx, ev)
 
@@ -96,6 +101,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// then bracket with thinking-off (safety), typing-off, and the meta frame.
 		s.inner.Emit(ctx, ev)
 		s.setThinking(false)
+		s.setWarming(false)
 		s.b.setInTurn(false)
 		s.b.send(fap.Typing{ConversationID: s.b.convID, On: false})
 		s.emitMeta(e)
@@ -114,6 +120,17 @@ func (s *appSink) setThinking(on bool) {
 	s.thinking = on
 	s.b.setThinkingSnapshot(on)
 	s.b.send(fap.Thinking{ConversationID: s.b.convID, On: on})
+}
+
+// setWarming toggles the "warming up" indicator, emitting the roster snapshot
+// + live delta frame only on an actual state change.
+func (s *appSink) setWarming(on bool) {
+	if s.warming == on {
+		return
+	}
+	s.warming = on
+	s.b.setWarmingSnapshot(on)
+	s.b.send(fap.Warming{ConversationID: s.b.convID, On: on})
 }
 
 // emitMeta sends the user-facing status chips (model, cost, tokens) the app

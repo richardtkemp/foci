@@ -37,6 +37,7 @@ const (
 	TypeNotification    = "notification"
 	TypeTyping          = "typing"
 	TypeThinking        = "thinking"
+	TypeWarming         = "warming"
 	TypeMedia           = "media"
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
@@ -138,6 +139,10 @@ type ConversationInfo struct {
 	// Snapshot half of the thinking indicator; the Thinking frame carries live
 	// deltas. Narrower than Typing: it brackets only the reasoning phase(s).
 	Thinking bool `json:"thinking,omitempty"`
+	// Warming is true between turn start and the model's first output token —
+	// the "warming up" phase before any thinking or text has streamed. Snapshot
+	// half of the warming indicator; the Warming frame carries live deltas.
+	Warming bool `json:"warming,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.
@@ -293,6 +298,16 @@ type Thinking struct {
 }
 
 func (Thinking) Type() string { return TypeThinking }
+
+// Warming toggles the "warming up" indicator: on at turn start, off at the
+// model's first output (thinking or text). The pre-first-token phase the app
+// shows in place of typing, which brackets the whole turn.
+type Warming struct {
+	ConversationID string `json:"conversationId"`
+	On             bool   `json:"on"`
+}
+
+func (Warming) Type() string { return TypeWarming }
 
 // Media references an out-of-band blob the app fetches via GET /app/blob/<id>.
 // The bytes never travel over the WebSocket — only this reference does.
