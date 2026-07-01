@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
+	"foci/internal/platform"
 )
 
 // fakeAgent is a minimal agentCore that captures the enqueued envelope.
@@ -449,4 +451,150 @@ func TestServeDevices_ListsWithoutTokens(t *testing.T) {
 	if strings.Contains(body, "\"token\"") {
 		t.Errorf("devices listing must omit tokens: %s", body)
 	}
+}
+
+// --- lifecycle callbacks (regression for the "reflection never fires on app
+// sessions" bug: the app provider's SetLifecycleCallback used to be a no-op, so
+// the periodic runner's lastInteraction stayed frozen at boot and reflection /
+// consolidation perpetually skipped with "idle > interval"). ---
+
+// TestRouteUserTurn_FiresOnUserMessage asserts an inbound user message records
+// interaction via the OnUserMessage hook — the only signal the periodic runner
+// has that an app-delivered agent is active.
+func TestRouteUserTurn_FiresOnUserMessage(t *testing.T) {
+	h := newTestHub()
+	registerFakeAgent(h, "ag")
+	c := fakeClient()
+	c.hub = h
+	c.deviceID = "dev-1"
+
+	conn := h.PrimaryBot("ag")
+	fired := false
+	conn.OnUserMessage = func() { fired = true }
+
+	h.routeUserTurn(c, "conv-1", "ag", "hello world", nil, "env-1", 1)
+	if !fired {
+		t.Fatal("OnUserMessage did not fire on inbound user message")
+	}
+}
+
+// TestRouteUserTurn_EmptyMessageDoesNotFire guards against recording
+// interaction for a no-op turn (empty text + no attachments, or a voice note
+// that transcribes to nothing).
+func TestRouteUserTurn_EmptyMessageDoesNotFire(t *testing.T) {
+	h := newTestHub()
+	registerFakeAgent(h, "ag")
+	c := fakeClient()
+	c.hub = h
+
+	conn := h.PrimaryBot("ag")
+	fired := false
+	conn.OnUserMessage = func() { fired = true }
+
+	h.routeUserTurn(c, "conv-1", "ag", "", nil, "env-1", 1)
+	if fired {
+		t.Fatal("OnUserMessage must not fire for an empty message")
+	}
+}
+
+// TestRouteCommand_FiresOnUserMessage asserts a slash-command also records
+// interaction — a command is user activity, and the reset-idle-guard must see
+// the user as active right after a command, not "idle since boot".
+func TestRouteCommand_FiresOnUserMessage(t *testing.T) {
+	h := newTestHub()
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{
+		Name:    "ping",
+		Execute: func(context.Context, command.Request, command.CommandContext) (command.Response, error) {
+			return command.Response{Parts: []string{"pong"}}, nil
+		},
+	})
+	h.agents["ag"] = &appConn{hub: h, agentID: "ag", commands: reg}
+	c := fakeClient()
+	c.hub = h
+
+	conn := h.PrimaryBot("ag")
+	fired := false
+	conn.OnUserMessage = func() { fired = true }
+
+	h.routeCommand(c, fap.Command{ConversationID: "c1", AgentID: "ag", Name: "ping"})
+	if !fired {
+		t.Fatal("OnUserMessage did not fire on inbound command")
+	}
+}
+
+// TestWrapTurn_FiresCompleteThenEnd asserts the turn lifecycle hooks fire in
+// the right order: OnTurnComplete once the turn body returns, OnTurnEnd last
+// (deferred) — and both fire even when the turn body errors (matching
+// telegram.Bot.WrapTurn, which fires OnTurnComplete unconditionally).
+func TestWrapTurn_FiresCompleteThenEnd(t *testing.T) {
+	conn := &appConn{}
+	var order []string
+	conn.OnTurnComplete = func() { order = append(order, "complete") }
+	conn.OnTurnEnd = func() { order = append(order, "end") }
+
+	turnErr := errors.New("boom")
+	got := conn.WrapTurn(context.Background(), func() error { return turnErr })
+
+	if got != turnErr {
+		t.Errorf("WrapTurn returned %v, want the original error passthrough", got)
+	}
+	if len(order) != 2 || order[0] != "complete" || order[1] != "end" {
+		t.Fatalf("lifecycle order = %v, want [complete end]", order)
+	}
+}
+
+// TestWrapTurn_NilHooksSafe ensures WrapTurn stays safe when no callbacks are
+// wired (tests, or an agent the gateway hasn't registered hooks for).
+func TestWrapTurn_NilHooksSafe(t *testing.T) {
+	conn := &appConn{}
+	if err := conn.WrapTurn(context.Background(), func() error { return nil }); err != nil {
+		t.Fatalf("nil-hook WrapTurn errored: %v", err)
+	}
+}
+
+// TestSetLifecycleCallback_StoresOnConn verifies the provider stores each
+// lifecycle event on the per-agent appConn (the fix for the former no-op).
+func TestSetLifecycleCallback_StoresOnConn(t *testing.T) {
+	h := newTestHub()
+	h.agents["ag"] = &appConn{hub: h, agentID: "ag"}
+	p := &appProvider{hub: h}
+
+	for _, ev := range []platform.LifecycleEvent{platform.OnUserMessage, platform.OnTurnComplete, platform.OnTurnEnd} {
+		marker := false
+		p.SetLifecycleCallback("ag", ev, func() { marker = true })
+		conn := h.PrimaryBot("ag")
+		switch ev {
+		case platform.OnUserMessage:
+			if conn.OnUserMessage == nil {
+				t.Fatal("OnUserMessage not stored")
+			}
+			conn.OnUserMessage()
+		case platform.OnTurnComplete:
+			if conn.OnTurnComplete == nil {
+				t.Fatal("OnTurnComplete not stored")
+			}
+			conn.OnTurnComplete()
+		case platform.OnTurnEnd:
+			if conn.OnTurnEnd == nil {
+				t.Fatal("OnTurnEnd not stored")
+			}
+			conn.OnTurnEnd()
+		}
+		if !marker {
+			t.Errorf("event %d: stored callback did not fire", ev)
+		}
+	}
+}
+
+// TestSetLifecycleCallback_UnknownAgentNoOp ensures a missing agent connection
+// is a silent no-op (not a panic) — mirrors telegram's PrimaryBot-nil guard.
+func TestSetLifecycleCallback_UnknownAgentNoOp(t *testing.T) {
+	h := newTestHub()
+	p := &appProvider{hub: h}
+	// Unknown agent, nil hub, and a known-but-callbackless path must all be safe.
+	p.SetLifecycleCallback("ghost", platform.OnUserMessage, func() {})
+
+	pNil := &appProvider{} // nil hub (Init panicked)
+	pNil.SetLifecycleCallback("ag", platform.OnUserMessage, func() {})
 }

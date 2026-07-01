@@ -337,6 +337,12 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 		client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "no_commands", Message: "commands unavailable"})
 		return
 	}
+	// A command is user activity too — record interaction so the periodic
+	// runner (reflection/consolidation/reset-idle-guard) sees the user as active
+	// even when the turn is a slash-command rather than an enqueued message.
+	if conn.OnUserMessage != nil {
+		conn.OnUserMessage()
+	}
 	req := command.Request{
 		Name:       strings.ToLower(strings.TrimPrefix(f.Name, "/")),
 		Args:       f.Args,
@@ -518,6 +524,13 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	text, atts = h.transcribeVoice(conn, text, atts)
 	if text == "" && len(atts) == 0 {
 		return // voice transcription yielded nothing and there's no other content
+	}
+	// User message confirmed bound for the agent — record interaction. This is
+	// the app transport's only lastInteraction signal (the periodic runner gates
+	// reflection/consolidation/reset-idle-guard on it); without it those timers
+	// see "idle since boot" forever and never fire on app-driven agents.
+	if conn.OnUserMessage != nil {
+		conn.OnUserMessage()
 	}
 	conn.agentRef.Enqueue(agent.Envelope{
 		SessionKey:  b.sessionKey,

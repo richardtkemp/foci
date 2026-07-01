@@ -91,11 +91,29 @@ func (p *appProvider) SetupAgentConnection(params platform.AgentConnectionParams
 	}
 }
 
-// The app provider does not (yet) support shared facets, facet restore, or
-// per-agent lifecycle callbacks — these are no-ops.
+// The app provider does not (yet) support shared facets or facet restore —
+// these are no-ops. Per-agent lifecycle callbacks ARE implemented: they are
+// stored on the per-agent appConn (PrimaryBot) and fired from routeUserTurn /
+// routeCommand (OnUserMessage) and appConn.WrapTurn (OnTurnComplete/OnTurnEnd).
 func (p *appProvider) SetupSharedFacet(platform.SharedFacetParams)                  {}
 func (p *appProvider) RestoreFacetSessions(platform.RestoreParams)                  {}
-func (p *appProvider) SetLifecycleCallback(string, platform.LifecycleEvent, func()) {}
+func (p *appProvider) SetLifecycleCallback(agentID string, event platform.LifecycleEvent, fn func()) {
+	if p.hub == nil {
+		return
+	}
+	conn := p.hub.PrimaryBot(agentID)
+	if conn == nil {
+		return
+	}
+	switch event {
+	case platform.OnUserMessage:
+		conn.OnUserMessage = fn
+	case platform.OnTurnComplete:
+		conn.OnTurnComplete = fn
+	case platform.OnTurnEnd:
+		conn.OnTurnEnd = fn
+	}
+}
 
 func (p *appProvider) ToolDetailStore() platform.ToolDetailStore { return nil }
 

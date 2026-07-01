@@ -47,6 +47,17 @@ type appConn struct {
 	cmdCtx   command.CommandContext
 	stt      voice.STT // inbound voice transcription; nil = unsupported
 
+	// Platform lifecycle callbacks, wired by the gateway via
+	// SetLifecycleCallback (mirror of telegram.Bot's hooks). OnUserMessage
+	// fires on each inbound user message/command (drives the periodic runner's
+	// lastInteraction — reflection/consolidation/reset-idle-guard gate on it);
+	// OnTurnComplete/OnTurnEnd fire at turn completion (cache-warm + warning
+	// flush). Stored on the per-agent PrimaryBot instance; set once at startup,
+	// read concurrently during turns — the same set-once contract as telegram.
+	OnUserMessage  func()
+	OnTurnComplete func()
+	OnTurnEnd      func()
+
 	// bound is the session this view is pinned to. The stored per-agent instance
 	// (PrimaryBot) leaves it empty; hub.BotForSession mints a shallow copy with
 	// bound set, so a session-blind send (SendText/SendNotification/media) routes
@@ -431,10 +442,22 @@ func toChoices(buttons []platform.ButtonChoice) []fap.Choice {
 
 // --- agent.Driver ---
 
-// WrapTurn runs the turn. Typing lifecycle is handled by the streaming sink
-// (TurnStart/TurnComplete), so no extra wrapping is needed for slice 1.
-func (c *appConn) WrapTurn(_ context.Context, fn func() error) error {
-	return fn()
+// WrapTurn runs the turn and fires the platform lifecycle hooks. Typing
+// lifecycle is handled by the streaming sink (TurnStart/TurnComplete), but the
+// gateway-level hooks (cache-warm + warning flush) belong here — same shape as
+// telegram.Bot.WrapTurn. OnTurnComplete fires once fn returns (success or
+// error); OnTurnEnd fires last in the deferred cleanup.
+func (c *appConn) WrapTurn(ctx context.Context, fn func() error) error {
+	defer func() {
+		if c.OnTurnEnd != nil {
+			c.OnTurnEnd()
+		}
+	}()
+	err := fn()
+	if c.OnTurnComplete != nil {
+		c.OnTurnComplete()
+	}
+	return err
 }
 
 // NewTurnSink builds the per-turn streaming sink bound to the envelope's
