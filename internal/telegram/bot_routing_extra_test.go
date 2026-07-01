@@ -189,14 +189,16 @@ func TestBuildReceivedMessage_QuoteAndReplyContext(t *testing.T) {
 	if !ok {
 		t.Fatal("message dropped")
 	}
-	if !strings.Contains(qm.text, "[Quoting: highlighted bit]") || strings.Contains(qm.text, "whole original") {
+	// The prefix carries the replied-to message's send time, so match on the
+	// marker + payload rather than an exact string (timestamp is TZ-dependent).
+	if !strings.Contains(qm.text, "[Quoting (") || !strings.Contains(qm.text, "highlighted bit]") || strings.Contains(qm.text, "whole original") {
 		t.Errorf("text = %q, want quote preferred over reply", qm.text)
 	}
 
 	msg2 := makeMsg(111, "owner", "my reply")
 	msg2.ReplyToMessage = &gotgbot.Message{Caption: "photo caption"}
 	qm2, _ := b.buildReceivedMessage(context.Background(), msg2)
-	if !strings.Contains(qm2.text, "[Replying to: photo caption]") {
+	if !strings.Contains(qm2.text, "[Replying to (") || !strings.Contains(qm2.text, "photo caption]") {
 		t.Errorf("text = %q, want reply caption context", qm2.text)
 	}
 }
