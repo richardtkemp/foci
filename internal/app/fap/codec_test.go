@@ -299,6 +299,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		Typing{ConversationID: "c", On: true},
 		Thinking{ConversationID: "c", On: true},
 		Warming{ConversationID: "c", On: true},
+		Tool{ConversationID: "c", On: true, Name: "Bash"},
 		Media{ConversationID: "c", MessageID: "m", BlobID: "b", MIME: "image/png"},
 		Interactive{ConversationID: "c", PromptID: "p", Text: "ok?", Choices: []Choice{{Label: "Y", Data: "p:0"}}, ExpiresAt: "2026-01-01T00:00:00Z"},
 		InteractiveEdit{ConversationID: "c", PromptID: "p", Text: "done"},

@@ -42,6 +42,7 @@ type appSink struct {
 	// lock — the turn-event stream is single-producer and strictly ordered.
 	thinking bool
 	warming  bool
+	tool     string
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -64,6 +65,7 @@ func newAppSink(b *convBinding) *appSink {
 		b.setInTurn(false)
 		s.setThinking(false)
 		s.setWarming(false)
+		s.setTool("")
 		renderer.Cleanup()
 	}
 	return s
@@ -88,12 +90,24 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 
 	case turnevent.ThinkingDelta, turnevent.ThinkingBlock:
 		s.setWarming(false)
+		s.setTool("")
 		s.setThinking(true)
 		s.inner.Emit(ctx, ev)
 
-	case turnevent.TextDelta, turnevent.TextBlock, turnevent.ToolCall:
+	case turnevent.ToolCall:
 		s.setWarming(false)
 		s.setThinking(false)
+		s.setTool(e.Name)
+		s.inner.Emit(ctx, ev)
+
+	case turnevent.ToolResult:
+		s.setTool("")
+		s.inner.Emit(ctx, ev)
+
+	case turnevent.TextDelta, turnevent.TextBlock:
+		s.setWarming(false)
+		s.setThinking(false)
+		s.setTool("")
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.TurnComplete:
@@ -102,6 +116,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.inner.Emit(ctx, ev)
 		s.setThinking(false)
 		s.setWarming(false)
+		s.setTool("")
 		s.b.setInTurn(false)
 		s.b.send(fap.Typing{ConversationID: s.b.convID, On: false})
 		s.emitMeta(e)
@@ -131,6 +146,17 @@ func (s *appSink) setWarming(on bool) {
 	s.warming = on
 	s.b.setWarmingSnapshot(on)
 	s.b.send(fap.Warming{ConversationID: s.b.convID, On: on})
+}
+
+// setTool toggles the running-tool indicator, emitting the roster snapshot +
+// live frame only on an actual change. Empty name means no tool is running.
+func (s *appSink) setTool(name string) {
+	if s.tool == name {
+		return
+	}
+	s.tool = name
+	s.b.setToolSnapshot(name)
+	s.b.send(fap.Tool{ConversationID: s.b.convID, On: name != "", Name: name})
 }
 
 // emitMeta sends the user-facing status chips (model, cost, tokens) the app
