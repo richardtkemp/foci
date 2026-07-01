@@ -231,6 +231,13 @@ func (b *Backend) closeInner() {
 		return
 	}
 
+	component := b.logComponent()
+	pid := 0
+	if b.cmd.Process != nil {
+		pid = b.cmd.Process.Pid
+	}
+	log.Infof(component, "closing CC subprocess (pid=%d)", pid)
+
 	// Try graceful shutdown: only send an interrupt if a turn is in flight.
 	// CC's interrupt handler aborts the per-turn AbortController; sent after
 	// a clean turn end it cascades through stale post-turn async work and
@@ -262,13 +269,12 @@ func (b *Backend) closeInner() {
 	// locks. That root cause is fixed (commit 85e49f26) and has logged zero
 	// stalls since 2026-05-17. The cap stays regardless: it is the backstop
 	// for whatever the next unforeseen stall turns out to be.
-	component := b.logComponent()
 	select {
 	case <-b.waitCh:
-		// Process already exited (or just did).
+		log.Infof(component, "CC subprocess (pid=%d) exited", pid)
 	case <-time.After(closeGracefulWait):
 		// SIGTERM.
-		log.Warnf(component, "process did not exit after %s, sending SIGTERM", closeGracefulWait)
+		log.Warnf(component, "process (pid=%d) did not exit after %s, sending SIGTERM", pid, closeGracefulWait)
 		if b.cmd.Process != nil {
 			_ = b.cmd.Process.Signal(syscall.SIGTERM)
 		}
@@ -276,7 +282,7 @@ func (b *Backend) closeInner() {
 		case <-b.waitCh:
 		case <-time.After(closeSigtermWait):
 			// SIGKILL.
-			log.Warnf(component, "process did not exit after SIGTERM, sending SIGKILL")
+			log.Warnf(component, "process (pid=%d) did not exit after SIGTERM, sending SIGKILL", pid)
 			if b.cmd.Process != nil {
 				_ = b.cmd.Process.Kill()
 			}

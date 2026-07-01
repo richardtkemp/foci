@@ -180,6 +180,11 @@ func (s *Server) closeInner() {
 		return
 	}
 	component := s.logComponent()
+	pid := 0
+	if s.cmd.Process != nil {
+		pid = s.cmd.Process.Pid
+	}
+	log.Infof(component, "closing opencode server (pid=%d)", pid)
 
 	// Cancel the SSE subscriber ctx (nil only if Start never reached the
 	// subscriber launch). Done early so it stops touching the subprocess —
@@ -214,14 +219,14 @@ func (s *Server) closeInner() {
 
 	exitSeen := waitForExit(s.waitCh, closeGracefulWait)
 	if !exitSeen {
-		log.Warnf(component, "subprocess did not exit after %s, sending SIGTERM", closeGracefulWait)
+		log.Warnf(component, "subprocess (pid=%d) did not exit after %s, sending SIGTERM", pid, closeGracefulWait)
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Signal(syscall.SIGTERM)
 		}
 		exitSeen = waitForExit(s.waitCh, closeSigtermWait)
 	}
 	if !exitSeen {
-		log.Warnf(component, "subprocess did not exit after SIGTERM, sending SIGKILL")
+		log.Warnf(component, "subprocess (pid=%d) did not exit after SIGTERM, sending SIGKILL", pid)
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Kill()
 		}
@@ -229,6 +234,8 @@ func (s *Server) closeInner() {
 	}
 	if !exitSeen {
 		log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
+	} else {
+		log.Infof(component, "opencode server (pid=%d) exited", pid)
 	}
 
 	// Cancel the cmd ctx (releases any outstanding cmd resources).

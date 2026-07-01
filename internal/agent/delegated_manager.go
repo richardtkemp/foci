@@ -666,6 +666,9 @@ func (m *DelegatedManager) Close() {
 	}
 	m.mu.Unlock()
 
+	if len(dead) > 0 {
+		log.Infof("delegated", "closing %d delegated backend(s): %v", len(dead), deadKeys)
+	}
 	for _, mb := range dead {
 		_ = mb.be.Close()
 		if mb.bridge != nil {
