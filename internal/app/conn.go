@@ -142,9 +142,9 @@ func (c *appConn) SendToSession(sessionKey, text string) error {
 	if clean == "" {
 		return nil
 	}
-	b := c.hub.bindingForSession(sessionKey)
+	b := c.sendBinding(sessionKey)
 	if b == nil {
-		return nil // offline: buffering/push is a later slice
+		return nil
 	}
 	b.send(fap.ServerMessage{
 		ConversationID: b.convID,
@@ -156,7 +156,7 @@ func (c *appConn) SendToSession(sessionKey, text string) error {
 }
 
 func (c *appConn) SendInjectedMessage(sessionKey, text string) error {
-	b := c.hub.bindingForSession(sessionKey)
+	b := c.sendBinding(sessionKey)
 	if b == nil {
 		return nil
 	}
@@ -167,6 +167,24 @@ func (c *appConn) SendInjectedMessage(sessionKey, text string) error {
 		Text:           text,
 	})
 	return nil
+}
+
+// sendBinding resolves the target binding for an unsolicited send. When
+// sessionKey has no binding — an agent-initiated/independent session the app
+// never opened — it falls back to the agent's default app chat so the message
+// surfaces instead of vanishing (#959). It logs LOUDLY either way, so the
+// never-bound case is never a silent recovery and we can see how often it fires.
+func (c *appConn) sendBinding(sessionKey string) *convBinding {
+	if b := c.hub.bindingForSession(sessionKey); b != nil {
+		return b
+	}
+	b := c.hub.defaultChatBinding(c.agentID)
+	if b == nil {
+		log.Warnf("app", "unsolicited send to unbound session %q (agent %s) DROPPED: no binding and no default-chat binding", sessionKey, c.agentID)
+		return nil
+	}
+	log.Warnf("app", "unsolicited send to unbound session %q (agent %s) routed to default app chat (conv=%s)", sessionKey, c.agentID, b.convID)
+	return b
 }
 
 func (c *appConn) SendText(text string) error {

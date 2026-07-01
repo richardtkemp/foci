@@ -950,6 +950,30 @@ func (h *Hub) bindingForSession(sessionKey string) *convBinding {
 	return h.bySession[sessionKey]
 }
 
+// defaultChatBinding returns the live binding for the agent's default app chat,
+// or nil if there is no default set or its conversation isn't currently bound.
+// The default is stored as a chatID (SetDefaultChat); chatIDForConv is a one-way
+// hash, so we can only match an existing binding — not reconstruct the convID to
+// bind a never-opened default. Used as the never-bound send fallback (#959).
+func (h *Hub) defaultChatBinding(agentID string) *convBinding {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return nil
+	}
+	dc := idx.DefaultChatForAgent(agentID, "app")
+	if dc == 0 {
+		return nil
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, b := range h.convs {
+		if b.agentID == agentID && b.chatID == dc {
+			return b
+		}
+	}
+	return nil
+}
+
 // bindingsForAgent returns every live conversation binding for an agent. The
 // unbound appConn (PrimaryBot) uses this to fan a session-blind notification
 // out to all the agent's conversations instead of guessing a default session.

@@ -407,6 +407,54 @@ func TestSendToSession_EmitsMessageFrame(t *testing.T) {
 	}
 }
 
+func TestSendToSession_FallsBackToDefaultChat(t *testing.T) {
+	// An unsolicited send to a session with no binding surfaces in the agent's
+	// default app chat instead of vanishing (#959).
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	if err := idx.SetDefaultChat("ag", "app", 42); err != nil {
+		t.Fatal(err)
+	}
+	c := fakeClient()
+	def := &convBinding{convID: "cdef", sessionKey: "ag/cdef/9", agentID: "ag", chatID: 42, client: c}
+	h.convs[def.convID] = def
+
+	conn := &appConn{hub: h, agentID: "ag"}
+	if err := conn.SendToSession("ag/never-bound/1", "surfaced"); err != nil {
+		t.Fatal(err)
+	}
+	got := drain(t, c)
+	if len(got) != 1 || got[0].t != fap.TypeMessage || got[0].d["text"] != "surfaced" {
+		t.Fatalf("want one message 'surfaced' on the default chat, got %v", types(got))
+	}
+	if got[0].d["conversationId"] != "cdef" {
+		t.Errorf("routed to conv %v, want cdef (default chat)", got[0].d["conversationId"])
+	}
+}
+
+func TestSendToSession_DropsWhenNoDefaultBinding(t *testing.T) {
+	// Default set but its conversation isn't bound → drop, and must NOT misroute
+	// to some other conversation.
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	if err := idx.SetDefaultChat("ag", "app", 42); err != nil {
+		t.Fatal(err)
+	}
+	c := fakeClient()
+	other := &convBinding{convID: "cother", sessionKey: "ag/cother/9", agentID: "ag", chatID: 99, client: c}
+	h.convs[other.convID] = other
+
+	conn := &appConn{hub: h, agentID: "ag"}
+	if err := conn.SendToSession("ag/never-bound/1", "lost"); err != nil {
+		t.Fatal(err)
+	}
+	if got := drain(t, c); len(got) != 0 {
+		t.Fatalf("unbound send with no default binding must not deliver, got %v", types(got))
+	}
+}
+
 func TestSendToSession_SilentSuppressed(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
