@@ -177,6 +177,89 @@ func TestAppSink_CleanupClearsInTurn(t *testing.T) {
 	}
 }
 
+func TestAppSink_ThinkingSnapshot(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	if b.info().Thinking {
+		t.Fatal("thinking snapshot should be false before any reasoning")
+	}
+	s.Emit(ctx, turnevent.TurnStart{})
+	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "hmm"})
+	if !b.info().Thinking {
+		t.Fatal("thinking snapshot should be true mid-reasoning")
+	}
+	s.Emit(ctx, turnevent.TextDelta{Delta: "answer"})
+	if b.info().Thinking {
+		t.Fatal("thinking snapshot should clear when text begins")
+	}
+	// A second reasoning phase (think → tool → think) flips it back on.
+	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "more"})
+	if !b.info().Thinking {
+		t.Fatal("thinking snapshot should re-arm on a later reasoning phase")
+	}
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "answer"})
+	if b.info().Thinking {
+		t.Fatal("thinking snapshot should be false after TurnComplete")
+	}
+}
+
+// thinkingOns extracts the on/off sequence of thinking frames in order.
+func thinkingOns(got []decoded) []bool {
+	var out []bool
+	for _, d := range got {
+		if d.t == fap.TypeThinking {
+			on, _ := d.d["on"].(bool)
+			out = append(out, on)
+		}
+	}
+	return out
+}
+
+func TestAppSink_ThinkingFrames(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	s.Emit(ctx, turnevent.TurnStart{})
+	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "a"})
+	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "b"}) // deduped: no second on
+	s.Emit(ctx, turnevent.TextDelta{Delta: "x"})
+	s.Emit(ctx, turnevent.ToolCall{Name: "Read"}) // already off: deduped
+	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "c"})
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "x"})
+
+	got := drain(t, c)
+	ons := thinkingOns(got)
+	want := []bool{true, false, true, false}
+	if len(ons) != len(want) {
+		t.Fatalf("thinking frames = %v, want %v (all: %v)", ons, want, types(got))
+	}
+	for i := range want {
+		if ons[i] != want[i] {
+			t.Fatalf("thinking frames = %v, want %v", ons, want)
+		}
+	}
+}
+
+func TestAppSink_NoThinkingFramesWhenAbsent(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	s.Emit(ctx, turnevent.TurnStart{})
+	s.Emit(ctx, turnevent.TextDelta{Delta: "hi"})
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "hi"})
+
+	if ons := thinkingOns(drain(t, c)); len(ons) != 0 {
+		t.Fatalf("thinking-free turn emitted %d thinking frames, want 0", len(ons))
+	}
+}
+
 // TestAppSink_MultiReplyNoDoubleDelivery is the regression test for the
 // double-delivery bug: a turn with two replies (reply → tool → reply) must
 // render as two distinct finalized bubbles, never re-sending a streamed reply as
@@ -959,6 +1042,7 @@ func TestPushPreview_Classification(t *testing.T) {
 		{fap.Interactive{Questions: []fap.Question{{Text: "batched ask?"}}}, true, "batched ask?"},
 		{fap.Interactive{}, true, "Question from agent"},
 		{fap.Typing{On: true}, false, ""},
+		{fap.Thinking{On: true}, false, ""},
 		{fap.Meta{}, false, ""},
 		{fap.TextDelta{Text: "x"}, false, ""},
 	}
