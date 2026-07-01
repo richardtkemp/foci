@@ -158,10 +158,24 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		StartSweep(initial, interval time.Duration)
 	}
 
+	// reindexStagger offsets each agent's reindexing so the whole fleet does not
+	// reindex simultaneously — a full-fleet reindex (startup, or a sweep tick)
+	// otherwise stacks every agent's peak memory in the same few seconds, which
+	// is what drove the memory_guard pressure. Each successive index gets an
+	// extra reindexStaggerStep of delay on both its initial reindex and its
+	// sweep phase.
+	const reindexStaggerStep = 7 * time.Second
+	reindexStagger := time.Duration(0)
+
 	// initOne watches, starts sweep, and kicks off an async initial reindex.
 	initOne := func(label string, b memoryBackend, debounce, sweepInterval time.Duration) {
 		closers = append(closers, b)
+		stagger := reindexStagger
+		reindexStagger += reindexStaggerStep
 		go func() {
+			if stagger > 0 {
+				time.Sleep(stagger)
+			}
 			if err := b.Reindex(); err != nil {
 				log.Errorf("main", "initial reindex %s: %v", label, err)
 			} else {
@@ -174,7 +188,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			}
 		}
 		if sweepInterval > 0 {
-			b.StartSweep(30*time.Second, sweepInterval)
+			// Offset the sweep phase per-agent too, so periodic sweeps (if
+			// re-enabled) also don't cluster.
+			b.StartSweep(30*time.Second+stagger, sweepInterval)
 		}
 	}
 
