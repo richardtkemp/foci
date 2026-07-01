@@ -95,12 +95,16 @@ func TestAppSink_StreamingTranslation(t *testing.T) {
 	s.Emit(ctx, turnevent.TurnComplete{FinalText: "Hello"})
 
 	got := drain(t, c)
-	// Bookended by typing on/off. Deltas may be batched by the stream pump, so
-	// this asserts invariants rather than an exact frame count: one turn.start,
-	// one text.end (sharing the turnId), ≥1 delta forming a prefix of the final
-	// text, and no whole-message frame (a streamed reply is never re-sent).
-	if len(got) < 4 || got[0].t != fap.TypeTyping || got[0].d["on"] != true {
-		t.Fatalf("first frame must be typing-on, got %v", types(got))
+	// Opens with warming-on then typing-on (warming precedes typing at TurnStart);
+	// closes with typing-off. Deltas may be batched by the stream pump, so this
+	// asserts invariants rather than an exact frame count: one turn.start, one
+	// text.end (sharing the turnId), ≥1 delta forming a prefix of the final text,
+	// and no whole-message frame (a streamed reply is never re-sent).
+	if len(got) < 4 || got[0].t != fap.TypeWarming || got[0].d["on"] != true {
+		t.Fatalf("first frame must be warming-on, got %v", types(got))
+	}
+	if got[1].t != fap.TypeTyping || got[1].d["on"] != true {
+		t.Fatalf("second frame must be typing-on, got %v", types(got))
 	}
 	if last := got[len(got)-1]; last.t != fap.TypeTyping || last.d["on"] != false {
 		t.Fatalf("last frame must be typing-off, got %v", types(got))
@@ -174,6 +178,22 @@ func TestAppSink_CleanupClearsInTurn(t *testing.T) {
 	s.cleanup()
 	if b.info().Typing {
 		t.Fatal("cleanup must clear the typing snapshot for an abandoned turn")
+	}
+}
+
+func TestAppSink_WarmingLifecycle(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	s.Emit(ctx, turnevent.TurnStart{})
+	if !b.info().Warming {
+		t.Fatal("warming should be true at turn start")
+	}
+	s.Emit(ctx, turnevent.ThinkingDelta{Delta: ""})
+	if b.info().Warming {
+		t.Fatal("warming should clear on the first output")
 	}
 }
 

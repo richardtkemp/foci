@@ -1120,6 +1120,7 @@ type convBinding struct {
 	seenOrder   []string            // FIFO eviction order for seen
 	inTurn      bool                // a turn is in flight; surfaced as the roster typing snapshot
 	thinking    bool                // model is mid extended-thinking; surfaced as the roster thinking snapshot
+	warming     bool                // turn started, no output yet; surfaced as the roster warming snapshot
 }
 
 // attach points the durable state at a (re)connected socket and registers it in
@@ -1161,7 +1162,7 @@ func (b *convBinding) currentSeq() int64 {
 func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Typing: b.inTurn, Thinking: b.thinking}
+	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Typing: b.inTurn, Thinking: b.thinking, Warming: b.warming}
 }
 
 func (b *convBinding) setInTurn(v bool) {
@@ -1173,6 +1174,12 @@ func (b *convBinding) setInTurn(v bool) {
 func (b *convBinding) setThinkingSnapshot(v bool) {
 	b.mu.Lock()
 	b.thinking = v
+	b.mu.Unlock()
+}
+
+func (b *convBinding) setWarmingSnapshot(v bool) {
+	b.mu.Lock()
+	b.warming = v
 	b.mu.Unlock()
 }
 
