@@ -5,7 +5,6 @@ import (
 
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
-	"foci/internal/log"
 	"foci/internal/turn"
 )
 
@@ -85,7 +84,6 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// prematurely finalizing the in-flight reply stream. See type doc.
 
 	case turnevent.ThinkingDelta, turnevent.ThinkingBlock:
-		log.Infof("app", "THINKDIAG appSink received thinking event conv=%s", s.b.convID)
 		s.setThinking(true)
 		s.inner.Emit(ctx, ev)
 
@@ -115,7 +113,6 @@ func (s *appSink) setThinking(on bool) {
 	}
 	s.thinking = on
 	s.b.setThinkingSnapshot(on)
-	log.Infof("app", "THINKDIAG sending fap.Thinking on=%v conv=%s", on, s.b.convID)
 	s.b.send(fap.Thinking{ConversationID: s.b.convID, On: on})
 }
 
