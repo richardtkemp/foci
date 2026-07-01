@@ -393,6 +393,14 @@ func (s *Server) route(ev rawEvent) {
 			if pbe := s.resolveParentBackend(sid); pbe != nil {
 				log.Debugf(s.logComponent(), "routing child session %s %s to parent session %s", sid, ev.Type, pbe.sessionID)
 				be = pbe
+			} else if s.http != nil && s.baseURL != "" {
+				// No childToParent link for this child — its session.created was
+				// missed (fired before this subscriber connected, or dropped when
+				// the event channel was full). Fetch the parent chain via GET
+				// /session OFF the reader goroutine (HTTP must not block the SSE
+				// stream) and re-route once resolved (#969).
+				go s.resolveChildPermissionViaAPI(sid, ev)
+				return
 			}
 		}
 		if be == nil {
@@ -459,6 +467,77 @@ func (s *Server) resolveParentBackend(sid string) *Backend {
 		cur = parent
 	}
 	return nil
+}
+
+// resolveChildPermissionViaAPI resolves a subagent's parent Backend by walking
+// the child→parent chain, filling any missing links via GET /session, then
+// delivers ev to the first registered ancestor. It runs OFF the SSE-reader
+// goroutine (route spawns it) because the HTTP calls must not block the stream.
+// Fired only when childToParent has no link for the child, i.e. the child's
+// session.created was missed (#969). Bounded by depth + a visited set.
+func (s *Server) resolveChildPermissionViaAPI(sid string, ev rawEvent) {
+	const maxDepth = 16
+	cur := sid
+	seen := make(map[string]bool, maxDepth)
+	for i := 0; i < maxDepth && cur != "" && !seen[cur]; i++ {
+		seen[cur] = true
+
+		s.sessionsMu.RLock()
+		be := s.sessions[cur]
+		parent, known := s.childToParent[cur]
+		s.sessionsMu.RUnlock()
+
+		if be != nil {
+			log.Debugf(s.logComponent(), "routing child session %s %s to parent session %s (resolved via GET /session)", sid, ev.Type, be.sessionID)
+			select {
+			case be.events <- ev:
+			default:
+				log.Warnf(s.logComponent(), "event channel full for session %s; dropping %s", be.sessionID, ev.Type)
+			}
+			return
+		}
+		if !known {
+			pid, ok := s.fetchParentID(cur)
+			if !ok || pid == "" {
+				// Fetch failed, or cur is a root session (no parent) — no
+				// registered ancestor exists to answer this permission.
+				log.Debugf(s.logComponent(), "no registered ancestor for child session %s; %s dropped", sid, ev.Type)
+				return
+			}
+			s.sessionsMu.Lock()
+			if s.childToParent == nil {
+				s.childToParent = make(map[string]string)
+			}
+			s.childToParent[cur] = pid
+			s.sessionsMu.Unlock()
+			parent = pid
+		}
+		cur = parent
+	}
+	log.Debugf(s.logComponent(), "parent chain for child session %s exceeded depth/cycle; %s dropped", sid, ev.Type)
+}
+
+// fetchParentID reads a session's parentID via GET /session/{id}. Returns
+// (parentID, true) on success — parentID is "" for a root session — and
+// ("", false) on any non-200 or transport error.
+func (s *Server) fetchParentID(sid string) (string, bool) {
+	req, err := http.NewRequest(http.MethodGet, s.baseURL+"/session/"+sid, nil)
+	if err != nil {
+		return "", false
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	var sess Session
+	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
+		return "", false
+	}
+	return sess.ParentID, true
 }
 
 // registerSession adds be to the per-Server session registry under

@@ -22,9 +22,10 @@ import (
 // POST /session; the returned ID is what every subsequent /session/:id
 // endpoint takes.
 type Session struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Time  struct {
+	ID       string `json:"id"`
+	ParentID string `json:"parentID,omitempty"` // set on subagent (child) sessions; empty for roots
+	Title    string `json:"title"`
+	Time     struct {
 		Created int64 `json:"created"` // unix ms
 		Updated int64 `json:"updated"` // unix ms
 	} `json:"time"`
