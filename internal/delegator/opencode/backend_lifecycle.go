@@ -79,8 +79,9 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// and still exists on the server, otherwise create a new one. Resume
 	// avoids orphaning sessions across foci restarts and preserves
 	// conversation context. A 404 on the GET (session evicted, opencode.db
-	// wiped, etc.) falls through to create; any other error fails Start so
-	// the manager's retry-without-resume path runs.
+	// wiped, etc.) — like any other resume failure — fails Start so the
+	// manager's retry-without-resume path runs; that path creates the fresh
+	// session and alerts the user their old session couldn't be resumed.
 	sessionID := ""
 	resumed := false
 	if opts.ResumeSessionID != "" {
@@ -93,7 +94,13 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 			resumed = true
 			log.Infof(b.logComponent(), "Start: resumed session id=%s", sessionID)
 		} else {
-			log.Warnf(b.logComponent(), "Start: resume session %s not found, creating new", opts.ResumeSessionID)
+			// Requested session is gone (404). Rather than silently creating a
+			// new session inline, fail Start so DelegatedManager's
+			// retry-without-resume path runs — the single place (shared with
+			// ccstream/cctmux, whose CLI exits non-zero on a stale --resume)
+			// that both creates the fresh session AND alerts the user that
+			// their old session could not be resumed.
+			return fmt.Errorf("opencode: resume session %s not found", opts.ResumeSessionID)
 		}
 	}
 	if sessionID == "" {

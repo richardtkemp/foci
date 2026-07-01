@@ -80,6 +80,12 @@ type DelegatedManager struct {
 	// Called with true when CC starts working, false on turn complete.
 	TypingFunc func(sessionKey string, typing bool)
 
+	// SystemNoticeFunc sends an out-of-band system notice directly to a
+	// session's platform chat (NOT through an agent turn). Used to tell the
+	// user when a requested session could not be resumed and a fresh one was
+	// started in its place. Nil = notices are silently dropped (e.g. tests).
+	SystemNoticeFunc func(sessionKey, text string)
+
 	// IdleTimeout is how long a backend can be idle before being closed.
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
@@ -282,6 +288,11 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	}
 	m.setBackendCallbacks(mb)
 
+	// resumeFellBack becomes true if a requested resume ended up creating a
+	// fresh session (either retry path below), so we don't log a misleading
+	// "resumed session" for what was actually a fallback.
+	resumeFellBack := false
+
 	if err := be.Start(ctx, opts); err != nil {
 		// If resume failed (e.g. stale UUID), retry without resume.
 		if resumeID != "" {
@@ -303,6 +314,9 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 				}
 				return nil, fmt.Errorf("start delegated backend for %s (no resume): %w", sessionKey, err)
 			}
+			// Fresh session started in place of the missing one — tell the user.
+			m.notifyResumeMissed(sessionKey, resumeID)
+			resumeFellBack = true
 		} else {
 			if bridge != nil {
 				bridge.Close()
@@ -324,10 +338,6 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		go m.idleReaper(ctx)
 	}
 	m.mu.Unlock()
-
-	if resumeID != "" {
-		log.Infof("delegated", "resumed session %s for %s", resumeID, sessionKey)
-	}
 
 	// Wait for the coding agent to be ready to accept prompts.
 	// Without this, early SendToPane hits a CC that's still loading.
@@ -359,6 +369,9 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 				}
 				return nil, fmt.Errorf("start delegated backend for %s (retry after init death): %w", sessionKey, err)
 			}
+			// Fresh session started in place of the missing one — tell the user.
+			m.notifyResumeMissed(sessionKey, resumeID)
+			resumeFellBack = true
 
 			m.mu.Lock()
 			m.backends[sessionKey] = mb
@@ -372,7 +385,26 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		}
 	}
 
+	// Log a genuine resume only once we know neither retry path fell back.
+	if resumeID != "" && !resumeFellBack {
+		log.Infof("delegated", "resumed session %s for %s", resumeID, sessionKey)
+	}
+
 	return mb.be, nil
+}
+
+// notifyResumeMissed alerts the user, out of band via their platform chat, that
+// a requested session could not be resumed and a fresh session was started in
+// its place. All three delegated backends converge here: opencode fails Start
+// on a 404, ccstream/cctmux exit non-zero on a stale --resume — both routed
+// through the retry-without-resume path above. Safe with a nil SystemNoticeFunc.
+func (m *DelegatedManager) notifyResumeMissed(sessionKey, resumeID string) {
+	if m.SystemNoticeFunc == nil {
+		return
+	}
+	m.SystemNoticeFunc(sessionKey,
+		"⚠️ Couldn't resume your previous session (`"+resumeID+"`) — it may have been "+
+			"evicted or cleared. Started a fresh session instead; earlier context won't carry over.")
 }
 
 // StopSession interrupts the current agent turn. The mechanism is

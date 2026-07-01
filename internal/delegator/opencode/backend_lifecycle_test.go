@@ -353,16 +353,16 @@ func TestBackend_Start_ResumeExistingSession(t *testing.T) {
 	_ = b.Close()
 }
 
-func TestBackend_Start_ResumeFallsThroughOn404(t *testing.T) {
-	// Verifies: when ResumeSessionID is set but GET /session/:id returns
-	// 404 (session evicted, db wiped), Start falls through to POST /session
-	// and creates a fresh session. The system prompt IS injected for the
-	// new session.
+func TestBackend_Start_ResumeErrorsOn404(t *testing.T) {
+	// Verifies: when ResumeSessionID is set but GET /session/:id returns 404
+	// (session evicted, db wiped), Start FAILS rather than silently creating a
+	// new session inline. DelegatedManager's retry-without-resume path owns the
+	// fallback (creates the fresh session AND alerts the user), so Start must
+	// NOT POST /session itself here.
 	var (
-		mu              sync.Mutex
-		gotResumeGet    bool
-		gotCreatePost   bool
-		gotPromptInject bool
+		mu            sync.Mutex
+		gotResumeGet  bool
+		gotCreatePost bool
 	)
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session/ses-stale" && r.Method == http.MethodGet {
@@ -380,13 +380,6 @@ func TestBackend_Start_ResumeFallsThroughOn404(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"sess-fresh"}`))
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/session/sess-fresh/message") {
-			mu.Lock()
-			gotPromptInject = true
-			mu.Unlock()
-			w.WriteHeader(http.StatusOK)
-			return
-		}
 		http.NotFound(w, r)
 	})
 
@@ -395,8 +388,11 @@ func TestBackend_Start_ResumeFallsThroughOn404(t *testing.T) {
 		ResumeSessionID: "ses-stale",
 		SystemPrompt:    "fresh-prompt",
 	})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
+	if err == nil {
+		t.Fatal("Start should fail when the resume session returns 404")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should mention 'not found', got: %v", err)
 	}
 
 	mu.Lock()
@@ -404,14 +400,8 @@ func TestBackend_Start_ResumeFallsThroughOn404(t *testing.T) {
 	if !gotResumeGet {
 		t.Error("GET /session/ses-stale was not invoked")
 	}
-	if !gotCreatePost {
-		t.Error("POST /session should fire when resume returns 404")
-	}
-	if !gotPromptInject {
-		t.Error("system prompt should be injected for fresh session")
-	}
-	if b.sessionID != "sess-fresh" {
-		t.Errorf("b.sessionID = %q, want sess-fresh", b.sessionID)
+	if gotCreatePost {
+		t.Error("POST /session must NOT fire on 404 — the manager owns the fallback")
 	}
 	_ = b.Close()
 }

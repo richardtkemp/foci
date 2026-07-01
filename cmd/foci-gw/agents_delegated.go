@@ -351,6 +351,16 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			}
 			conn.SetTyping(typing)
 		},
+		SystemNoticeFunc: func(sessionKey, text string) {
+			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+			if conn == nil {
+				log.Warnf("agent/"+agentID, "system notice: no connection for session=%s, dropped: %s", sessionKey, text)
+				return
+			}
+			if err := conn.SendText(text); err != nil {
+				log.Warnf("agent/"+agentID, "system notice send failed for session=%s: %v", sessionKey, err)
+			}
+		},
 		IdleTimeout: idleTimeout,
 	}
 
