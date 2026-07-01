@@ -2818,9 +2818,10 @@ func TestOnStreamEvent_ThinkingDelta(t *testing.T) {
 	}
 }
 
-// TestOnStreamEvent_EmptyThinking proves empty thinking_delta payloads are
-// dropped, matching the existing text_delta behaviour and keeping downstream
-// emit helpers from firing no-op events.
+// TestOnStreamEvent_EmptyThinking proves an empty thinking_delta still fires
+// OnThinkingDelta. The thinking indicator keys off the presence of thinking
+// activity, not content — this model streams thinking with empty plaintext
+// (only the signature), so gating on non-empty text would never light it.
 func TestOnStreamEvent_EmptyThinking(t *testing.T) {
 	t.Parallel()
 
@@ -2842,8 +2843,8 @@ func TestOnStreamEvent_EmptyThinking(t *testing.T) {
 	}`)
 	b.OnStreamEvent(raw)
 
-	if called {
-		t.Error("OnThinkingDelta should not fire for empty thinking delta")
+	if !called {
+		t.Error("OnThinkingDelta should fire on presence, even for empty thinking delta")
 	}
 }
 

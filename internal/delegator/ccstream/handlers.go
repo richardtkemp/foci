@@ -143,7 +143,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			}
 
 		case "thinking":
-			log.Infof(b.logComponent(), "THINKDIAG backend complete thinking block len=%d", len(block.Thinking))
+			// Thinking blocks are informational; optionally log.
 		}
 	}
 
@@ -676,8 +676,10 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 			se.OnTextDelta(env.Event.Delta.Text)
 		}
 	case "thinking_delta":
-		log.Infof(b.logComponent(), "THINKDIAG backend thinking_delta len=%d se_nil=%v cb_nil=%v", len(env.Event.Delta.Thinking), se == nil, se.OnThinkingDelta == nil)
-		if env.Event.Delta.Thinking != "" && se.OnThinkingDelta != nil {
+		// Fire on event presence, not content: this model streams thinking with
+		// empty plaintext (only the signature), so gating on non-empty text would
+		// never light the indicator. renderer.OnThinkingDelta no-ops on empty.
+		if se.OnThinkingDelta != nil {
 			se.OnThinkingDelta(env.Event.Delta.Thinking)
 		}
 	}

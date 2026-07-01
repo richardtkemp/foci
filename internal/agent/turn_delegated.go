@@ -266,7 +266,6 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			sessionSink.Emit(context.Background(), turnevent.TextDelta{Delta: delta})
 		},
 		OnThinkingDelta: func(delta string) {
-			log.Infof("delegated", "THINKDIAG bridge OnThinkingDelta->turnevent len=%d sink=%T", len(delta), sessionSink)
 			sessionSink.Emit(context.Background(), turnevent.ThinkingDelta{Delta: delta})
 			thinkingBuf.WriteString(delta)
 		},
