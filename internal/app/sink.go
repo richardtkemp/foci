@@ -51,7 +51,13 @@ func newAppSink(b *convBinding) *appSink {
 	}
 	renderer := turn.NewTurnRenderer(backend, tracker, d, newSB)
 	inner := turn.NewStreamingSink(renderer, tracker, nil)
-	return &appSink{b: b, inner: inner, cleanup: renderer.Cleanup}
+	// A turn abandoned without TurnComplete would strand inTurn=true; cleanup is
+	// deferred by the agent on every turn, so clearing it here is the backstop.
+	cleanup := func() {
+		b.setInTurn(false)
+		renderer.Cleanup()
+	}
+	return &appSink{b: b, inner: inner, cleanup: cleanup}
 }
 
 // DeliversToPlatform implements turnevent.Sink — output is always user-facing.
@@ -62,6 +68,7 @@ func (s *appSink) DeliversToPlatform() bool { return true }
 func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
 	case turnevent.TurnStart:
+		s.b.setInTurn(true)
 		s.b.send(fap.Typing{ConversationID: s.b.convID, On: true})
 		s.inner.Emit(ctx, ev)
 
@@ -73,6 +80,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// Forward first so the final text is delivered (TextEnd / ServerMessage),
 		// then bracket with typing-off and the structured meta frame.
 		s.inner.Emit(ctx, ev)
+		s.b.setInTurn(false)
 		s.b.send(fap.Typing{ConversationID: s.b.convID, On: false})
 		s.emitMeta(e)
 

@@ -129,6 +129,10 @@ type ConversationInfo struct {
 	// platform (used by keepalive/cron routing; rendered as the golden pin in the
 	// app). Server-authoritative; set via ConversationSetDefault.
 	IsDefault bool `json:"isDefault,omitempty"`
+	// Typing is true iff a turn is in flight on this conversation. It is the roster
+	// snapshot half of the typing indicator; the Typing frame carries live deltas —
+	// the same snapshot+delta pairing as SessionKey/SessionUpdate.
+	Typing bool `json:"typing,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.

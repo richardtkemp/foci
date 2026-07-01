@@ -141,6 +141,42 @@ func TestAppSink_StreamingTranslation(t *testing.T) {
 	}
 }
 
+func TestAppSink_InTurnSnapshot(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	if b.info().Typing {
+		t.Fatal("typing snapshot should be false before any turn")
+	}
+	s.Emit(ctx, turnevent.TurnStart{})
+	if !b.info().Typing {
+		t.Fatal("typing snapshot should be true mid-turn")
+	}
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "x"})
+	if b.info().Typing {
+		t.Fatal("typing snapshot should be false after TurnComplete")
+	}
+}
+
+// A turn abandoned without TurnComplete must still clear the snapshot via the
+// deferred cleanup, or the roster would report a phantom typing indicator.
+func TestAppSink_CleanupClearsInTurn(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+
+	s.Emit(context.Background(), turnevent.TurnStart{})
+	if !b.info().Typing {
+		t.Fatal("typing snapshot should be true mid-turn")
+	}
+	s.cleanup()
+	if b.info().Typing {
+		t.Fatal("cleanup must clear the typing snapshot for an abandoned turn")
+	}
+}
+
 // TestAppSink_MultiReplyNoDoubleDelivery is the regression test for the
 // double-delivery bug: a turn with two replies (reply → tool → reply) must
 // render as two distinct finalized bubbles, never re-sending a streamed reply as
