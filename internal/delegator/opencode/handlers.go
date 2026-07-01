@@ -138,6 +138,12 @@ func (b *Backend) onMessagePartUpdated(part Part, delta string) {
 	// whose handlers take turnMu themselves (handleTextPart/handleToolPart).
 	if part.ID != "" {
 		b.turnMu.Lock()
+		if b.partTypes == nil {
+			// Events can arrive before the first beginTurn (which normally
+			// allocates this map) — e.g. a freshly-created session emitting
+			// message.part.updated ahead of foci's own turn bookkeeping.
+			b.partTypes = make(map[string]string)
+		}
 		b.partTypes[part.ID] = part.Type
 		b.turnMu.Unlock()
 	}
@@ -220,6 +226,11 @@ func (b *Backend) handleTextPart(part Part, delta string) {
 			b.turnMu.Unlock()
 			return // already fired OnText for this part
 		}
+		if b.seenTextParts == nil {
+			// See partTypes nil-guard in onMessagePartUpdated: events can
+			// arrive before the first beginTurn allocates this map.
+			b.seenTextParts = make(map[string]bool)
+		}
 		b.seenTextParts[part.ID] = true
 
 		// Accumulate into turnText. Multiple text parts in one turn
@@ -268,6 +279,11 @@ func (b *Backend) handleToolPart(part Part) {
 		b.turnMu.Lock()
 		seen := b.seenToolCalls[part.CallID]
 		if !seen {
+			if b.seenToolCalls == nil {
+				// See partTypes nil-guard in onMessagePartUpdated: events can
+				// arrive before the first beginTurn allocates this map.
+				b.seenToolCalls = make(map[string]bool)
+			}
 			b.seenToolCalls[part.CallID] = true
 			b.turnTools++
 		}
