@@ -60,6 +60,7 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.seenToolCalls = make(map[string]bool)
 	b.seenTextParts = make(map[string]bool)
+	b.partTypes = make(map[string]string)
 
 	// lastUsage/lastModel/lastProvider are reset under b.mu (they're read
 	// by onSessionIdle on the next turn to build TurnResult, and by

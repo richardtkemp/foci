@@ -216,6 +216,128 @@ func TestOnMessagePartUpdated_ReasoningFiresOnThinkingDelta(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// message.part.delta — incremental streaming (text AND reasoning)
+//
+// opencode streams content via message.part.delta events, separate from the
+// part.updated open/close lifecycle. The delta payload carries no part type —
+// only a partID — so the type is resolved from the preceding part.updated.
+// ---------------------------------------------------------------------------
+
+func TestOnMessagePartDelta_ReasoningFiresOnThinkingDelta(t *testing.T) {
+	// The core fix: a reasoning part opened via part.updated, then
+	// streamed via part.delta, routes to OnThinkingDelta (drives the
+	// app's "thinking…" indicator on).
+	b := newHandlerTestBackend(t)
+	c := b.captures()
+
+	// Open the reasoning part (records partID→reasoning).
+	b.onMessagePartUpdated(Part{
+		Type: PartReasoning,
+		ID:   "pr-1",
+		Text: "",
+		Time: &PartTime{Start: 1000},
+	}, "")
+	// Stream fragments.
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pr-1", Field: "text", Delta: "reasoning "})
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pr-1", Field: "text", Delta: "streamed"})
+
+	if len(*c.thinkingDeltas) != 2 || (*c.thinkingDeltas)[0] != "reasoning " || (*c.thinkingDeltas)[1] != "streamed" {
+		t.Errorf("thinkingDeltas = %v, want [reasoning  streamed]", *c.thinkingDeltas)
+	}
+}
+
+func TestOnMessagePartDelta_TextFiresOnTextDelta(t *testing.T) {
+	// A text part streamed via part.delta routes to OnTextDelta.
+	b := newHandlerTestBackend(t)
+	c := b.captures()
+
+	b.onMessagePartUpdated(Part{
+		Type: PartText,
+		ID:   "pt-1",
+		Text: "",
+		Time: &PartTime{Start: 1000},
+	}, "")
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pt-1", Field: "text", Delta: "Hello"})
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pt-1", Field: "text", Delta: " world"})
+
+	if len(*c.textDeltas) != 2 || (*c.textDeltas)[0] != "Hello" || (*c.textDeltas)[1] != " world" {
+		t.Errorf("textDeltas = %v, want [Hello  world]", *c.textDeltas)
+	}
+	// Deltas must not fire OnText (completion-only); nor pollute turnText.
+	if len(*c.texts) != 0 {
+		t.Errorf("OnText fired %d times on deltas, want 0", len(*c.texts))
+	}
+}
+
+func TestOnMessagePartDelta_UntrackedPartDropped(t *testing.T) {
+	// A part.delta whose partID was never seen in a part.updated (e.g.
+	// arrived before the open, or a synthetic part we don't track) is
+	// dropped — no handler fires.
+	b := newHandlerTestBackend(t)
+	c := b.captures()
+
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pt-ghost", Field: "text", Delta: "boo"})
+
+	if len(*c.textDeltas) != 0 || len(*c.thinkingDeltas) != 0 {
+		t.Errorf("untracked part.delta fired handlers: text=%v thinking=%v", *c.textDeltas, *c.thinkingDeltas)
+	}
+}
+
+func TestOnMessagePartDelta_SyntheticPartNotTracked(t *testing.T) {
+	// Synthetic parts are skipped in onMessagePartUpdated before the
+	// partTypes map is populated, so their deltas have no type to route
+	// to and are dropped.
+	b := newHandlerTestBackend(t)
+	c := b.captures()
+
+	b.onMessagePartUpdated(Part{
+		Type:      PartText,
+		ID:        "pt-syn",
+		Text:      "",
+		Synthetic: true,
+	}, "")
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pt-syn", Field: "text", Delta: "banner"})
+
+	if len(*c.textDeltas) != 0 {
+		t.Errorf("synthetic part delta fired OnTextDelta %v, want none", *c.textDeltas)
+	}
+}
+
+func TestOnMessagePartDelta_RoutesByPartIDWhenBothOpen(t *testing.T) {
+	// With a reasoning and a text part both open, deltas route to the
+	// correct handler by partID — reasoning→OnThinkingDelta,
+	// text→OnTextDelta.
+	b := newHandlerTestBackend(t)
+	c := b.captures()
+
+	b.onMessagePartUpdated(Part{Type: PartReasoning, ID: "pr-1"}, "")
+	b.onMessagePartUpdated(Part{Type: PartText, ID: "pt-1"}, "")
+
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pr-1", Delta: "think"})
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pt-1", Delta: "speak"})
+
+	if len(*c.thinkingDeltas) != 1 || (*c.thinkingDeltas)[0] != "think" {
+		t.Errorf("thinkingDeltas = %v, want [think]", *c.thinkingDeltas)
+	}
+	if len(*c.textDeltas) != 1 || (*c.textDeltas)[0] != "speak" {
+		t.Errorf("textDeltas = %v, want [speak]", *c.textDeltas)
+	}
+}
+
+func TestOnMessagePartDelta_EmptyDeltaOrPartIDIgnored(t *testing.T) {
+	b := newHandlerTestBackend(t)
+	c := b.captures()
+
+	b.onMessagePartUpdated(Part{Type: PartReasoning, ID: "pr-1"}, "")
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "pr-1", Delta: ""})
+	b.onMessagePartDelta(eventMessagePartDelta{PartID: "", Delta: "no id"})
+
+	if len(*c.thinkingDeltas) != 0 {
+		t.Errorf("empty/idsless deltas fired %v, want none", *c.thinkingDeltas)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // message.part.updated — tool lifecycle
 // ---------------------------------------------------------------------------
 
