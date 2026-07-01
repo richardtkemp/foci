@@ -141,7 +141,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Wire DelegatedManager: lazy per-session Backend creation.
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
-	// Parse idle timeout from config (default 24h).
+	// Parse idle timeout from config (default 3h; see agent.DefaultIdleTimeout).
 	var idleTimeout time.Duration
 	if v, ok := backendConfig["idle_timeout"].(string); ok && v != "" {
 		if d, err := time.ParseDuration(v); err == nil {

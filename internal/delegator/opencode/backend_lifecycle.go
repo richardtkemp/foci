@@ -185,16 +185,21 @@ func (b *Backend) Close() error {
 		b.server.unregisterSession(b.sessionID)
 	}
 
-	// Best-effort DELETE — opencode cleans up session state. Ignore
-	// errors: a failed DELETE doesn't leak anything significant (the
-	// session becomes idle on the server side and is reaped by the
-	// server's own idle timeout).
+	// Best-effort DELETE — opencode cleans up session state. A failed
+	// DELETE doesn't leak anything significant (the session becomes idle
+	// on the server side and is reaped by the server's own idle timeout),
+	// but log failures as warnings so they're visible rather than silent.
 	if b.server != nil && b.server.baseURL != "" && b.sessionID != "" {
 		url := fmt.Sprintf("%s/session/%s", b.server.baseURL, b.sessionID)
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
 		client := &http.Client{Timeout: 5 * time.Second}
 		resp, err := client.Do(req)
-		if err == nil {
+		if err != nil {
+			log.Warnf(b.logComponent(), "Close: session DELETE %s failed: %v", b.sessionID, err)
+		} else {
+			if resp.StatusCode >= 300 {
+				log.Warnf(b.logComponent(), "Close: session DELETE %s returned %s", b.sessionID, resp.Status)
+			}
 			_ = resp.Body.Close()
 		}
 	}
