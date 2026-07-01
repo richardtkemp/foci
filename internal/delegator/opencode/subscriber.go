@@ -25,6 +25,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -61,6 +62,7 @@ type Subscriber struct {
 	r           io.Reader
 	onEvent     func(rawEvent)
 	onHeartbeat func()
+	component   string // log tag; set by Server.runSubscriber (defaults to "opencode")
 }
 
 // NewSubscriber constructs a Subscriber that reads SSE frames from r,
@@ -69,7 +71,7 @@ type Subscriber struct {
 // Run's goroutine — callers that need async dispatch should push to a
 // channel from onEvent (which is exactly what Server.route does).
 func NewSubscriber(r io.Reader, onEvent func(rawEvent), onHeartbeat func()) *Subscriber {
-	return &Subscriber{r: r, onEvent: onEvent, onHeartbeat: onHeartbeat}
+	return &Subscriber{r: r, onEvent: onEvent, onHeartbeat: onHeartbeat, component: "opencode"}
 }
 
 // Run is the blocking parse loop. Returns when the reader reaches EOF,
@@ -80,13 +82,15 @@ func NewSubscriber(r io.Reader, onEvent func(rawEvent), onHeartbeat func()) *Sub
 // Run does NOT call OnSubscriberStopped — that's Server.runSubscriber's
 // job, so it can fire finalizeExit exactly once across all exit paths.
 func (sub *Subscriber) Run(ctx context.Context) error {
-	scanner := bufio.NewScanner(sub.r)
-	// opencode's events are small JSON blobs, but a single frame may
-	// carry a large tool_result snippet. Match the ccstream reader cap
-	// (1 MiB) so a chatty server doesn't blow the default 64 KiB and
-	// silently wedge the subscriber.
-	const maxSize = 1 << 20
-	scanner.Buffer(make([]byte, 0, 64*1024), maxSize)
+	// opencode 1.17.11 can emit a single SSE frame well over 1 MiB (large
+	// tool_result / message.part payloads). A bufio.Scanner errors terminally
+	// once a token exceeds its cap, and here a dropped stream tears down the
+	// whole Server and errors every one of the agent's sessions (#972). Read
+	// with a growable bufio.Reader under a hard ceiling instead: an oversized
+	// line is logged and skipped (resyncing to the next frame) so one giant
+	// event can't kill the stream.
+	const maxLine = 16 << 20 // 16 MiB hard ceiling per SSE line
+	reader := bufio.NewReaderSize(sub.r, 64*1024)
 
 	var dataLines []string // accumulates "data:" lines for the current frame
 
@@ -98,14 +102,17 @@ func (sub *Subscriber) Run(ctx context.Context) error {
 			return ctx.Err()
 		default:
 		}
-		if !scanner.Scan() {
-			err := scanner.Err()
-			if err == nil {
-				return io.EOF
-			}
-			return err
+
+		lineBytes, err := readLine(reader, maxLine)
+		if errors.Is(err, errLineTooLong) {
+			log.Warnf(sub.component, "SSE line exceeded %d bytes — dropping oversized frame and resyncing to next event", maxLine)
+			dataLines = dataLines[:0] // partial frame is untrustworthy; restart at the next boundary
+			continue
 		}
-		line := scanner.Text()
+		if err != nil {
+			return err // io.EOF on clean close, or the underlying read error
+		}
+		line := string(lineBytes)
 
 		// Blank line terminates the current frame (if any).
 		if line == "" {
@@ -140,6 +147,61 @@ func (sub *Subscriber) Run(ctx context.Context) error {
 		// Other fields (event, id, retry) are ignored — opencode's
 		// stream uses only data:.
 	}
+}
+
+var errLineTooLong = errors.New("opencode: SSE line exceeds ceiling")
+
+// readLine reads one '\n'-terminated line from r under a hard byte ceiling,
+// returning it with the trailing newline (and optional CR) stripped. If the
+// line would exceed max, readLine drains the rest of the line so the reader
+// resyncs to the next frame, and returns errLineTooLong. A final line at EOF
+// without a trailing newline is dropped (an unterminated SSE frame is never
+// flushed anyway), surfacing io.EOF. Read errors propagate as-is.
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
+	var buf []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			if len(buf)+len(chunk) > max {
+				if derr := drainLine(r); derr != nil {
+					return nil, derr
+				}
+				return nil, errLineTooLong
+			}
+			buf = append(buf, chunk...) // copy: chunk aliases r's internal buffer
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(buf)+len(chunk) > max {
+			return nil, errLineTooLong // full line already consumed through '\n'
+		}
+		buf = append(buf, chunk...)
+		return trimEOL(buf), nil
+	}
+}
+
+// drainLine discards bytes until the end of the current line ('\n') or a read
+// error, so the reader resyncs after an over-ceiling line.
+func drainLine(r *bufio.Reader) error {
+	for {
+		if _, err := r.ReadSlice('\n'); !errors.Is(err, bufio.ErrBufferFull) {
+			return err // nil once '\n' is consumed; otherwise the read error
+		}
+	}
+}
+
+// trimEOL strips a trailing '\n' and an optional preceding '\r'.
+func trimEOL(b []byte) []byte {
+	n := len(b)
+	if n > 0 && b[n-1] == '\n' {
+		n--
+		if n > 0 && b[n-1] == '\r' {
+			n--
+		}
+	}
+	return b[:n]
 }
 
 // splitSSEField splits "field:value" or "field: value" at the first
@@ -269,6 +331,7 @@ func (s *Server) runSubscriber(ctx context.Context) {
 	}
 
 	sub := NewSubscriber(resp.Body, onEvent, onHeartbeat)
+	sub.component = component
 	err := sub.Run(ctx)
 	if err == io.EOF {
 		log.Infof(component, "subscriber: end of stream")

@@ -1,7 +1,9 @@
 package opencode
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -38,6 +40,36 @@ func TestSubscriber_ParsesEventFrame(t *testing.T) {
 	}
 	if sid := extractSessionID(got[0].Properties); sid != "sess-x" {
 		t.Errorf("sessionID = %q, want sess-x", sid)
+	}
+}
+
+func TestReadLine_TrimsAndResyncsPastOversized(t *testing.T) {
+	// An over-ceiling line must be dropped (errLineTooLong) and the reader
+	// resynced so the NEXT line reads cleanly — the property that keeps one
+	// giant SSE frame from killing the subscriber (#972). Also checks CRLF
+	// trimming. Ceiling is passed directly, so no 16 MiB allocation needed.
+	const max = 64
+	input := "small line\r\n" + strings.Repeat("x", max+50) + "\nafter\n"
+	r := bufio.NewReaderSize(strings.NewReader(input), 16)
+
+	line, err := readLine(r, max)
+	if err != nil {
+		t.Fatalf("line 1: %v", err)
+	}
+	if string(line) != "small line" {
+		t.Errorf("line 1 = %q, want %q (CR must be trimmed)", line, "small line")
+	}
+
+	if _, err := readLine(r, max); !errors.Is(err, errLineTooLong) {
+		t.Fatalf("oversized line: err = %v, want errLineTooLong", err)
+	}
+
+	line, err = readLine(r, max)
+	if err != nil {
+		t.Fatalf("line after oversized: %v", err)
+	}
+	if string(line) != "after" {
+		t.Errorf("resync failed: got %q, want %q", line, "after")
 	}
 }
 
