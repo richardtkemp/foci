@@ -528,7 +528,7 @@ var todoActions = []struct {
 	Usage string // single-line: e.g. "complete <id> [--reason TEXT]"
 	Flags string // space-separated --flag list valid for this action; empty = no flags
 }{
-	{"add", "add --text TEXT [--priority high|medium|low] [--tag TAGS]   (alias: create)", "--text --priority --tag"},
+	{"add", "add --text TEXT [--body TEXT] [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; --title prepended in bold to --body/--text)", "--text --body --title --priority --tag"},
 	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --status --priority --sort --reverse --limit"},
 	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --priority --sort --reverse --limit"},
 	{"search", "search <query> [--sort F] [--reverse] [--limit N]", "--sort --reverse --limit"},
@@ -660,10 +660,12 @@ func generateShellFunc(t *Tool) string {
     fi
     return 0
   fi
-  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text=""
+  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text="" body="" title=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --text) text="$2"; shift 2 ;;
+      --body) body="$2"; shift 2 ;;
+      --title) title="$2"; shift 2 ;;
       --priority) priority="$2"; shift 2 ;;
       --tag) tag="$2"; shift 2 ;;
       --query) query="$2"; shift 2 ;;
@@ -707,6 +709,13 @@ func generateShellFunc(t *Tool) string {
   done
   text="${text# }"
   query="${query# }"
+  # #941: --body is an alias for the todo text; --title (if set) is prepended in bold.
+  if [ "$action" = add ]; then
+    [ -n "$body" ] && text="$body"
+    if [ -n "$title" ]; then
+      if [ -n "$text" ]; then text="$(printf '*%%s*\n\n%%s' "$title" "$text")"; else text="*$title*"; fi
+    fi
+  fi
   # On complete/drop, --text aliases --reason (writes to close_reason).
   # --notes and --note are parsed directly into reason above. If both --text
   # and --reason are supplied, --reason wins (explicit beats implicit).
