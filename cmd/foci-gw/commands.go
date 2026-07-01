@@ -176,7 +176,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		AgentNewDeps:        agentNewDeps,
 		SecretsDeps:         secretsDeps,
 		AndroidDeps:         androidDeps,
-		SkillsDirs:          p.skillsDirs,
 		TokenCountCache:     command.NewTokenCountCache(),
 		ConfigureFacet:      p.configureFacet,
 		UsageClientProvider: p.usageClientProvider,
@@ -206,17 +205,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.ErrorsCommand())
 	cmds.Register(command.VersionCommand())
 	cmds.Register(command.HelpCommand(cmds))
-	// /reload rebuilds the system prompt from disk so the NEXT turn sees
-	// edited workspace/character files. That only works for API backends,
-	// which reassemble the prompt per turn. A delegated backend (CC) captures
-	// its base system prompt once at session start (StartOpts.SystemPrompt) and
-	// can't be refreshed mid-session — only /restart, /reset, or compaction
-	// rebuild it. Registering /reload for delegated agents would falsely imply
-	// the edit took effect, so gate it to API backends. Same predicate as
-	// agents.go's isDelegated. (TODO #799)
-	if p.acfg.Backend == "" || p.acfg.Backend == "api" {
-		cmds.Register(command.ReloadCommand())
-	}
 	cmds.Register(command.CompactCommand())
 	cmds.Register(command.RestartCommand())
 	cmds.Register(command.SecretsCommand())

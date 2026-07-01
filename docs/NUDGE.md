@@ -18,7 +18,7 @@ The goal is to reinforce guidance without bloating the system prompt. Character 
 3. When hashes differ (or no rules file exists), the character file contents are sent to the agent's model with the extraction prompt.
 4. The model identifies rule-like statements and outputs structured JSON: a terse reminder, the source passage, a trigger type, and a priority level.
 5. Rules are saved to `{workspace}/character/nudge-rules.json` (or `{workspace}/nudge-rules.json` if no `character/` directory exists).
-6. Re-extraction happens when character files change — detected via content hash on `/reload` or during compaction.
+6. Re-extraction happens when character files change — detected via content hash during compaction.
 
 When `nudge_auto_extract` is false, the LLM is never called; nudges still fire from an existing rules file.
 

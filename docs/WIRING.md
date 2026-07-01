@@ -322,7 +322,6 @@ The agent exposes three lifecycle methods that encapsulate multi-step sequences 
 
 - **`ResetSession(ctx, sessionKey)`** — clears session history with memory formation. For API agents: fires memory formation as an async branch, rotates the session key, reloads bootstrap. For delegated agents: rotates the session key and reloads immediately (the chat maps to a fresh session at once; a new CC backend spawns lazily on the next message), then runs memory formation on the old CC session and destroys it in the background (up to 120s). The old CC resume ID is cleared before rotation so the fresh key does not resume the previous conversation. Returns the new session key.
 - **`CompactSession(ctx, sessionKey, dryRun)`** — triggers manual compaction. Validates message count (min 5), runs the compaction pipeline, then reloads bootstrap and resets cache baseline. When `dryRun` is true, the full pipeline runs (API call, summary generation) but the session is left unchanged — the summary is returned for inspection.
-- **`ReloadSystem()`** — reloads bootstrap (system prompt files from disk), refreshes nudge rules, invalidates system caches, and reloads extra system blocks (skills) via `ReloadSystemFn`. Returns the count of reloaded extra items.
 
 All three call `reloadAfterMutation()` internally, which reloads bootstrap, refreshes nudges, and invalidates all per-session system prompt caches.
 
@@ -1211,9 +1210,8 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`, `/pass`, `/login`
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`, `/pass`, `/login`
    - `/mana` — check quota remaining (`/usage` is a hidden alias)
-   - `/reload` — reload workspace files, skills, and system blocks from disk
    - `/login` (`RequiresBackend`, ccstream only) — manually trigger the automated CC re-login flow (see [Automated CC re-login on 401](#backend-session-lifecycle)); URL returns to the chat that ran it
    - `/pass` — forward a command directly to the delegated backend (e.g. `/pass /context`, `/pass /model opus`). Bypasses foci's command dispatch so CC slash commands that would otherwise be intercepted by foci can be sent through. For tmux backends, captures and returns pane output after stabilisation. For stream backends, output arrives normally via the stdout reader. Only available for delegated agents — returns an error for API-mode agents.
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
@@ -1852,7 +1850,7 @@ Rules are extracted once from character files via an LLM call, then cached in `{
 3. If changed: spawns a background goroutine that creates a branch session and sends `ExtractionPrompt` to the agent's own model
 4. LLM response is parsed as JSON array of rules, each with text, trigger type, source attribution, and priority
 5. Rules are saved to disk; scheduler is refreshed with new rules
-6. Also re-runs on `/reload` and after compaction (character files may have changed)
+6. Also re-runs after compaction (character files may have changed)
 
 ### Trigger Types
 

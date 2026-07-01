@@ -238,14 +238,14 @@ Session storage. Compaction and prompt fields that can be overridden per-agent a
 | `dir` | string | `$data_dir/sessions` | Directory for JSONL session files. Relative paths resolve against `$HOME`. |
 | `compaction_max_tokens` | int | `4096` | Max output tokens for the compaction summary. |
 | `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
-| `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
-| `max_system_prompt_chars_total` | int | `80000` | Warn at startup and `/reload` if total system prompt exceeds this many chars. `0` disables. |
+| `max_system_prompt_chars_file` | int | `20000` | Warn at startup if any system prompt file exceeds this many chars. `0` disables. |
+| `max_system_prompt_chars_total` | int | `80000` | Warn at startup if total system prompt exceeds this many chars. `0` disables. |
 | `archive_after` | string | `"24h"` | Gzip idle session files after this duration of inactivity. Go duration format. Each agent's most recently created chat session is never archived regardless of age. Sessions with active branches are also skipped. Archived sessions are transparently decompressed when accessed. `"0"` effectively disables (no sessions will be old enough). |
 | `file_mode` | string | `"0600"` | Octal file permissions for session files (branches, appends, compacted rewrites). Applied at file creation time. Example: `"0640"` for owner read/write + group read. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `branch_orientation_facet_prompt`, `branch_orientation_headless_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
+All prompt fields (`compaction_summary_prompt`, `branch_orientation_facet_prompt`, `branch_orientation_headless_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without a restart.
 
 When no config override is set, embedded defaults from `shared/prompts/` are used:
 - `shared/prompts/branch-orientation-headless.md` — headless branches (cron, spawn, keepalive)
@@ -815,7 +815,7 @@ Implemented as a built-in nudge rule with an `every_n_tools` trigger. When tool 
 
 ### Nudge System
 
-Mid-turn behavioral reminders extracted from character files. Rules are extracted by an LLM from the agent's character files (system prompt) and stored in `{workspace}/nudge-rules.json` (or `{workspace}/character/nudge-rules.json` if the `character/` directory exists). Rules are re-extracted when character files change (detected via content hash on `/reload` or compaction).
+Mid-turn behavioral reminders extracted from character files. Rules are extracted by an LLM from the agent's character files (system prompt) and stored in `{workspace}/nudge-rules.json` (or `{workspace}/character/nudge-rules.json` if the `character/` directory exists). Rules are re-extracted when character files change (detected via content hash on compaction).
 
 Available in both `[defaults.nudge]` and `[agents.nudge]`.
 

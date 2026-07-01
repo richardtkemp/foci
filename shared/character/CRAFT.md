@@ -127,7 +127,7 @@ Completed projects belong in dated files, not MEMORY.md. MEMORY.md is for things
 
 ### Edit Freely
 
-System prompt files are rebuilt from disk on compaction, `/reload`, or restart. Edit any character file directly whenever needed — changes filter through on the next reload.
+System prompt files are rebuilt from disk on compaction or restart. Edit any character file directly whenever needed — changes filter through on the next rebuild.
 
 ### Writing It Down
 

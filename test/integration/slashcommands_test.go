@@ -384,43 +384,6 @@ func TestL2_SlashCommands_ResetHardCancelsInflightTurn(t *testing.T) {
 	}
 }
 
-// TestL2_SlashCommands_ReloadReturnsSkillCount proves /reload reloads
-// /reload is NOT available on a delegated (claude-code) backend: it is gated to
-// API backends only (TODO #799 — a delegated backend captures its system prompt
-// once at session start via StartOpts.SystemPrompt and is never refreshed
-// mid-session, so registering /reload there would falsely imply an edit took
-// effect). The default harness agent is delegated, so the gateway must answer
-// "Unknown command /reload" rather than a reload confirmation. This guards the
-// API-backend gate in cmd/foci-gw/commands.go from silently regressing.
-// (ReloadCommand's reply formatting is covered by the unit test
-// TestReloadCommand_ReplyFormat in internal/command.)
-func TestL2_SlashCommands_ReloadRejectedForDelegatedAgent(t *testing.T) {
-	testharness.ParallelWait(t)
-	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7009}},
-		ReadyTimeout: 30 * time.Second,
-	})
-	pushTelegramText(t, h, "alpha", 7009, "/reload")
-
-	token := h.AgentBotToken("alpha")
-	text := waitForSendMessageText(t, h, token, 15*time.Second, "Unknown command", "/reload")
-	if text == "" {
-		t.Fatalf("/reload should be rejected as unknown on a delegated agent, but no such reply arrived\nsent so far:\n%v\nstderr tail:\n%s",
-			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
-	}
-}
-
-// TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile was REMOVED 2026-06-02
-// (TODO #799). It asserted that /reload makes the NEXT delegated (cc-stub)
-// invocation pick up an edited character/workspace file. That premise was
-// resolved as by-design-false and the behaviour intentionally removed: a
-// delegated backend captures StartOpts.SystemPrompt once at agent setup and
-// is never refreshed mid-session (ReloadSystemFn only mutates ExtraSystemBlocks
-// for skills). Rather than leave a misleading capability, /reload is now gated
-// to API backends only (foci 59ed8038 — see cmd/foci-gw/commands.go). Delegated
-// agents pick up edited base-prompt files via /restart, /reset, or compaction.
-// There is therefore nothing to test here.
-
 // TestL2_SlashCommands_ErrorsTailsEventLog proves /errors returns only
 // ERROR/WARN level lines from the configured event log file. Seeds
 // the log with a mix of INFO/WARN/ERROR lines and asserts the reply
@@ -908,7 +871,7 @@ func TestL2_SlashCommands_StaleCommandDropped(t *testing.T) {
 
 // TestL2_SlashCommands_NeverReachCCStub proves the general invariant:
 // for every command in the foci-internal set (/help, /ping, /reset,
-// /reload, /errors, /cost, /mode, /version, /status), the cc-stub
+// /errors, /cost, /mode, /version, /status), the cc-stub
 // recorder records ZERO user_message entries with text_prefix
 // starting with "/" for that agent. The negative assertion catches
 // regressions where a future change forwards command text into the
@@ -922,7 +885,7 @@ func TestL2_SlashCommands_NeverReachCCStub(t *testing.T) {
 	token := h.AgentBotToken("alpha")
 
 	commands := []string{
-		"/help", "/ping", "/reset", "/reload",
+		"/help", "/ping", "/reset",
 		"/errors", "/cost", "/mode", "/version", "/status",
 	}
 	for _, cmd := range commands {

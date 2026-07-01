@@ -200,7 +200,7 @@ Features OpenClaw has that foci doesn't:
 | Binding-based message routing | Not planned. Per-bot routing only. |
 | `tools.fs.workspaceOnly` | Not implemented. Agent has full filesystem access. |
 | Temporal decay scoring in memory | Not implemented. FTS5 uses relevance ranking. |
-| Config hot-reload (automatic) | Use `/reload` command after editing config. |
+| Config hot-reload (automatic) | Restart the service after editing config (`foci.toml` is read at startup). |
 
 ## Quick Start
 

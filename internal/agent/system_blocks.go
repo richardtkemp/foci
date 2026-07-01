@@ -12,8 +12,8 @@ import (
 
 // InvalidateSystemCaches clears per-session system prompt caches so the
 // next turn on every session rebuilds from the bootstrap. Call after
-// explicit user actions that change the system prompt (e.g. /reload,
-// session reset) where a global cache bust is expected.
+// explicit user actions that change the system prompt (e.g. session
+// reset) where a global cache bust is expected.
 func (a *Agent) InvalidateSystemCaches() {
 	a.metaMu.Lock()
 	defer a.metaMu.Unlock()

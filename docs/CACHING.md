@@ -99,7 +99,6 @@ When idle, a lightweight branch session fires to keep the cache prefix warm — 
 | Action | Impact | Cost |
 |--------|--------|------|
 | Model switch | Full rebuild | ~$2.50 eq |
-| `/reload` | System prompt changes | ~$2.50 eq |
 | Service restart | New session, new cache | ~$2.50 eq |
 | Character file edit | No immediate impact; applies at next compaction/restart | Deferred |
 | Adding/removing skills | System prompt changes at next compaction/restart | Deferred |
