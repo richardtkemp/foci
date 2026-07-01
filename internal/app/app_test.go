@@ -197,6 +197,22 @@ func TestAppSink_WarmingLifecycle(t *testing.T) {
 	}
 }
 
+func TestAppSink_ToolLifecycle(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	s.Emit(ctx, turnevent.ToolCall{Name: "Bash"})
+	if b.info().Tool != "Bash" {
+		t.Fatalf("tool snapshot should be Bash while running, got %q", b.info().Tool)
+	}
+	s.Emit(ctx, turnevent.ToolResult{Name: "Bash"})
+	if b.info().Tool != "" {
+		t.Fatalf("tool snapshot should clear on result, got %q", b.info().Tool)
+	}
+}
+
 func TestAppSink_ThinkingSnapshot(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", client: c}

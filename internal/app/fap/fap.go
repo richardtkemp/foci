@@ -38,6 +38,7 @@ const (
 	TypeTyping          = "typing"
 	TypeThinking        = "thinking"
 	TypeWarming         = "warming"
+	TypeTool            = "tool"
 	TypeMedia           = "media"
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
@@ -143,6 +144,10 @@ type ConversationInfo struct {
 	// the "warming up" phase before any thinking or text has streamed. Snapshot
 	// half of the warming indicator; the Warming frame carries live deltas.
 	Warming bool `json:"warming,omitempty"`
+	// Tool is the name of the tool currently running on this conversation, empty
+	// if none. Snapshot half of the tool indicator; the Tool frame carries live
+	// deltas.
+	Tool string `json:"tool,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.
@@ -308,6 +313,16 @@ type Warming struct {
 }
 
 func (Warming) Type() string { return TypeWarming }
+
+// Tool toggles the running-tool indicator. On carries the tool name; off
+// (On=false, Name empty) clears it. App-only, like Warming.
+type Tool struct {
+	ConversationID string `json:"conversationId"`
+	On             bool   `json:"on"`
+	Name           string `json:"name,omitempty"`
+}
+
+func (Tool) Type() string { return TypeTool }
 
 // Media references an out-of-band blob the app fetches via GET /app/blob/<id>.
 // The bytes never travel over the WebSocket — only this reference does.
