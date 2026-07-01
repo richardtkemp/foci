@@ -71,9 +71,7 @@ func runShutdown(
 	// process would exit before those goroutines finish and orphan the subprocess
 	// (#948). This drains the pool and WAITS for the bounded shutdown, so no
 	// `opencode serve` survives a restart. No-op when no opencode agents ran.
-	if n := opencode.CloseAllServers(); n > 0 {
-		log.Infof("main", "reaped %d opencode server(s) on shutdown", n)
-	}
+	log.Infof("main", "opencode: closed %d pooled server(s) on shutdown", opencode.CloseAllServers())
 
 	// Close MCP managers
 	for _, inst := range agents {
