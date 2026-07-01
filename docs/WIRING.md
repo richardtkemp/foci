@@ -1462,6 +1462,15 @@ captured in `setupAgent`) and merged into the turn text before `Enqueue`;
 `interactive.edit` resolution, suppressed when a follow-up question advanced the
 binding's seq); `ping`→`pong`; unknown→ignored. No agent → `error` frame.
 
+**Platform lifecycle callbacks:** `SetLifecycleCallback` stores the gateway's
+`OnUserMessage`/`OnTurnComplete`/`OnTurnEnd` hooks on the per-agent `appConn`
+(`PrimaryBot`), mirroring telegram's `Bot` fields. `OnUserMessage` fires from
+`routeUserTurn` (right before `agent.Enqueue`) and `routeCommand` — it is the
+**only** signal the periodic runner's `lastInteraction` receives on this
+transport, so reflection / consolidation / the reset idle-guard all depend on
+it. `OnTurnComplete`/`OnTurnEnd` fire from `appConn.WrapTurn` (complete after
+the turn body returns, end deferred last) — same shape as `telegram.Bot.WrapTurn`.
+
 **Outbound — `appConn` (`conn.go`)** implements `platform.Connection`,
 `platform.ButtonSender`, and `agent.Driver`. `SendToSession`/`SendText`→`message`;
 `SetTyping`→`typing`; `SendNotification`→`notification`;
@@ -1755,7 +1764,7 @@ Reflection and consolidation run in the keepalive timer loop (30s ticks):
 
 **Interval reflection** (`maybeReflection`):
 1. Check `interval_enabled` (nil = true)
-2. Check wall-clock interval elapsed and user not idle
+2. Check wall-clock interval elapsed and user not idle (`sinceLastInteraction` must be ≤ interval; `lastInteraction` is fed by the platform `OnUserMessage` lifecycle callback — wired on telegram, discord, and app providers. A transport that doesn't fire it leaves `lastInteraction` frozen at boot, so this gate skips forever for that agent.)
 3. Query `session_index` for active chat sessions with `last_activity_at > last_reflection` (per-session tracking)
 4. Resolve prompt via `prompts.ResolvePrompt`
 5. Iterate all matching sessions: `branchFn("reflection", sessionKey, promptText, true)` for each
