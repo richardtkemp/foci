@@ -232,17 +232,10 @@ func TestServer_Close_BoundedWait(t *testing.T) {
 	//
 	// Shrink the timeouts so the test runs fast. The assertion is that
 	// Close returns well under 2s.
-	prevGrace, prevKill, prevTerm := closeGracefulWait, closeSigkillWait, closeSigtermWait
-	closeGracefulWait = 200 * time.Millisecond
-	closeSigkillWait = 200 * time.Millisecond
-	closeSigtermWait = 200 * time.Millisecond
-	defer func() {
-		closeGracefulWait = prevGrace
-		closeSigkillWait = prevKill
-		closeSigtermWait = prevTerm
-	}()
-
 	srv := newTestServer(t, "agent-bounded")
+	srv.closeGracefulWait = 200 * time.Millisecond
+	srv.closeSigtermWait = 200 * time.Millisecond
+	srv.closeSigkillWait = 200 * time.Millisecond
 	if err := launchStubDirectly(t, srv); err != nil {
 		t.Fatalf("launchStubDirectly: %v", err)
 	}
@@ -468,16 +461,10 @@ func TestServer_Pool_ReleaseDoesNotBlockOnClose(t *testing.T) {
 	resetTestPool(t)
 
 	srv := insertLiveServerForTest("agent-slow")
-	// Force Close to take ~200ms via shrunk timeouts.
-	prevGrace, prevKill, prevTerm := closeGracefulWait, closeSigkillWait, closeSigtermWait
-	closeGracefulWait = 100 * time.Millisecond
-	closeSigkillWait = 100 * time.Millisecond
-	closeSigtermWait = 100 * time.Millisecond
-	defer func() {
-		closeGracefulWait = prevGrace
-		closeSigkillWait = prevKill
-		closeSigtermWait = prevTerm
-	}()
+	// Force Close to take ~100ms via shrunk timeouts.
+	srv.closeGracefulWait = 100 * time.Millisecond
+	srv.closeSigtermWait = 100 * time.Millisecond
+	srv.closeSigkillWait = 100 * time.Millisecond
 	start := time.Now()
 	releaseServer("agent-slow", srv)
 	elapsed := time.Since(start)

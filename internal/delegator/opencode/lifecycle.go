@@ -26,13 +26,17 @@ import (
 	"foci/internal/procx"
 )
 
-// Close timeouts. Vars (not consts) so tests can shrink them; production
-// keeps the ~9s worst-case documented in the bounded-shutdown contract.
-// Matches ccstream's budget so behaviour is consistent across backends.
+// Close-ladder default waits. Copied into per-Server fields (Server.close*Wait)
+// by newServer so a test can shorten them on its own Server without mutating a
+// shared package global — the data race behind #975. Production keeps the ~9s
+// worst-case in the bounded-shutdown contract; matches ccstream's budget.
+const (
+	defaultCloseGracefulWait = 5 * time.Second // wait for clean exit before SIGTERM
+	defaultCloseSigtermWait  = 2 * time.Second // wait after SIGTERM before SIGKILL
+	defaultCloseSigkillWait  = 2 * time.Second // wait after SIGKILL before abandoning the waiter goroutine
+)
+
 var (
-	closeGracefulWait = 5 * time.Second // wait for clean exit before SIGTERM
-	closeSigtermWait  = 2 * time.Second // wait after SIGTERM before SIGKILL
-	closeSigkillWait  = 2 * time.Second // wait after SIGKILL before abandoning the waiter goroutine
 
 	// healthProbeInterval is the polling cadence for GET /global/health
 	// during Start. The probe times out via the caller's context.
@@ -217,23 +221,23 @@ func (s *Server) closeInner() {
 		}
 	}
 
-	exitSeen := waitForExit(s.waitCh, closeGracefulWait)
+	exitSeen := waitForExit(s.waitCh, s.closeGracefulWait)
 	if !exitSeen {
-		log.Warnf(component, "subprocess (pid=%d) did not exit after %s, sending SIGTERM", pid, closeGracefulWait)
+		log.Warnf(component, "subprocess (pid=%d) did not exit after %s, sending SIGTERM", pid, s.closeGracefulWait)
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Signal(syscall.SIGTERM)
 		}
-		exitSeen = waitForExit(s.waitCh, closeSigtermWait)
+		exitSeen = waitForExit(s.waitCh, s.closeSigtermWait)
 	}
 	if !exitSeen {
 		log.Warnf(component, "subprocess (pid=%d) did not exit after SIGTERM, sending SIGKILL", pid)
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Kill()
 		}
-		exitSeen = waitForExit(s.waitCh, closeSigkillWait)
+		exitSeen = waitForExit(s.waitCh, s.closeSigkillWait)
 	}
 	if !exitSeen {
-		log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
+		log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", s.closeSigkillWait)
 	} else {
 		log.Infof(component, "opencode server (pid=%d) exited", pid)
 	}
@@ -247,8 +251,8 @@ func (s *Server) closeInner() {
 	// Bounded: a stalled waiter shouldn't wedge Close.
 	select {
 	case <-s.done:
-	case <-time.After(closeSigtermWait):
-		log.Warnf(component, "waiter goroutine did not close done channel within %s — abandoning", closeSigtermWait)
+	case <-time.After(s.closeSigtermWait):
+		log.Warnf(component, "waiter goroutine did not close done channel within %s — abandoning", s.closeSigtermWait)
 	}
 }
 

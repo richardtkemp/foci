@@ -550,16 +550,6 @@ func TestBackend_Close_LastReleaseShutsDownServer(t *testing.T) {
 	// Step 3's TestServer_Pool_RefcountShutdown covers pool semantics
 	// without a subprocess; this test pins the Backend → release → kill
 	// composition end-to-end.
-	prevGrace, prevKill, prevTerm := closeGracefulWait, closeSigkillWait, closeSigtermWait
-	closeGracefulWait = 200 * time.Millisecond
-	closeSigkillWait = 200 * time.Millisecond
-	closeSigtermWait = 200 * time.Millisecond
-	defer func() {
-		closeGracefulWait = prevGrace
-		closeSigkillWait = prevKill
-		closeSigtermWait = prevTerm
-	}()
-
 	resetTestPool(t)
 
 	// Spawn a real stub subprocess via the same helper Step 3 uses.
@@ -568,6 +558,9 @@ func TestBackend_Close_LastReleaseShutsDownServer(t *testing.T) {
 		binaryPath: stubBinary(t),
 		hostname:   "127.0.0.1",
 	})
+	srv.closeGracefulWait = 200 * time.Millisecond
+	srv.closeSigtermWait = 200 * time.Millisecond
+	srv.closeSigkillWait = 200 * time.Millisecond
 	if err := launchStubDirectly(t, srv); err != nil {
 		t.Fatalf("launchStubDirectly: %v", err)
 	}

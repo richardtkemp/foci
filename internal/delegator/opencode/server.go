@@ -44,6 +44,13 @@ type Server struct {
 	finalizeOnce sync.Once
 	closeOnce    sync.Once
 
+	// Close-ladder waits, per-Server so a test can shorten them on its own
+	// Server rather than mutating a shared package global (#975). Defaults
+	// from defaultClose*Wait, set in newServer.
+	closeGracefulWait time.Duration
+	closeSigtermWait  time.Duration
+	closeSigkillWait  time.Duration
+
 	// Per-session registry. Backends register under their opencode
 	// sessionID; the SSE subscriber routes events by looking up here.
 	// childToParent maps a subagent (child) session ID to its parent,
@@ -91,9 +98,12 @@ func newServer(agentID string, cfg serverConfig) *Server {
 		hostname:       cfg.hostname,
 		port:           cfg.port,
 		serverPassword: cfg.serverPassword,
-		sessions:       make(map[string]*Backend),
-		childToParent:  make(map[string]string),
-		http:           &http.Client{Timeout: 30 * time.Second},
+		sessions:          make(map[string]*Backend),
+		childToParent:     make(map[string]string),
+		http:              &http.Client{Timeout: 30 * time.Second},
+		closeGracefulWait: defaultCloseGracefulWait,
+		closeSigtermWait:  defaultCloseSigtermWait,
+		closeSigkillWait:  defaultCloseSigkillWait,
 	}
 	s.wrapAuthCheckingTransport()
 	return s
