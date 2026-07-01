@@ -282,6 +282,7 @@ const (
 	EventMessageRemoved     = "message.removed"
 	EventMessagePartUpdated = "message.part.updated"
 	EventMessagePartRemoved = "message.part.removed"
+	EventMessagePartDelta   = "message.part.delta"
 	EventPermissionUpdated  = "permission.updated" // legacy (older opencode)
 	EventPermissionAsked    = "permission.asked"   // opencode 1.2.x permission prompt
 	EventPermissionReplied  = "permission.replied"
@@ -314,6 +315,19 @@ type eventMessageUpdated struct {
 type eventMessagePartUpdated struct {
 	Part  Part   `json:"part"`
 	Delta string `json:"delta,omitempty"`
+}
+
+// eventMessagePartDelta is the payload of a message.part.delta SSE event.
+// opencode streams incremental content (text AND reasoning) via these events,
+// separate from the part.updated open/close lifecycle. The payload carries no
+// part type — only a partID — so the dispatcher must look up the type from a
+// preceding message.part.updated (tracked in Backend.partTypes).
+type eventMessagePartDelta struct {
+	SessionID string `json:"sessionID"`
+	MessageID string `json:"messageID"`
+	PartID    string `json:"partID"`
+	Field     string `json:"field"`            // "text" for both text and reasoning parts
+	Delta     string `json:"delta,omitempty"`  // incremental fragment
 }
 
 type eventPermissionUpdated struct {

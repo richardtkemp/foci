@@ -593,6 +593,43 @@ func TestEventMessagePartUpdated_TypedDecode(t *testing.T) {
 	}
 }
 
+func TestEventMessagePartDelta_TypedDecode(t *testing.T) {
+	// Verifies a message.part.delta event decodes into the typed
+	// payload — the shape onMessagePartDelta reads. Note the payload
+	// carries NO part type, only a partID; the type is resolved at
+	// dispatch time from the preceding message.part.updated.
+	raw := `{
+		"type": "message.part.delta",
+		"properties": {
+			"sessionID": "sess-x",
+			"messageID": "msg-1",
+			"partID": "pr-1",
+			"field": "text",
+			"delta": "reasoning fragment"
+		}
+	}`
+	var ev rawEvent
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if ev.Type != EventMessagePartDelta {
+		t.Errorf("Type = %q, want %q", ev.Type, EventMessagePartDelta)
+	}
+	var payload eventMessagePartDelta
+	if err := json.Unmarshal(ev.Properties, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.PartID != "pr-1" {
+		t.Errorf("PartID = %q, want pr-1", payload.PartID)
+	}
+	if payload.Field != "text" {
+		t.Errorf("Field = %q, want text", payload.Field)
+	}
+	if payload.Delta != "reasoning fragment" {
+		t.Errorf("Delta = %q", payload.Delta)
+	}
+}
+
 func TestEventMessageUpdated_TypedDecode(t *testing.T) {
 	raw := `{
 		"type": "message.updated",

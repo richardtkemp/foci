@@ -35,6 +35,14 @@ func (b *Backend) handleEvent(ev rawEvent) {
 		}
 		b.onMessagePartUpdated(p.Part, p.Delta)
 
+	case EventMessagePartDelta:
+		var p eventMessagePartDelta
+		if err := json.Unmarshal(ev.Properties, &p); err != nil {
+			log.Warnf(b.logComponent(), "handlers: decode message.part.delta: %v", err)
+			return
+		}
+		b.onMessagePartDelta(p)
+
 	case EventMessageUpdated:
 		var p eventMessageUpdated
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
@@ -123,6 +131,17 @@ func (b *Backend) onMessagePartUpdated(part Part, delta string) {
 		return
 	}
 
+	// Record the part's type so subsequent message.part.delta events
+	// (which carry no type, only a partID) can route to the right
+	// streaming handler. Guarded by turnMu — beginTurn resets the map
+	// on a different goroutine. Released before the type switch below,
+	// whose handlers take turnMu themselves (handleTextPart/handleToolPart).
+	if part.ID != "" {
+		b.turnMu.Lock()
+		b.partTypes[part.ID] = part.Type
+		b.turnMu.Unlock()
+	}
+
 	switch part.Type {
 	case PartText:
 		b.handleTextPart(part, delta)
@@ -143,6 +162,37 @@ func (b *Backend) onMessagePartUpdated(part Part, delta string) {
 		// step-start, step-finish, snapshot, patch, agent, retry, file —
 		// not surfaced by foci for v1. Logged at DEBUG for observability.
 		log.Debugf(b.logComponent(), "handlers: part type %s ignored", part.Type)
+	}
+}
+
+// onMessagePartDelta routes an incremental content delta (message.part.delta)
+// to the streaming handler for the part's type. opencode streams both text and
+// reasoning content via these events, separate from the part.updated
+// open/close lifecycle. The payload carries no part type — only a partID — so
+// the type is resolved from partTypes, which the preceding message.part.updated
+// open event populated. Deltas for unknown parts (arrived before the open, or
+// synthetic parts we don't track) are dropped at DEBUG.
+func (b *Backend) onMessagePartDelta(p eventMessagePartDelta) {
+	if p.Delta == "" || p.PartID == "" {
+		return
+	}
+	b.turnMu.Lock()
+	partType := b.partTypes[p.PartID]
+	b.turnMu.Unlock()
+	if partType == "" {
+		log.Debugf(b.logComponent(), "handlers: part.delta for untracked part %s", p.PartID)
+		return
+	}
+	switch partType {
+	case PartText:
+		// Part{} has no Time/Text, so handleTextPart fires only the
+		// streaming-delta path; the completion path stays bound to the
+		// terminal message.part.updated (time.end set).
+		b.handleTextPart(Part{}, p.Delta)
+	case PartReasoning:
+		b.handleReasoningPart(Part{}, p.Delta)
+	default:
+		// tool, subtask, file, etc. — not streamed via deltas.
 	}
 }
 
@@ -187,9 +237,11 @@ func (b *Backend) handleTextPart(part Part, delta string) {
 	}
 }
 
-// handleReasoningPart fires OnThinkingDelta for reasoning deltas. opencode
-// sends reasoning as complete blocks (no incremental delta), so we fire
-// on the full text.
+// handleReasoningPart fires OnThinkingDelta for a reasoning fragment. It is
+// driven by message.part.delta events (streamed, incremental) — the part is
+// ignored because the delta event carries only the fragment, not the part.
+// The terminal message.part.updated (reasoning complete) carries no delta and
+// is a no-op here; streaming is entirely delta-driven.
 func (b *Backend) handleReasoningPart(_ Part, delta string) {
 	if delta != "" {
 		if se := b.sessionEvents.Load(); se != nil && se.OnThinkingDelta != nil {

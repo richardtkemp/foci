@@ -201,6 +201,7 @@ type Backend struct {
 	ctxLimitModel string          // model the cached limit belongs to; re-query on model change
 	seenToolCalls map[string]bool // reset in beginTurn; dedupes OnToolStart
 	seenTextParts map[string]bool // reset in beginTurn; dedupes OnText
+	partTypes     map[string]string // reset in beginTurn; partID→Type for message.part.delta routing
 
 	// Steer buffer (plan §6 divergence). opencode has no mid-turn
 	// queue, so SourceUser / SourceSteer arriving during an in-flight
