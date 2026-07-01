@@ -199,7 +199,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | Config format | TOML | JSON5 | JSON | YAML |
 | Separate secrets file | ✅ inaccessible to agent | ❌ inline SecretRef | ❌ env vars | ✅ `.env` |
 | Per-agent overrides | ✅ all keys | ✅ per agent | ❌ | ✅ via profiles |
-| Hot-reload | ✅ `/reload` | ✅ automatic | ❌ | ✅ partial |
+| Hot-reload | ✅ on restart/compaction | ✅ automatic | ❌ | ✅ partial |
 | Interactive setup wizard | ✅ setup.sh | ✅ `openclaw onboard` | ✅ `nanobot onboard` | ✅ `hermes setup` |
 | Validation at load | ✅ warns on unknown keys | ✅ strict, blocks startup | ✅ Pydantic schema | ❌ on-demand only |
 | Env var substitution | ❌ | ✅ `${VAR}` syntax | ❌ | ✅ `${VAR}` syntax |

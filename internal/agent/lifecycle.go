@@ -18,7 +18,7 @@ import (
 // refreshes nudge rules, and invalidates all per-session system prompt caches.
 //
 // Call after any explicit user action that changes the system prompt or session
-// state (e.g. /reset, /reload, /compact). Auto-compaction (maybeCompact) does
+// state (e.g. /reset, /compact). Auto-compaction (maybeCompact) does
 // its own targeted per-session cache reset instead.
 func (a *Agent) reloadAfterMutation() {
 	a.Bootstrap.Reload()
@@ -26,21 +26,6 @@ func (a *Agent) reloadAfterMutation() {
 		a.NudgeReloadFunc()
 	}
 	a.InvalidateSystemCaches()
-}
-
-// ReloadSystem reloads the bootstrap (system prompt files from disk),
-// refreshes nudge rules, invalidates system caches, and reloads extra
-// system blocks (e.g. skills) via the ReloadSystemFn callback.
-// Returns the number of reloaded extra items (e.g. skills count).
-func (a *Agent) ReloadSystem() int {
-	a.reloadAfterMutation()
-
-	if a.ReloadSystemFn == nil {
-		return 0
-	}
-	blocks, count := a.ReloadSystemFn()
-	a.ExtraSystemBlocks = blocks
-	return count
 }
 
 // ResetSession clears session history with memory formation.

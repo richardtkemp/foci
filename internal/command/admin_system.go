@@ -31,19 +31,6 @@ func VersionCommand() *Command {
 	}
 }
 
-// ReloadCommand returns a /reload command that reloads config, skills, and system prompt.
-func ReloadCommand() *Command {
-	return &Command{
-		Name:        "reload",
-		Description: "Reload config, skills, and system prompt from disk",
-		Category:    "operations",
-		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
-			skillCount := cc.Agent.ReloadSystem()
-			return Response{Text: fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: foci.toml config changes require a service restart to take effect. Prompt file changes take effect immediately.", skillCount)}, nil
-		},
-	}
-}
-
 // restartFunc is the function used to trigger a restart. Overridable for testing.
 var restartFunc = doRestart
 

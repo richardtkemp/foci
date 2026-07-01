@@ -784,7 +784,6 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 **System:**
 - `/version` - binary version, go version, build time, git commit
 - `/uptime` - process uptime, system load, memory usage
-- `/reload` - reload config and workspace files (IDENTITY.md, SOUL.md, etc.) without restarting
 
 ### Custom commands (TOML config)
 

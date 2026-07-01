@@ -169,9 +169,6 @@ Forward a raw command directly to the delegated backend (Claude Code), bypassing
 ### `/login`
 Manually trigger Claude Code re-authentication. Drives a `claude /login` TUI in tmux, relays the login URL back to the chat that ran `/login`, then treats your next message as the login code — message processing is paused throughout. Normally this flow fires automatically on a 401 auth failure; this command exposes the same trigger on demand. ccstream backend only (reports unavailable on cctmux/API); returns "already in progress" if a re-login is already running.
 
-### `/reload`
-Reload workspace files (system prompt) and skills from disk. **CLI-only**. Config file (`foci.toml`) changes still require a full service restart.
-
 ### `/restart`
 Restart the foci service. Tries `systemctl restart foci`; falls back to SIGTERM (relies on process supervisor or Docker restart policy).
 

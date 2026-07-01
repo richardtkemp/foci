@@ -24,7 +24,7 @@ The shipped defaults are seeded into `~/shared/prompts/` on first start (seed-if
 
 So: tweak wording → copy into `<workspace>/prompts/`; disable a turn → set its config key to `"none"`; point at a shared file elsewhere → set the key to its path.
 
-The **character files** that make up your identity are separate from these turn templates — they load from your `character/` dir and are reloaded on compaction, `/reload`, and restart, so editing them takes effect on the next reload.
+The **character files** that make up your identity are separate from these turn templates — they load from your `character/` dir and are reloaded on compaction and restart, so editing them takes effect on the next rebuild.
 
 ## The `[meta]` header
 

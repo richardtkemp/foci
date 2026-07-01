@@ -121,9 +121,6 @@ type CommandContext struct {
 	// Todo store (for /todo command)
 	TodoStore *memory.TodoStore
 
-	// Skills (for /reload)
-	SkillsDirs []string
-
 	// Token count cache (for /context — avoids re-counting on every call)
 	TokenCountCache *TokenCountCache
 
