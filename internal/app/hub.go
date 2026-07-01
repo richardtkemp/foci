@@ -198,6 +198,9 @@ func newHub(deps platform.ProviderDeps) *Hub {
 				fcmPath = strings.TrimSpace(v)
 			}
 		}
+		if pushEnabled && fcmPath == "" {
+			log.Warnf("app", "app push enabled but no FCM credentials found (neither [platforms.app].fcm_credentials nor app.fcm_credentials secret) — offline wake pushes disabled")
+		}
 		if !pushEnabled {
 			fcmPath = "" // disabled → newFCMPusher returns nil
 		}
