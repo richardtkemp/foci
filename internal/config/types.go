@@ -793,7 +793,7 @@ type MemoryConfig struct {
 	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"delay before reindex" type:"duration"`                                   // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"weight for conversation search results" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"max search results to return"`                           // max search results to return (default 20)
-	SweepInterval      *string        `toml:"sweep_interval"      default:"1h"    desc:"periodic full reindex interval" type:"duration"`         // periodic full reindex interval (default "1h", "0" disables)
+	SweepInterval      *string        `toml:"sweep_interval"      default:"0"     desc:"periodic full reindex interval; 0=disabled" type:"duration"` // periodic full reindex interval (default "0"=disabled; fsnotify watch already catches file changes). Set e.g. "1h" to re-enable.
 }
 
 type DatabaseConfig struct {

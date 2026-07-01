@@ -6,6 +6,7 @@ import (
 	"html"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,36 +111,34 @@ func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce t
 	}, nil
 }
 
-// Reindex scans all configured source directories and rebuilds the file
-// portion of the index. Conversation and todo entries are preserved.
+// Reindex refreshes the FILE portion of the index in place: it re-reads the
+// configured source directories, upserts each .md file's doc, and prunes docs
+// for files that no longer exist. Conversation and todo docs are write-once
+// (added incrementally via IndexConversation / todo sync) and are deliberately
+// left untouched — the index is NEVER recreated, so the (large) conversation
+// corpus is not round-tripped through memory. Peak memory therefore scales with
+// the file corpus, not the conversation history. Mirrors the FTS5 backend's
+// delete-file-rows-then-reinsert approach. Instrumented with RSS/heap logging.
 func (b *BleveIndex) Reindex() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Collect non-file docs (conversations, todos) before recreation
-	dynamicDocs := b.collectDynamicDocs()
+	start := time.Now()
+	rssStart := readSelfRSSkB()
+	log.Infof("memory", "bleve reindex START %s: rss=%dMB heap=%dMB", b.indexPath, rssStart/1024, heapAllocMB())
 
-	// Close existing index, remove, recreate
-	if err := b.index.Close(); err != nil {
-		return fmt.Errorf("close bleve index for reindex: %w", err)
-	}
-	if err := os.RemoveAll(b.indexPath); err != nil {
-		return fmt.Errorf("remove bleve index: %w", err)
-	}
-
-	idx, err := bleve.New(b.indexPath, buildBleveMapping())
-	if err != nil {
-		return fmt.Errorf("recreate bleve index: %w", err)
-	}
-	b.index = idx
-
-	// Index all source directories using a batch
+	// Upsert current .md files into a batch.
 	batch := b.index.NewBatch()
+	current := make(map[string]bool)
+	var fileCount int
+	var fileBytes int64
 	for sourceName, sourceCfg := range b.sources {
 		if _, err := os.Stat(sourceCfg.Dir); os.IsNotExist(err) {
 			log.Infof("memory", "bleve: skipping source %q: directory %s does not exist yet", sourceName, sourceCfg.Dir)
 			continue
 		}
+		var srcFiles int
+		var srcBytes int64
 		if err := filepath.Walk(sourceCfg.Dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return err
@@ -156,9 +155,12 @@ func (b *BleveIndex) Reindex() error {
 			if len(data) == 0 {
 				return nil
 			}
+			srcFiles++
+			srcBytes += int64(len(data))
 
 			relPath, _ := filepath.Rel(sourceCfg.Dir, path)
 			docID := sourceName + ":" + relPath
+			current[docID] = true
 			doc := map[string]interface{}{
 				"content": html.UnescapeString(string(data)),
 				"path":    relPath,
@@ -172,54 +174,85 @@ func (b *BleveIndex) Reindex() error {
 		}); err != nil {
 			return fmt.Errorf("index source %q: %w", sourceName, err)
 		}
+		fileCount += srcFiles
+		fileBytes += srcBytes
+		log.Infof("memory", "bleve reindex %s: source %q = %d files, %dKB", b.indexPath, sourceName, srcFiles, srcBytes/1024)
 	}
 
-	// Restore non-file docs (conversations, todos)
-	for _, doc := range dynamicDocs {
-		if err := batch.Index(doc.id, doc.fields); err != nil {
-			log.Errorf("memory", "restore dynamic doc: %v", err)
+	// Prune docs for files that no longer exist on disk. IDs only — no stored
+	// content is loaded — so this stays cheap regardless of corpus size, and it
+	// never reads conversation/todo docs.
+	var deleted int
+	for _, id := range b.collectFileDocIDs() {
+		if !current[id] {
+			batch.Delete(id)
+			deleted++
 		}
 	}
 
-	return b.index.Batch(batch)
+	err := b.index.Batch(batch)
+	rssDone := readSelfRSSkB()
+	log.Infof("memory", "bleve reindex DONE %s in %s: %d file docs (%dKB) upserted, %d stale pruned; conv/todo docs untouched; rss=%dMB (Δ+%dMB) heap=%dMB err=%v",
+		b.indexPath, time.Since(start).Round(time.Millisecond), fileCount, fileBytes/1024, deleted,
+		rssDone/1024, (rssDone-rssStart)/1024, heapAllocMB(), err)
+	return err
 }
 
-// dynamicDoc holds a non-file document's ID and fields for preservation
-// across reindexes (conversations and todos).
-type dynamicDoc struct {
-	id     string
-	fields map[string]interface{}
+// readSelfRSSkB returns this process's resident set size in kB (0 on error).
+// Mirrors readSelfRSS in internal/resources/memory_guard.go.
+func readSelfRSSkB() int64 {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "VmRSS:") {
+			f := strings.Fields(line)
+			if len(f) >= 2 {
+				v, _ := strconv.ParseInt(f[1], 10, 64)
+				return v
+			}
+		}
+	}
+	return 0
 }
 
-// collectDynamicDocs reads all conversation and todo documents from the index.
-// Must be called with b.mu held.
-func (b *BleveIndex) collectDynamicDocs() []dynamicDoc {
-	// Match source = "conversation" OR source = "todo"
-	convQuery := query.NewTermQuery("conversation")
-	convQuery.SetField("source")
-	todoQuery := query.NewTermQuery("todo")
-	todoQuery.SetField("source")
-	combined := bleve.NewDisjunctionQuery(convQuery, todoQuery)
+// heapAllocMB returns the current Go heap allocation in MB.
+func heapAllocMB() uint64 {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	return ms.HeapAlloc / 1024 / 1024
+}
 
-	req := bleve.NewSearchRequest(combined)
-	req.Size = 100_000
-	req.Fields = []string{"content", "path", "source", "mtime", "agent_id", "todo_id"}
+// collectFileDocIDs returns the IDs of all docs indexed under a configured
+// file source (i.e. not conversation/todo). It requests IDs only — no stored
+// fields are loaded — so it stays cheap regardless of corpus size and never
+// materialises conversation content. Used by Reindex to prune docs whose
+// backing file was deleted. Must be called with b.mu held.
+func (b *BleveIndex) collectFileDocIDs() []string {
+	if len(b.sources) == 0 {
+		return nil
+	}
+	qs := make([]query.Query, 0, len(b.sources))
+	for name := range b.sources {
+		tq := query.NewTermQuery(name)
+		tq.SetField("source")
+		qs = append(qs, tq)
+	}
+	req := bleve.NewSearchRequest(bleve.NewDisjunctionQuery(qs...))
+	req.Size = 1_000_000 // IDs only; the file corpus is small
 
 	result, err := b.index.Search(req)
 	if err != nil {
-		log.Warnf("memory", "collect dynamic docs for reindex: %v", err)
+		log.Warnf("memory", "collect file doc IDs for reindex: %v", err)
 		return nil
 	}
 
-	docs := make([]dynamicDoc, 0, len(result.Hits))
+	ids := make([]string, 0, len(result.Hits))
 	for _, hit := range result.Hits {
-		fields := make(map[string]interface{})
-		for k, v := range hit.Fields {
-			fields[k] = v
-		}
-		docs = append(docs, dynamicDoc{id: hit.ID, fields: fields})
+		ids = append(ids, hit.ID)
 	}
-	return docs
+	return ids
 }
 
 // IndexConversation adds a conversation message to the bleve index.
