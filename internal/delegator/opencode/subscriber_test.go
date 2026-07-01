@@ -510,6 +510,48 @@ func TestServer_Route_DispatchesBySessionID(t *testing.T) {
 	}
 }
 
+func TestServer_Route_ChildPermissionResolvedViaAPI(t *testing.T) {
+	// When a subagent's permission arrives but its session.created was missed
+	// (no childToParent link), route must fetch the parent via GET /session and
+	// deliver the permission to the parent Backend rather than dropping it (#969).
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/child-sess" {
+			_, _ = w.Write([]byte(`{"id":"child-sess","parentID":"parent-sess"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer hs.Close()
+
+	srv := &Server{
+		sessions:      map[string]*Backend{},
+		childToParent: map[string]string{},
+		baseURL:       hs.URL,
+		http:          hs.Client(),
+		agentID:       "perm-fetch-test",
+	}
+	parent := &Backend{sessionID: "parent-sess", events: make(chan rawEvent, 1)}
+	srv.sessions["parent-sess"] = parent
+
+	// Permission for an unregistered child with no known parent link.
+	srv.route(rawEvent{Type: EventPermissionAsked, Properties: []byte(`{"permission":{"sessionID":"child-sess"}}`)})
+
+	// route spawned the fetch off-goroutine; wait briefly for delivery.
+	select {
+	case ev := <-parent.events:
+		if ev.Type != EventPermissionAsked {
+			t.Errorf("parent received %q, want %q", ev.Type, EventPermissionAsked)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("permission was not routed to the parent Backend via GET /session")
+	}
+
+	// The link must now be cached so subsequent events resolve synchronously.
+	if got := srv.childToParent["child-sess"]; got != "parent-sess" {
+		t.Errorf("childToParent[child-sess] = %q, want parent-sess", got)
+	}
+}
+
 func TestServer_Route_UnknownSessionIgnored(t *testing.T) {
 	// Verifies route silently drops events for unknown sessionIDs rather
 	// than blocking or panicking. This is the early-race case (event
