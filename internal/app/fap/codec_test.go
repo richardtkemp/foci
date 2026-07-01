@@ -251,7 +251,7 @@ func TestRoundTrip_HelloServer(t *testing.T) {
 		Caps:    Caps{Versions: []int{1}, Push: []string{"fcm"}, Features: []string{"voice"}},
 		Agents: []AgentInfo{{
 			ID: "clutch", Name: "Clutch",
-			Conversations: []ConversationInfo{{ID: "conv1", SessionKey: "clutch/capp/123", Title: "Main", LastSeq: 9}},
+			Conversations: []ConversationInfo{{ID: "conv1", SessionKey: "clutch/capp/123", Title: "Main", LastSeq: 9, Typing: true}},
 		}},
 	}
 	wire, err := Encode(h, 0, 0, "X", "ts")
@@ -269,6 +269,9 @@ func TestRoundTrip_HelloServer(t *testing.T) {
 	}
 	if back.Agents[0].Conversations[0].SessionKey != "clutch/capp/123" {
 		t.Errorf("round-trip lost sessionKey: %+v", back)
+	}
+	if !back.Agents[0].Conversations[0].Typing {
+		t.Errorf("round-trip lost typing: %+v", back)
 	}
 	if back.Caps.Push[0] != "fcm" {
 		t.Errorf("round-trip lost caps.push: %+v", back.Caps)

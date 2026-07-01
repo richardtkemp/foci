@@ -1115,6 +1115,7 @@ type convBinding struct {
 	buffer      []bufferedFrame     // sent frames retained for replay (trimmed by ack/depth/TTL)
 	seen        map[string]struct{} // inbound dedup by envelope id
 	seenOrder   []string            // FIFO eviction order for seen
+	inTurn      bool                // a turn is in flight; surfaced as the roster typing snapshot
 }
 
 // attach points the durable state at a (re)connected socket and registers it in
@@ -1156,7 +1157,13 @@ func (b *convBinding) currentSeq() int64 {
 func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq}
+	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Typing: b.inTurn}
+}
+
+func (b *convBinding) setInTurn(v bool) {
+	b.mu.Lock()
+	b.inTurn = v
+	b.mu.Unlock()
 }
 
 // send encodes a server frame with the next per-conversation seq and the
