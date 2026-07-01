@@ -1088,8 +1088,15 @@ func TestParseGetArgs(t *testing.T) {
 			want: todoArgs{subcommand: "get", status: "done", sort: "priority", limit: 15, reverse: true, text: "deploy"},
 		},
 		{
-			name: "limit with search",
+			// #880: a bare integer selects a todo by ID, not a count limit.
+			name: "bare id with search",
 			raw:  "get 5 deploy",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, ids: []int64{5}, text: "deploy"},
+		},
+		{
+			// #880: nN is the count-limit form.
+			name: "count limit with search",
+			raw:  "get n5 deploy",
 			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 5, text: "deploy"},
 		},
 		{

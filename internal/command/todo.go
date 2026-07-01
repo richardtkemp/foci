@@ -263,8 +263,16 @@ func parseGetArgs(a *todoArgs, tokens []string) {
 			// Re-use parseListArgs logic for this single token.
 			parseListArgs(a, []string{tok})
 		default:
-			if n, err := strconv.Atoi(tok); err == nil && n > 0 {
-				a.limit = n
+			// #880: a bare positive integer selects a todo by ID (get 500 → #500);
+			// the count-limit form is nN (get n500 → limit 500).
+			if len(tok) > 1 && (tok[0] == 'n' || tok[0] == 'N') {
+				if n, err := strconv.Atoi(tok[1:]); err == nil && n > 0 {
+					a.limit = n
+					break
+				}
+			}
+			if id, err := strconv.ParseInt(tok, 10, 64); err == nil && id > 0 {
+				a.ids = append(a.ids, id)
 			} else {
 				searchParts = append(searchParts, tok)
 			}
@@ -470,6 +478,19 @@ func todoSearchCmd(store *memory.TodoStore, agentID string, args todoArgs, forma
 // If a search query is present, uses Search with tag/priority/status/sort opts.
 // If no search query, falls back to List (pure filter mode).
 func todoGetCmd(store *memory.TodoStore, agentID string, args todoArgs, format string) (Response, error) {
+	// #880: bare IDs (get 500) resolve to specific todos, shown in detail.
+	if len(args.ids) > 0 {
+		var parts []string
+		for _, id := range args.ids {
+			item, err := store.Get(agentID, id)
+			if err != nil {
+				parts = append(parts, fmt.Sprintf("#%d: %v", id, err))
+				continue
+			}
+			parts = append(parts, formatTodoDetail(item))
+		}
+		return Response{Text: strings.Join(parts, "\n\n")}, nil
+	}
 	if args.text != "" {
 		items, err := store.Search(agentID, args.text, &memory.TodoSearchOpts{
 			Status:   args.status,
