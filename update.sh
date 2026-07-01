@@ -121,6 +121,23 @@ for svcfile in /etc/systemd/system/foci*.service; do
         sed -i "/^NoNewPrivileges=/a LockPersonality=yes" "$svcfile"
     fi
 
+    # Shutdown budget (#948 follow-up). foci's graceful shutdown can take up to
+    # graceful_shutdown_timeout (30s, waiting for in-flight turns) + ~9s for the
+    # opencode server close ladder — far longer than systemd's default 10s stop
+    # timeout. Without headroom systemd SIGKILLs foci-gw mid-shutdown before it
+    # reaps its opencode/CC children, orphaning them (observed: "Unit process N
+    # remains running after unit stopped"). Give it room, and switch KillMode
+    # process->mixed so systemd SIGKILLs the whole cgroup at the deadline as a
+    # backstop (catches any children foci's own cleanup didn't reach).
+    if ! grep -q "^TimeoutStopSec=" "$svcfile"; then
+        echo "  Patching $svcfile: add TimeoutStopSec=45s"
+        sed -i '/^KillMode=/a TimeoutStopSec=45s' "$svcfile"
+    fi
+    if grep -q "^KillMode=process" "$svcfile"; then
+        echo "  Patching $svcfile: KillMode process -> mixed"
+        sed -i 's/^KillMode=process$/KillMode=mixed/' "$svcfile"
+    fi
+
     # Remove the service user's permanent foci-secrets /etc/group membership — it
     # is re-acquirable via setuid sg/newgrp (P0-1). The group is now granted to
     # the process only (SupplementaryGroups, above), so the gw keeps read+write
@@ -189,10 +206,18 @@ for svcfile in /etc/systemd/system/foci*.service; do
 done
 
 echo "Restarting services..."
+# --no-block: a deploy is normally launched from inside an agent's OWN turn (the
+# agent runs update.sh). A blocking restart would make systemctl wait for foci to
+# stop, but foci's graceful shutdown waits for that same agent's in-flight turn to
+# finish — which cannot finish until systemctl returns. That circular wait pins
+# shutdown until the stop timeout and SIGKILLs foci mid-cleanup, orphaning its
+# opencode/CC children. Queuing the job and returning immediately lets update.sh
+# exit, the agent's turn complete and release foci, then systemd performs a clean
+# stop with no in-flight turn to wait on.
 s=$(systemctl list-units --type=service --plain --no-legend 'foci*' | awk '{print $1}')
 for svc in $s; do
     echo "  $svc"
-    systemctl restart "$svc"
+    systemctl restart --no-block "$svc"
 done
 
 # (Removed: a block that grepped the api_key out of secrets.toml and echoed it
