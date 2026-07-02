@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -230,6 +231,12 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 	if idx := h.deps.SessionIndex; idx != nil {
 		if err := idx.SetChatAliasUnique(b.agentID, "app", b.chatID, f.Title); err != nil {
 			log.Warnf("app", "rename %s: persist alias: %v", f.ConversationID, err)
+			code, msg := "rename_failed", "Couldn't save that name."
+			if errors.Is(err, session.ErrAliasTaken) {
+				code, msg = "alias_taken", "That name is already used by another chat."
+			}
+			client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: code, Message: msg, Retryable: true})
+			return
 		}
 	}
 	client.sendRaw(fap.HelloServer{
