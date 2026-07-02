@@ -2,10 +2,12 @@ package discord
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"foci/internal/command"
+	"foci/internal/timeutil"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -50,17 +52,19 @@ func TestBuildReceivedMessageMentionStripping(t *testing.T) {
 }
 
 // TestBuildReceivedMessageReplyContext verifies replied-to message content is
-// prepended as context.
+// prepended as context, stamped with the original message's send time (matching
+// the telegram reply/quote context — commit 7d237367).
 func TestBuildReceivedMessageReplyContext(t *testing.T) {
 	b, _, _ := newTestBot(t, "a")
 	msg := testDiscordMessage("1", "u", "my answer")
-	msg.ReferencedMessage = &discordgo.Message{Content: "original question"}
+	orig := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	msg.ReferencedMessage = &discordgo.Message{Content: "original question", Timestamp: orig}
 
 	qm, ok := b.buildReceivedMessage(context.Background(), msg)
 	if !ok {
 		t.Fatal("expected message accepted")
 	}
-	want := "[Replying to: original question]\n\nmy answer"
+	want := fmt.Sprintf("[Replying to (%s): original question]\n\nmy answer", timeutil.Format(orig))
 	if qm.text != want {
 		t.Errorf("got %q, want %q", qm.text, want)
 	}
