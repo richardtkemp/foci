@@ -66,7 +66,34 @@ type Envelope struct {
 	// (an agent serving telegram + discord has one Driver per platform;
 	// each Envelope carries a reference to the Driver from its origin).
 	Driver Driver
+
+	// Inject, when non-nil, marks this as a system injection (keepalive,
+	// reflection, compaction-resume, inter-session notify, tmux-watch, …)
+	// rather than a platform message. The worker runs Inject.Run instead of
+	// Driver.Drive, serialising it with this session's platform turns, and
+	// (for non-control triggers) defers it while a foci_ask is pending.
+	Inject *InjectMeta
 }
+
+// InjectMeta carries a system injection's execution closure and classification.
+// Run is built where the platform wiring lives (cmd/foci-gw) and does the whole
+// HandleMessage + delivery/relay; the worker only decides WHEN to call it, so no
+// platform coupling leaks into the agent package.
+type InjectMeta struct {
+	Trigger string
+	Run     func()
+}
+
+// controlInjectTriggers are exempt from ask-deferral: they resume/drive the agent
+// and must not be held behind a pending ask (which can outlive a compaction).
+var controlInjectTriggers = map[string]bool{
+	"compaction-resume": true,
+	"plan-command":      true,
+}
+
+// IsControlInjectTrigger reports whether an injection trigger is a control
+// injection (exempt from ask-deferral).
+func IsControlInjectTrigger(trigger string) bool { return controlInjectTriggers[trigger] }
 
 // platformApp is the PlatformName reported by the native-app connection
 // (internal/app.appConn.PlatformName). The app answers asks via interactive
@@ -177,6 +204,11 @@ type sessionInbox struct {
 	steerMu    sync.Mutex
 	steer      []SteerEntry
 	turnActive atomic.Bool
+
+	// injMu guards deferredInjects: proactive injections held while a foci_ask
+	// was pending on this session, drained (re-enqueued) when the ask resolves.
+	injMu           sync.Mutex
+	deferredInjects []Envelope
 
 	workerStarted sync.Once
 
@@ -336,6 +368,17 @@ func (a *Agent) Enqueue(env Envelope) {
 	}
 
 	inb := a.getOrCreateInbox(env.SessionKey)
+
+	// Injections skip all user-message routing (plan-cancel, ask-capture, steer)
+	// — they are system turns, not user input. Queue straight to the worker.
+	if env.Inject != nil {
+		select {
+		case inb.ch <- env:
+		default:
+			a.logger().Warnf("inbox: queue full for sk=%s, dropping injection trigger=%s", env.SessionKey, env.Inject.Trigger)
+		}
+		return
+	}
 
 	isActive := inb.turnActive.Load()
 	// Compaction hold (#856): a /compact turn is rewriting CC's transcript.
@@ -538,6 +581,14 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		case <-ctx.Done():
 			return
 		case env := <-inb.ch:
+			// System injection: run it serialised with this session's platform
+			// turns (the worker is idle between turns here) rather than in a
+			// detached goroutine that races them. No platform gates apply — the
+			// worker only dequeues while idle, so nothing is in flight.
+			if env.Inject != nil {
+				a.runInject(inb, env)
+				continue
+			}
 			// Sink-delivery gate (TODO #767): if a turn is currently in
 			// flight on this session base AND its sink does NOT deliver to
 			// a user-facing platform (reflection, keepalive, compaction-
@@ -606,11 +657,79 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			workerCtx := WithOnPrimaryWritten(ctx, func() {
 				once.Do(func() { inb.turnActive.Store(true) })
 			})
-			batch := append([]Envelope{env}, inb.drainAvailable()...)
+			// Batch consecutive platform messages into this turn, but hold back
+			// any injections drained alongside them — they run individually after
+			// the turn (an inject has no Driver and must not enter driveAndDrainOrphans).
+			batch := []Envelope{env}
+			var heldInjects []Envelope
+			for _, d := range inb.drainAvailable() {
+				if d.Inject != nil {
+					heldInjects = append(heldInjects, d)
+				} else {
+					batch = append(batch, d)
+				}
+			}
 			steerer := turnevent.SteererFunc(inb.drainSteerTexts)
 			a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)
 			inb.turnActive.Store(false)
+			for _, inj := range heldInjects {
+				a.runInject(inb, inj)
+			}
 		}
+	}
+}
+
+// runInject executes a system injection's closure inside the worker goroutine,
+// recovering from panics so a bad injection can't take down the session worker.
+// A proactive (non-control) injection arriving while a foci_ask is pending is
+// deferred instead — buffered and re-enqueued when the ask resolves (via
+// DrainDeferredInjects) — so it can't race the pending ask.
+func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
+	if !IsControlInjectTrigger(env.Inject.Trigger) && a.askPending(env.SessionKey) {
+		inb.injMu.Lock()
+		inb.deferredInjects = append(inb.deferredInjects, env)
+		inb.injMu.Unlock()
+		a.logger().Debugf("inbox: deferred injection sk=%s trigger=%s (ask pending)", inb.sk, env.Inject.Trigger)
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			a.logger().Errorf("inbox: inject panic sk=%s trigger=%s: %v", inb.sk, env.Inject.Trigger, r)
+		}
+	}()
+	if env.Inject.Run != nil {
+		env.Inject.Run()
+	}
+}
+
+// askPending reports whether an unpaused foci_ask is awaiting an answer on sk.
+func (a *Agent) askPending(sk string) bool {
+	r := a.AskRouter
+	if r == nil || r.PendingForSession == nil {
+		return false
+	}
+	if r.PendingForSession(sk) == "" {
+		return false
+	}
+	return !(r.IsPaused != nil && r.IsPaused(sk))
+}
+
+// DrainDeferredInjects re-enqueues any injections that were deferred while an ask
+// was pending on sk, so they run now that it has resolved. Called from the
+// ask-resolve hook. Safe on a nil/unknown session.
+func (a *Agent) DrainDeferredInjects(sk string) {
+	a.inboxesMu.Lock()
+	inb := a.inboxes[sk]
+	a.inboxesMu.Unlock()
+	if inb == nil {
+		return
+	}
+	inb.injMu.Lock()
+	held := inb.deferredInjects
+	inb.deferredInjects = nil
+	inb.injMu.Unlock()
+	for _, env := range held {
+		a.Enqueue(env)
 	}
 }
 

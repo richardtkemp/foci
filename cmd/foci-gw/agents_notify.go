@@ -56,38 +56,46 @@ func newAsyncNotifier(
 	connMgr platform.ConnectionManager,
 ) *tools.AsyncNotifier {
 	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string) {
-		go func() {
-			// Async notifier dispatches are best-effort: a panic here
-			// (e.g. nil receiver on an unconfigured Agent) shouldn't take
-			// down the foci process. Log and move on.
+		target := targetSession
+		if target == "" {
+			target = mostRecentSessionKey(getAgent(), connMgr, agentID)
+		}
+		if trigger == "" {
+			trigger = "async_notify"
+		}
+
+		// Resolve which Agent owns the target session. Defaults to the
+		// caller's Agent (same-agent fast path); switches to the target's
+		// Agent if the session key parses to a different agent ID. An
+		// unknown agent ID is a hard error — the message has nowhere to go.
+		targetAg := getAgent()
+		targetAgentID := agentID
+		if sk, err := session.ParseSessionKey(target); err == nil && sk.AgentID != agentID {
+			inst := agentResolverFn(sk.AgentID)
+			if inst == nil {
+				log.Errorf(trigger, "unknown target agent %q for session %s, message dropped", sk.AgentID, target)
+				return
+			}
+			targetAg = inst.ag
+			targetAgentID = sk.AgentID
+		}
+
+		if targetAg == nil {
+			log.Errorf(trigger, "no target agent for session %s, injection dropped", target)
+			return
+		}
+
+		// Run the injection on the target session's inbox worker — serialised
+		// with its platform turns (and deferred while a foci_ask is pending, for
+		// non-control triggers) instead of in a detached goroutine that races them.
+		run := func() {
+			// Best-effort: a panic here (e.g. nil receiver on an unconfigured
+			// Agent) shouldn't take down the foci process. Log and move on.
 			defer func() {
 				if r := recover(); r != nil {
-					log.Errorf(trigger, "async notifier goroutine panicked: %v (target=%s)", r, targetSession)
+					log.Errorf(trigger, "async notifier run panicked: %v (target=%s)", r, target)
 				}
 			}()
-			target := targetSession
-			if target == "" {
-				target = mostRecentSessionKey(getAgent(), connMgr, agentID)
-			}
-			if trigger == "" {
-				trigger = "async_notify"
-			}
-
-			// Resolve which Agent owns the target session. Defaults to the
-			// caller's Agent (same-agent fast path); switches to the target's
-			// Agent if the session key parses to a different agent ID. An
-			// unknown agent ID is a hard error — the message has nowhere to go.
-			targetAg := getAgent()
-			targetAgentID := agentID
-			if sk, err := session.ParseSessionKey(target); err == nil && sk.AgentID != agentID {
-				inst := agentResolverFn(sk.AgentID)
-				if inst == nil {
-					log.Errorf(trigger, "unknown target agent %q for session %s, message dropped", sk.AgentID, target)
-					return
-				}
-				targetAg = inst.ag
-				targetAgentID = sk.AgentID
-			}
 
 			// If replyToSession is set, route the target's response back
 			// to the calling session via an injected [SESSION RESPONSE].
@@ -156,7 +164,11 @@ func newAsyncNotifier(
 				log.Errorf(trigger, "error: %v", err)
 				return
 			}
-		}()
+		}
+		targetAg.Enqueue(agent.Envelope{
+			SessionKey: target,
+			Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
+		})
 	})
 }
 
