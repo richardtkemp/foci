@@ -149,7 +149,7 @@ Activity gates (TODO #753):
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
-  -s, --session <id>        Target session (env: FOCI_SESSION, default: main)
+  -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main)
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
   --if-active <dur>         Skip if this session has not run a turn within duration (env: FOCI_IF_ACTIVE)
   --if-inactive <dur>       Skip if this session has run a turn within duration (env: FOCI_IF_INACTIVE)

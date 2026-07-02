@@ -104,3 +104,86 @@ func TestListChatSessions_DifferentAgents(t *testing.T) {
 		t.Errorf("expected chat ID 111, got %d", sessions[0].ChatID)
 	}
 }
+
+func newAliasTestIndex(t *testing.T) *SessionIndex {
+	t.Helper()
+	idx, err := NewSessionIndex(t.TempDir() + "/index.db")
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+	return idx
+}
+
+func TestResolveChatAlias(t *testing.T) {
+	idx := newAliasTestIndex(t)
+	if err := idx.SetChatAliasUnique("clutch", "app", 42, "Holiday Plans"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetChatMetadata("clutch", "app", 42, "session_key", "clutch/c42/1000"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Case-insensitive, trimmed match.
+	if got, err := idx.ResolveChatAlias("clutch", "  holiday plans "); err != nil || got != "clutch/c42/1000" {
+		t.Fatalf("ResolveChatAlias = %q, %v; want clutch/c42/1000, nil", got, err)
+	}
+	// Unknown alias.
+	if _, err := idx.ResolveChatAlias("clutch", "nope"); err != ErrAliasNotFound {
+		t.Fatalf("unknown alias err = %v, want ErrAliasNotFound", err)
+	}
+	// Wrong agent doesn't match.
+	if _, err := idx.ResolveChatAlias("scout", "holiday plans"); err != ErrAliasNotFound {
+		t.Fatalf("cross-agent err = %v, want ErrAliasNotFound", err)
+	}
+}
+
+func TestResolveChatAlias_Ambiguous(t *testing.T) {
+	idx := newAliasTestIndex(t)
+	// Two chats with the same alias can only exist if written directly (pre-uniqueness data).
+	for _, chat := range []int64{1, 2} {
+		if err := idx.SetChatMetadata("clutch", "app", chat, "alias", "dupe"); err != nil {
+			t.Fatal(err)
+		}
+		if err := idx.SetChatMetadata("clutch", "app", chat, "session_key", "clutch/c/x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Same session_key on both → DISTINCT collapses to one, not ambiguous.
+	if got, err := idx.ResolveChatAlias("clutch", "dupe"); err != nil || got != "clutch/c/x" {
+		t.Fatalf("same-key dupe = %q, %v; want clutch/c/x, nil", got, err)
+	}
+	// Different session_keys → genuinely ambiguous.
+	if err := idx.SetChatMetadata("clutch", "app", 2, "session_key", "clutch/c2/y"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := idx.ResolveChatAlias("clutch", "dupe"); err != ErrAliasAmbiguous {
+		t.Fatalf("err = %v, want ErrAliasAmbiguous", err)
+	}
+}
+
+func TestSetChatAliasUnique(t *testing.T) {
+	idx := newAliasTestIndex(t)
+	if err := idx.SetChatAliasUnique("clutch", "app", 1, "work"); err != nil {
+		t.Fatal(err)
+	}
+	// A different chat can't steal it.
+	if err := idx.SetChatAliasUnique("clutch", "app", 2, "Work"); err != ErrAliasTaken {
+		t.Fatalf("collision err = %v, want ErrAliasTaken", err)
+	}
+	// The same chat can re-set its own alias.
+	if err := idx.SetChatAliasUnique("clutch", "app", 1, "work"); err != nil {
+		t.Fatalf("self re-set: %v", err)
+	}
+	// Clearing releases the alias for another chat.
+	if err := idx.SetChatAliasUnique("clutch", "app", 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetChatAliasUnique("clutch", "app", 2, "work"); err != nil {
+		t.Fatalf("after clear: %v", err)
+	}
+	// Reserved characters rejected.
+	if err := idx.SetChatAliasUnique("clutch", "app", 3, "a/b"); err == nil {
+		t.Fatal("expected rejection of alias with '/'")
+	}
+}

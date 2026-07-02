@@ -228,7 +228,7 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
-		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, "alias", strings.TrimSpace(f.Title)); err != nil {
+		if err := idx.SetChatAliasUnique(b.agentID, "app", b.chatID, f.Title); err != nil {
 			log.Warnf("app", "rename %s: persist alias: %v", f.ConversationID, err)
 		}
 	}
