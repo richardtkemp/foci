@@ -1,5 +1,5 @@
 // compaction.go — CompactionWaiter + CompactionStartWaiter implementation.
-// All four compaction-wait methods live here per plan §8.2.
+// All four compaction-wait methods live here.
 //
 // Implements delegator.CompactionWaiter (ArmCompactionWait /
 // WaitForCompaction) + delegator.CompactionStartWaiter
@@ -35,29 +35,25 @@ func (b *Backend) WaitForCompaction(ctx context.Context) error {
 }
 
 // ArmCompactionStartWait arms the one-shot "compaction started" waiter.
-// Since opencode has no status="compacting" event, we synthesise it by
-// immediately closing compactStartCh — the /compact command was already
-// accepted by the server (Inject SourceCompact fired), so "compaction
-// started" is a reasonable proxy.
-//
-// Documented divergence (plan §8.2): the "⏳ notification" appears
-// instantly rather than after the LLM has started summarising. For
-// operators who rely on the notification as a "compaction is underway"
-// signal, this is slightly premature but not misleading — the
-// compaction IS in progress, just not yet at the LLM stage.
+// The channel is closed by handleCompactionPart (handlers.go) when the
+// compaction part arrives — opencode's real start signal, emitted at
+// summarize initiation, before the summary LLM streams (~2.5s ahead of
+// the first reasoning token, measured on 1.17.11). Must be called before
+// Inject(SourceCompact) so the signal is never missed; see
+// agent.runDelegatedCompact.
 func (b *Backend) ArmCompactionStartWait() {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
 	b.compactStartCh = make(chan struct{}, 1)
-	// Immediately close — synthesise "started" since we can't detect
-	// the real start. WaitForCompactionStart will return immediately.
-	close(b.compactStartCh)
 }
 
-// WaitForCompactionStart blocks on compactStartCh or ctx. Since
-// ArmCompactionStartWait closes the channel immediately, this always
-// returns nil right away (unless called without arming → returns nil
-// per the no-arm contract, matching WaitForCompaction's behaviour).
+// WaitForCompactionStart blocks until the compaction part arrives
+// (compactStartCh closed by handleCompactionPart) or ctx expires. Returns
+// nil immediately if not armed (matching WaitForCompaction's no-arm
+// contract). The ctx branch is reachable: if /summarize is accepted but
+// opencode never emits a compaction part, this unblocks on the context
+// deadline so the ⏳ notification fires anyway (non-fatal — the wait for
+// completion below proceeds regardless).
 func (b *Backend) WaitForCompactionStart(ctx context.Context) error {
 	b.turnMu.Lock()
 	ch := b.compactStartCh

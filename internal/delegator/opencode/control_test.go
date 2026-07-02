@@ -217,25 +217,35 @@ func TestCompactionWait_FiresOnSessionCompacted(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CompactionStartWait — synthesised immediate fire
+// CompactionStartWait — real start signal (compaction part)
 // ---------------------------------------------------------------------------
 
-func TestCompactionStartWait_FiresImmediatelyAfterArm(t *testing.T) {
-	// Verifies ArmCompactionStartWait + WaitForCompactionStart returns
-	// immediately — opencode has no "compacting started" event, so we
-	// synthesise it by closing the channel on arm.
+func TestCompactionStartWait_BlocksUntilCompactionPart(t *testing.T) {
+	// Verifies ArmCompactionStartWait arms (but does NOT fire) the start
+	// waiter: WaitForCompactionStart blocks until the compaction part
+	// arrives via handleCompactionPart — opencode's real start signal,
+	// emitted at summarize initiation.
 	b := &Backend{
-		sessionID:     "sess-test",
-		compactDoneCh: make(chan struct{}, 1),
-		outstanding:   delegator.NewOutstandingRegistry(),
+		sessionID:   "sess-test",
+		outstanding: delegator.NewOutstandingRegistry(),
 	}
 
 	b.ArmCompactionStartWait()
 
+	// Armed but no compaction part yet → must block, not return immediately.
+	blockedCtx, blockedCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer blockedCancel()
+	if err := b.WaitForCompactionStart(blockedCtx); err == nil {
+		t.Fatal("WaitForCompactionStart returned before compaction part arrived (expected to block until the start signal)")
+	}
+
+	// Compaction part arrives → start signal fires.
+	b.handleCompactionPart()
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := b.WaitForCompactionStart(ctx); err != nil {
-		t.Errorf("WaitForCompactionStart: %v", err)
+		t.Errorf("WaitForCompactionStart after compaction part: %v", err)
 	}
 }
 
