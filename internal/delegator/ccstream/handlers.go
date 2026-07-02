@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -155,41 +154,24 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	}
 }
 
-// OnResult handles the result message signalling turn completion.
+// OnResult handles a result message. Under the idle-keyed lifecycle a result
+// is NOT the turn boundary — it is one internal ask cycle's accounting. CC
+// mints 0, 1 or N results per logical turn (a "now" steer aborts the current
+// ask and adds one; a steer landing mid-tool folds and adds none; results are
+// withheld while background agents run), so the result is stashed (latest
+// wins; output tokens accumulate across cycles) and the turn completes when
+// CC's session_state_changed:idle arrives — see onSessionIdle.
+//
+// Legacy fallback: when CC has emitted no session-state events this session
+// (env unset, older binary), complete on the result as the pre-idle design
+// did. See docs/WIRING.md → "Idle-keyed turn completion".
 func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
 
-	// Capture turn state. TurnEvents clearing is deferred — the pre-answer
-	// gate path needs OnTurnComplete alive across rounds. Normal path
-	// clears turnEvents/turnActive below.
 	b.turnMu.Lock()
-	turn := b.turnEvents
-	// Claim the turn for this completion immediately: capture turn into a local
-	// and clear b.turnEvents in the SAME critical section that sets
-	// `completing`. This narrows the window in which finalizeExit (which reads
-	// b.turnEvents) could capture the same TurnEvents and fire a second
-	// OnTurnComplete (P1-8). The re-arm paths re-install b.turnEvents via
-	// beginTurn for the next round, and the current round fires completion via
-	// the local `turn`, so early-clearing is safe. The completion itself is
-	// also guarded by a sync.Once at the agent layer as the hard backstop.
-	b.turnEvents = nil
-	resultCh := b.turnResultCh
+	turnActive := b.turnActive
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
-	// Capture (and close) any open shadow-reply window: this result IS that
-	// shadow reply (or the round-1 result of a fresh fold). Used only for
-	// xtra:ccstream instrumentation. A chained re-arm below re-opens the window.
-	wasAwaitingShadow := b.awaitingShadow
-	shadowReArmAt := b.reArmAt
-	b.awaitingShadow = false
-	// A real result arrived: claim this turn against the re-arm watchdog and
-	// disarm it. If we go on to re-arm below, beginTurn resets `completing` and
-	// a fresh watchdog is armed for the new generation (#813).
-	b.completing = true
-	if b.watchdog != nil {
-		b.watchdog.Stop()
-		b.watchdog = nil
-	}
 	b.turnMu.Unlock()
 
 	// Build TurnResult. Prefer turnText (accumulated from all assistant
@@ -286,132 +268,51 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		Usage:     turnUsage,
 	}
 
-	// Pre-answer nudge gate: give the caller a chance to re-dispatch this
-	// turn with a verification prompt before finalising. When the func
-	// returns a non-empty follow-up, the result is swallowed, beginTurn
-	// is called again with the same TurnEvents, and the follow-up is sent
-	// as a new user message — explicitly starting a fresh CC ask(). The
-	// next OnResult delivers the revised answer as the authoritative
-	// outcome. The caller must stop returning a follow-up after the first
-	// fire to break the loop (guaranteed by the scheduler's internal
-	// state — CheckPreAnswer returns the same text every call but the
-	// turn_delegated closure tracks "fired" locally). This is distinct
-	// from the mid-turn-drain path used by SourceUser/Steer/post-tool
-	// nudges: pre-answer needs a fresh ask() because it's a verification
-	// re-prompt, not a fold-in.
-	//
-	// See docs/WIRING.md → "Shadow-turn re-arm + watchdog (#813)" for the
-	// full re-arm/heldResult/watchdog map (this is the pre-answer caller).
-	if turn != nil && turn.PreAnswerNudgeFunc != nil {
-		if followUp := turn.PreAnswerNudgeFunc(result); followUp != "" {
-			if b.reArmForContinuation(turn, followUp) {
-				b.logger().Extra("steer_shadow event=preanswer_redispatch followup_len=%d round1_output=%d round1_textlen=%d",
-					len(followUp), result.Usage.OutputTokens, len(result.Text))
-				return
-			}
-			// Re-dispatch failed; fall through to the normal completion
-			// path so the first-round result is still delivered.
-		}
-	}
-
-	// Shadow-turn re-arm gate. A folded steer makes CC emit THIS (abort) result
-	// and then re-init + produce the real reply as a SEPARATE result. Re-arm the
-	// turn (same TurnEvents, same delivering sink, refcount stays held) so that
-	// reply lands in a live turn instead of an untracked shadow turn a colliding
-	// inject can lose (#813). Trigger = CC's own `system init` stream
-	// (continuationExpected, set by a mid-turn re-init in OnSystem) plus the
-	// inject-time foldPending gate for the abort result whose herald init has not
-	// yet arrived. NOT a per-steer counter — that over-counted on bursts (N steers
-	// fold into ONE re-init/result) and awaited phantom results → 45s watchdog.
-	// Ordered AFTER the pre-answer gate (a verification re-prompt wins if both
-	// apply) and BEFORE the normal clear.
-	//
-	// See docs/WIRING.md → "Shadow-turn re-arm + watchdog (#813)" for the
-	// full re-arm/heldResult/watchdog map (this is the steer re-arm caller).
+	// Stash this cycle's result; the turn total for output tokens is the sum
+	// across cycles (each result's usage is per-ask-cycle, probe-verified),
+	// while text (turnText spans the whole turn), tool count, model and
+	// input/cache (the FINAL cycle's context fill — what compaction needs)
+	// are latest-wins. A fresh result also satisfies any pre-answer
+	// re-dispatch that was holding the turn open at idle.
 	b.turnMu.Lock()
-	b.sawFirstResult = true
-	reArm := false
-	switch {
-	case b.continuationExpected:
-		// This result was heralded by a mid-turn re-init: consume that herald.
-		// Keep the turn open only if another fold is still pending (a steer
-		// injected during this window owes its own abort+reinit cycle); otherwise
-		// this is the genuine shadow reply → complete it.
-		b.continuationExpected = false
-		reArm = b.foldPending
-		b.foldPending = false
-	case b.foldPending:
-		// Abort result of a freshly-injected steer; its continuation
-		// (init → reply) has not started yet. Hold the turn open for it. The
-		// watchdog backstops the 0-extra-results fold (no init/reply ever comes).
-		b.foldPending = false
-		reArm = true
-	}
+	b.turnCalls++
+	cycle := b.turnCalls
+	b.turnOutputTokens += result.Usage.OutputTokens
+	result.Usage.OutputTokens = b.turnOutputTokens
+	b.stashedResult = result
+	b.stashedResultMsg = msg
+	b.redispatchInFlight = false
+	stateSeen := b.stateEventsSeen
 	b.turnMu.Unlock()
-	if reArm && turn != nil {
-		// Stash this result BEFORE re-arming: reArmForContinuation's beginTurn
-		// resets turnText, so if no shadow reply ever arrives the watchdog
-		// delivers this (in the no-second-OnResult fold mode, it IS the answer).
-		b.turnMu.Lock()
-		b.heldResult = result
-		b.reArmDepth++
-		depth := b.reArmDepth
-		b.turnMu.Unlock()
-		b.logger().Debugf("OnResult: re-arming turn for folded steer/follow-up shadow reply (#813)")
-		b.reArmForContinuation(turn, "")
-		b.armReArmWatchdog()
-		// depth=1 is a first fold (round_* is the round-1 result); depth>1 is a
-		// chained fold (the prior shadow reply itself folded — round_* is the
-		// round-N result, not round 1).
-		b.logger().Extra("steer_shadow event=rearm depth=%d round_output=%d round_textlen=%d watchdog_bound=%s outstanding_prompts=%d",
-			depth, result.Usage.OutputTokens, len(result.Text), b.watchdogBound(), b.outstandingPrompts())
+
+	b.logger().Debugf("OnResult: stashed ask-cycle result (turn_active=%v cycle=%d textlen=%d out_total=%d)",
+		turnActive, cycle, len(text), result.Usage.OutputTokens)
+	b.logger().Extra("turn_lifecycle event=result_stash cycle=%d turn_active=%v subtype=%s textlen=%d out_total=%d",
+		cycle, turnActive, msg.Subtype, len(text), result.Usage.OutputTokens)
+
+	if !turnActive {
+		// Orphan run (no foci turn open — e.g. a background Bash finishing
+		// after idle triggers a task-notification run). Its text already
+		// delivered via the always-live SessionEvents; nothing to complete.
 		return
 	}
 
-	// Normal turn completion — clear TurnEvents. SessionEvents stay live for
-	// the rest of the session so any post-turn text (e.g. CC running a
-	// follow-up ask() from a folded steer) still delivers cleanly.
-	b.turnMu.Lock()
-	hadTurn := b.turnEvents != nil
-	chainDepth := b.reArmDepth
-	b.turnEvents = nil
-	b.turnActive = false
-	b.foldPending = false          // turn truly ended; drop any unconsumed fold gate
-	b.continuationExpected = false // and any unmatched mid-turn-init herald
-	b.sawFirstResult = false       // next logical turn starts fresh
-	b.heldResult = nil             // no longer need the stashed re-arm result
-	b.reArmDepth = 0               // chain terminated by a real completion
-	b.turnMu.Unlock()
-	b.logger().Debugf("OnResult: turn cleared (had_turn_events=%v)", hadTurn)
-	if wasAwaitingShadow {
-		outcome := "delivered"
-		if text == "" {
-			outcome = "empty"
+	if !stateSeen {
+		// CC is not emitting session-state events — no idle will ever come.
+		// Complete on the result, the pre-idle-keyed behaviour (including the
+		// pre-answer verification gate, which normally runs at idle).
+		b.turnMu.Lock()
+		warned := b.fallbackWarned
+		b.fallbackWarned = true
+		turn := b.turnEvents
+		b.turnMu.Unlock()
+		if !warned {
+			b.logger().Warnf("no session_state_changed events from CC (CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS unset or unsupported); falling back to complete-on-result — steers folded mid-turn may complete early")
 		}
-		b.logger().Extra("steer_shadow event=shadow_result outcome=%s depth=%d output=%d textlen=%d rearm_to_result=%s outstanding_prompts=%d",
-			outcome, chainDepth, turnUsage.OutputTokens, len(text), time.Since(shadowReArmAt).Round(time.Millisecond), b.outstandingPrompts())
-	}
-
-	// Clear any agents still tracked (safety net — task_notification should
-	// have already removed them individually during the turn).
-	b.agents.ClearAll()
-
-	// Fire OnTurnComplete OUTSIDE any lock.
-	if turn != nil && turn.OnTurnComplete != nil {
-		turn.OnTurnComplete(result)
-	}
-
-	// Stop typing indicator.
-	if b.typingFunc != nil {
-		b.typingFunc(false)
-	}
-
-	// Signal WaitForTurn (non-blocking).
-	if resultCh != nil {
-		select {
-		case resultCh <- msg:
-		default:
+		if b.tryPreAnswerRedispatch(turn, result) {
+			return
 		}
+		b.completeTurn("result-fallback")
 	}
 }
 
@@ -430,19 +331,6 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.initMsg = &init
 		b.lastModel = init.Model
 		b.mu.Unlock()
-		// Mid-turn re-init: CC re-initialises at the start of every continuation
-		// cycle (init count == result count, strictly interleaved IRIR). An init
-		// arriving while a turn is active AND after that turn's first result is
-		// CC's own signal that a shadow-reply cycle has begun — the next result
-		// is the genuine continuation reply, not the turn-start herald. Drives the
-		// #813 re-arm completion decision in OnResult. The turn-start init
-		// (sawFirstResult == false) is correctly ignored. See docs/WIRING.md →
-		// "Shadow-turn re-arm + watchdog (#813)".
-		b.turnMu.Lock()
-		if b.turnActive && b.sawFirstResult {
-			b.continuationExpected = true
-		}
-		b.turnMu.Unlock()
 		b.readyOnce.Do(func() { close(b.readyCh) })
 		if b.onSessionReady != nil {
 			b.onSessionReady(init.SessionID)
@@ -493,8 +381,24 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		}
 
 	case "session_state_changed":
+		// CC's authoritative run-loop boundary (opt-in via
+		// CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1, set at launch). `running`
+		// fires at run() entry; `idle` fires at run() exit, AFTER the held-back
+		// result flush — it is the turn-completion signal. See OnResult and
+		// docs/WIRING.md → "Idle-keyed turn completion".
 		var ss SessionStateMessage
-		_ = json.Unmarshal(raw, &ss)
+		if err := json.Unmarshal(raw, &ss); err != nil {
+			log.Warnf("ccstream", "drop session_state_changed (unmarshal failed): %v — turn completion may fall to the orchestrator timeout", err)
+			return
+		}
+		b.turnMu.Lock()
+		b.stateEventsSeen = true
+		turnActive := b.turnActive
+		b.turnMu.Unlock()
+		b.logger().Extra("turn_lifecycle event=session_state state=%s turn_active=%v", ss.State, turnActive)
+		if ss.State == "idle" {
+			b.onSessionIdle()
+		}
 
 	case "task_started", "task_progress", "task_notification":
 		var task TaskEvent

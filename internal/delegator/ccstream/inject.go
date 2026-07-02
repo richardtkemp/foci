@@ -24,56 +24,24 @@ func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
 // for fire-and-forget paths (slash commands, tests) that don't need
 // completion signalling.
 //
-// freshTurn distinguishes a GENUINE new logical turn (true — from sendToPane /
-// sendToPaneWithAttachments) from a #813 re-arm continuation of the current
-// logical turn (false — from reArmForContinuation). On a fresh turn the
-// shadow-turn signals (sawFirstResult / continuationExpected / foldPending) are
-// reset to a clean slate; on a re-arm they MUST persist so the in-flight
-// logical turn keeps recognising its mid-turn re-inits (sawFirstResult stays
-// true) — resetting them would break the continuation tracking.
-func (b *Backend) beginTurn(turn *delegator.TurnEvents, freshTurn bool) {
+// A turn spans CC's whole run loop: everything CC drains into the run this
+// message starts (steers, follow-ups, nudges) belongs to this turn, and the
+// turn completes on CC's session_state_changed:idle (see onSessionIdle). A
+// begin-turn therefore only happens at CC-idle — Inject routes in-flight
+// messages to the fold path instead.
+func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnMu.Lock()
-	// Collision canary: a fresh turn starting while we were still awaiting a
-	// folded steer's shadow reply means the #813 re-arm protection did NOT keep
-	// this session marked in-flight — the shadow reply can be lost to this turn.
-	// Should be unreachable post-fix; logged (outside the lock) if it fires.
-	collision := b.awaitingShadow
-	if freshTurn {
-		// Clean slate for a genuine new logical turn (also clears any stale
-		// signals a collision left behind).
-		b.sawFirstResult = false
-		b.continuationExpected = false
-		b.foldPending = false
-	}
-	prevGen := b.turnGen
-	var collisionAwaitedFor time.Duration
-	var collisionHeldOutput, collisionHeldTextlen int
-	if collision {
-		b.awaitingShadow = false
-		collisionAwaitedFor = time.Since(b.reArmAt).Round(time.Millisecond)
-		// Capture the round-1 result now at risk: the still-pending shadow reply
-		// for prevGen will be misattributed to this fresh turn and the stashed
-		// round-1 content can be lost. Logged below as the collision casualty.
-		if b.heldResult != nil {
-			if b.heldResult.Usage != nil {
-				collisionHeldOutput = b.heldResult.Usage.OutputTokens
-			}
-			collisionHeldTextlen = len(b.heldResult.Text)
-		}
-	}
 	b.turnActive = true
 	b.turnEvents = turn
 	b.turnText.Reset()
 	b.turnTools = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
-	b.turnGen++          // new turn instance; stale watchdog ticks for prior gens no-op
-	b.completing = false // fresh turn is unclaimed
+	b.stashedResult = nil
+	b.stashedResultMsg = nil
+	b.turnOutputTokens = 0
+	b.turnCalls = 0
+	b.redispatchInFlight = false
 	b.turnMu.Unlock()
-
-	if collision {
-		b.logger().Extra("steer_shadow event=collision detail=new_turn_began_during_shadow_window prev_gen=%d awaited_for=%s held_output=%d held_textlen=%d",
-			prevGen, collisionAwaitedFor, collisionHeldOutput, collisionHeldTextlen)
-	}
 
 	b.mu.Lock()
 	b.lastUsage = nil
@@ -97,7 +65,7 @@ func (b *Backend) cancelTurn() {
 // Called from Inject's begin-turn path (SourceUser/Steer at idle); not part
 // of the public Delegator surface.
 func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.TurnEvents) error {
-	b.beginTurn(turn, true) // genuine new logical turn: reset shadow-turn signals
+	b.beginTurn(turn)
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
@@ -124,7 +92,7 @@ func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.T
 // user message containing all of them. Called from Inject's begin-turn
 // path when len(inj.Attachments) > 0.
 func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, attachments []delegator.Attachment, turn *delegator.TurnEvents) error {
-	b.beginTurn(turn, true) // genuine new logical turn: reset shadow-turn signals
+	b.beginTurn(turn)
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
@@ -170,7 +138,8 @@ func attachmentBlockType(mimeType string) string {
 	return "document"
 }
 
-// WaitForTurn blocks until the current turn completes (result message received).
+// WaitForTurn blocks until the current turn completes (session idle observed,
+// or the legacy complete-on-result fallback / process-exit cleanup fired).
 // Returns immediately if no turn is in progress.
 func (b *Backend) WaitForTurn(ctx context.Context) error {
 	b.turnMu.Lock()
@@ -231,11 +200,11 @@ func (b *Backend) sendUserMessagePriority(text, priority string) error {
 //	Compact  | any        | send slash command (fire-and-forget)
 //	Pass     | any        | send slash command (fire-and-forget)
 //
-// All in-flight injections rely on CC's mid-turn drain
-// (claude-code/src/query.ts:1570-1589) to fold the message as an
-// attachment into the current ask() — no separate ask/result cycle
-// is produced for them. The model addresses the message in the same
-// turn and the response reaches the original handler.
+// All in-flight injections land inside CC's current run loop — folded
+// into the running ask at a drain point, or (a "now" steer arriving
+// mid-stream) answered in a fresh ask cycle of the same run. Either way
+// the response belongs to the current foci turn, which completes at the
+// run's session_state_changed:idle (see onSessionIdle).
 //
 // inj.Turn is required for SourceUser/Steer at idle (a fresh turn needs an
 // OnTurnComplete sink). Ignored for in-flight injections (the existing
@@ -255,33 +224,12 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		if !inFlight {
 			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn)
 		}
-		// In-flight follow-up: SendUser at default priority. CC's mid-turn
-		// drain at the next tool boundary (claude-code's
-		// query.ts:1570-1589) folds the message as an attachment to the
-		// current turn's tool_results — the model responds in the same
-		// ask(), so the original turn's OnTurnComplete and the always-live
-		// SessionEvents.OnText carry the response. inj.Turn is
-		// intentionally ignored.
-		//
-		// NOTE(#813): deliberately NOT re-armed here — this is the opposite
-		// decision from the SourceSteer branch below, and it is intentional.
-		// A plain follow-up does NOT create a shadow turn: because it goes in
-		// at default priority ("next"), CC drains it at the next tool boundary
-		// INTO the running ask(), producing a SINGLE OnResult that delivers the
-		// reply in-turn. A steer goes in at "now", which forces an immediate
-		// drain that aborts the current ask() and spawns the reply as a second,
-		// untracked result (the shadow turn) — that is the only path #813's
-		// re-arm exists to protect.
-		// Verified by log-mining (2026-06): every in-flight SourceUser inject
-		// produced exactly one OnResult(had_turn_events=true, delivered=true);
-		// no same-second output=0 abort, no second shadow result — across the
-		// 257 in-flight follow-ups in the archives, vs the steer's confirmed
-		// double-OnResult signature. (Phase 1's "zero follow-ups" was a sampling
-		// artefact of one short window, not the real frequency.)
-		// Re-arming here would be a REGRESSION: reArmForContinuation suppresses
-		// completion to wait for a second OnResult that never arrives, so the
-		// reply would sit idle until the ~45s watchdog fires — a visible delay
-		// on a common path, for no benefit.
+		// In-flight follow-up: SendUser at default priority ("next"). CC
+		// drains it into the running turn (at the next tool boundary, or as
+		// a fresh ask cycle in the same run) — either way it stays inside
+		// the current run, so the reply belongs to the current foci turn and
+		// the turn completes at that run's idle. inj.Turn is intentionally
+		// ignored.
 		return b.sendUserMessage(inj.Text)
 
 	case delegator.SourceSteer:
@@ -301,22 +249,14 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn)
 		}
 		// In-flight steer: SendUser at priority "now". CC dequeues "now"
-		// ahead of "next"/"later" at the next mid-turn drain, so the
-		// steer message folds in before any other queued items without
-		// aborting the current ask() and killing in-flight tool work.
+		// ahead of "next"/"later"; depending on where the run is it either
+		// folds the steer into the current ask (mid-tool arrival) or aborts
+		// the ask and answers it in a fresh ask cycle (mid-stream arrival,
+		// print.ts abort('interrupt')). Both stay inside the current run, so
+		// no bookkeeping is needed here: the turn completes at the run's
+		// idle regardless of how many ask cycles the steer minted.
 		// "Stop right now" semantics live in /reset hard, not Steer.
-		//
-		// The stdin write makes CC emit an immediate result and then produce
-		// the real reply as a SEPARATE result. Mark a pending fold so OnResult
-		// re-arms the turn across that gap, keeping it in flight (refcount held,
-		// delivering sink attached) — otherwise the reply runs as an untracked
-		// shadow turn and can be lost to a colliding inject (#813).
-		b.markFoldedInject()
-		if err := b.sendUserMessagePriority(inj.Text, "now"); err != nil {
-			b.unmarkFoldedInject()
-			return err
-		}
-		return nil
+		return b.sendUserMessagePriority(inj.Text, "now")
 
 	case delegator.SourceCompact, delegator.SourcePass:
 		// Slash commands. Fire-and-forget. The caller is responsible for

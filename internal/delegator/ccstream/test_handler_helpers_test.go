@@ -51,7 +51,7 @@ func (h *testHandler) turn() *delegator.TurnEvents {
 func applyHandler(b *Backend, h *testHandler) {
 	if h == nil {
 		b.AttachSessionEvents(nil)
-		b.beginTurn(nil, true)
+		b.beginTurn(nil)
 		return
 	}
 	b.AttachSessionEvents(&delegator.SessionEvents{
@@ -65,5 +65,5 @@ func applyHandler(b *Backend, h *testHandler) {
 		OnTurnComplete:     h.OnTurnComplete,
 		PostToolNudgeFunc:  h.PostToolNudgeFunc,
 		PreAnswerNudgeFunc: h.PreAnswerNudgeFunc,
-	}, true)
+	})
 }

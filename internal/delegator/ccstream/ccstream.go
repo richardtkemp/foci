@@ -94,33 +94,26 @@ type Backend struct {
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText       strings.Builder       // accumulates text across assistant messages
 	turnTools      int                   // tool_use count this turn
-	// Shadow-turn re-arm signals (#813). A folded steer makes CC emit the
-	// current turn's result, then re-init and produce the real reply as a
-	// SEPARATE result. The trigger is now CC's own `system init` stream — init
-	// count == result count, strictly interleaved IRIR — NOT a per-steer
-	// counter (which over-counted on bursts: N steers fold into ONE re-init/
-	// result, so a counter awaited phantom results → 45s watchdog). See
-	// docs/WIRING.md → "Shadow-turn re-arm + watchdog (#813)".
-	foldPending          bool                  // a steer was written to stdin this turn; set-ONCE (bursts collapse N→1). Gates the abort result into a re-arm instead of a completion. The init-herald of the continuation arrives AFTER that abort result, so this inject-time signal is still needed to bridge it.
-	sawFirstResult       bool                  // the logical turn has produced ≥1 result; lets OnSystem(init) tell a mid-turn re-init from the turn-start init. Reset only on a GENUINE new turn, never on re-arm.
-	continuationExpected bool                  // a mid-turn `system init` was observed (CC began a continuation cycle): the next result is the genuine shadow reply, complete on it
-	turnGen              int                   // bumped every beginTurn; identifies the current turn instance for the re-arm watchdog
-	completing           bool                  // a completer (OnResult or the watchdog) has claimed this turn; the other must stand down. Reset by beginTurn
-	heldResult           *delegator.TurnResult // round-1 result stashed at re-arm; the watchdog delivers it if no shadow reply arrives (#813)
-	watchdog             *time.Timer           // bounded re-arm safety net; nil when not armed (#813)
-
-	// Re-arm instrumentation — observation only, no control-flow effect.
-	// reArmAt stamps when the shadow-reply watchdog was armed; awaitingShadow is
-	// true across the window between re-arm and the shadow result (or watchdog
-	// fire). Surfaced via xtra:ccstream logging ([debug] extra_ccstream_logging)
-	// to measure steer fold-vs-shadow outcomes and catch collisions (#813).
-	reArmAt        time.Time
-	awaitingShadow bool
-	reArmDepth     int // chained-fold counter: 1 on first fold, N on the Nth consecutive re-arm; reset on normal completion / watchdog fire (#813 instrumentation)
-
-	// reArmWatchdogBound overrides defaultReArmWatchdogBound. Set once at
-	// construction (or by tests) before any turn starts; read without a lock.
-	reArmWatchdogBound time.Duration
+	// Idle-keyed turn completion (#813 successor). The turn boundary is CC's
+	// own `session_state_changed` running/idle SDK stream (enabled via
+	// CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1 at launch): running/idle bracket
+	// CC's entire internal run loop — every ask cycle, every drained
+	// steer/follow-up, the background-agent wait, and the held-result flush —
+	// so one foci turn == one CC run and `idle` is the authoritative "no more
+	// results are coming" signal. `result` events are per-internal-ask-cycle
+	// data carriers, NOT turn boundaries: a "now" steer aborts the current ask
+	// and mints an extra result, a steer landing mid-tool folds and mints
+	// none, and results are withheld (and can be silently dropped) while
+	// background agents run — so no amount of result counting can recover the
+	// turn boundary. OnResult stashes; OnSystem(idle) completes. See
+	// docs/WIRING.md → "Idle-keyed turn completion".
+	stashedResult      *delegator.TurnResult // latest per-ask-cycle result this turn; delivered at idle
+	stashedResultMsg   *ResultMessage        // raw message of the stash, for WaitForTurn signalling
+	turnOutputTokens   int                   // output tokens summed across this turn's ask cycles
+	turnCalls          int                   // ask cycles (result events) observed this turn
+	redispatchInFlight bool                  // pre-answer follow-up sent at idle; hold the turn open until its result arrives
+	stateEventsSeen    bool                  // CC emitted ≥1 session_state_changed this session; gates the legacy complete-on-result fallback
+	fallbackWarned     bool                  // one-shot Warnf when falling back to complete-on-result
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
