@@ -148,6 +148,11 @@ type ConversationInfo struct {
 	// if none. Snapshot half of the tool indicator; the Tool frame carries live
 	// deltas.
 	Tool string `json:"tool,omitempty"`
+	// LastActivityTs and LastPreview seed the roster row (last-active time + last
+	// message preview) so a freshly-paired device renders them without opening each
+	// chat to backfill. LastActivityTs is unix ms of the last visible frame.
+	LastActivityTs int64  `json:"lastActivityTs,omitempty"`
+	LastPreview    string `json:"lastPreview,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.

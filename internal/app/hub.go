@@ -911,6 +911,10 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		return existing
 	}
 	b = &convBinding{convID: convID, sessionKey: sk, agentID: agentID, chatID: chatID, replayDepth: h.replayDepth, replayTTL: h.replayTTL, store: h.frames, seq: h.frames.MaxSeq(convID), seen: make(map[string]struct{}), notifyOffline: h.pushNotify}
+	if preview, sentMs, ok := h.frames.LastVisible(convID); ok {
+		b.lastPreview = preview
+		b.lastActMs = sentMs
+	}
 	h.convs[convID] = b
 	h.bySession[sk] = b
 	h.mu.Unlock()
@@ -1146,6 +1150,8 @@ type convBinding struct {
 	thinking    bool                // model is mid extended-thinking; surfaced as the roster thinking snapshot
 	warming     bool                // turn started, no output yet; surfaced as the roster warming snapshot
 	tool        string              // name of the running tool, empty if none; surfaced as the roster tool snapshot
+	lastPreview string              // last visible frame's preview; seeds the roster row
+	lastActMs   int64               // last visible frame's send time (unix ms); seeds the roster row
 }
 
 // attach points the durable state at a (re)connected socket and registers it in
@@ -1187,7 +1193,7 @@ func (b *convBinding) currentSeq() int64 {
 func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Typing: b.inTurn, Thinking: b.thinking, Warming: b.warming, Tool: b.tool}
+	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Typing: b.inTurn, Thinking: b.thinking, Warming: b.warming, Tool: b.tool, LastActivityTs: b.lastActMs, LastPreview: b.lastPreview}
 }
 
 func (b *convBinding) setInTurn(v bool) {
@@ -1229,6 +1235,11 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 		return
 	}
 	now := time.Now()
+	preview, visible := pushPreview(frame)
+	if visible {
+		b.lastPreview = preview
+		b.lastActMs = now.UnixMilli()
+	}
 	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: now})
 	b.trimBufferLocked()
 	client := b.client
@@ -1241,8 +1252,7 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	// in-memory depth/TTL bound, so a long-offline phone can backfill it). The
 	// visible flag marks user-facing content vs transient frames (typing).
 	if store != nil {
-		_, visible := pushPreview(frame)
-		store.Append(b.convID, b.agentID, seq, wire, now.UnixMilli(), visible)
+		store.Append(b.convID, b.agentID, seq, wire, now.UnixMilli(), visible, preview)
 	}
 
 	if client != nil {
@@ -1252,7 +1262,7 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	// Offline: the frame is buffered for replay. Fire a coalesced wake push for
 	// user-visible content so the device reconnects and replays it.
 	if notify != nil {
-		if preview, ok := pushPreview(frame); ok {
+		if visible {
 			notify(pushPayload{
 				ConvID:     b.convID,
 				Preview:    preview,
