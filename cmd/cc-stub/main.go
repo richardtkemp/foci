@@ -874,15 +874,48 @@ func main() {
 				os.Exit(0)
 			}
 		case "control_request":
-			// e.g. interrupt — ack with a control_response.
-			if reqID, ok := env["request_id"].(string); ok {
+			// Dispatch by request subtype. The stub must answer each
+			// control_request foci sends or foci blocks on its response.
+			reqID, _ := env["request_id"].(string)
+			reqSubtype := ""
+			if req, ok := env["request"].(map[string]any); ok {
+				reqSubtype, _ = req["subtype"].(string)
+			}
+			switch reqSubtype {
+			case "get_context_usage":
+				// foci's refreshContextFromBackend (post-turn hook) asks for
+				// the context window once per session. If the stub ignores it,
+				// GetContextUsage blocks for its full 5s timeout — and because
+				// a failed refresh caches nothing, that timeout repeats every
+				// turn, inflating in-flight latency and starving gates that
+				// fire shortly after a turn (e.g. the reflection pass). Answer
+				// with a canned large window so the limit is cached after the
+				// first call and subsequent turns skip the refresh entirely.
 				emit(out, map[string]any{
 					"type":       "control_response",
 					"request_id": reqID,
-					"response":   map[string]any{"subtype": "ack"},
+					"response": map[string]any{
+						"subtype":    "success",
+						"request_id": reqID,
+						"response": map[string]any{
+							"totalTokens": 1000,
+							"maxTokens":   200000,
+							"percentage":  0,
+							"model":       "stub",
+						},
+					},
 				})
-				_ = out.Flush()
+			default:
+				// e.g. interrupt — ack with a control_response.
+				if reqID != "" {
+					emit(out, map[string]any{
+						"type":       "control_response",
+						"request_id": reqID,
+						"response":   map[string]any{"subtype": "ack"},
+					})
+				}
 			}
+			_ = out.Flush()
 		case "control_response":
 			// Inbound from foci — typically the answer to a can_use_tool
 			// permission request the stub emitted on a previous turn.

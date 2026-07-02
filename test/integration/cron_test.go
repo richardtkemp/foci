@@ -361,7 +361,7 @@ func TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos(t *testing.T) {
 		// Background enabled at 1s interval so the idle gate passes within
 		// the test window. Disable reflection's interval + consolidation so
 		// they don't add noise to the user_message stream we're scanning.
-		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = false\n",
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval_enabled = false\n\n[maintenance]\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -426,7 +426,7 @@ func TestL2_Cron_BackgroundSkippedWithNoOpenTodos(t *testing.T) {
 		// still skip because the per-agent todo store is empty. We also
 		// disable reflection's interval + consolidation timers so they
 		// don't contribute recorder growth unrelated to this assertion.
-		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = false\n",
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval_enabled = false\n\n[maintenance]\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -487,7 +487,7 @@ func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
 		// well inside the cooldown and assert it stayed at exactly 1. Without
 		// the cooldown the next tick would re-fire immediately (idle is also
 		// ≥ interval).
-		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"10s\"\n\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = false\n",
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"10s\"\n\n[reflection]\ninterval_enabled = false\n\n[maintenance]\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -560,7 +560,7 @@ func TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches(t *testing.T) {
 		// Background enabled at 1s interval so the idle gate would
 		// otherwise pass within the test window — we're proving the
 		// HasActiveWork gate alone blocks dispatch.
-		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = false\n",
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval_enabled = false\n\n[maintenance]\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -628,8 +628,8 @@ func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 		// ~5s after boot and the first tick after bootstrap finds idle well
 		// under the 5s interval, so reflection fires without a warm-up refresh.
 		// Reflection SKIPS when sinceLastInteraction > interval (dormant
-		// sessions). consolidation_enabled=false isolates the assertion.
-		ExtraConfigTOML: "\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		// sessions).
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"5s\"\nbackend_quiet_period = \"1s\"\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -651,10 +651,39 @@ func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
 		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
+	// Wait for the bootstrap turn to fully complete (reply delivered) before
+	// sending the next message. A message that arrives while the delegated
+	// session's turn is still in-flight is handled as a steer/follow-up and
+	// bypasses RegisterSessionIndex, so it wouldn't advance last_activity_at.
+	if _, ok := waitForSentMethod(h, token, "sendMessage", 15*time.Second); !ok {
+		t.Fatalf("bootstrap reply never sent (turn did not complete); stderr:\n%s", stderrTail(h.Stderr()))
+	}
+	// The reply send fires mid-turn (streaming/final text); doneInFlight
+	// runs slightly later when OrchestrateFullTurn returns. Sleep briefly so
+	// the bootstrap turn is fully closed before the next message — otherwise
+	// the delegated backend treats the 2nd message as a steer/follow-up and
+	// skips RegisterSessionIndex, so last_activity_at wouldn't advance.
+	time.Sleep(2 * time.Second)
 
-	// The first tick after bootstrap (idle ~1s < 5s interval) once the
-	// lastReflection time-gate has elapsed (~5s) fires the pass. Poll for the
-	// reflection marker rather than sleeping a fixed window.
+	// A second interaction is required to make the session reflection-eligible.
+	// Since #945, upsertLocked seeds last_reflection = last_activity at birth,
+	// so the bootstrap above (which IS the creation activity) leaves
+	// last_activity == last_reflection and the session is never "due". This
+	// fresh turn's RegisterSessionIndex advances last_activity past the seed.
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "second ping to advance activity",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second ping to advance activity", 15*time.Second) {
+		t.Fatalf("second interaction never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// The first tick after the activity advance, once the lastReflection
+	// time-gate has elapsed (~5s), fires the pass. Poll for the reflection
+	// marker rather than sleeping a fixed window.
 	if _, ok := waitForUserMessageContaining(t, h, "alpha", 25*time.Second, "Reflection Pass"); !ok {
 		t.Fatalf("reflection prompt never reached cc-stub as user_message; stderr:\n%s",
 			stderrTail(h.Stderr()))
@@ -685,7 +714,7 @@ func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
 		// interval=10s: the time-gate opens ~10s after boot and fires once;
 		// re-firing is then blocked until ~10s after that fire. We assert well
 		// inside that window. consolidation_enabled=false isolates reflection.
-		ExtraConfigTOML: "\n[reflection]\ninterval = \"10s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"10s\"\nbackend_quiet_period = \"1s\"\n\n[maintenance]\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -705,6 +734,25 @@ func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
 	})
 	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
 		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+	// Advance the session past its #945-seeded last_reflection with a second
+	// interaction so the first reflection pass can fire. Wait for the bootstrap
+	// turn to complete (reply delivered) and let doneInFlight fire so the next
+	// message starts a fresh turn (advancing last_activity_at) rather than
+	// steering. See TestL2_Cron_ReflectionFiresOnInterval for the rationale.
+	if _, ok := waitForSentMethod(h, token, "sendMessage", 15*time.Second); !ok {
+		t.Fatalf("bootstrap reply never sent (turn did not complete); stderr:\n%s", stderrTail(h.Stderr()))
+	}
+	time.Sleep(2 * time.Second)
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "second ping to advance activity",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second ping to advance activity", 15*time.Second) {
+		t.Fatalf("second interaction never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
 	countReflectionInjects := func() int {
@@ -765,7 +813,7 @@ func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
 		// interval=1s so the gate doesn't block; the in-flight filter is
 		// the only thing that should stop reflection. Disable
 		// consolidation so its timer doesn't muddy the count.
-		ExtraConfigTOML: "\n[reflection]\ninterval = \"1s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"1s\"\nbackend_quiet_period = \"1s\"\n\n[maintenance]\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -849,7 +897,7 @@ func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
 		// consolidation_enabled=false suppresses the sibling memory-
 		// consolidation timer that otherwise fires on the first tick
 		// and would create recorder growth unrelated to this assertion.
-		ExtraConfigTOML: "\n[reflection]\ninterval_enabled = false\ninterval = \"1s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		ExtraConfigTOML: "\n[reflection]\ninterval_enabled = false\ninterval = \"1s\"\nbackend_quiet_period = \"1s\"\n\n[maintenance]\nconsolidation_enabled = false\n",
 		ReadyTimeout:    30 * time.Second,
 	})
 
@@ -980,6 +1028,26 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 	})
 	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
 		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+	// Advance the session past its #945-seeded last_reflection with a second
+	// interaction so it becomes reflection-eligible. Wait for the bootstrap
+	// turn to complete (reply delivered) and let doneInFlight fire before the
+	// next message — otherwise the delegated backend steers it and skips
+	// RegisterSessionIndex, so last_activity_at wouldn't advance. See
+	// TestL2_Cron_ReflectionFiresOnInterval for the full rationale.
+	if _, ok := waitForSentMethod(h, token, "sendMessage", 15*time.Second); !ok {
+		t.Fatalf("bootstrap reply never sent (turn did not complete); stderr:\n%s", stderrTail(h.Stderr()))
+	}
+	time.Sleep(2 * time.Second)
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "second ping to advance activity",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second ping to advance activity", 15*time.Second) {
+		t.Fatalf("second interaction never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
 	// Write the HANG script so the upcoming reflection turn keeps
