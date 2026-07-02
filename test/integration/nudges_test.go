@@ -25,6 +25,13 @@ import (
 // drift.
 const nudgeHeaderMarker = "[Background nudge"
 
+// nudgeEndMarker mirrors internal/agent.nudgeEndMarker. It closes the nudge
+// region when nudges are bundled with a real user message in the same turn
+// (the start-of-turn regex/turn-interval path), so the agent can see where
+// the background nudge ends and the user's text begins. Kept in sync with
+// the source constant by the FooterVsEndMarker regression test below.
+const nudgeEndMarker = "[End of background nudge"
+
 // noResponseSentinelMarker mirrors agent.NoResponseSentinel. The footer
 // embeds this token so we can use it as a structural assertion that the
 // silence-vs-reply footer landed on a particular delivery path.
@@ -304,19 +311,28 @@ func TestL2_Nudges_PreAnswerGateInjectsBeforeFinalReply(t *testing.T) {
 	}
 }
 
-// TestL2_Nudges_FooterPresentOnAllDeliveryPaths is the regression net
-// for the 2026-05-14 footer unification refactor (30f577c3). Pre-refactor
-// only the pre_answer path appended the silence-vs-reply footer; the
-// other three paths (turn-interval, regex, after-tools) shipped a bare
-// nudge. Loads one rule per path, drives a single turn that triggers
-// all three, and asserts the NoResponseSentinel marker from nudgeFooter
-// appears in each corresponding user_message text_prefix.
+// TestL2_Nudges_FooterVsEndMarker_ByDeliveryPath is the regression net for
+// the nudge wrapper contract (TODO 130). The delivery paths deliberately
+// diverge on how they close the nudge region:
+//
+//   - Bundled paths (regex, turn-interval) prepend the nudge to the user's
+//     own message in the same turn. They carry nudgeEndMarker — a visible
+//     delimiter between the background nudge and the user's text — and DROP
+//     the NoResponseSentinel footer, because a reply to the user is always
+//     required on that path (the footer's "respond with [[NO_RESPONSE]]"
+//     guidance would contradict the user's message).
+//   - Standalone paths (after-tools) inject the nudge as its own user
+//     message mid-loop, with no user text following. They keep the
+//     NoResponseSentinel footer as silence-vs-reply guidance.
+//
+// This test seeds one rule per path, drives a single turn that triggers all
+// three, and asserts each body lands under the correct closing contract.
 //
 // Note: pre_answer is not covered here — it requires the
-// nudge_pre_answer_gate config knob plus a TurnResult-shape harness
-// path that's a separate gap. The three covered paths share the same
-// wrapNudge() helper so they're the meaningful regression surface.
-func TestL2_Nudges_FooterPresentOnAllDeliveryPaths(t *testing.T) {
+// nudge_pre_answer_gate config knob plus a TurnResult-shape harness path
+// that's a separate gap. It shares wrapNudge() with after-tools, so it's
+// covered transitively.
+func TestL2_Nudges_FooterVsEndMarker_ByDeliveryPath(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 7511
 	const regexBody = "FOOTER_REGEX_MARKER"
@@ -344,32 +360,62 @@ func TestL2_Nudges_FooterPresentOnAllDeliveryPaths(t *testing.T) {
 
 	pushUserMessage(t, h, "alpha", userID, "trigger all paths")
 
-	// Each rule body must appear in some user_message text_prefix that
-	// ALSO carries the NoResponseSentinel footer marker.
-	mustHaveFootered := []string{regexBody, turnIntervalBody, afterToolsBody}
+	// After-tools is a standalone injected message: it must carry the
+	// NoResponseSentinel footer (silence-vs-reply guidance, no user text
+	// follows). The two bundled bodies must NOT appear in a footered
+	// message — they belong to the bundled path which drops the footer.
 	deadline := time.Now().Add(30 * time.Second)
-	matched := map[string]bool{}
-	for time.Now().Before(deadline) && len(matched) < len(mustHaveFootered) {
+	afterToolsFootered := false
+	for time.Now().Before(deadline) && !afterToolsFootered {
 		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
 			if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
 				continue
 			}
-			if !strings.Contains(e.TextPrefix, agent.NoResponseSentinel) {
-				continue
-			}
-			for _, body := range mustHaveFootered {
-				if strings.Contains(e.TextPrefix, body) {
-					matched[body] = true
-				}
+			if strings.Contains(e.TextPrefix, afterToolsBody) &&
+				strings.Contains(e.TextPrefix, agent.NoResponseSentinel) {
+				afterToolsFootered = true
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	for _, body := range mustHaveFootered {
-		if !matched[body] {
-			t.Errorf("rule %q never appeared in a user_message that also carried the footer (%s); recorder:\n%s",
-				body, agent.NoResponseSentinel, recorderTail(t, h.RecorderPath()))
+	if !afterToolsFootered {
+		t.Errorf("after-tools body %q never appeared in a user_message carrying the footer (%s); recorder:\n%s",
+			afterToolsBody, agent.NoResponseSentinel, recorderTail(t, h.RecorderPath()))
+	}
+
+	// The bundled bodies (regex + turn-interval) share one start-of-turn
+	// user message: they must carry the end-marker delimiter and must NOT
+	// carry the NoResponseSentinel footer.
+	bundledMarked := false
+	bundledFooterLeaked := false
+	deadline = time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && !bundledMarked {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+				continue
+			}
+			// A bundled entry carries both bodies + the end-marker. (They
+			// fire together on the single start-of-turn user message.)
+			if strings.Contains(e.TextPrefix, regexBody) &&
+				strings.Contains(e.TextPrefix, turnIntervalBody) &&
+				strings.Contains(e.TextPrefix, nudgeEndMarker) {
+				bundledMarked = true
+			}
+			// Regression: the footer must NOT leak onto the bundled path.
+			if (strings.Contains(e.TextPrefix, regexBody) || strings.Contains(e.TextPrefix, turnIntervalBody)) &&
+				strings.Contains(e.TextPrefix, agent.NoResponseSentinel) {
+				bundledFooterLeaked = true
+			}
 		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !bundledMarked {
+		t.Errorf("bundled bodies (%q, %q) never appeared together in a user_message carrying the end-marker (%s); recorder:\n%s",
+			regexBody, turnIntervalBody, nudgeEndMarker, recorderTail(t, h.RecorderPath()))
+	}
+	if bundledFooterLeaked {
+		t.Errorf("NoResponseSentinel footer leaked onto a bundled (start-of-turn) nudge path — the footer must be dropped when a user message follows; recorder:\n%s",
+			recorderTail(t, h.RecorderPath()))
 	}
 }
 
