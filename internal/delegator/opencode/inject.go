@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -175,15 +176,38 @@ func (b *Backend) injectUser(ctx context.Context, inj delegator.Inject) error {
 // injectSteer handles SourceSteer. At idle + Turn present it degrades
 // to User-idle (mirroring ccstream's race-fix semantics). At idle +
 // no Turn it returns ErrTurnNotInFlight so the caller (Agent.Inbox)
-// re-routes through the normal idle path. Mid-turn it queues in
-// steerBuf identically to SourceUser (opencode has no priority
-// channel — see plan §Steer).
+// re-routes through the normal idle path. Mid-turn it buffers the steer
+// and aborts the active turn: opencode queues a mid-turn prompt_async
+// behind the active turn and POST /abort discards that queue, so the
+// steer can only land as a fresh turn AFTER the abort. The drain
+// (handlers.go + the backstop timer below) flushes the buffered steer
+// once the abort's event burst settles (pattern or 500ms, whichever
+// first). See inject.go header + handlers.go onSessionIdle.
 func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 	if b.IsTurnInFlight() {
+		// Mid-turn: buffer the steer and abort the active turn. A second
+		// steer arriving during the drain just appends (the flush combines
+		// all buffered messages), so the abort fires only once.
 		b.turnMu.Lock()
 		b.steerBuf = append(b.steerBuf, inj.Text)
+		if b.aborting {
+			b.turnMu.Unlock()
+			log.Debugf(b.logComponent(), "inject: steer appended mid-turn (abort drain in progress, %d buffered)", len(b.steerBuf))
+			return nil
+		}
+		b.aborting = true
+		b.abortIdlesSeen = 0
+		b.armAbortTimerLocked()
 		b.turnMu.Unlock()
-		log.Debugf(b.logComponent(), "inject: steer queued mid-turn (%d in buffer)", len(b.steerBuf))
+		log.Debugf(b.logComponent(), "inject: steer mid-turn → aborting active turn, drain pending")
+		if err := b.Interrupt(ctx); err != nil {
+			// Abort failed — clear drain state and fall back to flushing at
+			// the next natural OnSessionIdle (legacy behaviour).
+			b.turnMu.Lock()
+			b.disarmAbortLocked()
+			b.turnMu.Unlock()
+			log.Warnf(b.logComponent(), "inject: steer abort failed (%v); will flush at next idle", err)
+		}
 		return nil
 	}
 	// Idle.
@@ -403,4 +427,55 @@ func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegat
 	b.beginTurn(turn)
 	log.Infof(b.logComponent(), "flushSteerBuf: sending %d queued message(s) as follow-up turn", len(buf))
 	return b.sendPrompt(ctx, combined, nil)
+}
+
+// ---------------------------------------------------------------------------
+// Mid-turn steer abort-drain (opencode 1.17.11)
+// ---------------------------------------------------------------------------
+
+// armAbortTimerLocked arms the backstop timer that flushes the buffered steer
+// if the abort's idle burst never arrives (or arrives too slowly). Default
+// 500ms; overridable via abortDrainTimeout (tests). Caller must hold turnMu.
+func (b *Backend) armAbortTimerLocked() {
+	d := b.abortDrainTimeout
+	if d == 0 {
+		d = 500 * time.Millisecond
+	}
+	b.abortTimer = time.AfterFunc(d, b.abortDrainComplete)
+}
+
+// disarmAbortLocked clears abort-drain state and stops the timer. Caller must
+// hold turnMu.
+func (b *Backend) disarmAbortLocked() {
+	if b.abortTimer != nil {
+		b.abortTimer.Stop()
+		b.abortTimer = nil
+	}
+	b.aborting = false
+	b.abortIdlesSeen = 0
+}
+
+// abortDrainComplete flushes the buffered steer as a fresh turn once the abort
+// burst has drained. Called from exactly one of: onSessionIdle (after the 2nd
+// burst idle) or the backstop timer — whichever fires first wins; the other is
+// a no-op via the aborting flag. Safe to call from the dispatcher or timer
+// goroutine.
+func (b *Backend) abortDrainComplete() {
+	b.turnMu.Lock()
+	if !b.aborting {
+		b.turnMu.Unlock()
+		return
+	}
+	if b.abortTimer != nil {
+		b.abortTimer.Stop()
+		b.abortTimer = nil
+	}
+	b.aborting = false
+	b.abortIdlesSeen = 0
+	bufLen := len(b.steerBuf)
+	b.turnMu.Unlock()
+	log.Infof(b.logComponent(), "steer: abort drain complete (flushing %d buffered message(s))", bufLen)
+	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents { return nil }); err != nil {
+		log.Warnf(b.logComponent(), "steer: flushSteerBuf after abort drain: %v", err)
+	}
 }

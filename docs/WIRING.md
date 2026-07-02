@@ -621,17 +621,18 @@ The opencode backend drives OpenCode as a coding agent via its HTTP server API. 
 | `message.part.updated` (tool, completed/error) | `onMessagePartUpdated` | `OnToolEnd` |
 | `message.part.updated` (subtask) | `onMessagePartUpdated` | `OnSubagentText` (blockquote) |
 | `message.updated` (assistant) | `onMessageUpdated` | Store `lastModel`/`lastUsage` (no callback) |
-| `session.idle` | `onSessionIdle` | `OnTurnComplete` + flush `steerBuf` |
+| `session.idle` | `onSessionIdle` | `OnTurnComplete` + flush `steerBuf`; during an abort drain, counts burst idles and flushes the buffered steer once settled (see Steer divergence) |
 | `session.status` (busy) | `onSessionStatus` | `typingFunc(true)` |
 | `session.compacted` | `onSessionCompacted` | `onCompactionDone(0)` + close `compactDoneCh` |
 | `session.error` (ProviderAuthError) | `onSessionError` | `fanOutAuthFailure` |
+| `session.error` (MessageAbortedError) | `onSessionError` → `failInFlightTurn` | completes the aborted turn (steer abort-drain turn 1) |
 | `permission.updated` | `onPermissionUpdated` | `permPromptFn` (Allow/Deny/Always) |
 | `permission.updated` (type:question) | `handleQuestionPermission` | `permPromptFn` (option buttons) |
 | `permission.replied` | `onPermissionReplied` | cancel-listener fanout |
 
 **Divergences from ccstream:**
 
-- **Steer buffering:** opencode has no mid-turn queue (CC's `priority:"now"` fold has no equivalent). SourceSteer arriving mid-turn is buffered in `steerBuf` and flushed as a follow-up turn on `session.idle`. The follow-up uses a nil TurnEvents (no `OnTurnComplete`); text arrives via `SessionEvents.OnText`.
+- **Steer abort-drain (opencode 1.17.11):** opencode has no mid-turn fold queue (CC's `priority:"now"` has no equivalent). Empirically, a mid-turn `prompt_async` is queued behind the active turn, and `POST /abort` **discards** that queue (a turn sent before/during the abort is lost; a turn sent after survives). So a `SourceSteer` arriving mid-turn buffers in `steerBuf`, calls `Interrupt` (POST /abort) to kill the active turn, then — once the abort's event burst drains (`session.error:MessageAbortedError` + 2× `session.idle`, the empirically observed signature) OR a 500ms backstop timer fires, whichever comes first — flushes the buffered steer as a fresh follow-up turn via `flushSteerBuf`. A second steer during the drain just appends (one abort; the flush combines them). A premature-completion watchdog (`onSessionIdle` / `failInFlightTurn`) `Warnf`s if a turn ends with no text/tools outside a drain — catches any stray abort idle mis-attributed to the steered turn. Backend fields (turnMu-guarded): `aborting`, `abortIdlesSeen`, `abortTimer`, `abortDrainTimeout`. The follow-up uses a nil TurnEvents (no `OnTurnComplete`); text arrives via `SessionEvents.OnText`.
 - **Question tool:** opencode's built-in `question` tool surfaces as `permission.updated` with `type:"question"`. Metadata carries the question schema (header, text, options). `RespondToQuestion` POSTs the option label or typed text.
 - **Plan delivery:** Uses the prompt body's per-request `agent:"plan"` field (no `PATCH /config`, no swap-back). Simpler than ccstream's `EnterPlanMode` turn.
 - **No PostToolUse hooks:** opencode emits tool parts directly on its event bus — no external hook-helper binary needed.
@@ -771,7 +772,7 @@ type Steerer interface {
 }
 ```
 
-Interactive platforms supply a `Steerer` indirectly: `agent.driveAndDrainOrphans` constructs the steerer from the inbox's steer buffer and passes it to `Agent.RunTurn`, which forwards it to `turn.RunTurn`. The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries on the API path. The delegated path bypasses the steerer for mid-turn injection — `agent.Inbox.Enqueue` calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: ...})` directly when a steer arrives during an in-flight CC turn (Inject internally chains the Interrupt + SendUser sequence).
+Interactive platforms supply a `Steerer` indirectly: `agent.driveAndDrainOrphans` constructs the steerer from the inbox's steer buffer and passes it to `Agent.RunTurn`, which forwards it to `turn.RunTurn`. The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries on the API path. The delegated path bypasses the steerer for mid-turn injection — `agent.Inbox.Enqueue` calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: ...})` directly when a steer arrives during an in-flight CC turn. In the opencode backend Inject triggers the abort-drain sequence (Interrupt → drain the abort burst → flush the buffered steer as a fresh turn); in ccstream it folds via `priority:"now"`.
 
 ## Deferred Replies
 

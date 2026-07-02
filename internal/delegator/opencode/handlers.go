@@ -471,10 +471,20 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	b.turnMu.Lock()
 	b.turnEvents = nil
 	b.turnActive = false
+	wasAborting := b.aborting
 	b.turnMu.Unlock()
 
 	if turn != nil && turn.OnTurnComplete != nil {
 		turn.OnTurnComplete(result)
+	}
+
+	// Watchdog: a turn completing with neither text nor tools likely means a
+	// stray abort idle was mis-attributed to it — the residual race the abort
+	// drain guards against. turn==nil means the turn was already completed
+	// (e.g. the aborted turn 1 via failInFlightTurn), so this only fires for a
+	// real active turn that produced nothing. Skip during an abort drain.
+	if !wasAborting && turn != nil && result.Text == "" && result.ToolCalls == 0 {
+		log.Warnf(b.logComponent(), "onSessionIdle: turn completed with no text/tools — possible stray abort idle mis-attributed to steered turn")
 	}
 
 	// Signal WaitForTurn.
@@ -489,6 +499,26 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	if b.typingFunc != nil {
 		b.typingFunc(false)
 	}
+
+	// Abort-drain: a mid-turn steer aborted the active turn. Count the abort's
+	// burst idles (empirically 2 on opencode 1.17.11) and flush the buffered
+	// steer once the burst settles. The backstop timer (inject.go) covers a
+	// missing/slow burst. Whichever fires first calls abortDrainComplete; the
+	// other is a no-op via the aborting flag.
+	b.turnMu.Lock()
+	if b.aborting {
+		b.abortIdlesSeen++
+		done := b.abortIdlesSeen >= 2
+		n := b.abortIdlesSeen
+		b.turnMu.Unlock()
+		if done {
+			b.abortDrainComplete()
+		} else {
+			log.Debugf(b.logComponent(), "onSessionIdle: abort drain idle %d/2", n)
+		}
+		return
+	}
+	b.turnMu.Unlock()
 
 	// Flush steerBuf — any user/steer messages that arrived during the
 	// turn are sent as a follow-up. The follow-up turn uses a nil
@@ -606,10 +636,20 @@ func (b *Backend) failInFlightTurn(reason string) {
 	turn := b.turnEvents
 	ch := b.turnResultCh
 	text := b.turnText.String()
+	tools := b.turnTools
+	wasAborting := b.aborting
 	b.turnEvents = nil
 	b.turnActive = false
 	b.turnResultCh = nil
 	b.turnMu.Unlock()
+
+	// Watchdog (error half): an active turn dying with no text/tools outside
+	// an abort drain is notable — for a steered turn it could indicate a
+	// stray abort event mis-attributed. The turn-1 abort itself (aborting=true)
+	// legitimately completes with partial/no output, so is suppressed here.
+	if !wasAborting && turn != nil && text == "" && tools == 0 {
+		log.Warnf(b.logComponent(), "failInFlightTurn: active turn ended with no text/tools on %s — possible premature error on steered turn", reason)
+	}
 
 	if text == "" {
 		text = "⚠️ opencode session ended unexpectedly (" + reason + ")"
