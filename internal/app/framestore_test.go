@@ -36,6 +36,21 @@ func seed(s *frameStore, convID string, seq int64, sentMs int64) {
 	s.insert(frameWrite{convID: convID, seq: seq, wire: "wire-" + convID, sentMs: sentMs, visible: true})
 }
 
+func TestFrameStore_LastVisible(t *testing.T) {
+	s := tempFrameStore(t)
+	s.insert(frameWrite{convID: "c1", seq: 1, wire: "w1", sentMs: 100, visible: true, preview: "first"})
+	s.insert(frameWrite{convID: "c1", seq: 2, wire: "w2", sentMs: 200, visible: true, preview: "second"})
+	s.insert(frameWrite{convID: "c1", seq: 3, wire: "w3", sentMs: 300, visible: false, preview: ""}) // typing etc.
+
+	preview, sentMs, ok := s.LastVisible("c1")
+	if !ok || preview != "second" || sentMs != 200 {
+		t.Fatalf("LastVisible(c1) = (%q, %d, %v), want (second, 200, true)", preview, sentMs, ok)
+	}
+	if _, _, ok := s.LastVisible("ghost"); ok {
+		t.Error("LastVisible(ghost) should report ok=false")
+	}
+}
+
 func TestFrameStore_InsertMaxSeqRange(t *testing.T) {
 	s := tempFrameStore(t)
 	now := time.Now().UnixMilli()
@@ -64,9 +79,9 @@ func TestFrameStore_PurgeConvOrdersAfterQueuedAppends(t *testing.T) {
 	s := tempFrameStore(t)
 	now := time.Now().UnixMilli()
 	for i := int64(1); i <= 5; i++ {
-		s.Append("c1", "ag", i, mkWire(t, "c1", i), now, true)
+		s.Append("c1", "ag", i, mkWire(t, "c1", i), now, true, "")
 	}
-	s.Append("keep", "ag", 1, mkWire(t, "keep", 1), now, true)
+	s.Append("keep", "ag", 1, mkWire(t, "keep", 1), now, true, "")
 
 	if got := s.PurgeConv("c1"); got != 5 {
 		t.Errorf("PurgeConv(c1) deleted %d, want 5 (queued appends must flush before delete)", got)
@@ -107,7 +122,7 @@ func TestFrameStore_AppendDrainsOnClose(t *testing.T) {
 		t.Fatalf("newFrameStore: %v", err)
 	}
 	for i := int64(1); i <= 3; i++ {
-		s.Append("c1", "clutch", i, "w", time.Now().UnixMilli(), true)
+		s.Append("c1", "clutch", i, "w", time.Now().UnixMilli(), true, "")
 	}
 	s.Close() // drains the queue + closes
 

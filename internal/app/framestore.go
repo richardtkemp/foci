@@ -52,6 +52,7 @@ type frameWrite struct {
 	wire    string
 	sentMs  int64
 	visible bool
+	preview string
 	purge   bool
 	done    chan int64 // purge only: receives rows deleted
 }
@@ -74,6 +75,7 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 			sent_ms  INTEGER NOT NULL,
 			visible  INTEGER NOT NULL DEFAULT 1,
 			agent_id TEXT    NOT NULL DEFAULT '',
+			preview  TEXT    NOT NULL DEFAULT '',
 			PRIMARY KEY (conv_id, seq)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_frames_sent ON app_frames(sent_ms)`,
@@ -83,9 +85,11 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 		return nil, err
 	}
 	// Migrate an existing DB to carry agent_id (which conv belongs to which agent —
-	// needed to rebuild bindings at startup). Errors ignored: a "duplicate column"
-	// means it is already present (the repo's ALTER-ADD-COLUMN migration idiom).
+	// needed to rebuild bindings at startup) and preview (the visible frame's roster
+	// preview, so a restart can seed the roster snapshot). Errors ignored: a
+	// "duplicate column" means it is already present (the ALTER-ADD-COLUMN idiom).
 	_, _ = db.Exec(`ALTER TABLE app_frames ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE app_frames ADD COLUMN preview TEXT NOT NULL DEFAULT ''`)
 	s := &frameStore{
 		db:      db,
 		ttl:     ttl,
@@ -100,11 +104,11 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 // Append durably persists one sent frame. Non-blocking in the common case; if the
 // writer is saturated it writes synchronously rather than drop (durability beats
 // latency here). nil receiver is a no-op so a store-less hub (no data_dir) is safe.
-func (s *frameStore) Append(convID, agentID string, seq int64, wire string, sentMs int64, visible bool) {
+func (s *frameStore) Append(convID, agentID string, seq int64, wire string, sentMs int64, visible bool, preview string) {
 	if s == nil {
 		return
 	}
-	w := frameWrite{convID: convID, agentID: agentID, seq: seq, wire: wire, sentMs: sentMs, visible: visible}
+	w := frameWrite{convID: convID, agentID: agentID, seq: seq, wire: wire, sentMs: sentMs, visible: visible, preview: preview}
 	select {
 	case s.writeCh <- w:
 	default:
@@ -164,8 +168,8 @@ func (s *frameStore) insert(w frameWrite) {
 		v = 1
 	}
 	if _, err := s.db.Exec(
-		`INSERT OR REPLACE INTO app_frames (conv_id, seq, wire, sent_ms, visible, agent_id) VALUES (?, ?, ?, ?, ?, ?)`,
-		w.convID, w.seq, w.wire, w.sentMs, v, w.agentID,
+		`INSERT OR REPLACE INTO app_frames (conv_id, seq, wire, sent_ms, visible, agent_id, preview) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		w.convID, w.seq, w.wire, w.sentMs, v, w.agentID, w.preview,
 	); err != nil {
 		log.Errorf("app", "frame store insert (conv=%s seq=%d): %v", w.convID, w.seq, err)
 	}
@@ -238,6 +242,23 @@ func (s *frameStore) MaxSeq(convID string) int64 {
 		return seq.Int64
 	}
 	return 0
+}
+
+// LastVisible returns the newest user-visible frame's roster preview and send
+// time (ms) for convID — used to seed the roster's last-activity snapshot after a
+// restart. ok is false when the conversation has no stored visible frame.
+func (s *frameStore) LastVisible(convID string) (preview string, sentMs int64, ok bool) {
+	if s == nil {
+		return "", 0, false
+	}
+	err := s.db.QueryRow(
+		`SELECT preview, sent_ms FROM app_frames WHERE conv_id = ? AND visible = 1 ORDER BY seq DESC LIMIT 1`,
+		convID,
+	).Scan(&preview, &sentMs)
+	if err != nil {
+		return "", 0, false
+	}
+	return preview, sentMs, true
 }
 
 // Range returns up to limit frames with seq > fromSeq, in ascending seq order —
