@@ -63,6 +63,30 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 	}
 }
 
+// A plain user message must be echoed back as a durable user-role frame so it
+// persists to the replay store and a freshly-paired device can restore it — with
+// MessageID = the inbound envelope id so the sending device reconciles its
+// optimistic copy instead of double-rendering.
+func TestRouteUserTurn_EchoesUserMessage(t *testing.T) {
+	h := newTestHub()
+	registerFakeAgent(h, "ag")
+	c := fakeClientFor(h)
+	c.deviceID = "dev-1"
+
+	h.routeUserTurn(c, "conv-1", "ag", "hello world", nil, "env-1", 1)
+
+	got := drain(t, c)
+	if len(got) == 0 {
+		t.Fatal("user message was not echoed as a server frame")
+	}
+	if got[0].d["role"] != "user" || got[0].d["text"] != "hello world" {
+		t.Errorf("echo = %v, want role=user text=\"hello world\"", got[0])
+	}
+	if got[0].d["messageId"] != "env-1" {
+		t.Errorf("echo messageId = %v, want the inbound envelope id env-1", got[0].d["messageId"])
+	}
+}
+
 // Slash commands typed as messages ("/ping") must be intercepted and routed
 // to the command dispatch path — not enqueued as an agent turn (which would
 // fire a typing indicator and send the text to the LLM). Also covers dot-alias
