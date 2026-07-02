@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/log"
@@ -32,14 +33,18 @@ import (
 // hard crash can lose only the last few in-flight frames (bounded; the offline
 // push + history reconcile cover the worst case).
 type frameStore struct {
-	db      *sql.DB
-	ttl     time.Duration
-	writeCh chan frameWrite
-	done    chan struct{}
-	wg      sync.WaitGroup
+	db             *sql.DB
+	ttl            time.Duration
+	writeCh        chan frameWrite
+	done           chan struct{}
+	wg             sync.WaitGroup
+	lastInlineWarn atomic.Int64 // unix nanos of the last saturation warn (rate-limit)
 }
 
-// frameWrite is one pending durable append.
+// frameWrite is one pending durable write. Normally an append; when purge is
+// set it deletes all frames for convID instead. Purges go through the same FIFO
+// queue as appends so a delete can't race ahead of appends still queued for the
+// conv (which would re-insert after the delete and resurrect an archived conv).
 type frameWrite struct {
 	convID  string
 	agentID string
@@ -47,6 +52,8 @@ type frameWrite struct {
 	wire    string
 	sentMs  int64
 	visible bool
+	purge   bool
+	done    chan int64 // purge only: receives rows deleted
 }
 
 // storedFrame is one frame read back for replay/backfill.
@@ -55,7 +62,7 @@ type storedFrame struct {
 	wire string
 }
 
-const frameWriteQueue = 256 // async write backlog before Append falls back to sync
+const frameWriteQueue = 1024 // async write backlog before Append falls back to sync
 
 // newFrameStore opens (or creates) the durable frame DB and starts its writer.
 func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
@@ -101,7 +108,15 @@ func (s *frameStore) Append(convID, agentID string, seq int64, wire string, sent
 	select {
 	case s.writeCh <- w:
 	default:
-		s.insert(w) // queue full — write inline so nothing is lost
+		// Queue full: write inline so nothing is lost. This means a second
+		// goroutine now writes concurrently with the writer — safe (pool-wide
+		// busy_timeout), but a sign frames are outpacing the DB. Warn, rate-
+		// limited to once/5s so a burst doesn't flood the log.
+		now := time.Now().UnixNano()
+		if last := s.lastInlineWarn.Load(); now-last > int64(5*time.Second) && s.lastInlineWarn.CompareAndSwap(last, now) {
+			log.Warnf("app", "frame store write queue saturated (cap=%d) — writing inline; frames outpacing DB drain", cap(s.writeCh))
+		}
+		s.insert(w)
 	}
 }
 
@@ -111,18 +126,34 @@ func (s *frameStore) writer() {
 	for {
 		select {
 		case w := <-s.writeCh:
-			s.insert(w)
+			s.apply(w)
 		case <-s.done:
 			for {
 				select {
 				case w := <-s.writeCh:
-					s.insert(w)
+					s.apply(w)
 				default:
 					return
 				}
 			}
 		}
 	}
+}
+
+// apply dispatches a queued write to insert or purge.
+func (s *frameStore) apply(w frameWrite) {
+	if w.purge {
+		res, err := s.db.Exec(`DELETE FROM app_frames WHERE conv_id = ?`, w.convID)
+		if err != nil {
+			log.Errorf("app", "frame store PurgeConv (conv=%s): %v", w.convID, err)
+			w.done <- 0
+			return
+		}
+		n, _ := res.RowsAffected()
+		w.done <- n
+		return
+	}
+	s.insert(w)
 }
 
 // insert writes one frame. INSERT OR REPLACE keeps the latest wire for a
@@ -185,13 +216,9 @@ func (s *frameStore) PurgeConv(convID string) int64 {
 	if s == nil {
 		return 0
 	}
-	res, err := s.db.Exec(`DELETE FROM app_frames WHERE conv_id = ?`, convID)
-	if err != nil {
-		log.Errorf("app", "frame store PurgeConv (conv=%s): %v", convID, err)
-		return 0
-	}
-	n, _ := res.RowsAffected()
-	return n
+	done := make(chan int64, 1)
+	s.writeCh <- frameWrite{convID: convID, purge: true, done: done}
+	return <-done
 }
 
 // MaxSeq returns the highest persisted seq for a conversation (0 if none). Used
