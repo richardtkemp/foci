@@ -279,41 +279,34 @@ func (h *Hub) handleConversationSetDefault(client *wsClient, f fap.ConversationS
 	})
 }
 
-// handleConversationArchive archives a conversation: it purges the conversation's
-// durable replay frames (excluding it from the startup binding restore — presence
-// of frames IS the restore signal, so there is no archived flag to store), drops
-// its live binding, flips the session status to archived (which also removes it
-// from periodic reflection, whose query filters status='active'), and fires one
-// FINAL reflection if the session is due (reusing the same "activity since last
-// reflection" gate). One-directional: there is no server-side unarchive — the
-// app's unarchive is a local re-show, and the binding is recreated lazily on its
-// next use. (#app-binding-restore)
-func (h *Hub) handleConversationArchive(_ *wsClient, f fap.ConversationArchive) {
-	h.mu.Lock()
+// handleConversationArchive sets or clears the archived flag on a conversation.
+// Reversible — unlike the old destructive archive, this does NOT purge replay
+// frames, drop the binding, flip session status, or fire a final reflection.
+// It persists only the is_archived flag (keyed by agent+platform+chatID in
+// chat_metadata, alongside is_default) and pushes back an updated roster so the
+// app and every other device reconciles. The binding stays live: inbound frames
+// still flow and history is retained, so unarchive (Archived=false) restores the
+// full thread. Mirrors handleConversationSetDefault (the established per-chat-
+// metadata round-trip). (#app-archive-flag)
+func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArchive) {
+	h.mu.RLock()
 	b := h.convs[f.ConversationID]
-	if b != nil {
-		delete(h.convs, f.ConversationID)
-		delete(h.bySession, b.sessionKey)
-	}
-	h.mu.Unlock()
-
-	purged := h.frames.PurgeConv(f.ConversationID)
+	h.mu.RUnlock()
 	if b == nil {
-		log.Debugf("app", "archive %s: no live binding (frames purged=%d)", f.ConversationID, purged)
+		log.Debugf("app", "archive %s: no live binding (flag not set)", f.ConversationID)
 		return
 	}
-	// Final reflection BEFORE flipping status — gated by reflection's own
-	// "activity since last reflection" rule, so an already-reflected session with
-	// no new input is skipped. nil when no reflector is wired (tests, no periodic).
-	if h.reflectOnArchive != nil {
-		h.reflectOnArchive(b.sessionKey)
-	}
-	// Flip status last so the session stops being picked up by periodic reflection
-	// (its query filters status='active').
 	if idx := h.deps.SessionIndex; idx != nil {
-		idx.UpdateStatus(b.sessionKey, session.SessionStatusArchived)
+		if err := idx.SetArchivedChat(b.agentID, "app", b.chatID, f.Archived); err != nil {
+			log.Warnf("app", "archive %s (archived=%v): %v", f.ConversationID, f.Archived, err)
+		}
 	}
-	log.Infof("app", "archived conversation %s (session %s, frames purged=%d)", f.ConversationID, b.sessionKey, purged)
+	log.Infof("app", "archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.sessionKey)
+	client.sendRaw(fap.HelloServer{
+		Version: fap.ProtocolVersion,
+		Caps:    h.caps(),
+		Agents:  h.agentRoster(),
+	})
 }
 
 // routeCommand dispatches a slash command through the agent's command registry,

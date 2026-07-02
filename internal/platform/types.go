@@ -85,6 +85,8 @@ type SessionIndex interface {
 	SetDefaultChat(agentID, platform string, chatID int64) error
 	DefaultChatForAgent(agentID, platform string) int64
 	ClearDefaultChat(agentID, platform string) error
+	SetArchivedChat(agentID, platform string, chatID int64, archived bool) error
+	ArchivedChatsForAgent(agentID, platform string) map[int64]bool
 }
 
 type SendOptions struct {

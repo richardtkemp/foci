@@ -70,8 +70,9 @@ func TestStartAll_RestoresBindings(t *testing.T) {
 	}
 }
 
-// TestHandleConversationArchive proves archive purges frames, drops the binding,
-// and fires the final-reflection callback with the session key.
+// TestHandleConversationArchive proves archive sets the is_archived flag
+// (reversibly) and leaves the binding + frames intact — it does NOT purge,
+// drop the binding, or flip session status. Round-trips through unarchive.
 func TestHandleConversationArchive(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
@@ -85,25 +86,64 @@ func TestHandleConversationArchive(t *testing.T) {
 	h.convs["c1"] = b
 	h.bySession[b.sessionKey] = b
 
-	var reflected string
-	h.reflectOnArchive = func(key string) { reflected = key }
-
-	h.handleConversationArchive(nil, fap.ConversationArchive{ConversationID: "c1"})
-
-	if h.convs["c1"] != nil || h.bySession[b.sessionKey] != nil {
-		t.Error("archive must drop the binding from convs + bySession")
+	// Archive: flag set, binding + frames retained.
+	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "c1", Archived: true})
+	if !idx.ArchivedChatsForAgent("clutch", "app")[42] {
+		t.Error("archive must set the is_archived flag for chatID 42")
 	}
-	if len(s.RestorableConvs()) != 0 {
-		t.Error("archive must purge the conv's frames")
+	if h.convs["c1"] == nil || h.bySession[b.sessionKey] == nil {
+		t.Error("archive must NOT drop the binding (flag-based, not destructive)")
 	}
-	if reflected != "clutch/capp/9" {
-		t.Errorf("reflectOnArchive fired with %q, want the session key", reflected)
+	if len(s.RestorableConvs()) != 1 {
+		t.Error("archive must NOT purge frames (history retained for unarchive)")
 	}
 
-	// Unknown conversation: no panic, callback not fired.
-	reflected = ""
-	h.handleConversationArchive(nil, fap.ConversationArchive{ConversationID: "ghost"})
-	if reflected != "" {
-		t.Error("archive of unknown conv must not fire reflection")
+	// Unarchive: flag cleared, binding + frames still intact.
+	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "c1", Archived: false})
+	if idx.ArchivedChatsForAgent("clutch", "app")[42] {
+		t.Error("unarchive must clear the is_archived flag")
+	}
+	if h.convs["c1"] == nil {
+		t.Error("unarchive must leave the binding live")
+	}
+
+	// Unknown conversation: no panic, no flag written.
+	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "ghost", Archived: true})
+	if len(idx.ArchivedChatsForAgent("clutch", "app")) != 0 {
+		t.Error("archive of unknown conv must not write a flag")
+	}
+}
+
+// TestAgentRoster_MarksArchivedConversation proves the roster surfaces Archived
+// for chats flagged is_archived on the app platform, and only those — mirroring
+// the IsDefault roster test. The roster is the app's source of truth for
+// archived state across devices and fresh pairings.
+func TestAgentRoster_MarksArchivedConversation(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerBareAgent(h, "ag")
+	h.convs["c1"] = &convBinding{convID: "c1", agentID: "ag", chatID: 42}
+	h.convs["c2"] = &convBinding{convID: "c2", agentID: "ag", chatID: 99}
+	if err := idx.SetArchivedChat("ag", "app", 99, true); err != nil {
+		t.Fatal(err)
+	}
+
+	roster := h.agentRoster()
+	if len(roster) != 1 {
+		t.Fatalf("roster = %d agents, want 1", len(roster))
+	}
+	var archived, total int
+	for _, ci := range roster[0].Conversations {
+		total++
+		if ci.Archived {
+			archived++
+			if ci.ID != "c2" {
+				t.Errorf("Archived set on %q, want c2 (chatID 99)", ci.ID)
+			}
+		}
+	}
+	if total != 2 || archived != 1 {
+		t.Fatalf("roster convs total=%d archived=%d, want 2/1", total, archived)
 	}
 }

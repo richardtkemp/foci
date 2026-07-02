@@ -194,9 +194,10 @@ type restorableConv struct {
 
 // RestorableConvs returns the conversations that should have their bindings
 // rebuilt at startup: those with at least one VISIBLE frame (a real message, not
-// transient typing) and a known agent_id. Archived conversations have had their
-// frames purged (PurgeConv), so presence here IS the "non-archived & active"
-// signal — no archived flag needed (#app-binding-restore). Legacy rows with an
+// transient typing) and a known agent_id. Archive is now flag-based (not
+// frame-purging), so archived conversations are present here too and get
+// restored — their archived state is surfaced separately via the roster
+// (agentRoster reads is_archived from chat_metadata). Legacy rows with an
 // empty agent_id (pre-migration) are skipped: their binding can't be rebuilt
 // without the agent, and they recover lazily on the app's next open.
 func (s *frameStore) RestorableConvs() []restorableConv {

@@ -132,6 +132,13 @@ type ConversationInfo struct {
 	// platform (used by keepalive/cron routing; rendered as the golden pin in the
 	// app). Server-authoritative; set via ConversationSetDefault.
 	IsDefault bool `json:"isDefault,omitempty"`
+	// Archived marks this conversation as hidden from the roster. Reversible —
+	// the server retains replay frames, the binding, and the session, so unarchive
+	// restores full history. Server-authoritative; set via ConversationArchive.
+	// Surfaced here so the roster reconcile is the app's source of truth and a
+	// freshly-paired device learns the archived state without a local column to
+	// seed from.
+	Archived bool `json:"archived,omitempty"`
 	// Typing is true iff a turn is in flight on this conversation. It is the roster
 	// snapshot half of the typing indicator; the Typing frame carries live deltas —
 	// the same snapshot+delta pairing as SessionKey/SessionUpdate.
@@ -504,14 +511,18 @@ type ConversationSetDefault struct {
 	IsDefault      bool   `json:"isDefault"`
 }
 
-// ConversationArchive marks a conversation archived (one-directional — there is
-// no server-side unarchive; the app's unarchive is a local re-show). The server
-// purges the conversation's durable replay frames (so it is excluded from the
-// startup binding restore), drops its live binding, flips the session status to
-// archived (which also stops periodic reflection), and fires one final
-// reflection if the session is due. See docs/WIRING.md → app binding restore.
+// ConversationArchive sets or clears the archived flag on a conversation.
+// Reversible — the server does NOT purge replay frames, drop the binding, or
+// flip session status; it only persists the flag (keyed by agent+platform+chatID
+// in chat_metadata, alongside is_default) and pushes back an updated roster so
+// every device reconciles. Archived conversations stay live: inbound frames
+// still flow, history is retained, and unarchive is a real server action
+// (Archived=false) rather than a local re-show. See docs/WIRING.md → app
+// binding restore.
 type ConversationArchive struct {
 	ConversationID string `json:"conversationId"`
+	// Archived is true to archive (hide from roster), false to unarchive.
+	Archived bool `json:"archived"`
 }
 
 // ConversationList re-requests the roster (payload-less).
