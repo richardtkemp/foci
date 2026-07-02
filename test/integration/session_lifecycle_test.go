@@ -980,6 +980,19 @@ func TestL2_SessionLifecycle_ReloadOnCompactBouncesSession(t *testing.T) {
 		t.Fatalf("no prime session id in recorder:\n%s", recorderTail(t, h.RecorderPath()))
 	}
 
+	// The post-compaction reload-bounce is gated on the on-disk system prompt
+	// having changed since session start (404aacbf: skip the bounce when the
+	// prompt is unchanged — no reload needed). Edit a character file AFTER the
+	// priming turn so the prompt hash differs and the bounce actually fires;
+	// otherwise the test would never exercise the resume path it asserts on.
+	marker := "\n\nMARKER-RELOADONCOMPACT-7c3e1a9b distinctive reload sentinel line.\n"
+	craft := filepath.Join(h.AgentWorkspace("alpha"), "character", "CRAFT.md")
+	if existing, err := os.ReadFile(craft); err != nil {
+		t.Fatalf("read CRAFT.md: %v", err)
+	} else if err := os.WriteFile(craft, append(existing, []byte(marker)...), 0o600); err != nil {
+		t.Fatalf("append marker to CRAFT.md: %v", err)
+	}
+
 	// "/compact run" (the run subcommand) compacts directly; bare "/compact"
 	// would only open a confirmation menu that never reaches the backend. The
 	// stub then emits status=compacting then compact_boundary. Wait for the

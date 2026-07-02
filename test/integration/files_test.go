@@ -1059,8 +1059,12 @@ func TestL2_Files_ReplyToMessageWithFile_QuoteContextPreserved(t *testing.T) {
 			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
 	tp := entry.TextPrefix
-	if !strings.Contains(tp, "[Replying to: "+quotedText+"]") {
-		t.Errorf("reply context lost — expected '[Replying to: %s]' in user_message; got:\n%s", quotedText, tp)
+	// The reply header carries a TZ-dependent timestamp —
+	// "[Replying to (ts): <quoted>]" (bot_receive.go origTS). Assert the
+	// header prefix and the quoted text both reach the agent, without
+	// coupling to the timestamp (#962).
+	if !strings.Contains(tp, "[Replying to") || !strings.Contains(tp, quotedText) {
+		t.Errorf("reply context lost — expected '[Replying to ...: %s]' in user_message; got:\n%s", quotedText, tp)
 	}
 	if !strings.Contains(tp, "[Image saved to:") {
 		t.Errorf("saved-path tag missing — expected '[Image saved to:' in user_message; got:\n%s", tp)
