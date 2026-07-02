@@ -103,6 +103,13 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	cmd.Dir = opts.WorkDir
 	cmd.Env = os.Environ()
 
+	// Turn completion is keyed to CC's session_state_changed running/idle SDK
+	// events (see OnSystem / onSessionIdle) — opt-in in CC, so the backend
+	// enables them itself. Placed before opts.Env so a per-agent
+	// backend_config.env can override for debugging (the backend then falls
+	// back to complete-on-result with a Warnf).
+	cmd.Env = append(cmd.Env, "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1")
+
 	// Apply extra environment variables from StartOptions (e.g. BASH_ENV,
 	// FOCI_SOCK from the exec bridge created by DelegatedManager).
 	for k, v := range opts.Env {
@@ -417,11 +424,15 @@ func (b *Backend) finalizeExit(reason error) {
 		}
 
 		// Drain any in-flight turn so callers waiting on CompletionChan or
-		// WaitForTurn don't block forever.
+		// WaitForTurn don't block forever. The subprocess is gone, so no
+		// idle event will ever complete this turn — claim it here.
 		b.turnMu.Lock()
 		turn := b.turnEvents
 		b.turnEvents = nil
 		b.turnActive = false
+		b.stashedResult = nil
+		b.stashedResultMsg = nil
+		b.redispatchInFlight = false
 		resultCh := b.turnResultCh
 		b.turnMu.Unlock()
 		log.Debugf(component, "finalizeExit: post-turnMu turn_nil=%v turn_otc_nil=%v elapsed=%s", turn == nil, turn == nil || turn.OnTurnComplete == nil, time.Since(start))

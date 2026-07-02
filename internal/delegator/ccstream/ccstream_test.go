@@ -973,7 +973,7 @@ func TestTextDelivery_NoHandler_GoesToSessionEvents(t *testing.T) {
 	})
 	b.beginTurn(&delegator.TurnEvents{
 		OnTurnComplete: func(_ *delegator.TurnResult) { turnCompletedFired = true },
-	}, true)
+	})
 
 	// Round 1: text during the turn — SessionEvents.OnText should fire.
 	roundOne := &AssistantMessage{
