@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -253,56 +254,74 @@ func TestInject_User_InFlight_QueuedToSteerBuf(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SourceSteer — queued mid-turn, degrades to User-idle when Turn present,
-// returns ErrTurnNotInFlight when no Turn
+// SourceSteer mid-turn — abort the active turn, drain the abort's event burst,
+// then flush the buffered steer as a fresh turn. At idle it degrades to
+// User-idle (Turn present) or returns ErrTurnNotInFlight (no Turn).
 // ---------------------------------------------------------------------------
 
-func TestInject_Steer_InFlight_QueuedToSteerBuf_FlushedOnIdle(t *testing.T) {
-	// Verifies the full steer lifecycle: steer arrives mid-turn → text
-	// is buffered; flushSteerBuf is called → buffered text becomes a
-	// follow-up turn via POST /prompt_async. This is the test plan §6.3
-	// called out as the canonical opencode steer divergence from
-	// ccstream.
+func TestInject_Steer_InFlight_AbortsDrainsThenFlushes(t *testing.T) {
+	// Verifies the steer lifecycle on opencode 1.17.11: a steer arriving
+	// mid-turn buffers, aborts the active turn (POST /abort), and once the
+	// abort's event burst drains (session.error + 2× session.idle) the buffered
+	// steer(s) flush as a single combined follow-up turn. A second steer during
+	// the drain just appends (one abort, not two).
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
+	// Make the backstop timer effectively never fire so the test drives the
+	// drain deterministically via simulated events.
+	b.abortDrainTimeout = time.Hour
 
-	// Begin a turn (simulating a user turn already in progress).
+	// Turn 1 in progress.
 	b.beginTurn(&delegator.TurnEvents{})
 
 	// Two steers arrive mid-turn.
 	if err := b.Inject(context.Background(), delegator.Inject{
-		Source: delegator.SourceSteer,
-		Text:   "first steer",
+		Source: delegator.SourceSteer, Text: "first steer",
 	}); err != nil {
 		t.Fatalf("Inject first steer: %v", err)
 	}
 	if err := b.Inject(context.Background(), delegator.Inject{
-		Source: delegator.SourceSteer,
-		Text:   "second steer",
+		Source: delegator.SourceSteer, Text: "second steer",
 	}); err != nil {
 		t.Fatalf("Inject second steer: %v", err)
 	}
 
-	// Nothing POSTed yet — both should be buffered.
+	// Exactly one /abort (the first steer triggered it; the second appended),
+	// and no follow-up turn yet.
+	if got := rec.countPath("/session/sess-inject/abort"); got != 1 {
+		t.Errorf("/abort POSTs = %d, want 1", got)
+	}
 	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
-		t.Errorf("pre-flush POSTs = %d, want 0", got)
+		t.Errorf("pre-drain /prompt_async POSTs = %d, want 0", got)
+	}
+	b.turnMu.Lock()
+	bufLen := len(b.steerBuf)
+	aborting := b.aborting
+	b.turnMu.Unlock()
+	if bufLen != 2 {
+		t.Errorf("steerBuf len = %d, want 2", bufLen)
+	}
+	if !aborting {
+		t.Error("aborting = false after mid-turn steer, want true")
 	}
 
-	// flushSteerBuf simulates Step 7's OnSessionIdle path.
-	var newTurn delegator.TurnEvents
-	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents { return &newTurn }); err != nil {
-		t.Fatalf("flushSteerBuf: %v", err)
+	// Drain: session.error (ErrMessageAborted) completes turn 1, then the two
+	// burst idles. The first idle advances the counter; the second fires the
+	// flush.
+	b.onSessionError(b.sessionID, &MessageError{Name: ErrMessageAborted})
+	b.onSessionIdle(b.sessionID)
+	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
+		t.Errorf("after 1st idle /prompt_async POSTs = %d, want 0 (drain not complete)", got)
 	}
+	b.onSessionIdle(b.sessionID)
 
-	// Exactly one POST should have fired — the two steers combined
-	// into a single message with \n\n separator (plan §6.2 design
-	// decision: combine to avoid multiplying model round-trips).
+	// Exactly one follow-up turn, combining both steers with \n\n.
 	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 1 {
-		t.Errorf("post-flush POSTs = %d, want 1 (combined follow-up turn)", got)
+		t.Errorf("post-drain /prompt_async POSTs = %d, want 1", got)
 	}
 	req, ok := rec.lastPath("/session/sess-inject/prompt_async")
 	if !ok {
-		t.Fatal("no /prompt_async recorded after flush")
+		t.Fatal("no /prompt_async recorded after drain")
 	}
 	var body struct {
 		Parts []struct {
@@ -316,12 +335,52 @@ func TestInject_Steer_InFlight_QueuedToSteerBuf_FlushedOnIdle(t *testing.T) {
 		t.Errorf("combined text = %q, want %q", body.Parts[0].Text, "first steer\n\nsecond steer")
 	}
 
-	// steerBuf should be drained.
+	// Drain state cleared; buffer drained.
 	b.turnMu.Lock()
-	remaining := len(b.steerBuf)
+	aborting = b.aborting
+	bufLen = len(b.steerBuf)
 	b.turnMu.Unlock()
-	if remaining != 0 {
-		t.Errorf("steerBuf len = %d after flush, want 0", remaining)
+	if aborting {
+		t.Error("aborting = true after drain, want false")
+	}
+	if bufLen != 0 {
+		t.Errorf("steerBuf len = %d after drain, want 0", bufLen)
+	}
+}
+
+func TestInject_Steer_InFlight_BackstopTimerFlushes(t *testing.T) {
+	// If the abort's idle burst never arrives, the backstop timer flushes the
+	// buffered steer anyway. Uses a short timeout so the test doesn't block.
+	rec := &recordingHandler{}
+	b := newReadyBackend(t, rec)
+	b.abortDrainTimeout = 5 * time.Millisecond
+
+	b.beginTurn(&delegator.TurnEvents{})
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSteer, Text: "timer steer",
+	}); err != nil {
+		t.Fatalf("Inject steer: %v", err)
+	}
+	if got := rec.countPath("/session/sess-inject/abort"); got != 1 {
+		t.Errorf("/abort POSTs = %d, want 1", got)
+	}
+
+	// Don't simulate any idles; wait for the backstop to fire.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if rec.countPath("/session/sess-inject/prompt_async") >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 1 {
+		t.Errorf("backstop /prompt_async POSTs = %d, want 1 (timer should have flushed)", got)
+	}
+	b.turnMu.Lock()
+	aborting := b.aborting
+	b.turnMu.Unlock()
+	if aborting {
+		t.Error("aborting = true after backstop, want false")
 	}
 }
 

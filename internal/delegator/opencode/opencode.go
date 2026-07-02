@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -208,6 +209,20 @@ type Backend struct {
 	// turn are buffered here and flushed by flushSteerBuf when the
 	// dispatcher's OnSessionIdle fires. Guarded by turnMu.
 	steerBuf []string
+
+	// Abort-drain state for a mid-turn SourceSteer. Empirically (opencode
+	// 1.17.11): opencode queues a mid-turn prompt_async behind the active
+	// turn, and POST /abort discards that queue, so a steer must ABORT the
+	// active turn, drain the abort's event burst (session.error +
+	// 2× session.idle), then send the buffered steer as a fresh turn. A
+	// turn sent before/during the abort is lost; a turn sent after survives.
+	// aborting gates the drain; abortIdlesSeen counts burst idles;
+	// abortTimer is the backstop; abortDrainTimeout is the backstop delay
+	// (default 500ms, overridable for tests). Guarded by turnMu.
+	aborting         bool
+	abortIdlesSeen   int
+	abortTimer       *time.Timer
+	abortDrainTimeout time.Duration
 
 	// Callbacks — set before Start, read-only after. Each is referenced
 	// by the matching Set* method below; that's enough production-code
