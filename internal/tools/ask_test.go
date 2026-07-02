@@ -121,6 +121,37 @@ func execAsk(t *testing.T, tool *Tool, raw string) ToolResult {
 	return res
 }
 
+// TestAsk_OnResolveFiresWhenAnswered proves the ask-resolve hook (#984): when a
+// session's pending ask clears, WithOnResolve's callback fires with that session
+// key so deferred injections can be redelivered.
+func TestAsk_OnResolveFiresWhenAnswered(t *testing.T) {
+	t.Parallel()
+	p := &fakePresenter{}
+	d := &fakeDeliver{}
+	resolved := make(chan string, 1)
+	tool, _ := NewAskTool(p.present, nil, d.deliver, nil, nil, "test",
+		WithOnResolve(func(sk string) { resolved <- sk }))
+
+	execAsk(t, tool, `{"questions":[{"question":"Which color?","header":"Color","options":[{"label":"Red"},{"label":"Blue"}]}]}`)
+
+	select {
+	case <-resolved:
+		t.Fatal("onResolve fired before the ask was answered")
+	default:
+	}
+
+	p.answer("qa:1")
+
+	select {
+	case got := <-resolved:
+		if got != askSession {
+			t.Fatalf("onResolve fired with %q, want %q", got, askSession)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("onResolve did not fire within 1s of the ask being answered")
+	}
+}
+
 func TestAsk_ReturnsImmediatelyAndPresentsFirst(t *testing.T) {
 	t.Parallel()
 	tool, _, p, _ := newAskFixture()
