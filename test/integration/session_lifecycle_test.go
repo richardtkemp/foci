@@ -47,6 +47,9 @@ func sendText(h *testharness.Harness, token string, chatID, userID int64, text s
 // timeout. Useful for asserting that a slash command's reply (or an
 // error message) landed in Telegram.
 func waitForSendMessageContaining(h *testharness.Harness, token, substr string, timeout time.Duration) string {
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, call := range h.TelegramStub().PeekSent(token) {
@@ -97,6 +100,9 @@ func initSystemsIn(entries []recorderEntry, workdirSubstr string) []recorderEntr
 // hit) and a bool indicating whether the threshold was reached.
 func waitForInvocationCount(t *testing.T, h *testharness.Harness, workdirSubstr string, n int, timeout time.Duration) ([]recorderEntry, bool) {
 	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		invs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), workdirSubstr)
@@ -112,6 +118,9 @@ func waitForInvocationCount(t *testing.T, h *testharness.Harness, workdirSubstr 
 // appear for the workdir substring, or the deadline elapses.
 func waitForUserMessageCount(t *testing.T, h *testharness.Harness, workdirSubstr string, n int, timeout time.Duration) ([]recorderEntry, bool) {
 	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		ums := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), workdirSubstr)

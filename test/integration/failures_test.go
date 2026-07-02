@@ -389,6 +389,9 @@ func TestL2_Failures_BackendKilledMidTurnByGateway(t *testing.T) {
 // variant uses the per-agent workdir convention.
 func waitForUserMessageContainingAlpha(t *testing.T, h *testharness.Harness, marker string, timeout time.Duration) bool {
 	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, e := range readRecorderEntries(t, h.RecorderPath()) {

@@ -60,6 +60,9 @@ func pushTelegramText(t *testing.T, h *testharness.Harness, agentID string, user
 // "" on timeout.
 func waitForSendMessageText(t *testing.T, h *testharness.Harness, token string, timeout time.Duration, requireAll ...string) string {
 	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, call := range h.TelegramStub().PeekSent(token) {

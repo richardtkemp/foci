@@ -135,6 +135,9 @@ func findControlResponse(t *testing.T, h *testharness.Harness, requestID string,
 // the callback button.
 func waitForPermissionPrompt(t *testing.T, stub *testharness.TelegramStub, token string, textSubstr string, timeout time.Duration) (testharness.SentCall, bool) {
 	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, call := range stub.PeekSent(token) {

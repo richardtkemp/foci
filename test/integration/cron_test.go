@@ -74,6 +74,9 @@ func gwUnixClient(sockPath string) *http.Client {
 // waitForSocket polls until the gateway's unix socket is reachable.
 func waitForSocket(t *testing.T, sockPath string, timeout time.Duration) {
 	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if fi, err := os.Lstat(sockPath); err == nil && fi.Mode()&os.ModeSocket != 0 {

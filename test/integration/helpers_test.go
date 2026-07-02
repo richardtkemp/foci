@@ -16,6 +16,9 @@ import (
 // the timeout expires. Returns true on hit. Used for assertions about
 // foci's log surface (escalate lines, sanitized error messages).
 func waitForStderr(h *testharness.Harness, substr string, timeout time.Duration) bool {
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if strings.Contains(h.Stderr(), substr) {
