@@ -524,9 +524,10 @@ func TestBackend_Close_DeregistersAndReleases(t *testing.T) {
 		t.Error("Backend still registered after Close")
 	}
 
-	// Verify DELETE /session/sess-close fired.
-	if !deleteCalled.Load() {
-		t.Error("DELETE /session/:id was not invoked")
+	// Verify Close did NOT delete the session — Close is non-destructive:
+	// the session is left in place for resume (bounce / idle reaper / restart).
+	if deleteCalled.Load() {
+		t.Error("Close must not DELETE the session — it must be left for resume")
 	}
 
 	// Verify dispatcher stopped — be.stopDispatcher should be nil.
