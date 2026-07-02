@@ -20,6 +20,7 @@ require (
 	github.com/go-rod/rod v0.116.2
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/openai/openai-go/v3 v3.24.0
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/image v0.36.0
 	golang.org/x/oauth2 v0.34.0
 	golang.org/x/sync v0.20.0

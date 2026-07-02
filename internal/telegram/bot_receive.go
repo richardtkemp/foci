@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -286,6 +287,10 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 	}
 	if result.WizardReply != "" {
 		b.sendReply(qm.msg, result.WizardReply)
+		if result.WizardDocPath != "" {
+			_ = b.SendDocumentToChat(qm.msg.Chat.Id, result.WizardDocPath, "")
+			_ = os.Remove(result.WizardDocPath)
+		}
 		return true
 	}
 	if result.Outcome != nil {
