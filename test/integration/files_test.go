@@ -901,12 +901,13 @@ func TestL2_Files_SendToChatFile_CustomFilename_DisplaysAsRequested(t *testing.T
 
 // TestL2_Files_SendToChatMarkdownCaption_RegressionFor771 is the
 // regression net for TODO #771 — markdown in a caption must reach
-// Telegram correctly when send_to_chat is invoked with text+file
-// under MaxCaptionLen. Today the markdown caption path goes plain
-// (no parse_mode), so bold/italic markup arrives unformatted. Wire
-// under test: scripted send_to_chat with markdown caption → recorded
-// sendDocument multipart body must contain markdown formatting AND a
-// parse_mode hint (once the bug is fixed).
+// Telegram rendered when send_to_chat is invoked with text+file
+// under MaxCaptionLen. #771 is fixed: the caption is sent with
+// parse_mode=HTML and its markdown converted to HTML (<b>/<i>), so
+// bold/italic render. The regression net asserts both that parse_mode
+// is present and that the formatting reaches Telegram in a renderable
+// form (previously markdown literals arrived raw and rendered as
+// asterisks/underscores).
 func TestL2_Files_SendToChatMarkdownCaption_RegressionFor771(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 8009
@@ -947,16 +948,16 @@ func TestL2_Files_SendToChatMarkdownCaption_RegressionFor771(t *testing.T) {
 		t.Fatalf("parse stub body json: %v\nraw=%s", err, call.Body)
 	}
 	raw, _ := bodyMap["_raw_multipart"].(string)
-	// The literal markdown markers must reach Telegram so the user sees
-	// formatting (with parse_mode set client-side).
-	if !strings.Contains(raw, "**bold**") || !strings.Contains(raw, "_italic_") {
-		t.Errorf("expected markdown literals to round-trip in caption; raw body:\n%s", raw)
-	}
-	// And the multipart body must include a parse_mode field. TODO #771
-	// is fixed when this assertion passes (today it fails — the caption
-	// rides without parse_mode and bold/italic render as raw asterisks).
+	// #771 sends the caption with parse_mode set (HTML) and converts the
+	// markdown to HTML so Telegram renders bold/italic — previously the
+	// markdown literals arrived raw (no parse_mode) and rendered as
+	// asterisks/underscores. Assert both the parse_mode field and that the
+	// formatting reaches Telegram in a renderable form.
 	if !strings.Contains(strings.ToLower(raw), "parse_mode") {
-		t.Errorf("regression: caption sent without parse_mode field — TODO #771 still open. raw body:\n%s", raw)
+		t.Errorf("regression: caption sent without parse_mode field — TODO #771 regressed. raw body:\n%s", raw)
+	}
+	if !strings.Contains(raw, "<b>bold</b>") || !strings.Contains(raw, "<i>italic</i>") {
+		t.Errorf("expected caption formatting to reach Telegram as renderable HTML (<b>/<i>); raw body:\n%s", raw)
 	}
 }
 
