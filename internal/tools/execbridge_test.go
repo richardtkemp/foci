@@ -74,6 +74,54 @@ func TestExecBridgeLifecycle(t *testing.T) {
 	}
 }
 
+func TestExecBridgeStableReuse(t *testing.T) {
+	// Regression guard: a second NewExecBridgeStable for the same session key
+	// within one process must reuse the live bridge rather than os.Remove-ing
+	// its socket. The recreate bug deleted a healthy, in-use socket and left the
+	// session's FOCI_SOCK pointing at a dead path forever.
+	t.Parallel()
+	r := testRegistry()
+	key := t.Name() // unique across tests / parallel-safe
+
+	b1, err := NewExecBridgeStable(r, context.Background(), key)
+	if err != nil {
+		t.Fatalf("first NewExecBridgeStable: %v", err)
+	}
+	defer b1.Close()
+	sock := b1.SockPath()
+
+	// Second create for the same key returns the SAME bridge, not a recreate.
+	b2, err := NewExecBridgeStable(r, context.Background(), key)
+	if err != nil {
+		t.Fatalf("second NewExecBridgeStable: %v", err)
+	}
+	if b2 != b1 {
+		t.Fatalf("second create did not reuse the live bridge: got %p, want %p", b2, b1)
+	}
+	if b2.SockPath() != sock {
+		t.Fatalf("sock path changed: got %q, want %q", b2.SockPath(), sock)
+	}
+
+	// The reused bridge must still be callable — the bug left a dead socket.
+	if res, errMsg := callBridge(t, sock, `{"tool":"echo_tool","params":{"text":"hi"}}`); errMsg != "" || res != "echo: hi" {
+		t.Fatalf("reused bridge not callable: res=%q err=%q", res, errMsg)
+	}
+
+	// After Close, a fresh create yields a new, working bridge (eviction works).
+	b1.Close()
+	b3, err := NewExecBridgeStable(r, context.Background(), key)
+	if err != nil {
+		t.Fatalf("NewExecBridgeStable after Close: %v", err)
+	}
+	defer b3.Close()
+	if b3 == b1 {
+		t.Fatal("post-Close create returned the evicted bridge, not a fresh one")
+	}
+	if res, errMsg := callBridge(t, b3.SockPath(), `{"tool":"echo_tool","params":{"text":"back"}}`); errMsg != "" || res != "echo: back" {
+		t.Fatalf("fresh bridge not callable: res=%q err=%q", res, errMsg)
+	}
+}
+
 func TestExecBridgeCallTool(t *testing.T) {
 	// Verifies that calling an exported tool via the bridge socket returns the correct result.
 	t.Parallel()

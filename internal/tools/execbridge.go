@@ -20,6 +20,17 @@ import (
 // bridgeCounter provides unique socket paths across concurrent exec calls.
 var bridgeCounter atomic.Int64
 
+// stableBridges memoises live stable-path bridges keyed by socket path, so a
+// second NewExecBridgeStable for the same session key within one process
+// reuses the existing bridge instead of os.Remove-ing a live socket. Without
+// this, a recreate (e.g. after a transient "dead" detection) clobbers a
+// healthy, in-use socket — the session's FOCI_SOCK then points at a dead path
+// forever. Presence in the map ⇔ live: Close evicts before tearing down.
+var (
+	stableMu      sync.Mutex
+	stableBridges = make(map[string]*ExecBridge)
+)
+
 // ExecBridge creates a per-exec unix socket that exposes ExecExport tools
 // as shell functions inside subprocess commands.
 type ExecBridge struct {
@@ -48,16 +59,40 @@ func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error)
 // restarts: on creation, any existing stale socket at the same path is removed
 // and a new listener is started. This allows long-lived backend sessions (e.g.
 // Claude Code) to reconnect after a foci restart without needing new env vars.
+//
+// Within a single process, exactly one live bridge exists per session key: a
+// second call reuses it rather than recreating (which would delete a live,
+// in-use socket). os.Remove therefore only ever touches a socket left behind by
+// a previous process, as intended.
 func NewExecBridgeStable(registry *Registry, ctx context.Context, stableID string) (*ExecBridge, error) {
 	// Sanitize: session keys may contain slashes (e.g. "telegram/c123/456")
 	safe := strings.ReplaceAll(stableID, "/", "-")
 	sockPath := fmt.Sprintf("%s/exec-%s.sock", tempdir.Dir(), safe)
 	funcsPath := fmt.Sprintf("%s/exec-%s-funcs.sh", tempdir.Dir(), safe)
 
-	// Remove stale socket from a previous process (if any).
+	// The lock spans creation only, not the bridge's lifetime; creation is fast
+	// (local socket listen + small file write, no remote IO). Within foci the
+	// sole caller (DelegatedManager.getOrCreate) is singleflighted per key, so
+	// concurrent creation for one key does not occur — the lock is correctness
+	// belt-and-braces against any future caller.
+	stableMu.Lock()
+	defer stableMu.Unlock()
+
+	if existing, ok := stableBridges[sockPath]; ok {
+		return existing, nil
+	}
+
+	// Remove stale socket from a previous process (if any). Safe now: no live
+	// bridge for this path exists in this process (checked above), so any socket
+	// at this path is one left behind by a prior foci invocation.
 	_ = os.Remove(sockPath)
 
-	return newExecBridge(registry, ctx, sockPath, funcsPath)
+	b, err := newExecBridge(registry, ctx, sockPath, funcsPath)
+	if err != nil {
+		return nil, err
+	}
+	stableBridges[sockPath] = b
+	return b, nil
 }
 
 func newExecBridge(registry *Registry, ctx context.Context, sockPath, funcsPath string) (*ExecBridge, error) {
@@ -106,7 +141,14 @@ func (b *ExecBridge) SockPath() string { return b.sockPath }
 func (b *ExecBridge) FuncsPath() string { return b.funcsPath }
 
 // Close stops the listener, waits for in-flight connections, and removes files.
+// For a stable-path bridge it also evicts the entry from the stableBridges memo
+// (must happen under the lock so NewExecBridgeStable observes a consistent
+// state); for an ephemeral bridge the delete is a harmless no-op.
 func (b *ExecBridge) Close() {
+	stableMu.Lock()
+	delete(stableBridges, b.sockPath)
+	stableMu.Unlock()
+
 	b.cancel()
 	_ = b.listener.Close()
 	b.wg.Wait()
