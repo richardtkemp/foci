@@ -525,6 +525,15 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	if text == "" && len(atts) == 0 {
 		return // voice transcription yielded nothing and there's no other content
 	}
+	// Echo the user's message back as a durable user-role frame so it persists to
+	// the replay store and reaches other devices. The sending device reconciles it
+	// against its optimistic copy by MessageID (the inbound envelope id), so it
+	// doesn't double-render. Without this the message lives only on the sender; a
+	// freshly-paired device (which rebuilds from replayed server frames) never sees
+	// it — only agent/system messages, which already flow as server frames.
+	if text != "" {
+		b.send(fap.ServerMessage{ConversationID: convID, MessageID: inID, Role: "user", Text: text})
+	}
 	// User message confirmed bound for the agent — record interaction. This is
 	// the app transport's only lastInteraction signal (the periodic runner gates
 	// reflection/consolidation/reset-idle-guard on it); without it those timers
