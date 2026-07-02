@@ -55,6 +55,19 @@ func (p *pushTokens) all() []string {
 	return out
 }
 
+// removeByToken drops every deviceId whose registration token is token — called
+// when FCM reports it stale (404/410) so we stop retrying a dead token. The
+// device re-registers a fresh one in its next ClientHello.
+func (p *pushTokens) removeByToken(token string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for id, t := range p.tokens {
+		if t == token {
+			delete(p.tokens, id)
+		}
+	}
+}
+
 // pushPayload carries the full push context from the conversation binding to
 // the pusher. The pusher resolves display names (AgentName, SessionTitle) via
 // the Hub before sending, so the client can render a rich notification without
@@ -194,8 +207,12 @@ func (p *fcmPusher) send(token string, payload pushPayload) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= http.StatusMultipleChoices {
-		// 404/410 indicate a stale token; pruning is a later refinement.
 		log.Warnf("app", "fcm send: status %d", resp.StatusCode)
+		// 404 (unregistered) / 410 (gone) mean the token is dead — prune it so we
+		// stop retrying; the device re-registers on its next ClientHello.
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+			p.tokens.removeByToken(token)
+		}
 	}
 }
 

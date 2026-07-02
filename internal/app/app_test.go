@@ -1108,6 +1108,17 @@ func TestPushTokens_SetAndAll(t *testing.T) {
 	}
 }
 
+func TestPushTokens_RemoveByToken(t *testing.T) {
+	p := newPushTokens()
+	p.set("dev1", "dead")
+	p.set("dev2", "dead") // two devices, same (stale) token
+	p.set("dev3", "live")
+	p.removeByToken("dead")
+	if all := p.all(); len(all) != 1 || all[0] != "live" {
+		t.Fatalf("after removeByToken(dead) = %v, want [live]", all)
+	}
+}
+
 func TestPushPreview_Classification(t *testing.T) {
 	final := "the answer"
 	cases := []struct {
