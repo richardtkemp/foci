@@ -166,9 +166,19 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 }
 
 // Close deregisters from the Server (stopping the dispatcher goroutine
-// after any in-flight handler invocation completes), DELETEs the opencode
-// session (best-effort), and releases the per-agent Server reference
-// (which triggers Server shutdown if this was the last session).
+// after any in-flight handler invocation completes) and releases the
+// per-agent Server reference (which triggers Server shutdown if this was
+// the last session).
+//
+// Non-destructive by design: the opencode session is intentionally left
+// in place on the server (and in opencode.db) so it can be resumed later
+// — by the post-compaction bounce, the idle reaper, or after a foci
+// restart. Deleting it here would defeat every "keep resume ID, close,
+// resume later" path: the opencode session is server-side state (unlike
+// ccstream's local conversation file, whose Close only kills a process).
+// Orphaned sessions are reaped by opencode's own idle timeout. If a
+// session ever genuinely needs destroying, that is an explicit, separate
+// operation — never folded into Close.
 //
 // Idempotent via the mu-guarded running flag: a second Close is a no-op.
 // Safe to call on a never-Started Backend (server == nil, sessionID == "").
@@ -190,25 +200,6 @@ func (b *Backend) Close() error {
 	// call when b.server is nil (test Backend that bypassed Start).
 	if b.server != nil {
 		b.server.unregisterSession(b.sessionID)
-	}
-
-	// Best-effort DELETE — opencode cleans up session state. A failed
-	// DELETE doesn't leak anything significant (the session becomes idle
-	// on the server side and is reaped by the server's own idle timeout),
-	// but log failures as warnings so they're visible rather than silent.
-	if b.server != nil && b.server.baseURL != "" && b.sessionID != "" {
-		url := fmt.Sprintf("%s/session/%s", b.server.baseURL, b.sessionID)
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			log.Warnf(b.logComponent(), "Close: session DELETE %s failed: %v", b.sessionID, err)
-		} else {
-			if resp.StatusCode >= 300 {
-				log.Warnf(b.logComponent(), "Close: session DELETE %s returned %s", b.sessionID, resp.Status)
-			}
-			_ = resp.Body.Close()
-		}
 	}
 
 	// Release the per-agent Server reference. No-op if b.server wasn't
