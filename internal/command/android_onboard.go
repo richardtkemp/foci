@@ -95,11 +95,15 @@ func PairKeyCommand() *Command {
 			mins := int(time.Until(exp).Round(time.Minute).Minutes())
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "Pairing key (valid ~%d min, single use):\n%s\n", mins, key)
+			var docPath string
 			if host := normalizeAndroidHost(req.Args); host != "" {
 				pair := fmt.Sprintf("foci://pair?host=%s&key=%s", url.QueryEscape(host), url.QueryEscape(key))
 				fmt.Fprintf(&sb, "\nHost: %s\nPairing string:\n%s\n", host, pair)
+				if qr, err := pairingQRFile(pair); err == nil {
+					docPath = qr
+				}
 			}
-			return Response{Text: sb.String()}, nil
+			return Response{Text: sb.String(), DocPath: docPath}, nil
 		},
 	}
 }
@@ -123,6 +127,17 @@ type androidWizard struct {
 	// mintPairKey mints a single-use pairing key on the live app hub. nil when
 	// the app provider isn't running (e.g. just enabled, awaiting restart).
 	mintPairKey func(ttl time.Duration) (string, time.Time, error)
+
+	// pendingDoc holds a QR-image temp path produced by the final summary step,
+	// consumed once via PendingDoc (WizardDocProvider).
+	pendingDoc string
+}
+
+// PendingDoc returns and clears the QR image path staged by mintAndSummarize.
+func (w *androidWizard) PendingDoc() string {
+	p := w.pendingDoc
+	w.pendingDoc = ""
+	return p
 }
 
 func newAndroidWizard(cc CommandContext) *androidWizard {
@@ -219,11 +234,14 @@ func (w *androidWizard) mintAndSummarize() string {
 	fmt.Fprintf(&sb, "Host: `%s`\n", w.host)
 	fmt.Fprintf(&sb, "Pairing key (valid ~%d min, single use):\n`%s`\n", int(time.Until(exp).Round(time.Minute).Minutes()), key)
 	pair := fmt.Sprintf("foci://pair?host=%s&key=%s", url.QueryEscape(w.host), url.QueryEscape(key))
-	fmt.Fprintf(&sb, "\nPairing string (scan or paste in the app):\n`%s`\n", pair)
+	fmt.Fprintf(&sb, "\nPairing string:\n`%s`\n", pair)
+	if qr, err := pairingQRFile(pair); err == nil {
+		w.pendingDoc = qr
+	}
 
 	sb.WriteString("\nNext steps:\n")
 	sb.WriteString("1. Install the APK on your device.\n")
-	sb.WriteString("2. In the app, enter the host + pairing key (or scan the pairing string).\n")
+	sb.WriteString("2. In the app, tap \"Scan QR\" and scan the QR image (or enter the host + pairing key).\n")
 	sb.WriteString("3. Tap pair — the device swaps the one-time key for its own revocable token.\n")
 	sb.WriteString("\nThe key is single-use and expires; if it lapses, run /android again for a fresh one.")
 	return sb.String()

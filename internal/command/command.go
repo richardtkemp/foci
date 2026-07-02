@@ -88,6 +88,14 @@ type WizardHandler interface {
 	Handle(text string) (response string, done bool)
 }
 
+// WizardDocProvider is an optional wizard capability: after Handle produces its
+// reply, a wizard implementing this may also return a file to send alongside it
+// (e.g. a QR image). The path is consumed once; the platform layer sends and
+// then removes it.
+type WizardDocProvider interface {
+	PendingDoc() (path string)
+}
+
 // Registry holds registered slash commands and dispatches them.
 type Registry struct {
 	commands map[string]*Command
@@ -470,24 +478,29 @@ func (r *Registry) ClearWizard() {
 
 // HandleMessage routes a message to the active wizard, if any.
 // Returns (response, true) if the wizard handled the message, or ("", false)
-// if no wizard is active. Handles /cancel and /stop to abort the wizard.
-func (r *Registry) HandleMessage(text string) (string, bool) {
+// if no wizard is active. Handles /cancel and /stop to abort the wizard. docPath
+// is a file to send alongside the reply (e.g. a QR image) when the wizard
+// implements WizardDocProvider, else "".
+func (r *Registry) HandleMessage(text string) (response string, docPath string, handled bool) {
 	r.wizardMu.Lock()
 	defer r.wizardMu.Unlock()
 
 	if r.wizard == nil {
-		return "", false
+		return "", "", false
 	}
 
 	lower := strings.ToLower(strings.TrimSpace(text))
 	if lower == "/cancel" || lower == "/stop" || lower == ".cancel" || lower == ".stop" {
 		r.wizard = nil
-		return "Wizard cancelled.", true
+		return "Wizard cancelled.", "", true
 	}
 
-	response, done := r.wizard.Handle(text)
+	resp, done := r.wizard.Handle(text)
+	if p, ok := r.wizard.(WizardDocProvider); ok {
+		docPath = p.PendingDoc()
+	}
 	if done {
 		r.wizard = nil
 	}
-	return response, true
+	return resp, docPath, true
 }

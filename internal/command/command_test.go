@@ -779,7 +779,7 @@ func TestSetWizard(t *testing.T) {
 	reg.SetWizard(wizard)
 
 	// Verify wizard was set by calling HandleMessage
-	resp, handled := reg.HandleMessage("hello")
+	resp, _, handled := reg.HandleMessage("hello")
 	if !handled {
 		t.Error("HandleMessage should indicate wizard handled the message")
 	}
@@ -801,7 +801,7 @@ func TestClearWizard(t *testing.T) {
 	reg.ClearWizard()
 
 	// After clearing, HandleMessage should not handle messages
-	_, handled := reg.HandleMessage("test")
+	_, _, handled := reg.HandleMessage("test")
 	if handled {
 		t.Error("HandleMessage should not handle after wizard is cleared")
 	}
@@ -815,7 +815,7 @@ func TestHandleMessageWizardCancel(t *testing.T) {
 	}
 
 	reg.SetWizard(wizard)
-	resp, handled := reg.HandleMessage("/cancel")
+	resp, _, handled := reg.HandleMessage("/cancel")
 
 	if !handled {
 		t.Error("HandleMessage should handle /cancel")
@@ -825,7 +825,7 @@ func TestHandleMessageWizardCancel(t *testing.T) {
 	}
 
 	// Wizard should be cleared
-	_, handled = reg.HandleMessage("test")
+	_, _, handled = reg.HandleMessage("test")
 	if handled {
 		t.Error("wizard should be cleared after /cancel")
 	}
@@ -839,7 +839,7 @@ func TestHandleMessageWizardStop(t *testing.T) {
 	}
 
 	reg.SetWizard(wizard)
-	resp, handled := reg.HandleMessage("/stop")
+	resp, _, handled := reg.HandleMessage("/stop")
 
 	if !handled {
 		t.Error("HandleMessage should handle /stop")
@@ -849,7 +849,7 @@ func TestHandleMessageWizardStop(t *testing.T) {
 	}
 
 	// Wizard should be cleared
-	_, handled = reg.HandleMessage("test")
+	_, _, handled = reg.HandleMessage("test")
 	if handled {
 		t.Error("wizard should be cleared after /stop")
 	}
@@ -861,7 +861,7 @@ func TestHandleMessageWizardDotStop(t *testing.T) {
 	wizard := &mockWizard{responses: map[string]string{}}
 	reg.SetWizard(wizard)
 
-	resp, handled := reg.HandleMessage(".stop")
+	resp, _, handled := reg.HandleMessage(".stop")
 	if !handled {
 		t.Error("HandleMessage should handle .stop")
 	}
@@ -869,7 +869,7 @@ func TestHandleMessageWizardDotStop(t *testing.T) {
 		t.Errorf("response = %q, want 'cancelled'", resp)
 	}
 	// Wizard should be cleared
-	_, handled = reg.HandleMessage("test")
+	_, _, handled = reg.HandleMessage("test")
 	if handled {
 		t.Error("wizard should be cleared after .stop")
 	}
@@ -881,14 +881,14 @@ func TestHandleMessageWizardDotCancel(t *testing.T) {
 	wizard := &mockWizard{responses: map[string]string{}}
 	reg.SetWizard(wizard)
 
-	resp, handled := reg.HandleMessage(".cancel")
+	resp, _, handled := reg.HandleMessage(".cancel")
 	if !handled {
 		t.Error("HandleMessage should handle .cancel")
 	}
 	if !strings.Contains(resp, "cancelled") {
 		t.Errorf("response = %q, want 'cancelled'", resp)
 	}
-	_, handled = reg.HandleMessage("test")
+	_, _, handled = reg.HandleMessage("test")
 	if handled {
 		t.Error("wizard should be cleared after .cancel")
 	}
@@ -905,7 +905,7 @@ func TestHandleMessageWizardDone(t *testing.T) {
 	}
 
 	reg.SetWizard(wizard)
-	resp, handled := reg.HandleMessage("input")
+	resp, _, handled := reg.HandleMessage("input")
 
 	if !handled {
 		t.Error("HandleMessage should handle the message")
@@ -915,7 +915,7 @@ func TestHandleMessageWizardDone(t *testing.T) {
 	}
 
 	// Wizard should be cleared since it returned done=true
-	_, handled = reg.HandleMessage("another")
+	_, _, handled = reg.HandleMessage("another")
 	if handled {
 		t.Error("wizard should be cleared when it returns done=true")
 	}

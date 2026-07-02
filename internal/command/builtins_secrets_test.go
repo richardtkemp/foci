@@ -392,7 +392,7 @@ func TestSecretsSetWizardBare(t *testing.T) {
 	}
 
 	// Step 0: enter section.key
-	resp, handled := reg.HandleMessage("custom.api_key")
+	resp, _, handled := reg.HandleMessage("custom.api_key")
 	if !handled {
 		t.Fatal("wizard should handle the message")
 	}
@@ -401,7 +401,7 @@ func TestSecretsSetWizardBare(t *testing.T) {
 	}
 
 	// Step 1: enter value
-	resp, handled = reg.HandleMessage("my-secret-value")
+	resp, _, handled = reg.HandleMessage("my-secret-value")
 	if !handled {
 		t.Fatal("wizard should handle the message")
 	}
@@ -418,7 +418,7 @@ func TestSecretsSetWizardBare(t *testing.T) {
 	}
 
 	// Step 2: set hosts
-	resp, handled = reg.HandleMessage("api.example.com, api.backup.com")
+	resp, _, handled = reg.HandleMessage("api.example.com, api.backup.com")
 	if !handled {
 		t.Fatal("wizard should handle the message")
 	}
@@ -427,7 +427,7 @@ func TestSecretsSetWizardBare(t *testing.T) {
 	}
 
 	// Wizard should be done.
-	_, handled = reg.HandleMessage("anything")
+	_, _, handled = reg.HandleMessage("anything")
 	if handled {
 		t.Error("wizard should be cleared after completion")
 	}
@@ -462,7 +462,7 @@ func TestSecretsSetWizardKeyboardFastForward(t *testing.T) {
 	}
 
 	// Enter value.
-	resp, handled := reg.HandleMessage("new-secret")
+	resp, _, handled := reg.HandleMessage("new-secret")
 	if !handled {
 		t.Fatal("wizard should handle the message")
 	}
@@ -476,7 +476,7 @@ func TestSecretsSetWizardKeyboardFastForward(t *testing.T) {
 	}
 
 	// Skip hosts with /stop.
-	stopResp, handled := reg.HandleMessage("/stop")
+	stopResp, _, handled := reg.HandleMessage("/stop")
 	if !handled {
 		t.Fatal("/stop should be handled")
 	}
@@ -499,7 +499,7 @@ func TestSecretsSetWizardSkipHosts(t *testing.T) {
 	reg.HandleMessage("custom.key")
 
 	// Enter value
-	resp, handled := reg.HandleMessage("my-value")
+	resp, _, handled := reg.HandleMessage("my-value")
 	if !handled {
 		t.Fatal("wizard should handle")
 	}
@@ -508,7 +508,7 @@ func TestSecretsSetWizardSkipHosts(t *testing.T) {
 	}
 
 	// /stop to skip hosts
-	_, handled = reg.HandleMessage("/stop")
+	_, _, handled = reg.HandleMessage("/stop")
 	if !handled {
 		t.Fatal("/stop should be handled")
 	}
@@ -529,7 +529,7 @@ func TestSecretsSetWizardInvalidName(t *testing.T) {
 	cmd.Execute(context.Background(), Request{Args: "set"}, cc)
 
 	// Empty name
-	resp, handled := reg.HandleMessage("")
+	resp, _, handled := reg.HandleMessage("")
 	if !handled {
 		t.Fatal("wizard should handle")
 	}
@@ -538,7 +538,7 @@ func TestSecretsSetWizardInvalidName(t *testing.T) {
 	}
 
 	// Name without dot
-	resp, handled = reg.HandleMessage("nodot")
+	resp, _, handled = reg.HandleMessage("nodot")
 	if !handled {
 		t.Fatal("wizard should handle")
 	}
@@ -547,7 +547,7 @@ func TestSecretsSetWizardInvalidName(t *testing.T) {
 	}
 
 	// Valid name — wizard should advance
-	resp, handled = reg.HandleMessage("test.key")
+	resp, _, handled = reg.HandleMessage("test.key")
 	if !handled {
 		t.Fatal("wizard should handle")
 	}
@@ -576,7 +576,7 @@ func TestSecretsHostsAddWizard(t *testing.T) {
 	}
 
 	// Enter host.
-	resp, handled := reg.HandleMessage("api.new.com")
+	resp, _, handled := reg.HandleMessage("api.new.com")
 	if !handled {
 		t.Fatal("wizard should handle the message")
 	}
@@ -591,7 +591,7 @@ func TestSecretsHostsAddWizard(t *testing.T) {
 	}
 
 	// Wizard should be done.
-	_, handled = reg.HandleMessage("anything")
+	_, _, handled = reg.HandleMessage("anything")
 	if handled {
 		t.Error("wizard should be cleared after completion")
 	}
@@ -610,7 +610,7 @@ func TestSecretsHostsAddWizardCancel(t *testing.T) {
 	cmd.Execute(context.Background(), Request{Args: "hosts myapi add"}, cc)
 
 	// Cancel with /cancel
-	resp, handled := reg.HandleMessage("/cancel")
+	resp, _, handled := reg.HandleMessage("/cancel")
 	if !handled {
 		t.Fatal("/cancel should be handled")
 	}
@@ -763,7 +763,7 @@ func TestSecretsHostsAddWizardEmptyHost(t *testing.T) {
 	cmd.Execute(context.Background(), Request{Args: "hosts myapi add"}, cc)
 
 	// Empty host
-	resp, handled := reg.HandleMessage("")
+	resp, _, handled := reg.HandleMessage("")
 	if !handled {
 		t.Fatal("wizard should handle empty input")
 	}
@@ -772,7 +772,7 @@ func TestSecretsHostsAddWizardEmptyHost(t *testing.T) {
 	}
 
 	// Now enter a valid host
-	resp, handled = reg.HandleMessage("api.valid.com")
+	resp, _, handled = reg.HandleMessage("api.valid.com")
 	if !handled {
 		t.Fatal("wizard should handle")
 	}
@@ -792,7 +792,7 @@ func TestSecretsSetWizardEmptyValue(t *testing.T) {
 	reg.HandleMessage("test.key") // step 0 → step 1
 
 	// Empty value
-	resp, handled := reg.HandleMessage("")
+	resp, _, handled := reg.HandleMessage("")
 	if !handled {
 		t.Fatal("wizard should handle")
 	}

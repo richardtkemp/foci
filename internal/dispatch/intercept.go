@@ -82,7 +82,8 @@ type InterceptMessage struct {
 type InterceptResult struct {
 	Consumed bool
 	// If Consumed, at most one of these is set:
-	WizardReply string          // wizard handled it, send this reply
+	WizardReply    string       // wizard handled it, send this reply
+	WizardDocPath  string       // optional file to send after WizardReply (e.g. a QR image), then remove
 	Outcome     *CommandOutcome // command dispatched, render this
 	// Consumed && WizardReply=="" && Outcome==nil → silently consumed (stale/idle drop)
 
@@ -98,8 +99,8 @@ type InterceptResult struct {
 func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) InterceptResult {
 	// Wizard intercept — route all messages to active wizard before normal dispatch.
 	if msg.Text != "" {
-		if result, ok := i.Commands.HandleMessage(msg.Text); ok {
-			return InterceptResult{Consumed: true, WizardReply: result, Text: msg.Text}
+		if result, docPath, ok := i.Commands.HandleMessage(msg.Text); ok {
+			return InterceptResult{Consumed: true, WizardReply: result, WizardDocPath: docPath, Text: msg.Text}
 		}
 	}
 
