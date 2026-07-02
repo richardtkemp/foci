@@ -251,11 +251,13 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 // server reports healthy; (false, err) on transport error or non-200
 // response.
 //
-// Plan §5.1 calls out a (false, nil) "recovery initiated" return for
-// ProviderAuthError. That branch lands in Step 11 once the Server
-// tracks auth-failure state; for Step 5 the auth case is reported as a
-// generic err since /global/health itself doesn't surface per-provider
-// auth state.
+// Auth recovery is event-driven, not health-check-driven: ProviderAuthError
+// surfaces via message.updated / session.error during turns, caught by
+// handlers.go → authfail.go (onAuthFailure). /global/health does not expose
+// per-provider auth state, so CheckReady cannot detect auth failure at
+// startup. The (false, nil) "recovery initiated" return pattern is used by
+// the ccstream backend (which can probe auth status at startup); the opencode
+// backend recovers at first-turn time instead.
 func (b *Backend) CheckReady(ctx context.Context) (bool, error) {
 	if b.server == nil {
 		return false, errors.New("opencode: backend has no server (Start not called)")
@@ -426,10 +428,6 @@ func (b *Backend) logComponent() string {
 // server responds 200 with healthy=true. Distinguished from
 // healthProbe (which is the polling loop in Start) — healthCheck is the
 // one-shot variant Backend.CheckReady proxies to.
-//
-// Step 11 will extend this to inspect a server-side auth-failure state
-// and return a typed error the Backend.CheckReady wrapper can map to
-// the plan's (false, nil) "recovery initiated" return.
 func (s *Server) healthCheck(ctx context.Context) error {
 	if s.baseURL == "" {
 		return errors.New("opencode: server has no baseURL (Start not called)")
