@@ -279,6 +279,19 @@ func TestDelegatedTransport_InjectNudges_WithNudger(t *testing.T) {
 	if !strings.Contains(ts.Prompt, "regex-reminder") {
 		t.Errorf("expected regex-reminder in prompt, got: %q", ts.Prompt)
 	}
+	// Bundled nudges drop the NO_RESPONSE footer — a reply to the user is
+	// always required on this path.
+	if strings.Contains(ts.Prompt, NoResponseSentinel) {
+		t.Errorf("bundled nudges must not carry the NO_RESPONSE footer; got: %q", ts.Prompt)
+	}
+	// A single closing delimiter must separate the nudge region from the
+	// user's prompt — exactly once, even with multiple nudges fired.
+	if got := strings.Count(ts.Prompt, nudgeEndMarker); got != 1 {
+		t.Errorf("expected exactly 1 end-marker between nudges and prompt, got %d; prompt: %q", got, ts.Prompt)
+	}
+	if !strings.Contains(ts.Prompt, nudgeEndMarker+"\n\noriginal prompt") {
+		t.Errorf("end-marker should sit directly before the original prompt, got: %q", ts.Prompt)
+	}
 	// The original prompt should still be at the end.
 	if !strings.HasSuffix(ts.Prompt, "original prompt") {
 		t.Errorf("original prompt should be at the end, got: %q", ts.Prompt)

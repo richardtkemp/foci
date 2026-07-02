@@ -195,12 +195,16 @@ func (t *APITransport) InjectNudges(ts *TurnState) {
 
 	var nudgeBlocks []provider.ContentBlock
 	for _, r := range a.Nudger.CheckTurnInterval() {
-		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: wrapNudge(r)})
+		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: wrapBundledNudge(r)})
 	}
 	for _, r := range a.Nudger.CheckRegex() {
-		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: wrapNudge(r)})
+		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: wrapBundledNudge(r)})
 	}
 	if len(nudgeBlocks) > 0 {
+		// Close the nudge region with a single delimiter so the agent can
+		// distinguish where the background nudge ends and the user's text
+		// begins. Emitted once after the last nudge, not per-nudge.
+		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeEndMarker})
 		ts.UserMsg.Content = append(nudgeBlocks, ts.UserMsg.Content...)
 		// Update the already-appended message in both slices.
 		ts.Messages[len(ts.Messages)-1] = ts.UserMsg

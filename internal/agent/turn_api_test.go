@@ -595,12 +595,26 @@ func TestInjectNudges_TurnIntervalFires(t *testing.T) {
 
 	tr.InjectNudges(ts)
 
-	// Nudge should be prepended as a new content block before the user text.
-	if len(ts.UserMsg.Content) < 2 {
-		t.Fatalf("UserMsg.Content len = %d, want >= 2 (nudge + original)", len(ts.UserMsg.Content))
+	// Expect layout: [bundled-nudge block, end-marker block, user text].
+	if got := len(ts.UserMsg.Content); got != 3 {
+		t.Fatalf("UserMsg.Content len = %d, want 3 (nudge + end-marker + original); blocks: %v", got, ts.UserMsg.Content)
 	}
-	if !strings.Contains(ts.UserMsg.Content[0].Text, "Remember to be concise.") {
-		t.Errorf("first content block should contain nudge text; got %q", ts.UserMsg.Content[0].Text)
+	nudgeBlock := ts.UserMsg.Content[0].Text
+	if !strings.Contains(nudgeBlock, "Remember to be concise.") {
+		t.Errorf("first content block should contain nudge text; got %q", nudgeBlock)
+	}
+	// Bundled nudges drop the NO_RESPONSE footer — a reply to the user is
+	// always required on this path, so the footer would contradict it.
+	if strings.Contains(nudgeBlock, NoResponseSentinel) {
+		t.Errorf("bundled nudge must not carry the NO_RESPONSE footer; got %q", nudgeBlock)
+	}
+	// A single closing delimiter must separate the nudge region from the
+	// user's text, so the agent can see where one ends and the other begins.
+	if ts.UserMsg.Content[1].Text != nudgeEndMarker {
+		t.Errorf("second content block should be the nudge end-marker; got %q", ts.UserMsg.Content[1].Text)
+	}
+	if ts.UserMsg.Content[2].Text != "hello" {
+		t.Errorf("last content block should be the original user text; got %q", ts.UserMsg.Content[2].Text)
 	}
 	// Verify Messages and NewMessages were updated too.
 	lastMsg := ts.Messages[len(ts.Messages)-1]
@@ -634,11 +648,52 @@ func TestInjectNudges_RegexFires(t *testing.T) {
 
 	tr.InjectNudges(ts)
 
-	if len(ts.UserMsg.Content) < 2 {
-		t.Fatalf("UserMsg.Content len = %d, want >= 2 (nudge + original)", len(ts.UserMsg.Content))
+	if got := len(ts.UserMsg.Content); got != 3 {
+		t.Fatalf("UserMsg.Content len = %d, want 3 (nudge + end-marker + original); blocks: %v", got, ts.UserMsg.Content)
 	}
-	if !strings.Contains(ts.UserMsg.Content[0].Text, "Watch out for code quality.") {
-		t.Errorf("regex nudge not found in content; got %q", ts.UserMsg.Content[0].Text)
+	nudgeBlock := ts.UserMsg.Content[0].Text
+	if !strings.Contains(nudgeBlock, "Watch out for code quality.") {
+		t.Errorf("regex nudge not found in content; got %q", nudgeBlock)
+	}
+	if strings.Contains(nudgeBlock, NoResponseSentinel) {
+		t.Errorf("bundled nudge must not carry the NO_RESPONSE footer; got %q", nudgeBlock)
+	}
+	if ts.UserMsg.Content[1].Text != nudgeEndMarker {
+		t.Errorf("second content block should be the nudge end-marker; got %q", ts.UserMsg.Content[1].Text)
+	}
+	if ts.UserMsg.Content[2].Text != "please refactor this" {
+		t.Errorf("last content block should be the original user text; got %q", ts.UserMsg.Content[2].Text)
+	}
+}
+
+// TestNudgeWrapperContracts pins the contract difference between the two
+// nudge wrappers: wrapNudge (standalone mid-loop paths: after-tools,
+// pre-answer) keeps the NO_RESPONSE footer; wrapBundledNudge (start-of-turn
+// path bundled with user text) drops it. Both carry the background header.
+// Guards against the bundled-footer fix leaking onto the standalone paths.
+func TestNudgeWrapperContracts(t *testing.T) {
+	reminder := "be concise."
+	standalone := wrapNudge(reminder)
+	bundled := wrapBundledNudge(reminder)
+
+	if !strings.Contains(standalone, nudgeHeader) {
+		t.Errorf("wrapNudge must include nudgeHeader; got %q", standalone)
+	}
+	if !strings.Contains(standalone, reminder) {
+		t.Errorf("wrapNudge must include the reminder; got %q", standalone)
+	}
+	if !strings.Contains(standalone, NoResponseSentinel) {
+		t.Errorf("wrapNudge (standalone) must keep the NO_RESPONSE footer; got %q", standalone)
+	}
+
+	if !strings.Contains(bundled, nudgeHeader) {
+		t.Errorf("wrapBundledNudge must include nudgeHeader; got %q", bundled)
+	}
+	if !strings.Contains(bundled, reminder) {
+		t.Errorf("wrapBundledNudge must include the reminder; got %q", bundled)
+	}
+	if strings.Contains(bundled, NoResponseSentinel) {
+		t.Errorf("wrapBundledNudge must NOT carry the NO_RESPONSE footer; got %q", bundled)
 	}
 }
 

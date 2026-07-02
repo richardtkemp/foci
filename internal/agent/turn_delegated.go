@@ -103,13 +103,16 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 
 	var nudges []string
 	for _, r := range a.Nudger.CheckTurnInterval() {
-		nudges = append(nudges, wrapNudge(r))
+		nudges = append(nudges, wrapBundledNudge(r))
 	}
 	for _, r := range a.Nudger.CheckRegex() {
-		nudges = append(nudges, wrapNudge(r))
+		nudges = append(nudges, wrapBundledNudge(r))
 	}
 	if len(nudges) > 0 {
-		ts.Prompt = strings.Join(nudges, "\n") + "\n" + ts.Prompt
+		// Close the nudge region with a single delimiter so the agent can
+		// distinguish where the background nudge ends and the user's text
+		// begins. Emitted once after the last nudge, not per-nudge.
+		ts.Prompt = strings.Join(nudges, "\n") + "\n" + nudgeEndMarker + "\n\n" + ts.Prompt
 	}
 }
 
