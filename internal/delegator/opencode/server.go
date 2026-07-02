@@ -26,6 +26,7 @@ type Server struct {
 	hostname       string // default "127.0.0.1"
 	port           int    // 0 = pick free port per Server
 	serverPassword string // "" = no auth (loopback only)
+	logLevel       string // "" = opencode default (INFO)
 
 	// Process.
 	cmd     *exec.Cmd
@@ -98,6 +99,7 @@ func newServer(agentID string, cfg serverConfig) *Server {
 		hostname:       cfg.hostname,
 		port:           cfg.port,
 		serverPassword: cfg.serverPassword,
+		logLevel:       cfg.logLevel,
 		sessions:          make(map[string]*Backend),
 		childToParent:     make(map[string]string),
 		http:              &http.Client{Timeout: 30 * time.Second},
@@ -118,6 +120,7 @@ type serverConfig struct {
 	hostname       string
 	port           int
 	serverPassword string
+	logLevel       string
 }
 
 // defaultServerConfig returns a Server config with the documented defaults.
@@ -130,5 +133,6 @@ func defaultServerConfig(workDir string) serverConfig {
 		hostname:       "127.0.0.1", // loopback only
 		port:           0,           // pick free
 		serverPassword: "",          // no auth on loopback
+		logLevel:       "",          // opencode default (INFO)
 	}
 }

@@ -99,6 +99,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		ensure("opencode_binary", p.cfg.OpencodeBackend.OpencodeBinary)
 		ensure("hostname", p.cfg.OpencodeBackend.Hostname)
 		ensure("server_auth", p.cfg.OpencodeBackend.ServerAuth)
+		ensure("log_level", p.cfg.OpencodeBackend.LogLevel)
 		if p.cfg.OpencodeBackend.Port != 0 {
 			ensure("port", p.cfg.OpencodeBackend.Port)
 		}

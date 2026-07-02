@@ -31,4 +31,9 @@ type OpencodeBackendConfig struct {
 	// Server start via PATCH /config. "ask" = prompt for everything
 	// (safest default); "allow" = auto-approve; "deny" = block.
 	DefaultPermission string `toml:"default_permission" default:"ask"`
+
+	// LogLevel sets the opencode serve --log-level flag. Empty = opencode
+	// default (INFO). Set to "DEBUG" for verbose projector/persistence
+	// logging when diagnosing session persistence issues.
+	LogLevel string `toml:"log_level"`
 }

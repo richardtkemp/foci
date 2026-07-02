@@ -384,6 +384,9 @@ func (b *Backend) serverConfigFromOpts(opts delegator.StartOptions) serverConfig
 	if v, ok := b.cfg["server_auth"].(string); ok {
 		cfg.serverPassword = v
 	}
+	if v, ok := b.cfg["log_level"].(string); ok && v != "" {
+		cfg.logLevel = v
+	}
 	// Port can be int or int64 depending on TOML unmarshalling.
 	switch v := b.cfg["port"].(type) {
 	case int:
