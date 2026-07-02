@@ -115,6 +115,36 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 	return resolveAgent, gate
 }
 
+// resolveSendSession maps the /send `session` selector to a session key. An
+// existing named independent session wins; else a chat alias; else a new named
+// independent session (prior behaviour). Errors only when the selector is neither
+// a valid session name nor a known alias.
+func resolveSendSession(idx *session.SessionIndex, agentID, sel string) (string, error) {
+	named, nameErr := session.NamedIndependentSessionKey(agentID, sel)
+	if idx == nil {
+		if nameErr != nil {
+			return "", fmt.Errorf("invalid session name: %w", nameErr)
+		}
+		return named, nil
+	}
+	if nameErr == nil {
+		if _, err := idx.Get(named); err == nil {
+			return named, nil
+		}
+	}
+	alias, aliasErr := idx.ResolveChatAlias(agentID, sel)
+	switch {
+	case aliasErr == nil:
+		return alias, nil
+	case errors.Is(aliasErr, session.ErrAliasAmbiguous):
+		return "", fmt.Errorf("chat alias %q matches multiple chats — rename to disambiguate", sel)
+	case nameErr == nil:
+		return named, nil
+	default:
+		return "", fmt.Errorf("invalid session name / unknown alias %q: %w", sel, nameErr)
+	}
+}
+
 // handleSend returns the handler for POST /send.
 func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -155,11 +185,14 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// actually targets (TODO #753 — per-session granularity).
 		sessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if req.Session != "" {
-			// HTTP named sessions are deterministic — same name yields same session
-			sk, err := session.NamedIndependentSessionKey(inst.id, req.Session)
+			sk, err := resolveSendSession(d.sessionIndex, inst.id, req.Session)
 			if err != nil {
 				log.Warnf("http", "POST /send: %v", err)
-				http.Error(w, fmt.Sprintf("invalid session name: %v", err), http.StatusBadRequest)
+				status := http.StatusBadRequest
+				if errors.Is(err, session.ErrAliasAmbiguous) {
+					status = http.StatusConflict
+				}
+				http.Error(w, err.Error(), status)
 				return
 			}
 			sessionKey = sk

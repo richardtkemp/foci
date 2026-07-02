@@ -2,6 +2,7 @@ package session
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -872,6 +873,94 @@ func (idx *SessionIndex) CurrentSessionKeys() (map[string]bool, error) {
 // DeleteChatMetadata removes a metadata key for a chat.
 func (idx *SessionIndex) DeleteChatMetadata(agentID, platform string, chatID int64, key string) error {
 	return idx.metaDelete(chatMetaTable, agentID, platform, chatID, key)
+}
+
+// Chat alias resolution — mapping a user-facing chat alias to a session key so
+// `foci send -s <alias>` can target a specific chat.
+
+var (
+	ErrAliasNotFound  = errors.New("no chat with that alias")
+	ErrAliasAmbiguous = errors.New("alias resolves to multiple chats")
+	ErrAliasTaken     = errors.New("alias already in use by another chat")
+)
+
+func aliasNorm(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+// ResolveChatAlias maps a chat alias to that chat's current session key. The
+// session_key row follows compaction rotation, so the returned key is the live
+// one. Matching is case-insensitive on the trimmed alias. Returns ErrAliasNotFound
+// or ErrAliasAmbiguous (the latter only for duplicate aliases predating uniqueness).
+func (idx *SessionIndex) ResolveChatAlias(agentID, alias string) (string, error) {
+	norm := aliasNorm(alias)
+	if norm == "" {
+		return "", ErrAliasNotFound
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	rows, err := idx.db.Query(
+		`SELECT DISTINCT sk.value FROM chat_metadata a
+		 JOIN chat_metadata sk
+		   ON a.agent_id = sk.agent_id AND a.platform = sk.platform AND a.chat_id = sk.chat_id
+		 WHERE a.agent_id = ? AND a.platform = 'app' AND a.key = 'alias'
+		   AND lower(trim(a.value)) = ? AND sk.key = 'session_key' AND sk.value != ''`,
+		agentID, norm,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close() //nolint:errcheck
+	var keys []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return "", err
+		}
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(keys) {
+	case 0:
+		return "", ErrAliasNotFound
+	case 1:
+		return keys[0], nil
+	default:
+		return "", ErrAliasAmbiguous
+	}
+}
+
+// SetChatAliasUnique persists a chat's alias, rejecting with ErrAliasTaken an
+// alias already held by a different chat under the same agent. An empty alias
+// clears it. The index mutex serialises this check-then-set with all other
+// metadata writes, so it is race-free within the process.
+func (idx *SessionIndex) SetChatAliasUnique(agentID, platform string, chatID int64, alias string) error {
+	trimmed := strings.TrimSpace(alias)
+	if trimmed == "" {
+		return idx.SetChatMetadata(agentID, platform, chatID, "alias", "")
+	}
+	// '/' and ':' are session-key structure; an alias containing them could shadow
+	// a real key form at resolution time.
+	if strings.ContainsAny(trimmed, "/:") {
+		return fmt.Errorf("alias may not contain '/' or ':'")
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var other int64
+	err := idx.db.QueryRow(
+		`SELECT chat_id FROM chat_metadata WHERE agent_id = ? AND platform = ? AND key = 'alias'
+		   AND lower(trim(value)) = ? AND chat_id != ? LIMIT 1`,
+		agentID, platform, aliasNorm(trimmed), chatID,
+	).Scan(&other)
+	switch {
+	case err == nil:
+		return ErrAliasTaken
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = idx.db.Exec(chatMetaTable.upsertSQL, agentID, platform, chatID, "alias", trimmed)
+		return err
+	default:
+		return err
+	}
 }
 
 // PlatformForChat returns the platform name that owns a given chat's session key.
