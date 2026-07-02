@@ -848,7 +848,7 @@ func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
 	h.bySession[sessionKey] = b
 	h.mu.Unlock()
 	if idx := h.deps.SessionIndex; idx != nil {
-		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "session", sessionKey)
+		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "session_key", sessionKey)
 	}
 }
 
@@ -874,13 +874,13 @@ func chatIDForConv(convID string) int64 {
 func (h *Hub) sessionKeyForChat(agentID string, chatID int64) string {
 	idx := h.deps.SessionIndex
 	if idx != nil {
-		if v, err := idx.GetChatMetadata(agentID, "app", chatID, "session"); err == nil && v != "" {
+		if v, err := idx.GetChatMetadata(agentID, "app", chatID, "session_key"); err == nil && v != "" {
 			return v
 		}
 	}
 	sk := session.NewChatSessionKey(agentID, chatID)
 	if idx != nil {
-		_ = idx.SetChatMetadata(agentID, "app", chatID, "session", sk)
+		_ = idx.SetChatMetadata(agentID, "app", chatID, "session_key", sk)
 	}
 	return sk
 }
