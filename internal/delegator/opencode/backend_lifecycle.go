@@ -176,9 +176,13 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 // restart. Deleting it here would defeat every "keep resume ID, close,
 // resume later" path: the opencode session is server-side state (unlike
 // ccstream's local conversation file, whose Close only kills a process).
-// Orphaned sessions are reaped by opencode's own idle timeout. If a
-// session ever genuinely needs destroying, that is an explicit, separate
-// operation — never folded into Close.
+// Orphaned sessions accumulate in opencode.db — opencode does NOT reap
+// idle sessions itself (verified: rows survive indefinitely; ~100 orphaned
+// over 4 months at the time of writing). Growth is slow and SQLite stays
+// performant to GB scale, so cleanup is deferred hygiene (a periodic
+// sweep) rather than urgent. If a session ever genuinely needs destroying
+// before such a sweep exists, that is an explicit, separate operation —
+// never folded into Close.
 //
 // Idempotent via the mu-guarded running flag: a second Close is a no-op.
 // Safe to call on a never-Started Backend (server == nil, sessionID == "").
