@@ -51,6 +51,33 @@ func TestFrameStore_LastVisible(t *testing.T) {
 	}
 }
 
+func TestFrameStore_PromptIndex(t *testing.T) {
+	s := tempFrameStore(t)
+	s.PutPrompt("p1", "c1", "clutch", 100)
+
+	convID, agentID, ok := s.PromptConv("p1")
+	if !ok || convID != "c1" || agentID != "clutch" {
+		t.Fatalf("PromptConv(p1) = (%q, %q, %v), want (c1, clutch, true)", convID, agentID, ok)
+	}
+	s.DeletePrompt("p1")
+	if _, _, ok := s.PromptConv("p1"); ok {
+		t.Error("PromptConv(p1) should miss after DeletePrompt")
+	}
+}
+
+func TestFrameStore_TrimDropsOldPrompts(t *testing.T) {
+	s := tempFrameStore(t)
+	s.PutPrompt("old", "c1", "ag", 100)
+	s.PutPrompt("new", "c1", "ag", 5000)
+	s.TrimOlderThan(1000)
+	if _, _, ok := s.PromptConv("old"); ok {
+		t.Error("old prompt should be trimmed")
+	}
+	if _, _, ok := s.PromptConv("new"); !ok {
+		t.Error("new prompt should survive trim")
+	}
+}
+
 func TestFrameStore_InsertMaxSeqRange(t *testing.T) {
 	s := tempFrameStore(t)
 	now := time.Now().UnixMilli()

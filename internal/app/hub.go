@@ -1004,18 +1004,31 @@ func (h *Hub) registerPrompt(promptID string, b *convBinding) {
 	h.mu.Lock()
 	h.prompts[promptID] = b
 	h.mu.Unlock()
+	h.frames.PutPrompt(promptID, b.convID, b.agentID, time.Now().UnixMilli())
 }
 
 func (h *Hub) bindingForPrompt(promptID string) *convBinding {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.prompts[promptID]
+	b := h.prompts[promptID]
+	h.mu.RUnlock()
+	if b != nil {
+		return b
+	}
+	// Durable fallback: the prompt was registered before a restart wiped the
+	// in-memory registry. Rebuild the binding so the resolution still emits a
+	// resolve frame that persists and replays to the app (else a resolved ask
+	// re-appears as fresh after a fresh pair).
+	if convID, agentID, ok := h.frames.PromptConv(promptID); ok {
+		return h.ensureBinding(nil, agentID, convID)
+	}
+	return nil
 }
 
 func (h *Hub) deletePrompt(promptID string) {
 	h.mu.Lock()
 	delete(h.prompts, promptID)
 	h.mu.Unlock()
+	h.frames.DeletePrompt(promptID)
 }
 
 // --- notification edit registry (compaction ⏳→✅) ---
@@ -1062,6 +1075,7 @@ func (h *Hub) registerBatchPrompt(promptID string, b *convBinding, onResp func(a
 	h.mu.Lock()
 	h.batchPrompts[promptID] = &batchPrompt{b: b, onResp: onResp}
 	h.mu.Unlock()
+	h.frames.PutPrompt(promptID, b.convID, b.agentID, time.Now().UnixMilli())
 }
 
 func (h *Hub) batchPromptByID(promptID string) (*batchPrompt, bool) {
@@ -1075,6 +1089,7 @@ func (h *Hub) deleteBatchPrompt(promptID string) {
 	h.mu.Lock()
 	delete(h.batchPrompts, promptID)
 	h.mu.Unlock()
+	h.frames.DeletePrompt(promptID)
 }
 
 func (h *Hub) addClient(c *wsClient) {
