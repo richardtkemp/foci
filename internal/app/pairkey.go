@@ -3,12 +3,16 @@ package app
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"strings"
 	"sync"
 	"time"
+
+	"foci/internal/secrets"
 )
 
 const (
-	pairKeyBytes      = 32               // 256-bit single-use pairing keys
+	pairKeyBytes      = 32               // 256-bit single-use pairing keys (fallback)
+	pairKeyWords      = 5                // human-readable passphrase length (~52 bits)
 	defaultPairKeyTTL = 10 * time.Minute // short window: pair right after minting
 )
 
@@ -32,9 +36,18 @@ func newPairKeyStore() *pairKeyStore {
 }
 
 func newPairKey() string {
+	if p, err := secrets.GeneratePassphrase(pairKeyWords); err == nil {
+		return p
+	}
 	b := make([]byte, pairKeyBytes)
 	_, _ = rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// normalizePairKey makes manual entry forgiving: a user typing the passphrase
+// with spaces or mixed case still matches the minted lowercase-hyphen form.
+func normalizePairKey(k string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(k, "-", " ")), "-"))
 }
 
 // mint generates a pairing key valid for ttl (defaultPairKeyTTL when <= 0) and
@@ -47,7 +60,7 @@ func (s *pairKeyStore) mint(ttl time.Duration) (string, time.Time) {
 	exp := time.Now().Add(ttl)
 	s.mu.Lock()
 	s.sweepLocked()
-	s.keys[key] = exp
+	s.keys[normalizePairKey(key)] = exp
 	s.mu.Unlock()
 	return key, exp
 }
@@ -55,6 +68,7 @@ func (s *pairKeyStore) mint(ttl time.Duration) (string, time.Time) {
 // consume validates a pairing key and removes it (single-use), returning false
 // if the key is unknown or expired. An expired-but-present key is still deleted.
 func (s *pairKeyStore) consume(key string) bool {
+	key = normalizePairKey(key)
 	if key == "" {
 		return false
 	}

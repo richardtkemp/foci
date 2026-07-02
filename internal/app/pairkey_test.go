@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,5 +67,16 @@ func TestPairKeyStore_DistinctKeys(t *testing.T) {
 	}
 	if !s.consume(a) || !s.consume(b) {
 		t.Fatal("both distinct keys should consume independently")
+	}
+}
+
+// Keys are human-readable passphrases (#980), so manual entry must forgive
+// case and spacing differences from the minted lowercase-hyphen form.
+func TestPairKeyStore_ForgivesManualEntry(t *testing.T) {
+	s := newPairKeyStore()
+	key, _ := s.mint(time.Minute) // e.g. "maple-thunder-basket-olive-crane"
+	spaced := strings.ToUpper(strings.ReplaceAll(key, "-", "  "))
+	if !s.consume(spaced) {
+		t.Fatalf("consume(%q) should match minted key %q", spaced, key)
 	}
 }
