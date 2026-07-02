@@ -162,7 +162,7 @@ type Backend struct {
 	permMu         sync.Mutex
 	outstanding    *delegator.OutstandingRegistry
 	compactDoneCh  chan struct{} // buffered(1); closed by OnSessionCompacted
-	compactStartCh chan struct{} // closed immediately by ArmCompactionStartWait
+	compactStartCh chan struct{} // buffered(1); closed by handleCompactionPart (compaction-part = start signal)
 	sessionID      string
 
 	// Per-session event channel — Server.route pushes decoded rawEvents

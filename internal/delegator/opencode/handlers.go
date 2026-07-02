@@ -321,15 +321,20 @@ func (b *Backend) handleSubtaskPart(part Part) {
 	}
 }
 
-// handleCompactionPart fires when a compaction part arrives — arms
-// the compaction waiter so WaitForCompaction unblocks.
+// handleCompactionPart fires when a compaction part arrives (part.type ==
+// "compaction") — the real "compaction started" signal. opencode inserts
+// this part at summarize initiation, before the LLM begins streaming the
+// summary (~2.5s ahead of the first reasoning token, measured on 1.17.11).
+// We close compactStartCh so WaitForCompactionStart unblocks at true
+// initiation. compactDoneCh stays open here — it is closed only by
+// onSessionCompacted (the session.compacted completion event).
 func (b *Backend) handleCompactionPart() {
 	b.turnMu.Lock()
-	if b.compactDoneCh != nil {
+	if b.compactStartCh != nil {
 		select {
-		case <-b.compactDoneCh: // already closed
+		case <-b.compactStartCh: // already closed
 		default:
-			close(b.compactDoneCh)
+			close(b.compactStartCh)
 		}
 	}
 	b.turnMu.Unlock()

@@ -847,6 +847,45 @@ func TestOnSessionCompacted_FiresOnCompactionDone(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// handleCompactionPart — routes the start signal to compactStartCh only
+// ---------------------------------------------------------------------------
+
+func TestHandleCompactionPart_ClosesStartChNotDoneCh(t *testing.T) {
+	// Pins the routing of opencode's compaction start signal: the
+	// compaction part (part.type == "compaction") closes compactStartCh
+	// (the start waiter) and must NOT close compactDoneCh (the completion
+	// waiter, closed only by onSessionCompacted). Closing the wrong
+	// channel made WaitForCompaction unblock at initiation and the bounce
+	// destroy the session mid-compaction.
+	b := &Backend{
+		sessionID:     "sess-test",
+		compactDoneCh: make(chan struct{}, 1),
+		outstanding:   delegator.NewOutstandingRegistry(),
+	}
+	b.ArmCompactionStartWait()
+
+	b.handleCompactionPart()
+
+	b.turnMu.Lock()
+	startCh := b.compactStartCh
+	doneCh := b.compactDoneCh
+	b.turnMu.Unlock()
+
+	// compactStartCh must be closed (start signal fired)…
+	select {
+	case <-startCh:
+	default:
+		t.Error("compactStartCh not closed after compaction part")
+	}
+	// …and compactDoneCh must still be OPEN (completion is onSessionCompacted's job).
+	select {
+	case <-doneCh:
+		t.Error("compactDoneCh was closed by the compaction part (should stay open until session.compacted)")
+	default:
+	}
+}
+
+// ---------------------------------------------------------------------------
 // SessionEvents invariant: delivery works post-idle (no handler nil)
 // ---------------------------------------------------------------------------
 
