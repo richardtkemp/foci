@@ -49,11 +49,15 @@ find-disconnected-tests:
 test:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
-	# /tmp/heavy serialises the test process against any other heavy build
+	# /tmp/heavy serialises the test runner against any other heavy build
 	# (e.g. a concurrent `update.sh` deploy build) that holds the same lock,
 	# so they don't starve each other for CPU and trip deadline-sensitive
 	# waits. Other heavy builds should flock the same path reciprocally.
-	flock /tmp/heavy -c 'TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS'
+	# The lock is held on FD 9 by THIS subshell only: `9>&-` closes it for the
+	# go test command, so go test and its spawned subprocesses (foci-gw,
+	# cc-stub) do NOT inherit the lock — a lingering child must not keep the
+	# lock held after the runner exits, or the next run would block forever.
+	( flock 9; TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... 9>&- ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS ) 9>/tmp/heavy
 
 # Integration tests (L2): real foci-gw subprocess against stubbed CC and
 # stubbed Telegram. Build-tagged so they only run under this target — not
@@ -63,7 +67,7 @@ integration:
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
 	$(eval TESTDIR := /tmp/foci/integration-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
-	@flock /tmp/heavy -c 'TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) ./test/integration/... ./internal/testharness/... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS'
+	@( flock 9; TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) ./test/integration/... ./internal/testharness/... 9>&- ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS ) 9>/tmp/heavy
 
 # bucket-audit: the differential half of weight-bucket detection. Runs the
 # L2 suite at low (-parallel=2) and high (-parallel=IPARALLEL) concurrency
