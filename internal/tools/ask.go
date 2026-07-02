@@ -148,6 +148,13 @@ type askState struct {
 	closeMsg     AskCloseFn
 	store        *session.SessionIndex // nil = no persistence
 	agentID      string
+	onResolve    func(sessionKey string) // fired when a session's pending ask clears; nil = disabled
+}
+
+// WithOnResolve sets a callback fired (async) when a session's pending ask
+// resolves, so the caller can redeliver injections deferred while it was pending.
+func WithOnResolve(fn func(sessionKey string)) AskOption {
+	return func(s *askState) { s.onResolve = fn }
 }
 
 // AskOption customises the ask tool at construction — used to wire optional,
@@ -430,6 +437,11 @@ func (a *askState) removeLocked(p *pendingAsk) {
 	delete(a.byReqID, p.requestID)
 	if a.bySession[p.sessionKey] == p.requestID {
 		delete(a.bySession, p.sessionKey)
+		// The session now has no pending ask — notify async (off a.mu) so any
+		// injections deferred while it was pending can be redelivered.
+		if a.onResolve != nil {
+			go a.onResolve(p.sessionKey)
+		}
 	}
 }
 
