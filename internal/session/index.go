@@ -133,6 +133,13 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	// Detects old schema by checking column count, then rebuilds the table in a transaction.
 	migrateChatMetadataPlatform(db)
 
+	// Migration: rename the app platform's chat_metadata key from "session" to
+	// "session_key" so PlatformForChat (which queries key='session_key') matches
+	// app chats. The app platform historically wrote under "session" while the
+	// chatmeta resolver (telegram/discord) used "session_key" — the mismatch left
+	// app chats unclaimed by any platform in ForSessionOrPrimary routing (#943).
+	migrateChatMetadataSessionKey(db)
+
 	// Migration: move CC resume IDs from agent_metadata (key='cc_session:<sk>')
 	// to session_metadata (session_key=<sk>, key='cc_resume_id'). The data is
 	// session-scoped (each post-compact JSONL has its own UUID), so it belongs
@@ -708,6 +715,23 @@ func migrateChatMetadataPlatform(db *sql.DB) {
 		return
 	}
 	log.Infof("session", "chat_metadata migration complete")
+}
+
+// migrateChatMetadataSessionKey renames the app platform's legacy "session" key to
+// "session_key", aligning it with the chatmeta resolver convention that PlatformForChat
+// expects. Idempotent: a no-op once no rows have key='session'. Safe against PK conflicts
+// because app chats only ever wrote one key per (agent, platform, chat) — no competing
+// "session_key" row exists for platform='app' (the resolver only writes it for
+// telegram/discord).
+func migrateChatMetadataSessionKey(db *sql.DB) {
+	res, err := db.Exec(`UPDATE chat_metadata SET key = 'session_key' WHERE key = 'session'`)
+	if err != nil {
+		log.Errorf("session", "chat_metadata session_key migration: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Infof("session", "migrated %d app chat_metadata row(s): session → session_key", n)
+	}
 }
 
 // metadataTable holds precomputed SQL for a metadata table's CRUD operations.

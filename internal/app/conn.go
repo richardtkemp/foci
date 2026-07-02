@@ -112,7 +112,7 @@ func (c *appConn) SessionKeyForChat(chatID int64) string {
 // changes — nicer than Telegram where the chat IS the identity).
 func (c *appConn) UpdateChatSessionKey(chatID int64, newKey string) {
 	if idx := c.hub.deps.SessionIndex; idx != nil {
-		_ = idx.SetChatMetadata(c.agentID, "app", chatID, "session", newKey)
+		_ = idx.SetChatMetadata(c.agentID, "app", chatID, "session_key", newKey)
 	}
 	var rotated []*convBinding
 	c.hub.mu.Lock()
