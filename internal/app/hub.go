@@ -638,6 +638,19 @@ func (h *Hub) StartAll(context.Context) {
 	if len(convs) > 0 {
 		log.Infof("app", "restored %d binding(s) from durable store at startup", len(convs))
 	}
+	// One-time: resolve asks stored before durable resolution tracking existed,
+	// so a freshly-paired device doesn't replay them as fresh (#981).
+	if h.frames.NeedsLegacyAskSweep() {
+		legacy := h.frames.LegacyOpenAsks()
+		for _, a := range legacy {
+			h.ensureBinding(nil, a.agentID, a.convID).
+				send(fap.InteractiveEdit{ConversationID: a.convID, PromptID: a.promptID, Text: a.text})
+		}
+		h.frames.MarkLegacyAsksSwept()
+		if len(legacy) > 0 {
+			log.Infof("app", "swept %d legacy open ask(s) into resolved on startup", len(legacy))
+		}
+	}
 }
 func (h *Hub) Wait() {}
 

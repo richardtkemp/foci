@@ -2,10 +2,12 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"foci/internal/app/fap"
 	"foci/internal/log"
 	"foci/internal/sqlite"
 )
@@ -331,6 +333,102 @@ func (s *frameStore) DeletePrompt(promptID string) {
 	}
 	if _, err := s.db.Exec(`DELETE FROM app_prompts WHERE prompt_id = ?`, promptID); err != nil {
 		log.Errorf("app", "frame store DeletePrompt (prompt=%s): %v", promptID, err)
+	}
+}
+
+// legacyAsk is a stored interactive prompt that predates durable resolution
+// tracking and still needs a synthesized resolve.
+type legacyAsk struct {
+	promptID string
+	convID   string
+	agentID  string
+	text     string
+}
+
+// NeedsLegacyAskSweep reports whether the one-time legacy-ask sweep has yet to
+// run (gated by the DB's user_version).
+func (s *frameStore) NeedsLegacyAskSweep() bool {
+	if s == nil {
+		return false
+	}
+	var uv int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&uv); err != nil {
+		return false
+	}
+	return uv < 1
+}
+
+// LegacyOpenAsks returns interactive prompts stored before durable resolution
+// tracking existed and never resolved: an `interactive` frame with no matching
+// `interactive.edit` and no app_prompts row (that index is populated only from
+// this version on, so its presence marks a current-generation ask to leave
+// alone). The caller gates this on NeedsLegacyAskSweep and commits with
+// MarkLegacyAsksSwept once the resolves are synthesized.
+func (s *frameStore) LegacyOpenAsks() []legacyAsk {
+	if s == nil {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT conv_id, agent_id, wire FROM app_frames`)
+	if err != nil {
+		log.Errorf("app", "frame store LegacyOpenAsks scan: %v", err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	resolved := map[string]bool{}
+	indexed := map[string]bool{}
+	seen := map[string]bool{}
+	var asks []legacyAsk
+	for rows.Next() {
+		var convID, agentID, wire string
+		if err := rows.Scan(&convID, &agentID, &wire); err != nil {
+			continue
+		}
+		var env fap.Envelope
+		if json.Unmarshal([]byte(wire), &env) != nil {
+			continue
+		}
+		var p struct {
+			PromptID string `json:"promptId"`
+			Text     string `json:"text"`
+		}
+		_ = json.Unmarshal(env.D, &p)
+		if p.PromptID == "" {
+			continue
+		}
+		switch env.T {
+		case fap.TypeInteractiveEdit:
+			resolved[p.PromptID] = true
+		case fap.TypeInteractive:
+			asks = append(asks, legacyAsk{p.PromptID, convID, agentID, p.Text})
+		}
+	}
+	if prows, err := s.db.Query(`SELECT prompt_id FROM app_prompts`); err == nil {
+		for prows.Next() {
+			var id string
+			if prows.Scan(&id) == nil {
+				indexed[id] = true
+			}
+		}
+		_ = prows.Close()
+	}
+	out := make([]legacyAsk, 0)
+	for _, a := range asks {
+		if resolved[a.promptID] || indexed[a.promptID] || seen[a.promptID] {
+			continue
+		}
+		seen[a.promptID] = true
+		out = append(out, a)
+	}
+	return out
+}
+
+// MarkLegacyAsksSwept records that the one-time legacy-ask sweep has run.
+func (s *frameStore) MarkLegacyAsksSwept() {
+	if s == nil {
+		return
+	}
+	if _, err := s.db.Exec(`PRAGMA user_version = 1`); err != nil {
+		log.Errorf("app", "frame store MarkLegacyAsksSwept: %v", err)
 	}
 }
 

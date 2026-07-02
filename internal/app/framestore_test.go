@@ -78,6 +78,42 @@ func TestFrameStore_TrimDropsOldPrompts(t *testing.T) {
 	}
 }
 
+func TestFrameStore_LegacyOpenAsks(t *testing.T) {
+	s := tempFrameStore(t)
+	enc := func(f fap.ServerFrame, seq int64) string {
+		w, err := fap.Encode(f, seq, 0, "", "")
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return w
+	}
+	// p1: interactive, never resolved, not indexed → legacy open.
+	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 1, sentMs: 1,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "p1", Text: "allow?"}, 1)})
+	// p2: interactive + a later resolve → resolved.
+	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 2, sentMs: 2,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "p2"}, 2)})
+	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 3, sentMs: 3,
+		wire: enc(fap.InteractiveEdit{ConversationID: "c1", PromptID: "p2", Text: "done"}, 3)})
+	// p3: interactive but tracked in app_prompts → current-gen, leave alone.
+	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 4, sentMs: 4,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "p3"}, 4)})
+	s.PutPrompt("p3", "c1", "clutch", 4)
+
+	if !s.NeedsLegacyAskSweep() {
+		t.Fatal("sweep should be needed before it runs")
+	}
+	got := s.LegacyOpenAsks()
+	if len(got) != 1 || got[0].promptID != "p1" || got[0].convID != "c1" ||
+		got[0].agentID != "clutch" || got[0].text != "allow?" {
+		t.Fatalf("LegacyOpenAsks = %+v, want just p1 (c1/clutch/allow?)", got)
+	}
+	s.MarkLegacyAsksSwept()
+	if s.NeedsLegacyAskSweep() {
+		t.Error("sweep should be marked done after MarkLegacyAsksSwept")
+	}
+}
+
 func TestFrameStore_InsertMaxSeqRange(t *testing.T) {
 	s := tempFrameStore(t)
 	now := time.Now().UnixMilli()
