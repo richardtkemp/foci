@@ -384,6 +384,35 @@ func TestInject_Steer_InFlight_BackstopTimerFlushes(t *testing.T) {
 	}
 }
 
+func TestFailInFlightTurn_AbortNoOutput_NoScaryMessage(t *testing.T) {
+	// A deliberate abort (steer drain / /reset hard) that catches a turn before
+	// it streamed any text must NOT surface the "session ended unexpectedly"
+	// message — it's a deliberate interrupt, not an unexpected death. The
+	// turn completes with whatever partial text accumulated (here: none).
+	rec := &recordingHandler{}
+	b := newReadyBackend(t, rec)
+
+	var gotAbort string
+	b.beginTurn(&delegator.TurnEvents{
+		OnTurnComplete: func(r *delegator.TurnResult) { gotAbort = r.Text },
+	})
+	b.failInFlightTurn(ErrMessageAborted)
+	if gotAbort != "" {
+		t.Errorf("abort OnTurnComplete Text = %q, want empty (no ⚠️ on deliberate abort)", gotAbort)
+	}
+
+	// Contrast: a non-abort reason with no output still synthesises the
+	// unexpected-end message (genuine failures stay visible).
+	var gotOther string
+	b.beginTurn(&delegator.TurnEvents{
+		OnTurnComplete: func(r *delegator.TurnResult) { gotOther = r.Text },
+	})
+	b.failInFlightTurn(ErrUnknown)
+	if !strings.Contains(gotOther, "ended unexpectedly") {
+		t.Errorf("non-abort OnTurnComplete Text = %q, want the ⚠️ unexpected-end message", gotOther)
+	}
+}
+
 func TestInject_Steer_Idle_BeginsTurn(t *testing.T) {
 	// Verifies Inject(SourceSteer) at idle with inj.Turn present
 	// degrades to User-idle (begin turn + sendPrompt). This handles

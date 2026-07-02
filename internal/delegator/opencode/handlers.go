@@ -651,7 +651,12 @@ func (b *Backend) failInFlightTurn(reason string) {
 		log.Warnf(b.logComponent(), "failInFlightTurn: active turn ended with no text/tools on %s — possible premature error on steered turn", reason)
 	}
 
-	if text == "" {
+	if text == "" && reason != ErrMessageAborted {
+		// ErrMessageAborted comes from a deliberate POST /abort — either a
+		// mid-turn steer (injectSteer abort-drain) or /reset hard — not an
+		// unexpected session end, so the scary "ended unexpectedly" message is
+		// misleading. Deliver whatever partial text accumulated (possibly
+		// empty) and complete silently; a steer's follow-up turn follows.
 		text = "⚠️ opencode session ended unexpectedly (" + reason + ")"
 	}
 	if turn != nil && turn.OnTurnComplete != nil {
