@@ -714,10 +714,11 @@ func TestL2_Failures_TelegramSendMessage5xxLogsAndDrops(t *testing.T) {
 		t.Fatalf("user message never reached cc-stub; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Poll for the sanitized error log. sendHTMLChunks logs
-	// "send error: ..." once both HTML and plain attempts fail.
-	if !waitForStderr(h, "send error:", 10*time.Second) {
-		t.Fatalf("expected 'send error:' in stderr after 502; stderr:\n%s", stderrTail(h.Stderr()))
+	// Poll for the sanitized error log. sendHTMLWithFallback logs
+	// "send: plain-text fallback also failed: ..." once both HTML and plain
+	// attempts fail (bot_send.go).
+	if !waitForStderr(h, "send: plain-text fallback also failed", 10*time.Second) {
+		t.Fatalf("expected 'send: plain-text fallback also failed' in stderr after 502; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
 	// Lift the fault and confirm recovery: a fresh turn's reply
