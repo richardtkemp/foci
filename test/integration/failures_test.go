@@ -777,10 +777,12 @@ func TestL2_Failures_TelegramSendMessage429SurfacesRateLimit(t *testing.T) {
 		t.Fatalf("user message never reached cc-stub; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// foci logs the sanitized error from a 429 the same way as any
-	// other send failure. We just confirm the error surfaces.
-	if !waitForStderr(h, "send error:", 10*time.Second) {
-		t.Fatalf("expected 'send error:' for 429 response; stderr:\n%s", stderrTail(h.Stderr()))
+	// A 429 is handled gracefully via retryOn429: foci logs the flood-control
+	// WARN and retries up to maxFloodRetries. With two one-shots injected,
+	// both are absorbed by retry and the send ultimately succeeds — so we
+	// assert the flood-control handling fired, not an error log.
+	if !waitForStderr(h, "Telegram 429 flood control", 10*time.Second) {
+		t.Fatalf("expected 'Telegram 429 flood control' retry log for 429 response; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
 	// Recovery: the two one-shots are now drained. A subsequent
@@ -879,10 +881,10 @@ func TestL2_Failures_TelegramGetUpdatesPersistent5xxEscalatesLog(t *testing.T) {
 // foci tolerates a Telegram response whose body isn't `{"ok":...}` —
 // e.g. a CDN error page intercepted between bot and stub. The stub
 // returns `<html>...</html>` with HTTP 200; foci's gotgbot client
-// fails to parse it as the expected Message schema, sendHTMLChunks
-// retries as plain (same parse failure), logs "send error", and
-// continues polling. A subsequent reply after clearing the
-// injection lands normally.
+// fails to parse it as the expected Message schema, sendHTMLWithFallback
+// retries as plain (same parse failure), logs "send: plain-text fallback
+// also failed", and continues polling. A subsequent reply after clearing
+// the injection lands normally.
 func TestL2_Failures_TelegramSendMessageMalformedJSONResponse(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 8405
@@ -902,8 +904,8 @@ func TestL2_Failures_TelegramSendMessageMalformedJSONResponse(t *testing.T) {
 	if !waitForUserMessage(t, h, "workspaces/alpha", "malformed-response-probe", 20*time.Second) {
 		t.Fatalf("user message never reached cc-stub; stderr:\n%s", stderrTail(h.Stderr()))
 	}
-	if !waitForStderr(h, "send error:", 10*time.Second) {
-		t.Fatalf("expected 'send error:' for malformed JSON; stderr:\n%s", stderrTail(h.Stderr()))
+	if !waitForStderr(h, "send: plain-text fallback also failed", 10*time.Second) {
+		t.Fatalf("expected 'send: plain-text fallback also failed' for malformed JSON; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
 	// Recovery
