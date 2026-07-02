@@ -120,6 +120,17 @@ func (a AgentSpec) preStartFiles() map[string]string {
 	return a.PreStartFiles
 }
 
+// CorrectnessWaitFloor is the minimum budget for a test wait whose assertion
+// is about *eventual occurrence* (a message was sent, a socket appeared, a turn
+// was processed) rather than speed. Load-induced latency (concurrent builds,
+// gateway-boot contention, a busy CI box) must not trip such a wait, so every
+// wait in this family is floored to at least this long. Waits that genuinely
+// assert timing (poll frequency, retry rate) bypass it. 60s is generous over
+// the largest previously-hand-tuned value (30s); with the /tmp/heavy flock
+// preventing build-vs-test contention, waits normally return in well under a
+// second and the floor only bites when something is genuinely slow.
+const CorrectnessWaitFloor = 60 * time.Second
+
 // HarnessOptions configures a test foci-gw subprocess.
 type HarnessOptions struct {
 	Agents []AgentSpec
@@ -248,6 +259,11 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	}
 	if opts.ReadyTimeout == 0 {
 		opts.ReadyTimeout = 20 * time.Second
+	}
+	// Floor: gateway boot is a correctness wait (the gateway eventually comes
+	// up), not a speed assertion — load-induced latency must not trip it.
+	if opts.ReadyTimeout < CorrectnessWaitFloor {
+		opts.ReadyTimeout = CorrectnessWaitFloor
 	}
 
 	tempDir := t.TempDir()

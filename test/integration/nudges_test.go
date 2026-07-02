@@ -96,6 +96,9 @@ func seedNudgeRulesRaw(t *testing.T, h *testharness.Harness, agentID string, bod
 // timeout (caller decides whether the timeout is failure).
 func waitForUserMessageContaining(t *testing.T, h *testharness.Harness, agentID string, timeout time.Duration, must ...string) (recorderEntry, bool) {
 	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	wantWd := "workspaces/" + agentID
 	for time.Now().Before(deadline) {

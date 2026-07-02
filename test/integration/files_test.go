@@ -69,6 +69,9 @@ func writeSendToChatScript(t *testing.T, h *testharness.Harness, agentID, bashCm
 // whose Method equals the supplied string. Returns the first matching
 // SentCall and true, or zero value + false on timeout.
 func waitForSentMethod(h *testharness.Harness, token, method string, timeout time.Duration) (testharness.SentCall, bool) {
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, c := range h.TelegramStub().PeekSent(token) {

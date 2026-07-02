@@ -223,6 +223,9 @@ func TestL2_CrossAgent_SendToSession_BareAgentName_RoutesToTarget(t *testing.T) 
 // containing textSubstr. Returns true on hit, false on timeout.
 func waitForUserMessage(t *testing.T, h *testharness.Harness, workdirSubstr, textSubstr string, timeout time.Duration) bool {
 	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
