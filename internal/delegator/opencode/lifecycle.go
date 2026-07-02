@@ -81,6 +81,9 @@ func (s *Server) Start(ctx context.Context) error {
 		binary = "opencode"
 	}
 	args := []string{"serve", "--port", fmt.Sprintf("%d", port), "--hostname", s.hostname}
+	if s.logLevel != "" {
+		args = append(args, "--log-level", s.logLevel)
+	}
 	cmdCtx, cmdCancel := context.WithCancel(context.Background())
 	cmd := procx.Spawn(cmdCtx, binary, args...)
 	cmd.Dir = s.workDir
