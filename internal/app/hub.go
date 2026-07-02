@@ -72,11 +72,6 @@ type Hub struct {
 	replayTTL      time.Duration   // config-driven replay buffer TTL (0 = default)
 	frames         *frameStore     // durable replay-frame backstop (nil when no data_dir)
 	allowedDevices map[string]bool // non-empty = pairing allowlist
-	// reflectOnArchive fires one final reflection for a session being archived,
-	// gated by reflection's own "activity since last reflection" rule. Wired at
-	// startup (cmd/foci-gw) to the periodic Reflector; nil when no reflector exists
-	// (tests, reflection disabled). Set once before serving; read without a lock.
-	reflectOnArchive func(sessionKey string)
 
 	mu           sync.RWMutex
 	agents       map[string]*appConn     // agentID → its connection
@@ -619,12 +614,13 @@ func (h *Hub) BotForSessionOrPrimary(sessionKey, agentID string) *appConn {
 func (h *Hub) AcquireFacet(string) (*appConn, bool) { return nil, false } // facets: later slice
 func (h *Hub) HasFacet(string) bool                 { return false }
 
-// StartAll rebuilds bindings for non-archived conversations at startup so an
+// StartAll rebuilds bindings for every conversation at startup so an
 // unsolicited message (cron/keepalive/reflection) lands correctly BEFORE the app
 // reconnects — closing the post-restart window where bindingForSession would
 // otherwise return nil and the send would drop. The restore set is every conv
 // with a visible frame and a known agent in the durable store; archived convs
-// were purged (PurgeConv) so they are excluded by construction. ensureBinding
+// are included (archive is now a reversible flag, not a frame purge), and their
+// archived state is surfaced via the roster. ensureBinding
 // with a nil client creates the socketless durable binding; the real socket
 // re-attaches on the app's next hello/resume (#app-binding-restore).
 func (h *Hub) StartAll(context.Context) {
@@ -722,6 +718,23 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		return v
 	}
 
+	// Per-agent archived-chat set (app platform), memoised the same way as
+	// defaultChat so each agent's chat_metadata is queried at most once per
+	// roster build. Marks matching conversations' Archived flag — the roster is
+	// the app's source of truth for archived state (see ConversationInfo.Archived).
+	archivedByAgent := make(map[string]map[int64]bool)
+	archivedChats := func(agentID string) map[int64]bool {
+		if idx == nil {
+			return nil
+		}
+		if v, ok := archivedByAgent[agentID]; ok {
+			return v
+		}
+		v := idx.ArchivedChatsForAgent(agentID, "app")
+		archivedByAgent[agentID] = v
+		return v
+	}
+
 	// Group live conversations by agent (the app's Room DB is the durable source
 	// of its full thread list; the roster advertises agents + currently-bound
 	// conversations and any the app resumes are re-attached on hello).
@@ -731,6 +744,9 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		ci.Title = h.aliasFor(b)
 		if dc := defaultChat(b.agentID); dc != 0 && dc == b.chatID {
 			ci.IsDefault = true
+		}
+		if archivedChats(b.agentID)[b.chatID] {
+			ci.Archived = true
 		}
 		byAgent[b.agentID] = append(byAgent[b.agentID], ci)
 	}

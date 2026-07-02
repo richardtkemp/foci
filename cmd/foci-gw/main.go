@@ -21,7 +21,7 @@ import (
 	_ "foci/internal/telegram"           // register telegram messaging provider
 
 	"foci/internal/agent"
-	"foci/internal/app" // also registers the app (FAP WebSocket) messaging provider via init
+	_ "foci/internal/app" // registers the app (FAP WebSocket) messaging provider via init
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -29,7 +29,6 @@ import (
 	"foci/internal/modelcaps"
 	"foci/internal/platform"
 	"foci/internal/provision"
-	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/internal/startup"
 	"foci/internal/timeutil"
@@ -383,16 +382,6 @@ Subcommands:
 
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, inst.ag.Model, acfg.Workspace)
 	}
-
-	// Final-reflection-on-archive: when an app session is archived, dispatch one
-	// reflection to the owning agent's runner if the session is due (the runner
-	// re-applies the "activity since last reflection" gate). Registered once now
-	// that every agent's kaRunner is set (#app-binding-restore).
-	app.SetReflectOnArchive(func(sessionKey string) {
-		if inst := agents[session.AgentIDFromKey(sessionKey)]; inst != nil && inst.kaRunner != nil {
-			inst.kaRunner.ReflectSessionIfDue(sessionKey)
-		}
-	})
 
 	// ========== Post-agent setup ==========
 	if len(agentOrder) > 0 {

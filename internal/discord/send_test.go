@@ -82,6 +82,8 @@ func (m *mockIndex) ClearDefaultChat(string, string) error {
 	m.defaultChatID = 0
 	return nil
 }
+func (m *mockIndex) SetArchivedChat(string, string, int64, bool) error { return nil }
+func (m *mockIndex) ArchivedChatsForAgent(string, string) map[int64]bool { return nil }
 
 // TestClearStaleChannel verifies that clearStaleChannel removes the channel
 // from the session index default and last-known channel state.

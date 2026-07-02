@@ -1094,6 +1094,58 @@ func (idx *SessionIndex) ClearDefaultChat(agentID, platform string) error {
 	return err
 }
 
+// SetArchivedChat sets or clears the archived flag for a chat on a specific
+// platform. The flag is a sibling of is_default in chat_metadata (key
+// 'is_archived'); archived conversations are hidden from the app roster but
+// retain their replay frames, binding, and session — unarchive is reversible.
+// Removing the row (archived=false) rather than storing 'false' keeps the table
+// sparse: absence means not-archived, matching how is_default absence means
+// no default.
+func (idx *SessionIndex) SetArchivedChat(agentID, platform string, chatID int64, archived bool) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	if !archived {
+		_, err := idx.db.Exec(
+			`DELETE FROM chat_metadata WHERE agent_id = ? AND platform = ? AND chat_id = ? AND key = 'is_archived'`,
+			agentID, platform, chatID,
+		)
+		return err
+	}
+	_, err := idx.db.Exec(
+		chatMetaTable.upsertSQL,
+		agentID, platform, chatID, "is_archived", "true",
+	)
+	return err
+}
+
+// ArchivedChatsForAgent returns the set of archived chatIDs for an agent on a
+// specific platform. Used by the app roster builder to flag archived rows
+// (mirroring DefaultChatForAgent). Empty (nil) map means none archived.
+func (idx *SessionIndex) ArchivedChatsForAgent(agentID, platform string) map[int64]bool {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(
+		`SELECT chat_id FROM chat_metadata WHERE agent_id = ? AND platform = ? AND key = 'is_archived' AND value = 'true'`,
+		agentID, platform,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close() //nolint:errcheck
+
+	out := make(map[int64]bool)
+	for rows.Next() {
+		var chatID int64
+		if err := rows.Scan(&chatID); err != nil {
+			return out
+		}
+		out[chatID] = true
+	}
+	return out
+}
+
 // DefaultChatIDs returns all default chat IDs for an agent across all platforms.
 // Used by /sessions to mark defaults with ★ regardless of which platform the
 // command is invoked from.

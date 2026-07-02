@@ -21,19 +21,6 @@ func setActiveHub(h *Hub) {
 	activeMu.Unlock()
 }
 
-// SetReflectOnArchive wires the final-reflection-on-archive callback into the
-// active app hub (cmd/foci-gw calls this once after building the per-agent
-// reflectors). fn receives the archived session key and should fire one
-// reflection if the session is due. No-op when the app provider isn't running.
-func SetReflectOnArchive(fn func(sessionKey string)) {
-	activeMu.RLock()
-	h := activeHub
-	activeMu.RUnlock()
-	if h != nil {
-		h.reflectOnArchive = fn
-	}
-}
-
 // Enabled reports whether the app provider is configured and able to serve the
 // app endpoints (a hub exists). Authentication is per-device-token (#862); there
 // is no shared key whose presence gates the endpoint.
