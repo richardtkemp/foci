@@ -79,6 +79,15 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 			PRIMARY KEY (conv_id, seq)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_frames_sent ON app_frames(sent_ms)`,
+		// Durable promptID→conversation index so a resolution can always emit a
+		// resolve frame (even after a restart wipes the in-memory prompt registry),
+		// making ask resolution survive replay. Row removed on resolve.
+		`CREATE TABLE IF NOT EXISTS app_prompts (
+			prompt_id  TEXT    NOT NULL PRIMARY KEY,
+			conv_id    TEXT    NOT NULL,
+			agent_id   TEXT    NOT NULL,
+			created_ms INTEGER NOT NULL
+		)`,
 		`PRAGMA auto_vacuum = INCREMENTAL`,
 	)
 	if err != nil {
@@ -288,6 +297,43 @@ func (s *frameStore) Range(convID string, fromSeq int64, limit int) []storedFram
 	return out
 }
 
+// PutPrompt records a live app prompt's conversation so a resolution can find it
+// even after a restart wipes the in-memory registry. createdMs bounds cleanup.
+func (s *frameStore) PutPrompt(promptID, convID, agentID string, createdMs int64) {
+	if s == nil {
+		return
+	}
+	if _, err := s.db.Exec(
+		`INSERT OR REPLACE INTO app_prompts (prompt_id, conv_id, agent_id, created_ms) VALUES (?, ?, ?, ?)`,
+		promptID, convID, agentID, createdMs,
+	); err != nil {
+		log.Errorf("app", "frame store PutPrompt (prompt=%s): %v", promptID, err)
+	}
+}
+
+// PromptConv returns the conversation + agent a still-open prompt belongs to.
+func (s *frameStore) PromptConv(promptID string) (convID, agentID string, ok bool) {
+	if s == nil {
+		return "", "", false
+	}
+	if err := s.db.QueryRow(
+		`SELECT conv_id, agent_id FROM app_prompts WHERE prompt_id = ?`, promptID,
+	).Scan(&convID, &agentID); err != nil {
+		return "", "", false
+	}
+	return convID, agentID, true
+}
+
+// DeletePrompt drops a resolved prompt from the index.
+func (s *frameStore) DeletePrompt(promptID string) {
+	if s == nil {
+		return
+	}
+	if _, err := s.db.Exec(`DELETE FROM app_prompts WHERE prompt_id = ?`, promptID); err != nil {
+		log.Errorf("app", "frame store DeletePrompt (prompt=%s): %v", promptID, err)
+	}
+}
+
 // TrimOlderThan deletes frames older than cutoffMs and returns the rows removed.
 func (s *frameStore) TrimOlderThan(cutoffMs int64) int64 {
 	if s == nil {
@@ -298,6 +344,7 @@ func (s *frameStore) TrimOlderThan(cutoffMs int64) int64 {
 		log.Errorf("app", "frame store trim: %v", err)
 		return 0
 	}
+	_, _ = s.db.Exec(`DELETE FROM app_prompts WHERE created_ms < ?`, cutoffMs)
 	n, _ := res.RowsAffected()
 	if n > 0 {
 		// Reclaim freed pages incrementally (auto_vacuum=INCREMENTAL).
