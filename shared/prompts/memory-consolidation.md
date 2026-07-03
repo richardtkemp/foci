@@ -15,6 +15,9 @@ DO NOT add:
 - Completed one-off tasks
 - Technical details of specific fixes
 - Session-specific context
+- Anything already stated in your character files (CRAFT.md, USER.md, etc.)
+
+**Don't duplicate what's already in your character files.** MEMORY.md loads alongside your character files — anything already stated there is already in every prompt, so restating it is pure bloat. Before adding a line, confirm it isn't already covered. If a memory genuinely *extends* a character-file rule rather than repeating it, write it as an explicit supplement — e.g. "Supplementary to CRAFT.md, extra rule for <point>: …" — so it reads as an extension, not a restatement.
 
 **Distill, don't transcribe.** When a daily entry contains a reusable lesson embedded in a specific fix, extract ONLY the general rule. Strip commit hashes, dates, TODO/ticket numbers, version strings, and "deployed/merged/closed" framing — those are the incident, not the lesson.
 
