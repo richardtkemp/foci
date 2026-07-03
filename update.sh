@@ -14,7 +14,7 @@ fi
 NEW_COMMIT="$(git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "Building..."
-sudo -u foci bash -c "cd '$SCRIPT_DIR' && make all"
+sudo -u foci bash -c "cd '$SCRIPT_DIR' && make -s all"
 
 # ===== Config compatibility pre-check =====
 # Validate every foci service's config with the FRESHLY-BUILT binary BEFORE we
@@ -39,7 +39,10 @@ for svcfile in /etc/systemd/system/foci*.service; do
         continue
     fi
     echo -n "  $svcname: $SVC_CFG ... "
-    if "$NEW_GW" -check-config -config "$SVC_CFG"; then
+    # Resolve relative config paths against the service's own home (as it would
+    # at runtime), so the root-run check doesn't warn "$HOME is not defined".
+    SVC_HOME="$(grep '^WorkingDirectory=' "$svcfile" | cut -d= -f2)"
+    if HOME="$SVC_HOME" "$NEW_GW" -check-config -config "$SVC_CFG"; then
         checked_any=true
     else
         echo >&2
