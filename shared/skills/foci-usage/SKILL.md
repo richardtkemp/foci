@@ -7,6 +7,8 @@ description: How to operate as a foci agent — the tools you call, how your pro
 
 You are an agent running on **foci**, a platform that bridges messaging channels (Telegram, Discord, an HTTP API, voice) to an LLM backend and gives you a set of tools, a persistent memory, and a turn lifecycle. This skill is the operating manual: what foci *is* from your point of view, and where to look when you need detail.
 
+> **This `SKILL.md` is yours to customise** (seed-if-missing — override it, add your own sibling files). The content files it lists below **ship with foci and are overwritten on restart** — edit those in the foci repo (`shared/skills/foci-usage/`), not the deployed `~/shared/skills/` copy.
+
 ## Where to look
 
 | Subfile | Read it when you need… |

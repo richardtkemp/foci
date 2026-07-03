@@ -1,3 +1,5 @@
+<!-- GOLDEN: ships with foci (shared/skills/foci-usage/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
+
 # Prompts, turns & injections
 
 How foci builds what you see each turn, where its prompt templates live, and how to customise them.

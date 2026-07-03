@@ -1,3 +1,5 @@
+<!-- GOLDEN: ships with foci (shared/skills/foci-usage/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
+
 # Configuration (`foci.toml` & `secrets.toml`)
 
 Foci is configured by `foci.toml` (with secrets in a parallel `secrets.toml`), both in the config dir. You won't usually edit these mid-conversation, but understanding them explains *why you are the way you are*.
