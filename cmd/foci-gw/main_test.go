@@ -479,13 +479,10 @@ api_key = "sk-ant-test-new-token-value-for-reload"`+"\n"), 0600)
 		return nil
 	}
 
-	mux := http.NewServeMux()
-	registerHTTPHandlers(mux, httpHandlerDeps{
-		agents:            map[string]*agentInstance{},
-		agentOrder:        []string{},
-		cfg:               cfg,
-		reloadCredentials: reloadFn,
-	})
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	d.cfg = cfg
+	d.reloadCredentials = reloadFn
+	mux := newTestMux(d)
 
 	req := httptest.NewRequest(http.MethodPost, "/-/reload-credentials", nil)
 	w := httptest.NewRecorder()
@@ -509,13 +506,9 @@ api_key = "sk-ant-test-new-token-value-for-reload"`+"\n"), 0600)
 }
 
 func TestReloadCredentialsEndpoint_MethodNotAllowed(t *testing.T) {
-	mux := http.NewServeMux()
-	registerHTTPHandlers(mux, httpHandlerDeps{
-		agents:            map[string]*agentInstance{},
-		agentOrder:        []string{},
-		cfg:               &config.Config{},
-		reloadCredentials: func() error { return nil },
-	})
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	d.reloadCredentials = func() error { return nil }
+	mux := newTestMux(d)
 
 	req := httptest.NewRequest(http.MethodGet, "/-/reload-credentials", nil)
 	w := httptest.NewRecorder()
@@ -527,13 +520,9 @@ func TestReloadCredentialsEndpoint_MethodNotAllowed(t *testing.T) {
 }
 
 func TestReloadCredentialsEndpoint_NotRegisteredWithoutHolder(t *testing.T) {
-	mux := http.NewServeMux()
-	registerHTTPHandlers(mux, httpHandlerDeps{
-		agents:     map[string]*agentInstance{},
-		agentOrder: []string{},
-		cfg:        &config.Config{},
-		// reloadCredentials is nil — endpoint should not be registered
-	})
+	// reloadCredentials stays nil — endpoint should not be registered.
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
 
 	req := httptest.NewRequest(http.MethodPost, "/-/reload-credentials", nil)
 	w := httptest.NewRecorder()
@@ -560,11 +549,10 @@ func TestPprofGatedByConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			gate := &atomic.Bool{}
 			gate.Store(config.DerefBool(tc.cfg.Debug.EnablePprof))
-			mux := http.NewServeMux()
-			registerHTTPHandlers(mux, httpHandlerDeps{
-				agents: map[string]*agentInstance{}, agentOrder: []string{}, cfg: tc.cfg,
-				pprofGate: gate,
-			})
+			d, _ := httpTestSetup(t, httpTestOpts{})
+			d.cfg = tc.cfg
+			d.pprofGate = gate
+			mux := newTestMux(d)
 			req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)
@@ -579,12 +567,9 @@ func TestPprofLiveToggle(t *testing.T) {
 	// Proves the pprof gate can be toggled at runtime via POST /-/pprof,
 	// and that the change takes effect immediately without a restart.
 	gate := &atomic.Bool{} // start disabled
-	mux := http.NewServeMux()
-	registerHTTPHandlers(mux, httpHandlerDeps{
-		agents: map[string]*agentInstance{}, agentOrder: []string{},
-		cfg:       &config.Config{},
-		pprofGate: gate,
-	})
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	d.pprofGate = gate
+	mux := newTestMux(d)
 
 	// Initially off → 404
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
@@ -632,10 +617,8 @@ func TestPprofLiveToggle(t *testing.T) {
 func TestSendBodySizeLimit(t *testing.T) {
 	// Proves POST /send rejects an over-cap request body with 413 before it is
 	// buffered, rather than reading an unbounded body into memory. (P3.)
-	mux := http.NewServeMux()
-	registerHTTPHandlers(mux, httpHandlerDeps{
-		agents: map[string]*agentInstance{}, agentOrder: []string{}, cfg: &config.Config{},
-	})
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
 	big := strings.Repeat("a", (1<<20)+1024) // just over the 1 MiB cap
 	body := `{"text":"` + big + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader(body))
