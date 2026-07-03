@@ -1551,6 +1551,38 @@ func TestGenerateGenericShellFuncAliases(t *testing.T) {
 	}
 }
 
+func TestGenerateHelpTextPositionalArguments(t *testing.T) {
+	t.Parallel()
+
+	// A positional param's schema description (here the bare-agent-name
+	// affordance) must surface in --help. Positionals are excluded from the
+	// Flags list, so without an Arguments section the description is invisible.
+	tool := &Tool{
+		Name:       "send_to_session",
+		Positional: []string{"session_key"},
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"session_key":{"type":"string","description":"Target session. Accepts a full session key, a bare agent name, or a chat alias."},
+				"message":{"type":"string","description":"Message to send"}
+			},
+			"required":["session_key","message"]
+		}`),
+	}
+
+	help := generateHelpText(tool)
+	if !strings.Contains(help, "Arguments:") {
+		t.Errorf("help text missing Arguments section: got %q", help)
+	}
+	if !strings.Contains(help, "bare agent name") {
+		t.Errorf("help text should surface positional description: got %q", help)
+	}
+	// The positional must not also appear as a flag.
+	if strings.Contains(help, "--session-key") {
+		t.Errorf("positional should not be rendered as a flag: got %q", help)
+	}
+}
+
 func TestGeneratedRemindShellFuncEndToEnd(t *testing.T) {
 	// Sources the generated funcs file and invokes foci_remind with
 	// --text/--when/--wake against a real socket. Asserts the JSON

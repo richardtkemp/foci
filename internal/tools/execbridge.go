@@ -442,6 +442,18 @@ func generateHelpText(t *Tool) string {
 	var b strings.Builder
 	b.WriteString(t.Description)
 
+	// Extract parameter info from JSON schema up front — both the Arguments
+	// (positional) and Flags sections draw descriptions from it.
+	var schema struct {
+		Properties map[string]struct {
+			Type        string   `json:"type"`
+			Description string   `json:"description"`
+			Enum        []string `json:"enum"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	_ = json.Unmarshal(t.Parameters, &schema)
+
 	// Build set of positional params to exclude from flags list.
 	posSet := make(map[string]bool)
 	if pos, ok := positionalParamsForTool(t); ok {
@@ -454,18 +466,22 @@ func generateHelpText(t *Tool) string {
 			fmt.Fprintf(&b, " <%s>", p)
 		}
 		b.WriteString(" [flags...]")
+
+		// Arguments section: positionals carry descriptions in the schema
+		// (e.g. session_key accepts a bare agent name), but they're excluded
+		// from Flags, so surface them here or the affordance is invisible.
+		b.WriteString("\n\nArguments:")
+		for _, p := range pos {
+			desc := schema.Properties[p].Description
+			if desc != "" {
+				fmt.Fprintf(&b, "\n  %-22s %s", p, desc)
+			} else {
+				fmt.Fprintf(&b, "\n  %s", p)
+			}
+		}
 	}
 
-	// Extract parameter info from JSON schema.
-	var schema struct {
-		Properties map[string]struct {
-			Type        string   `json:"type"`
-			Description string   `json:"description"`
-			Enum        []string `json:"enum"`
-		} `json:"properties"`
-		Required []string `json:"required"`
-	}
-	if json.Unmarshal(t.Parameters, &schema) == nil && len(schema.Properties) > 0 {
+	if len(schema.Properties) > 0 {
 		// Collect non-positional params as flags.
 		keys := make([]string, 0, len(schema.Properties))
 		for k := range schema.Properties {
