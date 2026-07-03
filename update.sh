@@ -66,12 +66,6 @@ SECRETS_GROUP="foci-secrets"
 for svcfile in /etc/systemd/system/foci*.service; do
     [[ -f "$svcfile" ]] || continue
 
-    # Binary rename (focigw → foci-gw)
-    if grep -q "focigw" "$svcfile"; then
-        echo "  Patching $svcfile: focigw → foci-gw"
-        sed -i "s|${INSTALL_DIR}/focigw|${INSTALL_DIR}/foci-gw|g" "$svcfile"
-    fi
-
     # Secrets-boundary hardening (P0-1). Ensure the secrets group is granted to
     # the process (so removing the /etc/group membership below is safe), plus the
     # ambient-capability and no-new-privs hardening. Idempotent — only inserts
