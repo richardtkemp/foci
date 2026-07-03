@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -336,6 +337,47 @@ func TestInbox_Enqueue_PendingAsk_RoutesToAsk(t *testing.T) {
 	}
 	if entries := inb.drainSteer(); len(entries) != 0 {
 		t.Errorf("steer buffer should be empty, got %d entries", len(entries))
+	}
+}
+
+// failingSteerBackend declines every ImmediateInject with a generic error,
+// modelling a dead backend stdin / protocol failure during urgent-steer
+// dispatch.
+type failingSteerBackend struct{ mockBackendDT }
+
+func (*failingSteerBackend) ImmediateInject(context.Context, delegator.Inject) error {
+	return errors.New("stdin gone")
+}
+
+// TestInbox_Enqueue_SteerFailure_FallsBackToQueue verifies steering is an
+// optimisation, never a place to lose input: when the backend's urgent-steer
+// dispatch fails outright, the message is queued to the session channel for a
+// fresh turn instead of being dropped.
+func TestInbox_Enqueue_SteerFailure_FallsBackToQueue(t *testing.T) {
+	a := newTestAgent(t) // inbox not started — channel content stays observable
+	a.SetInboxSteerMode(true)
+
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return &failingSteerBackend{}, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	accepted := a.Enqueue(Envelope{SessionKey: "test/s", Text: "must not be lost"})
+	if !accepted {
+		t.Error("Enqueue = false; a failed steer that fell back to the queue was accepted")
+	}
+	select {
+	case env := <-inb.ch:
+		if env.Text != "must not be lost" {
+			t.Errorf("queued text = %q", env.Text)
+		}
+	default:
+		t.Fatal("message was dropped instead of falling back to the session channel")
+	}
+	if entries := inb.drainSteer(); len(entries) != 0 {
+		t.Errorf("steer buffer should be empty (channel is the fallback), got %d entries", len(entries))
 	}
 }
 

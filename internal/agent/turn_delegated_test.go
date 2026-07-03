@@ -649,6 +649,101 @@ func TestDelegatedTransport_RunInference_TurnInFlightSendCommandError(t *testing
 	}
 }
 
+// questionBackendDT is a mockBackendDT that reports a pending AskUserQuestion
+// and records the answer routed to it.
+type questionBackendDT struct {
+	mockBackendDT
+	pendingQuestion string
+	answeredReqID   string
+	answeredText    string
+}
+
+func (q *questionBackendDT) HasPendingQuestion() string { return q.pendingQuestion }
+func (q *questionBackendDT) RespondToQuestion(reqID, text string) error {
+	q.answeredReqID, q.answeredText = reqID, text
+	return nil
+}
+func (q *questionBackendDT) CancelQuestion(string) error { return nil }
+
+// elicitationBackendDT is the elicitation twin of questionBackendDT.
+type elicitationBackendDT struct {
+	mockBackendDT
+	pendingElicitation string
+	answeredReqID      string
+	answeredText       string
+}
+
+func (e *elicitationBackendDT) HasPendingElicitation() string { return e.pendingElicitation }
+func (e *elicitationBackendDT) RespondToElicitation(reqID, text string) error {
+	e.answeredReqID, e.answeredText = reqID, text
+	return nil
+}
+
+// TestAnswerPendingBackendPrompt verifies the shared typed-answer capture:
+// trimmed first-batch text answers a pending question (or elicitation field),
+// empty/whitespace text falls through, and a backend with nothing pending is
+// untouched.
+func TestAnswerPendingBackendPrompt(t *testing.T) {
+	q := &questionBackendDT{pendingQuestion: "req-q"}
+	if !answerPendingBackendPrompt(q, "test/s", []string{"  yes please  "}) {
+		t.Fatal("pending question + text: want consumed")
+	}
+	if q.answeredReqID != "req-q" || q.answeredText != "yes please" {
+		t.Errorf("answer routed as (%q, %q), want (req-q, trimmed text)", q.answeredReqID, q.answeredText)
+	}
+
+	e := &elicitationBackendDT{pendingElicitation: "req-e"}
+	if !answerPendingBackendPrompt(e, "test/s", []string{"field value"}) {
+		t.Fatal("pending elicitation + text: want consumed")
+	}
+	if e.answeredReqID != "req-e" || e.answeredText != "field value" {
+		t.Errorf("answer routed as (%q, %q), want (req-e, field value)", e.answeredReqID, e.answeredText)
+	}
+
+	q2 := &questionBackendDT{pendingQuestion: "req-q"}
+	if answerPendingBackendPrompt(q2, "test/s", []string{"   "}) {
+		t.Error("whitespace-only text must fall through to a normal turn")
+	}
+	if answerPendingBackendPrompt(q2, "test/s", nil) {
+		t.Error("empty batch must fall through to a normal turn")
+	}
+	if answerPendingBackendPrompt(&questionBackendDT{}, "test/s", []string{"hello"}) {
+		t.Error("no pending prompt: text must not be consumed")
+	}
+}
+
+// TestDelegatedTransport_RunInference_SystemTurnSkipsQuestionIntercept
+// verifies a system turn's text is never consumed as the answer to a pending
+// AskUserQuestion — the intercept is foldable-input-only, so the system prompt
+// proceeds to the normal (SourceSystem) dispatch path instead.
+func TestDelegatedTransport_RunInference_SystemTurnSkipsQuestionIntercept(t *testing.T) {
+	var sentToPane string
+	be := &questionBackendDT{pendingQuestion: "req-q"}
+	be.sendToPaneFn = func(_ context.Context, prompt string, handler *mockHandler) (*delegator.TurnResult, error) {
+		sentToPane = prompt
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "done"})
+		}
+		return nil, nil
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"[keepalive]"}, nil)
+	ts.Prompt = "[keepalive]"
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if be.answeredReqID != "" {
+		t.Errorf("system text was consumed as question answer (req=%q)", be.answeredReqID)
+	}
+	if sentToPane != "[keepalive]" {
+		t.Errorf("system turn prompt = %q, want dispatched normally", sentToPane)
+	}
+}
+
 // TestDelegatedTransport_RunInference_QueuedMessageNeverFolds verifies the
 // per-message queue choice at the transport: an interactive (platform) turn
 // whose sender marked it SteerNever does NOT fold into an in-flight turn via

@@ -526,8 +526,11 @@ func (a *Agent) Enqueue(env Envelope) bool {
 				// one inside the backend.
 				a.logger().Debugf("inbox: steer raced turn completion sk=%s, re-routing to idle path", env.SessionKey)
 			default:
-				a.logger().Warnf("inbox: urgent dispatch sk=%s failed: %v", env.SessionKey, err)
-				return false
+				// Steering is an optimisation, never a place to lose input: a
+				// failed dispatch (dead stdin, protocol error) falls through
+				// to the channel push below, so the message runs as a fresh
+				// turn once the worker gets to it instead of being dropped.
+				a.logger().Warnf("inbox: urgent dispatch sk=%s failed: %v — queueing for a fresh turn instead", env.SessionKey, err)
 			}
 		} else {
 			// API-mode fallback: buffer for next tool-boundary drain.

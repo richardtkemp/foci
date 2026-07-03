@@ -124,6 +124,44 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 	}
 }
 
+// answerPendingBackendPrompt routes typed text to a pending backend prompt —
+// a CC AskUserQuestion or an MCP elicitation free-text field — returning true
+// when the text was consumed as the answer. Both prompt kinds share one
+// capture semantics, mirroring foci_ask's typed-answer capture where the
+// mechanics allow: the batch's first text, whitespace-trimmed; empty text
+// falls through to a normal turn; only foldable input is eligible (the caller
+// gates on that — system turns and explicitly-queued messages wait instead).
+//
+// Unlike the foci_ask capture points there is deliberately NO app carve-out
+// here: foci_ask is async (the asking turn already ended), so an uncaptured
+// message can safely run as a turn — but these prompts block CC mid-turn, and
+// anything written to CC while it is asking is taken as the answer anyway.
+// Skipping capture would just deliver the same answer with worse bookkeeping.
+func answerPendingBackendPrompt(be delegator.Delegator, sessionKey string, texts []string) bool {
+	if len(texts) == 0 {
+		return false
+	}
+	text := strings.TrimSpace(texts[0])
+	if text == "" {
+		return false
+	}
+	if qr, ok := be.(delegator.QuestionResponder); ok {
+		if reqID := qr.HasPendingQuestion(); reqID != "" {
+			log.Debugf("delegated", "session=%s intercepting text as question answer: %q", sessionKey, text)
+			_ = qr.RespondToQuestion(reqID, text)
+			return true
+		}
+	}
+	if er, ok := be.(delegator.ElicitationResponder); ok {
+		if reqID := er.HasPendingElicitation(); reqID != "" {
+			log.Debugf("delegated", "session=%s intercepting text as elicitation answer: %q", sessionKey, text)
+			_ = er.RespondToElicitation(reqID, text)
+			return true
+		}
+	}
+	return false
+}
+
 // --- Phase 3: Core execution ---
 
 // RunInference sends the composed prompt to the backend with a per-turn
@@ -163,34 +201,9 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// and explicitly-queued messages (SteerNever) must never be consumed as
 	// an answer — they wait below (WaitForPermission + the SourceSystem retry
 	// loop) until the prompt resolves and the turn completes.
-	if foldable {
-		// Check for a pending AskUserQuestion — intercept typed text as an
-		// answer before WaitForPermission blocks.
-		if qr, ok := be.(delegator.QuestionResponder); ok {
-			if reqID := qr.HasPendingQuestion(); reqID != "" && len(ts.Texts) > 0 {
-				text := strings.TrimSpace(ts.Texts[0])
-				if text != "" {
-					log.Debugf("delegated", "session=%s intercepting text as question answer: %q", ts.SessionKey, text)
-					_ = qr.RespondToQuestion(reqID, text)
-					close(ts.CompletionChan)
-					return nil
-				}
-			}
-		}
-
-		// Same intercept for pending elicitation form fields — typed text
-		// becomes the answer for the current free-text field.
-		if er, ok := be.(delegator.ElicitationResponder); ok {
-			if reqID := er.HasPendingElicitation(); reqID != "" && len(ts.Texts) > 0 {
-				text := strings.TrimSpace(ts.Texts[0])
-				if text != "" {
-					log.Debugf("delegated", "session=%s intercepting text as elicitation answer: %q", ts.SessionKey, text)
-					_ = er.RespondToElicitation(reqID, text)
-					close(ts.CompletionChan)
-					return nil
-				}
-			}
-		}
+	if foldable && answerPendingBackendPrompt(be, ts.SessionKey, ts.Texts) {
+		close(ts.CompletionChan)
+		return nil
 	}
 
 	// Wait for any outstanding permission prompt to resolve before sending
