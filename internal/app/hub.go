@@ -571,8 +571,9 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 	h.agents[params.AgentID] = conn
 	h.mu.Unlock()
 
-	// App is interactive (like telegram): in-flight messages steer the live turn.
-	ag.SetInboxSteerMode(true)
+	// App is interactive (like telegram): steer dispatch follows the
+	// agent's behavior config (steer_mode), mirroring telegram/discord.
+	ag.SetInboxSteerMode(params.Resolved.Behavior.SteerMode)
 	ag.StartInbox(h.deps.Ctx)
 	return conn
 }
