@@ -632,13 +632,13 @@ func TestInject_System_InFlight_Rejects(t *testing.T) {
 	}
 }
 
-// TestInject_Steer_InFlight_NoInterrupt_PriorityNow verifies that
-// Inject(SourceSteer) during an in-flight turn does NOT call Interrupt
-// (the rearm-cascade era required interrupting; we now rely on CC's
-// mid-turn drain instead). The steer text is queued at priority "now"
-// so it dequeues ahead of any other queued items at the next tool
-// boundary, without aborting the in-flight tool.
-func TestInject_Steer_InFlight_NoInterrupt_PriorityNow(t *testing.T) {
+// TestInject_Steer_InFlight_NoInterrupt_PriorityNext verifies that
+// Inject(SourceSteer) during an in-flight turn does NOT call Interrupt and
+// does NOT use priority "now" (which makes CC abort the in-flight ask —
+// reserved for NYI aggressive-steer gating). The steer is queued at "next"
+// so CC folds it into the running ask at the next tool boundary, matching
+// CC's own class for user input.
+func TestInject_Steer_InFlight_NoInterrupt_PriorityNext(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -662,10 +662,12 @@ func TestInject_Steer_InFlight_NoInterrupt_PriorityNow(t *testing.T) {
 	if strings.Contains(out, "interrupt") {
 		t.Errorf("interrupt should NOT appear post-rearm-removal; got: %q", out)
 	}
-	// Priority="now" so CC dequeues ahead of default-priority items at the
-	// next mid-turn drain.
-	if !strings.Contains(out, `"priority":"now"`) {
-		t.Errorf("priority=\"now\" missing from Steer envelope; got: %q", out)
+	// Priority "now" would make CC abort the in-flight ask — steers must not.
+	if strings.Contains(out, `"priority":"now"`) {
+		t.Errorf("steer sent at priority \"now\" (aborts the ask); want \"next\": %q", out)
+	}
+	if !strings.Contains(out, `"priority":"next"`) {
+		t.Errorf("priority=\"next\" missing from Steer envelope; got: %q", out)
 	}
 }
 

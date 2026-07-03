@@ -178,8 +178,8 @@ func RestoreInteractiveCallback(id, msgID string, resolve ConnResolver, buttons 
 // already cancelled, or never existed).
 //
 // Used to disable inline keyboards when an upstream event makes the prompt
-// moot — for example, when CC cancels a permission request after a
-// PriorityNow steer aborted the in-flight tool execution.
+// moot — for example, when CC cancels a permission request after an
+// interrupt aborted the in-flight tool execution.
 func CancelInteractiveMessage(id string, finalText string) error {
 	imMu.Lock()
 	msg, ok := imStore[id]
