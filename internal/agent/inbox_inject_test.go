@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -108,5 +110,86 @@ func TestInbox_Inject_DefersThroughWorker(t *testing.T) {
 	a.DrainDeferredInjects(sk)
 	if !waitFor(time.Second, func() bool { return ran.Load() == 1 }) {
 		t.Fatalf("redelivered injection did not run after ask resolved; ran=%d", ran.Load())
+	}
+}
+
+// TestEnqueueInjectWait_RunsAndReturns proves the synchronous inject path:
+// EnqueueInjectWait blocks until the worker has executed the run closure,
+// then returns nil — the mechanism behind sync HTTP /send and the delegated
+// reflection/keepalive passes.
+func TestEnqueueInjectWait_RunsAndReturns(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	var ran atomic.Int32
+	err := a.EnqueueInjectWait(context.Background(), "test/s", "user", func() { ran.Add(1) })
+	if err != nil {
+		t.Fatalf("EnqueueInjectWait: %v", err)
+	}
+	if ran.Load() != 1 {
+		t.Fatalf("run closure executed %d times, want 1 (must complete before return)", ran.Load())
+	}
+}
+
+// TestEnqueueInjectWait_CtxCancelled proves the wait respects ctx: with no
+// worker running (inbox not started), the injection never executes and a
+// cancelled ctx unblocks the caller with ctx.Err().
+func TestEnqueueInjectWait_CtxCancelled(t *testing.T) {
+	a := newTestAgent(t) // StartInbox NOT called — nothing drains the channel
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := a.EnqueueInjectWait(ctx, "test/s", "user", func() {})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("EnqueueInjectWait err = %v, want context.Canceled", err)
+	}
+}
+
+// TestEnqueueInjectWait_RejectedQueue proves a full inbox channel surfaces as
+// an error instead of a silent drop — a sync caller must never block forever
+// on an envelope that was never queued.
+func TestEnqueueInjectWait_RejectedQueue(t *testing.T) {
+	a := newTestAgent(t) // no worker → channel fills and stays full
+	sk := "test/s"
+	inb := a.getOrCreateInbox(sk)
+	for i := 0; i < inboxChanSize; i++ {
+		inb.ch <- Envelope{SessionKey: sk}
+	}
+
+	err := a.EnqueueInjectWait(context.Background(), sk, "user", func() {})
+	if err == nil {
+		t.Fatal("EnqueueInjectWait returned nil for a rejected (full-queue) envelope")
+	}
+}
+
+// TestDriveAndDrainOrphans_HoldsInjectsFromExtras proves an injection envelope
+// arriving during a turn is NOT folded into the follow-up platform batch by
+// the post-turn orphan drain (where its Run closure would never fire and the
+// injection would be lost) — it is returned to the worker and executed after
+// the batch completes.
+func TestDriveAndDrainOrphans_HoldsInjectsFromExtras(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	sk := "test/s"
+	var ran atomic.Int32
+	var batches atomic.Int32
+	a.SetTurnObserver(func(_ string, batch []Envelope) {
+		// While the primary turn is "running", an injection and a late
+		// platform message arrive. The drain loop must run the message as a
+		// follow-up turn but hand the injection back to the worker.
+		if batches.Add(1) == 1 {
+			a.Enqueue(Envelope{SessionKey: sk, Inject: &InjectMeta{Trigger: "async_notify", Run: func() { ran.Add(1) }}})
+			a.Enqueue(Envelope{SessionKey: sk, Text: "late follow-up", Driver: &recordingDriver{}})
+		}
+	})
+
+	a.Enqueue(Envelope{SessionKey: sk, Text: "primary", Driver: &recordingDriver{}})
+
+	if !waitFor(time.Second, func() bool { return ran.Load() == 1 }) {
+		t.Fatal("injection drained during orphan-drain was never executed")
+	}
+	if got := batches.Load(); got != 2 {
+		t.Fatalf("turn batches = %d, want 2 (primary + follow-up; inject must not fold into a batch)", got)
 	}
 }

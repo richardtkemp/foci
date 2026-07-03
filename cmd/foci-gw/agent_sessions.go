@@ -87,35 +87,45 @@ func buildBranchFunc(
 func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, promptText string, ctx context.Context) bool {
 	turnCtx := agent.WithTrigger(ctx, branchType)
 
-	var sessionKey string
 	if branchTypesForMainSession[branchType] {
-		// Inject into existing CC session — it has the conversation context.
-		sessionKey = parentKey
+		// Inject into the existing CC session — it has the conversation
+		// context. Routed through the session's inbox worker: these are
+		// system turns and must serialise with (never steer) any in-flight
+		// platform turn. EnqueueInjectWait blocks until the turn has run, so
+		// the periodic scheduler's completion semantics are preserved.
+		sessionKey := parentKey
 		log.Infof(branchType, "[%s] delegated: injecting into main session %s", agentID, sessionKey)
-	} else {
-		// New independent CC session for isolated work.
-		sessionKey = session.SessionKey{
-			AgentID: agentID,
-			Type:    'i',
-			ID:      fmt.Sprintf("%s-%d", branchType, time.Now().Unix()),
-		}.String()
-		log.Infof(branchType, "[%s] delegated: new session %s", agentID, sessionKey)
+		var turnErr error
+		if err := ag.EnqueueInjectWait(ctx, sessionKey, branchType, func() {
+			turnErr = ag.HandleMessage(turnCtx, sessionKey, []string{promptText}, nil)
+		}); err != nil {
+			log.Warnf(branchType, "[%s] session=%s inject error: %v", agentID, sessionKey, err)
+			return false
+		}
+		if turnErr != nil {
+			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, sessionKey, turnErr)
+			return false
+		}
+		return true
 	}
 
-	// HandleMessage blocks until the turn completes (synchronous for both
-	// API and delegated agents).
-	err := ag.HandleMessage(turnCtx, sessionKey, []string{promptText}, nil)
-	if err != nil {
+	// New independent CC session for isolated work. Fresh key — nothing can
+	// be in flight on it, so the turn runs directly.
+	sessionKey := session.SessionKey{
+		AgentID: agentID,
+		Type:    'i',
+		ID:      fmt.Sprintf("%s-%d", branchType, time.Now().Unix()),
+	}.String()
+	log.Infof(branchType, "[%s] delegated: new session %s", agentID, sessionKey)
+
+	if err := ag.HandleMessage(turnCtx, sessionKey, []string{promptText}, nil); err != nil {
 		log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, sessionKey, err)
 		return false
 	}
 
 	// Close independent CC sessions after the turn completes. Without this,
 	// the backend process leaks until the idle reaper (24h default).
-	// Main-session injections are not cleaned up (they share the main backend).
-	if !branchTypesForMainSession[branchType] {
-		ag.DelegatedManager.ResetSession(sessionKey)
-	}
+	ag.DelegatedManager.ResetSession(sessionKey)
 
 	return true
 }

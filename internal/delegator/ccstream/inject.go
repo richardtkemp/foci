@@ -31,6 +31,30 @@ func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
 // messages to the fold path instead.
 func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnMu.Lock()
+	b.beginTurnLocked(turn)
+	b.turnMu.Unlock()
+	b.resetTurnScratch()
+}
+
+// tryBeginTurn begins a new turn only if none is in flight, returning
+// ErrTurnInFlight otherwise. The idle check and the turn begin happen under
+// one turnMu hold, so two racing SourceSystem injects cannot both begin and
+// clobber each other's TurnEvents — exactly one wins; the loser waits for
+// completion and retries.
+func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
+	b.turnMu.Lock()
+	if b.turnActive {
+		b.turnMu.Unlock()
+		return delegator.ErrTurnInFlight
+	}
+	b.beginTurnLocked(turn)
+	b.turnMu.Unlock()
+	b.resetTurnScratch()
+	return nil
+}
+
+// beginTurnLocked initialises per-turn state. Caller must hold turnMu.
+func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnActive = true
 	b.turnEvents = turn
 	b.turnText.Reset()
@@ -41,14 +65,16 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnOutputTokens = 0
 	b.turnCalls = 0
 	b.redispatchInFlight = false
-	b.turnMu.Unlock()
+}
 
+// resetTurnScratch clears the non-turnMu turn-start state: cached usage
+// (guarded by b.mu) and the activity timestamp seed so the idle reaper has
+// an initial deadline rather than polling indefinitely when no events arrive.
+func (b *Backend) resetTurnScratch() {
 	b.mu.Lock()
 	b.lastUsage = nil
 	b.mu.Unlock()
 
-	// Seed activity timestamp so the idle reaper has an initial deadline
-	// rather than polling indefinitely when no events arrive.
 	b.touchActivity()
 }
 
@@ -62,10 +88,18 @@ func (b *Backend) cancelTurn() {
 
 // sendToPane is the internal begin-turn primitive: starts a fresh turn
 // with the given bookkeeping callbacks and sends a plain text user message.
-// Called from Inject's begin-turn path (SourceUser/Steer at idle); not part
-// of the public Delegator surface.
-func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.TurnEvents) error {
-	b.beginTurn(turn)
+// Called from Inject's begin-turn path (SourceUser/Steer/System at idle);
+// not part of the public Delegator surface. exclusive selects tryBeginTurn
+// (SourceSystem: fail with ErrTurnInFlight rather than clobber a turn that
+// began in a race window) over the unconditional beginTurn.
+func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.TurnEvents, exclusive bool) error {
+	if exclusive {
+		if err := b.tryBeginTurn(turn); err != nil {
+			return err
+		}
+	} else {
+		b.beginTurn(turn)
+	}
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
@@ -90,9 +124,15 @@ func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.T
 // prompts that carry images/documents. Builds structured content blocks
 // (text first, then each attachment as image/document) and sends a single
 // user message containing all of them. Called from Inject's begin-turn
-// path when len(inj.Attachments) > 0.
-func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, attachments []delegator.Attachment, turn *delegator.TurnEvents) error {
-	b.beginTurn(turn)
+// path when len(inj.Attachments) > 0. exclusive as in sendToPane.
+func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, attachments []delegator.Attachment, turn *delegator.TurnEvents, exclusive bool) error {
+	if exclusive {
+		if err := b.tryBeginTurn(turn); err != nil {
+			return err
+		}
+	} else {
+		b.beginTurn(turn)
+	}
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
@@ -197,6 +237,8 @@ func (b *Backend) sendUserMessagePriority(text, priority string) error {
 //	User     | in-flight  | SendUser at default priority; CC folds via mid-turn drain
 //	Steer    | in-flight  | SendUser at priority "now"; CC folds via mid-turn drain
 //	Steer    | idle       | begin turn — degrades to User-idle
+//	System   | idle       | begin turn, atomically (tryBeginTurn)
+//	System   | in-flight  | ErrTurnInFlight — never folds; caller waits + retries
 //	Compact  | any        | send slash command (fire-and-forget)
 //	Pass     | any        | send slash command (fire-and-forget)
 //
@@ -214,7 +256,7 @@ func (b *Backend) sendUserMessagePriority(text, priority string) error {
 //
 // inj.Attachments are honored only when beginning a new turn; ignored
 // otherwise. They become structured content blocks alongside the text.
-func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
+func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	inFlight := b.IsTurnInFlight()
 	b.logger().Debugf("Inject: source=%s text_bytes=%d attachments=%d in_flight=%v",
 		inj.Source, len(inj.Text), len(inj.Attachments), inFlight)
@@ -222,7 +264,7 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 	switch inj.Source {
 	case delegator.SourceUser:
 		if !inFlight {
-			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn)
+			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn, false)
 		}
 		// In-flight follow-up: SendUser at default priority ("next"). CC
 		// drains it into the running turn (at the next tool boundary, or as
@@ -246,7 +288,7 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 				return delegator.ErrTurnNotInFlight
 			}
 			b.logger().Debugf("Inject(Steer): no turn in flight, beginning tracked turn from inj.Turn")
-			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn)
+			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn, false)
 		}
 		// In-flight steer: SendUser at priority "now". CC dequeues "now"
 		// ahead of "next"/"later"; depending on where the run is it either
@@ -257,6 +299,14 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		// idle regardless of how many ask cycles the steer minted.
 		// "Stop right now" semantics live in /reset hard, not Steer.
 		return b.sendUserMessagePriority(inj.Text, "now")
+
+	case delegator.SourceSystem:
+		// System-initiated text (foci send, cron, notifications, error and
+		// restart injections) never folds into a running turn — only real
+		// user input may steer. tryBeginTurn makes the idle check and turn
+		// begin atomic; when a turn is in flight the caller receives
+		// ErrTurnInFlight, waits for completion, and retries.
+		return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn, true)
 
 	case delegator.SourceCompact, delegator.SourcePass:
 		// Slash commands. Fire-and-forget. The caller is responsible for
@@ -272,10 +322,11 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 
 // beginTurnWithText starts a new turn, dispatching to the attachments path
 // when the inject carries them and to plain text otherwise. Internal to
-// Inject — callers reach turn-start through Inject(SourceUser) at idle.
-func (b *Backend) beginTurnWithText(ctx context.Context, text string, atts []delegator.Attachment, turn *delegator.TurnEvents) error {
+// Inject — callers reach turn-start through Inject(SourceUser/System) at
+// idle. exclusive selects the atomic begin-if-idle path (SourceSystem).
+func (b *Backend) beginTurnWithText(ctx context.Context, text string, atts []delegator.Attachment, turn *delegator.TurnEvents, exclusive bool) error {
 	if len(atts) > 0 {
-		return b.sendToPaneWithAttachments(ctx, text, atts, turn)
+		return b.sendToPaneWithAttachments(ctx, text, atts, turn, exclusive)
 	}
-	return b.sendToPane(ctx, text, turn)
+	return b.sendToPane(ctx, text, turn, exclusive)
 }

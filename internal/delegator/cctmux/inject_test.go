@@ -2,6 +2,7 @@ package cctmux
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestInject_UserIdleBeginsTurn(t *testing.T) {
 	b.lastPrompt = "stale prompt" // must be cleared on user input
 	b.lastPromptMu.Unlock()
 
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "hello claude, do the thing",
 		Turn:   &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}},
@@ -86,7 +87,7 @@ func TestInject_UserInFlightFollowsUp(t *testing.T) {
 	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) { fired = true }}
 	b.turnMu.Unlock()
 
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "follow-up message",
 		Turn:   &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) { t.Error("replacement callback installed") }},
@@ -113,7 +114,7 @@ func TestInject_SteerInFlightInterruptsThenSends(t *testing.T) {
 	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}}
 	b.turnMu.Unlock()
 
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "stop, change course",
 	})
@@ -142,7 +143,7 @@ func TestInject_SteerInFlightInterruptsThenSends(t *testing.T) {
 func TestInject_SteerIdleDegradesToBeginTurn(t *testing.T) {
 	b, f := newStartedBackend(t)
 
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "idle steer",
 		Turn:   &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}},
@@ -160,13 +161,66 @@ func TestInject_SteerIdleDegradesToBeginTurn(t *testing.T) {
 	}
 }
 
+// TestInject_SystemIdleBeginsTurn proves an idle SourceSystem inject begins a
+// fresh tracked turn exactly like SourceUser: prompt pasted, per-turn
+// callback registered.
+func TestInject_SystemIdleBeginsTurn(t *testing.T) {
+	b, f := newStartedBackend(t)
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem,
+		Text:   "[keepalive]",
+		Turn:   &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}},
+	})
+	if err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+	if got := textSends(f); len(got) != 1 || got[0] != "[keepalive]" {
+		t.Errorf("text sends = %v", got)
+	}
+	if !b.IsTurnInFlight() {
+		t.Error("turn should be in flight after system begin-turn inject")
+	}
+}
+
+// TestInject_SystemInFlightRejects proves a SourceSystem inject during an
+// in-flight turn returns ErrTurnInFlight without sending anything and without
+// disturbing the registered per-turn callback — system input never folds into
+// (steers) a running turn; the caller waits for completion and retries.
+func TestInject_SystemInFlightRejects(t *testing.T) {
+	b, f := newStartedBackend(t)
+
+	fired := false
+	b.turnMu.Lock()
+	b.turnEvents = &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) { fired = true }}
+	b.turnMu.Unlock()
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem,
+		Text:   "[keepalive]",
+		Turn:   &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) { t.Error("replacement callback installed") }},
+	})
+	if !errors.Is(err, delegator.ErrTurnInFlight) {
+		t.Fatalf("Inject error = %v, want ErrTurnInFlight", err)
+	}
+	if got := textSends(f); len(got) != 0 {
+		t.Errorf("system inject sent text during in-flight turn: %v", got)
+	}
+
+	// Original callback must still be the registered one.
+	b.fireTurnComplete(&delegator.TurnResult{})
+	if !fired {
+		t.Error("original per-turn callback was replaced by the rejected system inject")
+	}
+}
+
 // TestInject_SlashCommandsArePassthrough proves SourceCompact and SourcePass
 // route straight to the pane as text, regardless of turn state, without
 // touching the per-turn callback.
 func TestInject_SlashCommandsArePassthrough(t *testing.T) {
 	for _, src := range []delegator.InjectSource{delegator.SourceCompact, delegator.SourcePass} {
 		b, f := newStartedBackend(t)
-		err := b.Inject(context.Background(), delegator.Inject{Source: src, Text: "/compact keep recent"})
+		err := b.ImmediateInject(context.Background(), delegator.Inject{Source: src, Text: "/compact keep recent"})
 		if err != nil {
 			t.Fatalf("Inject(%v): %v", src, err)
 		}
@@ -183,7 +237,7 @@ func TestInject_SlashCommandsArePassthrough(t *testing.T) {
 // with an error rather than silently dropped.
 func TestInject_UnknownSource(t *testing.T) {
 	b, _ := newStartedBackend(t)
-	err := b.Inject(context.Background(), delegator.Inject{Source: delegator.InjectSource(99), Text: "x"})
+	err := b.ImmediateInject(context.Background(), delegator.Inject{Source: delegator.InjectSource(99), Text: "x"})
 	if err == nil || !strings.Contains(err.Error(), "unknown source") {
 		t.Fatalf("err = %v, want unknown-source error", err)
 	}
@@ -194,7 +248,7 @@ func TestInject_UnknownSource(t *testing.T) {
 // the text still goes through.
 func TestInject_AttachmentsDroppedButTextDelivered(t *testing.T) {
 	b, f := newStartedBackend(t)
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source:      delegator.SourceUser,
 		Text:        "describe this image",
 		Attachments: []delegator.Attachment{{MimeType: "image/png", Data: []byte{1, 2, 3}}},
@@ -214,7 +268,7 @@ func TestInject_NotStarted(t *testing.T) {
 		delegator.SourceUser, delegator.SourceSteer, delegator.SourceCompact, delegator.SourcePass,
 	} {
 		b := &Backend{}
-		err := b.Inject(context.Background(), delegator.Inject{Source: src, Text: "x"})
+		err := b.ImmediateInject(context.Background(), delegator.Inject{Source: src, Text: "x"})
 		if err == nil || !strings.Contains(err.Error(), "not started") {
 			t.Errorf("source %v: err = %v, want not-started error", src, err)
 		}
@@ -229,7 +283,7 @@ func TestSendToPane_SendTextError(t *testing.T) {
 	f.respond = func(args []string, _ string) (string, error) {
 		return "", context.DeadlineExceeded
 	}
-	err := b.sendToPane(context.Background(), "boom", nil)
+	err := b.sendToPane(context.Background(), "boom", nil, false)
 	if err == nil || !strings.Contains(err.Error(), "send prompt") {
 		t.Fatalf("err = %v, want send prompt error", err)
 	}

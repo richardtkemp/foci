@@ -477,7 +477,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 	handler := &testHandler{OnText: func(string) {}}
 // 	b.AttachSessionEvents(handler.session())
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceUser,
 // 		Text:   "hello",
 // 		Turn:   handler.turn(),
@@ -514,7 +514,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 	handler := &testHandler{OnText: func(string) {}}
 // 	b.AttachSessionEvents(handler.session())
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceUser,
 // 		Text:   "describe this",
 // 		Attachments: []delegator.Attachment{
@@ -550,7 +550,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 		turnActive: true,
 // 	}
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceUser,
 // 		Text:   "follow-up",
 // 	}); err != nil {
@@ -587,7 +587,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 		turnActive: true,
 // 	}
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceSteer,
 // 		Text:   "urgent text",
 // 	}); err != nil {
@@ -624,7 +624,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 	handler := &testHandler{OnText: func(string) {}}
 // 	b.AttachSessionEvents(handler.session())
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceSteer,
 // 		Text:   "steer-at-idle",
 // 		Turn:   handler.turn(),
@@ -652,7 +652,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 	var buf bytes.Buffer
 // 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 //
-// 	err := b.Inject(context.Background(), delegator.Inject{
+// 	err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceSteer,
 // 		Text:   "steer-at-idle-no-turn",
 // 	})
@@ -677,7 +677,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 	var buf bytes.Buffer
 // 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceCompact,
 // 		Text:   "/compact summarise everything",
 // 	}); err != nil {
@@ -702,7 +702,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 		turnActive: true,
 // 	}
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceCompact,
 // 		Text:   "/compact x",
 // 	}); err != nil {
@@ -723,7 +723,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // 		turnActive: true,
 // 	}
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourcePass,
 // 		Text:   "/model opus",
 // 	}); err != nil {

@@ -18,7 +18,7 @@ type recordingDelegator struct {
 	inj delegator.Inject
 }
 
-func (r *recordingDelegator) Inject(_ context.Context, inj delegator.Inject) error {
+func (r *recordingDelegator) ImmediateInject(_ context.Context, inj delegator.Inject) error {
 	r.inj = inj
 	return nil
 }

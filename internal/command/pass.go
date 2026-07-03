@@ -53,7 +53,7 @@ func PassCommand() *Command {
 				return Response{}, fmt.Errorf("get backend: %w", err)
 			}
 
-			if err := be.Inject(ctx, delegator.Inject{
+			if err := be.ImmediateInject(ctx, delegator.Inject{
 				Source: delegator.SourcePass,
 				Text:   req.Args,
 			}); err != nil {

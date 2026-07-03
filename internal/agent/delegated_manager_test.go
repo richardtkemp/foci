@@ -105,7 +105,7 @@ func (m *mockBackendDM) SendCommand(ctx context.Context, cmd string) error {
 // bookkeeping and install delivery via AttachSessionEvents; we recombine the
 // two into a mockHandler for the SendToPane test seam so the existing test
 // surface (which invokes handler.OnTurnComplete) keeps working without churn.
-func (m *mockBackendDM) Inject(ctx context.Context, inj delegator.Inject) error {
+func (m *mockBackendDM) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	m.mu.Lock()
 	se := m.sessionEvents
 	m.mu.Unlock()
@@ -145,6 +145,14 @@ func (m *mockBackendDM) Inject(ctx context.Context, inj delegator.Inject) error 
 			return err
 		}
 		return m.SendCommand(ctx, inj.Text)
+	case delegator.SourceSystem:
+		// Mirrors production: system input never folds into an in-flight
+		// turn — reject so the caller waits and retries.
+		if m.IsTurnInFlight() {
+			return delegator.ErrTurnInFlight
+		}
+		_, err := m.SendToPane(ctx, inj.Text, handler)
+		return err
 	case delegator.SourceCompact, delegator.SourcePass:
 		return m.SendCommand(ctx, inj.Text)
 	}

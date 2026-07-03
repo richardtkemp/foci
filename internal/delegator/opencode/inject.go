@@ -54,6 +54,26 @@ func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
 func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
+	b.beginTurnLocked(turn)
+}
+
+// tryBeginTurn begins a new turn only if none is in flight, returning
+// ErrTurnInFlight otherwise. The idle check and the turn begin happen under
+// one turnMu hold, so two racing SourceSystem injects cannot both begin and
+// clobber each other's TurnEvents — exactly one wins; the loser waits for
+// completion and retries. Mirrors ccstream.
+func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	if b.turnActive {
+		return delegator.ErrTurnInFlight
+	}
+	b.beginTurnLocked(turn)
+	return nil
+}
+
+// beginTurnLocked initialises per-turn state. Caller must hold turnMu.
+func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnActive = true
 	b.turnEvents = turn
 	b.turnText.Reset()
@@ -84,7 +104,7 @@ func (b *Backend) cancelTurn() {
 }
 
 // IsTurnInFlight reports whether a turn is registered but hasn't
-// completed. Inject consults this to route between begin-turn and the
+// completed. ImmediateInject consults this to route between begin-turn and the
 // steerBuf-queue path.
 func (b *Backend) IsTurnInFlight() bool {
 	b.turnMu.Lock()
@@ -126,12 +146,14 @@ func (b *Backend) WaitForTurn(ctx context.Context) error {
 //	Steer    | in-flight  | same as User in-flight
 //	Steer    | idle + Turn      | degrade to User-idle (begin turn)
 //	Steer    | idle + no Turn   | return ErrTurnNotInFlight
+//	System   | idle       | begin turn, atomically (tryBeginTurn)
+//	System   | in-flight  | ErrTurnInFlight — never folds; caller waits + retries
 //	Compact  | any        | sendCommand("compact", arguments)
 //	Pass     | any        | sendCommand(firstToken, rest)
 //
 // Attachments are honoured on the User-idle path (converted to file
 // parts with data: URLs per §6.1).
-func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
+func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	if b.server == nil || b.sessionID == "" {
 		return errors.New("opencode: Inject before Start (no session)")
 	}
@@ -145,6 +167,9 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 
 	case delegator.SourceSteer:
 		return b.injectSteer(ctx, inj)
+
+	case delegator.SourceSystem:
+		return b.injectSystem(ctx, inj)
 
 	case delegator.SourceCompact, delegator.SourcePass:
 		return b.injectCommand(ctx, inj)
@@ -168,9 +193,32 @@ func (b *Backend) injectUser(ctx context.Context, inj delegator.Inject) error {
 		log.Debugf(b.logComponent(), "inject: user text queued mid-turn (%d in buffer)", len(b.steerBuf))
 		return nil
 	}
-	// Idle — begin a fresh turn.
+	// Idle — begin a fresh turn. A failed send reverses the begin so a
+	// dead POST can't leave turnActive wedged true (which would misroute
+	// every subsequent inject to the mid-turn path). Mirrors ccstream's
+	// sendToPane.
 	b.beginTurn(inj.Turn)
-	return b.sendPrompt(ctx, inj.Text, inj.Attachments)
+	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments); err != nil {
+		b.cancelTurn()
+		return err
+	}
+	return nil
+}
+
+// injectSystem handles SourceSystem — system-initiated text (foci send,
+// cron, notifications, error and restart injections). It never folds into
+// a running turn: only real user input may steer. tryBeginTurn makes the
+// idle check and turn begin atomic; when a turn is in flight the caller
+// receives ErrTurnInFlight, waits for completion (WaitForTurn), and retries.
+func (b *Backend) injectSystem(ctx context.Context, inj delegator.Inject) error {
+	if err := b.tryBeginTurn(inj.Turn); err != nil {
+		return err
+	}
+	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments); err != nil {
+		b.cancelTurn()
+		return err
+	}
+	return nil
 }
 
 // injectSteer handles SourceSteer. At idle + Turn present it degrades
@@ -219,10 +267,15 @@ func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 		// builds a proper Turn.
 		return delegator.ErrTurnNotInFlight
 	}
-	// Steer-at-idle with Turn present — degrade to User-idle.
+	// Steer-at-idle with Turn present — degrade to User-idle. Send failure
+	// reverses the begin (see injectUser).
 	log.Debugf(b.logComponent(), "inject: steer at idle — degrading to user-idle")
 	b.beginTurn(inj.Turn)
-	return b.sendPrompt(ctx, inj.Text, inj.Attachments)
+	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments); err != nil {
+		b.cancelTurn()
+		return err
+	}
+	return nil
 }
 
 // injectCommand handles SourceCompact and SourcePass.

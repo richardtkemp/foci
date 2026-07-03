@@ -437,6 +437,12 @@ type ClientMessage struct {
 	Text        string          `json:"text"`
 	Attachments []AttachmentRef `json:"attachments,omitempty"`
 	ReplyTo     string          `json:"replyTo,omitempty"`
+	// Steer is the sender's per-message steer/queue choice: "steer" folds the
+	// message into an in-flight turn even when the agent's steer_mode is off;
+	// "queue" waits for the in-flight turn to complete and runs a fresh turn
+	// (and is never consumed as plan feedback or an ask answer). Empty means
+	// "use the agent's steer_mode config". Unknown values are treated as empty.
+	Steer string `json:"steer,omitempty"`
 }
 
 // Command is a slash-command invocation from the app. AgentID names the owning

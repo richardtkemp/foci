@@ -35,7 +35,7 @@ const defaultPromptTTL = 24 * time.Hour
 // to an interface keeps the inbound dispatch path (routeUserTurn) and the meta
 // status chips testable with a fake, without constructing a full Agent.
 type agentCore interface {
-	Enqueue(agent.Envelope)
+	Enqueue(agent.Envelope) bool
 	MetaStatus(sessionKey string) (manaPct *int, manaState, gap string)
 }
 

@@ -93,7 +93,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleConversationArchive(client, f)
 
 	case fap.ClientMessage:
-		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq)
+		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer))
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
@@ -447,7 +447,7 @@ func inboundConvID(frame any) string {
 // replayed from the client outbox after a reconnect is dropped (the image
 // double-send bug). A warm binding was already recorded by the gate, so we
 // only seed when we just created it.
-func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, inID string, inSeq int64) {
+func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, inID string, inSeq int64, steer agent.SteerPreference) {
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
@@ -554,7 +554,23 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		ReceivedAt:  time.Now(),
 		Original:    convID,
 		Driver:      conn,
+		Steer:       steer,
 	})
+}
+
+// steerPreference maps the wire-level steer field ("steer" / "queue" / "")
+// to the agent's per-envelope preference. Unknown values degrade to the
+// config default rather than erroring — forward compatibility with newer
+// clients.
+func steerPreference(s string) agent.SteerPreference {
+	switch s {
+	case "steer":
+		return agent.SteerAlways
+	case "queue":
+		return agent.SteerNever
+	default:
+		return agent.SteerDefault
+	}
 }
 
 // transcribeVoice replaces voice attachments with their STT transcript, merged

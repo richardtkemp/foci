@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -12,6 +13,13 @@ import (
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
+
+// systemInjectRetryInterval bounds each WaitForTurn cycle in RunInference's
+// SourceSystem dispatch loop. Turn completion normally wakes the waiter
+// immediately; the timeout is purely a lost-signal backstop, after which the
+// loop re-checks by retrying the atomic Inject. Not config: an internal
+// resilience detail, not a deployment-tunable behaviour.
+const systemInjectRetryInterval = 5 * time.Second
 
 // ---------------------------------------------------------------------------
 // DelegatedTransport — TurnContract implementations for the delegated transport
@@ -121,13 +129,25 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 // RunInference sends the composed prompt to the backend with a per-turn
 // completion handler that closes CompletionChan and captures results.
 //
-// If a turn is already in-flight (steered follow-up message), the prompt
-// is pasted into the pane via SendCommand without registering a new callback.
-// CC treats both messages as part of one turn. The original turn's handler
-// captures the combined result. This turn's CompletionChan is closed
-// immediately and runPostTurn skips it (no post-turn work needed).
+// Interactive turns (platform message, voice) with a turn already in-flight
+// fold into it: the prompt is injected without registering a new callback,
+// CC treats both messages as part of one turn, and the original turn's
+// handler captures the combined result (this turn's CompletionChan is closed
+// immediately so runPostTurn skips it).
+//
+// System-initiated turns (foci send / HTTP /send, cron, notifications,
+// error/restart injections) NEVER fold — they must not steer running work.
+// They dispatch as Inject(SourceSystem), and when the backend reports a turn
+// in flight they wait gracefully for it to complete before beginning a
+// fresh, fully-tracked turn of their own.
 func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	a := t.agent
+	// foldable = may this turn's text merge into an in-flight turn or answer a
+	// pending prompt? Only real-time user input qualifies — and even then the
+	// sender can opt out per message (SteerNever, the app's explicit "queue"
+	// choice), which gets the full system-turn dispatch guarantees: never
+	// folds, never consumed as an answer, waits for backend idle.
+	foldable := isInteractiveTrigger(ts.Trigger) && SteerPreferenceFromContext(ts.Ctx) != SteerNever
 
 	log.Debugf("delegated", "RunInference: Get backend start sk=%s", ts.SessionKey)
 	be, err := a.DelegatedManager.Get(ts.Ctx, ts.SessionKey)
@@ -137,31 +157,38 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	log.Debugf("delegated", "RunInference: Get backend done sk=%s", ts.SessionKey)
 	ts.Backend = be
 
-	// Check for a pending AskUserQuestion — intercept typed text as an
-	// answer before WaitForPermission blocks. This lets users respond to
-	// questions by typing instead of clicking buttons.
-	if qr, ok := be.(delegator.QuestionResponder); ok {
-		if reqID := qr.HasPendingQuestion(); reqID != "" && len(ts.Texts) > 0 {
-			text := strings.TrimSpace(ts.Texts[0])
-			if text != "" {
-				log.Debugf("delegated", "session=%s intercepting text as question answer: %q", ts.SessionKey, text)
-				_ = qr.RespondToQuestion(reqID, text)
-				close(ts.CompletionChan)
-				return nil
+	// Typed-answer intercepts apply to foldable input only: a user can
+	// answer a pending AskUserQuestion / elicitation field by typing instead
+	// of clicking buttons. System text (keepalive, notification, foci send)
+	// and explicitly-queued messages (SteerNever) must never be consumed as
+	// an answer — they wait below (WaitForPermission + the SourceSystem retry
+	// loop) until the prompt resolves and the turn completes.
+	if foldable {
+		// Check for a pending AskUserQuestion — intercept typed text as an
+		// answer before WaitForPermission blocks.
+		if qr, ok := be.(delegator.QuestionResponder); ok {
+			if reqID := qr.HasPendingQuestion(); reqID != "" && len(ts.Texts) > 0 {
+				text := strings.TrimSpace(ts.Texts[0])
+				if text != "" {
+					log.Debugf("delegated", "session=%s intercepting text as question answer: %q", ts.SessionKey, text)
+					_ = qr.RespondToQuestion(reqID, text)
+					close(ts.CompletionChan)
+					return nil
+				}
 			}
 		}
-	}
 
-	// Same intercept for pending elicitation form fields — typed text
-	// becomes the answer for the current free-text field.
-	if er, ok := be.(delegator.ElicitationResponder); ok {
-		if reqID := er.HasPendingElicitation(); reqID != "" && len(ts.Texts) > 0 {
-			text := strings.TrimSpace(ts.Texts[0])
-			if text != "" {
-				log.Debugf("delegated", "session=%s intercepting text as elicitation answer: %q", ts.SessionKey, text)
-				_ = er.RespondToElicitation(reqID, text)
-				close(ts.CompletionChan)
-				return nil
+		// Same intercept for pending elicitation form fields — typed text
+		// becomes the answer for the current free-text field.
+		if er, ok := be.(delegator.ElicitationResponder); ok {
+			if reqID := er.HasPendingElicitation(); reqID != "" && len(ts.Texts) > 0 {
+				text := strings.TrimSpace(ts.Texts[0])
+				if text != "" {
+					log.Debugf("delegated", "session=%s intercepting text as elicitation answer: %q", ts.SessionKey, text)
+					_ = er.RespondToElicitation(reqID, text)
+					close(ts.CompletionChan)
+					return nil
+				}
 			}
 		}
 	}
@@ -183,16 +210,21 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// immediately so runPostTurn exits without doing any post-turn work
 	// (the original turn's handler will handle usage, compaction, etc.).
 	//
+	// Foldable input only: system turns and explicitly-queued messages
+	// (SteerNever) skip this and wait via the SourceSystem retry loop below —
+	// folding a keepalive / notification / foci send / "queue this" message
+	// into running work would steer it.
+	//
 	// Note: urgent steers (steer_mode=true) on CC backends don't reach
 	// this path — they're dispatched immediately by the agent.Inbox
-	// (Backend.Inject(SourceSteer)) so they abort the in-flight turn
+	// (Backend.ImmediateInject(SourceSteer)) so they abort the in-flight turn
 	// rather than queuing behind it. This path handles the steer_mode=false
 	// case where messages flow through the channel normally and stack as
 	// follow-ups.
-	if be.IsTurnInFlight() {
+	if foldable && be.IsTurnInFlight() {
 		log.Infof("delegated", "session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
 		log.Debugf("delegated", "RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)
-		if err := be.Inject(ts.Ctx, delegator.Inject{
+		if err := be.ImmediateInject(ts.Ctx, delegator.Inject{
 			Source: delegator.SourceUser,
 			Text:   ts.Prompt,
 		}); err != nil {
@@ -398,14 +430,49 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		}
 	}
 
-	log.Debugf("delegated", "RunInference: Inject(SourceUser, begin-turn) start sk=%s attachments=%d", ts.SessionKey, len(atts))
-	err = be.Inject(ts.Ctx, delegator.Inject{
-		Source:      delegator.SourceUser,
-		Text:        ts.Prompt,
-		Attachments: atts,
-		Turn:        turnEvents,
-	})
-	log.Debugf("delegated", "RunInference: Inject(SourceUser, begin-turn) done sk=%s err=%v", ts.SessionKey, err)
+	// Foldable turns begin as SourceUser (idle here — the in-flight case
+	// folded above). System turns and explicitly-queued messages begin as
+	// SourceSystem: the backend's exclusive begin rejects with
+	// ErrTurnInFlight instead of folding, so the prompt can never steer
+	// running work. The session inbox worker is the primary serialisation
+	// (system entry points enqueue Inject envelopes); the retry loop below
+	// is a backstop for turns the worker can't see — backend-only runs
+	// (opencode shadow turns) and nested same-session system turns invoked
+	// from a turn's post-phase (compaction_memory, session_end_memory)
+	// racing one.
+	src := delegator.SourceUser
+	if !foldable {
+		src = delegator.SourceSystem
+	}
+
+	log.Debugf("delegated", "RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
+	for waited := false; ; waited = true {
+		err = be.ImmediateInject(ts.Ctx, delegator.Inject{
+			Source:      src,
+			Text:        ts.Prompt,
+			Attachments: atts,
+			Turn:        turnEvents,
+		})
+		if !errors.Is(err, delegator.ErrTurnInFlight) {
+			break
+		}
+		// Only SourceSystem returns ErrTurnInFlight: a turn is running and
+		// system input must not steer it. Wait for completion, then retry
+		// the exclusive begin. The timeout bounds a lost completion signal
+		// (WaitForTurn wakes a single waiter per completion, and cctmux
+		// registers its waiter only at call time) — on timeout the loop
+		// simply re-checks via another atomic Inject.
+		if !waited {
+			log.Infof("delegated", "session=%s system turn (trigger=%q) waiting for in-flight turn to complete before dispatch", ts.SessionKey, ts.Trigger)
+		}
+		wctx, cancel := context.WithTimeout(ts.Ctx, systemInjectRetryInterval)
+		werr := be.WaitForTurn(wctx)
+		cancel()
+		if werr != nil && ts.Ctx.Err() != nil {
+			return ts.Ctx.Err()
+		}
+	}
+	log.Debugf("delegated", "RunInference: Inject(%s, begin-turn) done sk=%s err=%v", src, ts.SessionKey, err)
 	if err == nil {
 		// Primary has reached the backend. Signal the inbox so turnActive
 		// flips true and any further follow-ups can safely steer via

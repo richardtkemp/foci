@@ -252,6 +252,28 @@ func runAgentBuffered(ctx context.Context, ag *agent.Agent, sessionKey, text str
 	return buf.FinalText(), nil
 }
 
+// runAgentQueued routes a system-initiated turn through the session's inbox
+// worker (Envelope.Inject) and blocks for the buffered response. Unlike
+// runAgentBuffered — which drives the turn on the calling goroutine and can
+// therefore race an in-flight turn — the queued turn serialises with the
+// session's platform turns and defers behind a pending foci_ask: system
+// input (HTTP /send, wake fall-through, webhook) never steers running work,
+// it waits gracefully for turn completion. The InjectMeta trigger is taken
+// from the ctx trigger label.
+//
+// Callers already running on the session's inbox worker (Inject.Run
+// closures) must keep using runAgentBuffered — see Agent.EnqueueInjectWait.
+func runAgentQueued(ctx context.Context, ag *agent.Agent, sessionKey, text string) (string, error) {
+	var resp string
+	var runErr error
+	if err := ag.EnqueueInjectWait(ctx, sessionKey, agent.TriggerFromContext(ctx), func() {
+		resp, runErr = runAgentBuffered(ctx, ag, sessionKey, text)
+	}); err != nil {
+		return "", err
+	}
+	return resp, runErr
+}
+
 // writeJSONResponse writes a {"response": text} JSON envelope to w. Encoding
 // errors are logged but not returned because by this point the status line
 // has already been committed and there is nothing the caller can do.
@@ -319,8 +341,12 @@ func defaultSessionKey(d httpHandlerDeps, agentID string) string {
 	return res.SessionKey
 }
 
-// asyncDispatch handles async fire-and-forget requests: sends the agent message
-// in a goroutine, writes a 202 response, and optionally delivers the result via platform.
+// asyncDispatch handles async fire-and-forget requests: queues the agent
+// message on the session's inbox worker, writes a 202 response, and
+// optionally delivers the result via platform. Queueing (rather than a
+// detached goroutine) means the turn serialises with the session's platform
+// turns and waits behind any in-flight turn — system input never steers
+// running work.
 //
 // Silencing: the captured FinalText is routed through
 // platform.StripSilencingSuffix before being forwarded to
@@ -333,7 +359,7 @@ func defaultSessionKey(d httpHandlerDeps, agentID string) string {
 // one here.
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
 	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) {
-	go func() {
+	run := func() {
 		resp, err := runAgentBuffered(ctx, inst.ag, sessionKey, text)
 		if err != nil {
 			log.Errorf(logTag, "async error: %v", err)
@@ -358,7 +384,14 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 		if err := conn.SendToSession(sessionKey, cleaned); err != nil {
 			log.Errorf(logTag, "async platform delivery: %v", err)
 		}
-	}()
+	}
+	if !inst.ag.Enqueue(agent.Envelope{
+		SessionKey: sessionKey,
+		Inject:     &agent.InjectMeta{Trigger: agent.TriggerFromContext(ctx), Run: run},
+	}) {
+		http.Error(w, "session inbox full", http.StatusServiceUnavailable)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{

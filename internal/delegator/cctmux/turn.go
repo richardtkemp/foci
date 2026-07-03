@@ -89,8 +89,11 @@ func (b *Backend) CheckReady(_ context.Context) (bool, error) {
 // sendToPane is the internal begin-turn primitive on the tmux backend.
 // Pastes the prompt into the Claude Code pane and installs the per-turn
 // TurnEvents (bookkeeping). Delivery flows asynchronously through the watcher
-// into the session-scoped SessionEvents; callers reach turn-start through Inject.
-func (b *Backend) sendToPane(ctx context.Context, prompt string, turn *delegator.TurnEvents) error {
+// into the session-scoped SessionEvents; callers reach turn-start through
+// Inject. exclusive (SourceSystem) makes the install conditional on idle —
+// the check and install happen under one turnMu hold, so system text can
+// never clobber a turn that began in a race window (ErrTurnInFlight instead).
+func (b *Backend) sendToPane(ctx context.Context, prompt string, turn *delegator.TurnEvents, exclusive bool) error {
 	b.mu.Lock()
 	if b.pane == nil {
 		b.mu.Unlock()
@@ -101,6 +104,10 @@ func (b *Backend) sendToPane(ctx context.Context, prompt string, turn *delegator
 
 	// Install the per-turn bookkeeping callbacks for this turn.
 	b.turnMu.Lock()
+	if exclusive && b.turnEvents != nil {
+		b.turnMu.Unlock()
+		return delegator.ErrTurnInFlight
+	}
 	b.turnEvents = turn
 	b.turnMu.Unlock()
 
@@ -326,7 +333,7 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 }
 
 // IsTurnInFlight reports whether per-turn bookkeeping is installed but hasn't
-// fired yet. Inject consults this to choose between begin-turn and follow-up
+// fired yet. ImmediateInject consults this to choose between begin-turn and follow-up
 // routing on cctmux.
 func (b *Backend) IsTurnInFlight() bool {
 	b.turnMu.Lock()
@@ -353,8 +360,8 @@ func (b *Backend) sendCommand(ctx context.Context, command string) error {
 // for structured content blocks via the tmux pane keystroke channel.
 // Callers who require attachments should run on the ccstream backend.
 //
-// Routing: see Delegator.Inject for the full matrix.
-func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
+// Routing: see Delegator.ImmediateInject for the full matrix.
+func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	inFlight := b.IsTurnInFlight()
 	if len(inj.Attachments) > 0 {
 		log.Debugf("cctmux", "Inject(%s): %d attachment(s) dropped — tmux backend has no structured content channel",
@@ -364,7 +371,7 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 	switch inj.Source {
 	case delegator.SourceUser:
 		if !inFlight {
-			return b.sendToPane(ctx, inj.Text, inj.Turn)
+			return b.sendToPane(ctx, inj.Text, inj.Turn, false)
 		}
 		return b.sendCommand(ctx, inj.Text)
 
@@ -372,12 +379,20 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		if !inFlight {
 			// Edge case: idle steer. Degrade to begin-turn — message is
 			// still delivered, just without an in-flight task to interrupt.
-			return b.sendToPane(ctx, inj.Text, inj.Turn)
+			return b.sendToPane(ctx, inj.Text, inj.Turn, false)
 		}
 		if err := b.Interrupt(ctx); err != nil {
 			log.Warnf("cctmux", "Inject(Steer): Interrupt failed: %v (continuing with sendCommand)", err)
 		}
 		return b.sendCommand(ctx, inj.Text)
+
+	case delegator.SourceSystem:
+		// System-initiated text (foci send, cron, notifications, error and
+		// restart injections) never folds into a running turn — only real
+		// user input may steer. The exclusive begin rejects with
+		// ErrTurnInFlight when a turn is in flight; the caller waits for
+		// completion and retries.
+		return b.sendToPane(ctx, inj.Text, inj.Turn, true)
 
 	case delegator.SourceCompact, delegator.SourcePass:
 		return b.sendCommand(ctx, inj.Text)

@@ -183,7 +183,7 @@ func (m *mockBackendDT) SendCommand(ctx context.Context, command string) error {
 // SendToPane test seam so test closures that fire handler.OnText/OnTurnComplete
 // keep working without per-test churn — delivery callbacks come from the
 // SessionEvents installed via AttachSessionEvents, exactly as production routes them.
-func (m *mockBackendDT) Inject(ctx context.Context, inj delegator.Inject) error {
+func (m *mockBackendDT) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	m.mu.Lock()
 	se := m.sessionEvents
 	m.mu.Unlock()
@@ -223,6 +223,14 @@ func (m *mockBackendDT) Inject(ctx context.Context, inj delegator.Inject) error 
 			return err
 		}
 		return m.SendCommand(ctx, inj.Text)
+	case delegator.SourceSystem:
+		// Mirrors production: system input never folds into an in-flight
+		// turn — reject so the caller waits and retries.
+		if m.IsTurnInFlight() {
+			return delegator.ErrTurnInFlight
+		}
+		_, err := m.SendToPane(ctx, inj.Text, handler)
+		return err
 	case delegator.SourceCompact, delegator.SourcePass:
 		return m.SendCommand(ctx, inj.Text)
 	}
@@ -559,8 +567,17 @@ func TestDelegatedTransport_RunInference_GetError(t *testing.T) {
 	}
 }
 
-// TestDelegatedTransport_RunInference_TurnInFlight verifies the follow-up path:
-// when IsTurnInFlight is true, SendCommand is called with the prompt and
+// interactiveTestCtx returns a context whose trigger is a registered platform
+// trigger, so RunInference classifies the turn as real-time user input (the
+// only class allowed to fold into an in-flight turn).
+func interactiveTestCtx() context.Context {
+	RegisterPlatformTrigger("testplat")
+	return WithTrigger(context.Background(), "testplat")
+}
+
+// TestDelegatedTransport_RunInference_TurnInFlight verifies the interactive
+// follow-up path: when IsTurnInFlight is true and the turn carries a platform
+// (user-input) trigger, SendCommand is called with the prompt and
 // CompletionChan is closed immediately without creating a new turn pipeline.
 // The backend's SendCommand owns rearm-cascade wiring so the queued response
 // reaches the original handler — that wiring is asserted in ccstream_test.go,
@@ -578,7 +595,8 @@ func TestDelegatedTransport_RunInference_TurnInFlight(t *testing.T) {
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "test/s", []string{"follow-up"}, nil)
+	ts := NewTurnState(interactiveTestCtx(), "test/s", []string{"follow-up"}, nil)
+	ts.Trigger = "testplat"
 	ts.Prompt = "follow-up text"
 
 	err := tr.RunInference(ts)
@@ -600,8 +618,8 @@ func TestDelegatedTransport_RunInference_TurnInFlight(t *testing.T) {
 }
 
 // TestDelegatedTransport_RunInference_TurnInFlightSendCommandError verifies
-// that when IsTurnInFlight + SendCommand fails, the error propagates and
-// CompletionChan is still closed (no leak).
+// that when IsTurnInFlight + SendCommand fails (interactive fold path), the
+// error propagates and CompletionChan is still closed (no leak).
 func TestDelegatedTransport_RunInference_TurnInFlightSendCommandError(t *testing.T) {
 	be := &mockBackendDT{
 		turnInFlight: true,
@@ -613,7 +631,8 @@ func TestDelegatedTransport_RunInference_TurnInFlightSendCommandError(t *testing
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "test/s", []string{"follow-up"}, nil)
+	ts := NewTurnState(interactiveTestCtx(), "test/s", []string{"follow-up"}, nil)
+	ts.Trigger = "testplat"
 	ts.Prompt = "follow-up"
 
 	err := tr.RunInference(ts)
@@ -627,6 +646,114 @@ func TestDelegatedTransport_RunInference_TurnInFlightSendCommandError(t *testing
 		// good
 	case <-time.After(time.Second):
 		t.Fatal("CompletionChan should be closed even on SendCommand error")
+	}
+}
+
+// TestDelegatedTransport_RunInference_QueuedMessageNeverFolds verifies the
+// per-message queue choice at the transport: an interactive (platform) turn
+// whose sender marked it SteerNever does NOT fold into an in-flight turn via
+// SendCommand — it dispatches like a system turn, waiting for the in-flight
+// turn to complete and then beginning a fresh tracked turn.
+func TestDelegatedTransport_RunInference_QueuedMessageNeverFolds(t *testing.T) {
+	var sentToPane string
+	var foldAttempted bool
+	be := &mockBackendDT{
+		turnInFlight: true,
+		sendCommandFn: func(_ context.Context, _ string) error {
+			foldAttempted = true
+			return nil
+		},
+	}
+	be.waitForTurnFn = func(_ context.Context) error {
+		be.mu.Lock()
+		be.turnInFlight = false
+		be.mu.Unlock()
+		return nil
+	}
+	be.sendToPaneFn = func(_ context.Context, prompt string, handler *mockHandler) (*delegator.TurnResult, error) {
+		sentToPane = prompt
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "done"})
+		}
+		return nil, nil
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ctx := WithSteerPreference(interactiveTestCtx(), SteerNever)
+	ts := NewTurnState(ctx, "test/s", []string{"queued message"}, nil)
+	ts.Trigger = "testplat"
+	ts.Prompt = "queued message"
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	if foldAttempted {
+		t.Error("explicitly-queued message folded into in-flight turn via SendCommand")
+	}
+	if sentToPane != "queued message" {
+		t.Errorf("fresh turn prompt = %q, want %q", sentToPane, "queued message")
+	}
+	select {
+	case <-ts.CompletionChan:
+	case <-time.After(time.Second):
+		t.Fatal("CompletionChan was not closed for queued message turn")
+	}
+}
+
+// TestDelegatedTransport_RunInference_SystemTurnNeverFolds verifies the system
+// dispatch path: a turn with a system trigger (here: none, e.g. foci send /
+// notifications) arriving while a turn is in flight does NOT fold via
+// SendCommand. It waits (WaitForTurn) for the in-flight turn to complete and
+// then begins a fresh turn via the exclusive SourceSystem begin.
+func TestDelegatedTransport_RunInference_SystemTurnNeverFolds(t *testing.T) {
+	var sentToPane string
+	var foldAttempted bool
+	be := &mockBackendDT{
+		turnInFlight: true,
+		sendCommandFn: func(_ context.Context, _ string) error {
+			foldAttempted = true
+			return nil
+		},
+	}
+	be.waitForTurnFn = func(_ context.Context) error {
+		// Simulate the in-flight turn completing while the system turn waits.
+		be.mu.Lock()
+		be.turnInFlight = false
+		be.mu.Unlock()
+		return nil
+	}
+	be.sendToPaneFn = func(_ context.Context, prompt string, handler *mockHandler) (*delegator.TurnResult, error) {
+		sentToPane = prompt
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "done"})
+		}
+		return nil, nil
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"[keepalive]"}, nil)
+	ts.Prompt = "[keepalive]"
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	if foldAttempted {
+		t.Error("system turn folded into in-flight turn via SendCommand — must never steer")
+	}
+	if sentToPane != "[keepalive]" {
+		t.Errorf("fresh turn prompt = %q, want %q", sentToPane, "[keepalive]")
+	}
+	select {
+	case <-ts.CompletionChan:
+		// good — fresh tracked turn completed
+	case <-time.After(time.Second):
+		t.Fatal("CompletionChan was not closed for system turn")
 	}
 }
 

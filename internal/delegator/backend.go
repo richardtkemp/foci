@@ -16,22 +16,45 @@ import (
 // carries no Turn of its own to track a fresh turn. Rather than silently
 // beginning an untracked turn (nil TurnEvents → no OnTurnComplete, lost
 // usage/compaction), the backend declines and the caller re-routes the message
-// through the normal idle path. See the Steer/idle row in Delegator.Inject.
+// through the normal idle path. See the Steer/idle row in Delegator.ImmediateInject.
 var ErrTurnNotInFlight = errors.New("delegator: turn not in flight")
+
+// ErrTurnInFlight is returned by Inject(SourceSystem) when a turn is already
+// in flight. System-initiated input (foci send, cron, notifications, error and
+// restart injections) must never fold into a running turn — only real user
+// input may steer. The backend rejects atomically (the idle check and turn
+// begin happen under one lock) and the caller waits for turn completion
+// (WaitForTurn) before retrying. See the System row in Delegator.ImmediateInject.
+var ErrTurnInFlight = errors.New("delegator: turn in flight")
 
 // Backend is the interface that all coding agent backends implement.
 // A Backend owns the entire turn: inference, tool execution, and context
 // management. Foci sends composed prompts (with metadata, nudges, reminders)
-// via Inject and receives streaming events back.
+// via ImmediateInject and receives streaming events back.
 type Delegator interface {
 	// Start launches the coding agent subprocess.
 	// Called once during agent setup. The backend should be ready to
 	// accept turns after Start returns.
 	Start(ctx context.Context, opts StartOptions) error
 
-	// Inject delivers a user-role event to the backend. Single funnel
-	// for every path that produces input to the coding agent: primary
-	// user turns, urgent steers, queued follow-ups, slash commands.
+	// ImmediateInject delivers a user-role event to the backend RIGHT NOW —
+	// it writes to the coding agent's input channel immediately, with no
+	// serialisation against in-flight turns beyond the per-source routing
+	// below. It is the low-level delivery primitive, and the counterpart of
+	// the session queue, Agent.Enqueue (internal/agent/inbox.go): Enqueue
+	// decides WHEN input may reach the backend (serialised with the
+	// session's turns, deferred behind pending asks, held through
+	// compaction); ImmediateInject is HOW it gets there once that decision
+	// is made.
+	//
+	// Most code should enqueue, not call this. The queue is the right
+	// choice for anything that can wait for the current turn — which is
+	// nearly everything, and everything system-initiated. Legitimate direct
+	// callers are the turn transport (RunInference: begin-turn and
+	// follow-up fold), the inbox's own urgent-steer dispatch, and the
+	// slash-command paths (compaction, passthrough). Calling it from
+	// anywhere else bypasses the queue's guarantees and re-introduces the
+	// mid-turn steering/racing bugs it exists to prevent.
 	//
 	// The backend dispatches based on inj.Source and the current
 	// IsTurnInFlight() state:
@@ -42,6 +65,8 @@ type Delegator interface {
 	//   User     | in-flight  | send follow-up; CC's mid-turn drain folds it
 	//   Steer    | in-flight  | send at priority "now"; CC folds at next tool boundary
 	//   Steer    | idle       | with inj.Turn: begin turn; without: ErrTurnNotInFlight (caller re-routes)
+	//   System   | idle       | begin turn, atomically (idle check + begin under one lock)
+	//   System   | in-flight  | ErrTurnInFlight — never folds; caller waits and retries
 	//   Compact  | any        | send slash command (fire-and-forget)
 	//   Pass     | any        | send slash command (fire-and-forget)
 	//
@@ -49,7 +74,7 @@ type Delegator interface {
 	// turn result (when applicable) flows through inj.Turn.OnTurnComplete;
 	// delivery (text, tool events) flows through the SessionEvents
 	// previously installed via AttachSessionEvents — independent of Turn.
-	Inject(ctx context.Context, inj Inject) error
+	ImmediateInject(ctx context.Context, inj Inject) error
 
 	// WaitForTurn blocks until the next turn completion (stop_reason
 	// "end_turn" in the session output). Returns immediately if no turn
@@ -57,7 +82,7 @@ type Delegator interface {
 	WaitForTurn(ctx context.Context) error
 
 	// IsTurnInFlight reports whether a turn callback is registered but
-	// hasn't fired yet. Inject consults this to decide between begin-turn
+	// hasn't fired yet. ImmediateInject consults this to decide between begin-turn
 	// and follow-up routing.
 	IsTurnInFlight() bool
 
@@ -375,7 +400,7 @@ type SessionEvents struct {
 }
 
 // TurnEvents are the per-turn bookkeeping callbacks. Set when a turn begins
-// via Inject, cleared on OnResult. May be nil between turns; backend must
+// via ImmediateInject, cleared on OnResult. May be nil between turns; backend must
 // tolerate that. These are bookkeeping only — delivery (text, tool events)
 // flows through SessionEvents regardless.
 type TurnEvents struct {
@@ -416,7 +441,7 @@ type TurnResult struct {
 
 // InjectSource identifies the semantic origin of an injected user-role
 // event. The backend's Inject method routes based on Source + the
-// current IsTurnInFlight() state — see Delegator.Inject for the
+// current IsTurnInFlight() state — see Delegator.ImmediateInject for the
 // full routing matrix.
 type InjectSource int
 
@@ -448,6 +473,16 @@ const (
 	// Fire-and-forget: response (if any) flows through the agent's normal
 	// stream events.
 	SourcePass
+
+	// SourceSystem is text that must never fold into an in-flight turn:
+	// system-initiated input (foci send / HTTP /send, cron keepalives,
+	// webhooks, inter-session notifies, error and restart notifications) and
+	// user messages the sender explicitly marked "queue" (agent.SteerNever).
+	// At idle it begins a new turn exactly like SourceUser (the idle check
+	// and turn begin are atomic, so two racing injects cannot clobber each
+	// other's turn bookkeeping); in flight it returns ErrTurnInFlight and
+	// the caller waits gracefully for turn completion before retrying.
+	SourceSystem
 )
 
 // String returns a stable lower-case label for logging.
@@ -461,13 +496,15 @@ func (s InjectSource) String() string {
 		return "compact"
 	case SourcePass:
 		return "pass"
+	case SourceSystem:
+		return "system"
 	default:
 		return "unknown"
 	}
 }
 
 // Inject describes a user-role event delivered to the backend via
-// Delegator.Inject. See InjectSource for source-specific routing.
+// Delegator.ImmediateInject. See InjectSource for source-specific routing.
 type Inject struct {
 	// Source identifies the semantic origin of the event. Drives routing
 	// and rearm policy.
@@ -485,9 +522,9 @@ type Inject struct {
 	Attachments []Attachment
 
 	// Turn is the per-turn TurnEvents installed for the turn this inject
-	// begins. Required for SourceUser / SourceSteer at idle when the
-	// caller needs OnTurnComplete fired; ignored for in-flight injections
-	// (the existing TurnEvents persists) and for slash commands.
+	// begins. Required for SourceUser / SourceSteer / SourceSystem at idle
+	// when the caller needs OnTurnComplete fired; ignored for in-flight
+	// injections (the existing TurnEvents persists) and for slash commands.
 	//
 	// Delivery (text, tool events) does NOT route through Turn — it
 	// routes through the SessionEvents installed on the backend via

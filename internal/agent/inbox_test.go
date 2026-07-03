@@ -106,7 +106,7 @@ type recordingBackend struct {
 	injects []delegator.Inject
 }
 
-func (r *recordingBackend) Inject(ctx context.Context, inj delegator.Inject) error {
+func (r *recordingBackend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	r.mu.Lock()
 	r.injects = append(r.injects, inj)
 	r.mu.Unlock()
@@ -179,7 +179,7 @@ func TestInbox_Enqueue_Idle_PushesToChannel(t *testing.T) {
 }
 
 // TestInbox_Enqueue_InFlight_CCBackend_InjectsSteer verifies that a
-// steer-eligible mid-turn message routes to Backend.Inject(SourceSteer)
+// steer-eligible mid-turn message routes to Backend.ImmediateInject(SourceSteer)
 // when a CC backend is registered, bypassing the buffer entirely.
 func TestInbox_Enqueue_InFlight_CCBackend_InjectsSteer(t *testing.T) {
 	a, cancel := startedAgent(t)
@@ -339,6 +339,127 @@ func TestInbox_Enqueue_PendingAsk_RoutesToAsk(t *testing.T) {
 	}
 }
 
+// TestInbox_Enqueue_SteerNever_QueuesInsteadOfSteering verifies the per-message
+// override: with the agent's steer_mode ON and a turn in flight, an envelope
+// explicitly marked SteerNever (the app's "queue" choice) is pushed to the
+// session channel for a fresh turn — not folded into the running turn.
+func TestInbox_Enqueue_SteerNever_QueuesInsteadOfSteering(t *testing.T) {
+	a := newTestAgent(t) // inbox not started — channel content stays observable
+	a.SetInboxSteerMode(true)
+
+	be := &recordingBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "queue this please", Steer: SteerNever})
+
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("SteerNever message was steered: %+v", injects)
+	}
+	if entries := inb.drainSteer(); len(entries) != 0 {
+		t.Errorf("SteerNever message landed in steer buffer (%d entries)", len(entries))
+	}
+	select {
+	case env := <-inb.ch:
+		if env.Text != "queue this please" {
+			t.Errorf("queued text = %q", env.Text)
+		}
+	default:
+		t.Fatal("SteerNever message was not queued to the session channel")
+	}
+}
+
+// TestInbox_Enqueue_SteerAlways_OverridesConfigOff verifies the opposite
+// override: with steer_mode OFF and a turn in flight, an envelope marked
+// SteerAlways dispatches as an urgent steer.
+func TestInbox_Enqueue_SteerAlways_OverridesConfigOff(t *testing.T) {
+	a := newTestAgent(t)
+	a.SetInboxSteerMode(false)
+
+	be := &recordingBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "steer this", Steer: SteerAlways})
+
+	injects := be.Injects()
+	if len(injects) != 1 || injects[0].Source != delegator.SourceSteer || injects[0].Text != "steer this" {
+		t.Fatalf("expected one SourceSteer inject despite steer_mode=false, got %+v", injects)
+	}
+}
+
+// TestInbox_Enqueue_SteerNever_PendingPlan_Queues verifies an explicitly-queued
+// message is a turn, not plan feedback: with an ExitPlanMode permission pending
+// it must NOT be consumed by CancelPlanWithFeedback — it queues for a fresh
+// turn after the plan flow resolves.
+func TestInbox_Enqueue_SteerNever_PendingPlan_Queues(t *testing.T) {
+	a := newTestAgent(t)
+	a.SetInboxSteerMode(true)
+
+	be := &planResponderBackend{planReqID: "req-plan"}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "queued, not feedback", Steer: SteerNever})
+
+	if be.cancelCalls != 0 {
+		t.Errorf("CancelPlanWithFeedback called %d times, want 0 (message was explicitly queued)", be.cancelCalls)
+	}
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("SteerNever message was steered: %+v", injects)
+	}
+	if len(inb.ch) != 1 {
+		t.Fatalf("SteerNever message not queued (channel len=%d)", len(inb.ch))
+	}
+}
+
+// TestInbox_Enqueue_SteerNever_PendingAsk_Queues verifies an explicitly-queued
+// message is a turn, not an ask answer: with an unpaused foci_ask pending it
+// must NOT be routed to HandleResponse — it queues for a fresh turn.
+func TestInbox_Enqueue_SteerNever_PendingAsk_Queues(t *testing.T) {
+	a := newTestAgent(t)
+	a.SetInboxSteerMode(true)
+
+	var handled bool
+	a.AskRouter = &tools.AskRouter{
+		PendingForSession: func(string) string { return "ask-1" },
+		IsPaused:          func(string) bool { return false },
+		HandleResponse:    func(string, string) { handled = true },
+	}
+
+	be := &recordingBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "not an answer", Steer: SteerNever})
+
+	if handled {
+		t.Error("HandleResponse consumed an explicitly-queued message as an ask answer")
+	}
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("SteerNever message was steered: %+v", injects)
+	}
+	if len(inb.ch) != 1 {
+		t.Fatalf("SteerNever message not queued (channel len=%d)", len(inb.ch))
+	}
+}
+
 // TestInbox_Enqueue_PausedAsk_NormalSteer is the regression guard: when the
 // pending ask is /paused, the intercept is skipped and a mid-turn message steers
 // normally — /pause is the escape hatch to steer mid-ask.
@@ -432,7 +553,7 @@ func TestEnvelope_platformName(t *testing.T) {
 // inbox's turnActive check and the inject landing.
 type errTurnNotInFlightBackend struct{ mockBackendDT }
 
-func (*errTurnNotInFlightBackend) Inject(context.Context, delegator.Inject) error {
+func (*errTurnNotInFlightBackend) ImmediateInject(context.Context, delegator.Inject) error {
 	return delegator.ErrTurnNotInFlight
 }
 
