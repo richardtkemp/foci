@@ -39,6 +39,7 @@ Fields that exist only at the top level or in dedicated global sections. These c
 | `skip_security_checks` | bool | `false` | Skip startup security checks for `secrets.toml` (ownership, permissions, group membership). Useful for development environments. See [SECRETS.md](SECRETS.md). |
 | `file_mode` | string | `"0640"` | Octal file permissions for workspace and content files (character files, prompts, skills, tool-written files, media saves, config edits). Session files have their own `[sessions] file_mode`. |
 | `timezone` | string | `""` | IANA timezone for timestamps (e.g. `"Europe/Athens"`, `"UTC"`, `"Local"`). Empty defaults to machine local time. |
+| `master_agent` | string | `""` | Agent that receives system injections not addressed to a specific agent: the post-restart context turn and the update welcome/changelog. Must name a configured agent. Empty = legacy behavior (restart injection to every agent, changelog to the first agent). |
 
 ### `[anthropic]`
 

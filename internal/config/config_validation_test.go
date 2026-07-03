@@ -551,3 +551,51 @@ func TestValidateMemoryThreshold(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateMasterAgent proves master_agent must name a configured agent:
+// a matching ID passes, an unknown one fails validation, and empty (unset)
+// is always fine. Loads full TOML so defaults apply.
+func TestValidateMasterAgent(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{
+			"valid master",
+			"master_agent = \"clutch\"\n\n[[agents]]\nid = \"clutch\"\nbackend = \"claude-code\"",
+			"",
+		},
+		{
+			"unknown master",
+			"master_agent = \"ghost\"\n\n[[agents]]\nid = \"clutch\"\nbackend = \"claude-code\"",
+			"master_agent = \"ghost\"",
+		},
+		{
+			"unset master",
+			"[[agents]]\nid = \"clutch\"\nbackend = \"claude-code\"",
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "foci.toml")
+			os.WriteFile(path, []byte(tt.toml), 0644)
+
+			_, err := Load(path)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}
