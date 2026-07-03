@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"foci/internal/agent"
 	"foci/internal/tools"
 )
 
@@ -91,11 +92,19 @@ func ResetCommand() *Command {
 		if sk == "" {
 			return Response{}, fmt.Errorf("no active session to reset")
 		}
-		if err := cc.Agent.ResetSession(ctx, sk); err != nil {
+		outcome, err := cc.Agent.ResetSession(ctx, sk)
+		if err != nil {
 			return Response{}, err
 		}
 		if cc.Agent.DelegatedManager != nil {
-			return Response{Text: "Session reset — fresh session ready. Memories from the previous session are being saved in the background."}, nil
+			switch outcome {
+			case agent.ResetMemoryAlreadySaved:
+				return Response{Text: "Session reset — fresh session ready. Memories from the previous session have already been saved."}, nil
+			case agent.ResetMemoryReflecting:
+				return Response{Text: "Session reset — fresh session ready. Memories from the previous session are being saved in the background."}, nil
+			default:
+				return Response{Text: "Session reset — fresh session ready."}, nil
+			}
 		}
 		return Response{Text: "Session cleared."}, nil
 	}

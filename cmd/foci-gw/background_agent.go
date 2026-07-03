@@ -67,6 +67,6 @@ func (b *backgroundAgent) RunOnce(ctx context.Context, prompt, systemPrompt stri
 }
 
 func (b *backgroundAgent) ResetSession(ctx context.Context, sessionKey string) error {
-	err := b.inst.ag.ResetSession(ctx, sessionKey)
+	_, err := b.inst.ag.ResetSession(ctx, sessionKey)
 	return err
 }
