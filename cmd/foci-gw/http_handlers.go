@@ -146,7 +146,8 @@ func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, sel
 		}
 		t.Policy = p
 	}
-	res, err := (&route.Resolver{Index: d.sessionIndex}).Resolve(t)
+	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor}
+	res, err := r.Resolve(t)
 	if err == nil {
 		rcpt := res.ReceiptFor(t)
 		if t.Policy != route.PolicyFallback {

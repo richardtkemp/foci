@@ -1098,15 +1098,53 @@ func (idx *SessionIndex) DefaultChatIDs(agentID string) map[int64]bool {
 }
 
 // DefaultSessionKeyForAgent resolves the most recently active session key for
-// an agent. Chat session keys are deterministic (agent/c<chatID>), so default
-// chats resolve by derivation: pick the is_default chat with the most recent
-// derived-session activity. Falls back to the most recently active root
-// session in the index.
+// an agent with no platform preference. See DefaultSessionKeyForAgentOn.
 func (idx *SessionIndex) DefaultSessionKeyForAgent(agentID string) string {
+	return idx.DefaultSessionKeyForAgentOn(agentID, "")
+}
+
+// DefaultSessionKeyForAgentOn resolves an agent's default session, preferring
+// the given platform when non-empty (the configured default_platform):
+//
+//  1. The preferred platform's is_default chat.
+//  2. The preferred platform's most recently active registered chat.
+//  3. Any is_default chat, ordered by derived-session activity.
+//  4. The most recently active root session for the agent.
+//
+// Chat session keys are deterministic (agent/c<chatID>), so chats resolve by
+// derivation.
+func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform string) string {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Default chats first. The is_default flag is platform-scoped; the session
+	if preferredPlatform != "" {
+		// Preferred platform's pinned default chat.
+		var chatID int64
+		err := idx.db.QueryRow(
+			`SELECT chat_id FROM chat_metadata
+			 WHERE agent_id = ? AND platform = ? AND key = 'is_default' AND value = 'true'`,
+			agentID, preferredPlatform,
+		).Scan(&chatID)
+		if err == nil && chatID != 0 {
+			return NewChatSessionKey(agentID, chatID)
+		}
+		// Preferred platform's most recently active registered chat.
+		err = idx.db.QueryRow(
+			`SELECT cm.chat_id FROM (SELECT DISTINCT agent_id, platform, chat_id FROM chat_metadata) cm
+			 LEFT JOIN session_index si
+			   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
+			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.chat_id != 0
+			 ORDER BY unixepoch(si.last_activity_at) DESC NULLS LAST
+			 LIMIT 1`,
+			agentID, preferredPlatform,
+		).Scan(&chatID)
+		if err == nil && chatID != 0 {
+			return NewChatSessionKey(agentID, chatID)
+		}
+		// No presence on the preferred platform — fall through.
+	}
+
+	// Any default chat. The is_default flag is platform-scoped; the session
 	// key is derived from (agent, chat). Order by the derived session's
 	// activity so an agent with defaults on several platforms resolves to the
 	// live one.

@@ -42,6 +42,10 @@ type Resolution struct {
 // so addressing behaves identically everywhere.
 type Resolver struct {
 	Index *session.SessionIndex // nil tolerated: only key derivation, no existence checks
+	// PreferredPlatform resolves the configured default_platform for an
+	// agent (per-agent override, else global). nil / "" = no preference —
+	// the most-recently-active platform wins the default-session rung.
+	PreferredPlatform func(agentID string) string
 }
 
 // Resolve maps a Target to a session key via the ladder:
@@ -71,7 +75,11 @@ func (r *Resolver) Resolve(t Target) (Resolution, error) {
 		if r.Index == nil {
 			return Resolution{}, fmt.Errorf("%w: %s (no session index)", ErrNoSession, t.Agent)
 		}
-		key := r.Index.DefaultSessionKeyForAgent(t.Agent)
+		preferred := ""
+		if r.PreferredPlatform != nil {
+			preferred = r.PreferredPlatform(t.Agent)
+		}
+		key := r.Index.DefaultSessionKeyForAgentOn(t.Agent, preferred)
 		if key == "" {
 			return Resolution{}, fmt.Errorf("%w: %s", ErrNoSession, t.Agent)
 		}

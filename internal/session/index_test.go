@@ -1378,3 +1378,55 @@ func TestRebuildIndex_PreservesBackendSessionRows(t *testing.T) {
 		t.Errorf("DefaultSessionKeyForAgent = %q, want ag/c111 (most recent activity)", got)
 	}
 }
+
+// TestDefaultSessionKeyForAgentOn proves the platform-preference rungs: the
+// preferred platform's pinned default wins over a more-active pin elsewhere;
+// without a pin, the preferred platform's most recently active registered
+// chat wins; with no presence on the preferred platform at all, resolution
+// falls through to the activity-ordered behavior.
+func TestDefaultSessionKeyForAgentOn(t *testing.T) {
+	idx, err := NewSessionIndex(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close() //nolint:errcheck
+
+	now := time.Now()
+	// Discord chat 222 far more active than telegram chat 111; both pinned.
+	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c111", SessionType: SessionTypeChat, Status: SessionStatusActive,
+		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-24 * time.Hour)})
+	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c222", SessionType: SessionTypeChat, Status: SessionStatusActive,
+		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-time.Minute)})
+	if err := idx.SetChatMetadata("ag", "telegram", 111, "registered", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetChatMetadata("ag", "discord", 222, "registered", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetDefaultChat("ag", "telegram", 111); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetDefaultChat("ag", "discord", 222); err != nil {
+		t.Fatal(err)
+	}
+
+	// Preferred platform's pin wins despite lower activity.
+	if got := idx.DefaultSessionKeyForAgentOn("ag", "telegram"); got != "ag/c111" {
+		t.Errorf("preferred-pin rung = %q, want ag/c111", got)
+	}
+	// No preference → activity ordering picks discord.
+	if got := idx.DefaultSessionKeyForAgentOn("ag", ""); got != "ag/c222" {
+		t.Errorf("no-preference = %q, want ag/c222", got)
+	}
+	// Preferred platform without a pin: most active registered chat there.
+	if err := idx.ClearDefaultChat("ag", "telegram"); err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.DefaultSessionKeyForAgentOn("ag", "telegram"); got != "ag/c111" {
+		t.Errorf("preferred-registered rung = %q, want ag/c111", got)
+	}
+	// No presence on the preferred platform → falls through to discord's pin.
+	if got := idx.DefaultSessionKeyForAgentOn("ag", "app"); got != "ag/c222" {
+		t.Errorf("absent-platform fallthrough = %q, want ag/c222", got)
+	}
+}

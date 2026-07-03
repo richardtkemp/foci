@@ -40,6 +40,7 @@ Fields that exist only at the top level or in dedicated global sections. These c
 | `file_mode` | string | `"0640"` | Octal file permissions for workspace and content files (character files, prompts, skills, tool-written files, media saves, config edits). Session files have their own `[sessions] file_mode`. |
 | `timezone` | string | `""` | IANA timezone for timestamps (e.g. `"Europe/Athens"`, `"UTC"`, `"Local"`). Empty defaults to machine local time. |
 | `master_agent` | string | `""` | Agent that receives system injections not addressed to a specific agent: the post-restart context turn and the update welcome/changelog. Must name a configured agent. Empty = legacy behavior (restart injection to every agent, changelog to the first agent). |
+| `default_platform` | string | `""` | Platform preferred when resolving an agent's default session (external sends and injections with no explicit session) and when picking a delivery fallback connection. Must name a configured `[[platforms]]` entry. Per-agent `default_platform` overrides. Empty = most-recently-active platform wins. |
 
 ### `[anthropic]`
 
@@ -1138,6 +1139,7 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | string | `""` | Agent identifier. Used in session keys (`ID/c{chatID}`). |
+| `default_platform` | string | `""` | Per-agent override of the global `default_platform` (see top-level keys). |
 | `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |

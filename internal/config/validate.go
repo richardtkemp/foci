@@ -139,6 +139,11 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
+	// Validate default_platform (global and per-agent) names a configured platform.
+	if err := cfg.validateDefaultPlatforms(); err != nil {
+		return err
+	}
+
 	// Validate timezone if configured.
 	if cfg.Timezone != "" {
 		if _, err := time.LoadLocation(cfg.Timezone); err != nil {
@@ -506,4 +511,28 @@ func DetectBotTokenConflicts(agents []AgentConfig, secrets SecretGetter) []BotTo
 		}
 	}
 	return conflicts
+}
+
+// validateDefaultPlatforms checks that every default_platform value (global
+// and per-agent) names a configured [[platforms]] entry.
+func (cfg *Config) validateDefaultPlatforms() error {
+	known := make(map[string]bool, len(cfg.Platforms))
+	for _, p := range cfg.Platforms {
+		known[p.ID] = true
+	}
+	check := func(scope, v string) error {
+		if v == "" || known[v] {
+			return nil
+		}
+		return fmt.Errorf("%s default_platform = %q: no such [[platforms]] entry configured", scope, v)
+	}
+	if err := check("", cfg.DefaultPlatform); err != nil {
+		return err
+	}
+	for _, a := range cfg.Agents {
+		if err := check(fmt.Sprintf("agent %q", a.ID), a.DefaultPlatform); err != nil {
+			return err
+		}
+	}
+	return nil
 }

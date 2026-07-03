@@ -620,11 +620,23 @@ func InitMessaging(cfg *config.Config, deps ProviderDeps) (*Messaging, error) {
 		if deps.SessionIndex != nil {
 			chatPlatformFn = deps.SessionIndex.PlatformForChat
 		}
+		var preferredPlatformFn func(string) string
+		if deps.Config != nil {
+			preferredPlatformFn = deps.Config.DefaultPlatformFor
+		}
 		var defaultSessionKeyFn func(string) string
 		if deps.SessionIndex != nil {
-			defaultSessionKeyFn = deps.SessionIndex.DefaultSessionKeyForAgent
+			idx := deps.SessionIndex
+			pref := preferredPlatformFn
+			defaultSessionKeyFn = func(agentID string) string {
+				preferred := ""
+				if pref != nil {
+					preferred = pref(agentID)
+				}
+				return idx.DefaultSessionKeyForAgentOn(agentID, preferred)
+			}
 		}
-		m.connMgr = newAggregatingConnMgr(active, chatPlatformFn, defaultSessionKeyFn)
+		m.connMgr = newAggregatingConnMgr(active, chatPlatformFn, defaultSessionKeyFn, preferredPlatformFn)
 	} else {
 		m.connMgr = &noopConnMgr{}
 	}
