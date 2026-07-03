@@ -311,7 +311,8 @@ func broadcastResponse(connMgr platform.ConnectionManager, agentID, sessionKey, 
 // defaultSessionKey resolves an agent's default session, tolerating "no
 // session yet" as an empty key (handlers that dispatch commands accept that).
 func defaultSessionKey(d httpHandlerDeps, agentID string) string {
-	res, err := (&route.Resolver{Index: d.sessionIndex}).Resolve(route.Target{Agent: agentID})
+	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor}
+	res, err := r.Resolve(route.Target{Agent: agentID})
 	if err != nil {
 		return ""
 	}

@@ -27,7 +27,11 @@ func defaultSessionKeyFor(ag *agent.Agent, agentID string) string {
 	if ag == nil {
 		return ""
 	}
-	res, err := (&route.Resolver{Index: ag.SessionIndex}).Resolve(route.Target{Agent: agentID})
+	r := &route.Resolver{
+		Index:             ag.SessionIndex,
+		PreferredPlatform: func(string) string { return ag.DefaultPlatform },
+	}
+	res, err := r.Resolve(route.Target{Agent: agentID})
 	if err != nil {
 		return ""
 	}

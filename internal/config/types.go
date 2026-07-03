@@ -268,10 +268,11 @@ type GroupsConfig struct {
 }
 
 type AgentConfig struct {
-	ID        string `toml:"id"`
-	Name      string `toml:"name"`  // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji     string `toml:"emoji"` // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Workspace string `toml:"workspace"`
+	ID              string `toml:"id"`
+	Name            string `toml:"name"`             // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji           string `toml:"emoji"`            // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	DefaultPlatform string `toml:"default_platform"` // per-agent override of the global default_platform
+	Workspace       string `toml:"workspace"`
 	// Avatar is an image file for the agent, served to the native app. An
 	// absolute path, or a path relative to the foci home dir, is used as-is
 	// (resolved via ResolvePath). When empty, it is auto-detected at load from
@@ -1157,7 +1158,20 @@ type Config struct {
 	WelcomeFile        string                    `toml:"welcome_file"         default:"data/WELCOME.md"` // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
 	Timezone           string                    `toml:"timezone"`                                       // IANA timezone for timestamps (e.g. "Europe/Athens", "UTC", "Local"); empty = machine local
 	MasterAgent        string                    `toml:"master_agent"`                                   // agent that receives system injections not addressed to a specific agent (restart notices, update changelogs); empty = legacy behavior (restart → every agent, changelog → first agent)
+	DefaultPlatform    string                    `toml:"default_platform"`                               // platform preferred when resolving an agent's default session and delivery fallbacks (e.g. "telegram"); per-agent default_platform overrides; empty = most-recently-active platform
 	SkipSecurityChecks bool                      `toml:"skip_security_checks"`                           // if true, skip startup security checks for secrets.toml
 	DefinedKeys        map[string]bool           `toml:"-"`                                              // keys explicitly set in TOML file (populated by Load)
 	UndefinedKeys      []string                  `toml:"-"`                                              // unrecognised TOML keys (populated by Load, logged by caller)
+}
+
+// DefaultPlatformFor resolves the preferred platform for an agent: the
+// per-agent default_platform when set, else the global one. Empty means no
+// preference (most-recently-active platform wins).
+func (cfg *Config) DefaultPlatformFor(agentID string) string {
+	for _, a := range cfg.Agents {
+		if a.ID == agentID && a.DefaultPlatform != "" {
+			return a.DefaultPlatform
+		}
+	}
+	return cfg.DefaultPlatform
 }

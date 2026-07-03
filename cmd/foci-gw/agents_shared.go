@@ -91,6 +91,7 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		MessageTransforms: agent.CompileTransforms(resolveMessageTransforms(acfg, s.p.cfg)),
 		PromptSearchDirs:  s.promptSearchDirs,
 		Reflection:        s.p.resolved.Reflection,
+		DefaultPlatform:   s.p.cfg.DefaultPlatformFor(s.p.acfg.ID),
 		ShowToolCalls:     resolveShowToolCalls(s.p.resolved),
 		Statusline:        s.p.resolved.Display.Statusline,
 	}

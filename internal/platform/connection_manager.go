@@ -20,9 +20,10 @@ type aggregatingConnMgr struct {
 	order               []string                     // iteration order
 	chatPlatformFn      func(agentID string, chatID int64) string
 	defaultSessionKeyFn func(agentID string) string // resolves most recently active session
+	preferredPlatformFn func(agentID string) string // configured default_platform (per-agent, else global); "" = no preference
 }
 
-func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(agentID string, chatID int64) string, defaultSessionKeyFn func(agentID string) string) *aggregatingConnMgr {
+func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(agentID string, chatID int64) string, defaultSessionKeyFn func(agentID string) string, preferredPlatformFn func(agentID string) string) *aggregatingConnMgr {
 	named := make(map[string]ConnectionManager, len(providers))
 	order := make([]string, len(providers))
 	for i, p := range providers {
@@ -36,10 +37,21 @@ func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(ag
 		order:               order,
 		chatPlatformFn:      chatPlatformFn,
 		defaultSessionKeyFn: defaultSessionKeyFn,
+		preferredPlatformFn: preferredPlatformFn,
 	}
 }
 
 func (a *aggregatingConnMgr) Primary(agentID string) Connection {
+	// Configured preference first: default_platform (per-agent, else global).
+	if a.preferredPlatformFn != nil {
+		if pref := a.preferredPlatformFn(agentID); pref != "" {
+			if mgr, ok := a.named[pref]; ok {
+				if c := mgr.Primary(agentID); c != nil {
+					return c
+				}
+			}
+		}
+	}
 	// Prefer the platform that owns the most recently active session.
 	if a.defaultSessionKeyFn != nil && a.chatPlatformFn != nil {
 		if sk := a.defaultSessionKeyFn(agentID); sk != "" {

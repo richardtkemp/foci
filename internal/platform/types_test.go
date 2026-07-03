@@ -220,7 +220,7 @@ func TestNoopConnMgr(t *testing.T) {
 // Verifies aggregatingConnMgr delegates to child managers correctly.
 func TestAggregatingConnMgr(t *testing.T) {
 	// With no providers, everything returns nil/false
-	mgr := newAggregatingConnMgr(nil, nil, nil)
+	mgr := newAggregatingConnMgr(nil, nil, nil, nil)
 	if mgr.Primary("x") != nil {
 		t.Error("Primary with no managers should return nil")
 	}

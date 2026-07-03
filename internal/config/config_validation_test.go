@@ -599,3 +599,50 @@ func TestValidateMasterAgent(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateDefaultPlatform proves default_platform (global and per-agent)
+// must name a configured [[platforms]] entry; empty is fine.
+func TestValidateDefaultPlatform(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{
+			"valid global",
+			"default_platform = \"telegram\"\n\n[[platforms]]\nid = \"telegram\"\n\n[[agents]]\nid = \"a\"\nbackend = \"claude-code\"",
+			"",
+		},
+		{
+			"unknown global",
+			"default_platform = \"matrix\"\n\n[[platforms]]\nid = \"telegram\"\n\n[[agents]]\nid = \"a\"\nbackend = \"claude-code\"",
+			"default_platform = \"matrix\"",
+		},
+		{
+			"unknown per-agent",
+			"[[platforms]]\nid = \"telegram\"\n\n[[agents]]\nid = \"a\"\nbackend = \"claude-code\"\ndefault_platform = \"matrix\"",
+			"agent \"a\" default_platform",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "foci.toml")
+			os.WriteFile(path, []byte(tt.toml), 0644)
+
+			_, err := Load(path)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}

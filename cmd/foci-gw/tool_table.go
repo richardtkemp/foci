@@ -267,7 +267,7 @@ var toolTable = []toolEntry{
 				return "", "", err
 			}
 			t.Create = false
-			res, err := (&route.Resolver{Index: idx}).Resolve(t)
+			res, err := (&route.Resolver{Index: idx, PreferredPlatform: d.p.cfg.DefaultPlatformFor}).Resolve(t)
 			if err != nil {
 				return "", "", err
 			}
