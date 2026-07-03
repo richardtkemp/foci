@@ -50,3 +50,23 @@ grep '<SESSION_KEY>' ~/logs/foci.log | grep -E 'branch created|turn_lock' | tail
 - **Archives are `.gz`** — `zgrep`/`zcat` them. A bare `grep -r` over `~/logs/` silently returns 0 on gzipped files (it doesn't decompress), so you'll miss everything in rotated logs.
 - **Filter errors on the level column** (`awk '$2=="ERROR"'`), not a bare `grep ERROR` — the word "error" appears in plenty of non-error lines (payloads, messages), giving false positives.
 - **A real panic** starts with `^panic:` at column 0.
+
+## Crash vs clean restart
+
+When foci restarted, was it a deploy, a crash, or a host reboot? **The systemd journal is authoritative:**
+
+```bash
+journalctl -u foci | grep -E 'Deactivated successfully|Stopped|Failed|signal|killed' | tail
+```
+- `Deactivated successfully` / `Stopped` = a **clean** stop (deploy/restart).
+- `Result=signal` / `killed` / `Failed` = a **crash**.
+
+foci also prints its own restart classification at startup (`internal/startup/diagnosis.go`: crash / reboot / clean, from proof-of-life timestamps — `last_startup`, `last_alive`, `last_clean_shutdown` — plus a host-uptime-vs-gap reboot check). **That label can misfire** when the silence gap exceeds foci's proof-of-life window (a long-idle clean process can look like a crash), so cross-check it against the journal rather than trusting it alone.
+
+**Diagnostic order** for "why did it restart":
+1. `uptime` — did the *host* reboot?
+2. foci binary mtime (`stat -c %y $(which foci)`) — was it a **deploy**?
+3. journal stop reason (above) — clean vs signal.
+4. foci's own startup label — last, and only cross-checked.
+
+**Goroutine count:** a step-up on an active session *plateaus* — it stays elevated until the driving activity ends (a live quiz, a running build). Don't predict drain while the driver is still active; it's not a leak.
