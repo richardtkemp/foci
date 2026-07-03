@@ -496,23 +496,38 @@ func migrateLegacyAgentMetadata(db *sql.DB) {
 	}
 }
 
-// migrateLegacySessionIndexRows drops legacy-keyed session_index rows and
-// clears the clean-shutdown marker so startup rebuilds the index from the
-// (migrated) files on disk.
+// migrateLegacySessionIndexRows re-keys legacy session_index rows to their
+// stable form — PRESERVING last_activity_at and last_reflection, which the
+// default-chat routing tiebreak and the reflection guard order by (wiping
+// them made the post-migration default pick arbitrary: the discord-misroute
+// bug) — and clears the clean-shutdown marker so startup still rebuilds
+// file-backed rows from the migrated files. Backend-session rows (empty
+// file_path) survive the rebuild with their re-keyed activity intact.
+// Where several versions of one session have rows, the newest version wins.
 func migrateLegacySessionIndexRows(db *sql.DB) {
-	rows, err := db.Query(`SELECT session_key FROM session_index`)
+	rows, err := db.Query(
+		`SELECT session_key, file_path, created_at, COALESCE(last_activity_at, ''), COALESCE(last_reflection, ''),
+		        COALESCE(parent_session_key, ''), session_type, status
+		 FROM session_index`)
 	if err != nil {
 		log.Errorf("session", "legacy migration: session_index scan: %v", err)
 		return
 	}
-	var legacy []string
+	type row struct {
+		key, filePath, created, activity, reflection, parent, sessType, status string
+		version                                                                int64
+		stable                                                                 string
+	}
+	var legacy []row
 	for rows.Next() {
-		var sk string
-		if rows.Scan(&sk) != nil {
+		var r row
+		if rows.Scan(&r.key, &r.filePath, &r.created, &r.activity, &r.reflection, &r.parent, &r.sessType, &r.status) != nil {
 			continue
 		}
-		if _, ok := LegacyKeyToStable(sk); ok {
-			legacy = append(legacy, sk)
+		if stable, ok := LegacyKeyToStable(r.key); ok {
+			r.stable = stable
+			r.version = legacyVersionOf(r.key)
+			legacy = append(legacy, r)
 		}
 	}
 	_ = rows.Close()
@@ -520,10 +535,35 @@ func migrateLegacySessionIndexRows(db *sql.DB) {
 		return
 	}
 
-	// Legacy rows present → the whole index predates the migration. Clear it
-	// and force the rebuild path (rebuild also fires on empty index, but a
-	// mixed old/new index with a stale clean-shutdown marker would not).
-	_, _ = db.Exec(`DELETE FROM session_index`)
+	// Ascending by version so the newest version's row lands last (REPLACE →
+	// newest wins).
+	sort.Slice(legacy, func(i, j int) bool { return legacy[i].version < legacy[j].version })
+	for _, r := range legacy {
+		parent := r.parent
+		if stable, ok := LegacyKeyToStable(parent); ok {
+			parent = stable
+		}
+		agentID, chatID, isRoot := keyColumns(r.stable)
+		// Unknown activity degrades to creation time — never NULL, so the
+		// most-recently-active ordering stays total.
+		if r.activity == "" {
+			r.activity = r.created
+		}
+		if _, err := db.Exec(
+			`INSERT OR REPLACE INTO session_index
+			   (session_key, file_path, created_at, last_activity_at, last_reflection, parent_session_key, session_type, status, agent_id, chat_id, is_root)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.stable, r.filePath, r.created, r.activity, nullableString(r.reflection),
+			nullableString(parent), r.sessType, r.status, agentID, chatID, isRoot,
+		); err != nil {
+			log.Errorf("session", "legacy migration: re-key index row %s: %v", r.key, err)
+			continue
+		}
+		_, _ = db.Exec(`DELETE FROM session_index WHERE session_key = ?`, r.key)
+	}
+	// The re-keyed file_path values point at the OLD layout; force the
+	// rebuild path so file-backed rows reconcile against the migrated files
+	// (RebuildIndex preserves backend rows and their activity).
 	_, _ = db.Exec(`DELETE FROM system_state WHERE key = 'last_clean_shutdown'`)
-	log.Infof("session", "legacy migration: cleared %d legacy session_index row(s); index will rebuild from disk", len(legacy))
+	log.Infof("session", "legacy migration: re-keyed %d legacy session_index row(s); file-backed rows will reconcile from disk", len(legacy))
 }

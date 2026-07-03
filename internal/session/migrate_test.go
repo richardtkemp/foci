@@ -245,9 +245,22 @@ func TestMigrateLegacyStateDB(t *testing.T) {
 		t.Errorf("tmux_owned = %q, want re-keyed map", v)
 	}
 
-	// Legacy index rows cleared and the clean-shutdown marker dropped.
-	if n := idx.IndexCount(); n != 0 {
-		t.Errorf("session_index rows = %d, want 0 (cleared for rebuild)", n)
+	// Legacy index rows are RE-KEYED (not wiped): the activity timestamp
+	// survives under the stable key so the default-chat routing tiebreak
+	// stays meaningful right after the migration restart. The clean-shutdown
+	// marker is dropped so file-backed rows still reconcile from disk.
+	entry, err := idx.Get("main/c1")
+	if err != nil {
+		t.Fatalf("re-keyed index row missing: %v", err)
+	}
+	if entry.Status != SessionStatusActive {
+		t.Errorf("re-keyed row status = %s, want active", entry.Status)
+	}
+	if got, _ := time.Parse(time.RFC3339, "2026-01-01T00:00:00Z"); !entry.CreatedAt.Equal(got) {
+		t.Errorf("re-keyed row created_at = %v, want preserved 2026-01-01", entry.CreatedAt)
+	}
+	if _, err := idx.Get("main/c1/2000"); err == nil {
+		t.Error("legacy-keyed index row survived")
 	}
 	if v, _ := idx.GetSystemState("last_clean_shutdown"); v != "" {
 		t.Errorf("last_clean_shutdown survived: %q", v)
