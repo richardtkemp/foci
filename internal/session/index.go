@@ -515,12 +515,19 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after commit
 
-	if _, err := tx.Exec(`DELETE FROM session_index`); err != nil {
+	// Clear only file-backed rows — the scan below re-derives them from
+	// disk. Rows with an empty file_path are BACKEND sessions (delegated
+	// agents whose conversation lives in CC's own store; same rule as
+	// PruneOrphans): they have no file to rescan, and deleting them wipes
+	// their last_activity_at — which is what the default-chat routing
+	// tiebreak orders by. A rebuild right after restart then picked an
+	// arbitrary default chat (the discord-misroute bug).
+	if _, err := tx.Exec(`DELETE FROM session_index WHERE file_path != ''`); err != nil {
 		return 0, fmt.Errorf("clear index: %w", err)
 	}
 
 	stmt, err := tx.Prepare(
-		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status, agent_id, chat_id, is_root)
+		`INSERT OR REPLACE INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status, agent_id, chat_id, is_root)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return 0, fmt.Errorf("prepare insert: %w", err)

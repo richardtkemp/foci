@@ -1331,3 +1331,50 @@ func TestSessionsNeedingReflection(t *testing.T) {
 		t.Errorf("expected exactly 2 sessions needing reflection, got %d: %v", len(keys), keys)
 	}
 }
+
+// TestRebuildIndex_PreservesBackendSessionRows captures the discord-misroute
+// bug: delegated agents' sessions have no session file (empty file_path), so
+// a rebuild that wipes the whole table erases their last_activity_at — and
+// DefaultSessionKeyForAgent's tiebreak between two is_default chats becomes
+// arbitrary right after restart. The rebuild must preserve backend rows (and
+// their activity) while file-backed rows are re-derived from the scan.
+func TestRebuildIndex_PreservesBackendSessionRows(t *testing.T) {
+	idx, err := NewSessionIndex(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close() //nolint:errcheck
+
+	// Two backend sessions (no files): telegram chat active recently,
+	// discord chat stale. Both chats flagged is_default on their platforms.
+	now := time.Now()
+	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c111", SessionType: SessionTypeChat, Status: SessionStatusActive,
+		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-time.Hour)})
+	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c222", SessionType: SessionTypeChat, Status: SessionStatusActive,
+		CreatedAt: now.Add(-24 * time.Hour), LastActivityAt: now.Add(-30 * 24 * time.Hour)})
+	if err := idx.SetDefaultChat("ag", "telegram", 111); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetDefaultChat("ag", "discord", 222); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebuild with an empty scan (no files on disk — the delegated case).
+	if _, err := idx.RebuildIndex(nil); err != nil {
+		t.Fatalf("RebuildIndex: %v", err)
+	}
+
+	// Backend rows survive with their activity...
+	e, err := idx.Get("ag/c111")
+	if err != nil {
+		t.Fatalf("backend row wiped by rebuild: %v", err)
+	}
+	if e.LastActivityAt.Before(now.Add(-2 * time.Hour)) {
+		t.Errorf("activity not preserved: %v", e.LastActivityAt)
+	}
+	// ...so the default-chat tiebreak still picks the recently-active chat,
+	// not an arbitrary one.
+	if got := idx.DefaultSessionKeyForAgent("ag"); got != "ag/c111" {
+		t.Errorf("DefaultSessionKeyForAgent = %q, want ag/c111 (most recent activity)", got)
+	}
+}

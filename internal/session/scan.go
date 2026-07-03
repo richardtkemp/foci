@@ -187,6 +187,12 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 					SessionKey:       key,
 					FilePath:         af.path,
 					CreatedAt:        createdAt,
+					// The file's mtime is the last append — the true "last
+					// activity" for a file-backed session. Without it, a
+					// rebuild seeds activity from created_at and the
+					// most-recently-active ordering (default-chat routing!)
+					// degrades to creation order.
+					LastActivityAt:   af.modTime,
 					ParentSessionKey: parentKey,
 					SessionType:      ClassifySessionKey(key),
 					Status:           SessionStatusActive,
