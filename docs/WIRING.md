@@ -1508,16 +1508,22 @@ assigns seq + ack, buffers for replay, and enqueues iff a socket is attached.
 **Session-blind sends (`Hub.deliverBinding`):** any send without a live
 binding — the unbound conn's `SendText`/`SendNotification` (broadcast
 warnings, `--broadcast` responses) or a `SendToSession` whose session has no
-binding — resolves through one ladder: the pinned default conversation; else
-whatever conversation is most recently active at send time; else a
-**server-minted conversation**, with an immediate roster push to live sockets
-(offline devices learn it on next hello; NB the Android client must upsert
-roster conversations it has never seen). The default pin is user-owned
-(`conversation.setDefault`) and never set automatically. The app can create
-conversations freely, so a session-blind send never has "nowhere to deliver".
-There is deliberately no fan-out to every binding: one send, one destination.
+binding — resolves through one ladder: the pinned default conversation
+(resurrected from its persisted `conv_id` row when not live — see conversation
+durability below); else whatever conversation is most recently active at send
+time; else a **server-minted conversation**, with an immediate roster push to
+live sockets (offline devices learn it on next hello; NB the Android client
+must upsert roster conversations it has never seen). `deliverBinding` returns
+the rung that fired (`default`/`most-recent`/`server-created`) and the send
+path logs it, so misdelivery is diagnosable from the log. The default pin is
+user-owned (`conversation.setDefault`) and never set automatically. The app can
+create conversations freely, so a session-blind send never has "nowhere to
+deliver". There is deliberately no fan-out to every binding: one send, one
+destination.
 
-**Binding restore across restart + archive (`framestore.go`, `StartAll`, `handleConversationArchive`):** bindings (`h.convs`/`h.bySession`) are in-memory, created on client frames (or server-side by `deliverBinding`) — so a foci restart empties them. To keep unsolicited sends landing in the SAME conversations rather than freshly minted ones, `Hub.StartAll` rebuilds bindings at startup from the durable store: `frameStore.RestorableConvs()` returns every conv with a **visible** frame and a known `agent_id` (a column added to `app_frames`; written by `convBinding.send`), and `ensureBinding(nil, agentID, convID)` recreates each socketless binding (`attach(nil)` is a no-op; seq seeded from `MaxSeq`). **Archive is a reversible flag, not a deletion:** the `conversation.archive` frame carries an `Archived` bool; `handleConversationArchive` persists only an `is_archived` row in `chat_metadata` (keyed by agent+platform+chatID, a sibling of `is_default`) — it does NOT purge frames, drop the binding, flip session status, or fire a reflection. The binding stays live (inbound frames still flow; history retained), and the roster surfaces `ConversationInfo.Archived` (read from `SessionIndex.ArchivedChatsForAgent` by `agentRoster`). Archived convs are therefore still in `RestorableConvs` and get their bindings rebuilt on restart. Unarchive is a real server action (`Archived=false` clears the flag); the updated roster is pushed back to the socket on every archive/unarchive so all devices reconcile.
+**Conversation durability (`conv_id` rows):** the app's numeric chatID is a one-way FNV-64a hash of the conversationId (`chatIDForConv`), so `ensureBinding` persists the preimage as a `conv_id` row in `chat_metadata` (agent+`app`+chatID → conversationId) at binding creation. This row is the conversation's durable identity, independent of its frames: a conversation created (and maybe pinned as default) but never used has no frames, yet survives restarts and frame-TTL expiry. It is also how `defaultChatBinding` reverses the hash to resurrect a pinned default that isn't live. Rows are never deleted (archive is a flag; the frame janitor only trims frames), so the pin can't dangle. Pins recorded before `conv_id` persistence existed are unresolvable when not live; delivery logs the fact and falls back to most-recent.
+
+**Binding restore across restart + archive (`framestore.go`, `StartAll`, `handleConversationArchive`):** bindings (`h.convs`/`h.bySession`) are in-memory, created on client frames (or server-side by `deliverBinding`) — so a foci restart empties them. To keep unsolicited sends landing in the SAME conversations rather than freshly minted ones, `Hub.StartAll` rebuilds bindings at startup from the union of two durable sources: `frameStore.RestorableConvs()` — every conv with a **visible** frame and a known `agent_id` (a column added to `app_frames`; written by `convBinding.send`) — plus `SessionIndex.ConvRefs("app")`, the persisted `conv_id` rows covering registered-but-frameless conversations. `ensureBinding(nil, agentID, convID)` recreates each socketless binding (`attach(nil)` is a no-op; seq seeded from `MaxSeq`). **Archive is a reversible flag, not a deletion:** the `conversation.archive` frame carries an `Archived` bool; `handleConversationArchive` persists only an `is_archived` row in `chat_metadata` (keyed by agent+platform+chatID, a sibling of `is_default`) — it does NOT purge frames, drop the binding, flip session status, or fire a reflection. The binding stays live (inbound frames still flow; history retained), and the roster surfaces `ConversationInfo.Archived` (read from `SessionIndex.ArchivedChatsForAgent` by `agentRoster`). Archived convs are therefore still restored on restart. Unarchive is a real server action (`Archived=false` clears the flag); the updated roster is pushed back to the socket on every archive/unarchive so all devices reconcile. **Archiving the agent's default chat is refused** with an `archive_default` `ErrorFrame` plus a roster re-push (reverting the client's optimistic flag): an archivable default would silently degrade session-blind delivery.
 
 **Media / blobs (`blob.go`, slice 4):** binary payloads never cross the
 WebSocket. `blobStore` keeps blobs on disk under `tempdir.Dir()/app-blobs`

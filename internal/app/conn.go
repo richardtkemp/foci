@@ -152,13 +152,13 @@ func (c *appConn) sendBinding(sessionKey string) *convBinding {
 	// No binding for this session — resolve (or create) the agent's default
 	// conversation. The app can mint conversations freely, so an unsolicited
 	// send always has somewhere sensible to land (see Hub.deliverBinding).
-	b := c.hub.deliverBinding(c.agentID)
+	b, via := c.hub.deliverBinding(c.agentID)
 	if b == nil {
 		log.Warnf("app", "unsolicited send to unbound session %q (agent %s) DROPPED: conversation creation failed", sessionKey, c.agentID)
 		return nil
 	}
 	if sessionKey != "" {
-		log.Infof("app", "unsolicited send to unbound session %q (agent %s) routed to default conversation %s", sessionKey, c.agentID, b.convID)
+		log.Infof("app", "unsolicited send to unbound session %q (agent %s) routed to %s conversation %s", sessionKey, c.agentID, via, b.convID)
 	}
 	return b
 }
@@ -199,7 +199,7 @@ func (c *appConn) notify(text string) string {
 	if c.bound != "" {
 		b = c.hub.bindingForSession(c.bound)
 	} else {
-		b = c.hub.deliverBinding(c.agentID)
+		b, _ = c.hub.deliverBinding(c.agentID)
 	}
 	if b == nil {
 		return ""

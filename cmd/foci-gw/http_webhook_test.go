@@ -99,6 +99,14 @@ func webhookTestSetup(t *testing.T, promptDir string, sessionKey string, webhook
 
 	ag.SessionIndex = idx
 
+	// The sync paths route through runAgentQueued → EnqueueInjectWait, which
+	// blocks until the session's inbox worker runs the injection — workers only
+	// exist once StartInbox has run (production: main.go / platform setup). A
+	// cancellable ctx winds the workers down at test end.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ag.StartInbox(ctx)
+
 	d := httpHandlerDeps{
 		agents:       map[string]*agentInstance{"test-agent": inst},
 		agentOrder:   []string{"test-agent"},
@@ -106,7 +114,7 @@ func webhookTestSetup(t *testing.T, promptDir string, sessionKey string, webhook
 		sessions:     sessions,
 		sessionIndex: idx,
 		connMgr:      cm,
-		ctx:          context.Background(),
+		ctx:          ctx,
 	}
 	return d, mock
 }

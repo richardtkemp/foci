@@ -43,10 +43,7 @@ type frameStore struct {
 	lastInlineWarn atomic.Int64 // unix nanos of the last saturation warn (rate-limit)
 }
 
-// frameWrite is one pending durable write. Normally an append; when purge is
-// set it deletes all frames for convID instead. Purges go through the same FIFO
-// queue as appends so a delete can't race ahead of appends still queued for the
-// conv (which would re-insert after the delete and resurrect an archived conv).
+// frameWrite is one pending durable append, queued FIFO to the writer.
 type frameWrite struct {
 	convID  string
 	agentID string
@@ -55,8 +52,6 @@ type frameWrite struct {
 	sentMs  int64
 	visible bool
 	preview string
-	purge   bool
-	done    chan int64 // purge only: receives rows deleted
 }
 
 // storedFrame is one frame read back for replay/backfill.
@@ -141,34 +136,18 @@ func (s *frameStore) writer() {
 	for {
 		select {
 		case w := <-s.writeCh:
-			s.apply(w)
+			s.insert(w)
 		case <-s.done:
 			for {
 				select {
 				case w := <-s.writeCh:
-					s.apply(w)
+					s.insert(w)
 				default:
 					return
 				}
 			}
 		}
 	}
-}
-
-// apply dispatches a queued write to insert or purge.
-func (s *frameStore) apply(w frameWrite) {
-	if w.purge {
-		res, err := s.db.Exec(`DELETE FROM app_frames WHERE conv_id = ?`, w.convID)
-		if err != nil {
-			log.Errorf("app", "frame store PurgeConv (conv=%s): %v", w.convID, err)
-			w.done <- 0
-			return
-		}
-		n, _ := res.RowsAffected()
-		w.done <- n
-		return
-	}
-	s.insert(w)
 }
 
 // insert writes one frame. INSERT OR REPLACE keeps the latest wire for a
@@ -222,19 +201,6 @@ func (s *frameStore) RestorableConvs() []restorableConv {
 		out = append(out, c)
 	}
 	return out
-}
-
-// PurgeConv deletes every frame for a conversation. Called when a session is
-// archived: removing its durable frames is what excludes it from the startup
-// binding restore (delete-on-archive — presence of frames is the restore signal,
-// so there is no archived flag to store). Returns rows removed.
-func (s *frameStore) PurgeConv(convID string) int64 {
-	if s == nil {
-		return 0
-	}
-	done := make(chan int64, 1)
-	s.writeCh <- frameWrite{convID: convID, purge: true, done: done}
-	return <-done
 }
 
 // MaxSeq returns the highest persisted seq for a conversation (0 if none). Used

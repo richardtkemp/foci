@@ -134,29 +134,6 @@ func TestFrameStore_InsertMaxSeqRange(t *testing.T) {
 	}
 }
 
-func TestFrameStore_PurgeConvOrdersAfterQueuedAppends(t *testing.T) {
-	// PurgeConv routes through the same FIFO writer queue as Append, so appends
-	// still queued for the conv flush BEFORE the delete — the delete can't run
-	// early and let those appends re-insert after it (resurrecting an archived
-	// conv). With the old direct-Exec purge this returned 0 and left 5 rows.
-	s := tempFrameStore(t)
-	now := time.Now().UnixMilli()
-	for i := int64(1); i <= 5; i++ {
-		s.Append("c1", "ag", i, mkWire(t, "c1", i), now, true, "")
-	}
-	s.Append("keep", "ag", 1, mkWire(t, "keep", 1), now, true, "")
-
-	if got := s.PurgeConv("c1"); got != 5 {
-		t.Errorf("PurgeConv(c1) deleted %d, want 5 (queued appends must flush before delete)", got)
-	}
-	if got := s.MaxSeq("c1"); got != 0 {
-		t.Errorf("MaxSeq(c1) after purge = %d, want 0", got)
-	}
-	if got := s.MaxSeq("keep"); got != 1 {
-		t.Errorf("MaxSeq(keep) = %d, want 1 (other conv untouched)", got)
-	}
-}
-
 func TestFrameStore_TrimOlderThan(t *testing.T) {
 	s := tempFrameStore(t)
 	old := time.Now().Add(-48 * time.Hour).UnixMilli()
