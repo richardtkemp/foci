@@ -29,6 +29,7 @@ import (
 	"foci/internal/modelcaps"
 	"foci/internal/platform"
 	"foci/internal/provision"
+	"foci/internal/shellenv"
 	"foci/internal/skills"
 	"foci/internal/startup"
 	"foci/internal/timeutil"
@@ -122,6 +123,10 @@ Subcommands:
 		timeutil.SetLocation(tz)
 		log.Infof("main", "timezone set to %s", cfg.Timezone)
 	}
+
+	// Load the operator's shell env into this process before any backend
+	// spawns, so tool shells inherit it via os.Environ().
+	shellenv.Apply(cfg.ShellEnvFile)
 
 	// ========== Workspace directories ==========
 	// Ensure each agent's workspace directories exist before any init
