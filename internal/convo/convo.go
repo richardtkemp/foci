@@ -129,7 +129,7 @@ func resolveLog(session string) *agentLog {
 }
 
 // agentFromSession extracts the agent ID from a session key. Session keys use
-// slash-separated format: "{agentID}/{typeID}/{versionTS}". Returns "" if the
+// slash-separated format: "{agentID}/{type}{id}[/{child}]". Returns "" if the
 // format doesn't match.
 func agentFromSession(session string) string {
 	if idx := strings.IndexByte(session, '/'); idx > 0 {

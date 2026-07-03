@@ -71,7 +71,6 @@ func (m *mockConnection) SetSessionKeyDirect(key string)            {}
 func (m *mockConnection) SetChatID(chatID int64)                    {}
 func (m *mockConnection) ChatID() int64                             { return 0 }
 func (m *mockConnection) Username() string                          { return "" }
-func (m *mockConnection) UpdateChatSessionKey(int64, string)        {}
 func (m *mockConnection) SendInjectedMessage(sk, text string) error { return nil }
 func (m *mockConnection) SendToSession(sk, text string) error       { return nil }
 func (m *mockConnection) SendNotification(text string)              {}
@@ -178,7 +177,6 @@ func TestMessagingNilSafe(t *testing.T) {
 	m.SetupSharedFacet(SharedFacetParams{})
 	m.RestoreFacetSessions(RestoreParams{})
 	m.SetLifecycleCallback("x", OnUserMessage, func() {})
-	m.NotifyAgent("x", "text")
 	m.notifyAgentDoc("x", "/tmp/doc")
 	if warns := m.AgentPreFlight("x"); warns != nil {
 		t.Errorf("AgentPreFlight on nil = %v, want nil", warns)

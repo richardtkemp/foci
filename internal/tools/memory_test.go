@@ -123,7 +123,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0, 0.1)
 	defer idx.Close()
 	idx.Reindex()
-	idx.IndexConversation("We talked about the weather yesterday", "main/i0/0", 1)
+	idx.IndexConversation("We talked about the weather yesterday", "main/i0", 1)
 
 	backends := map[string]memory.Searcher{"fts5": idx}
 	tool := NewMemorySearchTool(backends, "fts5", nil)
@@ -311,8 +311,8 @@ func TestMemorySearchExcludesCurrentSession(t *testing.T) {
 	defer idx.Close()
 
 	// Index conversations from two different sessions
-	currentSession := "agent1/imain/1000000000"
-	otherSession := "agent1/imain/2000000000"
+	currentSession := "agent1/imain"
+	otherSession := "agent1/iother"
 	idx.IndexConversation("The platypus is a fascinating mammal", currentSession, 1)
 	idx.IndexConversation("The platypus lays eggs unlike most mammals", otherSession, 2)
 
@@ -467,7 +467,7 @@ func TestMemorySearchBleveRowID(t *testing.T) {
 	}
 	defer bleveIdx.Close()
 
-	bleveIdx.IndexConversation("The platypus is an unusual creature", "agent/c100/1000", 42)
+	bleveIdx.IndexConversation("The platypus is an unusual creature", "agent/c100", 42)
 	// Allow bleve to process
 	time.Sleep(50 * time.Millisecond)
 
@@ -481,7 +481,7 @@ func TestMemorySearchBleveRowID(t *testing.T) {
 	}
 
 	// Should include session#rowID in the output
-	if !strings.Contains(result.Text, "agent/c100/1000#42") {
+	if !strings.Contains(result.Text, "agent/c100#42") {
 		t.Errorf("expected session#rowID in result, got: %q", result.Text)
 	}
 }
@@ -530,7 +530,7 @@ func TestMemorySearchDirectLookup(t *testing.T) {
 	// and returns surrounding messages with the target marked.
 	t.Parallel()
 	dir := t.TempDir()
-	session := "testagent/c100/1000"
+	session := "testagent/c100"
 	messages := []string{
 		"first message",
 		"second message",
@@ -578,7 +578,7 @@ func TestMemorySearchLinesParam(t *testing.T) {
 	// Verifies that the lines parameter adds inline conversation context to search results.
 	t.Parallel()
 	dir := t.TempDir()
-	session := "testagent/c100/1000"
+	session := "testagent/c100"
 	messages := []string{
 		"the weather was nice",
 		"we discussed the weather forecast",
@@ -645,7 +645,7 @@ func TestMemorySearchDirectLookupNoReader(t *testing.T) {
 	backends := map[string]memory.Searcher{"fts5": idx}
 	tool := NewMemorySearchTool(backends, "fts5", nil)
 
-	params, _ := json.Marshal(map[string]string{"query": "agent/c100/1000#42"})
+	params, _ := json.Marshal(map[string]string{"query": "agent/c100#42"})
 	_, err := tool.Execute(context.Background(), params)
 	if err == nil {
 		t.Error("expected error for direct lookup without ConversationReader")

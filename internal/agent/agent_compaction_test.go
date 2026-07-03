@@ -18,10 +18,11 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	// model-based context-limit selection.
 	t.Run("basic", func(t *testing.T) {
 		// Proves the full compaction lifecycle: turns accumulate until the token threshold
-		// is crossed, then the session is rotated and a summary+handoff replaces the history.
+		// is crossed, then the history is replaced in place by a summary+handoff — the
+		// session key is a stable identity and never changes.
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
-		sessionKey := "test/icompact/1000000000"
+		sessionKey := "test/icompact"
 
 		// Phase 1: 4 turns with low tokens — no compaction
 		env.runTurns(t, sessionKey, 1, 4)
@@ -34,13 +35,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// Phase 2: Turn 5 — high tokens triggers compaction
 		env.runTurns(t, sessionKey, 5, 5)
 
-		// After compaction, data is at the rotated key
-		rotatedKey := env.activeKey(sessionKey)
-		if rotatedKey == sessionKey {
-			t.Fatal("expected key rotation after compaction")
-		}
-
-		msgs, _ = env.store.Load(rotatedKey)
+		// After compaction, the compacted history loads under the SAME key.
+		msgs, _ = env.store.Load(sessionKey)
 		if len(msgs) != 3 {
 			t.Fatalf("after compaction: %d messages, want 3", len(msgs))
 		}
@@ -58,11 +54,11 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("msg[2] should contain handoff: %q", provider.TextOf(msgs[2].Content))
 		}
 
-		// Phase 3: Turn 6 — post-compaction continuity (uses rotated key)
-		env.runTurns(t, rotatedKey, 6, 6)
+		// Phase 3: Turn 6 — post-compaction continuity under the same key
+		env.runTurns(t, sessionKey, 6, 6)
 
 		// 3 compacted + user turn 6 + assistant turn 6 = 5
-		msgs, _ = env.store.Load(rotatedKey)
+		msgs, _ = env.store.Load(sessionKey)
 		if len(msgs) != 5 {
 			t.Fatalf("after Turn 6: %d messages, want 5", len(msgs))
 		}
@@ -91,13 +87,12 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		env.compactor.Scratchpad = scratchpad
 		env.compactor.AgentID = "test"
 
-		sessionKey := "test/icompactsp/1000000000"
+		sessionKey := "test/icompactsp"
 
 		// Build up 4 turns then trigger compaction on turn 5
 		env.runTurns(t, sessionKey, 1, 5)
 
-		rotatedKey := env.activeKey(sessionKey)
-		msgs, _ := env.store.Load(rotatedKey)
+		msgs, _ := env.store.Load(sessionKey)
 		if len(msgs) != 3 {
 			t.Fatalf("after compaction: %d messages, want 3", len(msgs))
 		}
@@ -128,7 +123,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		env := newCompactionTestEnv(t, &turnCount, 5)
 		env.compactor.WithConfig(4096, 4, 4) // preserve last 4 messages
 
-		sessionKey := "test/ipreserve/1000000000"
+		sessionKey := "test/ipreserve"
 
 		// Phase 1: 4 turns with low tokens — no compaction
 		env.runTurns(t, sessionKey, 1, 4)
@@ -141,11 +136,9 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// Phase 2: Turn 5 — high tokens triggers compaction
 		env.runTurns(t, sessionKey, 5, 5)
 
-		rotatedKey := env.activeKey(sessionKey)
-
 		// After compaction with preserve=4, preserved[0] is user so handoff folds:
 		// 2 (marker + summary+handoff) + 4 preserved = 6
-		msgs, _ = env.store.Load(rotatedKey)
+		msgs, _ = env.store.Load(sessionKey)
 		if len(msgs) != 6 {
 			t.Fatalf("after compaction: %d messages, want 6 (2 header + 4 preserved)", len(msgs))
 		}
@@ -187,11 +180,11 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("summary should contain folded handoff: %q", summaryText)
 		}
 
-		// Phase 3: Turn 6 — post-compaction continuity (uses rotated key)
-		env.runTurns(t, rotatedKey, 6, 6)
+		// Phase 3: Turn 6 — post-compaction continuity under the same key
+		env.runTurns(t, sessionKey, 6, 6)
 
 		// 6 compacted + user turn 6 + assistant turn 6 = 8
-		msgs, _ = env.store.Load(rotatedKey)
+		msgs, _ = env.store.Load(sessionKey)
 		if len(msgs) != 8 {
 			t.Fatalf("after Turn 6: %d messages, want 8", len(msgs))
 		}
@@ -218,7 +211,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			endNotifs = append(endNotifs, msg)
 		})
 
-		sessionKey := "test/icompactnotify/1000000000"
+		sessionKey := "test/icompactnotify"
 
 		// 4 turns, then turn 5 triggers compaction
 		env.runTurns(t, sessionKey, 1, 5)
@@ -250,7 +243,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			notified = append(notified, msg)
 		})
 
-		sessionKey := "test/inocompact/1000000000"
+		sessionKey := "test/inocompact"
 
 		// 4 normal turns
 		env.runTurns(t, sessionKey, 1, 4)
@@ -290,8 +283,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	})
 
 	t.Run("compaction_memory_hook", func(t *testing.T) {
-		// Proves CompactionMemoryFunc fires before compaction with the correct
-		// (pre-rotation) session key, and fires exactly once per compaction.
+		// Proves CompactionMemoryFunc fires before compaction with the session
+		// key, and fires exactly once per compaction.
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
 
@@ -306,7 +299,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			startCalls = append(startCalls, session)
 		})
 
-		sessionKey := "test/icompactmem/1000000000"
+		sessionKey := "test/icompactmem"
 
 		// Phase 1: 4 turns with low tokens — no compaction, no hook
 		env.runTurns(t, sessionKey, 1, 4)
@@ -318,7 +311,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// Phase 2: Turn 5 — high tokens triggers compaction
 		env.runTurns(t, sessionKey, 5, 5)
 
-		// Hook should have fired exactly once with the pre-rotation key
+		// Hook should have fired exactly once with the session key
 		if len(memoryHookCalls) != 1 {
 			t.Fatalf("expected 1 memory hook call, got %d", len(memoryHookCalls))
 		}
@@ -345,7 +338,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			notified = append(notified, msg)
 		})
 
-		sessionKey := "test/isessionmodel/1000000000"
+		sessionKey := "test/isessionmodel"
 
 		// Override session model to Gemini (1M context window)
 		env.ag.SetSessionModel(sessionKey, "google/gemini-2.5-flash", "", "", nil)

@@ -37,12 +37,6 @@ func (b *Bot) sessionKeyForMsg(chatID int64) string {
 	return b.chatmeta.SessionKeyForChat(chatID)
 }
 
-// UpdateChatSessionKey updates the persisted session key for a chat.
-// Called when a session key is rotated (compaction, /reset).
-func (b *Bot) UpdateChatSessionKey(chatID int64, newKey string) {
-	b.chatmeta.UpdateSessionKey(chatID, newKey)
-}
-
 // SetSessionKey changes the override session key (used for facet fork/done).
 // If OnSessionKeyChange is set, fires it outside the lock with the bot's username and new key.
 func (b *Bot) SetSessionKey(key string) {

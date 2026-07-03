@@ -43,7 +43,6 @@ type agentInstance struct {
 	promptSearchDirs []string                    // directories to search for prompt files
 	tmuxClearAll     func()                      // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount   func() int                  // returns number of active tmux watches
-	tmuxMigrateKey   func(string, string)        // updates tmux owned/watched maps on session key rotation
 	webhooks         map[string]string           // hook ID → prompt path (merged from global + per-agent)
 	kaRunner         *periodic.Runner            // keepalive & background work timer (nil if disabled)
 	mcpManager       *mcpkg.Manager              // nil if no MCP servers configured
@@ -96,7 +95,7 @@ type setupParams struct {
 	ttsMap              map[string]voice.TTS
 	sttMap              map[string]voice.STT
 	braveKey            string
-	gwSocketPath        string // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
+	gwSocketPath        string         // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
 	skillLoader         *skills.Loader // shared across all agents so the shared skills dir is scanned/warned once, not once per agent
 
 	startTime       time.Time
@@ -314,7 +313,6 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		tmuxTool:            out.tmuxTool,
 		tmuxClearAll:        out.tmuxClearAll,
 		tmuxWatchCount:      out.tmuxWatchCount,
-		tmuxMigrateKey:      out.tmuxMigrateKey,
 		ttsRepls:            ttsRepls,
 		mcpManager:          out.mcpMgr,
 		skillsDirs:          bs.skillsDirs,

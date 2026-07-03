@@ -292,7 +292,6 @@ type Connection interface {
 	SetChatID(chatID int64)
 	ChatID() int64
 	Username() string
-	UpdateChatSessionKey(chatID int64, newKey string) // update cached + persisted session key for a chat
 
 	// Messaging
 	SendInjectedMessage(sessionKey, text string) error // sends with system injection header
@@ -697,16 +696,6 @@ func (m *Messaging) SetLifecycleCallback(agentID string, event LifecycleEvent, f
 	}
 	for _, p := range m.providers {
 		p.SetLifecycleCallback(agentID, event, fn)
-	}
-}
-
-// NotifyAgent sends a text notification to ALL connections for an agent.
-func (m *Messaging) NotifyAgent(agentID string, text string) {
-	if m == nil {
-		return
-	}
-	for _, conn := range m.connMgr.AllForAgent(agentID) {
-		conn.SendNotification(text)
 	}
 }
 

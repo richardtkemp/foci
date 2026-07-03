@@ -49,7 +49,7 @@ func initAPIDB(t *testing.T, entries []log.APIEntry) string {
 // testContextInfo returns a standard ContextInfo for testing context commands.
 func testContextInfo() ContextInfo {
 	return ContextInfo{
-		SessionKey:       "main/i0/0",
+		SessionKey:       "main/i0",
 		Model:            "claude-sonnet-4-5",
 		CompactionThresh: 0.8,
 		ContextLimit:     200000,

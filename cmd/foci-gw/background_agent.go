@@ -46,7 +46,7 @@ func (b *backgroundAgent) IsTurnInFlight(parentBase string) bool {
 }
 
 func (b *backgroundAgent) SessionKey() string {
-	return mostRecentSessionKey(b.inst.ag, b.connMgr, b.agentID)
+	return defaultSessionKeyFor(b.inst.ag, b.agentID)
 }
 
 func (b *backgroundAgent) CanFire(ctx context.Context, sessionKey string) (bool, string) {
@@ -67,6 +67,6 @@ func (b *backgroundAgent) RunOnce(ctx context.Context, prompt, systemPrompt stri
 }
 
 func (b *backgroundAgent) ResetSession(ctx context.Context, sessionKey string) error {
-	_, err := b.inst.ag.ResetSession(ctx, sessionKey)
+	err := b.inst.ag.ResetSession(ctx, sessionKey)
 	return err
 }

@@ -43,7 +43,6 @@ const (
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
 	TypeMeta            = "meta"
-	TypeSessionUpdate   = "session.update"
 	TypeError           = "error"
 	TypePong            = "pong"
 
@@ -140,8 +139,7 @@ type ConversationInfo struct {
 	// seed from.
 	Archived bool `json:"archived,omitempty"`
 	// Typing is true iff a turn is in flight on this conversation. It is the roster
-	// snapshot half of the typing indicator; the Typing frame carries live deltas —
-	// the same snapshot+delta pairing as SessionKey/SessionUpdate.
+	// snapshot half of the typing indicator; the Typing frame carries live deltas.
 	Typing bool `json:"typing,omitempty"`
 	// Thinking is true iff the model is mid extended-thinking on this conversation.
 	// Snapshot half of the thinking indicator; the Thinking frame carries live
@@ -397,15 +395,6 @@ type Meta struct {
 }
 
 func (Meta) Type() string { return TypeMeta }
-
-// SessionUpdate tells the app a conversation's session key rotated.
-type SessionUpdate struct {
-	ConversationID string `json:"conversationId"`
-	SessionKey     string `json:"sessionKey"`
-	Reason         string `json:"reason,omitempty"`
-}
-
-func (SessionUpdate) Type() string { return TypeSessionUpdate }
 
 // ErrorFrame reports a server-side error.
 type ErrorFrame struct {

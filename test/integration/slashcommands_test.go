@@ -314,15 +314,9 @@ func TestL2_SlashCommands_ResetClearsSession(t *testing.T) {
 	}
 	preSessionID := preEntries[len(preEntries)-1].SessionID
 
-	// /reset (soft).
-	pushTelegramText(t, h, "alpha", 7007, "/reset")
-	if waitForSendMessageText(t, h, token, 15*time.Second, "Session reset") == "" {
-		// Fallback: API-mode wording is "Session cleared."
-		if waitForSendMessageText(t, h, token, 1*time.Second, "Session cleared") == "" {
-			t.Fatalf("/reset confirmation reply never arrived\nsent so far:\n%v\nstderr tail:\n%s",
-				peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
-		}
-	}
+	// /reset (soft) — retried until the in-flight guard clears (see
+	// resetWhenIdle).
+	resetWhenIdle(t, h, token, 7007)
 
 	// Send another message and verify it lands under a different session id.
 	pushTelegramText(t, h, "alpha", 7007, "after reset")

@@ -23,8 +23,8 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	// Proves that LoadFull on a branch returns the parent messages at the branch point
 	// followed by the branch's own messages — in the correct order and count.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
-	branchKey := "main/imain/1000000000/b1000000001"
+	parentKey := "main/imain"
+	branchKey := "main/imain/b1000000001"
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 	s.TestAppend(parentKey, msg("assistant", "hi"))
@@ -66,8 +66,8 @@ func TestLoadFullRecoversParentPrefixFromArchive(t *testing.T) {
 	// BranchPoint indexes the pre-rotation list, so the archive is the correct
 	// source. (P2-5.)
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
-	branchKey := "main/imain/1000000000/b1000000001"
+	parentKey := "main/imain"
+	branchKey := "main/imain/b1000000001"
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 	s.TestAppend(parentKey, msg("assistant", "hi"))
@@ -106,12 +106,132 @@ func TestLoadFullRecoversParentPrefixFromArchive(t *testing.T) {
 	}
 }
 
+func TestLoadFullRecoversParentPrefixAfterCompaction(t *testing.T) {
+	// Proves the same archive recovery through the REAL compaction path: after
+	// the parent is compacted via Replace (same key, file archived in place),
+	// the live parent holds fewer messages than the branch point, so LoadFull
+	// must recover the branch prefix from the parent's archive. With stable
+	// keys, compaction no longer re-keys the parent — the branch's parent_key
+	// stays valid and recovery is purely archive-based. (P2-5.)
+	s := NewStore(t.TempDir())
+	parentKey := "main/c123"
+
+	s.TestAppend(parentKey, msg("user", "hello"))
+	s.TestAppend(parentKey, msg("assistant", "hi"))
+	s.TestAppend(parentKey, msg("user", "how are you"))
+	s.TestAppend(parentKey, msg("assistant", "good"))
+
+	branchKey := "main/c123/b1000000001"
+	if err := s.createBranchFile(parentKey, branchKey, false, ""); err != nil {
+		t.Fatalf("createBranchFile: %v", err)
+	}
+	s.TestAppend(branchKey, msg("user", "branch q"))
+
+	// Compact the parent down to a single summary message.
+	if err := s.TestReplace(parentKey, []provider.Message{msg("user", "[summary]")}); err != nil {
+		t.Fatalf("Replace parent: %v", err)
+	}
+
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+	if len(msgs) != 5 {
+		t.Fatalf("len = %d, want 5 (4 recovered parent + 1 branch)", len(msgs))
+	}
+	if provider.TextOf(msgs[0].Content) != "hello" {
+		t.Errorf("msgs[0] = %q, want pre-compaction 'hello'", provider.TextOf(msgs[0].Content))
+	}
+}
+
+func TestLoadFullRecoversParentPrefixAfterReset(t *testing.T) {
+	// Proves archive recovery through the /reset path: after Store.Reset
+	// archives the parent's file in place (leaving no live file under the same
+	// key), LoadFull on an existing branch recovers the parent prefix from the
+	// reset archive instead of returning only the branch's own messages.
+	s := NewStore(t.TempDir())
+	parentKey := "main/c123"
+
+	s.TestAppend(parentKey, msg("user", "one"))
+	s.TestAppend(parentKey, msg("assistant", "two"))
+
+	branchKey := "main/c123/b1000000001"
+	if err := s.createBranchFile(parentKey, branchKey, false, ""); err != nil {
+		t.Fatalf("createBranchFile: %v", err)
+	}
+	s.TestAppend(branchKey, msg("user", "branch q"))
+
+	if err := s.Reset(parentKey); err != nil {
+		t.Fatalf("Reset parent: %v", err)
+	}
+
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("len = %d, want 3 (2 recovered parent + 1 branch)", len(msgs))
+	}
+	if provider.TextOf(msgs[0].Content) != "one" {
+		t.Errorf("msgs[0] = %q, want recovered parent 'one'", provider.TextOf(msgs[0].Content))
+	}
+	if provider.TextOf(msgs[2].Content) != "branch q" {
+		t.Errorf("msgs[2] = %q, want 'branch q'", provider.TextOf(msgs[2].Content))
+	}
+}
+
+func TestBranchOfBranchMintsSibling(t *testing.T) {
+	// Proves that branching from a branch mints a SIBLING key under the same
+	// root (the file layout is flat), while branch_meta.parent_key records the
+	// true parent — so the logical lineage is preserved in metadata, not the key.
+	s := NewStore(t.TempDir())
+	rootKey := "main/c123"
+
+	s.TestAppend(rootKey, msg("user", "hello"))
+
+	firstBranch := "main/c123/b1000000001"
+	if err := s.createBranchFile(rootKey, firstBranch, false, ""); err != nil {
+		t.Fatalf("create first branch: %v", err)
+	}
+	s.TestAppend(firstBranch, msg("user", "branch work"))
+
+	secondBranch, err := s.CreateBranchWithOptions(firstBranch, BranchOptions{})
+	if err != nil {
+		t.Fatalf("branch from branch: %v", err)
+	}
+
+	sk, err := ParseSessionKey(secondBranch)
+	if err != nil {
+		t.Fatalf("parse second branch key %q: %v", secondBranch, err)
+	}
+	if sk.Root().String() != rootKey {
+		t.Errorf("second branch root = %q, want %q (sibling under same root)", sk.Root().String(), rootKey)
+	}
+	if sk.ChildType != 'b' {
+		t.Errorf("second branch ChildType = %q, want 'b'", sk.ChildType)
+	}
+	if secondBranch == firstBranch {
+		t.Error("second branch must not collide with first branch key")
+	}
+
+	meta, err := s.GetBranchMeta(secondBranch)
+	if err != nil {
+		t.Fatalf("GetBranchMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected branch meta on second branch")
+	}
+	if meta.ParentKey != firstBranch {
+		t.Errorf("parent_key = %q, want true parent %q", meta.ParentKey, firstBranch)
+	}
+}
+
 func TestBranchParentContinuesGrowing(t *testing.T) {
 	// Proves that a branch snapshot is fixed at creation time: messages appended to
 	// the parent after branching are not visible when loading the branch.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
-	branchKey := "main/imain/1000000000/b1000000001"
+	parentKey := "main/imain"
+	branchKey := "main/imain/b1000000001"
 
 	s.TestAppend(parentKey, msg("user", "one"))
 	s.TestAppend(parentKey, msg("assistant", "two"))
@@ -141,8 +261,8 @@ func TestBranchFromEmptyParent(t *testing.T) {
 	// Proves that branching from a parent with no messages works correctly:
 	// LoadFull returns only the branch's own messages.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
-	branchKey := "main/imain/1000000000/b1000000001"
+	parentKey := "main/imain"
+	branchKey := "main/imain/b1000000001"
 
 	s.createBranchFile(parentKey, branchKey, false, "")
 	s.TestAppend(branchKey, msg("user", "branch only"))
@@ -163,7 +283,7 @@ func TestLoadFullNonBranch(t *testing.T) {
 	// Proves that LoadFull on a regular (non-branch) session behaves identically
 	// to a plain Load — it returns all messages without attempting parent resolution.
 	s := NewStore(t.TempDir())
-	key := "main/imain/1000000000"
+	key := "main/imain"
 
 	s.TestAppend(key, msg("user", "hello"))
 
@@ -180,7 +300,7 @@ func TestLoadFullNonexistent(t *testing.T) {
 	// Proves that LoadFull on a key that has never been written returns nil
 	// without error, matching the behaviour of a plain Load on a missing file.
 	s := NewStore(t.TempDir())
-	msgs, err := s.LoadFull("ghost/imain/1000000000")
+	msgs, err := s.LoadFull("ghost/imain")
 	if err != nil {
 		t.Fatalf("LoadFull nonexistent: %v", err)
 	}
@@ -192,7 +312,7 @@ func TestLoadFullNonexistent(t *testing.T) {
 func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
 	// Proves that the NoResetHook option is persisted in branch metadata.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
+	parentKey := "main/imain"
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 
@@ -219,7 +339,7 @@ func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
 func TestCreateBranchWithOptionsDefault(t *testing.T) {
 	// Proves that omitting BranchOptions leaves NoResetHook as false.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
+	parentKey := "main/imain"
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 
@@ -240,7 +360,7 @@ func TestCreateBranchWithOptionsDefault(t *testing.T) {
 func TestGetBranchMetaRegularSession(t *testing.T) {
 	// Proves that GetBranchMeta returns nil for a regular session.
 	s := NewStore(t.TempDir())
-	key := "main/imain/1000000000"
+	key := "main/imain"
 	s.TestAppend(key, msg("user", "hello"))
 
 	meta, err := s.GetBranchMeta(key)
@@ -255,7 +375,7 @@ func TestGetBranchMetaRegularSession(t *testing.T) {
 func TestGetBranchMetaNonexistent(t *testing.T) {
 	// Proves that GetBranchMeta returns nil without error for a nonexistent key.
 	s := NewStore(t.TempDir())
-	meta, err := s.GetBranchMeta("ghost/imain/1000000000")
+	meta, err := s.GetBranchMeta("ghost/imain")
 	if err != nil {
 		t.Fatalf("GetBranchMeta: %v", err)
 	}
@@ -267,8 +387,8 @@ func TestGetBranchMetaNonexistent(t *testing.T) {
 func TestBranchDoesNotContaminateParent(t *testing.T) {
 	// Proves that messages appended to a branch are not visible in the parent.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
-	branchKey := "main/imain/1000000000/b1000000001"
+	parentKey := "main/imain"
+	branchKey := "main/imain/b1000000001"
 
 	s.TestAppend(parentKey, msg("user", "parent msg"))
 	s.TestAppend(parentKey, msg("assistant", "parent reply"))
@@ -286,7 +406,7 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 func TestCreateBranchWithOrientationTemplate(t *testing.T) {
 	// Proves that orientation template variables are resolved and stored in metadata.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
+	parentKey := "main/imain"
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 	s.TestAppend(parentKey, msg("assistant", "hi"))
@@ -344,7 +464,7 @@ func TestCreateBranchWithOrientationTemplate(t *testing.T) {
 func TestCreateBranchWithoutOrientation(t *testing.T) {
 	// Proves that an empty orientation template produces no orientation text.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
+	parentKey := "main/imain"
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 
@@ -366,8 +486,8 @@ func TestCreateBranchCollision(t *testing.T) {
 	// Proves that createBranchFile rejects a duplicate key rather than
 	// silently overwriting. The original branch's metadata is preserved.
 	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
-	branchKey := "main/imain/1000000000/b1000000001"
+	parentKey := "main/imain"
+	branchKey := "main/imain/b1000000001"
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 

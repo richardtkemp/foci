@@ -255,7 +255,7 @@ func TestDispatchCommand_EmitsResponseParts(t *testing.T) {
 		},
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
-	b := &convBinding{convID: "c1", sessionKey: "ag/c1/9", client: fakeClientFor(h)}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c1", client: fakeClientFor(h)}
 	h.dispatchCommand(conn, b, command.Request{Name: "ping"})
 
 	got := drain(t, b.client)
@@ -302,7 +302,7 @@ func TestDispatchCommand_EchoesUserCommandWithArgs(t *testing.T) {
 		},
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
-	b := &convBinding{convID: "c1", sessionKey: "ag/c1/9", client: fakeClientFor(h)}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c1", client: fakeClientFor(h)}
 	h.dispatchCommand(conn, b, command.Request{Name: "plan", Args: "paint a room"})
 
 	got := drain(t, b.client)
@@ -329,7 +329,7 @@ func TestClientHello_RepliesRosterRegistersTokenAndResumes(t *testing.T) {
 	c := fakeClientFor(h)
 
 	// Pre-existing durable conversation with buffered frames seq 1..3.
-	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1/9", client: c, seen: map[string]struct{}{}}
+	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", client: c, seen: map[string]struct{}{}}
 	h.convs["c1"] = b
 	for i := 0; i < 3; i++ {
 		b.send(fap.Typing{ConversationID: "c1", On: true})
@@ -413,28 +413,6 @@ func TestFCMSend_PostsDataMessage(t *testing.T) {
 	data, _ := msg["data"].(map[string]any)
 	if data["conversationId"] != "conv-1" || data["preview"] != "a preview" {
 		t.Errorf("fcm data = %v", data)
-	}
-}
-
-func TestUpdateChatSessionKey_RepointsAndEmits(t *testing.T) {
-	h := newTestHub()
-	c := fakeClientFor(h)
-	b := &convBinding{convID: "c1", agentID: "ag", chatID: 7, sessionKey: "ag/7/old", client: c, seen: map[string]struct{}{}}
-	h.bySession["ag/7/old"] = b
-
-	conn := &appConn{hub: h, agentID: "ag"}
-	conn.UpdateChatSessionKey(7, "ag/7/new")
-
-	h.mu.RLock()
-	_, oldGone := h.bySession["ag/7/old"]
-	nb, newThere := h.bySession["ag/7/new"]
-	h.mu.RUnlock()
-	if oldGone || !newThere || nb != b {
-		t.Fatalf("bySession not repointed old→new")
-	}
-	got := drain(t, c)
-	if len(got) != 1 || got[0].t != fap.TypeSessionUpdate || got[0].d["reason"] != "rotated" {
-		t.Errorf("want session.update{reason:rotated}, got %v", got)
 	}
 }
 
@@ -528,7 +506,7 @@ func TestRouteCommand_FiresOnUserMessage(t *testing.T) {
 	h := newTestHub()
 	reg := command.NewRegistry()
 	reg.Register(&command.Command{
-		Name:    "ping",
+		Name: "ping",
 		Execute: func(context.Context, command.Request, command.CommandContext) (command.Response, error) {
 			return command.Response{Parts: []string{"pong"}}, nil
 		},

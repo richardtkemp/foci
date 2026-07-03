@@ -25,7 +25,7 @@ func TestRunInject_DefersWhileAskPending(t *testing.T) {
 			},
 		},
 	}
-	sk := "test/imain/1000000000"
+	sk := "test/imain"
 	inb := ag.getOrCreateInbox(sk) // inboxStarted=false → no worker drains the channel
 
 	var ran atomic.Int32

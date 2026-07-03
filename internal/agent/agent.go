@@ -128,7 +128,6 @@ type Agent struct {
 	CompactionStartFunc                     HookList[func(string, string)]          // callbacks for compaction start (session key, message) — sent immediately, not buffered
 	CompactionNotifyFunc                    HookList[func(string, string)]          // callbacks for compaction notifications (session key, message)
 	CompactionDebugFunc                     HookList[func(string, string)]          // callbacks for compaction debug (session key, summary text)
-	SessionKeyRotatedFunc                   HookList[func(string, string)]          // callbacks when session key rotates (oldKey, newKey)
 	OnActivity                              HookList[func(string)]                  // callbacks when a session has activity (session key)
 	Redact                                  func(string) string                     // redact secrets from tool output; nil disables
 	SessionIndex                            *session.SessionIndex                   // nil disables state persistence
@@ -155,7 +154,7 @@ type Agent struct {
 	ManaInvestInterval                      time.Duration                           // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                             []provider.ToolDef                      // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DelegatedManager                        *DelegatedManager                       // nil = traditional agent loop; non-nil = lazy per-session delegated transport management
-	ReloginTrigger                          func(reason, sessionKey string) bool     // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
+	ReloginTrigger                          func(reason, sessionKey string) bool    // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
 	Reflection                              config.ResolvedReflection               // resolved reflection config (agent+global merged)
 	ResetOrientTemplateFn                   func() string                           // resolves orientation template for session reset; nil = no orientation
 	ReloadSystemFn                          func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op
@@ -166,7 +165,7 @@ type Agent struct {
 	rateLimitGates     map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
 	rateLimitGatesMu   sync.RWMutex              // protects rateLimitGates map access
 	inFlightMu         sync.Mutex                // protects inFlight + inFlightDelivering + inFlightChanged map access
-	inFlight           map[string]int32          // per-session-base count of in-flight OrchestrateFullTurn calls (key = SessionKeyBase) — see IsTurnInFlight
+	inFlight           map[string]int32          // per-session count of in-flight OrchestrateFullTurn calls — see IsTurnInFlight
 	inFlightDelivering map[string]int32          // per-session-base count of in-flight turns whose sink reports DeliversToPlatform=true — see IsInFlightDelivering
 	inFlightChanged    map[string]chan struct{}  // per-session-base close-and-replace channel; closes on each state change so waiters wake — see InFlightWaitCh
 	turnDetailsMu      sync.Mutex
@@ -179,9 +178,8 @@ type Agent struct {
 
 	// compacting latches compaction-in-flight per session so /status reports
 	// "compacting" rather than "idle" while a summary turn runs. Keyed by
-	// SessionKeyBase (compaction-invariant — the version rotates mid-compact)
-	// → time.Time deadline for self-heal. Set/cleared around the compaction
-	// brackets in compaction.go; read via IsCompacting (#725).
+	// session key → time.Time deadline for self-heal. Set/cleared around the
+	// compaction brackets in compaction.go; read via IsCompacting (#725).
 	compacting sync.Map
 
 	// Inbox subsystem (Phase 6 — TODO #739): per-session message queue

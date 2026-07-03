@@ -20,7 +20,7 @@ func TestCompactPreserveMessages(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Add 10 messages (5 user + 5 assistant)
 	for i := 0; i < 5; i++ {
@@ -31,7 +31,7 @@ func TestCompactPreserveMessages(t *testing.T) {
 	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 4) // preserve last 4 messages
 
-	summary, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	summary, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestCompactPreserveMessages(t *testing.T) {
 
 	// After compaction: preserved[0] is user, so handoff folds into summary.
 	// 2 (marker + summary+handoff) + 4 preserved = 6
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	if len(msgs) != 6 {
 		t.Fatalf("after compact: %d messages, want 6", len(msgs))
 	}
@@ -97,7 +97,7 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -107,12 +107,12 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 0) // preserve=0 → same as current behaviour
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	if len(msgs) != 3 {
 		t.Fatalf("after compact: %d messages, want 3 (no preserved)", len(msgs))
 	}
@@ -134,7 +134,7 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// 10 messages, minMessages=4, preserve=100
 	for i := 0; i < 5; i++ {
@@ -145,12 +145,12 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 100) // preserve=100 but only 10 messages
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	// Should clamp: 10 messages, need at least 4 to summarize, so preserve = 6
 	// preserved[0] is user → handoff folded into summary
 	// Result: 2 (marker + summary+handoff) + 6 preserved = 8
@@ -173,7 +173,7 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 	t.Run("preserved_starts_user", func(t *testing.T) {
 		// Even preserve count from even total → preserved[0] is user
 		store := session.NewStore(t.TempDir())
-		key := "test/imain/1000000000"
+		key := "test/imain"
 		for i := 0; i < 5; i++ {
 			store.TestAppend(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
 			store.TestAppend(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
@@ -182,12 +182,12 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 		c := NewCompactor(store, 0.8)
 		c.WithConfig(4096, 4, 4) // preserve 4 → [u3,a3,u4,a4] → starts user
 
-		_, newKey, err := c.Compact(context.Background(), noStream(client), key, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+		_, err := c.Compact(context.Background(), noStream(client), key, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 		if err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
 
-		msgs, _ := store.Load(newKey)
+		msgs, _ := store.Load(key)
 		// Handoff folded: 2 header + 4 preserved = 6
 		if len(msgs) != 6 {
 			t.Fatalf("got %d messages, want 6", len(msgs))
@@ -207,7 +207,7 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 	t.Run("preserved_starts_assistant", func(t *testing.T) {
 		// Odd preserve count from even total → preserved[0] is assistant
 		store := session.NewStore(t.TempDir())
-		key := "test/imain/1000000000"
+		key := "test/imain"
 		for i := 0; i < 5; i++ {
 			store.TestAppend(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
 			store.TestAppend(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
@@ -216,12 +216,12 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 		c := NewCompactor(store, 0.8)
 		c.WithConfig(4096, 4, 3) // preserve 3 → [a3,u4,a4] → starts assistant
 
-		_, newKey, err := c.Compact(context.Background(), noStream(client), key, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+		_, err := c.Compact(context.Background(), noStream(client), key, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 		if err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
 
-		msgs, _ := store.Load(newKey)
+		msgs, _ := store.Load(key)
 		// Standard layout: 3 header + 3 preserved = 6
 		if len(msgs) != 6 {
 			t.Fatalf("got %d messages, want 6", len(msgs))

@@ -60,9 +60,18 @@ tail -200 ~/logs/api-payload.jsonl | jq -c '
 ### Session Files (JSONL)
 Per-session conversation history. No timestamps — just role + content.
 
-**Path:** `~/data/sessions/<AGENT_ID>/<CHAT_OR_FACET_ID>/<VERSION_TS>/root.jsonl` — the middle segment is `c<chat-id>` for a chat session (e.g. `c5970082313`) or `i<epoch>` for an independent/facet session.
+**Path:** `~/data/sessions/<AGENT_ID>/<TYPE_ID>/root.jsonl` — `<TYPE_ID>` is `c<chat-id>` for a chat session (e.g. `c5970082313`) or `i<name-or-epoch>` for an independent session. Session keys are **stable identities** (`clutch/c5970082313`, `clutch/iresearch`); compaction and /reset never change the key or the directory.
 
-Branch files have a `branch_meta` first line. Pre-compaction backups use timestamped names: `root.<ISO8601>.jsonl` (e.g. `root.2026-03-04T02-30-00Z.jsonl`), with a `.<N>` counter appended on collision.
+Branch files sit beside the root as `b<epoch>.jsonl` with a `branch_meta` first line. Compaction/reset archive the live file **in place** with an "archived at" stamp: `root.<STAMP>.jsonl` (e.g. `root.2026-03-04T02-30-00+0000.jsonl`, `.<N>` counter on collision) — that file holds the session's history **up to** the stamp.
+
+**Point-in-time lookup — which file / CC session covers moment T:**
+
+```bash
+foci debug at clutch/c5970082313 2026-07-01T12:00:00Z   # RFC3339
+foci debug at clutch 3h                                  # duration ago; bare agent = default session
+```
+
+Prints the JSONL path covering that moment (live file or archive, with source) and the CC resume ID observed live then. Backed by `session_archives` + `cc_resume_history` in state.db, with archive filename stamps as a state.db-independent fallback.
 
 ```bash
 # Last few messages
@@ -90,7 +99,7 @@ tail -30 SESS.jsonl | jq -rc 'select(.type=="assistant" or .type=="user") | {ts:
 | Database | Table(s) | Contents |
 |---|---|---|
 | `api.db` | `api_calls` | Every Anthropic API call with timestamps, cost, cache stats |
-| `state.db` | `session_index`, `agent_metadata`, `chat_metadata`, `session_metadata`, `system_state` | Unified state: session lifecycle, agent/chat/session metadata |
+| `state.db` | `session_index`, `agent_metadata`, `chat_metadata`, `session_metadata`, `system_state`, `session_archives`, `cc_resume_history` | Unified state: session lifecycle, agent/chat/session metadata, and provenance timelines (archive rotations, CC resume-ID history) |
 
 ```bash
 # Inspect any database schema
@@ -101,6 +110,12 @@ sqlite3 ~/data/state.db "SELECT session_key, status, session_type, last_activity
 
 # Active sessions only
 sqlite3 ~/data/state.db "SELECT session_key, session_type, last_activity_at FROM session_index WHERE status='active' ORDER BY last_activity_at DESC"
+
+# Archive rotations for a session (when was it compacted/reset, and to which file)
+sqlite3 ~/data/state.db "SELECT archived_at, reason, file_path FROM session_archives WHERE session_key='clutch/c5970082313' ORDER BY archived_at"
+
+# CC resume-ID timeline for a session (which CC session was live when)
+sqlite3 ~/data/state.db "SELECT observed_at, resume_id FROM cc_resume_history WHERE session_key='clutch/c5970082313' ORDER BY observed_at"
 ```
 
 ### Per-Agent SQLite Databases (`<workspace>/.data/`)
@@ -157,11 +172,14 @@ sqlite3 ~/data/api.db "SELECT ts, cost_usd, cache_write FROM api_calls WHERE cac
 
 ### Session Compaction
 ```bash
-# When did compaction happen? (rotation to a fresh session key)
-grep 'compaction rotated' ~/logs/foci.log | tail -10
+# When did compaction happen? (in-place archive; the session key is unchanged)
+grep 'compacted from' ~/logs/foci.log | tail -10
 
-# Compaction start (message count at trigger)
-grep 'compacting (' ~/logs/foci.log | tail -10
+# Or query the provenance table directly
+sqlite3 ~/data/state.db "SELECT archived_at, reason FROM session_archives WHERE session_key='<KEY>' ORDER BY archived_at DESC LIMIT 10"
+
+# Resets
+grep 'session reset key=' ~/logs/foci.log | tail -10
 ```
 
 ### Background Cron Sessions

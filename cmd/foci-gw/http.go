@@ -17,6 +17,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/voice"
 )
@@ -261,6 +262,62 @@ func writeJSONResponse(w http.ResponseWriter, text string) {
 	}
 }
 
+// writeJSONReceipt writes a {"response", "session", "resolved_via"} envelope:
+// the response text plus the routing receipt, so external senders (cron,
+// scripts) can verify WHERE their message actually landed instead of trusting
+// silent fallbacks.
+func writeJSONReceipt(w http.ResponseWriter, text string, rcpt route.Receipt) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"response":     text,
+		"target":       rcpt.Target,
+		"session":      rcpt.SessionKey,
+		"resolved_via": string(rcpt.Via),
+	}); err != nil {
+		log.Errorf("http", "encode response: %v", err)
+	}
+}
+
+// policyOrFallback normalises an unset policy to the default.
+func policyOrFallback(p route.Policy) route.Policy {
+	if p == "" {
+		return route.PolicyFallback
+	}
+	return p
+}
+
+// broadcastResponse delivers a turn's response text to every live connection
+// for the agent (PolicyBroadcast): the session's own chat gets it via
+// SendToSession; every other surface gets it via SendText (its default chat).
+func broadcastResponse(connMgr platform.ConnectionManager, agentID, sessionKey, text, logTag string) {
+	sessionConn := connMgr.ForSession(sessionKey)
+	delivered := 0
+	for _, conn := range route.Broadcast(connMgr, agentID) {
+		var err error
+		if conn == sessionConn {
+			err = conn.SendToSession(sessionKey, text)
+		} else {
+			err = conn.SendText(text)
+		}
+		if err != nil {
+			log.Errorf(logTag, "broadcast delivery via %s: %v", conn.PlatformName(), err)
+			continue
+		}
+		delivered++
+	}
+	log.Infof(logTag, "broadcast response for session %s delivered to %d connection(s)", sessionKey, delivered)
+}
+
+// defaultSessionKey resolves an agent's default session, tolerating "no
+// session yet" as an empty key (handlers that dispatch commands accept that).
+func defaultSessionKey(d httpHandlerDeps, agentID string) string {
+	res, err := (&route.Resolver{Index: d.sessionIndex}).Resolve(route.Target{Agent: agentID})
+	if err != nil {
+		return ""
+	}
+	return res.SessionKey
+}
+
 // asyncDispatch handles async fire-and-forget requests: sends the agent message
 // in a goroutine, writes a 202 response, and optionally delivers the result via platform.
 //
@@ -274,7 +331,7 @@ func writeJSONResponse(w http.ResponseWriter, text string) {
 // silencing sentinel reaches the user without an upstream gate unless we apply
 // one here.
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
-	ctx context.Context, sessionKey, text, logTag string, silent bool) {
+	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) {
 	go func() {
 		resp, err := runAgentBuffered(ctx, inst.ag, sessionKey, text)
 		if err != nil {
@@ -282,15 +339,31 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 			return
 		}
 		cleaned := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(resp))
-		if !silent && cleaned != "" && connMgr != nil {
-			if conn := connMgr.ForSessionOrPrimary(sessionKey, inst.id); conn != nil {
-				if err := conn.SendToSession(sessionKey, cleaned); err != nil {
-					log.Errorf(logTag, "async platform delivery: %v", err)
-				}
-			}
+		if silent || cleaned == "" || connMgr == nil {
+			return
+		}
+		if policy == route.PolicyBroadcast {
+			broadcastResponse(connMgr, inst.id, sessionKey, cleaned, logTag)
+			return
+		}
+		conn, outcome := route.ConnFor(connMgr, inst.id, sessionKey, policyOrFallback(policy))
+		if conn == nil {
+			log.Warnf(logTag, "no connection for session %s (policy=%s), async response not delivered", sessionKey, policyOrFallback(policy))
+			return
+		}
+		if outcome == route.DeliveredViaPrimary {
+			log.Infof(logTag, "session %s has no live connection — delivering via agent %s primary", sessionKey, inst.id)
+		}
+		if err := conn.SendToSession(sessionKey, cleaned); err != nil {
+			log.Errorf(logTag, "async platform delivery: %v", err)
 		}
 	}()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":       "queued",
+		"target":       rcpt.Target,
+		"session":      rcpt.SessionKey,
+		"resolved_via": string(rcpt.Via),
+	})
 }

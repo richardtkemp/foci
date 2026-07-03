@@ -248,7 +248,7 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 		}
 		return "Question from agent", true
 	default:
-		// typing, thinking, warming, tool, meta, turn.start, text.delta, session.update, error, pong
+		// typing, thinking, warming, tool, meta, turn.start, text.delta, error, pong
 		return "", false
 	}
 }

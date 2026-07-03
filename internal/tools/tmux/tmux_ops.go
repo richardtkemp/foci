@@ -10,7 +10,6 @@ import (
 
 	"foci/internal/display"
 	"foci/internal/log"
-	"foci/internal/session"
 	"foci/internal/tools"
 )
 
@@ -333,19 +332,19 @@ func (inst *tmuxInstance) list(ctx context.Context) (tools.ToolResult, error) {
 			ownedStillExist = true
 		}
 
-		// Only show sessions owned by the current agent session (base-key match).
+		// Only show sessions owned by the current agent session.
 		// Both empty = backwards compat for context.Background() in tests.
-		if !isOwned || (session.SessionKeyBase(storedKey) != session.SessionKeyBase(currentSessionKey) &&
+		if !isOwned || (storedKey != currentSessionKey &&
 			!(storedKey == "" && currentSessionKey == "")) {
 			continue
 		}
 
-		// Owner: show the full session ID; mark stale keys from a prior rotation.
+		// Owner: show the full session key. The filter above guarantees
+		// storedKey == currentSessionKey here (keys are stable identities),
+		// so no staleness marker is needed.
 		owner := storedKey
 		if owner == "" {
 			owner = "self"
-		} else if storedKey != currentSessionKey {
-			owner += " (prev session)"
 		}
 
 		watchInfo := "-"

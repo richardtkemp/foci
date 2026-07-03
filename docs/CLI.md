@@ -20,7 +20,7 @@ These flags are accepted by all commands:
 | `--socket <path>` | | `FOCI_GW_SOCK` | Gateway Unix socket path. Auto-detected from `~/data/foci-gw.sock`. No API key needed. |
 | `--addr <host:port>` | | `FOCI_ADDR` | Gateway TCP address. Default: `127.0.0.1:18791`. Used when no Unix socket is available. |
 | `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent. |
-| `--session <id>` | `-s` | `FOCI_SESSION` | Target session type. Default: `main`. |
+| `--session <sel>` | `-s` | `FOCI_SESSION` | Target session selector: full session key, session name, or chat alias. Empty = the agent's default session. |
 | `--model <model>` | `-m` | `FOCI_MODEL` | Model override: group name (`powerful`/`fast`/`cheap`), model name, or `developer/model_id`. See [MODELS.md](MODELS.md). |
 | `--if-active <dur>` | | `FOCI_IF_ACTIVE` | **Session-level**: skip if the target session has not run a turn within duration (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
 | `--if-inactive <dur>` | | `FOCI_IF_INACTIVE` | **Session-level**: skip if the target session has run a turn within duration (e.g. `30m`, `1h`). Opposite of `--if-active`; in-flight always counts. Standard keepalive shape. |
@@ -53,7 +53,11 @@ FOCI_IF_ACTIVE=4h
 
 ### `send` — Send a message to the agent
 
-Sends a text message to the agent's default session (or a named session). By default, send is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to Telegram. Use `--sync`/`--wait` to block until the response is available.
+Sends a text message to the agent's default session (or a named session / chat alias / exact session key). By default, send is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to the chat. Use `--sync`/`--wait` to block until the response is available.
+
+`--broadcast` delivers the agent's response to **every surface** for the agent — each platform's default destination (telegram default chat, the app's default conversation, else its newest — auto-created if the agent has none) — instead of only the target session's chat. Useful for "heads up" crons that must reach you wherever you are. Equivalent to `policy=broadcast` in the request (or embedded in the selector: `-s 'research?policy=broadcast'`).
+
+Every response carries a **routing receipt** — which session the message resolved to and which resolution rung matched (`exact`, `named`, `alias`, `created`, `default`). The CLI prints it to stderr (`session: clutch/iresearch (named)`), so cron logs show where a send actually landed instead of trusting silent fallbacks.
 
 **Usage:**
 ```
@@ -65,7 +69,7 @@ foci send [-a agent] [-s session] [-m model] [--if-active <duration>] [--if-inac
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--agent <id>` | `-a` | Target agent. |
-| `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `<id>/i0/0`. Default: `main`. |
+| `--session <sel>` | `-s` | Target session selector, resolved through one ladder on the server: full session key (`clutch/c123`) → existing named session (`research` → `clutch/iresearch`) → chat alias → create-named. Empty = the agent's default session. |
 | `--model <model>` | `-m` | Model override for this request. Group name (`powerful`/`fast`/`cheap`), model name (`opus`), or `developer/model_id`. |
 | `--if-active <dur>` | | **Session-level gate**: skip if the target session has not run a turn within duration. Go duration format (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
 | `--if-inactive <dur>` | | **Session-level gate**: skip if the target session has run a turn within duration. Opposite of `--if-active` — keepalive shape; in-flight always counts. |

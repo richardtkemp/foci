@@ -38,9 +38,9 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 		Bootstrap: bootstrap,
 		Model:     "claude-opus-4-6",
 	}
-	ag.SetSessionThinking("test/imain/1000000000", "adaptive")
+	ag.SetSessionThinking("test/imain", "adaptive")
 
-	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Think about this")
+	_, err := ag.hmTest(context.Background(), "test/imain", "Think about this")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestThinkingOffOmitsField(t *testing.T) {
 		// Thinking not set (empty string)
 	}
 
-	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "No thinking")
+	_, err := ag.hmTest(context.Background(), "test/imain", "No thinking")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -118,9 +118,9 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 		Bootstrap: bootstrap,
 		Model:     "claude-opus-4-6",
 	}
-	ag.SetSessionThinking("test/imain/1000000000", "adaptive")
+	ag.SetSessionThinking("test/imain", "adaptive")
 
-	resp, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Think and answer")
+	resp, err := ag.hmTest(context.Background(), "test/imain", "Think and answer")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 	}
 
 	// Session should preserve both thinking and text blocks
-	msgs, _ := sessionStore.Load("test/imain/1000000000")
+	msgs, _ := sessionStore.Load("test/imain")
 	if len(msgs) != 2 {
 		t.Fatalf("saved %d messages, want 2", len(msgs))
 	}
@@ -205,7 +205,7 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 	})
 	ctx := turnevent.WithSink(context.Background(), recorder)
 
-	finalResp, err := ag.hmTest(ctx, "test/ibatchfalse/1000000000", "Do something")
+	finalResp, err := ag.hmTest(ctx, "test/ibatchfalse", "Do something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	})
 	ctx := turnevent.WithSink(context.Background(), recorder)
 
-	finalResp, err := ag.hmTest(ctx, "test/ibatchtrue/1000000000", "Do something")
+	finalResp, err := ag.hmTest(ctx, "test/ibatchtrue", "Do something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 		BatchPartialAssistantMessages: true,
 	}
 
-	finalResp, err := ag.hmTest(context.Background(), "test/ibatchmulti/1000000000", "Do multiple things")
+	finalResp, err := ag.hmTest(context.Background(), "test/ibatchmulti", "Do multiple things")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

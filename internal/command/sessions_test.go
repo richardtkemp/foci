@@ -35,7 +35,7 @@ func sessionsTestCC(t *testing.T, agentID string) (CommandContext, *session.Stor
 // so that ListChatSessions picks it up. Returns the session key.
 func addChatSession(t *testing.T, store *session.Store, agentID string, chatID int64, msgCount int) string {
 	t.Helper()
-	key := fmt.Sprintf("%s/c%d/1000000000", agentID, chatID)
+	key := fmt.Sprintf("%s/c%d", agentID, chatID)
 	msgs := make([]provider.Message, msgCount)
 	for i := range msgs {
 		msgs[i] = provider.Message{Role: "user", Content: provider.TextContent("msg")}
@@ -330,20 +330,20 @@ func TestSessionsIndexWithResults(t *testing.T) {
 
 	// Populate index with entries of different types/statuses.
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:  "bot/c123/1000",
+		SessionKey:  "bot/c123",
 		CreatedAt:   now,
 		SessionType: session.SessionTypeChat,
 		Status:      session.SessionStatusActive,
 	})
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:       "bot/ispawn-456/1000",
+		SessionKey:       "bot/ispawn-456",
 		CreatedAt:        now.Add(-time.Hour),
-		ParentSessionKey: "bot/c123/1000",
+		ParentSessionKey: "bot/c123",
 		SessionType:      session.SessionTypeSpawn,
 		Status:           session.SessionStatusActive,
 	})
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:  "bot/ibg-789/1000",
+		SessionKey:  "bot/ibg-789",
 		CreatedAt:   now.Add(-2 * time.Hour),
 		SessionType: session.SessionTypeCron,
 		Status:      session.SessionStatusCompacted,
@@ -371,7 +371,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 	if !strings.Contains(result.Text, "3 sessions") {
 		t.Errorf("expected 3 sessions with 'all', got %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "bot/ispawn-456/1000") {
+	if !strings.Contains(result.Text, "bot/ispawn-456") {
 		t.Errorf("expected spawn session in output, got %q", result.Text)
 	}
 
@@ -510,21 +510,21 @@ func TestSessionsIndexSortedByLastActive(t *testing.T) {
 
 	// Insert in chronological order (oldest first) — command should reverse.
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "bot/cold/1000",
+		SessionKey:     "bot/cold",
 		CreatedAt:      now.Add(-3 * time.Hour),
 		LastActivityAt: now.Add(-3 * time.Hour),
 		SessionType:    session.SessionTypeChat,
 		Status:         session.SessionStatusActive,
 	})
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "bot/cmid/1000",
+		SessionKey:     "bot/cmid",
 		CreatedAt:      now.Add(-1 * time.Hour),
 		LastActivityAt: now.Add(-1 * time.Hour),
 		SessionType:    session.SessionTypeChat,
 		Status:         session.SessionStatusActive,
 	})
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "bot/cnew/1000",
+		SessionKey:     "bot/cnew",
 		CreatedAt:      now.Add(-5 * time.Minute),
 		LastActivityAt: now.Add(-5 * time.Minute),
 		SessionType:    session.SessionTypeChat,
@@ -561,13 +561,13 @@ func TestSessionsIndexSortFallsBackToCreatedAt(t *testing.T) {
 	cc.SessionIndex = idx
 
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:  "bot/icreated-old/1000",
+		SessionKey:  "bot/icreated-old",
 		CreatedAt:   now.Add(-2 * time.Hour),
 		SessionType: session.SessionTypeChat,
 		Status:      session.SessionStatusActive,
 	})
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "bot/iactive-new/1000",
+		SessionKey:     "bot/iactive-new",
 		CreatedAt:      now.Add(-2 * time.Hour),
 		LastActivityAt: now.Add(-10 * time.Minute),
 		SessionType:    session.SessionTypeChat,
@@ -580,8 +580,8 @@ func TestSessionsIndexSortFallsBackToCreatedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newIdx := strings.Index(result.Text, "bot/iactive-new/1000")
-	oldIdx := strings.Index(result.Text, "bot/icreated-old/1000")
+	newIdx := strings.Index(result.Text, "bot/iactive-new")
+	oldIdx := strings.Index(result.Text, "bot/icreated-old")
 	if newIdx == -1 || oldIdx == -1 {
 		t.Fatalf("expected both sessions in output, got %q", result.Text)
 	}
@@ -601,7 +601,7 @@ func TestSessionsIndexMaxCount(t *testing.T) {
 	idx := newTestSessionIndex(t)
 	cc.SessionIndex = idx
 
-	for i, key := range []string{"bot/c1/1000", "bot/c2/1000", "bot/c3/1000", "bot/c4/1000", "bot/c5/1000"} {
+	for i, key := range []string{"bot/c1", "bot/c2", "bot/c3", "bot/c4", "bot/c5"} {
 		idx.Upsert(session.SessionIndexEntry{
 			SessionKey:     key,
 			CreatedAt:      now.Add(-time.Duration(i) * time.Hour),
@@ -644,7 +644,7 @@ func TestSessionsIndexMaxCountLargerThanResults(t *testing.T) {
 	cc.SessionIndex = idx
 
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "bot/c1/1000",
+		SessionKey:     "bot/c1",
 		CreatedAt:      now,
 		LastActivityAt: now,
 		SessionType:    session.SessionTypeChat,
@@ -675,7 +675,7 @@ func TestSessionsIndexRelativeTime(t *testing.T) {
 	cc.SessionIndex = idx
 
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "bot/c1/1000",
+		SessionKey:     "bot/c1",
 		CreatedAt:      now.Add(-3 * time.Hour),
 		LastActivityAt: now.Add(-3 * time.Hour),
 		SessionType:    session.SessionTypeChat,

@@ -26,7 +26,7 @@ func TestPool_AcquireRelease(t *testing.T) {
 	// Verifies the basic acquire/release lifecycle: adding a bot makes it available,
 	// acquiring it reduces availability, and releasing it restores availability and
 	// clears the session key.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	bot1.pool = pool
 	pool.Add(bot1)
@@ -49,7 +49,7 @@ func TestPool_AcquireRelease(t *testing.T) {
 
 	// Bot should not be idle anymore — it has no session key set by Acquire,
 	// but the caller sets it. Let's simulate that.
-	b.SetSessionKey("main/c1/1/b1")
+	b.SetSessionKey("main/c1/b1")
 
 	if pool.Available() != 0 {
 		t.Fatalf("available = %d, want 0", pool.Available())
@@ -75,7 +75,7 @@ func TestPool_AcquireLRU(t *testing.T) {
 	// Verifies the LRU (least recently used) acquisition policy: after acquiring
 	// and releasing bot1, a subsequent acquire returns bot1 again because it was
 	// used longest ago.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
 	pool.Add(bot1)
@@ -112,7 +112,7 @@ func TestPool_AcquireLRU(t *testing.T) {
 
 func TestPool_Empty(t *testing.T) {
 	// Verifies that acquiring from an empty pool returns false without panicking.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	if pool.Size() != 0 {
 		t.Fatalf("size = %d, want 0", pool.Size())
 	}
@@ -137,7 +137,7 @@ func (m *mockSessionChecker) LastActivity(key string) string {
 func TestPool_TTLReclaimsStaleBot(t *testing.T) {
 	// Verifies that when all bots are busy but a bot's session has exceeded
 	// the TTL, it is automatically reclaimed and returned by the next Acquire.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
 
@@ -146,7 +146,7 @@ func TestPool_TTLReclaimsStaleBot(t *testing.T) {
 	if !ok {
 		t.Fatal("acquire failed")
 	}
-	b.SetSessionKey("main/c1/1/b1")
+	b.SetSessionKey("main/c1/b1")
 
 	// All bots busy, no TTL configured — should fail
 	_, ok = pool.Acquire()
@@ -158,7 +158,7 @@ func TestPool_TTLReclaimsStaleBot(t *testing.T) {
 	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"main/c1/1/b1": staleTime,
+			"main/c1/b1": staleTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -176,7 +176,7 @@ func TestPool_TTLReclaimsStaleBot(t *testing.T) {
 func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
 	// Verifies that a bot whose session has recent activity is not reclaimed
 	// by the TTL mechanism, even when all bots are busy.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
 
@@ -185,13 +185,13 @@ func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
 	if !ok {
 		t.Fatal("acquire failed")
 	}
-	b.SetSessionKey("main/c1/1/b1")
+	b.SetSessionKey("main/c1/b1")
 
 	// Configure TTL with an active session (last activity 5 minutes ago)
 	recentTime := time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"main/c1/1/b1": recentTime,
+			"main/c1/b1": recentTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -203,7 +203,7 @@ func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
 	}
 
 	// Bot should still have its session
-	if bot1.SessionKey() != "main/c1/1/b1" {
+	if bot1.SessionKey() != "main/c1/b1" {
 		t.Fatalf("session key should be unchanged, got %q", bot1.SessionKey())
 	}
 }
@@ -211,7 +211,7 @@ func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
 func TestPool_TTLReclaimsPhantomSession(t *testing.T) {
 	// Verifies that a bot holding a session key that no longer exists in the
 	// store (returns "n/a") is treated as stale and reclaimed by TTL.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
 
@@ -219,7 +219,7 @@ func TestPool_TTLReclaimsPhantomSession(t *testing.T) {
 	if !ok {
 		t.Fatal("acquire failed")
 	}
-	b.SetSessionKey("main/c1/1/b999")
+	b.SetSessionKey("main/c1/b999")
 
 	// Session doesn't exist in the store (returns "n/a")
 	checker := &mockSessionChecker{
@@ -240,7 +240,7 @@ func TestPool_TTLReclaimsPhantomSession(t *testing.T) {
 func TestPool_AllBotsBusyWithTTL(t *testing.T) {
 	// Verifies that when all bots have active (non-stale) sessions, TTL does not
 	// reclaim them and Acquire correctly returns false.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
 	pool.Add(bot1)
@@ -248,16 +248,16 @@ func TestPool_AllBotsBusyWithTTL(t *testing.T) {
 
 	// Acquire both
 	b1, _ := pool.Acquire()
-	b1.SetSessionKey("main/c1/1/b1")
+	b1.SetSessionKey("main/c1/b1")
 	b2, _ := pool.Acquire()
-	b2.SetSessionKey("main/c1/1/b2")
+	b2.SetSessionKey("main/c1/b2")
 
 	// Both sessions are active (recent activity)
 	recentTime := time.Now().Add(-10 * time.Minute).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"main/c1/1/b1": recentTime,
-			"main/c1/1/b2": recentTime,
+			"main/c1/b1": recentTime,
+			"main/c1/b2": recentTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -272,18 +272,18 @@ func TestPool_AllBotsBusyWithTTL(t *testing.T) {
 func TestPool_ZeroTTLDisablesReclaim(t *testing.T) {
 	// Verifies that setting TTL=0 disables automatic reclaim entirely, even
 	// when a checker is configured and sessions are demonstrably stale.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
 
 	b, _ := pool.Acquire()
-	b.SetSessionKey("main/c1/1/b1")
+	b.SetSessionKey("main/c1/b1")
 
 	// TTL=0 means no auto-reclaim even with a checker
 	staleTime := time.Now().Add(-24 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"main/c1/1/b1": staleTime,
+			"main/c1/b1": staleTime,
 		},
 	}
 	pool.SetSessionTTL(0, checker) // disabled
@@ -297,7 +297,7 @@ func TestPool_ZeroTTLDisablesReclaim(t *testing.T) {
 func TestPool_MixedStaleAndActive(t *testing.T) {
 	// Verifies that when one bot's session is stale and another is active,
 	// only the stale bot is reclaimed and the active bot is left untouched.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
 	pool.Add(bot1)
@@ -305,15 +305,15 @@ func TestPool_MixedStaleAndActive(t *testing.T) {
 
 	// Acquire both
 	b1, _ := pool.Acquire()
-	b1.SetSessionKey("main/c1/1/b1")
+	b1.SetSessionKey("main/c1/b1")
 	b2, _ := pool.Acquire()
-	b2.SetSessionKey("main/c1/1/b2")
+	b2.SetSessionKey("main/c1/b2")
 
 	// bot1's session is stale, bot2's is active
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"main/c1/1/b1": time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z"),
-			"main/c1/1/b2": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02T15:04:05Z"),
+			"main/c1/b1": time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z"),
+			"main/c1/b2": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02T15:04:05Z"),
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -331,17 +331,17 @@ func TestPool_MixedStaleAndActive(t *testing.T) {
 func TestPool_ReclaimHookFires(t *testing.T) {
 	// Verifies that when a stale bot is reclaimed, the ReclaimHook is called
 	// with the session key before the bot is returned to the caller.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
 
 	b, _ := pool.Acquire()
-	b.SetSessionKey("main/c1/1/b1")
+	b.SetSessionKey("main/c1/b1")
 
 	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"main/c1/1/b1": staleTime,
+			"main/c1/b1": staleTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -359,7 +359,7 @@ func TestPool_ReclaimHookFires(t *testing.T) {
 	if b2 != bot1 {
 		t.Fatal("should return the reclaimed bot")
 	}
-	if len(hookedKeys) != 1 || hookedKeys[0] != "main/c1/1/b1" {
+	if len(hookedKeys) != 1 || hookedKeys[0] != "main/c1/b1" {
 		t.Errorf("hook called with %v, want [agent:main:facet:f-1]", hookedKeys)
 	}
 }
@@ -367,17 +367,17 @@ func TestPool_ReclaimHookFires(t *testing.T) {
 func TestPool_ReclaimHookNil(t *testing.T) {
 	// Verifies that TTL reclaim works correctly when ReclaimHook is nil,
 	// i.e., the absence of a hook does not cause a panic.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
 
 	b, _ := pool.Acquire()
-	b.SetSessionKey("main/c1/1/b1")
+	b.SetSessionKey("main/c1/b1")
 
 	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"main/c1/1/b1": staleTime,
+			"main/c1/b1": staleTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -394,7 +394,7 @@ func TestPool_ReclaimHookNil(t *testing.T) {
 
 func TestPool_ForEach(t *testing.T) {
 	// Verifies that ForEach visits all bots in the pool in insertion order.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
 	bot3 := testSecondaryBot("bot3")
@@ -418,7 +418,7 @@ func TestPool_ForEach(t *testing.T) {
 func TestPool_ForEachEmpty(t *testing.T) {
 	// Verifies that ForEach on an empty pool calls the callback zero times
 	// without panicking.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	count := 0
 	pool.ForEach(func(b *Bot) {
 		count++
@@ -431,22 +431,22 @@ func TestPool_ForEachEmpty(t *testing.T) {
 func TestPool_ReclaimHookMultipleBots(t *testing.T) {
 	// Verifies that when multiple stale bots exist, the ReclaimHook is called
 	// once per reclaimed bot during a single Acquire call.
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
 	pool.Add(bot1)
 	pool.Add(bot2)
 
 	b1, _ := pool.Acquire()
-	b1.SetSessionKey("main/c1/1/b1")
+	b1.SetSessionKey("main/c1/b1")
 	b2, _ := pool.Acquire()
-	b2.SetSessionKey("main/c1/1/b2")
+	b2.SetSessionKey("main/c1/b2")
 
 	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"main/c1/1/b1": staleTime,
-			"main/c1/1/b2": staleTime,
+			"main/c1/b1": staleTime,
+			"main/c1/b2": staleTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)

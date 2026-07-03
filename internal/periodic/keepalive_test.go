@@ -29,7 +29,7 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn:    func() string { return "test/c1/1" },
+			sessionKeyFn:    func() string { return "test/c1" },
 			hasActiveWorkFn: func() int { return activeCount },
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				mu.Lock()
@@ -79,7 +79,7 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn: func() string { return "test/c1/1" },
+			sessionKeyFn: func() string { return "test/c1" },
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++
 				return true
@@ -107,14 +107,14 @@ func TestMaybeReflection_SkipsWhenRateLimited(t *testing.T) {
 	}
 	defer idx.Close()
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:  "test/c123/1000000000",
+		SessionKey:  "test/c123",
 		FilePath:    "/tmp/test.jsonl",
 		CreatedAt:   now.Add(-24 * time.Hour),
 		SessionType: session.SessionTypeChat,
 		Status:      session.SessionStatusActive,
 	})
-	idx.UpdateActivity("test/c123/1000000000", now.Add(-30*time.Minute))
-	idx.StampReflection("test/c123/1000000000", now.Add(-2*time.Hour))
+	idx.UpdateActivity("test/c123", now.Add(-30*time.Minute))
+	idx.StampReflection("test/c123", now.Add(-2*time.Hour))
 
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -125,7 +125,7 @@ func TestMaybeReflection_SkipsWhenRateLimited(t *testing.T) {
 		},
 		sessionIndex: idx,
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn: func() string { return "test/c123/1000000000" },
+			sessionKeyFn: func() string { return "test/c123" },
 			canFireFn: func(ctx context.Context, sk string) (bool, string) {
 				return false, "rate limited"
 			},
@@ -159,7 +159,7 @@ func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
 			ConsolidationTime:    "1h",
 		},
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn: func() string { return "test/c123/1000000000" },
+			sessionKeyFn: func() string { return "test/c123" },
 			canFireFn: func(ctx context.Context, sk string) (bool, string) {
 				return false, "rate limited"
 			},
@@ -192,7 +192,7 @@ func TestMaybeBackgroundWork_SkipsWhenRateLimited(t *testing.T) {
 			Interval: "1s",
 		},
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn: func() string { return "test/c123/1000000000" },
+			sessionKeyFn: func() string { return "test/c123" },
 			canFireFn: func(ctx context.Context, sk string) (bool, string) {
 				return false, "mana insufficient"
 			},

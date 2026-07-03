@@ -145,7 +145,6 @@ type finalizeParams struct {
 	tmuxTool            *tools.Tool              // nil for delegated agents
 	tmuxClearAll        func()                   // nil for delegated agents
 	tmuxWatchCount      func() int               // nil for delegated agents
-	tmuxMigrateKey      func(string, string)     // nil for delegated agents
 	ttsRepls            map[string]string        // nil for delegated agents
 	mcpManager          *mcpkg.Manager           // nil for delegated agents
 	skillsDirs          []string
@@ -175,7 +174,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 
 	// Nudge system.
 	wsFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
-	setupNudgeSystem(ag, acfg, p.resolved.Nudge, p.connMgr, p.sessions, fp.registry, fp.skillRegistry, wsFileMode)
+	setupNudgeSystem(ag, acfg, p.resolved.Nudge, p.sessions, fp.registry, fp.skillRegistry, wsFileMode)
 
 	// Slash commands.
 	var configureFacet func(platform.Connection)
@@ -230,7 +229,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 
 	// Platform connections.
 	if p.plat != nil {
-		platResult := setupPlatformConnections(ag, p, cmds, cc, lastMsgStore, fp.ttsRepls, s.promptSearchDirs, fp.tmuxMigrateKey)
+		platResult := setupPlatformConnections(ag, p, cmds, cc, lastMsgStore, fp.ttsRepls, s.promptSearchDirs)
 		configureFacet = platResult.configureFacetFn
 		displayDefaultsFn = platResult.displayDefaultsFn
 	}
@@ -258,7 +257,6 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		webhooks:         p.resolved.Webhooks,
 		tmuxClearAll:     fp.tmuxClearAll,
 		tmuxWatchCount:   fp.tmuxWatchCount,
-		tmuxMigrateKey:   fp.tmuxMigrateKey,
 		mcpManager:       fp.mcpManager,
 	}
 	// testActiveWorkOverride uses -1 as the "unset" sentinel so the

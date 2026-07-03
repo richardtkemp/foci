@@ -58,7 +58,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	sessionKey := "test/iconcurrent/1000000000"
+	sessionKey := "test/iconcurrent"
 
 	// Launch two concurrent turns on the same session
 	var wg sync.WaitGroup
@@ -180,12 +180,12 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		ag.hmTest(context.Background(), "test/isessionA/1000000000", "Hello A")
+		ag.hmTest(context.Background(), "test/isessionA", "Hello A")
 	}()
 
 	go func() {
 		defer wg.Done()
-		ag.hmTest(context.Background(), "test/isessionB/1000000000", "Hello B")
+		ag.hmTest(context.Background(), "test/isessionB", "Hello B")
 	}()
 
 	wg.Wait()
@@ -222,7 +222,7 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	sessionKey := "test/icancelq/1000000000"
+	sessionKey := "test/icancelq"
 
 	// Start a slow turn
 	var wg sync.WaitGroup
@@ -259,17 +259,17 @@ func TestTurnInFlight_PerSession(t *testing.T) {
 	// core regression the per-session refactor fixes — the old agent-wide
 	// counter conflated unrelated sessions.
 	ag := &Agent{}
-	const a, b = "bot/cA/1000", "bot/cB/1000"
+	const a, b = "bot/cA", "bot/cB"
 
 	if ag.IsAnyTurnInFlight() {
 		t.Fatal("new agent should have nothing in flight")
 	}
 
 	ag.SetTurnInFlightForTest(a, true)
-	if !ag.IsTurnInFlight(session.SessionKeyBase(a)) {
+	if !ag.IsTurnInFlight(a) {
 		t.Error("session A should be in flight")
 	}
-	if ag.IsTurnInFlight(session.SessionKeyBase(b)) {
+	if ag.IsTurnInFlight(b) {
 		t.Error("session B must NOT be in flight just because A is")
 	}
 	if !ag.IsAnyTurnInFlight() {
@@ -277,7 +277,7 @@ func TestTurnInFlight_PerSession(t *testing.T) {
 	}
 
 	ag.SetTurnInFlightForTest(a, false)
-	if ag.IsTurnInFlight(session.SessionKeyBase(a)) {
+	if ag.IsTurnInFlight(a) {
 		t.Error("session A should be idle after clear")
 	}
 	if ag.IsAnyTurnInFlight() {

@@ -838,13 +838,13 @@ func TestL2_Files_SendToChatFile_LongTextFallsBackToTwoMessages(t *testing.T) {
 	}
 }
 
-// TestL2_Files_SendToChatFile_CustomFilename_DisplaysAsRequested
+// TestL2_Files_SendToChatFile_CustomFilenameDisplayed
 // proves the symlink-rename trick in tools/message.go: when --filename
 // is supplied, the tool symlinks the source into a temp dir under the
 // requested basename, and openMediaFile sends that basename — the
 // Telegram multipart body should reference the custom filename, not
 // the source path's basename.
-func TestL2_Files_SendToChatFile_CustomFilename_DisplaysAsRequested(t *testing.T) {
+func TestL2_Files_SendToChatFile_CustomFilenameDisplayed(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 8008
 	h := testharness.StartGateway(t, testharness.HarnessOptions{

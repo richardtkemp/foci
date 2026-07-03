@@ -58,7 +58,7 @@ func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 	gate.Close(until)
 
 	ctx := WithTrigger(context.Background(), "telegram")
-	_, err := ag.hmTest(ctx, "test/igate/1000000000", "Hello")
+	_, err := ag.hmTest(ctx, "test/igate", "Hello")
 	if err == nil {
 		t.Fatal("expected RateLimitedError")
 	}
@@ -91,7 +91,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 	}
 
 	// First call hits the API, gets 429, closes gate
-	_, err := ag.hmTest(context.Background(), "test/igate429/1000000000", "Hello")
+	_, err := ag.hmTest(context.Background(), "test/igate429", "Hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -108,7 +108,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 	}
 
 	// Second call should be blocked by the gate (no API hit)
-	_, err = ag.hmTest(context.Background(), "test/igate429/1000000000", "World")
+	_, err = ag.hmTest(context.Background(), "test/igate429", "World")
 	if err == nil {
 		t.Fatal("expected RateLimitedError on second call")
 	}
@@ -146,8 +146,8 @@ func TestDrainRateLimitQueue(t *testing.T) {
 	// Queue items as if rate-limited on anthropic endpoint
 	gate := ag.getOrCreateRateLimitGate("anthropic")
 	gate.Close(time.Now().Add(-1 * time.Second)) // already expired
-	gate.Enqueue("test/idrain/1000000000", "msg1", "user")
-	gate.Enqueue("test/idrain/1000000000", "msg2", "keepalive")
+	gate.Enqueue("test/idrain", "msg1", "user")
+	gate.Enqueue("test/idrain", "msg2", "keepalive")
 
 	ag.DrainRateLimitQueue(context.Background())
 
@@ -163,7 +163,7 @@ func TestCanFireBackgroundOperation_RateLimited(t *testing.T) {
 	gate := ag.getOrCreateRateLimitGate("anthropic")
 	gate.Close(time.Now().Add(2 * time.Hour))
 
-	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123")
 
 	if canFire {
 		t.Error("expected canFire=false when rate limited")
@@ -201,7 +201,7 @@ func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 		ManaInvestInterval:  30 * time.Minute,
 	}
 
-	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123")
 
 	if !canFire {
 		t.Errorf("expected canFire=true for nil usage client (unknown mana should not block), got reason: %s", reason)
@@ -220,7 +220,7 @@ func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 		ManaInvestInterval:  0, // disabled
 	}
 
-	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123")
 
 	if !canFire {
 		t.Errorf("expected canFire=true with zero invest interval, got false: %s", reason)
@@ -239,7 +239,7 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 		ManaInvestInterval:  0, // disabled — bypasses mana check
 	}
 
-	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123")
 
 	if !canFire {
 		t.Errorf("expected canFire=true when all checks pass, got false: %s", reason)
@@ -290,8 +290,8 @@ func TestPerEndpointRateLimiting(t *testing.T) {
 	}
 
 	// Create two sessions with different endpoints
-	session1 := "test/c123/1000000000"
-	session2 := "test/c123/2000000000"
+	session1 := "test/c123"
+	session2 := "test/c456"
 
 	// Set endpoints
 	sm1 := ag.getSessionMeta(session1)

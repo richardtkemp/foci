@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,38 +18,49 @@ import (
 	"foci/internal/workspace"
 )
 
+// seedSession appends count user/assistant message pairs to the session.
+func seedSession(t *testing.T, store *session.Store, key string, pairs int) {
+	t.Helper()
+	for i := 0; i < pairs; i++ {
+		if err := store.TestAppend(key, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("msg %d", i))}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.TestAppend(key, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("reply %d", i))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestResetSession_APIPath(t *testing.T) {
-	// Proves that ResetSession for a traditional (non-delegated) agent fires
-	// memory formation, rotates the session key, reloads the bootstrap, and
-	// returns the new key.
+	// Proves that ResetSession for a traditional (non-delegated) agent leaves
+	// the session key stable, archives the history in place (the session
+	// reloads empty), clears all per-session state (overrides + metadata
+	// rows), and reloads the bootstrap.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	sessionKey := "test/reset/1000000000"
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	sessionKey := "test/ireset"
 
-	// Seed the session with enough messages so RotateKey has something to archive.
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hello")}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hi")}); err != nil {
-		t.Fatal(err)
-	}
+	seedSession(t, store, sessionKey, 1)
 
 	ag := &Agent{
-		Sessions:  store,
-		Bootstrap: bootstrap,
-		// Reflection.SessionEndEnabled defaults to false, so
-		// FireSessionEndMemory is a no-op. This is fine — we're testing
-		// that the method is called without crashing.
+		Sessions:     store,
+		Bootstrap:    bootstrap,
+		SessionIndex: idx,
+		// Reflection.SessionEndEnabled defaults to false, so the reflection
+		// branch is never prepared — reset proceeds without memory formation.
 	}
+
+	// Per-session state that must be wiped by the reset.
+	ag.SetSessionEffort(sessionKey, "high")
+	ag.SetSessionNoCompact(sessionKey, true)
 
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
-
-	var rotatedOld, rotatedNew string
-	ag.SessionKeyRotatedFunc.Add(func(old, new string) {
-		rotatedOld = old
-		rotatedNew = new
-	})
 
 	var orientCalled bool
 	ag.ResetOrientTemplateFn = func() string {
@@ -56,18 +68,28 @@ func TestResetSession_APIPath(t *testing.T) {
 		return "test orientation"
 	}
 
-	newKey, err := ag.ResetSession(context.Background(), sessionKey)
-	if err != nil {
+	if err := ag.ResetSession(context.Background(), sessionKey); err != nil {
 		t.Fatalf("ResetSession: %v", err)
 	}
-	if newKey == "" {
-		t.Fatal("ResetSession returned empty new key")
+
+	// The key is a stable identity: the same key must now load an empty
+	// (archived-in-place) session.
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 0 {
+		t.Errorf("after reset: %d messages under %s, want 0 (archived in place)", len(msgs), sessionKey)
 	}
-	if newKey == sessionKey {
-		t.Error("ResetSession should return a different key after rotation")
+	// Per-session overrides and metadata rows are gone.
+	if got := ag.SessionEffort(sessionKey); got != "" {
+		t.Errorf("effort override survived reset: %q", got)
 	}
-	if rotatedOld != sessionKey || rotatedNew != newKey {
-		t.Errorf("rotation callback: old=%q new=%q, want %q/%q", rotatedOld, rotatedNew, sessionKey, newKey)
+	if ag.SessionNoCompact(sessionKey) {
+		t.Error("no_compact override survived reset")
+	}
+	if v, _ := idx.GetSessionMetadata(sessionKey, "effort"); v != "" {
+		t.Errorf("effort metadata row survived reset: %q", v)
+	}
+	if v, _ := idx.GetSessionMetadata(sessionKey, "no_compact"); v != "" {
+		t.Errorf("no_compact metadata row survived reset: %q", v)
 	}
 	if !nudgeReloaded {
 		t.Error("NudgeReloadFunc was not called after reset")
@@ -77,21 +99,16 @@ func TestResetSession_APIPath(t *testing.T) {
 	}
 }
 
-func TestResetSessionHard_APIPath_RotatesEvenWhenProcessing(t *testing.T) {
+func TestResetSessionHard_APIPath_ResetsEvenWhenProcessing(t *testing.T) {
 	// Proves that ResetSessionHard does NOT check the in-flight gate and always
-	// proceeds to rotate the key. The whole point of /reset hard is to
+	// proceeds to archive the session. The whole point of /reset hard is to
 	// recover from a stuck turn — it must never refuse on the in-flight
 	// gate that ResetSession uses.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	sessionKey := "test/hard/1000000000"
+	sessionKey := "test/ihard"
 
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hello")}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hi")}); err != nil {
-		t.Fatal(err)
-	}
+	seedSession(t, store, sessionKey, 1)
 
 	ag := &Agent{
 		Sessions:  store,
@@ -103,21 +120,12 @@ func TestResetSessionHard_APIPath_RotatesEvenWhenProcessing(t *testing.T) {
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
 
-	var rotatedOld, rotatedNew string
-	ag.SessionKeyRotatedFunc.Add(func(old, new string) {
-		rotatedOld = old
-		rotatedNew = new
-	})
-
-	newKey, err := ag.ResetSessionHard(context.Background(), sessionKey)
-	if err != nil {
+	if err := ag.ResetSessionHard(context.Background(), sessionKey); err != nil {
 		t.Fatalf("ResetSessionHard: %v (must not refuse while processing)", err)
 	}
-	if newKey == "" || newKey == sessionKey {
-		t.Errorf("newKey = %q, want a rotated key different from %q", newKey, sessionKey)
-	}
-	if rotatedOld != sessionKey || rotatedNew != newKey {
-		t.Errorf("rotation: old=%q new=%q, want %q/%q", rotatedOld, rotatedNew, sessionKey, newKey)
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 0 {
+		t.Errorf("after hard reset: %d messages, want 0 (archived in place)", len(msgs))
 	}
 	if !nudgeReloaded {
 		t.Error("NudgeReloadFunc was not called after hard reset")
@@ -128,7 +136,7 @@ func TestResetSessionHard_NoSessionKey(t *testing.T) {
 	// Proves that ResetSessionHard rejects an empty session key with a
 	// clear error rather than panicking.
 	ag := &Agent{}
-	_, err := ag.ResetSessionHard(context.Background(), "")
+	err := ag.ResetSessionHard(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error when session key is empty")
 	}
@@ -140,19 +148,14 @@ func TestResetSessionHard_NoSessionKey(t *testing.T) {
 func TestResetSessionHard_DelegatedPath_NoMemoryFormation(t *testing.T) {
 	// Proves that ResetSessionHard for a delegated agent skips the memory
 	// formation prompt entirely (the difference from ResetSession), still
-	// closes the backend, and rotates the session key. SessionEndEnabled is
-	// deliberately TRUE here — hard reset must skip memory formation
-	// regardless of config.
+	// interrupts and closes the backend, and archives the session in place.
+	// SessionEndEnabled is deliberately TRUE here — hard reset must skip
+	// memory formation regardless of config.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	sessionKey := "test/hardDelegated/1000000000"
+	sessionKey := "test/iharddel"
 
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hello")}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hi")}); err != nil {
-		t.Fatal(err)
-	}
+	seedSession(t, store, sessionKey, 1)
 
 	var memorySent atomic.Bool
 	var backendClosed atomic.Bool
@@ -192,12 +195,12 @@ func TestResetSessionHard_DelegatedPath_NoMemoryFormation(t *testing.T) {
 		},
 	}
 
-	newKey, err := ag.ResetSessionHard(context.Background(), sessionKey)
-	if err != nil {
+	if err := ag.ResetSessionHard(context.Background(), sessionKey); err != nil {
 		t.Fatalf("ResetSessionHard (delegated): %v", err)
 	}
-	if newKey == "" || newKey == sessionKey {
-		t.Errorf("newKey = %q, want a rotated key different from %q", newKey, sessionKey)
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 0 {
+		t.Errorf("after hard reset: %d messages, want 0 (archived in place)", len(msgs))
 	}
 
 	if memorySent.Load() {
@@ -215,9 +218,9 @@ func TestResetSession_ErrorWhenProcessing(t *testing.T) {
 	// Proves that ResetSession returns an error when THIS session is currently
 	// processing a turn, so the user must stop it first.
 	ag := &Agent{}
-	ag.SetTurnInFlightForTest("test/busy/1", true)
+	ag.SetTurnInFlightForTest("test/ibusy", true)
 
-	_, err := ag.ResetSession(context.Background(), "test/busy/1")
+	err := ag.ResetSession(context.Background(), "test/ibusy")
 	if err == nil {
 		t.Fatal("expected error when processing")
 	}
@@ -227,8 +230,9 @@ func TestResetSession_ErrorWhenProcessing(t *testing.T) {
 }
 
 func TestCompactSession_HappyPath(t *testing.T) {
-	// Proves the full manual compaction lifecycle: CompactSession calls doCompact,
-	// rotates the session, fires hooks, and reloads the bootstrap afterward.
+	// Proves the full manual compaction lifecycle: CompactSession calls
+	// doCompact, replaces the history in place under the SAME session key,
+	// fires hooks, and reloads the bootstrap afterward.
 	var turnCount atomic.Int32
 	client := compactionTestClient(&turnCount, -1) // no high-token turn
 
@@ -236,17 +240,10 @@ func TestCompactSession_HappyPath(t *testing.T) {
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	compactor := compaction.NewCompactor(store, 0.8)
 
-	sessionKey := "test/compact/1000000000"
+	sessionKey := "test/icompactmanual"
 
 	// Seed the session with 6 messages (3 turns) so we pass the >=5 check.
-	for i := 0; i < 3; i++ {
-		if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("msg %d", i))}); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("reply %d", i))}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	seedSession(t, store, sessionKey, 3)
 
 	ag := &Agent{
 		Client:    client,
@@ -272,8 +269,11 @@ func TestCompactSession_HappyPath(t *testing.T) {
 	if result.OldMessageCount != 6 {
 		t.Errorf("OldMessageCount = %d, want 6", result.OldMessageCount)
 	}
-	if result.NewSessionKey == "" {
-		t.Error("expected NewSessionKey after compaction")
+	// The session key is stable: the compacted history (marker + summary +
+	// handoff) loads under the original key.
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 3 {
+		t.Errorf("after compaction: %d messages under %s, want 3", len(msgs), sessionKey)
 	}
 	if !nudgeReloaded {
 		t.Error("NudgeReloadFunc was not called after compaction")
@@ -298,15 +298,8 @@ func TestCompactSession_FiresMemoryHook(t *testing.T) {
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	compactor := compaction.NewCompactor(store, 0.8)
 
-	sessionKey := "test/compactmem/1000000000"
-	for i := 0; i < 3; i++ {
-		if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("msg %d", i))}); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("reply %d", i))}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	sessionKey := "test/icompactmem"
+	seedSession(t, store, sessionKey, 3)
 
 	ag := &Agent{
 		Client:    client,
@@ -329,17 +322,10 @@ func TestCompactSession_FiresMemoryHook(t *testing.T) {
 
 	// Dry-run must NOT fire memory formation (no side effects).
 	memoryFiredFor = ""
-	// Seed a new session for dry-run so the rotation from the first compaction
-	// doesn't leave us pointing at a stale key.
-	dryKey := "test/compactmemdry/1000000000"
-	for i := 0; i < 3; i++ {
-		if err := store.TestAppend(dryKey, provider.Message{Role: "user", Content: provider.TextContent("x")}); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.TestAppend(dryKey, provider.Message{Role: "assistant", Content: provider.TextContent("y")}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Seed a fresh session for dry-run — the first session was already
+	// compacted down to 3 messages, below the >=5 gate.
+	dryKey := "test/icompactmemdry"
+	seedSession(t, store, dryKey, 3)
 	if _, err := ag.CompactSession(context.Background(), dryKey, true); err != nil {
 		t.Fatalf("CompactSession dry-run: %v", err)
 	}
@@ -349,8 +335,8 @@ func TestCompactSession_FiresMemoryHook(t *testing.T) {
 }
 
 func TestCompactSession_DryRun(t *testing.T) {
-	// Proves that dry-run mode runs compaction but does NOT reload the
-	// bootstrap, does NOT rotate the session, and returns an empty NewSessionKey.
+	// Proves that dry-run mode runs the full compaction pipeline but does NOT
+	// reload the bootstrap and does NOT touch the session content.
 	var turnCount atomic.Int32
 	client := compactionTestClient(&turnCount, -1)
 
@@ -358,17 +344,9 @@ func TestCompactSession_DryRun(t *testing.T) {
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	compactor := compaction.NewCompactor(store, 0.8)
 
-	sessionKey := "test/dryrun/1000000000"
+	sessionKey := "test/idryrun"
 
-	// Seed 6 messages.
-	for i := 0; i < 3; i++ {
-		if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("msg %d", i))}); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("reply %d", i))}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	seedSession(t, store, sessionKey, 3)
 
 	ag := &Agent{
 		Client:    client,
@@ -387,12 +365,8 @@ func TestCompactSession_DryRun(t *testing.T) {
 		debugMsgs = append(debugMsgs, summary)
 	})
 
-	result, err := ag.CompactSession(context.Background(), sessionKey, true)
-	if err != nil {
+	if _, err := ag.CompactSession(context.Background(), sessionKey, true); err != nil {
 		t.Fatalf("CompactSession dry-run: %v", err)
-	}
-	if result.NewSessionKey != "" {
-		t.Errorf("NewSessionKey = %q, want empty on dry-run", result.NewSessionKey)
 	}
 	if nudgeReloaded {
 		t.Error("NudgeReloadFunc should NOT be called on dry-run")
@@ -413,7 +387,7 @@ func TestCompactSession_ErrorWhenCompactorNil(t *testing.T) {
 	// is nil (compaction not configured).
 	ag := &Agent{}
 
-	_, err := ag.CompactSession(context.Background(), "test/s/1", false)
+	_, err := ag.CompactSession(context.Background(), "test/inocompactor", false)
 	if err == nil {
 		t.Fatal("expected error when Compactor is nil")
 	}
@@ -445,17 +419,10 @@ func TestCompactSession_ErrorWhenTooFewMessages(t *testing.T) {
 	// than 5 messages, returning a descriptive error with the message count.
 	store := session.NewStore(t.TempDir())
 	compactor := compaction.NewCompactor(store, 0.8)
-	sessionKey := "test/few/1000000000"
+	sessionKey := "test/ifew"
 
 	// Seed 4 messages (below the 5-message threshold).
-	for i := 0; i < 2; i++ {
-		if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("x")}); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("y")}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	seedSession(t, store, sessionKey, 2)
 
 	ag := &Agent{
 		Sessions:  store,
@@ -484,7 +451,7 @@ func TestCompactSession_ErrorWhenEmptySession(t *testing.T) {
 		Compactor: compactor,
 	}
 
-	_, err := ag.CompactSession(context.Background(), "test/empty/1000000000", false)
+	_, err := ag.CompactSession(context.Background(), "test/iempty", false)
 	if err == nil {
 		t.Fatal("expected error for empty session")
 	}
@@ -501,7 +468,7 @@ func TestCompactSession_Delegated(t *testing.T) {
 	// (CC owns the session file) so /compact always failed with "too few messages".
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	sessionKey := "test/delegatedcompact/1000000000"
+	sessionKey := "test/idelcompact"
 
 	// Note: we deliberately do NOT seed any messages. Delegated agents have
 	// empty foci session files — the whole point is that /compact must work
@@ -544,12 +511,8 @@ func TestCompactSession_Delegated(t *testing.T) {
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
 
-	result, err := ag.CompactSession(context.Background(), sessionKey, false)
-	if err != nil {
+	if _, err := ag.CompactSession(context.Background(), sessionKey, false); err != nil {
 		t.Fatalf("CompactSession (delegated): %v", err)
-	}
-	if result.NewSessionKey != "" {
-		t.Errorf("delegated compact should not rotate session key, got %q", result.NewSessionKey)
 	}
 
 	if !strings.HasPrefix(sentCommand, "/compact ") {
@@ -585,7 +548,7 @@ func TestCompactSession_Delegated_DryRunUnsupported(t *testing.T) {
 
 	ag := &Agent{DelegatedManager: dm}
 
-	_, err := ag.CompactSession(context.Background(), "test/session/1", true)
+	_, err := ag.CompactSession(context.Background(), "test/isession", true)
 	if err == nil {
 		t.Fatal("expected dry-run to be rejected for delegated agents")
 	}
@@ -594,22 +557,100 @@ func TestCompactSession_Delegated_DryRunUnsupported(t *testing.T) {
 	}
 }
 
+func TestPrepareSessionEndMemory_RemapsBackendAndResumeID(t *testing.T) {
+	// Proves the reflection-branch handoff for delegated agents:
+	// PrepareSessionEndMemory creates the branch from the still-live history
+	// BEFORE any reset, and RemapSession moves both the live backend and the
+	// saved cc_resume_id row from the parent key to the branch key, leaving
+	// the parent clean for a fresh backend.
+	store := session.NewStore(t.TempDir())
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	sessionKey := "test/iprepare"
+
+	seedSession(t, store, sessionKey, 1)
+
+	dm := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			return &mockBackendDM{running: true}, nil
+		},
+		StartOpts:    delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:      "test",
+		IdleTimeout:  time.Hour,
+		SessionIndex: idx,
+	}
+	t.Cleanup(func() { dm.Close() })
+
+	if _, err := dm.Get(context.Background(), sessionKey); err != nil {
+		t.Fatalf("pre-create backend: %v", err)
+	}
+	// Simulate a persisted CC resume UUID for the live session.
+	if err := idx.SetSessionMetadata(sessionKey, "cc_resume_id", "uuid-123"); err != nil {
+		t.Fatalf("seed resume ID: %v", err)
+	}
+
+	ag := &Agent{
+		Sessions:         store,
+		SessionIndex:     idx,
+		DelegatedManager: dm,
+		Reflection: config.ResolvedReflection{
+			SessionEndEnabled: true,
+		},
+	}
+
+	branchKey, ok := ag.PrepareSessionEndMemory(sessionKey, "orient", false)
+	if !ok {
+		t.Fatal("PrepareSessionEndMemory returned ok=false, want a reflection branch")
+	}
+	if !strings.HasPrefix(branchKey, sessionKey+"/b") {
+		t.Fatalf("branchKey = %q, want a 'b' child of %q", branchKey, sessionKey)
+	}
+
+	// The branch was created against the live history, before any reset.
+	meta, err := store.GetBranchMeta(branchKey)
+	if err != nil || meta == nil {
+		t.Fatalf("GetBranchMeta(%s): meta=%v err=%v", branchKey, meta, err)
+	}
+	if !meta.NoResetHook {
+		t.Error("reflection branch should have NoResetHook set")
+	}
+
+	// The live backend moved from the parent key to the branch key.
+	if _, stillMapped := dm.getManaged(sessionKey); stillMapped {
+		t.Error("backend still mapped under the parent key after remap")
+	}
+	if _, mapped := dm.getManaged(branchKey); !mapped {
+		t.Error("backend not mapped under the branch key after remap")
+	}
+
+	// The cc_resume_id row moved with it.
+	if v, _ := idx.GetSessionMetadata(branchKey, "cc_resume_id"); v != "uuid-123" {
+		t.Errorf("branch cc_resume_id = %q, want uuid-123", v)
+	}
+	if v, _ := idx.GetSessionMetadata(sessionKey, "cc_resume_id"); v != "" {
+		t.Errorf("parent cc_resume_id = %q, want empty after remap", v)
+	}
+
+	// Reflection branches must never auto-compact mid-reflection.
+	if !ag.SessionNoCompact(branchKey) {
+		t.Error("reflection branch should have no_compact set")
+	}
+}
+
 func TestResetDelegatedSession(t *testing.T) {
-	// Proves the delegated soft reset is non-blocking: it rotates the foci key
-	// and reloads the bootstrap synchronously, then runs memory formation on
-	// the old CC session and closes that backend in the BACKGROUND. The backend
-	// must stay open until reflection completes, then close.
+	// Proves the delegated soft reset is non-blocking and key-stable: it
+	// archives the history in place and reloads the bootstrap synchronously,
+	// hands the live backend to the reflection branch, then runs memory
+	// formation on that branch and closes its backend in the BACKGROUND. The
+	// backend must stay open until reflection completes, then close.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	sessionKey := "test/delegated/1000000000"
+	sessionKey := "test/idelegated"
 
-	// Seed the session so RotateKey has a file to archive.
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hello")}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hi")}); err != nil {
-		t.Fatal(err)
-	}
+	seedSession(t, store, sessionKey, 1)
 
 	// The mock blocks inside reflection until the test releases it, so we can
 	// observe that ResetSession returned without waiting.
@@ -667,26 +708,22 @@ func TestResetDelegatedSession(t *testing.T) {
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
 
-	var rotatedOld, rotatedNew string
-	ag.SessionKeyRotatedFunc.Add(func(old, new string) {
-		rotatedOld = old
-		rotatedNew = new
-	})
-
-	newKey, err := ag.ResetSession(context.Background(), sessionKey)
-	if err != nil {
+	if err := ag.ResetSession(context.Background(), sessionKey); err != nil {
 		t.Fatalf("ResetSession (delegated): %v", err)
 	}
 
-	// Synchronous results: key rotated, rotation callback fired, bootstrap reloaded.
-	if newKey == "" || newKey == sessionKey {
-		t.Errorf("newKey = %q, want a rotated key different from %q", newKey, sessionKey)
-	}
-	if rotatedOld != sessionKey || rotatedNew != newKey {
-		t.Errorf("rotation: old=%q new=%q, want %q/%q", rotatedOld, rotatedNew, sessionKey, newKey)
+	// Synchronous results: history archived in place under the stable key,
+	// bootstrap reloaded, and the live backend handed to the reflection
+	// branch (parent key left clean).
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 0 {
+		t.Errorf("after reset: %d messages under %s, want 0 (archived in place)", len(msgs), sessionKey)
 	}
 	if !nudgeReloaded {
 		t.Error("NudgeReloadFunc was not called after delegated reset")
+	}
+	if _, stillMapped := dm.getManaged(sessionKey); stillMapped {
+		t.Error("backend should have been remapped to the reflection branch, not left on the parent key")
 	}
 
 	// Reflection runs in the background — wait for it to start.
@@ -715,18 +752,14 @@ func TestResetDelegatedSession(t *testing.T) {
 }
 
 func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
-	// Proves that when SessionEndEnabled is false, resetDelegatedSession skips
-	// memory formation but still closes the backend and rotates the key.
+	// Proves that when SessionEndEnabled is false, the delegated reset skips
+	// memory formation but still closes the backend and archives the session
+	// in place.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	sessionKey := "test/delnomem/1000000000"
+	sessionKey := "test/idelnomem"
 
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hello")}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hi")}); err != nil {
-		t.Fatal(err)
-	}
+	seedSession(t, store, sessionKey, 1)
 
 	var backendClosed atomic.Bool
 	dm := &DelegatedManager{
@@ -759,20 +792,21 @@ func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 		},
 	}
 
-	newKey, err := ag.ResetSession(context.Background(), sessionKey)
-	if err != nil {
+	if err := ag.ResetSession(context.Background(), sessionKey); err != nil {
 		t.Fatalf("ResetSession: %v", err)
 	}
-	if newKey == "" || newKey == sessionKey {
-		t.Errorf("expected rotated key, got %q", newKey)
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 0 {
+		t.Errorf("after reset: %d messages, want 0 (archived in place)", len(msgs))
 	}
-	// Teardown is backgrounded even with reflection disabled — wait for close.
+	// No reflection branch adopted the backend — it must be closed so the
+	// next message starts a genuinely fresh CC session.
 	deadline := time.Now().Add(2 * time.Second)
 	for !backendClosed.Load() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if !backendClosed.Load() {
-		t.Error("backend should be closed in the background even when memory is disabled")
+		t.Error("backend should be closed when no reflection branch adopts it")
 	}
 }
 
@@ -787,9 +821,9 @@ func TestReloadAfterMutation(t *testing.T) {
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
 
 	// Prime two session meta entries with cached system blocks.
-	sm1 := ag.getSessionMeta("test/s1/1")
+	sm1 := ag.getSessionMeta("test/is1")
 	sm1.systemBlocks = []provider.SystemBlock{{Text: "cached-1"}}
-	sm2 := ag.getSessionMeta("test/s2/1")
+	sm2 := ag.getSessionMeta("test/is2")
 	sm2.systemBlocks = []provider.SystemBlock{{Text: "cached-2"}}
 
 	ag.reloadAfterMutation()

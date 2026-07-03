@@ -36,7 +36,7 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 - **Don't use it to duplicate a plain reply** on a bot-attached session — your reply text is already delivered. Use it for attachments or piping command output (`… | foci_send_to_chat`).
 
 ### `foci_send_to_session` — message another session
-- Positional `session_key`: full (`scout/c5970082313/1772794601`), partial (`scout/c5970082313`), or bare agent name (`scout` → its default/most-recent session).
+- Positional `session_key`: full session key (`scout/c5970082313`, `scout/iresearch`), agent-qualified session name or chat alias (`scout/research`), or bare agent name (`scout` → its default session).
 - `--message` (or stdin). `--reply-to caller|session` (default **caller** — the reply comes back to *you*, not the target's user chat; use `session` to surface it to their chat).
 
 ### `foci_todo` — persistent todo list
@@ -53,7 +53,7 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 ### `foci_memory_search` — full-text search of memory + conversation history
 - Positional `query`, stemmed FTS. Memory files rank above chat history.
 - `--sort relevance|newest|oldest`, `--date-from`/`--date-to YYYY-MM-DD`, `--lines N` (context window).
-- Direct lookup: `--query "session#rowID"` (e.g. `agent/c123/456#42`) pulls surrounding messages.
+- Direct lookup: `--query "session#rowID"` (e.g. `agent/c123#42`) pulls surrounding messages.
 - This reaches **conversation history that grep can't** — prefer it over grepping the memory dir.
 
 ### `foci_http_request` — HTTP with server-side secret resolution

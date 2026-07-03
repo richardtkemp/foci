@@ -314,7 +314,7 @@ func TestSeedSessionMeta(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
 
-	sessionKey := "test/iseed/1000000000"
+	sessionKey := "test/iseed"
 
 	// Seed with empty session — should not panic
 	ag.SeedSessionMeta(sessionKey)
@@ -357,7 +357,7 @@ func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
 
-	sessionKey := "test/iseedskip/1000000000"
+	sessionKey := "test/iseedskip"
 
 	// First message has meta, second user message is a restart marker (no meta)
 	store.TestAppend(sessionKey, provider.Message{

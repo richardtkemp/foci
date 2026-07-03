@@ -181,8 +181,12 @@ func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
 	// Reopening a named session that already has a durable conversation must
 	// reuse it, not mint a duplicate that races the existing binding in
 	// bySession. Only a fresh open (no session key, or an unknown one) creates a
-	// new conversation.
+	// new conversation. Legacy (pre-stable-identity) keys from an older client
+	// DB are normalised first so the reopen finds the migrated conversation.
 	if f.SessionKey != "" {
+		if stable, isLegacy := session.LegacyKeyToStable(f.SessionKey); isLegacy {
+			f.SessionKey = stable
+		}
 		if existing := h.bindingForSession(f.SessionKey); existing != nil {
 			existing.attach(client)
 			client.sendRaw(fap.HelloServer{

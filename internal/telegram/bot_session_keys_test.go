@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -155,8 +154,8 @@ func TestDefaultSessionKey(t *testing.T) {
 
 	// Set default chat
 	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
-	if sk := b.DefaultSessionKey(); !strings.HasPrefix(sk, "test-agent/c12345/") {
-		t.Errorf("expected prefix test-agent/c12345/, got %q", sk)
+	if sk := b.DefaultSessionKey(); sk != "test-agent/c12345" {
+		t.Errorf("expected test-agent/c12345, got %q", sk)
 	}
 }
 
@@ -175,8 +174,8 @@ func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	// SessionKey() should return the default chat session
-	if sk := b.SessionKey(); !strings.HasPrefix(sk, "test-agent/c12345/") {
-		t.Errorf("expected prefix test-agent/c12345/, got %q", sk)
+	if sk := b.SessionKey(); sk != "test-agent/c12345" {
+		t.Errorf("expected test-agent/c12345, got %q", sk)
 	}
 }
 
@@ -221,45 +220,14 @@ func TestDefaultSessionKey_IsStable(t *testing.T) {
 	}
 }
 
-func TestUpdateChatSessionKey_ChangesDefaultSessionKey(t *testing.T) {
-	// Verifies that UpdateChatSessionKey updates the persisted session key
-	// so that subsequent DefaultSessionKey calls return the new key.
-	// This is the mechanism used by /reset to rotate session keys.
-	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.agentID = "test-agent"
-	b.chatmeta.AgentID = "test-agent"
-	b.SetSessionIndex(idx)
-	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
-
-	oldKey := b.DefaultSessionKey()
-	if oldKey == "" {
-		t.Fatal("expected non-empty default session key")
-	}
-
-	newKey := "test-agent/c12345/9999999999"
-	b.UpdateChatSessionKey(12345, newKey)
-
-	got := b.DefaultSessionKey()
-	if got != newKey {
-		t.Errorf("DefaultSessionKey() after UpdateChatSessionKey = %q, want %q", got, newKey)
-	}
-	if got == oldKey {
-		t.Error("DefaultSessionKey() should have changed after UpdateChatSessionKey")
-	}
-}
-
 func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
 	// Verifies that secondary bots use
 	// the configured session key override.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
-	b.SetSessionKey("test/c1/1/b123")
+	b.SetSessionKey("test/c1/b123")
 
-	if sk := b.SessionKey(); sk != "test/c1/1/b123" {
+	if sk := b.SessionKey(); sk != "test/c1/b123" {
 		t.Errorf("expected override key, got %q", sk)
 	}
 }
@@ -344,10 +312,10 @@ func TestDispatchSessionKey_SecondaryUsesOverride(t *testing.T) {
 	// This ensures /status shows the correct session in facet chats.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
-	b.SetSessionKey("agent/c12345/1000000000/b1111111111")
+	b.SetSessionKey("agent/c12345/b1111111111")
 
 	got := b.dispatchSessionKey(12345)
-	if got != "agent/c12345/1000000000/b1111111111" {
+	if got != "agent/c12345/b1111111111" {
 		t.Errorf("dispatchSessionKey() = %q, want override branch key", got)
 	}
 }
@@ -362,8 +330,8 @@ func TestDispatchSessionKey_SecondaryIdleFallsBack(t *testing.T) {
 	b.SetSessionKey("") // idle -- no session assigned
 
 	got := b.dispatchSessionKey(12345)
-	if !strings.HasPrefix(got, "test-agent/c12345/") {
-		t.Errorf("dispatchSessionKey() = %q, want prefix test-agent/c12345/", got)
+	if got != "test-agent/c12345" {
+		t.Errorf("dispatchSessionKey() = %q, want test-agent/c12345", got)
 	}
 }
 
@@ -375,8 +343,8 @@ func TestDispatchSessionKey_PrimaryUsesChat(t *testing.T) {
 	b.chatmeta.AgentID = "test-agent"
 
 	got := b.dispatchSessionKey(12345)
-	if !strings.HasPrefix(got, "test-agent/c12345/") {
-		t.Errorf("dispatchSessionKey() = %q, want prefix test-agent/c12345/", got)
+	if got != "test-agent/c12345" {
+		t.Errorf("dispatchSessionKey() = %q, want test-agent/c12345", got)
 	}
 }
 

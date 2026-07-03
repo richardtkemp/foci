@@ -20,8 +20,8 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create two sessions
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
-	store.TestAppend("bot/c200/1000000000", msg("user", "world"))
+	store.TestAppend("bot/c100", msg("user", "hello"))
+	store.TestAppend("bot/c200", msg("user", "world"))
 
 	// Rebuild index
 	n, err := idx.Rebuild(store)
@@ -35,7 +35,7 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	// Force last_activity_at to 48h ago so both qualify for archival.
 	// Must use UpdateActivity since Upsert only moves activity forward.
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	for _, key := range []string{"bot/c100/1000000000", "bot/c200/1000000000"} {
+	for _, key := range []string{"bot/c100", "bot/c200"} {
 		idx.UpdateActivity(key, past)
 	}
 
@@ -49,7 +49,7 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	}
 
 	// Verify .jsonl files are gone and .jsonl.gz files exist
-	for _, key := range []string{"bot/c100/1000000000", "bot/c200/1000000000"} {
+	for _, key := range []string{"bot/c100", "bot/c200"} {
 		path := mustSessionPath(t, store, key)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("expected %s to be removed, but it exists", path)
@@ -73,7 +73,7 @@ func TestArchiveSweep_SkipsRecentSessions(t *testing.T) {
 	store := NewStore(dir)
 	idx := tempIndex(t)
 
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c100", msg("user", "hello"))
 	idx.Rebuild(store)
 
 	// Last activity is now (recent), so it should not be archived
@@ -94,13 +94,13 @@ func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create parent and branch
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
-	store.createBranchFile("bot/c100/1000000000", "bot/c100/1000000000/b1000000001", false, "")
+	store.TestAppend("bot/c100", msg("user", "hello"))
+	store.createBranchFile("bot/c100", "bot/c100/b1000000001", false, "")
 	idx.Rebuild(store)
 
 	// Set parent to old, but branch is still active
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	idx.UpdateActivity("bot/c100/1000000000", past)
+	idx.UpdateActivity("bot/c100", past)
 
 	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
 	if err != nil {
@@ -112,48 +112,49 @@ func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
 }
 
 func TestArchiveSweep_SkipsCurrentChatSession(t *testing.T) {
-	// Verifies that a session registered as the current chat session (via
-	// chat_metadata) is never archived, even when it exceeds the maxAge threshold.
+	// Verifies that an agent's current chat session — derived from the chat's
+	// registration rows in chat_metadata (keys are deterministic agent/c<id>) —
+	// is never archived, even when it exceeds the maxAge threshold. Chats with
+	// no metadata rows get no such protection.
 	dir := t.TempDir()
 	store := NewStore(dir)
 	idx := tempIndex(t)
 
-	// Create two chat sessions for the same agent+chat (different version timestamps)
-	store.TestAppend("bot/c100/1000000000", msg("user", "old"))
-	store.TestAppend("bot/c100/2000000000", msg("user", "current"))
+	// Two chats: c100 is a registered chat (has a chat_metadata row, written on
+	// first platform contact), c200 is not registered.
+	store.TestAppend("bot/c100", msg("user", "current"))
+	store.TestAppend("bot/c200", msg("user", "unprotected"))
 	idx.Rebuild(store)
-
-	// Mark the newer one as the current session via chat_metadata
-	idx.SetChatMetadata("bot", "", 100, "session_key", "bot/c100/2000000000")
+	idx.SetChatMetadata("bot", "telegram", 100, "registered", "1")
 
 	// Set both to old activity so they'd normally both qualify
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	idx.UpdateActivity("bot/c100/1000000000", past)
-	idx.UpdateActivity("bot/c100/2000000000", past)
+	idx.UpdateActivity("bot/c100", past)
+	idx.UpdateActivity("bot/c200", past)
 
 	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("ArchiveSweep: %v", err)
 	}
 
-	// Only the old session should be archived; the current one is protected
+	// Only the unregistered session should be archived; the current one is protected
 	if archived != 1 {
 		t.Fatalf("expected 1 archived, got %d", archived)
 	}
 
 	// Verify the current session file still exists uncompressed
-	currentPath := mustSessionPath(t, store, "bot/c100/2000000000")
+	currentPath := mustSessionPath(t, store, "bot/c100")
 	if _, err := os.Stat(currentPath); err != nil {
 		t.Errorf("current session should still exist: %v", err)
 	}
 
-	// Verify the old session was archived
-	oldPath := mustSessionPath(t, store, "bot/c100/1000000000")
+	// Verify the unregistered session was archived
+	oldPath := mustSessionPath(t, store, "bot/c200")
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
-		t.Errorf("old session should be removed")
+		t.Errorf("unregistered session should be removed")
 	}
 	if _, err := os.Stat(oldPath + ".gz"); err != nil {
-		t.Errorf("old session .gz should exist: %v", err)
+		t.Errorf("unregistered session .gz should exist: %v", err)
 	}
 }
 
@@ -165,14 +166,14 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create a session and compact it (creates numbered archive)
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
-	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
+	store.TestAppend("bot/c100", msg("user", "hello"))
+	store.TestReplace("bot/c100", []provider.Message{msg("user", "compacted")})
 	idx.Rebuild(store)
 
 	// Set last activity to past
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	path := mustSessionPath(t, store, "bot/c100/1000000000")
-	idx.UpdateActivity("bot/c100/1000000000", past)
+	path := mustSessionPath(t, store, "bot/c100")
+	idx.UpdateActivity("bot/c100", past)
 
 	// Verify archive file exists before sweep
 	sessionDir := filepath.Dir(path)
@@ -226,13 +227,13 @@ func TestArchiveSweep_GzipPreservesFileMode(t *testing.T) {
 
 	// Create a session and compact it so both a main file and a numbered
 	// archive exist — both should end up with 0640 after sweep.
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
-	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
+	store.TestAppend("bot/c100", msg("user", "hello"))
+	store.TestReplace("bot/c100", []provider.Message{msg("user", "compacted")})
 	idx.Rebuild(store)
 
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	idx.UpdateActivity("bot/c100/1000000000", past)
-	path := mustSessionPath(t, store, "bot/c100/1000000000")
+	idx.UpdateActivity("bot/c100", past)
+	path := mustSessionPath(t, store, "bot/c100")
 
 	// Sanity check: source files were created with 0640.
 	info, err := os.Stat(path)
@@ -294,8 +295,8 @@ func TestDecompressIfGzipped(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a session, then manually gzip it
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
-	path := mustSessionPath(t, store, "bot/c100/1000000000")
+	store.TestAppend("bot/c100", msg("user", "hello"))
+	path := mustSessionPath(t, store, "bot/c100")
 
 	// Read original content
 	original, err := os.ReadFile(path)
@@ -321,7 +322,7 @@ func TestDecompressIfGzipped(t *testing.T) {
 	}
 
 	// Load should transparently decompress
-	msgs, err := store.Load("bot/c100/1000000000")
+	msgs, err := store.Load("bot/c100")
 	if err != nil {
 		t.Fatalf("Load after gzip: %v", err)
 	}
@@ -349,8 +350,8 @@ func TestScanAllSessions_IncludesArchivesAndGzipped(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a session with an archive
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
-	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
+	store.TestAppend("bot/c100", msg("user", "hello"))
+	store.TestReplace("bot/c100", []provider.Message{msg("user", "compacted")})
 
 	entries, err := store.ScanAllSessions()
 	if err != nil {
@@ -387,9 +388,9 @@ func TestScanAllSessions_CurrentFileAlwaysActive(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a session with archives — current file should still be active
-	store.TestAppend("bot/c100/1000000000", msg("user", "v1"))
-	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "v2")})
-	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "v3")})
+	store.TestAppend("bot/c100", msg("user", "v1"))
+	store.TestReplace("bot/c100", []provider.Message{msg("user", "v2")})
+	store.TestReplace("bot/c100", []provider.Message{msg("user", "v3")})
 
 	entries, err := store.ScanAllSessions()
 	if err != nil {
@@ -402,7 +403,7 @@ func TestScanAllSessions_CurrentFileAlwaysActive(t *testing.T) {
 	}
 
 	for _, e := range entries {
-		if strings.HasSuffix(e.SessionKey, "/root") || e.SessionKey == "bot/c100/1000000000" {
+		if e.SessionKey == "bot/c100" {
 			if e.Status != SessionStatusActive {
 				t.Errorf("current file should be active, got %s for key %s", e.Status, e.SessionKey)
 			}

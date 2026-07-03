@@ -7,13 +7,26 @@ import (
 	"time"
 )
 
-// SessionKey represents a structured session identifier.
-// Format: {agentID}/{type}{id}/{versionTS}[/{childType}{childTS}]
+// SessionKey is a structured, STABLE session identity.
+// Format: {agentID}/{type}{id}[/{childType}{childTS}]
+//
+// The identity never changes for the life of a conversation: compaction and
+// /reset archive the underlying file in place (see Store.Replace / Store.Reset)
+// without minting a new key. Everything that holds a session key — reminders,
+// chat metadata, tmux ownership, in-flight maps, external cron jobs — can hold
+// it forever.
+//
+// Examples:
+//
+//	clutch/c123              chat session (Telegram/Discord/app chat 123)
+//	clutch/iresearch         named independent session
+//	clutch/i1709596800       anonymous independent session (creation ts as id)
+//	clutch/c123/b1709596800  branch (facet, spawn, cron, memory pass)
+//	clutch/c123/i1709596801  independent spawn
 type SessionKey struct {
 	AgentID   string
 	Type      rune   // 'c' (chat) or 'i' (independent)
-	ID        string // chat ID or creation timestamp
-	VersionTS int64  // version timestamp (creation or compaction time)
+	ID        string // chat ID, name, or creation timestamp
 	ChildType rune   // 'b' (branch) or 'i' (independent spawn), 0 for root
 	ChildTS   int64  // child timestamp, 0 for root
 }
@@ -44,15 +57,11 @@ func parseTypeTS(s string) (rune, int64, error) {
 func (k SessionKey) String() string {
 	var sb strings.Builder
 
-	// Base: agentID/typeID/versionTS
 	sb.WriteString(k.AgentID)
 	sb.WriteRune('/')
 	sb.WriteRune(k.Type)
 	sb.WriteString(k.ID)
-	sb.WriteRune('/')
-	sb.WriteString(strconv.FormatInt(k.VersionTS, 10))
 
-	// Child suffix: /childTypeTS
 	if k.ChildType != 0 {
 		sb.WriteRune('/')
 		sb.WriteRune(k.ChildType)
@@ -65,65 +74,65 @@ func (k SessionKey) String() string {
 // ParseSessionKey parses a string into a SessionKey.
 func ParseSessionKey(s string) (SessionKey, error) {
 	parts := strings.Split(s, "/")
-	if len(parts) < 3 {
-		return SessionKey{}, fmt.Errorf("invalid session key format: %q (need at least agentID/typeID/versionTS)", s)
+	if len(parts) < 2 {
+		return SessionKey{}, fmt.Errorf("invalid session key format: %q (need at least agentID/typeID)", s)
+	}
+	if len(parts) > 3 {
+		return SessionKey{}, fmt.Errorf("invalid session key %q: too many segments", s)
 	}
 
 	agentID := parts[0]
+	if agentID == "" {
+		return SessionKey{}, fmt.Errorf("invalid session key %q: empty agent ID", s)
+	}
 
-	// Parse type and ID from second part (e.g., "c123" or "i1709596800")
 	typ, id, err := parseTypeID(parts[1])
 	if err != nil {
 		return SessionKey{}, err
 	}
-
-	// Parse version timestamp
-	versionTS, err := strconv.ParseInt(parts[2], 10, 64)
-	if err != nil {
-		return SessionKey{}, fmt.Errorf("invalid version timestamp: %w", err)
+	if typ != 'c' && typ != 'i' {
+		return SessionKey{}, fmt.Errorf("invalid session key %q: unknown type %q", s, string(typ))
 	}
 
 	key := SessionKey{
-		AgentID:   agentID,
-		Type:      typ,
-		ID:        id,
-		VersionTS: versionTS,
+		AgentID: agentID,
+		Type:    typ,
+		ID:      id,
 	}
 
-	// Check for child suffix (4th part)
-	if len(parts) >= 4 {
-		childType, childTS, err := parseTypeTS(parts[3])
+	if len(parts) == 3 {
+		childType, childTS, err := parseTypeTS(parts[2])
 		if err != nil {
 			return SessionKey{}, err
+		}
+		if childType != 'b' && childType != 'i' {
+			return SessionKey{}, fmt.Errorf("invalid session key %q: unknown child type %q", s, string(childType))
 		}
 		key.ChildType = childType
 		key.ChildTS = childTS
 	}
 
-	if len(parts) > 4 {
-		return SessionKey{}, fmt.Errorf("invalid session key: too many segments")
-	}
-
 	return key, nil
 }
 
-// NewChatSession creates a new chat session key.
+// NewChatSession creates the chat session key for a chat ID. Deterministic:
+// the same (agentID, chatID) always yields the same key.
 func NewChatSession(agentID string, chatID int64) SessionKey {
 	return SessionKey{
-		AgentID:   agentID,
-		Type:      'c',
-		ID:        strconv.FormatInt(chatID, 10),
-		VersionTS: time.Now().Unix(),
+		AgentID: agentID,
+		Type:    'c',
+		ID:      strconv.FormatInt(chatID, 10),
 	}
 }
 
-// withChild creates a child session key with the given child type.
+// withChild creates a child session key with the given child type. Deriving a
+// child from a child yields a sibling under the same root — the file layout is
+// flat; the logical parent is recorded in the branch_meta line, not the key.
 func (k SessionKey) withChild(childType rune) SessionKey {
 	return SessionKey{
 		AgentID:   k.AgentID,
 		Type:      k.Type,
 		ID:        k.ID,
-		VersionTS: k.VersionTS,
 		ChildType: childType,
 		ChildTS:   time.Now().Unix(),
 	}
@@ -134,9 +143,8 @@ func (k SessionKey) Branch() SessionKey {
 	return k.withChild('b')
 }
 
-// WithVersion returns a copy with a new version timestamp.
-func (k SessionKey) WithVersion(versionTS int64) SessionKey {
-	k.VersionTS = versionTS
+// Root returns the root key for this session (itself if already a root).
+func (k SessionKey) Root() SessionKey {
 	k.ChildType = 0
 	k.ChildTS = 0
 	return k
@@ -156,8 +164,8 @@ func (k SessionKey) ChatID() int64 {
 	return id
 }
 
-// NewChatSessionKey creates a NEW chat session key with the current timestamp.
-// Each call generates a unique key — cache the result if you need stable keys across calls.
+// NewChatSessionKey returns the chat session key string for a chat ID.
+// Deterministic: the same (agentID, chatID) always yields the same key.
 func NewChatSessionKey(agentID string, chatID int64) string {
 	return NewChatSession(agentID, chatID).String()
 }
@@ -185,25 +193,23 @@ func ValidateSessionName(name string) error {
 	return nil
 }
 
-// NamedIndependentSessionKey constructs a deterministic independent session key
-// for a given name. The name is used as the ID field so that repeated calls with
-// the same agentID and name return the same key. The version timestamp is fixed
-// at 0 to ensure stability. The name is validated (see ValidateSessionName) so
-// that request-controlled names cannot escape the session directory.
+// NamedIndependentSessionKey constructs the deterministic independent session
+// key for a given name. The name is used as the ID field so that repeated calls
+// with the same agentID and name return the same key. The name is validated
+// (see ValidateSessionName) so that request-controlled names cannot escape the
+// session directory.
 func NamedIndependentSessionKey(agentID, name string) (string, error) {
 	if err := ValidateSessionName(name); err != nil {
 		return "", err
 	}
 	return SessionKey{
-		AgentID:   agentID,
-		Type:      'i',
-		ID:        name,
-		VersionTS: 0,
+		AgentID: agentID,
+		Type:    'i',
+		ID:      name,
 	}.String(), nil
 }
 
 // ChatIDFromKey extracts the chat ID from a session key string.
-// Session keys use the format "{agentID}/c{chatID}/{versionTS}".
 // Returns 0 if the key doesn't contain a chat ID.
 func ChatIDFromKey(key string) int64 {
 	if sk, err := ParseSessionKey(key); err == nil {
@@ -226,65 +232,6 @@ func AgentIDFromKey(key string) string {
 		return ""
 	}
 	return key[:idx]
-}
-
-// SessionKeyBase extracts the stable {agentID}/{type}{id} prefix from a session
-// key string. This portion is invariant across compaction (version rotation) and
-// branching, making it suitable for ownership comparisons.
-func SessionKeyBase(key string) string {
-	parts := strings.SplitN(key, "/", 3)
-	if len(parts) < 2 {
-		return key
-	}
-	return parts[0] + "/" + parts[1]
-}
-
-// SessionInFlightKey returns the identity used for runtime in-flight turn
-// tracking. Like SessionKeyBase it collapses version rotation (compaction) so a
-// root session's in-flight state survives a version bump — but UNLIKE
-// SessionKeyBase it PRESERVES the child suffix, so a branch/facet tracks its
-// in-flight status separately from its parent root.
-//
-// This distinction matters because facets are independent conversations running
-// on their own backend (separate CC process), reached via a separate bot. They
-// are minted as 'b' branch children only to inherit the parent's history at the
-// fork point — they are NOT a continuation of the root turn. Collapsing them
-// onto the parent base (as SessionKeyBase does) wrongly couples the two: a busy
-// or permission-blocked facet would make the root read as in-flight and suppress
-// its keepalive/reflection. See TODO #719.
-//
-// Root-injected periodic turns (reflection, compaction-memory, session-end-
-// memory, keepalive — see branchTypesForMainSession) run under the *parent* key
-// with no child suffix, so they continue to mark the root base and the #760/#767
-// gates that rely on that are unaffected.
-//
-// Examples:
-//
-//	clutch/c123/v1        → clutch/c123          (root; version collapsed)
-//	clutch/c123/v2        → clutch/c123          (post-compaction root; same)
-//	clutch/c123/v1/b1700  → clutch/c123/b1700    (facet/branch; distinct from root)
-//	clutch/c123/v2/b1900  → clutch/c123/b1900    (distinct per child, version-stable)
-//
-// IDEMPOTENT: an already-derived identity ("clutch/c123" or "clutch/c123/b1700")
-// does not parse as a full session key, so it is returned unchanged rather than
-// re-collapsed. This means callers may pass either a full session key or an
-// already-derived identity safely — important because the Agent in-flight
-// methods derive internally, so a caller that pre-derives must not have its key
-// mangled a second time.
-func SessionInFlightKey(key string) string {
-	sk, err := ParseSessionKey(key)
-	if err != nil {
-		// Not a full session key (already-derived identity, base, or malformed):
-		// return as-is so derivation is idempotent. Do NOT call SessionKeyBase
-		// here — that would strip the child suffix off an already-derived
-		// branch/facet identity and wrongly collapse it onto the root.
-		return key
-	}
-	base := sk.AgentID + "/" + string(sk.Type) + sk.ID
-	if sk.ChildType == 0 {
-		return base
-	}
-	return base + "/" + string(sk.ChildType) + strconv.FormatInt(sk.ChildTS, 10)
 }
 
 // branchFromSession creates a branch child key from a parent session key string.

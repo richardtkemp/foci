@@ -251,7 +251,7 @@ Subcommands:
 		var infos []command.AgentInfo
 		for _, id := range agentOrder {
 			inst := agents[id]
-			sk := mostRecentSessionKey(inst.ag, connMgr, id)
+			sk := defaultSessionKeyFor(inst.ag, id)
 			var mc int
 			var lastAct string
 			if sk != "" {
@@ -427,7 +427,7 @@ Subcommands:
 		promptTTL = d
 	}
 	setupInteractiveCleanup(ctx, promptTTL)
-	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, connMgr, ctx)
+	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, ctx)
 	// L2 integration-test lifecycle control. Opens a UNIX-domain socket
 	// at FOCI_TESTHARNESS_CONTROL_SOCK if set; otherwise no-op. Tests
 	// drive per-agent backend close / etc. via a simple line protocol.

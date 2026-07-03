@@ -65,7 +65,7 @@ func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error)
 // in-use socket). os.Remove therefore only ever touches a socket left behind by
 // a previous process, as intended.
 func NewExecBridgeStable(registry *Registry, ctx context.Context, stableID string) (*ExecBridge, error) {
-	// Sanitize: session keys may contain slashes (e.g. "telegram/c123/456")
+	// Sanitize: session keys may contain slashes (e.g. "clutch/c123/b456")
 	safe := strings.ReplaceAll(stableID, "/", "-")
 	sockPath := fmt.Sprintf("%s/exec-%s.sock", tempdir.Dir(), safe)
 	funcsPath := fmt.Sprintf("%s/exec-%s-funcs.sh", tempdir.Dir(), safe)

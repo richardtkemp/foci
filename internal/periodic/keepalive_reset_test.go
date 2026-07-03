@@ -20,7 +20,7 @@ func newResetRunner(t *testing.T, maint config.ResolvedMaintenance, lastReset, l
 		lastReset:       lastReset,
 		lastInteraction: lastInteraction,
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn: func() string { return "test/c123/1000000000" },
+			sessionKeyFn: func() string { return "test/c123" },
 			resetFn: func(ctx context.Context, sk string) error {
 				resetCh <- sk
 				return nil
@@ -42,7 +42,7 @@ func TestMaybeReset_Fires(t *testing.T) {
 
 	select {
 	case sk := <-resetCh:
-		if sk != "test/c123/1000000000" {
+		if sk != "test/c123" {
 			t.Errorf("reset fired on wrong session: %q", sk)
 		}
 	case <-time.After(2 * time.Second):

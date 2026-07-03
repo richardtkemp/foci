@@ -713,7 +713,7 @@ func TestConvertToTelegramHTMLEmphasisWellFormed(t *testing.T) {
 		"__under **bold** line__",
 		"a ***b*** c ***d** e*",
 		"**bold** and *italic* and ~~strike~~",
-		"***",      // bare triple — must not emit unbalanced tags
+		"***",        // bare triple — must not emit unbalanced tags
 		"****word**", // stray marker — must still be well-formed
 		// emphasis abutting inline-code placeholders (NUL-delimited)
 		"**`code`**",

@@ -59,7 +59,7 @@ const typingFuncTimeout = 2 * time.Second
 // on next message.
 type DelegatedManager struct {
 	mu       sync.Mutex
-	backends map[string]*managedBackend // sessionKeyBase → managed backend
+	backends map[string]*managedBackend // sessionKey → managed backend
 
 	// NewBackend creates a fresh Backend instance (does not start it).
 	NewBackend func() (delegator.Delegator, error)
@@ -749,7 +749,9 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 // don't store agent_id separately.
 const resumeIDKey = "cc_resume_id"
 
-// saveResumeID persists the CC session UUID to state.db.
+// saveResumeID persists the CC session UUID to state.db and appends it to
+// the cc_resume_history provenance timeline, so "which CC session was live
+// for this key at time T" stays answerable after resets and respawns.
 func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 	if sessionID == "" || m.SessionIndex == nil {
 		return
@@ -757,6 +759,7 @@ func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 	if err := m.SessionIndex.SetSessionMetadata(sessionKey, resumeIDKey, sessionID); err != nil {
 		log.Warnf("delegated", "save resume ID for %s: %v", sessionKey, err)
 	}
+	m.SessionIndex.RecordCCResume(sessionKey, sessionID)
 }
 
 // clearResumeID removes a saved CC session UUID from state.db.
@@ -769,13 +772,28 @@ func (m *DelegatedManager) clearResumeID(sessionKey string) {
 	}
 }
 
-// ClearResumeID removes the saved CC resume UUID for a session without touching
-// the live backend. Used by the async soft reset so that when sessionKey's
-// metadata is renamed forward to the rotated key, the fresh session does not
-// inherit (and resume) the old CC conversation. Reflection still reaches the
-// old backend via the manager map, which is unaffected.
-func (m *DelegatedManager) ClearResumeID(sessionKey string) {
-	m.clearResumeID(sessionKey)
+// RemapSession moves the live backend (if any) and the saved CC resume ID
+// from oldKey to newKey. Used when a reflection branch adopts an expiring
+// session's backend: the branch drives the existing CC session — which holds
+// the conversation context in-process (or on disk via the resume ID) — while
+// the old key is left clean for a fresh backend on next contact.
+func (m *DelegatedManager) RemapSession(oldKey, newKey string) {
+	if oldKey == newKey || newKey == "" {
+		return
+	}
+	m.mu.Lock()
+	if mb, ok := m.backends[oldKey]; ok {
+		delete(m.backends, oldKey)
+		mb.sessionKey = newKey
+		m.backends[newKey] = mb
+		log.Infof("delegated", "backend remapped %s → %s", oldKey, newKey)
+	}
+	m.mu.Unlock()
+
+	if id := m.loadResumeID(oldKey); id != "" {
+		m.saveResumeID(newKey, id)
+		m.clearResumeID(oldKey)
+	}
 }
 
 // loadResumeID reads a saved CC session UUID from state.db.

@@ -10,33 +10,28 @@ import (
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
+	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/turn"
 	"foci/shared/prompts"
 )
 
-// mostRecentSessionKey returns the session key with the most recent user activity
-// across all platform connections for the agent. Returns "" if no active sessions.
-func mostRecentSessionKey(ag *agent.Agent, connMgr platform.ConnectionManager, agentID string) string {
-	if connMgr == nil {
+// defaultSessionKeyFor resolves an agent's default session through the ONE
+// routing oracle (route.Resolver → SessionIndex.DefaultSessionKeyForAgent:
+// is_default chat, else most-recently-active root). Every "no explicit
+// session named" path in the gateway resolves here so cron sends, restart
+// injections, warnings, and status all agree on the destination.
+// Returns "" when the agent has no sessions yet.
+func defaultSessionKeyFor(ag *agent.Agent, agentID string) string {
+	if ag == nil {
 		return ""
 	}
-	conns := connMgr.AllForAgent(agentID)
-	var bestKey string
-	var bestTime time.Time
-	for _, conn := range conns {
-		sk := conn.DefaultSessionKey()
-		if sk == "" {
-			continue
-		}
-		t := ag.LastUserMessageTime(sk)
-		if bestKey == "" || t.After(bestTime) {
-			bestKey = sk
-			bestTime = t
-		}
+	res, err := (&route.Resolver{Index: ag.SessionIndex}).Resolve(route.Target{Agent: agentID})
+	if err != nil {
+		return ""
 	}
-	return bestKey
+	return res.SessionKey
 }
 
 // newAsyncNotifier creates the async notifier callback for exec/tmux auto-background results.
@@ -58,7 +53,7 @@ func newAsyncNotifier(
 	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string) {
 		target := targetSession
 		if target == "" {
-			target = mostRecentSessionKey(getAgent(), connMgr, agentID)
+			target = defaultSessionKeyFor(getAgent(), agentID)
 		}
 		if trigger == "" {
 			trigger = "async_notify"
@@ -128,21 +123,18 @@ func newAsyncNotifier(
 			// Otherwise deliver the response to the target session's chat.
 			// Use targetAgentID for routing so cross-agent dispatches reach
 			// the target's bot (not the caller's first-primary fallback).
-			conn := connMgr.ForSessionOrPrimary(target, targetAgentID)
-
-			// Branch sessions without their own facet connection should not
-			// deliver replies to chat — they'd leak into the parent's chat.
-			// The response still gets written to the branch JSONL via HandleMessage.
-			sk, parseErr := session.ParseSessionKey(target)
-			isBranchWithoutConn := parseErr == nil && !sk.IsRoot() && connMgr.ForSession(target) == nil
+			// PolicyRootFallback: a branch session without its own facet
+			// connection is suppressed rather than leaked into the parent's
+			// chat; the response still lands in the branch JSONL.
+			conn, outcome := route.ConnFor(connMgr, targetAgentID, target, route.PolicyRootFallback)
 
 			notifyCtx := agent.WithTrigger(ctx, trigger)
-			if conn == nil || isBranchWithoutConn {
+			if conn == nil {
 				if err := targetAg.HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
 					log.Errorf(trigger, "error: %v", err)
 					return
 				}
-				if isBranchWithoutConn {
+				if outcome == route.DeliverySuppressed {
 					log.Debugf(trigger, "branch session %s has no dedicated connection, skipping platform delivery", target)
 				} else {
 					log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", targetAgentID, target)
@@ -195,14 +187,21 @@ func newSessionNotifyFn(
 				return
 			}
 
-			conn := connMgr.ForSessionOrPrimary(targetSessionKey, targetAgentID)
+			// PolicyRootFallback: same branch-suppression rule as the async
+			// notifier — a reply meant for a facet must not leak into the
+			// parent's chat via the primary fallback.
+			conn, outcome := route.ConnFor(connMgr, targetAgentID, targetSessionKey, route.PolicyRootFallback)
 			notifyCtx := agent.WithTrigger(ctx, "session_notify")
 			if conn == nil {
 				if err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, []string{message}, nil); err != nil {
 					log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
 					return
 				}
-				log.Warnf("session_notify", "no connection for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)
+				if outcome == route.DeliverySuppressed {
+					log.Debugf("session_notify", "branch session %s has no dedicated connection, skipping platform delivery", targetSessionKey)
+				} else {
+					log.Warnf("session_notify", "no connection for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)
+				}
 				return
 			}
 
@@ -232,7 +231,7 @@ func deliverInjectedTurn(
 	sessionKey string,
 	message string,
 ) {
-	conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+	conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
 	triggerCtx := agent.WithTrigger(ctx, trigger)
 	if conn == nil {
 		if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
@@ -241,6 +240,9 @@ func deliverInjectedTurn(
 		}
 		log.Warnf(trigger, "no connection for session %s agent %s, response not delivered", sessionKey, agentID)
 		return
+	}
+	if outcome == route.DeliveredViaPrimary {
+		log.Infof(trigger, "session %s has no live connection — delivering via agent %s primary", sessionKey, agentID)
 	}
 
 	// Typing indicator is driven by SessionSink on TurnStart /
@@ -292,7 +294,7 @@ func buildWakeScheduler(
 				// pick the most recently active session.
 				sk := sessionKey
 				if sk == "" {
-					sk = mostRecentSessionKey(getAgent(), connMgr, agentID)
+					sk = defaultSessionKeyFor(getAgent(), agentID)
 				}
 				if sk == "" {
 					log.Warnf("remind", "no session for agent %s, skipping", agentID)

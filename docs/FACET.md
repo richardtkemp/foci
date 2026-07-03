@@ -59,7 +59,7 @@ From the agent's perspective, a facet session is just another session. It has:
 - Its own compaction cycle
 - Its own tool call context
 
-The agent knows it's in a facet session via its session key (e.g., `clutch/c123/1709590000/b1709123456`).
+The agent knows it's in a facet session via its session key (e.g., `clutch/c123/b1709123456`).
 
 ## Display Settings
 

@@ -42,6 +42,8 @@ func cmdDebug(args []string) error {
 	switch subcmd {
 	case "session":
 		return cmdDebugSession(args[1:], configPath)
+	case "at":
+		return cmdDebugAt(args[1:], configPath)
 	case "rebuild-index":
 		return cmdDebugRebuildIndex(configPath)
 	case "pprof":
@@ -209,6 +211,79 @@ func cmdDebugSession(args []string, configPath string) error {
 
 // parseTimeArg parses a time argument as either an RFC3339 timestamp or a
 // relative duration like "1h", "30m", "2h30m" (interpreted as that duration ago).
+// cmdDebugAt answers "where is session <key>'s history at time <t>": prints
+// the JSONL file covering that moment (live file, or the earliest archive
+// rotated at-or-after it — provenance table first, filename stamps as
+// fallback) and the CC resume ID observed live at that moment, if any.
+func cmdDebugAt(args []string, configPath string) error {
+	if flagVal, rest := parseFlagValue(args, "config"); flagVal != "" {
+		configPath = flagVal
+		args = rest
+	}
+	if configPath == "" {
+		configPath = envDefault("", "FOCI_CONFIG")
+	}
+	if configPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve home dir: %w", err)
+		}
+		configPath = filepath.Join(home, "config", "foci.toml")
+	}
+	if len(args) < 2 {
+		return fmt.Errorf("usage: foci debug at <key> <time>  (time: RFC3339 or duration ago like \"1h\")")
+	}
+	keyArg, timeArg := args[0], args[1]
+
+	at, err := parseTimeArg(timeArg)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	store := session.NewStore(cfg.Sessions.Dir)
+	idx, err := session.OpenSessionIndexReadOnly(cfg.DataPath("state.db"))
+	if err != nil {
+		return fmt.Errorf("open session index: %w", err)
+	}
+	defer idx.Close() //nolint:errcheck
+
+	sessionKey, err := resolveSessionKey(idx, keyArg)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("session: %s\nat:      %s\n", sessionKey, at.Format(time.RFC3339))
+
+	// File covering that moment: provenance table, filename-stamp fallback,
+	// else the live file.
+	path, archivedAt, ok := idx.ArchiveFileAt(sessionKey, at)
+	source := "archive (recorded)"
+	if !ok {
+		path, archivedAt, ok = store.ArchiveFileAt(sessionKey, at)
+		source = "archive (filename stamp)"
+	}
+	if ok {
+		fmt.Printf("file:    %s\n         %s, archived %s\n", path, source, archivedAt.Format(time.RFC3339))
+	} else {
+		livePath, err := store.SessionPath(sessionKey)
+		if err != nil {
+			return fmt.Errorf("resolve live path: %w", err)
+		}
+		fmt.Printf("file:    %s (live)\n", livePath)
+	}
+
+	if id, observedAt, ok := idx.CCResumeAt(sessionKey, at); ok {
+		fmt.Printf("cc:      %s (observed %s)\n", id, observedAt.Format(time.RFC3339))
+	} else {
+		fmt.Printf("cc:      none observed at or before that time\n")
+	}
+	return nil
+}
+
 func parseTimeArg(s string) (time.Time, error) {
 	// Try RFC3339 first
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
@@ -280,12 +355,13 @@ func renderLine(line []byte, format outputFormat) string {
 }
 
 // resolveSessionKey resolves a user-provided key argument to a full session key.
-// Supports: bare agent name ("scout"), partial key ("scout/c123"), full key ("scout/c123/17095...").
-// Bare names and partial keys dispatch to SessionIndex.ResolveLooseKey (the same
-// resolver send_to_session uses); full keys (3+ segments) are returned as-is.
+// Supports: bare agent name ("scout") — resolved to the agent's default session
+// via SessionIndex.ResolveLooseKey (the same resolver send_to_session uses) —
+// and full session keys ("scout/c123", "scout/c123/b1709596800"), which are
+// returned as-is.
 func resolveSessionKey(idx *session.SessionIndex, keyArg string) (string, error) {
-	if strings.Count(keyArg, "/") >= 2 {
-		// Full key (3+ segments) → use directly.
+	if strings.Contains(keyArg, "/") {
+		// Full session key → use directly.
 		return keyArg, nil
 	}
 	if key := idx.ResolveLooseKey(keyArg); key != "" {
@@ -495,13 +571,17 @@ func debugUsage() {
 
 Subcommands:
   session <key>        Tail a session file with formatted output
+  at <key> <time>      Point-in-time lookup: which JSONL file (live or archive)
+                       holds the session's history at <time>, and which CC
+                       resume ID was live then. <time> is RFC3339 or a
+                       duration ago ("1h", "30m").
   rebuild-index        Rebuild session index from disk
   pprof on|off|status  Toggle or query the live /debug/pprof/* gate
 
 Session key formats:
-  scout                        Agent name (resolves to most recent active session)
-  scout/c5970082313            Partial key (resolves to latest version)
-  scout/c5970082313/1709590000 Full session key
+  scout                Agent name (resolves to the agent's default session)
+  scout/c5970082313    Full session key (chat)
+  scout/iresearch      Full session key (named independent)
 
 Flags:
   --config <path>    Config file path (default: ~/config/foci.toml)

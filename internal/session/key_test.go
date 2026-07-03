@@ -5,44 +5,61 @@ import (
 )
 
 func TestSessionKeyString(t *testing.T) {
-	// Proves that SessionKey.String() produces the correct slash-separated path
-	// for chat roots, independent roots, branch children, and collision suffixes.
+	// Proves that SessionKey.String() produces the correct slash-separated key
+	// for chat roots, independent roots, and child sessions.
 	tests := []struct {
 		name string
 		key  SessionKey
 		want string
 	}{
 		{
-			name: "chat with branch",
+			name: "chat root",
+			key: SessionKey{
+				AgentID: "main",
+				Type:    'c',
+				ID:      "123",
+			},
+			want: "main/c123",
+		},
+		{
+			name: "named independent root",
+			key: SessionKey{
+				AgentID: "main",
+				Type:    'i',
+				ID:      "work",
+			},
+			want: "main/iwork",
+		},
+		{
+			name: "anonymous independent root",
+			key: SessionKey{
+				AgentID: "main",
+				Type:    'i',
+				ID:      "1709596800",
+			},
+			want: "main/i1709596800",
+		},
+		{
+			name: "chat with branch child",
 			key: SessionKey{
 				AgentID:   "main",
 				Type:      'c',
 				ID:        "123",
-				VersionTS: 1709590000,
 				ChildType: 'b',
 				ChildTS:   1709596800,
 			},
-			want: "main/c123/1709590000/b1709596800",
+			want: "main/c123/b1709596800",
 		},
 		{
-			name: "independent root",
-			key: SessionKey{
-				AgentID:   "main",
-				Type:      'i',
-				ID:        "1709596800",
-				VersionTS: 1709596800,
-			},
-			want: "main/i1709596800/1709596800",
-		},
-		{
-			name: "chat root",
+			name: "independent spawn child",
 			key: SessionKey{
 				AgentID:   "main",
 				Type:      'c',
 				ID:        "123",
-				VersionTS: 1709590000,
+				ChildType: 'i',
+				ChildTS:   1709596801,
 			},
-			want: "main/c123/1709590000",
+			want: "main/c123/i1709596801",
 		},
 	}
 
@@ -57,9 +74,10 @@ func TestSessionKeyString(t *testing.T) {
 }
 
 func TestParseSessionKey(t *testing.T) {
-	// Proves that ParseSessionKey correctly round-trips all key formats including
-	// chat roots, independent roots, branch and independent children, collision
-	// suffixes, and rejects invalid input with an error.
+	// Proves that ParseSessionKey round-trips all valid key shapes (chat root,
+	// independent root, branch child, independent-spawn child) and rejects
+	// malformed input: too few/many segments, empty agent, unknown type runes,
+	// unknown child runes, and non-numeric child timestamps.
 	tests := []struct {
 		name    string
 		input   string
@@ -68,51 +86,96 @@ func TestParseSessionKey(t *testing.T) {
 	}{
 		{
 			name:  "chat root",
-			input: "main/c123/1709590000",
+			input: "main/c123",
 			want: SessionKey{
-				AgentID:   "main",
-				Type:      'c',
-				ID:        "123",
-				VersionTS: 1709590000,
+				AgentID: "main",
+				Type:    'c',
+				ID:      "123",
 			},
 		},
 		{
-			name:  "independent root",
-			input: "main/i1709596800/1709596800",
+			name:  "named independent root",
+			input: "main/iwork",
 			want: SessionKey{
-				AgentID:   "main",
-				Type:      'i',
-				ID:        "1709596800",
-				VersionTS: 1709596800,
+				AgentID: "main",
+				Type:    'i',
+				ID:      "work",
+			},
+		},
+		{
+			name:  "anonymous independent root",
+			input: "main/i1709596800",
+			want: SessionKey{
+				AgentID: "main",
+				Type:    'i',
+				ID:      "1709596800",
 			},
 		},
 		{
 			name:  "branch child",
-			input: "main/c123/1709590000/b1709596800",
+			input: "main/c123/b1709596800",
 			want: SessionKey{
 				AgentID:   "main",
 				Type:      'c',
 				ID:        "123",
-				VersionTS: 1709590000,
 				ChildType: 'b',
 				ChildTS:   1709596800,
 			},
 		},
 		{
-			name:  "independent child",
-			input: "main/c123/1709590000/i1709596801",
+			name:  "independent spawn child",
+			input: "main/c123/i1709596801",
 			want: SessionKey{
 				AgentID:   "main",
 				Type:      'c',
 				ID:        "123",
-				VersionTS: 1709590000,
 				ChildType: 'i',
 				ChildTS:   1709596801,
 			},
 		},
 		{
-			name:    "invalid format",
+			name:    "single segment",
 			input:   "invalid",
+			wantErr: true,
+		},
+		{
+			name:    "empty string",
+			input:   "",
+			wantErr: true,
+		},
+		{
+			name:    "too many segments (old versioned format)",
+			input:   "main/c123/1709590000/b1709596800",
+			wantErr: true,
+		},
+		{
+			name:    "empty agent ID",
+			input:   "/c123",
+			wantErr: true,
+		},
+		{
+			name:    "unknown type rune",
+			input:   "main/x123",
+			wantErr: true,
+		},
+		{
+			name:    "type segment too short",
+			input:   "main/c",
+			wantErr: true,
+		},
+		{
+			name:    "unknown child rune",
+			input:   "main/c123/x456",
+			wantErr: true,
+		},
+		{
+			name:    "child segment too short",
+			input:   "main/c123/b",
+			wantErr: true,
+		},
+		{
+			name:    "non-numeric child timestamp",
+			input:   "main/c123/babc",
 			wantErr: true,
 		},
 	}
@@ -166,25 +229,42 @@ func TestValidateSessionName(t *testing.T) {
 }
 
 func TestNamedIndependentSessionKey(t *testing.T) {
-	// Proves that NamedIndependentSessionKey returns a stable key for valid names
-	// and an error for traversal-bearing names, so request-controlled session names
-	// cannot escape the session directory via the key.
+	// Proves that NamedIndependentSessionKey returns a stable "agent/i<name>" key
+	// for valid names and an error for traversal-bearing names, so
+	// request-controlled session names cannot escape the session directory.
 	got, err := NamedIndependentSessionKey("main", "work")
 	if err != nil {
 		t.Fatalf("NamedIndependentSessionKey(valid) unexpected error: %v", err)
 	}
-	if got != "main/iwork/0" {
-		t.Errorf("NamedIndependentSessionKey = %q, want %q", got, "main/iwork/0")
+	if got != "main/iwork" {
+		t.Errorf("NamedIndependentSessionKey = %q, want %q", got, "main/iwork")
 	}
 	// Same inputs must yield the same key (deterministic).
 	again, _ := NamedIndependentSessionKey("main", "work")
 	if again != got {
 		t.Errorf("NamedIndependentSessionKey not deterministic: %q != %q", again, got)
 	}
-	for _, bad := range []string{"../../../../other/c123/0", "a/b", "..", ""} {
+	for _, bad := range []string{"../../../../other/c123", "a/b", "..", ""} {
 		if _, err := NamedIndependentSessionKey("main", bad); err == nil {
 			t.Errorf("NamedIndependentSessionKey(%q) should return error", bad)
 		}
+	}
+}
+
+func TestNewChatSessionKey(t *testing.T) {
+	// Proves that NewChatSessionKey is deterministic — the same (agentID, chatID)
+	// always yields the same "agent/c<id>" key, with no timestamp component. This
+	// is the core of the stable-identity design: chat keys can be derived anywhere
+	// without a lookup.
+	got := NewChatSessionKey("main", 123)
+	if got != "main/c123" {
+		t.Errorf("NewChatSessionKey = %q, want %q", got, "main/c123")
+	}
+	if again := NewChatSessionKey("main", 123); again != got {
+		t.Errorf("NewChatSessionKey not deterministic: %q != %q", again, got)
+	}
+	if neg := NewChatSessionKey("main", -456); neg != "main/c-456" {
+		t.Errorf("NewChatSessionKey(negative) = %q, want %q", neg, "main/c-456")
 	}
 }
 
@@ -192,10 +272,9 @@ func TestSessionKeyBranch(t *testing.T) {
 	// Proves that Branch() returns a child key that inherits the parent's identity
 	// fields, sets ChildType to 'b', and generates a non-zero ChildTS timestamp.
 	parent := SessionKey{
-		AgentID:   "main",
-		Type:      'c',
-		ID:        "123",
-		VersionTS: 1709590000,
+		AgentID: "main",
+		Type:    'c',
+		ID:      "123",
 	}
 
 	child := parent.Branch()
@@ -209,9 +288,6 @@ func TestSessionKeyBranch(t *testing.T) {
 	if child.ID != parent.ID {
 		t.Errorf("Branch() ID = %v, want %v", child.ID, parent.ID)
 	}
-	if child.VersionTS != parent.VersionTS {
-		t.Errorf("Branch() VersionTS = %v, want %v", child.VersionTS, parent.VersionTS)
-	}
 	if child.ChildType != 'b' {
 		t.Errorf("Branch() ChildType = %v, want 'b'", child.ChildType)
 	}
@@ -220,10 +296,34 @@ func TestSessionKeyBranch(t *testing.T) {
 	}
 }
 
+func TestSessionKeyRoot(t *testing.T) {
+	// Proves that Root() strips the child suffix from a child key (yielding the
+	// root the child lives under) and returns a root key unchanged. Branching from
+	// a branch mints a sibling under the same root, so Root() of any child is the
+	// shared root.
+	branch := SessionKey{AgentID: "main", Type: 'c', ID: "123", ChildType: 'b', ChildTS: 1709596800}
+	if got := branch.Root().String(); got != "main/c123" {
+		t.Errorf("Root() of branch = %q, want %q", got, "main/c123")
+	}
+	if branch.Root().IsRoot() != true {
+		t.Error("Root() result should report IsRoot")
+	}
+
+	root := SessionKey{AgentID: "main", Type: 'i', ID: "work"}
+	if got := root.Root(); got != root {
+		t.Errorf("Root() of root = %+v, want unchanged %+v", got, root)
+	}
+
+	// Branch-of-branch mints a sibling under the same root.
+	sibling := branch.Branch()
+	if sibling.Root() != branch.Root() {
+		t.Errorf("branch-of-branch root = %+v, want same root %+v", sibling.Root(), branch.Root())
+	}
+}
+
 func TestChatIDFromKey(t *testing.T) {
-	// Verifies that ChatIDFromKey extracts chat IDs from
-	// slash-separated session key formats, including branch keys which
-	// preserve the root chat type.
+	// Verifies that ChatIDFromKey extracts chat IDs from slash-separated session
+	// key strings, including branch keys which preserve the root chat type.
 	tests := []struct {
 		name string
 		key  string
@@ -231,22 +331,22 @@ func TestChatIDFromKey(t *testing.T) {
 	}{
 		{
 			name: "chat root",
-			key:  "main/c123456/1709590000",
+			key:  "main/c123456",
 			want: 123456,
 		},
 		{
 			name: "chat branch",
-			key:  "main/c123456/1709590000/b1709596800",
+			key:  "main/c123456/b1709596800",
 			want: 123456,
 		},
 		{
 			name: "independent root",
-			key:  "main/i1709596800/1709596800",
+			key:  "main/i1709596800",
 			want: 0,
 		},
 		{
 			name: "independent branch",
-			key:  "main/i1709596800/1709596800/b1709596900",
+			key:  "main/i1709596800/b1709596900",
 			want: 0,
 		},
 		{
@@ -270,99 +370,24 @@ func TestChatIDFromKey(t *testing.T) {
 	}
 }
 
-func TestSessionKeyBase(t *testing.T) {
-	// Proves that SessionKeyBase extracts the stable {agentID}/{type}{id} prefix
-	// regardless of version timestamp, branch suffix, or collision counter.
-	tests := []struct {
-		name string
-		key  string
-		want string
-	}{
-		{name: "root key", key: "main/c123/1700000000", want: "main/c123"},
-		{name: "rotated key", key: "main/c123/1700100000", want: "main/c123"},
-		{name: "branch key", key: "main/c123/1700000000/b1700050000", want: "main/c123"},
-		{name: "independent", key: "main/i1700000000/1700000000", want: "main/i1700000000"},
-		{name: "empty", key: "", want: ""},
-		{name: "single segment", key: "main", want: "main"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := SessionKeyBase(tt.key); got != tt.want {
-				t.Errorf("SessionKeyBase(%q) = %q, want %q", tt.key, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestSessionInFlightKey(t *testing.T) {
-	// Proves that SessionInFlightKey collapses version rotation (like
-	// SessionKeyBase) but PRESERVES the child suffix, so a facet/branch tracks
-	// in-flight state separately from its parent root (TODO #719). Also proves
-	// idempotency: an already-derived identity is returned unchanged, never
-	// re-collapsed onto the root.
-	tests := []struct {
-		name string
-		key  string
-		want string
-	}{
-		{name: "root key", key: "main/c123/1700000000", want: "main/c123"},
-		{name: "rotated root shares identity", key: "main/c123/1700100000", want: "main/c123"},
-		{name: "branch preserves child", key: "main/c123/1700000000/b1700050000", want: "main/c123/b1700050000"},
-		{name: "branch from rotated version, same child", key: "main/c123/1700100000/b1700050000", want: "main/c123/b1700050000"},
-		{name: "distinct child distinct identity", key: "main/c123/1700000000/b1700099999", want: "main/c123/b1700099999"},
-		{name: "independent root", key: "main/i1700000000/1700000000", want: "main/i1700000000"},
-		// Idempotency: derived identities don't parse as full keys, returned as-is.
-		{name: "idempotent root identity", key: "main/c123", want: "main/c123"},
-		{name: "idempotent branch identity", key: "main/c123/b1700050000", want: "main/c123/b1700050000"},
-		{name: "empty", key: "", want: ""},
-		{name: "single segment", key: "main", want: "main"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := SessionInFlightKey(tt.key); got != tt.want {
-				t.Errorf("SessionInFlightKey(%q) = %q, want %q", tt.key, got, tt.want)
-			}
-			// Idempotency: feeding the result back must not change it.
-			if got := SessionInFlightKey(tt.want); got != tt.want {
-				t.Errorf("SessionInFlightKey not idempotent: SessionInFlightKey(%q) = %q, want %q", tt.want, got, tt.want)
-			}
-		})
-	}
-
-	// A facet and its parent root must NOT share an in-flight identity — the
-	// core #719 invariant.
-	root := "main/c123/1700000000"
-	facet := "main/c123/1700000000/b1700050000"
-	if SessionInFlightKey(root) == SessionInFlightKey(facet) {
-		t.Errorf("facet %q and root %q must have distinct in-flight identities, both got %q",
-			facet, root, SessionInFlightKey(root))
-	}
-	// But a root-injected periodic turn (runs under the parent key, no child)
-	// MUST share the root identity so the #760/#767 gates still see it.
-	if SessionInFlightKey(root) != SessionKeyBase(root) {
-		t.Errorf("root in-flight identity %q must equal SessionKeyBase %q (root-injected turns gate correctly)",
-			SessionInFlightKey(root), SessionKeyBase(root))
-	}
-}
-
 func TestAgentIDFromKey(t *testing.T) {
 	// Proves that AgentIDFromKey returns the first segment of a session key,
-	// or the empty string for malformed input. Mirrors ChatIDFromKey/
-	// SessionKeyBase coverage. Used by telegram/discord providers when
-	// resuming a saved session — they only need the agent ID, not the full
-	// parse, so failing soft (return "" on malformed input) matches the
-	// pre-existing extractAgentID helper this function replaces.
+	// or the empty string for malformed input. Mirrors ChatIDFromKey coverage.
+	// Used by telegram/discord providers when resuming a saved session — they
+	// only need the agent ID, not the full parse, so failing soft (return "" on
+	// malformed input) matches the pre-existing extractAgentID helper this
+	// function replaces.
 	tests := []struct {
 		name string
 		key  string
 		want string
 	}{
-		{name: "chat root", key: "main/c123/1700000000", want: "main"},
-		{name: "branch", key: "main/c123/1700000000/b1700050000", want: "main"},
-		{name: "independent", key: "clutch/i1700000000/1700000000", want: "clutch"},
+		{name: "chat root", key: "main/c123", want: "main"},
+		{name: "branch", key: "main/c123/b1700050000", want: "main"},
+		{name: "independent", key: "clutch/i1700000000", want: "clutch"},
 		{name: "empty string", key: "", want: ""},
 		{name: "no separator", key: "main", want: ""},
-		{name: "leading slash", key: "/main/c123/1700000000", want: ""},
+		{name: "leading slash", key: "/main/c123", want: ""},
 		{name: "just slash", key: "/", want: ""},
 	}
 	for _, tt := range tests {

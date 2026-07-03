@@ -18,6 +18,8 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/platform"
+	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/voice"
@@ -115,34 +117,53 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 	return resolveAgent, gate
 }
 
-// resolveSendSession maps the /send `session` selector to a session key. An
-// existing named independent session wins; else a chat alias; else a new named
-// independent session (prior behaviour). Errors only when the selector is neither
-// a valid session name nor a known alias.
-func resolveSendSession(idx *session.SessionIndex, agentID, sel string) (string, error) {
-	named, nameErr := session.NamedIndependentSessionKey(agentID, sel)
-	if idx == nil {
-		if nameErr != nil {
-			return "", fmt.Errorf("invalid session name: %w", nameErr)
+// resolveTargetSession resolves an endpoint's (agent, session-selector) pair
+// through the single route.Resolver ladder, writing the appropriate HTTP error
+// on failure. Every endpoint that takes a session selector resolves here, so
+// /send, /wake, /command, and /webhook behave identically: exact key → named
+// session → chat alias → create-named; empty selector → the agent's default
+// session. Returns ok=false after an error response has been written.
+func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, selector, policy, endpoint string) (route.Resolution, route.Receipt, bool) {
+	t := route.Target{Agent: agentID, Rest: selector, Create: true, Policy: route.PolicyFallback}
+	if strings.Contains(selector, "?") {
+		// Selector carries embedded params (create=/policy=) — parse the
+		// full canonical target form.
+		parsed, err := route.ParseTarget(agentID + "/" + selector)
+		if err != nil {
+			log.Warnf("http", "POST %s: %v", endpoint, err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return route.Resolution{}, route.Receipt{}, false
 		}
-		return named, nil
+		t = parsed
 	}
-	if nameErr == nil {
-		if _, err := idx.Get(named); err == nil {
-			return named, nil
+	if policy != "" {
+		// An explicit request-level policy field overrides.
+		p, err := route.ParsePolicy(policy)
+		if err != nil {
+			log.Warnf("http", "POST %s: %v", endpoint, err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return route.Resolution{}, route.Receipt{}, false
 		}
+		t.Policy = p
 	}
-	alias, aliasErr := idx.ResolveChatAlias(agentID, sel)
+	res, err := (&route.Resolver{Index: d.sessionIndex}).Resolve(t)
+	if err == nil {
+		rcpt := res.ReceiptFor(t)
+		if t.Policy != route.PolicyFallback {
+			rcpt.Policy = string(t.Policy)
+		}
+		return res, rcpt, true
+	}
+	log.Warnf("http", "POST %s: %v", endpoint, err)
 	switch {
-	case aliasErr == nil:
-		return alias, nil
-	case errors.Is(aliasErr, session.ErrAliasAmbiguous):
-		return "", fmt.Errorf("chat alias %q matches multiple chats — rename to disambiguate", sel)
-	case nameErr == nil:
-		return named, nil
+	case errors.Is(err, route.ErrNoSession):
+		http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+	case errors.Is(err, session.ErrAliasAmbiguous):
+		http.Error(w, fmt.Sprintf("chat alias %q matches multiple chats — rename to disambiguate", selector), http.StatusConflict)
 	default:
-		return "", fmt.Errorf("invalid session name / unknown alias %q: %w", sel, nameErr)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
+	return route.Resolution{}, route.Receipt{}, false
 }
 
 // handleSend returns the handler for POST /send.
@@ -155,6 +176,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		var req struct {
 			Agent          string `json:"agent"`
 			Session        string `json:"session"`
+			Policy         string `json:"policy"` // strict | fallback | broadcast (delivery policy)
 			Text           string `json:"text"`
 			Model          string `json:"model"`
 			IfUserActive   string `json:"if_user_active"`
@@ -183,27 +205,13 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// Resolve session before gating so the activity gate can consult
 		// last_activity / IsTurnInFlight for the session this request
 		// actually targets (TODO #753 — per-session granularity).
-		sessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
-		if req.Session != "" {
-			sk, err := resolveSendSession(d.sessionIndex, inst.id, req.Session)
-			if err != nil {
-				log.Warnf("http", "POST /send: %v", err)
-				status := http.StatusBadRequest
-				if errors.Is(err, session.ErrAliasAmbiguous) {
-					status = http.StatusConflict
-				}
-				http.Error(w, err.Error(), status)
-				return
-			}
-			sessionKey = sk
-		}
-		if sessionKey == "" {
-			log.Warnf("http", "POST /send: no default session for agent %q", inst.id)
-			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+		res, rcpt, ok := resolveTargetSession(d, w, inst.id, req.Session, req.Policy, "/send")
+		if !ok {
 			return
 		}
+		sessionKey := res.SessionKey
 
-		sessionBase := session.SessionKeyBase(sessionKey)
+		sessionBase := sessionKey
 		if !gate(w, activityGateInputs{
 			AgentID:        inst.id,
 			SessionBase:    sessionBase,
@@ -231,14 +239,14 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			cmdReq := command.RequestFromText(req.Text, sessionKey, "", 0)
 			cmdCtx := tools.WithSessionKey(d.ctx, sessionKey)
 			if result, ok, _ := inst.cmds.Dispatch(cmdCtx, cmdReq, inst.cc); ok {
-				writeJSONResponse(w, result.Text)
+				writeJSONReceipt(w, result.Text, rcpt)
 				return
 			}
 		}
 
 		sendCtx := agent.WithTrigger(d.ctx, "user")
 		if req.Async {
-			asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, req.Text, "http", false)
+			asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, req.Text, "http", false, res.Policy, rcpt)
 			return
 		}
 
@@ -248,7 +256,14 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		writeJSONResponse(w, resp)
+		// PolicyBroadcast: the caller gets the response in the body AND every
+		// live surface for the agent gets it delivered.
+		if res.Policy == route.PolicyBroadcast {
+			if cleaned := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(resp)); cleaned != "" {
+				broadcastResponse(d.connMgr, inst.id, sessionKey, cleaned, "http")
+			}
+		}
+		writeJSONReceipt(w, resp, rcpt)
 	}
 }
 
@@ -266,7 +281,7 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
 			return
 		}
-		sk := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
+		sk := defaultSessionKey(d, inst.id)
 		cmdReq := command.RequestFromText("/status", sk, "", 0)
 		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(r.Context(), sk), cmdReq, inst.cc)
 		if !ok {
@@ -307,14 +322,14 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
-		sk := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
+		sk := defaultSessionKey(d, inst.id)
 
 		// Activity gate (TODO #753): a gated command — e.g. an overnight
 		// `/reset` cron with --if-inactive — is skipped when the target
 		// session ran a turn recently or has one in flight. Gating here, on
 		// the session this command actually targets, keeps it from
 		// interrupting active or mid-turn work.
-		sessionBase := session.SessionKeyBase(sk)
+		sessionBase := sk
 		if !gate(w, activityGateInputs{
 			AgentID:        inst.id,
 			SessionBase:    sessionBase,
@@ -393,26 +408,16 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		}
 
 		// Resolve parent session before gating so the activity gate can
-		// consult the parent's last_activity / IsTurnInFlight. Branches
-		// share the parent's SessionKeyBase, so a turn running in any
-		// branch correctly registers as in-flight under the parent.
-		parentKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
-		if req.Session != "" {
-			pk, err := session.NamedIndependentSessionKey(inst.id, req.Session)
-			if err != nil {
-				log.Warnf("wake", "POST /wake: %v", err)
-				http.Error(w, fmt.Sprintf("invalid session name: %v", err), http.StatusBadRequest)
-				return
-			}
-			parentKey = pk
-		}
-		if parentKey == "" {
-			log.Warnf("wake", "no default session for agent %q, skipping", inst.id)
-			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+		// consult the parent's last_activity / IsTurnInFlight. Branch turns
+		// record last_activity against their parent root, so a turn running
+		// in any branch correctly registers as activity under the parent.
+		wakeRes, wakeRcpt, ok := resolveTargetSession(d, w, inst.id, req.Session, "", "/wake")
+		if !ok {
 			return
 		}
+		parentKey := wakeRes.SessionKey
 
-		parentBase := session.SessionKeyBase(parentKey)
+		parentBase := parentKey
 		if !gate(w, activityGateInputs{
 			AgentID:        inst.id,
 			SessionBase:    parentBase,
@@ -443,7 +448,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			}
 			sendCtx := agent.WithTrigger(d.ctx, "wake")
 			if req.Async {
-				asyncDispatch(w, inst, d.connMgr, sendCtx, parentKey, req.Text, "wake", req.Silent)
+				asyncDispatch(w, inst, d.connMgr, sendCtx, parentKey, req.Text, "wake", req.Silent, route.PolicyFallback, wakeRcpt)
 				return
 			}
 			resp, err := runAgentBuffered(sendCtx, inst.ag, parentKey, req.Text)
@@ -452,7 +457,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
-			writeJSONResponse(w, resp)
+			writeJSONReceipt(w, resp, wakeRcpt)
 			return
 		}
 
@@ -484,7 +489,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		}
 
 		if req.Async {
-			asyncDispatch(w, inst, d.connMgr, wakeCtx, branchKey, req.Text, "wake", req.Silent)
+			asyncDispatch(w, inst, d.connMgr, wakeCtx, branchKey, req.Text, "wake", req.Silent, route.PolicyFallback, route.Receipt{SessionKey: branchKey, Via: "branch"})
 			return
 		}
 
@@ -494,7 +499,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		writeJSONResponse(w, resp)
+		writeJSONReceipt(w, resp, route.Receipt{SessionKey: branchKey, Via: "branch"})
 	}
 }
 
@@ -603,23 +608,13 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 
 		// Resolve session before gating so the activity gate can consult
 		// last_activity / IsTurnInFlight for the targeted session.
-		webhookSessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
-		if s := q.Get("session"); s != "" {
-			wk, err := session.NamedIndependentSessionKey(inst.id, s)
-			if err != nil {
-				log.Warnf("http", "POST /webhook: %v", err)
-				http.Error(w, fmt.Sprintf("invalid session name: %v", err), http.StatusBadRequest)
-				return
-			}
-			webhookSessionKey = wk
-		}
-		if webhookSessionKey == "" {
-			log.Warnf("http", "POST /webhook: no default session for agent %q", inst.id)
-			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+		webhookRes, webhookRcpt, ok := resolveTargetSession(d, w, inst.id, q.Get("session"), "", "/webhook")
+		if !ok {
 			return
 		}
+		webhookSessionKey := webhookRes.SessionKey
 
-		webhookSessionBase := session.SessionKeyBase(webhookSessionKey)
+		webhookSessionBase := webhookSessionKey
 		if !gate(w, activityGateInputs{
 			AgentID:        inst.id,
 			SessionBase:    webhookSessionBase,
@@ -673,7 +668,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		sendCtx := agent.WithTrigger(d.ctx, "webhook")
 		sync := q.Get("sync") == "true"
 		if !sync {
-			asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, combined, "http", false)
+			asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, combined, "http", false, route.PolicyFallback, webhookRcpt)
 			return
 		}
 
@@ -683,7 +678,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		writeJSONResponse(w, resp)
+		writeJSONReceipt(w, resp, webhookRcpt)
 	}
 }
 

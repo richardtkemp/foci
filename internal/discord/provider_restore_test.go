@@ -23,14 +23,14 @@ func TestRestoreFacetSessions(t *testing.T) {
 	sessions := session.NewStore(t.TempDir())
 
 	// A live session for facet bot fb1 and a dead mapping for fb2.
-	liveKey := "a/c42/123"
+	liveKey := "a/c42/b123"
 	if err := sessions.TestAppend(liveKey, provider.Message{Role: "user"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := idx.SetAgentMetadata("_system", "discord_facet:fb1", liveKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.SetAgentMetadata("_system", "discord_facet:fb2", "a/c99/dead"); err != nil {
+	if err := idx.SetAgentMetadata("_system", "discord_facet:fb2", "a/c99/b999"); err != nil {
 		t.Fatal(err)
 	}
 

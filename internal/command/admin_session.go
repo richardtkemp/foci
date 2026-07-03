@@ -91,7 +91,7 @@ func ResetCommand() *Command {
 		if sk == "" {
 			return Response{}, fmt.Errorf("no active session to reset")
 		}
-		if _, err := cc.Agent.ResetSession(ctx, sk); err != nil {
+		if err := cc.Agent.ResetSession(ctx, sk); err != nil {
 			return Response{}, err
 		}
 		if cc.Agent.DelegatedManager != nil {
@@ -105,7 +105,7 @@ func ResetCommand() *Command {
 		if sk == "" {
 			return Response{}, fmt.Errorf("no active session to reset")
 		}
-		if _, err := cc.Agent.ResetSessionHard(ctx, sk); err != nil {
+		if err := cc.Agent.ResetSessionHard(ctx, sk); err != nil {
 			return Response{}, err
 		}
 		return Response{Text: "Session reset (hard) — turn cancelled, no memories saved."}, nil

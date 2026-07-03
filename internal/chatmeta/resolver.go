@@ -1,68 +1,57 @@
-// Package chatmeta provides shared session key management logic used by
-// platform-specific bot implementations (telegram, discord, etc.).
+// Package chatmeta provides shared per-chat metadata logic used by
+// platform-specific bot implementations (telegram, discord, app).
 //
-// The Resolver handles looking up, creating, persisting, and rotating
-// per-chat session keys via a platform.SessionIndex backend. Each platform
-// bot embeds or holds a *Resolver and delegates session key operations to it.
+// Session keys are deterministic (session.NewChatSessionKey), so the Resolver
+// no longer stores keys — its job is registering which platform owns each chat
+// (the routing oracle behind SessionIndex.PlatformForChat) and handling
+// per-chat metadata like usernames and the default-chat flag.
 //
 // All Resolver methods are nil-receiver safe: calling on a nil *Resolver
 // returns zero values without panicking.
 package chatmeta
 
 import (
+	"sync"
+
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 )
 
-// Resolver manages per-chat session keys backed by a platform.SessionIndex.
+// Resolver manages per-chat metadata backed by a platform.SessionIndex.
 // All methods are safe to call on a nil receiver or when Index is nil.
 type Resolver struct {
 	Index        platform.SessionIndex // may be nil (no persistence)
 	AgentID      string
 	PlatformName string
 	Logger       func() *log.ComponentLogger // lazy logger (borrows the bot's logger)
+
+	registered sync.Map // chatID → struct{}: chats already registered this process
 }
 
-// SessionKeyForChat returns the stable session key for a chat ID.
-// Looks up the persisted key first; creates and persists a new one if none exists.
+// SessionKeyForChat returns the stable session key for a chat ID and records
+// the (agent, platform, chat) association on first contact so outbound routing
+// can find the owning platform (SessionIndex.PlatformForChat).
 func (r *Resolver) SessionKeyForChat(chatID int64) string {
 	if r == nil {
 		return session.NewChatSessionKey("", chatID)
 	}
-
-	// Check DB for existing key.
-	if r.Index != nil && r.AgentID != "" {
-		if key, err := r.Index.GetChatMetadata(r.AgentID, r.PlatformName, chatID, "session_key"); err == nil && key != "" {
-			return key
-		}
-	}
-
-	// No persisted key -- generate and persist.
-	key := session.NewChatSessionKey(r.AgentID, chatID)
-	if r.Index != nil && r.AgentID != "" {
-		if err := r.Index.SetChatMetadata(r.AgentID, r.PlatformName, chatID, "session_key", key); err != nil {
-			r.Logger().Errorf("persist session key for chat %d: %v", chatID, err)
-		} else {
-			r.Logger().Infof("persisted new session key for chat %d: %s", chatID, key)
-		}
-	}
-
-	return key
+	r.RegisterChat(chatID)
+	return session.NewChatSessionKey(r.AgentID, chatID)
 }
 
-// UpdateSessionKey updates the persisted session key for a chat.
-// Called when a session key is rotated (compaction, /reset).
-func (r *Resolver) UpdateSessionKey(chatID int64, newKey string) {
-	if r == nil {
+// RegisterChat persists the platform-ownership row for a chat. Idempotent and
+// cached: only the first call per chat per process hits the database.
+func (r *Resolver) RegisterChat(chatID int64) {
+	if r == nil || r.Index == nil || r.AgentID == "" || r.PlatformName == "" {
 		return
 	}
-	if r.Index != nil && r.AgentID != "" {
-		if err := r.Index.SetChatMetadata(r.AgentID, r.PlatformName, chatID, "session_key", newKey); err != nil {
-			r.Logger().Errorf("update session key for chat %d: %v", chatID, err)
-		} else {
-			r.Logger().Infof("rotated session key for chat %d: %s", chatID, newKey)
-		}
+	if _, seen := r.registered.LoadOrStore(chatID, struct{}{}); seen {
+		return
+	}
+	if err := r.Index.SetChatMetadata(r.AgentID, r.PlatformName, chatID, "registered", "true"); err != nil {
+		r.Logger().Errorf("register chat %d: %v", chatID, err)
+		r.registered.Delete(chatID) // retry on next contact
 	}
 }
 

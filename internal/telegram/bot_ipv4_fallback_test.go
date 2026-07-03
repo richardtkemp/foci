@@ -173,7 +173,7 @@ func TestRevertToDualStack_ClearsLatchAndCycles(t *testing.T) {
 
 // A test-constructed bot with no transport wiring must not panic on revert.
 func TestRevertToDualStack_NilSafe(t *testing.T) {
-	b := &Bot{} // forceIPv4 and transport both nil
+	b := &Bot{}            // forceIPv4 and transport both nil
 	b.revertToDualStack(1) // must not panic
 	if b.ipv4Latched() {
 		t.Fatal("revert on nil-wired bot must stay not latched")

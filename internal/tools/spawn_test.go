@@ -165,7 +165,7 @@ func TestSpawnInheritSetsNoCompact(t *testing.T) {
 	}
 	sem := make(chan struct{}, 2)
 
-	ctx := WithSessionKey(context.Background(), "test/c123/456")
+	ctx := WithSessionKey(context.Background(), "test/c123")
 
 	result, err := spawnInherit(ctx, deps, func() SpawnAgent { return agent }, sem, "test prompt", 5*time.Second)
 	if err != nil {

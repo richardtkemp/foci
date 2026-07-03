@@ -32,7 +32,7 @@ func TestLoginCommand_Starts(t *testing.T) {
 			return true
 		},
 	}}
-	resp, err := cmd.Execute(context.Background(), Request{SessionKey: "clutch/c123/456"}, cc)
+	resp, err := cmd.Execute(context.Background(), Request{SessionKey: "clutch/c123"}, cc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,8 +41,8 @@ func TestLoginCommand_Starts(t *testing.T) {
 	}
 	// The triggering session key must be threaded through so the login URL is
 	// delivered to the chat that ran /login (#843).
-	if gotKey != "clutch/c123/456" {
-		t.Errorf("session key = %q, want %q", gotKey, "clutch/c123/456")
+	if gotKey != "clutch/c123" {
+		t.Errorf("session key = %q, want %q", gotKey, "clutch/c123")
 	}
 	if !strings.Contains(resp.Text, "Re-login started") {
 		t.Errorf("response = %q, want started message", resp.Text)

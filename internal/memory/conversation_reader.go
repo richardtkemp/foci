@@ -82,7 +82,7 @@ func (cr *ConversationReader) ReadContext(session string, rowID int64, lines int
 }
 
 // sessionAgent extracts the agent ID from a session key.
-// Session keys use slash-separated format: "{agentID}/{typeID}/{versionTS}".
+// Session keys use slash-separated format: "{agentID}/{type}{id}[/{child}]".
 func sessionAgent(session string) string {
 	if idx := strings.IndexByte(session, '/'); idx > 0 {
 		return session[:idx]

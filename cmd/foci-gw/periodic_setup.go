@@ -117,7 +117,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	warningActivityThreshold, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveActivityThreshold)
 	agentID := acfg.ID
 	lastUserMsgFn := func() time.Time {
-		sk := mostRecentSessionKey(inst.ag, p.connMgr, agentID)
+		sk := defaultSessionKeyFor(inst.ag, agentID)
 		if sk == "" {
 			return time.Time{}
 		}
@@ -137,14 +137,14 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			// Defer proactive warnings only while the session they'd be injected
 			// into (the most recent one) is mid-turn — not agent-wide.
 			IsProcessingFn: func() bool {
-				sk := mostRecentSessionKey(inst.ag, p.connMgr, agentID)
-				return sk != "" && inst.ag.IsTurnInFlight(session.SessionKeyBase(sk))
+				sk := defaultSessionKeyFor(inst.ag, agentID)
+				return sk != "" && inst.ag.IsTurnInFlight(sk)
 			},
 			FormatFn: func(body string) string {
 				return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
 			},
 			DispatchFn: func(warningText string) {
-				sk := mostRecentSessionKey(inst.ag, p.connMgr, agentID)
+				sk := defaultSessionKeyFor(inst.ag, agentID)
 				if sk == "" {
 					log.Warnf("warning", "[%s] no active session for proactive warning dispatch", agentID)
 					return

@@ -49,7 +49,7 @@ func TestConversationReaderReadContext(t *testing.T) {
 	// centered on the target rowID within the same session.
 	t.Parallel()
 	dir := t.TempDir()
-	session := "agent1/c100/1000"
+	session := "agent1/c100"
 	texts := []string{
 		"msg one",
 		"msg two",
@@ -101,7 +101,7 @@ func TestConversationReaderEdgeCases(t *testing.T) {
 	// and requesting more lines than available.
 	t.Parallel()
 	dir := t.TempDir()
-	session := "agent1/c100/1000"
+	session := "agent1/c100"
 	texts := []string{"alpha", "beta", "gamma"}
 	dbPath := seedConversationDB(t, dir, session, texts)
 
@@ -151,7 +151,7 @@ func TestConversationReaderIsolatesSession(t *testing.T) {
 
 	// Insert interleaved messages from two sessions
 	base := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
-	sessions := []string{"agent1/c100/1000", "agent1/c200/2000"}
+	sessions := []string{"agent1/c100", "agent1/c200"}
 	for i := 0; i < 6; i++ {
 		sess := sessions[i%2]
 		ts := base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339Nano)
@@ -166,12 +166,12 @@ func TestConversationReaderIsolatesSession(t *testing.T) {
 	cr := NewConversationReader(map[string]string{"agent1": dbPath})
 
 	// Should only get messages from session c100
-	msgs, err := cr.ReadContext("agent1/c100/1000", 1, 10)
+	msgs, err := cr.ReadContext("agent1/c100", 1, 10)
 	if err != nil {
 		t.Fatalf("ReadContext: %v", err)
 	}
 	for _, m := range msgs {
-		if m.Session != "agent1/c100/1000" {
+		if m.Session != "agent1/c100" {
 			t.Errorf("got message from wrong session: %q", m.Session)
 		}
 	}
@@ -197,7 +197,7 @@ func TestConversationReaderUnknownAgent(t *testing.T) {
 	dbPath := filepath.Join(dir, "conversation.db")
 	os.WriteFile(dbPath, nil, 0644) // dummy file
 	cr := NewConversationReader(map[string]string{"known": dbPath})
-	_, err := cr.ReadContext("unknown/c100/1000", 1, 10)
+	_, err := cr.ReadContext("unknown/c100", 1, 10)
 	if err == nil {
 		t.Error("expected error for unknown agent")
 	}

@@ -219,7 +219,7 @@ func commandTestContext() command.CommandContext {
 // platform message.
 func agentEnvelope(original any, chatID int64) agent.Envelope {
 	return agent.Envelope{
-		SessionKey: fmt.Sprintf("a/c%d/123", chatID),
+		SessionKey: fmt.Sprintf("a/c%d", chatID),
 		ChatID:     chatID,
 		Original:   original,
 	}

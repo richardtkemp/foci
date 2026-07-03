@@ -158,7 +158,7 @@ func TestSpawnContextClone(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
+	ctx := WithSessionKey(context.Background(), "test/imain")
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do the research task",
@@ -174,16 +174,16 @@ func TestSpawnContextClone(t *testing.T) {
 	if !strings.Contains(result.Text, "Spawn started in background") {
 		t.Errorf("expected async ack, got %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "Branch: test/imain/1000000000/b") {
+	if !strings.Contains(result.Text, "Branch: test/imain/b") {
 		t.Errorf("expected branch key in ack, got %q", result.Text)
 	}
 
 	// Should have created a branch
-	if mockSessions.parentKey != "test/imain/1000000000" {
-		t.Errorf("parent = %q, want test/imain/1000000000", mockSessions.parentKey)
+	if mockSessions.parentKey != "test/imain" {
+		t.Errorf("parent = %q, want test/imain", mockSessions.parentKey)
 	}
-	if !strings.HasPrefix(mockSessions.branchKey, "test/imain/1000000000/b") {
-		t.Errorf("branch = %q, want prefix test/imain/1000000000/b", mockSessions.branchKey)
+	if !strings.HasPrefix(mockSessions.branchKey, "test/imain/b") {
+		t.Errorf("branch = %q, want prefix test/imain/b", mockSessions.branchKey)
 	}
 	if !mockSessions.opts.NoResetHook {
 		t.Error("expected noResetHook=true")
@@ -226,7 +226,7 @@ func TestSpawnContextCloneDefault(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
+	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
 		"prompt": "Do something",
 	})

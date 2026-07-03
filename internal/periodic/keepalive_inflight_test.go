@@ -75,7 +75,7 @@ func TestMaybeKeepalive_SkipsWhenTurnInFlight(t *testing.T) {
 		},
 		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn:     func() string { return "test/c1/1" },
+			sessionKeyFn:     func() string { return "test/c1" },
 			isTurnInFlightFn: inFlightFn(t, "test/c1"),
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++
@@ -109,7 +109,7 @@ func TestMaybeBackgroundWork_SkipsWhenTurnInFlight(t *testing.T) {
 		// hasActiveWorkFn=nil and todoStore=nil means the open-todo gate is skipped,
 		// so the only thing protecting us from a fire is the in-flight gate.
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn:     func() string { return "test/c1/1" },
+			sessionKeyFn:     func() string { return "test/c1" },
 			isTurnInFlightFn: inFlightFn(t, "test/c1"),
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++
@@ -140,7 +140,7 @@ func TestMaybeReflection_FiltersInFlightSessions(t *testing.T) {
 	defer idx.Close()
 
 	// Three sessions, all needing reflection (activity newer than reflection stamp).
-	for _, key := range []string{"test/c1/1", "test/c2/1", "test/c3/1"} {
+	for _, key := range []string{"test/c1", "test/c2", "test/c3"} {
 		idx.Upsert(session.SessionIndexEntry{
 			SessionKey:  key,
 			FilePath:    "/tmp/test.jsonl",
@@ -178,14 +178,14 @@ func TestMaybeReflection_FiltersInFlightSessions(t *testing.T) {
 	r.maybeReflection()
 	waitIdle(t, r)
 
-	if got["test/c1/1"] != 0 {
-		t.Errorf("c1 fired despite in-flight turn (got %d calls)", got["test/c1/1"])
+	if got["test/c1"] != 0 {
+		t.Errorf("c1 fired despite in-flight turn (got %d calls)", got["test/c1"])
 	}
-	if got["test/c3/1"] != 0 {
-		t.Errorf("c3 fired despite in-flight turn (got %d calls)", got["test/c3/1"])
+	if got["test/c3"] != 0 {
+		t.Errorf("c3 fired despite in-flight turn (got %d calls)", got["test/c3"])
 	}
-	if got["test/c2/1"] != 1 {
-		t.Errorf("c2 fired %d times, want 1 (it's free)", got["test/c2/1"])
+	if got["test/c2"] != 1 {
+		t.Errorf("c2 fired %d times, want 1 (it's free)", got["test/c2"])
 	}
 }
 
@@ -202,14 +202,14 @@ func TestMaybeReflection_SkipsWhenAllSessionsBusy(t *testing.T) {
 	defer idx.Close()
 
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:  "test/c1/1",
+		SessionKey:  "test/c1",
 		FilePath:    "/tmp/test.jsonl",
 		CreatedAt:   now.Add(-24 * time.Hour),
 		SessionType: session.SessionTypeChat,
 		Status:      session.SessionStatusActive,
 	})
-	idx.UpdateActivity("test/c1/1", now.Add(-30*time.Minute))
-	idx.StampReflection("test/c1/1", now.Add(-2*time.Hour))
+	idx.UpdateActivity("test/c1", now.Add(-30*time.Minute))
+	idx.StampReflection("test/c1", now.Add(-2*time.Hour))
 
 	var calls int
 	r := &Runner{
@@ -263,7 +263,7 @@ func TestMaybeConsolidation_SkipsWhenTurnInFlight(t *testing.T) {
 		lastInteraction:   now.Add(-30 * time.Minute),
 		lastConsolidation: now.Add(-2 * time.Hour),
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn:     func() string { return "test/c1/1" },
+			sessionKeyFn:     func() string { return "test/c1" },
 			isTurnInFlightFn: inFlightFn(t, "test/c1"),
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++
@@ -286,7 +286,7 @@ func TestParentTurnInFlight_NilFunc(t *testing.T) {
 	// it), parentTurnInFlight returns false unconditionally — schedulers
 	// behave as they did pre-TODO #760 (no in-flight gating).
 	r := &Runner{}
-	if r.parentTurnInFlight("test/c1/1") {
+	if r.parentTurnInFlight("test/c1") {
 		t.Error("parentTurnInFlight should return false when isTurnInFlightFn is nil")
 	}
 }
@@ -304,9 +304,10 @@ func TestParentTurnInFlight_EmptyKey(t *testing.T) {
 	}
 }
 
-func TestParentTurnInFlight_BasePassedToCallback(t *testing.T) {
-	// parentTurnInFlight must pass SessionKeyBase(parentKey), not the full
-	// key. The callback's job is to look up in-flight state by base.
+func TestParentTurnInFlight_KeyPassedToCallback(t *testing.T) {
+	// parentTurnInFlight passes the session key through unchanged — session
+	// keys are stable identities, so the callback looks up in-flight state
+	// by the key itself.
 	var got string
 	r := &Runner{
 		agent: &fakeBackgroundAgent{
@@ -316,8 +317,8 @@ func TestParentTurnInFlight_BasePassedToCallback(t *testing.T) {
 			},
 		},
 	}
-	r.parentTurnInFlight("test/c1/1759000000")
+	r.parentTurnInFlight("test/c1")
 	if got != "test/c1" {
-		t.Errorf("callback received base %q, want %q (SessionKeyBase strips the version)", got, "test/c1")
+		t.Errorf("callback received key %q, want %q", got, "test/c1")
 	}
 }

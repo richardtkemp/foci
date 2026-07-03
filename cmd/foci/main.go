@@ -361,12 +361,20 @@ func printResponse(resp *http.Response) error {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	// Try to extract "response" or "status" field from JSON
+	// Try to extract "response" or "status" field from JSON. The routing
+	// receipt (which session the message landed in, and which resolution
+	// rung matched) goes to stderr so cron logs show where a send actually
+	// went without polluting stdout for pipelines.
 	var result struct {
-		Response string `json:"response"`
-		Status   string `json:"status"`
+		Response    string `json:"response"`
+		Status      string `json:"status"`
+		Session     string `json:"session"`
+		ResolvedVia string `json:"resolved_via"`
 	}
 	if json.Unmarshal(body, &result) == nil {
+		if result.Session != "" {
+			fmt.Fprintf(os.Stderr, "session: %s (%s)\n", result.Session, result.ResolvedVia)
+		}
 		if result.Response != "" {
 			fmt.Println(result.Response)
 			return nil

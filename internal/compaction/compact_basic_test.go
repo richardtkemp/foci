@@ -145,7 +145,7 @@ func TestShouldCompact(t *testing.T) {
 	c := NewCompactor(nil, 0.8)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := c.ShouldCompact("claude-haiku-4-5", "test/session", tt.msgs, tt.usage); got != tt.want {
+			if got := c.ShouldCompact("claude-haiku-4-5", "test/imain", tt.msgs, tt.usage); got != tt.want {
 				t.Errorf("ShouldCompact = %v, want %v", got, tt.want)
 			}
 		})

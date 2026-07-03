@@ -40,7 +40,7 @@ These behave the same as for backend agents — the only difference is you call 
 - Don't use it to duplicate a plain reply on a bot-attached session — your reply text is already delivered. Use it for attachments.
 
 ### `send_to_session` — message another session
-- `session_key`: full (`scout/c5970082313/1772794601`), partial (`scout/c5970082313`), or bare agent name (`scout`).
+- `session_key`: full session key (`scout/c5970082313`, `scout/iresearch`), agent-qualified session name or chat alias (`scout/research`), or bare agent name (`scout` → its default session).
 - `message`; `reply-to` = `caller` (default — reply returns to you) or `session` (reply goes to the target's own chat).
 
 ### `todo` — persistent todo list

@@ -50,10 +50,9 @@ func compactionTestClient(turnCount *atomic.Int32, highTokenTurn int32) *testCli
 
 // compactionTestEnv holds common test infrastructure for compaction tests.
 type compactionTestEnv struct {
-	ag             *Agent
-	store          *session.Store
-	compactor      *compaction.Compactor
-	lastRotatedKey string // set by SessionKeyRotatedFunc callback
+	ag        *Agent
+	store     *session.Store
+	compactor *compaction.Compactor
 }
 
 // newCompactionTestEnv creates a test environment with a mock client,
@@ -76,23 +75,11 @@ func newCompactionTestEnv(t *testing.T, turnCount *atomic.Int32, highTokenTurn i
 		Model:     "claude-haiku-4-5",
 	}
 
-	env := &compactionTestEnv{
+	return &compactionTestEnv{
 		ag:        ag,
 		store:     store,
 		compactor: compactor,
 	}
-	ag.SessionKeyRotatedFunc.Add(func(oldKey, newKey string) {
-		env.lastRotatedKey = newKey
-	})
-	return env
-}
-
-// activeKey returns the current session key, accounting for rotation.
-func (e *compactionTestEnv) activeKey(original string) string {
-	if e.lastRotatedKey != "" {
-		return e.lastRotatedKey
-	}
-	return original
 }
 
 // runTurns runs HandleMessage for turns numbered from..to (inclusive) and

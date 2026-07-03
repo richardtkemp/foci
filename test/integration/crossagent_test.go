@@ -59,8 +59,8 @@ func TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir(t *testing.T) {
 		ReadyTimeout: 30 * time.Second,
 	})
 
-	// Step 1: prime clutch so its session exists and the partial-key
-	// resolver in NewSendToSessionTool can find it.
+	// Step 1: prime clutch so its session exists (the target key below
+	// addresses it directly — keys are deterministic).
 	clutchToken := h.AgentBotToken("clutch")
 	h.TelegramStub().PushUpdate(clutchToken, gotgbot.Update{
 		Message: &gotgbot.Message{
@@ -76,8 +76,8 @@ func TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir(t *testing.T) {
 	// via json.Marshal so embedded quotes / shell quoting don't smear
 	// the JSON envelope (Go's %q produces a JSON-escape-incompatible
 	// double-quoted string).
-	partialKey := fmt.Sprintf("clutch/c%d", testUserID)
-	bashCmd := fmt.Sprintf(`foci_send_to_session %s --message %q`, partialKey, testMarker+" from fotini")
+	targetKey := fmt.Sprintf("clutch/c%d", testUserID)
+	bashCmd := fmt.Sprintf(`foci_send_to_session %s --message %q`, targetKey, testMarker+" from fotini")
 	scriptBody, err := json.Marshal(map[string]any{
 		"text": "okay, forwarding to clutch",
 		"tool_uses": []map[string]any{
@@ -143,19 +143,18 @@ func TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir(t *testing.T) {
 }
 
 // TestL2_CrossAgent_SendToSession_BareAgentName_RoutesToTarget exercises
-// the bare-agent-name resolution path added with SessionIndex.ResolveLooseKey:
-// a send_to_session target of just "clutch" (no chat segment, no version ts)
-// must resolve to clutch's default chat session and dispatch there.
+// the bare-agent-name rung of the route.Resolver ladder: a send_to_session
+// target of just "clutch" (no session segment) must resolve to clutch's
+// default chat session and dispatch there.
 //
-// This is the end-to-end companion to the ResolveLooseKey unit tests in
-// internal/session/index_test.go — it proves the wiring all the way through
-// the exec bridge → resolveKeyFn (= SessionIndex.ResolveLooseKey) → notifier
-// → target Agent, for the 1-segment case that ResolvePartialKey alone rejects.
+// This is the end-to-end companion to the route ladder unit tests in
+// internal/route/route_test.go — it proves the wiring all the way through
+// the exec bridge → resolveKeyFn (route.Resolver) → notifier → target Agent.
 //
-// Mechanism mirrors the partial-key test above, except fotini's scripted
+// Mechanism mirrors the full-key test above, except fotini's scripted
 // Bash runs `foci_send_to_session clutch --message "..."`. The priming
 // Telegram message to clutch marks its session is_default, so the bare
-// name "clutch" resolves to clutch/c<USER>/<ts> via DefaultSessionKeyForAgent.
+// name "clutch" resolves to clutch/c<USER> via the default rung.
 func TestL2_CrossAgent_SendToSession_BareAgentName_RoutesToTarget(t *testing.T) {
 	testharness.ParallelWait(t)
 	const testUserID = 4343

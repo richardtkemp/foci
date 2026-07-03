@@ -12,7 +12,6 @@ import (
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/mana"
-	"foci/internal/session"
 	"foci/internal/timeutil"
 	"foci/internal/tools"
 )
@@ -80,7 +79,7 @@ func StatusCommand() *Command {
 
 			compacting := cc.Agent.IsCompacting(sk)
 			status := "idle"
-			if cc.Agent.IsTurnInFlight(session.SessionKeyBase(sk)) {
+			if cc.Agent.IsTurnInFlight(sk) {
 				status = "processing"
 			} else if compacting {
 				status = "compacting"

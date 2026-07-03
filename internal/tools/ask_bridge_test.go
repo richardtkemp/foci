@@ -45,7 +45,7 @@ func (c *capturePresenter) answer(data string) {
 // batch. This covers the bridge → Execute → session-routing wiring that the
 // direct-Execute unit tests (ask_test.go) bypass.
 func TestAsk_ExecBridgeRoundTrip(t *testing.T) {
-	const sk = "clutch/c777/1000"
+	const sk = "clutch/c777"
 
 	pres := &capturePresenter{}
 	var (

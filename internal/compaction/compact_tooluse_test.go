@@ -204,7 +204,7 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Build session: 5 text pairs + 1 tool pair + 1 text pair = 14 messages
 	for i := 0; i < 5; i++ {
@@ -221,12 +221,12 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 3)
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 
 	// Verify no orphaned tool_use: every assistant with tool_use must be followed
 	// by a user with matching tool_result.
@@ -268,7 +268,7 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Build session with an orphaned tool_use deep in history.
 	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
@@ -283,14 +283,14 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	c.WithConfig(4096, 4, 0) // no preservation — all messages summarized
 
 	// This should not fail — repairOrphanedToolUse should inject synthetic results.
-	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact with orphaned tool_use: %v", err)
 	}
 }
 
 func TestCompactWithModelDefaults(t *testing.T) {
-	// Verifies that ModelParamsFn provides effort to the compaction API
+	// Verifies that ModelDefaultsFn provides effort to the compaction API
 	// request for models that support it (Sonnet), and that the effort is
 	// stripped for models that do not (Haiku).
 	var capturedBody []byte
@@ -310,7 +310,7 @@ func TestCompactWithModelDefaults(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -322,7 +322,7 @@ func TestCompactWithModelDefaults(t *testing.T) {
 	c.ModelDefaultsFn = func(model string) config.ModelDefaults {
 		return config.ModelDefaults{Effort: "high"}
 	}
-	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-sonnet-4-6", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-sonnet-4-6", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestCompactWithModelDefaults(t *testing.T) {
 	c2.ModelDefaultsFn = func(model string) config.ModelDefaults {
 		return config.ModelDefaults{Effort: "high"}
 	}
-	_, _, err = c2.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err = c2.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact with haiku: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -382,7 +382,7 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 
 	c := NewCompactor(store, 0.8)
 	// Not setting effort — should omit from request
-	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}

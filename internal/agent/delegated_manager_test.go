@@ -323,7 +323,7 @@ func TestGet_ConcurrentSameKeySpawnsOne(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			backends[i], errs[i] = mgr.Get(context.Background(), "test-agent/c1/1000")
+			backends[i], errs[i] = mgr.Get(context.Background(), "test-agent/c1")
 		}(i)
 	}
 	wg.Wait()
@@ -348,7 +348,7 @@ func TestGet_LazyCreation(t *testing.T) {
 	// backend on subsequent calls with the same session key base.
 	mgr, mocks := newTestManager(t, nil)
 
-	be1, err := mgr.Get(context.Background(), "test-agent/c123/1000")
+	be1, err := mgr.Get(context.Background(), "test-agent/c123")
 	if err != nil {
 		t.Fatalf("Get #1: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestGet_LazyCreation(t *testing.T) {
 	}
 
 	// Same session key returns the same backend (no new mock created).
-	be2, err := mgr.Get(context.Background(), "test-agent/c123/1000")
+	be2, err := mgr.Get(context.Background(), "test-agent/c123")
 	if err != nil {
 		t.Fatalf("Get #2: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestGet_LazyCreation(t *testing.T) {
 	}
 
 	// Different session key creates a separate backend.
-	be3, err := mgr.Get(context.Background(), "test-agent/c123/2000")
+	be3, err := mgr.Get(context.Background(), "test-agent/c999")
 	if err != nil {
 		t.Fatalf("Get #3 (different key): %v", err)
 	}
@@ -559,13 +559,13 @@ func TestGet_SetsLabelFromBase(t *testing.T) {
 	// with slashes replaced by dashes.
 	mgr, mocks := newTestManager(t, nil)
 
-	_, err := mgr.Get(context.Background(), "myagent/c42/v1")
+	_, err := mgr.Get(context.Background(), "myagent/c42")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 
 	mock := (*mocks)[0]
-	want := "myagent-c42-v1"
+	want := "myagent-c42"
 	if mock.startOpts.Label != want {
 		t.Errorf("Label = %q, want %q", mock.startOpts.Label, want)
 	}
@@ -1545,7 +1545,7 @@ func TestGet_StartOptionsPassthrough(t *testing.T) {
 		Model:        "opus",
 	}
 
-	_, err := mgr.Get(context.Background(), "agent/c1/v1")
+	_, err := mgr.Get(context.Background(), "agent/c1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -1560,11 +1560,11 @@ func TestGet_StartOptionsPassthrough(t *testing.T) {
 	if opts.Model != "opus" {
 		t.Errorf("Model = %q, want %q", opts.Model, "opus")
 	}
-	if opts.Label != "agent-c1-v1" {
-		t.Errorf("Label = %q, want %q", opts.Label, "agent-c1-v1")
+	if opts.Label != "agent-c1" {
+		t.Errorf("Label = %q, want %q", opts.Label, "agent-c1")
 	}
-	if opts.SessionKey != "agent/c1/v1" {
-		t.Errorf("SessionKey = %q, want %q", opts.SessionKey, "agent/c1/v1")
+	if opts.SessionKey != "agent/c1" {
+		t.Errorf("SessionKey = %q, want %q", opts.SessionKey, "agent/c1")
 	}
 }
 
@@ -1583,7 +1583,7 @@ func TestGet_SystemPromptFuncOverridesStatic(t *testing.T) {
 		},
 	}
 
-	_, err := mgr.Get(context.Background(), "agent/c1/v1")
+	_, err := mgr.Get(context.Background(), "agent/c1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -1605,7 +1605,7 @@ func TestGet_SystemPromptFuncEmptyFallsBackToStatic(t *testing.T) {
 		SystemPromptFunc: func() string { return "" },
 	}
 
-	_, err := mgr.Get(context.Background(), "agent/c1/v1")
+	_, err := mgr.Get(context.Background(), "agent/c1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -1665,6 +1665,69 @@ func TestClearResumeID_NilIndex(t *testing.T) {
 	// Proves that clearResumeID is a no-op when SessionIndex is nil.
 	mgr := &DelegatedManager{AgentID: "test-agent"}
 	mgr.clearResumeID("test-agent/c1") // should not panic
+}
+
+func TestRemapSession_MovesBackendAndResumeID(t *testing.T) {
+	// Proves that RemapSession moves both the live backend map entry and the
+	// persisted cc_resume_id row from oldKey to newKey, leaving the old key
+	// clean — the primitive the reflection-branch handoff is built on.
+	idx := newTestSessionIndex(t)
+	mgr, _ := newTestManager(t, idx)
+
+	oldKey := "test-agent/c1"
+	newKey := "test-agent/c1/b1700000000"
+
+	be, err := mgr.Get(context.Background(), oldKey)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	mgr.saveResumeID(oldKey, "resume-uuid-123")
+
+	mgr.RemapSession(oldKey, newKey)
+
+	if _, ok := mgr.getManaged(oldKey); ok {
+		t.Error("backend still mapped under old key after remap")
+	}
+	mb, ok := mgr.getManaged(newKey)
+	if !ok {
+		t.Fatal("backend not mapped under new key after remap")
+	}
+	if mb.be != be {
+		t.Error("remapped entry is not the same backend instance")
+	}
+	if mb.sessionKey != newKey {
+		t.Errorf("managed sessionKey = %q, want %q (reply routing must follow the new key)", mb.sessionKey, newKey)
+	}
+
+	if got := mgr.loadResumeID(newKey); got != "resume-uuid-123" {
+		t.Errorf("resume ID under new key = %q, want resume-uuid-123", got)
+	}
+	if got := mgr.loadResumeID(oldKey); got != "" {
+		t.Errorf("resume ID under old key = %q, want empty after remap", got)
+	}
+}
+
+func TestRemapSession_NoOpGuards(t *testing.T) {
+	// Proves that RemapSession does nothing when oldKey == newKey or newKey is
+	// empty — the backend stays where it is and the resume ID row is untouched.
+	idx := newTestSessionIndex(t)
+	mgr, _ := newTestManager(t, idx)
+
+	key := "test-agent/c1"
+	if _, err := mgr.Get(context.Background(), key); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	mgr.saveResumeID(key, "resume-uuid-123")
+
+	mgr.RemapSession(key, key)
+	mgr.RemapSession(key, "")
+
+	if _, ok := mgr.getManaged(key); !ok {
+		t.Error("backend lost after no-op remaps")
+	}
+	if got := mgr.loadResumeID(key); got != "resume-uuid-123" {
+		t.Errorf("resume ID = %q, want resume-uuid-123 after no-op remaps", got)
+	}
 }
 
 func TestGet_RetryAfterInitDeath(t *testing.T) {
@@ -1837,41 +1900,6 @@ func TestRegisterPromptCancelListener_UnknownSession(t *testing.T) {
 	mgr.RegisterPromptCancelListener("nonexistent-sk", "req-x", func(string) {
 		t.Error("listener should not fire for unknown session")
 	})
-}
-
-func TestClearResumeID_KeepsBackend(t *testing.T) {
-	// Proves the exported ClearResumeID removes the persisted CC resume UUID for
-	// a session while leaving the live backend in the manager map intact. The
-	// async soft reset relies on this: clearing the resume ID before the
-	// metadata is renamed forward stops the fresh key from resuming the old CC,
-	// but the backend must remain so background reflection can still drive it.
-	idx := newTestSessionIndex(t)
-	mgr, mocks := newTestManager(t, idx)
-
-	if _, err := mgr.Get(context.Background(), "old-key"); err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-
-	// Simulate session-ready to persist a resume ID.
-	(*mocks)[0].mu.Lock()
-	osr := (*mocks)[0].onSessionReady
-	(*mocks)[0].mu.Unlock()
-	if osr != nil {
-		osr("resume-uuid-123")
-	}
-	if got := mgr.loadResumeID("old-key"); got != "resume-uuid-123" {
-		t.Fatalf("precondition: resume ID = %q, want resume-uuid-123", got)
-	}
-
-	mgr.ClearResumeID("old-key")
-
-	if got := mgr.loadResumeID("old-key"); got != "" {
-		t.Errorf("resume ID not cleared: got %q", got)
-	}
-	// The live backend must still be present and reusable.
-	if mgr.Count() != 1 {
-		t.Errorf("backend count = %d, want 1 (backend must remain after ClearResumeID)", mgr.Count())
-	}
 }
 
 // contains is a test helper that checks if a string contains a substring.

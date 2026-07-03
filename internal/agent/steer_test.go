@@ -280,7 +280,7 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.hmTestAttachments(ctx, "test/imain/1000000000", []string{"Do something"}, nil)
+	resp, err := ag.hmTestAttachments(ctx, "test/imain", []string{"Do something"}, nil)
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestSteerMidBatch_AssistantMessageRewritten(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.hmTestAttachments(ctx, "test/imain/2000000000", []string{"Run three tools"}, nil)
+	resp, err := ag.hmTestAttachments(ctx, "test/imain", []string{"Run three tools"}, nil)
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

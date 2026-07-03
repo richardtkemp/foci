@@ -13,7 +13,7 @@ func TestBotForSession_NoBotMatchReturnsNil(t *testing.T) {
 	facet := &Bot{agentID: "clutch"}
 	mgr.AddFacet("clutch", facet)
 
-	found := mgr.BotForSession("clutch/c12345/1709590000")
+	found := mgr.BotForSession("clutch/c12345")
 	if found != nil {
 		t.Errorf("BotForSession should return nil when no bot has this session key, got %v", found)
 	}
@@ -22,13 +22,13 @@ func TestBotForSession_NoBotMatchReturnsNil(t *testing.T) {
 func TestBotForSession_MatchesPrimaryBot(t *testing.T) {
 	// Verifies that BotForSession returns the primary bot when its SessionKey matches.
 	mgr := NewBotManager()
-	primary := &Bot{agentID: "clutch", sessionKey: "clutch/c12345/1709590000"}
+	primary := &Bot{agentID: "clutch", sessionKey: "clutch/c12345"}
 	mgr.AddPrimary("clutch", primary)
 
 	facet := &Bot{agentID: "clutch"}
 	mgr.AddFacet("clutch", facet)
 
-	found := mgr.BotForSession("clutch/c12345/1709590000")
+	found := mgr.BotForSession("clutch/c12345")
 	if found != primary {
 		t.Errorf("BotForSession should return primary bot when its SessionKey matches")
 	}
@@ -44,7 +44,7 @@ func TestBotForSessionOrPrimary_NonFacetSessionUsesPrimary(t *testing.T) {
 	facet := &Bot{agentID: "clutch"}
 	mgr.AddFacet("clutch", facet)
 
-	bot := mgr.BotForSessionOrPrimary("clutch/c12345/1709590000", "clutch")
+	bot := mgr.BotForSessionOrPrimary("clutch/c12345", "clutch")
 	if bot != primary {
 		t.Errorf("BotForSessionOrPrimary should fall back to primary for unmatched session key")
 	}

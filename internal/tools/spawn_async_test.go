@@ -45,7 +45,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 		}
 	})
 
-	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
+	ctx := WithSessionKey(context.Background(), "test/imain")
 
 	// Launch 4 concurrent inherit calls (all return immediately with ack)
 	for i := 0; i < 4; i++ {
@@ -96,7 +96,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
+	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do research",
 		"context": "clone",
@@ -112,7 +112,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 
 	select {
 	case d := <-delivered:
-		if d.sk != "test/imain/1000000000" {
+		if d.sk != "test/imain" {
 			t.Errorf("notified session = %q, want agent:test:main", d.sk)
 		}
 		if !strings.Contains(d.msg, "[SPAWN RESULT]") {
@@ -153,7 +153,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
+	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do task",
 		"context": "clone",
@@ -199,7 +199,7 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
+	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do task",
 		"context": "clone",

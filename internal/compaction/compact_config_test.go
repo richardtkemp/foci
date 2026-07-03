@@ -96,7 +96,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -104,7 +104,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 	}
 
 	c := NewCompactor(store, 0.8)
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "custom summary prompt", "custom handoff msg", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "custom summary prompt", "custom handoff msg", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -114,8 +114,8 @@ func TestCompactCustomPrompts(t *testing.T) {
 		t.Errorf("API request body should contain custom summary prompt")
 	}
 
-	// Verify custom handoff message in resulting messages
-	msgs, _ := store.Load(newKey)
+	// Verify custom handoff message in the compacted session (same key)
+	msgs, _ := store.Load(sessionKey)
 	if len(msgs) != 3 {
 		t.Fatalf("messages = %d, want 3", len(msgs))
 	}
@@ -147,7 +147,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -156,7 +156,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 
 	c := NewCompactor(store, 0.8)
 	// Empty strings should fall back to defaults
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -166,8 +166,8 @@ func TestCompactDefaultPrompts(t *testing.T) {
 		t.Errorf("API request body should contain fallback summary prompt")
 	}
 
-	// Verify default handoff message
-	msgs, _ := store.Load(newKey)
+	// Verify default handoff message in the compacted session (same key)
+	msgs, _ := store.Load(sessionKey)
 	handoff := provider.TextOf(msgs[2].Content)
 	if !strings.Contains(handoff, DefaultHandoffMessage) {
 		t.Errorf("handoff = %q, want default handoff", handoff)

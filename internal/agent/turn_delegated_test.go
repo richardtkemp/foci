@@ -1264,7 +1264,7 @@ func TestDelegatedTransport_OnText_LogsEachMessage(t *testing.T) {
 
 	// The session key must start with the agent ID so resolveConvLog routes
 	// to the right DB.
-	sk := agentID + "/chat/12345"
+	sk := agentID + "/c12345"
 	// Wrap the test's BufferSink with loggingSink so intermediate TextBlock
 	// events fire conversation-DB logging — production wires this in
 	// Agent.RunTurn (per-turn) and lateDeliverySink (fallback). Tests that

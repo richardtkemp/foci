@@ -10,7 +10,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/provider"
-	"foci/internal/session"
 	"foci/shared/prompts"
 )
 
@@ -18,29 +17,26 @@ const delegatedCompactTimeout = 5 * time.Minute
 
 // markCompacting / clearCompacting / IsCompacting latch whether a compaction
 // is in flight for a session, so /status can show "compacting" instead of
-// "idle" (#725). The key is normalised to SessionKeyBase because compaction
-// rotates the session version mid-flight — set and clear would otherwise miss
-// each other. The stored deadline is a self-heal backstop: if a compaction
+// "idle" (#725). The stored deadline is a self-heal backstop: if a compaction
 // errors between mark and clear (so the defer-clear is skipped only on a
 // panic that unwinds past it), the latch expires rather than wedging forever.
 func (a *Agent) markCompacting(sessionKey string) {
-	a.compacting.Store(session.SessionKeyBase(sessionKey), time.Now().Add(delegatedCompactTimeout))
+	a.compacting.Store(sessionKey, time.Now().Add(delegatedCompactTimeout))
 }
 
 func (a *Agent) clearCompacting(sessionKey string) {
-	a.compacting.Delete(session.SessionKeyBase(sessionKey))
+	a.compacting.Delete(sessionKey)
 }
 
 // IsCompacting reports whether a compaction is currently in flight for the
-// session (keyed by SessionKeyBase). Expired latches self-heal on read.
+// session. Expired latches self-heal on read.
 func (a *Agent) IsCompacting(sessionKey string) bool {
-	base := session.SessionKeyBase(sessionKey)
-	v, ok := a.compacting.Load(base)
+	v, ok := a.compacting.Load(sessionKey)
 	if !ok {
 		return false
 	}
 	if time.Now().After(v.(time.Time)) {
-		a.compacting.Delete(base)
+		a.compacting.Delete(sessionKey)
 		return false
 	}
 	return true
@@ -50,11 +46,11 @@ func (a *Agent) IsCompacting(sessionKey string) bool {
 type CompactResult struct {
 	OldMessageCount int
 	Summary         string
-	NewSessionKey   string // empty on dry-run or no rotation
 }
 
 // doCompact executes the core compaction sequence: resolve prompts, resolve
-// call site, run Compactor.Compact, rotate session on success, fire hooks.
+// call site, run Compactor.Compact (which archives the old content in place),
+// fire hooks.
 //
 // Callers are responsible for pre-compaction actions (threshold checks,
 // memory formation) and post-compaction cleanup (bootstrap reload, cache
@@ -81,7 +77,7 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 	}
 
 	compactClient, compactModel, compactFormat := a.ResolveCallSite(config.CallCompaction, sessionKey)
-	summary, newKey, err := a.Compactor.Compact(ctx, compactClient, sessionKey, compactModel, compactFormat, system, summaryPrompt, handoffMsg, dryRun)
+	summary, err := a.Compactor.Compact(ctx, compactClient, sessionKey, compactModel, compactFormat, system, summaryPrompt, handoffMsg, dryRun)
 	if err != nil {
 		return CompactResult{OldMessageCount: oldCount}, fmt.Errorf("compaction failed: %w", err)
 	}
@@ -98,10 +94,6 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 			fn(sessionKey, "✅ Dry-run complete — summary sent.")
 		}
 	} else {
-		if newKey != "" {
-			a.RotateSession(sessionKey, newKey)
-			result.NewSessionKey = newKey
-		}
 		for _, fn := range a.CompactionNotifyFunc {
 			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
 		}
@@ -301,11 +293,8 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	}
 
 	oldCount := len(messages)
-	result, err := a.doCompact(ctx, sessionKey, system, oldCount, false)
-	if err != nil {
+	if _, err := a.doCompact(ctx, sessionKey, system, oldCount, false); err != nil {
 		a.logger().Errorf("session=%s %v", sessionKey, err)
-	} else if result.NewSessionKey != "" {
-		a.logger().Infof("session=%s compaction rotated → %s (pre_messages=%d)", sessionKey, result.NewSessionKey, oldCount)
 	}
 
 	// Reload system prompt — compaction may have changed memory files.

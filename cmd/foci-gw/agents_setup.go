@@ -106,7 +106,7 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 const nudgeExtractMaxAttempts = 3
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
-func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, connMgr platform.ConnectionManager, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
 	nudgeEnabled := nc.NudgeEnable
 	nudgeDefaultEnabled := nc.NudgeDefaultEnable
 	braindeadThreshold := nc.NudgeDefaultBraindeadThreshold
@@ -225,7 +225,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 					attempt = func() error { return extractor.ExtractViaRunOnce(ctx, ag.DelegatedManager) }
 				} else {
 					// API: branch from the most recent session.
-					parentKey := mostRecentSessionKey(ag, connMgr, acfg.ID)
+					parentKey := defaultSessionKeyFor(ag, acfg.ID)
 					if parentKey == "" {
 						log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
 						return
@@ -337,7 +337,6 @@ func setupPlatformConnections(
 	lastMsgStore *command.LastMessageStore,
 	ttsRepls map[string]string,
 	promptSearchDirs []string,
-	tmuxMigrateKey func(string, string),
 ) platformConnectionResult {
 	acfg := p.acfg
 	var result platformConnectionResult
@@ -380,7 +379,7 @@ func setupPlatformConnections(
 		}
 	}
 
-	wireAgentPlatformCallbacks(ag, acfg, p.resolved, p.plat, p.connMgr, p.sessionIndex, tmuxMigrateKey)
+	wireAgentPlatformCallbacks(ag, acfg, p.resolved, p.connMgr, p.sessionIndex)
 
 	return result
 }

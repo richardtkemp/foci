@@ -35,12 +35,12 @@ func TestFormatLine_SessionMeta(t *testing.T) {
 
 // Tests that formatLine correctly identifies and formats branch metadata lines.
 func TestFormatLine_BranchMeta(t *testing.T) {
-	line := `{"type":"branch_meta","parent_key":"scout/c123/1709590000","branch_point":5}`
+	line := `{"type":"branch_meta","parent_key":"scout/c123","branch_point":5}`
 	out := formatLine([]byte(line))
 	if !strings.Contains(out, "branch_meta") {
 		t.Errorf("expected branch_meta mention, got: %s", out)
 	}
-	if !strings.Contains(out, "scout/c123/1709590000") {
+	if !strings.Contains(out, "scout/c123") {
 		t.Errorf("expected parent key, got: %s", out)
 	}
 }
@@ -260,39 +260,33 @@ func TestFormatLine_EmptyLine(t *testing.T) {
 	}
 }
 
-// Tests resolveSessionKey with a full 3-segment key (direct passthrough, no index needed).
+// Tests resolveSessionKey with a full branch key (direct passthrough, no index needed).
 func TestResolveSessionKey_FullKey(t *testing.T) {
 	idx := testIndex(t)
 	defer idx.Close()
 
-	key, err := resolveSessionKey(idx, "scout/c123/1709590000")
+	key, err := resolveSessionKey(idx, "scout/c123/b1709590000")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if key != "scout/c123/1709590000" {
+	if key != "scout/c123/b1709590000" {
 		t.Errorf("expected passthrough, got %q", key)
 	}
 }
 
-// Tests resolveSessionKey with a 2-segment partial key that matches an indexed session.
-func TestResolveSessionKey_PartialKey(t *testing.T) {
+// Tests resolveSessionKey with a root chat key: anything containing "/" is a
+// full key under the stable-identity grammar, so it passes through unchanged
+// without consulting the index.
+func TestResolveSessionKey_RootChatKey(t *testing.T) {
 	idx := testIndex(t)
 	defer idx.Close()
-
-	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:  "scout/c123/1709590000",
-		FilePath:    "/tmp/test.jsonl",
-		CreatedAt:   time.Now(),
-		SessionType: session.SessionTypeChat,
-		Status:      session.SessionStatusActive,
-	})
 
 	key, err := resolveSessionKey(idx, "scout/c123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if key != "scout/c123/1709590000" {
-		t.Errorf("expected resolved key, got %q", key)
+	if key != "scout/c123" {
+		t.Errorf("expected passthrough, got %q", key)
 	}
 }
 
@@ -302,7 +296,7 @@ func TestResolveSessionKey_AgentName(t *testing.T) {
 	defer idx.Close()
 
 	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "scout/c999/1709590000",
+		SessionKey:     "scout/c999",
 		FilePath:       "/tmp/test.jsonl",
 		CreatedAt:      time.Now(),
 		LastActivityAt: time.Now(),
@@ -314,7 +308,7 @@ func TestResolveSessionKey_AgentName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if key != "scout/c999/1709590000" {
+	if key != "scout/c999" {
 		t.Errorf("expected resolved key, got %q", key)
 	}
 }

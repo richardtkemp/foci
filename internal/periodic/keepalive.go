@@ -280,7 +280,7 @@ func (r *Runner) parentTurnInFlight(parentKey string) bool {
 	if r.agent == nil || parentKey == "" {
 		return false
 	}
-	return r.agent.IsTurnInFlight(session.SessionKeyBase(parentKey))
+	return r.agent.IsTurnInFlight(parentKey)
 }
 
 // readyParentKey resolves the default session to dispatch a branch into and
@@ -579,7 +579,7 @@ func (r *Runner) maybeReflection() {
 	filtered := keys[:0]
 	busy := 0
 	for _, k := range keys {
-		if r.agent.IsTurnInFlight(session.SessionKeyBase(k)) {
+		if r.agent.IsTurnInFlight(k) {
 			busy++
 			continue
 		}

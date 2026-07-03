@@ -45,7 +45,6 @@ func (c *stubConn) SetSessionKeyDirect(string)                      {}
 func (c *stubConn) SetChatID(int64)                                 {}
 func (c *stubConn) ChatID() int64                                   { return 0 }
 func (c *stubConn) Username() string                                { return "test" }
-func (c *stubConn) UpdateChatSessionKey(int64, string)              {}
 func (c *stubConn) SendText(string) error                           { return nil }
 func (c *stubConn) SendDocument(string, string) error               { return nil }
 func (c *stubConn) SendVoice(string) error                          { return nil }
@@ -70,7 +69,7 @@ func (c *stubConn) SetTyping(bool)                                  {}
 
 func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {
 	// The resolver must receive the correct agent ID extracted from
-	// slash-separated session keys like "clutch/c5970082313/1772794601".
+	// slash-separated session keys like "clutch/c5970082313".
 	// Before the fix, colon-splitting failed on this format.
 	t.Parallel()
 
@@ -87,7 +86,7 @@ func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {
 	}
 
 	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{})
-	fn("clutch/c5970082313/1772794601", "test message")
+	fn("clutch/c5970082313", "test message")
 
 	select {
 	case <-resolverCalled:
@@ -103,7 +102,7 @@ func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {
 }
 
 func TestNewSessionNotifyFnParsesBranchKeys(t *testing.T) {
-	// Branch keys have a 4th segment; agent ID is the first segment.
+	// Branch keys have a child segment; agent ID is the first segment.
 	t.Parallel()
 
 	var mu sync.Mutex
@@ -119,7 +118,7 @@ func TestNewSessionNotifyFnParsesBranchKeys(t *testing.T) {
 	}
 
 	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{})
-	fn("fotini/c8792716180/1741826250/b1741826300", "branch message")
+	fn("fotini/c8792716180/b1741826300", "branch message")
 
 	select {
 	case <-resolverCalled:
@@ -172,7 +171,7 @@ func TestNewSessionNotifyFnParsesIndependentKeys(t *testing.T) {
 	}
 
 	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{})
-	fn("myagent/i1709596800/1709596800", "independent message")
+	fn("myagent/i1709596800", "independent message")
 
 	select {
 	case <-resolverCalled:
@@ -213,7 +212,7 @@ func TestNewAsyncNotifier_CrossAgentTarget_UsesResolver(t *testing.T) {
 		stubConnMgr{},
 	)
 	// reply_to=caller path: targetSession owned by "target", replyToSession owned by "caller".
-	notifier.InjectToAgent("target/c42/1000000000", "msg", "caller/c1/1000000001", "test")
+	notifier.InjectToAgent("target/c42", "msg", "caller/c1", "test")
 
 	select {
 	case got := <-resolverCalls:
@@ -246,7 +245,7 @@ func TestNewAsyncNotifier_SameAgentTarget_SkipsResolver(t *testing.T) {
 		stubConnMgr{},
 	)
 	// Same-agent target — resolver path should not fire.
-	notifier.InjectToAgent("caller/c1/1000000001", "msg", "caller/c2/1000000002", "test")
+	notifier.InjectToAgent("caller/c1", "msg", "caller/c2", "test")
 
 	select {
 	case got := <-resolverCalls:

@@ -10,9 +10,9 @@ import (
 	"foci/internal/session"
 )
 
-// testBaseA is a representative SessionKeyBase for in-flight tests:
-// {agentID}/{type}{id}. Branches/sub-agents would extend this; the in-flight
-// counter is keyed by exactly this base.
+// testBaseA is a representative root session key for in-flight tests:
+// {agentID}/{type}{id}. Branches/sub-agents have their own child keys; the
+// in-flight counter is keyed by the session key as-is.
 const (
 	testBaseA = "test-agent/cTEST"
 	testBaseB = "test-agent/cOTHER"
@@ -121,9 +121,8 @@ func TestInFlight_DistinctBases(t *testing.T) {
 func TestInFlight_FacetDecoupledFromRoot(t *testing.T) {
 	a := &Agent{}
 
-	root := "test-agent/cTEST/1700000000"
-	facet := "test-agent/cTEST/1700000000/b1700050000"
-	rotatedRoot := "test-agent/cTEST/1700100000" // post-compaction version of root
+	root := "test-agent/cTEST"
+	facet := "test-agent/cTEST/b1700050000"
 
 	// A turn on the facet must not couple the root.
 	doneFacet := a.markInFlight(facet, true)
@@ -138,10 +137,6 @@ func TestInFlight_FacetDecoupledFromRoot(t *testing.T) {
 	doneRoot := a.markInFlight(root, false)
 	if !a.IsTurnInFlight(root) {
 		t.Fatalf("IsTurnInFlight(root=%s) after mark: got false, want true", root)
-	}
-	// And a post-compaction version of the root shares the root identity.
-	if !a.IsTurnInFlight(rotatedRoot) {
-		t.Fatalf("rotated root %s must share in-flight identity with %s", rotatedRoot, root)
 	}
 
 	// Releasing the facet must not clear the root.
