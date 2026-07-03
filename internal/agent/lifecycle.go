@@ -41,9 +41,24 @@ func (a *Agent) reloadAfterMutation() {
 //     no_compact, …) so the reset session starts from a clean slate.
 //  4. Run reflection on the branch in the background — the caller is not
 //     blocked on it.
-func (a *Agent) ResetSession(ctx context.Context, sessionKey string) error {
+// ResetMemoryOutcome reports what happened to the previous session's memories on
+// a soft reset, so the caller can tell the user accurately.
+type ResetMemoryOutcome int
+
+const (
+	// ResetMemoryNone: no reflection ran (session-end memory disabled, or the
+	// reset couldn't fire one right now).
+	ResetMemoryNone ResetMemoryOutcome = iota
+	// ResetMemoryReflecting: a reflection pass was started in the background.
+	ResetMemoryReflecting
+	// ResetMemoryAlreadySaved: a prior reflection already captured this session
+	// and nothing substantive happened since, so there was nothing new to save.
+	ResetMemoryAlreadySaved
+)
+
+func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (ResetMemoryOutcome, error) {
 	if a.IsTurnInFlight(sessionKey) {
-		return fmt.Errorf("session is processing — send stop first, then reset")
+		return ResetMemoryNone, fmt.Errorf("session is processing — send stop first, then reset")
 	}
 
 	orientTemplate := ""
@@ -51,6 +66,17 @@ func (a *Agent) ResetSession(ctx context.Context, sessionKey string) error {
 		orientTemplate = a.ResetOrientTemplateFn()
 	}
 	reflectKey, doReflect := a.PrepareSessionEndMemory(sessionKey, orientTemplate, false)
+
+	// Classify the memory outcome before the reset mutates index state. A
+	// no-reflection reset is "already saved" only when a prior reflection
+	// covered everything (ReflectionRedundant); any other reason
+	// (disabled/rate-limited) is ResetMemoryNone.
+	outcome := ResetMemoryNone
+	if doReflect {
+		outcome = ResetMemoryReflecting
+	} else if a.SessionIndex != nil && a.SessionIndex.ReflectionRedundant(sessionKey) {
+		outcome = ResetMemoryAlreadySaved
+	}
 
 	// No reflection branch adopted the live backend — make sure the main key
 	// doesn't keep one (delegated agents: close it and clear the resume ID so
@@ -60,7 +86,7 @@ func (a *Agent) ResetSession(ctx context.Context, sessionKey string) error {
 	}
 
 	if err := a.Sessions.Reset(sessionKey); err != nil {
-		return err
+		return ResetMemoryNone, err
 	}
 	a.ClearSessionState(sessionKey)
 	a.reloadAfterMutation()
@@ -72,7 +98,7 @@ func (a *Agent) ResetSession(ctx context.Context, sessionKey string) error {
 		bg := context.WithoutCancel(ctx)
 		go a.RunSessionEndMemory(bg, reflectKey)
 	}
-	return nil
+	return outcome, nil
 }
 
 // CompactSession triggers manual context compaction for a session.

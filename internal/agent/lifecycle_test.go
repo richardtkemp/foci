@@ -68,8 +68,12 @@ func TestResetSession_APIPath(t *testing.T) {
 		return "test orientation"
 	}
 
-	if err := ag.ResetSession(context.Background(), sessionKey); err != nil {
+	outcome, err := ag.ResetSession(context.Background(), sessionKey)
+	if err != nil {
 		t.Fatalf("ResetSession: %v", err)
+	}
+	if outcome != ResetMemoryNone {
+		t.Errorf("memory outcome = %v, want ResetMemoryNone (SessionEndEnabled false)", outcome)
 	}
 
 	// The key is a stable identity: the same key must now load an empty
@@ -96,6 +100,43 @@ func TestResetSession_APIPath(t *testing.T) {
 	}
 	if !orientCalled {
 		t.Error("ResetOrientTemplateFn was not called")
+	}
+}
+
+func TestResetSession_MemoryAlreadySaved(t *testing.T) {
+	// Session-end memory enabled, but a prior reflection already covered the
+	// session (nothing substantive since) → the reset saves nothing new and
+	// reports ResetMemoryAlreadySaved. A freshly-registered index row seeds
+	// last_reflection == last_activity, so it is redundant by construction.
+	store := session.NewStore(t.TempDir())
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	sessionKey := "test/ireset"
+	seedSession(t, store, sessionKey, 1)
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  sessionKey,
+		FilePath:    "/x/root.jsonl",
+		CreatedAt:   time.Now(),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+
+	ag := &Agent{
+		Sessions:     store,
+		Bootstrap:    workspace.NewBootstrap(t.TempDir(), []string{}),
+		SessionIndex: idx,
+		Reflection:   config.ResolvedReflection{SessionEndEnabled: true},
+	}
+
+	outcome, err := ag.ResetSession(context.Background(), sessionKey)
+	if err != nil {
+		t.Fatalf("ResetSession: %v", err)
+	}
+	if outcome != ResetMemoryAlreadySaved {
+		t.Errorf("memory outcome = %v, want ResetMemoryAlreadySaved", outcome)
 	}
 }
 
@@ -220,7 +261,7 @@ func TestResetSession_ErrorWhenProcessing(t *testing.T) {
 	ag := &Agent{}
 	ag.SetTurnInFlightForTest("test/ibusy", true)
 
-	err := ag.ResetSession(context.Background(), "test/ibusy")
+	_, err := ag.ResetSession(context.Background(), "test/ibusy")
 	if err == nil {
 		t.Fatal("expected error when processing")
 	}
@@ -708,8 +749,12 @@ func TestResetDelegatedSession(t *testing.T) {
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
 
-	if err := ag.ResetSession(context.Background(), sessionKey); err != nil {
+	outcome, err := ag.ResetSession(context.Background(), sessionKey)
+	if err != nil {
 		t.Fatalf("ResetSession (delegated): %v", err)
+	}
+	if outcome != ResetMemoryReflecting {
+		t.Errorf("memory outcome = %v, want ResetMemoryReflecting (background reflection)", outcome)
 	}
 
 	// Synchronous results: history archived in place under the stable key,
@@ -792,7 +837,7 @@ func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 		},
 	}
 
-	if err := ag.ResetSession(context.Background(), sessionKey); err != nil {
+	if _, err := ag.ResetSession(context.Background(), sessionKey); err != nil {
 		t.Fatalf("ResetSession: %v", err)
 	}
 	msgs, _ := store.Load(sessionKey)
