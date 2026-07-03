@@ -227,3 +227,7 @@ done
 # P2-9.)
 
 echo "Done."
+echo ""
+echo ">>> AGENT: the foci restart is now queued (async, --no-block). END YOUR TURN NOW."
+echo ">>> foci's graceful shutdown waits only briefly (~30s) for your in-flight turn before"
+echo ">>> being force-stopped mid-cleanup. Do any post-deploy verification in a NEW turn."
