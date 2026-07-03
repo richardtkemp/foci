@@ -287,7 +287,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 
 	b.logger().Debugf("OnResult: stashed ask-cycle result (turn_active=%v cycle=%d textlen=%d out_total=%d)",
 		turnActive, cycle, len(text), result.Usage.OutputTokens)
-	b.logger().Extra("turn_lifecycle event=result_stash cycle=%d turn_active=%v subtype=%s textlen=%d out_total=%d",
+	b.logger().Debugf("turn_lifecycle event=result_stash cycle=%d turn_active=%v subtype=%s textlen=%d out_total=%d",
 		cycle, turnActive, msg.Subtype, len(text), result.Usage.OutputTokens)
 
 	if !turnActive {
@@ -395,7 +395,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.stateEventsSeen = true
 		turnActive := b.turnActive
 		b.turnMu.Unlock()
-		b.logger().Extra("turn_lifecycle event=session_state state=%s turn_active=%v", ss.State, turnActive)
+		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v", ss.State, turnActive)
 		if ss.State == "idle" {
 			b.onSessionIdle()
 		}

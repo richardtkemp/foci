@@ -79,7 +79,7 @@ func (b *Backend) tryPreAnswerRedispatch(turn *delegator.TurnEvents, result *del
 		b.typingFunc(true)
 	}
 	b.touchActivity()
-	b.logger().Extra("turn_lifecycle event=preanswer_redispatch followup_len=%d round1_textlen=%d",
+	b.logger().Debugf("turn_lifecycle event=preanswer_redispatch followup_len=%d round1_textlen=%d",
 		len(followUp), len(result.Text))
 	return true
 }
@@ -116,7 +116,7 @@ func (b *Backend) completeTurn(reason string) {
 
 	b.logger().Debugf("turn complete (%s): had_turn_events=%v cycles=%d textlen=%d",
 		reason, turn != nil, cycles, len(result.Text))
-	b.logger().Extra("turn_lifecycle event=complete reason=%s had_turn_events=%v cycles=%d textlen=%d out_total=%d",
+	b.logger().Debugf("turn_lifecycle event=complete reason=%s had_turn_events=%v cycles=%d textlen=%d out_total=%d",
 		reason, turn != nil, cycles, len(result.Text), resultOutputTokens(result))
 
 	// Clear any agents still tracked (safety net — task_notification should
