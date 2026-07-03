@@ -1160,6 +1160,7 @@ type Config struct {
 	MasterAgent        string                    `toml:"master_agent"`                                   // agent that receives system injections not addressed to a specific agent (restart notices, update changelogs); empty = legacy behavior (restart → every agent, changelog → first agent)
 	DefaultPlatform    string                    `toml:"default_platform"`                               // platform preferred when resolving an agent's default session and delivery fallbacks (e.g. "telegram"); per-agent default_platform overrides; empty = most-recently-active platform
 	SkipSecurityChecks bool                      `toml:"skip_security_checks"`                           // if true, skip startup security checks for secrets.toml
+	ShellEnvFile       *string                   `toml:"shell_env_file"`                                 // rc/env file sourced at startup so tool shells inherit the operator's common env; nil = ladder (~/.bashrc → ~/.zshenv → ~/.profile, first present); "" = load nothing; explicit path = that file. backend_config.env overrides on collision.
 	DefinedKeys        map[string]bool           `toml:"-"`                                              // keys explicitly set in TOML file (populated by Load)
 	UndefinedKeys      []string                  `toml:"-"`                                              // unrecognised TOML keys (populated by Load, logged by caller)
 }
