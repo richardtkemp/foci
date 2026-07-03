@@ -35,20 +35,20 @@ Daily files only. MEMORY.md curation is handled by the consolidation job.
 
 Alongside memory, capture *procedural* knowledge as skills. Memories record what's true; skills record how to do something worth replaying.
 
-### When to create a skill
+### When to capture a skill
 
-If this session produced a workflow matching any of these, it's worth capturing:
+The bar is high, and it is a **conjunction** — capture a skill only when BOTH are clearly true:
 
-- 5+ tool calls chained to reach the outcome
-- Error recovery — something failed and you had to adapt
-- A user correction mid-task that changed the approach
-- A non-obvious sequence a future agent would re-derive from scratch
+1. **The path was not obvious.** You had to discover the right sequence, recover from a failure, or follow a correction — not just do the obvious thing that worked first try.
+2. **Reading the skill would have saved real time.** A future agent handed this skill reaches the outcome materially faster than re-deriving it from scratch. If any competent agent would figure this out quickly on its own, a skill adds noise, not value.
 
-If nothing qualifies, skip this section entirely. Most sessions won't produce a skill. Better none than a bad one.
+If both aren't clearly true, skip this section entirely. Most sessions won't produce a skill. Better none than a bad one.
 
-### Check existing skills first
+Concrete signals that both hold: 5+ tool calls chained non-obviously; error recovery you had to adapt to; a mid-task correction that changed the approach; a sequence a future agent would otherwise re-derive painfully.
 
-Scan the Available Skills block in the system prompt before writing anything new. If an existing skill already covers most of the workflow, **edit its SKILL.md to improve it** rather than creating a duplicate. Duplication is worse than imperfection.
+### Merge into an existing skill — don't create a new one by default
+
+Creating a new skill is the **exception, not the default.** Scan the Available Skills block in the system prompt first. If any existing skill is even adjacent to this workflow, **edit its SKILL.md to fold in what you learned** rather than adding a sibling. A new top-level skill is justified only when nothing existing is a plausible home. Skill-sprawl and duplication are worse than an imperfect edit to the right existing skill.
 
 ### Where and how to write
 
