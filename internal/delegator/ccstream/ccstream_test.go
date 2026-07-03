@@ -479,7 +479,7 @@ func TestInject_User_Idle_BeginsTurn(t *testing.T) {
 	handler := &testHandler{OnText: func(string) {}}
 	b.AttachSessionEvents(handler.session())
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "hello",
 		Turn:   handler.turn(),
@@ -515,7 +515,7 @@ func TestInject_User_Idle_WithAttachments(t *testing.T) {
 	handler := &testHandler{OnText: func(string) {}}
 	b.AttachSessionEvents(handler.session())
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "describe this",
 		Attachments: []delegator.Attachment{
@@ -550,7 +550,7 @@ func TestInject_User_InFlight_FoldsViaSendUser(t *testing.T) {
 		turnActive: true,
 	}
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "follow-up",
 	}); err != nil {
@@ -571,6 +571,67 @@ func TestInject_User_InFlight_FoldsViaSendUser(t *testing.T) {
 	}
 }
 
+// TestInject_System_Idle_BeginsTurn verifies Inject(SourceSystem) at idle
+// begins a fresh tracked turn exactly like SourceUser: bookkeeping installed,
+// prompt written.
+func TestInject_System_Idle_BeginsTurn(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	handler := &testHandler{OnText: func(string) {}}
+	b.AttachSessionEvents(handler.session())
+
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem,
+		Text:   "[keepalive]",
+		Turn:   handler.turn(),
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	if !b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = false after system begin-turn Inject; want true")
+	}
+	if !strings.Contains(buf.String(), "[keepalive]") {
+		t.Errorf("writer missing prompt text; got: %q", buf.String())
+	}
+}
+
+// TestInject_System_InFlight_Rejects verifies Inject(SourceSystem) during an
+// in-flight turn returns ErrTurnInFlight, writes nothing to CC, and leaves
+// the running turn's bookkeeping untouched — system input never folds into
+// (steers) a running turn; the caller waits for completion and retries.
+func TestInject_System_InFlight_Rejects(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	existing := &delegator.TurnEvents{}
+	b := &Backend{
+		writer:     NewWriter(nopWriteCloser{&buf}),
+		turnActive: true,
+		turnEvents: existing,
+	}
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem,
+		Text:   "[keepalive]",
+		Turn:   &delegator.TurnEvents{},
+	})
+	if !errors.Is(err, delegator.ErrTurnInFlight) {
+		t.Fatalf("Inject err = %v, want ErrTurnInFlight", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("system inject wrote to CC during in-flight turn: %q", buf.String())
+	}
+	b.turnMu.Lock()
+	gotTurn := b.turnEvents
+	b.turnMu.Unlock()
+	if gotTurn != existing {
+		t.Error("rejected system inject replaced the running turn's TurnEvents")
+	}
+}
+
 // TestInject_Steer_InFlight_NoInterrupt_PriorityNow verifies that
 // Inject(SourceSteer) during an in-flight turn does NOT call Interrupt
 // (the rearm-cascade era required interrupting; we now rely on CC's
@@ -586,7 +647,7 @@ func TestInject_Steer_InFlight_NoInterrupt_PriorityNow(t *testing.T) {
 		turnActive: true,
 	}
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "urgent text",
 	}); err != nil {
@@ -622,7 +683,7 @@ func TestInject_Steer_Idle_BeginsTurn(t *testing.T) {
 	handler := &testHandler{OnText: func(string) {}}
 	b.AttachSessionEvents(handler.session())
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "steer-at-idle",
 		Turn:   handler.turn(),
@@ -649,7 +710,7 @@ func TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight(t *testing.T) {
 	var buf bytes.Buffer
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "steer-at-idle-no-turn",
 	})
@@ -673,7 +734,7 @@ func TestInject_Compact(t *testing.T) {
 	var buf bytes.Buffer
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact,
 		Text:   "/compact summarise everything",
 	}); err != nil {
@@ -697,7 +758,7 @@ func TestInject_Compact_InFlight(t *testing.T) {
 		turnActive: true,
 	}
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact,
 		Text:   "/compact x",
 	}); err != nil {
@@ -717,7 +778,7 @@ func TestInject_Pass(t *testing.T) {
 		turnActive: true,
 	}
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourcePass,
 		Text:   "/model opus",
 	}); err != nil {
@@ -744,7 +805,7 @@ func TestSendToPane_Success(t *testing.T) {
 	b.SetTypingFunc(func(v bool) { typingCalls = append(typingCalls, v) })
 
 	turn := &delegator.TurnEvents{}
-	if err := b.sendToPane(context.Background(), "hello world", turn); err != nil {
+	if err := b.sendToPane(context.Background(), "hello world", turn, false); err != nil {
 		t.Fatalf("sendToPane: %v", err)
 	}
 	if !b.IsTurnInFlight() {
@@ -786,7 +847,7 @@ func TestSendToPaneWithAttachments(t *testing.T) {
 		{MimeType: "image/jpeg", Data: []byte("fake-jpeg")},
 		{MimeType: "application/pdf", Data: []byte("fake-pdf")},
 	}
-	if err := b.sendToPaneWithAttachments(context.Background(), "describe these", atts, turn); err != nil {
+	if err := b.sendToPaneWithAttachments(context.Background(), "describe these", atts, turn, false); err != nil {
 		t.Fatalf("sendToPaneWithAttachments: %v", err)
 	}
 	if !b.IsTurnInFlight() {
@@ -857,7 +918,7 @@ func TestSendToPane_WriterError(t *testing.T) {
 	b.writer.Close()
 
 	turn := &delegator.TurnEvents{}
-	if err := b.sendToPane(context.Background(), "hello", turn); err == nil {
+	if err := b.sendToPane(context.Background(), "hello", turn, false); err == nil {
 		t.Fatal("expected error from closed writer")
 	}
 	if b.IsTurnInFlight() {

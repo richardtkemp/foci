@@ -18,7 +18,7 @@ func planDelivery(ctx context.Context, deps delegator.PlanDeps, args string) (st
 		return "", fmt.Errorf("get backend: %w", err)
 	}
 	cmd := "/plan " + args
-	if err := be.Inject(ctx, delegator.Inject{Source: delegator.SourcePass, Text: cmd}); err != nil {
+	if err := be.ImmediateInject(ctx, delegator.Inject{Source: delegator.SourcePass, Text: cmd}); err != nil {
 		return "", fmt.Errorf("send command: %w", err)
 	}
 	return fmt.Sprintf("↗ Sent to CC: `%s`", cmd), nil

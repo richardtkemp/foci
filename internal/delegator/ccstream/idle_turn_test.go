@@ -102,7 +102,7 @@ func TestIdleKeyed_SteerAbortCycle(t *testing.T) {
 	applyHandler(b, handler)
 	stateEvent(b, "running")
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "actually, reconsider",
 	}); err != nil {
@@ -157,7 +157,7 @@ func TestIdleKeyed_FoldedSteerSingleResult(t *testing.T) {
 	applyHandler(b, handler)
 	stateEvent(b, "running")
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer, Text: "also cover the edge case",
 	}); err != nil {
 		t.Fatalf("Inject(SourceSteer): %v", err)

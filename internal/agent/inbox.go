@@ -26,6 +26,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +38,28 @@ import (
 	"foci/internal/platform"
 	"foci/internal/relogin"
 	"foci/internal/turn"
+)
+
+// SteerPreference is a sender's per-message routing choice, overriding the
+// agent's steer_mode config for this envelope only. Platforms that offer a
+// per-message affordance (the app's send options) set it; everything else
+// leaves SteerDefault.
+type SteerPreference int
+
+const (
+	// SteerDefault follows the agent's steer_mode config.
+	SteerDefault SteerPreference = iota
+
+	// SteerAlways steers mid-turn even when steer_mode is off.
+	SteerAlways
+
+	// SteerNever queues the message for a fresh turn after the in-flight
+	// turn completes. An explicitly-queued message is a turn and nothing
+	// else: it is also exempt from the conversational intercepts that would
+	// otherwise consume it mid-turn — plan-cancel feedback (#858), pending
+	// foci_ask answer capture (#884), and the backend question/elicitation
+	// typed-answer intercepts.
+	SteerNever
 )
 
 // Envelope is a session-resolved, platform-neutral message ready for the
@@ -52,6 +75,10 @@ type Envelope struct {
 	ChatID      int64 // platform-side chat/channel ID; opaque to the agent, used by the Driver for renderer/tracker setup
 	IsGroupChat bool
 	ReceivedAt  time.Time
+
+	// Steer is the sender's per-message steer/queue choice; SteerDefault
+	// when the platform offers none. See SteerPreference.
+	Steer SteerPreference
 
 	// Original is the platform-specific raw message (e.g. *gotgbot.Message
 	// for telegram, *discordgo.Message for discord). Opaque to the agent;
@@ -296,7 +323,7 @@ func (a *Agent) SetInboxBackend(fn func(ctx context.Context, sk string) (delegat
 }
 
 // SetInboxSteerMode toggles urgent-steer dispatch. When true, mid-turn
-// text-only messages route via Backend.Inject(SourceSteer) (CC-backend) or
+// text-only messages route via Backend.ImmediateInject(SourceSteer) (CC-backend) or
 // the steer buffer (API-backend). When false, all messages queue to the
 // next turn (matches legacy steer_mode=false). Set during agent setup
 // from config; default false.
@@ -336,18 +363,33 @@ func (a *Agent) StartInbox(ctx context.Context) {
 // per-session inbox. The session inbox + worker are lazy-created on first
 // call for a given session key.
 //
+// Enqueue is THE entry point for input to an agent session — the "when" half
+// of the pair it forms with delegator.ImmediateInject (the "how": the raw
+// write to the backend, which Enqueue's routing and the turn transport call
+// once dispatch is safe). Anything that wants a session to process input —
+// platform messages, system injections, HTTP sends — comes through here so it
+// serialises with in-flight turns, defers behind pending asks, and holds
+// through compaction. Only the routing below (urgent steer) and the turn
+// transport reach ImmediateInject directly.
+//
 // Routing:
 //
-//	in-flight + text-only + CC backend     → Backend.Inject(SourceSteer)
+//	in-flight + text-only + CC backend     → Backend.ImmediateInject(SourceSteer)
 //	in-flight + text-only + API backend    → AppendSteer (drained at tool boundary)
 //	otherwise (idle, or has attachments)   → push to session's channel
 //
+// Returns true when the envelope was accepted — queued, dispatched, or
+// intentionally consumed (steer, plan-cancel, ask answer, re-login code) —
+// and false when it was dropped (empty session key, full queue, failed
+// dispatch, re-login gate). Fire-and-forget callers may ignore the result;
+// callers that wait on the envelope's effect (EnqueueInjectWait) must not.
+//
 // Drops envelopes with empty session keys (logged) — caller is expected
 // to resolve the session key before calling Enqueue.
-func (a *Agent) Enqueue(env Envelope) {
+func (a *Agent) Enqueue(env Envelope) bool {
 	if env.SessionKey == "" {
 		a.logger().Warnf("inbox: enqueue with empty session key, dropping (text=%dB)", len(env.Text))
-		return
+		return false
 	}
 
 	// CC re-login gate (#843). A 401 on the shared OAuth credential pauses every
@@ -360,10 +402,10 @@ func (a *Agent) Enqueue(env Envelope) {
 		if relogin.G.ShouldCapture(a.AgentID) {
 			relogin.G.SubmitCode(env.Text)
 			a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
-		} else {
-			a.logger().Warnf("inbox: dropping message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
+			return true
 		}
-		return
+		a.logger().Warnf("inbox: dropping message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
+		return false
 	}
 
 	inb := a.getOrCreateInbox(env.SessionKey)
@@ -373,10 +415,11 @@ func (a *Agent) Enqueue(env Envelope) {
 	if env.Inject != nil {
 		select {
 		case inb.ch <- env:
+			return true
 		default:
 			a.logger().Warnf("inbox: queue full for sk=%s, dropping injection trigger=%s", env.SessionKey, env.Inject.Trigger)
+			return false
 		}
-		return
 	}
 
 	isActive := inb.turnActive.Load()
@@ -395,7 +438,11 @@ func (a *Agent) Enqueue(env Envelope) {
 	// the prompt's cancel listener). Runs before steer/queue routing so it catches
 	// the message whether steer mode is on (would otherwise hit ignored stdin) or
 	// off (would otherwise queue). Attachments / empty text fall through.
-	if isActive && env.Text != "" && len(env.Attachments) == 0 {
+	//
+	// SteerNever carve-out: a message the sender explicitly marked "queue" is a
+	// turn, not feedback — it must not be consumed here. It queues below and
+	// waits for the plan flow (and turn) to resolve.
+	if isActive && env.Steer != SteerNever && env.Text != "" && len(env.Attachments) == 0 {
 		if be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey); err == nil && be != nil {
 			if pr, ok := be.(delegator.PlanResponder); ok {
 				if reqID := pr.HasPendingPlanPermission(); reqID != "" {
@@ -403,7 +450,7 @@ func (a *Agent) Enqueue(env Envelope) {
 						a.logger().Warnf("inbox: plan-cancel-by-message failed sk=%s reqID=%s: %v (falling through)", env.SessionKey, reqID, err)
 					} else {
 						a.logger().Infof("inbox: plan approval cancelled by follow-up message sk=%s reqID=%s", env.SessionKey, reqID)
-						return
+						return true
 					}
 				}
 			}
@@ -427,36 +474,51 @@ func (a *Agent) Enqueue(env Envelope) {
 	// typed-text capture for app-sourced turns so quizzes don't swallow ordinary
 	// app messages (telegram/discord still capture, since their only "Other"
 	// free-text answer channel IS a typed reply).
-	if isActive && env.Text != "" && len(env.Attachments) == 0 && env.platformName() != platformApp &&
+	//
+	// SteerNever carve-out: an explicitly-queued message is a turn, never an
+	// answer — same rationale as the plan-cancel carve-out above.
+	if isActive && env.Steer != SteerNever && env.Text != "" && len(env.Attachments) == 0 && env.platformName() != platformApp &&
 		a.AskRouter != nil && a.AskRouter.PendingForSession != nil && a.AskRouter.HandleResponse != nil {
 		if reqID := a.AskRouter.PendingForSession(env.SessionKey); reqID != "" &&
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(env.SessionKey)) {
 			if answer := strings.TrimSpace(env.Text); answer != "" {
 				a.logger().Debugf("inbox: routing mid-turn typed reply to pending ask sk=%s req=%s", env.SessionKey, reqID)
 				a.AskRouter.HandleResponse(reqID, answer)
-				return
+				return true
 			}
 		}
 	}
 
-	steerEligible := a.inboxSteerMode && isActive && !compacting && env.Text != "" && len(env.Attachments) == 0
+	// Per-message preference beats the agent's steer_mode config: SteerAlways
+	// steers even with the config off, SteerNever queues even with it on. The
+	// compaction hold and text-only/attachment constraints still apply — a
+	// SteerAlways message can't be folded into a compaction transcript or
+	// carry attachments mid-turn.
+	steerMode := a.inboxSteerMode
+	switch env.Steer {
+	case SteerAlways:
+		steerMode = true
+	case SteerNever:
+		steerMode = false
+	}
+	steerEligible := steerMode && isActive && !compacting && env.Text != "" && len(env.Attachments) == 0
 
 	if steerEligible {
 		be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey)
 		if err != nil {
 			a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (falling back to buffer)", env.SessionKey, err)
 			inb.appendSteer(env.Text, env.ReceivedAt)
-			return
+			return true
 		}
 		if be != nil {
-			err := be.Inject(a.inboxCtx, delegator.Inject{
+			err := be.ImmediateInject(a.inboxCtx, delegator.Inject{
 				Source: delegator.SourceSteer,
 				Text:   env.Text,
 			})
 			switch {
 			case err == nil:
 				a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB", env.SessionKey, len(env.Text))
-				return
+				return true
 			case errors.Is(err, delegator.ErrTurnNotInFlight):
 				// The turn finished between the turnActive check above and the
 				// inject landing. Fall through to the normal idle path so the
@@ -465,21 +527,60 @@ func (a *Agent) Enqueue(env Envelope) {
 				a.logger().Debugf("inbox: steer raced turn completion sk=%s, re-routing to idle path", env.SessionKey)
 			default:
 				a.logger().Warnf("inbox: urgent dispatch sk=%s failed: %v", env.SessionKey, err)
-				return
+				return false
 			}
 		} else {
 			// API-mode fallback: buffer for next tool-boundary drain.
 			inb.appendSteer(env.Text, env.ReceivedAt)
 			a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
-			return
+			return true
 		}
 	}
 
 	// Push to this session's channel; drop with warning if full.
 	select {
 	case inb.ch <- env:
+		return true
 	default:
 		a.logger().Warnf("inbox: queue full for sk=%s, dropping message (%dB)", env.SessionKey, len(env.Text))
+		return false
+	}
+}
+
+// EnqueueInjectWait enqueues a system injection on sessionKey's inbox and
+// blocks until its run closure has completed (or ctx ends). This is the
+// synchronous counterpart of enqueueing an Envelope with Inject set: the
+// injection serialises with the session's platform turns and defers behind a
+// pending foci_ask, so system input never steers an in-flight turn — while
+// the caller still gets "the turn has finished" semantics (HTTP /send --sync,
+// reflection/keepalive passes that must complete before their scheduler
+// continues).
+//
+// Must NOT be called from the session's own inbox worker (an Inject.Run
+// closure or a platform Driver turn): the worker cannot dequeue the new
+// envelope while blocked here, so the wait would deadlock. Worker-context
+// and nested-turn callers (e.g. the pre-compaction memory hook, which runs
+// inside the outer turn's post-turn phase) call HandleMessage directly.
+//
+// Returns ctx.Err() if ctx ends first; the injection still runs when the
+// worker reaches it (Run closures are not cancellable once queued).
+func (a *Agent) EnqueueInjectWait(ctx context.Context, sessionKey, trigger string, run func()) error {
+	done := make(chan struct{})
+	accepted := a.Enqueue(Envelope{
+		SessionKey: sessionKey,
+		Inject: &InjectMeta{Trigger: trigger, Run: func() {
+			defer close(done)
+			run()
+		}},
+	})
+	if !accepted {
+		return fmt.Errorf("inbox rejected injection for session %s (trigger=%s)", sessionKey, trigger)
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -643,7 +744,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// the primary message to the backend, not the moment we
 			// dequeue (TODO #777). This closes the reorder race where a
 			// fast follow-up Enqueue could match the steer predicate and
-			// reach ccstream's stdin via Inject(SourceSteer) before the
+			// reach ccstream's stdin via ImmediateInject(SourceSteer) before the
 			// primary's own Inject call completed inside RunInference,
 			// stripping the [meta] header off the displaced message. See
 			// clutch/docs/inbox-steer-reorder-bug.md.
@@ -669,7 +770,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 				}
 			}
 			steerer := turnevent.SteererFunc(inb.drainSteerTexts)
-			a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)
+			heldInjects = append(heldInjects, a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)...)
 			inb.turnActive.Store(false)
 			for _, inj := range heldInjects {
 				a.runInject(inb, inj)
@@ -813,19 +914,33 @@ func (a *Agent) lateDeliverySink(sk string, driver Driver) turnevent.Sink {
 // that was buffered for tool-boundary drain but never drained because the
 // turn was text-only) plus any late arrivals on the channel get
 // re-dispatched as follow-up turns until both drains are empty.
-func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, seed Envelope) {
+//
+// Injection envelopes drained alongside late arrivals are returned to the
+// caller (the session worker) to run after the batch completes — folding one
+// into a follow-up platform batch would silently drop it (its Run closure
+// would never fire, and an inject carries no Text for the turn to deliver).
+// Mirrors the worker's own held-back filtering at batch time.
+func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, seed Envelope) []Envelope {
 	driver := seed.Driver
 	if driver == nil {
 		a.logger().Warnf("inbox: no driver on envelope sk=%s, dropping batch (%d msgs)", inb.sk, len(batch))
-		return
+		return nil
 	}
 	router := a.sessionRouterFor(inb, driver)
 	a.driveOnce(ctx, inb, batch, steerer, router, driver)
+	var heldInjects []Envelope
 	for {
 		orphans := inb.drainSteer()
-		extras := inb.drainAvailable()
+		var extras []Envelope
+		for _, d := range inb.drainAvailable() {
+			if d.Inject != nil {
+				heldInjects = append(heldInjects, d)
+			} else {
+				extras = append(extras, d)
+			}
+		}
 		if len(orphans) == 0 && len(extras) == 0 {
-			return
+			return heldInjects
 		}
 		followUp := buildFollowUp(seed, orphans, extras)
 		a.logger().Infof("inbox: follow-up sk=%s orphans=%d extras=%d", inb.sk, len(orphans), len(extras))

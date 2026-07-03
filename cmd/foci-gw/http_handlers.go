@@ -251,7 +251,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			return
 		}
 
-		resp, err := runAgentBuffered(sendCtx, inst.ag, sessionKey, req.Text)
+		resp, err := runAgentQueued(sendCtx, inst.ag, sessionKey, req.Text)
 		if err != nil {
 			log.Errorf("http", "send error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -452,7 +452,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 				asyncDispatch(w, inst, d.connMgr, sendCtx, parentKey, req.Text, "wake", req.Silent, route.PolicyFallback, wakeRcpt)
 				return
 			}
-			resp, err := runAgentBuffered(sendCtx, inst.ag, parentKey, req.Text)
+			resp, err := runAgentQueued(sendCtx, inst.ag, parentKey, req.Text)
 			if err != nil {
 				log.Errorf("wake", "send fallback error: %v", err)
 				http.Error(w, "internal error", http.StatusInternalServerError)
@@ -494,7 +494,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			return
 		}
 
-		resp, err := runAgentBuffered(wakeCtx, inst.ag, branchKey, req.Text)
+		resp, err := runAgentQueued(wakeCtx, inst.ag, branchKey, req.Text)
 		if err != nil {
 			log.Errorf("wake", "error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -673,7 +673,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			return
 		}
 
-		resp, err := runAgentBuffered(sendCtx, inst.ag, sessionKey, combined)
+		resp, err := runAgentQueued(sendCtx, inst.ag, sessionKey, combined)
 		if err != nil {
 			log.Errorf("http", "webhook error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)

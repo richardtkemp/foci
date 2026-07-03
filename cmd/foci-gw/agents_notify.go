@@ -177,20 +177,23 @@ func newSessionNotifyFn(
 	connMgr platform.ConnectionManager,
 ) tools.SessionNotifyFn {
 	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
-		go func() {
-			sk, err := session.ParseSessionKey(targetSessionKey)
-			if err != nil {
-				log.Errorf("session_notify", "invalid session key %q: %v", targetSessionKey, err)
-				return
-			}
-			targetAgentID := sk.AgentID
+		sk, err := session.ParseSessionKey(targetSessionKey)
+		if err != nil {
+			log.Errorf("session_notify", "invalid session key %q: %v", targetSessionKey, err)
+			return
+		}
+		targetAgentID := sk.AgentID
 
-			inst := agentResolverFn(targetAgentID)
-			if inst == nil {
-				log.Errorf("session_notify", "unknown agent %q for session %s", targetAgentID, targetSessionKey)
-				return
-			}
+		inst := agentResolverFn(targetAgentID)
+		if inst == nil {
+			log.Errorf("session_notify", "unknown agent %q for session %s", targetAgentID, targetSessionKey)
+			return
+		}
 
+		// Run on the target session's inbox worker — serialised with its
+		// platform turns and deferred behind a pending foci_ask — rather than
+		// in a detached goroutine that would race (and steer) them.
+		run := func() {
 			// PolicyRootFallback: same branch-suppression rule as the async
 			// notifier — a reply meant for a facet must not leak into the
 			// parent's chat via the primary fallback.
@@ -217,15 +220,25 @@ func newSessionNotifyFn(
 
 			if err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, []string{message}, nil); err != nil {
 				log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
-				return
 			}
-		}()
+		}
+		if !inst.ag.Enqueue(agent.Envelope{
+			SessionKey: targetSessionKey,
+			Inject:     &agent.InjectMeta{Trigger: "session_notify", Run: run},
+		}) {
+			log.Errorf("session_notify", "inbox rejected message for session %s", targetSessionKey)
+		}
 	})
 }
 
-// deliverInjectedTurn runs a HandleMessage turn and delivers the response
-// to the user's platform connection. Used by all system-initiated injections
-// (restart changelog, scheduled wakes, proactive warnings).
+// deliverInjectedTurn queues a HandleMessage turn on the session's inbox
+// worker and delivers the response to the user's platform connection. Used by
+// all system-initiated injections (restart changelog, scheduled wakes,
+// proactive warnings, inter-session replies). Queueing means the turn
+// serialises with the session's platform turns and defers behind a pending
+// foci_ask — system injections never steer an in-flight turn, they wait
+// gracefully for it to complete. Fire-and-forget: a rejected enqueue (full
+// inbox) is logged and dropped.
 func deliverInjectedTurn(
 	ag *agent.Agent,
 	ctx context.Context,
@@ -235,33 +248,40 @@ func deliverInjectedTurn(
 	sessionKey string,
 	message string,
 ) {
-	conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
-	triggerCtx := agent.WithTrigger(ctx, trigger)
-	if conn == nil {
-		if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
-			log.Errorf(trigger, "error: %v", err)
+	run := func() {
+		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
+		triggerCtx := agent.WithTrigger(ctx, trigger)
+		if conn == nil {
+			if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
+				log.Errorf(trigger, "error: %v", err)
+				return
+			}
+			log.Warnf(trigger, "no connection for session %s agent %s, response not delivered", sessionKey, agentID)
 			return
 		}
-		log.Warnf(trigger, "no connection for session %s agent %s, response not delivered", sessionKey, agentID)
-		return
-	}
-	if outcome == route.DeliveredViaPrimary {
-		log.Infof(trigger, "session %s has no live connection — delivering via agent %s primary", sessionKey, agentID)
-	}
+		if outcome == route.DeliveredViaPrimary {
+			log.Infof(trigger, "session %s has no live connection — delivering via agent %s primary", sessionKey, agentID)
+		}
 
-	// Typing indicator is driven by SessionSink on TurnStart /
-	// TurnComplete — the Bot.SetTyping implementation on both telegram
-	// and discord starts its own 4s refresh ticker internally, so one
-	// call at turn start is sufficient.
-	sink := turn.NewSessionSink(conn, sessionKey, trigger,
-		turn.WithSessionSinkErrorHandler(func(t string, err error) {
-			log.Errorf(t, "platform delivery: %v", err)
-		}))
-	triggerCtx = turnevent.WithSink(triggerCtx, sink)
+		// Typing indicator is driven by SessionSink on TurnStart /
+		// TurnComplete — the Bot.SetTyping implementation on both telegram
+		// and discord starts its own 4s refresh ticker internally, so one
+		// call at turn start is sufficient.
+		sink := turn.NewSessionSink(conn, sessionKey, trigger,
+			turn.WithSessionSinkErrorHandler(func(t string, err error) {
+				log.Errorf(t, "platform delivery: %v", err)
+			}))
+		triggerCtx = turnevent.WithSink(triggerCtx, sink)
 
-	if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
-		log.Errorf(trigger, "error: %v", err)
-		return
+		if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
+			log.Errorf(trigger, "error: %v", err)
+		}
+	}
+	if !ag.Enqueue(agent.Envelope{
+		SessionKey: sessionKey,
+		Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
+	}) {
+		log.Warnf(trigger, "inbox rejected injected turn for session %s", sessionKey)
 	}
 }
 
@@ -304,19 +324,11 @@ func buildWakeScheduler(
 					log.Warnf("remind", "no session for agent %s, skipping", agentID)
 					return
 				}
-				// Wait for an active turn on THIS session to finish before
-				// injecting — a turn on another session must not delay us.
-				// Pass the full key: the in-flight methods derive the
-				// child-preserving identity, so a reminder targeting a facet
-				// gates on the facet's own turn, not the parent root's (#719).
-				for getAgent().IsTurnInFlight(sk) {
-					select {
-					case <-getAgent().InFlightWaitCh(sk):
-					case <-wakeCtx.Done():
-						_ = reminderStore.Dismiss(id)
-						return
-					}
-				}
+				// deliverInjectedTurn queues on the session's inbox worker,
+				// which serialises with any in-flight turn on THIS session —
+				// no manual in-flight wait needed. A facet key queues on the
+				// facet's own inbox, so a turn on another session does not
+				// delay the wake (#719).
 				deliverInjectedTurn(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message))
 				wakesMu.Lock()
 				delete(wakes, id)

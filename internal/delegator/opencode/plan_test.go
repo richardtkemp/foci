@@ -184,7 +184,7 @@ var planErr = planError{}
 type fakeDelegator struct{}
 
 func (fakeDelegator) Start(context.Context, delegator.StartOptions) error { return nil }
-func (fakeDelegator) Inject(context.Context, delegator.Inject) error      { return nil }
+func (fakeDelegator) ImmediateInject(context.Context, delegator.Inject) error      { return nil }
 func (fakeDelegator) WaitForTurn(context.Context) error                   { return nil }
 func (fakeDelegator) IsTurnInFlight() bool                                { return false }
 func (fakeDelegator) IsRunning() bool                                     { return false }

@@ -94,6 +94,10 @@ func (a *Agent) RunTurn(
 	if !first.ReceivedAt.IsZero() {
 		ctx = WithReceivedAt(ctx, first.ReceivedAt)
 	}
+	// Thread the sender's steer/queue choice through to the turn transport —
+	// RunInference dispatches a SteerNever turn like a system turn (never
+	// folds, waits for backend idle) and skips the typed-answer intercepts.
+	ctx = WithSteerPreference(ctx, first.Steer)
 
 	// Collect texts and attachments across the batch. Group-chat messages
 	// gain sender attribution so downstream logs and prompts know who said
@@ -124,7 +128,10 @@ func (a *Agent) RunTurn(
 	// interactive-form frames, so a typed app message is always meant for the
 	// agent — never capture it as an answer. platformName is resolved above from
 	// driver.Connection(); "" (unknown source) falls through to capture as before.
-	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 && platformName != platformApp {
+	// SteerNever carve-out (mirrors inbox.go): an explicitly-queued message is a
+	// turn, never an answer.
+	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 && platformName != platformApp &&
+		first.Steer != SteerNever {
 		if reqID := a.AskRouter.PendingForSession(sk); reqID != "" &&
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(sk)) {
 			answer := strings.TrimSpace(texts[0])

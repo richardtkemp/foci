@@ -110,7 +110,7 @@ func TestInject_User_Idle_BeginsTurn(t *testing.T) {
 	b := newReadyBackend(t, rec)
 
 	turn := &delegator.TurnEvents{}
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "hello world",
 		Turn:   turn,
@@ -160,7 +160,7 @@ func TestInject_User_Idle_WithAttachments(t *testing.T) {
 		{MimeType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
 		{MimeType: "application/pdf", Data: []byte("%PDF-1.4")},
 	}
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source:      delegator.SourceUser,
 		Text:        "describe these",
 		Attachments: attachments,
@@ -234,7 +234,7 @@ func TestInject_User_InFlight_QueuedToSteerBuf(t *testing.T) {
 	// sending a prompt (avoids needing Step 7's session.idle wiring).
 	b.beginTurn(&delegator.TurnEvents{})
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "follow-up while busy",
 	}); err != nil {
@@ -275,12 +275,12 @@ func TestInject_Steer_InFlight_AbortsDrainsThenFlushes(t *testing.T) {
 	b.beginTurn(&delegator.TurnEvents{})
 
 	// Two steers arrive mid-turn.
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer, Text: "first steer",
 	}); err != nil {
 		t.Fatalf("Inject first steer: %v", err)
 	}
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer, Text: "second steer",
 	}); err != nil {
 		t.Fatalf("Inject second steer: %v", err)
@@ -356,7 +356,7 @@ func TestInject_Steer_InFlight_BackstopTimerFlushes(t *testing.T) {
 	b.abortDrainTimeout = 5 * time.Millisecond
 
 	b.beginTurn(&delegator.TurnEvents{})
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer, Text: "timer steer",
 	}); err != nil {
 		t.Fatalf("Inject steer: %v", err)
@@ -421,7 +421,7 @@ func TestInject_Steer_Idle_BeginsTurn(t *testing.T) {
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "steer at idle",
 		Turn:   &delegator.TurnEvents{},
@@ -445,7 +445,7 @@ func TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight(t *testing.T) {
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
 
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "steer at idle no turn",
 	})
@@ -457,6 +457,55 @@ func TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight(t *testing.T) {
 	}
 	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
 		t.Errorf("declined steer must not POST; got %d POSTs", got)
+	}
+}
+
+func TestInject_System_Idle_BeginsTurn(t *testing.T) {
+	// Verifies Inject(SourceSystem) at idle begins a fresh tracked turn
+	// exactly like SourceUser: turn active, one prompt POST.
+	rec := &recordingHandler{}
+	b := newReadyBackend(t, rec)
+
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem,
+		Text:   "[keepalive]",
+		Turn:   &delegator.TurnEvents{},
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+	if !b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = false after system begin-turn inject")
+	}
+	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 1 {
+		t.Errorf("system-idle POSTs = %d, want 1", got)
+	}
+}
+
+func TestInject_System_InFlight_Rejects(t *testing.T) {
+	// Verifies Inject(SourceSystem) during an in-flight turn returns
+	// ErrTurnInFlight without POSTing and without queueing in steerBuf —
+	// system input never folds into (steers) a running turn; the caller
+	// waits for completion and retries.
+	rec := &recordingHandler{}
+	b := newReadyBackend(t, rec)
+	b.beginTurn(&delegator.TurnEvents{})
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem,
+		Text:   "[keepalive]",
+		Turn:   &delegator.TurnEvents{},
+	})
+	if !errors.Is(err, delegator.ErrTurnInFlight) {
+		t.Fatalf("Inject err = %v, want ErrTurnInFlight", err)
+	}
+	if got := rec.countPath("/session/sess-inject/prompt_async"); got != 0 {
+		t.Errorf("rejected system inject must not POST; got %d", got)
+	}
+	b.turnMu.Lock()
+	buffered := len(b.steerBuf)
+	b.turnMu.Unlock()
+	if buffered != 0 {
+		t.Errorf("rejected system inject queued in steerBuf (%d entries); must not fold", buffered)
 	}
 }
 
@@ -475,7 +524,7 @@ func TestInject_Compact(t *testing.T) {
 	b.lastModel = "glm-5.2"
 	b.lastProvider = "zai-coding-plan"
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact,
 		Text:   "/compact summarise everything",
 	}); err != nil {
@@ -519,7 +568,7 @@ func TestInject_Compact_InFlight(t *testing.T) {
 	b.lastModel = "glm-5.2"
 	b.lastProvider = "zai-coding-plan"
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact,
 		Text:   "/compact x",
 	}); err != nil {
@@ -536,7 +585,7 @@ func TestInject_Compact_NoModel(t *testing.T) {
 	rec := &recordingHandler{}
 	b := newReadyBackend(t, rec)
 
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact,
 		Text:   "/compact x",
 	})
@@ -555,7 +604,7 @@ func TestInject_Pass(t *testing.T) {
 	b := newReadyBackend(t, rec)
 	b.beginTurn(&delegator.TurnEvents{}) // mid-turn — should still fire
 
-	if err := b.Inject(context.Background(), delegator.Inject{
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourcePass,
 		Text:   "/model opus",
 	}); err != nil {
@@ -588,7 +637,7 @@ func TestInject_BeforeStart(t *testing.T) {
 	// Verifies Inject on a never-Started Backend returns an error
 	// rather than panicking on a nil server or empty sessionID.
 	b := &Backend{}
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "premature",
 		Turn:   &delegator.TurnEvents{},
@@ -619,7 +668,7 @@ func TestInject_HTTPError(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	err := b.Inject(context.Background(), delegator.Inject{
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceUser,
 		Text:   "during rate limit",
 		Turn:   &delegator.TurnEvents{},

@@ -413,6 +413,16 @@ Subcommands:
 		})
 	}
 
+	// Start every agent's inbox workers unconditionally. Platform setup
+	// (telegram/discord/app) also calls StartInbox (idempotent), but a
+	// platform-less agent (cron/API-only) still needs its workers running:
+	// all system-initiated turns — HTTP /send, webhooks, wakes, notifies,
+	// reflection/keepalive passes — route through the inbox queue so they
+	// serialise with (and never steer) in-flight turns.
+	for _, inst := range agents {
+		inst.ag.StartInbox(ctx)
+	}
+
 	setupWarningHooks(agents, cfg)
 	if stop := setupTmuxMemoryMonitor(agents, agentOrder, cfg, connMgr, ctx); stop != nil {
 		defer stop()

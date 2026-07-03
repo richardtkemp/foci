@@ -72,7 +72,7 @@ import (
 //
 // 	// The first turn has produced no text yet (the real incident's first
 // 	// result was output=0). A mid-turn steer arrives.
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceSteer,
 // 		Text:   "actually, reconsider the causal theory",
 // 	}); err != nil {
@@ -148,7 +148,7 @@ import (
 // 	b.turnText.WriteString("the answer that must not be lost")
 // 	b.turnMu.Unlock()
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceSteer,
 // 		Text:   "tweak it",
 // 	}); err != nil {
@@ -210,7 +210,7 @@ import (
 // 	}
 // 	applyHandler(b, handler)
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceSteer,
 // 		Text:   "steer",
 // 	}); err != nil {
@@ -274,7 +274,7 @@ import (
 // 	}
 // 	applyHandler(b, handler)
 //
-// 	if err := b.Inject(context.Background(), delegator.Inject{
+// 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 // 		Source: delegator.SourceSteer,
 // 		Text:   "steer",
 // 	}); err != nil {

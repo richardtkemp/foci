@@ -55,6 +55,24 @@ func TriggerFromContext(ctx context.Context) string {
 	return s
 }
 
+// steerPrefKey is the context key for the sender's per-message steer/queue
+// preference (Envelope.Steer). Set by RunTurn from the batch's first envelope
+// so the turn transport can honour SteerNever: an explicitly-queued message
+// must not fold into an in-flight turn and must not be consumed by the
+// backend's typed-answer intercepts.
+type steerPrefKey struct{}
+
+// WithSteerPreference attaches a per-message steer preference to a context.
+func WithSteerPreference(ctx context.Context, p SteerPreference) context.Context {
+	return context.WithValue(ctx, steerPrefKey{}, p)
+}
+
+// SteerPreferenceFromContext extracts the steer preference (SteerDefault if absent).
+func SteerPreferenceFromContext(ctx context.Context) SteerPreference {
+	p, _ := ctx.Value(steerPrefKey{}).(SteerPreference)
+	return p
+}
+
 // receivedAtKey is the context key for the user-message receipt time.
 type receivedAtKey struct{}
 
@@ -85,6 +103,25 @@ func isUserTrigger(trigger string) bool {
 	default:
 		return false
 	}
+}
+
+// isInteractiveTrigger reports whether a turn originates from real-time user
+// input on an interactive surface: a registered messaging platform (telegram,
+// discord, app) or voice. Only these turns may steer — fold into an in-flight
+// turn via the backend's mid-turn drain. Every other trigger is
+// system-initiated — HTTP /send (foci send, cron), webhooks, wakes,
+// inter-session notifies, error/restart injections, memory passes — and must
+// wait gracefully for the in-flight turn to complete instead (the
+// Inject(SourceSystem) retry loop in turn_delegated.go RunInference).
+//
+// Deliberately narrower than isUserTrigger: "user" (HTTP /send) and ""
+// count as user-initiated for nudges and logging, but they are not
+// real-time input and must never steer running work.
+func isInteractiveTrigger(trigger string) bool {
+	if _, ok := platformTriggers.Load(trigger); ok {
+		return true
+	}
+	return trigger == "voice"
 }
 
 // isMemoryTrigger reports whether a turn is a memory-formation pass —

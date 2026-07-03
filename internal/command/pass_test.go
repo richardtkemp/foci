@@ -349,7 +349,7 @@ func (m *mockPassBackend) SendCommand(_ context.Context, cmd string) error {
 	m.sentCommand = cmd
 	return nil
 }
-func (m *mockPassBackend) Inject(ctx context.Context, inj delegator.Inject) error {
+func (m *mockPassBackend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	switch inj.Source {
 	case delegator.SourceUser, delegator.SourceSteer:
 		if !m.IsTurnInFlight() {
@@ -403,7 +403,7 @@ func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd string) e
 	m.sentCommand = cmd
 	return nil
 }
-func (m *mockPassBackendNoCapturer) Inject(ctx context.Context, inj delegator.Inject) error {
+func (m *mockPassBackendNoCapturer) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	switch inj.Source {
 	case delegator.SourceUser, delegator.SourceSteer:
 		if !m.IsTurnInFlight() {

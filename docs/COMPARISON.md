@@ -120,7 +120,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | | **Foci** | **OpenClaw** | **Nanobot** | **Hermes** |
 |---|---|---|---|---|
 | Message transforms (regex) | ✅ per-agent | ❌ | ❌ | ❌ |
-| Queue modes | NYI | ✅ steer/followup/collect/interrupt | ❌ | ✅ interrupt/queue/steer |
+| Queue modes | ✅ steer/queue (config default + per-message override from app; system input always queues) | ✅ steer/followup/collect/interrupt | ❌ | ✅ interrupt/queue/steer |
 | Block streaming | NYI | ✅ chunked delivery | ❌ | ✅ progressive edits |
 | Deferred partial replies | ✅ batch or immediate | ❌ | ❌ | ❌ |
 | Tool call display modes | ✅ off/preview/full | ✅ verbose toggle | ❌ | ✅ off/new/all/verbose |
