@@ -527,7 +527,7 @@ if $HAS_SYSTEMCTL; then
         cat >> "$INSTALL_SCRIPT" << EMIT_SERVICE
 cat > "$SERVICE_FILE" << 'EOF'
 [Unit]
-Description=Foci Agent
+Description=FOCI Agent
 After=network-online.target
 Wants=network-online.target
 
@@ -545,6 +545,8 @@ LockPersonality=yes
 WorkingDirectory=$FOCI_HOME
 Environment="PATH=$SERVICE_PATH"
 ExecStart=$INSTALL_DIR/foci-gw -config $FOCI_HOME/config/foci.toml
+KillMode=mixed
+TimeoutStopSec=45s
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
