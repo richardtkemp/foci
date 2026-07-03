@@ -63,7 +63,7 @@ type Delegator interface {
 	//   ---------|------------|--------------------------------------------
 	//   User     | idle       | begin turn (with attachments if provided)
 	//   User     | in-flight  | send follow-up; CC's mid-turn drain folds it
-	//   Steer    | in-flight  | send at priority "now"; CC folds at next tool boundary
+	//   Steer    | in-flight  | send at priority "next"; CC folds at next tool boundary
 	//   Steer    | idle       | with inj.Turn: begin turn; without: ErrTurnNotInFlight (caller re-routes)
 	//   System   | idle       | begin turn, atomically (idle check + begin under one lock)
 	//   System   | in-flight  | ErrTurnInFlight — never folds; caller waits and retries
@@ -411,7 +411,7 @@ type TurnEvents struct {
 
 	// PostToolNudgeFunc is called after each tool's completion signal
 	// (PostToolUse hook dispatch). The caller returns any nudge reminders
-	// that should be injected mid-turn as "now"-priority user messages,
+	// that should be injected mid-turn as default-priority user messages,
 	// matching the API transport's CheckAfterTools path. Non-blocking.
 	// Used by the delegated transport to fire every_n_tools, after_error,
 	// and tool_pattern nudge rules during long CC turns.
@@ -455,12 +455,13 @@ const (
 
 	// SourceSteer is an urgent platform-side dispatch (Telegram/Discord
 	// message arriving during an in-flight CC turn). Inject queues the
-	// text at queue priority "now" — CC's mid-turn drain folds it ahead
-	// of any other queued items at the next tool boundary, without
-	// aborting the in-flight tool. The running tool finishes and the
-	// model responds in the same turn. Steer no longer interrupts; for
-	// "stop right now" semantics use /reset hard. At idle, degrades to
-	// SourceUser-idle (begin turn).
+	// text at queue priority "next" — CC's mid-turn drain folds it into
+	// the current ask at the next tool boundary; the running tool
+	// finishes and the model responds in the same turn. Steer does not
+	// interrupt: priority "now" (which aborts the in-flight ask) is
+	// reserved for a future per-message steer tag or aggressive-steer
+	// config mode (both NYI); "stop right now" semantics live in /reset
+	// hard. At idle, degrades to SourceUser-idle (begin turn).
 	SourceSteer
 
 	// SourceCompact is a /compact slash command sent to CC. Fire-and-forget:

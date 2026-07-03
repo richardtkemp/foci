@@ -71,15 +71,17 @@ func (wr *Writer) trySend(msg interface{}) bool {
 // SendUser sends a user-typed message to Claude Code. CC enqueues with the
 // default priority "next" and folds the message into the current ask() at
 // the next mid-turn drain (claude-code's query.ts:1570-1589) — there is
-// no separate ask/result cycle for in-flight injections. Use
-// SendUserPriority("now", ...) for steer-flavoured messages that should
-// jump ahead of other queued commands.
+// no separate ask/result cycle for in-flight injections. SendUserPriority
+// sets an explicit queue priority; foci currently only sends "next".
 func (wr *Writer) SendUser(content string) error {
 	return wr.Send(NewUserMessage(content))
 }
 
 // SendUserPriority is like SendUser but explicitly sets the queue priority.
-// Valid values: "now" | "next" | "later". Used by SourceSteer dispatch
+// Valid values: "now" | "next" | "later". Used by SourceSteer dispatch.
+// "now" additionally makes CC abort the in-flight ask (print.ts / REPL.tsx
+// abort('interrupt')); steers don't use it today — see
+// Backend.sendUserMessagePriority for the NYI gating it belongs behind.
 // where the message must dequeue ahead of any other queued items at the
 // next mid-turn drain.
 func (wr *Writer) SendUserPriority(content, priority string) error {

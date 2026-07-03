@@ -70,10 +70,14 @@ type PermSuggestion struct {
 //
 // Priority controls CC's queue dequeue order: "now" > "next" > "later".
 // When omitted, CC's enqueue defaults to "next" (per claude-code's
-// messageQueueManager.ts). foci sets "now" only for SourceSteer-flavoured
-// in-flight injections so they jump ahead of any other queued commands at
-// the next mid-turn drain (CC's query.ts:1570-1589) without aborting the
-// current ask().
+// messageQueueManager.ts). The classes differ in more than order: "now"
+// makes CC abort the in-flight ask (abort('interrupt')) and answer
+// immediately in a fresh ask cycle of the same run; "next" folds at the
+// next mid-turn drain (query.ts:1570-1589); "later" is excluded from the
+// mid-turn drain entirely (CC's own background task notifications use it)
+// and is processed between runs. foci currently sends everything at
+// "next" — "now" for steers is reserved for NYI per-message tagging or an
+// NYI aggressive-steer config mode.
 type UserMessage struct {
 	Type            string      `json:"type"` // always "user"
 	Message         UserPayload `json:"message"`
@@ -494,11 +498,9 @@ func NewUserMessage(content string) *UserMessage {
 }
 
 // NewUserMessagePriority creates a simple text UserMessage with an explicit
-// queue priority ("now" / "next" / "later"). Used by SourceSteer dispatch
-// so the steer message jumps ahead of any other queued commands when CC's
-// mid-turn drain runs at the next tool boundary, without aborting the
-// current ask(). Empty priority produces an unset field — CC defaults to
-// "next" when the field is omitted.
+// queue priority ("now" / "next" / "later" — see the Priority field docs on
+// UserMessage). Used by SourceSteer dispatch. Empty priority produces an
+// unset field — CC defaults to "next" when the field is omitted.
 func NewUserMessagePriority(content, priority string) *UserMessage {
 	m := NewUserMessage(content)
 	m.Priority = priority

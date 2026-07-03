@@ -216,9 +216,18 @@ func (b *Backend) sendUserMessage(text string) error {
 }
 
 // sendUserMessagePriority writes a user-role message at the given queue
-// priority ("now" / "next" / "later"). Used by SourceSteer dispatch so
-// the message dequeues ahead of any other queued items at CC's next
-// mid-turn drain.
+// priority. CC's classes ("now" > "next" > "later", messageQueueManager.ts):
+// "now" additionally aborts the in-flight ask (abort('interrupt')) so it is
+// answered immediately in a fresh ask cycle; "next" folds at the next
+// mid-turn drain (tool boundary); "later" sits out the run entirely (CC uses
+// it for its own background task notifications).
+//
+// SourceSteer currently sends "next" — same fold point as a follow-up, but
+// dequeued through the explicit-priority path so the intent (and this seam)
+// stays visible. Using "now" for steers is deliberately NOT wired: it should
+// be gated on per-message steer tagging or an aggressive-steer config mode
+// (both NYI) — interrupting mid-generation is too disruptive to be every
+// steer's default, and "stop right now" already has /reset hard.
 func (b *Backend) sendUserMessagePriority(text, priority string) error {
 	return b.writer.SendUserPriority(text, priority)
 }
@@ -235,7 +244,7 @@ func (b *Backend) sendUserMessagePriority(text, priority string) error {
 //	---------|------------|--------------------------------------------
 //	User     | idle       | begin turn (with attachments if provided)
 //	User     | in-flight  | SendUser at default priority; CC folds via mid-turn drain
-//	Steer    | in-flight  | SendUser at priority "now"; CC folds via mid-turn drain
+//	Steer    | in-flight  | SendUser at priority "next"; CC folds via mid-turn drain
 //	Steer    | idle       | begin turn — degrades to User-idle
 //	System   | idle       | begin turn, atomically (tryBeginTurn)
 //	System   | in-flight  | ErrTurnInFlight — never folds; caller waits + retries
@@ -243,9 +252,8 @@ func (b *Backend) sendUserMessagePriority(text, priority string) error {
 //	Pass     | any        | send slash command (fire-and-forget)
 //
 // All in-flight injections land inside CC's current run loop — folded
-// into the running ask at a drain point, or (a "now" steer arriving
-// mid-stream) answered in a fresh ask cycle of the same run. Either way
-// the response belongs to the current foci turn, which completes at the
+// into the running ask at the next drain point (tool boundary). The
+// response belongs to the current foci turn, which completes at the
 // run's session_state_changed:idle (see onSessionIdle).
 //
 // inj.Turn is required for SourceUser/Steer at idle (a fresh turn needs an
@@ -290,15 +298,15 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 			b.logger().Debugf("Inject(Steer): no turn in flight, beginning tracked turn from inj.Turn")
 			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn, false)
 		}
-		// In-flight steer: SendUser at priority "now". CC dequeues "now"
-		// ahead of "next"/"later"; depending on where the run is it either
-		// folds the steer into the current ask (mid-tool arrival) or aborts
-		// the ask and answers it in a fresh ask cycle (mid-stream arrival,
-		// print.ts abort('interrupt')). Both stay inside the current run, so
-		// no bookkeeping is needed here: the turn completes at the run's
-		// idle regardless of how many ask cycles the steer minted.
-		// "Stop right now" semantics live in /reset hard, not Steer.
-		return b.sendUserMessagePriority(inj.Text, "now")
+		// In-flight steer: SendUser at priority "next" — CC folds it into
+		// the running ask at the next mid-turn drain (tool boundary),
+		// matching CC's own class for user input. It stays inside the
+		// current run, so no bookkeeping is needed here: the turn completes
+		// at the run's idle. Priority "now" (abort the in-flight ask, answer
+		// immediately) is deliberately not used — see sendUserMessagePriority
+		// for the NYI gating it should live behind. "Stop right now"
+		// semantics live in /reset hard, not Steer.
+		return b.sendUserMessagePriority(inj.Text, "next")
 
 	case delegator.SourceSystem:
 		// System-initiated text (foci send, cron, notifications, error and
