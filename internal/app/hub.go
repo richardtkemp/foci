@@ -619,22 +619,41 @@ func (h *Hub) HasFacet(string) bool                 { return false }
 // StartAll rebuilds bindings for every conversation at startup so an
 // unsolicited message (cron/keepalive/reflection) lands correctly BEFORE the app
 // reconnects — closing the post-restart window where bindingForSession would
-// otherwise return nil and the send would drop. The restore set is every conv
-// with a visible frame and a known agent in the durable store; archived convs
-// are included (archive is now a reversible flag, not a frame purge), and their
-// archived state is surfaced via the roster. ensureBinding
-// with a nil client creates the socketless durable binding; the real socket
-// re-attaches on the app's next hello/resume (#app-binding-restore).
+// otherwise return nil and the send would drop. The restore set is the union of
+// two durable sources: every conv with a visible frame and a known agent in the
+// frame store, plus every persisted conv_id row (a conversation registered at
+// binding creation but without a durable frame yet — created and maybe starred,
+// never used — must survive restarts too). Archived convs are included (archive
+// is a reversible flag, not a frame purge); their archived state is surfaced via
+// the roster. ensureBinding with a nil client creates the socketless durable
+// binding; the real socket re-attaches on the app's next hello/resume
+// (#app-binding-restore).
 func (h *Hub) StartAll(context.Context) {
 	if h.frames == nil {
 		return
 	}
 	convs := h.frames.RestorableConvs()
+	seen := make(map[string]struct{}, len(convs))
 	for _, c := range convs {
 		h.ensureBinding(nil, c.agentID, c.convID)
+		seen[c.convID] = struct{}{}
 	}
-	if len(convs) > 0 {
-		log.Infof("app", "restored %d binding(s) from durable store at startup", len(convs))
+	restored := len(convs)
+	if idx := h.deps.SessionIndex; idx != nil {
+		refs, err := idx.ConvRefs("app")
+		if err != nil {
+			log.Errorf("app", "startup restore: conv_id rows: %v", err)
+		}
+		for _, r := range refs {
+			if _, ok := seen[r.ConvID]; ok {
+				continue
+			}
+			h.ensureBinding(nil, r.AgentID, r.ConvID)
+			restored++
+		}
+	}
+	if restored > 0 {
+		log.Infof("app", "restored %d binding(s) from durable store at startup", restored)
 	}
 	// One-time: resolve asks stored before durable resolution tracking existed,
 	// so a freshly-paired device doesn't replay them as fresh (#981).
@@ -946,6 +965,13 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 	// gracefully.
 	chatID := chatIDForConv(convID)
 	sk := h.sessionKeyForChat(agentID, chatID)
+	if idx := h.deps.SessionIndex; idx != nil {
+		// Persist the hash preimage: this row is what makes the conversation
+		// durable before its first frame (StartAll restores from it) and the
+		// default-chat pin resolvable when the binding isn't live
+		// (defaultChatBinding reverses the one-way chatID hash through it).
+		_ = idx.SetChatMetadata(agentID, "app", chatID, "conv_id", convID)
+	}
 
 	h.mu.Lock()
 	if existing := h.convs[convID]; existing != nil {
@@ -997,11 +1023,13 @@ func (h *Hub) bindingForSession(sessionKey string) *convBinding {
 	return h.bySession[sessionKey]
 }
 
-// defaultChatBinding returns the live binding for the agent's default app chat,
-// or nil if there is no default set or its conversation isn't currently bound.
-// The default is stored as a chatID (SetDefaultChat); chatIDForConv is a one-way
-// hash, so we can only match an existing binding — not reconstruct the convID to
-// bind a never-opened default. Used as the never-bound send fallback (#959).
+// defaultChatBinding returns the binding for the agent's default app chat, or
+// nil when no default is set. A live binding is matched by chatID; when the
+// pinned conversation isn't bound (restart edge cases, pin set from another
+// device), its persisted conv_id row — the preimage of the one-way chatID hash,
+// written at binding creation — resurrects it. nil is also returned for a pin
+// with no conv_id row (set before conv_id persistence existed), in which case
+// the caller falls back. Used as the never-bound send fallback (#959).
 func (h *Hub) defaultChatBinding(agentID string) *convBinding {
 	idx := h.deps.SessionIndex
 	if idx == nil {
@@ -1012,20 +1040,28 @@ func (h *Hub) defaultChatBinding(agentID string) *convBinding {
 		return nil
 	}
 	h.mu.RLock()
-	defer h.mu.RUnlock()
 	for _, b := range h.convs {
 		if b.agentID == agentID && b.chatID == dc {
+			h.mu.RUnlock()
 			return b
 		}
 	}
-	return nil
+	h.mu.RUnlock()
+	convID, err := idx.GetChatMetadata(agentID, "app", dc, "conv_id")
+	if err != nil || convID == "" {
+		log.Warnf("app", "default chat %d (agent %s): no live binding and no persisted conv_id — pin unresolvable, falling back", dc, agentID)
+		return nil
+	}
+	log.Infof("app", "default chat %d (agent %s): resurrecting conversation %s", dc, agentID, convID)
+	return h.ensureBinding(nil, agentID, convID)
 }
 
 // deliverBinding resolves — or creates — the destination conversation for a
 // session-blind send to this agent. The app is a session-creating surface, so
 // "nowhere to deliver" is never the right answer:
 //
-//  1. The pinned default conversation, when set and live.
+//  1. The pinned default conversation, when set (resurrected from its
+//     persisted conv_id if not live).
 //  2. No default: the most recently active conversation at the time of the
 //     send. The default pin is user-owned (conversation.setDefault) — it is
 //     never set automatically.
@@ -1035,14 +1071,16 @@ func (h *Hub) defaultChatBinding(agentID string) *convBinding {
 //     never seen locally.) Subsequent sends find it as the newest
 //     conversation via rung 2.
 //
-// Returns nil only when creation itself fails. Serialised by deliverMu so
-// concurrent session-blind sends can't mint duplicate conversations.
-func (h *Hub) deliverBinding(agentID string) *convBinding {
+// The second return names the rung that fired ("default", "most-recent",
+// "server-created") so callers can log the true destination. Serialised by
+// deliverMu so concurrent session-blind sends can't mint duplicate
+// conversations.
+func (h *Hub) deliverBinding(agentID string) (*convBinding, string) {
 	h.deliverMu.Lock()
 	defer h.deliverMu.Unlock()
 
 	if b := h.defaultChatBinding(agentID); b != nil {
-		return b
+		return b, "default"
 	}
 
 	// Most recently active existing conversation.
@@ -1058,14 +1096,21 @@ func (h *Hub) deliverBinding(agentID string) *convBinding {
 	}
 	h.mu.RUnlock()
 	if latest != nil {
-		return latest
+		return latest, "most-recent"
 	}
 
 	convID := fap.NewULID()
 	created := h.ensureBinding(nil, agentID, convID)
 	log.Infof("app", "server-created conversation %s for agent %s (no existing conversations)", convID, agentID)
 	h.pushRosterAll()
-	return created
+	return created, "server-created"
+}
+
+// pushRoster re-advertises the roster to one socket — the ack half of every
+// roster-changing round-trip (hello, conversation.list/open/rename/setDefault/
+// archive), through which the client reconciles server-authoritative state.
+func (h *Hub) pushRoster(client *wsClient) {
+	client.sendRaw(fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()})
 }
 
 // pushRosterAll re-advertises the roster to every live socket, so connected

@@ -64,11 +64,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.evictOtherDeviceSockets(client, f.Client.DeviceID)
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
-		client.sendRaw(fap.HelloServer{
-			Version: fap.ProtocolVersion,
-			Caps:    h.caps(),
-			Agents:  h.agentRoster(),
-		})
+		h.pushRoster(client)
 		// Reconnect resume: re-attach + replay each conversation the client still
 		// has unrendered frames for.
 		h.resumeConversations(client, f.Resume)
@@ -77,11 +73,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleConversationOpen(client, f)
 
 	case fap.ConversationList:
-		client.sendRaw(fap.HelloServer{
-			Version: fap.ProtocolVersion,
-			Caps:    h.caps(),
-			Agents:  h.agentRoster(),
-		})
+		h.pushRoster(client)
 
 	case fap.ConversationRename:
 		h.handleConversationRename(client, f)
@@ -189,11 +181,7 @@ func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
 		}
 		if existing := h.bindingForSession(f.SessionKey); existing != nil {
 			existing.attach(client)
-			client.sendRaw(fap.HelloServer{
-				Version: fap.ProtocolVersion,
-				Caps:    h.caps(),
-				Agents:  h.agentRoster(),
-			})
+			h.pushRoster(client)
 			return
 		}
 	}
@@ -213,11 +201,7 @@ func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
 	}
 	// Advertise the new conversation (+ its session key) via an updated roster;
 	// the app upserts it from the hello frame.
-	client.sendRaw(fap.HelloServer{
-		Version: fap.ProtocolVersion,
-		Caps:    h.caps(),
-		Agents:  h.agentRoster(),
-	})
+	h.pushRoster(client)
 }
 
 // handleConversationRename sets (or clears, when Title is empty) the user-friendly
@@ -243,11 +227,7 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 			return
 		}
 	}
-	client.sendRaw(fap.HelloServer{
-		Version: fap.ProtocolVersion,
-		Caps:    h.caps(),
-		Agents:  h.agentRoster(),
-	})
+	h.pushRoster(client)
 }
 
 // handleConversationSetDefault sets (f.IsDefault) or clears this conversation as
@@ -276,11 +256,7 @@ func (h *Hub) handleConversationSetDefault(client *wsClient, f fap.ConversationS
 			log.Warnf("app", "setDefault %s (isDefault=%v): %v", f.ConversationID, f.IsDefault, err)
 		}
 	}
-	client.sendRaw(fap.HelloServer{
-		Version: fap.ProtocolVersion,
-		Caps:    h.caps(),
-		Agents:  h.agentRoster(),
-	})
+	h.pushRoster(client)
 }
 
 // handleConversationArchive sets or clears the archived flag on a conversation.
@@ -290,8 +266,12 @@ func (h *Hub) handleConversationSetDefault(client *wsClient, f fap.ConversationS
 // chat_metadata, alongside is_default) and pushes back an updated roster so the
 // app and every other device reconciles. The binding stays live: inbound frames
 // still flow and history is retained, so unarchive (Archived=false) restores the
-// full thread. Mirrors handleConversationSetDefault (the established per-chat-
-// metadata round-trip). (#app-archive-flag)
+// full thread. Archiving the agent's default chat is refused with an ErrorFrame
+// (the client's Archive control is disabled for the default, so this is a
+// belt-and-braces guard for other devices/older clients): a default that could
+// be archived would silently degrade session-blind delivery. Mirrors
+// handleConversationSetDefault (the established per-chat-metadata round-trip).
+// (#app-archive-flag)
 func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArchive) {
 	h.mu.RLock()
 	b := h.convs[f.ConversationID]
@@ -301,16 +281,18 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
+		if f.Archived && idx.DefaultChatForAgent(b.agentID, "app") == b.chatID {
+			log.Infof("app", "refused archive of default conversation %s (agent %s)", f.ConversationID, b.agentID)
+			client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "archive_default", Message: "This is the default chat. Set another default before archiving it."})
+			h.pushRoster(client) // reverts the client's optimistic archived flag
+			return
+		}
 		if err := idx.SetArchivedChat(b.agentID, "app", b.chatID, f.Archived); err != nil {
 			log.Warnf("app", "archive %s (archived=%v): %v", f.ConversationID, f.Archived, err)
 		}
 	}
 	log.Infof("app", "archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.sessionKey)
-	client.sendRaw(fap.HelloServer{
-		Version: fap.ProtocolVersion,
-		Caps:    h.caps(),
-		Agents:  h.agentRoster(),
-	})
+	h.pushRoster(client)
 }
 
 // routeCommand dispatches a slash command through the agent's command registry,

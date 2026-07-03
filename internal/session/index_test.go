@@ -1430,3 +1430,38 @@ func TestDefaultSessionKeyForAgentOn(t *testing.T) {
 		t.Errorf("absent-platform fallthrough = %q, want ag/c222", got)
 	}
 }
+
+func TestConvRefs_ReturnsPersistedConvIDRows(t *testing.T) {
+	// Proves ConvRefs returns exactly the platform's conv_id rows (the chatID
+	// hash preimages written at binding creation), skipping other keys, other
+	// platforms, and rows with an empty agent or value.
+	idx := tempIndex(t)
+	for _, row := range []struct {
+		agent, platform string
+		chatID          int64
+		key, value      string
+	}{
+		{"ag1", "app", 42, "conv_id", "01AAA"},
+		{"ag2", "app", 43, "conv_id", "01BBB"},
+		{"ag1", "app", 44, "alias", "not-a-conv"},
+		{"ag1", "telegram", 45, "conv_id", "01CCC"},
+		{"", "app", 46, "conv_id", "01DDD"},
+		{"ag1", "app", 47, "conv_id", ""},
+	} {
+		if err := idx.SetChatMetadata(row.agent, row.platform, row.chatID, row.key, row.value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	refs, err := idx.ConvRefs("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, r := range refs {
+		got[r.ConvID] = r.AgentID
+	}
+	if len(got) != 2 || got["01AAA"] != "ag1" || got["01BBB"] != "ag2" {
+		t.Fatalf("ConvRefs = %v, want {01AAA: ag1, 01BBB: ag2}", got)
+	}
+}

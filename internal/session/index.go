@@ -783,6 +783,41 @@ func (idx *SessionIndex) DeleteChatMetadata(agentID, platform string, chatID int
 	return idx.metaDelete(chatMetaTable, agentID, platform, chatID, key)
 }
 
+// ConvRef identifies a persisted platform conversation: the owning agent and
+// the platform-native conversation ID (the preimage of the numeric chatID).
+type ConvRef struct {
+	AgentID string
+	ConvID  string
+}
+
+// ConvRefs returns every persisted 'conv_id' row for a platform. The row is
+// written at binding creation (the app's ensureBinding) and makes a
+// conversation durable independently of its frames: startup restore unions
+// these with the frame store's restorable set, and default-chat resolution
+// uses the per-chat row to reverse the one-way chatID hash.
+func (idx *SessionIndex) ConvRefs(platform string) ([]ConvRef, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	rows, err := idx.db.Query(
+		`SELECT agent_id, value FROM chat_metadata
+		 WHERE platform = ? AND key = 'conv_id' AND agent_id != '' AND value != ''`,
+		platform,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []ConvRef
+	for rows.Next() {
+		var r ConvRef
+		if err := rows.Scan(&r.AgentID, &r.ConvID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // Chat alias resolution — mapping a user-facing chat alias to a session key so
 // `foci send -s <alias>` can target a specific chat.
 
