@@ -72,6 +72,21 @@ func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstan
 	wg.Wait()
 }
 
+// systemInjectionTargets resolves where agent-less system injections land.
+// With a master agent configured: the master receives both the
+// welcome/changelog and the (only) restart-context injection. Without one:
+// the first agent gets the changelog and every agent gets a restart
+// injection (restartOnly == "" means "no restriction").
+func systemInjectionTargets(masterAgent string, agentOrder []string) (welcomeTarget, restartOnly string) {
+	if masterAgent != "" {
+		return masterAgent, masterAgent
+	}
+	if len(agentOrder) > 0 {
+		welcomeTarget = agentOrder[0]
+	}
+	return welcomeTarget, ""
+}
+
 // handleRestartAndFirstRun delivers restart notifications (with optional
 // welcome/changelog content) and first-run onboarding prompts.
 //
@@ -91,8 +106,12 @@ func handleRestartAndFirstRun(
 	// Read and consume the welcome/changelog file (written by setup.sh on update).
 	welcomeContent := readAndConsumeWelcomeFile(cfg.WelcomeFile)
 
-	// Deliver restart notification to each agent's default session.
-	// The welcome content is included only for the primary (first) agent.
+	// System injections not addressed to a specific agent route to the
+	// configured master agent when one is set: the restart-context turn goes
+	// ONLY to the master, which also receives the welcome/changelog.
+	// Config-validated, so a set master always exists.
+	welcomeTarget, restartOnly := systemInjectionTargets(cfg.MasterAgent, agentOrder)
+
 	needsRestart := diagnosis != nil &&
 		diagnosis.Class != startup.ClassClean &&
 		diagnosis.Class != startup.ClassUnknown
@@ -119,10 +138,9 @@ func handleRestartAndFirstRun(
 	}
 
 	// Session-level injection: restart context as a proper agent turn.
-	for i, agentID := range agentOrder {
-		isPrimary := i == 0
+	for _, agentID := range agentOrder {
 		agentWelcome := ""
-		if isPrimary {
+		if agentID == welcomeTarget {
 			agentWelcome = welcomeContent
 		}
 
@@ -130,7 +148,7 @@ func handleRestartAndFirstRun(
 
 		// Respect startup_notify config: skip restart injection if all
 		// platform connections for this agent have it disabled.
-		agentNeedsRestart := needsRestart
+		agentNeedsRestart := needsRestart && (restartOnly == "" || agentID == restartOnly)
 		if agentNeedsRestart {
 			hasStartupNotify := false
 			for _, conn := range connMgr.AllForAgent(agentID) {

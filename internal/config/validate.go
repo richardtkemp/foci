@@ -125,6 +125,20 @@ func (cfg *Config) Validate() error {
 		return err
 	}
 
+	// Validate master_agent references a configured agent.
+	if cfg.MasterAgent != "" {
+		found := false
+		for _, a := range cfg.Agents {
+			if a.ID == cfg.MasterAgent {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("master_agent = %q: no such agent configured", cfg.MasterAgent)
+		}
+	}
+
 	// Validate timezone if configured.
 	if cfg.Timezone != "" {
 		if _, err := time.LoadLocation(cfg.Timezone); err != nil {
