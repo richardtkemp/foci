@@ -10,10 +10,10 @@ import (
 // TestSend_RejectsSessionTraversal proves the /send request boundary rejects a
 // request-controlled session name containing path traversal (P1-5): the handler
 // returns 400 Bad Request instead of constructing a key that would escape the
-// session directory. Reuses webhookTestSetup, which wires the full handler mux.
+// session directory. Reuses httpTestSetup, which wires the full handler mux.
 func TestSend_RejectsSessionTraversal(t *testing.T) {
-	d, _ := webhookTestSetup(t, t.TempDir(), "", nil)
-	mux := newWebhookMux(d)
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
 
 	malicious := []string{
 		"../../../../other-agent/c123/0",
