@@ -1,3 +1,5 @@
+<!-- GOLDEN: ships with foci (shared/skills/foci-usage/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
+
 # Databases & persistent state
 
 Foci keeps state in SQLite, split into two scopes. As an agent you rarely query these directly — your tools (`foci_todo`, `foci_remind`, `foci_memory_search`) are the front door — but knowing the layout helps when reasoning about what persists.

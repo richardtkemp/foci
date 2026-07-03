@@ -1,3 +1,5 @@
+<!-- GOLDEN: ships with foci (shared/skills/foci-usage/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
+
 # Scheduled & periodic tasks
 
 Two kinds of scheduled work touch you: the tasks **foci runs for you automatically**, and the **durable schedules you create yourself** via crontab. This file covers both.
