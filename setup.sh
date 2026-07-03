@@ -177,7 +177,7 @@ fi
 # ---------- Detect update ----------
 OLD_COMMIT=""
 IS_UPDATE=false
-if [[ -f "$INSTALL_DIR/foci-gw" ]] || [[ -f "$INSTALL_DIR/focigw" ]]; then
+if [[ -f "$INSTALL_DIR/foci-gw" ]]; then
     IS_UPDATE=true
     if [[ -f "$COMMIT_FILE" ]] && [[ -r "$COMMIT_FILE" ]]; then
         OLD_COMMIT="$(cat "$COMMIT_FILE" 2>/dev/null || true)"
@@ -305,7 +305,6 @@ if $HAS_SYSTEMCTL; then
         grep -q "ProtectKernelTunables=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
         grep -q "ProtectKernelModules=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
         grep -q "LockPersonality=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
-        grep -q "focigw" "$SERVICE_FILE" 2>/dev/null && NEED_SERVICE_PATCH=true
     fi
 fi
 
@@ -588,9 +587,6 @@ EMIT_SERVICE
         fi
         if ! grep -q "LockPersonality=" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i '/^NoNewPrivileges=/a LockPersonality=yes' \"$SERVICE_FILE\""
-        fi
-        if grep -q "focigw" "$SERVICE_FILE" 2>/dev/null; then
-            emit "sed -i 's|/usr/local/bin/focigw|$INSTALL_DIR/foci-gw|g' \"$SERVICE_FILE\""
         fi
         emit "systemctl daemon-reload"
     else
