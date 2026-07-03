@@ -659,7 +659,7 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 	if !ok {
 		m = &sessionMeta{}
 		// Hydrate lastMessageTime from the session index so that
-		// mostRecentSessionKey works correctly after a restart
+		// LastUserMessageTime-based gates work correctly after a restart
 		// (in-memory meta is empty, but the DB has last_activity_at).
 		if a.SessionIndex != nil {
 			if entry, err := a.SessionIndex.Get(key); err == nil && !entry.LastActivityAt.IsZero() {
@@ -693,55 +693,28 @@ func (a *Agent) persistSessionString(sessionKey, prefix, value string) {
 	}
 }
 
-// RotateSession migrates all per-session state from oldKey to newKey.
-// This includes the meta map, state store keys, turn locks, and fires
-// SessionKeyRotatedFunc callbacks.
-func (a *Agent) RotateSession(oldKey, newKey string) {
-	if oldKey == newKey || newKey == "" {
-		return
-	}
-
-	// Migrate meta map
+// ClearSessionState drops all per-session runtime and persisted state for a
+// session after its history is reset: the meta map entry (model/effort
+// overrides, cache baselines), the turn lock, and all session_metadata rows
+// (cc_resume_id, no_compact, orientation_consumed, last_activity, …). The
+// session key is a stable identity — a reset session keeps its key but starts
+// from a clean slate.
+func (a *Agent) ClearSessionState(sessionKey string) {
 	a.metaMu.Lock()
-	if a.meta != nil {
-		if m, ok := a.meta[oldKey]; ok {
-			a.meta[newKey] = m
-			delete(a.meta, oldKey)
-		}
-	}
+	delete(a.meta, sessionKey)
 	a.metaMu.Unlock()
 
-	// Migrate session metadata keys (single SQL UPDATE)
-	if a.SessionIndex != nil {
-		if err := a.SessionIndex.RenameSessionMetadata(oldKey, newKey); err != nil {
-			a.logger().Errorf("rename session metadata %s → %s: %v", oldKey, newKey, err)
-		}
-	}
-
-	// Migrate turn lock
 	a.turnLocksMu.Lock()
-	if a.turnLocks != nil {
-		if mu, ok := a.turnLocks[oldKey]; ok {
-			a.turnLocks[newKey] = mu
-			delete(a.turnLocks, oldKey)
-		}
-	}
+	delete(a.turnLocks, sessionKey)
 	a.turnLocksMu.Unlock()
 
-	// Migrate async pending tracking so in-flight goroutines that captured
-	// the old key resolve to the new key when they deliver results.
-	a.AsyncNotifier.MigrateSession(oldKey, newKey)
-
-	// Note: delegated backends are intentionally NOT migrated. The only flows
-	// that rotate a key (reset, API compaction) either have no live backend or
-	// want a fresh one, so carrying the running CC forward is never desired.
-
-	// Fire callbacks
-	for _, fn := range a.SessionKeyRotatedFunc {
-		fn(oldKey, newKey)
+	if a.SessionIndex != nil {
+		if err := a.SessionIndex.DeleteAllSessionMetadata(sessionKey); err != nil {
+			a.logger().Errorf("clear session metadata %s: %v", sessionKey, err)
+		}
 	}
 
-	a.logger().Infof("session rotated %s → %s", oldKey, newKey)
+	a.logger().Infof("session state cleared %s", sessionKey)
 }
 
 // ResetCacheBaseline clears the cache-read baseline for a session so that the

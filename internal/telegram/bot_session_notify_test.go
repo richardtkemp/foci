@@ -31,7 +31,7 @@ func TestSendNotificationToSession_RoutesToSessionChat(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	setDefaultChat(t, b, "main", 999) // default is chat 999...
 
-	msgID := b.SendNotificationToSession("main/c222/1709590000", "compacting…")
+	msgID := b.SendNotificationToSession("main/c222", "compacting…")
 
 	if mock.lastSendChatID != 222 {
 		t.Errorf("routed to chat %d, want 222 (the session's chat, not the default 999)", mock.lastSendChatID)
@@ -48,7 +48,7 @@ func TestSendNotificationToSession_FallsBackToDefault(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	setDefaultChat(t, b, "main", 999)
 
-	b.SendNotificationToSession("main/i1709596800/1709596800", "system notice")
+	b.SendNotificationToSession("main/i1709596800", "system notice")
 
 	if mock.lastSendChatID != 999 {
 		t.Errorf("routed to chat %d, want 999 (default fallback for a chatless key)", mock.lastSendChatID)
@@ -58,7 +58,7 @@ func TestSendNotificationToSession_FallsBackToDefault(t *testing.T) {
 // TestSendNotificationToSession_SkipsEmpty proves empty text is a no-op.
 func TestSendNotificationToSession_SkipsEmpty(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
-	if id := b.SendNotificationToSession("main/c222/1709590000", "  "); id != "" {
+	if id := b.SendNotificationToSession("main/c222", "  "); id != "" {
 		t.Errorf("empty text should return empty id, got %q", id)
 	}
 	if mock.sentCount() != 0 {
@@ -73,7 +73,7 @@ func TestEditNotificationInSession_TargetsSessionChat(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	setDefaultChat(t, b, "main", 999)
 
-	if err := b.EditNotificationInSession("main/c222/1709590000", "5", "✅ done"); err != nil {
+	if err := b.EditNotificationInSession("main/c222", "5", "✅ done"); err != nil {
 		t.Fatalf("EditNotificationInSession: %v", err)
 	}
 	if mock.lastEditOpts == nil || mock.lastEditOpts.ChatId != 222 {

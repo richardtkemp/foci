@@ -17,7 +17,7 @@ import (
 func TestValidateSessionOwnership_CrossAgent(t *testing.T) {
 	t.Parallel()
 	a := &Agent{AgentID: "fotini"}
-	err := a.validateSessionOwnership("clutch/c5970082313/1775812617")
+	err := a.validateSessionOwnership("clutch/c5970082313")
 	if err == nil {
 		t.Fatal("validateSessionOwnership with cross-agent key returned nil, want invariant violation")
 	}
@@ -34,23 +34,23 @@ func TestValidateSessionOwnership_CrossAgent(t *testing.T) {
 func TestValidateSessionOwnership_SameAgent(t *testing.T) {
 	t.Parallel()
 	a := &Agent{AgentID: "clutch"}
-	if err := a.validateSessionOwnership("clutch/c5970082313/1775812617"); err != nil {
+	if err := a.validateSessionOwnership("clutch/c5970082313"); err != nil {
 		t.Errorf("validateSessionOwnership(own-session) returned error: %v", err)
 	}
 }
 
 // TestValidateSessionOwnership_BranchKey verifies the guard parses branch-style
-// keys correctly (4 segments instead of 3). The AgentID still comes from the
+// keys correctly (3 segments instead of 2). The AgentID still comes from the
 // first segment.
 func TestValidateSessionOwnership_BranchKey(t *testing.T) {
 	t.Parallel()
 	a := &Agent{AgentID: "fotini"}
 	// Own branch: pass
-	if err := a.validateSessionOwnership("fotini/c8792716180/1741826250/b1741826300"); err != nil {
+	if err := a.validateSessionOwnership("fotini/c8792716180/b1741826300"); err != nil {
 		t.Errorf("own branch key returned error: %v", err)
 	}
 	// Cross-agent branch: fail
-	if err := a.validateSessionOwnership("clutch/c5970082313/1775812617/b1776233668"); err == nil {
+	if err := a.validateSessionOwnership("clutch/c5970082313/b1776233668"); err == nil {
 		t.Fatal("cross-agent branch key returned nil, want invariant violation")
 	}
 }
@@ -76,7 +76,7 @@ func TestValidateSessionOwnership_LegacyKeyExempt(t *testing.T) {
 func TestValidateSessionOwnership_EmptyAgentIDExempt(t *testing.T) {
 	t.Parallel()
 	a := &Agent{} // no AgentID
-	if err := a.validateSessionOwnership("clutch/c5970082313/1775812617"); err != nil {
+	if err := a.validateSessionOwnership("clutch/c5970082313"); err != nil {
 		t.Errorf("empty AgentID returned error: %v", err)
 	}
 }
@@ -89,7 +89,7 @@ func TestValidateSessionOwnership_EmptyAgentIDExempt(t *testing.T) {
 func TestHandleMessage_RejectsCrossAgentSessionKey(t *testing.T) {
 	t.Parallel()
 	a := &Agent{AgentID: "fotini"}
-	err := a.HandleMessage(context.Background(), "clutch/c5970082313/1775812617", []string{"ping"}, nil)
+	err := a.HandleMessage(context.Background(), "clutch/c5970082313", []string{"ping"}, nil)
 	if err == nil {
 		t.Fatal("HandleMessage with cross-agent key returned nil, want invariant violation")
 	}

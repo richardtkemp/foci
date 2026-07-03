@@ -65,7 +65,7 @@ func TestBranchCacheSharing(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	parentKey := "cachetest/imain/1000000000"
+	parentKey := "cachetest/imain"
 
 	// --- Step 1: First parent request (expect cache WRITE) ---
 	t.Log("=== Step 1: First parent request (expect cache WRITE) ===")
@@ -101,7 +101,7 @@ func TestBranchCacheSharing(t *testing.T) {
 	}
 
 	// --- Step 3: Create branch ---
-	branchKey := "cachetest/imain/1000000000/b1000000001"
+	branchKey := "cachetest/imain/b1000000001"
 	if err := sessions.TestCreateBranch(parentKey, branchKey); err != nil {
 		t.Fatalf("CreateBranch failed: %v", err)
 	}

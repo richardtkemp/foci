@@ -17,7 +17,7 @@ func TestSessionDisplayOverrides(t *testing.T) {
 	}
 	defer idx.Close()
 	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
-	sk := "bot/c100/1000000000"
+	sk := "bot/c100"
 
 	// Initially empty
 	if v := ag.SessionShowToolCalls(sk); v != "" {
@@ -71,7 +71,7 @@ func TestSessionDisplayOverrides_Restore(t *testing.T) {
 	}
 	defer idx.Close()
 	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
-	sk := "bot/c100/1000000000"
+	sk := "bot/c100"
 
 	ag.SetSessionShowToolCalls(sk, "preview")
 	ag.SetSessionDisplayShowThinking(sk, "true")
@@ -100,7 +100,7 @@ func TestSessionShowToolCalls_AgentDefault(t *testing.T) {
 	// Proves that SessionShowToolCalls returns the agent-level ShowToolCalls default
 	// when no per-session override is set, and that a per-session override takes precedence.
 	ag := &Agent{ShowToolCalls: "preview", AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
-	sk := "bot/c100/1000000000"
+	sk := "bot/c100"
 
 	// No per-session override → agent default
 	if v := ag.SessionShowToolCalls(sk); v != "preview" {
@@ -143,8 +143,10 @@ func TestToolDisplayNote(t *testing.T) {
 	}
 }
 
-func TestSessionDisplayOverrides_Rotate(t *testing.T) {
-	// Proves that display overrides move from the old session key to the new one after RotateSession, and that the state store reflects the new key with the old key's values removed.
+func TestSessionDisplayOverrides_ClearedByClearSessionState(t *testing.T) {
+	// Proves that per-session display overrides (in-memory and their persisted
+	// session_metadata rows) are wiped by ClearSessionState — the reset path —
+	// so a reset session starts with agent-default display settings.
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -152,32 +154,24 @@ func TestSessionDisplayOverrides_Rotate(t *testing.T) {
 	defer idx.Close()
 	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
 
-	oldKey := "bot/c100/1000000000"
-	newKey := "bot/c100/2000000000"
+	key := "bot/c100"
 
-	ag.SetSessionShowToolCalls(oldKey, "full")
-	ag.SetSessionDisplayWidth(oldKey, "80")
+	ag.SetSessionShowToolCalls(key, "full")
+	ag.SetSessionDisplayWidth(key, "80")
 
-	ag.RotateSession(oldKey, newKey)
+	ag.ClearSessionState(key)
 
-	if v := ag.SessionShowToolCalls(newKey); v != "full" {
-		t.Errorf("rotated show_tool_calls = %q, want full", v)
+	if v := ag.SessionShowToolCalls(key); v != "" {
+		t.Errorf("show_tool_calls after clear = %q, want empty", v)
 	}
-	if v := ag.SessionDisplayWidth(newKey); v != "80" {
-		t.Errorf("rotated display_width = %q, want 80", v)
-	}
-
-	// Old key should be empty
-	if v := ag.SessionShowToolCalls(oldKey); v != "" {
-		t.Errorf("old key show_tool_calls = %q, want empty", v)
+	if v := ag.SessionDisplayWidth(key); v != "" {
+		t.Errorf("display_width after clear = %q, want empty", v)
 	}
 
-	// Verify session metadata has the new key
-	val, err := idx.GetSessionMetadata(newKey, "show_tool_calls")
-	if err != nil {
-		t.Fatalf("get show_tool_calls for new key: %v", err)
-	}
-	if val != "full" {
-		t.Errorf("session metadata show_tool_calls for %s = %q, want full", newKey, val)
+	// Persisted rows are gone too.
+	for _, k := range []string{"show_tool_calls", "display_width"} {
+		if v, _ := idx.GetSessionMetadata(key, k); v != "" {
+			t.Errorf("metadata row %q survived clear: %q", k, v)
+		}
 	}
 }

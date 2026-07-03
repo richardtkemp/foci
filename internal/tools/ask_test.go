@@ -106,7 +106,7 @@ func newAskFixtureWithCloser() (*Tool, *AskRouter, *fakePresenter, *fakeDeliver,
 	return tool, router, p, d, c
 }
 
-const askSession = "clutch/c123/1000"
+const askSession = "clutch/c123"
 
 func askCtx() context.Context {
 	return WithSessionKey(context.Background(), askSession)
@@ -309,7 +309,7 @@ func TestAsk_EachAnsweredQuestionCloses(t *testing.T) {
 		{"question":"Q2?"}
 	]}`)
 
-	p.answer("qa:0") // Q1 via button
+	p.answer("qa:0")        // Q1 via button
 	p.answer("typed reply") // Q2 via typing
 
 	if c.calls() != 2 {

@@ -13,13 +13,12 @@ A minimal, maintainable agent platform in Go. One binary, no framework, no bloat
 
 ### Session Keys
 
-Format: `{agentID}/{type}{id}/{versionTS}` — see [docs/SESSION_KEYS.md](docs/SESSION_KEYS.md) for full reference.
+Format: `{agentID}/{type}{id}[/{childType}{childTS}]` — a stable identity that survives compaction and /reset; see [docs/SESSION_KEYS.md](docs/SESSION_KEYS.md) for full reference.
 
-- `fotini/c123456789/1709590000` — per-chat DM session (keyed by Telegram chat ID)
+- `fotini/c123456789` — per-chat DM session (keyed by Telegram chat ID)
 - `main/i0/0/b1709123456` — cron-triggered branch (child of default independent session)
-- `main/c123/1709590000/b1709123456` — sub-agent branch
-- `main/c123/1709590000/b1709123456` — facet fork
-- `clutch/i1709123456/1709123456` — WebSocket voice session (ephemeral, one per connection)
+- `main/c123/b1709123456` — sub-agent branch or facet fork
+- `clutch/i1709123456` — WebSocket voice session (ephemeral, one per connection)
 
 Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what cron (`foci send`/`foci branch`) and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
 
@@ -61,7 +60,7 @@ Default orientation text is embedded in `shared/prompts/branch-orientation-headl
 - Scratchpad preserved through compaction (appended to handoff)
 - Last N messages preserved verbatim after the summary (configurable, default 25) — gives the agent access to the actual recent conversation, not just a summary of it
 - Branch sessions preserve `branch_meta` through compaction (branch_point set to 0 since compacted messages are self-contained)
-- Session file rotation: on compaction, the pre-compaction file is renamed to a timestamp-based archive (e.g. `5970082313.2026-03-04T02-30-00Z.jsonl`) before writing the new compacted session. If multiple compactions occur within the same second, a counter is added (e.g. `.2026-03-04T02-30-00Z.2.jsonl`). Archives are preserved for usage tracking and audit — nothing reads them during normal operation.
+- Session file rotation: on compaction, the pre-compaction file is renamed in place to a timestamp-based archive (e.g. `root.2026-03-04T02-30-00Z.jsonl`) before writing the new compacted `root.jsonl` — the session key is unchanged. If multiple compactions occur within the same second, a counter is added (e.g. `.2026-03-04T02-30-00Z.2.jsonl`). Archives are read only to recover a branch's parent prefix after the parent was compacted/reset (P2-5); otherwise they exist for usage tracking and audit.
 - Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone, auto-backgrounded shell/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
 
 All compaction parameters are configurable per-agent or globally: threshold, max tokens, min messages, summary/handoff/reset prompts, debug mode, and preserve-messages count. Prompt files are read live — edits take effect without restart. See [CONFIG.md](CONFIG.md).
@@ -576,7 +575,7 @@ Two domains of activity are tracked separately, each with its own pair of gate f
 - `if_active` (Go duration, e.g. `"8h"`) — skip unless the session ran a turn within the window ("skipped: no recent activity")
 - `if_inactive` (Go duration, e.g. `"30m"`) — skip if the session ran a turn within the window ("skipped: session recently active")
 
-The timestamp is written by `OrchestrateFullTurn` for *every* turn-init path (user inbound, cron, CLI, webhook, agent-to-agent, system-injected) and stored under `session_metadata` keyed by `SessionKeyBase` (`agentID/cTYPE+ID`, branches share the parent's base). Use these for keepalive-shaped jobs that should yield to anything currently running on the session.
+The timestamp is written by `OrchestrateFullTurn` for *every* turn-init path (user inbound, cron, CLI, webhook, agent-to-agent, system-injected) and stored under `session_metadata` keyed by the ROOT session key (branch turns record against their parent root). Use these for keepalive-shaped jobs that should yield to anything currently running on the session.
 
 **User-attention activity** — did the user themselves reach out within the window?
 

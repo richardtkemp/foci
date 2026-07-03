@@ -25,7 +25,7 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
 
 	name := "foci-test-persist"
 
@@ -79,7 +79,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 
 	// Create tool with session index - should restore owned sessions
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
 
 	// Read should succeed because the session is in the restored owned set
 	params, _ := json.Marshal(map[string]interface{}{
@@ -102,7 +102,7 @@ func TestTmuxPersistOnKill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
 	t.Parallel()
 
 	name := "foci-test-persistkill"
@@ -169,7 +169,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 		t.Fatalf("set state: %v", err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
 	t.Parallel()
 
 	// List should detect stale sessions and clear persisted state
@@ -201,7 +201,7 @@ func TestTmuxNoSessionIndex(t *testing.T) {
 	sock := tmuxIsolatedSocket(t)
 
 	// Create tool without session index (nil)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-nostate"
 
@@ -241,7 +241,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool1, _, _ := NewTmuxTool(300, 30, nil, idx1, "test-agent", false, 30, 0, sock)
+	_, tool1, _ := NewTmuxTool(300, 30, nil, idx1, "test-agent", false, 30, 0, sock)
 
 	name := "foci-test-roundtrip"
 
@@ -269,7 +269,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool2, _, _ := NewTmuxTool(300, 30, nil, idx2, "test-agent", false, 30, 0, sock)
+	_, tool2, _ := NewTmuxTool(300, 30, nil, idx2, "test-agent", false, 30, 0, sock)
 
 	// Read should work because session was restored from state
 	params, _ = json.Marshal(map[string]interface{}{
@@ -294,7 +294,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 	}
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	name := "foci-test-persist-watch"
 
@@ -378,7 +378,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	}
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, _, cleanup, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
+	_, _, cleanup := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	// Verify the watch was restored by checking the state is still persisted
 	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
@@ -449,7 +449,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	name := "foci-test-unwatch-persist"
 
@@ -521,7 +521,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, cleanup, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
+	_, tool, cleanup := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	name := "foci-test-clearall-watch"
 
@@ -575,175 +575,104 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 }
 
-func TestTmuxOwnsAfterRotation(t *testing.T) {
-	// Proves that owns() returns true when the stored session key has a different
-	// version timestamp (simulating compaction rotation) but the same base key
-	// (agentID/typeID).
+func TestTmuxOwnsExactKey(t *testing.T) {
+	// Proves that owns() matches on the exact session key: the key that started
+	// a session can read, send to, and kill it. Session keys are stable
+	// identities — there is no rotation, so exact match is the ownership rule.
 	sock := tmuxIsolatedSocket(t)
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 	t.Parallel()
 
-	name := "foci-test-owns-rotation"
+	name := "foci-test-owns-exact"
 
-	oldKey := "agent1/c123/1700000000"
-	newKey := "agent1/c123/1700100000"
-	ctxOld := tools.WithSessionKey(context.Background(), oldKey)
+	key := "agent1/c123"
+	ctx := tools.WithSessionKey(context.Background(), key)
 
-	// Start session with old key
+	// Start session
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
 		"command":   "sleep 60",
 	})
-	if _, err := tool.Execute(ctxOld, params); err != nil {
+	if _, err := tool.Execute(ctx, params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Read with rotated key should succeed (same base key)
-	ctxNew := tools.WithSessionKey(context.Background(), newKey)
+	// Read with the same key should succeed
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "read",
 		"name":      name,
 	})
-	if _, err := tool.Execute(ctxNew, params); err != nil {
-		t.Errorf("read with rotated key should succeed: %v", err)
+	if _, err := tool.Execute(ctx, params); err != nil {
+		t.Errorf("read with owning key should succeed: %v", err)
 	}
 
-	// Send with rotated key should succeed
+	// Send with the same key should succeed
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "send",
 		"name":      name,
 		"keys":      "echo hello",
 	})
-	if _, err := tool.Execute(ctxNew, params); err != nil {
-		t.Errorf("send with rotated key should succeed: %v", err)
+	if _, err := tool.Execute(ctx, params); err != nil {
+		t.Errorf("send with owning key should succeed: %v", err)
 	}
 
-	// Kill with rotated key should succeed
+	// Kill with the same key should succeed
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "kill",
 		"name":      name,
 	})
-	if _, err := tool.Execute(ctxNew, params); err != nil {
-		t.Errorf("kill with rotated key should succeed: %v", err)
+	if _, err := tool.Execute(ctx, params); err != nil {
+		t.Errorf("kill with owning key should succeed: %v", err)
 	}
 }
 
-func TestTmuxListAfterRotation(t *testing.T) {
-	// Proves that list shows sessions owned by a previous version of the same
-	// session key (same base, different version timestamp) and marks them as
-	// "(prev session)" in the OWNER column.
+func TestTmuxListExcludesOtherKeys(t *testing.T) {
+	// Proves that list only shows sessions owned by the caller's exact session
+	// key: a session started under one key is invisible to list under a
+	// different key, and visible under its own key.
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
-	name := "foci-test-list-rotation"
+	name := "foci-test-list-exclude"
 
-	oldKey := "agent1/c456/1700000000"
-	newKey := "agent1/c456/1700100000"
-	ctxOld := tools.WithSessionKey(context.Background(), oldKey)
+	ownerKey := "agent1/c456"
+	otherKey := "agent1/c457"
+	ctxOwner := tools.WithSessionKey(context.Background(), ownerKey)
 
-	// Start session with old key
+	// Start session under ownerKey
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
 		"command":   "sleep 60",
 	})
-	if _, err := tool.Execute(ctxOld, params); err != nil {
+	if _, err := tool.Execute(ctxOwner, params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
-	// List with rotated key should show the session
-	ctxNew := tools.WithSessionKey(context.Background(), newKey)
+	// List with a different key should not show the session
+	ctxOther := tools.WithSessionKey(context.Background(), otherKey)
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "list",
 	})
-	result, err := tool.Execute(ctxNew, params)
+	result, err := tool.Execute(ctxOther, params)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if strings.Contains(result.Text, name) {
+		t.Errorf("list under a different key should not show session %s, got: %s", name, result.Text)
+	}
+
+	// List with the owning key should show it
+	result, err = tool.Execute(ctxOwner, params)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if !strings.Contains(result.Text, name) {
-		t.Errorf("list should show session %s, got: %s", name, result.Text)
-	}
-	if !strings.Contains(result.Text, "prev session") {
-		t.Errorf("list should show '(prev session)' indicator, got: %s", result.Text)
-	}
-}
-
-func TestTmuxMigrateSessionKey(t *testing.T) {
-	// Proves that MigrateSessionKey updates both owned and watched maps,
-	// persisting the changes so they survive restart.
-	t.Parallel()
-	sock := tmuxIsolatedSocket(t)
-
-	dir := t.TempDir()
-	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, migrate := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
-
-	name := "foci-test-migrate"
-
-	oldKey := "agent1/c789/1700000000"
-	newKey := "agent1/c789/1700100000"
-	ctxOld := tools.WithSessionKey(context.Background(), oldKey)
-
-	// Start session with old key, then add a watch
-	params, _ := json.Marshal(map[string]interface{}{
-		"operation": "start",
-		"name":      name,
-		"command":   "sleep 60",
-		"watch":     false,
-	})
-	if _, err := tool.Execute(ctxOld, params); err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	time.Sleep(100 * time.Millisecond)
-
-	params, _ = json.Marshal(map[string]interface{}{
-		"operation":         "watch",
-		"name":              name,
-		"threshold_seconds": 30,
-	})
-	if _, err := tool.Execute(ctxOld, params); err != nil {
-		t.Fatalf("watch: %v", err)
-	}
-
-	// Migrate session key
-	migrate(oldKey, newKey)
-
-	// Verify owned map updated
-	raw, err := idx.GetAgentMetadata("test-agent", "tmux_owned")
-	if err != nil || raw == "" {
-		t.Fatal("owned sessions not found in state")
-	}
-	var owned map[string]string
-	if err := json.Unmarshal([]byte(raw), &owned); err != nil {
-		t.Fatalf("unmarshal owned: %v", err)
-	}
-	if owned[name] != newKey {
-		t.Errorf("owned[%s] = %q, want %q", name, owned[name], newKey)
-	}
-
-	// Verify watches updated
-	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
-	if errW != nil || rawW == "" {
-		t.Fatal("watches not found in state")
-	}
-	var watches []persistedWatch
-	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
-		t.Fatalf("unmarshal watches: %v", err)
-	}
-	if len(watches) != 1 {
-		t.Fatalf("watches = %d, want 1", len(watches))
-	}
-	if watches[0].AgentSessionKey != newKey {
-		t.Errorf("watch agent_session_key = %q, want %q", watches[0].AgentSessionKey, newKey)
+		t.Errorf("list under owning key should show session %s, got: %s", name, result.Text)
 	}
 }
 
@@ -759,7 +688,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	}
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool1, cleanup1, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
+	_, tool1, cleanup1 := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 	defer cleanup1()
 
 	name := "foci-test-unwatch-restart"
@@ -814,7 +743,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool2, cleanup2, _ := NewTmuxTool(300, 30, notifier, idx2, "test-agent", false, 30, 0, sock)
+	_, tool2, cleanup2 := NewTmuxTool(300, 30, notifier, idx2, "test-agent", false, 30, 0, sock)
 	defer cleanup2()
 
 	// The unwatched session should NOT be restored — verify by trying to unwatch

@@ -106,7 +106,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
 	// Mark context as already inside a spawn inherit
-	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
+	ctx := WithSessionKey(context.Background(), "test/imain")
 	ctx = WithSpawnInherit(ctx)
 
 	// Inherit should be rejected
@@ -171,7 +171,7 @@ func TestSpawnInheritOrientationTemplate(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
+	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do something",
 		"context": "clone",
@@ -189,8 +189,8 @@ func TestSpawnInheritOrientationTemplate(t *testing.T) {
 	if mockSessions.opts.BranchType != "spawn" {
 		t.Errorf("branch type = %q, want %q", mockSessions.opts.BranchType, "spawn")
 	}
-	if mockSessions.parentKey != "test/imain/1000000000" {
-		t.Errorf("parent key = %q, want %q", mockSessions.parentKey, "test/imain/1000000000")
+	if mockSessions.parentKey != "test/imain" {
+		t.Errorf("parent key = %q, want %q", mockSessions.parentKey, "test/imain")
 	}
 }
 

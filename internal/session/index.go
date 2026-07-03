@@ -34,7 +34,7 @@ const (
 	SessionStatusCompacted SessionStatus = "compacted"
 	SessionStatusCleared   SessionStatus = "cleared"
 	SessionStatusArchived  SessionStatus = "archived"
-	SessionStatusRotated   SessionStatus = "rotated"
+	SessionStatusReset     SessionStatus = "reset"
 )
 
 // SessionIndexEntry represents a row in the session_index table.
@@ -71,9 +71,14 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 			session_key        TEXT PRIMARY KEY,
 			file_path          TEXT NOT NULL,
 			created_at         TEXT NOT NULL,
+			last_activity_at   TEXT,
+			last_reflection    TEXT,
 			parent_session_key TEXT,
 			session_type       TEXT NOT NULL,
-			status             TEXT NOT NULL DEFAULT 'active'
+			status             TEXT NOT NULL DEFAULT 'active',
+			agent_id           TEXT NOT NULL DEFAULT '',
+			chat_id            INTEGER NOT NULL DEFAULT 0,
+			is_root            INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS agent_metadata (
 			agent_id TEXT NOT NULL,
@@ -118,38 +123,22 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 		return nil, err
 	}
 
-	// Migration: add last_activity_at column if missing (idempotent).
-	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_activity_at TEXT`)
+	// Provenance tables: archive rotations + CC resume-ID history for
+	// point-in-time debugging (see provenance.go).
+	initProvenanceSchema(db)
 
-	// Migration: add last_reflection column if missing, copy data from the
-	// now-defunct last_memory_formation column (if present) and drop the old
-	// column. Backfill any still-null values to now so a fresh install doesn't
+	// One-shot legacy migration: pre-stable-identity installs get their
+	// rows re-keyed (and old schemas the new columns). Idempotent.
+	migrateLegacyStateDB(db)
+
+	// Backfill any null last_reflection to now so a fresh install doesn't
 	// stampede all sessions into reflection on first run.
-	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_reflection TEXT`)
-	migrateLastReflection(db)
 	_, _ = db.Exec(`UPDATE session_index SET last_reflection = ? WHERE last_reflection IS NULL`,
 		timeutil.Format(timeutil.Now()))
 
-	// Migration: add platform column to chat_metadata if missing (idempotent).
-	// Detects old schema by checking column count, then rebuilds the table in a transaction.
-	migrateChatMetadataPlatform(db)
-
-	// Migration: rename the app platform's chat_metadata key from "session" to
-	// "session_key" so PlatformForChat (which queries key='session_key') matches
-	// app chats. The app platform historically wrote under "session" while the
-	// chatmeta resolver (telegram/discord) used "session_key" — the mismatch left
-	// app chats unclaimed by any platform in ForSessionOrPrimary routing (#943).
-	migrateChatMetadataSessionKey(db)
-
-	// Migration: move CC resume IDs from agent_metadata (key='cc_session:<sk>')
-	// to session_metadata (session_key=<sk>, key='cc_resume_id'). The data is
-	// session-scoped (each post-compact JSONL has its own UUID), so it belongs
-	// in session_metadata where rotation gets a single-UPDATE rename via
-	// RenameSessionMetadata instead of the manual load/save/clear pattern.
-	migrateCcResumeIDs(db)
-
 	// Expression index for correct cross-timezone last_activity_at ordering.
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_activity_unix ON session_index(unixepoch(last_activity_at))`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_agent ON session_index(agent_id, is_root, status)`)
 
 	return &SessionIndex{db: db}, nil
 }
@@ -167,6 +156,21 @@ func (idx *SessionIndex) Upsert(e SessionIndexEntry) {
 	idx.upsertLocked(e)
 }
 
+// keyColumns derives the structured columns (agent_id, chat_id, is_root) from
+// a session key string. Archive bookkeeping keys (with dotted suffixes) don't
+// parse as session keys — they fall back to agent-only attribution.
+func keyColumns(sessionKey string) (agentID string, chatID int64, isRoot int) {
+	sk, err := ParseSessionKey(sessionKey)
+	if err != nil {
+		return AgentIDFromKey(sessionKey), 0, 0
+	}
+	root := 0
+	if sk.IsRoot() {
+		root = 1
+	}
+	return sk.AgentID, sk.ChatID(), root
+}
+
 // upsertLocked performs the upsert without acquiring the mutex.
 // Caller must hold idx.mu.
 func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
@@ -176,6 +180,7 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 	}
 	activityStr := timeutil.Format(activityAt)
 	createdStr := timeutil.Format(e.CreatedAt)
+	agentID, chatID, isRoot := keyColumns(e.SessionKey)
 	// Seed last_reflection to the row's activity time on INSERT so a freshly
 	// created/activated session is NOT immediately "due" for reflection. The
 	// SessionsNeedingReflection query treats last_reflection IS NULL as due, so
@@ -186,8 +191,8 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 	// CONFLICT (existing row) last_reflection is intentionally NOT touched, so a
 	// real prior reflection timestamp is preserved.
 	_, err := idx.db.Exec(
-		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, last_reflection, parent_session_key, session_type, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, last_reflection, parent_session_key, session_type, status, agent_id, chat_id, is_root)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_key) DO UPDATE SET
 		   file_path = excluded.file_path,
 		   created_at = excluded.created_at,
@@ -197,7 +202,10 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 		   END,
 		   parent_session_key = excluded.parent_session_key,
 		   session_type = excluded.session_type,
-		   status = excluded.status`,
+		   status = excluded.status,
+		   agent_id = excluded.agent_id,
+		   chat_id = excluded.chat_id,
+		   is_root = excluded.is_root`,
 		e.SessionKey,
 		e.FilePath,
 		createdStr,
@@ -206,6 +214,9 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 		nullableString(e.ParentSessionKey),
 		e.SessionType,
 		e.Status,
+		agentID,
+		chatID,
+		isRoot,
 	)
 	if err != nil {
 		log.Errorf("session", "upsert index entry %q: %v", e.SessionKey, err)
@@ -282,12 +293,18 @@ func (idx *SessionIndex) SessionsNeedingReflection(agentID string) ([]string, er
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	rows, err := idx.db.Query(
+	return idx.querySessionKeysLocked(
 		`SELECT session_key FROM session_index
-		 WHERE session_key LIKE ? AND session_type = 'chat' AND status = 'active'
+		 WHERE agent_id = ? AND session_type = 'chat' AND status = 'active'
 		   AND (last_reflection IS NULL OR unixepoch(last_activity_at) > unixepoch(last_reflection))`,
-		agentID+"/%",
+		agentID,
 	)
+}
+
+// querySessionKeysLocked runs a query whose result is a single session_key
+// column and collects the values. Caller must hold idx.mu.
+func (idx *SessionIndex) querySessionKeysLocked(query string, args ...interface{}) ([]string, error) {
+	rows, err := idx.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -369,8 +386,8 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 	var args []interface{}
 
 	if opts.AgentID != "" {
-		query += ` AND session_key LIKE ?`
-		args = append(args, opts.AgentID+"/%")
+		query += ` AND agent_id = ?`
+		args = append(args, opts.AgentID)
 	}
 	if opts.SessionType != "" {
 		query += ` AND session_type = ?`
@@ -503,8 +520,8 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	}
 
 	stmt, err := tx.Prepare(
-		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status, agent_id, chat_id, is_root)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return 0, fmt.Errorf("prepare insert: %w", err)
 	}
@@ -516,6 +533,7 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 		if activityAt.IsZero() {
 			activityAt = e.CreatedAt
 		}
+		agentID, chatID, isRoot := keyColumns(e.SessionKey)
 		_, err := stmt.Exec(
 			e.SessionKey,
 			e.FilePath,
@@ -524,6 +542,9 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 			nullableString(e.ParentSessionKey),
 			e.SessionType,
 			e.Status,
+			agentID,
+			chatID,
+			isRoot,
 		)
 		if err != nil {
 			log.Errorf("session", "insert index entry %q: %v", e.SessionKey, err)
@@ -611,128 +632,6 @@ func nullableString(s string) interface{} {
 		return nil
 	}
 	return s
-}
-
-// migrateLastReflection copies data from the legacy last_memory_formation column
-// into the new last_reflection column, then drops the old column. No-op if the
-// old column doesn't exist (fresh install on post-rename schema).
-func migrateLastReflection(db *sql.DB) {
-	// Probe for old column presence by querying it.
-	var dummy sql.NullString
-	err := db.QueryRow(`SELECT last_memory_formation FROM session_index LIMIT 1`).Scan(&dummy)
-	if err != nil && err != sql.ErrNoRows {
-		// "no such column" — nothing to migrate.
-		return
-	}
-	log.Infof("session", "migrating last_memory_formation → last_reflection")
-	if _, err := db.Exec(`UPDATE session_index SET last_reflection = last_memory_formation WHERE last_reflection IS NULL AND last_memory_formation IS NOT NULL`); err != nil {
-		log.Errorf("session", "copy last_memory_formation: %v", err)
-		return
-	}
-	if _, err := db.Exec(`ALTER TABLE session_index DROP COLUMN last_memory_formation`); err != nil {
-		log.Warnf("session", "drop last_memory_formation (SQLite <3.35?): %v — leaving column in place", err)
-	}
-}
-
-// migrateCcResumeIDs moves CC backend resume UUIDs from agent_metadata
-// (where they were stored under key='cc_session:<sessionKey>') into
-// session_metadata (session_key=<sessionKey>, key='cc_resume_id'). The
-// agent_id is dropped: session keys begin with the agent ID, so no
-// information is lost. Idempotent — re-running after a successful migration
-// is a no-op because the source rows are deleted in the same transaction.
-func migrateCcResumeIDs(db *sql.DB) {
-	// Cheap probe: any rows to migrate?
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_metadata WHERE key LIKE 'cc_session:%'`).Scan(&n); err != nil || n == 0 {
-		return
-	}
-	log.Infof("session", "migrating %d cc_session row(s) from agent_metadata to session_metadata", n)
-	tx, err := db.Begin()
-	if err != nil {
-		log.Errorf("session", "cc_resume_id migration: begin tx: %v", err)
-		return
-	}
-	// Copy: session_key is the suffix after 'cc_session:'.
-	if _, err := tx.Exec(`
-		INSERT OR REPLACE INTO session_metadata (session_key, key, value)
-		SELECT substr(key, length('cc_session:')+1), 'cc_resume_id', value
-		FROM agent_metadata WHERE key LIKE 'cc_session:%'
-	`); err != nil {
-		log.Errorf("session", "cc_resume_id migration: copy: %v", err)
-		_ = tx.Rollback()
-		return
-	}
-	if _, err := tx.Exec(`DELETE FROM agent_metadata WHERE key LIKE 'cc_session:%'`); err != nil {
-		log.Errorf("session", "cc_resume_id migration: delete: %v", err)
-		_ = tx.Rollback()
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		log.Errorf("session", "cc_resume_id migration: commit: %v", err)
-	}
-}
-
-// migrateChatMetadataPlatform adds the platform column to chat_metadata if missing.
-// Detects old schema by attempting to select the platform column. If it doesn't
-// exist, rebuilds the table in a transaction: rename → create new → copy → drop old.
-// Old rows get platform=” which won't match explicit platform queries.
-func migrateChatMetadataPlatform(db *sql.DB) {
-	// Check if platform column already exists by querying it.
-	var dummy string
-	err := db.QueryRow(`SELECT platform FROM chat_metadata LIMIT 1`).Scan(&dummy)
-	if err == nil || err == sql.ErrNoRows {
-		return // column exists
-	}
-	// Column doesn't exist — err is a "no such column" error. Rebuild.
-	log.Infof("session", "migrating chat_metadata: adding platform column")
-	tx, err := db.Begin()
-	if err != nil {
-		log.Errorf("session", "chat_metadata migration: begin tx: %v", err)
-		return
-	}
-	stmts := []string{
-		`ALTER TABLE chat_metadata RENAME TO chat_metadata_old`,
-		`CREATE TABLE chat_metadata (
-			agent_id TEXT NOT NULL,
-			platform TEXT NOT NULL DEFAULT '',
-			chat_id  INTEGER NOT NULL,
-			key      TEXT NOT NULL,
-			value    TEXT,
-			PRIMARY KEY (agent_id, platform, chat_id, key)
-		)`,
-		`INSERT INTO chat_metadata (agent_id, platform, chat_id, key, value)
-		 SELECT agent_id, '', chat_id, key, value FROM chat_metadata_old`,
-		`DROP TABLE chat_metadata_old`,
-	}
-	for _, s := range stmts {
-		if _, err := tx.Exec(s); err != nil {
-			log.Errorf("session", "chat_metadata migration: %v", err)
-			_ = tx.Rollback()
-			return
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		log.Errorf("session", "chat_metadata migration: commit: %v", err)
-		return
-	}
-	log.Infof("session", "chat_metadata migration complete")
-}
-
-// migrateChatMetadataSessionKey renames the app platform's legacy "session" key to
-// "session_key", aligning it with the chatmeta resolver convention that PlatformForChat
-// expects. Idempotent: a no-op once no rows have key='session'. Safe against PK conflicts
-// because app chats only ever wrote one key per (agent, platform, chat) — no competing
-// "session_key" row exists for platform='app' (the resolver only writes it for
-// telegram/discord).
-func migrateChatMetadataSessionKey(db *sql.DB) {
-	res, err := db.Exec(`UPDATE chat_metadata SET key = 'session_key' WHERE key = 'session'`)
-	if err != nil {
-		log.Errorf("session", "chat_metadata session_key migration: %v", err)
-		return
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		log.Infof("session", "migrated %d app chat_metadata row(s): session → session_key", n)
-	}
 }
 
 // metadataTable holds precomputed SQL for a metadata table's CRUD operations.
@@ -845,14 +744,15 @@ func (idx *SessionIndex) GetChatMetadataAnyPlatform(agentID string, chatID int64
 	return value, err
 }
 
-// CurrentSessionKeys returns the set of session keys that are the active/current
-// session for any agent+chat combination (i.e. all "session_key" values in chat_metadata).
+// CurrentSessionKeys returns the set of session keys that are the current
+// session for any known agent+chat combination. Keys are derived from the
+// registered chats in chat_metadata (deterministic agent/c<chatID> keys).
 func (idx *SessionIndex) CurrentSessionKeys() (map[string]bool, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	rows, err := idx.db.Query(
-		`SELECT value FROM chat_metadata WHERE key = 'session_key'`,
+		`SELECT DISTINCT agent_id, chat_id FROM chat_metadata WHERE agent_id != '' AND chat_id != 0`,
 	)
 	if err != nil {
 		return nil, err
@@ -861,11 +761,12 @@ func (idx *SessionIndex) CurrentSessionKeys() (map[string]bool, error) {
 
 	keys := make(map[string]bool)
 	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
+		var agentID string
+		var chatID int64
+		if err := rows.Scan(&agentID, &chatID); err != nil {
 			return nil, err
 		}
-		keys[v] = true
+		keys[NewChatSessionKey(agentID, chatID)] = true
 	}
 	return keys, rows.Err()
 }
@@ -886,10 +787,12 @@ var (
 
 func aliasNorm(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
-// ResolveChatAlias maps a chat alias to that chat's current session key. The
-// session_key row follows compaction rotation, so the returned key is the live
-// one. Matching is case-insensitive on the trimmed alias. Returns ErrAliasNotFound
-// or ErrAliasAmbiguous (the latter only for duplicate aliases predating uniqueness).
+// ResolveChatAlias maps a chat alias to that chat's session key. Chat keys are
+// deterministic (agent/c<chatID>), so the key is derived from the aliased chat
+// — unless a 'session_key' adoption override row exists (an app conversation
+// pointed at a named session), which wins. Matching is case-insensitive on the
+// trimmed alias. Returns ErrAliasNotFound or ErrAliasAmbiguous (the latter only
+// for duplicate aliases predating uniqueness).
 func (idx *SessionIndex) ResolveChatAlias(agentID, alias string) (string, error) {
 	norm := aliasNorm(alias)
 	if norm == "" {
@@ -898,24 +801,36 @@ func (idx *SessionIndex) ResolveChatAlias(agentID, alias string) (string, error)
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	rows, err := idx.db.Query(
-		`SELECT DISTINCT sk.value FROM chat_metadata a
-		 JOIN chat_metadata sk
-		   ON a.agent_id = sk.agent_id AND a.platform = sk.platform AND a.chat_id = sk.chat_id
+		`SELECT DISTINCT a.chat_id, COALESCE(sk.value, '') FROM chat_metadata a
+		 LEFT JOIN chat_metadata sk
+		   ON a.agent_id = sk.agent_id AND a.platform = sk.platform
+		  AND a.chat_id = sk.chat_id AND sk.key = 'session_key'
 		 WHERE a.agent_id = ? AND a.platform = 'app' AND a.key = 'alias'
-		   AND lower(trim(a.value)) = ? AND sk.key = 'session_key' AND sk.value != ''`,
+		   AND lower(trim(a.value)) = ?`,
 		agentID, norm,
 	)
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close() //nolint:errcheck
+	// Dedup on the RESOLVED key: distinct chats adopted onto the same named
+	// session are one destination, not an ambiguity.
+	seen := make(map[string]bool)
 	var keys []string
 	for rows.Next() {
-		var k string
-		if err := rows.Scan(&k); err != nil {
+		var chatID int64
+		var override string
+		if err := rows.Scan(&chatID, &override); err != nil {
 			return "", err
 		}
-		keys = append(keys, k)
+		key := override
+		if key == "" {
+			key = NewChatSessionKey(agentID, chatID)
+		}
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
@@ -963,15 +878,18 @@ func (idx *SessionIndex) SetChatAliasUnique(agentID, platform string, chatID int
 	}
 }
 
-// PlatformForChat returns the platform name that owns a given chat's session key.
-// Returns "" if no platform-specific mapping exists (e.g. legacy data or first message).
+// PlatformForChat returns the platform name that owns a given chat.
+// Any chat_metadata row with a non-empty platform (the "registered" row
+// written on first contact, is_default, username, …) establishes ownership.
+// Returns "" if no platform-specific mapping exists (first message not yet
+// processed).
 func (idx *SessionIndex) PlatformForChat(agentID string, chatID int64) string {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	var platform string
 	err := idx.db.QueryRow(
-		`SELECT platform FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = 'session_key' AND platform != ''`,
+		`SELECT platform FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND platform != '' LIMIT 1`,
 		agentID, chatID,
 	).Scan(&platform)
 	if err != nil {
@@ -1173,136 +1091,45 @@ func (idx *SessionIndex) DefaultChatIDs(agentID string) map[int64]bool {
 }
 
 // DefaultSessionKeyForAgent resolves the most recently active session key for
-// an agent. First checks for default chats (is_default flag, any platform),
-// picking the one with the most recent activity. Falls back to chat_metadata
-// session keys, and finally queries session_index for the most recently active
-// root session.
+// an agent. Chat session keys are deterministic (agent/c<chatID>), so default
+// chats resolve by derivation: pick the is_default chat with the most recent
+// derived-session activity. Falls back to the most recently active root
+// session in the index.
 func (idx *SessionIndex) DefaultSessionKeyForAgent(agentID string) string {
-	// Try default chats. The is_default flag is platform-scoped, so the
-	// authoritative session_key is the one on the SAME platform as the flag.
-	// Resolving "any platform" here could grab a stale empty-platform pointer
-	// left by a superseded session — the inter-agent send-routing bug, where a
-	// bare `send_to_session <agent>` landed in a dead session instead of the
-	// user's live default chat. Join session_key on the is_default row's exact
-	// (agent, platform, chat) and pick the most recently active default chat.
 	idx.mu.Lock()
-	var sk string
-	_ = idx.db.QueryRow(
-		`SELECT skm.value FROM chat_metadata cm
-		 JOIN chat_metadata skm
-		   ON skm.agent_id = cm.agent_id
-		  AND skm.platform = cm.platform
-		  AND skm.chat_id  = cm.chat_id
-		  AND skm.key = 'session_key'
-		 LEFT JOIN session_index si ON si.session_key = skm.value
+	defer idx.mu.Unlock()
+
+	// Default chats first. The is_default flag is platform-scoped; the session
+	// key is derived from (agent, chat). Order by the derived session's
+	// activity so an agent with defaults on several platforms resolves to the
+	// live one.
+	var chatID int64
+	err := idx.db.QueryRow(
+		`SELECT cm.chat_id FROM chat_metadata cm
+		 LEFT JOIN session_index si
+		   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
 		 WHERE cm.agent_id = ? AND cm.key = 'is_default' AND cm.value = 'true'
 		 ORDER BY unixepoch(si.last_activity_at) DESC NULLS LAST
 		 LIMIT 1`,
 		agentID,
-	).Scan(&sk)
-	idx.mu.Unlock()
-	if sk != "" {
-		return sk
+	).Scan(&chatID)
+	if err == nil && chatID != 0 {
+		return NewChatSessionKey(agentID, chatID)
 	}
 
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	// Try chat_metadata: find session keys assigned to this agent.
-	rows, err := idx.db.Query(
-		`SELECT value FROM chat_metadata WHERE agent_id = ? AND key = 'session_key'`,
-		agentID,
-	)
-	if err == nil {
-		defer rows.Close() //nolint:errcheck
-		var candidates []string
-		for rows.Next() {
-			var v string
-			if err := rows.Scan(&v); err == nil && v != "" {
-				candidates = append(candidates, v)
-			}
-		}
-		if len(candidates) == 1 {
-			return candidates[0]
-		}
-		if len(candidates) > 1 {
-			// Multiple chats — pick the most recently active via session_index.
-			var best string
-			err := idx.db.QueryRow(
-				`SELECT si.session_key FROM session_index si
-				 WHERE si.session_key IN (`+placeholders(len(candidates))+`)
-				 ORDER BY unixepoch(si.last_activity_at) DESC
-				 LIMIT 1`,
-				toArgs(candidates)...,
-			).Scan(&best)
-			if err == nil {
-				return best
-			}
-			// Fall back to first candidate if index query fails.
-			return candidates[0]
-		}
-	}
-
-	// Fallback: query session_index for most recently active root session.
-	// Root sessions have exactly 3 segments (agent/typeID/versionTS).
+	// Fallback: most recently active root session for the agent.
 	var key string
 	err = idx.db.QueryRow(
 		`SELECT session_key FROM session_index
-		 WHERE session_key LIKE ? AND status = 'active'
-		   AND session_key NOT LIKE ?
+		 WHERE agent_id = ? AND is_root = 1 AND status = 'active'
 		 ORDER BY unixepoch(last_activity_at) DESC, unixepoch(created_at) DESC
 		 LIMIT 1`,
-		agentID+"/%",
-		agentID+"/%/%/%", // exclude children (4+ segments)
+		agentID,
 	).Scan(&key)
 	if err != nil {
 		return ""
 	}
 	return key
-}
-
-// placeholders generates a comma-separated list of ? for SQL IN clauses.
-func placeholders(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	s := strings.Repeat("?,", n)
-	return s[:len(s)-1]
-}
-
-// toArgs converts a string slice to []interface{} for sql.Query.
-func toArgs(ss []string) []interface{} {
-	args := make([]interface{}, len(ss))
-	for i, s := range ss {
-		args[i] = s
-	}
-	return args
-}
-
-// RotateChatSessionKey updates chat_metadata session_key rows that currently hold oldKey
-// to newKey. Uses a conditional UPDATE (WHERE value = oldKey) so it only touches the correct
-// row(s) regardless of platform — no spurious rows are created, and rows with a different
-// value are left untouched.
-func (idx *SessionIndex) RotateChatSessionKey(agentID string, chatID int64, oldKey, newKey string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-	_, err := idx.db.Exec(
-		`UPDATE chat_metadata SET value = ? WHERE agent_id = ? AND chat_id = ? AND key = 'session_key' AND value = ?`,
-		newKey, agentID, chatID, oldKey,
-	)
-	return err
-}
-
-// RenameSessionMetadata atomically renames all session_metadata rows from oldKey to newKey.
-// Used by RotateSession to migrate per-session state in a single UPDATE.
-func (idx *SessionIndex) RenameSessionMetadata(oldKey, newKey string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-	_, err := idx.db.Exec(
-		`UPDATE session_metadata SET session_key = ? WHERE session_key = ?`,
-		newKey, oldKey,
-	)
-	return err
 }
 
 // DeleteAllSessionMetadata removes every metadata row for a session key. Used
@@ -1318,28 +1145,14 @@ func (idx *SessionIndex) DeleteAllSessionMetadata(sessionKey string) error {
 }
 
 // SessionKeysWithMetadata returns all session keys that have a given metadata key set.
-// Used for cleanup of stale session metadata (e.g. no_compact entries for rotated sessions).
+// Used for cleanup of stale session metadata (e.g. no_compact entries for defunct sessions).
 func (idx *SessionIndex) SessionKeysWithMetadata(key string) ([]string, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	rows, err := idx.db.Query(
+	return idx.querySessionKeysLocked(
 		`SELECT session_key FROM session_metadata WHERE key = ?`, key,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close() //nolint:errcheck
-
-	var keys []string
-	for rows.Next() {
-		var sk string
-		if err := rows.Scan(&sk); err != nil {
-			return nil, err
-		}
-		keys = append(keys, sk)
-	}
-	return keys, rows.Err()
 }
 
 // AgentMetadataByPrefix returns all metadata entries for an agent whose key starts with prefix.
@@ -1368,57 +1181,25 @@ func (idx *SessionIndex) AgentMetadataByPrefix(agentID, prefix string) (map[stri
 	return result, rows.Err()
 }
 
-// ResolvePartialKey resolves a partial session key (agent/typeID, e.g.
-// "scout/c5970082313") to the most recently active full key with a versionTS
-// ("scout/c5970082313/1772794601"). Only accepts keys with exactly 2
-// slash-separated segments where the second starts with 'c' or 'i'.
-// Returns "" if no match is found or the format is invalid.
-func (idx *SessionIndex) ResolvePartialKey(partialKey string) string {
-	// Validate format: must be exactly agent/typeID (2 segments)
-	parts := strings.Split(partialKey, "/")
-	if len(parts) != 2 || len(parts[0]) == 0 || len(parts[1]) < 2 {
-		return ""
-	}
-	// Second segment must start with a valid session type
-	switch parts[1][0] {
-	case 'c', 'i':
-		// valid
-	default:
-		return ""
-	}
-
+// SessionExists reports whether a session key has an index row.
+func (idx *SessionIndex) SessionExists(sessionKey string) bool {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-
-	prefix := partialKey + "/"
-	var key string
+	var one int
 	err := idx.db.QueryRow(
-		`SELECT session_key FROM session_index
-		 WHERE session_key LIKE ? AND status = 'active'
-		 ORDER BY unixepoch(last_activity_at) DESC, unixepoch(created_at) DESC
-		 LIMIT 1`,
-		prefix+"%",
-	).Scan(&key)
-	if err != nil {
-		return ""
-	}
-	return key
+		`SELECT 1 FROM session_index WHERE session_key = ?`, sessionKey,
+	).Scan(&one)
+	return err == nil
 }
 
-// ResolveLooseKey resolves a "loose" target — either a bare agent name
-// ("scout") or a partial key ("scout/c5970082313") — to a full active session
-// key. Bare names dispatch to DefaultSessionKeyForAgent (default-chat aware,
-// excludes branch/child sessions); partial keys dispatch to ResolvePartialKey
-// (most-recent active session within that chat). Full keys (3+ segments)
-// return "" — callers that accept full keys should ParseSessionKey them first.
-// Returns "" when nothing resolves.
+// ResolveLooseKey resolves a "loose" target — a bare agent name ("scout") —
+// to a full active session key via DefaultSessionKeyForAgent. Anything
+// containing "/" is already a full session key under the stable-identity
+// grammar and returns "" — callers that accept full keys should
+// ParseSessionKey them first. Returns "" when nothing resolves.
 func (idx *SessionIndex) ResolveLooseKey(key string) string {
-	switch strings.Count(key, "/") {
-	case 0:
-		return idx.DefaultSessionKeyForAgent(key)
-	case 1:
-		return idx.ResolvePartialKey(key)
-	default:
+	if strings.Contains(key, "/") {
 		return ""
 	}
+	return idx.DefaultSessionKeyForAgent(key)
 }

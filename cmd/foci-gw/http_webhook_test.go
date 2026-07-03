@@ -74,14 +74,20 @@ func webhookTestSetup(t *testing.T, promptDir string, sessionKey string, webhook
 
 	sk := sessionKey
 	if sk == "" {
-		sk = "test-agent/i0/0"
+		sk = "test-agent/i0"
 	}
 
-	// Provide a stub connMgr so mostRecentSessionKey can resolve the session.
+	// A real session index backs the route.Resolver's default resolution.
 	// "EMPTY" is a sentinel: pass it to get no session (tests the error path).
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
 	var cm platform.ConnectionManager = stubConnMgr{}
 	if sk != "EMPTY" {
 		cm = stubConnMgr{agentID: "test-agent", sessionKey: sk}
+		idx.Upsert(session.SessionIndexEntry{SessionKey: sk, FilePath: "x", SessionType: session.SessionTypeChat, Status: session.SessionStatusActive})
 	}
 
 	inst := &agentInstance{
@@ -91,13 +97,16 @@ func webhookTestSetup(t *testing.T, promptDir string, sessionKey string, webhook
 		webhooks:         webhooks,
 	}
 
+	ag.SessionIndex = idx
+
 	d := httpHandlerDeps{
-		agents:     map[string]*agentInstance{"test-agent": inst},
-		agentOrder: []string{"test-agent"},
-		cfg:        &config.Config{},
-		sessions:   sessions,
-		connMgr:    cm,
-		ctx:        context.Background(),
+		agents:       map[string]*agentInstance{"test-agent": inst},
+		agentOrder:   []string{"test-agent"},
+		cfg:          &config.Config{},
+		sessions:     sessions,
+		sessionIndex: idx,
+		connMgr:      cm,
+		ctx:          context.Background(),
 	}
 	return d, mock
 }
@@ -330,16 +339,9 @@ func TestWebhook_IfInactive(t *testing.T) {
 	webhooks := map[string]string{"test": "test.md"}
 	d, _ := webhookTestSetup(t, dir, "", webhooks)
 
-	// Simulate recent session activity. The webhook test setup wires a
-	// stubConnMgr with sessionKey="test-agent/i0/0", so SessionKeyBase is
-	// "test-agent/i0".
-	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatalf("NewSessionIndex: %v", err)
-	}
-	t.Cleanup(func() { _ = idx.Close() })
-	idx.SetSessionMetadata("test-agent/i0", "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
-	d.sessionIndex = idx
+	// Simulate recent session activity under the stable key the gate
+	// consults directly.
+	d.sessionIndex.SetSessionMetadata("test-agent/i0", "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
 
 	mux := newWebhookMux(d)
 
@@ -369,16 +371,10 @@ func TestWebhook_IfUserInactive_LegacyUserActivityOnly(t *testing.T) {
 	webhooks := map[string]string{"test": "test.md"}
 	d, _ := webhookTestSetup(t, dir, "", webhooks)
 
-	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatalf("NewSessionIndex: %v", err)
-	}
-	t.Cleanup(func() { _ = idx.Close() })
 	// Recent SESSION activity (cron-injected turn) but NO recent user
 	// activity. --if-user-inactive should still allow the request through
 	// (user has not been engaged), even though the session has been busy.
-	idx.SetSessionMetadata("test-agent/i0", "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
-	d.sessionIndex = idx
+	d.sessionIndex.SetSessionMetadata("test-agent/i0", "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
 
 	mux := newWebhookMux(d)
 

@@ -11,6 +11,7 @@ import (
 	mcpkg "foci/internal/mcp"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/route"
 	"foci/internal/secrets"
 	"foci/internal/tools"
 	"foci/internal/tools/browser"
@@ -68,7 +69,6 @@ type toolOutputs struct {
 	tmuxTool       *tools.Tool
 	tmuxClearAll   func()
 	tmuxWatchCount func() int
-	tmuxMigrateKey func(string, string)
 	serverTools    []provider.ToolDef
 	mcpMgr         *mcpkg.Manager
 	askRouter      *tools.AskRouter
@@ -146,9 +146,9 @@ var toolTable = []toolEntry{
 				ttl = dur
 			}
 		}
-		wc, t, clear, migrate := tmux.NewTmuxTool(d.p.cfg.Tools.TmuxCols, d.p.cfg.Tools.TmuxRows,
+		wc, t, clear := tmux.NewTmuxTool(d.p.cfg.Tools.TmuxCols, d.p.cfg.Tools.TmuxRows,
 			d.notifier, d.p.sessionIndex, d.p.acfg.ID, tc.TmuxAutopilot, watchSec, ttl, "")
-		d.out.tmuxWatchCount, d.out.tmuxTool, d.out.tmuxClearAll, d.out.tmuxMigrateKey = wc, t, clear, migrate
+		d.out.tmuxWatchCount, d.out.tmuxTool, d.out.tmuxClearAll = wc, t, clear
 		return t
 	}},
 
@@ -257,9 +257,21 @@ var toolTable = []toolEntry{
 	}},
 
 	{name: "send_to_session", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
-		var resolveKeyFn tools.SessionKeyResolverFn
-		if d.p.sessionIndex != nil {
-			resolveKeyFn = d.p.sessionIndex.ResolveLooseKey
+		// Loose targets resolve through the shared route ladder (Create
+		// disabled: the tool addresses existing sessions, it doesn't mint
+		// new ones).
+		idx := d.p.sessionIndex
+		resolveKeyFn := func(target string) (string, string, error) {
+			t, err := route.ParseTarget(target)
+			if err != nil {
+				return "", "", err
+			}
+			t.Create = false
+			res, err := (&route.Resolver{Index: idx}).Resolve(t)
+			if err != nil {
+				return "", "", err
+			}
+			return res.SessionKey, string(res.Rung), nil
 		}
 		return tools.NewSendToSessionTool(d.p.sessions, d.notifier, d.sessionNotify, resolveKeyFn)
 	}},

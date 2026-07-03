@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +22,6 @@ type SessionWriter interface {
 	Append(key string, msg provider.Message) error
 	AppendAll(key string, msgs []provider.Message) error
 	Replace(key string, msgs []provider.Message) error
-	ReplaceAndRotate(key string, msgs []provider.Message) (string, error)
 	Clear(key string) error
 }
 
@@ -128,16 +126,6 @@ func (w *sessionWriter) Replace(key string, msgs []provider.Message) error {
 	return w.store.replaceInternal(key, msgs)
 }
 
-// ReplaceAndRotate overwrites the owned session with new messages under a rotated
-// key (new VersionTS), archiving the old file. Returns the new session key.
-func (w *sessionWriter) ReplaceAndRotate(key string, msgs []provider.Message) (string, error) {
-	if key != w.sessionKey {
-		return "", fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
-			w.sessionKey, key)
-	}
-	return w.store.ReplaceAndRotate(key, msgs)
-}
-
 // Clear deletes the owned session, rejecting cross-session writes.
 func (w *sessionWriter) Clear(key string) error {
 	if key != w.sessionKey {
@@ -150,25 +138,22 @@ func (w *sessionWriter) Clear(key string) error {
 }
 
 // SessionPath converts a session key to a file path.
-// Key format: {agentID}/{type}{id}/{versionTS}[/{childType}{childTS}]
+// Key format: {agentID}/{type}{id}[/{childType}{childTS}]
 // Root path: {dir}/{key}/root.jsonl
 // Child path: {dir}/{key}.jsonl
+//
+// Root sessions get a directory so archives (root.<ts>.jsonl) and child files
+// (b<ts>.jsonl) live alongside the live root.jsonl.
 func (s *Store) SessionPath(key string) (string, error) {
-	// Split on '/' and check last segment
-	// If last segment is a pure number (version timestamp), it's a root
-	parts := strings.Split(key, "/")
-	if len(parts) < 3 {
-		return "", fmt.Errorf("invalid session key %q: need at least agentID/typeID/versionTS", key)
+	sk, err := ParseSessionKey(key)
+	if err != nil {
+		return "", fmt.Errorf("invalid session key %q: %w", key, err)
 	}
 
-	lastSegment := parts[len(parts)-1]
-
-	// If last segment is pure number, it's a root session
 	var path string
-	if _, err := strconv.ParseInt(lastSegment, 10, 64); err == nil {
+	if sk.IsRoot() {
 		path = filepath.Join(s.dir, key, "root.jsonl")
 	} else {
-		// Otherwise it's a child session
 		path = filepath.Join(s.dir, key+".jsonl")
 	}
 
@@ -555,13 +540,12 @@ func (s *Store) fileTime(key string) string {
 // SessionEvent describes a lifecycle event on a session.
 type SessionEvent struct {
 	Key         string
-	NewKey      string // set on rotation: the new session key
 	Type        SessionType
 	Status      SessionStatus
 	ParentKey   string // for branches
 	FilePath    string
 	CreatedAt   time.Time
-	ArchivePath string // set on compaction: path to the rotated archive file
+	ArchivePath string // set on compaction/reset: path to the archived file
 }
 
 // OnSessionEvent is an optional callback fired on session lifecycle events.

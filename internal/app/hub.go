@@ -79,6 +79,7 @@ type Hub struct {
 	convs        map[string]*convBinding // conversationId → durable conversation state (outlives sockets)
 	bySession    map[string]*convBinding // sessionKey → conversation binding
 	clients      map[*wsClient]struct{}  // live sockets
+	deliverMu    sync.Mutex              // serialises deliverBinding's find-or-create + default pin
 	prompts      map[string]*convBinding // promptID → binding (live interactive prompts)
 	batchPrompts map[string]*batchPrompt // promptID → batched-ask callback (app-only multi-question form)
 	notifs       map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
@@ -864,7 +865,19 @@ func (h *Hub) aliasForChat(agentID string, chatID int64) string {
 // named/independent session named in conversation.open), updating the routing
 // map and persisting the mapping. The key must belong to the binding's agent.
 func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
-	if sessionKey == "" || session.AgentIDFromKey(sessionKey) != b.agentID {
+	if sessionKey == "" {
+		return
+	}
+	// Clients may replay keys stored before the stable-identity migration
+	// (with a version segment); normalise rather than adopting a key the
+	// store can no longer resolve. Anything else that doesn't parse is
+	// refused — a bad adoption would wedge the conversation.
+	if stable, isLegacy := session.LegacyKeyToStable(sessionKey); isLegacy {
+		log.Infof("app", "conversation %s: normalised legacy session key %q → %q", b.convID, sessionKey, stable)
+		sessionKey = stable
+	}
+	if sk, err := session.ParseSessionKey(sessionKey); err != nil || sk.AgentID != b.agentID {
+		log.Warnf("app", "conversation %s: refusing to adopt session key %q (agent %s): invalid or cross-agent", b.convID, sessionKey, b.agentID)
 		return
 	}
 	b.mu.Lock()
@@ -898,21 +911,21 @@ func chatIDForConv(convID string) int64 {
 	return v
 }
 
-// sessionKeyForChat resolves (creating + persisting if new) the foci session
-// key for an (agent, chatID), mirroring telegram/discord chat-meta persistence
-// so a conversation's history survives reconnects and restarts.
+// sessionKeyForChat resolves the foci session key for an (agent, chatID).
+// Chat session keys are deterministic (agent/c<chatID>); a persisted
+// "session_key" row overrides that when the conversation adopted an explicit
+// session — e.g. a named/independent session via conversation.open (see
+// adoptSession). The platform-ownership row is registered either way so
+// outbound routing (SessionIndex.PlatformForChat) can find the app.
 func (h *Hub) sessionKeyForChat(agentID string, chatID int64) string {
 	idx := h.deps.SessionIndex
 	if idx != nil {
 		if v, err := idx.GetChatMetadata(agentID, "app", chatID, "session_key"); err == nil && v != "" {
 			return v
 		}
+		_ = idx.SetChatMetadata(agentID, "app", chatID, "registered", "true")
 	}
-	sk := session.NewChatSessionKey(agentID, chatID)
-	if idx != nil {
-		_ = idx.SetChatMetadata(agentID, "app", chatID, "session_key", sk)
-	}
-	return sk
+	return session.NewChatSessionKey(agentID, chatID)
 }
 
 // ensureBinding resolves the durable conversation state for (agent, convID),
@@ -1008,19 +1021,66 @@ func (h *Hub) defaultChatBinding(agentID string) *convBinding {
 	return nil
 }
 
-// bindingsForAgent returns every live conversation binding for an agent. The
-// unbound appConn (PrimaryBot) uses this to fan a session-blind notification
-// out to all the agent's conversations instead of guessing a default session.
-func (h *Hub) bindingsForAgent(agentID string) []*convBinding {
+// deliverBinding resolves — or creates — the destination conversation for a
+// session-blind send to this agent. The app is a session-creating surface, so
+// "nowhere to deliver" is never the right answer:
+//
+//  1. The pinned default conversation, when set and live.
+//  2. No default: the most recently active conversation at the time of the
+//     send. The default pin is user-owned (conversation.setDefault) — it is
+//     never set automatically.
+//  3. No conversations at all: a server-minted conversation. Live sockets
+//     learn it from an immediate roster push; offline devices on their next
+//     hello. (NB: the Android client must upsert roster conversations it has
+//     never seen locally.) Subsequent sends find it as the newest
+//     conversation via rung 2.
+//
+// Returns nil only when creation itself fails. Serialised by deliverMu so
+// concurrent session-blind sends can't mint duplicate conversations.
+func (h *Hub) deliverBinding(agentID string) *convBinding {
+	h.deliverMu.Lock()
+	defer h.deliverMu.Unlock()
+
+	if b := h.defaultChatBinding(agentID); b != nil {
+		return b
+	}
+
+	// Most recently active existing conversation.
+	var latest *convBinding
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-	var out []*convBinding
 	for _, b := range h.convs {
-		if b.agentID == agentID {
-			out = append(out, b)
+		if b.agentID != agentID {
+			continue
+		}
+		if latest == nil || b.lastActivity() > latest.lastActivity() {
+			latest = b
 		}
 	}
-	return out
+	h.mu.RUnlock()
+	if latest != nil {
+		return latest
+	}
+
+	convID := fap.NewULID()
+	created := h.ensureBinding(nil, agentID, convID)
+	log.Infof("app", "server-created conversation %s for agent %s (no existing conversations)", convID, agentID)
+	h.pushRosterAll()
+	return created
+}
+
+// pushRosterAll re-advertises the roster to every live socket, so connected
+// devices learn server-originated conversation changes without reconnecting.
+func (h *Hub) pushRosterAll() {
+	hello := fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()}
+	h.mu.RLock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+	for _, c := range clients {
+		c.sendRaw(hello)
+	}
 }
 
 // --- interactive prompt registry (slice 2) ---
@@ -1269,6 +1329,14 @@ func (b *convBinding) setToolSnapshot(v string) {
 // current inbound ack, retains it in the replay buffer, and enqueues it on the
 // attached socket (if any). Offline (no socket) it buffers only — reconnect
 // replay (and push, a later slice) heal the gap.
+// lastActivity returns the last visible frame's send time (unix ms) under
+// the binding's lock, for recency comparisons.
+func (b *convBinding) lastActivity() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.lastActMs
+}
+
 func (b *convBinding) send(frame fap.ServerFrame) {
 	b.mu.Lock()
 	b.seq++

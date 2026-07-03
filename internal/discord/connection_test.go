@@ -2,6 +2,7 @@ package discord
 
 import (
 	"errors"
+	"foci/internal/platform"
 	"testing"
 	"time"
 
@@ -134,8 +135,8 @@ func TestSessionKeyForChannelID(t *testing.T) {
 	// Secondary bot: override session key wins regardless of channel.
 	sec, _, _ := newTestBot(t, "")
 	sec.isSecondary = true
-	sec.SetSessionKeyDirect("a/c9/777")
-	if got := sec.SessionKeyForChannelID(42); got != "a/c9/777" {
+	sec.SetSessionKeyDirect("a/c9")
+	if got := sec.SessionKeyForChannelID(42); got != "a/c9" {
 		t.Errorf("secondary: expected override key, got %q", got)
 	}
 
@@ -235,8 +236,8 @@ func TestSetCommandContext(t *testing.T) {
 func TestDispatchSessionKey(t *testing.T) {
 	sec, _, _ := newTestBot(t, "")
 	sec.isSecondary = true
-	sec.SetSessionKeyDirect("a/c9/777")
-	if got := sec.dispatchSessionKey(42); got != "a/c9/777" {
+	sec.SetSessionKeyDirect("a/c9")
+	if got := sec.dispatchSessionKey(42); got != "a/c9" {
 		t.Errorf("secondary: expected override, got %q", got)
 	}
 
@@ -304,7 +305,7 @@ func TestDisplayDefaultGetters(t *testing.T) {
 
 // TestSetSecondary verifies SetSecondary marks the bot and records its pool.
 func TestSetSecondary(t *testing.T) {
-	p := NewPool()
+	p := platform.NewPool[*Bot]("discord")
 	b := &Bot{}
 	b.SetSecondary(p)
 	if !b.isSecondary || b.pool != p {

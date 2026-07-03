@@ -52,8 +52,7 @@ import (
 // path is "<data_dir>/foci-gw.sock"). The recorder path lives at
 // tempDir/cc-recorder.jsonl, so we recover tempDir by taking its dir.
 func gwSocketPath(h *testharness.Harness) string {
-	tempDir := filepath.Dir(h.RecorderPath())
-	return filepath.Join(tempDir, "data", "foci-gw.sock")
+	return h.SocketPath()
 }
 
 // gwUnixClient returns an *http.Client that dials the foci-gw Unix

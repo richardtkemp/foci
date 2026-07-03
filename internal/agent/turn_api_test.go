@@ -151,7 +151,7 @@ func TestComposePrompt_Basic(t *testing.T) {
 
 	ctx := WithTrigger(context.Background(), "telegram")
 	ctx = WithTurnMetadata(ctx, &TurnMetadata{UserID: "42", Username: "alice"})
-	ts := NewTurnState(ctx, "bot/c100/1000000000", []string{"hello world"}, nil)
+	ts := NewTurnState(ctx, "bot/c100", []string{"hello world"}, nil)
 	ts.Meta = &TurnMetadata{UserID: "42", Username: "alice"}
 	ts.TurnModel = "anthropic/claude-sonnet-4-20250514"
 
@@ -186,7 +186,7 @@ func TestComposePrompt_DuplicateSuppressedWithThinking(t *testing.T) {
 
 	ctx := WithTrigger(context.Background(), "telegram")
 	ctx = WithTurnMetadata(ctx, &TurnMetadata{})
-	ts := NewTurnState(ctx, "bot/c100/1000000000", []string{"test"}, nil)
+	ts := NewTurnState(ctx, "bot/c100", []string{"test"}, nil)
 	ts.Meta = &TurnMetadata{}
 	ts.TurnModel = "anthropic/claude-sonnet-4-20250514"
 	ts.TurnThinking = "adaptive"
@@ -210,7 +210,7 @@ func TestComposePrompt_DuplicateAllowedWithLowEffort(t *testing.T) {
 
 	ctx := WithTrigger(context.Background(), "telegram")
 	ctx = WithTurnMetadata(ctx, &TurnMetadata{})
-	ts := NewTurnState(ctx, "bot/c100/1000000000", []string{"test"}, nil)
+	ts := NewTurnState(ctx, "bot/c100", []string{"test"}, nil)
 	ts.Meta = &TurnMetadata{}
 	ts.TurnModel = "anthropic/claude-sonnet-4-20250514"
 	ts.TurnThinking = "adaptive"
@@ -234,7 +234,7 @@ func TestComposePrompt_DuplicateAllowedWithThinkingOff(t *testing.T) {
 
 	ctx := WithTrigger(context.Background(), "telegram")
 	ctx = WithTurnMetadata(ctx, &TurnMetadata{})
-	ts := NewTurnState(ctx, "bot/c100/1000000000", []string{"test"}, nil)
+	ts := NewTurnState(ctx, "bot/c100", []string{"test"}, nil)
 	ts.Meta = &TurnMetadata{}
 	ts.TurnModel = "anthropic/claude-sonnet-4-20250514"
 	ts.TurnThinking = "off"
@@ -258,7 +258,7 @@ func TestComposePrompt_Orientation(t *testing.T) {
 	bs := workspace.NewBootstrap(t.TempDir(), []string{})
 
 	// Set up a root session with some history, then create a branch with orientation.
-	rootKey := "bot/c100/1000000000"
+	rootKey := "bot/c100"
 	if err := store.TestAppend(rootKey, provider.Message{Role: "user", Content: provider.TextContent("msg1")}); err != nil {
 		t.Fatalf("setup root: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestComposePrompt_AppendsToExistingMessages(t *testing.T) {
 
 	ctx := WithTrigger(context.Background(), "telegram")
 	ctx = WithTurnMetadata(ctx, &TurnMetadata{})
-	ts := NewTurnState(ctx, "bot/c100/1000000000", []string{"hello"}, nil)
+	ts := NewTurnState(ctx, "bot/c100", []string{"hello"}, nil)
 	ts.Meta = &TurnMetadata{}
 	ts.TurnModel = "anthropic/claude-sonnet-4-20250514"
 
@@ -339,7 +339,7 @@ func TestLoadAndRepairSession_EmptySession(t *testing.T) {
 	store := session.NewStore(dir)
 	a := &Agent{Sessions: store}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 
 	if err := tr.LoadAndRepairSession(ts); err != nil {
 		t.Fatalf("LoadAndRepairSession: %v", err)
@@ -354,7 +354,7 @@ func TestLoadAndRepairSession_EmptySession(t *testing.T) {
 func TestLoadAndRepairSession_LoadsExisting(t *testing.T) {
 	dir := t.TempDir()
 	store := session.NewStore(dir)
-	key := "bot/c100/1000000000"
+	key := "bot/c100"
 	if err := store.TestAppend(key, provider.Message{Role: "user", Content: provider.TextContent("q1")}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestLoadAndRepairSession_LoadsExisting(t *testing.T) {
 func TestLoadAndRepairSession_RepairsInterruptedToolCalls(t *testing.T) {
 	dir := t.TempDir()
 	store := session.NewStore(dir)
-	key := "bot/c100/1000000000"
+	key := "bot/c100"
 
 	// Set up a session with an interrupted tool call (assistant with tool_use, no tool_result).
 	if err := store.TestAppend(key, provider.Message{Role: "user", Content: provider.TextContent("do something")}); err != nil {
@@ -425,7 +425,7 @@ func TestLoadAndRepairSession_RepairsInterruptedToolCalls(t *testing.T) {
 func TestLoadAndRepairSession_RepairsMissingAssistant(t *testing.T) {
 	dir := t.TempDir()
 	store := session.NewStore(dir)
-	key := "bot/c100/1000000000"
+	key := "bot/c100"
 
 	// Two consecutive user messages (corrupt session).
 	if err := store.TestAppend(key, provider.Message{Role: "user", Content: provider.TextContent("q1")}); err != nil {
@@ -469,7 +469,7 @@ func TestBuildSystemAndTools_BasicBlocks(t *testing.T) {
 		Tools:            reg,
 	}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 
 	tr.BuildSystemAndTools(ts)
 
@@ -505,7 +505,7 @@ func TestBuildSystemAndTools_ServerToolsMerge(t *testing.T) {
 		ServerTools: []provider.ToolDef{serverTool},
 	}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 
 	tr.BuildSystemAndTools(ts)
 
@@ -530,7 +530,7 @@ func TestBuildSystemAndTools_ExtraSystemBlocks(t *testing.T) {
 		},
 	}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 
 	tr.BuildSystemAndTools(ts)
 
@@ -554,7 +554,7 @@ func TestBuildSystemAndTools_ExtraSystemBlocks(t *testing.T) {
 func TestInjectNudges_NilNudger(t *testing.T) {
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 	ts.UserMsg = provider.Message{
 		Role:    "user",
 		Content: provider.TextContent("original"),
@@ -585,7 +585,7 @@ func TestInjectNudges_TurnIntervalFires(t *testing.T) {
 
 	a := &Agent{Nudger: scheduler}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hello"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hello"}, nil)
 	ts.UserMsg = provider.Message{
 		Role:    "user",
 		Content: provider.TextContent("hello"),
@@ -638,7 +638,7 @@ func TestInjectNudges_RegexFires(t *testing.T) {
 
 	a := &Agent{Nudger: scheduler}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"please refactor this"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"please refactor this"}, nil)
 	ts.UserMsg = provider.Message{
 		Role:    "user",
 		Content: provider.TextContent("please refactor this"),
@@ -712,7 +712,7 @@ func TestInjectNudges_NoMatch(t *testing.T) {
 
 	a := &Agent{Nudger: scheduler}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hello world"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hello world"}, nil)
 	ts.UserMsg = provider.Message{
 		Role:    "user",
 		Content: provider.TextContent("hello world"),
@@ -740,7 +740,7 @@ func TestSaveSession_PersistsMessages(t *testing.T) {
 	a := &Agent{Sessions: store}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
-	key := "bot/c100/1000000000"
+	key := "bot/c100"
 	ts := NewTurnState(context.Background(), key, []string{"hi"}, nil)
 	ts.Messages = []provider.Message{
 		{Role: "user", Content: provider.TextContent("q1")},
@@ -778,7 +778,7 @@ func TestSaveSession_EmptyNewMessages(t *testing.T) {
 	a := &Agent{Sessions: store}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
-	key := "bot/c100/1000000000"
+	key := "bot/c100"
 	ts := NewTurnState(ctx(t), key, []string{"hi"}, nil)
 	ts.NewMessages = nil
 
@@ -801,7 +801,7 @@ func TestSaveSession_EmptyNewMessages(t *testing.T) {
 func TestSaveSession_NilNewMessages(t *testing.T) {
 	a := &Agent{Sessions: session.NewStore(t.TempDir())}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 	ts.NewMessages = nil
 
 	if err := tr.SaveSession(ts); err != nil {
@@ -819,7 +819,7 @@ func TestUpdateSessionMeta_Updates(t *testing.T) {
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 	ts.SessionMeta = &sessionMeta{}
 	ts.StartedAt = time.Date(2026, 4, 2, 12, 0, 0, 0, time.UTC)
 	ts.FinalCost = 0.0042
@@ -854,7 +854,7 @@ func TestUpdateSessionMeta_NilSessionMeta(t *testing.T) {
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 	ts.SessionMeta = nil
 	ts.FinalUsage = &provider.Usage{InputTokens: 100}
 
@@ -868,7 +868,7 @@ func TestUpdateSessionMeta_NilFinalUsage(t *testing.T) {
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 	ts.SessionMeta = &sessionMeta{prevCost: 0.01}
 	ts.FinalUsage = nil
 
@@ -889,7 +889,7 @@ func TestUpdateSessionMeta_NilFinalUsage(t *testing.T) {
 func TestRunCompaction_NilFinalUsage(t *testing.T) {
 	a := &Agent{Sessions: session.NewStore(t.TempDir())}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 	ts.FinalUsage = nil
 
 	// Should not panic (Compactor is nil, and we bail early on nil FinalUsage).
@@ -902,7 +902,7 @@ func TestRunCompaction_NilFinalUsage(t *testing.T) {
 func TestRunCompaction_WithFinalUsage(t *testing.T) {
 	a := &Agent{Sessions: session.NewStore(t.TempDir())}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 	ts.SessionMeta = &sessionMeta{}
 	ts.FinalUsage = &provider.Usage{InputTokens: 5000, OutputTokens: 1000}
 	ts.Messages = []provider.Message{
@@ -924,7 +924,7 @@ func TestRunCompaction_WithFinalUsage(t *testing.T) {
 func TestLogUsage_NoOp(t *testing.T) {
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 
 	// Should not panic.
 	tr.LogUsage(ts)
@@ -965,7 +965,7 @@ func TestRateLimitGate_NotLimited(t *testing.T) {
 	a := &Agent{Endpoint: "api.anthropic.com"}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
 	ts.Trigger = "telegram"
 	// Ensure session meta exists with no endpoint override.
 	a.getSessionMeta(ts.SessionKey)
@@ -1009,7 +1009,7 @@ func ctx(t *testing.T) context.Context {
 // newInferenceTS builds a minimal TurnState for RunInference tests.
 func newInferenceTS(t *testing.T, a *Agent, client provider.Client) *TurnState {
 	t.Helper()
-	ts := NewTurnState(context.Background(), "bot/c100/1000000000", []string{"go"}, nil)
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"go"}, nil)
 	ts.Meta = &TurnMetadata{}
 	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
 	ts.TurnModel = "anthropic/test-model"
@@ -1093,7 +1093,7 @@ func TestRunInference_ContextCancelled(t *testing.T) {
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	ts := NewTurnState(cancelCtx, "bot/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(cancelCtx, "bot/c100", []string{"hi"}, nil)
 	ts.Meta = &TurnMetadata{}
 	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
 	ts.TurnModel = "anthropic/test-model"

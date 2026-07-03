@@ -37,14 +37,11 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	unlock := tc.AcquireTurnLock(ts)
 	defer unlock()
 	// markInFlight is the sole in-flight tracker; it covers both API and
-	// delegated transports. Pass the FULL session key — markInFlight derives
-	// the in-flight identity via session.SessionInFlightKey, which collapses
-	// version rotation but PRESERVES the child suffix. So a root and its
-	// post-compaction versions share one identity, while a facet/branch (a 'b'
-	// child on its own backend, an independent conversation) tracks separately
-	// rather than wrongly coupling to the parent root (TODO #719). Root-injected
-	// periodic turns (reflection/keepalive/memory) run under the parent key with
-	// no child suffix, so they still register under the root identity — the
+	// delegated transports. Session keys are stable identities: a facet/branch
+	// (a 'b' child on its own backend, an independent conversation) has its own
+	// key and tracks separately rather than wrongly coupling to the parent root
+	// (TODO #719). Root-injected periodic turns (reflection/keepalive/memory)
+	// run under the parent key, so they register under the root identity — the
 	// granularity the activity gate cares about. Released when
 	// OrchestrateFullTurn returns, which for delegated turns is after
 	// runPostTurn unblocks on CompletionChan. A permission-blocked CC turn
@@ -74,21 +71,25 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// touchLastActivity records that *this session* is doing something *now*,
 	// regardless of trigger (user, cron, CLI, webhook, agent-to-agent,
 	// system-injected). Single chokepoint covers every turn-init path. Keyed
-	// by SessionKeyBase so the gate consults the specific session a CLI send
-	// would target (the agent's main session) rather than being confused by
-	// activity in unrelated branches or sub-agents. The per-receive-path
-	// last_user_activity write (telegram/discord) is deliberately separate —
-	// it tracks user attention, not agent activity, and lives in
-	// agent_metadata rather than session_metadata.
+	// by the ROOT key (branch turns record against their parent root) so the
+	// gate consults the specific session a CLI send would target (the agent's
+	// main session) rather than being confused by activity in unrelated
+	// branches or sub-agents. The per-receive-path last_user_activity write
+	// (telegram/discord) is deliberately separate — it tracks user attention,
+	// not agent activity, and lives in agent_metadata rather than
+	// session_metadata.
 	//
-	// NOTE: this deliberately stays on SessionKeyBase (root-collapsed) while
-	// in-flight tracking above uses the child-preserving SessionInFlightKey.
-	// last_activity feeds DefaultSessionKeyForAgent's most-recently-active
-	// ordering; promoting facet/branch keys into that ordering is a separate
-	// question from the in-flight coupling fixed in TODO #719, so it is left
-	// root-collapsed pending its own analysis.
-	sessionBase := session.SessionKeyBase(ts.SessionKey)
-	a.touchLastActivity(sessionBase)
+	// NOTE: this deliberately stays root-collapsed while in-flight tracking
+	// above uses the per-key (child-distinct) identity. last_activity feeds
+	// DefaultSessionKeyForAgent's most-recently-active ordering; promoting
+	// facet/branch keys into that ordering is a separate question from the
+	// in-flight coupling fixed in TODO #719, so it is left root-collapsed
+	// pending its own analysis.
+	activityKey := ts.SessionKey
+	if sk, err := session.ParseSessionKey(ts.SessionKey); err == nil {
+		activityKey = sk.Root().String()
+	}
+	a.touchLastActivity(activityKey)
 
 	// Phase 2: Preparation
 	tc.LoadSessionMeta(ts)

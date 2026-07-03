@@ -24,18 +24,20 @@ type SessionAppender interface {
 // own chat, rather than the calling session.
 type SessionNotifyFn func(sessionKey, message string)
 
-// SessionKeyResolverFn resolves a loose session target — a bare agent name
-// (e.g. "scout") or a partial key (e.g. "scout/c5970082313") — to the full
-// active session key. Returns "" if no match is found.
-type SessionKeyResolverFn func(partialKey string) string
+// SessionKeyResolverFn resolves a loose session target — anything that does
+// not parse as a full session key: a bare agent name ("scout" → the agent's
+// default session), a named session ("scout/research"), or a chat alias.
+// Returns the resolved key and which resolution rung matched (for the tool's
+// receipt), or an error describing why nothing matched.
+type SessionKeyResolverFn func(target string) (key, via string, err error)
 
 // NewSendToSessionTool creates a tool that injects a user-role message into
 // another session and triggers processing via the notifier.
 //
 // The sessionNotifyFn is called when reply_to="session" — it routes the
 // response to the target session's own chat instead of back to the caller.
-// The resolveKeyFn is optional — if provided, partial session keys (without
-// versionTS) are resolved to the active session key.
+// The resolveKeyFn is optional — if provided, loose targets (bare agent
+// names) are resolved to the active session key.
 func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn, resolveKeyFn SessionKeyResolverFn) *Tool {
 	return &Tool{
 		Name:       "send_to_session",
@@ -52,7 +54,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			"properties": {
 				"session_key": {
 					"type": "string",
-					"description": "Target session. Accepts a full key (e.g. scout/c5970082313/1772794601), a partial key without the version timestamp (e.g. scout/c5970082313), or a bare agent name (e.g. scout). Partial keys resolve to the most recent active session in that chat; a bare agent name resolves to the agent's default chat session."
+					"description": "Target session. Accepts a full session key (e.g. scout/c5970082313), a bare agent name (e.g. scout — resolves to the agent's default session), an agent-qualified session name (e.g. scout/research), or a chat alias."
 				},
 				"message": {
 					"type": "string",
@@ -88,17 +90,19 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				return ToolResult{}, fmt.Errorf("reply_to must be 'caller' or 'session', got %q", p.ReplyTo)
 			}
 
-			// Resolve loose targets — bare agent name ("scout") or partial key
-			// ("scout/c5970082313") — to a full active key. Full keys parse
-			// cleanly and skip resolution.
+			// Resolve loose targets — bare agent names, session names, chat
+			// aliases — through the shared route ladder. Full session keys
+			// parse cleanly and skip resolution.
 			targetKey := p.SessionKey
+			resolvedVia := "exact"
 			if _, err := session.ParseSessionKey(targetKey); err != nil && resolveKeyFn != nil {
-				if resolved := resolveKeyFn(targetKey); resolved != "" {
-					targetKey = resolved
-					log.Infof("send_to_session", "resolved %q → %s", p.SessionKey, targetKey)
-				} else {
-					return ToolResult{}, fmt.Errorf("could not resolve %q to an active session (tried bare agent name and partial key)", p.SessionKey)
+				key, via, rerr := resolveKeyFn(targetKey)
+				if rerr != nil {
+					return ToolResult{}, fmt.Errorf("could not resolve %q to a session: %w", p.SessionKey, rerr)
 				}
+				targetKey = key
+				resolvedVia = via
+				log.Infof("send_to_session", "resolved %q → %s (via %s)", p.SessionKey, targetKey, via)
 			}
 
 			originSession := SessionKeyFromContext(ctx)
@@ -138,7 +142,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				}
 			}
 
-			return TextResult(fmt.Sprintf("Message sent to session %s (reply_to=%s).", targetKey, p.ReplyTo)), nil
+			return TextResult(fmt.Sprintf("Message sent to session %s (resolved via %s, reply_to=%s).", targetKey, resolvedVia, p.ReplyTo)), nil
 		},
 	}
 }

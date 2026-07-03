@@ -1136,7 +1136,7 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `id` | string | `""` | Agent identifier. Used in session keys (`ID/c{chatID}/{versionTS}`). |
+| `id` | string | `""` | Agent identifier. Used in session keys (`ID/c{chatID}`). |
 | `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |

@@ -40,6 +40,14 @@ func initSessions(cfg *config.Config) sessionInfra {
 	}
 	log.Debugf("main", "session store dir=%s", cfg.Sessions.Dir)
 
+	// One-shot legacy migration: flatten pre-stable-identity version
+	// directories before anything reads or indexes session files.
+	if n, err := sessions.MigrateLegacyLayout(); err != nil {
+		log.Errorf("main", "legacy session layout migration: %v", err)
+	} else if n > 0 {
+		log.Infof("main", "migrated %d session(s) from legacy version-directory layout", n)
+	}
+
 	// State database (SQLite-backed state for sessions, agents, chats, and system)
 	stateDBPath := cfg.DataPath("state.db")
 	sessionIndex, err := session.NewSessionIndex(stateDBPath)
@@ -61,6 +69,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 					Status:           session.SessionStatusActive,
 				})
 			case session.SessionStatusCompacted:
+				sessionIndex.RecordArchive(e.Key, e.ArchivePath, "compaction")
 				if e.ArchivePath != "" {
 					rel, err := filepath.Rel(cfg.Sessions.Dir, e.ArchivePath)
 					if err == nil {
@@ -76,8 +85,10 @@ func initSessions(cfg *config.Config) sessionInfra {
 						})
 					}
 				}
-			case session.SessionStatusRotated:
-				// Index the archive file
+			case session.SessionStatusReset:
+				sessionIndex.RecordArchive(e.Key, e.ArchivePath, "reset")
+				// Index the archived file; the session key itself is stable
+				// and its next Append re-activates it.
 				if e.ArchivePath != "" {
 					rel, err := filepath.Rel(cfg.Sessions.Dir, e.ArchivePath)
 					if err == nil {
@@ -93,18 +104,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 						})
 					}
 				}
-				// Create new active entry for the rotated key
-				if e.NewKey != "" {
-					sessionIndex.Upsert(session.SessionIndexEntry{
-						SessionKey:  e.NewKey,
-						FilePath:    e.FilePath,
-						CreatedAt:   timeutil.Now(),
-						SessionType: e.Type,
-						Status:      session.SessionStatusActive,
-					})
-				}
-				// Mark old key as rotated
-				sessionIndex.UpdateStatus(e.Key, session.SessionStatusRotated)
+				sessionIndex.UpdateStatus(e.Key, session.SessionStatusReset)
 			case session.SessionStatusCleared:
 				sessionIndex.UpdateStatus(e.Key, session.SessionStatusCleared)
 			}

@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"foci/internal/platform"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ func testSecondaryBot() *Bot {
 // available, acquiring marks it busy once a session key is set, and releasing
 // clears the key and restores availability.
 func TestPoolAcquireRelease(t *testing.T) {
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("discord")
 	bot := testSecondaryBot()
 	bot.pool = pool
 	pool.Add(bot)
@@ -37,7 +38,7 @@ func TestPoolAcquireRelease(t *testing.T) {
 	if !ok || got != bot {
 		t.Fatal("expected to acquire the added bot")
 	}
-	got.SetSessionKey("a/c1/100")
+	got.SetSessionKey("a/c1")
 	if pool.Available() != 0 {
 		t.Fatalf("available=%d, want 0", pool.Available())
 	}
@@ -57,7 +58,7 @@ func TestPoolAcquireRelease(t *testing.T) {
 // TestPoolAcquireLRU verifies the least-recently-used policy: after releasing
 // the first-acquired bot, the next acquire returns it again.
 func TestPoolAcquireLRU(t *testing.T) {
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("discord")
 	bot1 := testSecondaryBot()
 	bot2 := testSecondaryBot()
 	pool.Add(bot1)
@@ -80,7 +81,7 @@ func TestPoolAcquireLRU(t *testing.T) {
 
 // TestPoolAcquireEmpty verifies acquiring from an empty pool fails cleanly.
 func TestPoolAcquireEmpty(t *testing.T) {
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("discord")
 	if _, ok := pool.Acquire(); ok {
 		t.Fatal("expected acquire to fail on empty pool")
 	}
@@ -90,7 +91,7 @@ func TestPoolAcquireEmpty(t *testing.T) {
 // entirely) are auto-released on Acquire, firing the ReclaimHook for each, while
 // fresh sessions are left alone.
 func TestPoolTTLReclaim(t *testing.T) {
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("discord")
 	staleBot := testSecondaryBot()
 	missingBot := testSecondaryBot()
 	freshBot := testSecondaryBot()
@@ -136,7 +137,7 @@ func TestPoolTTLReclaim(t *testing.T) {
 // TestPoolTTLUnparseableTimestampIgnored verifies sessions with unparseable
 // activity timestamps are not reclaimed.
 func TestPoolTTLUnparseableTimestampIgnored(t *testing.T) {
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("discord")
 	bot := testSecondaryBot()
 	pool.Add(bot)
 	bot.SetSessionKeyDirect("weird-session")
@@ -153,7 +154,7 @@ func TestPoolTTLUnparseableTimestampIgnored(t *testing.T) {
 
 // TestPoolForEach verifies ForEach visits every bot exactly once.
 func TestPoolForEach(t *testing.T) {
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("discord")
 	bot1 := testSecondaryBot()
 	bot2 := testSecondaryBot()
 	pool.Add(bot1)

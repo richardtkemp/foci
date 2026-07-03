@@ -26,7 +26,7 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 		exec.Command("tmux", "-S", sock, "kill-server").Run()
 	})
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	t.Parallel()
 
@@ -239,7 +239,7 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 		exec.Command("tmux", "-S", sock, "kill-server").Run()
 	})
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	t.Parallel()
 

@@ -123,7 +123,7 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
 	// Pre-populate session with an interrupted tool call
-	sessionKey := "test/irepair/1000000000"
+	sessionKey := "test/irepair"
 	store.TestAppend(sessionKey, provider.Message{
 		Role: "user", Content: provider.TextContent("do something"),
 	})
@@ -251,7 +251,7 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	})
 	ctx := turnevent.WithSink(context.Background(), recorder)
 
-	_, err := ag.hmTest(ctx, "test/iorder/1000000000", "Check something")
+	_, err := ag.hmTest(ctx, "test/iorder", "Check something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -318,13 +318,13 @@ func TestToolResultRedaction(t *testing.T) {
 		},
 	}
 
-	_, err := ag.hmTest(context.Background(), "test/iredact/1000000000", "Leak the secret")
+	_, err := ag.hmTest(context.Background(), "test/iredact", "Leak the secret")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
 	// Verify the saved session has redacted tool result
-	msgs, _ := store.Load("test/iredact/1000000000")
+	msgs, _ := store.Load("test/iredact")
 	for _, msg := range msgs {
 		for _, block := range msg.Content {
 			if block.Type == "tool_result" {
@@ -387,13 +387,13 @@ func TestToolErrorRedaction(t *testing.T) {
 		},
 	}
 
-	_, err := ag.hmTest(context.Background(), "test/iredacterr/1000000000", "Try the tool")
+	_, err := ag.hmTest(context.Background(), "test/iredacterr", "Try the tool")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
 	// Verify the saved session has redacted error message
-	msgs, _ := store.Load("test/iredacterr/1000000000")
+	msgs, _ := store.Load("test/iredacterr")
 	for _, msg := range msgs {
 		for _, block := range msg.Content {
 			if block.Type == "tool_result" && block.IsError {

@@ -16,16 +16,17 @@ import (
 )
 
 func TestCompactBasic(t *testing.T) {
-	// Verifies the end-to-end compaction workflow: a session with enough
-	// messages is compacted into a new session key containing exactly a marker message, an
-	// assistant summary from the mock API, and a user handoff message — in the correct roles
-	// and with the expected text content.
+	// Verifies the end-to-end compaction workflow: a session with enough messages
+	// is replaced IN PLACE under the SAME key with exactly a marker message, an
+	// assistant summary from the mock API, and a user handoff message — in the
+	// correct roles and with the expected text — and the old content is archived
+	// on disk next to the live session file.
 	server := mockCompactionServer("Summary of conversation: user said hello, we discussed Go testing.")
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Add 6 messages (above default minMessages=4)
 	for i := 0; i < 3; i++ {
@@ -34,19 +35,16 @@ func TestCompactBasic(t *testing.T) {
 	}
 
 	c := NewCompactor(store, 0.8)
-	summary, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	summary, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 	if summary == "" {
 		t.Error("expected non-empty summary")
 	}
-	if newKey == "" || newKey == sessionKey {
-		t.Fatalf("expected rotated key, got %q", newKey)
-	}
 
-	// After compaction: should have 3 messages at the new key
-	msgs, _ := store.Load(newKey)
+	// The session reloads under the SAME key with the compacted content.
+	msgs, _ := store.Load(sessionKey)
 	if len(msgs) != 3 {
 		t.Fatalf("after compact: %d messages, want 3", len(msgs))
 	}
@@ -74,18 +72,39 @@ func TestCompactBasic(t *testing.T) {
 	if msgs[2].Role != "user" {
 		t.Errorf("msgs[2].Role = %q, want user", msgs[2].Role)
 	}
+
+	// The old content must be archived in place: an archive file (root.<ts>.jsonl)
+	// sits next to the live session file and holds the pre-compaction messages.
+	livePath, err := store.SessionPath(sessionKey)
+	if err != nil {
+		t.Fatalf("SessionPath: %v", err)
+	}
+	archives, err := filepath.Glob(strings.TrimSuffix(livePath, ".jsonl") + ".*.jsonl")
+	if err != nil {
+		t.Fatalf("glob archives: %v", err)
+	}
+	if len(archives) != 1 {
+		t.Fatalf("expected 1 archive file next to %s, found %d: %v", livePath, len(archives), archives)
+	}
+	archived, err := os.ReadFile(archives[0])
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	if !strings.Contains(string(archived), "user message") {
+		t.Errorf("archive %s should contain the pre-compaction messages", archives[0])
+	}
 }
 
 func TestCompactDryRun(t *testing.T) {
 	// Verifies that dry-run mode calls the API and returns a summary
-	// but leaves the original session completely unmodified, proving the flag acts as a
-	// true preview with no side effects on stored messages.
+	// but leaves the original session completely unmodified — no message changes
+	// and no archive file created — proving the flag acts as a true preview.
 	server := mockCompactionServer("Dry-run summary of conversation.")
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Add 6 messages (above default minMessages=4)
 	for i := 0; i < 3; i++ {
@@ -94,7 +113,7 @@ func TestCompactDryRun(t *testing.T) {
 	}
 
 	c := NewCompactor(store, 0.8)
-	summary, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", true)
+	summary, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", true)
 	if err != nil {
 		t.Fatalf("Compact dry-run: %v", err)
 	}
@@ -113,6 +132,16 @@ func TestCompactDryRun(t *testing.T) {
 	if provider.TextOf(msgs[0].Content) != "user message" {
 		t.Errorf("msgs[0] = %q, want original user message", provider.TextOf(msgs[0].Content))
 	}
+
+	// No archive should have been created in dry-run mode.
+	livePath, err := store.SessionPath(sessionKey)
+	if err != nil {
+		t.Fatalf("SessionPath: %v", err)
+	}
+	archives, _ := filepath.Glob(strings.TrimSuffix(livePath, ".jsonl") + ".*.jsonl")
+	if len(archives) != 0 {
+		t.Errorf("dry-run should not archive, found: %v", archives)
+	}
 }
 
 func TestCompactTooFewMessages(t *testing.T) {
@@ -120,14 +149,14 @@ func TestCompactTooFewMessages(t *testing.T) {
 	// fewer messages than minMessages: no API call is made, the session is unchanged, and
 	// the returned summary is empty — proving the guard condition works correctly.
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Add only 2 messages (below default minMessages=4)
 	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hi")})
 	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
 
 	c := NewCompactor(store, 0.8)
-	summary, _, err := c.Compact(context.Background(), nil, sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	summary, err := c.Compact(context.Background(), nil, sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -145,13 +174,13 @@ func TestCompactTooFewMessages(t *testing.T) {
 func TestCompactWithScratchpad(t *testing.T) {
 	// Verifies that when a scratchpad has entries, the compaction
 	// handoff message includes a scratchpad section containing the stored keys and values,
-	// so that important agent notes survive the session rotation.
+	// so that important agent notes survive compaction.
 	server := mockCompactionServer("Summary: testing scratchpad.")
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Create scratchpad with entries
 	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
@@ -174,12 +203,12 @@ func TestCompactWithScratchpad(t *testing.T) {
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err = c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	if len(msgs) != 3 {
 		t.Fatalf("messages = %d, want 3", len(msgs))
 	}
@@ -206,7 +235,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Create empty scratchpad
 	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
@@ -225,12 +254,12 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err = c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	handoff := provider.TextOf(msgs[2].Content)
 	// Should have default handoff without scratchpad section
 	if strings.Contains(handoff, "scratchpad") {
@@ -250,7 +279,7 @@ func TestCompactAPIError(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -258,7 +287,7 @@ func TestCompactAPIError(t *testing.T) {
 	}
 
 	c := NewCompactor(store, 0.8)
-	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err == nil {
 		t.Fatal("expected error from API failure")
 	}
@@ -275,15 +304,15 @@ func TestCompactAPIError(t *testing.T) {
 
 func TestCompactStreaming(t *testing.T) {
 	// Verifies that when the client supports SSE streaming, compaction
-	// collects the streamed summary correctly and produces a valid compacted session,
-	// proving the streaming path reaches the same end state as the non-streaming path.
+	// collects the streamed summary correctly and replaces the session in place under the
+	// same key, proving the streaming path reaches the same end state as the non-streaming path.
 	server := mockStreamingCompactionServer("Streamed summary of conversation.")
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
@@ -291,7 +320,7 @@ func TestCompactStreaming(t *testing.T) {
 	}
 
 	c := NewCompactor(store, 0.8)
-	summary, newKey, err := c.Compact(context.Background(), client, sessionKey, "anthropic/claude-haiku-4-5", "anthropic", nil, "", "", false)
+	summary, err := c.Compact(context.Background(), client, sessionKey, "anthropic/claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact (streaming): %v", err)
 	}
@@ -299,7 +328,7 @@ func TestCompactStreaming(t *testing.T) {
 		t.Errorf("summary = %q, want to contain 'Streamed summary'", summary)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	if len(msgs) != 3 {
 		t.Fatalf("after streaming compact: %d messages, want 3", len(msgs))
 	}
@@ -334,16 +363,16 @@ func TestCompactLoadError(t *testing.T) {
 	// directory is expected so that the store's open call fails with an I/O error.
 	dir := t.TempDir()
 	store := session.NewStore(dir)
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Create a file where the session directory should be to cause I/O error.
-	// SessionPath returns <dir>/test/imain/1000000000/root.jsonl
-	// Making 1000000000 a file prevents opening root.jsonl inside it.
-	os.MkdirAll(filepath.Join(dir, "test", "imain"), 0755)
-	os.WriteFile(filepath.Join(dir, "test", "imain", "1000000000"), []byte("conflict"), 0644)
+	// SessionPath returns <dir>/test/imain/root.jsonl
+	// Making imain a file prevents opening root.jsonl inside it.
+	os.MkdirAll(filepath.Join(dir, "test"), 0755)
+	os.WriteFile(filepath.Join(dir, "test", "imain"), []byte("conflict"), 0644)
 
 	c := NewCompactor(store, 0.8)
-	_, _, err := c.Compact(context.Background(), nil, sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), nil, sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err == nil {
 		t.Fatal("expected error when session can't be loaded")
 	}
@@ -361,7 +390,7 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Add exactly 4 messages (equals minMessages)
 	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
@@ -374,13 +403,13 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 	// len(messages)-preserveN = 4-3 = 1 < minMessages(4), so preserveN = 4-4 = 0
 	c.WithConfig(4096, 4, 3)
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
 	// Should have compacted everything (no preservation since preserveN clamped to 0)
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	if len(msgs) != 3 {
 		t.Fatalf("after compact: %d messages, want 3 (no preserved)", len(msgs))
 	}
@@ -397,7 +426,7 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// 8 messages: [u0, a0, u1, tool_use_A, tool_result_A, tool_use_B, tool_result_B, done]
 	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
@@ -415,14 +444,14 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	// With preserve=3, minMessages=6: preserveN clamped to 2 (8-6), splitIdx=6.
 	// Walk-back: msgs[5]=tool_use_B → walks to 5, but 5 < minMessages=6 →
 	// reverts to original splitIdx=6. preserveN stays at 2.
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
 	// New behavior: keeps original split, preserves 2 messages (tool_result_B, done).
 	// preserved[0]=user (tool_result) → handoff folded: 2 header + 2 preserved = 4.
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	if len(msgs) != 4 {
 		t.Fatalf("after compact: %d messages, want 4 (walk-back reverted, preserved 2)", len(msgs))
 	}
@@ -442,7 +471,7 @@ func TestCompactScratchpadError(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -462,7 +491,7 @@ func TestCompactScratchpadError(t *testing.T) {
 	c.AgentID = "test"
 
 	// Should succeed despite scratchpad error (it's best-effort).
-	_, _, err = c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err = c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact should succeed despite scratchpad error: %v", err)
 	}
@@ -479,20 +508,21 @@ func TestCompactReplaceError(t *testing.T) {
 	client := newTestAnthropicClient(server.URL, "test-key")
 	dir := t.TempDir()
 	store := session.NewStore(dir)
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 3; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	// Make the session directory read-only so Replace can't write.
-	sessDir := filepath.Join(dir, "test", "imain", "1000000000")
+	// Make the session directory read-only so Replace can't rotate/write.
+	// SessionPath is <dir>/test/imain/root.jsonl, so the session dir is test/imain.
+	sessDir := filepath.Join(dir, "test", "imain")
 	os.Chmod(sessDir, 0555)
 	t.Cleanup(func() { os.Chmod(sessDir, 0755) })
 
 	c := NewCompactor(store, 0.8)
-	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err == nil {
 		t.Fatal("expected error when Replace fails")
 	}

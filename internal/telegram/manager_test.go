@@ -138,7 +138,7 @@ func TestBotManagerIsolation(t *testing.T) {
 	if !ok {
 		t.Fatal("failed to acquire from clutch pool")
 	}
-	acquired.SetSessionKey("clutch/c1/1/b1")
+	acquired.SetSessionKey("clutch/c1/b1")
 
 	if scoutPool.Available() != 1 {
 		t.Errorf("scout pool available = %d after clutch acquire, want 1", scoutPool.Available())
@@ -230,7 +230,7 @@ func TestAcquireFacet_PerAgentBusyFallsToShared(t *testing.T) {
 	if !ok {
 		t.Fatal("initial acquire failed")
 	}
-	bot1.SetSessionKey("clutch/c1/1/b1")
+	bot1.SetSessionKey("clutch/c1/b1")
 
 	// Add shared bot
 	shared := testSecondaryBot("shared1")
@@ -257,13 +257,13 @@ func TestAcquireFacet_BothExhausted(t *testing.T) {
 	perAgent := testSecondaryBot("pa1")
 	mgr.AddFacet("clutch", perAgent)
 	bot1, _ := mgr.AcquireFacet("clutch")
-	bot1.SetSessionKey("clutch/c1/1/b1")
+	bot1.SetSessionKey("clutch/c1/b1")
 
 	// Shared bot — make busy
 	shared := testSecondaryBot("shared1")
 	mgr.AddSharedFacet(shared)
 	bot2, _ := mgr.AcquireFacet("clutch")
-	bot2.SetSessionKey("clutch/c1/1/b2")
+	bot2.SetSessionKey("clutch/c1/b2")
 
 	// Both exhausted
 	_, ok := mgr.AcquireFacet("clutch")
@@ -329,7 +329,7 @@ func TestAcquireFacet_ReleaseToCorrectPool(t *testing.T) {
 
 	// Acquire per-agent
 	bot1, _ := mgr.AcquireFacet("clutch")
-	bot1.SetSessionKey("clutch/c1/1/b1")
+	bot1.SetSessionKey("clutch/c1/b1")
 
 	// Acquire shared (per-agent still has one available, but let's exhaust per-agent first)
 	bot1b, _ := mgr.AcquireFacet("clutch") // gets shared (per-agent pool was just acquired from)
@@ -341,11 +341,11 @@ func TestAcquireFacet_ReleaseToCorrectPool(t *testing.T) {
 
 	// Acquire per-agent (it's idle again)
 	b1, _ := mgr.AcquireFacet("clutch")
-	b1.SetSessionKey("clutch/c1/1/b1")
+	b1.SetSessionKey("clutch/c1/b1")
 
 	// Per-agent is now busy, next acquire gets shared
 	b2, _ := mgr.AcquireFacet("clutch")
-	b2.SetSessionKey("clutch/c1/1/b2")
+	b2.SetSessionKey("clutch/c1/b2")
 
 	// Release per-agent bot — should return to per-agent pool
 	mgr.Pool("clutch").Release(b1)
@@ -377,9 +377,9 @@ func TestBotForSession_PerAgentPool(t *testing.T) {
 
 	// Acquire and assign a session key
 	bot, _ := mgr.Pool("clutch").Acquire()
-	bot.SetSessionKey("clutch/c1/1/b100")
+	bot.SetSessionKey("clutch/c1/b100")
 
-	found := mgr.BotForSession("clutch/c1/1/b100")
+	found := mgr.BotForSession("clutch/c1/b100")
 	if found != bot {
 		t.Errorf("BotForSession should find per-agent facet bot")
 	}
@@ -397,9 +397,9 @@ func TestBotForSession_SharedPool(t *testing.T) {
 
 	// Acquire and assign a session key
 	bot, _ := mgr.SharedPool().Acquire()
-	bot.SetSessionKey("clutch/c1/1/b200")
+	bot.SetSessionKey("clutch/c1/b200")
 
-	found := mgr.BotForSession("clutch/c1/1/b200")
+	found := mgr.BotForSession("clutch/c1/b200")
 	if found != bot {
 		t.Errorf("BotForSession should find shared facet bot")
 	}
@@ -415,7 +415,7 @@ func TestBotForSession_NotFound(t *testing.T) {
 	fb := testSecondaryBot("mb1")
 	mgr.AddFacet("clutch", fb)
 
-	found := mgr.BotForSession("clutch/c1/1/b998")
+	found := mgr.BotForSession("clutch/c1/b998")
 	if found != nil {
 		t.Errorf("BotForSession should return nil for unknown session key, got %v", found)
 	}
@@ -440,7 +440,7 @@ func TestBotForSession_NoBotMatchReturnsNil(t *testing.T) {
 	fb := testSecondaryBot("mb1")
 	mgr.AddFacet("clutch", fb)
 
-	found := mgr.BotForSession("clutch/c12345/1709590000")
+	found := mgr.BotForSession("clutch/c12345")
 	if found != nil {
 		t.Errorf("BotForSession should return nil when no bot has this session key, got %v", found)
 	}
@@ -450,13 +450,13 @@ func TestBotForSession_MatchesPrimaryBot(t *testing.T) {
 	// Verifies that BotForSession returns the primary bot when its SessionKey matches.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
-	primary.SetSessionKeyDirect("clutch/c12345/1709590000")
+	primary.SetSessionKeyDirect("clutch/c12345")
 	mgr.AddPrimary("clutch", primary)
 
 	fb := testSecondaryBot("mb1")
 	mgr.AddFacet("clutch", fb)
 
-	found := mgr.BotForSession("clutch/c12345/1709590000")
+	found := mgr.BotForSession("clutch/c12345")
 	if found != primary {
 		t.Errorf("BotForSession should return primary bot when its SessionKey matches")
 	}
@@ -487,8 +487,8 @@ func TestFacet_SessionKeyCallbackIntegration(t *testing.T) {
 	}
 
 	// Fork: set session key
-	fb.SetSessionKey("clutch/c1/1/b123")
-	if v, ok := persisted["facet:"]; !ok || v != "clutch/c1/1/b123" {
+	fb.SetSessionKey("clutch/c1/b123")
+	if v, ok := persisted["facet:"]; !ok || v != "clutch/c1/b123" {
 		t.Errorf("persisted = %v, want facet: → agent:clutch:facet:f-123", persisted)
 	}
 
@@ -509,11 +509,11 @@ func TestFacet_SetSessionKeyDirectSkipsCallback(t *testing.T) {
 	}
 
 	// Restoration path — should NOT fire callback
-	fb.SetSessionKeyDirect("clutch/c1/1/b456")
+	fb.SetSessionKeyDirect("clutch/c1/b456")
 	if called {
 		t.Error("SetSessionKeyDirect should not fire OnSessionKeyChange")
 	}
-	if sk := fb.SessionKey(); sk != "clutch/c1/1/b456" {
+	if sk := fb.SessionKey(); sk != "clutch/c1/b456" {
 		t.Errorf("session key = %q, want agent:clutch:facet:f-456", sk)
 	}
 }
@@ -530,7 +530,7 @@ func TestBotForSessionOrPrimary_FacetSessionUsesFacetBot(t *testing.T) {
 	fb := testSecondaryBot("mb1")
 	mgr.AddFacet("clutch", fb)
 
-	sessionKey := "clutch/c1/1/b100"
+	sessionKey := "clutch/c1/b100"
 	acquired, _ := mgr.Pool("clutch").Acquire()
 	acquired.SetSessionKey(sessionKey)
 
@@ -550,7 +550,7 @@ func TestBotForSessionOrPrimary_UnassignedSessionFallsBackToPrimary(t *testing.T
 	fb := testSecondaryBot("mb1")
 	mgr.AddFacet("clutch", fb)
 
-	bot := mgr.BotForSessionOrPrimary("clutch/c1/1/b997", "clutch")
+	bot := mgr.BotForSessionOrPrimary("clutch/c1/b997", "clutch")
 	if bot != primary {
 		t.Errorf("BotForSessionOrPrimary should fall back to primary when facet bot not found")
 	}
@@ -566,7 +566,7 @@ func TestBotForSessionOrPrimary_NonFacetSessionUsesPrimary(t *testing.T) {
 	fb := testSecondaryBot("mb1")
 	mgr.AddFacet("clutch", fb)
 	acquired, _ := mgr.Pool("clutch").Acquire()
-	acquired.SetSessionKey("clutch/c1/1/b100")
+	acquired.SetSessionKey("clutch/c1/b100")
 
 	bot := mgr.BotForSessionOrPrimary("agent:clutch:main", "clutch")
 	if bot != primary {
@@ -592,7 +592,7 @@ func TestBotForSessionOrPrimary_FacetNoPrimaryReturnsNil(t *testing.T) {
 	fb := testSecondaryBot("mb1")
 	mgr.AddFacet("clutch", fb)
 
-	bot := mgr.BotForSessionOrPrimary("clutch/c1/1/b997", "clutch")
+	bot := mgr.BotForSessionOrPrimary("clutch/c1/b997", "clutch")
 	if bot != nil {
 		t.Errorf("BotForSessionOrPrimary should return nil when facet not found and no primary exists")
 	}
@@ -611,7 +611,7 @@ func TestBotForSessionOrPrimary_NewFormatBranchKey(t *testing.T) {
 	mgr.AddFacet("clutch", fb)
 
 	// New-format branch key assigned to facet bot
-	sessionKey := "clutch/c12345/1709590000/b1709596800"
+	sessionKey := "clutch/c12345/b1709596800"
 	acquired, _ := mgr.Pool("clutch").Acquire()
 	acquired.SetSessionKey(sessionKey)
 
@@ -631,7 +631,7 @@ func TestBotForSessionOrPrimary_NewFormatChatKey(t *testing.T) {
 	fb := testSecondaryBot("mb1")
 	mgr.AddFacet("clutch", fb)
 
-	bot := mgr.BotForSessionOrPrimary("clutch/c12345/1709590000", "clutch")
+	bot := mgr.BotForSessionOrPrimary("clutch/c12345", "clutch")
 	if bot != primary {
 		t.Errorf("BotForSessionOrPrimary should fall back to primary for unmatched new-format key")
 	}

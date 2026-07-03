@@ -16,7 +16,7 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 	// Verifies that watch registers monitoring for a session and unwatch stops it, both returning appropriate confirmation messages.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-watch"
 	tmuxSetup(t, name)
@@ -65,7 +65,7 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	// Verifies that a second watch call on an already-watched session returns a clear error, preventing duplicate watch registrations.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-watch-dup"
 	tmuxSetup(t, name)
@@ -110,7 +110,7 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 func TestTmuxUnwatchNotWatched(t *testing.T) {
 	// Verifies that unwatching a session that was never watched returns a clear error, guarding against invalid state transitions.
 	t.Parallel()
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "unwatch",
@@ -136,7 +136,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		wakeMsg.Store(msg)
 	})
 
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, "")
 
 	name := "foci-test-wake"
 	tmuxSetup(t, name)
@@ -206,7 +206,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		mu.Unlock()
 	})
 
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, "")
 
 	name := "foci-test-dead"
 	tmuxSetup(t, name)
@@ -268,7 +268,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 func TestTmuxWatchMissingName(t *testing.T) {
 	// Verifies that both watch and unwatch fail with an error when no session name is provided, enforcing required-parameter validation.
 	t.Parallel()
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "watch",

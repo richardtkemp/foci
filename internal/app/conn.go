@@ -106,35 +106,6 @@ func (c *appConn) SessionKeyForChat(chatID int64) string {
 	return c.hub.sessionKeyForChat(c.agentID, chatID)
 }
 
-// UpdateChatSessionKey persists a rotated session key (compaction/reset) and
-// re-points the live binding, so the app's conversation thread survives the
-// rotation (the conversationId stays stable; only the underlying session key
-// changes — nicer than Telegram where the chat IS the identity).
-func (c *appConn) UpdateChatSessionKey(chatID int64, newKey string) {
-	if idx := c.hub.deps.SessionIndex; idx != nil {
-		_ = idx.SetChatMetadata(c.agentID, "app", chatID, "session_key", newKey)
-	}
-	var rotated []*convBinding
-	c.hub.mu.Lock()
-	for old, b := range c.hub.bySession {
-		if b.chatID == chatID && b.agentID == c.agentID {
-			delete(c.hub.bySession, old)
-			b.mu.Lock()
-			b.sessionKey = newKey
-			b.mu.Unlock()
-			c.hub.bySession[newKey] = b
-			rotated = append(rotated, b)
-		}
-	}
-	c.hub.mu.Unlock()
-
-	// Tell the app its conversation's session key rotated; the conversationId
-	// stays stable so the thread identity survives the rotation.
-	for _, b := range rotated {
-		b.send(fap.SessionUpdate{ConversationID: b.convID, SessionKey: newKey, Reason: "rotated"})
-	}
-}
-
 // --- messaging ---
 
 func (c *appConn) SendToSession(sessionKey, text string) error {
@@ -178,12 +149,17 @@ func (c *appConn) sendBinding(sessionKey string) *convBinding {
 	if b := c.hub.bindingForSession(sessionKey); b != nil {
 		return b
 	}
-	b := c.hub.defaultChatBinding(c.agentID)
+	// No binding for this session — resolve (or create) the agent's default
+	// conversation. The app can mint conversations freely, so an unsolicited
+	// send always has somewhere sensible to land (see Hub.deliverBinding).
+	b := c.hub.deliverBinding(c.agentID)
 	if b == nil {
-		log.Warnf("app", "unsolicited send to unbound session %q (agent %s) DROPPED: no binding and no default-chat binding", sessionKey, c.agentID)
+		log.Warnf("app", "unsolicited send to unbound session %q (agent %s) DROPPED: conversation creation failed", sessionKey, c.agentID)
 		return nil
 	}
-	log.Warnf("app", "unsolicited send to unbound session %q (agent %s) routed to default app chat (conv=%s)", sessionKey, c.agentID, b.convID)
+	if sessionKey != "" {
+		log.Infof("app", "unsolicited send to unbound session %q (agent %s) routed to default conversation %s", sessionKey, c.agentID, b.convID)
+	}
 	return b
 }
 
@@ -205,32 +181,33 @@ func (c *appConn) SendNotificationDirect(text string) string {
 	return c.notify(text)
 }
 
-// notify delivers an agent notification and returns its messageID. A bound view
-// targets its pinned session, stamps a stable messageID, and registers it so a
-// later EditMessageText can re-send with the same id (replace in place). The
-// unbound stored instance (used by NotifyAgent and the AllForAgent fallback in
-// the compaction/tasklist hooks) has no single session, so it fans out to every
-// live binding rather than guessing a "default" — that guess was the wrong-chat
-// compaction-notice bug — and returns "" (a fan-out has no single id to edit).
+// notify delivers an agent notification and returns its messageID. A bound
+// view targets its pinned session; the unbound stored instance (broadcast
+// warnings, AllForAgent fallbacks in the compaction/tasklist hooks) targets
+// the agent's default conversation via the same resolve-or-create ladder as
+// every other session-blind send (Hub.deliverBinding) — one destination, not
+// a fan-out to every conversation. Session-targeted notices that must land
+// in a SPECIFIC chat use a bound view (the wrong-chat compaction-notice bug,
+// #911). The messageID is registered so a later EditMessageText can replace
+// the notification in place.
 func (c *appConn) notify(text string) string {
 	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if clean == "" {
 		return ""
 	}
+	var b *convBinding
 	if c.bound != "" {
-		b := c.hub.bindingForSession(c.bound)
-		if b == nil {
-			return ""
-		}
-		msgID := fap.NewULID()
-		c.hub.registerNotification(msgID, b)
-		b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info"})
-		return msgID
+		b = c.hub.bindingForSession(c.bound)
+	} else {
+		b = c.hub.deliverBinding(c.agentID)
 	}
-	for _, b := range c.hub.bindingsForAgent(c.agentID) {
-		b.send(fap.Notification{ConversationID: b.convID, MessageID: fap.NewULID(), Text: clean, Level: "info"})
+	if b == nil {
+		return ""
 	}
-	return ""
+	msgID := fap.NewULID()
+	c.hub.registerNotification(msgID, b)
+	b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info"})
+	return msgID
 }
 
 // SetTyping is intentionally a no-op for the app. The app's typing indicator is

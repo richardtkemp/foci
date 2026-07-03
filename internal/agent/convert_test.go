@@ -375,7 +375,7 @@ func TestHandleMessageWithCSVAttachment(t *testing.T) {
 	attachments := []platform.Attachment{
 		{MimeType: mimeCSV, Data: []byte("name,value\nfoo,42"), SavedPath: "/tmp/data.csv"},
 	}
-	resp, err := ag.hmTestAttachments(context.Background(), "test/csv/1000000000", []string{"Analyze this data"}, attachments)
+	resp, err := ag.hmTestAttachments(context.Background(), "test/csv", []string{"Analyze this data"}, attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestHandleMessageWithHTMLAttachment(t *testing.T) {
 	attachments := []platform.Attachment{
 		{MimeType: mimeHTML, Data: html, SavedPath: "/tmp/page.html"},
 	}
-	resp, err := ag.hmTestAttachments(context.Background(), "test/html/1000000000", []string{"What does this say?"}, attachments)
+	resp, err := ag.hmTestAttachments(context.Background(), "test/ihtml", []string{"What does this say?"}, attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}

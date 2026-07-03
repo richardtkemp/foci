@@ -69,6 +69,52 @@ func waitForSendMessageContaining(h *testharness.Harness, token, substr string, 
 	return ""
 }
 
+// sentMessageContaining does a single non-blocking scan of the Telegram
+// stub's sent log for a sendMessage containing any of the substrings,
+// returning the matched text or "".
+func sentMessageContaining(h *testharness.Harness, token string, substrs ...string) string {
+	for _, call := range h.TelegramStub().PeekSent(token) {
+		if call.Method != "sendMessage" {
+			continue
+		}
+		var body map[string]any
+		if err := json.Unmarshal(call.Body, &body); err != nil {
+			continue
+		}
+		text, _ := body["text"].(string)
+		for _, substr := range substrs {
+			if strings.Contains(text, substr) {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+// resetWhenIdle drives /reset to completion. The in-flight guard rejects a
+// reset while the previous turn's tail is still running (by design — users
+// see "send stop first"), so under CPU load a one-shot /reset races that
+// tail: the L2 flake family where every reset test fails together on a
+// loaded box. Re-send /reset until the confirmation lands; the guard error
+// is harmless and idempotent. Matches both wordings ("Session reset" for
+// delegated agents, "Session cleared." for API agents).
+func resetWhenIdle(t *testing.T, h *testharness.Harness, token string, userID int64) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		sendText(h, token, userID, userID, "/reset")
+		poll := time.Now().Add(5 * time.Second)
+		for time.Now().Before(poll) {
+			if sentMessageContaining(h, token, "Session reset", "Session cleared") != "" {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	t.Fatalf("/reset never confirmed within 90s; sent calls:\n%s\nstderr tail:\n%s",
+		sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+}
+
 // userMessagesIn returns the user_message entries whose workdir contains
 // the given substring, preserving order.
 func userMessagesIn(entries []recorderEntry, workdirSubstr string) []recorderEntry {
@@ -188,14 +234,15 @@ func TestL2_SessionLifecycle_MultiTurnSharesSessionID(t *testing.T) {
 	}
 }
 
-// TestL2_SessionLifecycle_ResetSoftRotatesSessionKey proves a /reset
-// command on an established session destroys the delegated backend,
-// rotates foci's session key, and the NEXT user message spawns a fresh
-// cc-stub subprocess with NO --resume flag. Mechanism: prime the
+// TestL2_SessionLifecycle_ResetSpawnsFreshCCSession proves a /reset
+// command on an established session hands the delegated backend to the
+// reflection branch, and the NEXT user message spawns a fresh cc-stub
+// subprocess with NO --resume flag (foci's session key is a stable
+// identity — only the CC-side session is fresh). Mechanism: prime the
 // session, send "/reset", send another message; assert two
 // invocations in the recorder where the second has empty resume_id
 // and a different session_id from the first.
-func TestL2_SessionLifecycle_ResetSoftRotatesSessionKey(t *testing.T) {
+func TestL2_SessionLifecycle_ResetSpawnsFreshCCSession(t *testing.T) {
 	testharness.ParallelHeavy(t)
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
@@ -215,12 +262,7 @@ func TestL2_SessionLifecycle_ResetSoftRotatesSessionKey(t *testing.T) {
 	}
 	firstSession := primeUMs[0].SessionID
 
-	sendText(h, token, 9201, 9201, "/reset")
-	// Wait for the soft-reset confirmation to surface through Telegram.
-	if got := waitForSendMessageContaining(h, token, "Session reset", 10*time.Second); got == "" {
-		t.Fatalf("never saw soft-reset confirmation sendMessage; sent calls:\n%s\nstderr tail:\n%s",
-			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
-	}
+	resetWhenIdle(t, h, token, 9201)
 
 	sendText(h, token, 9201, 9201, "after reset")
 	if !waitForUserMessage(t, h, "workspaces/alpha", "after reset", 15*time.Second) {
@@ -250,7 +292,7 @@ func TestL2_SessionLifecycle_ResetSoftRotatesSessionKey(t *testing.T) {
 		t.Fatalf("could not locate post-reset user_message")
 	}
 	if secondSession == firstSession {
-		t.Errorf("session_id did not rotate across /reset: %q == %q", firstSession, secondSession)
+		t.Errorf("CC session_id did not change across /reset: %q == %q", firstSession, secondSession)
 	}
 }
 
@@ -295,11 +337,7 @@ func TestL2_SessionLifecycle_ResetRebuildsSystemPromptFromDisk(t *testing.T) {
 		t.Fatalf("append marker to CRAFT.md: %v", err)
 	}
 
-	sendText(h, token, 9201, 9201, "/reset")
-	if got := waitForSendMessageContaining(h, token, "Session reset", 10*time.Second); got == "" {
-		t.Fatalf("never saw soft-reset confirmation; sent calls:\n%s\nstderr tail:\n%s",
-			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
-	}
+	resetWhenIdle(t, h, token, 9201)
 
 	sendText(h, token, 9201, 9201, "after reset")
 	if !waitForUserMessage(t, h, "workspaces/alpha", "after reset", 15*time.Second) {
@@ -339,7 +377,7 @@ func TestL2_SessionLifecycle_ResetRebuildsSystemPromptFromDisk(t *testing.T) {
 // on its next user message; send a normal message to start the hung
 // turn; send "/reset hard"; send a follow-up message; assert the
 // follow-up shows up as a user_message with no resume_id and a new
-// session_id. Catches the CancelSession + StopSession + RotateKey
+// session_id. Catches the CancelSession + StopSession + Store.Reset
 // sequencing in ResetSessionHard.
 func TestL2_SessionLifecycle_ResetHardCancelsInFlightTurn(t *testing.T) {
 	testharness.ParallelWait(t)
@@ -350,7 +388,7 @@ func TestL2_SessionLifecycle_ResetHardCancelsInFlightTurn(t *testing.T) {
 	// in-flight turn that /reset hard then cancels.
 	//
 	// We still implement the structural part: prime, then /reset hard,
-	// then a follow-up — and assert the session_id rotates and the next
+	// then a follow-up — and assert the CC session_id changes and the next
 	// spawn has no --resume.
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
@@ -401,7 +439,7 @@ func TestL2_SessionLifecycle_ResetHardCancelsInFlightTurn(t *testing.T) {
 		t.Fatalf("could not locate post-hard-reset user_message")
 	}
 	if secondSession == firstSession {
-		t.Errorf("session_id did not rotate across /reset hard: %q == %q", firstSession, secondSession)
+		t.Errorf("CC session_id did not change across /reset hard: %q == %q", firstSession, secondSession)
 	}
 }
 
@@ -426,15 +464,7 @@ func TestL2_SessionLifecycle_ResetClearsPersistedResumeID(t *testing.T) {
 		t.Fatalf("prime turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
 	}
 
-	sendText(h, token, 9401, 9401, "/reset")
-	// 30s rather than 10s — under t.Parallel() CPU pressure on a 4-core box
-	// with the prime turn still flushing its reply, /reset's confirmation
-	// can take 10-15s end-to-end (Telegram poll latency + inbox queuing
-	// behind the in-flight prime). 30s leaves headroom without masking a
-	// real hang. See docs/l2-flake-diagnosis-2026-05-19.md.
-	if got := waitForSendMessageContaining(h, token, "Session reset", 30*time.Second); got == "" {
-		t.Fatalf("never saw soft-reset confirmation; stderr tail:\n%s", stderrTail(h.Stderr()))
-	}
+	resetWhenIdle(t, h, token, 9401)
 
 	sendText(h, token, 9401, 9401, "follow-up")
 	if !waitForUserMessage(t, h, "workspaces/alpha", "follow-up", 15*time.Second) {
@@ -1055,7 +1085,7 @@ func TestL2_SessionLifecycle_ReloadOnCompactBouncesSession(t *testing.T) {
 // cc-stub to hang; send a normal message to start the hung turn;
 // send "/reset" while the hang is active; assert the Telegram stub
 // recorded an error-ish sendMessage ("send stop first, then reset")
-// AND no session rotation occurred (no second cc-stub invocation
+// AND no fresh CC session was spawned (no second cc-stub invocation
 // during the hang window). Negative path complementing the soft-reset
 // happy path.
 func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
@@ -1081,7 +1111,7 @@ func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 	}
 
 	// Now /reset (soft) arrives. Soft reset's IsProcessing gate should
-	// refuse the rotation; foci sends back a "send stop first" advisory.
+	// refuse the reset; foci sends back a "send stop first" advisory.
 	sendText(h, token, userID, userID, "/reset")
 	got := waitForSendMessageContaining(h, token, "stop", 10*time.Second)
 	if got == "" {
@@ -1091,7 +1121,7 @@ func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 	// Soft reset must not have rotated the session: only ONE long-lived
 	// agent cc-stub invocation should be live for alpha. The auto-extract
 	// nudge spawns a separate cc-stub with --no-session-persistence —
-	// filter those out so the assertion is about session rotation, not
+	// filter those out so the assertion is about backend respawning, not
 	// total subprocess count.
 	var liveInvs []recorderEntry
 	for _, inv := range invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
@@ -1107,12 +1137,12 @@ func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 		}
 	}
 	if len(liveInvs) > 1 {
-		t.Errorf("soft /reset while processing rotated the session anyway: long-lived invocations=%d (expected 1):\n%s",
+		t.Errorf("soft /reset while processing respawned the backend anyway: long-lived invocations=%d (expected 1):\n%s",
 			len(liveInvs), invocationsTail(liveInvs))
 	}
 }
 
-// TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn
+// TestL2_SessionLifecycle_ResumeIDSurvivesRespawn
 // proves foci's persisted resume_id survives a subprocess respawn
 // triggered by anything OTHER than reset (e.g. backend death, idle
 // reap). Mechanism: prime to capture session_id A; force respawn
@@ -1121,7 +1151,7 @@ func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 // invocation's resume_id == A AND the user_message lands under the
 // same session_id. Distinct from BackendDeathMidSessionRespawns by
 // asserting persistence across a CLEAN exit, not a crash.
-func TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn(t *testing.T) {
+func TestL2_SessionLifecycle_ResumeIDSurvivesRespawn(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 8412
 

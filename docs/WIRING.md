@@ -204,7 +204,9 @@ No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `sk
 
 **`platform` package:** Defines platform-agnostic messaging types (`Message`, `Attachment`), the `Connection`/`ConnectionManager` interfaces, the `MessagingProvider` interface for platform implementations, and the `Messaging` facade that manages all active providers. Providers register via `RegisterMessagingProvider()` (called from `init()`) and are activated at startup via `InitMessaging()`. An aggregating `ConnectionManager` merges connections from all providers — `AllForAgent()` returns connections across all platforms, enabling multi-platform fan-out for notifications. `cmd/foci-gw/` uses only the facade; zero platform-specific type references. Also defines the `SetupWizard` interface (optionally implemented by `MessagingProvider`) for contributing interactive setup steps to `foci first-run`. `SetupProviders()` returns all registered providers that implement `SetupWizard`. Types: `SetupFlag` (CLI flag definition), `WizardResult` (config TOML fragment + secrets), `SetupUI` (console interaction primitives).
 
-**`chatmeta` package:** Shared session key management logic extracted from `telegram` and `discord`. Provides `Resolver` — a lightweight struct that looks up, creates, persists, and rotates per-chat session keys via `platform.SessionIndex`. Each platform `Bot` holds a `*chatmeta.Resolver` and delegates `SessionKeyForChat`, `UpdateSessionKey`, `DefaultChatID`, `DefaultSessionKey`, and `RecordUsername` to it. Platform-specific methods (`SessionKey`, `SetSessionKey`, `ChatID`, `SetChatID`, `Username`) remain on each Bot. Imports: `platform`, `session`, `log`. All methods are nil-receiver safe.
+**`chatmeta` package:** Shared per-chat metadata logic extracted from `telegram` and `discord`. Session keys are deterministic (`session.NewChatSessionKey`), so the `Resolver` derives them and registers platform ownership (a `registered` chat_metadata row backing `SessionIndex.PlatformForChat`) on first contact; it also handles `DefaultChatID`, `DefaultSessionKey`, and `RecordUsername`. Platform-specific methods (`SessionKey`, `SetSessionKey`, `ChatID`, `SetChatID`, `Username`) remain on each Bot. Imports: `platform`, `session`, `log`. All methods are nil-receiver safe.
+
+**`route` package:** The single addressing authority. Defines the canonical `Target` grammar (`agent[/rest][?create=&policy=]`) parsed identically by every entry point (HTTP handlers, CLI, `send_to_session`, webhooks), the `Resolver` with ONE resolution ladder (exact key → existing named session → chat alias → create-named; empty rest → agent default via `SessionIndex.DefaultSessionKeyForAgent`), `Receipt` (`{target, session, resolved_via}` returned to senders in HTTP responses and tool results), `ConnFor` — the ONE outbound delivery cascade (session's own connection → policy-dependent fallback to the owning platform's primary, with `PolicyRootFallback` suppressing branch sessions so facet replies never leak into the parent's chat) — and `Broadcast`, the delivery set behind `PolicyBroadcast` (`foci send --broadcast`, and the mana/rate-limit/max-tokens warnings): one connection per platform — each platform's primary — delivering to that platform's default destination (telegram/discord: the default chat; app: the default conversation via `Hub.deliverBinding`, else the newest conversation, auto-created if none exist). Cache-bust warnings are deliberately NOT broadcast: they concern one session's cache prefix and route to that session's chat via `SessionNotifier`. Imports: `platform`, `session`.
 
 Most packages depend on `provider` for types; only `main.go`, `tools`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 
@@ -320,7 +322,7 @@ Used by:
 
 The agent exposes three lifecycle methods that encapsulate multi-step sequences previously scattered across command handlers:
 
-- **`ResetSession(ctx, sessionKey)`** — clears session history with memory formation. For API agents: fires memory formation as an async branch, rotates the session key, reloads bootstrap. For delegated agents: rotates the session key and reloads immediately (the chat maps to a fresh session at once; a new CC backend spawns lazily on the next message), then runs memory formation on the old CC session and destroys it in the background (up to 120s). The old CC resume ID is cleared before rotation so the fresh key does not resume the previous conversation. Returns the new session key.
+- **`ResetSession(ctx, sessionKey)`** — clears session history with memory formation. The session key is a stable identity; unified across API and delegated transports: (1) `PrepareSessionEndMemory` creates the reflection branch from the still-live history — for delegated agents it also remaps the live backend and its `cc_resume_id` to the branch (`DelegatedManager.RemapSession`) so the main key gets a fresh CC on next message; (2) `Store.Reset` archives the session file in place; (3) `ClearSessionState` drops per-session overrides/metadata; (4) `RunSessionEndMemory` drives reflection on the branch in the background (up to 120s) and destroys the branch backend.
 - **`CompactSession(ctx, sessionKey, dryRun)`** — triggers manual compaction. Validates message count (min 5), runs the compaction pipeline, then reloads bootstrap and resets cache baseline. When `dryRun` is true, the full pipeline runs (API call, summary generation) but the session is left unchanged — the summary is returned for inspection.
 
 All three call `reloadAfterMutation()` internally, which reloads bootstrap, refreshes nudges, and invalidates all per-session system prompt caches.
@@ -377,7 +379,7 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 - **New independent CC session** — consolidation, background tasks, and nudge extraction use `RunOnce` (see above), which spawns an independent headless CC process.
 - **Reject** — the HTTP `/branch` endpoint is explicitly rejected since delegated agents don't support session branching.
 
-**/reset:** Rotates to a fresh session immediately and returns — it does not block on memory formation. In the background it runs the reflection pass on the old CC session, then destroys that backend (kills tmux pane or closes stream subprocess). The old CC resume ID is cleared before rotation so the rotated-to key does not resume the previous conversation; a new CC session spawns lazily on the next message. See `agent/lifecycle.go:resetDelegatedSession`.
+**/reset:** Archives the session in place and returns — it does not block on memory formation. The live CC backend (and its resume ID) is handed to the reflection branch via `DelegatedManager.RemapSession`; the reflection pass then runs on that branch in the background and destroys the backend when done. The main key starts clean — a fresh CC session spawns lazily on the next message. See `agent/lifecycle.go:ResetSession`.
 
 **/stop:** Interrupts the current turn. Tmux backend: sends Escape×2 + Ctrl-C via `send-keys`. Stream backend: sends an `interrupt` control message over stdin. Both halt the in-flight inference/tool execution inside Claude Code.
 
@@ -907,11 +909,12 @@ Tasks: 2/5 completed
 
 **Format:** JSONL files, one JSON-encoded `provider.Message` per line.
 
-**Key format:** `{agentID}/{type}{id}/{versionTS}[/{childType}{childTS}][.{n}]`
+**Key format:** `{agentID}/{type}{id}[/{childType}{childTS}]` — a **stable
+identity**; compaction and `/reset` never change it.
 
 **Type codes:**
-- `c` — chat (Telegram, external stable ID)
-- `i` — independent (HTTP, ephemeral)
+- `c` — chat (Telegram/Discord/app, external stable ID; deterministic key `agent/c<chatID>`)
+- `i` — independent (named `agent/i<name>` or anonymous `agent/i<ts>`)
 - Child types: `b` (branch), `i` (independent spawn)
 
 **Key → Path mapping:**
@@ -920,16 +923,23 @@ Root sessions:   {key}/root.jsonl
 Child sessions:  {key}.jsonl
 
 Examples:
-main/c123/1709590000                    → sessions/main/c123/1709590000/root.jsonl
-main/c123/1709590000/b1709596800        → sessions/main/c123/1709590000/b1709596800.jsonl
-main/i1709596800/1709596800             → sessions/main/i1709596800/1709596800/root.jsonl
+main/c123               → sessions/main/c123/root.jsonl
+main/c123/b1709596800   → sessions/main/c123/b1709596800.jsonl
+main/iresearch          → sessions/main/iresearch/root.jsonl
 ```
 
-**Versioning:** Each chat/independent session has version directories (created at first message, incremented on compaction). When compacted, the old `root.jsonl` is rotated to `root.{timestamp}.jsonl` and a new version directory is created. Children remain in their original version directories. This allows stable chat IDs across compactions while preserving compaction history.
+**Compaction / reset:** in-place archive rotation. Compaction
+(`SessionWriter.Replace`) renames `root.jsonl` → `root.{timestamp}.jsonl` and
+writes the compacted messages to a fresh `root.jsonl`; `/reset` (`Store.Reset`)
+archives the same way and lets the next Append recreate the file. The session
+key — and everything holding it (chat metadata, reminders, tmux ownership,
+in-flight maps, app conversation bindings) — is unchanged, so there is no
+rotation-migration machinery anywhere. Per-session state is cleared explicitly
+on reset by `Agent.ClearSessionState`.
 
-**Branching:** Branch files start with a `{"type":"branch_meta",...}` line containing `parent_key` and `branch_point`. `LoadFull()` reads parent[:branch_point] + branch's own messages. This is what makes cache sharing work — the API sees the same prefix bytes.
+**Branching:** Branch files start with a `{"type":"branch_meta",...}` line containing `parent_key` and `branch_point`. `LoadFull()` reads parent[:branch_point] + branch's own messages, recovering the prefix from the parent's newest archive if the parent was compacted/reset after the branch was created (P2-5). This is what makes cache sharing work — the API sees the same prefix bytes — and what lets `/reset` archive a session while its reflection branch still sees the full history.
 
-**See also:** [SESSION_KEYS.md](SESSION_KEYS.md) for complete format specification, migration guide, and API reference.
+**See also:** [SESSION_KEYS.md](SESSION_KEYS.md) for complete format specification and API reference.
 
 ## System Prompt Assembly (`workspace/bootstrap.go`, `agent/agent.go`)
 
@@ -1141,8 +1151,8 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)
 | `ls` | explore.go | List directory contents. Internal to `explore` spawn mode — not registered in the main tool registry. |
 | `find` | explore.go | Search for files in a directory hierarchy. Dangerous predicates (`-exec`, `-delete`, etc.) blocked. Internal to `explore` spawn mode. |
 | `grep` | explore.go | Search file contents using the best available binary (rg > ack > ag > grep). Flags are validated and translated to the active binary's dialect. Internal to `explore` spawn mode. |
-| `send_to_chat` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS. Routes to the chat extracted from the session key (`X/cCHATID/{versionTS}`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
-| `send_to_session` | session_send.go | Inject a user-role message into another session. Tags the message with `[Message from session ...]` origin header. Appends to session store and triggers processing via `AsyncNotifier`. Used for cross-session communication (e.g. facet branches talking to main). Target accepts full key, partial key (`agent/typeID`), or bare agent name (`scout`) — non-full keys resolve via `SessionIndex.ResolveLooseKey` (1 seg → `DefaultSessionKeyForAgent`, 2 seg → `ResolvePartialKey`; same dispatcher the `foci debug` CLI uses). |
+| `send_to_chat` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS. Routes to the chat extracted from the session key (`X/c{chatID}`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
+| `send_to_session` | session_send.go | Inject a user-role message into another session. Tags the message with `[Message from session ...]` origin header. Appends to session store and triggers processing via `AsyncNotifier`. Used for cross-session communication (e.g. facet branches talking to main). Target accepts a full session key (`scout/c123`, `scout/iresearch`), an agent-qualified session name or chat alias (`scout/research`), or a bare agent name (`scout` → default session) — loose targets resolve through the route.Resolver ladder (create disabled). |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 | `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
 | `bitwarden_unlock` | bitwarden.go | Unlock a vault item by ID. Calls `sudo -u bitwarden bw get password` via aisudo — blocks until Telegram approval or denial. Caches value for `secret_ttl`. Never returns the actual password. |
@@ -1364,7 +1374,7 @@ Same architecture as Telegram (receiver + agentMessagePump + commandWorker + per
 
 **Bot token resolution:** `config.ResolveDiscordToken(botName, botSecret, secrets)` looks up `"discord.<botName>"` in the secrets store.
 
-**Session keys:** Same format as Telegram: `agentID/c{channelID}/{versionTS}`. Discord snowflake channel IDs are int64.
+**Session keys:** Same format as Telegram: `agentID/c{channelID}`. Discord snowflake channel IDs are int64.
 
 **Config:** `[discord]` for global settings, `[agents.platforms.discord]` for per-agent overrides. See [CONFIG.md](CONFIG.md).
 
@@ -1450,7 +1460,7 @@ a named `sessionKey`, replies with an updated roster the app upserts; idempotent
 via `ensureBinding`, so a reopen of an id the first message already created
 reuses it); `conversation.rename`→`handleConversationRename`
 (persists a user-friendly session alias in the session index's `chat_metadata`,
-keyed by the stable app `chatID` so it survives session-key rotation/restart;
+keyed by the stable app `chatID` so it survives restart;
 `agentRoster` surfaces it via `aliasFor` as `ConversationInfo.Title`, replacing the
 raw conversationId the app would otherwise show); `command`→`routeCommand`→ the agent's
 `command.Registry.Dispatch` (captured from `AgentConnectionParams` in
@@ -1474,8 +1484,7 @@ the turn body returns, end deferred last) — same shape as `telegram.Bot.WrapTu
 
 **Outbound — `appConn` (`conn.go`)** implements `platform.Connection`,
 `platform.ButtonSender`, and `agent.Driver`. `SendToSession`/`SendText`→`message`;
-`SetTyping`→`typing`; `SendNotification`→`notification`;
-`UpdateChatSessionKey`→remap binding + `session.update`. `SendTextWithButtons`→
+`SetTyping`→`typing`; `SendNotification`→`notification`. `SendTextWithButtons`→
 `interactive` (foci pre-encodes each button's Data as `<promptId>:<index>`, so the
 app echoes it back for routing); `EditMessageText`/`EditMessageWithButtons`→
 `interactive.edit` (addressed via the hub `prompts` map). The `Send{Photo,Document,
@@ -1483,7 +1492,19 @@ Voice,…}` media methods store the payload in the `blobStore` and emit a `media
 frame referencing the blobId. All sends go through `convBinding.send`, which
 assigns seq + ack, buffers for replay, and enqueues iff a socket is attached.
 
-**Binding restore across restart + archive (`framestore.go`, `StartAll`, `handleConversationArchive`):** bindings (`h.convs`/`h.bySession`) are in-memory, created only on client frames — so a foci restart empties them and an unsolicited send (`SendToSession`) would `return nil` (drop) until the app reconnects. To close that window, `Hub.StartAll` rebuilds bindings at startup from the durable store: `frameStore.RestorableConvs()` returns every conv with a **visible** frame and a known `agent_id` (a column added to `app_frames`; written by `convBinding.send`), and `ensureBinding(nil, agentID, convID)` recreates each socketless binding (`attach(nil)` is a no-op; seq seeded from `MaxSeq`). **Archive is a reversible flag, not a deletion:** the `conversation.archive` frame carries an `Archived` bool; `handleConversationArchive` persists only an `is_archived` row in `chat_metadata` (keyed by agent+platform+chatID, a sibling of `is_default`) — it does NOT purge frames, drop the binding, flip session status, or fire a reflection. The binding stays live (inbound frames still flow; history retained), and the roster surfaces `ConversationInfo.Archived` (read from `SessionIndex.ArchivedChatsForAgent` by `agentRoster`). Archived convs are therefore still in `RestorableConvs` and get their bindings rebuilt on restart. Unarchive is a real server action (`Archived=false` clears the flag); the updated roster is pushed back to the socket on every archive/unarchive so all devices reconcile.
+**Session-blind sends (`Hub.deliverBinding`):** any send without a live
+binding — the unbound conn's `SendText`/`SendNotification` (broadcast
+warnings, `--broadcast` responses) or a `SendToSession` whose session has no
+binding — resolves through one ladder: the pinned default conversation; else
+whatever conversation is most recently active at send time; else a
+**server-minted conversation**, with an immediate roster push to live sockets
+(offline devices learn it on next hello; NB the Android client must upsert
+roster conversations it has never seen). The default pin is user-owned
+(`conversation.setDefault`) and never set automatically. The app can create
+conversations freely, so a session-blind send never has "nowhere to deliver".
+There is deliberately no fan-out to every binding: one send, one destination.
+
+**Binding restore across restart + archive (`framestore.go`, `StartAll`, `handleConversationArchive`):** bindings (`h.convs`/`h.bySession`) are in-memory, created on client frames (or server-side by `deliverBinding`) — so a foci restart empties them. To keep unsolicited sends landing in the SAME conversations rather than freshly minted ones, `Hub.StartAll` rebuilds bindings at startup from the durable store: `frameStore.RestorableConvs()` returns every conv with a **visible** frame and a known `agent_id` (a column added to `app_frames`; written by `convBinding.send`), and `ensureBinding(nil, agentID, convID)` recreates each socketless binding (`attach(nil)` is a no-op; seq seeded from `MaxSeq`). **Archive is a reversible flag, not a deletion:** the `conversation.archive` frame carries an `Archived` bool; `handleConversationArchive` persists only an `is_archived` row in `chat_metadata` (keyed by agent+platform+chatID, a sibling of `is_default`) — it does NOT purge frames, drop the binding, flip session status, or fire a reflection. The binding stays live (inbound frames still flow; history retained), and the roster surfaces `ConversationInfo.Archived` (read from `SessionIndex.ArchivedChatsForAgent` by `agentRoster`). Archived convs are therefore still in `RestorableConvs` and get their bindings rebuilt on restart. Unarchive is a real server action (`Archived=false` clears the flag); the updated roster is pushed back to the socket on every archive/unarchive so all devices reconcile.
 
 **Media / blobs (`blob.go`, slice 4):** binary payloads never cross the
 WebSocket. `blobStore` keeps blobs on disk under `tempdir.Dir()/app-blobs`
@@ -1655,7 +1676,7 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 
 **Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate, replacements)` which also wraps with word replacements (entry → `[voice]` → per-agent `[voice]`, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
 
-## Facet (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
+## Facet (`platform/botpool.go`, `telegram/manager.go`, `telegram/bot.go`)
 
 Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix. See [FACET.md](FACET.md) for user-facing docs (bot pool config, session lifecycle, use cases).
 
@@ -1682,16 +1703,15 @@ facet_bots = ["spare1"]          # shared pool (fallback)
 
 Messages to the secondary bot route to the forked session. `/done` on the secondary bot detaches it and returns it to the pool.
 
-**Bot pool** (`telegram/pool.go`): Tracks secondary bots, acquires LRU idle bot, releases on `/done`.
+**Bot pool** (`platform/botpool.go`): The generic `platform.Pool[B]` / `platform.BotManager[B]` — ONE implementation of LRU acquire, release on `/done`, TTL-based stale-session reclaim, and bot lifecycle, instantiated by both Telegram and Discord (`telegram/manager.go` and `discord/manager.go` are thin type aliases).
 
-**Shared pool** (`telegram/manager.go`): `BotManager.shared` is a fallback pool available to any agent. Shared bots are re-wired to the acquiring agent via `SetHandlerAndCommands` at fork time.
+**Shared pool**: `BotManager.shared` is a fallback pool available to any agent. Shared bots are re-wired to the acquiring agent via `SetHandlerAndCommands` at fork time.
 
 **Bot changes** (`telegram/bot.go`):
-- Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `ID/cCHATID/{versionTS}`
+- Per-chat session routing: primary bots derive the deterministic session key from `msg.Chat.Id` → `agentID/c{chatID}`
 - `SessionKey()` — returns override key (secondary bots) or default chat session (primary bots)
 - `SetSessionKey()` — thread-safe override (facet fork/done)
-- `Bot.SessionKeyForChat(chatID)` — stable cached session key for a chat. On first call for a chat, checks session index for persisted key before generating new one. New keys are persisted to `chat_metadata` table in session index under key `session_key`. This ensures the same session is resumed after restart instead of creating a new timestamped session.
-- `NewSessionKeyForChat(agentID, chatID)` — creates a NEW session key with current timestamp (uncached, unpersisted)
+- `Bot.SessionKeyForChat(chatID)` — derives the deterministic session key for a chat and registers platform ownership in `chat_metadata` on first contact (via `chatmeta.Resolver`). Keys are stable identities, so restart resumption needs no persisted key.
 - Default chat: first message sets the default; persisted in state store as `agent/ID/default_chat`
 - Username recording: persisted per chat for `/sessions list` display
 - `isSecondary` flag — enables `/done` handling, idle message rejection
@@ -1700,7 +1720,7 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 **Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `facet:<bot_username>` (the bot's Telegram username). Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `agent_setup.go`) that writes or deletes the mapping. On startup, `restoreFacetSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetHandlerAndCommands` and gets the primary bot's chat ID for notifications.
 
-**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort/<sessionKey>`, `thinking/<sessionKey>`, `model/<sessionKey>`, `model_endpoint/<sessionKey>`, `model_format/<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all five — for model overrides, it reads the endpoint and format and calls `GetClient(endpoint, format)` to restore the correct client. The `/voice` mode follows the same pattern under `voice/<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
+**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in `session_metadata`. On startup, `RestoreSessionOverrides(sessionKey)` restores them — for model overrides, it reads the endpoint and format and calls `GetClient(endpoint, format)` to restore the correct client. The `/voice` mode follows the same pattern. Session keys are stable identities, so `/reset` clears overrides explicitly via `Agent.ClearSessionState` (which drops all `session_metadata` rows for the key).
 
 **Special commands on secondary bots:**
 - `/done` — detach from forked session, return to pool
@@ -1755,7 +1775,7 @@ Flow (`agent.FireSessionEndMemory` in `internal/agent/session_end_memory.go`):
 **Activity tracking excludes memory turns.** `last_activity_at` is bumped by `RegisterSessionIndex` / `TouchActivity` (`turn_contract.go`) on every turn *except* those whose trigger is a memory-formation pass — `isMemoryTrigger` returns true for `"reflection"` and `"session_end_memory"` (`internal/agent/context.go`). Without this, a delegated agent's reflection (which injects into the *main* session, not a branch) would bump `last_activity_at` past `last_reflection` and make the reflect-twice guard always fire reflection. Keepalive / background / cron turns still count as activity by design — only the memory passes themselves are excluded.
 
 Entry points:
-- `/reset` command → `agent.FireSessionEndMemory` (async) → `RotateKey` → `Reload`
+- `/reset` command → `agent.ResetSession` (`PrepareSessionEndMemory` → `Store.Reset` → `ClearSessionState` → background `RunSessionEndMemory`)
 - `Pool.Acquire` (TTL reclaim) → `ReclaimHook` → `agent.FireSessionEndMemory` (async) → clear session key
 - Periodic runner (background branch completion) → `agent.FireSessionEndMemory` (async, skipMetaCheck=true)
 
@@ -1788,7 +1808,7 @@ Reflection runs before consolidation so the latest memory content is available. 
 3. Skip if reflection/consolidation/reset already running
 4. Inactivity guard: skip if user active within `reset_idle_guard` (default `"55m"`) — mirrors the `foci command --if-inactive` crontab it replaces
 5. Skip if no default session or a turn is in flight on it
-6. Fire `resetFn(ctx, parentKey)` (→ `Agent.ResetSession`: memory formation + key rotation, the same path as a manual `/reset`) in a goroutine; persist `reset_last` on completion
+6. Fire `resetFn(ctx, parentKey)` (→ `Agent.ResetSession`: memory formation + in-place archive, the same path as a manual `/reset`) in a goroutine; persist `reset_last` on completion
 
 The shared schedule parser lives in `internal/periodic/schedule.go` (`parseSchedule` / `schedule.nextFire`): a daemon asleep past a clock time fires once on wake (catch-up), never once per missed day; clock times are rebuilt via `time.Date` so they stay stable across DST.
 

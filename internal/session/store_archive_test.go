@@ -19,12 +19,12 @@ func TestListChatSessionsSkipsArchives(t *testing.T) {
 	s := NewStore(dir)
 
 	// Create a real chat session
-	key := "test/c555/1000000000"
+	key := "test/c555"
 	s.TestAppend(key, msg("user", "hello"))
 
 	// Simulate an archive file by creating it directly (using timestamp pattern)
 	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
-	archiveDir := filepath.Join(dir, "test", "c555", "1000000000")
+	archiveDir := filepath.Join(dir, "test", "c555")
 	os.MkdirAll(archiveDir, 0755)
 	archivePath := filepath.Join(archiveDir, fmt.Sprintf("root.%s.jsonl", timestamp))
 	os.WriteFile(archivePath, []byte(`{"role":"user","content":[{"type":"text","text":"old"}]}`+"\n"), 0644)
@@ -50,7 +50,7 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 	s := NewStore(dir)
 
 	// Create a session with an orphaned tool_use
-	key := "test/c444/1000000000"
+	key := "test/c444"
 	s.TestAppend(key, msg("user", "hello"))
 	s.TestAppend(key, provider.Message{
 		Role: "assistant",
@@ -60,7 +60,7 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 	})
 
 	// Create an archive file with the same orphaned pattern (using timestamp pattern)
-	archiveDir := filepath.Join(dir, "test", "c444", "1000000000")
+	archiveDir := filepath.Join(dir, "test", "c444")
 	os.MkdirAll(archiveDir, 0755)
 	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
 	archiveData := `{"role":"user","content":[{"type":"text","text":"old"}]}` + "\n" +
@@ -82,7 +82,7 @@ func TestReplaceNonexistentFile(t *testing.T) {
 	// Proves that Replace works even when no file previously existed — it creates
 	// the file with the provided messages without requiring a prior rotation.
 	s := NewStore(t.TempDir())
-	key := "test/c333/1000000000"
+	key := "test/c333"
 
 	// Replace on a key with no existing file should work (no rotation needed)
 	compacted := []provider.Message{
@@ -133,13 +133,55 @@ func TestIsArchiveFile(t *testing.T) {
 	}
 }
 
+func TestPathToKey(t *testing.T) {
+	// Proves that pathToKey maps a relative session file path (extension already
+	// stripped) back to its key: a trailing "/root" is the root file of the
+	// directory-keyed session; anything else IS the key (child files, archives).
+	tests := []struct {
+		relPath string
+		want    string
+	}{
+		{"main/c123/root", "main/c123"},
+		{"main/iwork/root", "main/iwork"},
+		{"main/c123/b1709596800", "main/c123/b1709596800"},
+		{"main/c123/root.2026-03-04T02-30-00Z", "main/c123/root.2026-03-04T02-30-00Z"},
+	}
+	for _, tt := range tests {
+		if got := pathToKey(tt.relPath); got != tt.want {
+			t.Errorf("pathToKey(%q) = %q, want %q", tt.relPath, got, tt.want)
+		}
+	}
+}
+
+func TestArchiveParentKey(t *testing.T) {
+	// Proves that archiveParentKey strips the dotted archive suffix from the last
+	// segment to recover the live session key an archive belongs to: a "root"
+	// stem maps to the directory (the root key), other stems (branch/independent
+	// children) keep their segment.
+	tests := []struct {
+		archiveKey string
+		want       string
+	}{
+		{"main/c123/root.2026-03-04T02-30-00Z", "main/c123"},
+		{"main/c123/root.2026-03-04T02-30-00Z.2", "main/c123"},
+		{"main/iwork/root.1", "main/iwork"},
+		{"main/c123/b1700.1", "main/c123/b1700"},
+		{"main/c123/b1709596800.2026-03-04T02-30-00Z", "main/c123/b1709596800"},
+	}
+	for _, tt := range tests {
+		if got := archiveParentKey(tt.archiveKey); got != tt.want {
+			t.Errorf("archiveParentKey(%q) = %q, want %q", tt.archiveKey, got, tt.want)
+		}
+	}
+}
+
 func TestSessionWriter(t *testing.T) {
 	// Verifies that SessionWriter prevents cross-session writes for all operations.
 	dir := t.TempDir()
 	store := NewStore(dir)
 
-	sessionA := "test/imain/1000000000"
-	sessionB := "test/ibranch/1000000001"
+	sessionA := "test/imain"
+	sessionB := "test/ibranch"
 
 	// Create a writer for session A
 	writerA := store.For(sessionA)

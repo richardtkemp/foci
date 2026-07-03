@@ -92,7 +92,7 @@ func TestHTTPRequestCeilingTruncates(t *testing.T) {
 	// while ResultSize still reports the full source length seen.
 	t.Parallel()
 	const preview = 512
-	const ceiling = 4 * 1024  // tiny ceiling
+	const ceiling = 4 * 1024   // tiny ceiling
 	const bodySize = 20 * 1024 // far exceeds the ceiling
 	srv := bigBodyServer(t, bodySize)
 	defer srv.Close()

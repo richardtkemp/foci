@@ -131,10 +131,10 @@ func TestL2_Permissions_AutoApproveUserRuleSkipsPrompt(t *testing.T) {
 	}
 }
 
-// TestL2_Permissions_AutoApproveCommonSafeWriteDisabledByDefault proves
+// TestL2_Permissions_AutoApproveSafeWriteOffByDefault proves
 // that with AutoApproveCommonSafeWrite left at its default false, a
 // Bash:curl request DOES surface to Telegram as an interactive prompt.
-func TestL2_Permissions_AutoApproveCommonSafeWriteDisabledByDefault(t *testing.T) {
+func TestL2_Permissions_AutoApproveSafeWriteOffByDefault(t *testing.T) {
 	testharness.ParallelWait(t)
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
@@ -149,10 +149,10 @@ func TestL2_Permissions_AutoApproveCommonSafeWriteDisabledByDefault(t *testing.T
 	// No control_response yet — the test deliberately does not click a button.
 }
 
-// TestL2_Permissions_AutoApproveCommonSafeWriteEnabledSkipsPrompt proves
+// TestL2_Permissions_AutoApproveSafeWriteEnabledSkipsPrompt proves
 // that toggling auto_approve_common_safe_write=true on the agent makes
 // the same Bash:curl request auto-approved without a prompt.
-func TestL2_Permissions_AutoApproveCommonSafeWriteEnabledSkipsPrompt(t *testing.T) {
+func TestL2_Permissions_AutoApproveSafeWriteEnabledSkipsPrompt(t *testing.T) {
 	testharness.ParallelWait(t)
 	enabled := true
 	h, token := permTestSetup(t, []testharness.AgentSpec{{
@@ -352,9 +352,9 @@ func TestL2_Permissions_PromptContainsCommandInFencedBlock(t *testing.T) {
 	}
 }
 
-// TestL2_Permissions_PromptChoicesIncludeAllowDenyAndSuggestion proves
+// TestL2_Permissions_PromptChoicesAllowDenySuggestion proves
 // that permission_suggestions in the request produce a third button.
-func TestL2_Permissions_PromptChoicesIncludeAllowDenyAndSuggestion(t *testing.T) {
+func TestL2_Permissions_PromptChoicesAllowDenySuggestion(t *testing.T) {
 	testharness.ParallelWait(t)
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 

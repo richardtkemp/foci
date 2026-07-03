@@ -11,8 +11,8 @@ import (
 )
 
 func TestKeyToPath(t *testing.T) {
-	// Proves that SessionPath converts session keys to the expected nested
-	// directory paths and returns errors for empty or malformed keys.
+	// Proves that SessionPath maps root keys to {dir}/{key}/root.jsonl and child
+	// keys to {dir}/{key}.jsonl, and returns errors for empty or malformed keys.
 
 	s := NewStore("/data/sessions")
 
@@ -20,9 +20,11 @@ func TestKeyToPath(t *testing.T) {
 		key  string
 		want string
 	}{
-		{"main/imain/1000000000", "/data/sessions/main/imain/1000000000/root.jsonl"},
-		{"main/imorning/1000000000", "/data/sessions/main/imorning/1000000000/root.jsonl"},
-		{"test/iresearch/1000000000", "/data/sessions/test/iresearch/1000000000/root.jsonl"},
+		{"main/imain", "/data/sessions/main/imain/root.jsonl"},
+		{"main/c123", "/data/sessions/main/c123/root.jsonl"},
+		{"test/iresearch", "/data/sessions/test/iresearch/root.jsonl"},
+		{"main/c123/b1709596800", "/data/sessions/main/c123/b1709596800.jsonl"},
+		{"main/imain/i1709596801", "/data/sessions/main/imain/i1709596801.jsonl"},
 	}
 
 	for _, tt := range tests {
@@ -37,7 +39,7 @@ func TestKeyToPath(t *testing.T) {
 	}
 
 	// Empty/malformed keys should return error, not panic
-	for _, bad := range []string{"", "agent", "main/c"} {
+	for _, bad := range []string{"", "agent", "main/c", "main/c1/1000000000/b2"} {
 		_, err := s.SessionPath(bad)
 		if err == nil {
 			t.Errorf("keyToPath(%q) should return error for malformed key", bad)
@@ -47,15 +49,15 @@ func TestKeyToPath(t *testing.T) {
 
 func TestSessionPathRejectsTraversal(t *testing.T) {
 	// Proves the SessionPath containment guard (P1-5 defense-in-depth) rejects any
-	// key whose joined path escapes the store dir, even if a bad key bypasses the
-	// key-layer validator. No returned path may point outside s.dir.
+	// key whose joined path escapes the store dir, even when the key parses (e.g.
+	// a ".." agent segment slips past the grammar). No returned path may point
+	// outside s.dir.
 	dir := t.TempDir()
 	s := NewStore(dir)
 
 	bad := []string{
-		"main/i../../../../../../../../../../etc/passwd/0", // root-style escape
-		"../../../../../../../../../../etc/x/0/ichild",     // child-style escape
-		"../../../../../../../../../../etc/cron.d/x/0",     // leading escape
+		"../c123",             // ".." agent: root path escapes to a sibling of the store dir
+		"../c123/b1700000000", // ".." agent: child path escapes
 	}
 	for _, key := range bad {
 		got, err := s.SessionPath(key)
@@ -64,8 +66,18 @@ func TestSessionPathRejectsTraversal(t *testing.T) {
 		}
 	}
 
+	// Keys with embedded traversal that fail the grammar must also error, not panic.
+	for _, key := range []string{
+		"main/i../../../../../../../../../../etc/passwd",
+		"../../../../../../../../../../etc/cron.d/x",
+	} {
+		if got, err := s.SessionPath(key); err == nil {
+			t.Errorf("SessionPath(%q) = %q, want error", key, got)
+		}
+	}
+
 	// A normal key must still resolve within the store dir.
-	good, err := s.SessionPath("main/iwork/0")
+	good, err := s.SessionPath("main/iwork")
 	if err != nil {
 		t.Fatalf("SessionPath(valid) unexpected error: %v", err)
 	}
@@ -79,7 +91,7 @@ func TestLoadEmpty(t *testing.T) {
 	// Proves that Load returns nil (not an error) when no session file exists yet.
 	s := NewStore(t.TempDir())
 
-	msgs, err := s.Load("test/imain/1000000000")
+	msgs, err := s.Load("test/imain")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -92,7 +104,7 @@ func TestAppendAndLoad(t *testing.T) {
 	// Proves the fundamental round-trip: messages appended to a session are returned
 	// by Load in the correct order with roles and content intact.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	if err := s.TestAppend(key, msg("user", "hello")); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -121,7 +133,7 @@ func TestAppendAll(t *testing.T) {
 	// Proves that AppendAll writes an entire batch of messages atomically and they
 	// are all retrievable via Load in the same order.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	batch := []provider.Message{
 		msg("user", "one"),
@@ -152,7 +164,7 @@ func TestAppendAll_NoEventOnWriteFailure(t *testing.T) {
 	var fired int
 	s.OnSessionEvent(func(SessionEvent) { fired++ })
 
-	key := "test/imain/1000000000"
+	key := "test/imain"
 	path, err := s.SessionPath(key)
 	if err != nil {
 		t.Fatalf("SessionPath: %v", err)
@@ -180,7 +192,7 @@ func TestClear(t *testing.T) {
 	// Proves that Clear removes all messages from a session so that subsequent
 	// Load returns nil.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	s.TestAppend(key, msg("user", "hello"))
 
@@ -200,7 +212,7 @@ func TestClear(t *testing.T) {
 func TestClearNonexistent(t *testing.T) {
 	// Proves that Clear on a non-existent session key is a no-op that returns no error.
 	s := NewStore(t.TempDir())
-	if err := s.TestClear("ghost/imain/1000000000"); err != nil {
+	if err := s.TestClear("ghost/imain"); err != nil {
 		t.Fatalf("Clear nonexistent: %v", err)
 	}
 }
@@ -209,7 +221,7 @@ func TestReplace(t *testing.T) {
 	// Proves that Replace atomically overwrites a session's content so only the
 	// replacement messages are visible via Load.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	// Write initial messages
 	s.TestAppend(key, msg("user", "old1"))
@@ -241,7 +253,7 @@ func TestMessageCount(t *testing.T) {
 	// Proves that MessageCount returns 0 for an empty session and correctly counts
 	// messages as they are appended.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	n, _ := s.MessageCount(key)
 	if n != 0 {
@@ -262,7 +274,7 @@ func TestAppendAllAtomicOnMarshalError(t *testing.T) {
 	// are written to disk. This prevents partial writes that cause duplicate
 	// tool_use IDs when a defer safety-net re-writes the same messages.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	// Pre-populate with one message
 	if err := s.TestAppend(key, msg("user", "existing")); err != nil {
@@ -306,7 +318,7 @@ func TestFileMode(t *testing.T) {
 	s := NewStore(t.TempDir())
 	s.SetFileMode(0640)
 
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	// Append creates a new session file
 	s.TestAppend(key, msg("user", "hello"))
@@ -327,7 +339,7 @@ func TestFileMode(t *testing.T) {
 func TestFileModeDefault(t *testing.T) {
 	// Proves that NewStore defaults to 0600 without explicit SetFileMode.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 	s.TestAppend(key, msg("user", "hello"))
 	checkMode(t, s, key, 0600)
 }
@@ -354,7 +366,7 @@ func TestAppendCreatesDirectories(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 	// Deep key that requires nested directories
-	key := "mybot/idaily/1000000000"
+	key := "mybot/idaily"
 	if err := s.TestAppend(key, msg("user", "wake up")); err != nil {
 		t.Fatalf("Append deep key: %v", err)
 	}

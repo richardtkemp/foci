@@ -25,19 +25,26 @@ func testResolver(t *testing.T) *Resolver {
 	}
 }
 
-// TestSessionKeyForChat_CreatesAndPersists verifies that a new session key is
-// created on first access and subsequent calls return the same persisted value.
-func TestSessionKeyForChat_CreatesAndPersists(t *testing.T) {
+// TestSessionKeyForChat_DerivesAndRegisters verifies that the derived key is
+// deterministic and stable, and that the first access persists the
+// platform-ownership 'registered' row for outbound routing.
+func TestSessionKeyForChat_DerivesAndRegisters(t *testing.T) {
 	r := testResolver(t)
 	key1 := r.SessionKeyForChat(42)
-	if key1 == "" {
-		t.Fatal("expected non-empty session key")
-	}
-	if !strings.HasPrefix(key1, "test-agent/c42/") {
-		t.Errorf("key %q missing expected prefix test-agent/c42/", key1)
+	if key1 != "test-agent/c42" {
+		t.Errorf("expected test-agent/c42, got %q", key1)
 	}
 
-	// Second call must return the same persisted key.
+	// The registered row must exist so PlatformForChat can route.
+	v, err := r.Index.GetChatMetadata("test-agent", "test", 42, "registered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "true" {
+		t.Errorf("expected registered=true row, got %q", v)
+	}
+
+	// Second call must return the same key.
 	key2 := r.SessionKeyForChat(42)
 	if key1 != key2 {
 		t.Errorf("expected stable key, got %q then %q", key1, key2)
@@ -56,7 +63,7 @@ func TestSessionKeyForChat_DifferentChats(t *testing.T) {
 }
 
 // TestSessionKeyForChat_NilIndex verifies that the resolver works without a
-// session index (creates keys but cannot persist them).
+// session index (derives keys but cannot register the chat).
 func TestSessionKeyForChat_NilIndex(t *testing.T) {
 	r := &Resolver{
 		AgentID:      "agent",
@@ -64,23 +71,23 @@ func TestSessionKeyForChat_NilIndex(t *testing.T) {
 		Logger:       func() *log.ComponentLogger { return testLogger },
 	}
 	key := r.SessionKeyForChat(99)
-	if key == "" {
-		t.Fatal("expected non-empty key even without index")
+	if key != "agent/c99" {
+		t.Errorf("expected agent/c99 even without index, got %q", key)
 	}
 }
 
-// TestUpdateSessionKey verifies that updating a session key replaces the
-// persisted value so subsequent lookups return the new key.
-func TestUpdateSessionKey(t *testing.T) {
+// TestRegisterChat_Idempotent verifies that RegisterChat only writes the
+// ownership row once per process (cached) and never errors on repeat calls.
+func TestRegisterChat_Idempotent(t *testing.T) {
 	r := testResolver(t)
-	oldKey := r.SessionKeyForChat(55)
-	r.UpdateSessionKey(55, "test-agent/c55/newversion")
-	newKey := r.SessionKeyForChat(55)
-	if newKey != "test-agent/c55/newversion" {
-		t.Errorf("expected updated key, got %q", newKey)
+	r.RegisterChat(7)
+	r.RegisterChat(7) // cached, no-op
+	v, err := r.Index.GetChatMetadata("test-agent", "test", 7, "registered")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if oldKey == newKey {
-		t.Error("expected key to change after update")
+	if v != "true" {
+		t.Errorf("expected registered=true row after RegisterChat, got %q", v)
 	}
 }
 
@@ -128,8 +135,8 @@ func TestDefaultSessionKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	sk := r.DefaultSessionKey()
-	if !strings.HasPrefix(sk, "test-agent/c12345/") {
-		t.Errorf("expected prefix test-agent/c12345/, got %q", sk)
+	if sk != "test-agent/c12345" {
+		t.Errorf("expected test-agent/c12345, got %q", sk)
 	}
 
 	// Must be stable.
@@ -177,12 +184,12 @@ func TestNilReceiver(t *testing.T) {
 	if sk := r.DefaultSessionKey(); sk != "" {
 		t.Errorf("expected empty, got %q", sk)
 	}
-	// SessionKeyForChat on nil still generates a key (for safety).
+	// SessionKeyForChat on nil still derives a key (for safety).
 	key := r.SessionKeyForChat(42)
-	if key == "" {
-		t.Error("expected non-empty key from nil resolver")
+	if !strings.HasSuffix(key, "/c42") {
+		t.Errorf("expected derived key from nil resolver, got %q", key)
 	}
 	// These should not panic.
-	r.UpdateSessionKey(42, "x")
+	r.RegisterChat(42)
 	r.RecordUsername(42, "alice")
 }

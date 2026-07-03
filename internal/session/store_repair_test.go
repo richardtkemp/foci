@@ -9,7 +9,7 @@ func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 	// tool_use message and appends a synthetic tool_result + assistant ack,
 	// maintaining role alternation for the next user message.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	s.TestAppend(key, msg("user", "hello"))
 	s.TestAppend(key, toolUseMsg("toolu_123"))
@@ -61,7 +61,7 @@ func TestRepairOrphansNoOpWhenClean(t *testing.T) {
 	// Proves that RepairOrphans leaves a structurally sound session untouched
 	// and reports zero repaired sessions.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	s.TestAppend(key, msg("user", "hello"))
 	s.TestAppend(key, msg("assistant", "hi"))
@@ -87,12 +87,12 @@ func TestRepairOrphansMultipleSessions(t *testing.T) {
 	s := NewStore(t.TempDir())
 
 	// Broken session
-	broken := "test/imain/1000000000"
+	broken := "test/imain"
 	s.TestAppend(broken, msg("user", "hello"))
 	s.TestAppend(broken, toolUseMsg("toolu_aaa"))
 
 	// Clean session
-	clean := "test/idaily/1000000000"
+	clean := "test/idaily"
 	s.TestAppend(clean, msg("user", "wake"))
 	s.TestAppend(clean, msg("assistant", "done"))
 
@@ -122,7 +122,7 @@ func TestRepairOrphansMultipleToolUse(t *testing.T) {
 	// blocks, RepairOrphans injects a single repair message with one tool_result
 	// per block, preserving each tool_use ID.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	s.TestAppend(key, msg("user", "do things"))
 	s.TestAppend(key, toolUseMsg("toolu_one", "toolu_two"))

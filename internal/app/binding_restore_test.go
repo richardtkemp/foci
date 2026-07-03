@@ -82,7 +82,7 @@ func TestHandleConversationArchive(t *testing.T) {
 	now := time.Now().UnixMilli()
 	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 1, wire: "w", sentMs: now, visible: true})
 
-	b := &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/capp/9"}
+	b := &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
 	h.convs["c1"] = b
 	h.bySession[b.sessionKey] = b
 

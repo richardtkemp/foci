@@ -12,7 +12,7 @@ import (
 func TestBounceSessionIfPromptChanged(t *testing.T) {
 	idx := newTestSessionIndex(t)
 	mgr, _ := newTestManager(t, idx)
-	const sk = "test-agent/c1/1000"
+	const sk = "test-agent/c1"
 
 	prompt := "system prompt v1 — character files and skill list"
 	mgr.StartOpts.SystemPromptFunc = func() string { return prompt }
@@ -41,7 +41,7 @@ func TestBounceSessionIfPromptChanged(t *testing.T) {
 	})
 
 	t.Run("no live backend is a no-op", func(t *testing.T) {
-		if mgr.BounceSessionIfPromptChanged("test-agent/c1/9999") {
+		if mgr.BounceSessionIfPromptChanged("test-agent/c1") {
 			t.Errorf("bounced for a session with no backend")
 		}
 	})

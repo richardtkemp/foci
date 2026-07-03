@@ -62,7 +62,6 @@ func (c *recordingConn) SetSessionKeyDirect(string)               {}
 func (c *recordingConn) SetChatID(int64)                          {}
 func (c *recordingConn) ChatID() int64                            { return 0 }
 func (c *recordingConn) Username() string                         { return "" }
-func (c *recordingConn) UpdateChatSessionKey(int64, string)       {}
 func (c *recordingConn) SendInjectedMessage(string, string) error { panic("SendInjectedMessage") }
 func (c *recordingConn) SendNotification(string)                  {}
 func (c *recordingConn) SendNotificationDirect(string) string     { return "" }
@@ -107,7 +106,7 @@ func TestAPIEgress_TrailingSentinelStripped(t *testing.T) {
 	const realReply = "all clean, nothing uncommitted"
 	ag := newSentinelTestAgent(t, realReply+"\n[[NO_RESPONSE]]")
 
-	sk := "test/iresp/1000000000"
+	sk := "test/iresp"
 	conn := &recordingConn{}
 	sink := turn.NewSessionSink(conn, sk, "test")
 	ctx := turnevent.WithSink(context.Background(), sink)
@@ -134,7 +133,7 @@ func TestAPIEgress_TrailingSentinelStripped(t *testing.T) {
 func TestAPIEgress_PureSentinelSuppressed(t *testing.T) {
 	ag := newSentinelTestAgent(t, "[[NO_RESPONSE]]")
 
-	sk := "test/iresp/2000000000"
+	sk := "test/iresp"
 	conn := &recordingConn{}
 	sink := turn.NewSessionSink(conn, sk, "test")
 	ctx := turnevent.WithSink(context.Background(), sink)

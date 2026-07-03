@@ -12,7 +12,7 @@ Foci's periodic loop fires these on their own schedules — you don't set them u
 | **Background work** | Idle-time turn for picking up self-directed work when nothing's queued. | `background.md`, `[background]` config |
 | **Reflection** | Memory formation — captures facts to your daily file and procedures to skills. Runs on an interval, at session end, and after compaction. Skipped if nothing happened since last time. | `reflection.md`, `[reflection]` config |
 | **Consolidation** | Periodically curates `MEMORY.md` from the daily files (a longer interval than reflection). | `memory-consolidation.md`, `[maintenance]` config |
-| **Session reset** | Optional soft reset (memory formation + session-key rotation) when a `reset_time` is configured. | `[maintenance]` config |
+| **Session reset** | Optional soft reset (memory formation + in-place history archive; the session key is stable) when a `reset_time` is configured. | `[maintenance]` config |
 | **Log rotation** | Built-in: rotates the log files and writes `.gz` archives. No turn — runs inside foci. | — |
 
 **Compaction** is related but *threshold-triggered*, not on a clock — it fires when a session's context grows too large (or on manual `/compact`). See **prompts.md**.

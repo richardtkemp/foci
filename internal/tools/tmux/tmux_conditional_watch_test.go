@@ -34,7 +34,7 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 	}
 
 	// autopilot=true, threshold=2s for fast test
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-nofire", true, 2, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-nofire", true, 2, 0, "")
 
 	name := "foci-test-cond-nofire"
 	tmuxSetup(t, name)
@@ -102,7 +102,7 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 	}
 
 	// autopilot=true, threshold=2s
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-fire", true, 2, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-fire", true, 2, 0, "")
 
 	name := "foci-test-cond-fire"
 	tmuxSetup(t, name)
@@ -177,7 +177,7 @@ func TestTmuxReadNoConditionalWatchWithoutAutopilot(t *testing.T) {
 	}
 
 	// autopilot=false
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-cond", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-cond", false, 30, 0, "")
 
 	name := "foci-test-no-cond"
 	tmuxSetup(t, name)
@@ -222,7 +222,7 @@ func TestTmuxReadNoConditionalWatchIfAlreadyWatched(t *testing.T) {
 	}
 
 	// autopilot=true
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-dup", true, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-dup", true, 30, 0, "")
 
 	name := "foci-test-cond-dup"
 	tmuxSetup(t, name)
@@ -278,7 +278,7 @@ func TestTmuxConditionalWatchPersistence(t *testing.T) {
 	}
 
 	// autopilot=true
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-persist", true, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-persist", true, 30, 0, "")
 
 	name := "foci-test-cond-persist"
 	tmuxSetup(t, name)

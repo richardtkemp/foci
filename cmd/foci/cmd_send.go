@@ -15,6 +15,7 @@ type sendFlags struct {
 	messageFile string // explicit --message-file / -mf
 	async       bool   // fire-and-forget mode
 	sync        bool   // wait for response (overrides async)
+	broadcast   bool   // deliver the response to every live surface for the agent
 }
 
 func parseSendFlags(args []string) (flags sendFlags, rest []string) {
@@ -27,6 +28,9 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 				i++
 				consumed = true
 			}
+		} else if args[i] == "--broadcast" {
+			flags.broadcast = true
+			consumed = true
 		} else if args[i] == "-s" || args[i] == "--session" {
 			if i+1 < len(args) {
 				flags.session = args[i+1]
@@ -150,6 +154,7 @@ Activity gates (TODO #753):
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
   -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main)
+  --broadcast               Deliver the response to every live surface for the agent (telegram, app, …)
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
   --if-active <dur>         Skip if this session has not run a turn within duration (env: FOCI_IF_ACTIVE)
   --if-inactive <dur>       Skip if this session has run a turn within duration (env: FOCI_IF_INACTIVE)
@@ -189,6 +194,9 @@ func cmdSend(base string, args []string) error {
 	}
 	if flags.session != "" {
 		body["session"] = flags.session
+	}
+	if flags.broadcast {
+		body["policy"] = "broadcast"
 	}
 	flags.gateFlags.addToBody(body)
 	if flags.model != "" {

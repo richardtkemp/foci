@@ -251,7 +251,7 @@ func TestRoundTrip_HelloServer(t *testing.T) {
 		Caps:    Caps{Versions: []int{1}, Push: []string{"fcm"}, Features: []string{"voice"}},
 		Agents: []AgentInfo{{
 			ID: "clutch", Name: "Clutch",
-			Conversations: []ConversationInfo{{ID: "conv1", SessionKey: "clutch/capp/123", Title: "Main", LastSeq: 9, Typing: true, Thinking: true, Archived: true}},
+			Conversations: []ConversationInfo{{ID: "conv1", SessionKey: "clutch/c123", Title: "Main", LastSeq: 9, Typing: true, Thinking: true, Archived: true}},
 		}},
 	}
 	wire, err := Encode(h, 0, 0, "X", "ts")
@@ -267,7 +267,7 @@ func TestRoundTrip_HelloServer(t *testing.T) {
 	if err := json.Unmarshal(env.D, &back); err != nil {
 		t.Fatal(err)
 	}
-	if back.Agents[0].Conversations[0].SessionKey != "clutch/capp/123" {
+	if back.Agents[0].Conversations[0].SessionKey != "clutch/c123" {
 		t.Errorf("round-trip lost sessionKey: %+v", back)
 	}
 	if !back.Agents[0].Conversations[0].Typing {
@@ -307,7 +307,6 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		Interactive{ConversationID: "c", PromptID: "p", Text: "ok?", Choices: []Choice{{Label: "Y", Data: "p:0"}}, ExpiresAt: "2026-01-01T00:00:00Z"},
 		InteractiveEdit{ConversationID: "c", PromptID: "p", Text: "done"},
 		Meta{ConversationID: "c", Model: "opus", ManaPct: &mana, ManaState: "good", Gap: "5m", PrevCostUsd: &cost, Tokens: &Tokens{In: 1}},
-		SessionUpdate{ConversationID: "c", SessionKey: "ag/capp1/9", Reason: "compaction"},
 		ErrorFrame{Code: "boom", Message: "bad"},
 		Pong{},
 	}

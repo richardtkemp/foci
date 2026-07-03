@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"foci/internal/session"
 )
 
 // TestCommand_IfInactive proves POST /command honours the activity gate: a
@@ -24,14 +21,8 @@ import (
 func TestCommand_IfInactive(t *testing.T) {
 	d, _ := webhookTestSetup(t, t.TempDir(), "", nil)
 
-	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatalf("NewSessionIndex: %v", err)
-	}
-	t.Cleanup(func() { _ = idx.Close() })
 	// Recent session activity → an --if-inactive command must skip.
-	idx.SetSessionMetadata("test-agent/i0", "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
-	d.sessionIndex = idx
+	d.sessionIndex.SetSessionMetadata("test-agent/i0", "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
 
 	mux := newWebhookMux(d)
 

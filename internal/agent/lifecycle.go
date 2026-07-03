@@ -11,7 +11,6 @@ import (
 	"fmt"
 
 	"foci/internal/log"
-	"foci/internal/session"
 )
 
 // reloadAfterMutation reloads the bootstrap (system prompt files from disk),
@@ -28,40 +27,52 @@ func (a *Agent) reloadAfterMutation() {
 	a.InvalidateSystemCaches()
 }
 
-// ResetSession clears session history with memory formation.
+// ResetSession clears session history with memory formation. The session key
+// is a stable identity — the history is archived in place and per-session
+// state cleared, but the key (and everything that holds it) is unchanged.
 //
-// For API agents: fires memory formation as an async branch, then rotates
-// the session key and reloads the bootstrap.
+// Sequence, unified across API and delegated transports:
 //
-// For delegated agents: rotates immediately to a fresh session, then runs
-// memory formation on the old CC session and destroys it in the background —
-// the caller is not blocked on reflection.
-//
-// Returns the new session key on success.
-func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (string, error) {
-	if a.IsTurnInFlight(session.SessionKeyBase(sessionKey)) {
-		return "", fmt.Errorf("session is processing — send stop first, then reset")
+//  1. Prepare the reflection branch against the still-live history. For
+//     delegated agents this also remaps the live backend (and its resume ID)
+//     to the branch, so the main key is clean for a fresh backend.
+//  2. Archive the session file in place (Store.Reset).
+//  3. Clear per-session state (model/effort overrides, cc_resume_id,
+//     no_compact, …) so the reset session starts from a clean slate.
+//  4. Run reflection on the branch in the background — the caller is not
+//     blocked on it.
+func (a *Agent) ResetSession(ctx context.Context, sessionKey string) error {
+	if a.IsTurnInFlight(sessionKey) {
+		return fmt.Errorf("session is processing — send stop first, then reset")
 	}
 
-	if a.DelegatedManager != nil {
-		return a.resetDelegatedSession(ctx, sessionKey)
-	}
-
-	// Traditional mode: fire memory formation as a branch, then rotate.
-	// Memory runs on a separate branch — safe to proceed without waiting.
 	orientTemplate := ""
 	if a.ResetOrientTemplateFn != nil {
 		orientTemplate = a.ResetOrientTemplateFn()
 	}
-	go a.FireSessionEndMemory(ctx, sessionKey, orientTemplate, false)
+	reflectKey, doReflect := a.PrepareSessionEndMemory(sessionKey, orientTemplate, false)
 
-	newKey, err := a.Sessions.RotateKey(sessionKey)
-	if err != nil {
-		return "", err
+	// No reflection branch adopted the live backend — make sure the main key
+	// doesn't keep one (delegated agents: close it and clear the resume ID so
+	// the next message starts a genuinely fresh CC session).
+	if !doReflect && a.DelegatedManager != nil {
+		a.DelegatedManager.ResetSession(sessionKey)
 	}
-	a.RotateSession(sessionKey, newKey)
+
+	if err := a.Sessions.Reset(sessionKey); err != nil {
+		return err
+	}
+	a.ClearSessionState(sessionKey)
 	a.reloadAfterMutation()
-	return newKey, nil
+
+	if doReflect {
+		// Detach from the request context so the reflection survives this
+		// call returning. RunSessionEndMemory destroys the branch's backend
+		// when it finishes.
+		bg := context.WithoutCancel(ctx)
+		go a.RunSessionEndMemory(bg, reflectKey)
+	}
+	return nil
 }
 
 // CompactSession triggers manual context compaction for a session.
@@ -112,11 +123,7 @@ func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bo
 
 	if !dryRun {
 		a.reloadAfterMutation()
-		resetKey := sessionKey
-		if result.NewSessionKey != "" {
-			resetKey = result.NewSessionKey
-		}
-		a.ResetCacheBaseline(resetKey)
+		a.ResetCacheBaseline(sessionKey)
 	}
 	return result, nil
 }
@@ -143,17 +150,15 @@ func (a *Agent) compactDelegatedSession(ctx context.Context, sessionKey string, 
 // in-flight turn and without sending memory formation prompts.
 //
 // Cancels the in-flight turn ctx (if any), interrupts the delegated backend
-// (best-effort), destroys the backend, rotates the session key, and reloads
-// the bootstrap. Use this when the agent is stuck or the user wants a clean
-// reset without saving session memories.
+// (best-effort), destroys the backend, archives the session file in place,
+// clears per-session state, and reloads the bootstrap. Use this when the agent
+// is stuck or the user wants a clean reset without saving session memories.
 //
 // Unlike ResetSession, this does not check IsProcessing — that's the whole
 // point. Cancellation propagates through the same paths /stop uses.
-//
-// Returns the new session key on success.
-func (a *Agent) ResetSessionHard(ctx context.Context, sessionKey string) (string, error) {
+func (a *Agent) ResetSessionHard(ctx context.Context, sessionKey string) error {
 	if sessionKey == "" {
-		return "", fmt.Errorf("no active session to reset")
+		return fmt.Errorf("no active session to reset")
 	}
 
 	// Cancel any in-flight turn ctx. CancelSession is a no-op if no turn is
@@ -169,63 +174,10 @@ func (a *Agent) ResetSessionHard(ctx context.Context, sessionKey string) (string
 		a.DelegatedManager.ResetSession(sessionKey)
 	}
 
-	newKey, err := a.Sessions.RotateKey(sessionKey)
-	if err != nil {
-		return "", err
+	if err := a.Sessions.Reset(sessionKey); err != nil {
+		return err
 	}
-	a.RotateSession(sessionKey, newKey)
+	a.ClearSessionState(sessionKey)
 	a.reloadAfterMutation()
-	return newKey, nil
-}
-
-// resetDelegatedSession resets a backend-managed session without blocking the
-// caller. It rotates the foci session key immediately — the chat maps to a
-// fresh session right away (a new CC backend is spawned lazily on the next
-// message) — then runs reflection on the old CC session and tears it down in
-// the background.
-//
-// The old backend deliberately stays mapped under sessionKey so the background
-// reflection can drive it (RotateSession no longer migrates backends). The old
-// CC resume ID is cleared up front so the rotated-to key starts a genuinely
-// fresh CC session rather than inheriting the old conversation when its
-// metadata is renamed forward.
-func (a *Agent) resetDelegatedSession(ctx context.Context, sessionKey string) (string, error) {
-	orientTemplate := ""
-	if a.ResetOrientTemplateFn != nil {
-		orientTemplate = a.ResetOrientTemplateFn()
-	}
-
-	// Drop the old CC resume ID before rotating: RotateSession renames
-	// sessionKey's metadata (including cc_resume_id) forward to newKey, and we
-	// must not let the fresh session resume the old conversation. The live
-	// backend stays in the manager map, so reflection below still reaches it.
-	a.DelegatedManager.ClearResumeID(sessionKey)
-
-	newKey, err := a.Sessions.RotateKey(sessionKey)
-	if err != nil {
-		return "", err
-	}
-	a.RotateSession(sessionKey, newKey)
-	a.reloadAfterMutation()
-
-	// Reflect on the live CC session, then destroy it — in the background so
-	// the user isn't blocked. FireSessionEndMemory injects the reflection into
-	// the existing CC session (it special-cases delegated mode) and blocks
-	// internally until CC completes, so the backend is only closed once
-	// memories are saved. Detach from the request context so the work survives
-	// this call returning.
-	bg := context.WithoutCancel(ctx)
-	go func() {
-		a.FireSessionEndMemory(bg, sessionKey, orientTemplate, false)
-		a.DelegatedManager.ResetSession(sessionKey)
-		// Reflection ran after the metadata rename, so it left rows under the
-		// now-defunct old key. Clear them so nothing leaks.
-		if a.SessionIndex != nil {
-			if err := a.SessionIndex.DeleteAllSessionMetadata(sessionKey); err != nil {
-				log.Warnf("reset", "cleanup metadata for %s: %v", sessionKey, err)
-			}
-		}
-	}()
-
-	return newKey, nil
+	return nil
 }

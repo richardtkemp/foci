@@ -12,7 +12,7 @@ func TestSendToSession_ChatSession(t *testing.T) {
 	// Session key with embedded chat ID — should extract and route there.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
-	err := b.SendToSession("main/c67890/1709590000", "hello from session")
+	err := b.SendToSession("main/c67890", "hello from session")
 	if err != nil {
 		t.Fatalf("SendToSession error: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestSendToSession_IndependentSessionFallsBackToDefault(t *testing.T) {
 	b.SetSessionIndex(idx)
 	_ = idx.SetDefaultChat("main", platformName, 11111)
 
-	if err := b.SendToSession("main/i1709596800/1709596800", "hello independent"); err != nil {
+	if err := b.SendToSession("main/i1709596800", "hello independent"); err != nil {
 		t.Fatalf("SendToSession error: %v", err)
 	}
 	if mock.sentCount() != 1 {
@@ -46,7 +46,7 @@ func TestSendToSession_NoChatIDNoDefaultErrors(t *testing.T) {
 	// No embedded chat ID and no default chat — should error.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
-	err := b.SendToSession("main/i1709596800/1709596800", "hello")
+	err := b.SendToSession("main/i1709596800", "hello")
 	if err == nil {
 		t.Fatal("expected error when no chat ID and no default")
 	}
@@ -55,7 +55,7 @@ func TestSendToSession_NoChatIDNoDefaultErrors(t *testing.T) {
 func TestSendToSession_SkipsEmptyMessage(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
-	if err := b.SendToSession("main/c123/1709590000", ""); err != nil {
+	if err := b.SendToSession("main/c123", ""); err != nil {
 		t.Errorf("SendToSession with empty text should not error, got: %v", err)
 	}
 	if mock.sentCount() != 0 {
@@ -67,7 +67,7 @@ func TestSendToSession_BranchKeyUsesParentChat(t *testing.T) {
 	// Branch session keys contain parent's chat ID — should resolve correctly.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
-	err := b.SendToSession("main/c67890/1709590000/b1709596800", "branch message")
+	err := b.SendToSession("main/c67890/b1709596800", "branch message")
 	if err != nil {
 		t.Fatalf("SendToSession error: %v", err)
 	}

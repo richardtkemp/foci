@@ -20,7 +20,7 @@ func TestManaRefreshPreservePercentage(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Add 20 messages (10 user + 10 assistant)
 	for i := 0; i < 10; i++ {
@@ -32,12 +32,12 @@ func TestManaRefreshPreservePercentage(t *testing.T) {
 	// Simulate mana-refresh: preserve 50% of 20 = 10 messages
 	c.WithConfig(4096, 4, 10)
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 
 	// preserved[0] is user → handoff folded into summary
 	// Result: 2 (marker + summary+handoff) + 10 preserved = 12
@@ -76,7 +76,7 @@ func TestManaRefreshPreserveExplicitCountOverridesPercentage(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	for i := 0; i < 10; i++ {
 		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("u%d", i))})
@@ -87,12 +87,12 @@ func TestManaRefreshPreserveExplicitCountOverridesPercentage(t *testing.T) {
 	// Explicit count: preserve 6 messages
 	c.WithConfig(4096, 4, 6)
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 	// preserved[0] is user → handoff folded: 2 header + 6 preserved = 8
 	if len(msgs) != 8 {
 		t.Fatalf("after compact: %d messages, want 8", len(msgs))
@@ -109,7 +109,7 @@ func TestWalkBackFallbackKeepsOriginalSplit(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/1000000000"
+	sessionKey := "test/imain"
 
 	// Build a session where walk-back would push below minMessages:
 	// [0] user text
@@ -132,12 +132,12 @@ func TestWalkBackFallbackKeepsOriginalSplit(t *testing.T) {
 	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 2) // preserve 2, minMessages 4
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 
 	// Should preserve 2 messages (the last 2), NOT 0.
 	// The boundary tool_use/tool_result pair is split, but repairOrphanedToolUse
@@ -165,7 +165,7 @@ func TestWalkBackFallbackDoesNotNukeSession(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "test/imain/2000000000"
+	sessionKey := "test/imain"
 
 	// Simulate a post-compaction session:
 	// [0] user: compaction marker
@@ -184,12 +184,12 @@ func TestWalkBackFallbackDoesNotNukeSession(t *testing.T) {
 	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 2) // preserve 2, minMessages 4
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(newKey)
+	msgs, _ := store.Load(sessionKey)
 
 	// With old code: walk-back pushes splitIdx from 4 to 3, which is < minMessages=4,
 	// so preserveN=0 → all 6 messages summarised → result is 3 messages (marker+summary+handoff).

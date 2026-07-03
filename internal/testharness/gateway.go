@@ -186,6 +186,16 @@ type HarnessOptions struct {
 // access the stub via TelegramStub() and the cc-stub recorder file via
 // RecorderPath(); they push synthetic updates and assert on what foci
 // did to the recorder.
+// MaxIntegTestNameLen is the sun_path budget for integration test names:
+// under `make integration`, t.TempDir() is
+// /tmp/foci/integration-<unix10>/<TestName><rand10>/001, and that path must
+// itself stay within sockaddr_un.sun_path (108 incl NUL) — the necessary
+// condition for ANY unix socket ever placed under a test's TempDir (real
+// sockets need headroom on top, which is why harness sockets live in short
+// /tmp/fcs*//tmp/fgw* dirs instead; TODO #804). Enforced at build time by
+// TestIntegrationTestNamesFitSunPath.
+const MaxIntegTestNameLen = 107 - len("/tmp/foci/integration-1234567890/") - 10 - len("/001")
+
 type Harness struct {
 	t            *testing.T
 	tempDir      string
@@ -203,6 +213,11 @@ type Harness struct {
 	// at harness startup; foci-gw opens it when FOCI_TESTHARNESS_CONTROL_SOCK
 	// is set in its env. Empty means no control socket was requested.
 	controlSock string
+
+	// gwSock is the gateway's same-user auth unix socket ([http]
+	// socket_path). Allocated under a short /tmp dir — not DataDir — so
+	// long test names can't overflow sun_path (TODO #804).
+	gwSock string
 
 	// Spawn-time invariants captured so Restart can re-run spawnGateway
 	// without re-doing the build / config / stub-setup work.
@@ -374,6 +389,17 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		return nil, fmt.Errorf("pick free port: %w", err)
 	}
 
+	// Gateway unix socket: same sun_path story as the control socket below
+	// (TODO #804) — the default socket path lives under DataDir, which embeds
+	// the test name and overflows 108 bytes for long-named tests, failing
+	// bind with "invalid argument". Allocate a short /tmp dir instead.
+	gwSockDir, err := os.MkdirTemp("/tmp", "fgw")
+	if err != nil {
+		return nil, fmt.Errorf("alloc gateway-socket dir: %w", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(gwSockDir) })
+	gwSock := filepath.Join(gwSockDir, "gw.sock")
+
 	writeTestConfig(t, configPath, testConfigOpts{
 		DataDir:         dataDir,
 		LogsDir:         logsDir,
@@ -384,6 +410,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		Workspaces:      workspaces,
 		RecorderPath:    recorderPath,
 		HTTPPort:        httpPort,
+		SocketPath:      gwSock,
 		ExtraConfigTOML: opts.ExtraConfigTOML,
 	})
 	if !opts.SkipSecretsFile {
@@ -419,6 +446,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		scriptDir:    scriptDir,
 		workspaces:   workspaces,
 		controlSock:  controlSock,
+		gwSock:       gwSock,
 		gwBin:        gwBin,
 		binDir:       binDir,
 		ccStubBin:    stubBin,
@@ -569,6 +597,16 @@ func (h *Harness) spawnGateway() error {
 		// stderr so callers can debug without re-grabbing it.
 		return fmt.Errorf("foci-gw not ready: %w\n--- stderr ---\n%s", err, stderrBuf.String())
 	}
+
+	// Tripwire for the sun_path class of failure (TODO #804): if the gateway
+	// failed to bind its same-user unix socket, every socket-dependent
+	// operation in this test will time out later with a far less diagnostic
+	// error — and only under `make integration` (short paths in isolation).
+	// Fail loudly at the source instead. Bind failure is never legitimate in
+	// the harness: the socket path is allocated short (see gwSock).
+	if strings.Contains(stderrBuf.String(), "same-user auth unavailable") {
+		return fmt.Errorf("foci-gw failed to bind its unix socket (sun_path overflow? see TODO #804; socket=%s)\n--- stderr ---\n%s", h.gwSock, stderrBuf.String())
+	}
 	return nil
 }
 
@@ -695,6 +733,9 @@ func (h *Harness) TempDir() string { return h.tempDir }
 // per-agent override — must read it here rather than reconstructing
 // TempDir()/bin/cc-stub.
 func (h *Harness) CCStubBinary() string { return h.ccStubBin }
+
+// SocketPath returns the gateway's same-user auth unix socket path.
+func (h *Harness) SocketPath() string { return h.gwSock }
 
 // DataDir returns the on-disk data directory foci-gw was configured
 // with. Tests use it to seed JSONL session files, mutate permissions,

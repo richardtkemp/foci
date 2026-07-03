@@ -35,7 +35,7 @@ func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend str
 		Name:        "memory_search",
 		ExecExport:  true,
 		Positional:  []string{"query"},
-		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123/456#42').",
+		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123#42').",
 		Parameters:  schema,
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return memorySearch(ctx, params, backends, names[0], convReader)
@@ -226,7 +226,7 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 		}
 	}
 	if hasConvContext && p.Lines == 0 {
-		sb.WriteString("\nTip: To see surrounding conversation, re-query with the session#rowID shown above (e.g., query=\"agent/c123/456#42\"), or add \"lines\" to expand inline.\n")
+		sb.WriteString("\nTip: To see surrounding conversation, re-query with the session#rowID shown above (e.g., query=\"agent/c123#42\"), or add \"lines\" to expand inline.\n")
 	}
 	return TextResult(sb.String()), nil
 }

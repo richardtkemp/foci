@@ -9,14 +9,25 @@ import (
 	"foci/shared/prompts"
 )
 
-// FireSessionEndMemory runs the reflection pass on the expiring session.
-// Blocks until the turn completes (HandleMessage is synchronous for all transports).
-// Checks BranchMeta.NoResetHook and reflection.session_end_enabled.
-// If skipMetaCheck is true, the NoResetHook check is skipped (used for background
-// work branches which set NoResetHook but should still get reflection).
-func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemplate string, skipMetaCheck bool) {
+// PrepareSessionEndMemory decides whether the reflection pass should run for
+// an expiring session and creates the reflection branch. Returns the branch
+// key and true when reflection should proceed via RunSessionEndMemory.
+//
+// Synchronous, and MUST run before the parent session is reset/archived: the
+// branch's branch_point is taken against the live history (an archived parent
+// is later recovered through the branch loader's archive fallback, P2-5).
+//
+// For delegated agents the live backend (if any) is remapped to the branch
+// key, so reflection drives the existing CC session — which holds the
+// conversation context in-process — while the parent key is left clean for a
+// fresh backend on next contact.
+//
+// If skipMetaCheck is true, the NoResetHook check is skipped (used for
+// background work branches which set NoResetHook but should still get
+// reflection).
+func (a *Agent) PrepareSessionEndMemory(sessionKey, orientTemplate string, skipMetaCheck bool) (string, bool) {
 	if !a.Reflection.SessionEndEnabled {
-		return
+		return "", false
 	}
 
 	// No need to reflect twice: skip if a reflection has already run on this
@@ -26,18 +37,12 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 	// activity here. Unknown / never-reflected sessions return false → reflect.
 	if a.SessionIndex != nil && a.SessionIndex.ReflectionRedundant(sessionKey) {
 		log.Debugf("session-end-memory", "skipping for %s: no activity since last reflection", sessionKey)
-		return
+		return "", false
 	}
 
-	canFire, reason := a.CanFireBackgroundOperation(ctx, sessionKey)
-	if !canFire {
+	if canFire, reason := a.CanFireBackgroundOperation(context.Background(), sessionKey); !canFire {
 		log.Debugf("session-end-memory", "skipping for %s: %s", sessionKey, reason)
-		return
-	}
-
-	prompt := prompts.ResolvePrompt(a.Reflection.SessionEndPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
-	if prompt == "" {
-		return
+		return "", false
 	}
 
 	if !skipMetaCheck {
@@ -47,33 +52,69 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		}
 		if meta != nil && meta.NoResetHook {
 			log.Debugf("session-end-memory", "skipping for %s (no_reset_hook set)", sessionKey)
-			return
+			return "", false
 		}
 	}
 
-	// Delegated agents: inject into existing session (CC has the context).
-	// API agents: create a branch so the parent session isn't modified.
-	targetKey := sessionKey
-	if a.DelegatedManager == nil {
-		branchKey, err := a.Sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
-			NoResetHook:         true,
-			BranchType:          "session-end-memory",
-			OrientationTemplate: orientTemplate,
-		})
-		if err != nil {
-			log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)
-			return
-		}
-		a.SetSessionNoCompact(branchKey, true)
-		targetKey = branchKey
+	branchKey, err := a.Sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
+		NoResetHook:         true,
+		BranchType:          "session-end-memory",
+		OrientationTemplate: orientTemplate,
+	})
+	if err != nil {
+		log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)
+		return "", false
+	}
+	a.SetSessionNoCompact(branchKey, true)
+
+	// Hand the live delegated backend (and its resume ID) to the branch so
+	// reflection reaches the CC session that holds the context.
+	if a.DelegatedManager != nil {
+		a.DelegatedManager.RemapSession(sessionKey, branchKey)
 	}
 
-	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, targetKey)
+	return branchKey, true
+}
+
+// RunSessionEndMemory runs the reflection turn on a prepared branch.
+// Blocks until the turn completes (HandleMessage is synchronous for all
+// transports). For delegated agents the branch's backend is destroyed
+// afterwards — reflection is the branch's last act.
+func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
+	prompt := prompts.ResolvePrompt(a.Reflection.SessionEndPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
+	if prompt == "" {
+		return
+	}
+
+	log.Infof("session-end-memory", "firing on %s", branchKey)
 
 	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	hookCtx = WithTrigger(hookCtx, "session_end_memory")
-	if err := a.HandleMessage(hookCtx, targetKey, []string{prompt}, nil); err != nil {
-		log.Warnf("session-end-memory", "failed for %s: %v", targetKey, err)
+	if err := a.HandleMessage(hookCtx, branchKey, []string{prompt}, nil); err != nil {
+		log.Warnf("session-end-memory", "failed for %s: %v", branchKey, err)
 	}
+
+	if a.DelegatedManager != nil {
+		a.DelegatedManager.ResetSession(branchKey)
+	}
+	// The branch is done — drop its metadata rows (no_compact, remapped
+	// cc_resume_id, …) so nothing leaks per reset.
+	if a.SessionIndex != nil {
+		if err := a.SessionIndex.DeleteAllSessionMetadata(branchKey); err != nil {
+			log.Warnf("session-end-memory", "cleanup metadata for %s: %v", branchKey, err)
+		}
+	}
+}
+
+// FireSessionEndMemory runs the reflection pass on the expiring session:
+// PrepareSessionEndMemory + RunSessionEndMemory. Blocks until the turn
+// completes. Callers that reset/archive the parent themselves should call the
+// two phases separately, with the reset between them.
+func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemplate string, skipMetaCheck bool) {
+	branchKey, ok := a.PrepareSessionEndMemory(sessionKey, orientTemplate, skipMetaCheck)
+	if !ok {
+		return
+	}
+	a.RunSessionEndMemory(ctx, branchKey)
 }

@@ -176,13 +176,68 @@ func (b *Bot) SendNotificationDirect(text string) string {
 
 // sendNotificationImmediate sends a notification directly to the default channel.
 func (b *Bot) sendNotificationImmediate(text string) string {
+	return b.sendNotificationToChannel(b.defaultChannelIDOrLast(), text)
+}
+
+// defaultChannelIDOrLast resolves the bot's default channel, falling back to
+// the last known channel when no state store is configured (e.g. tests).
+func (b *Bot) defaultChannelIDOrLast() int64 {
 	channelID := b.DefaultChatID()
 	if channelID == 0 {
-		// Fall back to last known channel (e.g. when no state store is configured).
 		b.channelMu.Lock()
 		channelID = b.channelID
 		b.channelMu.Unlock()
 	}
+	return channelID
+}
+
+// channelIDForSession resolves the destination channel for a session key. The
+// Discord channel ID is embedded in the session key (clutch/c<channelID>), so
+// it is extracted directly. Falls back to the default channel when the key
+// carries no channel ID (unparseable / independent session) (#911).
+func (b *Bot) channelIDForSession(sessionKey string) int64 {
+	if id := session.ChatIDFromKey(sessionKey); id != 0 {
+		return id
+	}
+	return b.defaultChannelIDOrLast()
+}
+
+// SendNotificationToSession sends a notification to the channel that owns
+// sessionKey, rather than the bot's default channel. This fixes multi-user
+// misrouting: when two users share the same bot, a per-session notice (e.g. a
+// compaction notice for the second user) must land in THAT user's channel,
+// not the default one (#911). Implements platform.SessionNotifier.
+func (b *Bot) SendNotificationToSession(sessionKey, text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return b.sendNotificationToChannel(b.channelIDForSession(sessionKey), text)
+}
+
+// EditNotificationInSession edits a message in the channel that owns
+// sessionKey, rather than the default channel. The compaction flow sends a ⏳
+// start notice and edits it in place to ✅ — both must target the session's
+// channel, else the edit addresses a message ID from a different channel and
+// fails (#911). Implements platform.SessionNotifier.
+func (b *Bot) EditNotificationInSession(sessionKey, msgID, text string) error {
+	channelID := b.channelIDForSession(sessionKey)
+	if channelID == 0 {
+		return fmt.Errorf("no channel for session %s", sessionKey)
+	}
+	noComponents := []discordgo.MessageComponent{}
+	_, err := b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    strconv.FormatInt(channelID, 10),
+		ID:         msgID,
+		Content:    &text,
+		Components: &noComponents,
+	})
+	return err
+}
+
+// sendNotificationToChannel sends a notification to a specific channel.
+// Returns the first chunk's message ID as the anchor (for later in-place
+// edits), or "" on failure / no channel.
+func (b *Bot) sendNotificationToChannel(channelID int64, text string) string {
 	if channelID == 0 {
 		truncated := text
 		if len(truncated) > 40 {

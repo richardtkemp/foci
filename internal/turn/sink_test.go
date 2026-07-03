@@ -78,7 +78,6 @@ func (f *fakeTypingConn) SetSessionKeyDirect(string)              { panic("SetSe
 func (f *fakeTypingConn) SetChatID(int64)                         { panic("SetChatID") }
 func (f *fakeTypingConn) ChatID() int64                           { panic("ChatID") }
 func (f *fakeTypingConn) Username() string                        { panic("Username") }
-func (f *fakeTypingConn) UpdateChatSessionKey(int64, string)      { panic("UpdateChatSessionKey") }
 func (f *fakeTypingConn) SendInjectedMessage(string, string) error {
 	panic("SendInjectedMessage")
 }

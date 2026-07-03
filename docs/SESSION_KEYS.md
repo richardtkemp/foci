@@ -2,12 +2,16 @@
 
 ## Overview
 
-Session keys uniquely identify conversation sessions in foci. The new format uses a hierarchical structure with version directories to handle compaction while maintaining stable identifiers for external sources like Telegram chats.
+Session keys uniquely identify conversation sessions in foci. A key is a
+**stable identity**: it never changes for the life of a conversation.
+Compaction and `/reset` archive the session file *in place* — they do not mint
+a new key. Anything that holds a session key (reminders, chat metadata, tmux
+ownership, cron jobs, the Android app's local database) can hold it forever.
 
 ## Format
 
 ```
-{agentID}/{type}{id}/{versionTS}[/{childType}{childTS}][.{n}]
+{agentID}/{type}{id}[/{childType}{childTS}]
 ```
 
 ### Components
@@ -16,188 +20,176 @@ Session keys uniquely identify conversation sessions in foci. The new format use
 |-----------|-------------|---------|
 | `agentID` | Agent identifier from config | `main` |
 | `type` | Session type: `c` (chat) or `i` (independent) | `c` |
-| `id` | Type-specific identifier | `123` (chat ID) or `1709596800` (timestamp) |
-| `versionTS` | Version timestamp (creation or compaction time, unix seconds) | `1709590000` |
+| `id` | Type-specific identifier | `123` (chat ID), `research` (name), or `1709596800` (timestamp) |
 | `childType` | Child type: `b` (branch) or `i` (independent spawn) | `b` |
-| `childTS` | Child timestamp (unix seconds) | `1709596800` |
-| `n` | Collision counter for same-second children | `1`, `2`, `3`... |
+| `childTS` | Child creation timestamp (unix seconds) | `1709596800` |
+
+`session.ParseSessionKey` is the **single parser** for this grammar. Nothing
+outside `internal/session` should dissect key strings by hand — use
+`ParseSessionKey`, `AgentIDFromKey`, `ChatIDFromKey`, or the `SessionKey`
+struct methods.
 
 ## Session Types
 
 ### Chat Sessions (`c`)
 
-Persistent conversation sessions with external stable IDs (e.g., Telegram chat IDs).
+Conversation sessions bound to an external chat: a Telegram chat, Discord
+channel, or app conversation (whose conversationId is FNV-hashed to a chat ID).
 
-**Format:** `{agentID}/c{chatID}/{versionTS}`
+**Format:** `{agentID}/c{chatID}` — **deterministic**: the same
+`(agent, chatID)` always yields the same key (`session.NewChatSessionKey`).
+No persistence is needed to reconstruct it; platforms record only *ownership*
+(which platform owns the chat) via a `registered` row in `chat_metadata`.
 
-**Examples:**
-- `main/c5970082313/1709590000` - Chat session for Telegram chat ID 5970082313
-- `main/c5970082313/1709600000` - Same chat after compaction (new version)
+**Example:** `main/c5970082313`
 
 ### Independent Sessions (`i`)
 
-Ephemeral sessions without external IDs (HTTP requests, standalone tasks).
+Sessions without an external chat binding.
 
-**Format:** `{agentID}/i{creationTS}/{versionTS}`
-
-**Examples:**
-- `main/i1709596800/1709596800` - Independent session (ID and initial version are the same)
-- `main/i1709596800/1709600000` - Same session after compaction
+- **Named** (HTTP `/send -s <name>`, adopted app conversations):
+  `{agentID}/i{name}` — deterministic per name
+  (`session.NamedIndependentSessionKey`). Example: `main/iresearch`
+- **Anonymous** (one-off background tasks): `{agentID}/i{descriptive-id}` —
+  built via the `SessionKey` struct with a caller-chosen ID (e.g.
+  `main/ireflection-1709596800`).
 
 ## Child Sessions
 
-All derived sessions (branches, spawns) are children of a parent session.
+Derived sessions are children of a **root** session. A child key has exactly
+three segments; deriving a child from a child yields a *sibling* under the same
+root (the true parent is recorded in the branch file's metadata, not the key).
 
 ### Branch (`b`)
 
-Inherits parent's message history. Used for:
-- Clone spawns
-- Facet (forked interactive sessions)
-- Session-end memory
-- Cron/keepalive tasks
+Inherits parent history up to the branch point. Used for facets, clone spawns,
+session-end reflection, cron/keepalive tasks.
 
-**Format:** `{parentKey}/b{timestamp}`
-
-**Examples:**
-- `main/c123/1709590000/b1709596800` - Branch from chat
-- `main/i1709596800/1709596800/b1709596900` - Branch from independent
-- `main/c123/1709590000/b1709596800/b1709597000` - Branch from branch
+**Format:** `{rootKey}/b{timestamp}`
+**Example:** `main/c123/b1709596800`
 
 ### Independent Spawn (`i`)
 
-Spawned by parent but has separate message history. Used for:
-- Non-clone spawns
-- Character spawns
+Spawned by a parent but with separate history (non-clone spawns).
 
-**Format:** `{parentKey}/i{timestamp}`
-
-**Examples:**
-- `main/c123/1709590000/i1709596801` - Independent spawn from chat
-- `main/c123/1709590000/i1709596801.1` - Second spawn same second (collision)
+**Format:** `{rootKey}/i{timestamp}`
 
 ## File Paths
 
-Session keys map to file paths with a special rule for root sessions.
+`Store.SessionPath` maps keys to files:
 
-### Root Sessions
+| Kind | Key | Path |
+|------|-----|------|
+| Root | `main/c123` | `sessions/main/c123/root.jsonl` |
+| Child | `main/c123/b1709596800` | `sessions/main/c123/b1709596800.jsonl` |
 
-**Key:** `main/c123/1709590000`
-**Path:** `sessions/main/c123/1709590000/root.jsonl`
+A root session's directory holds its live `root.jsonl`, its archives, and its
+child session files.
 
-The `/root.jsonl` suffix is added when converting key to path.
+## Compaction and Reset (in-place archives)
 
-### Child Sessions
+There is no key rotation. Both operations archive the live file next to itself
+and keep the key:
 
-**Key:** `main/c123/1709590000/b1709596800`
-**Path:** `sessions/main/c123/1709590000/b1709596800.jsonl`
+- **Compaction** (`SessionWriter.Replace`): `root.jsonl` →
+  `root.<timestamp>.jsonl`, then the compacted messages are written to a fresh
+  `root.jsonl`. Fires a `SessionStatusCompacted` event carrying the archive
+  path.
+- **Reset** (`Store.Reset`): `root.jsonl` → `root.<timestamp>.jsonl`; the next
+  `Append` recreates the file lazily. Fires `SessionStatusReset`. Per-session
+  state (model/effort overrides, `cc_resume_id`, `no_compact`, …) is cleared
+  explicitly by `Agent.ClearSessionState` — a reset session keeps its identity
+  but starts from a clean slate.
 
-The key is the path (minus extension).
+**Example directory after a compaction and a reset:**
 
-### Mapping Function
-
-```go
-func SessionPath(key string) string {
-    parts := strings.Split(key, "/")
-    lastSegment := parts[len(parts)-1]
-
-    // Strip collision suffix if present
-    if idx := strings.Index(lastSegment, "."); idx > 0 {
-        lastSegment = lastSegment[:idx]
-    }
-
-    // If last segment is pure number (version timestamp), it's a root
-    if isNumeric(lastSegment) {
-        return filepath.Join(sessionsDir, key, "root.jsonl")
-    }
-
-    // Otherwise it's a child
-    return filepath.Join(sessionsDir, key + ".jsonl")
-}
-```
-
-## Versioning and Compaction
-
-When a session is compacted:
-
-1. Old file is rotated: `root.jsonl` → `root.2026-03-04T02-30-00Z.jsonl`
-2. New version created with new timestamp: `1709590000/` → `1709600000/`
-3. Children remain in their original version directories
-4. New children use the current (latest) version
-
-### Example
-
-**Before compaction:**
 ```
 sessions/main/c123/
-  1709590000/
-    root.jsonl            ← original chat
-    b1709596800.jsonl     ← branch from original
+  root.jsonl                        ← live session
+  root.2026-03-04T02-30-00Z.jsonl   ← pre-compaction archive
+  root.2026-05-01T09-00-00Z.jsonl   ← pre-reset archive
+  b1709596800.jsonl                 ← branch (facet/reflection/…)
 ```
 
-**After compaction:**
-```
-sessions/main/c123/
-  1709590000/
-    root.2026-03-04T02-30-00Z.jsonl  ← archived original
-    b1709596800.jsonl                 ← branch still here
-  1709600000/
-    root.jsonl            ← new compacted chat
-```
+### Branches survive parent archives
 
-### Finding Current Version
-
-On startup, find the latest version directory for each chat/independent session:
-
-```go
-// Scan directories under main/c123/
-// Select highest numeric directory name
-// Cache: currentVersion["c123"] = "1709600000"
-```
-
-For incoming messages, use the cached current version.
+Branch files start with a `{"type":"branch_meta",...}` line holding
+`parent_key` and `branch_point`. `LoadFull()` reads
+`parent[:branch_point] + branch's own messages`. When the parent was compacted
+or reset after the branch was created, the pre-archive prefix is recovered from
+the parent's newest archive file (P2-5) — this is what lets `/reset` archive a
+session while its reflection branch still sees the full history.
 
 ## API
 
 ### Constructors
 
 ```go
-// Create new chat session
-key := session.NewChatSessionKey("main", chatID)
-
-// Create new independent session
-key := session.IndependentSessionKey("main")
-
-// Create branch from existing session
-branchKey, err := session.BranchFromSession(parentKey)
-
-// Create independent spawn from existing session
-spawnKey, err := session.IndependentSpawnFromSession(parentKey)
+key := session.NewChatSessionKey("main", chatID)          // "main/c123" (deterministic)
+key, err := session.NamedIndependentSessionKey("main", "research") // "main/iresearch"
+branchKey, err := store.CreateBranchWithOptions(parentKey, opts)   // "main/c123/b<now>"
 ```
 
 ### Parsing
 
 ```go
-// Parse string key
-key, err := session.ParseSessionKey("main/c123/1709590000/b1709596800")
-
-// Access components
-chatID := key.ChatID()        // 123 (or 0 if not a chat)
-isRoot := key.IsRoot()        // false (has child suffix)
-rootKey := key.RootKey()      // strips child suffix
+sk, err := session.ParseSessionKey("main/c123/b1709596800")
+sk.AgentID   // "main"
+sk.ChatID()  // 123 (0 if not a chat session)
+sk.IsRoot()  // false
+sk.Root()    // SessionKey for "main/c123"
 ```
 
-### Manipulation
+### Point-in-time history
+
+Keys are stable, so "where is the transcript for moment T?" is answered by
+provenance, not by the key:
+
+- **Archives** carry an "archived at" stamp — the file holds history *up to*
+  that moment. Rotations are recorded in the `session_archives` table
+  (`SessionIndex.RecordArchive`, written by the store event handler), and the
+  filename stamps themselves are a state.db-independent fallback
+  (`Store.ArchiveFileAt`).
+- **CC resume IDs** are recorded in `cc_resume_history` every time a
+  delegated backend observes a new one (`DelegatedManager.saveResumeID`), so
+  "which CC session was live at T" survives resets and respawns.
 
 ```go
-// Create branch
-child := key.Branch()
+idx.ArchiveFileAt("clutch/c123", t)  // earliest archive rotated at/after t; miss = live file
+idx.CCResumeAt("clutch/c123", t)     // newest resume-ID observation at/before t
+store.ArchiveFileAt("clutch/c123", t) // same answer from filename stamps alone
+```
 
-// Create independent spawn
-spawn := key.IndependentSpawn()
+From the CLI: `foci debug at clutch/c123 2026-07-01T12:00:00Z` (or a
+duration ago, e.g. `foci debug at clutch 3h`) prints the covering JSONL path
+and the CC resume ID live at that moment.
 
-// Handle collision
-key2 := key.WithCollision(1)
+### Migrating pre-stable-identity installs
 
-// Change version (after compaction)
-newKey := key.WithVersion(newTimestamp)
+Both migrations run automatically at startup and are idempotent:
+
+- `Store.MigrateLegacyLayout` flattens version directories: the newest
+  version's `root.jsonl` becomes the live file; older versions become
+  in-place archives stamped with the *superseding* version's timestamp (the
+  moment they were rotated away); children move up beside them with their
+  `branch_meta` parent keys rewritten.
+- `migrateLegacyStateDB` (inside `NewSessionIndex`) re-keys
+  `session_metadata` (newest version wins — this carries `cc_resume_id`
+  forward), converts `chat_metadata` `session_key` rows to `registered`
+  ownership rows (preserving app named-session adoptions), re-keys
+  facet/tmux `agent_metadata` values, and clears legacy `session_index` rows
+  plus the clean-shutdown marker so the index rebuilds from the migrated
+  files.
+
+### Index resolution
+
+The session index stores structured columns (`agent_id`, `chat_id`, `is_root`)
+derived from the key at insert, so resolution is SQL over columns, never string
+pattern-matching:
+
+```go
+idx.DefaultSessionKeyForAgent("main") // default chat, else most-recent active root
+idx.ResolveLooseKey("main")           // bare agent name → default session key
+idx.PlatformForChat("main", 123)      // which platform owns this chat
+idx.SessionExists(key)
 ```

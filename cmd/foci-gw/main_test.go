@@ -32,7 +32,7 @@ func TestGracefulShutdown_AllIdle(t *testing.T) {
 }
 
 func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
-	const sk = "a/c1/1"
+	const sk = "a/c1"
 	ag := &agent.Agent{}
 	ag.SetTurnInFlightForTest(sk, true)
 
@@ -59,7 +59,7 @@ func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
 }
 
 func TestGracefulShutdown_TimesOut(t *testing.T) {
-	const sk = "a/c1/1"
+	const sk = "a/c1"
 	ag := &agent.Agent{}
 	ag.SetTurnInFlightForTest(sk, true) // never cleared — simulates stuck agent
 

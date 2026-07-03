@@ -14,7 +14,7 @@ func TestCreatedAtNewSession(t *testing.T) {
 	// Proves that CreatedAt returns "n/a" before any messages are written and a
 	// valid RFC3339 timestamp after the first append.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	createdAt := s.CreatedAt(key)
 	if createdAt != "n/a" {
@@ -38,7 +38,7 @@ func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 	// Proves that the original creation timestamp survives a Replace (compaction)
 	// operation and is unchanged in the resulting file.
 	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	// Create session
 	s.TestAppend(key, msg("user", "hello"))
@@ -66,7 +66,7 @@ func TestCreatedAtWrittenOnFirstAppend(t *testing.T) {
 	// with a non-empty created_at field, by inspecting the raw JSONL on disk.
 	dir := t.TempDir()
 	s := NewStore(dir)
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	s.TestAppend(key, msg("user", "hello"))
 
@@ -97,7 +97,7 @@ func TestCreatedAtPreservedAfterRestart(t *testing.T) {
 	// Proves that CreatedAt reads the persisted value from disk on a fresh store
 	// instance, meaning the timestamp survives process restart.
 	dir := t.TempDir()
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	// Create session with first store instance
 	s1 := NewStore(dir)
@@ -119,7 +119,7 @@ func TestCreatedAtPreservedWithChangedMtime(t *testing.T) {
 	// Proves that CreatedAt returns the value embedded in the session_meta record,
 	// not the file's modification time — it's stable even when mtime changes.
 	dir := t.TempDir()
-	key := "test/imain/1000000000"
+	key := "test/imain"
 
 	s := NewStore(dir)
 	s.TestAppend(key, msg("user", "hello"))
@@ -146,7 +146,7 @@ func TestLastActivity(t *testing.T) {
 	// Proves that LastActivity returns a valid RFC3339 timestamp after a message
 	// has been written to the session file.
 	s := NewStore(t.TempDir())
-	key := "test/c123/1000000000"
+	key := "test/c123"
 
 	// Write a message to create the file
 	s.TestAppend(key, msg("user", "test message"))
@@ -166,7 +166,7 @@ func TestLastActivity(t *testing.T) {
 func TestLastActivity_Missing(t *testing.T) {
 	// Proves that LastActivity returns "n/a" when the session file does not exist.
 	s := NewStore(t.TempDir())
-	key := "test/c999/1000000000"
+	key := "test/c999"
 
 	// Try to get activity for non-existent session
 	lastActivity := s.LastActivity(key)

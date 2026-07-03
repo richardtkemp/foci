@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +19,7 @@ type ChatSessionInfo struct {
 }
 
 // ListChatSessions returns all chat sessions for an agent.
-// It scans for directories matching the pattern <agentID>/c<chatID>/<versionTS>/root.jsonl.
+// It scans for directories matching the pattern <agentID>/c<chatID>/root.jsonl.
 func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 	agentDir := filepath.Join(s.dir, agentID)
 	entries, err := os.ReadDir(agentDir)
@@ -39,56 +38,31 @@ func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 		}
 
 		// Parse chat ID from directory name (e.g., "c123" -> 123)
-		chatIDStr := strings.TrimPrefix(e.Name(), "c")
-		var chatID int64
-		if _, err := fmt.Sscanf(chatIDStr, "%d", &chatID); err != nil {
-			continue
-		}
-
-		// Look for version timestamp directories inside the chat directory
-		chatDir := filepath.Join(agentDir, e.Name())
-		versionEntries, err := os.ReadDir(chatDir)
+		chatID, err := strconv.ParseInt(strings.TrimPrefix(e.Name(), "c"), 10, 64)
 		if err != nil {
 			continue
 		}
 
-		// Find version directories (numeric names)
-		for _, ve := range versionEntries {
-			if !ve.IsDir() {
-				continue
-			}
-
-			// Version should be a number (the timestamp)
-			versionTS, err := strconv.ParseInt(ve.Name(), 10, 64)
-			if err != nil {
-				continue
-			}
-
-			// Check for root.jsonl in the version directory
-			versionDir := filepath.Join(chatDir, ve.Name())
-			rootPath := filepath.Join(versionDir, "root.jsonl")
-			if _, err := os.Stat(rootPath); os.IsNotExist(err) {
-				continue
-			}
-
-			// Reconstruct the actual session key from the directory structure
-			key := fmt.Sprintf("%s/c%d/%d", agentID, chatID, versionTS)
-			mc, _ := s.MessageCount(key)
-
-			info, err := os.Stat(rootPath)
-			var lastActivity time.Time
-			if err == nil {
-				lastActivity = info.ModTime()
-			}
-
-			sessions = append(sessions, ChatSessionInfo{
-				ChatID:       chatID,
-				SessionKey:   key,
-				MessageCount: mc,
-				LastActivity: lastActivity,
-			})
-			break // Only take the first version found
+		key := NewChatSessionKey(agentID, chatID)
+		rootPath := filepath.Join(agentDir, e.Name(), "root.jsonl")
+		if _, err := os.Stat(rootPath); os.IsNotExist(err) {
+			continue
 		}
+
+		mc, _ := s.MessageCount(key)
+
+		info, err := os.Stat(rootPath)
+		var lastActivity time.Time
+		if err == nil {
+			lastActivity = info.ModTime()
+		}
+
+		sessions = append(sessions, ChatSessionInfo{
+			ChatID:       chatID,
+			SessionKey:   key,
+			MessageCount: mc,
+			LastActivity: lastActivity,
+		})
 	}
 
 	return sessions, nil
@@ -228,10 +202,10 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 	return entries, nil
 }
 
-// pathToKey converts a relative file path back to a session key.
-// New format: path is the key, except root sessions have /root suffix.
-// Example: main/c123/1709590000/root → main/c123/1709590000
-// Example: main/c123/1709590000/b1709596800 → main/c123/1709590000/b1709596800
+// pathToKey converts a relative file path (extension already stripped) back to
+// a session key.
+// Example: main/c123/root → main/c123
+// Example: main/c123/b1709596800 → main/c123/b1709596800
 func pathToKey(relPath string) string {
 	// If path ends with /root, strip it (it's a root session)
 	if strings.HasSuffix(relPath, "/root") {
@@ -241,59 +215,30 @@ func pathToKey(relPath string) string {
 	return relPath
 }
 
-// archiveParentKey derives the parent session key from an archive key.
-// New format examples:
-// "main/c123/1709590000.2026-03-04T02-30-00Z" → "main/c123/1709590000"
-// "main/c123/1709590000.2026-03-04T02-30-00Z.2" → "main/c123/1709590000"
-// "main/c123/1709590000.1" → "main/c123/1709590000" (numbered suffix)
+// archiveParentKey derives the live session key an archive file belongs to.
+// The archive suffix (timestamp and/or counter, dot-separated) is stripped from
+// the last path segment; a remaining "root" segment maps to the root key.
+// Examples:
+//
+//	"main/c123/root.2026-03-04T02-30-00Z"    → "main/c123"
+//	"main/c123/root.2026-03-04T02-30-00Z.2"  → "main/c123"
+//	"main/c123/b1709596800.1"                → "main/c123/b1709596800"
 func archiveParentKey(archiveKey string) string {
-	// Find the last segment
 	keyParts := strings.Split(archiveKey, "/")
-	if len(keyParts) == 0 {
-		return archiveKey
-	}
-
 	lastSegment := keyParts[len(keyParts)-1]
-	segmentParts := strings.Split(lastSegment, ".")
 
-	// Need at least 2 parts to have an archive suffix
-	if len(segmentParts) < 2 {
-		return archiveKey
+	// The live file's stem is everything before the first dot: archive
+	// suffixes are only ever appended (nextArchivePath), and live stems
+	// ("root", "b<ts>", "i<ts>") never contain dots.
+	stem := lastSegment
+	if idx := strings.Index(lastSegment, "."); idx > 0 {
+		stem = lastSegment[:idx]
 	}
 
-	// Find the base name by removing archive suffixes
-	var baseParts []string
-
-	// Compile regexes once before loop
-	timestampRe := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$`)
-	digitsRe := regexp.MustCompile(`^\d+$`)
-
-	// Identify where the archive suffix starts
-	for i := 0; i < len(segmentParts); i++ {
-		part := segmentParts[i]
-
-		// Check if this part is a timestamp pattern
-		if timestampRe.MatchString(part) {
-			// Found timestamp, everything before this is the base
-			baseParts = segmentParts[:i]
-			break
-		}
-
-		// Check if this part is just digits (numbered pattern)
-		if digitsRe.MatchString(part) {
-			// Found numbered suffix, everything before this is the base
-			baseParts = segmentParts[:i]
-			break
-		}
+	if stem == "root" {
+		// Root archive: the parent key is the directory path.
+		return strings.Join(keyParts[:len(keyParts)-1], "/")
 	}
-
-	// If no archive pattern found, return original
-	if len(baseParts) == 0 {
-		return archiveKey
-	}
-
-	// Rebuild the key with cleaned last segment
-	cleanedLastSegment := strings.Join(baseParts, ".")
-	keyParts[len(keyParts)-1] = cleanedLastSegment
+	keyParts[len(keyParts)-1] = stem
 	return strings.Join(keyParts, "/")
 }

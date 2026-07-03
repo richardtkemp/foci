@@ -3,8 +3,6 @@ package agent
 import (
 	"fmt"
 	"time"
-
-	"foci/internal/session"
 )
 
 // sessionMetaLastActivity is the session_metadata key holding the unix
@@ -14,11 +12,11 @@ import (
 // path participates uniformly. Used by --if-active / --if-inactive gates
 // to answer "has this session been doing anything recently?" (TODO #753).
 //
-// Stored against SessionKeyBase(sessionKey) — the {agentID}/{type}{id}
-// prefix that is stable across compaction (version rotation) and branching.
-// CLI sends target the agent's *main* session, so the gate consults that
-// session's row; activity in branches or sub-agents does not falsely keep
-// the main session "warm" for keepalive purposes.
+// Stored against the session key. Session keys are stable identities
+// (compaction archives in place), and branches have their own keys — so CLI
+// sends targeting the agent's *main* session consult that session's row;
+// activity in branches or sub-agents does not falsely keep the main session
+// "warm" for keepalive purposes.
 //
 // Distinct from "last_user_activity" (still in agent_metadata, written by
 // internal/telegram/bot_receive.go and internal/discord/receive.go) which
@@ -32,23 +30,20 @@ const sessionMetaLastActivity = "last_activity"
 // only reflects the API path's internal counter and is per-agent rather than
 // per-session.
 //
-// Pass the FULL session key; the identity is derived via
-// session.SessionInFlightKey, which collapses version rotation (compaction)
-// but PRESERVES the child suffix. So a root session and its post-compaction
-// versions share one identity, while a facet/branch (a 'b' child on its own
-// backend) tracks separately — collapsing a facet onto the parent would wrongly
-// couple two independent conversations (TODO #719). Root-injected periodic
-// turns (reflection/keepalive/memory) run under the parent key with no child,
-// so they still register under the root identity as the #760/#767 gates expect.
+// Session keys are stable identities: a root session and its post-compaction
+// content share one key, while a facet/branch (a 'b' child on its own backend)
+// has its own key and tracks separately — coupling a facet to the parent would
+// wrongly couple two independent conversations (TODO #719). Root-injected
+// periodic turns (reflection/keepalive/memory) run under the parent key, so
+// they register under the root identity as the #760/#767 gates expect.
 //
 // This is the runtime signal used by the activity gate to short-circuit
 // keepalive sends while a turn is mid-flight (e.g. blocked waiting for a
 // permission decision in the delegated path).
 func (a *Agent) IsTurnInFlight(key string) bool {
-	base := session.SessionInFlightKey(key)
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
-	return a.inFlight[base] > 0
+	return a.inFlight[key] > 0
 }
 
 // IsAnyTurnInFlight reports whether any session under this agent currently has
@@ -70,7 +65,7 @@ func (a *Agent) IsAnyTurnInFlight() bool {
 // clears it, so tests can exercise the in-flight guards without driving a real
 // turn. Test-only.
 func (a *Agent) SetTurnInFlightForTest(sessionKey string, inFlight bool) {
-	base := session.SessionInFlightKey(sessionKey)
+	base := sessionKey
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
 	if a.inFlight == nil {
@@ -94,10 +89,9 @@ func (a *Agent) SetTurnInFlightForTest(sessionKey string, inFlight bool) {
 // markInFlight time; the bookkeeping is exact across nested/concurrent turns
 // on the same base.
 func (a *Agent) IsInFlightDelivering(key string) bool {
-	base := session.SessionInFlightKey(key)
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
-	return a.inFlightDelivering[base] > 0
+	return a.inFlightDelivering[key] > 0
 }
 
 // InFlightWaitCh returns a channel that closes the next time the in-flight
@@ -120,7 +114,7 @@ func (a *Agent) IsInFlightDelivering(key string) bool {
 // happens under inFlightMu, so every waiter that fetched the channel before
 // the change observes the close.
 func (a *Agent) InFlightWaitCh(key string) <-chan struct{} {
-	base := session.SessionInFlightKey(key)
+	base := key
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
 	if a.inFlightChanged == nil {
@@ -158,9 +152,6 @@ func (a *Agent) notifyInFlightChangedLocked(base string) {
 // counter tracks delivering turns so callers can distinguish "any turn in
 // flight" from "an in-flight turn whose output reaches the user."
 //
-// Pass the FULL session key — markInFlight derives the in-flight identity via
-// session.SessionInFlightKey (child-preserving; see IsTurnInFlight).
-//
 // Usage at call sites:
 //
 //	delivering := turnevent.SinkFromContext(ctx).DeliversToPlatform()
@@ -175,7 +166,7 @@ func (a *Agent) notifyInFlightChangedLocked(base string) {
 // close-and-replace, so the inbox's wait loop wakes on any state change and
 // re-evaluates its predicate.
 func (a *Agent) markInFlight(key string, delivering bool) func() {
-	base := session.SessionInFlightKey(key)
+	base := key
 	a.inFlightMu.Lock()
 	if a.inFlight == nil {
 		a.inFlight = make(map[string]int32)
@@ -215,7 +206,7 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 	}
 }
 
-// touchLastActivity writes the current unix timestamp to the session base's
+// touchLastActivity writes the current unix timestamp to the session's
 // last_activity metadata key, recording that this session is currently
 // executing a turn. No-op if SessionIndex is nil (test agents) or base is
 // empty.

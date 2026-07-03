@@ -11,6 +11,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/mana"
 	"foci/internal/platform"
+	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/tempdir"
 	"foci/internal/tools"
@@ -22,45 +23,62 @@ func wireAgentPlatformCallbacks(
 	ag *agent.Agent,
 	acfg config.AgentConfig,
 	resolved *config.ResolvedAgentConfig,
-	plat *platform.Messaging,
 	connMgr platform.ConnectionManager,
 	sessionIndex *session.SessionIndex,
-	tmuxMigrateKey func(string, string),
 ) {
 	// Register ALL platform connections with agent
 	for i, conn := range connMgr.AllForAgent(acfg.ID) {
 		ag.AddPlatform(fmt.Sprintf("platform-%d", i), conn)
 	}
 
-	// Cache bust — notify all connections
+	// broadcastNotify fans a notice out to every live connection for this
+	// agent (route.Broadcast — the delivery set behind PolicyBroadcast).
+	broadcastNotify := func(text string) {
+		for _, conn := range route.Broadcast(connMgr, acfg.ID) {
+			conn.SendNotification(text)
+		}
+	}
+
+	// Cache bust — session-specific, not a broadcast: the bust concerns ONE
+	// session's cache prefix, so the notice goes to that session's chat
+	// (SessionNotifier where supported, #911), not to every surface.
 	if ag.CacheBustDetect {
 		ag.CacheBustAlert.Add(func(sess string, prev, cur int) {
 			msg := fmt.Sprintf("⚠️ %s: cache bust, cache_read dropped %d → %d", sess, prev, cur)
 			log.Warnf("agent", "%s", msg)
-			plat.NotifyAgent(acfg.ID, msg)
+			c, outcome := route.ConnFor(connMgr, acfg.ID, sess, route.PolicyFallback)
+			if c == nil {
+				log.Warnf("agent", "cache-bust notice for %s: no connection (%s)", sess, outcome)
+				return
+			}
+			if sn, ok := c.(platform.SessionNotifier); ok {
+				sn.SendNotificationToSession(sess, msg)
+			} else {
+				c.SendNotification(msg)
+			}
 		})
 	}
 
-	// Mana warnings — notify all
+	// Mana warnings — broadcast to every surface
 	if ag.ManaWatcher != nil {
 		ag.ManaWarnFunc.Add(func(warn string) {
 			log.Infof("mana", "%s", warn)
-			plat.NotifyAgent(acfg.ID, "⚠️ "+warn)
+			broadcastNotify("⚠️ " + warn)
 		})
 	}
 
-	// Rate limit — notify all
+	// Rate limit — broadcast to every surface
 	ag.RateLimitFunc.Add(func(resetTime time.Time) {
 		resetStr := mana.ParseResetTime(resetTime.Format(time.RFC3339Nano))
 		if resetStr == "" {
 			resetStr = resetTime.Format(time.Kitchen)
 		}
-		plat.NotifyAgent(acfg.ID, fmt.Sprintf("⚡ Rate limited (resets %s).", resetStr))
+		broadcastNotify(fmt.Sprintf("⚡ Rate limited (resets %s).", resetStr))
 	})
 
-	// Max tokens — notify all
+	// Max tokens — broadcast to every surface
 	ag.MaxTokensWarnFunc.Add(func(warn string) {
-		plat.NotifyAgent(acfg.ID, "⚠️ "+warn)
+		broadcastNotify("⚠️ " + warn)
 	})
 
 	// Task list notify — per-platform resolution.
@@ -162,20 +180,6 @@ func wireAgentPlatformCallbacks(
 			log.Warnf("agent", "compaction debug: send document: %v", err)
 		}
 		_ = os.Remove(f.Name())
-	})
-
-	// Session key rotation — update DB directly and tmux ownership
-	ag.SessionKeyRotatedFunc.Add(func(oldKey, newKey string) {
-		if tmuxMigrateKey != nil {
-			tmuxMigrateKey(oldKey, newKey)
-		}
-		chatID := session.ChatIDFromKey(oldKey)
-		if chatID == 0 || sessionIndex == nil {
-			return
-		}
-		if err := sessionIndex.RotateChatSessionKey(acfg.ID, chatID, oldKey, newKey); err != nil {
-			log.Errorf("agent", "rotate chat session key %s → %s: %v", oldKey, newKey, err)
-		}
 	})
 
 	// Session activity tracking

@@ -55,10 +55,10 @@ func TestForSessionOrPrimary_PlatformAwareRouting(t *testing.T) {
 		},
 	}
 
-	// Session key for agent "myagent", chat 42 (format: agent/c<chatID>/versionTS).
+	// Session key for agent "myagent", chat 42 (format: agent/c<chatID>).
 	// ForSession won't match (no session mappings), so it falls through to
 	// platform-aware primary.
-	got := mgr.ForSessionOrPrimary("myagent/c42/1000000000", "myagent")
+	got := mgr.ForSessionOrPrimary("myagent/c42", "myagent")
 	if got == nil {
 		t.Fatal("ForSessionOrPrimary returned nil")
 	}
@@ -88,7 +88,7 @@ func TestForSessionOrPrimary_FallsBackToFirstPrimary(t *testing.T) {
 		},
 	}
 
-	got := mgr.ForSessionOrPrimary("myagent/c99/1000000000", "myagent")
+	got := mgr.ForSessionOrPrimary("myagent/c99", "myagent")
 	if got == nil {
 		t.Fatal("ForSessionOrPrimary returned nil")
 	}
@@ -106,7 +106,7 @@ func TestForSessionOrPrimary_ForSessionHit(t *testing.T) {
 
 	telegramMgr := &testConnMgr{
 		primary:  primaryConn,
-		sessions: map[string]Connection{"myagent/c42/1000000000": sessionConn},
+		sessions: map[string]Connection{"myagent/c42": sessionConn},
 	}
 
 	mgr := &aggregatingConnMgr{
@@ -119,7 +119,7 @@ func TestForSessionOrPrimary_ForSessionHit(t *testing.T) {
 		},
 	}
 
-	got := mgr.ForSessionOrPrimary("myagent/c42/1000000000", "myagent")
+	got := mgr.ForSessionOrPrimary("myagent/c42", "myagent")
 	if got == nil {
 		t.Fatal("ForSessionOrPrimary returned nil")
 	}
@@ -140,7 +140,7 @@ func TestForSessionOrPrimary_NoChatPlatformFn(t *testing.T) {
 		chatPlatformFn: nil,
 	}
 
-	got := mgr.ForSessionOrPrimary("myagent/c42/1000000000", "myagent")
+	got := mgr.ForSessionOrPrimary("myagent/c42", "myagent")
 	if got == nil {
 		t.Fatal("ForSessionOrPrimary returned nil")
 	}

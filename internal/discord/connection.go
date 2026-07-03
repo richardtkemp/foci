@@ -23,6 +23,7 @@ import (
 )
 
 var _ platform.Sender = (*Bot)(nil)
+var _ platform.SessionNotifier = (*Bot)(nil) // #911: per-session compaction-notice routing
 var _ platform.ButtonSender = (*Bot)(nil)
 
 // messageSession is the subset of the discordgo session API the bot uses for
@@ -93,8 +94,8 @@ type Bot struct {
 	sessionIndex platform.SessionIndex
 	chatmeta     *chatmeta.Resolver
 
-	display         BotDisplayConfig
-	fileMode        os.FileMode       // permission bits for saved files (media, etc.)
+	display       BotDisplayConfig
+	fileMode      os.FileMode          // permission bits for saved files (media, etc.)
 	toolStore     turn.ToolResultStore // tool-call display state (in-memory + optional SQLite write-through)
 	thinkingStore sync.Map             // message ID (int64) -> thinkingEntry; ephemeral
 

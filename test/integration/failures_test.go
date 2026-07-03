@@ -1132,15 +1132,14 @@ func TestL2_Failures_UnknownToolInBashCommandFailsCleanly(t *testing.T) {
 	}
 }
 
-// TestL2_Failures_SendToSessionUnknownTargetLogged proves the
-// send_to_session tool surfaces a clear error when the partial key
-// doesn't resolve to any registered agent. cc-stub scripts
-// `foci_send_to_session ghost/c1234 --message hi`; foci's
-// NewSendToSessionTool resolver returns an error which the exec bridge
-// JSON-encodes back to the shell function. The test asserts the stderr
-// contains the "no session matches" line AND that no user_message
-// entry lands in any workspaces/* dir (the dispatch was correctly
-// dropped).
+// TestL2_Failures_SendToSessionUnknownTargetLogged proves a
+// send_to_session targeting an unknown agent is dropped with a clear
+// log. cc-stub scripts `foci_send_to_session ghost/c1234 --message hi`;
+// "ghost/c1234" is a well-formed session key, so it dispatches to the
+// async notifier, whose agent-resolution guard finds no agent "ghost"
+// and drops the message ("unknown target agent"). The test asserts the
+// stderr surfaces that drop AND that no user_message entry lands in any
+// workspaces/* dir.
 func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
 	testharness.ParallelWait(t)
 	const testMarker = "MARKER_GHOST_SHOULD_NEVER_LAND"
@@ -1182,26 +1181,24 @@ func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
 	// dispatch should have been refused before any agent saw it.
 	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
 		if e.Kind == "user_message" && strings.Contains(e.TextPrefix, testMarker) {
-			t.Errorf("marker landed in workdir %q despite the partial key being unresolvable", e.Workdir)
+			t.Errorf("marker landed in workdir %q despite the target agent being unknown", e.Workdir)
 		}
 	}
 
-	// Assert: foci-gw stderr surfaces the resolver error. The actual
-	// log line is "could not resolve partial session key" (see
-	// internal/tools/session_send.go). Different wording from the
-	// purpose comment's "no session matches" but identical semantics.
+	// Assert: foci-gw stderr surfaces the drop — the async notifier logs
+	// `unknown target agent "ghost" for session ghost/c1234` (see
+	// cmd/foci-gw/agents_notify.go).
 	stderr := h.Stderr()
-	if !strings.Contains(stderr, "could not resolve partial session key") &&
+	if !strings.Contains(stderr, "unknown target agent") &&
 		!strings.Contains(stderr, "ghost/c1234") {
 		t.Errorf("expected resolver error mentioning the ghost key in stderr; got tail:\n%s", stderrTail(stderr))
 	}
 }
 
 // (TestL2_Failures_SendToSessionAmbiguousPartialKeyRejects removed —
-// premise was wrong: partial keys are <agent>/<typeID>, so agent-level
-// ambiguity is structurally impossible. The category is already covered
-// by TestL2_Failures_SendToSessionUnknownTargetLogged above, which
-// exercises the no-match path through the same resolver.)
+// premise was wrong: <agent>/<typeID> is a full session key, so
+// agent-level ambiguity is structurally impossible. The category is
+// covered by TestL2_Failures_SendToSessionUnknownTargetLogged above.)
 
 // TestL2_Failures_ExecBridgeSocketUnreachable proves a tool call that
 // can't reach the per-session bridge socket (e.g. FOCI_SOCK points at
@@ -1433,13 +1430,12 @@ func TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops(t *testing.T) {
 	}
 
 	// Script alpha to fire send_to_session via the exec bridge,
-	// targeting beta's session. Use a partial key (resolveKeyFn picks
-	// up the live session from beta's bootstrap). reply_to=session
+	// targeting beta's session by its full key. reply_to=session
 	// means the async notifier path runs — that's where the "unknown
 	// target agent" guard lives.
 	const marker = "STOPPED-AGENT-MARKER-9381"
-	partialKey := fmt.Sprintf("beta/c%d", betaUserID)
-	bashCmd := fmt.Sprintf(`foci_send_to_session %s --reply-to session --message %q`, partialKey, marker)
+	targetKey := fmt.Sprintf("beta/c%d", betaUserID)
+	bashCmd := fmt.Sprintf(`foci_send_to_session %s --reply-to session --message %q`, targetKey, marker)
 	scriptBody, err := json.Marshal(map[string]any{
 		"text": "forwarding to beta",
 		"tool_uses": []map[string]any{
@@ -1603,8 +1599,8 @@ func TestL2_Failures_SessionStoreCorruptedJSONLOnStartup(t *testing.T) {
 	// Build a malformed JSONL — valid session_meta on line 1, valid
 	// message on line 2, then a truncated JSON on line 3 (no closing
 	// brace) followed by a clean message on line 4. Path matches the
-	// SessionPath layout: <dataDir>/sessions/<agentID>/c<chatID>/<versionTS>/root.jsonl
-	corruptKey := fmt.Sprintf("sessions/alpha/c%d/1700000000/root.jsonl", userID)
+	// SessionPath layout: <dataDir>/sessions/<agentID>/c<chatID>/root.jsonl
+	corruptKey := fmt.Sprintf("sessions/alpha/c%d/root.jsonl", userID)
 	corruptBody := strings.Join([]string{
 		`{"type":"session_meta","created_at":"2026-05-24T13:00:00Z"}`,
 		`{"role":"user","content":"ancient stable message"}`,

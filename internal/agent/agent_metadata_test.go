@@ -100,7 +100,7 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	ag.hmTest(context.Background(), "test/imeta/1000000000", "Hello")
+	ag.hmTest(context.Background(), "test/imeta", "Hello")
 
 	if receivedReq == nil {
 		t.Fatal("no request received")
@@ -149,7 +149,7 @@ func TestMetadataUsesReceivedAtNotWallClock(t *testing.T) {
 
 	receivedAt := time.Date(2026, 4, 11, 13, 49, 0, 0, time.UTC)
 	ctx := WithReceivedAt(context.Background(), receivedAt)
-	if _, err := ag.hmTest(ctx, "test/ireceivedat/1000000000", "Dick's message"); err != nil {
+	if _, err := ag.hmTest(ctx, "test/ireceivedat", "Dick's message"); err != nil {
 		t.Fatalf("hmTest: %v", err)
 	}
 	if receivedReq == nil {
@@ -267,7 +267,7 @@ func TestMetaPlatformFromTrigger(t *testing.T) {
 		}
 
 		ctx := WithTrigger(context.Background(), tt.trigger)
-		sk := "test/plat_" + tt.trigger + "/1000000000"
+		sk := "test/iplat_" + tt.trigger
 		ag.hmTest(ctx, sk, "Hello")
 
 		lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -328,7 +328,7 @@ func TestDuplicateMessages(t *testing.T) {
 		DuplicateMessages: true,
 	}
 
-	ag.hmTest(context.Background(), "test/idup/1000000000", "Do the thing")
+	ag.hmTest(context.Background(), "test/idup", "Do the thing")
 
 	// The user message text should contain the instruction twice
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -343,7 +343,7 @@ func TestDuplicateMessages(t *testing.T) {
 	}
 
 	// Saved session should also have the duplicated text (for cache coherence)
-	saved, _ := store.Load("test/idup/1000000000")
+	saved, _ := store.Load("test/idup")
 	savedText := provider.TextOf(saved[0].Content)
 	if count := strings.Count(savedText, "Do the thing"); count != 2 {
 		t.Errorf("saved session should have duplicated text, got %d occurrences", count)
@@ -376,7 +376,7 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 		DuplicateMessages: false,
 	}
 
-	ag.hmTest(context.Background(), "test/inodup/1000000000", "Do the thing")
+	ag.hmTest(context.Background(), "test/inodup", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
 	text := provider.TextOf(lastMsg.Content)
@@ -417,7 +417,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// Wake trigger should NOT duplicate
 	wakeCtx := WithTrigger(context.Background(), "wake")
-	ag.hmTest(wakeCtx, "test/iwake/1000000000", "Do the thing")
+	ag.hmTest(wakeCtx, "test/iwake", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
 	text := provider.TextOf(lastMsg.Content)
@@ -427,7 +427,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// Keepalive trigger should NOT duplicate
 	kaCtx := WithTrigger(context.Background(), "keepalive")
-	ag.hmTest(kaCtx, "test/ika/1000000000", "Check stuff")
+	ag.hmTest(kaCtx, "test/ika", "Check stuff")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -437,7 +437,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// User trigger SHOULD duplicate
 	userCtx := WithTrigger(context.Background(), "user")
-	ag.hmTest(userCtx, "test/iuser/1000000000", "Do the thing")
+	ag.hmTest(userCtx, "test/iuser", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -447,7 +447,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// Telegram trigger SHOULD duplicate (human-typed messages)
 	tgCtx := WithTrigger(context.Background(), "telegram")
-	ag.hmTest(tgCtx, "test/itg/1000000000", "Say something")
+	ag.hmTest(tgCtx, "test/itg", "Say something")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -457,7 +457,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// Voice trigger SHOULD duplicate (human-spoken messages)
 	voiceCtx := WithTrigger(context.Background(), "voice")
-	ag.hmTest(voiceCtx, "test/ivoice/1000000000", "Tell me")
+	ag.hmTest(voiceCtx, "test/ivoice", "Tell me")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -468,7 +468,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	// System triggers should NOT duplicate
 	for _, sysT := range []string{"proactive_warning", "async_notify", "session_notify", "scheduled_wake", "restart", "first_run"} {
 		sysCtx := WithTrigger(context.Background(), sysT)
-		ag.hmTest(sysCtx, "test/isys"+sysT+"/1000000000", "System msg")
+		ag.hmTest(sysCtx, "test/isys"+sysT, "System msg")
 
 		lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 		text = provider.TextOf(lastMsg.Content)
@@ -507,9 +507,9 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 	}
 
 	// With thinking+effort>low, duplication should be suppressed
-	ag.SetSessionThinking("test/ithink/1000000000", "enabled")
-	ag.SetSessionEffort("test/ithink/1000000000", "high")
-	ag.hmTest(context.Background(), "test/ithink/1000000000", "Do the thing")
+	ag.SetSessionThinking("test/ithink", "enabled")
+	ag.SetSessionEffort("test/ithink", "high")
+	ag.hmTest(context.Background(), "test/ithink", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
 	text := provider.TextOf(lastMsg.Content)
@@ -518,9 +518,9 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 	}
 
 	// With effort=low, duplication should NOT be suppressed
-	ag.SetSessionThinking("test/ilow/1000000000", "enabled")
-	ag.SetSessionEffort("test/ilow/1000000000", "low")
-	ag.hmTest(context.Background(), "test/ilow/1000000000", "Do the thing")
+	ag.SetSessionThinking("test/ilow", "enabled")
+	ag.SetSessionEffort("test/ilow", "low")
+	ag.hmTest(context.Background(), "test/ilow", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -529,8 +529,8 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 	}
 
 	// With thinking but default (empty) effort, duplication should still be suppressed
-	ag.SetSessionThinking("test/idefaulteffort/1000000000", "adaptive")
-	ag.hmTest(context.Background(), "test/idefaulteffort/1000000000", "Do the thing")
+	ag.SetSessionThinking("test/idefaulteffort", "adaptive")
+	ag.hmTest(context.Background(), "test/idefaulteffort", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -539,8 +539,8 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 	}
 
 	// With no thinking, duplication should NOT be suppressed
-	ag.SetSessionEffort("test/inothink/1000000000", "high")
-	ag.hmTest(context.Background(), "test/inothink/1000000000", "Do the thing")
+	ag.SetSessionEffort("test/inothink", "high")
+	ag.hmTest(context.Background(), "test/inothink", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)

@@ -2,7 +2,6 @@ package discord
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"foci/internal/chatmeta"
@@ -25,9 +24,9 @@ func discordTestResolver(t *testing.T, agentID string) (*chatmeta.Resolver, *ses
 	}, idx
 }
 
-// TestSessionKeyForChatCaching verifies that repeated calls to SessionKeyForChat
-// return the same persisted key from the DB.
-func TestSessionKeyForChatCaching(t *testing.T) {
+// TestSessionKeyForChatStable verifies that repeated calls to SessionKeyForChat
+// return the same deterministic derived key.
+func TestSessionKeyForChatStable(t *testing.T) {
 	r, idx := discordTestResolver(t, "test")
 	bot := &Bot{
 		agentID:      "test",
@@ -37,7 +36,10 @@ func TestSessionKeyForChatCaching(t *testing.T) {
 	key1 := bot.SessionKeyForChat(42)
 	key2 := bot.SessionKeyForChat(42)
 	if key1 != key2 {
-		t.Errorf("expected cached key, got %q and %q", key1, key2)
+		t.Errorf("expected stable key, got %q and %q", key1, key2)
+	}
+	if key1 != "test/c42" {
+		t.Errorf("expected derived key test/c42, got %q", key1)
 	}
 }
 
@@ -71,12 +73,12 @@ func TestSetSessionKey(t *testing.T) {
 		},
 	}
 
-	bot.SetSessionKey("agent/c100/12345")
-	if got := bot.SessionKey(); got != "agent/c100/12345" {
-		t.Errorf("expected session key agent/c100/12345, got %q", got)
+	bot.SetSessionKey("agent/c100/b12345")
+	if got := bot.SessionKey(); got != "agent/c100/b12345" {
+		t.Errorf("expected session key agent/c100/b12345, got %q", got)
 	}
-	if calledWith != "agent/c100/12345" {
-		t.Errorf("expected callback with agent/c100/12345, got %q", calledWith)
+	if calledWith != "agent/c100/b12345" {
+		t.Errorf("expected callback with agent/c100/b12345, got %q", calledWith)
 	}
 }
 
@@ -93,37 +95,12 @@ func TestSetSessionKeyDirect(t *testing.T) {
 		},
 	}
 
-	bot.SetSessionKeyDirect("test/c1/999")
+	bot.SetSessionKeyDirect("test/c1/b999")
 	if called {
 		t.Error("SetSessionKeyDirect should not fire OnSessionKeyChange")
 	}
-	if got := bot.SessionKey(); got != "test/c1/999" {
-		t.Errorf("expected session key test/c1/999, got %q", got)
-	}
-}
-
-// TestUpdateChatSessionKey verifies that updating a chat session key overwrites
-// the persisted value in the DB.
-func TestUpdateChatSessionKey(t *testing.T) {
-	r, idx := discordTestResolver(t, "agent")
-	bot := &Bot{
-		agentID:      "agent",
-		sessionIndex: idx,
-		chatmeta:     r,
-	}
-
-	// First access creates a key.
-	key1 := bot.SessionKeyForChat(55)
-
-	// Update should replace it.
-	bot.UpdateChatSessionKey(55, "agent/c55/newversion")
-	key2 := bot.SessionKeyForChat(55)
-
-	if key1 == key2 {
-		t.Error("expected different key after update")
-	}
-	if key2 != "agent/c55/newversion" {
-		t.Errorf("expected updated key, got %q", key2)
+	if got := bot.SessionKey(); got != "test/c1/b999" {
+		t.Errorf("expected session key test/c1/b999, got %q", got)
 	}
 }
 
@@ -146,8 +123,8 @@ func TestDefaultSessionKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	sk := bot.DefaultSessionKey()
-	if !strings.HasPrefix(sk, "test-agent/c12345/") {
-		t.Errorf("expected prefix test-agent/c12345/, got %q", sk)
+	if sk != "test-agent/c12345" {
+		t.Errorf("expected test-agent/c12345, got %q", sk)
 	}
 }
 

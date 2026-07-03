@@ -14,7 +14,7 @@ func TestTmuxStartAndList(t *testing.T) {
 	// Verifies that sessions can be started and listed correctly, confirming the session name appears in list output with proper ownership markers.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-start"
 	tmuxSetup(t, name)
@@ -58,7 +58,7 @@ func TestTmuxSendAndRead(t *testing.T) {
 	// Verifies that text sent to a session appears in the read output, confirming the send→read round-trip works correctly.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-sendread"
 	tmuxSetup(t, name)
@@ -105,7 +105,7 @@ func TestTmuxReadDefault(t *testing.T) {
 	// Verifies that read succeeds with no explicit line count, confirming the default parameter works without error.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-readdefault"
 	tmuxSetup(t, name)
@@ -144,7 +144,7 @@ func TestTmuxKill(t *testing.T) {
 		exec.Command("tmux", "-S", sock, "kill-server").Run()
 	})
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	t.Parallel()
 
@@ -190,7 +190,7 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 	// Verifies that a session started with a workdir parameter actually runs in that directory, confirmed by reading pwd output.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-workdir"
 	tmuxSetup(t, name)

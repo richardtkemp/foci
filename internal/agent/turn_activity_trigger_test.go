@@ -30,7 +30,7 @@ func TestMemoryTriggerSkipsActivityBump(t *testing.T) {
 	// (agent_platforms.go); mirror that so TouchActivity has something to bump.
 	ag.OnActivity.Add(func(sk string) { idx.TouchActivity(sk) })
 
-	const key = "test-agent/i0/1000000000"
+	const key = "test-agent/i0"
 	old := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	idx.Upsert(session.SessionIndexEntry{
 		SessionKey:     key,

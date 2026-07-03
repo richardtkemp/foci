@@ -16,8 +16,8 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 	// NoResetHook flag) in the new file, resets BranchPoint to 0, and that
 	// LoadFull after compaction returns only the compacted messages.
 	s := NewStore(t.TempDir())
-	parentKey := "test/c123/1000000000"
-	branchKey := "test/iwake-999/1000000000"
+	parentKey := "test/c123"
+	branchKey := "test/c123/b1000000001"
 
 	// Build parent with 4 messages
 	s.TestAppend(parentKey, msg("user", "parent1"))
@@ -91,17 +91,21 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 }
 
 func TestReplaceRotatesFile(t *testing.T) {
-	// Proves that Replace archives the old session file before writing new content:
-	// the current file holds only the compacted messages while an archive file
-	// retains the original messages.
+	// Proves that Replace (compaction) archives the old session file in place
+	// before writing new content: the session KEY is unchanged, the current file
+	// holds only the compacted messages, an archive file retains the original
+	// messages, and the compacted event carries the archive path.
 	dir := t.TempDir()
 	s := NewStore(dir)
-	key := "test/c999/1000000000"
+	key := "test/c999"
 
 	// Write initial messages
 	s.TestAppend(key, msg("user", "old1"))
 	s.TestAppend(key, msg("assistant", "old2"))
 	s.TestAppend(key, msg("user", "old3"))
+
+	var event SessionEvent
+	s.OnSessionEvent(func(e SessionEvent) { event = e })
 
 	// Replace (simulating compaction)
 	compacted := []provider.Message{
@@ -110,6 +114,17 @@ func TestReplaceRotatesFile(t *testing.T) {
 	}
 	if err := s.TestReplace(key, compacted); err != nil {
 		t.Fatalf("Replace: %v", err)
+	}
+
+	// Event: same key (stable identity), compacted status, archive path set.
+	if event.Status != SessionStatusCompacted {
+		t.Errorf("event.Status = %q, want compacted", event.Status)
+	}
+	if event.Key != key {
+		t.Errorf("event.Key = %q, want %q (key must not change)", event.Key, key)
+	}
+	if event.ArchivePath == "" {
+		t.Error("event.ArchivePath should be set")
 	}
 
 	// Current file should have compacted messages
@@ -122,7 +137,7 @@ func TestReplaceRotatesFile(t *testing.T) {
 	}
 
 	// Archive file should exist with old messages - check for timestamp pattern
-	chatDir := filepath.Join(dir, "test", "c999", "1000000000")
+	chatDir := filepath.Join(dir, "test", "c999")
 	entries, err := os.ReadDir(chatDir)
 	if err != nil {
 		t.Fatalf("read chat dir: %v", err)
@@ -153,7 +168,7 @@ func TestReplaceMultipleRotations(t *testing.T) {
 	// file always holds only the latest compacted content.
 	dir := t.TempDir()
 	s := NewStore(dir)
-	key := "test/c888/1000000000"
+	key := "test/c888"
 
 	for round := 1; round <= 3; round++ {
 		s.TestAppend(key, msg("user", fmt.Sprintf("round %d", round)))
@@ -168,7 +183,7 @@ func TestReplaceMultipleRotations(t *testing.T) {
 	}
 
 	// Should have 3 archive files with timestamp suffixes
-	chatDir := filepath.Join(dir, "test", "c888", "1000000000")
+	chatDir := filepath.Join(dir, "test", "c888")
 	entries, err := os.ReadDir(chatDir)
 	if err != nil {
 		t.Fatalf("read chat dir: %v", err)
@@ -199,8 +214,8 @@ func TestReplaceBranchRotation(t *testing.T) {
 	// the new file's branch_meta has BranchPoint reset to 0.
 	dir := t.TempDir()
 	s := NewStore(dir)
-	parentKey := "test/c777/1000000000"
-	branchKey := "test/iwake-111/1000000000"
+	parentKey := "test/c777"
+	branchKey := "test/c777/b1000000001"
 
 	s.TestAppend(parentKey, msg("user", "parent"))
 	s.TestAppend(parentKey, msg("assistant", "reply"))
@@ -216,16 +231,17 @@ func TestReplaceBranchRotation(t *testing.T) {
 		t.Fatalf("Replace branch: %v", err)
 	}
 
-	// Archive should exist - check for timestamp pattern
-	cronDir := filepath.Join(dir, "test", "iwake-111", "1000000000")
-	entries, err := os.ReadDir(cronDir)
+	// Archive should exist as a b<ts>.<archive-ts>.jsonl sibling in the
+	// parent's directory (child files live flat alongside root.jsonl).
+	parentDir := filepath.Join(dir, "test", "c777")
+	entries, err := os.ReadDir(parentDir)
 	if err != nil {
-		t.Fatalf("read cron dir: %v", err)
+		t.Fatalf("read parent dir: %v", err)
 	}
 	var archivePath string
 	for _, e := range entries {
-		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "root.") {
-			archivePath = filepath.Join(cronDir, e.Name())
+		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "b1000000001.") {
+			archivePath = filepath.Join(parentDir, e.Name())
 			break
 		}
 	}

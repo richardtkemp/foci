@@ -65,8 +65,8 @@ func TestWrapTurnErrorPassthrough(t *testing.T) {
 func TestSessionKeyForQueuedMessage(t *testing.T) {
 	sec, _, _ := newTestBot(t, "")
 	sec.isSecondary = true
-	sec.SetSessionKeyDirect("a/c9/777")
-	if got := sec.sessionKeyForQueuedMessage(platform.QueuedMessage{ChatID: 42}); got != "a/c9/777" {
+	sec.SetSessionKeyDirect("a/c9")
+	if got := sec.sessionKeyForQueuedMessage(platform.QueuedMessage{ChatID: 42}); got != "a/c9" {
 		t.Errorf("secondary: got %q", got)
 	}
 

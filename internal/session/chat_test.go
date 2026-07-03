@@ -28,9 +28,9 @@ func TestListChatSessions_WithSessions(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create two chat sessions
-	store.TestAppend("test/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
-	store.TestAppend("test/c111/1000000000", provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
-	store.TestAppend("test/c222/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hey")})
+	store.TestAppend("test/c111", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend("test/c111", provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
+	store.TestAppend("test/c222", provider.Message{Role: "user", Content: provider.TextContent("hey")})
 
 	sessions, err := store.ListChatSessions("test")
 	if err != nil {
@@ -68,8 +68,8 @@ func TestListChatSessions_IgnoresNonChat(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a main session and a chat session
-	store.TestAppend("test/imain/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
-	store.TestAppend("test/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend("test/imain", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend("test/c111", provider.Message{Role: "user", Content: provider.TextContent("hi")})
 
 	sessions, err := store.ListChatSessions("test")
 	if err != nil {
@@ -89,8 +89,8 @@ func TestListChatSessions_DifferentAgents(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 
-	store.TestAppend("alice/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
-	store.TestAppend("bob/c222/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hey")})
+	store.TestAppend("alice/c111", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend("bob/c222", provider.Message{Role: "user", Content: provider.TextContent("hey")})
 
 	// Should only list alice's sessions
 	sessions, err := store.ListChatSessions("alice")
@@ -116,17 +116,25 @@ func newAliasTestIndex(t *testing.T) *SessionIndex {
 }
 
 func TestResolveChatAlias(t *testing.T) {
+	// An alias on a chat resolves to the chat's DERIVED session key; a
+	// 'session_key' adoption-override row (app conversation pointed at a
+	// named session) wins over derivation. Matching is case-insensitive and
+	// trimmed; unknown aliases and other agents' aliases don't resolve.
 	idx := newAliasTestIndex(t)
 	if err := idx.SetChatAliasUnique("clutch", "app", 42, "Holiday Plans"); err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.SetChatMetadata("clutch", "app", 42, "session_key", "clutch/c42/1000"); err != nil {
+
+	// Case-insensitive, trimmed match — derives the deterministic chat key.
+	if got, err := idx.ResolveChatAlias("clutch", "  holiday plans "); err != nil || got != "clutch/c42" {
+		t.Fatalf("ResolveChatAlias = %q, %v; want clutch/c42, nil", got, err)
+	}
+	// An adoption override row wins over derivation.
+	if err := idx.SetChatMetadata("clutch", "app", 42, "session_key", "clutch/iholiday"); err != nil {
 		t.Fatal(err)
 	}
-
-	// Case-insensitive, trimmed match.
-	if got, err := idx.ResolveChatAlias("clutch", "  holiday plans "); err != nil || got != "clutch/c42/1000" {
-		t.Fatalf("ResolveChatAlias = %q, %v; want clutch/c42/1000, nil", got, err)
+	if got, err := idx.ResolveChatAlias("clutch", "holiday plans"); err != nil || got != "clutch/iholiday" {
+		t.Fatalf("ResolveChatAlias (adopted) = %q, %v; want clutch/iholiday, nil", got, err)
 	}
 	// Unknown alias.
 	if _, err := idx.ResolveChatAlias("clutch", "nope"); err != ErrAliasNotFound {
@@ -139,26 +147,27 @@ func TestResolveChatAlias(t *testing.T) {
 }
 
 func TestResolveChatAlias_Ambiguous(t *testing.T) {
+	// Two chats sharing an alias (only possible via direct writes predating
+	// uniqueness) derive distinct keys → ambiguous; but if their adoption
+	// overrides point at the SAME session, DISTINCT collapses them to one.
 	idx := newAliasTestIndex(t)
-	// Two chats with the same alias can only exist if written directly (pre-uniqueness data).
 	for _, chat := range []int64{1, 2} {
 		if err := idx.SetChatMetadata("clutch", "app", chat, "alias", "dupe"); err != nil {
 			t.Fatal(err)
 		}
-		if err := idx.SetChatMetadata("clutch", "app", chat, "session_key", "clutch/c/x"); err != nil {
+	}
+	// Distinct derived keys (clutch/c1 vs clutch/c2) → ambiguous.
+	if _, err := idx.ResolveChatAlias("clutch", "dupe"); err != ErrAliasAmbiguous {
+		t.Fatalf("err = %v, want ErrAliasAmbiguous", err)
+	}
+	// Both adopted onto the same named session → collapses to one, not ambiguous.
+	for _, chat := range []int64{1, 2} {
+		if err := idx.SetChatMetadata("clutch", "app", chat, "session_key", "clutch/ix"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Same session_key on both → DISTINCT collapses to one, not ambiguous.
-	if got, err := idx.ResolveChatAlias("clutch", "dupe"); err != nil || got != "clutch/c/x" {
-		t.Fatalf("same-key dupe = %q, %v; want clutch/c/x, nil", got, err)
-	}
-	// Different session_keys → genuinely ambiguous.
-	if err := idx.SetChatMetadata("clutch", "app", 2, "session_key", "clutch/c2/y"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := idx.ResolveChatAlias("clutch", "dupe"); err != ErrAliasAmbiguous {
-		t.Fatalf("err = %v, want ErrAliasAmbiguous", err)
+	if got, err := idx.ResolveChatAlias("clutch", "dupe"); err != nil || got != "clutch/ix" {
+		t.Fatalf("same-adoption dupe = %q, %v; want clutch/ix, nil", got, err)
 	}
 }
 

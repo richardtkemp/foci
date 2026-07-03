@@ -19,7 +19,7 @@ func TestResetCommand_UsesSessionKeyFromContext(t *testing.T) {
 	sessDir := t.TempDir()
 	store := session.NewStore(sessDir)
 
-	reqKey := "testagent/c12345/1000000000"
+	reqKey := "testagent/c12345"
 	if err := store.TestAppend(reqKey, provider.Message{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "hello"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestResetCommand_HardSubcommand(t *testing.T) {
 	sessDir := t.TempDir()
 	store := session.NewStore(sessDir)
 
-	reqKey := "testagent/c12345/1000000000"
+	reqKey := "testagent/c12345"
 	if err := store.TestAppend(reqKey, provider.Message{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "hello"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestCompactCommand_UsesSessionKeyFromContext(t *testing.T) {
 		Agent: ag,
 	}
 
-	ctx := tools.WithSessionKey(context.Background(), "testagent/c12345/1000000000")
+	ctx := tools.WithSessionKey(context.Background(), "testagent/c12345")
 	cmd := CompactCommand()
 	// Without a compactor, the command errors with "not configured".
 	_, err := cmd.Execute(ctx, Request{}, cc)

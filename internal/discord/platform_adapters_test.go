@@ -43,7 +43,7 @@ func TestConnectionManagerAdapterNilSafety(t *testing.T) {
 func TestConnectionManagerAdapterWrapping(t *testing.T) {
 	mgr := NewBotManager()
 	a := platform.NewConnectionManagerAdapter[*Bot](mgr)
-	primary := &Bot{agentID: "a", sessionKey: "a/c1/123"}
+	primary := &Bot{agentID: "a", sessionKey: "a/c1"}
 	mgr.AddPrimary("a", primary)
 	facet := &Bot{}
 	mgr.AddFacet("a", facet)
@@ -55,7 +55,7 @@ func TestConnectionManagerAdapterWrapping(t *testing.T) {
 	if len(all) != 1 || all[0] != primary {
 		t.Errorf("AllForAgent: got %v", all)
 	}
-	if got := a.ForSession("a/c1/123"); got != primary {
+	if got := a.ForSession("a/c1"); got != primary {
 		t.Error("ForSession should match the primary's session key")
 	}
 	if got := a.ForSessionOrPrimary("unmatched", "a"); got != primary {

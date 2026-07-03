@@ -10,7 +10,6 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
 	"foci/internal/platform"
-	"foci/internal/session"
 	"foci/internal/tools"
 )
 
@@ -1196,7 +1195,7 @@ func TestInbox_Worker_SinkDeliveryGate_BlocksNonDelivering(t *testing.T) {
 	a.SetTurnObserver(d.recordBatch)
 
 	sk := "test/s"
-	base := session.SessionKeyBase(sk)
+	base := sk
 
 	// Simulate a non-delivering turn in-flight (reflection-style).
 	releaseInFlight := a.markInFlight(base, false)
@@ -1247,7 +1246,7 @@ func TestInbox_Worker_SinkDeliveryGate_AllowsDelivering(t *testing.T) {
 	a.SetTurnObserver(d.recordBatch)
 
 	sk := "test/s"
-	base := session.SessionKeyBase(sk)
+	base := sk
 
 	// Simulate a delivering turn in-flight (a normal user-facing turn).
 	releaseInFlight := a.markInFlight(base, true)
@@ -1278,7 +1277,7 @@ func TestInbox_Worker_SinkDeliveryGate_BatchesArrivalsWhileWaiting(t *testing.T)
 	a.SetTurnObserver(d.recordBatch)
 
 	sk := "test/s"
-	base := session.SessionKeyBase(sk)
+	base := sk
 
 	releaseInFlight := a.markInFlight(base, false)
 

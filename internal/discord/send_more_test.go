@@ -211,7 +211,7 @@ func TestSendInjectedMessageHeader(t *testing.T) {
 	b, fs, _ := newTestBot(t, "a")
 	b.display.InjectedMessageHeader = "[system]"
 
-	if err := b.SendInjectedMessage("a/c42/123", "wake up"); err != nil {
+	if err := b.SendInjectedMessage("a/c42", "wake up"); err != nil {
 		t.Fatal(err)
 	}
 	got := fs.lastSend(t)

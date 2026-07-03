@@ -63,7 +63,7 @@ func TestLoadSessionMeta(t *testing.T) {
 func TestLogConversationRecv_SetsChatID(t *testing.T) {
 	a := &Agent{}
 	s := &sharedTurnOps{agent: a}
-	ts := NewTurnState(context.Background(), "clutch/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "clutch/c100", []string{"hi"}, nil)
 	ts.Meta = &TurnMetadata{} // ChatID = 0
 
 	s.LogConversationRecv(ts)
@@ -95,16 +95,16 @@ func TestRegisterSessionIndex_Upserts(t *testing.T) {
 
 	a := &Agent{SessionIndex: idx}
 	s := &sharedTurnOps{agent: a}
-	ts := NewTurnState(context.Background(), "clutch/c100/1000000000", []string{"hi"}, nil)
+	ts := NewTurnState(context.Background(), "clutch/c100", []string{"hi"}, nil)
 	ts.Meta = &TurnMetadata{}
 
 	s.RegisterSessionIndex(ts)
 
-	entry, err := idx.Get("clutch/c100/1000000000")
+	entry, err := idx.Get("clutch/c100")
 	if err != nil {
 		t.Fatalf("Get after RegisterSessionIndex: %v", err)
 	}
-	if entry.SessionKey != "clutch/c100/1000000000" {
-		t.Fatalf("entry.SessionKey = %q, want %q", entry.SessionKey, "clutch/c100/1000000000")
+	if entry.SessionKey != "clutch/c100" {
+		t.Fatalf("entry.SessionKey = %q, want %q", entry.SessionKey, "clutch/c100")
 	}
 }

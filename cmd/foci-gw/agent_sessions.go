@@ -95,10 +95,9 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 	} else {
 		// New independent CC session for isolated work.
 		sessionKey = session.SessionKey{
-			AgentID:   agentID,
-			Type:      'i',
-			ID:        fmt.Sprintf("%s-%d", branchType, time.Now().Unix()),
-			VersionTS: time.Now().Unix(),
+			AgentID: agentID,
+			Type:    'i',
+			ID:      fmt.Sprintf("%s-%d", branchType, time.Now().Unix()),
 		}.String()
 		log.Infof(branchType, "[%s] delegated: new session %s", agentID, sessionKey)
 	}

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,17 +27,17 @@ func TestSessionIndex_UpsertAndQuery(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:  "bot/c123/1000000000",
-		FilePath:    "/data/sessions/bot/bot/c123/1000000000.jsonl",
+		SessionKey:  "bot/c123",
+		FilePath:    "/data/sessions/bot/c123/root.jsonl",
 		CreatedAt:   now,
 		SessionType: SessionTypeChat,
 		Status:      SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:       "bot/i456/456",
-		FilePath:         "/data/sessions/bot/bot/i456/456.jsonl",
+		SessionKey:       "bot/i456",
+		FilePath:         "/data/sessions/bot/i456/root.jsonl",
 		CreatedAt:        now.Add(-time.Hour),
-		ParentSessionKey: "bot/c123/1000000000",
+		ParentSessionKey: "bot/c123",
 		SessionType:      SessionTypeSpawn,
 		Status:           SessionStatusActive,
 	})
@@ -55,10 +56,10 @@ func TestSessionIndex_UpsertAndQuery(t *testing.T) {
 		t.Fatalf("expected 2 entries, got %d", len(entries))
 	}
 	// Should be ordered by created_at desc — chat first (newer)
-	if entries[0].SessionKey != "bot/c123/1000000000" {
+	if entries[0].SessionKey != "bot/c123" {
 		t.Errorf("expected chat first, got %s", entries[0].SessionKey)
 	}
-	if entries[1].ParentSessionKey != "bot/c123/1000000000" {
+	if entries[1].ParentSessionKey != "bot/c123" {
 		t.Errorf("expected parent key on spawn, got %q", entries[1].ParentSessionKey)
 	}
 }
@@ -70,11 +71,11 @@ func TestSessionIndex_QueryByType(t *testing.T) {
 
 	now := time.Now().UTC()
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c1/1000000000", FilePath: "a", CreatedAt: now,
+		SessionKey: "bot/c1", FilePath: "a", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/i2/2", FilePath: "b", CreatedAt: now,
+		SessionKey: "bot/i2", FilePath: "b", CreatedAt: now,
 		SessionType: SessionTypeSpawn, Status: SessionStatusActive,
 	})
 
@@ -85,7 +86,7 @@ func TestSessionIndex_QueryByType(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 chat entry, got %d", len(entries))
 	}
-	if entries[0].SessionKey != "bot/c1/1000000000" {
+	if entries[0].SessionKey != "bot/c1" {
 		t.Errorf("wrong entry: %s", entries[0].SessionKey)
 	}
 }
@@ -97,11 +98,11 @@ func TestSessionIndex_QueryByStatus(t *testing.T) {
 
 	now := time.Now().UTC()
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c1/1000000000", FilePath: "a", CreatedAt: now,
+		SessionKey: "bot/c1", FilePath: "a", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c2/1000000000", FilePath: "b", CreatedAt: now,
+		SessionKey: "bot/c2", FilePath: "b", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusCompacted,
 	})
 
@@ -115,17 +116,18 @@ func TestSessionIndex_QueryByStatus(t *testing.T) {
 }
 
 func TestSessionIndex_QueryByAgent(t *testing.T) {
-	// Proves that QueryOptions.AgentID scopes results to a single agent,
-	// excluding entries belonging to other agents in the same index.
+	// Proves that QueryOptions.AgentID scopes results to a single agent via the
+	// agent_id column derived from the key at upsert, excluding entries belonging
+	// to other agents in the same index.
 	idx := tempIndex(t)
 
 	now := time.Now().UTC()
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "alpha/c1/1000000000", FilePath: "a", CreatedAt: now,
+		SessionKey: "alpha/c1", FilePath: "a", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "beta/c2/1000000000", FilePath: "b", CreatedAt: now,
+		SessionKey: "beta/c2", FilePath: "b", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
 
@@ -136,7 +138,7 @@ func TestSessionIndex_QueryByAgent(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry for alpha, got %d", len(entries))
 	}
-	if entries[0].SessionKey != "alpha/c1/1000000000" {
+	if entries[0].SessionKey != "alpha/c1" {
 		t.Errorf("wrong entry: %s", entries[0].SessionKey)
 	}
 }
@@ -149,7 +151,7 @@ func TestSessionIndex_QueryLimit(t *testing.T) {
 	now := time.Now().UTC()
 	for i := 0; i < 10; i++ {
 		idx.Upsert(SessionIndexEntry{
-			SessionKey: "agent:bot:chat:" + string(rune('a'+i)), FilePath: "f",
+			SessionKey: fmt.Sprintf("bot/c%d", i), FilePath: "f",
 			CreatedAt:   now.Add(time.Duration(i) * time.Minute),
 			SessionType: SessionTypeChat, Status: SessionStatusActive,
 		})
@@ -170,12 +172,12 @@ func TestSessionIndex_SetStatus(t *testing.T) {
 	idx := tempIndex(t)
 
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c1/1000000000", FilePath: "a",
+		SessionKey: "bot/c1", FilePath: "a",
 		CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat,
 		Status: SessionStatusActive,
 	})
 
-	idx.UpdateStatus("bot/c1/1000000000", SessionStatusCompacted)
+	idx.UpdateStatus("bot/c1", SessionStatusCompacted)
 
 	entries, err := idx.Query(QueryOptions{})
 	if err != nil {
@@ -192,12 +194,12 @@ func TestSessionIndex_Delete(t *testing.T) {
 	idx := tempIndex(t)
 
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c1/1000000000", FilePath: "a",
+		SessionKey: "bot/c1", FilePath: "a",
 		CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat,
 		Status: SessionStatusActive,
 	})
 
-	idx.Delete("bot/c1/1000000000")
+	idx.Delete("bot/c1")
 
 	count, _ := idx.Count()
 	if count != 0 {
@@ -212,12 +214,12 @@ func TestSessionIndex_Upsert_Replaces(t *testing.T) {
 
 	now := time.Now().UTC()
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c1/1000000000", FilePath: "a",
+		SessionKey: "bot/c1", FilePath: "a",
 		CreatedAt: now, SessionType: SessionTypeChat,
 		Status: SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c1/1000000000", FilePath: "a",
+		SessionKey: "bot/c1", FilePath: "a",
 		CreatedAt: now, SessionType: SessionTypeChat,
 		Status: SessionStatusCompacted,
 	})
@@ -232,6 +234,59 @@ func TestSessionIndex_Upsert_Replaces(t *testing.T) {
 	}
 }
 
+func TestSessionIndex_SessionExists(t *testing.T) {
+	// Proves that SessionExists reports true for an upserted key and false for a
+	// key with no index row (or after deletion).
+	idx := tempIndex(t)
+
+	if idx.SessionExists("bot/c1") {
+		t.Error("SessionExists on empty index should be false")
+	}
+
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: "bot/c1", FilePath: "a",
+		CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat,
+		Status: SessionStatusActive,
+	})
+	if !idx.SessionExists("bot/c1") {
+		t.Error("SessionExists should be true after upsert")
+	}
+
+	idx.Delete("bot/c1")
+	if idx.SessionExists("bot/c1") {
+		t.Error("SessionExists should be false after delete")
+	}
+}
+
+func TestKeyColumns(t *testing.T) {
+	// Proves that keyColumns derives the structured index columns from a session
+	// key: agent_id and chat_id from the parse, is_root=1 only for roots, and
+	// falls back to agent-only attribution for archive bookkeeping keys that
+	// don't parse (dotted suffixes).
+	tests := []struct {
+		key       string
+		wantAgent string
+		wantChat  int64
+		wantRoot  int
+	}{
+		{"main/c123", "main", 123, 1},
+		{"main/iwork", "main", 0, 1},
+		{"main/c123/b1700000000", "main", 123, 0},
+		{"main/i1700000000/i1700000001", "main", 0, 0},
+		// Archive key: doesn't parse → agent-only fallback.
+		{"main/c123/root.2026-03-04T02-30-00Z", "main", 0, 0},
+		// Garbage: no separator → no agent.
+		{"garbage", "", 0, 0},
+	}
+	for _, tt := range tests {
+		agent, chat, root := keyColumns(tt.key)
+		if agent != tt.wantAgent || chat != tt.wantChat || root != tt.wantRoot {
+			t.Errorf("keyColumns(%q) = (%q, %d, %d), want (%q, %d, %d)",
+				tt.key, agent, chat, root, tt.wantAgent, tt.wantChat, tt.wantRoot)
+		}
+	}
+}
+
 func TestClassifySessionKey(t *testing.T) {
 	// Proves that ClassifySessionKey correctly identifies chat, branch, and unknown
 	// session types from their key format, including edge cases like independent
@@ -240,12 +295,13 @@ func TestClassifySessionKey(t *testing.T) {
 		key  string
 		want SessionType
 	}{
-		{"bot/c123/1000000000", SessionTypeChat},
-		{"bot/i123/123", SessionTypeUnknown},             // independent — can't distinguish facet/spawn/cron from key alone
-		{"bot/c123/1000000000/b456", SessionTypeBranch},  // branch child type
-		{"bot/i123/1000000000/b456", SessionTypeBranch},  // branch from independent parent
-		{"bot/c123/1000000000/i456", SessionTypeUnknown}, // independent spawn child
-		{"agent:bot:unknown:thing", SessionTypeUnknown},  // old format / unparseable
+		{"bot/c123", SessionTypeChat},
+		{"bot/i123", SessionTypeUnknown},            // independent — can't distinguish facet/spawn/cron from key alone
+		{"bot/c123/b456", SessionTypeBranch},        // branch child type
+		{"bot/i123/b456", SessionTypeBranch},        // branch from independent parent
+		{"bot/c123/i456", SessionTypeUnknown},       // independent spawn child
+		{"bot/c123/1709590000", SessionTypeUnknown}, // old versioned format — no longer parses
+		{"agent:bot:unknown:thing", SessionTypeUnknown},
 		{"bad", SessionTypeUnknown},
 	}
 	for _, tt := range tests {
@@ -263,10 +319,10 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a few sessions
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
-	store.TestAppend("bot/c200/1000000000", msg("user", "world"))
-	branchKey := "bot/c100/1000000000/b1000000001"
-	store.createBranchFile("bot/c100/1000000000", branchKey, false, "")
+	store.TestAppend("bot/c100", msg("user", "hello"))
+	store.TestAppend("bot/c200", msg("user", "world"))
+	branchKey := "bot/c100/b1000000001"
+	store.createBranchFile("bot/c100", branchKey, false, "")
 
 	// Create index and rebuild
 	idx := tempIndex(t)
@@ -293,8 +349,8 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 	}
 
 	// Verify parent key on branch
-	if entries[0].ParentSessionKey != "bot/c100/1000000000" {
-		t.Errorf("expected parent key bot/c100/1000000000, got %q", entries[0].ParentSessionKey)
+	if entries[0].ParentSessionKey != "bot/c100" {
+		t.Errorf("expected parent key bot/c100, got %q", entries[0].ParentSessionKey)
 	}
 }
 
@@ -326,7 +382,7 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 	})
 
 	// Create a session via Append (new file triggers event)
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c100", msg("user", "hello"))
 	count, _ := idx.Count()
 	if count != 1 {
 		t.Fatalf("expected 1 after create, got %d", count)
@@ -341,21 +397,21 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 	}
 
 	// Append again should NOT fire another create event
-	store.TestAppend("bot/c100/1000000000", msg("assistant", "hi"))
+	store.TestAppend("bot/c100", msg("assistant", "hi"))
 	count, _ = idx.Count()
 	if count != 1 {
 		t.Fatalf("expected still 1 after second append, got %d", count)
 	}
 
 	// Replace should fire compacted event
-	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
+	store.TestReplace("bot/c100", []provider.Message{msg("user", "compacted")})
 	entries, _ = idx.Query(QueryOptions{})
 	if entries[0].Status != SessionStatusCompacted {
 		t.Errorf("expected compacted after Replace, got %s", entries[0].Status)
 	}
 
 	// Clear should fire cleared event
-	store.TestClear("bot/c100/1000000000")
+	store.TestClear("bot/c100")
 	entries, _ = idx.Query(QueryOptions{})
 	if entries[0].Status != SessionStatusCleared {
 		t.Errorf("expected cleared after Clear, got %s", entries[0].Status)
@@ -383,10 +439,10 @@ func TestSessionIndex_BranchEventFiring(t *testing.T) {
 	})
 
 	// Create parent
-	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c100", msg("user", "hello"))
 
 	// Create branch
-	store.createBranchFile("bot/c100/1000000000", "bot/c100/1000000000/b1000000001", false, "")
+	store.createBranchFile("bot/c100", "bot/c100/b1000000001", false, "")
 	count, _ := idx.Count()
 	if count != 2 {
 		t.Fatalf("expected 2 after branch create, got %d", count)
@@ -396,7 +452,7 @@ func TestSessionIndex_BranchEventFiring(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 branch, got %d", len(entries))
 	}
-	if entries[0].ParentSessionKey != "bot/c100/1000000000" {
+	if entries[0].ParentSessionKey != "bot/c100" {
 		t.Errorf("expected parent key, got %q", entries[0].ParentSessionKey)
 	}
 }
@@ -412,7 +468,7 @@ func TestSessionIndex_PersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("first open: %v", err)
 	}
 	idx1.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c1/1000000000", FilePath: "a",
+		SessionKey: "bot/c1", FilePath: "a",
 		CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat,
 		Status: SessionStatusActive,
 	})
@@ -427,83 +483,6 @@ func TestSessionIndex_PersistsAcrossReopen(t *testing.T) {
 	count2, _ := idx2.Count()
 	if count2 != 1 {
 		t.Fatalf("expected 1 after reopen, got %d", count2)
-	}
-}
-
-// ========== ResolvePartialKey tests ==========
-
-// Verifies that ResolvePartialKey rejects invalid formats and resolves
-// valid partial keys to the most recently active full session key.
-func TestSessionIndex_ResolvePartialKey(t *testing.T) {
-	idx := tempIndex(t)
-
-	now := time.Now().UTC()
-	// Insert two sessions for the same chat, different versions
-	idx.Upsert(SessionIndexEntry{
-		SessionKey: "scout/c123/1000000000", FilePath: "a", CreatedAt: now.Add(-time.Hour),
-		SessionType: SessionTypeChat, Status: SessionStatusActive,
-		LastActivityAt: now.Add(-time.Hour),
-	})
-	idx.Upsert(SessionIndexEntry{
-		SessionKey: "scout/c123/2000000000", FilePath: "b", CreatedAt: now,
-		SessionType: SessionTypeChat, Status: SessionStatusActive,
-		LastActivityAt: now,
-	})
-	// Insert an independent session
-	idx.Upsert(SessionIndexEntry{
-		SessionKey: "scout/i456/1000000000", FilePath: "c", CreatedAt: now,
-		SessionType: SessionTypeSpawn, Status: SessionStatusActive,
-		LastActivityAt: now,
-	})
-
-	tests := []struct {
-		name    string
-		partial string
-		want    string
-	}{
-		// Valid resolutions
-		{"chat resolves to latest", "scout/c123", "scout/c123/2000000000"},
-		{"independent resolves", "scout/i456", "scout/i456/1000000000"},
-
-		// Invalid formats — should return ""
-		{"empty string", "", ""},
-		{"single segment", "scout", ""},
-		{"three segments (already full)", "scout/c123/1000000000", ""},
-		{"empty agent ID", "/c123", ""},
-		{"empty type ID", "scout/", ""},
-		{"type ID too short", "scout/c", ""},
-		{"invalid type prefix", "scout/x123", ""},
-		{"invalid type prefix b", "scout/b123", ""},
-
-		// Valid format but no match
-		{"no matching agent", "other/c123", ""},
-		{"no matching chat", "scout/c999", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := idx.ResolvePartialKey(tt.partial)
-			if got != tt.want {
-				t.Errorf("ResolvePartialKey(%q) = %q, want %q", tt.partial, got, tt.want)
-			}
-		})
-	}
-}
-
-// Verifies that ResolvePartialKey only returns active sessions,
-// not compacted or cleared ones.
-func TestSessionIndex_ResolvePartialKey_IgnoresInactive(t *testing.T) {
-	idx := tempIndex(t)
-
-	now := time.Now().UTC()
-	idx.Upsert(SessionIndexEntry{
-		SessionKey: "bot/c1/1000000000", FilePath: "a", CreatedAt: now,
-		SessionType: SessionTypeChat, Status: SessionStatusCompacted,
-	})
-
-	got := idx.ResolvePartialKey("bot/c1")
-	if got != "" {
-		t.Errorf("should not resolve compacted session, got %q", got)
 	}
 }
 
@@ -529,7 +508,7 @@ func TestSessionIndex_Count_ReflectsInsertionsAndDeletions(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Insert 3 sessions
-	for i, key := range []string{"a/c1/1000000000", "b/c2/1000000000", "c/c3/1000000000"} {
+	for i, key := range []string{"a/c1", "b/c2", "c/c3"} {
 		idx.Upsert(SessionIndexEntry{
 			SessionKey:  key,
 			FilePath:    "f",
@@ -545,7 +524,7 @@ func TestSessionIndex_Count_ReflectsInsertionsAndDeletions(t *testing.T) {
 	}
 
 	// Delete one
-	idx.Delete("b/c2/1000000000")
+	idx.Delete("b/c2")
 	count, _ = idx.Count()
 	if count != 2 {
 		t.Fatalf("expected 2 after delete, got %d", count)
@@ -553,7 +532,7 @@ func TestSessionIndex_Count_ReflectsInsertionsAndDeletions(t *testing.T) {
 
 	// Upsert existing (should not increase count)
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:  "a/c1/1000000000",
+		SessionKey:  "a/c1",
 		FilePath:    "f-updated",
 		CreatedAt:   now,
 		SessionType: SessionTypeChat,
@@ -687,7 +666,7 @@ func TestSessionMetadata_CRUD(t *testing.T) {
 	// Proves that session-scoped metadata supports the full set/get/upsert/delete
 	// operations using the shared CRUD battery.
 	idx := tempIndex(t)
-	testMetadataCRUD(t, sessionMetaOps(idx, "bot/c1/1000000000"))
+	testMetadataCRUD(t, sessionMetaOps(idx, "bot/c1"))
 }
 
 func TestSystemState_CRUD(t *testing.T) {
@@ -720,49 +699,93 @@ func TestAgentMetadata_IsolationBetweenAgents(t *testing.T) {
 
 // ========== DefaultSessionKeyForAgent tests ==========
 
-func TestDefaultSessionKeyForAgent_ChatMetadata(t *testing.T) {
-	// Proves DefaultSessionKeyForAgent returns the session key stored in
-	// chat_metadata when one is present, taking priority over session_index.
+func TestDefaultSessionKeyForAgent_DefaultChat(t *testing.T) {
+	// Proves DefaultSessionKeyForAgent resolves an is_default chat by DERIVING
+	// the deterministic agent/c<chatID> key — no session_key row or index entry
+	// is needed, because chat keys are stable identities.
 	idx := tempIndex(t)
 
-	if err := idx.SetChatMetadata("scout", "", 123, "session_key", "scout/c123/1709590000"); err != nil {
-		t.Fatalf("set chat metadata: %v", err)
+	if err := idx.SetDefaultChat("scout", "telegram", 123); err != nil {
+		t.Fatalf("set default chat: %v", err)
 	}
 
 	key := idx.DefaultSessionKeyForAgent("scout")
-	if key != "scout/c123/1709590000" {
-		t.Errorf("expected chat metadata key, got %q", key)
+	if key != "scout/c123" {
+		t.Errorf("expected derived default-chat key scout/c123, got %q", key)
+	}
+}
+
+func TestDefaultSessionKeyForAgent_MostActiveDefaultWins(t *testing.T) {
+	// Proves that when an agent has is_default chats on several platforms, the
+	// resolver returns the one whose derived session has the most recent
+	// activity — the live platform wins over a dormant one.
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := idx.SetDefaultChat("helen", "telegram", 100); err != nil {
+		t.Fatalf("set telegram default: %v", err)
+	}
+	if err := idx.SetDefaultChat("helen", "discord", 200); err != nil {
+		t.Fatalf("set discord default: %v", err)
+	}
+
+	// telegram chat is dormant, discord chat is live.
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: "helen/c100", FilePath: "a",
+		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-48 * time.Hour),
+		SessionType: SessionTypeChat, Status: SessionStatusActive,
+	})
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: "helen/c200", FilePath: "b",
+		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now,
+		SessionType: SessionTypeChat, Status: SessionStatusActive,
+	})
+
+	if key := idx.DefaultSessionKeyForAgent("helen"); key != "helen/c200" {
+		t.Errorf("expected most recently active default helen/c200, got %q", key)
+	}
+	if key := idx.ResolveLooseKey("helen"); key != "helen/c200" {
+		t.Errorf("ResolveLooseKey: expected helen/c200, got %q", key)
 	}
 }
 
 func TestDefaultSessionKeyForAgent_Fallback(t *testing.T) {
-	// Proves DefaultSessionKeyForAgent falls back to the most-recent root
-	// session from session_index when no chat_metadata entry exists.
+	// Proves DefaultSessionKeyForAgent falls back to the most recently active
+	// is_root=1 active session from session_index when no default chat is set.
 	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
 
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "scout/c999/1709590000",
-		FilePath:       "/tmp/test.jsonl",
-		CreatedAt:      time.Now(),
-		LastActivityAt: time.Now(),
+		SessionKey:     "scout/c999",
+		FilePath:       "/tmp/old.jsonl",
+		CreatedAt:      now.Add(-2 * time.Hour),
+		LastActivityAt: now.Add(-2 * time.Hour),
 		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "scout/iwork",
+		FilePath:       "/tmp/live.jsonl",
+		CreatedAt:      now.Add(-time.Hour),
+		LastActivityAt: now,
+		SessionType:    SessionTypeUnknown,
 		Status:         SessionStatusActive,
 	})
 
 	key := idx.DefaultSessionKeyForAgent("scout")
-	if key != "scout/c999/1709590000" {
-		t.Errorf("expected fallback key, got %q", key)
+	if key != "scout/iwork" {
+		t.Errorf("expected most recently active root scout/iwork, got %q", key)
 	}
 }
 
 func TestDefaultSessionKeyForAgent_ExcludesChildren(t *testing.T) {
-	// Proves DefaultSessionKeyForAgent ignores branch/child sessions (4+ segment
-	// keys) and returns "" when only child sessions exist.
+	// Proves the fallback ignores branch/child sessions (is_root=0) and returns
+	// "" when only child sessions exist.
 	idx := tempIndex(t)
 
-	// Insert only a branch session (4 segments)
+	// Insert only a branch session (child key)
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "scout/c999/1709590000/b1709590001",
+		SessionKey:     "scout/c999/b1709590001",
 		FilePath:       "/tmp/branch.jsonl",
 		CreatedAt:      time.Now(),
 		LastActivityAt: time.Now(),
@@ -776,78 +799,55 @@ func TestDefaultSessionKeyForAgent_ExcludesChildren(t *testing.T) {
 	}
 }
 
-func TestDefaultSessionKeyForAgent_HonoursDefaultChatPlatform(t *testing.T) {
-	// Regression for the inter-agent send-routing bug. A chat has TWO
-	// session_key rows: a stale empty-platform pointer (superseded session) and
-	// the live telegram pointer, with is_default flagged on telegram. The
-	// resolver must return the telegram session_key (the is_default platform),
-	// not the stale empty-platform one that a platform-blind "any platform"
-	// lookup would grab first.
+func TestDefaultSessionKeyForAgent_ExcludesInactive(t *testing.T) {
+	// Proves the fallback skips non-active rows (e.g. archived sessions), so a
+	// swept session is never handed out as an agent's default.
 	idx := tempIndex(t)
 
-	// Stale empty-platform pointer (older session), inserted first so a
-	// LIMIT-1-no-ORDER-BY query would return it.
-	if err := idx.SetChatMetadata("helen", "", 5970, "session_key", "helen/c5970/1000"); err != nil {
-		t.Fatalf("set stale chat metadata: %v", err)
-	}
-	// Live telegram pointer + is_default flag.
-	if err := idx.SetChatMetadata("helen", "telegram", 5970, "session_key", "helen/c5970/2000"); err != nil {
-		t.Fatalf("set live chat metadata: %v", err)
-	}
-	if err := idx.SetDefaultChat("helen", "telegram", 5970); err != nil {
-		t.Fatalf("set default chat: %v", err)
-	}
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "scout/c999",
+		FilePath:       "/tmp/archived.jsonl",
+		CreatedAt:      time.Now(),
+		LastActivityAt: time.Now(),
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusArchived,
+	})
 
-	if key := idx.DefaultSessionKeyForAgent("helen"); key != "helen/c5970/2000" {
-		t.Errorf("expected telegram (is_default) session key helen/c5970/2000, got %q", key)
-	}
-	if key := idx.ResolveLooseKey("helen"); key != "helen/c5970/2000" {
-		t.Errorf("ResolveLooseKey: expected helen/c5970/2000, got %q", key)
+	if key := idx.DefaultSessionKeyForAgent("scout"); key != "" {
+		t.Errorf("expected empty (no active roots), got %q", key)
 	}
 }
 
 // ========== ResolveLooseKey tests ==========
 
 func TestResolveLooseKey_BareAgentName(t *testing.T) {
-	// Proves a bare agent name (0 slashes) dispatches to
-	// DefaultSessionKeyForAgent and resolves to the agent's session.
+	// Proves a bare agent name (no slash) dispatches to
+	// DefaultSessionKeyForAgent and resolves to the agent's default session.
 	idx := tempIndex(t)
 
-	if err := idx.SetChatMetadata("scout", "", 123, "session_key", "scout/c123/1709590000"); err != nil {
-		t.Fatalf("set chat metadata: %v", err)
+	if err := idx.SetDefaultChat("scout", "telegram", 123); err != nil {
+		t.Fatalf("set default chat: %v", err)
 	}
 
-	if key := idx.ResolveLooseKey("scout"); key != "scout/c123/1709590000" {
-		t.Errorf("bare name: expected scout/c123/1709590000, got %q", key)
-	}
-}
-
-func TestResolveLooseKey_PartialKey(t *testing.T) {
-	// Proves a partial key (1 slash, agent/typeID) dispatches to
-	// ResolvePartialKey and resolves to the most-recent active session there.
-	idx := tempIndex(t)
-
-	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "scout/c123/1709590000",
-		FilePath:       "/tmp/test.jsonl",
-		CreatedAt:      time.Now(),
-		LastActivityAt: time.Now(),
-		SessionType:    SessionTypeChat,
-		Status:         SessionStatusActive,
-	})
-
-	if key := idx.ResolveLooseKey("scout/c123"); key != "scout/c123/1709590000" {
-		t.Errorf("partial key: expected scout/c123/1709590000, got %q", key)
+	if key := idx.ResolveLooseKey("scout"); key != "scout/c123" {
+		t.Errorf("bare name: expected scout/c123, got %q", key)
 	}
 }
 
 func TestResolveLooseKey_FullKeyReturnsEmpty(t *testing.T) {
-	// Proves a full key (2+ slashes) returns "" — full keys are handled by
+	// Proves anything containing "/" returns "" — under the stable-identity
+	// grammar such strings are already full session keys, handled by
 	// ParseSessionKey before the resolver is consulted.
 	idx := tempIndex(t)
 
-	if key := idx.ResolveLooseKey("scout/c123/1709590000"); key != "" {
-		t.Errorf("full key: expected empty, got %q", key)
+	if err := idx.SetDefaultChat("scout", "telegram", 123); err != nil {
+		t.Fatalf("set default chat: %v", err)
+	}
+
+	for _, full := range []string{"scout/c123", "scout/c123/b1709590000", "scout/"} {
+		if key := idx.ResolveLooseKey(full); key != "" {
+			t.Errorf("ResolveLooseKey(%q): expected empty, got %q", full, key)
+		}
 	}
 }
 
@@ -857,6 +857,69 @@ func TestResolveLooseKey_NoMatch(t *testing.T) {
 
 	if key := idx.ResolveLooseKey("ghost"); key != "" {
 		t.Errorf("unknown agent: expected empty, got %q", key)
+	}
+}
+
+// ========== CurrentSessionKeys / PlatformForChat tests ==========
+
+func TestCurrentSessionKeys(t *testing.T) {
+	// Proves CurrentSessionKeys derives the protected key set from DISTINCT
+	// (agent_id, chat_id) pairs in chat_metadata — one deterministic key per
+	// registered chat, regardless of how many metadata rows the chat has, and
+	// no keys for agent-less or chat-less rows.
+	idx := tempIndex(t)
+
+	// Two rows for the same chat (registered + username) → one key.
+	idx.SetChatMetadata("bot", "telegram", 100, "registered", "1")
+	idx.SetChatMetadata("bot", "telegram", 100, "username", "rich")
+	// Another chat on a different platform.
+	idx.SetChatMetadata("bot", "discord", 200, "registered", "1")
+	// Different agent, same chat ID.
+	idx.SetChatMetadata("other", "telegram", 100, "registered", "1")
+	// chat_id 0 rows must not produce keys.
+	idx.SetChatMetadata("bot", "telegram", 0, "misc", "x")
+
+	keys, err := idx.CurrentSessionKeys()
+	if err != nil {
+		t.Fatalf("CurrentSessionKeys: %v", err)
+	}
+	want := []string{"bot/c100", "bot/c200", "other/c100"}
+	if len(keys) != len(want) {
+		t.Fatalf("expected %d keys, got %d: %v", len(want), len(keys), keys)
+	}
+	for _, k := range want {
+		if !keys[k] {
+			t.Errorf("expected key %q in current set %v", k, keys)
+		}
+	}
+}
+
+func TestPlatformForChat(t *testing.T) {
+	// Proves PlatformForChat returns the platform of any chat_metadata row with
+	// a non-empty platform (the "registered" row written on first contact), and
+	// "" when only empty-platform rows or no rows exist.
+	idx := tempIndex(t)
+
+	// Unknown chat → "".
+	if p := idx.PlatformForChat("bot", 100); p != "" {
+		t.Errorf("unknown chat: expected empty, got %q", p)
+	}
+
+	// Only an empty-platform row → still "".
+	idx.SetChatMetadata("bot", "", 100, "misc", "x")
+	if p := idx.PlatformForChat("bot", 100); p != "" {
+		t.Errorf("empty-platform row: expected empty, got %q", p)
+	}
+
+	// Registered row establishes ownership.
+	idx.SetChatMetadata("bot", "telegram", 100, "registered", "1")
+	if p := idx.PlatformForChat("bot", 100); p != "telegram" {
+		t.Errorf("expected telegram, got %q", p)
+	}
+
+	// Other agent's rows don't leak.
+	if p := idx.PlatformForChat("other", 100); p != "" {
+		t.Errorf("other agent: expected empty, got %q", p)
 	}
 }
 
@@ -920,11 +983,11 @@ func TestSessionMetadata_IsolationBetweenSessions(t *testing.T) {
 	// key on two different sessions holds independent values.
 	idx := tempIndex(t)
 
-	idx.SetSessionMetadata("bot/c1/1000000000", "no_compact", "true")
-	idx.SetSessionMetadata("bot/c2/1000000000", "no_compact", "false")
+	idx.SetSessionMetadata("bot/c1", "no_compact", "true")
+	idx.SetSessionMetadata("bot/c2", "no_compact", "false")
 
-	v1, _ := idx.GetSessionMetadata("bot/c1/1000000000", "no_compact")
-	v2, _ := idx.GetSessionMetadata("bot/c2/1000000000", "no_compact")
+	v1, _ := idx.GetSessionMetadata("bot/c1", "no_compact")
+	v2, _ := idx.GetSessionMetadata("bot/c2", "no_compact")
 
 	if v1 != "true" || v2 != "false" {
 		t.Errorf("session isolation failed: s1=%q s2=%q", v1, v2)
@@ -973,7 +1036,7 @@ func TestMetadata_PersistsAcrossReopen(t *testing.T) {
 	}
 	idx1.SetAgentMetadata("bot1", "model", "claude-3")
 	idx1.SetChatMetadata("bot1", "", 42, "effort", "high")
-	idx1.SetSessionMetadata("bot/c1/1000000000", "no_compact", "true")
+	idx1.SetSessionMetadata("bot/c1", "no_compact", "true")
 	idx1.SetSystemState("version", "1")
 	idx1.Close()
 
@@ -989,7 +1052,7 @@ func TestMetadata_PersistsAcrossReopen(t *testing.T) {
 	if v, _ := idx2.GetChatMetadata("bot1", "", 42, "effort"); v != "high" {
 		t.Errorf("chat metadata not persisted: got %q", v)
 	}
-	if v, _ := idx2.GetSessionMetadata("bot/c1/1000000000", "no_compact"); v != "true" {
+	if v, _ := idx2.GetSessionMetadata("bot/c1", "no_compact"); v != "true" {
 		t.Errorf("session metadata not persisted: got %q", v)
 	}
 	if v, _ := idx2.GetSystemState("version"); v != "1" {
@@ -998,65 +1061,6 @@ func TestMetadata_PersistsAcrossReopen(t *testing.T) {
 }
 
 // ========== Metadata tables don't interfere with session index ==========
-
-// Proves that RotateChatSessionKey only updates the chat_metadata row whose value
-// matches oldKey, leaving rows for other platforms, other chats, and rows with
-// different values completely untouched. Also verifies no spurious rows are created.
-func TestSessionIndex_RotateChatSessionKey(t *testing.T) {
-	idx := tempIndex(t)
-
-	// Set up: two platforms for the same agent+chat, each with a different session key.
-	// This simulates the bug scenario where telegram and discord both have rows.
-	idx.SetChatMetadata("clutch", "telegram", 5970, "session_key", "clutch/c5970/1000")
-	idx.SetChatMetadata("clutch", "discord", 5970, "session_key", "clutch/c5970/2000")
-
-	// Also set up a different chat that should never be touched.
-	idx.SetChatMetadata("clutch", "telegram", 9999, "session_key", "clutch/c9999/1000")
-
-	// Rotate: only the telegram row (value=clutch/c5970/1000) should change.
-	err := idx.RotateChatSessionKey("clutch", 5970, "clutch/c5970/1000", "clutch/c5970/3000")
-	if err != nil {
-		t.Fatalf("RotateChatSessionKey: %v", err)
-	}
-
-	// Telegram row updated.
-	v, _ := idx.GetChatMetadata("clutch", "telegram", 5970, "session_key")
-	if v != "clutch/c5970/3000" {
-		t.Errorf("telegram row: got %q, want %q", v, "clutch/c5970/3000")
-	}
-
-	// Discord row untouched (different value).
-	v, _ = idx.GetChatMetadata("clutch", "discord", 5970, "session_key")
-	if v != "clutch/c5970/2000" {
-		t.Errorf("discord row should be untouched: got %q, want %q", v, "clutch/c5970/2000")
-	}
-
-	// Other chat untouched.
-	v, _ = idx.GetChatMetadata("clutch", "telegram", 9999, "session_key")
-	if v != "clutch/c9999/1000" {
-		t.Errorf("other chat should be untouched: got %q, want %q", v, "clutch/c9999/1000")
-	}
-}
-
-// Proves that RotateChatSessionKey is a no-op when no row matches the old value,
-// and does not create any new rows.
-func TestSessionIndex_RotateChatSessionKey_NoMatch(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetChatMetadata("clutch", "telegram", 5970, "session_key", "clutch/c5970/1000")
-
-	// Rotate with a wrong oldKey — should be a no-op.
-	err := idx.RotateChatSessionKey("clutch", 5970, "clutch/c5970/WRONG", "clutch/c5970/3000")
-	if err != nil {
-		t.Fatalf("RotateChatSessionKey: %v", err)
-	}
-
-	// Original row unchanged.
-	v, _ := idx.GetChatMetadata("clutch", "telegram", 5970, "session_key")
-	if v != "clutch/c5970/1000" {
-		t.Errorf("row should be unchanged: got %q, want %q", v, "clutch/c5970/1000")
-	}
-}
 
 func TestMetadata_IndependentOfSessionIndex(t *testing.T) {
 	// Proves that metadata operations don't affect the session entry count and that
@@ -1075,7 +1079,7 @@ func TestMetadata_IndependentOfSessionIndex(t *testing.T) {
 
 	// Session operations shouldn't affect metadata
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:  "bot/c1/1000000000",
+		SessionKey:  "bot/c1",
 		FilePath:    "f",
 		CreatedAt:   time.Now().UTC(),
 		SessionType: SessionTypeChat,
@@ -1102,8 +1106,8 @@ func TestStampReflection(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "bot/c100/1000000000",
-		FilePath:       "/data/sessions/bot/c100/1000000000.jsonl",
+		SessionKey:     "bot/c100",
+		FilePath:       "/data/sessions/bot/c100/root.jsonl",
 		CreatedAt:      now.Add(-time.Hour),
 		LastActivityAt: now,
 		SessionType:    SessionTypeChat,
@@ -1112,19 +1116,19 @@ func TestStampReflection(t *testing.T) {
 
 	// New activity after the seeded last_reflection (#945: Upsert seeds it to the
 	// birth activity time) makes the session genuinely due for reflection.
-	idx.UpdateActivity("bot/c100/1000000000", now.Add(time.Minute))
+	idx.UpdateActivity("bot/c100", now.Add(time.Minute))
 
 	// Before stamping: activity is newer than last_reflection, so it needs reflection.
 	keys, err := idx.SessionsNeedingReflection("bot")
 	if err != nil {
 		t.Fatalf("SessionsNeedingReflection: %v", err)
 	}
-	if len(keys) != 1 || keys[0] != "bot/c100/1000000000" {
-		t.Fatalf("expected [bot/c100/1000000000] before stamp, got %v", keys)
+	if len(keys) != 1 || keys[0] != "bot/c100" {
+		t.Fatalf("expected [bot/c100] before stamp, got %v", keys)
 	}
 
 	// Stamp reflection at or after the last activity time.
-	idx.StampReflection("bot/c100/1000000000", now.Add(time.Minute))
+	idx.StampReflection("bot/c100", now.Add(time.Minute))
 
 	// After stamping: last_reflection >= last_activity_at, so not returned.
 	keys, err = idx.SessionsNeedingReflection("bot")
@@ -1157,7 +1161,7 @@ func TestReflectionRedundant(t *testing.T) {
 	}
 
 	// Unknown session → not redundant (default to reflecting).
-	if idx.ReflectionRedundant("bot/c0/1000000000") {
+	if idx.ReflectionRedundant("bot/c0") {
 		t.Error("unknown session: want false, got true")
 	}
 
@@ -1165,30 +1169,30 @@ func TestReflectionRedundant(t *testing.T) {
 	// REDUNDANT (#945). Upsert seeds last_reflection to the birth activity time, so
 	// last_activity == last_reflection and there is nothing new to reflect. (Before
 	// the fix this defaulted to NOT redundant and got reflected empty.)
-	mk("bot/c1/1000000000")
-	if !idx.ReflectionRedundant("bot/c1/1000000000") {
+	mk("bot/c1")
+	if !idx.ReflectionRedundant("bot/c1") {
 		t.Error("fresh session, no new activity: want true (redundant), got false")
 	}
 
 	// Reflection ran, then activity since → not redundant.
-	mk("bot/c2/1000000000")
-	idx.StampReflection("bot/c2/1000000000", now.Add(-time.Minute))
-	idx.UpdateActivity("bot/c2/1000000000", now)
-	if idx.ReflectionRedundant("bot/c2/1000000000") {
+	mk("bot/c2")
+	idx.StampReflection("bot/c2", now.Add(-time.Minute))
+	idx.UpdateActivity("bot/c2", now)
+	if idx.ReflectionRedundant("bot/c2") {
 		t.Error("activity after reflection: want false, got true")
 	}
 
 	// Reflection at/after last activity → redundant (the skip case).
-	mk("bot/c3/1000000000")
-	idx.StampReflection("bot/c3/1000000000", now.Add(time.Minute))
-	if !idx.ReflectionRedundant("bot/c3/1000000000") {
+	mk("bot/c3")
+	idx.StampReflection("bot/c3", now.Add(time.Minute))
+	if !idx.ReflectionRedundant("bot/c3") {
 		t.Error("reflection newer than activity: want true, got false")
 	}
 
 	// Exact tie (last_reflection == last_activity_at) → redundant (<=).
-	mk("bot/c4/1000000000")
-	idx.StampReflection("bot/c4/1000000000", now)
-	if !idx.ReflectionRedundant("bot/c4/1000000000") {
+	mk("bot/c4")
+	idx.StampReflection("bot/c4", now)
+	if !idx.ReflectionRedundant("bot/c4") {
 		t.Error("reflection == activity: want true, got false")
 	}
 }
@@ -1202,33 +1206,33 @@ func TestSessionsNeedingReflection(t *testing.T) {
 
 	// Case 1: Activity newer than reflection — should be included.
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent1/c1/1000000000",
+		SessionKey:     "agent1/c1",
 		FilePath:       "f1",
 		CreatedAt:      base,
 		LastActivityAt: base,
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
-	idx.StampReflection("agent1/c1/1000000000", base.Add(-time.Hour))
-	idx.UpdateActivity("agent1/c1/1000000000", base)
+	idx.StampReflection("agent1/c1", base.Add(-time.Hour))
+	idx.UpdateActivity("agent1/c1", base)
 
 	// Case 2: Activity older than reflection — should be excluded.
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent1/c2/1000000000",
+		SessionKey:     "agent1/c2",
 		FilePath:       "f2",
 		CreatedAt:      base,
 		LastActivityAt: base,
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
-	idx.StampReflection("agent1/c2/1000000000", base.Add(time.Hour))
+	idx.StampReflection("agent1/c2", base.Add(time.Hour))
 
 	// Case 3: freshly created, never explicitly reflected, NO activity since
 	// creation — should be EXCLUDED (#945). Upsert seeds last_reflection to the
 	// creation/activity time, so a just-born / just-compacted session is not
 	// immediately due; it becomes due only once real new activity arrives.
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent1/c3/1000000000",
+		SessionKey:     "agent1/c3",
 		FilePath:       "f3",
 		CreatedAt:      base,
 		LastActivityAt: base,
@@ -1240,18 +1244,18 @@ func TestSessionsNeedingReflection(t *testing.T) {
 	// Case 3b: same shape but with NEW activity AFTER creation — should be
 	// INCLUDED (activity advances last_activity past the seeded last_reflection).
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent1/c3b/1000000000",
+		SessionKey:     "agent1/c33",
 		FilePath:       "f3b",
 		CreatedAt:      base,
 		LastActivityAt: base,
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
-	idx.UpdateActivity("agent1/c3b/1000000000", base.Add(time.Hour))
+	idx.UpdateActivity("agent1/c33", base.Add(time.Hour))
 
 	// Case 4: Non-chat session (branch) — should be excluded.
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent1/c1/1000000000/b2000000000",
+		SessionKey:     "agent1/c1/b2000000000",
 		FilePath:       "f4",
 		CreatedAt:      base,
 		LastActivityAt: base,
@@ -1262,7 +1266,7 @@ func TestSessionsNeedingReflection(t *testing.T) {
 
 	// Case 5: Non-active session (compacted chat) — should be excluded.
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent1/c5/1000000000",
+		SessionKey:     "agent1/c5",
 		FilePath:       "f5",
 		CreatedAt:      base,
 		LastActivityAt: base,
@@ -1273,7 +1277,7 @@ func TestSessionsNeedingReflection(t *testing.T) {
 
 	// Case 6: Different agent — should be excluded.
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent2/c6/1000000000",
+		SessionKey:     "agent2/c6",
 		FilePath:       "f6",
 		CreatedAt:      base,
 		LastActivityAt: base,
@@ -1294,102 +1298,36 @@ func TestSessionsNeedingReflection(t *testing.T) {
 	}
 
 	// Case 1: activity > reflection → included.
-	if !got["agent1/c1/1000000000"] {
+	if !got["agent1/c1"] {
 		t.Errorf("case 1 (activity newer than reflection): expected included, missing from %v", keys)
 	}
 	// Case 2: activity < reflection → excluded.
-	if got["agent1/c2/1000000000"] {
+	if got["agent1/c2"] {
 		t.Errorf("case 2 (activity older than reflection): expected excluded, present in %v", keys)
 	}
 	// Case 3: freshly created, no new activity since creation → excluded (#945).
-	if got["agent1/c3/1000000000"] {
+	if got["agent1/c3"] {
 		t.Errorf("case 3 (fresh session, no new activity): expected excluded, present in %v", keys)
 	}
 	// Case 3b: freshly created but with new activity after creation → included.
-	if !got["agent1/c3b/1000000000"] {
+	if !got["agent1/c33"] {
 		t.Errorf("case 3b (fresh session with new activity): expected included, missing from %v", keys)
 	}
 	// Case 4: non-chat session → excluded.
-	if got["agent1/c1/1000000000/b2000000000"] {
+	if got["agent1/c1/b2000000000"] {
 		t.Errorf("case 4 (branch session): expected excluded, present in %v", keys)
 	}
 	// Case 5: non-active session → excluded.
-	if got["agent1/c5/1000000000"] {
+	if got["agent1/c5"] {
 		t.Errorf("case 5 (compacted session): expected excluded, present in %v", keys)
 	}
 	// Case 6: different agent → excluded.
-	if got["agent2/c6/1000000000"] {
+	if got["agent2/c6"] {
 		t.Errorf("case 6 (different agent): expected excluded, present in %v", keys)
 	}
 
 	// Exactly 2 sessions should be returned.
 	if len(keys) != 2 {
 		t.Errorf("expected exactly 2 sessions needing reflection, got %d: %v", len(keys), keys)
-	}
-}
-
-// ========== cc_resume_id migration ==========
-
-func TestMigrateCcResumeIDs(t *testing.T) {
-	// Proves that pre-existing agent_metadata rows keyed 'cc_session:<sk>' are
-	// moved into session_metadata under key='cc_resume_id' on next open, with
-	// the source rows deleted. Verifies the structural fix for TODO #759.
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "migrate.db")
-
-	idx1, err := NewSessionIndex(dbPath)
-	if err != nil {
-		t.Fatalf("first open: %v", err)
-	}
-	// Seed pre-migration state: legacy rows in agent_metadata.
-	if err := idx1.SetAgentMetadata("clutch", "cc_session:clutch/c123", "uuid-A"); err != nil {
-		t.Fatalf("seed A: %v", err)
-	}
-	if err := idx1.SetAgentMetadata("scout", "cc_session:scout/c456", "uuid-B"); err != nil {
-		t.Fatalf("seed B: %v", err)
-	}
-	// Also seed an unrelated agent_metadata row that must NOT be touched.
-	if err := idx1.SetAgentMetadata("clutch", "model", "claude-opus-4-7"); err != nil {
-		t.Fatalf("seed unrelated: %v", err)
-	}
-	idx1.Close()
-
-	// Re-open: migration runs in NewSessionIndex.
-	idx2, err := NewSessionIndex(dbPath)
-	if err != nil {
-		t.Fatalf("second open: %v", err)
-	}
-	defer idx2.Close()
-
-	// Migrated rows present in session_metadata.
-	if v, _ := idx2.GetSessionMetadata("clutch/c123", "cc_resume_id"); v != "uuid-A" {
-		t.Errorf("session_metadata clutch/c123 cc_resume_id = %q, want %q", v, "uuid-A")
-	}
-	if v, _ := idx2.GetSessionMetadata("scout/c456", "cc_resume_id"); v != "uuid-B" {
-		t.Errorf("session_metadata scout/c456 cc_resume_id = %q, want %q", v, "uuid-B")
-	}
-
-	// Source rows gone from agent_metadata.
-	if v, _ := idx2.GetAgentMetadata("clutch", "cc_session:clutch/c123"); v != "" {
-		t.Errorf("agent_metadata cc_session:clutch/c123 should be empty post-migration, got %q", v)
-	}
-	if v, _ := idx2.GetAgentMetadata("scout", "cc_session:scout/c456"); v != "" {
-		t.Errorf("agent_metadata cc_session:scout/c456 should be empty post-migration, got %q", v)
-	}
-
-	// Unrelated agent_metadata row preserved.
-	if v, _ := idx2.GetAgentMetadata("clutch", "model"); v != "claude-opus-4-7" {
-		t.Errorf("unrelated agent_metadata row clobbered: got %q", v)
-	}
-
-	// Idempotency: re-opening once more must not panic or undo anything.
-	idx2.Close()
-	idx3, err := NewSessionIndex(dbPath)
-	if err != nil {
-		t.Fatalf("third open: %v", err)
-	}
-	defer idx3.Close()
-	if v, _ := idx3.GetSessionMetadata("clutch/c123", "cc_resume_id"); v != "uuid-A" {
-		t.Errorf("idempotency: lost data on second migration pass, got %q", v)
 	}
 }

@@ -6,9 +6,38 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/session"
 	"foci/internal/sqlite"
 	"foci/internal/timeutil"
 )
+
+// migrateLegacyReminderKeys rewrites reminders.session_key values from the
+// legacy versioned form to the stable identity form. No-op once migrated.
+func migrateLegacyReminderKeys(db *sql.DB) {
+	rows, err := db.Query(`SELECT id, session_key FROM reminders WHERE session_key != ''`)
+	if err != nil {
+		return
+	}
+	type rekey struct {
+		id     int64
+		stable string
+	}
+	var rekeys []rekey
+	for rows.Next() {
+		var id int64
+		var sk string
+		if rows.Scan(&id, &sk) != nil {
+			continue
+		}
+		if stable, ok := session.LegacyKeyToStable(sk); ok {
+			rekeys = append(rekeys, rekey{id: id, stable: stable})
+		}
+	}
+	_ = rows.Close()
+	for _, rk := range rekeys {
+		_, _ = db.Exec(`UPDATE reminders SET session_key = ? WHERE id = ?`, rk.stable, rk.id)
+	}
+}
 
 // Reminder is a deferred thought for later.
 type Reminder struct {
@@ -56,6 +85,11 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 
 	// Expression index for correct cross-timezone due_at ordering.
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reminders_due_unix ON reminders(unixepoch(due_at))`)
+
+	// Idempotent legacy migration: re-key wake reminders that captured a
+	// pre-stable-identity session key (with a version segment), so pending
+	// wakes still target the right session after the key format change.
+	migrateLegacyReminderKeys(db)
 
 	return &ReminderStore{db: db}, nil
 }

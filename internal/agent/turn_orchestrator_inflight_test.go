@@ -43,25 +43,26 @@ func (s *rateLimitedStubContract) RunCompaction(*TurnState)       {}
 func (s *rateLimitedStubContract) LogConversationSent(*TurnState) {}
 func (s *rateLimitedStubContract) TouchActivityPost(*TurnState)   {}
 
-// orchestratorTestKey is a representative session key for orchestrator
-// integration tests. The version segment is a real (integer) unix timestamp so
-// it parses as a full session key — SessionInFlightKey/SessionKeyBase then
-// collapse it to "test-agent/cTEST" for the in-flight counter and last_activity
-// row. (A non-integer version like "v1" would fail to parse and, under the
-// idempotent SessionInFlightKey fallback, be returned unchanged.)
-const orchestratorTestKey = "test-agent/cTEST/1700000000"
+// orchestratorTestKey is a representative root session key for orchestrator
+// integration tests. Session keys are stable identities: the in-flight counter
+// is keyed directly by the session key, and last_activity is keyed by the root
+// key — for a root key like this one, both are the key itself.
+const orchestratorTestKey = "test-agent/cTEST"
 
-var orchestratorTestBase = session.SessionKeyBase(orchestratorTestKey)
+// orchestratorTestBranchKey is a branch child of orchestratorTestKey. Branch
+// turns track in-flight under their own key but record last_activity against
+// the parent root.
+const orchestratorTestBranchKey = orchestratorTestKey + "/b1700000000"
 
 // TestOrchestrator_InFlightRisesAndFalls_API verifies that a synchronous
-// (API-path) turn flips IsTurnInFlight(base) from false → true → false
+// (API-path) turn flips IsTurnInFlight(key) from false → true → false
 // across the orchestrator call. RunInference closes CompletionChan inline;
 // the markInFlight defer runs as the orchestrator returns.
 func TestOrchestrator_InFlightRisesAndFalls_API(t *testing.T) {
 	a := &Agent{}
 
-	if a.IsTurnInFlight(orchestratorTestBase) {
-		t.Fatalf("pre-call: IsTurnInFlight(%s) = true, want false", orchestratorTestBase)
+	if a.IsTurnInFlight(orchestratorTestKey) {
+		t.Fatalf("pre-call: IsTurnInFlight(%s) = true, want false", orchestratorTestKey)
 	}
 
 	tc := &stubContract{}
@@ -72,14 +73,14 @@ func TestOrchestrator_InFlightRisesAndFalls_API(t *testing.T) {
 		t.Fatalf("OrchestrateFullTurn: %v", err)
 	}
 
-	if a.IsTurnInFlight(orchestratorTestBase) {
-		t.Fatalf("post-call: IsTurnInFlight(%s) = true, want false", orchestratorTestBase)
+	if a.IsTurnInFlight(orchestratorTestKey) {
+		t.Fatalf("post-call: IsTurnInFlight(%s) = true, want false", orchestratorTestKey)
 	}
 }
 
 // TestOrchestrator_InFlightStaysTrueDuringDelegatedWait verifies that for
 // a delegated turn whose backend doesn't immediately close CompletionChan,
-// IsTurnInFlight remains true for the session base throughout the wait.
+// IsTurnInFlight remains true for the session key throughout the wait.
 // This is the regression that motivates the whole stage: a permission-
 // blocked CC turn must keep the gate signal lit until the user actually
 // decides.
@@ -117,8 +118,8 @@ func TestOrchestrator_InFlightStaysTrueDuringDelegatedWait(t *testing.T) {
 		if remaining := sampleAt - time.Since(start); remaining > 0 {
 			time.Sleep(remaining)
 		}
-		if !a.IsTurnInFlight(orchestratorTestBase) {
-			t.Fatalf("at sample %v during delegated wait: IsTurnInFlight(%s) = false, want true", sampleAt, orchestratorTestBase)
+		if !a.IsTurnInFlight(orchestratorTestKey) {
+			t.Fatalf("at sample %v during delegated wait: IsTurnInFlight(%s) = false, want true", sampleAt, orchestratorTestKey)
 		}
 	}
 
@@ -132,14 +133,14 @@ func TestOrchestrator_InFlightStaysTrueDuringDelegatedWait(t *testing.T) {
 		t.Fatalf("orchestrator did not return within 5s of completion delay %v", delay)
 	}
 
-	if a.IsTurnInFlight(orchestratorTestBase) {
-		t.Fatalf("after orchestrator return: IsTurnInFlight(%s) = true, want false", orchestratorTestBase)
+	if a.IsTurnInFlight(orchestratorTestKey) {
+		t.Fatalf("after orchestrator return: IsTurnInFlight(%s) = true, want false", orchestratorTestKey)
 	}
 }
 
 // TestOrchestrator_TouchLastActivityWritesRow verifies that running a turn
 // through OrchestrateFullTurn writes the last_activity row keyed by the
-// session base. Covers Stage B's promise that "every turn-init path
+// session's root key. Covers Stage B's promise that "every turn-init path
 // participates" via the single chokepoint, and that the row is keyed
 // correctly for the gate to consult later.
 func TestOrchestrator_TouchLastActivityWritesRow(t *testing.T) {
@@ -155,7 +156,7 @@ func TestOrchestrator_TouchLastActivityWritesRow(t *testing.T) {
 	}
 
 	// Confirm no prior row.
-	if raw, _ := idx.GetSessionMetadata(orchestratorTestBase, sessionMetaLastActivity); raw != "" {
+	if raw, _ := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity); raw != "" {
 		t.Fatalf("pre-call: last_activity = %q, want empty", raw)
 	}
 
@@ -169,7 +170,7 @@ func TestOrchestrator_TouchLastActivityWritesRow(t *testing.T) {
 		t.Fatalf("OrchestrateFullTurn: %v", err)
 	}
 
-	raw, err := idx.GetSessionMetadata(orchestratorTestBase, sessionMetaLastActivity)
+	raw, err := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity)
 	if err != nil {
 		t.Fatalf("GetSessionMetadata: %v", err)
 	}
@@ -209,14 +210,14 @@ func TestOrchestrator_TouchLastActivityWritesEvenOnError(t *testing.T) {
 		t.Fatalf("expected error from RunInference")
 	}
 
-	raw, _ := idx.GetSessionMetadata(orchestratorTestBase, sessionMetaLastActivity)
+	raw, _ := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity)
 	if raw == "" {
 		t.Fatalf("last_activity not written despite error path")
 	}
 
 	// inFlight must still drop back to zero on the error path.
-	if a.IsTurnInFlight(orchestratorTestBase) {
-		t.Fatalf("after error: IsTurnInFlight(%s) = true, want false", orchestratorTestBase)
+	if a.IsTurnInFlight(orchestratorTestKey) {
+		t.Fatalf("after error: IsTurnInFlight(%s) = true, want false", orchestratorTestKey)
 	}
 }
 
@@ -244,10 +245,65 @@ func TestOrchestrator_RateLimitGateSkipsInFlightAndTouch(t *testing.T) {
 		t.Fatalf("expected rate-limit error")
 	}
 
-	if a.IsTurnInFlight(orchestratorTestBase) {
-		t.Fatalf("after rate-limit reject: IsTurnInFlight(%s) = true, want false", orchestratorTestBase)
+	if a.IsTurnInFlight(orchestratorTestKey) {
+		t.Fatalf("after rate-limit reject: IsTurnInFlight(%s) = true, want false", orchestratorTestKey)
 	}
-	if raw, _ := idx.GetSessionMetadata(orchestratorTestBase, sessionMetaLastActivity); raw != "" {
+	if raw, _ := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity); raw != "" {
 		t.Fatalf("rate-limit reject wrote last_activity = %q (should be untouched)", raw)
+	}
+}
+
+// TestOrchestrator_BranchTurnKeysInFlightByBranchAndActivityByRoot verifies
+// the split key semantics for branch turns: the in-flight counter tracks the
+// branch's OWN key (branches are distinct identities — a facet turn must not
+// couple to the parent), while last_activity is recorded against the parent
+// ROOT key (so keepalive/CLI gates targeting the main session see the
+// activity).
+func TestOrchestrator_BranchTurnKeysInFlightByBranchAndActivityByRoot(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+
+	a := &Agent{
+		AgentID:      "test-agent",
+		SessionIndex: idx,
+	}
+
+	const delay = 100 * time.Millisecond
+	tc := &asyncStubContract{completionDelay: delay}
+	ts := NewTurnState(context.Background(), orchestratorTestBranchKey, []string{"hi"}, nil)
+
+	resultErr := make(chan error, 1)
+	go func() {
+		_, err := a.OrchestrateFullTurn(context.Background(), tc, ts)
+		resultErr <- err
+	}()
+
+	// Sample mid-turn: in-flight must be lit for the branch key only.
+	time.Sleep(40 * time.Millisecond)
+	if !a.IsTurnInFlight(orchestratorTestBranchKey) {
+		t.Errorf("mid-turn: IsTurnInFlight(%s) = false, want true", orchestratorTestBranchKey)
+	}
+	if a.IsTurnInFlight(orchestratorTestKey) {
+		t.Errorf("mid-turn: IsTurnInFlight(%s) = true, want false — branch must not couple to root", orchestratorTestKey)
+	}
+
+	select {
+	case err := <-resultErr:
+		if err != nil {
+			t.Fatalf("OrchestrateFullTurn: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("orchestrator did not return")
+	}
+
+	// last_activity lands under the ROOT key, not the branch key.
+	if raw, _ := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity); raw == "" {
+		t.Error("branch turn did not write last_activity under the root key")
+	}
+	if raw, _ := idx.GetSessionMetadata(orchestratorTestBranchKey, sessionMetaLastActivity); raw != "" {
+		t.Errorf("branch turn wrote last_activity under the branch key = %q, want empty", raw)
 	}
 }

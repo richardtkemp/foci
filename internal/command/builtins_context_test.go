@@ -25,8 +25,8 @@ func contextCC(apiLogPath string, info ContextInfo) CommandContext {
 func TestContextCommand(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/i0/0", Input: 50000, CacheRead: 30000, CacheWrite: 10000},
-		{Timestamp: now.Add(time.Minute), Session: "main/i0/0", Input: 60000, CacheRead: 40000, CacheWrite: 5000, Output: 1500},
+		{Timestamp: now, Session: "main/i0", Input: 50000, CacheRead: 30000, CacheWrite: 10000},
+		{Timestamp: now.Add(time.Minute), Session: "main/i0", Input: 60000, CacheRead: 40000, CacheWrite: 5000, Output: 1500},
 		{Timestamp: now, Session: "other:session", Input: 100000, CacheRead: 0, CacheWrite: 0},
 	})
 
@@ -85,7 +85,7 @@ func TestContextCommand(t *testing.T) {
 func TestContextCommandAtThreshold(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/i0/0", Input: 150000, CacheRead: 20000, CacheWrite: 0},
+		{Timestamp: now, Session: "main/i0", Input: 150000, CacheRead: 20000, CacheWrite: 0},
 	})
 
 	info := testContextInfo()
@@ -146,7 +146,7 @@ func TestContextCommandOtherSession(t *testing.T) {
 func TestContextCommandCustomThreshold(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/i0/0", Input: 100000, CacheRead: 0, CacheWrite: 0},
+		{Timestamp: now, Session: "main/i0", Input: 100000, CacheRead: 0, CacheWrite: 0},
 	})
 
 	info := testContextInfo()
@@ -167,7 +167,7 @@ func TestContextCommandCustomThreshold(t *testing.T) {
 func TestContextCommandNoSkillsOrEnv(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/i0/0", Input: 10000, CacheRead: 5000, CacheWrite: 1000},
+		{Timestamp: now, Session: "main/i0", Input: 10000, CacheRead: 5000, CacheWrite: 1000},
 	})
 
 	info := testContextInfo()
@@ -252,7 +252,7 @@ func TestContextCommandExactTokens(t *testing.T) {
 func TestContextCommandCountingAPIError(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/i0/0", Input: 50000, CacheRead: 30000, CacheWrite: 10000, Output: 500},
+		{Timestamp: now, Session: "main/i0", Input: 50000, CacheRead: 30000, CacheWrite: 10000, Output: 500},
 	})
 
 	info := testContextInfo()

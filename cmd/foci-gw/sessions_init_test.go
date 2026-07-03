@@ -22,10 +22,10 @@ func TestCleanupStaleSessionMetadata_RemovesStaleNoCompact(t *testing.T) {
 	sessions := session.NewStore(sessDir)
 
 	// Create a no_compact entry for a branch session that doesn't exist on disk
-	idx.SetSessionMetadata("fotini/c123/1710000000/b1710000001", "no_compact", "true")
+	idx.SetSessionMetadata("fotini/c123/b1710000001", "no_compact", "true")
 
 	// Create a no_compact entry for a session that DOES exist on disk
-	existingKey := "fotini/c456/1710000000"
+	existingKey := "fotini/c456"
 	existingPath := filepath.Join(sessDir, existingKey, "root.jsonl")
 	os.MkdirAll(filepath.Dir(existingPath), 0o755)
 	os.WriteFile(existingPath, []byte("{}"), 0o644)
@@ -34,7 +34,7 @@ func TestCleanupStaleSessionMetadata_RemovesStaleNoCompact(t *testing.T) {
 	cleanupStaleSessionMetadata(idx, sessions)
 
 	// Stale entry should be removed
-	val, _ := idx.GetSessionMetadata("fotini/c123/1710000000/b1710000001", "no_compact")
+	val, _ := idx.GetSessionMetadata("fotini/c123/b1710000001", "no_compact")
 	if val != "" {
 		t.Error("stale no_compact entry should be removed")
 	}

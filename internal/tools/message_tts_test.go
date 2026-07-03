@@ -62,7 +62,7 @@ func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
 	tts := &mockTTS{data: []byte("fake-audio")}
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
 
-	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
+	ctx := WithSessionKey(context.Background(), "fotini/c12345")
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello world",
 		"send_as": "voice",

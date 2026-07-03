@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"foci/internal/platform"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -156,7 +157,7 @@ func TestSetCommandContext_SecondaryReleaseFunc(t *testing.T) {
 		},
 	})
 
-	pool := NewPool()
+	pool := platform.NewPool[*Bot]("telegram")
 	b, _ := testBot([]string{"111"}, cmds)
 	b.api = &gotgbot.Bot{User: gotgbot.User{Id: 1, Username: "facetbot"}}
 	b.SetSecondary(pool)

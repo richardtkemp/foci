@@ -26,6 +26,7 @@ type testConfigOpts struct {
 	Workspaces      map[string]string // agent id → workspace path
 	RecorderPath    string
 	HTTPPort        int    // kernel-assigned ephemeral port; 0 falls back to foci's default 18791 (collides under t.Parallel)
+	SocketPath      string // short /tmp path for the same-user unix socket; "" lets foci default to DataDir (sun_path hazard)
 	ExtraConfigTOML string // appended verbatim at the end of the config
 }
 
@@ -56,11 +57,14 @@ welcome_file = %q
 	// hardcoded default (127.0.0.1:18791). The harness picks an ephemeral
 	// port via the kernel before we get here; if HTTPPort is zero we skip
 	// the override and let foci's default apply.
-	if o.HTTPPort > 0 {
-		fmt.Fprintf(&sb, `
-[http]
-port = %d
-`, o.HTTPPort)
+	if o.HTTPPort > 0 || o.SocketPath != "" {
+		sb.WriteString("\n[http]\n")
+		if o.HTTPPort > 0 {
+			fmt.Fprintf(&sb, "port = %d\n", o.HTTPPort)
+		}
+		if o.SocketPath != "" {
+			fmt.Fprintf(&sb, "socket_path = %q\n", o.SocketPath)
+		}
 	}
 
 	// Emit [logging] only if the test isn't supplying its own. Tests that

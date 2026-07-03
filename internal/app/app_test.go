@@ -391,7 +391,7 @@ func newTestHub() *Hub {
 func TestSendToSession_EmitsMessageFrame(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
-	b := &convBinding{convID: "c1", sessionKey: "ag/capp1/9", client: c}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c7", client: c}
 	h.bySession[b.sessionKey] = b
 
 	conn := &appConn{hub: h, agentID: "ag"}
@@ -433,9 +433,10 @@ func TestSendToSession_FallsBackToDefaultChat(t *testing.T) {
 	}
 }
 
-func TestSendToSession_DropsWhenNoDefaultBinding(t *testing.T) {
-	// Default set but its conversation isn't bound → drop, and must NOT misroute
-	// to some other conversation.
+func TestSendToSession_StaleDefaultFallsToLatest(t *testing.T) {
+	// Default pinned to a conversation that isn't live → the deliver ladder
+	// treats it as absent and the send lands in the most recently active live
+	// conversation. The default pin is user-owned and left untouched.
 	idx := newTestIndex(t)
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
@@ -443,22 +444,94 @@ func TestSendToSession_DropsWhenNoDefaultBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := fakeClient()
-	other := &convBinding{convID: "cother", sessionKey: "ag/cother/9", agentID: "ag", chatID: 99, client: c}
+	other := &convBinding{convID: "cother", sessionKey: "ag/c99", agentID: "ag", chatID: 99, client: c}
 	h.convs[other.convID] = other
 
 	conn := &appConn{hub: h, agentID: "ag"}
-	if err := conn.SendToSession("ag/never-bound/1", "lost"); err != nil {
+	if err := conn.SendToSession("ag/inever-bound", "lost"); err != nil {
 		t.Fatal(err)
 	}
-	if got := drain(t, c); len(got) != 0 {
-		t.Fatalf("unbound send with no default binding must not deliver, got %v", types(got))
+	got := drain(t, c)
+	if len(got) != 1 || got[0].t != "message" {
+		t.Fatalf("send must deliver to the latest live conversation, got %v", types(got))
+	}
+	if got[0].d["conversationId"] != "cother" {
+		t.Errorf("routed to conv %v, want cother", got[0].d["conversationId"])
+	}
+	if dc := idx.DefaultChatForAgent("ag", "app"); dc != 42 {
+		t.Errorf("default chat = %d, want 42 unchanged (pins are user-owned)", dc)
+	}
+}
+
+func TestDeliverBinding_NoConversationsCreates(t *testing.T) {
+	// An agent with NO app conversations gets a server-minted one: the send
+	// ladder creates a binding (leaving the user-owned default pin unset) and
+	// pushes an updated roster to live sockets so a connected device learns
+	// it immediately.
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	c := fakeClient()
+	h.clients[c] = struct{}{}
+
+	conn := &appConn{hub: h, agentID: "ag"}
+	if err := conn.SendToSession("", "hello out of nowhere"); err != nil {
+		t.Fatal(err)
+	}
+
+	h.mu.RLock()
+	nConvs := len(h.convs)
+	h.mu.RUnlock()
+	if nConvs != 1 {
+		t.Fatalf("expected 1 server-created conversation, got %d", nConvs)
+	}
+	if dc := idx.DefaultChatForAgent("ag", "app"); dc != 0 {
+		t.Errorf("default chat = %d, want unset (pins are user-owned, never automatic)", dc)
+	}
+	// The socket saw a roster push (hello) — the created conversation is
+	// buffered on its binding, not the socket (nil client at creation).
+	sawHello := false
+	for _, f := range drain(t, c) {
+		if f.t == "hello" {
+			sawHello = true
+		}
+	}
+	if !sawHello {
+		t.Error("live socket did not receive a roster push after server-side creation")
+	}
+}
+
+func TestNotifyUnbound_TargetsDefaultConversationOnly(t *testing.T) {
+	// The unbound conn's notifications (broadcast warnings) go to the default
+	// conversation via the deliver ladder — NOT a fan-out to every binding.
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	cDef, cOther := fakeClient(), fakeClient()
+	def := &convBinding{convID: "cdef", sessionKey: "ag/c42", agentID: "ag", chatID: 42, client: cDef}
+	other := &convBinding{convID: "cother", sessionKey: "ag/c99", agentID: "ag", chatID: 99, client: cOther}
+	h.convs[def.convID] = def
+	h.convs[other.convID] = other
+	if err := idx.SetDefaultChat("ag", "app", 42); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := &appConn{hub: h, agentID: "ag"}
+	if msgID := conn.SendNotificationDirect("⚡ rate limited"); msgID == "" {
+		t.Fatal("unbound notification should return an editable messageID")
+	}
+	if got := drain(t, cDef); len(got) != 1 || got[0].t != "notification" {
+		t.Fatalf("default conversation should receive the notification, got %v", types(got))
+	}
+	if got := drain(t, cOther); len(got) != 0 {
+		t.Fatalf("non-default conversation must NOT receive the notification, got %v", types(got))
 	}
 }
 
 func TestSendToSession_SilentSuppressed(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
-	b := &convBinding{convID: "c1", sessionKey: "ag/capp1/9", client: c}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c7", client: c}
 	h.bySession[b.sessionKey] = b
 
 	conn := &appConn{hub: h, agentID: "ag"}
@@ -489,7 +562,7 @@ func boundConn(t *testing.T) (*Hub, *wsClient, *convBinding, *appConn) {
 	h := newTestHub()
 	c := fakeClient()
 	c.hub = h
-	b := &convBinding{convID: "c1", sessionKey: "ag/capp1/9", client: c, chatID: 7}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c7", client: c, chatID: 7}
 	h.bySession[b.sessionKey] = b
 	c.convByID["c1"] = b
 	conn := &appConn{hub: h, agentID: "ag", bound: b.sessionKey}
@@ -538,7 +611,7 @@ func TestSendTextWithButtons_EmitsInteractive(t *testing.T) {
 
 func TestSendTextWithButtons_OfflineReturnsErr(t *testing.T) {
 	h := newTestHub()
-	conn := &appConn{hub: h, agentID: "ag", bound: "ag/capp1/9"} // no binding
+	conn := &appConn{hub: h, agentID: "ag", bound: "ag/c7"} // no binding
 	if _, err := conn.SendTextWithButtons("x", []platform.ButtonChoice{{Label: "Allow", Data: "r:0"}}, "im:"); err == nil {
 		t.Errorf("offline SendTextWithButtons must return an error")
 	}
@@ -1331,7 +1404,7 @@ func TestServePushRegister_UpdatesToken(t *testing.T) {
 func TestServeHistory_ReportsSeqHighWater(t *testing.T) {
 	h := newTestHub()
 	d := h.devices.pair("dev", "")
-	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1/9", seq: 42, seen: map[string]struct{}{}}
+	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", seq: 42, seen: map[string]struct{}{}}
 	h.convs["c1"] = b
 
 	req := httptest.NewRequest(http.MethodGet, "/app/history?conversationId=c1", nil)
@@ -1394,11 +1467,11 @@ func TestSendTextWithButtons_SetsExpiresAt(t *testing.T) {
 
 func TestAdoptSession_RejectsForeignAgentKey(t *testing.T) {
 	h := newTestHub()
-	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1/9", seen: map[string]struct{}{}}
+	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", seen: map[string]struct{}{}}
 	h.convs["c1"] = b
-	h.bySession["ag/c1/9"] = b
-	h.adoptSession(b, "other/iwork/0") // belongs to a different agent
-	if b.sessionKey != "ag/c1/9" {
+	h.bySession["ag/c1"] = b
+	h.adoptSession(b, "other/iwork") // belongs to a different agent
+	if b.sessionKey != "ag/c1" {
 		t.Errorf("foreign-agent key must be rejected, sessionKey = %q", b.sessionKey)
 	}
 }
