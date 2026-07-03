@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"foci/internal/log"
 
@@ -57,6 +58,8 @@ func ResolveDiscordToken(botName, botSecret string, secrets SecretGetter) string
 	return v
 }
 
+var homeResolveWarnOnce sync.Once
+
 // ResolvePath resolves a path. Absolute paths are returned as-is.
 // Relative paths are resolved against os.UserHomeDir().
 func ResolvePath(p string) string {
@@ -65,7 +68,10 @@ func ResolvePath(p string) string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Warnf("config", "resolve home dir for %q: %v", p, err)
+		// Every relative path hits the same failure; warn once, not per-path.
+		homeResolveWarnOnce.Do(func() {
+			log.Warnf("config", "could not resolve home dir for relative config paths (left relative): %v", err)
+		})
 		return p
 	}
 	return filepath.Join(home, p)
