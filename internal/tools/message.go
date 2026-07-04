@@ -44,7 +44,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 				},
 				"send_as": {
 					"type": "string",
-					"description": "How to send the file: 'document' (default), 'voice', 'video', 'photo', 'audio', or 'animation' (GIF).",
+					"description": "How to send the file: 'document' (default), 'voice', 'video', 'photo', 'audio', or 'animation' (GIF). TTS mode (no file): 'voice' with 'text' and no 'file' synthesizes the text to speech and sends it as a voice note.",
 					"enum": ["document", "voice", "video", "photo", "audio", "animation"]
 				}
 			}
