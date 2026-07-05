@@ -302,6 +302,10 @@ type ResolvedMemorySearch struct {
 	ConversationWeight float64
 	SearchLimit        int
 	SweepInterval      string
+	TemporalDecay      bool
+	DecayHalfLife      float64
+	DecayBoost         float64
+	EvergreenPatterns  []string
 }
 
 func resolveMemorySearch(m MemoryConfig) ResolvedMemorySearch {
@@ -311,6 +315,10 @@ func resolveMemorySearch(m MemoryConfig) ResolvedMemorySearch {
 		ConversationWeight: DerefFloat(m.ConversationWeight),
 		SearchLimit:        DerefInt(m.SearchLimit),
 		SweepInterval:      DerefStr(m.SweepInterval),
+		TemporalDecay:      DerefBool(m.TemporalDecay),
+		DecayHalfLife:      DerefFloat(m.DecayHalfLife),
+		DecayBoost:         DerefFloat(m.DecayBoost),
+		EvergreenPatterns:  m.EvergreenPatterns,
 	}
 }
 

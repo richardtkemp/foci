@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"foci/internal/sqlite"
 )
 
 func testIndex(t *testing.T) (*Index, string) {
@@ -26,6 +28,52 @@ func testIndex(t *testing.T) (*Index, string) {
 	}
 	t.Cleanup(func() { idx.Close() })
 	return idx, memDir
+}
+
+func TestBackfillConversations(t *testing.T) {
+	idx, _ := testIndex(t)
+	convPath := filepath.Join(t.TempDir(), "conversation.db")
+
+	conv, err := sqlite.OpenInit(convPath,
+		`CREATE TABLE messages (id INTEGER PRIMARY KEY, ts TEXT, text TEXT, session TEXT)`)
+	if err != nil {
+		t.Fatalf("create conv db: %v", err)
+	}
+	for i, msg := range []string{"quantum entanglement discussion", "neural network training tips"} {
+		if _, err := conv.Exec(`INSERT INTO messages (id, ts, text, session) VALUES (?, ?, ?, ?)`,
+			i+1, "2026-07-01T10:00:00Z", msg, "clutch/c1"); err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+	}
+	_ = conv.Close()
+
+	// First backfill indexes both messages, making conversation searchable.
+	n, err := idx.BackfillConversations(convPath)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("backfilled %d messages, want 2", n)
+	}
+	if res, err := idx.Search("quantum", "", nil); err != nil {
+		t.Fatalf("search: %v", err)
+	} else if len(res) == 0 {
+		t.Error("expected 'quantum' conversation message searchable after backfill, got none")
+	}
+
+	// Idempotent: the marker skips a second run, so no re-index / no duplicates.
+	n2, err := idx.BackfillConversations(convPath)
+	if err != nil {
+		t.Fatalf("second backfill: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second backfill indexed %d, want 0 (marker should skip)", n2)
+	}
+	if res, err := idx.Search("neural", "", nil); err != nil {
+		t.Fatalf("search: %v", err)
+	} else if len(res) != 1 {
+		t.Errorf("expected exactly 1 'neural' result (no duplicate), got %d", len(res))
+	}
 }
 
 func TestNewIndex(t *testing.T) {
