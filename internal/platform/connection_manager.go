@@ -89,10 +89,12 @@ func (a *aggregatingConnMgr) AllForAgent(agentID string) []Connection {
 func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
 	// Platform-aware routing: extract agentID and chatID from the session key,
 	// look up which platform owns it, and dispatch directly.
+	claimed := false
 	if a.chatPlatformFn != nil {
 		agentID, chatID := extractSessionInfo(sessionKey)
 		if agentID != "" && chatID != 0 {
 			if platformName := a.chatPlatformFn(agentID, chatID); platformName != "" {
+				claimed = true
 				if mgr, ok := a.named[platformName]; ok {
 					if c := mgr.ForSession(sessionKey); c != nil {
 						return c
@@ -101,6 +103,15 @@ func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
 				}
 			}
 		}
+	}
+
+	// A claimed chat whose owning platform has no live session connection must NOT
+	// fall through to the promiscuous fallback below: that iterates all platforms
+	// and would hand the session to another (e.g. the owner-blind app), misrouting
+	// and dropping it (#990). Returning nil routes it to the proper offline path
+	// (queue/push) instead. The fallback is only for the unclaimed case.
+	if claimed {
+		return nil
 	}
 
 	// Fallback: iterate all platforms (first-message-ever case, facet bots, etc.)
