@@ -1308,6 +1308,26 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	if got != todoText {
 		t.Errorf("captured text = %q, want %q\nbash output: %s", got, todoText, out)
 	}
+
+	// `--text -` must read stdin like `--file -`, not send a literal "-" (#1007).
+	script2 := fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_todo get 1 | foci_send_to_chat --text -",
+		bridge.FuncsPath(),
+	)
+	cmd2 := osexec.Command("bash", "-c", script2)
+	cmd2.Env = append(os.Environ(),
+		"FOCI_SOCK="+bridge.SockPath(),
+		"PATH="+binDir+":"+os.Getenv("PATH"),
+	)
+	if out2, err := cmd2.CombinedOutput(); err != nil {
+		t.Fatalf("bash --text - pipe failed: %v\noutput: %s", err, out2)
+	}
+	mu.Lock()
+	got2 := captured
+	mu.Unlock()
+	if got2 != todoText {
+		t.Errorf("--text - captured %q, want %q (should read stdin, not send literal '-')", got2, todoText)
+	}
 }
 
 // TestTodoShellFunc_AppendAliasesResolve runs the generated foci_todo through
