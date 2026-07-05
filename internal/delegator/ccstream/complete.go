@@ -120,9 +120,10 @@ func (b *Backend) completeTurn(reason string) {
 	b.logger().Debugf("turn_lifecycle event=complete reason=%s had_turn_events=%v cycles=%d textlen=%d out_total=%d",
 		reason, turn != nil, cycles, len(result.Text), resultOutputTokens(result))
 
-	// Clear any agents still tracked (safety net — task_notification should
-	// have already removed them individually during the turn).
-	b.agents.ClearAll()
+	// Background agents outlive the turn that spawned them, so they are NOT
+	// cleared here — they persist across turns and are removed individually by
+	// task_notification (or the tracker's max-age prune). ClearAll now runs
+	// only on session exit (lifecycle finalizeExit).
 
 	// Fire OnTurnComplete OUTSIDE any lock.
 	if turn != nil && turn.OnTurnComplete != nil {

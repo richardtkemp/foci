@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- AgentTracker tests ---
@@ -158,6 +159,21 @@ func TestAgentTracker_RemoveOneEmpty(t *testing.T) {
 	tr := &AgentTracker{}
 	if tr.RemoveOne() {
 		t.Error("RemoveOne returned true with no pending agents")
+	}
+}
+
+// TestAgentTracker_PruneExpired verifies a spawn with no completion signal is
+// dropped after agentMaxAge, so Pending() can't stay stuck > 0 now that the
+// tracker survives turn boundaries.
+func TestAgentTracker_PruneExpired(t *testing.T) {
+	t.Parallel()
+	tr := &AgentTracker{}
+	tr.pending = []TrackedAgent{
+		{ID: "stale", added: time.Now().Add(-agentMaxAge - time.Minute)},
+		{ID: "live", added: time.Now()},
+	}
+	if n := tr.Pending(); n != 1 {
+		t.Fatalf("Pending() = %d, want 1 (stale spawn pruned)", n)
 	}
 }
 
