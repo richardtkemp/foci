@@ -337,15 +337,40 @@ func parseAgentFlag(args []string) (agentID string, rest []string) {
 	return agentID, args
 }
 
+// postSend* bound and instrument the connection-retry loop in postJSON (#998):
+// when the CLI is invoked from cron/a script while the daemon is mid-restart,
+// retry the dial every 5s for up to a minute before failing loudly. The last
+// two are test seams.
+var (
+	postSendRetryEvery  = 5 * time.Second
+	postSendGiveUpAfter = time.Minute
+	postSendSleep       = time.Sleep
+	postSendNow         = time.Now
+)
+
 func postJSON(url string, body interface{}) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 
-	resp, err := client.Post(url, "application/json", bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+	// Retry ONLY transport-level failures (daemon unreachable — dial refused).
+	// A returned *http.Response, even a non-2xx one, means the daemon is up and
+	// is handled by printResponse; those are never retried.
+	start := postSendNow()
+	var resp *http.Response
+	for {
+		resp, err = client.Post(url, "application/json", bytes.NewReader(data))
+		if err == nil {
+			break
+		}
+		if postSendNow().Sub(start) >= postSendGiveUpAfter {
+			fmt.Fprintf(os.Stderr, "\n*** foci unreachable — gave up after %s. Message NOT sent. Last error: %v ***\n",
+				postSendGiveUpAfter, err)
+			return fmt.Errorf("foci daemon unreachable after %s: %w", postSendGiveUpAfter, err)
+		}
+		fmt.Fprintf(os.Stderr, "foci unreachable (%v) — retrying in %s...\n", err, postSendRetryEvery)
+		postSendSleep(postSendRetryEvery)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return printResponse(resp)

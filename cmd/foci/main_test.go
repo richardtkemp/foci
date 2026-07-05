@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testBinary is the path to the CLI binary built once in TestMain.
@@ -450,5 +451,41 @@ func TestWantsHelp(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("wantsHelp(%v) = %v, want %v", tt.args, got, tt.want)
 		}
+	}
+}
+
+type failRoundTripper struct{}
+
+func (failRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("dial unix: connect: connection refused")
+}
+
+func TestPostJSON_RetriesThenGivesUpLoudly(t *testing.T) {
+	// #998: an unreachable daemon (dial refused) is retried on a bounded clock,
+	// then postJSON returns a loud 'unreachable' error (→ CLI exit 1) instead of
+	// failing on the first dial.
+	origClient, origGiveUp, origSleep, origNow := client, postSendGiveUpAfter, postSendSleep, postSendNow
+	defer func() {
+		client, postSendGiveUpAfter, postSendSleep, postSendNow = origClient, origGiveUp, origSleep, origNow
+	}()
+
+	client = &http.Client{Transport: failRoundTripper{}}
+	// Fake clock: each sleep advances virtual time so the loop terminates fast.
+	var virtual time.Duration
+	sleeps := 0
+	postSendSleep = func(d time.Duration) { sleeps++; virtual += d }
+	base := time.Unix(0, 0)
+	postSendNow = func() time.Time { return base.Add(virtual) }
+	postSendGiveUpAfter = 12 * time.Second // with 5s retryEvery → ~3 retries then give up
+
+	err := postJSON("http://unix/send", map[string]string{"text": "hi"})
+	if err == nil {
+		t.Fatal("expected an error when the daemon is unreachable")
+	}
+	if !strings.Contains(err.Error(), "unreachable") {
+		t.Errorf("error = %q, want it to mention 'unreachable'", err.Error())
+	}
+	if sleeps == 0 {
+		t.Error("expected at least one retry sleep, got 0 — did not retry")
 	}
 }
