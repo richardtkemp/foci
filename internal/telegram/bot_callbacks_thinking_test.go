@@ -88,9 +88,9 @@ func TestFormatThinkingExpanded_TruncatesLongThinking(t *testing.T) {
 	}
 }
 
-func TestTruncateHTMLSafe_EntityBoundary(t *testing.T) {
-	// Proves truncation never cuts inside an HTML entity: a cut mid-entity
-	// backs up to before the '&'.
+func TestTruncateHTMLSafeTail_EntityBoundary(t *testing.T) {
+	// Proves the tail-keeping truncation keeps the END and never leaves a dangling
+	// HTML-entity fragment at the cut (#720): a cut mid-entity drops the fragment.
 	tests := []struct {
 		name   string
 		in     string
@@ -98,14 +98,14 @@ func TestTruncateHTMLSafe_EntityBoundary(t *testing.T) {
 		want   string
 	}{
 		{"under limit unchanged", "abc&amp;", 20, "abc&amp;"},
-		{"cut mid-entity backs up", "abc&amp;def", 6, "abc"},
-		{"cut after complete entity keeps it", "abc&amp;def", 9, "abc&amp;d"},
-		{"no entities plain cut", "abcdef", 3, "abc"},
+		{"no entities keeps tail", "abcdef", 3, "def"},
+		{"cut mid-entity drops fragment", "&amp;def", 5, "def"},
+		{"cut before complete entity keeps it", "x&amp;def", 8, "&amp;def"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := truncateHTMLSafe(tt.in, tt.maxLen); got != tt.want {
-				t.Errorf("truncateHTMLSafe(%q, %d) = %q, want %q", tt.in, tt.maxLen, got, tt.want)
+			if got := truncateHTMLSafeTail(tt.in, tt.maxLen); got != tt.want {
+				t.Errorf("truncateHTMLSafeTail(%q, %d) = %q, want %q", tt.in, tt.maxLen, got, tt.want)
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -129,7 +130,14 @@ func formatToolCallWithResult(toolText, result string) string {
 		return toolText
 	}
 
-	escapedResult := htmlEscape(result)
+	// Pretty-print JSON results with a 2-space indent (#993); leave non-JSON
+	// untouched. Mirrors formatToolCall's handling of tool-call *params*.
+	prettyResult := result
+	var indented bytes.Buffer
+	if json.Indent(&indented, []byte(result), "", "  ") == nil {
+		prettyResult = indented.String()
+	}
+	escapedResult := htmlEscape(prettyResult)
 	available := maxLen - overhead
 	if len(escapedResult) > available {
 		escapedResult = escapedResult[:available-3] + "..."

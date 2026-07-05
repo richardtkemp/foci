@@ -101,8 +101,17 @@ func (idx *Index) Reindex() error {
 			continue
 		}
 		if err := filepath.Walk(sourceCfg.Dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
+			if err != nil {
+				// A file listed by the dir walk can vanish before we lstat it — e.g. a
+				// sqlite -shm/-wal sidecar next to a source DB. Tolerate it (skip) rather
+				// than aborting the whole reindex (#1033). info is nil on a walk error.
+				if os.IsNotExist(err) {
+					return nil
+				}
 				return err
+			}
+			if info.IsDir() {
+				return nil
 			}
 			if !strings.HasSuffix(path, ".md") {
 				return nil
