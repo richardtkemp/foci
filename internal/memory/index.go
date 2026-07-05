@@ -43,6 +43,13 @@ type Index struct {
 	reindexTimer       *time.Timer
 	sweepStop          chan struct{} // closed to stop sweep goroutine
 	mu                 sync.Mutex
+
+	// Temporal decay (#352): recency boost on relevance-sorted results. Defaults
+	// set in NewIndex, overridden from [memory] config via SetTemporalDecay.
+	temporalDecay     bool
+	decayHalfLifeDays float64
+	decayBoost        float64
+	evergreenPatterns []string
 }
 
 // NewIndex creates or opens an FTS5 index at dbPath, indexing .md files from the given sources.
@@ -70,7 +77,29 @@ func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Dura
 		sources:            sources,
 		conversationWeight: conversationWeight,
 		debounce:           debounce,
+		// #352 defaults (overridable via SetTemporalDecay).
+		temporalDecay:     true,
+		decayHalfLifeDays: 10,
+		decayBoost:        1.0,
+		evergreenPatterns: []string{"MEMORY.md", "research-*"},
 	}, nil
+}
+
+// SetTemporalDecay overrides the recency-boost settings from [memory] config
+// (#352). evergreen may be nil to keep the defaults. Call once after construction.
+func (idx *Index) SetTemporalDecay(enabled bool, halfLifeDays, boost float64, evergreen []string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.temporalDecay = enabled
+	if halfLifeDays > 0 {
+		idx.decayHalfLifeDays = halfLifeDays
+	}
+	if boost > 0 {
+		idx.decayBoost = boost
+	}
+	if evergreen != nil {
+		idx.evergreenPatterns = evergreen
+	}
 }
 
 // Reindex scans all configured source directories and rebuilds the memory portion of the index.
@@ -147,9 +176,9 @@ func (idx *Index) Reindex() error {
 	return nil
 }
 
-// IndexConversation adds a conversation message to the FTS5 index.
-// The rowID parameter is accepted for signature compatibility with BleveIndex
-// but not used — FTS5 assigns its own internal rowids.
+// IndexConversation adds a conversation message to the FTS5 index. The rowID
+// parameter is accepted for signature parity with BleveIndex but unused — the
+// one-time BackfillConversations rebuild (not per-message dedup) handles history.
 func (idx *Index) IndexConversation(text, session string, _ int64) {
 	if text == "" {
 		return
@@ -170,6 +199,124 @@ func (idx *Index) IndexConversation(text, session string, _ int64) {
 	); err != nil {
 		log.Errorf("memory", "index conversation meta: %v", err)
 	}
+}
+
+// BackfillConversations does a ONE-TIME rebuild of the conversation portion of
+// the FTS5 index from one or more conversation SQLite logs, so historical chat
+// is searchable (FTS5 otherwise only indexes conversation in real-time). Pass
+// EVERY conversation DB that feeds this index in a single call — in shared mode
+// one FTS5 index serves all agents' per-agent conversation DBs, so they must all
+// be rebuilt inside the same wipe.
+//
+// FTS5 has no per-message doc ID, so rather than dedupe it wipes the derived
+// conversation rows and re-inserts them all — guarded by a marker table so it
+// runs only once. Wipe + re-insert + marker are ONE transaction: a crash rolls
+// back to unmarked, so the next startup cleanly re-runs it (never a
+// marked-but-half-populated state). Memory FILES are untouched. Returns the
+// number of messages indexed.
+func (idx *Index) BackfillConversations(convDBPaths ...string) (int, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	// Already migrated? The marker table's existence is the one-time flag.
+	var marked int
+	_ = idx.db.QueryRow(
+		`SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_backfilled'`,
+	).Scan(&marked)
+	if marked == 1 {
+		return 0, nil
+	}
+
+	tx, err := idx.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin backfill tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Wipe the derived conversation rows (source='conversation' only; files stay).
+	if _, err := tx.Exec(`DELETE FROM memory_fts WHERE source = 'conversation'`); err != nil {
+		return 0, fmt.Errorf("wipe conversation fts: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM memory_meta WHERE source = 'conversation'`); err != nil {
+		return 0, fmt.Errorf("wipe conversation meta: %w", err)
+	}
+
+	insFTS, err := tx.Prepare(`INSERT INTO memory_fts (content, path, source) VALUES (?, ?, 'conversation')`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare fts insert: %w", err)
+	}
+	defer func() { _ = insFTS.Close() }()
+	upMeta, err := tx.Prepare(`INSERT OR REPLACE INTO memory_meta (source, path, mtime) VALUES ('conversation', ?, ?)`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare meta upsert: %w", err)
+	}
+	defer func() { _ = upMeta.Close() }()
+
+	var count int
+	for _, convDBPath := range convDBPaths {
+		if _, err := os.Stat(convDBPath); err != nil {
+			continue // no conversation DB for this agent yet — nothing to rebuild
+		}
+		n, err := backfillOneConvDB(convDBPath, insFTS, upMeta)
+		if err != nil {
+			return 0, err
+		}
+		count += n
+	}
+
+	// Marker LAST, same tx: commit makes backfill+marker atomic.
+	if _, err := tx.Exec(`CREATE TABLE conversation_backfilled (done INTEGER)`); err != nil {
+		return 0, fmt.Errorf("create marker: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit backfill: %w", err)
+	}
+	committed = true
+	return count, nil
+}
+
+// backfillOneConvDB reads every non-empty message from a conversation SQLite log
+// and inserts it into the FTS5 index via the prepared statements (which belong
+// to the caller's transaction). Returns the number inserted.
+func backfillOneConvDB(convDBPath string, insFTS, upMeta *sql.Stmt) (int, error) {
+	conv, err := sqlite.Open(convDBPath)
+	if err != nil {
+		return 0, fmt.Errorf("open conversation db %s: %w", convDBPath, err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	rows, err := conv.Query(`SELECT ts, text, session FROM messages WHERE text != '' ORDER BY id`)
+	if err != nil {
+		return 0, fmt.Errorf("query conversation messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var count int
+	for rows.Next() {
+		var ts, text string
+		var session sql.NullString
+		if err := rows.Scan(&ts, &text, &session); err != nil {
+			return 0, fmt.Errorf("scan conversation row: %w", err)
+		}
+		sess := session.String
+		if _, err := insFTS.Exec(text, sess); err != nil {
+			return 0, fmt.Errorf("insert conversation fts: %w", err)
+		}
+		mtime := float64(time.Now().Unix())
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			mtime = float64(t.Unix())
+		}
+		if _, err := upMeta.Exec(sess, mtime); err != nil {
+			return 0, fmt.Errorf("upsert conversation meta: %w", err)
+		}
+		count++
+	}
+	return count, rows.Err()
 }
 
 // buildWeightedRankCase constructs a CASE statement for per-source weight multipliers.
@@ -261,7 +408,7 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
 			WHERE memory_fts MATCH ?%s
 			ORDER BY weighted_rank
-			LIMIT 20
+			LIMIT 40
 		`, weightedRankCase, extraFilter)
 	}
 
@@ -283,7 +430,22 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 		}
 		results = append(results, r)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Recency boost for relevance sort (#352). FTS5 weighted_rank is negative
+	// (more-negative = better) → higherIsBetter=false. When decay is off, hl/boost
+	// are 0 so this degenerates to a plain rank-ascending sort + truncate to the
+	// return limit — same top-N as before the over-fetch.
+	if sort == "" || sort == "relevance" {
+		hl, boost := 0.0, 0.0
+		if idx.temporalDecay {
+			hl, boost = idx.decayHalfLifeDays, idx.decayBoost
+		}
+		results = rerankByRecency(results, time.Now(), hl, boost, idx.evergreenPatterns, memorySearchReturn, false)
+	}
+	return results, nil
 }
 
 // Watch starts file system watching on all source directories.

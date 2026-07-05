@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +37,14 @@ type BleveIndex struct {
 	sweepStop          chan struct{}
 	closed             bool
 	mu                 sync.Mutex
+
+	// Temporal decay (#352): recency boost applied to relevance-sorted results.
+	// Defaults set in NewBleveIndex; overridden from [memory] config via
+	// SetTemporalDecay. Read under mu inside Search.
+	temporalDecay     bool
+	decayHalfLifeDays float64
+	decayBoost        float64
+	evergreenPatterns []string
 }
 
 // buildBleveMapping creates the index mapping for search documents.
@@ -108,7 +115,31 @@ func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce t
 		sources:            sources,
 		conversationWeight: conversationWeight,
 		debounce:           debounce,
+		// #352 defaults (overridable via SetTemporalDecay): on, 10-day half-life,
+		// up to 2x boost for brand-new results, timeless files exempt.
+		temporalDecay:     true,
+		decayHalfLifeDays: 10,
+		decayBoost:        1.0,
+		evergreenPatterns: []string{"MEMORY.md", "research-*"},
 	}, nil
+}
+
+// SetTemporalDecay overrides the recency-boost settings from [memory] config
+// (#352). evergreen may be nil to keep the default patterns. Safe to call once
+// right after construction, before the index is used.
+func (b *BleveIndex) SetTemporalDecay(enabled bool, halfLifeDays, boost float64, evergreen []string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.temporalDecay = enabled
+	if halfLifeDays > 0 {
+		b.decayHalfLifeDays = halfLifeDays
+	}
+	if boost > 0 {
+		b.decayBoost = boost
+	}
+	if evergreen != nil {
+		b.evergreenPatterns = evergreen
+	}
 }
 
 // Reindex refreshes the FILE portion of the index in place: it re-reads the
@@ -594,7 +625,9 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 	case "oldest":
 		req.SortBy([]string{"mtime"})
 	default:
-		// relevance — bleve sorts by score by default
+		// relevance: over-fetch so the recency re-rank (#352) can promote a recent
+		// item into the returned set; truncated back to the return limit after.
+		req.Size = memorySearchReturn * 2
 		req.SortBy([]string{"-_score"})
 	}
 
@@ -640,11 +673,16 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 		results = append(results, r)
 	}
 
-	// For relevance sort, re-sort by weighted rank (descending — higher is better)
+	// For relevance sort, re-rank by weighted rank with a recency boost (#352) and
+	// truncate to the return limit. When temporal decay is off, hl/boost are 0 so
+	// rerankByRecency degenerates to a plain rank-descending sort + truncate —
+	// identical top-N to the pre-#352 behaviour.
 	if sortOrder == "" || sortOrder == "relevance" {
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].Rank > results[j].Rank
-		})
+		hl, boost := 0.0, 0.0
+		if b.temporalDecay {
+			hl, boost = b.decayHalfLifeDays, b.decayBoost
+		}
+		results = rerankByRecency(results, time.Now(), hl, boost, b.evergreenPatterns, memorySearchReturn, true /* bleve rank: higher is better */)
 	}
 
 	return results, nil

@@ -795,6 +795,14 @@ type MemoryConfig struct {
 	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"weight for conversation search results" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"max search results to return"`                           // max search results to return (default 20)
 	SweepInterval      *string        `toml:"sweep_interval"      default:"0"     desc:"periodic full reindex interval; 0=disabled" type:"duration"` // periodic full reindex interval (default "0"=disabled; fsnotify watch already catches file changes). Set e.g. "1h" to re-enable.
+	// Temporal decay (#352, bleve backend): boost recent results in relevance
+	// search. Recency-boost only — old results are never penalised.
+	TemporalDecay     *bool    `toml:"temporal_decay"     default:"true" desc:"boost recent results in memory relevance search (bleve)"`
+	DecayHalfLife     *float64 `toml:"decay_half_life"    default:"10"   desc:"days for the recency boost to halve" min:"0"`
+	DecayBoost        *float64 `toml:"decay_boost"        default:"1"    desc:"max recency multiplier is 1+this (1.0 = up to 2x for brand-new)" min:"0"`
+	// Basename globs never recency-boosted (default MEMORY.md, research-*). A slice
+	// field, so no desc tag (the /config-set registry only handles scalars).
+	EvergreenPatterns []string `toml:"evergreen_patterns"`
 }
 
 type DatabaseConfig struct {

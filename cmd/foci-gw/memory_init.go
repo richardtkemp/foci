@@ -223,6 +223,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if err != nil {
 				log.Fatalf("main", "create FTS5 index (%s): %v", label, err)
 			}
+			idx.SetTemporalDecay(rm.TemporalDecay, rm.DecayHalfLife, rm.DecayBoost, rm.EvergreenPatterns) // #352
 			initOne(fmt.Sprintf("FTS5 (%s)", label), idx, debounce, sweepInterval)
 			backends["fts5"] = idx
 			fts5Idx = idx
@@ -233,6 +234,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if err != nil {
 				log.Fatalf("main", "create bleve index (%s): %v", label, err)
 			}
+			bidx.SetTemporalDecay(rm.TemporalDecay, rm.DecayHalfLife, rm.DecayBoost, rm.EvergreenPatterns) // #352
 			initOne(fmt.Sprintf("bleve (%s)", label), bidx, debounce, sweepInterval)
 			backends["bleve"] = bidx
 			bleveIdx = bidx
@@ -368,6 +370,44 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 					} else if n > 0 {
 						log.Infof("main", "backfilled %d conversation messages into bleve for agent %s", n, acfg.ID)
 					}
+				}
+			}
+		}()
+	}
+
+	// Backfill historical conversations into FTS5 indices (one-time wipe+rebuild;
+	// #352 / backend parity). Per-agent: each agent's own index rebuilds from its
+	// own conversation DB. Shared: one index serves all agents, so ALL agents'
+	// conversation DBs are rebuilt in a single call (the wipe is index-wide).
+	hasAnyFTS5 := result.sharedFTS5 != nil || len(result.agentFTS5) > 0
+	if hasAnyFTS5 {
+		backfillWG.Add(1)
+		go func() {
+			defer backfillWG.Done()
+			if hasPerAgentMemory {
+				for _, acfg := range cfg.Agents {
+					idx, ok := result.agentFTS5[acfg.ID]
+					if !ok {
+						continue
+					}
+					dbPath := config.AgentDataPath(acfg.Workspace, "conversation.db")
+					n, err := idx.BackfillConversations(dbPath)
+					if err != nil {
+						log.Errorf("main", "backfill conversations (fts5) for agent %s: %v", acfg.ID, err)
+					} else if n > 0 {
+						log.Infof("main", "backfilled %d conversation messages into FTS5 for agent %s", n, acfg.ID)
+					}
+				}
+			} else if result.sharedFTS5 != nil {
+				paths := make([]string, 0, len(cfg.Agents))
+				for _, acfg := range cfg.Agents {
+					paths = append(paths, config.AgentDataPath(acfg.Workspace, "conversation.db"))
+				}
+				n, err := result.sharedFTS5.BackfillConversations(paths...)
+				if err != nil {
+					log.Errorf("main", "backfill conversations (fts5, shared): %v", err)
+				} else if n > 0 {
+					log.Infof("main", "backfilled %d conversation messages into shared FTS5", n)
 				}
 			}
 		}()
