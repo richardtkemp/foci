@@ -85,7 +85,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleConversationArchive(client, f)
 
 	case fap.ClientMessage:
-		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer))
+		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer), f.TranscribeOnly)
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
@@ -429,7 +429,7 @@ func inboundConvID(frame any) string {
 // replayed from the client outbox after a reconnect is dropped (the image
 // double-send bug). A warm binding was already recorded by the gate, so we
 // only seed when we just created it.
-func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, inID string, inSeq int64, steer agent.SteerPreference) {
+func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, inID string, inSeq int64, steer agent.SteerPreference, transcribeOnly bool) {
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
@@ -508,6 +508,11 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		b.acceptInbound(inID, inSeq)
 	}
 	text, atts = h.transcribeVoice(conn, text, atts)
+	if transcribeOnly {
+		// Return the transcript for the user to edit; don't echo or run a turn.
+		b.send(fap.Transcript{ConversationID: convID, Text: text})
+		return
+	}
 	if text == "" && len(atts) == 0 {
 		return // voice transcription yielded nothing and there's no other content
 	}
