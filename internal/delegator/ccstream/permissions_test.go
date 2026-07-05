@@ -1238,3 +1238,85 @@ func TestCancelPlanWithFeedback_UnknownID(t *testing.T) {
 		t.Errorf("expected no wire output, got %q", buf.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// formatEditDiff & Choices (show/hide diff toggle)
+// ---------------------------------------------------------------------------
+
+func TestFormatEditDiff_Edit(t *testing.T) {
+	in := json.RawMessage(`{"file_path":"/a.go","old_string":"foo\nbar","new_string":"baz"}`)
+	got := formatEditDiff("Edit", in)
+	for _, want := range []string{"🔴 foo", "🔴 bar", "🟢 baz", "```"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("diff missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFormatEditDiff_MultiEdit(t *testing.T) {
+	in := json.RawMessage(`{"file_path":"/a.go","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"d"}]}`)
+	got := formatEditDiff("MultiEdit", in)
+	for _, want := range []string{"edit 1", "edit 2", "🔴 a", "🟢 b", "🔴 c", "🟢 d"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("multiedit diff missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFormatEditDiff_NonEditTool(t *testing.T) {
+	if got := formatEditDiff("Bash", json.RawMessage(`{"command":"ls"}`)); got != "" {
+		t.Errorf("non-edit tool got %q, want empty", got)
+	}
+}
+
+func TestFormatEditDiff_NeutralizesInnerFence(t *testing.T) {
+	in := json.RawMessage(`{"old_string":"x","new_string":"pre\n` + "```" + `go\ncode"}`)
+	got := formatEditDiff("Edit", in)
+	if strings.Contains(got, "\n```go") {
+		t.Errorf("inner triple-backtick not neutralized:\n%q", got)
+	}
+	if strings.Count(got, "```") != 2 {
+		t.Errorf("want exactly 2 fence markers (open+close), got %d:\n%q", strings.Count(got, "```"), got)
+	}
+}
+
+func TestFormatEditDiff_Truncates(t *testing.T) {
+	big := strings.Repeat("x", maxDiffChars+500)
+	in := json.RawMessage(`{"old_string":"","new_string":"` + big + `"}`)
+	got := formatEditDiff("Edit", in)
+	if !strings.Contains(got, "… (truncated)") {
+		t.Error("oversized diff should be truncated")
+	}
+}
+
+func TestChoices_EditAddsToggle(t *testing.T) {
+	req := &PermissionRequestPayload{
+		ToolName: "Edit",
+		Input:    json.RawMessage(`{"file_path":"/a.go","old_string":"foo","new_string":"bar"}`),
+	}
+	choices := req.Choices()
+	var toggle *delegator.PromptChoice
+	for i := range choices {
+		if choices[i].Toggle != nil {
+			toggle = &choices[i]
+		}
+	}
+	if toggle == nil {
+		t.Fatal("Edit request should carry a toggle choice")
+	}
+	if toggle.Toggle.ShowLabel != "Show diff" || toggle.Toggle.HideLabel != "Hide diff" {
+		t.Errorf("toggle labels = %q/%q", toggle.Toggle.ShowLabel, toggle.Toggle.HideLabel)
+	}
+	if !strings.Contains(toggle.Toggle.ExtraBody, "🟢 bar") {
+		t.Errorf("toggle body missing diff: %q", toggle.Toggle.ExtraBody)
+	}
+}
+
+func TestChoices_BashNoToggle(t *testing.T) {
+	req := &PermissionRequestPayload{ToolName: "Bash", Input: json.RawMessage(`{"command":"ls"}`)}
+	for _, c := range req.Choices() {
+		if c.Toggle != nil {
+			t.Error("Bash request should not carry a toggle choice")
+		}
+	}
+}

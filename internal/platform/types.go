@@ -307,6 +307,22 @@ type ButtonChoice struct {
 	Data        string // callback data sent when pressed
 	Row         int    // which row this button goes in (0-indexed)
 	Description string // optional sub-label (batched-app ask options only)
+
+	// Toggle, when non-nil, makes this a NON-TERMINAL button: a press toggles
+	// ExtraBody in/out of the message body and re-renders the prompt in place
+	// (keeping every button) instead of firing the resolving callback. Used
+	// for show/hide-diff on Edit permission prompts. See
+	// HandleInteractiveCallback. Platforms that can't re-render in place drop
+	// toggle buttons at send time (see appConn.SendTextWithButtons).
+	Toggle *ButtonToggle
+}
+
+// ButtonToggle carries the collapsible content and the labels for a
+// non-terminal toggle button (see ButtonChoice.Toggle).
+type ButtonToggle struct {
+	ExtraBody string // appended to the prompt body when shown
+	ShowLabel string // button label while hidden (e.g. "Show diff")
+	HideLabel string // button label while shown (e.g. "Hide diff")
 }
 
 // ButtonSender is optionally implemented by Connection types that support

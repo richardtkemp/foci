@@ -241,6 +241,22 @@ type CommandOutputCapturer interface {
 type PromptChoice struct {
 	Label string // button text (e.g. "Yes", "No")
 	Data  string // value to send to the pane (e.g. "1", "2")
+
+	// Toggle, when non-nil, makes this a NON-TERMINAL button: pressing it
+	// toggles ExtraBody in/out of the message (e.g. show/hide a proposed
+	// diff) and re-renders the prompt in place instead of resolving it. The
+	// Allow/Deny buttons stay live. Platforms that can't re-render in place
+	// (currently the native app) omit toggle buttons entirely. See
+	// platform.ButtonToggle and platform.HandleInteractiveCallback.
+	Toggle *PromptToggle
+}
+
+// PromptToggle carries the collapsible content and the two labels for a
+// non-terminal toggle button (see PromptChoice.Toggle).
+type PromptToggle struct {
+	ExtraBody string // appended to the prompt body when shown
+	ShowLabel string // button label while hidden (e.g. "Show diff")
+	HideLabel string // button label while shown (e.g. "Hide diff")
 }
 
 // PermissionPromptFunc sends an interactive prompt to the user with keyboard
