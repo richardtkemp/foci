@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -413,6 +414,61 @@ func TestFCMSend_PostsDataMessage(t *testing.T) {
 	data, _ := msg["data"].(map[string]any)
 	if data["conversationId"] != "conv-1" || data["preview"] != "a preview" {
 		t.Errorf("fcm data = %v", data)
+	}
+}
+
+func TestFCMSend_RetriesTransientThenSucceeds(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&attempts, 1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable) // transient 5xx → retried
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := &fcmPusher{
+		projectID: "proj",
+		ts:        oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "tok"}),
+		http:      srv.Client(),
+		baseURL:   srv.URL,
+		ctx:       context.Background(),
+		retryBase: time.Millisecond,
+	}
+	p.send("device-token", pushPayload{ConvID: "conv-1"})
+
+	if got := atomic.LoadInt32(&attempts); got != 3 {
+		t.Errorf("attempts = %d, want 3 (two 503s then success)", got)
+	}
+}
+
+func TestFCMSend_DeadTokenPrunedNotRetried(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusNotFound) // dead token → permanent, prune, no retry
+	}))
+	defer srv.Close()
+
+	tokens := newPushTokens()
+	tokens.set("dev-1", "dead-token")
+	p := &fcmPusher{
+		projectID: "proj",
+		ts:        oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "tok"}),
+		http:      srv.Client(),
+		baseURL:   srv.URL,
+		ctx:       context.Background(),
+		tokens:    tokens,
+		retryBase: time.Millisecond,
+	}
+	p.send("dead-token", pushPayload{ConvID: "conv-1"})
+
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Errorf("attempts = %d, want 1 (404 is permanent)", got)
+	}
+	if len(tokens.all()) != 0 {
+		t.Errorf("dead token not pruned: %v", tokens.all())
 	}
 }
 

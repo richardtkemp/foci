@@ -23,6 +23,8 @@ const (
 	defaultPushCoalesce = 15 * time.Second // at most one wake push per conversation per window
 	pushPreviewMax      = 80               // hard cap on the preview hint length
 	fcmSendTimeout      = 10 * time.Second
+	fcmMaxAttempts      = 3                      // total send attempts before giving up
+	fcmRetryBase        = 500 * time.Millisecond // backoff doubles each retry (0.5s, 1s, …)
 )
 
 // pushTokens is the in-memory deviceId→FCM-token registry. The client re-sends
@@ -95,6 +97,7 @@ type fcmPusher struct {
 	tokens    *pushTokens
 	window    time.Duration // coalescing window (one wake push per conv per window)
 	baseURL   string        // FCM v1 endpoint base; overridable in tests
+	retryBase time.Duration // backoff base; overridable in tests (0 → fcmRetryBase)
 
 	mu       sync.Mutex
 	lastPush map[string]time.Time // convID → last push time (coalescing)
@@ -142,6 +145,7 @@ func newFCMPusher(ctx context.Context, path string, tokens *pushTokens, window t
 		ctx:       ctx,
 		tokens:    tokens,
 		window:    window,
+		retryBase: fcmRetryBase,
 		lastPush:  make(map[string]time.Time),
 	}
 }
@@ -194,26 +198,56 @@ func (p *fcmPusher) send(token string, payload pushPayload) {
 		base = fcmBaseURL
 	}
 	url := fmt.Sprintf("%s/v1/projects/%s/messages:send", base, p.projectID)
+
+	backoff := p.retryBase
+	if backoff <= 0 {
+		backoff = fcmRetryBase
+	}
+	for attempt := 1; ; attempt++ {
+		if !p.sendOnce(url, token, tok, body) {
+			return // success or permanent outcome — done
+		}
+		if attempt >= fcmMaxAttempts {
+			log.Warnf("app", "fcm send: giving up after %d attempts", fcmMaxAttempts)
+			return
+		}
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+}
+
+// sendOnce performs one FCM send attempt. It returns true only when the failure is
+// transient and worth retrying — a transport error (timeout, reset) or a 5xx/429
+// from FCM. Success, and permanent failures (a dead token, pruned here; any other
+// 4xx), return false so the caller stops.
+func (p *fcmPusher) sendOnce(url, token string, tok *oauth2.Token, body []byte) (retry bool) {
 	req, err := http.NewRequestWithContext(p.ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return
+		return false
 	}
 	tok.SetAuthHeader(req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.http.Do(req)
 	if err != nil {
 		log.Warnf("app", "fcm send: %v", err)
-		return
+		return true
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= http.StatusMultipleChoices {
-		log.Warnf("app", "fcm send: status %d", resp.StatusCode)
-		// 404 (unregistered) / 410 (gone) mean the token is dead — prune it so we
-		// stop retrying; the device re-registers on its next ClientHello.
-		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
-			p.tokens.removeByToken(token)
-		}
+	if resp.StatusCode < http.StatusMultipleChoices {
+		return false
 	}
+	log.Warnf("app", "fcm send: status %d", resp.StatusCode)
+	// 404 (unregistered) / 410 (gone) mean the token is dead — prune it so we
+	// stop retrying; the device re-registers on its next ClientHello.
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		p.tokens.removeByToken(token)
+		return false
+	}
+	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError
 }
 
 // pushPreview classifies a server frame for offline push. It returns a short
