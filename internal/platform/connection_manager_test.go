@@ -148,3 +148,38 @@ func TestForSessionOrPrimary_NoChatPlatformFn(t *testing.T) {
 		t.Errorf("got connection %q, want discord-bot", got.Username())
 	}
 }
+
+// TestForSession_ClaimedButDown_DoesNotMisroute verifies that when a platform owns
+// the chat but its ForSession returns nil (connection momentarily down), ForSession
+// returns nil rather than falling through and handing the session to another
+// platform that happens to have a connection for the key (#990).
+func TestForSession_ClaimedButDown_DoesNotMisroute(t *testing.T) {
+	appConn := &namedConn{name: "app-bot"}
+	telegramMgr := &testConnMgr{sessions: map[string]Connection{}}                  // owner, no live conn
+	appMgr := &testConnMgr{sessions: map[string]Connection{"myagent/c42": appConn}} // would be picked by fallback
+
+	mgr := &aggregatingConnMgr{
+		named:          map[string]ConnectionManager{"app": appMgr, "telegram": telegramMgr},
+		order:          []string{"app", "telegram"},
+		chatPlatformFn: func(_ string, chatID int64) string { return map[int64]string{42: "telegram"}[chatID] },
+	}
+
+	if got := mgr.ForSession("myagent/c42"); got != nil {
+		t.Errorf("ForSession = %q, want nil (telegram owns the chat but is down; must not misroute to app)", got.Username())
+	}
+}
+
+// TestForSession_Unclaimed_UsesFallback verifies the promiscuous fallback still
+// applies when no platform claims the chat (first-message-ever / facet case).
+func TestForSession_Unclaimed_UsesFallback(t *testing.T) {
+	appConn := &namedConn{name: "app-bot"}
+	appMgr := &testConnMgr{sessions: map[string]Connection{"myagent/c99": appConn}}
+	mgr := &aggregatingConnMgr{
+		named:          map[string]ConnectionManager{"app": appMgr},
+		order:          []string{"app"},
+		chatPlatformFn: func(string, int64) string { return "" }, // nothing claims it
+	}
+	if got := mgr.ForSession("myagent/c99"); got != appConn {
+		t.Error("ForSession returned nil/wrong conn; unclaimed chat should use the fallback")
+	}
+}
