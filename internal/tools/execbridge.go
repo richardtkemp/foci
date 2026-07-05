@@ -1259,6 +1259,10 @@ func generateGenericShellFunc(t *Tool) string {
 		if hasStdinFile {
 			extraGuard = " && [ -z \"$__foci_stdin_file\" ]"
 		}
+		// An explicit "-" means "read this field from stdin", mirroring `--file -`;
+		// normalise it to empty so the reader below fills it from the pipe rather
+		// than sending a literal "-" (#1007).
+		fmt.Fprintf(&b, "  if [ \"$%s\" = \"-\" ]; then %s=\"\"; fi\n", t.StdinParam, t.StdinParam)
 		fmt.Fprintf(&b, "  if [ -z \"$%s\" ] && [ ! -t 0 ]%s; then\n    %s=\"$(cat)\"\n  fi\n", t.StdinParam, extraGuard, t.StdinParam)
 	}
 
