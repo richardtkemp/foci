@@ -252,25 +252,26 @@ func formatThinkingExpanded(thinkingText, responseHTML string, displayWidth int)
 		if budget < 100 {
 			budget = 100
 		}
-		escaped := truncateHTMLSafe(htmlEscape(thinkingText), budget) + "\n... (truncated)"
+		// Preserve the END of the thinking, not the start (#720): the tail (the
+		// conclusion/answer) is what's worth reading; drop the earlier reasoning.
+		escaped := "... (truncated)\n" + truncateHTMLSafeTail(htmlEscape(thinkingText), budget)
 		result = "<i>" + escaped + "</i>" + divider + responseHTML
 	}
 	return result
 }
 
-// truncateHTMLSafe truncates HTML-escaped text to maxLen bytes without splitting
-// HTML entities (e.g. &amp; &lt; &gt;). If the cut falls inside an entity, it
-// backs up to before the '&'.
-func truncateHTMLSafe(s string, maxLen int) string {
+// truncateHTMLSafeTail keeps the LAST maxLen bytes of HTML-escaped text without
+// leaving a dangling entity fragment at the cut. If the kept prefix begins inside
+// an entity (a ';' appears before any '&'), it drops up to and including that ';'.
+func truncateHTMLSafeTail(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	s = s[:maxLen]
-	// If we cut inside an HTML entity, back up to before the '&'.
-	if idx := strings.LastIndex(s, "&"); idx != -1 {
-		if !strings.Contains(s[idx:], ";") {
-			s = s[:idx]
-		}
+	s = s[len(s)-maxLen:]
+	amp := strings.IndexByte(s, '&')
+	semi := strings.IndexByte(s, ';')
+	if semi != -1 && (amp == -1 || semi < amp) {
+		s = s[semi+1:]
 	}
 	return s
 }
