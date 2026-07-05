@@ -96,6 +96,28 @@ func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duratio
 	}
 }
 
+// isStructuredContentType reports whether a Content-Type header denotes a
+// non-HTML, machine-parseable payload (JSON/XML/CSV/plain/YAML) that web_fetch
+// should return verbatim rather than run through readability (#966). xhtml is
+// deliberately excluded — it's HTML and readability handles it.
+func isStructuredContentType(ct string) bool {
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	switch {
+	case ct == "application/json" || ct == "text/json" || strings.HasSuffix(ct, "+json"):
+		return true
+	case ct == "application/xml" || ct == "text/xml" || (strings.HasSuffix(ct, "+xml") && ct != "application/xhtml+xml"):
+		return true
+	case ct == "text/csv" || ct == "text/tab-separated-values" || ct == "text/plain":
+		return true
+	case ct == "application/yaml" || ct == "text/yaml" || ct == "application/x-yaml":
+		return true
+	}
+	return false
+}
+
 func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		URL string `json:"url"`
@@ -134,6 +156,13 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 
 	// Raw mode: return unprocessed HTML
 	if p.Raw {
+		return TextResult(string(body)), nil
+	}
+
+	// Structured/non-HTML payloads (JSON, XML, CSV, plain text, YAML) must NOT go
+	// through readability + HTML→markdown — that mangles them (#966). Return the
+	// body verbatim when the Content-Type says it isn't HTML.
+	if isStructuredContentType(resp.Header.Get("Content-Type")) {
 		return TextResult(string(body)), nil
 	}
 

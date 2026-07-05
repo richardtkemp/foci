@@ -593,6 +593,40 @@ func TestReadPDF(t *testing.T) {
 	}
 }
 
+func TestReadImage(t *testing.T) {
+	// Verifies reading an image file returns a text description and an ExtraBlocks
+	// image block with the correct MIME (#630).
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pic.png")
+	if err := os.WriteFile(path, []byte("\x89PNG\r\n\x1a\n fake png data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewReadTool(nil, "", 0)
+	params, _ := json.Marshal(map[string]string{"path": path})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "[Image: pic.png") {
+		t.Errorf("text should mention image filename, got: %q", result.Text)
+	}
+	if len(result.ExtraBlocks) != 1 {
+		t.Fatalf("expected 1 extra block, got %d", len(result.ExtraBlocks))
+	}
+	block := result.ExtraBlocks[0]
+	if block.Type != "image" {
+		t.Errorf("block.Type = %q, want image", block.Type)
+	}
+	if block.Source == nil || block.Source.MimeType != "image/png" {
+		t.Errorf("image block source wrong: %+v", block.Source)
+	}
+	if block.Source != nil && block.Source.Data == "" {
+		t.Error("block.Source.Data is empty")
+	}
+}
+
 func TestReadPDFCaseInsensitive(t *testing.T) {
 	// Verifies that PDF detection is case-insensitive, so .PDF files are treated the same as .pdf.
 	t.Parallel()
