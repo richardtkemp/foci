@@ -1,0 +1,28 @@
+[Unit]
+Description=FOCI Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@FOCI_USER@
+SupplementaryGroups=@SECRETS_GROUP@ crontab
+AmbientCapabilities=CAP_SETGID
+CapabilityBoundingSet=CAP_SETGID
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+WorkingDirectory=@FOCI_HOME@
+Environment="PATH=@SERVICE_PATH@"
+ExecStart=@INSTALL_DIR@/foci-gw -config @FOCI_HOME@/config/foci.toml
+KillMode=mixed
+TimeoutStopSec=45s
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
