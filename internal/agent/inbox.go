@@ -890,12 +890,19 @@ func (a *Agent) sessionRouterFor(inb *sessionInbox, driver Driver) *sessionRoute
 // Replaces the per-driver NewLateDeliverySink method (TODO #746 Stage D)
 // — sink construction is platform-agnostic, so it belongs in the agent.
 func (a *Agent) lateDeliverySink(sk string, driver Driver) turnevent.Sink {
+	// No live connection → warn instead of silently discarding. A non-empty
+	// reply that lands here reached no chat at all (a mis-folded/orphaned turn).
+	// Defensive: the #1038 investigation showed this path discards silently, so
+	// if a reply ever does orphan here it's now visible rather than invisible.
+	warn := discardWarnSink{logWarn: func(finalText string) {
+		a.logger().Warnf("late-delivery: no delivering connection for sk=%s — discarded a %d-char reply (it reached no chat)", sk, len(finalText))
+	}}
 	if driver == nil {
-		return nil
+		return warn
 	}
 	conn := driver.Connection()
 	if conn == nil {
-		return nil
+		return warn
 	}
 	logFn := func(trigger string, err error) {
 		a.logger().Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
@@ -910,6 +917,22 @@ func (a *Agent) lateDeliverySink(sk string, driver Driver) turnevent.Sink {
 		a, 0, &TurnMetadata{}, sk,
 	)
 }
+
+// discardWarnSink is the late-delivery fallback for a session with no live
+// delivering connection. It logs any non-empty final turn text rather than
+// silently dropping it, so an orphaned/mis-folded reply is visible instead of
+// vanishing (defensive hygiene surfaced by the #1038 investigation).
+type discardWarnSink struct {
+	logWarn func(finalText string)
+}
+
+func (s discardWarnSink) Emit(_ context.Context, ev turnevent.Event) {
+	if tc, ok := ev.(turnevent.TurnComplete); ok && strings.TrimSpace(tc.FinalText) != "" {
+		s.logWarn(tc.FinalText)
+	}
+}
+
+func (discardWarnSink) DeliversToPlatform() bool { return false }
 
 // driveAndDrainOrphans runs a single batched turn plus the orphan/extras
 // drain loop. Split out so the worker stays readable. After the primary
