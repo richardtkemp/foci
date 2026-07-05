@@ -74,21 +74,21 @@ Default per-agent source (when none configured): `{name: $id, dir: $workspace/me
 
 ## Search Backends
 
-Two backends are available. They can run independently or simultaneously.
+Two backends are available; **exactly one is active per index**, selected by the `search_backend` string (default `bleve`).
 
 ### FTS5 (SQLite)
 
-The default backend. Uses SQLite's FTS5 extension with Porter stemming and unicode61 tokenization.
+Uses SQLite's FTS5 extension with Porter stemming and unicode61 tokenization.
 
 - Zero external dependencies (built into SQLite)
-- Indexes both memory files and conversation history in real-time
+- Indexes memory files and conversation history — real-time, plus a one-time historical backfill on first use
 - Deterministic ranking via SQL
 - Snippet generation: 40-character context with `>...<` markers
 - Database: `memory.db` (shared mode) or `memory-{agentID}.db` (per-agent mode)
 
 ### Bleve
 
-Pure-Go full-text search with English analyzer and Porter stemming.
+The **default** backend. Pure-Go full-text search with English analyzer and Porter stemming.
 
 - Richer analysis pipeline with term vectors and highlighting
 - Indexes memory files, conversation history, and todo items
@@ -100,22 +100,28 @@ Pure-Go full-text search with English analyzer and Porter stemming.
 
 ```toml
 [memory]
-search_backends = ["fts5"]           # or ["bleve"], or ["fts5", "bleve"]
+search_backend = "bleve"             # "bleve" (default) or "fts5"
 conversation_weight = 0.1            # weight for conversation results (0.0–1.0)
 search_limit = 20                    # max results returned
 reindex_debounce = "0s"              # delay before reindex on file change
 sweep_interval = "1h"                # periodic full reindex interval ("0" disables)
+temporal_decay = true                # recency boost on relevance search (default true)
+decay_half_life = 10                 # days for the recency boost to halve
+decay_boost = 1.0                    # max recency multiplier is 1+this (1.0 = up to 2x for brand-new)
+evergreen_patterns = ["MEMORY.md", "research-*"]  # basename globs never recency-boosted
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `search_backends` | string[] | `["fts5"]` | Active backends: `"fts5"`, `"bleve"`, or both. |
+| `search_backend` | string | `"bleve"` | Search backend: `"bleve"` or `"fts5"`. Exactly one per index. |
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation results. Lower values push conversation below memory files. |
 | `search_limit` | int | `20` | Maximum search results returned per query. |
 | `reindex_debounce` | string | `"0s"` | Delay before reindex after file changes. Go duration format. |
 | `sweep_interval` | string | `"1h"` | Periodic full reindex interval. Catches files added by git, rsync, or other external tools. First sweep runs 30s after startup. `"0"` disables. |
-
-When multiple backends are active, the `memory_search` tool exposes a `backend` parameter so the agent can choose which to query. When only one is active, the parameter is hidden.
+| `temporal_decay` | bool | `true` | Boost recent results in relevance search (recency boost only — old results are never penalised). |
+| `decay_half_life` | float | `10` | Days for the recency boost to halve. |
+| `decay_boost` | float | `1.0` | Max recency multiplier is `1+decay_boost` (1.0 = up to 2× for brand-new). |
+| `evergreen_patterns` | string[] | `["MEMORY.md", "research-*"]` | Basename globs never recency-boosted (timeless files). |
 
 ---
 
