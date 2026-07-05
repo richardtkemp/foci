@@ -45,6 +45,7 @@ const (
 	TypeMeta            = "meta"
 	TypeError           = "error"
 	TypePong            = "pong"
+	TypeTranscript      = "transcript"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -383,6 +384,15 @@ type InteractiveEdit struct {
 
 func (InteractiveEdit) Type() string { return TypeInteractiveEdit }
 
+// Transcript returns a voice note's STT text to the app for editing before send
+// (the TranscribeOnly path) rather than routing it to the agent.
+type Transcript struct {
+	ConversationID string `json:"conversationId"`
+	Text           string `json:"text"`
+}
+
+func (Transcript) Type() string { return TypeTranscript }
+
 // Meta carries the user-facing status chips (model, mana, cost, tokens).
 type Meta struct {
 	ConversationID string   `json:"conversationId"`
@@ -443,6 +453,11 @@ type ClientMessage struct {
 	// (and is never consumed as plan feedback or an ask answer). Empty means
 	// "use the agent's steer_mode config". Unknown values are treated as empty.
 	Steer string `json:"steer,omitempty"`
+	// TranscribeOnly requests that a voice attachment be transcribed and the
+	// text returned to the app (as a Transcript frame) for the user to edit
+	// before sending, instead of being routed to the agent as a turn. Ignored
+	// when there is no voice attachment.
+	TranscribeOnly bool `json:"transcribeOnly,omitempty"`
 }
 
 // Command is a slash-command invocation from the app. AgentID names the owning
