@@ -1,5 +1,5 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+VERSION ?= $(shell git -c safe.directory=$(CURDIR) describe --tags --always --dirty 2>/dev/null || echo dev)
+GIT_COMMIT ?= $(shell git -c safe.directory=$(CURDIR) rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 GOBIN ?= $(shell go env GOPATH)/bin
@@ -216,3 +216,173 @@ verify-persistence:
 	@./scripts/verify-persistence.sh
 
 check: lint coverage-check verify-persistence
+
+# ============================================================
+# Deploy — single source of truth (replaces setup.sh / update.sh)
+# ============================================================
+# Privileged targets run under `sudo make <target>`; aisudo gates the
+# escalation, so the old emit-for-review model is redundant. The systemd unit
+# is rendered from deploy/foci.service.tmpl — the ONE place it is defined.
+#
+#   sudo make -C <repo> update   # deploy new code to an existing install
+#   sudo make -C <repo> setup    # first-time provision (usually via download.sh)
+
+FOCI_USER     ?= foci
+FOCI_HOME     ?= /home/$(FOCI_USER)
+INSTALL_DIR   ?= /usr/local/bin
+SECRETS_GROUP ?= foci-secrets
+SERVICE_NAME  ?= foci
+SERVICE_FILE  := /etc/systemd/system/$(SERVICE_NAME).service
+SECRETS_FILE  := $(FOCI_HOME)/config/secrets.toml
+DEPLOY_BINS   := foci-gw foci foci-call foci-cc-hook
+
+# Base PATH baked into the unit (shellenv layers the operator dotfile env on top
+# at startup): FOCI_HOME/.local/bin plus the standard system dirs that exist.
+SERVICE_PATH := $(FOCI_HOME)/.local/bin$(shell for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do [ -d "$$d" ] && printf ':%s' "$$d"; done)
+
+# first-run wizard: interactive by default; non-interactive when a token is set.
+WIZARD_ARGS := --config-dir $(FOCI_HOME)/config
+ifdef FOCI_TELEGRAM_TOKEN
+WIZARD_ARGS += --non-interactive --telegram-bot-token $(FOCI_TELEGRAM_TOKEN) --telegram-user-id $(FOCI_TELEGRAM_USER)
+ifdef FOCI_PROVIDER
+WIZARD_ARGS += --provider $(FOCI_PROVIDER)
+endif
+ifdef FOCI_API_KEY
+WIZARD_ARGS += --api-key $(FOCI_API_KEY)
+endif
+endif
+
+.PHONY: deploy-build install-bin install-unit install-polkit provision install-shared install-docs wizard check-config stage-changelog reload restart enable setup update
+
+# go build must not run as root under `sudo make`; drop to the service user
+# (mirrors what update.sh did). Real /usr/bin/sudo here — root's PATH has no
+# aisudo shim, so no re-prompt.
+deploy-build:
+	sudo -u $(FOCI_USER) bash -c "cd '$(CURDIR)' && $(MAKE) -s all"
+
+install-bin:
+	@for b in $(DEPLOY_BINS); do echo "  install $$b"; install -m 755 bin/$$b $(INSTALL_DIR)/$$b; done
+
+install-unit:
+	sed -e 's|@FOCI_USER@|$(FOCI_USER)|g' \
+	    -e 's|@SECRETS_GROUP@|$(SECRETS_GROUP)|g' \
+	    -e 's|@FOCI_HOME@|$(FOCI_HOME)|g' \
+	    -e 's|@SERVICE_PATH@|$(SERVICE_PATH)|g' \
+	    -e 's|@INSTALL_DIR@|$(INSTALL_DIR)|g' \
+	    deploy/foci.service.tmpl > $(SERVICE_FILE)
+	systemctl daemon-reload
+
+install-polkit:
+	@install -d /etc/polkit-1/rules.d
+	@printf '%s\n' \
+	  '// Allow $(FOCI_USER) to manage $(SERVICE_NAME).service without a password.' \
+	  'polkit.addRule(function(action, subject) {' \
+	  '    if (action.id === "org.freedesktop.systemd1.manage-units" &&' \
+	  '        action.lookup("unit") === "$(SERVICE_NAME).service" &&' \
+	  '        subject.user === "$(FOCI_USER)") {' \
+	  '        return polkit.Result.YES;' \
+	  '    }' \
+	  '});' > /etc/polkit-1/rules.d/49-$(SERVICE_NAME).rules
+
+provision:
+	id $(FOCI_USER) >/dev/null 2>&1 || useradd --system --home-dir $(FOCI_HOME) --create-home --shell /bin/bash $(FOCI_USER)
+	getent group $(SECRETS_GROUP) >/dev/null 2>&1 || groupadd $(SECRETS_GROUP)
+	@if ! getent group crontab >/dev/null 2>&1; then \
+	  if   command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y cron || true; \
+	  elif command -v dnf     >/dev/null 2>&1; then dnf install -y cronie || true; \
+	  elif command -v pacman  >/dev/null 2>&1; then pacman -S --noconfirm cronie || true; \
+	  fi; \
+	  getent group crontab >/dev/null 2>&1 || groupadd crontab; \
+	fi
+	@id -nG $(FOCI_USER) 2>/dev/null | grep -qw $(SECRETS_GROUP) && gpasswd -d $(FOCI_USER) $(SECRETS_GROUP) || true
+	mkdir -p $(FOCI_HOME)/config $(FOCI_HOME)/data $(FOCI_HOME)/logs
+	chown $(FOCI_USER):$(FOCI_USER) $(FOCI_HOME)/config $(FOCI_HOME)/data $(FOCI_HOME)/logs
+
+install-shared:
+	mkdir -p $(FOCI_HOME)/shared/docs
+	cp -r shared/* $(FOCI_HOME)/shared/
+	cp -r docs/* $(FOCI_HOME)/shared/docs/
+	cp README.md $(FOCI_HOME)/shared/docs/README.md
+	chown -R $(FOCI_USER):$(FOCI_USER) $(FOCI_HOME)/shared
+
+wizard:
+	@runuser -u $(FOCI_USER) -- $(INSTALL_DIR)/foci first-run $(WIZARD_ARGS)
+	@[ -f $(SECRETS_FILE) ] && chown root:$(SECRETS_GROUP) $(SECRETS_FILE) && chmod 0660 $(SECRETS_FILE) || true
+
+check-config:
+	@for svcfile in /etc/systemd/system/foci*.service; do \
+	  [ -f "$$svcfile" ] || continue; \
+	  cfg=$$(grep '^ExecStart=' "$$svcfile" | grep -oP '(?<=-config )\S+' || true); \
+	  [ -z "$$cfg" ] && continue; \
+	  home=$$(grep '^WorkingDirectory=' "$$svcfile" | cut -d= -f2); \
+	  printf '  %s: %s ... ' "$$(basename $$svcfile .service)" "$$cfg"; \
+	  HOME="$$home" bin/foci-gw -check-config -config "$$cfg" || { echo "ABORT: $$svcfile config incompatible — daemon untouched"; exit 1; }; \
+	done
+
+stage-changelog:
+	@for svcfile in /etc/systemd/system/foci*.service; do \
+	  [ -f "$$svcfile" ] || continue; \
+	  home=$$(grep '^WorkingDirectory=' "$$svcfile" | cut -d= -f2); \
+	  user=$$(grep '^User=' "$$svcfile" | cut -d= -f2); \
+	  [ -n "$$home" ] || continue; \
+	  cf="$$home/data/.foci-commit"; old=""; \
+	  [ -r "$$cf" ] && old=$$(cat "$$cf" 2>/dev/null || true); \
+	  if [ -n "$$old" ] && [ "$$old" != "$(GIT_COMMIT)" ]; then \
+	    { echo "# Foci Updated"; echo; echo "Updated from \`$$old\` to \`$(GIT_COMMIT)\` on $$(date -u '+%Y-%m-%d %H:%M UTC')."; echo; echo "## Changes"; echo; \
+	      git -C "$(CURDIR)" -c safe.directory="$(CURDIR)" log --format='- **%s**%n%n%w(0,2,2)%b' "$$old..$(GIT_COMMIT)" 2>/dev/null || echo "(could not read git log)"; echo; echo "## Instructions"; echo; echo "Tell your user what just changed. Summarise the updates above in a brief, friendly message."; } > "$$home/data/WELCOME.md"; \
+	    chown "$$user:$$user" "$$home/data/WELCOME.md"; \
+	    echo "  $$(basename $$svcfile .service): changelog staged ($$old -> $(GIT_COMMIT))"; \
+	  fi; \
+	  mkdir -p "$$(dirname "$$cf")"; echo "$(GIT_COMMIT)" > "$$cf"; chown "$$user:$$user" "$$cf"; \
+	done
+
+install-docs:
+	@for svcfile in /etc/systemd/system/foci*.service; do \
+	  [ -f "$$svcfile" ] || continue; \
+	  home=$$(grep '^WorkingDirectory=' "$$svcfile" | cut -d= -f2); \
+	  user=$$(grep '^User=' "$$svcfile" | cut -d= -f2); \
+	  [ -n "$$home" ] && [ -n "$$user" ] || continue; \
+	  mkdir -p "$$home/shared/docs"; \
+	  rsync -a --delete docs/ "$$home/shared/docs/"; \
+	  cp README.md "$$home/shared/docs/README.md"; \
+	  chown -R "$$user:$$user" "$$home/shared/docs"; \
+	done
+
+reload:
+	systemctl daemon-reload
+
+restart:
+	@for svc in $$(systemctl list-units --type=service --plain --no-legend 'foci*' | awk '{print $$1}'); do \
+	  echo "  restarting $$svc"; systemctl restart --no-block "$$svc"; \
+	done
+	@echo ""
+	@echo ">>> AGENT: the foci restart is queued (async, --no-block). END YOUR TURN NOW."
+	@echo ">>> foci's graceful shutdown waits only ~30s for your in-flight turn before"
+	@echo ">>> being force-stopped mid-cleanup. Do post-deploy checks in a NEW turn."
+
+enable:
+	systemctl enable $(SERVICE_NAME)
+
+# First-time provision. Ordered explicitly (sub-make) so it is correct even
+# under -j. Usually invoked by download.sh after fetching the repo.
+setup:
+	$(MAKE) deploy-build
+	$(MAKE) provision
+	$(MAKE) install-shared
+	$(MAKE) install-bin
+	$(MAKE) install-unit
+	$(MAKE) install-polkit
+	$(MAKE) wizard
+	$(MAKE) enable
+	systemctl start $(SERVICE_NAME)
+
+# Deploy new code to an existing install. check-config runs against the FRESH
+# binary before anything is installed, so a bad config aborts untouched.
+update:
+	$(MAKE) deploy-build
+	$(MAKE) check-config
+	$(MAKE) install-bin
+	$(MAKE) install-docs
+	$(MAKE) install-unit
+	$(MAKE) stage-changelog
+	$(MAKE) restart
