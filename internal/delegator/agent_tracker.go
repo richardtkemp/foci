@@ -28,23 +28,50 @@ type AgentTracker struct {
 type TrackedAgent struct {
 	ID          string // tool_use ID
 	Description string // short description from Agent tool input
+	added       time.Time
 }
+
+// agentMaxAge bounds how long a spawn stays tracked without a completion
+// signal. The tracker now survives turn boundaries (a background agent
+// outlives the turn that spawned it), so a missed completion — RemoveOne is
+// FIFO, not ID-matched, in ccstream — can no longer be swept by a per-turn
+// clear; this prune is the backstop so Pending() can't stay stuck > 0. Set
+// well beyond any real subagent's runtime.
+const agentMaxAge = 30 * time.Minute
 
 // Add registers a new agent spawn. Duplicate IDs are silently ignored
 // (handles --include-partial-messages replays in ccstream).
 func (t *AgentTracker) Add(id, description string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.pruneLocked()
 	for _, ag := range t.pending {
 		if ag.ID == id {
 			return
 		}
 	}
-	t.pending = append(t.pending, TrackedAgent{ID: id, Description: description})
+	t.pending = append(t.pending, TrackedAgent{ID: id, Description: description, added: time.Now()})
 	if t.start.IsZero() {
 		t.start = time.Now()
 	}
 	t.notify()
+}
+
+// pruneLocked drops agents older than agentMaxAge. Caller holds mu; it does
+// not notify (callers already do around their own mutations).
+func (t *AgentTracker) pruneLocked() {
+	if len(t.pending) == 0 {
+		return
+	}
+	cutoff := time.Now().Add(-agentMaxAge)
+	kept := t.pending[:0]
+	for _, ag := range t.pending {
+		if ag.added.Before(cutoff) {
+			continue
+		}
+		kept = append(kept, ag)
+	}
+	t.pending = kept
 }
 
 // Remove marks an agent as completed by its tool_use ID.
@@ -69,6 +96,7 @@ func (t *AgentTracker) Remove(id string) bool {
 func (t *AgentTracker) RemoveOne() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.pruneLocked()
 	if len(t.pending) == 0 {
 		return false
 	}
@@ -93,6 +121,11 @@ func (t *AgentTracker) ClearAll() {
 func (t *AgentTracker) Pending() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	before := len(t.pending)
+	t.pruneLocked()
+	if len(t.pending) != before {
+		t.notify()
+	}
 	return len(t.pending)
 }
 

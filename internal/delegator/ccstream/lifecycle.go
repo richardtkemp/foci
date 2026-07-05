@@ -436,6 +436,7 @@ func (b *Backend) finalizeExit(reason error) {
 		b.redispatchInFlight = false
 		resultCh := b.turnResultCh
 		b.turnMu.Unlock()
+		b.agents.ClearAll() // subprocess gone: pending agents can never complete
 		log.Debugf(component, "finalizeExit: post-turnMu turn_nil=%v turn_otc_nil=%v elapsed=%s", turn == nil, turn == nil || turn.OnTurnComplete == nil, time.Since(start))
 
 		if turn != nil && turn.OnTurnComplete != nil {

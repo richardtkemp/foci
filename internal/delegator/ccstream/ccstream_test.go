@@ -1389,8 +1389,10 @@ func TestOnAssistant_AgentDuplicateIgnored(t *testing.T) {
 	}
 }
 
-func TestOnResult_ClearsTrackedAgents(t *testing.T) {
-	// Verifies OnResult clears any remaining tracked agents as a safety net.
+func TestOnResult_KeepsTrackedAgentsAcrossTurn(t *testing.T) {
+	// Background agents outlive the turn that spawned them, so completing a turn
+	// must NOT clear them — they persist until task_notification, the max-age
+	// prune, or session exit.
 	t.Parallel()
 
 	var statusMessages []string
@@ -1402,14 +1404,11 @@ func TestOnResult_ClearsTrackedAgents(t *testing.T) {
 	applyHandler(b, &testHandler{})
 	b.OnResult(&ResultMessage{Subtype: "success", Usage: TokenUsage{}})
 
-	if b.agents.Pending() != 0 {
-		t.Fatalf("Pending() = %d, want 0 after OnResult", b.agents.Pending())
+	if b.agents.Pending() != 1 {
+		t.Fatalf("Pending() = %d, want 1 (agent survives turn completion)", b.agents.Pending())
 	}
-	if len(statusMessages) != 1 {
-		t.Fatalf("OnStatus called %d times, want 1 (completion)", len(statusMessages))
-	}
-	if !strings.Contains(statusMessages[0], "complete") {
-		t.Errorf("status = %q, want completion message", statusMessages[0])
+	if len(statusMessages) != 0 {
+		t.Fatalf("OnStatus called %d times, want 0 (no clear on turn complete)", len(statusMessages))
 	}
 }
 
