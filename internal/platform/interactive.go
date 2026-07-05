@@ -33,7 +33,9 @@ type ConnResolver func() Connection
 type interactiveMsg struct {
 	resolve  ConnResolver // lazily resolves the connection for later proactive edits; nil = none
 	msgID    string       // platform-side message ID, used by CancelInteractiveMessage / expiry
+	baseText string       // prompt body without any toggled-in extra content
 	buttons  []ButtonChoice
+	shown    map[int]bool // btnIdx → whether its toggle content is currently revealed
 	callback ButtonCallback
 	onExpire func() // resolves the upstream waiter on expiry (e.g. deny to CC); nil = no-op
 	created  time.Time
@@ -104,6 +106,7 @@ func SendInteractiveMessageWithID(resolve ConnResolver, id string, text string, 
 	imMu.Lock()
 	imStore[id] = &interactiveMsg{
 		resolve:  resolve,
+		baseText: text,
 		buttons:  buttons,
 		callback: cb,
 		onExpire: onExpire,
@@ -111,16 +114,7 @@ func SendInteractiveMessageWithID(resolve ConnResolver, id string, text string, 
 	}
 	imMu.Unlock()
 
-	// Callback data: "im:<id>:<buttonIndex>"
-	var imButtons []ButtonChoice
-	for i, b := range buttons {
-		imButtons = append(imButtons, ButtonChoice{
-			Label: b.Label,
-			Data:  id + ":" + strconv.Itoa(i),
-		})
-	}
-
-	msgID, err := bs.SendTextWithButtons(text, imButtons, "im:")
+	msgID, err := bs.SendTextWithButtons(text, imEncodeButtons(id, buttons), "im:")
 	if err != nil {
 		// Clean up on failure.
 		imMu.Lock()
@@ -136,6 +130,24 @@ func SendInteractiveMessageWithID(resolve ConnResolver, id string, text string, 
 	}
 	imMu.Unlock()
 	return msgID, nil
+}
+
+// imEncodeButtons rewrites each button's callback Data to the routing token
+// "<promptID>:<index>" (the "im:" prefix is added by the platform sender),
+// preserving Label/Row/Description/Toggle so re-rendered keyboards stay
+// consistent with the send path.
+func imEncodeButtons(id string, buttons []ButtonChoice) []ButtonChoice {
+	out := make([]ButtonChoice, len(buttons))
+	for i, b := range buttons {
+		out[i] = ButtonChoice{
+			Label:       b.Label,
+			Data:        id + ":" + strconv.Itoa(i),
+			Row:         b.Row,
+			Description: b.Description,
+			Toggle:      b.Toggle,
+		}
+	}
+	return out
 }
 
 // RestoreInteractiveCallback re-registers an interactive message's callback after
@@ -218,16 +230,45 @@ func HandleInteractiveCallback(callbackData string) (editText, choiceData string
 
 	imMu.Lock()
 	msg, found := imStore[promptID]
-	if found {
-		delete(imStore, promptID) // one-shot: remove after handling
-	}
-	imMu.Unlock()
-
 	if !found || btnIdx < 0 || btnIdx >= len(msg.buttons) {
+		imMu.Unlock()
 		return "", "", false
 	}
 
+	// Non-terminal toggle: flip the revealed state, re-render the prompt in
+	// place (keeping every button), and leave the registration live so the
+	// Allow/Deny buttons still resolve. The edit is performed here — the
+	// caller sees editText="" and does no further edit.
+	if choice := msg.buttons[btnIdx]; choice.Toggle != nil {
+		if msg.shown == nil {
+			msg.shown = make(map[int]bool)
+		}
+		shown := !msg.shown[btnIdx]
+		msg.shown[btnIdx] = shown
+		if shown {
+			msg.buttons[btnIdx].Label = choice.Toggle.HideLabel
+		} else {
+			msg.buttons[btnIdx].Label = choice.Toggle.ShowLabel
+		}
+		body := msg.baseText
+		if shown {
+			body = msg.baseText + "\n\n" + choice.Toggle.ExtraBody
+		}
+		bs := msg.buttonSender()
+		mid := msg.msgID
+		reButtons := imEncodeButtons(promptID, msg.buttons)
+		imMu.Unlock()
+		if bs != nil && mid != "" {
+			if err := bs.EditMessageWithButtons(mid, body, reButtons, "im:"); err != nil {
+				log.Warnf("interactive", "toggle edit %s: %v", mid, err)
+			}
+		}
+		return "", choice.Data, true
+	}
+
+	delete(imStore, promptID) // one-shot: remove after handling
 	choice := msg.buttons[btnIdx]
+	imMu.Unlock()
 	edit := ""
 	if msg.callback != nil {
 		edit = msg.callback(choice)

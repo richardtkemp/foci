@@ -152,6 +152,70 @@ func TestHandleInteractiveCallbackOneShot(t *testing.T) {
 	}
 }
 
+// TestHandleInteractiveCallbackToggle verifies a non-terminal toggle button:
+// pressing it re-renders the prompt in place (revealing/hiding ExtraBody and
+// flipping the label) via EditMessageWithButtons, keeps the prompt live, and
+// never fires the resolving callback — while the terminal buttons still resolve.
+func TestHandleInteractiveCallbackToggle(t *testing.T) {
+	clearIMStore(t)
+
+	bs := &mockButtonSender{msgID: "m1"}
+	buttons := []ButtonChoice{
+		{Label: "Allow", Data: "allow"},
+		{Label: "Deny", Data: "deny"},
+		{Label: "Show diff", Data: "showdiff", Toggle: &ButtonToggle{
+			ExtraBody: "THE DIFF", ShowLabel: "Show diff", HideLabel: "Hide diff",
+		}},
+	}
+
+	var resolved bool
+	_, err := SendInteractiveMessageWithID(staticResolver(bs), "req-t", "Permit?", buttons, func(ButtonChoice) string {
+		resolved = true
+		return "✅ done"
+	}, nil)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	// Reveal.
+	edit, _, ok := HandleInteractiveCallback("req-t:2")
+	if !ok || edit != "" {
+		t.Fatalf("toggle reveal: ok=%v edit=%q, want ok=true edit=\"\"", ok, edit)
+	}
+	if resolved {
+		t.Fatal("toggle must not fire the resolving callback")
+	}
+	if bs.ewbCalls != 1 {
+		t.Fatalf("EditMessageWithButtons calls = %d, want 1", bs.ewbCalls)
+	}
+	if bs.ewbText != "Permit?\n\nTHE DIFF" {
+		t.Errorf("revealed body = %q, want %q", bs.ewbText, "Permit?\n\nTHE DIFF")
+	}
+	if bs.ewbButtons[2].Label != "Hide diff" {
+		t.Errorf("toggle label = %q, want 'Hide diff'", bs.ewbButtons[2].Label)
+	}
+
+	// Hide again.
+	if _, _, ok := HandleInteractiveCallback("req-t:2"); !ok {
+		t.Fatal("second toggle should succeed")
+	}
+	if bs.ewbText != "Permit?" {
+		t.Errorf("hidden body = %q, want %q", bs.ewbText, "Permit?")
+	}
+	if bs.ewbButtons[2].Label != "Show diff" {
+		t.Errorf("toggle label after hide = %q, want 'Show diff'", bs.ewbButtons[2].Label)
+	}
+
+	// Prompt is still live: the terminal Allow button resolves.
+	edit, _, ok = HandleInteractiveCallback("req-t:0")
+	if !ok || !resolved || edit != "✅ done" {
+		t.Fatalf("terminal after toggle: ok=%v resolved=%v edit=%q", ok, resolved, edit)
+	}
+	if _, _, ok := HandleInteractiveCallback("req-t:0"); ok {
+		t.Fatal("prompt should be gone after terminal resolve")
+	}
+}
+
 // TestHandleInteractiveCallbackInvalidFormat verifies that malformed callback
 // data returns ok=false without panicking.
 func TestHandleInteractiveCallbackInvalidFormat(t *testing.T) {
@@ -472,6 +536,10 @@ type mockButtonSender struct {
 	editedMsgID string // captured by EditMessageText
 	editedText  string // captured by EditMessageText
 	editErr     error  // returned from EditMessageText
+
+	ewbText    string         // captured by EditMessageWithButtons
+	ewbButtons []ButtonChoice // captured by EditMessageWithButtons
+	ewbCalls   int
 }
 
 func (m *mockButtonSender) SendTextWithButtons(text string, buttons []ButtonChoice, prefix string) (string, error) {
@@ -486,7 +554,10 @@ func (m *mockButtonSender) EditMessageText(msgID string, text string) error {
 	m.editedText = text
 	return m.editErr
 }
-func (m *mockButtonSender) EditMessageWithButtons(string, string, []ButtonChoice, string) error {
+func (m *mockButtonSender) EditMessageWithButtons(msgID, text string, buttons []ButtonChoice, _ string) error {
+	m.ewbText = text
+	m.ewbButtons = buttons
+	m.ewbCalls++
 	return nil
 }
 

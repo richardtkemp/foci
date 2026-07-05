@@ -292,7 +292,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			}
 			var buttons []platform.ButtonChoice
 			for _, c := range choices {
-				buttons = append(buttons, platform.ButtonChoice{Label: c.Label, Data: c.Data})
+				btn := platform.ButtonChoice{Label: c.Label, Data: c.Data}
+				if c.Toggle != nil {
+					btn.Toggle = &platform.ButtonToggle{
+						ExtraBody: c.Toggle.ExtraBody,
+						ShowLabel: c.Toggle.ShowLabel,
+						HideLabel: c.Toggle.HideLabel,
+					}
+				}
+				buttons = append(buttons, btn)
 			}
 			reqID := requestID // capture for closure
 			// Use the requestID as the platform prompt ID so the cancel

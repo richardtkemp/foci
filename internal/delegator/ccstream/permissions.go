@@ -343,6 +343,69 @@ func formatToolInput(toolName string, input json.RawMessage) string {
 	return fencedBlock(s)
 }
 
+// maxDiffChars bounds the rendered diff so the re-rendered prompt stays within
+// platform message-length limits (Telegram caps at 4096); an over-limit edit
+// would silently fail and the toggle would appear dead.
+const maxDiffChars = 3500
+
+// formatEditDiff renders the proposed change for an Edit/MultiEdit permission
+// request as a red/green line diff, fenced to protect arbitrary code content
+// from the markdown converter. Returns "" for other tools or unparseable input.
+func formatEditDiff(toolName string, input json.RawMessage) string {
+	switch toolName {
+	case "Edit":
+		var e struct {
+			OldString string `json:"old_string"`
+			NewString string `json:"new_string"`
+		}
+		if json.Unmarshal(input, &e) != nil {
+			return ""
+		}
+		return fencedBlock(truncateDiff(diffLines(e.OldString, e.NewString)))
+	case "MultiEdit":
+		var m struct {
+			Edits []struct {
+				OldString string `json:"old_string"`
+				NewString string `json:"new_string"`
+			} `json:"edits"`
+		}
+		if json.Unmarshal(input, &m) != nil || len(m.Edits) == 0 {
+			return ""
+		}
+		parts := make([]string, len(m.Edits))
+		for i, e := range m.Edits {
+			parts[i] = fmt.Sprintf("── edit %d ──\n%s", i+1, diffLines(e.OldString, e.NewString))
+		}
+		return fencedBlock(truncateDiff(strings.Join(parts, "\n\n")))
+	}
+	return ""
+}
+
+func diffLines(oldS, newS string) string {
+	var b strings.Builder
+	for _, ln := range strings.Split(oldS, "\n") {
+		b.WriteString("🔴 " + neutralizeFence(ln) + "\n")
+	}
+	for _, ln := range strings.Split(newS, "\n") {
+		b.WriteString("🟢 " + neutralizeFence(ln) + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// neutralizeFence breaks any triple-backtick run in edited content so it can't
+// close the code fence that wraps the diff (common when editing markdown/Go
+// files). A zero-width space between the backticks is invisible in the client.
+func neutralizeFence(s string) string {
+	return strings.ReplaceAll(s, "```", "`​`​`")
+}
+
+func truncateDiff(s string) string {
+	if len(s) <= maxDiffChars {
+		return s
+	}
+	return s[:maxDiffChars] + "\n… (truncated)"
+}
+
 // planAttachmentPath returns a readable file path holding the full plan
 // markdown for an ExitPlanMode request, or "" if none is available. CC writes
 // the plan to input.planFilePath itself (under ~/.claude/plans), so we attach
@@ -399,6 +462,17 @@ func (req *PermissionRequestPayload) Choices() []delegator.PromptChoice {
 	choices := []delegator.PromptChoice{
 		{Label: "Allow", Data: "allow"},
 		{Label: "Deny", Data: "deny"},
+	}
+	if diff := formatEditDiff(req.ToolName, req.Input); diff != "" {
+		choices = append(choices, delegator.PromptChoice{
+			Label: "Show diff",
+			Data:  "showdiff",
+			Toggle: &delegator.PromptToggle{
+				ExtraBody: diff,
+				ShowLabel: "Show diff",
+				HideLabel: "Hide diff",
+			},
+		})
 	}
 	for _, s := range req.PermissionSuggestions {
 		if s.Prefix != "" {

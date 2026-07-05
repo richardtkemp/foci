@@ -323,6 +323,10 @@ func (c *appConn) SendTextWithButtons(text string, buttons []platform.ButtonChoi
 	if b == nil {
 		return "", errNoBinding
 	}
+	// The app's click dispatch deletes the prompt binding on any resolved
+	// callback, so a non-terminal toggle would orphan the remaining buttons.
+	// Drop toggle buttons here; the app shows only the terminal choices.
+	buttons = dropToggleButtons(buttons)
 	promptID := promptIDFromButtons(buttons)
 	c.hub.registerPrompt(promptID, b)
 	b.send(fap.Interactive{
@@ -421,6 +425,17 @@ func promptIDFromButtons(buttons []platform.ButtonChoice) string {
 		}
 	}
 	return fap.NewULID()
+}
+
+// dropToggleButtons returns buttons with non-terminal toggle buttons removed.
+func dropToggleButtons(buttons []platform.ButtonChoice) []platform.ButtonChoice {
+	out := buttons[:0:0]
+	for _, b := range buttons {
+		if b.Toggle == nil {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // toChoices maps foci's ButtonChoice slice onto the wire Choice slice.
