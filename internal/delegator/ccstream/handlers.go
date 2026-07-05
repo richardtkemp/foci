@@ -291,8 +291,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		cycle, turnActive, msg.Subtype, len(text), result.Usage.OutputTokens)
 
 	if !turnActive {
-		// Orphan run (no foci turn open — e.g. a background Bash finishing
-		// after idle triggers a task-notification run). Its text already
+		// Autonomous turn (no foci turn open — e.g. a background-agent or Bash
+		// completion triggers a task-notification run). Its text already
 		// delivered via the always-live SessionEvents; nothing to complete.
 		return
 	}
@@ -394,8 +394,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.turnMu.Lock()
 		b.stateEventsSeen = true
 		turnActive := b.turnActive
+		if ss.State == "running" && !turnActive {
+			b.autonomousActive = true
+		}
+		autonomous := b.autonomousActive
 		b.turnMu.Unlock()
-		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v", ss.State, turnActive)
+		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v autonomous=%v", ss.State, turnActive, autonomous)
 		if ss.State == "idle" {
 			b.onSessionIdle()
 		}

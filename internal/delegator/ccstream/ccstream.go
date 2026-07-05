@@ -88,7 +88,14 @@ type Backend struct {
 	// Turn state
 	turnMu         sync.Mutex
 	turnActive     bool
-	turnEvents     *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
+	// autonomousActive is true while CC runs a turn foci didn't open (an
+	// "autonomous turn": a background-agent-completion or task-notification run
+	// that produces work with no foci TurnEvents). Set on session_state=running
+	// while !turnActive, cleared on idle / turn adoption. It gates SourceSystem
+	// injects (tryBeginTurn) so reflection/keepalive can't inject into — and get
+	// its silent-sink turn to swallow — live autonomous work (#1047).
+	autonomousActive bool
+	turnEvents       *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
 	turnResultCh   chan *ResultMessage   // buffered(1), receives result
 	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"

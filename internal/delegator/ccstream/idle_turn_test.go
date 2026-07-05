@@ -327,6 +327,35 @@ func TestIdleKeyed_PreAnswerSendFailure(t *testing.T) {
 
 // TestIdleKeyed_WaitForTurnUnblocksAtIdle proves WaitForTurn tracks the new
 // boundary: it stays blocked across a result and returns once idle completes
+// TestAutonomousTurnBlocksSystemInject: an autonomous turn (CC runs with no foci
+// turn open — e.g. a background-agent completion) marks the session busy, so a
+// SourceSystem inject (reflection/keepalive) defers instead of stealing the run
+// into its silent-sink turn (#1047). Once the run goes idle it may begin.
+func TestAutonomousTurnBlocksSystemInject(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	b.typingFunc = func(bool) {}
+	applyHandler(b, &testHandler{OnTurnComplete: func(*delegator.TurnResult) {}})
+
+	stateEvent(b, "running") // running with no foci turn open → autonomous turn
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem, Text: "reflect", Turn: &delegator.TurnEvents{},
+	})
+	if !errors.Is(err, delegator.ErrTurnInFlight) {
+		t.Fatalf("system inject during autonomous turn = %v, want ErrTurnInFlight", err)
+	}
+
+	stateEvent(b, "idle") // autonomous turn ends → flag clears
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem, Text: "reflect", Turn: &delegator.TurnEvents{},
+	}); err != nil {
+		t.Fatalf("system inject after idle = %v, want nil", err)
+	}
+}
+
 // the turn.
 func TestIdleKeyed_WaitForTurnUnblocksAtIdle(t *testing.T) {
 	t.Parallel()

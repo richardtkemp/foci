@@ -43,7 +43,7 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 // completion and retries.
 func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
 	b.turnMu.Lock()
-	if b.turnActive {
+	if b.turnActive || b.autonomousActive {
 		b.turnMu.Unlock()
 		return delegator.ErrTurnInFlight
 	}
@@ -56,6 +56,7 @@ func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
 // beginTurnLocked initialises per-turn state. Caller must hold turnMu.
 func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnActive = true
+	b.autonomousActive = false // a foci turn now owns the run (adoption)
 	b.turnEvents = turn
 	b.turnText.Reset()
 	b.turnTools = 0

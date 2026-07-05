@@ -25,12 +25,13 @@ func (b *Backend) onSessionIdle() {
 	active := b.turnActive
 	redispatch := b.redispatchInFlight
 	result := b.stashedResult
+	b.autonomousActive = false // idle ends any autonomous turn
 	b.turnMu.Unlock()
 
 	if !active {
-		// Orphan run: a run foci didn't open a turn for (slash commands,
-		// task-notification runs after a background Bash finishes, proactive
-		// ticks). Nothing to complete.
+		// Autonomous turn: a run foci didn't open a turn for (slash commands,
+		// task-notification runs after a background-agent/Bash finishes,
+		// proactive ticks). Nothing to complete.
 		return
 	}
 	if redispatch {
