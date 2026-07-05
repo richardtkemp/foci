@@ -485,6 +485,7 @@ func (h *Hub) ServeReplay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	frames := h.frames.Range(convID, fromSeq, limit)
+	log.Debugf("app", "replay GET: conv=%s fromSeq=%d returned=%d more=%v", convID, fromSeq, len(frames), len(frames) == limit)
 	out := make([]map[string]any, 0, len(frames))
 	for _, f := range frames {
 		out = append(out, map[string]any{"seq": f.seq, "wire": f.wire})
@@ -1001,6 +1002,7 @@ func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 		b := h.convs[rp.ConversationID]
 		h.mu.RUnlock()
 		if b == nil {
+			log.Debugf("app", "resume: conv=%s ack=%d — no binding, skipped", rp.ConversationID, rp.Ack)
 			continue
 		}
 		b.attach(client)
@@ -1526,17 +1528,20 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 	// frames at seq >= memFloor would duplicate `pending`, so stop there. No
 	// in-memory frames (hasMem == false) → the store supplies everything > fromSeq.
 	// A gap larger than maxReplayPage is finished by the client via GET /app/replay.
+	storeCount := 0
 	if store != nil && (!hasMem || fromSeq < memFloor-1) {
 		for _, sf := range store.Range(convID, fromSeq, maxReplayPage) {
 			if hasMem && sf.seq >= memFloor {
 				break
 			}
 			client.enqueue(sf.wire)
+			storeCount++
 		}
 	}
 	for _, wire := range pending {
 		client.enqueue(wire)
 	}
+	log.Debugf("app", "replayTo: conv=%s fromSeq=%d memFloor=%d fromStore=%d fromBuffer=%d", convID, fromSeq, memFloor, storeCount, len(pending))
 }
 
 // --- wsClient: one physical socket ---
