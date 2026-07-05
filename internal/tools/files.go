@@ -356,6 +356,24 @@ func checkConfigBlockedPath(blockedPaths []config.BlockedPath, resolved string) 
 	return "", false
 }
 
+// imageMimeForExt maps a file extension to an image MIME type, or "" if the
+// extension isn't a supported image (#630). Kept in sync with the model
+// providers' accepted image formats.
+func imageMimeForExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return ""
+	}
+}
+
 func readFile(ctx context.Context, params json.RawMessage, fs fileScope) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		Path   string `json:"path"`
@@ -416,6 +434,21 @@ func readFile(ctx context.Context, params json.RawMessage, fs fileScope) (ToolRe
 		return ToolResult{
 			Text:        fmt.Sprintf("[PDF: %s, %d bytes]", filepath.Base(resolved), len(data)),
 			ExtraBlocks: []provider.ContentBlock{provider.DocumentBlock("application/pdf", encoded)},
+		}, nil
+	}
+
+	// Image files: base64-encode and return as an image content block so the
+	// model can actually see them (#630) — the same way platform-received images
+	// are delivered. Non-image files fall through to text handling below.
+	if mime := imageMimeForExt(filepath.Ext(resolved)); mime != "" {
+		const maxImageSize = 8 * 1024 * 1024 // provider image-payload ceiling
+		if len(data) > maxImageSize {
+			return ToolResult{}, fmt.Errorf("image too large: %d bytes (max %d)", len(data), maxImageSize)
+		}
+		encoded := base64.StdEncoding.EncodeToString(data)
+		return ToolResult{
+			Text:        fmt.Sprintf("[Image: %s, %d bytes]", filepath.Base(resolved), len(data)),
+			ExtraBlocks: []provider.ContentBlock{provider.ImageBlock(mime, encoded)},
 		}, nil
 	}
 

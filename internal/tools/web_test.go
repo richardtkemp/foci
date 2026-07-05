@@ -14,6 +14,33 @@ import (
 	readability "github.com/go-shiori/go-readability"
 )
 
+func TestIsStructuredContentType(t *testing.T) {
+	// #966: JSON/XML/CSV/plain/YAML skip readability; HTML (incl. xhtml) does not.
+	t.Parallel()
+	cases := []struct {
+		ct   string
+		want bool
+	}{
+		{"application/json", true},
+		{"application/json; charset=utf-8", true},
+		{"text/vnd.api+json", true},
+		{"application/xml", true},
+		{"application/rss+xml", true},
+		{"application/xhtml+xml", false}, // xhtml is HTML — readability handles it
+		{"text/csv", true},
+		{"text/plain; charset=utf-8", true},
+		{"application/yaml", true},
+		{"text/html", false},
+		{"text/html; charset=utf-8", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isStructuredContentType(c.ct); got != c.want {
+			t.Errorf("isStructuredContentType(%q) = %v, want %v", c.ct, got, c.want)
+		}
+	}
+}
+
 func TestParseReadableWithTimeout(t *testing.T) {
 	// Proves the readability parse step is bounded by a wall-clock timeout: a
 	// parse that blocks past the deadline returns a timeout error rather than
