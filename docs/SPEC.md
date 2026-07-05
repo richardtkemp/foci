@@ -496,7 +496,7 @@ Each source is indexed with `source={sourceName}` and searched with weight multi
 
 If `sources` is empty, falls back to a single `dir` field with default weight.
 
-**Search:** Pluggable search backends — FTS5 (default) and bleve. Both can run simultaneously for A/B comparison.
+**Search:** Pluggable search backend — bleve (default) or fts5, selected via `search_backend` (exactly one per index).
 
 **FTS5 backend** — SQLite FTS5 index over multiple sources with conversation history:
 
@@ -521,16 +521,14 @@ ORDER BY weighted_rank;
 
 **Bleve backend** — blevesearch/bleve full-text index. Files and conversation history. English analyzer with Porter stemming, per-source weighted ranking, highlighted snippets. Index stored at `{data_dir}/memory.bleve`. Clean rebuild on each reindex (close → remove → recreate). Conversation messages are indexed in real time via hook and backfilled from SQLite on startup.
 
-Active backends are listed in `search_backends` (default: `["fts5"]`).
-
-When multiple backends are active, the `memory_search` tool exposes a `backend` parameter so the agent can choose which to query. When only one backend is active, the parameter is hidden.
+The active backend is set by `search_backend` (default: `bleve`); exactly one backend runs per index.
 
 **Indexing and Auto-Reindex:**
 
 - Memory files: re-indexed on startup
 - File watching: optional auto-reindex when `.md` files change via fsnotify
 - Debounce delay is configurable (default: immediate).
-- Conversation history: indexed as messages are logged (both FTS5 and bleve). On startup, bleve backfills any historical messages from the conversation SQLite DB that aren't already indexed.
+- Conversation history: indexed as messages are logged (both backends). On startup both backends backfill historical conversation from the conversation SQLite DB — bleve per-message (deduped by doc ID), FTS5 via a one-time wipe+rebuild guarded by a marker table.
 
 **Why FTS5 over vector embeddings:**
 - Zero dependencies (built into SQLite, which we already use)
@@ -538,11 +536,10 @@ When multiple backends are active, the `memory_search` tool exposes a `backend` 
 - Deterministic, debuggable
 - Covers 90% of memory recall — you usually remember roughly what you wrote
 
-**Why bleve as an alternative:**
-- Pure Go, no CGo — simpler builds
-- Smaller index without conversation history (files only)
+**Why bleve (the default):**
 - Richer analysis pipeline (built-in English analyzer, term vectors, highlighting)
-- Can run alongside FTS5 for A/B comparison
+- Query-string relevance is forgiving of natural-language queries (OR + rank), vs FTS5's stricter implicit-AND
+- Pure Go, no CGo — though moot here since foci already links SQLite elsewhere
 
 **Maybe later:** Vector embeddings for semantic search when keyword search proves insufficient.
 
