@@ -287,13 +287,32 @@ func writeBackend(b *strings.Builder, backend string, searchDirs []string) {
 	b.WriteString("\n")
 }
 
+// writePlatform appends the "## Platform" section from the platform-<name>.md
+// prompt file (user-editable via searchDirs, embedded default otherwise) for the
+// messaging platform this session runs on (telegram/app/discord). No section is
+// emitted if the platform is empty (unknown session) or no file resolves.
+func writePlatform(b *strings.Builder, platform string, searchDirs []string) {
+	if platform == "" {
+		return
+	}
+	filename := "platform-" + platform + ".md"
+	notes := prompts.ResolvePrompt("", filename, prompts.Platform(platform), searchDirs...)
+	if notes == "" {
+		return
+	}
+	b.WriteString("\n## Platform\n")
+	b.WriteString(notes)
+	b.WriteString("\n")
+}
+
 // buildEnvironmentAPI generates the environment block for API agents, which
 // have direct access to foci's tool registry.
-func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, searchDirs []string) string {
+func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, searchDirs []string, sessionPlatform string) string {
 	var b strings.Builder
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms, crontabCount)
 
 	writeBackend(&b, acfg.Backend, searchDirs)
+	writePlatform(&b, sessionPlatform, searchDirs)
 	writeMemorySearch(&b, acfg, rc)
 	writeAPIConfig(&b, acfg, cfg, rc)
 
@@ -311,11 +330,12 @@ func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config
 // buildEnvironmentDelegated generates the environment block for delegated
 // (CC backend) agents. These agents use Claude Code's built-in tools plus
 // foci shell functions exposed via the exec bridge.
-func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, shellTools []tools.ExportedTool, searchDirs []string) string {
+func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, shellTools []tools.ExportedTool, searchDirs []string, sessionPlatform string) string {
 	var b strings.Builder
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms, crontabCount)
 
 	writeBackend(&b, acfg.Backend, searchDirs)
+	writePlatform(&b, sessionPlatform, searchDirs)
 	writeMemorySearch(&b, acfg, rc)
 	writeShellTools(&b, shellTools)
 

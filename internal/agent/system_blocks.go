@@ -159,8 +159,12 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 	}
 
 	system := a.Bootstrap.SystemBlocks()
-	if a.EnvironmentBlock != "" {
-		envBlock := provider.SystemBlock{Type: "text", Text: a.EnvironmentBlock}
+	envText := a.EnvironmentBlock
+	if a.EnvironmentBlockFunc != nil {
+		envText = a.EnvironmentBlockFunc(sessionKey)
+	}
+	if envText != "" {
+		envBlock := provider.SystemBlock{Type: "text", Text: envText}
 		system = append([]provider.SystemBlock{envBlock}, system...)
 	}
 

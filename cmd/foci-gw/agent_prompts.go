@@ -32,6 +32,13 @@ func seedDefaultPrompts(dir string, fileMode os.FileMode, liveBackends map[strin
 		promptFiles["backend-"+backend+".md"] = func() string { return prompts.Backend(backend) }
 	}
 
+	// Seed editable copies of the messaging-platform guidance files. Seeded
+	// unconditionally (platform-type detection happens later at InitMessaging);
+	// an unused copy is harmless since the block only renders for the active one.
+	for _, platform := range []string{"telegram", "app", "discord"} {
+		promptFiles["platform-"+platform+".md"] = func() string { return prompts.Platform(platform) }
+	}
+
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		log.Warnf("main", "seed prompts: mkdir %s: %v", dir, err)
 		return

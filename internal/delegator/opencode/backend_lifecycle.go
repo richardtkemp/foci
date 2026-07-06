@@ -147,7 +147,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// files changed since the session was created, the next /reset or
 	// compaction picks up the new prompt.
 	if !resumed {
-		if prompt := resolveSystemPrompt(opts); prompt != "" {
+		if prompt := opts.SystemPrompt; prompt != "" {
 			if err := b.injectSystemPrompt(ctx, prompt); err != nil {
 				log.Warnf(b.logComponent(), "system prompt injection failed: %v", err)
 			}
@@ -370,17 +370,6 @@ func (b *Backend) injectSystemPrompt(ctx context.Context, prompt string) error {
 		return fmt.Errorf("POST /session/%s/message: HTTP %d: %s", b.sessionID, resp.StatusCode, string(respBody))
 	}
 	return nil
-}
-
-// resolveSystemPrompt returns opts.SystemPromptFunc() if non-nil and
-// non-empty, else opts.SystemPrompt. Empty → caller skips injection.
-func resolveSystemPrompt(opts delegator.StartOptions) string {
-	if opts.SystemPromptFunc != nil {
-		if s := opts.SystemPromptFunc(); s != "" {
-			return s
-		}
-	}
-	return opts.SystemPrompt
 }
 
 // serverConfigFromOpts builds a serverConfig from StartOptions + the

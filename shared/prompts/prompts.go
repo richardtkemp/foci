@@ -34,6 +34,17 @@ func Backend(name string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// Platform returns the embedded platform-<name>.md guidance for a messaging
+// platform (e.g. "telegram", "app", "discord"), or "" if none exists. Used as
+// the embedded default for the environment block's Platform section.
+func Platform(name string) string {
+	data, err := fs.ReadFile("platform-" + name + ".md")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // BranchOrientationHeadless returns the default orientation for headless branches
 // (heartbeat, cron, spawn). Template vars: {branch_key}, {parent_key}, {branch_type}.
 func BranchOrientationHeadless() string { return read("branch-orientation-headless.md") }

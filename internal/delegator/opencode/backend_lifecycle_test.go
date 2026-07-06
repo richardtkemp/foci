@@ -183,13 +183,11 @@ func TestBackend_Start_InjectsSystemPromptAsNoReply(t *testing.T) {
 	_ = b.Close()
 }
 
-func TestBackend_Start_PromptFuncOverridesStatic(t *testing.T) {
-	// Verifies SystemPromptFunc (when non-nil and returns non-empty)
-	// takes precedence over the static SystemPrompt field — matches
-	// ccstream's behaviour where the per-session rebuild wins over the
-	// frozen-at-setup snapshot (#828).
-	const staticPrompt = "static"
-	const dynamicPrompt = "dynamic-from-func"
+func TestBackend_Start_InjectsSystemPrompt(t *testing.T) {
+	// The manager resolves SystemPromptFunc into opts.SystemPrompt before Start,
+	// so opencode injects opts.SystemPrompt directly (like ccstream/cctmux) and
+	// never reads SystemPromptFunc itself — the unified prompt-resolution contract.
+	const wantPrompt = "resolved-system-prompt"
 	var gotBody []byte
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" && r.Method == http.MethodPost {
@@ -207,20 +205,14 @@ func TestBackend_Start_PromptFuncOverridesStatic(t *testing.T) {
 
 	err := b.Start(context.Background(), delegator.StartOptions{
 		AgentID:      "test-agent",
-		SystemPrompt: staticPrompt,
-		SystemPromptFunc: func() string {
-			return dynamicPrompt
-		},
+		SystemPrompt: wantPrompt,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	if !strings.Contains(string(gotBody), dynamicPrompt) {
-		t.Errorf("body did not contain dynamic prompt %q: %s", dynamicPrompt, string(gotBody))
-	}
-	if strings.Contains(string(gotBody), staticPrompt) {
-		t.Errorf("body should not contain static prompt when func returned non-empty: %s", string(gotBody))
+	if !strings.Contains(string(gotBody), wantPrompt) {
+		t.Errorf("body did not contain the resolved system prompt %q: %s", wantPrompt, string(gotBody))
 	}
 	_ = b.Close()
 }

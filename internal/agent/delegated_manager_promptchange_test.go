@@ -15,7 +15,7 @@ func TestBounceSessionIfPromptChanged(t *testing.T) {
 	const sk = "test-agent/c1"
 
 	prompt := "system prompt v1 — character files and skill list"
-	mgr.StartOpts.SystemPromptFunc = func() string { return prompt }
+	mgr.StartOpts.SystemPromptFunc = func(string) string { return prompt }
 
 	if _, err := mgr.Get(context.Background(), sk); err != nil {
 		t.Fatalf("Get: %v", err)

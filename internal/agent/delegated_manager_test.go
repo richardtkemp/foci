@@ -1628,7 +1628,7 @@ func TestGet_SystemPromptFuncOverridesStatic(t *testing.T) {
 	mgr.StartOpts = delegator.StartOptions{
 		WorkDir:      "/workspace",
 		SystemPrompt: "STALE prompt frozen at setup",
-		SystemPromptFunc: func() string {
+		SystemPromptFunc: func(string) string {
 			calls++
 			return "FRESH prompt rebuilt from disk"
 		},
@@ -1653,7 +1653,7 @@ func TestGet_SystemPromptFuncEmptyFallsBackToStatic(t *testing.T) {
 	mgr.StartOpts = delegator.StartOptions{
 		WorkDir:          "/workspace",
 		SystemPrompt:     "STATIC fallback prompt",
-		SystemPromptFunc: func() string { return "" },
+		SystemPromptFunc: func(string) string { return "" },
 	}
 
 	_, err := mgr.Get(context.Background(), "agent/c1")

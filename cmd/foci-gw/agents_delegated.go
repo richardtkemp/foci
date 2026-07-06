@@ -125,12 +125,17 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// The rebuild wins over the static prompt at each session start (#828/#706),
 	// and that rebuild path previously dropped the env block (and with it the
 	// "Foci Shell Tools" list), so CC agents never saw foci_todo etc.
-	envBlock := ""
+	crontabCount := 0
 	if p.resolved.Environment.Enabled {
-		crontabCount := countCrontabJobs()
-		envBlock = buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools(), shared.promptSearchDirs)
+		crontabCount = countCrontabJobs()
 	}
-	systemPrompt := delegatedSystemPrompt(envBlock, bs.SystemBlocks(), br.extraSystemBlocks)
+	buildEnv := func(sessionPlatform string) string {
+		if !p.resolved.Environment.Enabled {
+			return ""
+		}
+		return buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools(), shared.promptSearchDirs, sessionPlatform)
+	}
+	systemPrompt := delegatedSystemPrompt(buildEnv(""), bs.SystemBlocks(), br.extraSystemBlocks)
 
 	// Override model display name to show the backend name.
 	ag.Model = backendName
@@ -138,6 +143,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Wire DelegatedManager: lazy per-session Backend creation.
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
+	// Resolve a session's messaging platform (telegram/app/discord) for the
+	// per-session ## Platform block; "" if the session has no connection yet.
+	platformFor := func(sessionKey string) string {
+		if conn := connMgr.ForSessionOrPrimary(sessionKey, agentID); conn != nil {
+			return conn.PlatformName()
+		}
+		return ""
+	}
 	// Parse idle timeout from config (default 3h; see agent.DefaultIdleTimeout).
 	var idleTimeout time.Duration
 	if v, ok := backendConfig["idle_timeout"].(string); ok && v != "" {
@@ -227,7 +240,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// but this closure only runs at runtime session-start, by when it's set.
 			// The env block is re-prepended via newDelegatedSystemPromptFunc so it
 			// survives this rebuild (the #828/#706 rebuild used to drop it).
-			SystemPromptFunc: newDelegatedSystemPromptFunc(envBlock, func() (ws, extra []provider.SystemBlock) {
+			SystemPromptFunc: newDelegatedSystemPromptFunc(buildEnv, platformFor, func() (ws, extra []provider.SystemBlock) {
 				// Re-read character files from disk so this fresh session reflects
 				// edits since setup, independent of whether the caller reloaded
 				// (the compaction-bounce path #828 does not). bs is shared
@@ -441,8 +454,13 @@ func delegatedSystemPrompt(envBlock string, workspaceBlocks, extraBlocks []provi
 // rebuild. This closure's result wins over the static StartOptions.SystemPrompt
 // whenever non-empty (see delegated_manager.go), which is why the env block
 // MUST be re-applied here and not only baked into the static prompt.
-func newDelegatedSystemPromptFunc(envBlock string, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock)) func() string {
-	return func() string {
+// newDelegatedSystemPromptFunc returns the per-session prompt generator. buildEnv
+// rebuilds the environment block for a given session platform (so the ## Platform
+// block matches the session's messaging platform); platformFor resolves that
+// platform from the session key.
+func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string) string, platformFor func(sessionKey string) string, reload func() (workspaceBlocks, extraBlocks []provider.SystemBlock)) func(sessionKey string) string {
+	return func(sessionKey string) string {
+		envBlock := buildEnv(platformFor(sessionKey))
 		ws, extra := reload()
 		return delegatedSystemPrompt(envBlock, ws, extra)
 	}

@@ -236,7 +236,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	// file edits instead of the prompt frozen at agent setup. Non-empty result
 	// wins over the static SystemPrompt. See #828 / #706.
 	if opts.SystemPromptFunc != nil {
-		if p := opts.SystemPromptFunc(); p != "" {
+		if p := opts.SystemPromptFunc(sessionKey); p != "" {
 			opts.SystemPrompt = p
 		}
 	}
@@ -603,7 +603,7 @@ func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool 
 		m.BounceSession(sessionKey)
 		return true
 	}
-	p := m.StartOpts.SystemPromptFunc()
+	p := m.StartOpts.SystemPromptFunc(sessionKey)
 	if p == "" {
 		p = m.StartOpts.SystemPrompt
 	}
