@@ -7,6 +7,58 @@ import (
 	"foci/internal/config"
 )
 
+func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
+	base := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "claude-code"}
+	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
+
+	normal := buildEnvironmentDelegated(base, "/tmp/foci.toml", cfg, config.Resolve(cfg, base), 0, nil, nil, nil)
+	if !strings.Contains(normal, "## Command Approval") {
+		t.Fatal("expected Command Approval section for a normal claude-code agent")
+	}
+
+	skip := base
+	skip.BackendConfig = map[string]any{"skip_permissions": true}
+	skipped := buildEnvironmentDelegated(skip, "/tmp/foci.toml", cfg, config.Resolve(cfg, skip), 0, nil, nil, nil)
+	if strings.Contains(skipped, "## Command Approval") {
+		t.Error("skip_permissions should omit the Command Approval section (everything is permitted)")
+	}
+}
+
+func TestWriteMemorySearch(t *testing.T) {
+	mk := func(backend string) (config.AgentConfig, *config.ResolvedAgentConfig) {
+		acfg := config.AgentConfig{}
+		acfg.Memory.Sources = []config.MemorySource{{Name: "canonical", Dir: "/home/foci/clutch/memory", Weight: 1.0}}
+		rc := &config.ResolvedAgentConfig{}
+		rc.MemorySearch.SearchBackend = backend
+		rc.MemorySearch.SearchLimit = 20
+		rc.MemorySearch.ConversationWeight = 0.1
+		return acfg, rc
+	}
+
+	var bl strings.Builder
+	acfg, rc := mk("bleve")
+	writeMemorySearch(&bl, acfg, rc)
+	for _, want := range []string{"## Memory & Search", "**bleve**", "stemmed", "NOT conversation history", "canonical", "up to 20 results"} {
+		if !strings.Contains(strings.ToLower(bl.String()), strings.ToLower(want)) {
+			t.Errorf("bleve block missing %q\n---\n%s", want, bl.String())
+		}
+	}
+
+	var f5 strings.Builder
+	acfg, rc = mk("fts5")
+	writeMemorySearch(&f5, acfg, rc)
+	if !strings.Contains(f5.String(), "and conversation history") {
+		t.Errorf("fts5 block should note conversation history is indexed\n---\n%s", f5.String())
+	}
+
+	// No backend → no section.
+	var none strings.Builder
+	writeMemorySearch(&none, config.AgentConfig{}, &config.ResolvedAgentConfig{})
+	if none.Len() != 0 {
+		t.Errorf("no backend should emit nothing, got:\n%s", none.String())
+	}
+}
+
 func TestWriteCommandApproval(t *testing.T) {
 	var b strings.Builder
 	rc := &config.ResolvedAgentConfig{}
@@ -18,7 +70,7 @@ func TestWriteCommandApproval(t *testing.T) {
 
 	for _, want := range []string{
 		"## Command Approval",
-		"**CC-native** (CC never prompts): Read(/tmp/**), Write(/tmp/**)", // the CC --allowedTools layer
+		"**CC pre-approved** (auto-run, no prompt — not a restriction): Read(/tmp/**), Write(/tmp/**)", // the CC --allowedTools layer
 		"every `foci_*` shell function is always auto-approved",
 		"**read-only** (on):",
 		"sqlite3 -readonly",           // a rendered read-only rule (Bash: stripped)
@@ -77,7 +129,7 @@ func TestWriteCommandApproval_ReadonlyDisabled(t *testing.T) {
 	if strings.Contains(out, "**read-only** (on)") {
 		t.Error("read-only line should be absent when the allowlist is disabled")
 	}
-	if strings.Contains(out, "CC-native") {
-		t.Error("CC-native line should be absent when no --allowedTools are configured")
+	if strings.Contains(out, "CC pre-approved") {
+		t.Error("CC pre-approved line should be absent when no --allowedTools are configured")
 	}
 }

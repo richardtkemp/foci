@@ -60,6 +60,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
+	// skip_permissions bypasses all CC permission prompts (unattended). When
+	// set, CC never asks, so foci's auto-approve hook has nothing to answer.
+	if v, ok := b.cfg["skip_permissions"].(bool); ok && v {
+		args = append(args, "--dangerously-skip-permissions")
+	}
 	// Permission pre-approval rules. cfg["allowed_tools"] is the merged
 	// string produced by cmd/foci-gw/agents_delegated.go (global
 	// [cc_backend] default_allowed_tools combined with the agent's
