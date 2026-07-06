@@ -23,6 +23,17 @@ func read(name string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// Backend returns the embedded backend-<name>.md notes for a backend name
+// (e.g. "claude-code", "opencode", "api"), or "" if no dedicated file exists.
+// Used as the embedded default for the environment block's Backend section.
+func Backend(name string) string {
+	data, err := fs.ReadFile("backend-" + name + ".md")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // BranchOrientationHeadless returns the default orientation for headless branches
 // (heartbeat, cron, spawn). Template vars: {branch_key}, {parent_key}, {branch_type}.
 func BranchOrientationHeadless() string { return read("branch-orientation-headless.md") }

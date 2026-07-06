@@ -190,7 +190,7 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 				},
 			}
 
-			block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
+			block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil, nil)
 
 			if !strings.Contains(block, "## Visibility") {
 				t.Error("expected Visibility section")
@@ -227,7 +227,7 @@ func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 		},
 	}
 
-	block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
+	block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil, nil)
 
 	// Agent overrides should win
 	if !strings.Contains(block, "fully visible") {
@@ -253,13 +253,13 @@ func TestBuildEnvironmentBlock_CrontabInfo(t *testing.T) {
 	}
 
 	// Test with 0 cron jobs
-	block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
+	block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil, nil)
 	if !strings.Contains(block, "You may schedule recurring tasks using crontab. You have 0 jobs scheduled.") {
 		t.Error("expected crontab info with 0 jobs")
 	}
 
 	// Test with 3 cron jobs
-	block = buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 3, nil)
+	block = buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 3, nil, nil)
 	if !strings.Contains(block, "You may schedule recurring tasks using crontab. You have 3 jobs scheduled.") {
 		t.Error("expected crontab info with 3 jobs")
 	}
@@ -269,6 +269,7 @@ func TestBuildEnvironmentDelegated(t *testing.T) {
 	acfg := config.AgentConfig{
 		ID:        "clutch",
 		Workspace: "/home/foci/clutch",
+		Backend:   "claude-code",
 	}
 	cfg := &config.Config{
 		Logging: config.LoggingConfig{
@@ -285,7 +286,7 @@ func TestBuildEnvironmentDelegated(t *testing.T) {
 		{Name: "foci_web_search", Description: "Search the web using Brave Search API."},
 	}
 
-	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, 3, []string{"telegram"}, shellTools)
+	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, 3, []string{"telegram"}, shellTools, nil)
 
 	// Core sections present
 	if !strings.Contains(block, "You are running on **foci**") {

@@ -14,6 +14,7 @@ import (
 	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/workspace"
+	"foci/shared/prompts"
 )
 
 // checkSystemPromptSizes logs warnings if system prompt files exceed thresholds.
@@ -167,13 +168,33 @@ func stripBashPrefix(rules []string) []string {
 	return out
 }
 
+// writeBackend appends the "## Backend" section from the backend-<name>.md
+// prompt file (user-editable via searchDirs, embedded default otherwise). An
+// empty backend name (API agents) resolves to backend-api.md. No section is
+// emitted if no file resolves.
+func writeBackend(b *strings.Builder, backend string, searchDirs []string) {
+	if backend == "" {
+		backend = "api"
+	}
+	filename := "backend-" + backend + ".md"
+	notes := prompts.ResolvePrompt("", filename, prompts.Backend(backend), searchDirs...)
+	if notes == "" {
+		return
+	}
+	b.WriteString("\n## Backend\n")
+	b.WriteString(notes)
+	b.WriteString("\n")
+}
+
 // buildEnvironmentAPI generates the environment block for API agents, which
 // have direct access to foci's tool registry.
-func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string) string {
+func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, searchDirs []string) string {
 	var b strings.Builder
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms)
 
 	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
+
+	writeBackend(&b, acfg.Backend, searchDirs)
 
 	// Task List
 	b.WriteString("\n## Task List\n")
@@ -189,17 +210,13 @@ func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config
 // buildEnvironmentDelegated generates the environment block for delegated
 // (CC backend) agents. These agents use Claude Code's built-in tools plus
 // foci shell functions exposed via the exec bridge.
-func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, shellTools []tools.ExportedTool) string {
+func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, shellTools []tools.ExportedTool, searchDirs []string) string {
 	var b strings.Builder
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms)
 
 	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 
-	// Backend description
-	b.WriteString("\n## Backend\n")
-	b.WriteString("You run inside **Claude Code** (CC) as a delegated backend. ")
-	b.WriteString("Your primary tools are CC's built-in tools (Read, Write, Edit, Bash, Grep, Glob, Agent, WebFetch, WebSearch, etc.). ")
-	b.WriteString("Foci bridges messaging platforms to CC and provides additional tools as shell functions.\n")
+	writeBackend(&b, acfg.Backend, searchDirs)
 
 	// Shell tools
 	if len(shellTools) > 0 {
