@@ -94,8 +94,14 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.mu.Unlock()
 }
 
-// cancelTurn reverses beginTurn. Called from Close and control.go's
-// Interrupt (via the Delegator interface).
+// cancelTurn reverses beginTurn WITHOUT firing OnTurnComplete. Used only to
+// unwind a begin whose send never reached opencode (injectUser / injectSystem
+// / injectSteer on sendPrompt failure): RunInference returns that send error,
+// the orchestrator skips runPostTurn (never awaits CompletionChan), and
+// HandleMessage's defer emits the terminal TurnComplete — so firing it here
+// would double-complete. Backend.Close, by contrast, force-completes via
+// failInFlightTurn because there the agent-side turn IS awaiting CompletionChan
+// and must be released (bug #1051).
 func (b *Backend) cancelTurn() {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()

@@ -542,6 +542,77 @@ func TestBackend_Close_DeregistersAndReleases(t *testing.T) {
 
 }
 
+func TestBackend_Close_ForceCompletesInFlightTurn(t *testing.T) {
+	// Regression for foci bug #1051: a delegated turn whose completion signal
+	// never arrives (e.g. the SSE subscriber failed to connect, so no
+	// session.idle is ever dispatched) must still be force-completed when the
+	// backend is closed (idle reaper / bounce / shutdown). Otherwise the
+	// agent-side runPostTurn stays blocked on CompletionChan forever, no
+	// TurnComplete is emitted, and hasTurn/in-flight dangles until a restart.
+	//
+	// Close previously called cancelTurn, which clears turn state WITHOUT
+	// firing OnTurnComplete. It now calls failInFlightTurn, so OnTurnComplete
+	// fires exactly once.
+	var mu sync.Mutex
+	var completed *delegator.TurnResult
+	var calls int
+
+	b := &Backend{
+		sessionID:   "sess-1051",
+		readyCh:     make(chan struct{}),
+		outstanding: delegator.NewOutstandingRegistry(),
+	}
+	// running must be true for Close to run (the not-running guard is a no-op).
+	// server is nil and agentID is empty so Close skips unregisterSession /
+	// releaseServer and exercises the turn-completion path directly.
+	b.mu.Lock()
+	b.running = true
+	b.mu.Unlock()
+
+	b.beginTurn(&delegator.TurnEvents{
+		OnTurnComplete: func(r *delegator.TurnResult) {
+			mu.Lock()
+			completed = r
+			calls++
+			mu.Unlock()
+		},
+	})
+
+	if !b.IsTurnInFlight() {
+		t.Fatal("precondition: turn should be in flight after beginTurn")
+	}
+
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	mu.Lock()
+	gotCompleted := completed
+	gotCalls := calls
+	mu.Unlock()
+
+	if gotCompleted == nil {
+		t.Fatal("Close did not fire OnTurnComplete for the in-flight turn — turn would hang forever (bug #1051)")
+	}
+	if gotCalls != 1 {
+		t.Errorf("OnTurnComplete fired %d times, want exactly 1", gotCalls)
+	}
+	if b.IsTurnInFlight() {
+		t.Error("turn still in flight after Close — turnActive not cleared")
+	}
+
+	// Idempotent: a second Close (already not-running) must not re-fire.
+	if err := b.Close(); err != nil {
+		t.Errorf("second Close returned error: %v", err)
+	}
+	mu.Lock()
+	gotCalls = calls
+	mu.Unlock()
+	if gotCalls != 1 {
+		t.Errorf("second Close re-fired OnTurnComplete (calls=%d, want 1)", gotCalls)
+	}
+}
+
 func TestBackend_Close_LastReleaseShutsDownServer(t *testing.T) {
 	// Verifies the full chain: Backend.Close → releaseServer →
 	// (refcount→0) → Server.Close (in goroutine) → subprocess killed.
