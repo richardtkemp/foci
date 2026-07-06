@@ -373,13 +373,14 @@ type StartOptions struct {
 	// point at bin/cc-stub.
 	ClaudeBinary string
 
-	// SystemPromptFunc, when non-nil, is called at each session Start to
-	// produce a fresh system prompt from disk. Its result (when non-empty)
-	// takes precedence over the static SystemPrompt string. This makes the
-	// delegated prompt lazy rather than frozen at agent setup, so a fresh
-	// session (reset, idle-respawn, emulated compaction) picks up
-	// character-file edits. See #828 / #706.
-	SystemPromptFunc func() string
+	// SystemPromptFunc, when non-nil, is the single per-session prompt
+	// generator: called at each session Start with the session key to produce
+	// a fresh system prompt from disk (character/skill edits) AND resolve the
+	// session's platform block. The manager resolves it once into SystemPrompt
+	// before Start, so every backend consumes SystemPrompt identically — none
+	// re-resolves. Its result (when non-empty) takes precedence over the static
+	// SystemPrompt. See #828 / #706.
+	SystemPromptFunc func(sessionKey string) string
 
 	// Effort is the effort level to apply at launch (e.g. "high", "max").
 	// Backends that support it (ccstream → `claude --effort <level>`) inject

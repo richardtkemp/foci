@@ -97,8 +97,10 @@ func TestNewDelegatedSystemPromptFunc_RetainsEnvBlock(t *testing.T) {
 			[]provider.SystemBlock{{Type: "text", Text: "Available Skills: foo"}}
 	}
 
-	fn := newDelegatedSystemPromptFunc(env, reload)
-	got := fn()
+	buildEnv := func(string) string { return env }
+	platformFor := func(string) string { return "" }
+	fn := newDelegatedSystemPromptFunc(buildEnv, platformFor, reload)
+	got := fn("test/c1")
 
 	for _, want := range []string{"## Backend", "## Foci Shell Tools", "foci_todo", "CRAFT content", "Available Skills"} {
 		if !strings.Contains(got, want) {
@@ -132,7 +134,7 @@ func TestConfigureDelegated_WiresEnvBlockIntoBothPromptPaths(t *testing.T) {
 	if fn == nil {
 		t.Fatal("StartOpts.SystemPromptFunc is nil — rebuild path unwired")
 	}
-	rebuilt := fn()
+	rebuilt := fn("test/c1")
 
 	// Both paths must carry the env block (## Backend + shell-tools list) and
 	// EVERY character file's identity content, not just CRAFT. foci_send_to_chat
@@ -174,7 +176,7 @@ func TestConfigureDelegated_BothPromptPathsAgree(t *testing.T) {
 	if so.SystemPromptFunc == nil {
 		t.Fatal("StartOpts.SystemPromptFunc is nil")
 	}
-	if got := so.SystemPromptFunc(); got != so.SystemPrompt {
+	if got := so.SystemPromptFunc("test/c1"); got != so.SystemPrompt {
 		t.Errorf("static SystemPrompt and rebuilt SystemPromptFunc() diverge with unchanged disk:\n--- static ---\n%s\n--- rebuilt ---\n%s", so.SystemPrompt, got)
 	}
 }

@@ -247,11 +247,23 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	})
 	ag.AskRouter = out.askRouter
 
-	// Per-agent environment block
-	var envBlock string
+	// Per-agent environment block, rebuilt per session so the ## Platform block
+	// matches the session's messaging platform. Crontab count is captured once.
+	crontabCount := 0
 	if p.resolved.Environment.Enabled {
-		crontabCount := countCrontabJobs()
-		envBlock = buildEnvironmentAPI(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), shared.promptSearchDirs)
+		crontabCount = countCrontabJobs()
+	}
+	envConnMgr := p.connMgr
+	envAgentID := acfg.ID
+	envBlockFunc := func(sessionKey string) string {
+		if !p.resolved.Environment.Enabled {
+			return ""
+		}
+		sessionPlatform := ""
+		if conn := envConnMgr.ForSessionOrPrimary(sessionKey, envAgentID); conn != nil {
+			sessionPlatform = conn.PlatformName()
+		}
+		return buildEnvironmentAPI(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), shared.promptSearchDirs, sessionPlatform)
 	}
 
 	// API-specific agent fields
@@ -262,7 +274,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.ClientProvider = p.clientProvider
 	ag.Tools = registry
 	ag.ServerTools = out.serverTools
-	ag.EnvironmentBlock = envBlock
+	ag.EnvironmentBlockFunc = envBlockFunc
 	ag.AsyncNotifier = notifier
 	ag.Model = resolvedModel
 	ag.Format = defaultFormat

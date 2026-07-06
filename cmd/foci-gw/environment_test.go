@@ -11,14 +11,14 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 	base := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "claude-code"}
 	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
 
-	normal := buildEnvironmentDelegated(base, "/tmp/foci.toml", cfg, config.Resolve(cfg, base), 0, nil, nil, nil)
+	normal := buildEnvironmentDelegated(base, "/tmp/foci.toml", cfg, config.Resolve(cfg, base), 0, nil, nil, nil, "")
 	if !strings.Contains(normal, "## Command Approval") {
 		t.Fatal("expected Command Approval section for a normal claude-code agent")
 	}
 
 	skip := base
 	skip.BackendConfig = map[string]any{"skip_permissions": true}
-	skipped := buildEnvironmentDelegated(skip, "/tmp/foci.toml", cfg, config.Resolve(cfg, skip), 0, nil, nil, nil)
+	skipped := buildEnvironmentDelegated(skip, "/tmp/foci.toml", cfg, config.Resolve(cfg, skip), 0, nil, nil, nil, "")
 	if strings.Contains(skipped, "## Command Approval") {
 		t.Error("skip_permissions should omit the Command Approval section (everything is permitted)")
 	}
@@ -93,6 +93,29 @@ func TestWriteMemorySearch(t *testing.T) {
 	writeMemorySearch(&none, config.AgentConfig{}, &config.ResolvedAgentConfig{})
 	if none.Len() != 0 {
 		t.Errorf("no backend should emit nothing, got:\n%s", none.String())
+	}
+}
+
+func TestWritePlatform(t *testing.T) {
+	var tg strings.Builder
+	writePlatform(&tg, "telegram", nil)
+	out := tg.String()
+	if !strings.Contains(out, "## Platform") || !strings.Contains(out, "Telegram") {
+		t.Errorf("telegram platform block missing header/content:\n%s", out)
+	}
+
+	// Unknown platform with no embedded default → no section.
+	var unknown strings.Builder
+	writePlatform(&unknown, "signal", nil)
+	if unknown.Len() != 0 {
+		t.Errorf("unknown platform should emit nothing, got:\n%s", unknown.String())
+	}
+
+	// Empty platform (unknown session) → no section.
+	var empty strings.Builder
+	writePlatform(&empty, "", nil)
+	if empty.Len() != 0 {
+		t.Errorf("empty platform should emit nothing, got:\n%s", empty.String())
 	}
 }
 

@@ -89,7 +89,8 @@ type Agent struct {
 	Endpoint        string                // agent's default endpoint (sessions inherit this unless overridden)
 	Log             *log.ComponentLogger  // structured logger for this agent
 
-	EnvironmentBlock                        string                                  // pre-built environment context block (prepended first in system prompt)
+	EnvironmentBlock                        string                                  // static environment block (fallback; tests). Prod uses EnvironmentBlockFunc.
+	EnvironmentBlockFunc                    func(sessionKey string) string          // per-session environment block (platform-aware); preferred over EnvironmentBlock
 	ExtraSystemBlocks                       []provider.SystemBlock                  // additional system blocks (e.g. skills list), injected before cache marker
 	CacheStrategy                           string                                  // "auto" (top-level) or "explicit" (manual breakpoints) — from primary model config
 	CacheBustDetect                         bool                                    // detect cache busts (cache_read drop >50%)
