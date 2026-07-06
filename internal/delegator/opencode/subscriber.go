@@ -48,6 +48,22 @@ const eventBufferSize = 256
 // establishes or the loop is cancelled (ctx / subprocess death).
 const subscriberConnectRetryInterval = 100 * time.Millisecond
 
+// subscriberHeaderTimeout bounds how long the initial GET /event connect waits
+// for the server's response headers. It is deliberately a ResponseHeaderTimeout
+// (Transport-level), NOT an http.Client.Timeout: the latter caps the whole
+// request including the SSE body read, which would sever an established stream;
+// ResponseHeaderTimeout covers ONLY the header wait and leaves the long-lived
+// body stream unbounded. Without it, a connect that reaches a booting opencode
+// which accepts the TCP connection but never sends headers wedges forever
+// (client.Do has no deadline, only unblocks on ctx-cancel) — the retry loop
+// never gets a chance to retry, no SSE stream establishes, no session.idle ever
+// arrives, and the delegated turn hangs until a restart (foci bug #1051's
+// trigger). 10s is pure margin: readiness is already gated by a 1-2s health
+// probe, so once opencode is up it sends headers within milliseconds; a wedged
+// connect instead errors after 10s and the loop retries. A var (not const) so
+// tests can shorten it, mirroring sigtermGrace.
+var subscriberHeaderTimeout = 10 * time.Second
+
 // Subscriber parses an SSE byte stream and invokes a callback per decoded
 // event. It owns nothing besides the parser state; the caller owns the
 // io.Reader (typically an HTTP response body) and is responsible for
@@ -274,7 +290,9 @@ func (s *Server) runSubscriber(ctx context.Context) {
 	// design: one DEBUG on the first failure, not a WARN per attempt (the
 	// per-attempt failures during the boot window would otherwise flood
 	// the log).
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: &http.Transport{ResponseHeaderTimeout: subscriberHeaderTimeout},
+	}
 	var resp *http.Response
 	loggedRetry := false
 	for {
