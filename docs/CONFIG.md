@@ -48,8 +48,6 @@ Anthropic API settings. API keys go in `secrets.toml` — see [AUTH.md](AUTH.md)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
-| `usage_cache_ttl` | string | `"10m"` | Cache TTL for usage API responses. All callers (mana monitor, turn metadata, /mana command) share a single cache. On fetch errors, retries use exponential backoff (starting at cache TTL, doubling up to 1h). |
 | `cc_expiry_threshold` | string | `"5m"` | How far before expiry to trigger a proactive token refresh. Credentials are read lazily from `~/.claude/.credentials.json` on each API call. |
 See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
@@ -399,7 +397,7 @@ When enabled, a text block is programmatically built at startup and prepended be
 
 - **Workspace** — workspace path, agent ID, platform URL, docs path (if configured), messaging platform
 - **Paths** — config file, log directory
-- **Message Metadata** — documents the `[meta]` header fields (time, gap, model, prev_cost, prev_tokens, mana)
+- **Message Metadata** — documents the `[meta]` header fields (time, gap, model, prev_cost, prev_tokens)
 - **Session Structure** — lists character files and explains what the human can/cannot see
 
 The block is built once per agent at startup from config values — no runtime overhead. It does not include secrets, character identity, or skill lists (those have their own blocks).
@@ -743,7 +741,7 @@ Global regex find/replace rules applied to inbound user messages before command 
 | `find` | string | required | Go regex pattern to match. |
 | `replace` | string | required | Replacement string. Supports `$1`, `$2`, etc. for capture groups. |
 
-Rules run in sequence — the output of one becomes the input of the next. Transforms fire before command dispatch, so a transform can produce a command (e.g. `m` → `/mana`). Messages that are already recognized commands are not transformed.
+Rules run in sequence — the output of one becomes the input of the next. Transforms fire before command dispatch, so a transform can produce a command (e.g. `s` → `/status`). Messages that are already recognized commands are not transformed.
 
 Example:
 ```toml
@@ -866,7 +864,7 @@ Supported keys: `show_tool_calls`, `show_thinking`, `stream_output`, `display_wi
 The `statusline` controls the `[meta]`/`[state]` header prepended to every message an agent receives. When empty, the built-in default reproduces the historical two-line header:
 
 ```
-[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens} {mana}
+[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens}
 [state] {state}
 ```
 
@@ -887,12 +885,10 @@ Available fields:
 | `{via}` | platform (`telegram`/`api`/`cron`/…) | always |
 | `{cost}` | `prev_cost=$X` | empty on first message |
 | `{tokens}` | `prev_tokens=in:…/out:…/cR:…/cW:…` | empty on first message |
-| `{mana}` | `mana=NN% 🟢`/`🔴` | empty when mana unavailable |
 | `{state}` | `tasks: … \| todos: … \| scratchpad: …` | composite; empty when all stores empty |
 | `{todos}` / `{tasks}` / `{scratchpad}` | individual labelled state part | self-omit when empty |
 | `{cost_raw}` | `$X` | bare value, always |
 | `{tokens_in}` / `{tokens_out}` / `{cache_read}` / `{cache_write}` | token count | bare value, always |
-| `{mana_pct}` / `{mana_flag}` | `NN%` / `🟢`\|`🔴` | bare; `{mana_flag}` empty when unavailable |
 
 ### Message Handling
 
@@ -915,37 +911,16 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
-| `autocompact_before_mana_refresh` | bool | `true` | Master switch for mana-refresh compaction. `false` disables entirely (replaces the old `"0"` disable convention). |
-| `autocompact_before_mana_refresh_threshold` | string | `"5m"` | Trigger mana-refresh compaction when mana reset is within this duration. Format: Go duration string. |
-| `autocompact_before_mana_refresh_factor` | float | `0.5` | Secondary compaction threshold for mana-refresh mode, as a fraction of the main `compaction_threshold`. E.g. with threshold 0.8 and factor 0.5, mana-refresh triggers at 40% context usage. Range: 0.0–1.0. |
-| `autocompact_before_mana_refresh_preserve` | int | unset | Explicit message count to preserve during mana-refresh compaction. Overrides the percentage-based default. `0` uses normal preservation count. |
-| `autocompact_before_mana_refresh_preserve_pct` | float | `0.5` | Fraction of messages to preserve during mana-refresh compaction (0.0–1.0). Default 0.5 preserves 50% of messages, summarising the older half. Only used when `autocompact_before_mana_refresh_preserve` is unset. |
 | `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `shared/prompts/branch-orientation-facet.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `shared/prompts/branch-orientation-headless.md`. |
 | `reload_on_compact` | bool | `true` | For delegated (Claude Code) backends, reload the system prompt from disk at compaction so character-file and skill edits take effect. The reload is a CC session bounce (restart + resume), so it only fires when the prompt rebuilt from disk **differs** from the one the running session launched with — fingerprinted by a hash of the character files plus the skill list. An unchanged prompt means no bounce and no interruption to the flow. It catches character-file edits and skill add/remove (the skill list is in the prompt), but **not** skill body-content edits (skill bodies load on demand and never appear in the prompt). |
 
-#### Mana-Refresh Compaction
+#### Compaction Triggers
 
-Compaction triggers in exactly two automatic modes:
+Compaction triggers in two modes:
 
 1. **Main threshold** — compact when context exceeds `compaction_threshold` (default 80%).
-2. **Mana-refresh** — when `autocompact_before_mana_refresh` is enabled (default true), compact when the mana reset is within `autocompact_before_mana_refresh_threshold` (default 5m) AND context exceeds a secondary threshold (`compaction_threshold × autocompact_before_mana_refresh_factor`, default 40%). This re-summarises before the new mana window starts. Preserves `autocompact_before_mana_refresh_preserve_pct` of messages (default 50%), summarising the older half. An explicit `autocompact_before_mana_refresh_preserve` count overrides the percentage.
-
-A third mode is manual: the user can run `/compact` at any time.
-
-Only Anthropic-endpoint sessions have mana tracking. Sessions switched to Gemini/OpenAI skip the mana-refresh check (no spurious compactions from the wrong budget).
-
-```toml
-# Example: tune mana-refresh for a specific agent
-[[agents]]
-id = "research"
-
-[agents.sessions]
-autocompact_before_mana_refresh = true           # master switch (default true)
-autocompact_before_mana_refresh_threshold = "10m" # wider window
-autocompact_before_mana_refresh_factor = 0.3      # trigger at 24% context
-autocompact_before_mana_refresh_preserve = 50     # preserve last 50 messages
-```
+2. **Manual** — the user can run `/compact` at any time.
 
 ### Tool Behavior
 
@@ -1017,13 +992,14 @@ Cache keepalive timer. Fires a lightweight branch session to keep the prompt cac
 
 ### Background (`[background]` / `[[agents.background]]`)
 
-Mana-gated background work timer. Fires when the user is idle, there are open background-tagged todos, and the manamometer says spending is wise.
+Background work timer. Fires when the user is idle, there are open background-tagged todos, and the `can_run_background` gate allows it.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable background work timer. |
 | `interval` | string | `"15m"` | Time since last interaction before firing. |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
+| `can_run_background` | string | `""` | Path to an executable run before each background operation. Exit 0 allows the tick; any non-zero exit skips it; empty/unset always allows. A command that fails to execute (missing/not executable) is treated as allowed and logged as a warning, so a broken script can't wedge all background work. Runs via `procx.Spawn` (foci-secrets group stripped) with a 10s timeout, receiving `FOCI_SESSION_KEY`, `FOCI_AGENT_ID`, and `FOCI_ENDPOINT` in the environment. The real-429 `RateLimitGate` still gates background work independently. |
 
 **Validation warnings:**
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
@@ -1037,18 +1013,7 @@ Poll cadence for the periodic scheduler. A single ticker drives all four timers 
 |-----|------|---------|-------------|
 | `tick_interval` | string | `"30s"` | How often the periodic timers are checked. Must be ≤ the shortest timer interval you care about firing on time. |
 
-### Mana (`[mana]` / `[[agents.mana]]`)
-
-Controls mana budget behavior and usage warning thresholds. All fields overridable per-agent.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `name` | string | `"mana"` | What to call the quota in user-facing messages (e.g. `"mana"`, `"juice"`). |
-| `thresholds` | int[] | `[]` | Mana percentages to warn at (e.g. `[50, 25, 10, 5]`). Per-agent values completely replace global. |
-| `restore_threshold` | int | `0` | Inject session notice when mana restores to 100% after being below this threshold. `0` disables. Range: 0–100. |
-| `invest_interval` | string | `"30m"` | Quiet period after mana reset before spending. The manamometer prevents background work from running during this period to allow cache building. |
-
-See [HEARTBEAT.md](HEARTBEAT.md) for full details on the manamometer and timer logic.
+See [HEARTBEAT.md](HEARTBEAT.md) for full details on the `can_run_background` gate and timer logic.
 
 ### Reflection (`[reflection]` / `[[agents.reflection]]`)
 
@@ -1092,17 +1057,6 @@ Scheduled housekeeping that runs at a wall-clock time of day **or** on a fixed i
 **Consolidation** reviews daily memory files and curates MEMORY.md. The last-run timestamp is persisted in state, so it survives restarts. Skips if the user has been idle longer than `consolidation_max_idle` (default 1h — no point curating a stale session).
 
 **Reset** fires a soft session reset at `reset_time` — identical to a manual `/reset`: memory is formed from the session, then the session key rotates so the next message starts fresh. Disabled when `reset_time` is empty. Skipped while a turn is in flight or if the user was active within `reset_idle_guard`. Both `consolidation_time` and `reset_time` resolve per-agent (an `[[agents.maintenance]]` override wins over the global `[maintenance]`), so each agent can keep its own schedule. Applied on restart.
-
-### Per-Agent Mana (`[agents.mana]`)
-
-Per-agent mana overrides. When set, completely replaces the global `[mana]` values for this agent.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `name` | string | `""` | Override quota name. `""` inherits from global `[mana]`. |
-| `thresholds` | int[] | `[]` | Mana warning thresholds. `[]` inherits from global `[mana]`. When set, completely replaces global thresholds for this agent. |
-| `restore_threshold` | int | `0` | Inject session notice when mana restores to 100% after being below this threshold. `0` disables. |
-| `invest_interval` | string | `""` | Override invest interval. `""` inherits from global `[mana]`. |
 
 ### Skills & Message Transforms
 

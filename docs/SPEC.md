@@ -231,7 +231,7 @@ Controls how much work Claude does per turn. Lower effort = shorter responses, f
 
 ### Adaptive Thinking
 
-Enables extended thinking (Opus 4.6). In adaptive mode, the model decides when and how much to think. Thinking blocks are interleaved between tool calls. Thinking content is preserved in session history. Thinking tokens count toward mana — opt-in per agent.
+Enables extended thinking (Opus 4.6). In adaptive mode, the model decides when and how much to think. Thinking blocks are interleaved between tool calls. Thinking content is preserved in session history. Thinking tokens count toward token usage — opt-in per agent.
 
 Configurable globally and per-agent. Runtime toggle: `/thinking adaptive` or `/thinking off`.
 
@@ -552,7 +552,7 @@ The active backend is set by `search_backend` (default: `bleve`); exactly one ba
 POST /wake
 {"agent": "main", "text": "morning routine", "no_compact": true}
 ```
-Injects text as a user message into a branch session. When `no_compact` is true, the session returns its result instead of triggering compaction if the context limit is reached — useful for cron jobs that inherit a large parent context and shouldn't waste mana compacting.
+Injects text as a user message into a branch session. When `no_compact` is true, the session returns its result instead of triggering compaction if the context limit is reached — useful for cron jobs that inherit a large parent context and shouldn't waste tokens compacting.
 
 **Tool-based scheduling:**
 The `remind` tool with `wake=true` allows the agent to schedule messages to itself:
@@ -581,7 +581,7 @@ The timestamp is written by `OrchestrateFullTurn` for *every* turn-init path (us
 
 "User activity" means messages from allowed users via the primary platform (Telegram or Discord). It explicitly excludes: CLI-injected messages (`foci send` / `foci branch`), async notifications, agent-to-agent messages, and system-injected messages. The timestamp is stored per-agent at `agent_metadata.last_user_activity`. Use these for nudges that should only fire when the user is engaged (or specifically away).
 
-**In-flight short-circuit (TODO #753).** A turn currently executing on the target session counts as "active" for *both* gate pairs. So `--if-inactive 30m` will skip while a turn is in flight even if no recent timestamp has been written, and `--if-user-active 1h` will pass during an in-flight turn even if the user has been silent for hours. The principle: never queue a duplicate when something is already running. Without this, keepalive crons would pile up behind a long turn, fire serially as it completes, and waste mana.
+**In-flight short-circuit (TODO #753).** A turn currently executing on the target session counts as "active" for *both* gate pairs. So `--if-inactive 30m` will skip while a turn is in flight even if no recent timestamp has been written, and `--if-user-active 1h` will pass during an in-flight turn even if the user has been silent for hours. The principle: never queue a duplicate when something is already running. Without this, keepalive crons would pile up behind a long turn, fire serially as it completes, and waste tokens.
 
 Evaluation order when multiple gates are set: `if_user_active` → `if_user_inactive` → `if_active` → `if_inactive`. The first applicable skip wins; the JSON response body identifies which one fired.
 
@@ -593,10 +593,10 @@ Four timer-driven mechanisms run on a ~30s tick loop per agent:
 
 **Keepalive** — Cache keepalive. Fires when `time_since(lastCacheWarmed) >= keepalive.interval`. Creates a lightweight branch session with `no_compact` to keep the Anthropic cache prefix warm. Does no real work.
 
-**Background work** — Mana-gated task execution. Fires when:
+**Background work** — Gated task execution. Fires when:
 1. User has been idle for `background.interval`
 2. Open todos tagged "background" exist
-3. Manamometer says we can afford it
+3. The `can_run_background` gate allows it (or is unset)
 
 Creates a branch session that picks up the highest-priority background todo item.
 
@@ -606,7 +606,7 @@ Creates a branch session that picks up the highest-priority background todo item
 
 **Scheduled reset** — `[maintenance].reset_time` (default off) fires a daily soft `/reset` (memory formation + key rotation) at an `"HH:MM"` clock time or duration, skipped if the user was active within `reset_idle_guard` (default `"55m"`).
 
-**Manamometer** — Linear interpolation of expected mana over the 5-hour budget window. After `invest_interval` (default 30m) of quiet to let the cache build, the expected mana line drops linearly from 100% to 0% at window end. Work fires when actual mana exceeds expected mana. Near reset, even tiny mana is "in credit" since the budget resets soon.
+**`can_run_background` gate** — Optional user-provided executable (`can_run_background` under `[background]`/`[agents.background]`). Run before each background operation via `procx.Spawn` with a 10s timeout and `FOCI_SESSION_KEY`/`FOCI_AGENT_ID`/`FOCI_ENDPOINT` in the environment. Exit 0 means background work is allowed; any non-zero exit skips the tick; unset means always allowed. A script that fails to execute is treated as allowed (logged as a warning) so it can't wedge all background work. The real-429 `RateLimitGate` still gates background work independently.
 
 Config: `[keepalive]`, `[background]`, and `[reflection]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
 

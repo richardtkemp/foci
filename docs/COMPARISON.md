@@ -99,9 +99,9 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 |---|---|---|---|---|
 | Per-turn cost display | ✅ injected as metadata | ✅ `/usage full` footer | ❌ | ✅ status bar |
 | Cumulative cost tracking | ✅ `/cost` | ✅ `/usage cost` | ❌ | ✅ `/usage` |
-| Quota monitoring | ✅ Anthropic usage API | ❌ | ❌ | ✅ Google only (`/gquota`) |
+| Quota monitoring | ❌ | ❌ | ❌ | ✅ Google only (`/gquota`) |
 | API call log | ✅ JSONL + SQLite | ✅ JSONL | ❌ | ❌ |
-| Budget gating | ✅ smart scheduling of background work to preserve quota | ❌ | ❌ | ✅ turn-budget |
+| Budget gating | ✅ `can_run_background` gate for background work | ❌ | ❌ | ✅ turn-budget |
 | Full payload recording | ✅ optional | ✅ optional | ❌ | ❌ |
 
 ## Multi-Agent
@@ -133,7 +133,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | Cron jobs | ✅ via system cron + CLI | ✅ built-in CronService | ✅ CronService | ✅ built-in scheduler |
 | Heartbeat / periodic tasks | ✅ keepalive + background work | ✅ configurable interval | ✅ HeartbeatService | ✅ |
 | Webhook ingestion | ✅ config-declared hooks | ✅ token-validated hooks | ❌ | ❌ |
-| Idle-triggered background work | ✅ mana-gated, todo-driven | ❌ | ❌ | ❌ |
+| Idle-triggered background work | ✅ `can_run_background`-gated, todo-driven | ❌ | ❌ | ❌ |
 | Gmail integration | ❌ | ✅ Pub/Sub | ❌ | ❌ generic email only |
 
 ## Voice & Speech

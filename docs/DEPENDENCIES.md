@@ -24,7 +24,7 @@ Foci has first-class tmux-based orchestration for coding agents. These are suppo
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| **Claude Code** | AI coding agent. Also required for `/usage` (rate limit detection via `claude usage`) | `npm install -g @anthropic-ai/claude-code` |
+| **Claude Code** | AI coding agent | `npm install -g @anthropic-ai/claude-code` |
 | **OpenCode** | AI coding agent | See [opencode.ai](https://opencode.ai) |
 
 ## Voice
