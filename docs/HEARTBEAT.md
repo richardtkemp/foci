@@ -17,11 +17,23 @@ The keepalive keeps the prompt cache warm. For Anthropic, the cache TTL is ~1 ho
 
 When the keepalive fires, it creates a branch session from the agent's default session. The branch shares the parent's cache prefix, so the API call warms the cache for the next real interaction. The branch runs with `no_compact` (returns immediately if context limit is hit) and does no real work.
 
+**Which session is warmed.** Keepalive is per-agent (one scheduler per agent) and warms exactly **one** session — the agent's resolved default, via `route.Resolver` → `SessionIndex.DefaultSessionKeyForAgentOn`. First match wins:
+
+1. `default_platform`'s `is_default` chat
+2. `default_platform`'s most-recently-active registered chat
+3. any `is_default` chat (ordered by activity)
+4. the most-recently-active **root** session
+
+Every candidate is filtered to `is_root = 1`, so branches, children, facets, and inactive sessions are never targeted. An agent active across many chats therefore only keeps **one** chat's cache warm (the default / most-active); other idle chats' caches expire naturally on the provider's TTL.
+
 **When it fires:**
 ```
 if keepalive.enabled
+   AND caching available (Anthropic model, or per-model cachingOverride)
    AND time_since(last_cache_warm) >= keepalive.interval
    AND no keepalive already running
+   AND a default session exists
+   AND no turn is in flight on that session
 ```
 
 **What warms the cache:**
