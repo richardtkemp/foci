@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/delegator/ccstream"
 	"foci/internal/log"
 	"foci/internal/procx"
 	"foci/internal/skills"
@@ -134,6 +135,38 @@ func writeVisibility(b *strings.Builder, rc *config.ResolvedAgentConfig) {
 	}
 }
 
+// writeCommandApproval documents the CC agent's effective auto-approve allowlist
+// so it knows which tool/Bash calls run without prompting the user, instead of
+// guessing (#950). Rendered from the ccstream rule sets (the source of truth) so
+// it can't drift from what the backend actually approves.
+func writeCommandApproval(b *strings.Builder, rc *config.ResolvedAgentConfig) {
+	b.WriteString("\n## Command Approval\n")
+	b.WriteString("Tool and Bash calls matching your auto-approve allowlist run WITHOUT prompting the user; everything else prompts. Your effective allowlist:\n")
+	b.WriteString("- **foci tools**: every `foci_*` shell function is always auto-approved.\n")
+	if rc.Permissions.AutoApproveCommonReadonly {
+		fmt.Fprintf(b, "- **read-only** (on): %s\n", strings.Join(stripBashPrefix(ccstream.CommonReadonlyRules), ", "))
+	}
+	swState := "off — these would prompt"
+	if rc.Permissions.AutoApproveCommonSafeWrite {
+		swState = "on"
+	}
+	fmt.Fprintf(b, "- **safe-write** (%s): %s\n", swState, strings.Join(stripBashPrefix(ccstream.CommonSafeWriteRules), ", "))
+	if len(rc.Permissions.AutoApproveRules) > 0 {
+		fmt.Fprintf(b, "- **configured for this agent**: %s\n", strings.Join(stripBashPrefix(rc.Permissions.AutoApproveRules), ", "))
+	}
+	b.WriteString("Everything else — e.g. bare `git`, writable `sqlite3`, `gh create`/`merge`, paths outside the above — prompts for your approval.\n")
+}
+
+// stripBashPrefix drops the "Bash:" prefix from auto-approve rules for readable
+// prose (non-Bash tool rules like "Read" pass through unchanged).
+func stripBashPrefix(rules []string) []string {
+	out := make([]string, len(rules))
+	for i, r := range rules {
+		out[i] = strings.TrimPrefix(r, "Bash:")
+	}
+	return out
+}
+
 // buildEnvironmentAPI generates the environment block for API agents, which
 // have direct access to foci's tool registry.
 func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string) string {
@@ -177,6 +210,12 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 		for _, t := range shellTools {
 			fmt.Fprintf(&b, "- `%s` — %s\n", t.Name, t.Description)
 		}
+	}
+
+	// Auto-approve visibility is CC-specific (the ccstream Bash allowlist);
+	// opencode has its own permission model.
+	if acfg.Backend == "claude-code" {
+		writeCommandApproval(&b, rc)
 	}
 
 	writeVisibility(&b, rc)
