@@ -985,6 +985,13 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		b.lastPreview = preview
 		b.lastActMs = sentMs
 	}
+	// Rehydrate the app's last-advertised caps so a binding rebuilt after a
+	// restart (before the app reconnects) still resolves capability checks.
+	if idx := h.deps.SessionIndex; idx != nil {
+		if v, err := idx.GetChatMetadata(agentID, "app", chatID, "features"); err == nil && v != "" {
+			b.features = featureSet(strings.Split(v, ","))
+		}
+	}
 	h.convs[convID] = b
 	h.bySession[sk] = b
 	h.mu.Unlock()
