@@ -1,6 +1,8 @@
 package ccstream
 
 import (
+	"time"
+
 	"foci/internal/delegator"
 )
 
@@ -25,6 +27,9 @@ func (b *Backend) onSessionIdle() {
 	active := b.turnActive
 	redispatch := b.redispatchInFlight
 	result := b.stashedResult
+	if b.autonomousActive {
+		b.lastAutonomousEnd = time.Now() // opens the post-run grace (see autonomousInjectGrace)
+	}
 	b.autonomousActive = false // idle ends any autonomous turn
 	b.turnMu.Unlock()
 

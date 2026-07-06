@@ -356,6 +356,40 @@ func TestAutonomousTurnBlocksSystemInject(t *testing.T) {
 	}
 }
 
+// TestAutonomousInjectGrace: after an autonomous run goes idle, SourceSystem
+// injects keep deferring for autonomousInjectGrace — bridging the sub-second
+// gap before CC starts the next back-to-back autonomous run so reflection can't
+// steal it (#1048). Once the grace elapses, a system inject may begin. Uses the
+// genuine autonomous setup (AttachSessionEvents, no turn opened) so turnActive
+// stays false and running marks the run autonomous.
+func TestAutonomousInjectGrace(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	b.typingFunc = func(bool) {}
+	b.AttachSessionEvents(&delegator.SessionEvents{})
+
+	stateEvent(b, "running") // no foci turn open → autonomous turn
+	stateEvent(b, "idle")    // ends → stamps lastAutonomousEnd, opening the grace
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem, Text: "reflect", Turn: &delegator.TurnEvents{},
+	})
+	if !errors.Is(err, delegator.ErrTurnInFlight) {
+		t.Fatalf("system inject within grace = %v, want ErrTurnInFlight", err)
+	}
+
+	b.turnMu.Lock()
+	b.lastAutonomousEnd = b.lastAutonomousEnd.Add(-2 * autonomousInjectGrace)
+	b.turnMu.Unlock()
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSystem, Text: "reflect", Turn: &delegator.TurnEvents{},
+	}); err != nil {
+		t.Fatalf("system inject after grace = %v, want nil", err)
+	}
+}
+
 // the turn.
 func TestIdleKeyed_WaitForTurnUnblocksAtIdle(t *testing.T) {
 	t.Parallel()

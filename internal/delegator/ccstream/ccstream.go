@@ -22,6 +22,13 @@ func init() {
 	delegator.RegisterPlan("claude-code", planDelivery)
 }
 
+// autonomousInjectGrace is how long after an autonomous run goes idle that
+// SourceSystem injects (reflection/keepalive) keep deferring. It bridges the
+// sub-second gap before CC starts the next back-to-back autonomous run, so
+// reflection can't slip in and get its silent sink to swallow that run —
+// hardening #1047's core fix (#1048). A var so tests can shorten it.
+var autonomousInjectGrace = 5 * time.Second
+
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{
 		readyCh:        make(chan struct{}),
@@ -95,7 +102,11 @@ type Backend struct {
 	// injects (tryBeginTurn) so reflection/keepalive can't inject into — and get
 	// its silent-sink turn to swallow — live autonomous work (#1047).
 	autonomousActive bool
-	turnEvents       *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
+	// lastAutonomousEnd is when the most recent autonomous run went idle. For a
+	// short grace after it (autonomousInjectGrace), SourceSystem injects still
+	// defer in tryBeginTurn — see there.
+	lastAutonomousEnd time.Time
+	turnEvents        *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
 	turnResultCh   chan *ResultMessage   // buffered(1), receives result
 	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
