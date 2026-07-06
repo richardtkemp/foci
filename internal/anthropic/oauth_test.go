@@ -120,30 +120,3 @@ func TestParseCredentialsInvalid(t *testing.T) {
 	}
 }
 
-func TestUsageClientWithFunc(t *testing.T) {
-	// Proves that NewUsageClient creates a usage client that calls the provided tokenFunc and sends it as the Bearer token on usage API requests.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if auth := r.Header.Get("Authorization"); auth != "Bearer func-token" {
-			t.Errorf("Authorization = %q", auth)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		util := 30.0
-		json.NewEncoder(w).Encode(usageAPIResponse{
-			FiveHour: &usageAPIWindow{Utilization: &util},
-		})
-	}))
-	defer server.Close()
-
-	client := NewUsageClient(func() (string, error) {
-		return "func-token", nil
-	})
-	client.baseURL = server.URL
-
-	resp, err := client.GetUsage(context.Background())
-	if err != nil {
-		t.Fatalf("GetUsage: %v", err)
-	}
-	if resp == nil || resp.Utilization == nil {
-		t.Fatal("Utilization is nil")
-	}
-}

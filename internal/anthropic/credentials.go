@@ -8,7 +8,6 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/mana"
 	"foci/internal/modelcaps"
 	"foci/internal/procx"
 	"foci/internal/provider"
@@ -48,23 +47,16 @@ func (h *tokenHolder) Set(token string) {
 // AnthropicResolver implements provider.CredentialResolver for anthropic-format endpoints.
 // Priority: API key → Claude Code credentials.
 type AnthropicResolver struct {
-	store         SecretsStore
-	ccSrc         *CCTokenSource
-	credHolders   map[string]*tokenHolder
-	mu            sync.Mutex
-	usageCacheTTL time.Duration
+	store       SecretsStore
+	ccSrc       *CCTokenSource
+	credHolders map[string]*tokenHolder
+	mu          sync.Mutex
 }
 
 // NewResolver creates and initializes an AnthropicResolver.
 // Initializes the shared CCTokenSource and sets up the refresh callback
 // for proactive token renewal.
 func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, store SecretsStore) (*AnthropicResolver, error) {
-	usageCacheTTL, err := time.ParseDuration(anthropicCfg.UsageCacheTTL)
-	if err != nil {
-		log.Warnf("anthropic", "invalid usage_cache_ttl, using default: %v", err)
-		usageCacheTTL = 10 * time.Minute
-	}
-
 	ccExpiryThreshold, err := time.ParseDuration(anthropicCfg.CCExpiryThreshold)
 	if err != nil {
 		log.Warnf("anthropic", "invalid cc_expiry_threshold, using default: %v", err)
@@ -86,10 +78,9 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 	}
 
 	return &AnthropicResolver{
-		store:         store,
-		ccSrc:         ccSrc,
-		credHolders:   make(map[string]*tokenHolder),
-		usageCacheTTL: usageCacheTTL,
+		store:       store,
+		ccSrc:       ccSrc,
+		credHolders: make(map[string]*tokenHolder),
 	}, nil
 }
 
@@ -126,26 +117,6 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 	}
 
 	return nil, fmt.Errorf("no Anthropic credentials found — run: foci auth")
-}
-
-// ResolveUsageClient implements provider.CredentialResolver.
-// The usage API requires OAuth credentials with user:profile scope, so only
-// Claude Code credentials are supported. Setup-tokens and API keys don't have
-// OAuth scopes and will be rejected by the usage endpoint.
-func (r *AnthropicResolver) ResolveUsageClient(endpointName, apiKeyName string) (mana.UsageClient, error) {
-	// Usage API requires OAuth with user:profile scope — only CC credentials work.
-	if r.ccSrc != nil {
-		client := NewUsageClient(r.ccSrc.Token)
-		client.SetCacheTTL(r.usageCacheTTL)
-		// After each successful usage fetch, check if the token needs proactive refresh.
-		client.SetPostFetchHook(r.ccSrc.CheckRefresh)
-		log.Infof("anthropic", "created usage client for %q (via CC credentials, lazy)", endpointName)
-		return client, nil
-	}
-
-	// No CC credentials available — usage API not supported.
-	log.Debugf("anthropic", "no usage client for %q: requires Claude Code credentials with OAuth scopes", endpointName)
-	return nil, fmt.Errorf("usage API requires Claude Code credentials (OAuth with user:profile scope)")
 }
 
 // ModelCapsFetcher returns a modelcaps.Fetcher backed by Claude Code OAuth

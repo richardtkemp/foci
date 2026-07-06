@@ -19,7 +19,6 @@ import (
 type periodicParams struct {
 	cfg                   *config.Config
 	sessions              *session.Store
-	usageClientReg        *usageClientRegistry
 	connMgr               platform.ConnectionManager
 	sessionIndex          *session.SessionIndex
 	todoStore             *memory.TodoStore
@@ -191,13 +190,12 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		Reflection:         refl,
 		TickInterval:       inst.resolved.Scheduler.TickInterval,
 		Maintenance:        maint,
-		ManaInvestInterval: inst.resolved.Mana.InvestInterval,
 		PromptSearchDirs:   inst.promptSearchDirs,
 		TodoStore:          p.todoStore,
 		SessionIndex:       p.sessionIndex,
 
 		// The schedulers' single dependency: branch dispatch, in-flight checks,
-		// rate-limit/mana gating, reset, etc. (see background_agent.go). Test
+		// rate-limit/can_run_background gating, reset, etc. (see background_agent.go). Test
 		// overrides and the consolidation RunOnce/Branch and reset_time feature
 		// flags are resolved inside the adapter / by IsDelegatedAgent + ResetTime.
 		Agent: &backgroundAgent{inst: inst, connMgr: p.connMgr, agentID: agentID, branch: branchFn},

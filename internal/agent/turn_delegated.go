@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"foci/internal/agent/turnevent"
-	"foci/internal/compaction"
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -65,7 +64,7 @@ func (t *DelegatedTransport) ResolveModelEffort(ts *TurnState) {
 func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 	a := t.agent
 
-	parts := a.composeTurnText(ts.Ctx, ts.SessionKey, ts.TurnModel, "", false, ts.Texts, ts.Attachments)
+	parts := a.composeTurnText(ts.Ctx, ts.SessionKey, ts.TurnModel, ts.Texts, ts.Attachments)
 	ts.Prompt = parts.JoinPrompt()
 
 	// First-run onboarding: prepend as a delimited block, then clear. The API
@@ -608,11 +607,9 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 }
 
 // RunCompaction checks whether context compaction is needed and dispatches
-// to the shared runDelegatedCompact primitive when the threshold is hit.
-// Two triggers: (1) standard threshold (e.g. 80% of context window),
-// (2) mana-refresh (lower threshold when Anthropic rate limit resets soon).
-// The watcher's TurnUsage provides the token counts; the context window
-// comes from model metadata.
+// to the shared runDelegatedCompact primitive when the standard threshold
+// (e.g. 80% of context window) is hit. The watcher's TurnUsage provides the
+// token counts; the context window comes from model metadata.
 func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	a := t.agent
 	if a.Compactor == nil || ts.FinalUsage == nil {
@@ -644,37 +641,13 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 		return
 	}
 
-	// Check mana-refresh trigger: compact at a lower threshold when mana
-	// reset is imminent so the new window starts with a smaller context.
-	isManaRefresh := false
-	if a.AutocompactBeforeManaRefresh {
-		usageClient := a.SessionUsageClient(ts.SessionKey)
-		if usageClient != nil {
-			manaRefreshThreshold := parseDurationFallback(a.AutocompactBeforeManaRefreshThreshold, 5*time.Minute)
-			if w, err := usageClient.GetUsage(ts.Ctx); err == nil && w != nil && !w.ResetsAt.IsZero() {
-				if compaction.ManaResetImminent(w.ResetsAt, manaRefreshThreshold) {
-					secondaryThreshold := int(float64(ctxLimit) * a.Compactor.Threshold() * a.AutocompactBeforeManaRefreshFactor)
-					if totalTokens > secondaryThreshold {
-						isManaRefresh = true
-						untilReset := time.Until(w.ResetsAt).Round(time.Minute)
-						a.logger().Infof("session=%s mana-refresh compaction (reset in %s, %d/%d tokens, delegated)",
-							ts.SessionKey, untilReset, totalTokens, ctxLimit)
-					}
-				}
-			}
-		}
-	}
-
-	// Standard threshold check (if mana-refresh didn't trigger).
 	// Delegated transport has no messages slice — use usage-only check.
-	if !isManaRefresh {
-		threshold := int(float64(ctxLimit) * a.Compactor.Threshold())
-		if totalTokens <= threshold {
-			return
-		}
-		a.logger().Infof("session=%s hit threshold: %d/%d tokens (%d%%, delegated)",
-			ts.SessionKey, totalTokens, ctxLimit, int(float64(totalTokens)/float64(ctxLimit)*100))
+	threshold := int(float64(ctxLimit) * a.Compactor.Threshold())
+	if totalTokens <= threshold {
+		return
 	}
+	a.logger().Infof("session=%s hit threshold: %d/%d tokens (%d%%, delegated)",
+		ts.SessionKey, totalTokens, ctxLimit, int(float64(totalTokens)/float64(ctxLimit)*100))
 
 	if a.SessionNoCompact(ts.SessionKey) {
 		percent := int(float64(totalTokens) / float64(ctxLimit) * 100)

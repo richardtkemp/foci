@@ -23,7 +23,6 @@ type ResolvedAgentConfig struct {
 	Scheduler    ResolvedScheduler
 	Maintenance  ResolvedMaintenance
 	Browser      ResolvedBrowser
-	Mana         ResolvedMana
 	Display      ResolvedDisplay
 	Notify       ResolvedNotify
 
@@ -127,7 +126,6 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Reflection:      resolveReflection(Merge(acfg.Reflection, cfg.Reflection)),
 		Maintenance:     resolveMaintenance(Merge(acfg.Maintenance, cfg.Maintenance)),
 		Browser:         resolveBrowser(Merge(acfg.Browser, cfg.Browser)),
-		Mana:            resolveMana(Merge(acfg.Mana, cfg.Mana)),
 		Display:         resolveDisplay(Merge(displayLayers...)),
 		Notify:          resolveNotify(Merge(acfg.Notify, cfg.Notify)),
 		Permissions:     resolvePermissions(acfg.Permissions, cfg.Permissions),

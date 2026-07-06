@@ -16,7 +16,6 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/delegator"
-	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -44,7 +43,6 @@ type cmdRegParams struct {
 	sessionIndex        *session.SessionIndex
 	client              provider.Client
 	clientProvider      provider.ClientProvider
-	usageClientProvider mana.UsageClientProvider
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
 	startTime           time.Time
@@ -162,7 +160,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			GitCommit: gitCommit,
 			BuildTime: buildTime,
 		},
-		ManaName:            config.DerefStr(p.cfg.Mana.Name),
 		StartTime:           p.startTime,
 		CompactionThreshold: p.compactionThreshold,
 		ActivityFunc:        app.ResolvedActivity,
@@ -179,7 +176,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		AndroidDeps:         androidDeps,
 		TokenCountCache:     command.NewTokenCountCache(),
 		ConfigureFacet:      p.configureFacet,
-		UsageClientProvider: p.usageClientProvider,
 		Resolved:            p.resolved,
 		PprofControl:        pprofControl,
 	}
@@ -261,27 +257,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	// Facet
 	cmds.Register(command.FacetCommand())
-
-	// Dynamic mana command — only register if the provider supports usage tracking.
-	if p.ag.UsageClient != nil {
-		manaName := config.DerefStr(p.cfg.Mana.Name)
-		if manaName == "" {
-			manaName = "mana"
-		}
-		cc.ManaName = manaName
-		manaCmd := command.ManaCommand(manaName)
-		cmds.Register(manaCmd)
-		cmds.Register(&command.Command{
-			Name: "usage", Hidden: true,
-			Execute: manaCmd.Execute,
-		})
-		if manaName != "m" {
-			cmds.Register(&command.Command{
-				Name: "m", Hidden: true,
-				Execute: manaCmd.Execute,
-			})
-		}
-	}
 
 	// Custom script commands from config
 	for _, cc := range p.cfg.Commands {

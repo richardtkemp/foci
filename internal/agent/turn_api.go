@@ -74,8 +74,6 @@ func (t *APITransport) RegisterTurn(ts *TurnState) func() {
 func (t *APITransport) ComposePrompt(ts *TurnState) error {
 	a := t.agent
 
-	// Resolve mana for meta prefix display.
-	// (prepareUserMessage does this internally, but we need effective duplicate check first.)
 	// Duplicate messages: suppress when thinking is active with effort > low.
 	ts.EffectiveDuplicate = a.DuplicateMessages
 	if ts.EffectiveDuplicate && ts.TurnThinking != "" && ts.TurnThinking != "off" && ts.TurnEffort != "low" {

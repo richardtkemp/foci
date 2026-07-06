@@ -8,7 +8,6 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
-	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/internal/modelinfo"
 	"foci/internal/platform"
@@ -94,7 +93,6 @@ type CommandContext struct {
 	BuildInfo BuildInfo
 
 	// Timing / thresholds
-	ManaName            string
 	StartTime           time.Time
 	CompactionThreshold float64
 
@@ -139,9 +137,6 @@ type CommandContext struct {
 	StopFunc       func() // cancels the current agent turn; nil = no-op
 	ReleaseFunc    func() // releases a secondary bot back to its pool; nil = no-op
 	IsSecondaryBot bool   // true for facet/secondary bots
-
-	// Usage client provider (for mana command)
-	UsageClientProvider mana.UsageClientProvider
 
 	// Resolved holds the pre-merged agent+global config. Prefer reading
 	// from here instead of calling config.Merge() at runtime.

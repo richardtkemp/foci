@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"sync"
 	"time"
 
-	"foci/internal/mana"
+	"foci/internal/procx"
 )
 
 // RateLimitGate blocks all session injection when the API is rate-limited.
@@ -33,11 +35,7 @@ type RateLimitedError struct {
 }
 
 func (e *RateLimitedError) Error() string {
-	resetStr := mana.ParseResetTime(e.Until.Format(time.RFC3339Nano))
-	if resetStr == "" {
-		resetStr = e.Until.Format(time.Kitchen)
-	}
-	return fmt.Sprintf("rate limited (resets %s)", resetStr)
+	return fmt.Sprintf("rate limited (resets %s)", e.Until.Format(time.Kitchen))
 }
 
 // Close marks the gate as rate-limited until the given time.
@@ -185,7 +183,7 @@ func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
 // CanFireBackgroundOperation checks if a background operation can run on the given session.
 // Returns false if:
 //   - The rate limit gate for the session's endpoint is closed
-//   - Mana is insufficient (session-aware check using agent's configured invest interval)
+//   - The configured can_run_background executable exits non-zero
 func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey string) (bool, string) {
 	if sessionKey == "" {
 		return false, "no session key"
@@ -203,23 +201,42 @@ func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey strin
 	// Check 1: Rate limit gate for this endpoint
 	gate := a.getOrCreateRateLimitGate(endpoint)
 	if limited, until := gate.IsLimited(); limited {
-		resetStr := mana.ParseResetTime(until.Format(time.RFC3339Nano))
-		if resetStr == "" {
-			resetStr = until.Format(time.Kitchen)
-		}
-		return false, fmt.Sprintf("rate limited on %s (resets %s)", endpoint, resetStr)
+		return false, fmt.Sprintf("rate limited on %s (resets %s)", endpoint, until.Format(time.Kitchen))
 	}
 
-	// Check 2: Mana availability (session-aware).
-	// When no usage client is available (e.g. backend agents with no
-	// configured endpoint), IsGoodFor returns true — unknown mana does
-	// not block operations.
-	if a.ManaInvestInterval > 0 {
-		monitor := mana.NewMonitor(a.SessionUsageClient(sessionKey))
-		if !monitor.IsGoodFor(ctx, a.ManaInvestInterval) {
-			return false, "mana insufficient"
-		}
+	// Check 2: user-provided background gate. Exit 0 = allowed, non-zero = skip.
+	if a.CanRunBackground != "" && !a.runCanRunBackground(ctx, sessionKey, endpoint) {
+		return false, "can_run_background declined"
 	}
 
 	return true, ""
+}
+
+// runCanRunBackground runs the configured can_run_background executable and
+// reports whether background work is permitted. A failure to execute the
+// command (not found, not executable) is treated as permitted so a broken
+// script never wedges all background work.
+func (a *Agent) runCanRunBackground(ctx context.Context, sessionKey, endpoint string) bool {
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	// procx.Spawn strips the foci-secrets group from the child and puts it in
+	// its own process group.
+	cmd := procx.Spawn(cctx, a.CanRunBackground)
+	cmd.Env = append(os.Environ(),
+		"FOCI_SESSION_KEY="+sessionKey,
+		"FOCI_AGENT_ID="+a.AgentID,
+		"FOCI_ENDPOINT="+endpoint,
+	)
+
+	err := cmd.Run()
+	if err == nil {
+		return true
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return false // explicit non-zero exit = decline
+	}
+	a.logger().Warnf("can_run_background %q failed to run: %v", a.CanRunBackground, err)
+	return true
 }

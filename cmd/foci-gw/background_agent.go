@@ -52,7 +52,7 @@ func (b *backgroundAgent) SessionKey() string {
 func (b *backgroundAgent) CanFire(ctx context.Context, sessionKey string) (bool, string) {
 	// Test-only override: if the L2 control socket has set a state, return it
 	// verbatim. A nil pointer means no override — use the production rate-limit /
-	// mana check on the agent.
+	// can_run_background check on the agent.
 	if s := b.inst.testCanFireOverride.Load(); s != nil {
 		return s.allowed, s.reason
 	}

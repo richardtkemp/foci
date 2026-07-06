@@ -13,7 +13,7 @@ import (
 
 // commandWorker processes queued slash commands in its own goroutine,
 // concurrent with the per-session agent workers in agent.Inbox. Commands
-// like /status, /mana, /model are stateless reads or only touch session
+// like /status, /model are stateless reads or only touch session
 // config — there is no good reason to serialise them behind in-flight
 // agent turns. Commands that must interrupt a turn (e.g. /stop) are
 // marked Immediate and dispatched inline by the polling goroutine

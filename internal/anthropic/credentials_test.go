@@ -98,7 +98,6 @@ func newTestResolver(t *testing.T, store SecretsStore, ccToken string) *Anthropi
 		writeCCCreds(t, filepath.Join(home, ".claude", ".credentials.json"), ccToken, "ref", time.Now().Add(time.Hour))
 	}
 	r, err := NewResolver(context.Background(), &config.AnthropicConfig{
-		UsageCacheTTL:     "3m",
 		CCExpiryThreshold: "2m",
 	}, store)
 	if err != nil {
@@ -108,17 +107,13 @@ func newTestResolver(t *testing.T, store SecretsStore, ccToken string) *Anthropi
 }
 
 func TestNewResolverInvalidDurationsUseDefaults(t *testing.T) {
-	// Proves NewResolver falls back to the documented defaults (10m usage cache, 5m expiry threshold) when the configured durations don't parse, instead of failing startup.
+	// Proves NewResolver falls back to the documented defaults (5m expiry threshold) when the configured durations don't parse, instead of failing startup.
 	t.Setenv("HOME", t.TempDir())
 	r, err := NewResolver(context.Background(), &config.AnthropicConfig{
-		UsageCacheTTL:     "not-a-duration",
 		CCExpiryThreshold: "also-bad",
 	}, fakeSecretsStore{})
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)
-	}
-	if r.usageCacheTTL != 10*time.Minute {
-		t.Errorf("usageCacheTTL = %v, want 10m default", r.usageCacheTTL)
 	}
 	if r.ccSrc != nil {
 		t.Error("ccSrc should be nil with no credentials file in HOME")
@@ -130,9 +125,6 @@ func TestNewResolverDetectsCCCredentials(t *testing.T) {
 	r := newTestResolver(t, fakeSecretsStore{}, "cc-tok")
 	if r.ccSrc == nil {
 		t.Fatal("ccSrc not configured despite valid credentials file")
-	}
-	if r.usageCacheTTL != 3*time.Minute {
-		t.Errorf("usageCacheTTL = %v, want 3m from config", r.usageCacheTTL)
 	}
 	tok, err := r.ccSrc.Token()
 	if err != nil || tok != "cc-tok" {
@@ -183,30 +175,6 @@ func TestResolveClientNoCredentials(t *testing.T) {
 	_, err := r.ResolveClient(context.Background(), "main", "anthropic.api_key", "", time.Second)
 	if err == nil || !strings.Contains(err.Error(), "foci auth") {
 		t.Errorf("err = %v, want no-credentials error pointing at foci auth", err)
-	}
-}
-
-func TestResolveUsageClient(t *testing.T) {
-	// Proves ResolveUsageClient only works with CC (OAuth) credentials: with them it returns a usage client carrying the configured cache TTL and a post-fetch refresh hook; without them it errors.
-	r := newTestResolver(t, fakeSecretsStore{}, "cc-tok")
-	uc, err := r.ResolveUsageClient("main", "anthropic.api_key")
-	if err != nil {
-		t.Fatalf("ResolveUsageClient: %v", err)
-	}
-	client, ok := uc.(*UsageClient)
-	if !ok {
-		t.Fatalf("client type = %T, want *UsageClient", uc)
-	}
-	if client.cacheTTL != 3*time.Minute {
-		t.Errorf("cacheTTL = %v, want 3m from config", client.cacheTTL)
-	}
-	if client.postFetch == nil {
-		t.Error("postFetch hook not set — proactive token refresh would never trigger")
-	}
-
-	noCC := newTestResolver(t, fakeSecretsStore{}, "")
-	if _, err := noCC.ResolveUsageClient("main", "anthropic.api_key"); err == nil {
-		t.Error("expected error without CC credentials")
 	}
 }
 

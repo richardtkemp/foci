@@ -60,8 +60,7 @@ func TestEncode_OmitsZeroReliabilityFields(t *testing.T) {
 
 func TestEncode_TokensInFieldName(t *testing.T) {
 	// Tokens.In must serialize as "in" (a Kotlin keyword, @SerialName-mapped).
-	mana := 42
-	wire, err := Encode(Meta{ConversationID: "c1", Model: "opus", ManaPct: &mana, Tokens: &Tokens{In: 10, Out: 20, CR: 30, CW: 40}}, 0, 0, "X", "ts")
+	wire, err := Encode(Meta{ConversationID: "c1", Model: "opus", Tokens: &Tokens{In: 10, Out: 20, CR: 30, CW: 40}}, 0, 0, "X", "ts")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +84,7 @@ func TestEncode_OptionalPointersOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, d := wireFields(t, wire)
-	for _, k := range []string{"model", "manaPct", "manaState", "prevCostUsd", "tokens", "gap"} {
+	for _, k := range []string{"model", "prevCostUsd", "tokens", "gap"} {
 		if _, present := d[k]; present {
 			t.Errorf("optional %q should be omitted when unset", k)
 		}
@@ -289,7 +288,6 @@ func TestRoundTrip_HelloServer(t *testing.T) {
 // FAP v1 server frame set (including types not yet emitted by the echo slice)
 // against the Kotlin client's decoder, which selects a serializer by `t`.
 func TestEncode_AllServerFrames(t *testing.T) {
-	mana := 80
 	cost := 0.12
 	final := "done"
 	frames := []ServerFrame{
@@ -303,7 +301,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		Media{ConversationID: "c", MessageID: "m", BlobID: "b", MIME: "image/png"},
 		Interactive{ConversationID: "c", PromptID: "p", Text: "ok?", Choices: []Choice{{Label: "Y", Data: "p:0"}}, ExpiresAt: "2026-01-01T00:00:00Z"},
 		InteractiveEdit{ConversationID: "c", PromptID: "p", Text: "done"},
-		Meta{ConversationID: "c", Model: "opus", ManaPct: &mana, ManaState: "good", Gap: "5m", PrevCostUsd: &cost, Tokens: &Tokens{In: 1}},
+		Meta{ConversationID: "c", Model: "opus", Gap: "5m", PrevCostUsd: &cost, Tokens: &Tokens{In: 1}},
 		ErrorFrame{Code: "boom", Message: "bad"},
 		Pong{},
 	}

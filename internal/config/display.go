@@ -267,11 +267,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		add("skills", "dir", cfg.Skills.Dir)
 	}
 
-	// mana
-	add("mana", "name", cfg.Mana.Name)
-	if len(cfg.Mana.Thresholds) > 0 {
-		add("mana", "thresholds", cfg.Mana.Thresholds)
-	}
 
 	// tts
 	for i, e := range cfg.TTS {
@@ -309,13 +304,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 
 	// database
 	add("database", "busy_timeout", cfg.Database.BusyTimeout)
-
-	// anthropic
-	add("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
-	add("anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL)
-
-	// mana
-	add("mana", "invest_interval", cfg.Mana.InvestInterval)
 
 	// message_transforms
 	if len(cfg.MessageTransforms) > 0 {
@@ -447,9 +435,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Sessions.CompactionPreserveMessages != nil {
 		add("compaction_preserve_messages", *agent.Sessions.CompactionPreserveMessages)
 	}
-	if len(agent.Mana.Thresholds) > 0 {
-		add("mana.thresholds", agent.Mana.Thresholds)
-	}
 	for name, model := range agent.Groups.Groups {
 		add("groups."+name, model)
 	}
@@ -560,17 +545,10 @@ type displayConfig struct {
 	Tools       ToolsConfig       `toml:"tools"`
 	Environment EnvironmentConfig `toml:"environment"`
 	Skills      SkillsConfig      `toml:"skills"`
-	Mana        ManaConfig        `toml:"mana"`
 	TTS         []TTSConfig       `toml:"tts"`
 	STT         []STTConfig       `toml:"stt"`
 	Debug       DebugConfig       `toml:"debug"`
 	Database    DatabaseConfig    `toml:"database"`
-	Anthropic   displayAnthropic  `toml:"anthropic"`
-}
-
-type displayAnthropic struct {
-	UsageAPITimeout string `toml:"usage_api_timeout"`
-	UsageCacheTTL   string `toml:"usage_cache_ttl"`
 }
 
 // FormatConfigTOML returns a TOML-marshalable representation of the running
@@ -586,15 +564,10 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Tools:       cfg.Tools,
 		Environment: cfg.Environment,
 		Skills:      cfg.Skills,
-		Mana:        cfg.Mana,
 		TTS:         cfg.TTS,
 		STT:         cfg.STT,
 		Debug:       cfg.Debug,
 		Database:    cfg.Database,
-		Anthropic: displayAnthropic{
-			UsageAPITimeout: cfg.Anthropic.UsageAPITimeout,
-			UsageCacheTTL:   cfg.Anthropic.UsageCacheTTL,
-		},
 	}
 
 	var buf bytes.Buffer

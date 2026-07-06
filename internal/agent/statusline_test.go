@@ -18,7 +18,7 @@ func renderTmpl(tmpl string, in statuslineInputs) string {
 }
 
 // TestStatuslineDefault_FirstMessage proves the default template reproduces the
-// historical first-message [meta] line exactly: no prev_cost/prev_tokens/mana,
+// historical first-message [meta] line exactly: no prev_cost/prev_tokens,
 // and the empty [state] line is dropped.
 func TestStatuslineDefault_FirstMessage(t *testing.T) {
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
@@ -32,7 +32,7 @@ func TestStatuslineDefault_FirstMessage(t *testing.T) {
 }
 
 // TestStatuslineDefault_FullLine proves the default template reproduces a
-// fully-populated [meta] line (cost, tokens, mana) byte-for-byte.
+// fully-populated [meta] line (cost, tokens) byte-for-byte.
 func TestStatuslineDefault_FullLine(t *testing.T) {
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	sm := &sessionMeta{
@@ -44,10 +44,10 @@ func TestStatuslineDefault_FullLine(t *testing.T) {
 		prevCacheWrite:  200,
 	}
 	got := renderTmpl(DefaultStatuslineTemplate, statuslineInputs{
-		now: now, model: "claude-opus-4-8", platform: "telegram", manaStr: "50%", manaGood: false, sm: sm,
+		now: now, model: "claude-opus-4-8", platform: "telegram", sm: sm,
 	})
 	want := "[meta] time=2026-02-21T05:30:00Z gap=2m0s model=claude-opus-4-8 via=telegram " +
-		"prev_cost=$0.043 prev_tokens=in:2400/out:312/cR:18000/cW:200 mana=50% 🔴"
+		"prev_cost=$0.043 prev_tokens=in:2400/out:312/cR:18000/cW:200"
 	if got != want {
 		t.Errorf("full statusline:\n got: %q\nwant: %q", got, want)
 	}
@@ -109,20 +109,6 @@ func TestStatuslineBareFields(t *testing.T) {
 	want := "in=7 out=3 cR=100 cW=9 c=$0"
 	if got != want {
 		t.Errorf("bare fields:\n got: %q\nwant: %q", got, want)
-	}
-}
-
-// TestStatuslineManaFlag proves {mana_pct} and {mana_flag} render independently.
-func TestStatuslineManaFlag(t *testing.T) {
-	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
-	in := statuslineInputs{now: now, manaStr: "80%", manaGood: true, sm: &sessionMeta{}}
-	if got := renderTmpl("{mana_pct} {mana_flag}", in); got != "80% 🟢" {
-		t.Errorf("mana flag: got %q, want %q", got, "80% 🟢")
-	}
-	// Empty mana → both empty → line dropped.
-	in.manaStr, in.manaGood = "", false
-	if got := renderTmpl("{mana_pct}{mana_flag}", in); got != "" {
-		t.Errorf("empty mana line should drop: got %q", got)
 	}
 }
 

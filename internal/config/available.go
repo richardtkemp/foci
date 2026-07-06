@@ -151,12 +151,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		opts = append(opts, availableOption{"skills", "dir", "\"\"", "shared skills directory (default: $home/shared/skills/)"})
 	}
 
-	// Mana warnings
-	mc := Merge(agent.Mana, cfg.Mana)
-	if len(mc.Thresholds) == 0 {
-		opts = append(opts, availableOption{"mana", "thresholds", "[]", "mana percentages to warn at"})
-	}
-
 	if len(opts) == 0 {
 		return "All config options are set."
 	}

@@ -139,16 +139,6 @@ func (il InjectionLevel) IncludeWarnings() bool {
 	return il == InjectionAll
 }
 
-// ManaConfig holds mana/quota budget and warning settings.
-// Embed in Config (global, TOML [mana]) and AgentConfig (per-agent).
-// All fields are pointer/slice types for Merge-based resolution.
-type ManaConfig struct {
-	Name             *string `toml:"name"              default:"mana"  desc:"what to call quota (e.g. mana)"`               // what to call quota
-	Thresholds       []int   `toml:"thresholds"`                                                                            // mana percentages to warn at (e.g. [50, 25, 10, 5])
-	RestoreThreshold *int    `toml:"restore_threshold" desc:"mana restore notice threshold (0=disabled)" min:"0" max:"100"` // inject session notice when mana restores to 100% after being below this (0=disabled)
-	InvestInterval   *string `toml:"invest_interval"   default:"30m"  desc:"quiet period after mana reset" type:"duration"` // quiet period after mana reset before spending
-}
-
 // ContextWindow represents a model's context window size in tokens.
 // Accepts plain integers or strings with k/K suffix (1k = 1000 tokens).
 type ContextWindow int
@@ -303,7 +293,6 @@ type AgentConfig struct {
 	Reflection  ReflectionConfig      `toml:"reflection"`  // overrides from [reflection]
 	Scheduler   SchedulerConfig       `toml:"scheduler"`   // overrides from [scheduler]
 	Maintenance MaintenanceConfig     `toml:"maintenance"` // overrides from [maintenance]
-	Mana        ManaConfig            `toml:"mana"`        // overrides from [mana]
 	Groups      GroupsConfig          `toml:"groups"`      // overrides from [groups]
 	Permissions PermissionsConfig     `toml:"permissions"` // overrides from [permissions]
 
@@ -361,11 +350,6 @@ type CompactionConfig struct {
 	CompactionEffort                        *string  `toml:"compaction_effort"                     desc:"compaction effort level"`
 	FacetNoCompact                          *bool    `toml:"facet_no_compact"                      desc:"set no_compact on facet sessions (default true)"`
 	ReloadOnCompact                         *bool    `toml:"reload_on_compact"                     desc:"delegated agents: after compaction, bounce the CC session (resume) so character/skill files reload from disk (default true)"`
-	AutocompactBeforeManaRefresh            *bool    `toml:"autocompact_before_mana_refresh"       desc:"autocompact before mana refresh"`
-	AutocompactBeforeManaRefreshThreshold   *string  `toml:"autocompact_before_mana_refresh_threshold" desc:"mana threshold to trigger autocompact" type:"duration"`
-	AutocompactBeforeManaRefreshFactor      *float64 `toml:"autocompact_before_mana_refresh_factor" desc:"compaction threshold factor for mana refresh"`
-	AutocompactBeforeManaRefreshPreserve    *int     `toml:"autocompact_before_mana_refresh_preserve" desc:"messages to preserve in mana-refresh compaction"`
-	AutocompactBeforeManaRefreshPreservePct *float64 `toml:"autocompact_before_mana_refresh_preserve_pct" desc:"fraction of messages to preserve in mana-refresh mode (0.0-1.0)" min:"0" max:"1"`
 }
 
 // NudgeConfig holds nudge system settings.
@@ -484,8 +468,6 @@ type ToolConfig struct {
 }
 
 type AnthropicConfig struct {
-	UsageAPITimeout   string `toml:"usage_api_timeout"   default:"10s" desc:"HTTP timeout for usage API calls" type:"duration"`
-	UsageCacheTTL     string `toml:"usage_cache_ttl"     default:"10m" desc:"cache TTL for usage API responses" type:"duration"`
 	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"  desc:"proactive token refresh threshold" type:"duration"`
 }
 
@@ -1089,12 +1071,13 @@ type MaintenanceConfig struct {
 	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"skip scheduled reset if user active within this window" type:"duration"`   // skip reset if recently active
 }
 
-// BackgroundConfig controls the mana-gated background work timer.
+// BackgroundConfig controls the background work timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type BackgroundConfig struct {
-	Enabled  *bool   `toml:"enabled"                  desc:"enable background work timer"`                              // enable background work timer
-	Interval *string `toml:"interval" default:"15m"   desc:"time since last interaction before firing" type:"duration"` // time since last interaction before firing
-	Prompt   *string `toml:"prompt"                   desc:"background work prompt file path"`                          // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	Enabled        *bool   `toml:"enabled"                  desc:"enable background work timer"`                              // enable background work timer
+	Interval       *string `toml:"interval" default:"15m"   desc:"time since last interaction before firing" type:"duration"` // time since last interaction before firing
+	Prompt         *string `toml:"prompt"                   desc:"background work prompt file path"`                          // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	CanRunBackground *string `toml:"can_run_background"       desc:"executable gating background work; exit 0 = allowed, non-zero = skip"`   // path to a script/executable run before each background op; exit 0 permits the work, any non-zero exit skips it. Empty = always allowed.
 }
 
 // DebugConfig holds developer/debugging knobs that can be configured at
@@ -1144,7 +1127,6 @@ type Config struct {
 	TTS                []TTSConfig               `toml:"tts"`
 	STT                []STTConfig               `toml:"stt"`
 	Bitwarden          BitwardenConfig           `toml:"bitwarden"`
-	Mana               ManaConfig                `toml:"mana"`
 	Environment        EnvironmentConfig         `toml:"environment"`
 	Skills             SkillsConfig              `toml:"skills"`
 	Resources          ResourcesConfig           `toml:"resources"`

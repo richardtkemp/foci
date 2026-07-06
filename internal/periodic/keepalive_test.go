@@ -65,36 +65,6 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 	}
 }
 
-func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
-	// Verifies that an unparseable manaInvestInterval does not block background dispatch entirely;
-	// the runner falls back gracefully rather than aborting the attempt.
-	var calls int
-	r := &Runner{
-		log:                log.NewComponentLogger("keepalive:test"),
-		agentID:            "test",
-		manaInvestInterval: "invalid",
-		bgCfg: config.ResolvedBackground{
-			Enabled:  true,
-			Interval: "1s",
-		},
-		lastInteraction: time.Now().Add(-2 * time.Second),
-		agent: &fakeBackgroundAgent{
-			sessionKeyFn: func() string { return "test/c1" },
-			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-				calls++
-				return true
-			},
-		},
-		done: make(chan struct{}),
-	}
-
-	r.maybeBackgroundWork(context.Background())
-	waitIdle(t, r)
-
-	// Even with bad InvestInterval, it should attempt background work
-	// (it just falls back to 30m for mana check)
-}
-
 func TestMaybeReflection_SkipsWhenRateLimited(t *testing.T) {
 	// Verifies that maybeReflection respects the canFireFn gate: if the function returns
 	// false (e.g. insufficient mana), no branch is dispatched even when all other conditions are met.

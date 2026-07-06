@@ -17,7 +17,7 @@ import (
 //
 //   - the agent activity indicator, driven off the turn boundary as structured
 //     fap.Activity frames (the renderer's SendTyping is a no-op for the app);
-//   - the structured fap.Meta frame on turn completion (model/cost/tokens/mana —
+//   - the structured fap.Meta frame on turn completion (model/cost/tokens —
 //     the typed replacement for the [meta] text blob the Telegram bridge injects);
 //   - dropping SubagentText, which the app has no surface for yet. Forwarding it
 //     would route through OnReply and prematurely finalize the in-flight reply
@@ -33,9 +33,9 @@ type appSink struct {
 	// (no TurnComplete) doesn't leak the pump.
 	cleanup func()
 
-	// statusFn supplies the meta-frame status chips (mana%, mana state, gap).
-	// nil = those fields are omitted (e.g. a sink with no agent context).
-	statusFn func() (manaPct *int, manaState, gap string)
+	// statusFn supplies the meta-frame gap chip.
+	// nil = that field is omitted (e.g. a sink with no agent context).
+	statusFn func() string
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -129,10 +129,9 @@ func (s *appSink) emitMeta(e turnevent.TurnComplete) {
 		}
 	}
 	if s.statusFn != nil {
-		meta.ManaPct, meta.ManaState, meta.Gap = s.statusFn()
+		meta.Gap = s.statusFn()
 	}
-	if meta.Model == "" && meta.PrevCostUsd == nil && meta.Tokens == nil &&
-		meta.ManaPct == nil && meta.ManaState == "" && meta.Gap == "" {
+	if meta.Model == "" && meta.PrevCostUsd == nil && meta.Tokens == nil && meta.Gap == "" {
 		return
 	}
 	s.b.send(meta)

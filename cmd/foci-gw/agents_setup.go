@@ -309,19 +309,6 @@ func setupWarningQueue(ag *agent.Agent, rc *config.ResolvedAgentConfig, cfg *con
 	}
 }
 
-// setupManaWatcher configures mana threshold warnings on the agent.
-func setupManaWatcher(ag *agent.Agent, p setupParams) {
-	mc := p.resolved.Mana
-	if len(mc.Thresholds) == 0 {
-		return
-	}
-
-	ag.ManaWatcher = agent.NewManaWatcher(mc.Name, mc.Thresholds)
-	ag.ManaWatcher.SetSessionIndex(p.sessionIndex, p.acfg.ID)
-	ag.ManaWatcher.Restore()
-	ag.ManaWatcher.SetRestoreThreshold(mc.RestoreThreshold)
-}
-
 // platformConnectionResult holds the callbacks wired by platform connection setup.
 type platformConnectionResult struct {
 	configureFacetFn  func(platform.Connection)

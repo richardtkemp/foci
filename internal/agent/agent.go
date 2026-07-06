@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/log"
-	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/internal/modelinfo"
 	"foci/internal/nudge"
@@ -23,7 +21,6 @@ import (
 	"foci/internal/tools"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
-	"foci/shared/prompts"
 )
 
 // NoResponseSentinel is the marker that prompts instruct the model to emit
@@ -113,16 +110,9 @@ type Agent struct {
 	AutoSummarise                           bool                                    // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                            *warnings.Queue                         // nil disables warning injection into session
 	ChatWarningQueue                        *warnings.Queue                         // nil disables chat warning notifications
-	ManaWatcher                             *ManaWatcher                            // nil disables mana threshold warnings
-	ManaWarnFunc                            HookList[func(string)]                  // callbacks for mana threshold warnings (e.g. platform notification)
 	MaxTokensWarnFunc                       HookList[func(string)]                  // callbacks when stop_reason=max_tokens (response truncated)
 	RateLimitFunc                           HookList[func(resetTime time.Time)]     // callbacks when API returns 429 (rate limited)
 	ReloadOnCompact                         bool                                    // delegated: after compaction, bounce the CC session (resume) so character/skill files reload from disk (#828)
-	AutocompactBeforeManaRefresh            bool                                    // master switch for mana-refresh compaction
-	AutocompactBeforeManaRefreshThreshold   string                                  // trigger mana-refresh when reset this soon (e.g. "5m")
-	AutocompactBeforeManaRefreshFactor      float64                                 // secondary threshold = main threshold × factor (e.g. 0.5)
-	AutocompactBeforeManaRefreshPreserve    *int                                    // messages to preserve in refresh mode (nil = use percentage)
-	AutocompactBeforeManaRefreshPreservePct float64                                 // fraction of messages to preserve in refresh mode (0 = default 0.5)
 	TaskListNotifyFunc                      HookList[func(string, string)]          // callbacks for task list changes (session key, message)
 	CompactionMemoryFunc                    HookList[func(string)]                  // fires before compaction to save memories (session key)
 	CompactionStartFunc                     HookList[func(string, string)]          // callbacks for compaction start (session key, message) — sent immediately, not buffered
@@ -131,8 +121,6 @@ type Agent struct {
 	OnActivity                              HookList[func(string)]                  // callbacks when a session has activity (session key)
 	Redact                                  func(string) string                     // redact secrets from tool output; nil disables
 	SessionIndex                            *session.SessionIndex                   // nil disables state persistence
-	UsageClient                             mana.UsageClient                        // nil disables mana metadata
-	UsageClientProvider                     mana.UsageClientProvider                // per-endpoint usage client resolution (nil = use default UsageClient)
 	MessageTransforms                       []CompiledTransform                     // compiled regex rules for inbound message transformation
 	CompactionSummaryPromptPath             string                                  // file path; read at compaction time via prompts.ResolvePrompt
 	CompactionHandoffMsg                    string                                  // inline handoff message; empty resolves from search dirs or embedded default
@@ -151,7 +139,7 @@ type Agent struct {
 	Streaming                               bool                                    // use streaming API when provider supports it
 	ModelMetaFn                             func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
 	ModelDefaultsFn                         func(model string) config.ModelDefaults // returns per-model defaults from [models.*] config; nil = no model defaults
-	ManaInvestInterval                      time.Duration                           // invest interval for mana good/bad indicator; 0 = no indicator
+	CanRunBackground                        string                                  // path to an executable gating background work; exit 0 = allowed, non-zero = skip; "" = always allowed
 	ServerTools                             []provider.ToolDef                      // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DelegatedManager                        *DelegatedManager                       // nil = traditional agent loop; non-nil = lazy per-session delegated transport management
 	ReloginTrigger                          func(reason, sessionKey string) bool    // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
@@ -266,18 +254,6 @@ func (a *Agent) ProcessingDetails() []TurnDetail {
 		out = append(out, *d)
 	}
 	return out
-}
-
-// isSystemMessage returns true if the message is from a system source
-// (keepalive, scheduled wake, proactive warnings, …) rather than a human user.
-//
-// Most injected messages (proactive warnings, scheduled wake, notifications,
-// inter-session) are wrapped by prompts.FormatInjectedMessage and so carry the
-// "[SYSTEM INJECTION …" note prefix — prompts.IsInjected matches those. Keepalive
-// is the exception: its text comes from a template starting with a bare
-// "[KEEPALIVE]" tag, so it needs its own prefix check.
-func isSystemMessage(msg string) bool {
-	return prompts.IsInjected(msg) || strings.HasPrefix(msg, "[KEEPALIVE]")
 }
 
 // turnLock returns a per-session mutex that serializes HandleMessage calls.

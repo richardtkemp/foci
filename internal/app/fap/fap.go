@@ -396,12 +396,10 @@ type Transcript struct {
 
 func (Transcript) Type() string { return TypeTranscript }
 
-// Meta carries the user-facing status chips (model, mana, cost, tokens).
+// Meta carries the user-facing status chips (model, cost, tokens, gap).
 type Meta struct {
 	ConversationID string   `json:"conversationId"`
 	Model          string   `json:"model,omitempty"`
-	ManaPct        *int     `json:"manaPct,omitempty"`
-	ManaState      string   `json:"manaState,omitempty"`
 	PrevCostUsd    *float64 `json:"prevCostUsd,omitempty"`
 	Tokens         *Tokens  `json:"tokens,omitempty"`
 	Gap            string   `json:"gap,omitempty"`

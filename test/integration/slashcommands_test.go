@@ -548,64 +548,6 @@ func TestL2_SlashCommands_ErrorsRespectsLineCountArg(t *testing.T) {
 	}
 }
 
-// TestL2_SlashCommands_ManaReportsNoProviderSupport proves the dynamic
-// /mana command is registered only when the provider's UsageClient is
-// non-nil, but the test harness uses a provider without usage support,
-// so a /mana sent to a default agent reply must surface as "Unknown
-// command" via the suggester — NOT as a panic and NOT as a fake
-// percentage.
-func TestL2_SlashCommands_ManaReportsNoProviderSupport(t *testing.T) {
-	testharness.ParallelWait(t)
-	// Premise correction: the harness configures the agent with
-	// backend="claude-code" (delegated/ccstream), and the ccstream
-	// agent wiring in cmd/foci-gw/agents_delegated.go sets
-	// ag.UsageClient = &ccstream.RateLimitState{} unconditionally —
-	// so /mana IS registered. The behaviour the test should actually
-	// guard is "no panic, no fake percentage": with no rate_limit_event
-	// pushed from cc-stub, RateLimitState.GetUsage returns (nil, nil),
-	// manaCheck takes the FormatPercent("") branch and replies
-	// "<emoji> Mana: unknown".
-	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7012}},
-		ReadyTimeout: 30 * time.Second,
-	})
-	pushTelegramText(t, h, "alpha", 7012, "/mana")
-
-	token := h.AgentBotToken("alpha")
-	// Either the suggester ("Unknown command /mana") OR manaCheck's
-	// no-data path ("Mana: unknown" / "No usage data") satisfies the
-	// real invariant: no panic, no made-up percentage. Accept both —
-	// the negative assertion below catches the "made-up percentage" case.
-	deadline := time.Now().Add(15 * time.Second)
-	var got string
-	for time.Now().Before(deadline) {
-		for _, candidate := range peekSendMessageTexts(h, token) {
-			lower := strings.ToLower(candidate)
-			if strings.Contains(lower, "unknown command") ||
-				strings.Contains(lower, "mana: unknown") ||
-				strings.Contains(lower, "no usage data") {
-				got = candidate
-				break
-			}
-		}
-		if got != "" {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if got == "" {
-		t.Fatalf("/mana did not surface as 'Unknown command' or 'unknown'/'No usage data'\nsent so far:\n%v\nstderr tail:\n%s",
-			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
-	}
-
-	// Negative: the reply must NOT contain a numeric percentage —
-	// FormatPercent returning "" means no rate_limit data, so any
-	// "%" sign would indicate a fabricated number.
-	if strings.Contains(got, "%") {
-		t.Errorf("/mana reply unexpectedly contains a percentage with no rate_limit_event pushed: %q", got)
-	}
-}
-
 // TestL2_SlashCommands_CostTodayReadsAPILog proves /cost today aggregates
 // rows from the configured api.db / api log and emits a sendMessage
 // with a "Today: $X.XX eq." header and per-session table. Seeds the

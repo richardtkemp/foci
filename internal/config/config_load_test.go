@@ -126,40 +126,6 @@ id = "test"
 	if cfg.Logging.APIFile != wantAPIFile {
 		t.Errorf("default Logging.APIFile = %q, want %q", cfg.Logging.APIFile, wantAPIFile)
 	}
-	if DerefStr(cfg.Mana.Name) != "mana" {
-		t.Errorf("default Mana.Name = %q, want %q", DerefStr(cfg.Mana.Name), "mana")
-	}
-}
-
-func TestLoadCustomManaName(t *testing.T) {
-	// Proves that a custom mana name and threshold list are loaded from
-	// the [mana] section and override the default "mana" name.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	toml := `
-[groups]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[[agents]]
-id = "test"
-
-[mana]
-name = "juice"
-thresholds = [50, 25, 10]
-`
-	os.WriteFile(path, []byte(toml), 0644)
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	if DerefStr(cfg.Mana.Name) != "juice" {
-		t.Errorf("Mana.Name = %q, want %q", DerefStr(cfg.Mana.Name), "juice")
-	}
-	if len(cfg.Mana.Thresholds) != 3 {
-		t.Errorf("len(Thresholds) = %d, want 3", len(cfg.Mana.Thresholds))
-	}
 }
 
 func TestLoadCustomCommands(t *testing.T) {
@@ -303,51 +269,6 @@ allowed_users = ["111"]
 		t.Errorf("Agents[1].FacetBots = %v, want empty", tg1.FacetBots)
 	}
 
-}
-
-func TestLoadPerAgentUsageWarnings(t *testing.T) {
-	// Proves that per-agent [agents.mana] overrides the global thresholds
-	// for that agent, while agents without an override have an empty threshold list,
-	// and the global configuration remains unaffected.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	toml := `
-[groups]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[mana]
-thresholds = [50, 25, 10]
-
-[[agents]]
-id = "main"
-
-[agents.mana]
-thresholds = [5]
-
-[[agents]]
-id = "other"
-`
-	os.WriteFile(path, []byte(toml), 0644)
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	// First agent should have per-agent thresholds
-	if len(cfg.Agents[0].Mana.Thresholds) != 1 || cfg.Agents[0].Mana.Thresholds[0] != 5 {
-		t.Errorf("Agents[0].Mana.Thresholds = %v, want [5]", cfg.Agents[0].Mana.Thresholds)
-	}
-
-	// Second agent should have no per-agent thresholds (falls back to global)
-	if len(cfg.Agents[1].Mana.Thresholds) != 0 {
-		t.Errorf("Agents[1].Mana.Thresholds = %v, want []", cfg.Agents[1].Mana.Thresholds)
-	}
-
-	// Global should still be set
-	if len(cfg.Mana.Thresholds) != 3 {
-		t.Errorf("Mana.Thresholds = %v, want [50, 25, 10]", cfg.Mana.Thresholds)
-	}
 }
 
 func TestUnknownKeysDetected(t *testing.T) {
