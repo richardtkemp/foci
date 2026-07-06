@@ -65,6 +65,20 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
 		h.pushRoster(client)
+		// Persist advertised caps per resumed conv (resolved via its binding) so
+		// capability checks survive a server restart, which rebuilds bindings
+		// caps-less before the app reconnects.
+		if idx := h.deps.SessionIndex; idx != nil {
+			csv := strings.Join(f.Features, ",")
+			for _, rp := range f.Resume {
+				h.mu.RLock()
+				b := h.convs[rp.ConversationID]
+				h.mu.RUnlock()
+				if b != nil {
+					_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "features", csv)
+				}
+			}
+		}
 		// Reconnect resume: re-attach + replay each conversation the client still
 		// has unrendered frames for.
 		h.resumeConversations(client, f.Resume)

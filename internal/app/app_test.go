@@ -778,6 +778,35 @@ func TestInteractive_BatchWhenCapableButOffline(t *testing.T) {
 	}
 }
 
+// TestBinding_RehydratesCapsFromDB: a restart rebuilds bindings with no socket;
+// ensureBinding rehydrates the last-advertised caps from chat metadata so a
+// capable-but-offline app still resolves capability checks (and batches).
+func TestBinding_RehydratesCapsFromDB(t *testing.T) {
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "index.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	fs, err := newFrameStore(filepath.Join(dir, "frames.db"), 24*time.Hour)
+	if err != nil {
+		t.Fatalf("newFrameStore: %v", err)
+	}
+	h := newTestHub()
+	h.deps.SessionIndex = idx
+	h.frames = fs
+
+	agentID, convID := "ag", "c1"
+	chatID := chatIDForConv(convID)
+	if err := idx.SetChatMetadata(agentID, "app", chatID, "features", featureInteractiveBatch); err != nil {
+		t.Fatalf("SetChatMetadata: %v", err)
+	}
+
+	b := h.ensureBinding(nil, agentID, convID) // StartAll rebuilds bindings with a nil socket
+	if !b.supportsFeature(featureInteractiveBatch) {
+		t.Fatalf("binding should rehydrate caps from DB across a restart")
+	}
+}
+
 // TestInteractive_NextQuestionSuppressesEdit verifies the seq-advance guard: a
 // callback that re-renders the conversation (e.g. presenting the next question
 // of a multi-question ask) must suppress the resolved-prompt edit so the new
