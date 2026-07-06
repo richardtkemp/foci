@@ -642,7 +642,7 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	}
 
 	// Delegated transport has no messages slice — use usage-only check.
-	threshold := int(float64(ctxLimit) * a.Compactor.Threshold())
+	threshold := a.Compactor.EffectiveThreshold(ctxLimit)
 	if totalTokens <= threshold {
 		return
 	}

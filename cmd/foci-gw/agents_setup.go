@@ -81,6 +81,7 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 	compactionThreshold := cc.CompactionThreshold
 	preserveMessages := cc.CompactionPreserveMessages
 	compactor := compaction.NewCompactor(p.sessions, compactionThreshold)
+	compactor.SetNonlinear(!cc.CompactionThresholdSet)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
 		p.cfg.Sessions.CompactionMinMessages,

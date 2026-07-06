@@ -343,7 +343,7 @@ type AgentToolsOverride struct {
 
 // CompactionConfig holds compaction settings. Embed in SessionsConfig (global) and AgentConfig (per-agent).
 type CompactionConfig struct {
-	CompactionThreshold                     *float64 `toml:"compaction_threshold"  default:"0.8"  desc:"compact at this fraction of context window" min:"0" max:"1"`
+	CompactionThreshold                     *float64 `toml:"compaction_threshold"  desc:"compact at this fixed fraction of context window; unset = non-linear curve (smaller fraction of larger windows)" min:"0" max:"1"`
 	CompactionSummaryPrompt                 *string  `toml:"compaction_summary_prompt"             desc:"compaction summary prompt file path"`
 	CompactionHandoffMsg                    *string  `toml:"compaction_handoff_msg"                desc:"compaction handoff message file path"`
 	CompactionPreserveMessages              *int     `toml:"compaction_preserve_messages"          desc:"preserve last N messages through compaction" min:"0"`
