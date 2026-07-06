@@ -44,8 +44,9 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 ### `foci_todo` — persistent todo list
 - Subcommand-style: `add|list|list-all|search|get|complete|drop|edit|remove` (`create` is an alias for `add`).
 - `add --text T [--priority high|medium|low] [--tag TAGS]`. **`--tag` REPLACES the tags parsed from the text body**, it doesn't append.
-- `list [--status open|started|done|dropped|active|all] [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]`.
+- `list [--status open|started|done|dropped|active|all] [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]`. **Defaults to `--limit 10`** — use `get <id>` or `--limit 100` to see the full backlog.
 - `complete|drop <id>` accept `--reason`/`--note`/`--notes` (all map to the close reason); ID forms `<id>` positional, `--id N`, or `--ids 1,2,3`.
+- **No `reopen` verb.** To reopen a closed item, write the DB directly: `UPDATE todos SET status='open', completed_at=NULL, close_reason='' WHERE agent_id=? AND id=?` on `~/<agent>/.data/todo.db`.
 - Chain with Unix tools to keep output small: `foci_todo list --status open | wc -l`.
 
 ### `foci_remind` — defer a thought
