@@ -69,7 +69,7 @@ config.Load(path)                                        ← validates values; l
            → returns []*platform.SetupResult with DefaultSessionKeyFn + ConfigureFacetConn
          → wireAgentPlatformCallbacks(ag, acfg, cfg, plat, connMgr, sessionIndex)
            → ag.AddPlatform() for each connection
-           → wires CacheBustAlert, ManaWarnFunc, RateLimitFunc, etc. using plat.NotifyAgent()
+           → wires CacheBustAlert, RateLimitFunc, etc. using plat.NotifyAgent()
   → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store (main.go, after setupAgent)
   → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
@@ -179,8 +179,7 @@ main
  ├── compaction    → log, memory, modelinfo, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
- ├── command       → agent, compaction, config, display, log, mana, memory, platform, provider, provision, session, skills, state, tempdir, tools, workspace
- ├── mana          → anthropic, log, provider (mana budget logic)
+ ├── command       → agent, compaction, config, display, log, memory, platform, provider, provision, session, skills, state, tempdir, tools, workspace
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
@@ -188,7 +187,7 @@ main
   │   ├── delegator/cctmux     → delegator, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
   │   ├── delegator/ccstream   → delegator, log (stream-json Claude Code; registers "claude-code" via init())
   │   └── delegator/opencode   → delegator, log (HTTP/SSE OpenCode; registers "opencode" via init())
- ├── agent         → delegator, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
+ ├── agent         → delegator, compaction, config, display, log, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
  ├── dispatch      → command, session (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → display, log, toolformat, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
@@ -198,7 +197,7 @@ main
                     (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `timeutil`, `turn`, `dispatch` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `timeutil`, `turn`, `dispatch` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
 
 **`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
 
@@ -206,9 +205,9 @@ No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `sk
 
 **`chatmeta` package:** Shared per-chat metadata logic extracted from `telegram` and `discord`. Session keys are deterministic (`session.NewChatSessionKey`), so the `Resolver` derives them and registers platform ownership (a `registered` chat_metadata row backing `SessionIndex.PlatformForChat`) on first contact; it also handles `DefaultChatID`, `DefaultSessionKey`, and `RecordUsername`. Platform-specific methods (`SessionKey`, `SetSessionKey`, `ChatID`, `SetChatID`, `Username`) remain on each Bot. Imports: `platform`, `session`, `log`. All methods are nil-receiver safe.
 
-**`route` package:** The single addressing authority. Defines the canonical `Target` grammar (`agent[/rest][?create=&policy=]`) parsed identically by every entry point (HTTP handlers, CLI, `send_to_session`, webhooks), the `Resolver` with ONE resolution ladder (exact key → existing named session → chat alias → create-named; empty rest → agent default via `SessionIndex.DefaultSessionKeyForAgent`), `Receipt` (`{target, session, resolved_via}` returned to senders in HTTP responses and tool results), `ConnFor` — the ONE outbound delivery cascade (session's own connection → policy-dependent fallback to the owning platform's primary, with `PolicyRootFallback` suppressing branch sessions so facet replies never leak into the parent's chat) — and `Broadcast`, the delivery set behind `PolicyBroadcast` (`foci send --broadcast`, and the mana/rate-limit/max-tokens warnings): one connection per platform — each platform's primary — delivering to that platform's default destination (telegram/discord: the default chat; app: the default conversation via `Hub.deliverBinding`, else the newest conversation, auto-created if none exist). Cache-bust warnings are deliberately NOT broadcast: they concern one session's cache prefix and route to that session's chat via `SessionNotifier`. Imports: `platform`, `session`.
+**`route` package:** The single addressing authority. Defines the canonical `Target` grammar (`agent[/rest][?create=&policy=]`) parsed identically by every entry point (HTTP handlers, CLI, `send_to_session`, webhooks), the `Resolver` with ONE resolution ladder (exact key → existing named session → chat alias → create-named; empty rest → agent default via `SessionIndex.DefaultSessionKeyForAgent`), `Receipt` (`{target, session, resolved_via}` returned to senders in HTTP responses and tool results), `ConnFor` — the ONE outbound delivery cascade (session's own connection → policy-dependent fallback to the owning platform's primary, with `PolicyRootFallback` suppressing branch sessions so facet replies never leak into the parent's chat) — and `Broadcast`, the delivery set behind `PolicyBroadcast` (`foci send --broadcast`, and the rate-limit/max-tokens warnings): one connection per platform — each platform's primary — delivering to that platform's default destination (telegram/discord: the default chat; app: the default conversation via `Hub.deliverBinding`, else the newest conversation, auto-created if none exist). Cache-bust warnings are deliberately NOT broadcast: they concern one session's cache prefix and route to that session's chat via `SessionNotifier`. Imports: `platform`, `session`.
 
-Most packages depend on `provider` for types; only `main.go`, `tools`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
+Most packages depend on `provider` for types; only `main.go` and `tools` import `anthropic` directly (for Anthropic-specific features). `periodic` no longer imports `agent` or `session` — warning dispatch is handled by the `warnings` package, wired together in `main.go`.
 
 **`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
 
@@ -308,7 +307,7 @@ Phase 4 — Post-turn:
 
 **Post-turn sync/async split** (`runPostTurn`): API turns close `CompletionChan` before `RunInference` returns (synchronous), so post-turn runs inline. Delegated turns block inline waiting for `CompletionChan` with an activity-based timeout — if no stream events arrive for 2 minutes (`streamIdleTimeout`), the wait times out. Activity is tracked by the backend's `LastActivity()` method, seeded at turn start and updated on every stream event. Steered follow-ups (delegated, `IsTurnInFlight() == true`) close `CompletionChan` immediately with no post-turn work.
 
-**Shared prompt composition** (`turn_common.go`): `composeTurnText` assembles metadata prefix, reminders, state dashboard, mana-restore text, attachment paths, and user texts into a `turnTextParts` struct. The API transport converts these to content blocks; the delegated transport joins them into a flat string via `JoinPrompt()`.
+**Shared prompt composition** (`turn_common.go`): `composeTurnText` assembles metadata prefix, reminders, state dashboard, attachment paths, and user texts into a `turnTextParts` struct. The API transport converts these to content blocks; the delegated transport joins them into a flat string via `JoinPrompt()`.
 
 ### RunOnce Mode (`DelegatedManager.RunOnce`)
 
@@ -600,10 +599,10 @@ Used by permission prompts (delegated backends), config selection menus, and oth
       - append assistant msg + tool_result msg
       - goto 7a
 8. sessions.AppendAll(sessionKey, newMessages)
-9. maybeCompact: main threshold + mana-refresh check → possibly compactor.Compact(sessionKey)
+9. maybeCompact: main threshold check → possibly compactor.Compact(sessionKey)
 ```
 
-Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save; two automatic triggers: main threshold and mana-refresh (see below).
+Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save; the automatic trigger is the main threshold (see below).
 
 **Error handling by status code:**
 - **429 (rate limit):** Could be burst rate limit or daily quota exhaustion. `classifyAPIError` fires `RateLimitFunc` callback (Telegram notification with estimated retry time from `Retry-After` header) and returns `"rate limited"`. The rate limit gate closes using the `Retry-After` header duration, or 60s if the header is absent (e.g. streaming SSE errors). No transport-level retry.
@@ -655,7 +654,6 @@ The opencode backend drives OpenCode as a coding agent via its HTTP server API. 
 - **No PostToolUse hooks:** opencode emits tool parts directly on its event bus — no external hook-helper binary needed.
 - **No elicitation:** opencode's MCP client doesn't advertise the elicitation capability (commented out, issue #23066). `ElicitationResponder` not implemented.
 - **Shared-server auth fanout:** A `ProviderAuthError` on one session fans to all Backends on the same Server (account-wide). `fireAuthFailure` is CAS-gated per-Backend (fires once per lifetime).
-- **No RateLimitState:** opencode has no `rate_limit` system message. Cost/token data is per-`AssistantMessage`. `RateLimitState` injection in `agents_delegated.go` is ccstream-only.
 - **No automated relogin:** `/login` reports "unavailable" for opencode agents. Auth recovery is per-provider (`opencode auth login <provider>`).
 
 **Lifecycle:**
@@ -669,7 +667,7 @@ The opencode backend drives OpenCode as a coding agent via its HTTP server API. 
 
 ## Message Metadata
 
-**Message transforms** (`[[message_transforms]]` in config) run regex find/replace on inbound user messages. Transforms fire before command dispatch — if a message is already a recognized command, transforms are skipped. If transforms produce a command (e.g. `m` → `/mana`), it is dispatched as one. Rules run in sequence; each rule's output becomes the next rule's input.
+**Message transforms** (`[[message_transforms]]` in config) run regex find/replace on inbound user messages. Transforms fire before command dispatch — if a message is already a recognized command, transforms are skipped. If transforms produce a command (e.g. `s` → `/status`), it is dispatched as one. Rules run in sequence; each rule's output becomes the next rule's input.
 
 Each user message then gets a metadata line prepended (NOT in system prompt — that would bust cache):
 
@@ -1047,7 +1045,7 @@ Implements `provider.Client` and `provider.StreamingClient`. Uses the official `
 
 **Streaming** (`stream.go`): `StreamMessage()` wraps `streamOnce()` with the same two-phase retry logic. Pre-stream errors (before any deltas) are retried; mid-stream errors are not (deltas already emitted). `streamOnce()` calls `Messages.NewStreaming()`, iterates events, fires `StreamHandler.OnTextDelta` / `OnThinkingDelta` callbacks, uses `Message.Accumulate()` for response assembly. Enabled per-agent via `streaming = true`.
 
-Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
+Two clients (two token types — see [docs/AUTH.md](AUTH.md)):
 
 1. **Client** (`client.go`) — messages API + token counting + streaming
    - Sends model requests with system prompt + conversation history
@@ -1056,17 +1054,12 @@ Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
    - Per-request auth via `option.WithAuthToken(token)` (SDK path) or manual header (raw path)
    - Sets `anthropic-beta: oauth-2025-04-20` header for OAuth token auth
 
-2. **UsageClient** (`usage.go`) — mana/usage API
-   - Queries `/api/oauth/usage` endpoint
-   - Supports static token (`NewUsageClient`) or dynamic token func (`NewUsageClientWithFunc`)
-   - Returns utilization for 5-hour window, 7-day limits, extra usage billing
-
-3. **CCTokenSource** (`cctoken.go`) — Claude Code credential reader
+2. **CCTokenSource** (`cctoken.go`) — Claude Code credential reader
    - Reads `~/.claude/.credentials.json` lazily on each `Token()` call (no polling)
    - Never refreshes tokens itself — only reads what Claude Code writes
    - If token is expired on read, triggers background refresh (runs `claude`) and returns error
-   - `CheckRefresh()` called by UsageClient after successful API fetch — triggers proactive refresh when token is within `cc_expiry_threshold` (default 5m) of expiry
-   - Provides `Token()` func used by both Client and UsageClient via tokenFunc
+   - `CheckRefresh()` triggers proactive refresh when token is within `cc_expiry_threshold` (default 5m) of expiry
+   - Provides `Token()` func used by Client via tokenFunc
 
 ## Gemini API Client (`gemini/`)
 
@@ -1236,8 +1229,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`, `/pass`, `/login`
-   - `/mana` — check quota remaining (`/usage` is a hidden alias)
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/reset`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`, `/pass`, `/login`
    - `/login` (`RequiresBackend`, ccstream only) — manually trigger the automated CC re-login flow (see [Automated CC re-login on 401](#backend-session-lifecycle)); URL returns to the chat that ran it
    - `/pass` — forward a command directly to the delegated backend (e.g. `/pass /context`, `/pass /model opus`). Bypasses foci's command dispatch so CC slash commands that would otherwise be intercepted by foci can be sent through. For tmux backends, captures and returns pane output after stabilisation. For stream backends, output arrives normally via the stdout reader. Only available for delegated agents — returns an error for API-mode agents.
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
@@ -1603,7 +1595,7 @@ keep those event paths inert. `appSink` layers on only what has no home in the
 renderer: the `typing on`/`off` frames bracketing the turn boundary, dropping
 `SubagentText` (no app surface yet — forwarding would prematurely finalize the
 in-flight stream), and the structured `meta` status frame on `TurnComplete`
-(model/cost/tokens from the turn usage; mana%/state + gap via `Agent.MetaStatus`,
+(model/cost/tokens from the turn usage; state, plus gap via `Agent.MetaStatus`,
 threaded as the sink's `statusFn`). Deltas are batched by the stream pump
 (`appStreamInterval`, 50ms) — beneficial: it keeps a fast token stream from
 flooding the socket. Per-conversation outbound `seq` is stamped, buffered, and
@@ -1855,9 +1847,8 @@ Checks token usage against threshold (default 80% of context window). When trigg
 
 **Session lifecycle events:** `Store.OnSessionEvent(func(SessionEvent))` fires on create (first `Append` to new file), branch create (`CreateBranchWithOptions`), compaction (`Replace`), and clear (`Clear`). Events carry the session key, type, status, parent key, file path, and timestamp. Used by `SessionIndex` to maintain a queryable SQLite index of all sessions.
 
-**Compaction triggers:** `maybeCompact()` in `agent/compaction.go` has two automatic triggers:
+**Compaction triggers:** `maybeCompact()` in `agent/compaction.go` has one automatic trigger:
 1. **Main threshold:** standard `ShouldCompact()` check against base threshold (default 0.8).
-2. **Mana refresh:** when `autocompact_before_mana_refresh` is enabled (default true) and mana resets within `autocompact_before_mana_refresh_threshold` (default 5m) AND context exceeds `compaction_threshold × autocompact_before_mana_refresh_factor` (default 0.5, i.e. 40%), triggers compaction. Optionally overrides preserve count via `autocompact_before_mana_refresh_preserve` and preserve percentage via `autocompact_before_mana_refresh_preserve_pct` (default 0.5). The cost is "free" since mana is about to reset. Only fires for sessions with an active Anthropic usage client — sessions switched to Gemini/OpenAI skip this check.
 
 **Async-pending guard:** Compaction is skipped when the session has pending async tool results (`AsyncNotifier.HasPending()`). Tools call `MarkPending()` before dispatching async work (spawn clone, auto-backgrounded exec/http) and `MarkDone()` when the result is delivered via `Notify()`. This prevents compacting away the context that the pending result relates to — compaction fires naturally on a later turn once all results have been delivered.
 

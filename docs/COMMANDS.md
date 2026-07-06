@@ -1,6 +1,6 @@
 # Slash Commands Reference
 
-Messages starting with `/` are intercepted at the Telegram router level before reaching the agent — they execute immediately and never enter session history. A period (`.`) prefix also works as an alias (e.g. `.mana` → `/mana`), but only when it matches a registered command — `.net` or other non-command text passes through to the agent normally. The `.` prefix exists because it's easier to type on most phone keyboards than `/`.
+Messages starting with `/` are intercepted at the Telegram router level before reaching the agent — they execute immediately and never enter session history. A period (`.`) prefix also works as an alias (e.g. `.status` → `/status`), but only when it matches a registered command — `.net` or other non-command text passes through to the agent normally. The `.` prefix exists because it's easier to type on most phone keyboards than `/`.
 
 All registered slash commands are also available to the agent as tools (without the `/` prefix), except those marked **CLI-only** below. See [TOOLS.md](TOOLS.md) for details.
 
@@ -26,9 +26,6 @@ API cost summary for a time period.
 
 ### `/context`
 Context window breakdown — total vs limit, compaction threshold, tokens until compaction, system prompt breakdown by section (environment, workspace files, skills), tool token count, conversation breakdown (user/assistant/tool results), last API call token breakdown.
-
-### `/mana`
-Check current mana/quota remaining (percentage remaining + reset time). The command name is configurable via `mana_command_name` in config (e.g. `/juice`, `/credits`). Hidden aliases: `/usage`, `/m`. Only available when the provider supports usage tracking.
 
 ### `/todo [subcommand] [args]`
 Manage todo items. Bare `/todo` lists active items sorted by priority (limit 15).

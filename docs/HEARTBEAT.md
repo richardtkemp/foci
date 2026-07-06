@@ -48,66 +48,28 @@ if background.enabled
 - Last inbound user message (via Telegram)
 - Last background branch completion
 
-## Manamometer
+## The `can_run_background` gate
 
-The manamometer decides whether spending mana on background work is wise. It uses linear interpolation over the 5-hour budget window.
+Whether background work should fire is delegated to a user-provided executable, configured as `can_run_background` under `[background]` (global) and `[agents.background]` (per-agent). This lets an operator plug in their own affordability policy — quota checks, time-of-day windows, load checks, whatever.
 
 ### How it works
 
-Mana is a 5-hour budget that resets to 100% every 5 hours. The manamometer compares actual mana against an expected mana line:
+Before each background operation, foci runs the configured executable:
 
-```
-100% +
-     |\.  invest_interval (30m)
-     | \   <- no work here, building cache
-     |  \
-     |   \.............. expected mana line
-     |    \
-     |     \
-     |      \
-  0% +------\--------------------------
-     0      30m                        5h
-         time since reset ->
+- **Exit 0** → background work is allowed this tick.
+- **Any non-zero exit** → skip this tick.
+- **Empty/unset** → always allowed.
+- **Fails to execute** (missing/not executable) → treated as allowed and logged as a warning, so a broken script never wedges all background work.
 
-Above the line = in credit = do work
-Below the line = in debt  = conserve
-```
+The script runs via `procx.Spawn` (the `foci-secrets` group is stripped) with a 10-second timeout, and receives environment variables:
 
-### Algorithm
+- `FOCI_SESSION_KEY`
+- `FOCI_AGENT_ID`
+- `FOCI_ENDPOINT`
 
-```
-time_since_reset = 5h - (resets_at - now)
+The real-429 `RateLimitGate` (queue + replay on an API rate-limit response) still gates background work first and is independent of `can_run_background`.
 
-if time_since_reset < invest_interval:
-    return false  // investing period -- building cache, don't spend
-
-expected_mana = 100% * (5h - time_since_reset) / (5h - invest_interval)
-
-return actual_mana > expected_mana
-```
-
-### Edge cases
-
-**2 minutes to reset, 5% mana:**
-```
-time_since_reset = 4h58m
-expected_mana = 100% * 2m / 270m = 0.74%
-5% > 0.74% -> in credit -> fire background work
-```
-Correct: near the end of the window, even tiny mana is "in credit" because the budget resets soon.
-
-**Just after reset, 95% mana:**
-```
-time_since_reset = 10m (within 30m invest_interval)
--> investing period -> no work
-```
-Correct: right after reset, we want to let the cache build up before spending.
-
-**Continuous re-evaluation:** Once `background.interval` has elapsed, the mana check runs every tick (~30s). If mana is bad at the interval boundary but improves on the next tick, background work fires immediately. We don't wait another full interval.
-
-### Usage API
-
-The manamometer calls the Anthropic usage API (`/api/oauth/usage`) to get current mana and reset time. Calls are rate-limited to at most once per 60 seconds.
+**Continuous re-evaluation:** Once `background.interval` has elapsed, the `can_run_background` check runs every tick (~30s). If it says no at the interval boundary but yes on the next tick, background work fires immediately. We don't wait another full interval.
 
 ## Todo Tags
 
@@ -136,9 +98,7 @@ prompt = "prompts/keepalive.md"     # path to prompt file
 enabled = true
 interval = "5m"                     # time since last interaction
 prompt = "prompts/background.md"    # path to prompt file
-
-[mana]
-invest_interval = "30m"             # quiet period after mana reset
+can_run_background = "check.sh"     # optional gate executable (exit 0 = allowed)
 ```
 
 ### Validation
@@ -161,7 +121,7 @@ invest_interval = "30m"             # quiet period after mana reset
 - **Flags:** `no_reset_hook` (may need compaction for longer tasks)
 - **Trigger context:** `"background"`
 - **Telegram delivery:** None (silent).
-- **Cost:** Variable. Manamometer prevents overspend.
+- **Cost:** Variable. The `can_run_background` gate can prevent overspend.
 
 ## Shutdown
 
@@ -177,4 +137,4 @@ The implementation lives in `periodic/keepalive.go`:
 
 `buildBranchFunc()` in `cmd/foci-gw/agent_sessions.go` creates the bridge between the periodic package and main's agent/session infrastructure.
 
-Tests in `keepalive/keepalive_test.go` cover manamometer edge cases (invest period, mid-window, near-reset, past-reset, zero data).
+Tests in `keepalive/keepalive_test.go` cover the tick loop and gating behaviour.

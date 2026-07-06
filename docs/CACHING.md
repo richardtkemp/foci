@@ -5,7 +5,7 @@
 > 1. **Stable system prompt**: character files, config, and skills are assembled in a fixed order at the start of every request. This prefix rarely changes, so it's served from cache at ~90% discount on every turn.
 > 2. **Append-only conversation**: new messages are only ever added at the end. Nothing is inserted in the middle, so the cached prefix (system prompt + prior conversation) is never invalidated.
 >
-> **Benefits**: Cache reads cost 90% less than regular input for all models. A well-cached session uses ~5x less mana (rate limit quota) per turn. Branch sessions and forks share the parent's cache automatically.
+> **Benefits**: Cache reads cost 90% less than regular input for all models. A well-cached session uses ~5x less rate limit quota per turn. Branch sessions and forks share the parent's cache automatically.
 
 Foci is designed around Anthropic's prompt cache. Every architectural decision considers cache impact.
 
@@ -71,7 +71,7 @@ Different sessions run concurrently — the lock is per-session, not global. Bra
 ## Design Decisions That Preserve Cache
 
 ### Message metadata injection
-Time, cost, mana, token breakdown — all injected into each user message, not the system prompt. Dynamic values go on messages because they're past the cache breakpoint.
+Time, cost, token breakdown — all injected into each user message, not the system prompt. Dynamic values go on messages because they're past the cache breakpoint.
 
 ### Message transforms
 Regex transforms on inbound messages happen inside user messages, not by modifying the system prompt.
@@ -134,6 +134,6 @@ High `cR` relative to `in` means the cache is working. A sudden spike in `cW` wi
 
 **Verify in `api.jsonl`:** `cache_read > 0` on the second message in a session means caching is working.
 
-## Mana Implications
+## Rate Limit Implications
 
-Cache efficiency directly affects mana (rate limit quota). Cached tokens cost ~10% of uncached tokens against the rate limit. A well-cached session uses ~5x less mana per turn than an uncached one. This is why cache preservation isn't just about cost — it's about how long the agent can exist and work before hitting rate limits.
+Cache efficiency directly affects rate limit quota. Cached tokens cost ~10% of uncached tokens against the rate limit. A well-cached session uses ~5x less quota per turn than an uncached one. This is why cache preservation isn't just about cost — it's about how long the agent can exist and work before hitting rate limits.
