@@ -26,6 +26,8 @@ When the keepalive fires, it creates a branch session from the agent's default s
 
 Every candidate is filtered to `is_root = 1`, so branches, children, facets, and inactive sessions are never targeted. An agent active across many chats therefore only keeps **one** chat's cache warm (the default / most-active); other idle chats' caches expire naturally on the provider's TTL.
 
+**Warming the app's open chats.** Set `[keepalive] warm_open_app_chats = true` (default false, global or per-agent) to instead warm **every chat the Android app currently has open** (its pager tabs). The app reports its open-set to the server — an `open` flag on each `hello` resume point, plus a `conversation.openSet` frame on change — and keepalive fires one warming branch per open session (deduped, in-flight-filtered). When no chats are open it falls back to the default session. Cost scales with the number of open chats (N warming calls per interval), so it is opt-in.
+
 **When it fires:**
 ```
 if keepalive.enabled

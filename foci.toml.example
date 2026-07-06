@@ -283,6 +283,7 @@ system_files = [
 # enabled = true
 # interval = "55m"
 # prompt = ""                             # empty = embedded default, "none" = disabled
+# warm_open_app_chats = true              # warm every chat the app has open, not just the default session
 
 # Per-agent browser overrides:
 # [agents.browser]
@@ -552,6 +553,7 @@ bind = "127.0.0.1"
 # enabled = false
 # interval = "55m"
 # prompt = ""
+# warm_open_app_chats = false             # warm every chat the app has open (per its pager tabs), not just the default session
 
 # ─── Global Reflection ───────────────────────────────────────────────
 # Periodic reflection pass: captures memories into daily files AND autogenerates
