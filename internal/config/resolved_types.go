@@ -155,7 +155,8 @@ func resolveSummary(m SummaryConfig) ResolvedSummary {
 }
 
 type ResolvedCompaction struct {
-	CompactionThreshold        float64 // default 0.8
+	CompactionThreshold        float64 // flat fraction anchor (0.8 when unset)
+	CompactionThresholdSet     bool    // true = user pinned a flat %; false = use the non-linear curve
 	CompactionSummaryPrompt    string
 	CompactionHandoffMsg       string
 	CompactionPreserveMessages int
@@ -165,8 +166,13 @@ type ResolvedCompaction struct {
 }
 
 func resolveCompaction(m CompactionConfig) ResolvedCompaction {
+	threshold := 0.8
+	if m.CompactionThreshold != nil {
+		threshold = *m.CompactionThreshold
+	}
 	return ResolvedCompaction{
-		CompactionThreshold:        DerefFloat(m.CompactionThreshold),
+		CompactionThreshold:        threshold,
+		CompactionThresholdSet:     m.CompactionThreshold != nil,
 		CompactionSummaryPrompt:    DerefStr(m.CompactionSummaryPrompt),
 		CompactionHandoffMsg:       DerefStr(m.CompactionHandoffMsg),
 		CompactionPreserveMessages: DerefInt(m.CompactionPreserveMessages),

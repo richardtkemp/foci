@@ -3,6 +3,7 @@ package compaction
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"foci/internal/config"
@@ -21,7 +22,8 @@ import (
 type Compactor struct {
 	log              *log.ComponentLogger
 	sessions         *session.Store
-	threshold        float64 // fraction of context window (e.g. 0.8)
+	threshold        float64 // fraction of context window (e.g. 0.8); anchor for the non-linear curve
+	nonlinear        bool    // true = concave curve (default when no explicit compaction_threshold); false = flat threshold
 	maxTokens        int
 	minMessages      int
 	preserveMessages int                                       // preserve last N messages through compaction (0 disables)
@@ -82,6 +84,36 @@ func (c *Compactor) ContextLimit(model string) int {
 // Threshold returns the base compaction threshold.
 func (c *Compactor) Threshold() float64 {
 	return c.threshold
+}
+
+// SetNonlinear enables the concave usable-context curve (default when the user
+// sets no explicit compaction_threshold). When false, a flat threshold applies.
+func (c *Compactor) SetNonlinear(nonlinear bool) *Compactor {
+	c.nonlinear = nonlinear
+	return c
+}
+
+// EffectiveThreshold returns the token count at which to compact for a context
+// window of the given size. With an explicit compaction_threshold it is a flat
+// fraction; otherwise the concave curve (thresholdFraction).
+func (c *Compactor) EffectiveThreshold(limit int) int {
+	return int(float64(limit) * c.thresholdFraction(limit))
+}
+
+// thresholdFraction is the usable-context fraction for a window. The non-linear
+// default uses a smaller fraction of larger windows: the anchor (c.threshold,
+// 0.8) up to a 200k pivot, then anchor·(W/pivot)^-0.32 — ~0.8 of 200k, ~0.48 of
+// 1M, ~0.38 of 2M. An explicit compaction_threshold pins a flat fraction.
+func (c *Compactor) thresholdFraction(limit int) float64 {
+	if !c.nonlinear {
+		return c.threshold
+	}
+	const pivot = 200_000.0
+	const b = 0.32
+	if limit <= 0 || float64(limit) <= pivot {
+		return c.threshold
+	}
+	return c.threshold * math.Pow(float64(limit)/pivot, -b)
 }
 
 // PreserveMessages returns the current preserve messages count.
@@ -196,7 +228,7 @@ func (c *Compactor) ShouldCompact(model, sessionKey string, messages []provider.
 // ShouldCompactWithLimit returns true if the session likely exceeds the threshold,
 // using the provided context limit instead of the compactor's model default.
 func (c *Compactor) ShouldCompactWithLimit(sessionKey string, messages []provider.Message, lastUsage *provider.Usage, limit int) bool {
-	threshold := int(float64(limit) * c.threshold)
+	threshold := c.EffectiveThreshold(limit)
 	estimated := estimateTokens(messages)
 
 	// Use actual usage if available

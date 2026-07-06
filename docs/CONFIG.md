@@ -906,7 +906,7 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `compaction_threshold` | float | `0.8` | Trigger compaction when context usage exceeds this fraction (0.0–1.0). |
+| `compaction_threshold` | float | unset → curve | Trigger compaction when context usage exceeds this fixed fraction (0.0–1.0). **Unset (default)** uses a non-linear curve that spends a smaller fraction of larger windows — ~80% of a 200k window, ~48% of 1M, ~38% of 2M (anchored at 0.8 up to a 200k pivot, then `0.8·(W/200k)^-0.32`). Setting a value pins that flat fraction for all window sizes. |
 | `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read live at compaction time (edits take effect immediately). `""` uses embedded default. |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
@@ -919,7 +919,7 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 
 Compaction triggers in two modes:
 
-1. **Main threshold** — compact when context exceeds `compaction_threshold` (default 80%).
+1. **Main threshold** — compact when context exceeds the usable-context fraction. By default this is a non-linear curve (smaller fraction of larger windows: ~80% of 200k, ~48% of 1M, ~38% of 2M); an explicit `compaction_threshold` pins a flat fraction instead.
 2. **Manual** — the user can run `/compact` at any time.
 
 ### Tool Behavior

@@ -105,8 +105,8 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Sessions.CompactionThreshold == nil || *cfg.Sessions.CompactionThreshold != 0.8 {
-		t.Errorf("default CompactionThreshold should be 0.8 (via tag default), got %v", cfg.Sessions.CompactionThreshold)
+	if cfg.Sessions.CompactionThreshold != nil {
+		t.Errorf("default CompactionThreshold should be nil (unset = non-linear curve), got %v", *cfg.Sessions.CompactionThreshold)
 	}
 	if cfg.HTTP.Port != 18791 {
 		t.Errorf("default HTTP.Port = %d, want 18791", cfg.HTTP.Port)

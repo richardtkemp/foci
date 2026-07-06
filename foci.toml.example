@@ -194,7 +194,7 @@ system_files = [
 
 # Per-agent session overrides (from [sessions]):
 # [agents.sessions]
-# compaction_threshold = 0.8
+# compaction_threshold = 0.8              # flat fraction; omit for the non-linear default curve
 # compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
@@ -368,7 +368,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # ─── Sessions ─────────────────────────────────────────────────────────
 [sessions]
 # dir = "/home/foci/data/sessions"
-compaction_threshold = 0.8
+# compaction_threshold = 0.8              # unset = non-linear curve (smaller fraction of larger windows: ~80% of 200k, ~48% of 1M, ~38% of 2M); set a value to pin a flat fraction
 # compaction_max_tokens = 4096
 # compaction_min_messages = 4
 # compaction_summary_prompt = "prompts/compaction-summary.md"
