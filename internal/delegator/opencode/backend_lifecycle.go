@@ -214,7 +214,24 @@ func (b *Backend) Close() error {
 		releaseServer(b.agentID, b.server)
 	}
 
-	b.cancelTurn()
+	// Force-complete any in-flight turn instead of silently dropping it.
+	// cancelTurn only clears turnActive/turnEvents — it never fires
+	// OnTurnComplete, so the agent-side turn (runPostTurn blocked on
+	// CompletionChan) would hang forever: no TurnComplete, hasTurn/in-flight
+	// dangling until a restart. This bites the idle reaper most: when a
+	// backend whose completion signal never arrived (e.g. the SSE subscriber
+	// failed to connect, so no session.idle ever came) is closed after the
+	// idle timeout, finalizeExit's synthetic session.error can't rescue the
+	// turn — unregisterSession above already removed us from s.sessions, so
+	// finalizeExit iterates zero backends. failInFlightTurn is the same
+	// force-completion path a real session.error uses; it fires
+	// OnTurnComplete (closing CompletionChan → runPostTurn unblocks →
+	// TurnComplete emitted → in-flight cleared) and is a no-op when no turn
+	// is active. The completion is completeOnce-guarded on the agent side, so
+	// racing a genuine session.idle is safe. Delivery of the buffered text is
+	// gated downstream (silent wakes route through a BufferSink), so this
+	// closes the turn WITHOUT surfacing output. See foci bug #1051.
+	b.failInFlightTurn("session closed")
 	return nil
 }
 
