@@ -144,10 +144,11 @@ func writeCommandApproval(b *strings.Builder, rc *config.ResolvedAgentConfig, cc
 	b.WriteString("\n## Command Approval\n")
 	b.WriteString("Tool and Bash calls matching your auto-approve allowlist run WITHOUT prompting the user; everything else prompts. Your effective allowlist:\n")
 	if ccAllowedTools != "" {
-		// CC's own --allowedTools layer: CC never even generates a prompt for
-		// these (distinct from the foci rules below, which auto-answer prompts
-		// CC does generate).
-		fmt.Fprintf(b, "- **CC-native** (CC never prompts): %s\n", ccAllowedTools)
+		// CC's --allowedTools layer: these are PRE-APPROVED (auto-run, no
+		// prompt) — NOT an exclusive whitelist; tools outside it still work,
+		// they just prompt. Distinct from the foci rules below, which
+		// auto-answer prompts CC does generate.
+		fmt.Fprintf(b, "- **CC pre-approved** (auto-run, no prompt — not a restriction): %s\n", ccAllowedTools)
 	}
 	b.WriteString("- **foci tools**: every `foci_*` shell function is always auto-approved.\n")
 	if rc.Permissions.AutoApproveCommonReadonly {
@@ -172,6 +173,33 @@ func stripBashPrefix(rules []string) []string {
 		out[i] = strings.TrimPrefix(r, "Bash:")
 	}
 	return out
+}
+
+// writeMemorySearch documents how foci_memory_search behaves for this agent —
+// the backend, its query semantics, and what's indexed — so the agent queries
+// effectively and reads a miss correctly (#1060).
+func writeMemorySearch(b *strings.Builder, acfg config.AgentConfig, rc *config.ResolvedAgentConfig) {
+	backend := rc.MemorySearch.SearchBackend
+	if backend == "" {
+		return
+	}
+	b.WriteString("\n## Memory & Search\n")
+	fmt.Fprintf(b, "`foci_memory_search` runs on the **%s** backend. Query terms are stemmed (English/Porter — `program` matches `programmer`), and special characters are literal, not operators (no `+`/`-`/`field:` syntax — queries are sanitised).\n", backend)
+	switch backend {
+	case "bleve":
+		b.WriteString("- Indexes your markdown memory files **only — NOT conversation history**. A query that finds nothing may just mean the match is in chat history (unindexed here), not that it's absent.\n")
+	case "fts5":
+		fmt.Fprintf(b, "- Indexes markdown files **and conversation history** (conversation hits weighted ×%.2g, so they rank lower).\n", rc.MemorySearch.ConversationWeight)
+	}
+	if len(acfg.Memory.Sources) > 0 {
+		b.WriteString("Indexed sources:\n")
+		for _, s := range acfg.Memory.Sources {
+			fmt.Fprintf(b, "- `%s` — %s (weight %.2g)\n", s.Name, s.Dir, s.Weight)
+		}
+	}
+	if rc.MemorySearch.SearchLimit > 0 {
+		fmt.Fprintf(b, "Returns up to %d results.\n", rc.MemorySearch.SearchLimit)
+	}
 }
 
 // writeBackend appends the "## Backend" section from the backend-<name>.md
@@ -201,6 +229,7 @@ func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config
 	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 
 	writeBackend(&b, acfg.Backend, searchDirs)
+	writeMemorySearch(&b, acfg, rc)
 
 	// Task List
 	b.WriteString("\n## Task List\n")
@@ -223,6 +252,7 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 
 	writeBackend(&b, acfg.Backend, searchDirs)
+	writeMemorySearch(&b, acfg, rc)
 
 	// Shell tools
 	if len(shellTools) > 0 {
@@ -237,7 +267,9 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 
 	// Auto-approve visibility is CC-specific (the ccstream Bash allowlist);
 	// opencode has its own permission model.
-	if acfg.Backend == "claude-code" {
+	// skip_permissions bypasses all prompts, so a Command Approval section would
+	// just be confusing noise — omit it entirely (everything is permitted).
+	if skip, _ := acfg.BackendConfig["skip_permissions"].(bool); acfg.Backend == "claude-code" && !skip {
 		writeCommandApproval(&b, rc, cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig["allowed_tools"]))
 	}
 
