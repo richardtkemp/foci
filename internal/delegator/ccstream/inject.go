@@ -47,6 +47,14 @@ func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
 		b.turnMu.Unlock()
 		return delegator.ErrTurnInFlight
 	}
+	// Grace after an autonomous run: CC often chains back-to-back autonomous
+	// runs with a sub-second idle between them. Deferring here keeps a
+	// SourceSystem inject (reflection) out of that gap so it can't steal the
+	// next run into its silent sink (#1048).
+	if !b.lastAutonomousEnd.IsZero() && time.Since(b.lastAutonomousEnd) < autonomousInjectGrace {
+		b.turnMu.Unlock()
+		return delegator.ErrTurnInFlight
+	}
 	b.beginTurnLocked(turn)
 	b.turnMu.Unlock()
 	b.resetTurnScratch()
