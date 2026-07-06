@@ -1304,14 +1304,24 @@ type convBinding struct {
 	seq         int64               // server→app outbound seq high-water
 	clientSeqHW int64               // highest client→server seq seen (stamped into outbound ack)
 	buffer      []bufferedFrame     // sent frames retained for replay (trimmed by ack/depth/TTL)
-	seen        map[string]struct{} // inbound dedup by envelope id
-	seenOrder   []string            // FIFO eviction order for seen
-	inTurn      bool                // a turn is in flight; surfaced as the roster typing snapshot
-	thinking    bool                // model is mid extended-thinking; surfaced as the roster thinking snapshot
-	warming     bool                // turn started, no output yet; surfaced as the roster warming snapshot
-	tool        string              // name of the running tool, empty if none; surfaced as the roster tool snapshot
-	lastPreview string              // last visible frame's preview; seeds the roster row
-	lastActMs   int64               // last visible frame's send time (unix ms); seeds the roster row
+	seen      map[string]struct{} // inbound dedup by envelope id
+	seenOrder []string            // FIFO eviction order for seen
+
+	// Unified activity inputs (see resolveActivity for precedence). turnKind /
+	// turnDetail are turn-scoped, driven by appSink off the turn-event stream;
+	// subagentDetail and waitingDetail are session-scoped, outliving any single
+	// turn. activityKind / activityDetail cache the last-emitted resolved value
+	// so a setter only sends an Activity frame (and updates the roster snapshot)
+	// on an actual change.
+	turnKind       fap.ActivityKind // turn-scoped kind (idle when no turn in flight)
+	turnDetail     string           // turn-scoped detail (e.g. tool name)
+	subagentDetail string           // running-subagent descriptions, empty if none
+	waitingDetail  string           // target agent id we're awaiting, empty if none
+	activityKind   fap.ActivityKind // last-emitted resolved kind ("" == idle)
+	activityDetail string           // last-emitted resolved detail
+
+	lastPreview string // last visible frame's preview; seeds the roster row
+	lastActMs   int64  // last visible frame's send time (unix ms); seeds the roster row
 }
 
 // attach points the durable state at a (re)connected socket and registers it in
@@ -1364,31 +1374,74 @@ func (b *convBinding) currentSeq() int64 {
 func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Typing: b.inTurn, Thinking: b.thinking, Warming: b.warming, Tool: b.tool, LastActivityTs: b.lastActMs, LastPreview: b.lastPreview}
+	kind, detail := b.resolveActivity()
+	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Activity: string(kind), ActivityDetail: detail, LastActivityTs: b.lastActMs, LastPreview: b.lastPreview}
 }
 
-func (b *convBinding) setInTurn(v bool) {
-	b.mu.Lock()
-	b.inTurn = v
-	b.mu.Unlock()
+// resolveActivity collapses the turn-scoped and session-scoped inputs to a
+// single (kind, detail) by the ActivityKind precedence:
+//
+//	subagents > waiting > tool > thinking > warming > typing > idle
+//
+// The turn-scoped inputs (turnKind/turnDetail) already carry exactly one of
+// tool/thinking/warming/typing (appSink sets the latest per turn event), so the
+// resolver only layers the two session-scoped states above them. Caller holds mu.
+func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
+	if b.subagentDetail != "" {
+		return fap.ActivityKindSubagents, b.subagentDetail
+	}
+	if b.waitingDetail != "" {
+		return fap.ActivityKindWaiting, b.waitingDetail
+	}
+	if b.turnKind != "" && b.turnKind != fap.ActivityKindIdle {
+		return b.turnKind, b.turnDetail
+	}
+	return fap.ActivityKindIdle, ""
 }
 
-func (b *convBinding) setThinkingSnapshot(v bool) {
-	b.mu.Lock()
-	b.thinking = v
-	b.mu.Unlock()
+// setTurnActivity records the turn-scoped activity (kind + detail) and re-emits
+// if the resolved value changed. Called by appSink off the turn-event stream.
+func (b *convBinding) setTurnActivity(kind fap.ActivityKind, detail string) {
+	b.applyActivity(func() {
+		b.turnKind = kind
+		b.turnDetail = detail
+	})
 }
 
-func (b *convBinding) setWarmingSnapshot(v bool) {
-	b.mu.Lock()
-	b.warming = v
-	b.mu.Unlock()
+// setSubagentDetail records the session-scoped running-subagent descriptions
+// (empty = none running) and re-emits if the resolved value changed.
+func (b *convBinding) setSubagentDetail(detail string) {
+	b.applyActivity(func() { b.subagentDetail = detail })
 }
 
-func (b *convBinding) setToolSnapshot(v string) {
+// setWaitingDetail records the session-scoped target agent this conversation is
+// awaiting a reply from (empty = not waiting) and re-emits on a resolved change.
+func (b *convBinding) setWaitingDetail(detail string) {
+	b.applyActivity(func() { b.waitingDetail = detail })
+}
+
+// applyActivity mutates the activity inputs under mu, recomputes the resolved
+// (kind, detail), and — only on an actual change vs the last-emitted value —
+// updates the cached snapshot (read by info()) and sends one Activity frame.
+// The send happens after mu is released because b.send takes mu itself.
+func (b *convBinding) applyActivity(mutate func()) {
 	b.mu.Lock()
-	b.tool = v
+	mutate()
+	kind, detail := b.resolveActivity()
+	prevKind := b.activityKind
+	if prevKind == "" {
+		prevKind = fap.ActivityKindIdle
+	}
+	changed := kind != prevKind || detail != b.activityDetail
+	if changed {
+		b.activityKind = kind
+		b.activityDetail = detail
+	}
+	convID := b.convID
 	b.mu.Unlock()
+	if changed {
+		b.send(fap.Activity{ConversationID: convID, Kind: string(kind), Detail: detail})
+	}
 }
 
 // send encodes a server frame with the next per-conversation seq and the

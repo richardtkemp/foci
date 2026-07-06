@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/app"
 	"foci/internal/config"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/platform"
@@ -273,7 +274,12 @@ var toolTable = []toolEntry{
 			}
 			return res.SessionKey, string(res.Rung), nil
 		}
-		return tools.NewSendToSessionTool(d.p.sessions, d.notifier, d.sessionNotify, resolveKeyFn)
+		return tools.NewSendToSessionTool(d.p.sessions, d.notifier, d.sessionNotify, resolveKeyFn, func(callerSessionKey, targetAgent string) {
+			// reply_to=caller waits for the target's reply — surface it on the
+			// caller's app conversation as a "waiting on <agent>" indicator
+			// (cleared when the caller's reply turn begins). No-op off the app.
+			app.SetWaiting(callerSessionKey, targetAgent)
+		})
 	}},
 
 	{name: "ask", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {

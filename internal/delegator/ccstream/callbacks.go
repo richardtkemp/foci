@@ -31,8 +31,10 @@ func (b *Backend) SetOnSessionReady(fn func(string)) { b.onSessionReady = fn }
 // SetTypingFunc sets a callback to control the platform's typing indicator.
 func (b *Backend) SetTypingFunc(fn func(bool)) { b.typingFunc = fn }
 
-// SetOnAgentStatus sets a callback for agent/task lifecycle events.
-func (b *Backend) SetOnAgentStatus(fn func(string)) { b.agents.OnStatus = fn }
+// SetOnSubagentStatus sets a callback for subagent (Agent-tool) lifecycle
+// events. The callback receives the running-subagent detail string (or "" when
+// none are running) — see delegator.SubagentTracker.OnStatus.
+func (b *Backend) SetOnSubagentStatus(fn func(detail string)) { b.agents.OnStatus = fn }
 
 // SetRateLimitState sets the shared rate limit state that OnRateLimit writes to.
 // Must be called before Start. The state is shared across all backends for an agent.

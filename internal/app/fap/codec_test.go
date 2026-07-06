@@ -251,7 +251,7 @@ func TestRoundTrip_HelloServer(t *testing.T) {
 		Caps:    Caps{Versions: []int{1}, Push: []string{"fcm"}, Features: []string{"voice"}},
 		Agents: []AgentInfo{{
 			ID: "clutch", Name: "Clutch",
-			Conversations: []ConversationInfo{{ID: "conv1", SessionKey: "clutch/c123", Title: "Main", LastSeq: 9, Typing: true, Thinking: true, Archived: true}},
+			Conversations: []ConversationInfo{{ID: "conv1", SessionKey: "clutch/c123", Title: "Main", LastSeq: 9, Activity: "thinking", ActivityDetail: "grep", Archived: true}},
 		}},
 	}
 	wire, err := Encode(h, 0, 0, "X", "ts")
@@ -270,11 +270,11 @@ func TestRoundTrip_HelloServer(t *testing.T) {
 	if back.Agents[0].Conversations[0].SessionKey != "clutch/c123" {
 		t.Errorf("round-trip lost sessionKey: %+v", back)
 	}
-	if !back.Agents[0].Conversations[0].Typing {
-		t.Errorf("round-trip lost typing: %+v", back)
+	if back.Agents[0].Conversations[0].Activity != "thinking" {
+		t.Errorf("round-trip lost activity: %+v", back)
 	}
-	if !back.Agents[0].Conversations[0].Thinking {
-		t.Errorf("round-trip lost thinking: %+v", back)
+	if back.Agents[0].Conversations[0].ActivityDetail != "grep" {
+		t.Errorf("round-trip lost activityDetail: %+v", back)
 	}
 	if !back.Agents[0].Conversations[0].Archived {
 		t.Errorf("round-trip lost archived: %+v", back)
@@ -299,10 +299,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		TextEnd{ConversationID: "c", TurnID: "t", MessageID: "m", FinalText: &final},
 		ServerMessage{ConversationID: "c", MessageID: "m", Role: "agent", Text: "hi"},
 		Notification{ConversationID: "c", Text: "n", Level: "info"},
-		Typing{ConversationID: "c", On: true},
-		Thinking{ConversationID: "c", On: true},
-		Warming{ConversationID: "c", On: true},
-		Tool{ConversationID: "c", On: true, Name: "Bash"},
+		Activity{ConversationID: "c", Kind: "tool", Detail: "Bash"},
 		Media{ConversationID: "c", MessageID: "m", BlobID: "b", MIME: "image/png"},
 		Interactive{ConversationID: "c", PromptID: "p", Text: "ok?", Choices: []Choice{{Label: "Y", Data: "p:0"}}, ExpiresAt: "2026-01-01T00:00:00Z"},
 		InteractiveEdit{ConversationID: "c", PromptID: "p", Text: "done"},

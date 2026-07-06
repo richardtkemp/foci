@@ -65,6 +65,8 @@ type StatusInfo struct {
 	LastActivity     string
 	ContextLimit     int     // model context window
 	CompactThreshold float64 // e.g. 0.8
+	Activity         string  // resolved unified activity kind (app-sourced); empty if unavailable
+	ActivityDetail   string  // kind-specific detail (tool name / subagents / target agent)
 }
 
 // StatusCommand returns a /status command showing dashboard overview.
@@ -118,6 +120,20 @@ func StatusCommand() *Command {
 			fmt.Fprintf(&sb, "📊 Session: %s\n", sk)
 			fmt.Fprintf(&sb, "   Messages: %d | Status: %s\n", mc, status)
 			fmt.Fprintf(&sb, "   Created: %s | Active: %s\n", created, active)
+
+			// Unified activity — sourced from the same app binding/resolver the
+			// app renders, so /status and the app agree. Only shown when this
+			// session has an app binding (ActivityFunc reports ok); otherwise
+			// gracefully omitted (non-app platforms have no such surface).
+			if cc.ActivityFunc != nil {
+				if kind, detail, ok := cc.ActivityFunc(sk); ok {
+					line := "🎯 Activity: " + kind
+					if detail != "" {
+						line += " " + detail
+					}
+					fmt.Fprintf(&sb, "   %s\n", line)
+				}
+			}
 
 			// Permission mode — always shown so the user knows the current
 			// permission posture. Empty session metadata = CC's baseline "default".

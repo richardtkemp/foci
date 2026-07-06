@@ -2,7 +2,6 @@ package cctmux
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"foci/internal/delegator"
@@ -295,7 +294,7 @@ func TestHandleAssistant_AgentTracking(t *testing.T) {
 	if len(statusMessages) != 1 {
 		t.Fatalf("OnStatus called %d times, want 1", len(statusMessages))
 	}
-	want := "🔄 1 agent(s) running: search files"
+	want := "search files"
 	if statusMessages[0] != want {
 		t.Errorf("status = %q, want %q", statusMessages[0], want)
 	}
@@ -471,7 +470,7 @@ func TestHandleUser_AgentCompletion(t *testing.T) {
 	if len(statusMessages) != 1 {
 		t.Fatalf("OnStatus called %d times, want 1", len(statusMessages))
 	}
-	want := "🔄 1 agent(s) running: task B"
+	want := "task B"
 	if statusMessages[0] != want {
 		t.Errorf("status = %q, want %q", statusMessages[0], want)
 	}
@@ -505,8 +504,8 @@ func TestHandleUser_AllAgentsComplete(t *testing.T) {
 	if len(statusMessages) != 1 {
 		t.Fatalf("OnStatus called %d times, want 1", len(statusMessages))
 	}
-	if !strings.Contains(statusMessages[0], "complete") {
-		t.Errorf("expected completion message, got %q", statusMessages[0])
+	if statusMessages[0] != "" {
+		t.Errorf("expected empty cleared detail, got %q", statusMessages[0])
 	}
 }
 

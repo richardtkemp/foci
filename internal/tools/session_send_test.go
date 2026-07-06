@@ -56,7 +56,7 @@ func TestSendToSession(t *testing.T) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, nil, nil)
+	tool := NewSendToSessionTool(store, notifier, nil, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i111")
 	params, _ := json.Marshal(map[string]string{
@@ -87,6 +87,47 @@ func TestSendToSession(t *testing.T) {
 	}
 }
 
+func TestSendToSessionOnWait(t *testing.T) {
+	// reply_to=caller fires onWait with the caller's session key and the target
+	// agent id (derived from the target session key); reply_to=session does not.
+	t.Parallel()
+	store := &mockSessionAppender{}
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	sessionNotifyFn := SessionNotifyFn(func(sk, msg string) {})
+
+	type wait struct{ caller, target string }
+	waits := make(chan wait, 2)
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil, func(caller, target string) {
+		waits <- wait{caller, target}
+	})
+
+	// reply_to=caller (default) → onWait fires with target agent "scout".
+	ctx := WithSessionKey(context.Background(), "clutch/c111")
+	params, _ := json.Marshal(map[string]string{"session_key": "scout/c0", "message": "status?"})
+	if _, err := tool.Execute(ctx, params); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	select {
+	case w := <-waits:
+		if w.caller != "clutch/c111" || w.target != "scout" {
+			t.Errorf("onWait = %+v, want {clutch/c111 scout}", w)
+		}
+	default:
+		t.Fatal("onWait not fired for reply_to=caller")
+	}
+
+	// reply_to=session → onWait must NOT fire (fire-and-forget).
+	params2, _ := json.Marshal(map[string]string{"session_key": "scout/c0", "message": "fyi", "reply_to": "session"})
+	if _, err := tool.Execute(ctx, params2); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	select {
+	case w := <-waits:
+		t.Errorf("onWait must not fire for reply_to=session, got %+v", w)
+	default:
+	}
+}
+
 func TestSendToSessionReplyToSession(t *testing.T) {
 	// Verifies reply_to=session routes through sessionNotifyFn instead of
 	// the caller notifier.
@@ -102,7 +143,7 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 		sessionDelivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil)
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "alpha/c111")
 	params, _ := json.Marshal(map[string]string{
@@ -141,7 +182,7 @@ func TestSendToSessionInvalidReplyTo(t *testing.T) {
 	// Verifies that an invalid reply_to value is rejected.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -163,7 +204,7 @@ func TestSendToSessionEmptyParams(t *testing.T) {
 	// Verifies that empty session_key and message are rejected.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil, nil)
 
 	// Empty session_key
 	params, _ := json.Marshal(map[string]string{
@@ -196,7 +237,7 @@ func TestSendToSessionNilNotifier(t *testing.T) {
 	// Verifies graceful behavior when notifier is nil.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -236,7 +277,7 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 		sessionDelivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil)
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil, nil)
 
 	// Dick's session sends to Eleni's session with reply_to=session
 	dickSession := "fotini/c5970082313"
@@ -305,7 +346,7 @@ func TestSendToSessionBareNameResolution(t *testing.T) {
 		return "", "", fmt.Errorf("no such target %q", target)
 	}
 
-	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn)
+	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -343,7 +384,7 @@ func TestSendToSessionFullKeySkipsResolution(t *testing.T) {
 		return "", "", nil
 	}
 
-	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn)
+	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -368,7 +409,7 @@ func TestSendToSessionBareNameUnresolved(t *testing.T) {
 	store := &mockSessionAppender{}
 	resolveKeyFn := func(target string) (string, string, error) { return "", "", fmt.Errorf("unresolvable") }
 
-	tool := NewSendToSessionTool(store, nil, nil, resolveKeyFn)
+	tool := NewSendToSessionTool(store, nil, nil, resolveKeyFn, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{

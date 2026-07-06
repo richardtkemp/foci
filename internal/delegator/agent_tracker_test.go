@@ -2,37 +2,35 @@ package delegator
 
 import (
 	"encoding/json"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 )
 
-// --- AgentTracker tests ---
+// --- SubagentTracker tests ---
 
-// TestAgentTracker_Add verifies that adding an agent fires a running
+// TestSubagentTracker_Add verifies that adding an agent fires a running
 // status message with the description.
-func TestAgentTracker_Add(t *testing.T) {
+func TestSubagentTracker_Add(t *testing.T) {
 	t.Parallel()
 	var got string
-	tr := &AgentTracker{OnStatus: func(text string) { got = text }}
+	tr := &SubagentTracker{OnStatus: func(text string) { got = text }}
 	tr.Add("ag1", "search files")
 
 	if tr.Pending() != 1 {
 		t.Fatalf("Pending() = %d, want 1", tr.Pending())
 	}
-	want := "🔄 1 agent(s) running: search files"
+	want := "search files"
 	if got != want {
 		t.Errorf("status = %q, want %q", got, want)
 	}
 }
 
-// TestAgentTracker_AddDuplicate verifies that adding the same ID twice
+// TestSubagentTracker_AddDuplicate verifies that adding the same ID twice
 // is a no-op.
-func TestAgentTracker_AddDuplicate(t *testing.T) {
+func TestSubagentTracker_AddDuplicate(t *testing.T) {
 	t.Parallel()
 	var calls int
-	tr := &AgentTracker{OnStatus: func(string) { calls++ }}
+	tr := &SubagentTracker{OnStatus: func(string) { calls++ }}
 	tr.Add("ag1", "task")
 	tr.Add("ag1", "task") // duplicate
 
@@ -44,44 +42,44 @@ func TestAgentTracker_AddDuplicate(t *testing.T) {
 	}
 }
 
-// TestAgentTracker_AddMultiple verifies accumulation of multiple agents.
-func TestAgentTracker_AddMultiple(t *testing.T) {
+// TestSubagentTracker_AddMultiple verifies accumulation of multiple agents.
+func TestSubagentTracker_AddMultiple(t *testing.T) {
 	t.Parallel()
 	var got string
-	tr := &AgentTracker{OnStatus: func(text string) { got = text }}
+	tr := &SubagentTracker{OnStatus: func(text string) { got = text }}
 	tr.Add("ag1", "search files")
 	tr.Add("ag2", "run tests")
 
 	if tr.Pending() != 2 {
 		t.Fatalf("Pending() = %d, want 2", tr.Pending())
 	}
-	want := "🔄 2 agent(s) running: search files, run tests"
+	want := "search files, run tests"
 	if got != want {
 		t.Errorf("status = %q, want %q", got, want)
 	}
 }
 
-// TestAgentTracker_AddNoDescriptions verifies the fallback message
+// TestSubagentTracker_AddNoDescriptions verifies the fallback message
 // when agents have empty descriptions.
-func TestAgentTracker_AddNoDescriptions(t *testing.T) {
+func TestSubagentTracker_AddNoDescriptions(t *testing.T) {
 	t.Parallel()
 	var got string
-	tr := &AgentTracker{OnStatus: func(text string) { got = text }}
+	tr := &SubagentTracker{OnStatus: func(text string) { got = text }}
 	tr.Add("ag1", "")
 	tr.Add("ag2", "")
 
-	want := fmt.Sprintf("🔄 %d agent(s) running", 2)
+	want := "2 subagent(s) running"
 	if got != want {
 		t.Errorf("status = %q, want %q", got, want)
 	}
 }
 
-// TestAgentTracker_Remove verifies that removing by ID works and fires
+// TestSubagentTracker_Remove verifies that removing by ID works and fires
 // an updated status.
-func TestAgentTracker_Remove(t *testing.T) {
+func TestSubagentTracker_Remove(t *testing.T) {
 	t.Parallel()
 	var got string
-	tr := &AgentTracker{OnStatus: func(text string) { got = text }}
+	tr := &SubagentTracker{OnStatus: func(text string) { got = text }}
 	tr.Add("ag1", "task A")
 	tr.Add("ag2", "task B")
 
@@ -91,18 +89,18 @@ func TestAgentTracker_Remove(t *testing.T) {
 	if tr.Pending() != 1 {
 		t.Fatalf("Pending() = %d, want 1", tr.Pending())
 	}
-	want := "🔄 1 agent(s) running: task B"
+	want := "task B"
 	if got != want {
 		t.Errorf("status = %q, want %q", got, want)
 	}
 }
 
-// TestAgentTracker_RemoveUnknown verifies that removing an unknown ID
+// TestSubagentTracker_RemoveUnknown verifies that removing an unknown ID
 // returns false and doesn't fire status.
-func TestAgentTracker_RemoveUnknown(t *testing.T) {
+func TestSubagentTracker_RemoveUnknown(t *testing.T) {
 	t.Parallel()
 	statusCalled := false
-	tr := &AgentTracker{OnStatus: func(string) { statusCalled = true }}
+	tr := &SubagentTracker{OnStatus: func(string) { statusCalled = true }}
 	tr.Add("ag1", "task")
 	statusCalled = false
 
@@ -114,29 +112,29 @@ func TestAgentTracker_RemoveUnknown(t *testing.T) {
 	}
 }
 
-// TestAgentTracker_RemoveLast verifies that removing the last agent
+// TestSubagentTracker_RemoveLast verifies that removing the last agent
 // fires a completion message.
-func TestAgentTracker_RemoveLast(t *testing.T) {
+func TestSubagentTracker_RemoveLast(t *testing.T) {
 	t.Parallel()
 	var got string
-	tr := &AgentTracker{OnStatus: func(text string) { got = text }}
+	tr := &SubagentTracker{OnStatus: func(text string) { got = text }}
 	tr.Add("ag1", "task")
 	tr.Remove("ag1")
 
 	if tr.Pending() != 0 {
 		t.Fatalf("Pending() = %d, want 0", tr.Pending())
 	}
-	if !strings.Contains(got, "complete") {
-		t.Errorf("expected completion message, got %q", got)
+	if got != "" {
+		t.Errorf("expected empty completion detail, got %q", got)
 	}
 }
 
-// TestAgentTracker_RemoveOne verifies that RemoveOne removes the first
+// TestSubagentTracker_RemoveOne verifies that RemoveOne removes the first
 // pending agent.
-func TestAgentTracker_RemoveOne(t *testing.T) {
+func TestSubagentTracker_RemoveOne(t *testing.T) {
 	t.Parallel()
 	var got string
-	tr := &AgentTracker{OnStatus: func(text string) { got = text }}
+	tr := &SubagentTracker{OnStatus: func(text string) { got = text }}
 	tr.Add("ag1", "task A")
 	tr.Add("ag2", "task B")
 
@@ -146,29 +144,29 @@ func TestAgentTracker_RemoveOne(t *testing.T) {
 	if tr.Pending() != 1 {
 		t.Fatalf("Pending() = %d, want 1", tr.Pending())
 	}
-	want := "🔄 1 agent(s) running: task B"
+	want := "task B"
 	if got != want {
 		t.Errorf("status = %q, want %q", got, want)
 	}
 }
 
-// TestAgentTracker_RemoveOneEmpty verifies that RemoveOne is a safe
+// TestSubagentTracker_RemoveOneEmpty verifies that RemoveOne is a safe
 // no-op when there are no pending agents.
-func TestAgentTracker_RemoveOneEmpty(t *testing.T) {
+func TestSubagentTracker_RemoveOneEmpty(t *testing.T) {
 	t.Parallel()
-	tr := &AgentTracker{}
+	tr := &SubagentTracker{}
 	if tr.RemoveOne() {
 		t.Error("RemoveOne returned true with no pending agents")
 	}
 }
 
-// TestAgentTracker_PruneExpired verifies a spawn with no completion signal is
+// TestSubagentTracker_PruneExpired verifies a spawn with no completion signal is
 // dropped after agentMaxAge, so Pending() can't stay stuck > 0 now that the
 // tracker survives turn boundaries.
-func TestAgentTracker_PruneExpired(t *testing.T) {
+func TestSubagentTracker_PruneExpired(t *testing.T) {
 	t.Parallel()
-	tr := &AgentTracker{}
-	tr.pending = []TrackedAgent{
+	tr := &SubagentTracker{}
+	tr.pending = []TrackedSubagent{
 		{ID: "stale", added: time.Now().Add(-agentMaxAge - time.Minute)},
 		{ID: "live", added: time.Now()},
 	}
@@ -177,12 +175,12 @@ func TestAgentTracker_PruneExpired(t *testing.T) {
 	}
 }
 
-// TestAgentTracker_ClearAll verifies that ClearAll removes all agents
+// TestSubagentTracker_ClearAll verifies that ClearAll removes all agents
 // and fires a completion message.
-func TestAgentTracker_ClearAll(t *testing.T) {
+func TestSubagentTracker_ClearAll(t *testing.T) {
 	t.Parallel()
 	var got string
-	tr := &AgentTracker{OnStatus: func(text string) { got = text }}
+	tr := &SubagentTracker{OnStatus: func(text string) { got = text }}
 	tr.Add("ag1", "task A")
 	tr.Add("ag2", "task B")
 
@@ -191,17 +189,17 @@ func TestAgentTracker_ClearAll(t *testing.T) {
 	if tr.Pending() != 0 {
 		t.Fatalf("Pending() = %d, want 0", tr.Pending())
 	}
-	if !strings.Contains(got, "complete") {
-		t.Errorf("expected completion message, got %q", got)
+	if got != "" {
+		t.Errorf("expected empty completion detail, got %q", got)
 	}
 }
 
-// TestAgentTracker_ClearAllEmpty verifies ClearAll is a safe no-op
+// TestSubagentTracker_ClearAllEmpty verifies ClearAll is a safe no-op
 // when there are no pending agents.
-func TestAgentTracker_ClearAllEmpty(t *testing.T) {
+func TestSubagentTracker_ClearAllEmpty(t *testing.T) {
 	t.Parallel()
 	statusCalled := false
-	tr := &AgentTracker{OnStatus: func(string) { statusCalled = true }}
+	tr := &SubagentTracker{OnStatus: func(string) { statusCalled = true }}
 	tr.ClearAll()
 
 	if statusCalled {
@@ -209,11 +207,11 @@ func TestAgentTracker_ClearAllEmpty(t *testing.T) {
 	}
 }
 
-// TestAgentTracker_NilCallback verifies that all operations are safe
+// TestSubagentTracker_NilCallback verifies that all operations are safe
 // when OnStatus is nil.
-func TestAgentTracker_NilCallback(t *testing.T) {
+func TestSubagentTracker_NilCallback(t *testing.T) {
 	t.Parallel()
-	tr := &AgentTracker{} // OnStatus is nil
+	tr := &SubagentTracker{} // OnStatus is nil
 	tr.Add("ag1", "task")
 	tr.Remove("ag1")
 	tr.Add("ag2", "task")

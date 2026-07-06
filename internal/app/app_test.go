@@ -100,14 +100,14 @@ func TestAppSink_StreamingTranslation(t *testing.T) {
 	// asserts invariants rather than an exact frame count: one turn.start, one
 	// text.end (sharing the turnId), ≥1 delta forming a prefix of the final text,
 	// and no whole-message frame (a streamed reply is never re-sent).
-	if len(got) < 4 || got[0].t != fap.TypeWarming || got[0].d["on"] != true {
-		t.Fatalf("first frame must be warming-on, got %v", types(got))
+	if len(got) < 4 || got[0].t != fap.TypeActivity || got[0].d["kind"] != "warming" {
+		t.Fatalf("first frame must be activity warming, got %v", types(got))
 	}
-	if got[1].t != fap.TypeTyping || got[1].d["on"] != true {
-		t.Fatalf("second frame must be typing-on, got %v", types(got))
+	if got[1].t != fap.TypeActivity || got[1].d["kind"] != "typing" {
+		t.Fatalf("second frame must be activity typing, got %v", types(got))
 	}
-	if last := got[len(got)-1]; last.t != fap.TypeTyping || last.d["on"] != false {
-		t.Fatalf("last frame must be typing-off, got %v", types(got))
+	if last := got[len(got)-1]; last.t != fap.TypeActivity || last.d["kind"] != "idle" {
+		t.Fatalf("last frame must be activity idle, got %v", types(got))
 	}
 	var turnStarts, textEnds int
 	var startTurnID, endTurnID, deltaText, deltaTurnID, finalText string
@@ -151,16 +151,16 @@ func TestAppSink_InTurnSnapshot(t *testing.T) {
 	s := newAppSink(b)
 	ctx := context.Background()
 
-	if b.info().Typing {
-		t.Fatal("typing snapshot should be false before any turn")
+	if b.info().Activity != "idle" {
+		t.Fatal("activity should be idle before any turn")
 	}
 	s.Emit(ctx, turnevent.TurnStart{})
-	if !b.info().Typing {
-		t.Fatal("typing snapshot should be true mid-turn")
+	if b.info().Activity == "idle" {
+		t.Fatal("activity should be non-idle mid-turn")
 	}
 	s.Emit(ctx, turnevent.TurnComplete{FinalText: "x"})
-	if b.info().Typing {
-		t.Fatal("typing snapshot should be false after TurnComplete")
+	if b.info().Activity != "idle" {
+		t.Fatal("activity should be idle after TurnComplete")
 	}
 }
 
@@ -172,12 +172,12 @@ func TestAppSink_CleanupClearsInTurn(t *testing.T) {
 	s := newAppSink(b)
 
 	s.Emit(context.Background(), turnevent.TurnStart{})
-	if !b.info().Typing {
-		t.Fatal("typing snapshot should be true mid-turn")
+	if b.info().Activity == "idle" {
+		t.Fatal("activity should be non-idle mid-turn")
 	}
 	s.cleanup()
-	if b.info().Typing {
-		t.Fatal("cleanup must clear the typing snapshot for an abandoned turn")
+	if b.info().Activity != "idle" {
+		t.Fatal("cleanup must clear the activity for an abandoned turn")
 	}
 }
 
@@ -188,12 +188,12 @@ func TestAppSink_WarmingLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	s.Emit(ctx, turnevent.TurnStart{})
-	if !b.info().Warming {
-		t.Fatal("warming should be true at turn start")
+	if b.info().Activity != "warming" {
+		t.Fatal("activity should be warming at turn start")
 	}
 	s.Emit(ctx, turnevent.ThinkingDelta{Delta: ""})
-	if b.info().Warming {
-		t.Fatal("warming should clear on the first output")
+	if b.info().Activity != "thinking" {
+		t.Fatal("warming should give way to thinking on the first output")
 	}
 }
 
@@ -204,12 +204,70 @@ func TestAppSink_ToolLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	s.Emit(ctx, turnevent.ToolCall{Name: "Bash"})
-	if b.info().Tool != "Bash" {
-		t.Fatalf("tool snapshot should be Bash while running, got %q", b.info().Tool)
+	if b.info().Activity != "tool" || b.info().ActivityDetail != "Bash" {
+		t.Fatalf("activity should be tool/Bash while running, got %q/%q", b.info().Activity, b.info().ActivityDetail)
 	}
 	s.Emit(ctx, turnevent.ToolResult{Name: "Bash"})
-	if b.info().Tool != "" {
-		t.Fatalf("tool snapshot should clear on result, got %q", b.info().Tool)
+	if b.info().Activity != "warming" || b.info().ActivityDetail != "" {
+		t.Fatalf("activity should return to warming after tool result, got %q/%q", b.info().Activity, b.info().ActivityDetail)
+	}
+}
+
+// TestConvBinding_ActivityResolver pins the unified resolver precedence
+// (subagents > waiting > tool > thinking > warming > typing > idle) and proves
+// that setting/clearing each input emits exactly one Activity frame per resolved
+// change (the binding-side change-check dedups no-op transitions).
+func TestConvBinding_ActivityResolver(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", client: c}
+
+	// Turn-scoped thinking is in flight.
+	b.setTurnActivity(fap.ActivityKindThinking, "")
+	if k, d := b.info().Activity, b.info().ActivityDetail; k != "thinking" || d != "" {
+		t.Fatalf("after thinking: %q/%q, want thinking/", k, d)
+	}
+
+	// Subagents outrank the turn-scoped thinking.
+	b.setSubagentDetail("build docs, run tests")
+	if k, d := b.info().Activity, b.info().ActivityDetail; k != "subagents" || d != "build docs, run tests" {
+		t.Fatalf("subagents must outrank thinking: %q/%q", k, d)
+	}
+
+	// Waiting is below subagents — no change while subagents are present (deduped).
+	b.setWaitingDetail("scout")
+	if b.info().Activity != "subagents" {
+		t.Fatalf("subagents must outrank waiting, got %q", b.info().Activity)
+	}
+
+	// Clearing subagents surfaces the waiting state (still above the turn thinking).
+	b.setSubagentDetail("")
+	if k, d := b.info().Activity, b.info().ActivityDetail; k != "waiting" || d != "scout" {
+		t.Fatalf("after clearing subagents: %q/%q, want waiting/scout", k, d)
+	}
+
+	// Clearing waiting falls back to the turn-scoped thinking.
+	b.setWaitingDetail("")
+	if b.info().Activity != "thinking" {
+		t.Fatalf("after clearing waiting: %q, want thinking", b.info().Activity)
+	}
+
+	// Ending the turn resolves to idle.
+	b.setTurnActivity(fap.ActivityKindIdle, "")
+	if b.info().Activity != "idle" {
+		t.Fatalf("after idle turn: %q, want idle", b.info().Activity)
+	}
+
+	// Exactly one Activity frame per resolved change; the no-op waiting set while
+	// subagents were present emitted nothing.
+	kinds := activityKinds(drain(t, c))
+	want := []string{"thinking", "subagents", "waiting", "thinking", "idle"}
+	if len(kinds) != len(want) {
+		t.Fatalf("emitted kinds = %v, want %v", kinds, want)
+	}
+	for i := range want {
+		if kinds[i] != want[i] {
+			t.Fatalf("emitted kinds = %v, want %v", kinds, want)
+		}
 	}
 }
 
@@ -219,36 +277,36 @@ func TestAppSink_ThinkingSnapshot(t *testing.T) {
 	s := newAppSink(b)
 	ctx := context.Background()
 
-	if b.info().Thinking {
-		t.Fatal("thinking snapshot should be false before any reasoning")
+	if b.info().Activity == "thinking" {
+		t.Fatal("activity should not be thinking before any reasoning")
 	}
 	s.Emit(ctx, turnevent.TurnStart{})
 	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "hmm"})
-	if !b.info().Thinking {
-		t.Fatal("thinking snapshot should be true mid-reasoning")
+	if b.info().Activity != "thinking" {
+		t.Fatal("activity should be thinking mid-reasoning")
 	}
 	s.Emit(ctx, turnevent.TextDelta{Delta: "answer"})
-	if b.info().Thinking {
-		t.Fatal("thinking snapshot should clear when text begins")
+	if b.info().Activity == "thinking" {
+		t.Fatal("activity should leave thinking when text begins")
 	}
 	// A second reasoning phase (think → tool → think) flips it back on.
 	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "more"})
-	if !b.info().Thinking {
-		t.Fatal("thinking snapshot should re-arm on a later reasoning phase")
+	if b.info().Activity != "thinking" {
+		t.Fatal("activity should re-arm thinking on a later reasoning phase")
 	}
 	s.Emit(ctx, turnevent.TurnComplete{FinalText: "answer"})
-	if b.info().Thinking {
-		t.Fatal("thinking snapshot should be false after TurnComplete")
+	if b.info().Activity == "thinking" {
+		t.Fatal("activity should not be thinking after TurnComplete")
 	}
 }
 
-// thinkingOns extracts the on/off sequence of thinking frames in order.
-func thinkingOns(got []decoded) []bool {
-	var out []bool
+// activityKinds extracts the ordered kind sequence of Activity frames.
+func activityKinds(got []decoded) []string {
+	var out []string
 	for _, d := range got {
-		if d.t == fap.TypeThinking {
-			on, _ := d.d["on"].(bool)
-			out = append(out, on)
+		if d.t == fap.TypeActivity {
+			k, _ := d.d["kind"].(string)
+			out = append(out, k)
 		}
 	}
 	return out
@@ -262,21 +320,21 @@ func TestAppSink_ThinkingFrames(t *testing.T) {
 
 	s.Emit(ctx, turnevent.TurnStart{})
 	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "a"})
-	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "b"}) // deduped: no second on
+	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "b"}) // deduped: same resolved kind
 	s.Emit(ctx, turnevent.TextDelta{Delta: "x"})
-	s.Emit(ctx, turnevent.ToolCall{Name: "Read"}) // already off: deduped
+	s.Emit(ctx, turnevent.ToolCall{Name: "Read"})
 	s.Emit(ctx, turnevent.ThinkingDelta{Delta: "c"})
 	s.Emit(ctx, turnevent.TurnComplete{FinalText: "x"})
 
 	got := drain(t, c)
-	ons := thinkingOns(got)
-	want := []bool{true, false, true, false}
-	if len(ons) != len(want) {
-		t.Fatalf("thinking frames = %v, want %v (all: %v)", ons, want, types(got))
+	kinds := activityKinds(got)
+	want := []string{"warming", "thinking", "typing", "tool", "thinking", "idle"}
+	if len(kinds) != len(want) {
+		t.Fatalf("activity kinds = %v, want %v (all: %v)", kinds, want, types(got))
 	}
 	for i := range want {
-		if ons[i] != want[i] {
-			t.Fatalf("thinking frames = %v, want %v", ons, want)
+		if kinds[i] != want[i] {
+			t.Fatalf("activity kinds = %v, want %v", kinds, want)
 		}
 	}
 }
@@ -291,8 +349,10 @@ func TestAppSink_NoThinkingFramesWhenAbsent(t *testing.T) {
 	s.Emit(ctx, turnevent.TextDelta{Delta: "hi"})
 	s.Emit(ctx, turnevent.TurnComplete{FinalText: "hi"})
 
-	if ons := thinkingOns(drain(t, c)); len(ons) != 0 {
-		t.Fatalf("thinking-free turn emitted %d thinking frames, want 0", len(ons))
+	for _, k := range activityKinds(drain(t, c)) {
+		if k == "thinking" {
+			t.Fatalf("thinking-free turn emitted a thinking activity frame")
+		}
 	}
 }
 
@@ -349,8 +409,8 @@ func TestAppSink_NonStreamedFinalText(t *testing.T) {
 	s.Emit(context.Background(), turnevent.TurnComplete{FinalText: "done"})
 
 	got := drain(t, c)
-	if w := types(got); !equal(w, []string{fap.TypeMessage, fap.TypeTyping}) {
-		t.Fatalf("frames = %v, want [message typing]", w)
+	if w := types(got); !equal(w, []string{fap.TypeMessage}) {
+		t.Fatalf("frames = %v, want [message] (no turn ⇒ no activity change)", w)
 	}
 	if got[0].d["text"] != "done" || got[0].d["role"] != "agent" {
 		t.Errorf("message payload wrong: %v", got[0].d)
@@ -364,9 +424,9 @@ func TestAppSink_SilentFinalSuppressed(t *testing.T) {
 	s.Emit(context.Background(), turnevent.TurnComplete{FinalText: "[[NO_RESPONSE]]"})
 
 	got := drain(t, c)
-	// Only the typing-off frame; no message for a silent turn.
-	if w := types(got); !equal(w, []string{fap.TypeTyping}) {
-		t.Fatalf("frames = %v, want just [typing] (silent suppressed)", w)
+	// No message for a silent turn, and no activity change (idle stayed idle).
+	if len(got) != 0 {
+		t.Fatalf("frames = %v, want none (silent suppressed, no activity change)", types(got))
 	}
 }
 
@@ -819,7 +879,7 @@ func TestInteractive_NextQuestionSuppressesEdit(t *testing.T) {
 		[]platform.ButtonChoice{{Label: "A", Data: "qa:0"}, {Label: "B", Data: "qa:1"}},
 		func(choice platform.ButtonChoice) string {
 			// Simulate presenting the next question: any frame advances seq.
-			b.send(fap.Typing{ConversationID: "c1", On: true})
+			b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
 			return "✅ A"
 		}, nil)
 	if err != nil {
@@ -970,8 +1030,8 @@ func TestReliability_SeqSurvivesReconnect(t *testing.T) {
 	c1 := fakeClient()
 	c1.hub = h
 	b := h.ensureBinding(c1, "ag", "conv-1")
-	b.send(fap.Typing{ConversationID: "conv-1", On: true})  // seq 1
-	b.send(fap.Typing{ConversationID: "conv-1", On: false}) // seq 2
+	b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"})  // seq 1
+	b.send(fap.Activity{ConversationID: "conv-1", Kind: "idle"}) // seq 2
 	drainEnv(t, c1)
 
 	h.removeClient(c1) // disconnect; durable state survives
@@ -981,7 +1041,7 @@ func TestReliability_SeqSurvivesReconnect(t *testing.T) {
 	if b2 != b {
 		t.Fatalf("reconnect must reuse the durable binding")
 	}
-	b2.send(fap.Typing{ConversationID: "conv-1", On: true}) // seq must continue at 3
+	b2.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"}) // seq must continue at 3
 	ds := drainEnv(t, c2)
 	if len(ds) != 1 || ds[0].seq != 3 {
 		t.Fatalf("post-reconnect frames = %v, want one frame at seq 3", ds)
@@ -994,7 +1054,7 @@ func TestReliability_ReplayOnResume(t *testing.T) {
 	c1.hub = h
 	b := h.ensureBinding(c1, "ag", "conv-1")
 	for i := 0; i < 3; i++ {
-		b.send(fap.Typing{ConversationID: "conv-1", On: true}) // seq 1,2,3
+		b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"}) // seq 1,2,3
 	}
 	drainEnv(t, c1)
 	h.removeClient(c1)
@@ -1047,7 +1107,7 @@ func TestReliability_OutboundAckStampsClientSeq(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
 	b.acceptInbound("u1", 7) // client's outbound seq high-water is 7
-	b.send(fap.Typing{ConversationID: "c1", On: true})
+	b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
 	ds := drainEnv(t, c)
 	if len(ds) != 1 || ds[0].ack != 7 {
 		t.Fatalf("outbound ack = %v, want 7 (client seq high-water)", ds)
@@ -1058,7 +1118,7 @@ func TestReliability_AckTrimsBuffer(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
 	for i := 0; i < 5; i++ {
-		b.send(fap.Typing{ConversationID: "c1", On: true}) // seq 1..5
+		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"}) // seq 1..5
 	}
 	drainEnv(t, c)
 	b.ackInbound(3)
@@ -1074,7 +1134,7 @@ func TestReliability_BufferTrimsByDepth(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
 	for i := 0; i < defaultReplayBufferDepth+50; i++ {
-		b.send(fap.Typing{ConversationID: "c1", On: true})
+		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
 	}
 	drainEnv(t, c)
 	b.mu.Lock()
@@ -1259,8 +1319,8 @@ func TestPushPreview_Classification(t *testing.T) {
 		{fap.Interactive{Text: "approve?"}, true, "approve?"},
 		{fap.Interactive{Questions: []fap.Question{{Text: "batched ask?"}}}, true, "batched ask?"},
 		{fap.Interactive{}, true, "Question from agent"},
-		{fap.Typing{On: true}, false, ""},
-		{fap.Thinking{On: true}, false, ""},
+		{fap.Activity{Kind: "typing"}, false, ""},
+		{fap.Activity{Kind: "thinking", Detail: "grep"}, false, ""},
 		{fap.Meta{}, false, ""},
 		{fap.TextDelta{Text: "x"}, false, ""},
 	}
@@ -1290,7 +1350,7 @@ func TestOfflineSend_FiresPushForVisibleFramesOnly(t *testing.T) {
 		notifyOffline: func(p pushPayload) { got = append(got, p.Preview) },
 	} // client nil → offline
 	b.send(fap.ServerMessage{ConversationID: "conv-1", MessageID: "m", Role: "agent", Text: "hello there"})
-	b.send(fap.Typing{ConversationID: "conv-1", On: true}) // control frame → no push
+	b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"}) // control frame → no push
 	if len(got) != 1 || got[0] != "hello there" {
 		t.Fatalf("offline previews = %v, want [hello there]", got)
 	}

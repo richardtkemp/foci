@@ -210,10 +210,10 @@ func (c *appConn) notify(text string) string {
 	return msgID
 }
 
-// SetTyping is intentionally a no-op for the app. The app's typing indicator is
+// SetTyping is intentionally a no-op for the app. The app's activity indicator is
 // owned exclusively by appSink, which brackets each turn with a single
-// fap.Typing{On:true} at TurnStart and {On:false} at TurnComplete (guaranteed via
-// defer, even on error). The platform TypingFunc path — designed for Telegram/
+// fap.Activity{Kind:"warming"} at TurnStart and {Kind:"idle"} at TurnComplete
+// (guaranteed via defer, even on error). The platform TypingFunc path — designed for Telegram/
 // Discord's refresh-and-auto-expire SetChatAction — must NOT drive the app, or its
 // periodic re-asserts (refresh `true`s) and intermediate cancels (round-end `false`s)
 // leak through as redundant frames and mid-session flicker. App clients have no

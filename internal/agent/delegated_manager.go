@@ -80,6 +80,13 @@ type DelegatedManager struct {
 	// Called with true when CC starts working, false on turn complete.
 	TypingFunc func(sessionKey string, typing bool)
 
+	// SubagentStatusFunc reports the running-subagent (CC Agent-tool spawn)
+	// status for a session: detail is the comma-joined running descriptions, or
+	// "" when none are running. The app maps this onto the conversation's
+	// unified Activity indicator (subagents kind). Nil = subagent status is not
+	// surfaced (e.g. non-app platforms, tests).
+	SubagentStatusFunc func(sessionKey, detail string)
+
 	// SystemNoticeFunc sends an out-of-band system notice directly to a
 	// session's platform chat (NOT through an agent turn). Used to tell the
 	// user when a requested session could not be resumed and a fresh one was
@@ -738,6 +745,23 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			}
 		})
 	}
+	// Wire the subagent (Agent-tool) status tracker → SubagentStatusFunc. The
+	// setter lives on the concrete CC backends (ccstream/opencode), not the
+	// Delegator interface, so we reach it via a narrow type assertion; backends
+	// without it (e.g. the legacy tmux backend, which self-wires its own status
+	// sink) are left untouched. Fixes the ccstream gap where the tracker's
+	// OnStatus was never wired at all. sk() resolves the current session key
+	// dynamically, mirroring the typing/session-ready wiring above.
+	if m.SubagentStatusFunc != nil {
+		if setter, ok := mb.be.(interface {
+			SetOnSubagentStatus(fn func(detail string))
+		}); ok {
+			setter.SetOnSubagentStatus(func(detail string) {
+				m.SubagentStatusFunc(sk(), detail)
+			})
+		}
+	}
+
 	mb.be.SetOnSessionReady(func(sessionID string) {
 		m.saveResumeID(sk(), sessionID)
 	})

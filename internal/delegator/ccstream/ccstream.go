@@ -159,7 +159,7 @@ type Backend struct {
 	rateLimitState *RateLimitState
 
 	// Agent tracking (shared with tmux backend via AgentTracker).
-	agents delegator.AgentTracker
+	agents delegator.SubagentTracker
 
 	// Activity tracking — updated on every inbound stream event.
 	lastActivity atomic.Int64 // unix nanos of most recent stream event

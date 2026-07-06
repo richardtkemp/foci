@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/app"
 	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
 	"foci/internal/delegator/opencode"
@@ -359,6 +360,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				return
 			}
 			conn.SetTyping(typing)
+		},
+		SubagentStatusFunc: func(sessionKey, detail string) {
+			// Subagent (CC Agent-tool) status has an app-native surface: the
+			// conversation's unified Activity indicator (subagents kind). Route
+			// straight to the app hub's binding; a no-op for non-app sessions.
+			app.SetSubagentDetail(sessionKey, detail)
 		},
 		SystemNoticeFunc: func(sessionKey, text string) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)

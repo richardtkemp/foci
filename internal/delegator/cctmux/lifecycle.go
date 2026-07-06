@@ -216,11 +216,19 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 		b.checkPermissionPrompt()
 	}
 
-	// Forward agent spawn/completion status to the user through the
-	// session-scoped delivery sink (same pipeline as ordinary text).
-	w.agents.OnStatus = func(text string) {
-		if se := b.sessionEvents.Load(); se != nil && se.OnText != nil {
-			se.OnText(text)
+	// Forward subagent spawn/completion status to the user through the
+	// session-scoped delivery sink (same pipeline as ordinary text). The tracker
+	// now emits a DETAIL string (running descriptions, or "" when none), so this
+	// caller owns the human-facing wording.
+	w.agents.OnStatus = func(detail string) {
+		se := b.sessionEvents.Load()
+		if se == nil || se.OnText == nil {
+			return
+		}
+		if detail == "" {
+			se.OnText("✅ Subagents complete")
+		} else {
+			se.OnText("🔄 Subagents running: " + detail)
 		}
 	}
 

@@ -35,10 +35,7 @@ const (
 	TypeTextEnd         = "text.end"
 	TypeMessage         = "message"
 	TypeNotification    = "notification"
-	TypeTyping          = "typing"
-	TypeThinking        = "thinking"
-	TypeWarming         = "warming"
-	TypeTool            = "tool"
+	TypeActivity        = "activity"
 	TypeMedia           = "media"
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
@@ -57,6 +54,39 @@ const (
 	TypeConversationArchive    = "conversation.archive"
 	TypeRead                   = "read"
 	TypePing                   = "ping"
+	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
+	// distinct from the server->app agent activity indicator, which is now the
+	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
+	TypeTyping = "typing"
+)
+
+// ActivityKind enumerates the server->app agent activity states carried by the
+// unified Activity frame. The server resolves the concurrently-true inputs to a
+// single kind by this precedence (highest first):
+//
+//	subagents > waiting > tool > thinking > warming > typing > idle
+//
+// The zero value is the empty string; treat it as ActivityKindIdle. Mirrors the
+// Kotlin ActivityKind enum in the :protocol module.
+type ActivityKind string
+
+const (
+	// ActivityKindIdle: no turn in flight and nothing session-scoped pending.
+	ActivityKindIdle ActivityKind = "idle"
+	// ActivityKindTyping: the model is streaming visible text.
+	ActivityKindTyping ActivityKind = "typing"
+	// ActivityKindThinking: the model is mid extended-thinking.
+	ActivityKindThinking ActivityKind = "thinking"
+	// ActivityKindWarming: turn started, no output token yet.
+	ActivityKindWarming ActivityKind = "warming"
+	// ActivityKindTool: a tool is running (detail carries the tool name).
+	ActivityKindTool ActivityKind = "tool"
+	// ActivityKindSubagents: one or more CC subagents (Agent-tool spawns) are
+	// running (detail carries their descriptions).
+	ActivityKindSubagents ActivityKind = "subagents"
+	// ActivityKindWaiting: this conversation dispatched a send_to_session and is
+	// waiting on another foci agent's reply (detail carries the target agent id).
+	ActivityKindWaiting ActivityKind = "waiting"
 )
 
 // WebSocket close codes (wire-protocol §7).
@@ -139,21 +169,15 @@ type ConversationInfo struct {
 	// freshly-paired device learns the archived state without a local column to
 	// seed from.
 	Archived bool `json:"archived,omitempty"`
-	// Typing is true iff a turn is in flight on this conversation. It is the roster
-	// snapshot half of the typing indicator; the Typing frame carries live deltas.
-	Typing bool `json:"typing,omitempty"`
-	// Thinking is true iff the model is mid extended-thinking on this conversation.
-	// Snapshot half of the thinking indicator; the Thinking frame carries live
-	// deltas. Narrower than Typing: it brackets only the reasoning phase(s).
-	Thinking bool `json:"thinking,omitempty"`
-	// Warming is true between turn start and the model's first output token —
-	// the "warming up" phase before any thinking or text has streamed. Snapshot
-	// half of the warming indicator; the Warming frame carries live deltas.
-	Warming bool `json:"warming,omitempty"`
-	// Tool is the name of the tool currently running on this conversation, empty
-	// if none. Snapshot half of the tool indicator; the Tool frame carries live
-	// deltas.
-	Tool string `json:"tool,omitempty"`
+	// Activity is the roster snapshot of this conversation's resolved agent
+	// activity kind (one of the ActivityKind values, as a string). It is the
+	// snapshot half of the unified Activity frame, which carries live changes.
+	// "idle" (or empty) means nothing is in flight.
+	Activity string `json:"activity,omitempty"`
+	// ActivityDetail carries the kind-specific detail for Activity: the tool name
+	// (kind=tool), the running-subagent descriptions (kind=subagents), the target
+	// agent id (kind=waiting), else empty.
+	ActivityDetail string `json:"activityDetail,omitempty"`
 	// LastActivityTs and LastPreview seed the roster row (last-active time + last
 	// message preview) so a freshly-paired device renders them without opening each
 	// chat to backfill. LastActivityTs is unix ms of the last visible frame.
@@ -298,42 +322,21 @@ type Notification struct {
 
 func (Notification) Type() string { return TypeNotification }
 
-// Typing toggles the agent typing indicator.
-type Typing struct {
+// Activity is the unified agent-activity indicator: the server resolves the
+// per-turn state (warming/thinking/tool/typing) and the two session-scoped
+// states (subagents running, waiting on another agent) to a single Kind by the
+// ActivityKind precedence, and emits one Activity frame on every resolved
+// change. Detail carries the kind-specific payload: the tool name (kind=tool),
+// the running-subagent descriptions (kind=subagents), the target agent id
+// (kind=waiting), else empty. This REPLACES the former Typing/Thinking/Warming/
+// Tool frames. App-only.
+type Activity struct {
 	ConversationID string `json:"conversationId"`
-	On             bool   `json:"on"`
+	Kind           string `json:"kind"`
+	Detail         string `json:"detail,omitempty"`
 }
 
-func (Typing) Type() string { return TypeTyping }
-
-// Thinking toggles the extended-thinking indicator. Distinct from Typing:
-// Typing brackets the whole turn; Thinking brackets only the reasoning phase(s).
-type Thinking struct {
-	ConversationID string `json:"conversationId"`
-	On             bool   `json:"on"`
-}
-
-func (Thinking) Type() string { return TypeThinking }
-
-// Warming toggles the "warming up" indicator: on at turn start, off at the
-// model's first output (thinking or text). The pre-first-token phase the app
-// shows in place of typing, which brackets the whole turn.
-type Warming struct {
-	ConversationID string `json:"conversationId"`
-	On             bool   `json:"on"`
-}
-
-func (Warming) Type() string { return TypeWarming }
-
-// Tool toggles the running-tool indicator. On carries the tool name; off
-// (On=false, Name empty) clears it. App-only, like Warming.
-type Tool struct {
-	ConversationID string `json:"conversationId"`
-	On             bool   `json:"on"`
-	Name           string `json:"name,omitempty"`
-}
-
-func (Tool) Type() string { return TypeTool }
+func (Activity) Type() string { return TypeActivity }
 
 // Media references an out-of-band blob the app fetches via GET /app/blob/<id>.
 // The bytes never travel over the WebSocket — only this reference does.
