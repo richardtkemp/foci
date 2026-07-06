@@ -547,7 +547,8 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 		agLazy:        agLazy,
 		summariser:    cliSummariser,
 		wakeFn:        wakeScheduleFn,
-		sessionNotify: newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr),
+		sessionNotify: newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),
+		askDeliver:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "ask_grader"),
 		agentTTS:      agentTTS,
 		out:           out,
 	})

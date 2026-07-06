@@ -85,7 +85,7 @@ func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {
 		return nil // stop processing
 	}
 
-	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{})
+	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify")
 	fn("clutch/c5970082313", "test message")
 
 	select {
@@ -117,7 +117,7 @@ func TestNewSessionNotifyFnParsesBranchKeys(t *testing.T) {
 		return nil
 	}
 
-	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{})
+	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify")
 	fn("fotini/c8792716180/b1741826300", "branch message")
 
 	select {
@@ -143,7 +143,7 @@ func TestNewSessionNotifyFnRejectsGarbage(t *testing.T) {
 		return nil
 	}
 
-	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{})
+	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify")
 	fn("not-a-valid-key", "bad message")
 
 	select {
@@ -170,7 +170,7 @@ func TestNewSessionNotifyFnParsesIndependentKeys(t *testing.T) {
 		return nil
 	}
 
-	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{})
+	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify")
 	fn("myagent/i1709596800", "independent message")
 
 	select {
