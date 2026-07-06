@@ -42,7 +42,7 @@ type sessionWatcher struct {
 
 	// agents tracks pending Agent tool_use calls within a turn and emits
 	// aggregated status messages (e.g. "🔄 2 agent(s) running: ...").
-	agents delegator.AgentTracker
+	agents delegator.SubagentTracker
 
 	// turnState tracks the current turn's accumulated text, tool calls, and usage.
 	turnText  string

@@ -31,6 +31,12 @@ type SessionNotifyFn func(sessionKey, message string)
 // receipt), or an error describing why nothing matched.
 type SessionKeyResolverFn func(target string) (key, via string, err error)
 
+// SessionWaitFn signals that callerSessionKey has dispatched a reply_to=caller
+// send_to_session and is now waiting on targetAgent's reply. Platforms with an
+// activity surface (the app) render this as a "waiting" indicator on the caller
+// conversation; it is cleared when the caller's next turn begins. Optional.
+type SessionWaitFn func(callerSessionKey, targetAgent string)
+
 // NewSendToSessionTool creates a tool that injects a user-role message into
 // another session and triggers processing via the notifier.
 //
@@ -38,7 +44,9 @@ type SessionKeyResolverFn func(target string) (key, via string, err error)
 // response to the target session's own chat instead of back to the caller.
 // The resolveKeyFn is optional — if provided, loose targets (bare agent
 // names) are resolved to the active session key.
-func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn, resolveKeyFn SessionKeyResolverFn) *Tool {
+// onWaitFn, when non-nil, is fired for reply_to=caller dispatches to signal that
+// the caller is now waiting on the target agent's reply (see SessionWaitFn).
+func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn, resolveKeyFn SessionKeyResolverFn, onWaitFn SessionWaitFn) *Tool {
 	return &Tool{
 		Name:       "send_to_session",
 		ExecExport: true,
@@ -140,9 +148,26 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 					// Pass originSession so response routes back to caller
 					notifier.InjectToAgent(targetKey, tagged, originSession, "async_notify")
 				}
+				// reply_to=caller genuinely waits for the target's reply — mark the
+				// caller as waiting on the target agent (cleared when the caller's
+				// reply turn begins). reply_to=session is fire-and-forget, so no
+				// waiting state is set there.
+				if onWaitFn != nil && originSession != "" {
+					onWaitFn(originSession, targetAgentOf(targetKey))
+				}
 			}
 
 			return TextResult(fmt.Sprintf("Message sent to session %s (resolved via %s, reply_to=%s).", targetKey, resolvedVia, p.ReplyTo)), nil
 		},
 	}
+}
+
+// targetAgentOf derives the target agent id (foci personality) from a resolved
+// session key, for the "waiting on <agent>" indicator. Falls back to the key
+// itself when it doesn't parse as agentID/typeID.
+func targetAgentOf(sessionKey string) string {
+	if sk, err := session.ParseSessionKey(sessionKey); err == nil {
+		return sk.AgentID
+	}
+	return sessionKey
 }

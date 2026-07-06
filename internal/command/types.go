@@ -151,6 +151,12 @@ type CommandContext struct {
 	// "on", "off", "toggle", "status"; returns the resulting enabled state.
 	// Nil = pprof not available (command reports unavailable).
 	PprofControl func(action string) bool
+
+	// ActivityFunc resolves the unified app activity (kind + detail) for a
+	// session, so /status renders the same value the app shows. ok is false when
+	// there is no app binding for the session (non-app platforms), in which case
+	// /status omits the activity line. Nil = never rendered.
+	ActivityFunc func(sessionKey string) (kind, detail string, ok bool)
 }
 
 // TokenCountCache caches token counting results so /context doesn't re-count every call.

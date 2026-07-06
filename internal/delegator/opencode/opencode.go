@@ -239,8 +239,8 @@ type Backend struct {
 	// when the Backend is recreated (session restart).
 	authFailureFired atomic.Bool
 
-	// Agent spawn tracking — shared with ccstream via delegator.AgentTracker.
-	agents delegator.AgentTracker
+	// Subagent spawn tracking — shared with ccstream via delegator.SubagentTracker.
+	agents delegator.SubagentTracker
 }
 
 // IsRunning reports whether the OpenCode subprocess is alive.
@@ -309,8 +309,9 @@ func (b *Backend) SetOnCompactionDone(fn func(preTokens int)) {
 	b.onCompactionDone = fn
 }
 
-// SetOnAgentStatus stores the callback on the shared AgentTracker.
-func (b *Backend) SetOnAgentStatus(fn func(text string)) {
+// SetOnSubagentStatus stores the callback on the shared SubagentTracker. The
+// callback receives the running-subagent detail string (or "" when none).
+func (b *Backend) SetOnSubagentStatus(fn func(detail string)) {
 	b.agents.OnStatus = fn
 }
 

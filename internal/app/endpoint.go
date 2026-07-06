@@ -61,6 +61,61 @@ func MintActivePairKey(ttl time.Duration) (string, time.Time, error) {
 	return key, exp, nil
 }
 
+// SetSubagentDetail routes a running-subagent status detail (or "" when none
+// are running) to the conversation bound to sessionKey, updating its unified
+// Activity indicator. No-op when the app provider is not running or the session
+// has no live binding — the app is only one of several platforms and a session
+// may not be an app conversation at all.
+func SetSubagentDetail(sessionKey, detail string) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	if b := h.bindingForSession(sessionKey); b != nil {
+		b.setSubagentDetail(detail)
+	}
+}
+
+// SetWaiting marks the conversation bound to callerSessionKey as waiting on
+// another foci agent (targetAgent), or clears it when targetAgent is "". Used by
+// send_to_session so the caller's Activity shows "waiting" until its reply turn
+// begins (which clears it). No-op when the app provider is not running or the
+// session has no live binding.
+func SetWaiting(callerSessionKey, targetAgent string) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	if b := h.bindingForSession(callerSessionKey); b != nil {
+		b.setWaitingDetail(targetAgent)
+	}
+}
+
+// ResolvedActivity returns the resolved unified activity (kind + detail) for the
+// conversation bound to sessionKey, so /status renders the same value the app
+// sees. ok is false when the app provider is not running or the session has no
+// app binding (the caller falls back gracefully).
+func ResolvedActivity(sessionKey string) (kind, detail string, ok bool) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return "", "", false
+	}
+	b := h.bindingForSession(sessionKey)
+	if b == nil {
+		return "", "", false
+	}
+	b.mu.Lock()
+	k, d := b.resolveActivity()
+	b.mu.Unlock()
+	return string(k), d, true
+}
+
 // withHub returns an http.HandlerFunc that resolves the active hub (503 if
 // unconfigured) and delegates to fn. Each hub method does its own Bearer auth,
 // so no shared middleware is needed.

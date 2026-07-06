@@ -157,11 +157,11 @@ func TestCallbackSetters(t *testing.T) {
 		t.Errorf("compDoneTokens = %d, want 50000", compDoneTokens)
 	}
 
-	// SetOnAgentStatus
+	// SetOnSubagentStatus
 	var agentStatusText string
-	b.SetOnAgentStatus(func(text string) { agentStatusText = text })
+	b.SetOnSubagentStatus(func(detail string) { agentStatusText = detail })
 	if b.agents.OnStatus == nil {
-		t.Error("agents.OnStatus is nil after SetOnAgentStatus")
+		t.Error("agents.OnStatus is nil after SetOnSubagentStatus")
 	}
 	b.agents.OnStatus("running")
 	if agentStatusText != "running" {
@@ -1333,13 +1333,13 @@ func TestOnAssistant_ThinkingBlock(t *testing.T) {
 }
 
 func TestOnAssistant_AgentToolUseTracking(t *testing.T) {
-	// Verifies Agent tool_use blocks are tracked via the shared AgentTracker,
+	// Verifies Agent tool_use blocks are tracked via the shared SubagentTracker,
 	// mirroring the tmux backend's behavior.
 	t.Parallel()
 
 	var statusMessages []string
 	b := &Backend{}
-	b.SetOnAgentStatus(func(text string) { statusMessages = append(statusMessages, text) })
+	b.SetOnSubagentStatus(func(text string) { statusMessages = append(statusMessages, text) })
 	applyHandler(b, &testHandler{})
 
 	agentInput := json.RawMessage(`{"description":"search for patterns"}`)
@@ -1370,7 +1370,7 @@ func TestOnAssistant_AgentDuplicateIgnored(t *testing.T) {
 	t.Parallel()
 
 	b := &Backend{}
-	b.SetOnAgentStatus(func(string) {})
+	b.SetOnSubagentStatus(func(string) {})
 	applyHandler(b, &testHandler{})
 
 	msg := &AssistantMessage{
@@ -1397,7 +1397,7 @@ func TestOnResult_KeepsTrackedAgentsAcrossTurn(t *testing.T) {
 
 	var statusMessages []string
 	b := &Backend{}
-	b.SetOnAgentStatus(func(text string) { statusMessages = append(statusMessages, text) })
+	b.SetOnSubagentStatus(func(text string) { statusMessages = append(statusMessages, text) })
 	b.agents.Add("ag1", "still running")
 	statusMessages = nil // clear Add notification
 
@@ -2333,7 +2333,7 @@ func TestOnSystem_TaskStarted(t *testing.T) {
 
 	var called bool
 	b := &Backend{}
-	b.SetOnAgentStatus(func(string) { called = true })
+	b.SetOnSubagentStatus(func(string) { called = true })
 
 	raw, _ := json.Marshal(TaskEvent{
 		Subtype:     "task_started",
@@ -2347,13 +2347,14 @@ func TestOnSystem_TaskStarted(t *testing.T) {
 }
 
 func TestOnSystem_TaskNotificationCompleted(t *testing.T) {
-	// With no tracked agents, task_notification (completed) fires a fallback
-	// message containing the summary.
+	// With no tracked subagents, task_notification (completed) signals the
+	// cleared state with an empty detail (no subagents running).
 	t.Parallel()
 
+	statusCalled := false
 	var statusText string
 	b := &Backend{}
-	b.SetOnAgentStatus(func(text string) { statusText = text })
+	b.SetOnSubagentStatus(func(detail string) { statusCalled = true; statusText = detail })
 
 	raw, _ := json.Marshal(TaskEvent{
 		Subtype: "task_notification",
@@ -2362,19 +2363,19 @@ func TestOnSystem_TaskNotificationCompleted(t *testing.T) {
 	})
 	b.OnSystem("task_notification", raw)
 
-	if !strings.Contains(statusText, "Bug is fixed") {
-		t.Errorf("statusText = %q, want to contain %q", statusText, "Bug is fixed")
+	if !statusCalled || statusText != "" {
+		t.Errorf("statusText = %q (called=%v), want empty cleared detail", statusText, statusCalled)
 	}
 }
 
 func TestOnSystem_TaskNotificationCompleted_WithTracked(t *testing.T) {
-	// With a tracked agent, task_notification (completed) removes one from
-	// the tracker and fires the aggregated completion message.
+	// With a tracked subagent, task_notification (completed) removes one from
+	// the tracker; the last removal resolves to the empty (cleared) detail.
 	t.Parallel()
 
 	var statusText string
 	b := &Backend{}
-	b.SetOnAgentStatus(func(text string) { statusText = text })
+	b.SetOnSubagentStatus(func(detail string) { statusText = detail })
 	b.agents.Add("ag1", "fix bug")
 
 	raw, _ := json.Marshal(TaskEvent{
@@ -2387,8 +2388,8 @@ func TestOnSystem_TaskNotificationCompleted_WithTracked(t *testing.T) {
 	if b.agents.Pending() != 0 {
 		t.Errorf("Pending() = %d, want 0", b.agents.Pending())
 	}
-	if !strings.Contains(statusText, "complete") {
-		t.Errorf("statusText = %q, want completion message", statusText)
+	if statusText != "" {
+		t.Errorf("statusText = %q, want empty cleared detail", statusText)
 	}
 }
 
@@ -2398,7 +2399,7 @@ func TestOnSystem_TaskProgress(t *testing.T) {
 
 	var called bool
 	b := &Backend{}
-	b.SetOnAgentStatus(func(string) { called = true })
+	b.SetOnSubagentStatus(func(string) { called = true })
 
 	raw, _ := json.Marshal(TaskEvent{
 		Subtype:     "task_progress",

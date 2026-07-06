@@ -8,40 +8,44 @@ import (
 	"time"
 )
 
-// AgentTracker tracks spawned subagent (Agent tool) calls and emits
-// aggregated status messages via OnStatus. Both the tmux and ccstream
-// backends compose this to report running/complete agent status to
-// platforms.
+// SubagentTracker tracks spawned subagent (CC Agent tool) calls and emits an
+// aggregated status detail string via OnStatus. Both the tmux and ccstream
+// backends compose this to report running/complete subagent status.
+//
+// A "subagent" is a CC Agent-tool spawn — distinct from a foci "agent" (a
+// personality that talks to another via send_to_session).
 //
 // All methods are safe for concurrent use.
-type AgentTracker struct {
+type SubagentTracker struct {
 	mu      sync.Mutex
-	pending []TrackedAgent
+	pending []TrackedSubagent
 	start   time.Time
 
-	// OnStatus is called when the agent status changes. Set by the
-	// backend before any tracking begins.
-	OnStatus func(text string)
+	// OnStatus is called when the subagent status changes. The argument is a
+	// plain DETAIL string: the running-subagent descriptions (comma-joined) while
+	// any are running, or "" when none are. It maps cleanly onto the app's
+	// setSubagentDetail. Set by the backend before any tracking begins.
+	OnStatus func(detail string)
 }
 
-// TrackedAgent is a pending Agent tool_use call.
-type TrackedAgent struct {
+// TrackedSubagent is a pending Agent tool_use call.
+type TrackedSubagent struct {
 	ID          string // tool_use ID
 	Description string // short description from Agent tool input
 	added       time.Time
 }
 
 // agentMaxAge bounds how long a spawn stays tracked without a completion
-// signal. The tracker now survives turn boundaries (a background agent
+// signal. The tracker now survives turn boundaries (a background subagent
 // outlives the turn that spawned it), so a missed completion — RemoveOne is
 // FIFO, not ID-matched, in ccstream — can no longer be swept by a per-turn
 // clear; this prune is the backstop so Pending() can't stay stuck > 0. Set
 // well beyond any real subagent's runtime.
 const agentMaxAge = 30 * time.Minute
 
-// Add registers a new agent spawn. Duplicate IDs are silently ignored
+// Add registers a new subagent spawn. Duplicate IDs are silently ignored
 // (handles --include-partial-messages replays in ccstream).
-func (t *AgentTracker) Add(id, description string) {
+func (t *SubagentTracker) Add(id, description string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pruneLocked()
@@ -50,7 +54,7 @@ func (t *AgentTracker) Add(id, description string) {
 			return
 		}
 	}
-	t.pending = append(t.pending, TrackedAgent{ID: id, Description: description, added: time.Now()})
+	t.pending = append(t.pending, TrackedSubagent{ID: id, Description: description, added: time.Now()})
 	if t.start.IsZero() {
 		t.start = time.Now()
 	}
@@ -59,7 +63,7 @@ func (t *AgentTracker) Add(id, description string) {
 
 // pruneLocked drops agents older than agentMaxAge. Caller holds mu; it does
 // not notify (callers already do around their own mutations).
-func (t *AgentTracker) pruneLocked() {
+func (t *SubagentTracker) pruneLocked() {
 	if len(t.pending) == 0 {
 		return
 	}
@@ -76,7 +80,7 @@ func (t *AgentTracker) pruneLocked() {
 
 // Remove marks an agent as completed by its tool_use ID.
 // Returns true if the agent was found and removed.
-func (t *AgentTracker) Remove(id string) bool {
+func (t *SubagentTracker) Remove(id string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i, ag := range t.pending {
@@ -93,7 +97,7 @@ func (t *AgentTracker) Remove(id string) bool {
 // ID matching isn't possible (e.g. ccstream task_notification events
 // don't carry the original tool_use ID).
 // Returns true if an agent was removed.
-func (t *AgentTracker) RemoveOne() bool {
+func (t *SubagentTracker) RemoveOne() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pruneLocked()
@@ -107,7 +111,7 @@ func (t *AgentTracker) RemoveOne() bool {
 
 // ClearAll removes all pending agents and fires a completion
 // notification if any were pending. Safe to call when already empty.
-func (t *AgentTracker) ClearAll() {
+func (t *SubagentTracker) ClearAll() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if len(t.pending) == 0 {
@@ -118,7 +122,7 @@ func (t *AgentTracker) ClearAll() {
 }
 
 // Pending returns the number of agents currently tracked.
-func (t *AgentTracker) Pending() int {
+func (t *SubagentTracker) Pending() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	before := len(t.pending)
@@ -129,15 +133,18 @@ func (t *AgentTracker) Pending() int {
 	return len(t.pending)
 }
 
-// notify sends a status update via OnStatus. Must be called with mu held.
-func (t *AgentTracker) notify() {
+// notify sends the current status DETAIL via OnStatus. Must be called with mu
+// held. The detail is the comma-joined running-subagent descriptions (or a
+// count when none carry a description), or "" when nothing is running — so it
+// maps directly onto the app's setSubagentDetail. Human-facing wording
+// ("🔄 …running" / "✅ …complete") is the caller's concern.
+func (t *SubagentTracker) notify() {
 	if t.OnStatus == nil {
 		return
 	}
 	if len(t.pending) == 0 {
-		elapsed := time.Since(t.start).Round(time.Second)
-		t.OnStatus(fmt.Sprintf("✅ Agents complete (%s)", elapsed))
 		t.start = time.Time{}
+		t.OnStatus("")
 		return
 	}
 	var descs []string
@@ -147,9 +154,9 @@ func (t *AgentTracker) notify() {
 		}
 	}
 	if len(descs) > 0 {
-		t.OnStatus(fmt.Sprintf("🔄 %d agent(s) running: %s", len(t.pending), strings.Join(descs, ", ")))
+		t.OnStatus(strings.Join(descs, ", "))
 	} else {
-		t.OnStatus(fmt.Sprintf("🔄 %d agent(s) running", len(t.pending)))
+		t.OnStatus(fmt.Sprintf("%d subagent(s) running", len(t.pending)))
 	}
 }
 

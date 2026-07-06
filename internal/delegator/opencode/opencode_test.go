@@ -151,11 +151,11 @@ func TestCallbackSetters(t *testing.T) {
 		t.Errorf("compDoneTokens = %d, want 50000", compDoneTokens)
 	}
 
-	// SetOnAgentStatus
+	// SetOnSubagentStatus
 	var agentStatusText string
-	b.SetOnAgentStatus(func(text string) { agentStatusText = text })
+	b.SetOnSubagentStatus(func(detail string) { agentStatusText = detail })
 	if b.agents.OnStatus == nil {
-		t.Error("agents.OnStatus is nil after SetOnAgentStatus")
+		t.Error("agents.OnStatus is nil after SetOnSubagentStatus")
 	}
 	b.agents.OnStatus("running")
 	if agentStatusText != "running" {

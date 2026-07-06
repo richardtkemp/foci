@@ -2,7 +2,6 @@ package ccstream
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"foci/internal/delegator"
@@ -413,11 +412,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		switch subtype {
 		case "task_notification":
 			if task.Status == "completed" {
-				// Remove one pending agent. If the tracker had nothing
-				// (e.g. tool_use detection missed it), fire a standalone
-				// notification as fallback.
+				// Remove one pending subagent. If the tracker had nothing
+				// (e.g. tool_use detection missed it), the resolved state is
+				// already "no subagents running" — signal that with an empty
+				// detail so any stale indicator clears.
 				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
-					b.agents.OnStatus(fmt.Sprintf("✅ Task complete: %s", task.Summary))
+					b.agents.OnStatus("")
 				}
 			}
 		}

@@ -15,8 +15,8 @@ import (
 // an appBackend (see render.go). The wrapper adds only what is genuinely
 // app-specific and has no home in the platform renderer:
 //
-//   - the typing indicator, driven off the turn boundary as structured
-//     fap.Typing frames (the renderer's SendTyping is a no-op for the app);
+//   - the agent activity indicator, driven off the turn boundary as structured
+//     fap.Activity frames (the renderer's SendTyping is a no-op for the app);
 //   - the structured fap.Meta frame on turn completion (model/cost/tokens/mana —
 //     the typed replacement for the [meta] text blob the Telegram bridge injects);
 //   - dropping SubagentText, which the app has no surface for yet. Forwarding it
@@ -36,13 +36,6 @@ type appSink struct {
 	// statusFn supplies the meta-frame status chips (mana%, mana state, gap).
 	// nil = those fields are omitted (e.g. a sink with no agent context).
 	statusFn func() (manaPct *int, manaState, gap string)
-
-	// thinking dedups the thinking indicator: the reasoning phase produces many
-	// ThinkingDelta events but only a state change emits a frame. Safe without a
-	// lock — the turn-event stream is single-producer and strictly ordered.
-	thinking bool
-	warming  bool
-	tool     string
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -59,13 +52,12 @@ func newAppSink(b *convBinding) *appSink {
 	renderer := turn.NewTurnRenderer(backend, tracker, d, newSB)
 	inner := turn.NewStreamingSink(renderer, tracker, nil)
 	s := &appSink{b: b, inner: inner}
-	// A turn abandoned without TurnComplete would strand the indicators; cleanup is
-	// deferred by the agent on every turn, so clearing them here is the backstop.
+	// A turn abandoned without TurnComplete would strand the indicator; cleanup is
+	// deferred by the agent on every turn, so clearing the turn-scoped activity
+	// here is the backstop. Session-scoped states (subagents/waiting) are NOT
+	// cleared here — they outlive the turn by design.
 	s.cleanup = func() {
-		b.setInTurn(false)
-		s.setThinking(false)
-		s.setWarming(false)
-		s.setTool("")
+		b.setTurnActivity(fap.ActivityKindIdle, "")
 		renderer.Cleanup()
 	}
 	return s
@@ -79,9 +71,10 @@ func (s *appSink) DeliversToPlatform() bool { return true }
 func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
 	case turnevent.TurnStart:
-		s.b.setInTurn(true)
-		s.setWarming(true)
-		s.b.send(fap.Typing{ConversationID: s.b.convID, On: true})
+		// A fresh turn means this conversation's caller is active again — clear any
+		// session-scoped "waiting on another agent" state before the turn opens.
+		s.b.setWaitingDetail("")
+		s.b.setTurnActivity(fap.ActivityKindWarming, "")
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.SubagentText:
@@ -89,74 +82,33 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// prematurely finalizing the in-flight reply stream. See type doc.
 
 	case turnevent.ThinkingDelta, turnevent.ThinkingBlock:
-		s.setWarming(false)
-		s.setTool("")
-		s.setThinking(true)
+		s.b.setTurnActivity(fap.ActivityKindThinking, "")
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolCall:
-		s.setWarming(false)
-		s.setThinking(false)
-		s.setTool(e.Name)
+		s.b.setTurnActivity(fap.ActivityKindTool, e.Name)
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolResult:
-		s.setTool("")
+		// Tool finished; the model is processing its result with no output token
+		// yet — back to the "warming" (working) state until the next event.
+		s.b.setTurnActivity(fap.ActivityKindWarming, "")
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.TextDelta, turnevent.TextBlock:
-		s.setWarming(false)
-		s.setThinking(false)
-		s.setTool("")
+		s.b.setTurnActivity(fap.ActivityKindTyping, "")
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.TurnComplete:
 		// Forward first so the final text is delivered (TextEnd / ServerMessage),
-		// then bracket with thinking-off (safety), typing-off, and the meta frame.
+		// then close out the turn-scoped activity (→ idle) and emit the meta frame.
 		s.inner.Emit(ctx, ev)
-		s.setThinking(false)
-		s.setWarming(false)
-		s.setTool("")
-		s.b.setInTurn(false)
-		s.b.send(fap.Typing{ConversationID: s.b.convID, On: false})
+		s.b.setTurnActivity(fap.ActivityKindIdle, "")
 		s.emitMeta(e)
 
 	default:
 		s.inner.Emit(ctx, ev)
 	}
-}
-
-// setThinking toggles the extended-thinking indicator, emitting the roster
-// snapshot + live delta frame only on an actual state change.
-func (s *appSink) setThinking(on bool) {
-	if s.thinking == on {
-		return
-	}
-	s.thinking = on
-	s.b.setThinkingSnapshot(on)
-	s.b.send(fap.Thinking{ConversationID: s.b.convID, On: on})
-}
-
-// setWarming toggles the "warming up" indicator, emitting the roster snapshot
-// + live delta frame only on an actual state change.
-func (s *appSink) setWarming(on bool) {
-	if s.warming == on {
-		return
-	}
-	s.warming = on
-	s.b.setWarmingSnapshot(on)
-	s.b.send(fap.Warming{ConversationID: s.b.convID, On: on})
-}
-
-// setTool toggles the running-tool indicator, emitting the roster snapshot +
-// live frame only on an actual change. Empty name means no tool is running.
-func (s *appSink) setTool(name string) {
-	if s.tool == name {
-		return
-	}
-	s.tool = name
-	s.b.setToolSnapshot(name)
-	s.b.send(fap.Tool{ConversationID: s.b.convID, On: name != "", Name: name})
 }
 
 // emitMeta sends the user-facing status chips (model, cost, tokens) the app

@@ -32,6 +32,7 @@ type mockBackendDM struct {
 	cancelListeners  map[string][]func(reason string)
 	onSessionReady   func(string)
 	typingFunc       func(bool)
+	onSubagentStatus func(string)
 	sessionID        string
 	sessionFilePath  string
 	waitReadyErr     error
@@ -192,6 +193,14 @@ func (m *mockBackendDM) SetTypingFunc(fn func(bool)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.typingFunc = fn
+}
+
+// SetOnSubagentStatus is the optional (non-interface) hook the manager wires via
+// type assertion; providing it here lets the routing test observe the wiring.
+func (m *mockBackendDM) SetOnSubagentStatus(fn func(detail string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onSubagentStatus = fn
 }
 
 func (m *mockBackendDM) AttachSessionEvents(events *delegator.SessionEvents) {
@@ -1281,6 +1290,40 @@ func TestGet_TypingFuncRouting(t *testing.T) {
 	}
 	if !gotTyping {
 		t.Error("TypingFunc typing = false, want true")
+	}
+}
+
+func TestGet_SubagentStatusFuncRouting(t *testing.T) {
+	// Proves setBackendCallbacks wires the backend's SetOnSubagentStatus (reached
+	// via type assertion, since it is not on the Delegator interface) to route the
+	// running-subagent detail through SubagentStatusFunc with the correct session
+	// key — the fix for the ccstream gap where OnStatus was never wired.
+	var gotKey, gotDetail string
+	mgr, mocks := newTestManager(t, nil)
+	mgr.SubagentStatusFunc = func(sk, detail string) {
+		gotKey = sk
+		gotDetail = detail
+	}
+
+	_, err := mgr.Get(context.Background(), "test-agent/c1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	mock := (*mocks)[0]
+	mock.mu.Lock()
+	ss := mock.onSubagentStatus
+	mock.mu.Unlock()
+	if ss == nil {
+		t.Fatal("onSubagentStatus not wired on backend")
+	}
+
+	ss("build docs, run tests")
+	if gotKey != "test-agent/c1" {
+		t.Errorf("SubagentStatusFunc sessionKey = %q, want %q", gotKey, "test-agent/c1")
+	}
+	if gotDetail != "build docs, run tests" {
+		t.Errorf("SubagentStatusFunc detail = %q, want %q", gotDetail, "build docs, run tests")
 	}
 }
 

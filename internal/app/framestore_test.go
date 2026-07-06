@@ -24,7 +24,7 @@ func tempFrameStore(t *testing.T) *frameStore {
 // mkWire encodes a real frame so drainEnv can decode the seq back out.
 func mkWire(t *testing.T, convID string, seq int64) string {
 	t.Helper()
-	w, err := fap.Encode(fap.Typing{ConversationID: convID, On: true}, seq, 0, "", "")
+	w, err := fap.Encode(fap.Activity{ConversationID: convID, Kind: "typing"}, seq, 0, "", "")
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestBinding_SeqRehydratesFromStore(t *testing.T) {
 	b := &convBinding{convID: "c1", store: s, seq: s.MaxSeq("c1"), seen: map[string]struct{}{}}
 	c := fakeClient()
 	b.attach(c)
-	b.send(fap.Typing{ConversationID: "c1", On: true}) // must be seq 6, not 1
+	b.send(fap.Activity{ConversationID: "c1", Kind: "typing"}) // must be seq 6, not 1
 	ds := drainEnv(t, c)
 	if len(ds) != 1 || ds[0].seq != 6 {
 		t.Fatalf("post-restart send = %v, want one frame at seq 6", ds)
