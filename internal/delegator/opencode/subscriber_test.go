@@ -446,6 +446,72 @@ func TestRunSubscriber_RetriesOnNon200(t *testing.T) {
 	}
 }
 
+func TestRunSubscriber_RetriesOnHeaderHang(t *testing.T) {
+	// Bug #1051's trigger: a server that accepts the TCP connection but never
+	// writes response headers (a booting opencode) must be retried, not wedged
+	// on forever. ResponseHeaderTimeout bounds the header wait so client.Do
+	// errors and the loop retries; without it the connect blocks indefinitely
+	// (no deadline, only ctx-cancel) and no SSE stream ever establishes.
+	orig := subscriberHeaderTimeout
+	subscriberHeaderTimeout = 150 * time.Millisecond
+	defer func() { subscriberHeaderTimeout = orig }()
+
+	var ready atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !ready.Load() {
+			<-r.Context().Done() // hold the connection open, never send headers
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"type\":\"session.idle\",\"properties\":{\"sessionID\":\"sess-hang\"}}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	srv := newRetryTestServer()
+	srv.baseURL = ts.URL
+	be := &Backend{sessionID: "sess-hang", events: make(chan rawEvent, 1)}
+	srv.sessions["sess-hang"] = be
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subDone := make(chan struct{})
+	go func() {
+		srv.runSubscriber(ctx)
+		close(subDone)
+	}()
+
+	// While the server hangs on headers, the loop must be retrying — not exited,
+	// and crucially not wedged inside a single client.Do.
+	select {
+	case <-subDone:
+		t.Fatal("runSubscriber returned while the server hung on headers — it must retry")
+	case <-time.After(3 * subscriberHeaderTimeout):
+	}
+
+	ready.Store(true)
+	select {
+	case ev := <-be.events:
+		if ev.Type != "session.idle" {
+			t.Errorf("routed event = %q, want session.idle", ev.Type)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no event routed after the server started sending headers — retry-on-header-hang failed")
+	}
+
+	cancel()
+	select {
+	case <-subDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("runSubscriber did not return after ctx cancel")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Server.route — per-session dispatch logic.
 // ---------------------------------------------------------------------------
