@@ -128,7 +128,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	envBlock := ""
 	if p.resolved.Environment.Enabled {
 		crontabCount := countCrontabJobs()
-		envBlock = buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools())
+		envBlock = buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools(), shared.promptSearchDirs)
 	}
 	systemPrompt := delegatedSystemPrompt(envBlock, bs.SystemBlocks(), br.extraSystemBlocks)
 
