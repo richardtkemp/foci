@@ -13,11 +13,12 @@ func TestWriteCommandApproval(t *testing.T) {
 	rc.Permissions.AutoApproveCommonReadonly = true
 	rc.Permissions.AutoApproveCommonSafeWrite = false
 	rc.Permissions.AutoApproveRules = []string{"Bash:gh search", "Bash:git -C /home/rich/git/foci"}
-	writeCommandApproval(&b, rc)
+	writeCommandApproval(&b, rc, "Read(/tmp/**), Write(/tmp/**)")
 	out := b.String()
 
 	for _, want := range []string{
 		"## Command Approval",
+		"**CC-native** (CC never prompts): Read(/tmp/**), Write(/tmp/**)", // the CC --allowedTools layer
 		"every `foci_*` shell function is always auto-approved",
 		"**read-only** (on):",
 		"sqlite3 -readonly",           // a rendered read-only rule (Bash: stripped)
@@ -71,9 +72,12 @@ func TestWriteCommandApproval_ReadonlyDisabled(t *testing.T) {
 	var b strings.Builder
 	rc := &config.ResolvedAgentConfig{}
 	rc.Permissions.AutoApproveCommonReadonly = false
-	writeCommandApproval(&b, rc)
+	writeCommandApproval(&b, rc, "")
 	out := b.String()
 	if strings.Contains(out, "**read-only** (on)") {
 		t.Error("read-only line should be absent when the allowlist is disabled")
+	}
+	if strings.Contains(out, "CC-native") {
+		t.Error("CC-native line should be absent when no --allowedTools are configured")
 	}
 }

@@ -140,9 +140,15 @@ func writeVisibility(b *strings.Builder, rc *config.ResolvedAgentConfig) {
 // so it knows which tool/Bash calls run without prompting the user, instead of
 // guessing (#950). Rendered from the ccstream rule sets (the source of truth) so
 // it can't drift from what the backend actually approves.
-func writeCommandApproval(b *strings.Builder, rc *config.ResolvedAgentConfig) {
+func writeCommandApproval(b *strings.Builder, rc *config.ResolvedAgentConfig, ccAllowedTools string) {
 	b.WriteString("\n## Command Approval\n")
 	b.WriteString("Tool and Bash calls matching your auto-approve allowlist run WITHOUT prompting the user; everything else prompts. Your effective allowlist:\n")
+	if ccAllowedTools != "" {
+		// CC's own --allowedTools layer: CC never even generates a prompt for
+		// these (distinct from the foci rules below, which auto-answer prompts
+		// CC does generate).
+		fmt.Fprintf(b, "- **CC-native** (CC never prompts): %s\n", ccAllowedTools)
+	}
 	b.WriteString("- **foci tools**: every `foci_*` shell function is always auto-approved.\n")
 	if rc.Permissions.AutoApproveCommonReadonly {
 		fmt.Fprintf(b, "- **read-only** (on): %s\n", strings.Join(stripBashPrefix(ccstream.CommonReadonlyRules), ", "))
@@ -232,7 +238,7 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	// Auto-approve visibility is CC-specific (the ccstream Bash allowlist);
 	// opencode has its own permission model.
 	if acfg.Backend == "claude-code" {
-		writeCommandApproval(&b, rc)
+		writeCommandApproval(&b, rc, cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig["allowed_tools"]))
 	}
 
 	writeVisibility(&b, rc)
