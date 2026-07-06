@@ -1271,6 +1271,48 @@ func (h *Hub) removeClient(c *wsClient) {
 	}
 }
 
+// OpenSessionsForAgent returns the deduped session keys of the conversations the
+// agent's app clients currently have open (their pager tabs). Used by keepalive
+// to warm open chats. Snapshots bindings under each client's lock, then reads
+// session keys under the binding lock — never both at once (attach takes b.mu
+// before client.mu, so the reverse order here would deadlock).
+func (h *Hub) OpenSessionsForAgent(agentID string) []string {
+	h.mu.RLock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+
+	var bindings []*convBinding
+	for _, c := range clients {
+		c.mu.Lock()
+		for convID := range c.openConvIDs {
+			if b := c.convByID[convID]; b != nil {
+				bindings = append(bindings, b)
+			}
+		}
+		c.mu.Unlock()
+	}
+
+	seen := make(map[string]struct{})
+	var out []string
+	for _, b := range bindings {
+		b.mu.Lock()
+		sk, ag := b.sessionKey, b.agentID
+		b.mu.Unlock()
+		if ag != agentID || sk == "" {
+			continue
+		}
+		if _, dup := seen[sk]; dup {
+			continue
+		}
+		seen[sk] = struct{}{}
+		out = append(out, sk)
+	}
+	return out
+}
+
 // --- convBinding: durable per-conversation state (outlives sockets) ---
 
 // bufferedFrame is one sent server frame retained for replay after a reconnect.
@@ -1629,9 +1671,10 @@ type wsClient struct {
 	// No socket-wide "current agent": one socket multiplexes every agent's
 	// conversations concurrently. Each inbound frame names its agent (or its
 	// conversation's binding does), so the agent is resolved per-frame.
-	deviceID string                  // from the client hello
-	features map[string]struct{}     // advertised client capabilities (from the hello)
-	convByID map[string]*convBinding // conversationId → binding
+	deviceID    string                  // from the client hello
+	features    map[string]struct{}     // advertised client capabilities (from the hello)
+	convByID    map[string]*convBinding // conversationId → binding
+	openConvIDs map[string]struct{}     // conversations the app currently has open (its pager tabs)
 }
 
 // supportsFeature reports whether the binding's app advertised feat. It reads the

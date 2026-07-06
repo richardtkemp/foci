@@ -102,6 +102,11 @@ type Runner struct {
 	todoStore          *memory.TodoStore
 	sessionIndex       *session.SessionIndex
 
+	// openSessionsFn returns the session keys of chats the app currently has open,
+	// used by keepalive when warm_open_app_chats is set. nil = feature unavailable
+	// (non-app agents) → keepalive warms only the default session.
+	openSessionsFn func() []string
+
 	// agent is the single dependency the schedulers drive — Branch, CanFire,
 	// IsTurnInFlight, etc. (replaces the former eight injected closures). The
 	// in-flight check mirrors the gateway send/branch gate (TODO #753): periodic
@@ -152,6 +157,10 @@ type RunnerConfig struct {
 	// cmd/foci-gw/periodic_setup.go to an adapter over the agent instance.
 	Agent BackgroundAgent
 
+	// OpenSessionsFn returns session keys of the app's currently-open chats.
+	// nil for non-app agents (keepalive then warms only the default session).
+	OpenSessionsFn func() []string
+
 	WarningDispatcher     *warnings.Dispatcher
 	ChatWarningDispatcher *warnings.Dispatcher
 
@@ -177,6 +186,7 @@ func New(cfg RunnerConfig) *Runner {
 		promptSearchDirs:   cfg.PromptSearchDirs,
 		todoStore:          cfg.TodoStore,
 		sessionIndex:       cfg.SessionIndex,
+		openSessionsFn:     cfg.OpenSessionsFn,
 
 		agent:                 cfg.Agent,
 		warningDispatcher:     cfg.WarningDispatcher,
@@ -388,8 +398,9 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
-	parentKey, skip := r.readyParentKey()
-	if skip != "" {
+	targets := r.keepaliveTargets()
+	if len(targets) == 0 {
+		skip = "no ready session"
 		return
 	}
 
@@ -400,7 +411,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	r.lastCacheWarmed = time.Now()
 	r.mu.Unlock()
 
-	r.log.Infof("firing keepalive for agent %s (cache age %s)", r.agentID, elapsed.Round(time.Second))
+	r.log.Infof("firing keepalive for agent %s (%d session(s), cache age %s)", r.agentID, len(targets), elapsed.Round(time.Second))
 
 	go func() {
 		defer func() {
@@ -408,8 +419,32 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 			r.keepaliveRunning = false
 			r.mu.Unlock()
 		}()
-		r.agent.Branch("keepalive", parentKey, promptText, true)
+		for _, sk := range targets {
+			r.agent.Branch("keepalive", sk, promptText, true)
+		}
 	}()
+}
+
+// keepaliveTargets returns the sessions to warm this cycle, each already filtered
+// for an in-flight turn. With warm_open_app_chats and open chats present, it warms
+// every open session; otherwise (or when none are open) it warms the default.
+func (r *Runner) keepaliveTargets() []string {
+	if r.kaCfg.WarmOpenAppChats && r.openSessionsFn != nil {
+		var ready []string
+		for _, sk := range r.openSessionsFn() {
+			if !r.parentTurnInFlight(sk) {
+				ready = append(ready, sk)
+			}
+		}
+		if len(ready) > 0 {
+			return ready
+		}
+	}
+	parentKey, skip := r.readyParentKey()
+	if skip != "" {
+		return nil
+	}
+	return []string{parentKey}
 }
 
 func (r *Runner) maybeBackgroundWork(ctx context.Context) {

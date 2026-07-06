@@ -82,9 +82,28 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// Reconnect resume: re-attach + replay each conversation the client still
 		// has unrendered frames for.
 		h.resumeConversations(client, f.Resume)
+		// Seed the open-set from the resume points' open flags.
+		open := make(map[string]struct{})
+		for _, rp := range f.Resume {
+			if rp.Open {
+				open[rp.ConversationID] = struct{}{}
+			}
+		}
+		client.mu.Lock()
+		client.openConvIDs = open
+		client.mu.Unlock()
 
 	case fap.ConversationOpen:
 		h.handleConversationOpen(client, f)
+
+	case fap.ConversationOpenSet:
+		open := make(map[string]struct{}, len(f.ConversationIDs))
+		for _, id := range f.ConversationIDs {
+			open[id] = struct{}{}
+		}
+		client.mu.Lock()
+		client.openConvIDs = open
+		client.mu.Unlock()
 
 	case fap.ConversationList:
 		h.pushRoster(client)

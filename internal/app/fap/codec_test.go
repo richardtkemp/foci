@@ -207,6 +207,34 @@ func TestDecode_ConversationOpen(t *testing.T) {
 	}
 }
 
+func TestDecode_ConversationOpenSet(t *testing.T) {
+	in, err := Decode(`{"t":"conversation.openSet","id":"x","d":{"conversationIds":["c1","c2"]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os, ok := in.Frame.(ConversationOpenSet)
+	if !ok {
+		t.Fatalf("frame type = %T, want ConversationOpenSet", in.Frame)
+	}
+	if len(os.ConversationIDs) != 2 || os.ConversationIDs[0] != "c1" || os.ConversationIDs[1] != "c2" {
+		t.Errorf("conversation.openSet decoded wrong: %+v", os)
+	}
+}
+
+func TestDecode_ClientHelloResumeOpen(t *testing.T) {
+	in, err := Decode(`{"t":"hello","id":"x","d":{"resume":[{"conversationId":"c1","ack":3,"open":true},{"conversationId":"c2","ack":1}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, ok := in.Frame.(ClientHello)
+	if !ok {
+		t.Fatalf("frame type = %T, want ClientHello", in.Frame)
+	}
+	if len(h.Resume) != 2 || !h.Resume[0].Open || h.Resume[1].Open {
+		t.Errorf("resume open flags decoded wrong: %+v", h.Resume)
+	}
+}
+
 func TestDecode_ClientTypingAndRead(t *testing.T) {
 	in, err := Decode(`{"t":"typing","id":"x","d":{"conversationId":"c1","on":true}}`)
 	if err != nil {

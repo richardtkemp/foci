@@ -1027,9 +1027,10 @@ func (e EndpointConfig) URLForFormat(f string) string {
 // KeepaliveConfig controls the cache keepalive timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type KeepaliveConfig struct {
-	Enabled  *bool   `toml:"enabled"                  desc:"enable keepalive timer"`                       // enable keepalive timer
-	Interval *string `toml:"interval" default:"55m"   desc:"time since cache last warmed" type:"duration"` // time since cache last warmed before firing
-	Prompt   *string `toml:"prompt"                   desc:"keepalive prompt file path"`                   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	Enabled          *bool   `toml:"enabled"                  desc:"enable keepalive timer"`                       // enable keepalive timer
+	Interval         *string `toml:"interval" default:"55m"   desc:"time since cache last warmed" type:"duration"` // time since cache last warmed before firing
+	Prompt           *string `toml:"prompt"                   desc:"keepalive prompt file path"`                   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	WarmOpenAppChats *bool   `toml:"warm_open_app_chats"      desc:"warm every chat the app has open, not just the default session"`
 }
 
 // ReflectionConfig controls the periodic reflection pass, which captures both

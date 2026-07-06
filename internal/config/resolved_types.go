@@ -205,16 +205,18 @@ func resolveEnvironment(m EnvironmentConfig) ResolvedEnvironment {
 }
 
 type ResolvedKeepalive struct {
-	Enabled  bool
-	Interval string
-	Prompt   string
+	Enabled          bool
+	Interval         string
+	Prompt           string
+	WarmOpenAppChats bool
 }
 
 func resolveKeepalive(m KeepaliveConfig) ResolvedKeepalive {
 	return ResolvedKeepalive{
-		Enabled:  DerefBool(m.Enabled),
-		Interval: DerefStr(m.Interval),
-		Prompt:   DerefStr(m.Prompt),
+		Enabled:          DerefBool(m.Enabled),
+		Interval:         DerefStr(m.Interval),
+		Prompt:           DerefStr(m.Prompt),
+		WarmOpenAppChats: DerefBool(m.WarmOpenAppChats),
 	}
 }
 

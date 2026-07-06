@@ -52,6 +52,7 @@ const (
 	TypeConversationRename     = "conversation.rename"
 	TypeConversationSetDefault = "conversation.setDefault"
 	TypeConversationArchive    = "conversation.archive"
+	TypeConversationOpenSet    = "conversation.openSet"
 	TypeRead                   = "read"
 	TypePing                   = "ping"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
@@ -202,9 +203,12 @@ type ClientInfo struct {
 }
 
 // ResumePoint is a per-conversation resume high-water sent in client `hello`.
+// Open seeds the server's per-connection open-set: true iff the app currently
+// has this conversation open (its pager tabs), used to warm open chats.
 type ResumePoint struct {
 	ConversationID string `json:"conversationId"`
 	Ack            int64  `json:"ack"`
+	Open           bool   `json:"open,omitempty"`
 }
 
 // AttachmentRef references an already-uploaded blob on an outbound message.
@@ -534,6 +538,13 @@ type ConversationArchive struct {
 	ConversationID string `json:"conversationId"`
 	// Archived is true to archive (hide from roster), false to unarchive.
 	Archived bool `json:"archived"`
+}
+
+// ConversationOpenSet carries the app's full current open-set (the conversations
+// it has open in its pager). Idempotent replace of the server's per-connection
+// open-set; sent whenever the app's open chats change.
+type ConversationOpenSet struct {
+	ConversationIDs []string `json:"conversationIds"`
 }
 
 // ConversationList re-requests the roster (payload-less).
