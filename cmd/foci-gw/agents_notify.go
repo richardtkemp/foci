@@ -171,10 +171,15 @@ func newAsyncNotifier(
 // newSessionNotifyFn creates the session notify callback for cross-agent message routing.
 // When a send_to_session tool targets another agent's session, this function handles
 // dispatching the message to the target agent and delivering the response.
+// newSessionNotifyFn builds a SessionNotifyFn that injects a message into a
+// target session's inbox. trigger is the turn trigger it stamps — "session_notify"
+// for inter-agent send_to_session (via=agent), "ask_grader" for the ask tool's
+// answer/grader delivery (via=ask-grader).
 func newSessionNotifyFn(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
+	trigger string,
 ) tools.SessionNotifyFn {
 	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
 		sk, err := session.ParseSessionKey(targetSessionKey)
@@ -198,7 +203,7 @@ func newSessionNotifyFn(
 			// notifier — a reply meant for a facet must not leak into the
 			// parent's chat via the primary fallback.
 			conn, outcome := route.ConnFor(connMgr, targetAgentID, targetSessionKey, route.PolicyRootFallback)
-			notifyCtx := agent.WithTrigger(ctx, "session_notify")
+			notifyCtx := agent.WithTrigger(ctx, trigger)
 			if conn == nil {
 				if err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, []string{message}, nil); err != nil {
 					log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
@@ -224,7 +229,7 @@ func newSessionNotifyFn(
 		}
 		if !inst.ag.Enqueue(agent.Envelope{
 			SessionKey: targetSessionKey,
-			Inject:     &agent.InjectMeta{Trigger: "session_notify", Run: run},
+			Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
 		}) {
 			log.Errorf("session_notify", "inbox rejected message for session %s", targetSessionKey)
 		}

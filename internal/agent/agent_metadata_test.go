@@ -215,18 +215,25 @@ func TestTriggerToPlatform(t *testing.T) {
 		{"discord", "discord"},
 		{"voice", "voice"},
 		{"android", "android"},
-		{"user", "api"},
-		{"", "api"},
-		{"keepalive", "cron"},
-		{"wake", "cron"},
-		{"cron", "cron"},
-		{"restart", "cron"},
+		{"user", "external"},
+		{"", "external"},
+		{"session_notify", "agent"},
+		{"ask_grader", "ask-grader"},
+		{"webhook", "webhook"},
+		{"keepalive", "background"},
+		{"reflection", "background"},
+		{"consolidation", "background"},
+		{"background", "background"},
+		{"wake", "wake"},
+		{"cron", "wake"},
+		{"scheduled_wake", "wake"},
+		{"restart", "system"},
+		{"proactive_warning", "system"},
 		{"first_run", "cron"},
 		{"async_notify", "async"},
 		{"tmux_watch", "tmux"},
-		{"scheduled_wake", "cron"},
-		{"proactive_warning", "cron"},
-		{"session_end_memory", "cron"},
+		{"compaction_memory", "memory"},
+		{"session_end_memory", "memory"},
 	}
 	for _, tt := range tests {
 		got := triggerToPlatform(tt.trigger)
@@ -247,8 +254,8 @@ func TestMetaPlatformFromTrigger(t *testing.T) {
 		wantPlat string
 	}{
 		{"telegram", "telegram"},
-		{"user", "api"},
-		{"keepalive", "cron"},
+		{"user", "external"},
+		{"keepalive", "background"},
 	} {
 		var receivedReq *provider.MessageRequest
 		client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {

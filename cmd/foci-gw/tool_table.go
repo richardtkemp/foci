@@ -48,7 +48,8 @@ type toolDeps struct {
 	summariser tools.Summariser // APISummariser (API) or CLISummariser (delegated)
 	wakeFn     tools.ScheduleWakeFn
 
-	sessionNotify tools.SessionNotifyFn
+	sessionNotify tools.SessionNotifyFn // send_to_session → via=agent
+	askDeliver    tools.SessionNotifyFn // ask answer/grader delivery → via=ask-grader
 	agentTTS      voice.TTS
 	blockedPaths  []config.BlockedPath // API-only (write/edit)
 
@@ -286,7 +287,7 @@ var toolTable = []toolEntry{
 		t, router := tools.NewAskTool(
 			newAskPresentFn(d.p.acfg.ID, d.connMgr),
 			newAskRestoreFn(d.p.acfg.ID, d.connMgr),
-			tools.AskDeliverFn(d.sessionNotify),
+			tools.AskDeliverFn(d.askDeliver),
 			func(msgID, finalText string) { _ = platform.CancelInteractiveMessage(msgID, finalText) },
 			d.p.sessionIndex, d.p.acfg.ID,
 			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr)),

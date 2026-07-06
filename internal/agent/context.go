@@ -160,14 +160,20 @@ func nudgesAllowed(ts *TurnState) bool {
 }
 
 // triggerToPlatform maps a trigger label to a platform name for the [meta] header.
-// Platform tells the agent which transport delivered the message:
-//   - telegram: message arrived via Telegram text
-//   - voice: message arrived via voice (speech-to-text)
-//   - android: message arrived via Android app
-//   - api: message arrived via HTTP /send endpoint
-//   - tmux: message from tmux watch inactivity detection
-//   - async: message from async tool result (shell, http_request, etc.)
-//   - cron: message is system-initiated (keepalive, wake, scheduled, etc.)
+// Platform tells the agent which transport/source delivered the message:
+//   - telegram/app/discord: a messaging platform (registered, identity-mapped)
+//   - voice: voice (speech-to-text)
+//   - external: HTTP /send endpoint (foci send CLI + raw API callers)
+//   - agent: an inter-agent send_to_session
+//   - ask-grader: the ask tool's answer/grader result delivery
+//   - webhook: an inbound webhook POST
+//   - wake: a /wake poke (scheduled cron job, self-scheduled wakeup)
+//   - background: a periodic self-maintenance tick (keepalive/reflection/consolidation)
+//   - memory: a memory-maintenance write (post-compaction, session-end)
+//   - system: a system-initiated notification (restart changelog, proactive warning)
+//   - tmux: tmux watch inactivity detection
+//   - async: async tool result (shell, http_request, etc.)
+//   - cron: fallback for a genuinely-unclassified trigger (should not normally appear)
 func triggerToPlatform(trigger string) string {
 	if _, ok := platformTriggers.Load(trigger); ok {
 		return trigger
@@ -178,11 +184,25 @@ func triggerToPlatform(trigger string) string {
 	case "android":
 		return "android"
 	case "", "user":
-		return "api"
+		return "external"
 	case "tmux_watch":
 		return "tmux"
 	case "async_notify":
 		return "async"
+	case "session_notify":
+		return "agent"
+	case "ask_grader":
+		return "ask-grader"
+	case "webhook":
+		return "webhook"
+	case "wake", "cron", "scheduled_wake":
+		return "wake"
+	case "keepalive", "reflection", "consolidation", "background":
+		return "background"
+	case "compaction_memory", "session_end_memory", "compaction-memory", "session-end-memory":
+		return "memory"
+	case "restart", "proactive_warning":
+		return "system"
 	default:
 		return "cron"
 	}
