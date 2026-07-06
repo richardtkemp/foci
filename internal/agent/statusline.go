@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"foci/internal/display"
-	"foci/internal/mana"
 	"foci/internal/procx"
 	"foci/internal/timeutil"
 )
@@ -29,7 +28,7 @@ import (
 //
 // Rendering rules (these reproduce the old conditional behaviour without
 // hardcoding it):
-//  1. Conditional fields ({cost}, {tokens}, {mana}, {state}, {todos}, …) carry
+//  1. Conditional fields ({cost}, {tokens}, {state}, {todos}, …) carry
 //     their own label and self-render to "" when their value is absent.
 //  2. Runs of spaces are collapsed to one and each line is trimmed, so omitted
 //     fields don't leave gaps.
@@ -43,7 +42,7 @@ import (
 // an agent has no `statusline` configured. The labels live here (editable);
 // the conditional fields self-omit, rule 2 cleans the spacing, and rule 3 drops
 // the "[state]" line when empty.
-const DefaultStatuslineTemplate = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens} {mana}\n[state] {state}\n[ask] {ask}"
+const DefaultStatuslineTemplate = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens}\n[state] {state}\n[ask] {ask}"
 
 // Statusline command execution bounds. The command runs synchronously before
 // every turn, so these are deliberately tight.
@@ -58,8 +57,6 @@ type statuslineInputs struct {
 	now        time.Time
 	model      string
 	platform   string
-	manaStr    string
-	manaGood   bool
 	sm         *sessionMeta
 	agent      *Agent
 	sessionKey string
@@ -74,8 +71,8 @@ func statuslineFirstMsg(sm *sessionMeta) bool {
 }
 
 // statuslineFields maps placeholder names to value providers. Composite fields
-// (cost/tokens/mana/state, and the per-store todos/tasks/scratchpad) carry their
-// own label and self-omit; the *_raw / *_pct / token-count fields are bare
+// (cost/tokens/state, and the per-store todos/tasks/scratchpad) carry their
+// own label and self-omit; the *_raw / token-count fields are bare
 // values that always render.
 var statuslineFields = map[string]func(statuslineInputs) string{
 	// Always-present meta fields (bare values; labels live in the template).
@@ -102,12 +99,6 @@ var statuslineFields = map[string]func(statuslineInputs) string{
 		}
 		return fmt.Sprintf("prev_tokens=in:%d/out:%d/cR:%d/cW:%d",
 			in.sm.prevInput, in.sm.prevOutput, in.sm.prevCacheRead, in.sm.prevCacheWrite)
-	},
-	"mana": func(in statuslineInputs) string {
-		if in.manaStr == "" {
-			return ""
-		}
-		return "mana=" + in.manaStr + " " + manaIndicator(in.manaGood)
 	},
 	"state": func(in statuslineInputs) string { return in.agent.stateDashboardBody(in.sessionKey) },
 	// Paused-ask reminder (addressed to the agent, who reads the statusline):
@@ -138,40 +129,12 @@ var statuslineFields = map[string]func(statuslineInputs) string{
 	"tokens_out":  func(in statuslineInputs) string { return strconv.Itoa(in.sm.prevOutput) },
 	"cache_read":  func(in statuslineInputs) string { return strconv.Itoa(in.sm.prevCacheRead) },
 	"cache_write": func(in statuslineInputs) string { return strconv.Itoa(in.sm.prevCacheWrite) },
-	"mana_pct":    func(in statuslineInputs) string { return in.manaStr },
-	"mana_flag": func(in statuslineInputs) string {
-		if in.manaStr == "" {
-			return ""
-		}
-		return manaIndicator(in.manaGood)
-	},
-}
-
-func manaIndicator(good bool) string {
-	if good {
-		return "🟢"
-	}
-	return "🔴"
 }
 
 // MetaStatus returns the status chips for a session that platforms with a
 // structured meta channel (the app provider's `meta` frame) render instead of
-// the text [meta] header: the mana percentage, a "good"/"low" mana state, and
-// the human-readable gap since the previous message. manaPct is nil when usage
-// data is unavailable (e.g. no UsageClient), so the field self-omits.
-func (a *Agent) MetaStatus(sessionKey string) (manaPct *int, manaState, gap string) {
-	pctStr, _, good := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
-	if pctStr != "" {
-		if v, err := strconv.ParseFloat(strings.TrimSuffix(pctStr, "%"), 64); err == nil {
-			p := int(v + 0.5)
-			manaPct = &p
-		}
-		if good {
-			manaState = "good"
-		} else {
-			manaState = "low"
-		}
-	}
+// the text [meta] header: the human-readable gap since the previous message.
+func (a *Agent) MetaStatus(sessionKey string) (gap string) {
 	if sm := a.getSessionMeta(sessionKey); sm != nil && !sm.lastMessageTime.IsZero() {
 		gap = display.FormatDuration(time.Since(sm.lastMessageTime))
 	}

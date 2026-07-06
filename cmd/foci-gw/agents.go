@@ -13,7 +13,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/log"
-	"foci/internal/mana"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
 	"foci/internal/periodic"
@@ -81,7 +80,6 @@ type setupParams struct {
 	resolved            *config.ResolvedAgentConfig
 	configPath          string
 	clientProvider      provider.ClientProvider
-	usageClientProvider mana.UsageClientProvider
 	sessions            *session.Store
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
@@ -286,8 +284,6 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.MaxSummaryInputChars = sc.MaxSummaryInputChars
 	ag.MaxImagePixels = sc.MaxImagePixels
 	ag.AutoSummarise = sc.AutoSummarise
-	ag.UsageClient = p.usageClientProvider.GetUsageClient(defaultEndpoint)
-	ag.UsageClientProvider = p.usageClientProvider
 	ag.MaxToolLoops = al.MaxToolLoops
 	ag.MaxOutputTokens = al.MaxOutputTokens
 	ag.Streaming = p.resolved.Display.Streaming
@@ -309,7 +305,6 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		serverTools:         out.serverTools,
 		client:              client,
 		clientProvider:      p.clientProvider,
-		usageClientProvider: p.usageClientProvider,
 		fallbackFn:          fallbackFn,
 		tmuxTool:            out.tmuxTool,
 		tmuxClearAll:        out.tmuxClearAll,

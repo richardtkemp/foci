@@ -163,7 +163,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 		// CanFireFunc return value to (allowed, reason) for subsequent
 		// periodic ticks. <0|1> is the boolean allowed value; the rest
 		// of the line is the reason string passed through verbatim.
-		// Drives the shared rate-limit / mana gate that all three
+		// Drives the shared rate-limit / can_run_background gate that all three
 		// schedulers (background, reflection, consolidation) consult
 		// before dispatching.
 		if len(fields) < 3 {

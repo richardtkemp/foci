@@ -14,7 +14,6 @@ func TestJoinPrompt_AllFields(t *testing.T) {
 		MetaPrefix:      "[meta: test]",
 		Reminders:       "reminder1",
 		StateDashboard:  "state: ok",
-		ManaRestore:     "mana restored",
 		AttachmentPaths: "[Image saved to: /tmp/img.png]",
 		UserTexts:       []string{"hello", "follow up 1", "follow up 2"},
 	}
@@ -25,7 +24,6 @@ func TestJoinPrompt_AllFields(t *testing.T) {
 		"[meta: test]",
 		"reminder1",
 		"state: ok",
-		"mana restored",
 		"[Image saved to: /tmp/img.png]",
 		"hello",
 		"[follow-up] follow up 1",
@@ -38,8 +36,8 @@ func TestJoinPrompt_AllFields(t *testing.T) {
 
 	// Verify parts are separated by newlines.
 	lines := strings.Split(got, "\n")
-	if len(lines) != 8 {
-		t.Errorf("expected 8 lines, got %d: %v", len(lines), lines)
+	if len(lines) != 7 {
+		t.Errorf("expected 7 lines, got %d: %v", len(lines), lines)
 	}
 }
 
@@ -48,7 +46,7 @@ func TestJoinPrompt_AllFields(t *testing.T) {
 func TestJoinPrompt_SkipsEmptyParts(t *testing.T) {
 	p := turnTextParts{
 		MetaPrefix: "[meta]",
-		// Reminders, StateDashboard, ManaRestore, AttachmentPaths all empty
+		// Reminders, StateDashboard, AttachmentPaths all empty
 		UserTexts: []string{"hello"},
 	}
 
@@ -84,19 +82,6 @@ func TestJoinPrompt_Empty(t *testing.T) {
 	got := p.JoinPrompt()
 	if got != "" {
 		t.Errorf("expected empty string, got %q", got)
-	}
-}
-
-// TestJoinPrompt_OnlyManaRestore verifies ManaRestore alone appears correctly
-// (regression: ensure the field isn't accidentally skipped).
-func TestJoinPrompt_OnlyManaRestore(t *testing.T) {
-	p := turnTextParts{
-		ManaRestore: "mana: +50",
-	}
-
-	got := p.JoinPrompt()
-	if got != "mana: +50" {
-		t.Errorf("expected %q, got %q", "mana: +50", got)
 	}
 }
 

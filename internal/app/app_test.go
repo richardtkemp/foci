@@ -1549,15 +1549,14 @@ func TestSink_EmitsStatusChips(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", client: c}
 	s := newAppSink(b)
-	pct := 73
-	s.statusFn = func() (*int, string, string) { return &pct, "good", "5m" }
+	s.statusFn = func() string { return "5m" }
 	s.emitMeta(turnevent.TurnComplete{Model: "claude"})
 
 	got := drain(t, c)
 	if len(got) != 1 || got[0].t != fap.TypeMeta {
 		t.Fatalf("frames = %v, want [meta]", types(got))
 	}
-	if got[0].d["manaPct"] != float64(73) || got[0].d["manaState"] != "good" || got[0].d["gap"] != "5m" {
+	if got[0].d["gap"] != "5m" {
 		t.Errorf("meta status chips = %v", got[0].d)
 	}
 }

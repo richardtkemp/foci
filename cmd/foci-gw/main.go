@@ -191,7 +191,6 @@ Subcommands:
 	}
 
 	clients := newClientRegistry(cfg, sec.store, ctx)
-	usageClients := newUsageClientRegistry(cfg)
 
 	// ========== Sessions & State ==========
 	si := initSessions(cfg)
@@ -319,7 +318,6 @@ Subcommands:
 			cfg:                 cfg,
 			configPath:          configPath,
 			clientProvider:      clients,
-			usageClientProvider: usageClients,
 			sessions:            si.sessions,
 			store:               sec.store,
 			bwStore:             sec.bwStore,
@@ -375,7 +373,6 @@ Subcommands:
 		setupPeriodic(inst, acfg, periodicParams{
 			cfg:                   cfg,
 			sessions:              si.sessions,
-			usageClientReg:        usageClients,
 			connMgr:               connMgr,
 			sessionIndex:          si.sessionIndex,
 			todoStore:             mem.todoStores[acfg.ID],

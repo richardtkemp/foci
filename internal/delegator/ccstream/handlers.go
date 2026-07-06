@@ -526,11 +526,8 @@ func (b *Backend) OnKeepAlive() {
 }
 
 // OnRateLimit handles rate limit events from CC's stdout.
-func (b *Backend) OnRateLimit(msg *RateLimitEvent) {
+func (b *Backend) OnRateLimit(_ *RateLimitEvent) {
 	b.touchActivity()
-	if b.rateLimitState != nil {
-		b.rateLimitState.Update(&msg.RateLimitInfo)
-	}
 }
 
 // OnToolProgress handles heartbeats during long-running tool execution.

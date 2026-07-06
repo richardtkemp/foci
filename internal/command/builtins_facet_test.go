@@ -28,17 +28,6 @@ func TestFacetCommand(t *testing.T) {
 	}
 }
 
-// TestManaCommand verifies mana command name is set correctly.
-func TestManaCommand(t *testing.T) {
-	cmd := ManaCommand("juice")
-	if cmd.Name != "juice" {
-		t.Errorf("cmd.Name = %q, want %q", cmd.Name, "juice")
-	}
-	if !strings.Contains(cmd.Description, "juice") {
-		t.Errorf("Description should contain 'juice', got %q", cmd.Description)
-	}
-}
-
 // TestCompactCommand verifies compact session operation delegates to runCompaction.
 func TestCompactCommand(t *testing.T) {
 	cmd := CompactCommand()

@@ -207,17 +207,6 @@ func (cfg *Config) Validate() error {
 			return err
 		}
 	}
-	if cfg.Sessions.AutocompactBeforeManaRefreshFactor != nil {
-		if err := validateRange(*cfg.Sessions.AutocompactBeforeManaRefreshFactor, 0.0, 1.0, "[sessions] autocompact_before_mana_refresh_factor"); err != nil {
-			return err
-		}
-	}
-	if cfg.Sessions.AutocompactBeforeManaRefreshThreshold != nil {
-		if _, err := time.ParseDuration(*cfg.Sessions.AutocompactBeforeManaRefreshThreshold); err != nil {
-			return fmt.Errorf("[sessions] autocompact_before_mana_refresh_threshold = %q: %w", *cfg.Sessions.AutocompactBeforeManaRefreshThreshold, err)
-		}
-	}
-
 	if cfg.Sessions.FileMode != "" {
 		if _, err := ParseFileMode(cfg.Sessions.FileMode); err != nil {
 			return fmt.Errorf("[sessions] file_mode = %q: %w", cfg.Sessions.FileMode, err)
@@ -266,30 +255,6 @@ func (cfg *Config) Validate() error {
 	}
 	if err := validateRange(DerefFloat(cfg.Memory.ConversationWeight), 0.0, 1.0, "[memory] conversation_weight"); err != nil {
 		return err
-	}
-
-	// Mana warnings thresholds
-	for i, t := range cfg.Mana.Thresholds {
-		if err := validateIntRange(t, 0, 100, fmt.Sprintf("[mana] thresholds[%d]", i)); err != nil {
-			return err
-		}
-	}
-	if cfg.Mana.RestoreThreshold != nil {
-		if err := validateIntRange(*cfg.Mana.RestoreThreshold, 0, 100, "[mana] restore_threshold"); err != nil {
-			return err
-		}
-	}
-	for _, a := range cfg.Agents {
-		for i, t := range a.Mana.Thresholds {
-			if err := validateIntRange(t, 0, 100, fmt.Sprintf("agent %q [mana] thresholds[%d]", a.ID, i)); err != nil {
-				return err
-			}
-		}
-		if a.Mana.RestoreThreshold != nil {
-			if err := validateIntRange(*a.Mana.RestoreThreshold, 0, 100, fmt.Sprintf("agent %q [mana] restore_threshold", a.ID)); err != nil {
-				return err
-			}
-		}
 	}
 
 	if ttl := cfg.Permissions.PromptTTL; ttl != "" {
@@ -347,8 +312,6 @@ func (cfg *Config) Validate() error {
 		{"logging", "rotation_period", cfg.Logging.RotationPeriod},
 		{"logging", "retention_period", cfg.Logging.RetentionPeriod},
 		{"database", "busy_timeout", cfg.Database.BusyTimeout},
-		{"anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout},
-		{"anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL},
 		{"anthropic", "cc_expiry_threshold", cfg.Anthropic.CCExpiryThreshold},
 		{"tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout},
 		{"tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout},

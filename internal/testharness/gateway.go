@@ -810,7 +810,7 @@ func (h *Harness) StopAgent(agentID string) error {
 }
 
 // SetCanFire pins the agent's CanFireFunc return value to (allowed,
-// reason) for subsequent periodic ticks. The shared rate-limit / mana
+// reason) for subsequent periodic ticks. The shared rate-limit / can_run_background
 // gate runs at the top of every scheduler (background, reflection,
 // consolidation); pinning allowed=false with a non-empty reason
 // confirms all three schedulers consult the same gate.

@@ -11,7 +11,6 @@ import (
 
 	"foci/internal/display"
 	"foci/internal/log"
-	"foci/internal/mana"
 	"foci/internal/timeutil"
 	"foci/internal/tools"
 )
@@ -174,49 +173,6 @@ func StatusCommand() *Command {
 			return Response{Text: strings.TrimRight(sb.String(), "\n")}, nil
 		},
 	}
-}
-
-// ManaCommand returns a dynamic slash command for checking quota.
-func ManaCommand(name string) *Command {
-	return &Command{
-		Name:        name,
-		Description: "Check current " + name + " (quota remaining)",
-		Category:    "observability",
-		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			return Response{Text: manaCheck(ctx, req, cc, name)}, nil
-		},
-	}
-}
-
-// manaCheck fetches and formats the current mana/quota status.
-func manaCheck(ctx context.Context, _ Request, cc CommandContext, manaName string) string {
-	emojis := []string{"🔮", "✨", "🌙", "⚡", "🪄", "💎", "🌟", "🔥", "🧿", "🪬", "💫", "🌀", "🎇"}
-	// Deterministic selection based on time (second-level jitter is fine)
-	emoji := emojis[time.Now().UnixNano()%int64(len(emojis))]
-	displayName := strings.ToUpper(manaName[:1]) + manaName[1:]
-
-	usageClient := cc.Agent.SessionUsageClient(tools.SessionKeyFromContext(ctx))
-	if usageClient == nil {
-		return fmt.Sprintf("%s %s: No usage data (provider does not support usage API)", emoji, displayName)
-	}
-
-	usageClient.Invalidate()
-	w, err := usageClient.GetUsage(ctx)
-	if err != nil {
-		return fmt.Sprintf("%s Error fetching %s: %v", emoji, displayName, err)
-	}
-	percent := mana.FormatPercent(w)
-	if percent == "" {
-		return fmt.Sprintf("%s %s: unknown", emoji, displayName)
-	}
-	result := fmt.Sprintf("%s %s: %s remaining", emoji, displayName, percent)
-	if reset := mana.FormatReset(w); reset != "" {
-		result += fmt.Sprintf(" (resets %s)", reset)
-	}
-	if w != nil && w.ExtraInfo != "" {
-		result += "\n" + w.ExtraInfo
-	}
-	return result
 }
 
 // parseLineCount parses a line count from args, returning defaultN if empty or invalid.

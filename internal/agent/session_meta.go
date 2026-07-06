@@ -8,7 +8,6 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/log"
-	"foci/internal/mana"
 	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
@@ -30,8 +29,6 @@ type sessionMeta struct {
 	modelFormat     string                 // per-session format override (empty = use agent default)
 	permissionMode  string                 // per-session CC permission mode (empty = ccstream default "default")
 	client          provider.Client        // per-session client override (nil = use a.Client)
-	usageClient     mana.UsageClient       // per-session usage client (nil may be intentional for non-Anthropic endpoints)
-	usageClientSet  bool                   // true if usageClient was explicitly set (distinguishes nil-from-set vs nil-from-default)
 	modelUserSet    bool                   // true if model was explicitly set by user (prevents backend clobber)
 	contextLimit    int                    // override from backend get_context_usage; 0 = use model default
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
@@ -286,11 +283,6 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 	sm.modelEndpoint = endpoint
 	sm.modelFormat = format
 	sm.client = client
-	// Update usage client for new endpoint (may be nil for non-Anthropic endpoints)
-	if a.UsageClientProvider != nil {
-		sm.usageClient = a.UsageClientProvider.GetUsageClient(endpoint)
-		sm.usageClientSet = true
-	}
 	a.metaMu.Unlock()
 
 	if a.SessionIndex != nil {
@@ -459,37 +451,6 @@ func (a *Agent) SessionClient(sessionKey string) provider.Client {
 	return a.Client
 }
 
-// SessionUsageClient returns the usage client for a session's active endpoint.
-// When the session has been explicitly configured (via SetSessionModel or
-// RestoreSessionOverrides), usageClientSet is true and we return the resolved
-// client (nil for non-Anthropic endpoints — no mana tracking).
-//
-// When usageClientSet is false (session using agent defaults, never explicitly
-// configured), we resolve from the session's effective endpoint via
-// UsageClientProvider rather than blindly returning a.UsageClient. This
-// prevents returning the agent's Anthropic usage client for sessions that are
-// actually using a non-Anthropic endpoint. The resolved value is cached so
-// subsequent calls don't re-resolve.
-func (a *Agent) SessionUsageClient(sessionKey string) mana.UsageClient {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	if sm.usageClientSet {
-		return sm.usageClient // may be nil for non-Anthropic endpoints
-	}
-	// Not explicitly set — resolve from the session's effective endpoint.
-	if a.UsageClientProvider != nil {
-		endpoint := sm.modelEndpoint
-		if endpoint == "" {
-			endpoint = a.Endpoint
-		}
-		sm.usageClient = a.UsageClientProvider.GetUsageClient(endpoint)
-		sm.usageClientSet = true
-		return sm.usageClient
-	}
-	return nil
-}
-
 // SessionNoCompact returns the effective no_compact setting for the session.
 func (a *Agent) SessionNoCompact(sessionKey string) bool {
 	sm := a.getSessionMeta(sessionKey)
@@ -586,8 +547,6 @@ func (a *Agent) ClearAllSessionOverrides(sessionKey string) {
 	// Clear model client overrides
 	a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
 		sm.client = nil
-		sm.usageClient = nil
-		sm.usageClientSet = false
 	})
 }
 
@@ -623,14 +582,6 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 			if c := a.ClientProvider.GetClient(ep, format); c != nil {
 				a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.client = c })
 			}
-		}
-
-		// Restore usage client for the endpoint (may be nil for non-Anthropic)
-		if ep != "" && a.UsageClientProvider != nil {
-			a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
-				sm.usageClient = a.UsageClientProvider.GetUsageClient(ep)
-				sm.usageClientSet = true
-			})
 		}
 	}
 

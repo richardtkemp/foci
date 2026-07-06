@@ -9,7 +9,6 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/mana"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -98,7 +97,7 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 }
 
 // configureUniversal sets agent fields that apply to both API and delegated
-// agents: compaction, warning queue, mana watcher, model defaults, and
+// agents: compaction, warning queue, model defaults, and
 // turn-lock warning threshold. Call this after newAgent() and before the
 // transport-specific configuration (configureAPI / configureDelegated).
 func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Compactor) {
@@ -109,11 +108,6 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	ag.CompactionSummaryPromptPath = cpc.CompactionSummaryPrompt
 	ag.CompactionHandoffMsg = cpc.CompactionHandoffMsg
 	ag.ReloadOnCompact = cpc.ReloadOnCompact
-	ag.AutocompactBeforeManaRefresh = cpc.AutocompactBeforeManaRefresh
-	ag.AutocompactBeforeManaRefreshThreshold = cpc.AutocompactBeforeManaRefreshThreshold
-	ag.AutocompactBeforeManaRefreshFactor = cpc.AutocompactBeforeManaRefreshFactor
-	ag.AutocompactBeforeManaRefreshPreserve = cpc.AutocompactBeforeManaRefreshPreserve
-	ag.AutocompactBeforeManaRefreshPreservePct = cpc.AutocompactBeforeManaRefreshPreservePct
 	ag.TurnLockWarnThreshold = parseDurationDefault(bc.TurnLockWarnThreshold, 0)
 	ag.ModelDefaultsFn = modelDefaultsFn(p.cfg.Models)
 
@@ -123,10 +117,9 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	ag.ResetOrientTemplateFn = func() string {
 		return prompts.ResolveOrientationTemplate(resetOrientPath, false, resetSearchDirs...)
 	}
-	ag.ManaInvestInterval = parseDurationDefault(p.resolved.Mana.InvestInterval, 0)
+	ag.CanRunBackground = p.resolved.Background.CanRunBackground
 
 	setupWarningQueue(ag, p.resolved, p.cfg)
-	setupManaWatcher(ag, p)
 }
 
 // finalizeParams holds optional values for finalize. Nil/zero fields are
@@ -140,7 +133,6 @@ type finalizeParams struct {
 	serverTools         []provider.ToolDef       // nil for delegated agents
 	client              provider.Client          // nil for delegated agents
 	clientProvider      provider.ClientProvider  // nil for delegated agents
-	usageClientProvider mana.UsageClientProvider // nil for delegated agents
 	fallbackFn          provider.FallbackFunc    // nil for delegated agents
 	compactionThreshold float64                  // 0 for delegated agents
 	tmuxTool            *tools.Tool              // nil for delegated agents
@@ -194,7 +186,6 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		sessionIndex:        p.sessionIndex,
 		client:              fp.client,
 		clientProvider:      fp.clientProvider,
-		usageClientProvider: fp.usageClientProvider,
 		store:               p.store,
 		bwStore:             p.bwStore,
 		startTime:           p.startTime,

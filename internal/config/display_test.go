@@ -9,9 +9,6 @@ import (
 
 func testConfig() (*Config, AgentConfig) {
 	cfg := &Config{
-		Anthropic: AnthropicConfig{
-			UsageAPITimeout: "10s",
-		},
 		Platforms: []PlatformConfig{{
 			ID:     "telegram",
 			Notify: NotifyConfig{StartupNotify: Ptr[bool](true)},
@@ -72,7 +69,6 @@ func testConfig() (*Config, AgentConfig) {
 			TmuxMemoryKill:          "30%",
 		},
 		Environment: EnvironmentConfig{Enabled: Ptr[bool](true)},
-		Mana:        ManaConfig{},
 		Database:    DatabaseConfig{BusyTimeout: "5s"},
 	}
 	agent := AgentConfig{
@@ -87,14 +83,13 @@ func testConfig() (*Config, AgentConfig) {
 }
 
 func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
-	// Proves that background and invest_interval fields appear in the grouped output
+	// Proves that background fields appear in the grouped output
 	// even when background is disabled, verifying the always-shown behavior in the
 	// multi-table format as well.
 	cfg, agent := testConfig()
 	cfg.Agents = []AgentConfig{agent}
 	cfg.Background.Enabled = Ptr[bool](false)
 	cfg.Background.Interval = Ptr[string]("5m")
-	cfg.Mana.InvestInterval = Ptr[string]("30m")
 	agent.Background = cfg.Background
 
 	tables := FormatConfigGrouped(cfg, agent)
@@ -103,7 +98,6 @@ func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
 	for _, key := range []string{
 		"background.enabled",
 		"background.interval",
-		"invest_interval",
 	} {
 		if !strings.Contains(combined, key) {
 			t.Errorf("missing %q in FormatConfigGrouped output when background disabled", key)
@@ -216,7 +210,6 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.STT = []STTConfig{{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com", Model: "whisper-large-v3"}}
 	cfg.Environment.DocsPath = Ptr[string]("/docs")
 	cfg.Skills.Dir = "/skills"
-	cfg.Mana.Thresholds = []int{50, 25, 10}
 
 	result := FormatAvailable(cfg, agent)
 	if result != "All config options are set." {

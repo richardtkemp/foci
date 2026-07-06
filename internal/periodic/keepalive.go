@@ -7,7 +7,7 @@
 //     Creates a lightweight branch session to keep the Anthropic cache prefix alive.
 //
 //   - Background work: fires when the user has been idle for the configured interval
-//     AND there are open background-tagged todos AND the manamometer says we can afford it.
+//     AND there are open background-tagged todos AND the can_run_background gate allows it.
 //     Creates a branch session that picks up the next background task.
 //
 //   - Memory formation: fires periodically to capture conversation memories to daily files.
@@ -77,7 +77,7 @@ type BackgroundAgent interface {
 	IsTurnInFlight(parentBase string) bool
 	// SessionKey returns the session key background operations run against ("" if none).
 	SessionKey() string
-	// CanFire reports whether a background operation may fire now (rate limit + mana).
+	// CanFire reports whether a background operation may fire now (rate limit + can_run_background gate).
 	CanFire(ctx context.Context, sessionKey string) (allowed bool, reason string)
 	// RunOnce executes a one-shot headless prompt (delegated agents only); used by
 	// consolidation. Only called when the agent is delegated.
@@ -97,7 +97,6 @@ type Runner struct {
 	bgCfg              config.ResolvedBackground
 	reflectCfg         config.ResolvedReflection
 	maintCfg           config.ResolvedMaintenance
-	manaInvestInterval string        // mana invest interval (Go duration string)
 	tickInterval       time.Duration // poll cadence for the timer loop (resolved from config)
 	promptSearchDirs   []string
 	todoStore          *memory.TodoStore
@@ -145,7 +144,6 @@ type RunnerConfig struct {
 	Reflection         config.ResolvedReflection
 	Maintenance        config.ResolvedMaintenance
 	TickInterval       string   // scheduler poll cadence (Go duration string, default: "30s")
-	ManaInvestInterval string   // mana invest interval (Go duration string, default: "30m")
 	PromptSearchDirs   []string // directories to search for prompt files (agent workspace, shared)
 	TodoStore          *memory.TodoStore
 	SessionIndex       *session.SessionIndex
@@ -176,7 +174,6 @@ func New(cfg RunnerConfig) *Runner {
 		bgCfg:              cfg.Background,
 		reflectCfg:         cfg.Reflection,
 		maintCfg:           cfg.Maintenance,
-		manaInvestInterval: cfg.ManaInvestInterval,
 		promptSearchDirs:   cfg.PromptSearchDirs,
 		todoStore:          cfg.TodoStore,
 		sessionIndex:       cfg.SessionIndex,
@@ -298,7 +295,7 @@ func (r *Runner) readyParentKey() (parentKey, skip string) {
 	return parentKey, ""
 }
 
-// checkCanFire applies the agent's rate-limit + mana affordability gate for the
+// checkCanFire applies the agent's rate-limit + can_run_background gate for the
 // current default session. Returns "" if the operation may fire, else the skip
 // reason. Used by the background/reflection/consolidation schedulers.
 func (r *Runner) checkCanFire(ctx context.Context) (skip string) {
@@ -476,7 +473,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		}
 	}
 
-	// Check availability (rate limit + mana)
+	// Check availability (rate limit + can_run_background gate)
 	if skip = r.checkCanFire(ctx); skip != "" {
 		return
 	}
@@ -594,7 +591,7 @@ func (r *Runner) maybeReflection() {
 		return
 	}
 
-	// Check availability (rate limit + mana)
+	// Check availability (rate limit + can_run_background gate)
 	if skip = r.checkCanFire(context.Background()); skip != "" {
 		return
 	}
@@ -700,7 +697,7 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
-	// Check availability (rate limit + mana)
+	// Check availability (rate limit + can_run_background gate)
 	if skip = r.checkCanFire(context.Background()); skip != "" {
 		return
 	}

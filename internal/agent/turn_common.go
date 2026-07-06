@@ -16,7 +16,6 @@ type turnTextParts struct {
 	MetaPrefix      string
 	Reminders       string
 	StateDashboard  string
-	ManaRestore     string
 	AttachmentPaths string
 	UserTexts       []string // texts[0] is primary, texts[1:] are follow-ups
 }
@@ -24,7 +23,7 @@ type turnTextParts struct {
 // composeTurnText assembles the common text parts for a turn. Used by both
 // the traditional API path (which converts these to content blocks) and the
 // delegated path (which joins them into a single prompt string).
-func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnModel string, manaStr string, manaGood bool, texts []string, attachments []platform.Attachment) turnTextParts {
+func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnModel string, texts []string, attachments []platform.Attachment) turnTextParts {
 	// Prefer the platform receipt time so queued/steered messages render the
 	// time the user actually sent them. Fall back to wall clock for
 	// system-initiated turns (cron, keepalive, etc.).
@@ -51,8 +50,6 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 		now:        now,
 		model:      turnModel,
 		platform:   platName,
-		manaStr:    manaStr,
-		manaGood:   manaGood,
 		sm:         sm,
 		agent:      a,
 		sessionKey: sessionKey,
@@ -87,9 +84,6 @@ func (p turnTextParts) JoinPrompt() string {
 	}
 	if p.StateDashboard != "" {
 		parts = append(parts, p.StateDashboard)
-	}
-	if p.ManaRestore != "" {
-		parts = append(parts, p.ManaRestore)
 	}
 	if p.AttachmentPaths != "" {
 		parts = append(parts, p.AttachmentPaths)

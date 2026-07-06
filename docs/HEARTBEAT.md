@@ -1,13 +1,13 @@
 # Keepalive & Background Work
 
-Two timer-driven mechanisms keep the agent productive without wasting mana.
+Two timer-driven mechanisms keep the agent productive without wasting effort.
 
 ## Overview
 
 | Mechanism | Purpose | Trigger | Cost |
 |-----------|---------|---------|------|
 | **Keepalive** | Cache keepalive | Cache not warmed within interval | Minimal (1 API call) |
-| **Background work** | Task execution | User idle + open tasks + mana available | Variable (full agent turn) |
+| **Background work** | Task execution | User idle + open tasks + `can_run_background` allows | Variable (full agent turn) |
 
 Both run on a single goroutine per agent with ~30-second ticks. Neither fires during active conversation.
 
@@ -31,7 +31,7 @@ if keepalive.enabled
 
 ## Background Work
 
-Background work executes tasks from the todo list while the user is away, gated by the manamometer to prevent overspending.
+Background work executes tasks from the todo list while the user is away, gated by the `can_run_background` check so an operator can decide when it's worth spending.
 
 **When it fires:**
 ```
@@ -39,10 +39,10 @@ if background.enabled
    AND time_since(last_interaction) >= background.interval
    AND no background work already running
    AND open todos tagged "background" exist
-   AND manamometer says mana is good
+   AND can_run_background allows (exit 0, or unset)
 ```
 
-**Self-chaining:** When a background task completes, it resets `last_interaction` to the completion time. After the interval elapses again, the next task can fire. This creates a chain: finish task -> wait interval -> check mana -> dispatch next task.
+**Self-chaining:** When a background task completes, it resets `last_interaction` to the completion time. After the interval elapses again, the next task can fire. This creates a chain: finish task -> wait interval -> check `can_run_background` -> dispatch next task.
 
 **Interaction** = last of:
 - Last inbound user message (via Telegram)

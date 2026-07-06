@@ -49,7 +49,6 @@ var globalSections = map[string]reflect.Type{
 	"keepalive":   reflect.TypeOf(KeepaliveConfig{}),
 	"background":  reflect.TypeOf(BackgroundConfig{}),
 	"reflection":  reflect.TypeOf(ReflectionConfig{}),
-	"mana":        reflect.TypeOf(ManaConfig{}),
 	"debug":       reflect.TypeOf(DebugConfig{}),
 	"logging":     reflect.TypeOf(LoggingConfig{}),
 	"memory":      reflect.TypeOf(MemoryConfig{}),

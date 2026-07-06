@@ -69,7 +69,7 @@ func ConnFor(cm platform.ConnectionManager, agentID, sessionKey string, policy P
 
 // Broadcast returns every live connection for an agent across all platforms
 // — the delivery set for PolicyBroadcast targets and for agent-wide notices
-// (mana, rate-limit, max-tokens warnings). Callers choose the send method
+// (rate-limit, max-tokens warnings). Callers choose the send method
 // (SendNotification for notices, SendText for messages) per connection.
 func Broadcast(cm platform.ConnectionManager, agentID string) []platform.Connection {
 	if cm == nil {

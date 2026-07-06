@@ -155,34 +155,24 @@ func resolveSummary(m SummaryConfig) ResolvedSummary {
 }
 
 type ResolvedCompaction struct {
-	CompactionThreshold                     float64 // default 0.8
-	CompactionSummaryPrompt                 string
-	CompactionHandoffMsg                    string
-	CompactionPreserveMessages              int
-	CompactionEffort                        string
-	FacetNoCompact                          bool
-	ReloadOnCompact                         bool
-	AutocompactBeforeManaRefresh            bool
-	AutocompactBeforeManaRefreshThreshold   string
-	AutocompactBeforeManaRefreshFactor      float64
-	AutocompactBeforeManaRefreshPreserve    *int // nil = use percentage fallback
-	AutocompactBeforeManaRefreshPreservePct float64
+	CompactionThreshold        float64 // default 0.8
+	CompactionSummaryPrompt    string
+	CompactionHandoffMsg       string
+	CompactionPreserveMessages int
+	CompactionEffort           string
+	FacetNoCompact             bool
+	ReloadOnCompact            bool
 }
 
 func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 	return ResolvedCompaction{
-		CompactionThreshold:                     DerefFloat(m.CompactionThreshold),
-		CompactionSummaryPrompt:                 DerefStr(m.CompactionSummaryPrompt),
-		CompactionHandoffMsg:                    DerefStr(m.CompactionHandoffMsg),
-		CompactionPreserveMessages:              DerefInt(m.CompactionPreserveMessages),
-		CompactionEffort:                        DerefStr(m.CompactionEffort),
-		FacetNoCompact:                          DerefBool(m.FacetNoCompact),
-		ReloadOnCompact:                         m.ReloadOnCompact == nil || *m.ReloadOnCompact, // default ON
-		AutocompactBeforeManaRefresh:            DerefBool(m.AutocompactBeforeManaRefresh),
-		AutocompactBeforeManaRefreshThreshold:   DerefStr(m.AutocompactBeforeManaRefreshThreshold),
-		AutocompactBeforeManaRefreshFactor:      DerefFloat(m.AutocompactBeforeManaRefreshFactor),
-		AutocompactBeforeManaRefreshPreserve:    m.AutocompactBeforeManaRefreshPreserve, // keep *int
-		AutocompactBeforeManaRefreshPreservePct: DerefFloat(m.AutocompactBeforeManaRefreshPreservePct),
+		CompactionThreshold:        DerefFloat(m.CompactionThreshold),
+		CompactionSummaryPrompt:    DerefStr(m.CompactionSummaryPrompt),
+		CompactionHandoffMsg:       DerefStr(m.CompactionHandoffMsg),
+		CompactionPreserveMessages: DerefInt(m.CompactionPreserveMessages),
+		CompactionEffort:           DerefStr(m.CompactionEffort),
+		FacetNoCompact:             DerefBool(m.FacetNoCompact),
+		ReloadOnCompact:            m.ReloadOnCompact == nil || *m.ReloadOnCompact, // default ON
 	}
 }
 
@@ -239,16 +229,18 @@ func resolveScheduler(m SchedulerConfig) ResolvedScheduler {
 }
 
 type ResolvedBackground struct {
-	Enabled  bool
-	Interval string
-	Prompt   string
+	Enabled          bool
+	Interval         string
+	Prompt           string
+	CanRunBackground string
 }
 
 func resolveBackground(m BackgroundConfig) ResolvedBackground {
 	return ResolvedBackground{
-		Enabled:  DerefBool(m.Enabled),
-		Interval: DerefStr(m.Interval),
-		Prompt:   DerefStr(m.Prompt),
+		Enabled:          DerefBool(m.Enabled),
+		Interval:         DerefStr(m.Interval),
+		Prompt:           DerefStr(m.Prompt),
+		CanRunBackground: DerefStr(m.CanRunBackground),
 	}
 }
 
@@ -341,22 +333,6 @@ func resolveBrowser(m BrowserConfig) ResolvedBrowser {
 		ExecutablePath: DerefStr(m.ExecutablePath),
 		DOMStableSec:   DerefFloat(m.DOMStableSec),
 		DOMStableDiff:  DerefFloat(m.DOMStableDiff),
-	}
-}
-
-type ResolvedMana struct {
-	Name             string
-	Thresholds       []int
-	RestoreThreshold int
-	InvestInterval   string
-}
-
-func resolveMana(m ManaConfig) ResolvedMana {
-	return ResolvedMana{
-		Name:             DerefStr(m.Name),
-		Thresholds:       m.Thresholds,
-		RestoreThreshold: DerefInt(m.RestoreThreshold),
-		InvestInterval:   DerefStr(m.InvestInterval),
 	}
 }
 

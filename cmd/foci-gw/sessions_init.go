@@ -259,10 +259,7 @@ func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
 			_ = idx.SetAgentMetadata(agentID, "consolidation_last", strVal)
 
 		case strings.HasPrefix(key, "mana:"):
-			// mana:<name> — stored per-agent, but old format was global.
-			// The raw JSON value is the full state, store as-is.
-			// We don't know which agent it belongs to in the old format,
-			// so skip — the mana watcher will re-create on next threshold hit.
+			// Legacy mana-watcher state — the mana feature was removed; skip.
 
 		case strings.HasPrefix(key, "tmux:") && strings.HasSuffix(key, ":watches"):
 			// tmux:<id>:watches

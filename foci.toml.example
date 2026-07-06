@@ -50,7 +50,7 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # [defaults.display]
 # streaming = false                        # use streaming API
 # injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
-# statusline = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens} {mana}\n[state] {state}"  # per-message [meta]/[state] header template; see docs/CONFIG.md for the field list and ${cmd} embedding
+# statusline = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens}\n[state] {state}"  # per-message [meta]/[state] header template; see docs/CONFIG.md for the field list and ${cmd} embedding
 
 # [defaults.notify]
 # inject_agent_warnings = "off"            # inject warnings into agent session: "all", "errors", "off"
@@ -271,16 +271,12 @@ system_files = [
 # dir = "memory/docs"
 # weight = 0.8
 
-# Per-agent mana overrides:
-# [agents.mana]
-# thresholds = [50, 25, 10, 5]
-# restore_threshold = 40                  # override global restore_threshold
-
 # Per-agent background task scheduling:
 # [agents.background]
 # enabled = true
 # interval = "5m"                         # time since last interaction before firing
 # prompt = "Check your todo list."
+# can_run_background = "background_ok.sh" # exit 0 = allow background work, non-zero = skip
 
 # Per-agent keepalive (cache warming):
 # [agents.keepalive]
@@ -309,8 +305,6 @@ system_files = [
 # API keys go in secrets.toml. These are non-secret settings only.
 # Model params (thinking, effort, speed) are now per-model in [models.*].
 [anthropic]
-# usage_api_timeout = "10s"              # HTTP timeout for usage API
-# usage_cache_ttl = "10m"                # cache TTL for usage API responses
 # cc_expiry_threshold = "5m"            # how far before expiry to trigger proactive token refresh
 
 # ─── Gemini ────────────────────────────────────────────────────────────
@@ -381,10 +375,6 @@ compaction_threshold = 0.8
 # compaction_preserve_messages = 25
 # compaction_effort = ""                   # effort for compaction API calls (default: session effort)
 # facet_no_compact = true                  # set no_compact on facet sessions
-# autocompact_before_mana_refresh = true   # compact before mana refresh
-# autocompact_before_mana_refresh_threshold = "5m"
-# autocompact_before_mana_refresh_factor = 0.5
-# autocompact_before_mana_refresh_preserve_pct = 0.5
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000
 # branch_orientation_facet_prompt = ""     # prompt for user-attached facet branches
@@ -485,13 +475,6 @@ bind = "127.0.0.1"
 
 # Cache settings (strategy, ttl) are now per-model via [models.*].cache_strategy and .cache_ttl
 
-# ─── Mana ────────────────────────────────────────────────────────────
-# [mana]
-# name = "mana"                           # what to call quota in messages
-# thresholds = [50, 25, 10, 5]            # mana percentages to warn at
-# restore_threshold = 40                  # inject session notice when mana restores (0=disabled)
-# invest_interval = "30m"                 # quiet period after mana reset before spending
-
 # ─── Environment ─────────────────────────────────────────────────────
 # [environment]
 # enabled = true
@@ -562,6 +545,7 @@ bind = "127.0.0.1"
 # enabled = false
 # interval = "15m"
 # prompt = ""
+# can_run_background = "background_ok.sh"  # executable run before each background op; exit 0 = allowed, non-zero = skip (empty = always allowed)
 
 # ─── Global Keepalive ────────────────────────────────────────────────
 # [keepalive]

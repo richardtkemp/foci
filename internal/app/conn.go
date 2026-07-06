@@ -36,7 +36,7 @@ const defaultPromptTTL = 24 * time.Hour
 // status chips testable with a fake, without constructing a full Agent.
 type agentCore interface {
 	Enqueue(agent.Envelope) bool
-	MetaStatus(sessionKey string) (manaPct *int, manaState, gap string)
+	MetaStatus(sessionKey string) (gap string)
 }
 
 type appConn struct {
@@ -486,7 +486,7 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	sink := newAppSink(b)
 	if c.agentRef != nil {
 		sk := env.SessionKey
-		sink.statusFn = func() (*int, string, string) { return c.agentRef.MetaStatus(sk) }
+		sink.statusFn = func() string { return c.agentRef.MetaStatus(sk) }
 	}
 	return sink, sink.cleanup
 }

@@ -122,9 +122,6 @@ func TestHandleMessageOverloaded(t *testing.T) {
 	if !strings.Contains(err.Error(), "overloaded") {
 		t.Errorf("error = %q, want overloaded message", err.Error())
 	}
-	if strings.Contains(err.Error(), "mana exhausted") {
-		t.Errorf("error = %q, should not mention mana exhausted for 529", err.Error())
-	}
 
 	if rateLimitCalled {
 		t.Error("RateLimitFunc should not be called for 529")

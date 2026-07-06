@@ -36,10 +36,6 @@ func (b *Backend) SetTypingFunc(fn func(bool)) { b.typingFunc = fn }
 // none are running) — see delegator.SubagentTracker.OnStatus.
 func (b *Backend) SetOnSubagentStatus(fn func(detail string)) { b.agents.OnStatus = fn }
 
-// SetRateLimitState sets the shared rate limit state that OnRateLimit writes to.
-// Must be called before Start. The state is shared across all backends for an agent.
-func (b *Backend) SetRateLimitState(s *RateLimitState) { b.rateLimitState = s }
-
 // SetOnAuthFailure registers a hook fired when CC reports an authentication
 // failure (a 401). Used to trigger automated re-login (#843). Must be set
 // before Start.

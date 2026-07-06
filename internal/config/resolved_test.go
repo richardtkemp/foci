@@ -59,7 +59,6 @@ func TestResolve_FallsBackToGlobal(t *testing.T) {
 		Voice:     VoiceConfig{TTS: Ptr("groq-playai")},
 		Nudge:     NudgeConfig{NudgeEnable: Ptr(true)},
 		Debug:     DebugConfig{MessagesInLog: Ptr(true)},
-		Mana:      ManaConfig{Name: Ptr("mana")},
 	}
 	acfg := AgentConfig{
 		Loop: AgentLoopConfig{MaxToolLoops: Ptr(50)}, // override only MaxToolLoops
@@ -78,9 +77,6 @@ func TestResolve_FallsBackToGlobal(t *testing.T) {
 	}
 	if got := rc.Debug.MessagesInLog; got != true {
 		t.Errorf("Debug.MessagesInLog = %v, want true (global fallback)", got)
-	}
-	if got := rc.Mana.Name; got != "mana" {
-		t.Errorf("Mana.Name = %q, want \"mana\" (global fallback)", got)
 	}
 }
 
@@ -175,7 +171,6 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Scheduler:   SchedulerConfig{TickInterval: Ptr("30s")},
 		Maintenance: MaintenanceConfig{ConsolidationEnabled: Ptr(true), ConsolidationTime: Ptr("20h"), ResetTime: Ptr("04:20"), ResetIdleGuard: Ptr("55m")},
 		Browser:     BrowserConfig{Enabled: Ptr(true)},
-		Mana:        ManaConfig{Name: Ptr("m")},
 	}
 	acfg := AgentConfig{} // all nil — global values should fill in
 

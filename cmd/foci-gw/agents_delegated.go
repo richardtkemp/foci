@@ -135,11 +135,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Override model display name to show the backend name.
 	ag.Model = backendName
 
-	// Shared rate limit state — account-wide, not per-session. All backends
-	// under this agent write to the same state via OnRateLimit.
-	rateLimitState := &ccstream.RateLimitState{}
-	ag.UsageClient = rateLimitState // implements mana.UsageClient
-
 	// Wire DelegatedManager: lazy per-session Backend creation.
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
@@ -201,9 +196,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			if err != nil {
 				return nil, err
 			}
-			// Inject shared rate limit state into ccstream backends.
 			if sb, ok := be.(*ccstream.Backend); ok {
-				sb.SetRateLimitState(rateLimitState)
 				// On a 401, run the automated re-login (#843) via the shared
 				// trigger built above (same path as the manual /login command).
 				sb.SetOnAuthFailure(func(detail string) {

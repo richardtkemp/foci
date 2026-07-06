@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"foci/internal/log"
-	"foci/internal/mana"
 	"foci/internal/platform"
 	"foci/internal/provider"
 )
@@ -48,23 +46,9 @@ func (a *Agent) consumeFirstRunMessage() string {
 func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts []string, turnModel string, attachments []platform.Attachment, duplicateMessages bool, orientation string) provider.Message {
 	trigger := TriggerFromContext(ctx)
 
-	// Resolve mana for both meta prefix and watcher.
-	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
-
 	// Shared prompt composition (metadata, reminders, state, attachment paths).
 	// Nudges are NOT included — handled separately by InjectNudges / lines 484-501.
-	tp := a.composeTurnText(ctx, sessionKey, turnModel, manaStr, manaGood, texts, attachments)
-	if a.ManaWatcher != nil && len(texts) > 0 && !isSystemMessage(texts[0]) {
-		a.ManaWatcher.CheckAndWarn(manaStr, manaReset, func(warn string) {
-			for _, fn := range a.ManaWarnFunc {
-				fn(warn)
-			}
-		})
-		if msg := a.ManaWatcher.CheckRestore(manaStr); msg != "" {
-			tp.ManaRestore = "[" + msg + "]"
-			log.Infof("mana", "session=%s restore: %s", sessionKey, msg)
-		}
-	}
+	tp := a.composeTurnText(ctx, sessionKey, turnModel, texts, attachments)
 
 	// Build content blocks: binary attachments first
 	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
@@ -106,9 +90,6 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 	}
 	if tp.StateDashboard != "" {
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.StateDashboard})
-	}
-	if tp.ManaRestore != "" {
-		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.ManaRestore})
 	}
 	if tp.AttachmentPaths != "" {
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.AttachmentPaths})

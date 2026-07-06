@@ -94,16 +94,6 @@ func (c *Compactor) SetPreserveMessages(n int) {
 	c.preserveMessages = n
 }
 
-// ManaResetImminent returns true if the mana reset time is in the future
-// and within the given threshold duration.
-func ManaResetImminent(manaResetsAt time.Time, threshold time.Duration) bool {
-	if manaResetsAt.IsZero() || threshold <= 0 {
-		return false
-	}
-	untilReset := time.Until(manaResetsAt)
-	return untilReset > 0 && untilReset < threshold
-}
-
 // safeSplitPoint adjusts splitIdx backward (up to maxWalkBack steps) so that
 // tool_use/tool_result pairs are not broken across the split boundary.
 // An assistant message with tool_use blocks must be followed by a user message

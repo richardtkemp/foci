@@ -166,9 +166,6 @@ type Backend struct {
 	hookCmd       string
 	hookInstallID string
 
-	// Rate limit state (shared across all backends for an agent).
-	rateLimitState *RateLimitState
-
 	// Agent tracking (shared with tmux backend via AgentTracker).
 	agents delegator.SubagentTracker
 

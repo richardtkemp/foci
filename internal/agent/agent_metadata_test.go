@@ -16,10 +16,10 @@ import (
 // renderDefaultMeta renders the default statusline template (which reproduces
 // the historical [meta]/[state] header) for a bare agent with no stores, so the
 // [state] line drops and only the [meta] line remains.
-func renderDefaultMeta(now time.Time, model, platform, manaStr string, manaGood bool, sm *sessionMeta) string {
+func renderDefaultMeta(now time.Time, model, platform string, sm *sessionMeta) string {
 	a := &Agent{}
 	return a.renderStatusline(context.Background(), DefaultStatuslineTemplate, statuslineInputs{
-		now: now, model: model, platform: platform, manaStr: manaStr, manaGood: manaGood, sm: sm, agent: a,
+		now: now, model: model, platform: platform, sm: sm, agent: a,
 	})
 }
 
@@ -31,7 +31,7 @@ func TestBuildMetaPrefix(t *testing.T) {
 
 	// First message — no previous turn data
 	sm := &sessionMeta{}
-	prefix := renderDefaultMeta(now, "claude-haiku-4-5", "api", "", false, sm)
+	prefix := renderDefaultMeta(now, "claude-haiku-4-5", "api", sm)
 	if !strings.Contains(prefix, "time=2026-02-21T05:30:00Z") {
 		t.Errorf("missing timestamp in prefix: %q", prefix)
 	}
@@ -56,7 +56,7 @@ func TestBuildMetaPrefix(t *testing.T) {
 	sm.prevCacheRead = 18000
 	sm.prevCacheWrite = 200
 
-	prefix = renderDefaultMeta(now, "claude-haiku-4-5", "telegram", "", false, sm)
+	prefix = renderDefaultMeta(now, "claude-haiku-4-5", "telegram", sm)
 	if !strings.Contains(prefix, "gap=3h12m") {
 		t.Errorf("missing gap in prefix: %q", prefix)
 	}
@@ -161,39 +161,6 @@ func TestMetadataUsesReceivedAtNotWallClock(t *testing.T) {
 	wantStamp := "time=" + timeutil.Format(receivedAt)
 	if !strings.Contains(text, wantStamp) {
 		t.Errorf("meta header missing receipt timestamp %q: %q", wantStamp, text)
-	}
-}
-
-func TestBuildMetaPrefix_Mana(t *testing.T) {
-	// Proves that mana status is omitted when empty, and shown with a red/green indicator
-	// based on the goodMana flag, both on first and subsequent messages.
-	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-
-	// Without mana
-	sm := &sessionMeta{}
-	prefix := renderDefaultMeta(now, "claude-haiku-4-5", "api", "", false, sm)
-	if strings.Contains(prefix, "mana=") {
-		t.Errorf("should not contain mana when empty: %q", prefix)
-	}
-
-	// With mana, not good (first message) — red indicator
-	prefix = renderDefaultMeta(now, "claude-haiku-4-5", "api", "75%", false, sm)
-	if !strings.Contains(prefix, "mana=75% 🔴") {
-		t.Errorf("should contain mana=75%% with red indicator: %q", prefix)
-	}
-
-	// With mana, good — green indicator
-	prefix = renderDefaultMeta(now, "claude-haiku-4-5", "api", "75%", true, sm)
-	if !strings.Contains(prefix, "mana=75% 🟢") {
-		t.Errorf("should contain mana=75%% with green indicator: %q", prefix)
-	}
-
-	// With mana (subsequent message with cost data)
-	sm.prevCost = 0.01
-	sm.prevInput = 100
-	prefix = renderDefaultMeta(now, "claude-haiku-4-5", "api", "50%", false, sm)
-	if !strings.Contains(prefix, "mana=50% 🔴") {
-		t.Errorf("should contain mana=50%% with red indicator in subsequent message: %q", prefix)
 	}
 }
 

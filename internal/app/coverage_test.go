@@ -24,8 +24,8 @@ type fakeAgent struct {
 	env *agent.Envelope
 }
 
-func (f *fakeAgent) Enqueue(e agent.Envelope) bool             { f.env = &e; return true }
-func (f *fakeAgent) MetaStatus(string) (*int, string, string) { return nil, "", "" }
+func (f *fakeAgent) Enqueue(e agent.Envelope) bool { f.env = &e; return true }
+func (f *fakeAgent) MetaStatus(string) string      { return "" }
 
 // registerFakeAgent wires a conn backed by a fakeAgent into the hub.
 func registerFakeAgent(h *Hub, agentID string) *fakeAgent {

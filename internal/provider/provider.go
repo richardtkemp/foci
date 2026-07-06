@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"foci/internal/mana"
 )
 
 // Client is the interface that all LLM providers implement.
@@ -82,10 +80,6 @@ type CredentialResolver interface {
 	// httpTimeout is the HTTP client timeout from the endpoint config.
 	ResolveClient(ctx context.Context, endpointName, apiKeyName, baseURL string, httpTimeout time.Duration) (Client, error)
 
-	// ResolveUsageClient returns a configured UsageClient for the given endpoint,
-	// or nil if usage tracking is not supported or credentials are unavailable.
-	ResolveUsageClient(endpointName, apiKeyName string) (mana.UsageClient, error)
-
 	// GetReloadFunc returns a function that reloads credentials from disk,
 	// or nil if hot-reload is not supported.
 	GetReloadFunc(secretsPath string) func() error
@@ -105,11 +99,4 @@ type ClientProvider interface {
 	// ResolveEndpointClient resolves the client for an endpoint+format pair.
 	// Falls back to openai format if the endpoint doesn't support the given format.
 	ResolveEndpointClient(endpoint, format string) Client
-}
-
-// CombinedClientProvider combines both client and usage client provision.
-// Implementations can satisfy both interfaces.
-type CombinedClientProvider interface {
-	ClientProvider
-	mana.UsageClientProvider
 }

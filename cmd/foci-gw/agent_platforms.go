@@ -9,7 +9,6 @@ import (
 	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/mana"
 	"foci/internal/platform"
 	"foci/internal/route"
 	"foci/internal/session"
@@ -59,21 +58,9 @@ func wireAgentPlatformCallbacks(
 		})
 	}
 
-	// Mana warnings — broadcast to every surface
-	if ag.ManaWatcher != nil {
-		ag.ManaWarnFunc.Add(func(warn string) {
-			log.Infof("mana", "%s", warn)
-			broadcastNotify("⚠️ " + warn)
-		})
-	}
-
 	// Rate limit — broadcast to every surface
 	ag.RateLimitFunc.Add(func(resetTime time.Time) {
-		resetStr := mana.ParseResetTime(resetTime.Format(time.RFC3339Nano))
-		if resetStr == "" {
-			resetStr = resetTime.Format(time.Kitchen)
-		}
-		broadcastNotify(fmt.Sprintf("⚡ Rate limited (resets %s).", resetStr))
+		broadcastNotify(fmt.Sprintf("⚡ Rate limited (resets %s).", resetTime.Format(time.Kitchen)))
 	})
 
 	// Max tokens — broadcast to every surface
