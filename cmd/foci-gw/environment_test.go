@@ -24,6 +24,43 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 	}
 }
 
+func TestWriteAPIConfig(t *testing.T) {
+	acfg := config.AgentConfig{BlockedPaths: []config.BlockedPath{{Path: "/etc"}}}
+	cfg := &config.Config{}
+	cfg.Tools.ExecDefaultTimeout = 30
+	rc := &config.ResolvedAgentConfig{}
+	rc.Loop.MaxToolLoops = 25
+	rc.Summary.MaxResultChars = 15000
+	rc.Summary.AutoSummarise = true
+	rc.Tools.MaxFileReadBytes = 52428800
+	rc.Tools.MaxConcurrentSpawns = 3
+	rc.Tools.ExecAutoBackground = 10
+
+	var b strings.Builder
+	writeAPIConfig(&b, acfg, cfg, rc)
+	out := b.String()
+	for _, want := range []string{
+		"## Tool & Loop Limits",
+		"up to 25 tool iterations",
+		"over 15000 chars",
+		"over 50 MB",
+		"up to 3 concurrent spawn",
+		"30s timeout",
+		"after 10s auto-background",
+		"(write/edit refused): `/etc`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("API config block missing %q\n---\n%s", want, out)
+		}
+	}
+
+	var empty strings.Builder
+	writeAPIConfig(&empty, config.AgentConfig{}, &config.Config{}, &config.ResolvedAgentConfig{})
+	if empty.Len() != 0 {
+		t.Errorf("empty config should emit no section, got:\n%s", empty.String())
+	}
+}
+
 func TestWriteMemorySearch(t *testing.T) {
 	mk := func(backend string) (config.AgentConfig, *config.ResolvedAgentConfig) {
 		acfg := config.AgentConfig{}

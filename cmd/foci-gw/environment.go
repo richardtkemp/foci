@@ -49,7 +49,7 @@ func countCrontabJobs() int {
 // writeEnvironmentCore writes the shared environment sections common to both
 // API and delegated agents: identity, workspace, paths, message metadata,
 // session structure, and visibility.
-func writeEnvironmentCore(b *strings.Builder, acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, activePlatforms []string) {
+func writeEnvironmentCore(b *strings.Builder, acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, activePlatforms []string, crontabCount int) {
 	logDir := filepath.Dir(cfg.Logging.EventFile)
 
 	b.WriteString("# Environment\n\n")
@@ -95,6 +95,8 @@ func writeEnvironmentCore(b *strings.Builder, acfg config.AgentConfig, configPat
 	b.WriteString("\n")
 	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
+
+	fmt.Fprintf(b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 }
 
 // writeVisibility appends the display visibility section.
@@ -175,6 +177,72 @@ func stripBashPrefix(rules []string) []string {
 	return out
 }
 
+// writeShellTools lists the foci shell functions available to delegated agents
+// via the exec bridge (they call foci tools through Bash, so they need the
+// names). API agents call the registry directly and get no such list.
+func writeShellTools(b *strings.Builder, shellTools []tools.ExportedTool) {
+	if len(shellTools) == 0 {
+		return
+	}
+	b.WriteString("\n## Foci Shell Tools\n")
+	b.WriteString("The following foci tools are available as shell functions in your Bash environment. ")
+	b.WriteString("Call them via the Bash tool (e.g., `foci_todo list --status open`).\n")
+	b.WriteString("Run any command with `--help` or `-h` for usage details.\n\n")
+	for _, t := range shellTools {
+		fmt.Fprintf(b, "- `%s` — %s\n", t.Name, t.Description)
+	}
+}
+
+// writeAPIConfig documents API-agent-specific tool/loop limits (API agents are
+// far more configurable than delegated ones) so the agent works within them
+// rather than discovering them by hitting a guard (#1060). API agents only.
+func writeAPIConfig(b *strings.Builder, acfg config.AgentConfig, cfg *config.Config, rc *config.ResolvedAgentConfig) {
+	var body strings.Builder
+	if rc.Loop.MaxToolLoops > 0 {
+		fmt.Fprintf(&body, "- **Tool budget**: up to %d tool iterations per turn — pace multi-step work against this.\n", rc.Loop.MaxToolLoops)
+	}
+	if rc.Summary.MaxResultChars > 0 {
+		disposition := "auto-summarised via the cheap model"
+		if !rc.Summary.AutoSummarise {
+			disposition = "saved to a temp file with hints (auto-summary off)"
+		}
+		fmt.Fprintf(&body, "- **Tool results** over %d chars aren't returned inline — they're %s. Prefer targeted queries over dumping.\n", rc.Summary.MaxResultChars, disposition)
+	}
+	if rc.Tools.MaxFileReadBytes > 0 {
+		fmt.Fprintf(&body, "- **File reads**: read/edit refuse files over %d MB — use offset/limit for big files.\n", rc.Tools.MaxFileReadBytes/(1<<20))
+	}
+	if rc.Tools.MaxConcurrentSpawns > 0 {
+		fmt.Fprintf(&body, "- **Spawn**: up to %d concurrent spawn sessions — batch parallel subagent work within this.\n", rc.Tools.MaxConcurrentSpawns)
+	}
+	if cfg.Tools.ExecDefaultTimeout > 0 {
+		line := fmt.Sprintf("- **Exec**: commands default to a %ds timeout", cfg.Tools.ExecDefaultTimeout)
+		if rc.Tools.ExecAutoBackground > 0 {
+			line += fmt.Sprintf("; those still running after %ds auto-background", rc.Tools.ExecAutoBackground)
+		}
+		body.WriteString(line + ". Set an explicit timeout for long commands.\n")
+	}
+	blocked := acfg.BlockedPaths // per-agent overrides global
+	if len(blocked) == 0 {
+		blocked = cfg.BlockedPaths
+	}
+	if len(blocked) > 0 {
+		body.WriteString("- **Blocked paths** (write/edit refused):")
+		for i, bp := range blocked {
+			if i > 0 {
+				body.WriteString(",")
+			}
+			fmt.Fprintf(&body, " `%s`", bp.Path)
+		}
+		body.WriteString("\n")
+	}
+
+	if body.Len() == 0 {
+		return
+	}
+	b.WriteString("\n## Tool & Loop Limits\n")
+	b.WriteString(body.String())
+}
+
 // writeMemorySearch documents how foci_memory_search behaves for this agent —
 // the backend, its query semantics, and what's indexed — so the agent queries
 // effectively and reads a miss correctly (#1060).
@@ -224,12 +292,11 @@ func writeBackend(b *strings.Builder, backend string, searchDirs []string) {
 // have direct access to foci's tool registry.
 func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, searchDirs []string) string {
 	var b strings.Builder
-	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms)
-
-	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
+	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms, crontabCount)
 
 	writeBackend(&b, acfg.Backend, searchDirs)
 	writeMemorySearch(&b, acfg, rc)
+	writeAPIConfig(&b, acfg, cfg, rc)
 
 	// Task List
 	b.WriteString("\n## Task List\n")
@@ -247,23 +314,11 @@ func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config
 // foci shell functions exposed via the exec bridge.
 func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, shellTools []tools.ExportedTool, searchDirs []string) string {
 	var b strings.Builder
-	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms)
-
-	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
+	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms, crontabCount)
 
 	writeBackend(&b, acfg.Backend, searchDirs)
 	writeMemorySearch(&b, acfg, rc)
-
-	// Shell tools
-	if len(shellTools) > 0 {
-		b.WriteString("\n## Foci Shell Tools\n")
-		b.WriteString("The following foci tools are available as shell functions in your Bash environment. ")
-		b.WriteString("Call them via the Bash tool (e.g., `foci_todo list --status open`).\n")
-		b.WriteString("Run any command with `--help` or `-h` for usage details.\n\n")
-		for _, t := range shellTools {
-			fmt.Fprintf(&b, "- `%s` — %s\n", t.Name, t.Description)
-		}
-	}
+	writeShellTools(&b, shellTools)
 
 	// Auto-approve visibility is CC-specific (the ccstream Bash allowlist);
 	// opencode has its own permission model.
