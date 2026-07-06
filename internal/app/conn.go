@@ -344,16 +344,17 @@ func (c *appConn) SendTextWithButtons(text string, buttons []platform.ButtonChoi
 // capability. The app renders a single form and replies with one
 // InteractiveResponse.Answers (all answers, positional), routed back via the
 // hub's batched-prompt registry. Returns batched=false when it can't batch — no
-// live socket, or the client didn't advertise the capability — so the ask layer
-// falls back to the sequential SendTextWithButtons path. Implements
-// platform.BatchButtonSender.
+// binding, or the app never advertised the capability — so the ask layer falls
+// back to the sequential SendTextWithButtons path. A capable app that's merely
+// offline still batches: the cached capability keeps supportsFeature true and the
+// frame persists for replay on reconnect. Implements platform.BatchButtonSender.
 func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.BatchQuestion, onResponse func(answers []string)) (bool, error) {
 	b := c.hub.bindingForSession(c.SessionKey())
 	if b == nil {
-		return false, nil // offline → caller uses the sequential path
+		return false, nil // no binding for this conv → sequential path
 	}
-	if !b.clientHasFeature(featureInteractiveBatch) {
-		return false, nil // legacy/uncapable client → sequential one-at-a-time
+	if !b.supportsFeature(featureInteractiveBatch) {
+		return false, nil // app never advertised batch support → sequential one-at-a-time
 	}
 	c.hub.registerBatchPrompt(promptID, b, onResponse)
 	qs := make([]fap.Question, len(questions))

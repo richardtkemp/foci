@@ -713,8 +713,9 @@ func TestNotification_EditInPlace(t *testing.T) {
 // gets ONE Interactive frame carrying all questions, and its single Answers reply
 // fires the registered callback with every answer at once.
 func TestInteractive_BatchRoundTrip(t *testing.T) {
-	h, c, _, conn := boundConn(t)
+	h, c, b, conn := boundConn(t)
 	c.features = map[string]struct{}{featureInteractiveBatch: {}}
+	b.attach(c) // hello→attach caches the capability onto the binding
 
 	var got []string
 	batched, err := conn.SendInteractiveBatch("req-b",
@@ -754,6 +755,26 @@ func TestInteractive_BatchDeclinedWhenUncapable(t *testing.T) {
 	}
 	if ds := drain(t, c); len(ds) != 0 {
 		t.Fatalf("declined batch must emit nothing, got %v", types(ds))
+	}
+}
+
+// TestInteractive_BatchWhenCapableButOffline: a client that advertised the
+// capability and then disconnected still batches — the cached feature set keeps
+// supportsFeature true, so the frame is registered + persisted for replay rather
+// than degrading to sequential prompts.
+func TestInteractive_BatchWhenCapableButOffline(t *testing.T) {
+	h, c, b, conn := boundConn(t)
+	c.features = map[string]struct{}{featureInteractiveBatch: {}}
+	b.attach(c)   // capability cached
+	b.attach(nil) // disconnect: b.client nil, cached feature set retained
+
+	batched, err := conn.SendInteractiveBatch("req-off",
+		[]platform.BatchQuestion{{Text: "Q?", Choices: []platform.ButtonChoice{{Label: "A", Data: "qa:0"}}}}, func([]string) {})
+	if err != nil || !batched {
+		t.Fatalf("offline capable client: batched=%v err=%v; want true,nil", batched, err)
+	}
+	if _, ok := h.batchPromptByID("req-off"); !ok {
+		t.Errorf("batch prompt should be registered for replay on reconnect")
 	}
 }
 
