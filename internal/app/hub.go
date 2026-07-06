@@ -1293,6 +1293,7 @@ type convBinding struct {
 
 	mu          sync.Mutex
 	client      *wsClient           // current socket; nil when offline
+	features    map[string]struct{} // last hello's advertised capabilities; cached so checks survive disconnect
 	seq         int64               // server→app outbound seq high-water
 	clientSeqHW int64               // highest client→server seq seen (stamped into outbound ack)
 	buffer      []bufferedFrame     // sent frames retained for replay (trimmed by ack/depth/TTL)
@@ -1309,8 +1310,19 @@ type convBinding struct {
 // attach points the durable state at a (re)connected socket and registers it in
 // the socket's per-conversation map so inbound frames resolve back to it.
 func (b *convBinding) attach(client *wsClient) {
+	var feats map[string]struct{}
+	if client != nil {
+		client.mu.Lock()
+		feats = client.features
+		client.mu.Unlock()
+	}
 	b.mu.Lock()
 	b.client = client
+	// Cache the capability set; attach(nil) on disconnect leaves the last-known
+	// set intact so checks still resolve while offline.
+	if client != nil {
+		b.features = feats
+	}
 	b.mu.Unlock()
 	// A nil client is the socketless case (startup binding restore): the durable
 	// binding exists and buffers/persists, but there is no socket to register it
@@ -1562,21 +1574,16 @@ type wsClient struct {
 	convByID map[string]*convBinding // conversationId → binding
 }
 
-// hasFeature reports whether this socket's client advertised feat in its hello.
-func (c *wsClient) hasFeature(feat string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, ok := c.features[feat]
-	return ok
-}
-
-// clientHasFeature reports whether the binding's currently-attached socket
-// advertised feat. False when offline (no socket) — callers treat that as "can't".
-func (b *convBinding) clientHasFeature(feat string) bool {
+// supportsFeature reports whether the binding's app advertised feat. It reads the
+// cached set from the last hello rather than the live socket, so it stays true
+// across a disconnect — a known-capable but offline app still gets capability-gated
+// frames, queued and replayed on reconnect. Canonical check: route all capability
+// gating through it.
+func (b *convBinding) supportsFeature(feat string) bool {
 	b.mu.Lock()
-	c := b.client
-	b.mu.Unlock()
-	return c != nil && c.hasFeature(feat)
+	defer b.mu.Unlock()
+	_, ok := b.features[feat]
+	return ok
 }
 
 // featureSet builds a lookup set from the hello's advertised feature list.
