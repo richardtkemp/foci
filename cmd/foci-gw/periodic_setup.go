@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
@@ -200,6 +201,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		// flags are resolved inside the adapter / by IsDelegatedAgent + ResetTime.
 		Agent: &backgroundAgent{inst: inst, connMgr: p.connMgr, agentID: agentID, branch: branchFn},
 
+		OpenSessionsFn: openSessionsFn(ka.WarmOpenAppChats, agentID),
+
 		WarningDispatcher:     warningDispatcher,
 		ChatWarningDispatcher: chatWarningDispatcher,
 		IsDelegatedAgent:      inst.ag.DelegatedManager != nil,
@@ -209,4 +212,13 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	log.Infof("main", "agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, kaEnabled, bg.Enabled)
 	return runner
+}
+
+// openSessionsFn returns the keepalive open-chats resolver, or nil when the
+// feature is disabled for this agent (keepalive then warms only the default).
+func openSessionsFn(enabled bool, agentID string) func() []string {
+	if !enabled {
+		return nil
+	}
+	return func() []string { return app.OpenSessionsForAgent(agentID) }
 }

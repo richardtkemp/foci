@@ -30,6 +30,19 @@ func Enabled() bool {
 	return activeHub != nil
 }
 
+// OpenSessionsForAgent returns the session keys of the chats the agent's app
+// clients currently have open, or nil if the app provider is not running. Used
+// by keepalive when warm_open_app_chats is set.
+func OpenSessionsForAgent(agentID string) []string {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return nil
+	}
+	return h.OpenSessionsForAgent(agentID)
+}
+
 // ActiveConnCount returns the number of live app sockets on the configured hub,
 // or 0 if the app provider is not running. The goroutine monitor calls it each
 // sample tick to grow its threshold with the live connection count (dynamic
