@@ -163,7 +163,15 @@ Subcommands:
 
 	// ========== Seed shared defaults ==========
 	wsFileMode, _ := config.ParseFileMode(cfg.FileMode)
-	seedSharedDefaults(wsFileMode)
+	liveBackends := map[string]bool{}
+	for _, acfg := range cfg.Agents {
+		b := acfg.Backend
+		if b == "" {
+			b = "api"
+		}
+		liveBackends[b] = true
+	}
+	seedSharedDefaults(wsFileMode, liveBackends)
 
 	// ========== Secrets & Bitwarden ==========
 	sec := initSecrets(configPath, cfg)
