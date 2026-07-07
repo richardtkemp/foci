@@ -1620,6 +1620,83 @@ func TestDelegatedTransport_SinkLessTurnBindsRouterNotNopSink(t *testing.T) {
 	}
 }
 
+// TestDelegatedTransport_ThinkingBufferResetPerTurn is the Phase 2 review flag-5
+// regression. Thinking deltas accumulate into a session-scoped buffer (installed
+// by AttachDelivery). A between-turns autonomous run streams thinking into that
+// same buffer but has no turn of its own to drain it, so without a per-turn reset
+// its thinking would be misattributed to the NEXT turn's conversation-DB entry.
+// RunInference discards the buffer at turn start; this proves the next turn logs
+// only its own thinking.
+func TestDelegatedTransport_ThinkingBufferResetPerTurn(t *testing.T) {
+	dir := t.TempDir()
+	agentID := "test"
+	if err := convo.InitPerAgent([]string{agentID}, func(id string) string {
+		return dir + "/" + id + ".db"
+	}); err != nil {
+		t.Fatalf("InitPerAgent: %v", err)
+	}
+	defer convo.Close()
+
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+			if handler != nil {
+				if handler.OnThinkingDelta != nil {
+					handler.OnThinkingDelta("TURN-THINK")
+				}
+				if handler.OnTurnComplete != nil {
+					handler.OnTurnComplete(&delegator.TurnResult{Text: "done", Model: "test-model"})
+				}
+			}
+			return nil, nil
+		},
+	}
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	mgr.AttachDelivery = a.AttachDelivery
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+	sk := agentID + "/c777"
+	meta := &TurnMetadata{UserID: "u1", Username: "dick"}
+
+	// Simulate a between-turns autonomous run: build the session delivery, then
+	// stream a thinking delta with no turn to drain it.
+	a.AttachDelivery(be, sk)
+	be.sessionEvents.OnThinkingDelta("STALE-AUTONOMOUS")
+
+	ts := NewTurnState(context.Background(), sk, []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+	ts.Meta = meta
+	ts.ConvChatID = 77
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	<-ts.CompletionChan
+
+	db, err := sql.Open("sqlite", dir+"/"+agentID+".db")
+	if err != nil {
+		t.Fatalf("open DB: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT text FROM messages WHERE content_type='thinking' ORDER BY id")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	var texts []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		texts = append(texts, s)
+	}
+	if len(texts) != 1 || texts[0] != "TURN-THINK" {
+		t.Fatalf("thinking log = %v, want exactly [TURN-THINK] — the stale autonomous delta must not leak into this turn's entry", texts)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // UpdateSessionMeta tests
 // ---------------------------------------------------------------------------

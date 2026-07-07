@@ -286,6 +286,12 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// session router — not rebuilt here per turn. Rebuilding it from the ctx sink
 	// was the #1068 poison. This turn's thinking deltas accumulate into the
 	// session buffer AttachDelivery installed; DrainThinking empties it below.
+	//
+	// Discard any deltas already in that buffer: a between-turns autonomous run
+	// streams thinking into the same session-scoped buffer but has no turn of its
+	// own to drain it, so without this reset its thinking would be misattributed
+	// to this turn's conversation-DB entry.
+	a.DrainThinking(ts.SessionKey)
 
 	// Per-turn bookkeeping callbacks via TurnEvents. These hold per-turn
 	// state (preAnswerFired, toolCount, ts) and may legitimately be nil
