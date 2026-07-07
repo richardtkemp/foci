@@ -59,16 +59,10 @@ func TestContextCommand(t *testing.T) {
 		"User messages",
 		"Assistant",
 		"Tool results",
-		// Last API call
-		"input:",
-		"cache_read:",
-		"cache_write:",
-		"output:",
-		"1,500", // output tokens
 	}
-	// Should have 4 separate code blocks (header, system, conversation, last API call)
-	if strings.Count(result.Text, "```") != 8 { // 4 opening + 4 closing
-		t.Errorf("expected 4 code blocks (8 backtick markers), got %d in:\n%s", strings.Count(result.Text, "```"), result.Text)
+	// Should have 3 code blocks (header, system, conversation)
+	if strings.Count(result.Text, "```") != 6 { // 3 opening + 3 closing
+		t.Errorf("expected 3 code blocks (6 backtick markers), got %d in:\n%s", strings.Count(result.Text, "```"), result.Text)
 	}
 	for _, check := range checks {
 		if !strings.Contains(result.Text, check) {

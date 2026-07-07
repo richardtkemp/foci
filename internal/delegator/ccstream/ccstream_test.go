@@ -3063,8 +3063,8 @@ func TestOnControlResponse_RoutesToWaiter(t *testing.T) {
 	}
 }
 
-func TestGetContextUsage(t *testing.T) {
-	// End-to-end test: GetContextUsage sends request, receives routed response.
+func TestGetContextWindow(t *testing.T) {
+	// End-to-end test: GetContextWindow sends request, receives routed response.
 	t.Parallel()
 
 	// Create a pipe; drain reader so writer.SendControl doesn't block.
@@ -3076,17 +3076,17 @@ func TestGetContextUsage(t *testing.T) {
 		pendingControls: make(map[string]chan json.RawMessage),
 	}
 
-	// Run GetContextUsage in a goroutine (it blocks waiting for response).
+	// Run GetContextWindow in a goroutine (it blocks waiting for response).
 	type result struct {
-		usage *delegator.ContextUsage
-		err   error
+		wnd *delegator.ContextWindow
+		err error
 	}
 	resCh := make(chan result, 1)
 	ctx := context.Background()
 
 	go func() {
-		u, err := b.GetContextUsage(ctx)
-		resCh <- result{u, err}
+		w, err := b.GetContextWindow(ctx)
+		resCh <- result{w, err}
 	}()
 
 	// Wait for the pending control to be registered.
@@ -3103,7 +3103,7 @@ func TestGetContextUsage(t *testing.T) {
 		}
 	}
 	if reqID == "" {
-		t.Fatal("GetContextUsage didn't register a pending control request")
+		t.Fatal("GetContextWindow didn't register a pending control request")
 	}
 
 	// Simulate CC returning the response via OnControlResponse.
@@ -3113,22 +3113,13 @@ func TestGetContextUsage(t *testing.T) {
 	// Read result.
 	r := <-resCh
 	if r.err != nil {
-		t.Fatalf("GetContextUsage error: %v", r.err)
+		t.Fatalf("GetContextWindow error: %v", r.err)
 	}
-	if r.usage.TotalTokens != 50000 {
-		t.Errorf("TotalTokens = %d, want 50000", r.usage.TotalTokens)
+	if r.wnd.MaxTokens != 200000 {
+		t.Errorf("MaxTokens = %d, want 200000", r.wnd.MaxTokens)
 	}
-	if r.usage.MaxTokens != 200000 {
-		t.Errorf("MaxTokens = %d, want 200000", r.usage.MaxTokens)
-	}
-	if r.usage.Percentage != 25 {
-		t.Errorf("Percentage = %d, want 25", r.usage.Percentage)
-	}
-	if r.usage.AutoCompactThreshold != 160000 {
-		t.Errorf("AutoCompactThreshold = %d, want 160000", r.usage.AutoCompactThreshold)
-	}
-	if r.usage.Model != "claude-sonnet-4-6" {
-		t.Errorf("Model = %q, want %q", r.usage.Model, "claude-sonnet-4-6")
+	if r.wnd.Model != "claude-sonnet-4-6" {
+		t.Errorf("Model = %q, want %q", r.wnd.Model, "claude-sonnet-4-6")
 	}
 
 	pw.Close()

@@ -393,9 +393,9 @@ func (a *Agent) SetPermissionMode(ctx context.Context, sessionKey, mode string) 
 // "mode switch requires ccstream backend" message.
 var ErrModeUnsupported = fmt.Errorf("permission mode switching requires the ccstream backend")
 
-// refreshContextFromBackend queries the backend's context usage and updates
+// refreshContextFromBackend queries the backend's context window and updates
 // the session's context limit and model name. No-op if the backend doesn't
-// implement ContextUsageQuerier.
+// implement ContextWindowQuerier.
 func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string) {
 	if a.DelegatedManager == nil {
 		return
@@ -404,7 +404,7 @@ func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string
 	if err != nil {
 		return
 	}
-	cuq, ok := be.(delegator.ContextUsageQuerier)
+	cwq, ok := be.(delegator.ContextWindowQuerier)
 	if !ok {
 		return
 	}
@@ -413,25 +413,25 @@ func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	usage, err := cuq.GetContextUsage(queryCtx)
+	wnd, err := cwq.GetContextWindow(queryCtx)
 	if err != nil {
-		log.Warnf("agent", "session=%s get_context_usage failed: %v", sessionKey, err)
+		log.Warnf("agent", "session=%s get_context_window failed: %v", sessionKey, err)
 		return
 	}
 
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
-	if usage.MaxTokens > 0 {
-		sm.contextLimit = usage.MaxTokens
+	if wnd.MaxTokens > 0 {
+		sm.contextLimit = wnd.MaxTokens
 	}
 	// Resolve the model alias immediately (e.g. "sonnet" → "claude-sonnet-4-6").
-	if usage.Model != "" {
-		sm.model = usage.Model
+	if wnd.Model != "" {
+		sm.model = wnd.Model
 	}
 	a.metaMu.Unlock()
 
-	log.Infof("agent", "session=%s context_usage: %d/%d tokens (%d%%), model=%s",
-		sessionKey, usage.TotalTokens, usage.MaxTokens, usage.Percentage, usage.Model)
+	log.Infof("agent", "session=%s context_window: %d tokens, model=%s",
+		sessionKey, wnd.MaxTokens, wnd.Model)
 }
 
 // SessionFormat returns the effective wire format for the session.

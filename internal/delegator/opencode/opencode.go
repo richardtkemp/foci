@@ -198,7 +198,7 @@ type Backend struct {
 	lastModel     string
 	lastProvider  string // paired with lastModel; required by /summarize compaction
 	lastUsage     *TokenUsage
-	ctxLimitCache int             // cached context window from /config/providers (GetContextUsage)
+	ctxLimitCache int             // cached context window from /config/providers (GetContextWindow)
 	ctxLimitModel string          // model the cached limit belongs to; re-query on model change
 	seenToolCalls map[string]bool // reset in beginTurn; dedupes OnToolStart
 	seenTextParts map[string]bool // reset in beginTurn; dedupes OnText

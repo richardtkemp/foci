@@ -1,4 +1,4 @@
-// context_usage.go — ContextUsageQuerier implementation for opencode.
+// context_usage.go — ContextWindowQuerier implementation for opencode.
 //
 // opencode has no CC-style get_context_usage endpoint, but it exposes the
 // model catalogue (sourced from models.dev) via GET /config/providers, which
@@ -7,6 +7,10 @@
 // up to 5× for models like zai-coding-plan/glm-5.2 (real window 1,000,000),
 // which made compaction fire at ~8% of true capacity. We query the real
 // window here so foci's compaction trigger uses the correct limit.
+//
+// Only the window SIZE is returned here. The current token count comes from
+// api.db (QuerySessionStats) — not from in-memory backend state, which is
+// cleared at turn boundaries and unreliable between sessions/restarts.
 
 package opencode
 
@@ -31,15 +35,12 @@ type providerInfo struct {
 	} `json:"models"`
 }
 
-// GetContextUsage implements delegator.ContextUsageQuerier. MaxTokens is the
-// model's real context window (from /config/providers); TotalTokens is the
-// last completed turn's context size. Both come from already-captured state
-// plus one cached HTTP GET — no LLM call.
-func (b *Backend) GetContextUsage(ctx context.Context) (*delegator.ContextUsage, error) {
+// GetContextWindow implements delegator.ContextWindowQuerier. Returns the
+// model's real context window from /config/providers (cached per model).
+func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindow, error) {
 	b.mu.Lock()
 	model := b.lastModel
 	provider := b.lastProvider
-	usage := b.lastUsage
 	b.mu.Unlock()
 
 	if model == "" {
@@ -51,20 +52,9 @@ func (b *Backend) GetContextUsage(ctx context.Context) (*delegator.ContextUsage,
 		return nil, err
 	}
 
-	total := 0
-	if usage != nil {
-		total = usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
-	}
-	pct := 0
-	if limit > 0 {
-		pct = int(float64(total) / float64(limit) * 100)
-	}
-
-	return &delegator.ContextUsage{
-		TotalTokens: total,
-		MaxTokens:   limit,
-		Percentage:  pct,
-		Model:       model,
+	return &delegator.ContextWindow{
+		MaxTokens: limit,
+		Model:     model,
 	}, nil
 }
 

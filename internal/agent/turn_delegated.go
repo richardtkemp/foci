@@ -625,7 +625,7 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	totalTokens := ts.FinalUsage.InputTokens + ts.FinalUsage.CacheReadInputTokens + ts.FinalUsage.CacheCreationInputTokens
 
 	// Lazily learn the real context window from the backend if we don't have
-	// it yet. Backends that implement ContextUsageQuerier (CC's
+	// it yet. Backends that implement ContextWindowQuerier (CC's
 	// get_context_usage; opencode's /config/providers lookup) report the true
 	// window; without it we'd fall back to modelinfo's generic 200k, which is
 	// wrong by up to 5× for non-Anthropic models (e.g. glm-5.2 = 1M) and fires
