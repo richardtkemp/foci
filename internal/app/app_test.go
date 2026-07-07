@@ -1315,6 +1315,9 @@ func TestPushPreview_Classification(t *testing.T) {
 		{fap.Media{MIME: "image/png"}, true, "Sent a photo"},
 		{fap.Media{MIME: "image/png", Caption: "cap"}, true, "cap"},
 		{fap.Media{MIME: "application/pdf"}, true, "Sent a file"},
+		// #1061: a named file previews with its filename, plus caption when present.
+		{fap.Media{MIME: "application/pdf", Name: "report.pdf"}, true, "report.pdf"},
+		{fap.Media{MIME: "application/pdf", Name: "report.pdf", Caption: "here you go"}, true, "report.pdf — here you go"},
 		{fap.Notification{Text: "note"}, true, "note"},
 		{fap.Interactive{Text: "approve?"}, true, "approve?"},
 		{fap.Interactive{Questions: []fap.Question{{Text: "batched ask?"}}}, true, "batched ask?"},
