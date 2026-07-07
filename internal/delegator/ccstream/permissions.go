@@ -290,9 +290,20 @@ func (req *PermissionRequestPayload) DisplayText() string {
 	return b.String()
 }
 
-// formatToolInput extracts a human-readable summary from tool input JSON.
-// Uses toolName to determine which input field to display, aligned with
-// toolMatchKeys in autoapprove.go.
+// toolMatchKeys maps CC tool names to the JSON input field used for display.
+// Mirrors the map in the shared autoapprove package (which uses it for
+// security-critical matching); this local copy is for display only.
+var toolMatchKeys = map[string]string{
+	"Bash":         "command",
+	"Read":         "file_path",
+	"Edit":         "file_path",
+	"Write":        "file_path",
+	"NotebookEdit": "file_path",
+	"Glob":         "pattern",
+	"Grep":         "pattern",
+	"WebFetch":     "url",
+	"WebSearch":    "query",
+}
 //
 // Fields that may contain arbitrary shell/regex text (command, pattern, url,
 // query, and the JSON fallback) are rendered as fenced code blocks rather

@@ -27,6 +27,7 @@ type pendingPermission struct {
 	id       string
 	permType string // "bash"|"edit"|"question"|...
 	title    string
+	patterns []string        // command source texts (bash) or paths (read/edit) — from permission.asked
 	metadata json.RawMessage // question schema for type=="question"
 	// replyNext selects the reply transport: true for permission.asked
 	// (opencode 1.2.x — POST /permission/{id}/reply {reply:once|always|reject});

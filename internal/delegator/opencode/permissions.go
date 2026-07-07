@@ -12,9 +12,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/log"
 )
 
@@ -50,6 +52,7 @@ func (b *Backend) onPermissionAsked(req PermissionRequest) {
 		id:        req.ID,
 		permType:  req.Permission,
 		title:     title,
+		patterns:  req.Patterns,
 		metadata:  req.Metadata,
 		replyNext: true, // 1.2.x: reply via POST /permission/{id}/reply
 	})
@@ -93,6 +96,24 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 		return
 	}
 
+	// Auto-approve pre-filter: if foci's compiled rules match ALL patterns,
+	// reply "allow" (one-shot) directly without prompting the user. This
+	// restores the defense-in-depth the ccstream auto-approve engine
+	// provided — bash command segmentation, unsafe-flag rejection, path
+	// traversal canonicalization, symlink escape detection.
+	if b.checkAutoApprove(pp) {
+		log.Infof(b.logComponent(), "auto-approved: type=%s patterns=%v id=%s", pp.permType, pp.patterns, pp.id)
+		if err := b.sendPermissionReply(pp, true, false); err != nil {
+			log.Warnf(b.logComponent(), "auto-approve reply failed (%v) — falling through to user prompt", err)
+		} else {
+			b.outstanding.Cancel(pp.id, "auto-approved")
+			b.permMu.Lock()
+			delete(b.pendingPerms, pp.id)
+			b.permMu.Unlock()
+			return
+		}
+	}
+
 	// Route question-type permissions to the question path.
 	if pp.permType == PermQuestion {
 		b.handleQuestionPermission(Permission{ID: pp.id, Type: pp.permType, Title: pp.title, Metadata: pp.metadata})
@@ -111,6 +132,65 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 		{Label: "Always Allow", Data: "always"},
 	}
 	b.permPromptFn(pp.id, pp.title, pp.title, "", choices)
+}
+
+// permTypeToToolName maps opencode permission types to the tool names used
+// by the auto-approve engine (matching ccstream's naming convention).
+// Returns "" for types foci doesn't auto-approve (external_directory,
+// question, unknown types).
+var permTypeToToolName = map[string]string{
+	"bash":      "Bash",
+	"read":      "Read",
+	"edit":      "Edit",
+	"write":     "Write",
+	"glob":      "Glob",
+	"grep":      "Grep",
+	"webfetch":  "WebFetch",
+	"websearch": "WebSearch",
+}
+
+// checkAutoApprove evaluates pending permission patterns against foci's
+// compiled auto-approve rules. Returns true if ALL patterns independently
+// match and the permission should be auto-approved without prompting the
+// user.
+//
+// For Bash, each pattern is a command source text (already AST-split by
+// opencode's tree-sitter) — the engine re-parses it with mvdan/sh for
+// structural safety (redirects, process substitution, unsafe flags).
+// For path tools, patterns are workspace-relative paths resolved to
+// absolute so the engine can canonicalize and match against workspace
+// boundaries.
+func (b *Backend) checkAutoApprove(pp pendingPermission) bool {
+	if len(b.autoApproveRules) == 0 || len(pp.patterns) == 0 {
+		return false
+	}
+
+	toolName, ok := permTypeToToolName[pp.permType]
+	if !ok {
+		return false
+	}
+
+	for _, pattern := range pp.patterns {
+		var input json.RawMessage
+		switch toolName {
+		case "Bash":
+			input, _ = json.Marshal(map[string]string{"command": pattern})
+		case "Read", "Edit", "Write":
+			absPath := pattern
+			if !filepath.IsAbs(absPath) && b.workDir != "" {
+				absPath = filepath.Join(b.workDir, pattern)
+			}
+			input, _ = json.Marshal(map[string]string{"file_path": absPath})
+		default:
+			input, _ = json.Marshal(map[string]string{"pattern": pattern})
+		}
+
+		if !autoapprove.Match(b.autoApproveRules, toolName, input) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // onPermissionReplied handles a permission.replied SSE event. opencode

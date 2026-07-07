@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 )
 
 // serverPool is the package-level registry of live Servers, keyed by
@@ -233,6 +234,13 @@ type Backend struct {
 	onCompactionStart func()
 	onCompactionDone  func(preTokens int)
 	onAuthFailure     func(detail string)
+
+	// Auto-approve rules — compiled from StartOptions.AutoApproveRules.
+	// When non-empty, incoming permission.asked events are checked against
+	// these rules before surfacing to the user. Matched permissions are
+	// auto-approved via sendPermissionReply without prompting.
+	autoApproveRules []autoapprove.Rule
+	workDir          string // workspace directory for path-canonicalization
 
 	// authFailureFired gates onAuthFailure so a flaky 401 loop doesn't
 	// spam repeated notifications. CAS'd to true on first fire; resets

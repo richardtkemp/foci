@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 )
 
 // ---------------------------------------------------------------------------
@@ -496,4 +497,135 @@ func TestRespondToQuestion_OnNonQuestionReturnsError(t *testing.T) {
 	if err == nil {
 		t.Error("RespondToQuestion on a non-question should error")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Auto-approve (foci defense-in-depth layer)
+// ---------------------------------------------------------------------------
+
+func TestAutoApprove_BashMatchingRule_NoPrompt(t *testing.T) {
+	// A bash command matching a rule should be auto-approved via
+	// POST /permission/{id}/reply with no user prompt.
+	b, rec := newPermTestBackend(t)
+	b.autoApproveRules = autoapprove.Compile([]string{"Bash:ls"})
+	b.workDir = "/tmp/test-ws"
+
+	b.onPermissionAsked(PermissionRequest{
+		ID:         "per-auto-1",
+		SessionID:  "sess-perm",
+		Permission: PermBash,
+		Patterns:   []string{"ls -la"},
+	})
+
+	// Should have POSTed a reply with "once".
+	posts := rec.findallPath("/permission/per-auto-1/reply")
+	if len(posts) != 1 {
+		t.Fatalf("expected 1 reply POST, got %d", len(posts))
+	}
+	if !strings.Contains(string(posts[0].Body), `"once"`) {
+		t.Errorf("reply body = %s, want \"once\"", string(posts[0].Body))
+	}
+
+	// Should NOT have prompted the user.
+	if id, _, _ := rec.promptInfo(); id != "" {
+		t.Error("user prompt fired despite auto-approve match")
+	}
+}
+
+func TestAutoApprove_BashNonMatchingRule_PromptsUser(t *testing.T) {
+	// A bash command NOT matching any rule should fall through to the
+	// user prompt.
+	b, rec := newPermTestBackend(t)
+	b.autoApproveRules = autoapprove.Compile([]string{"Bash:ls"})
+
+	b.onPermissionAsked(PermissionRequest{
+		ID:         "per-auto-2",
+		SessionID:  "sess-perm",
+		Permission: PermBash,
+		Patterns:   []string{"rm -rf /tmp"},
+	})
+
+	// Should NOT have POSTed a reply.
+	if posts := rec.findallPath("/permission/per-auto-2/reply"); len(posts) != 0 {
+		t.Errorf("unexpected auto-approve reply: %v", posts)
+	}
+
+	// SHOULD have prompted the user.
+	id, _, _ := rec.promptInfo()
+	if id != "per-auto-2" {
+		t.Errorf("user prompt expected for per-auto-2, got id=%q", id)
+	}
+}
+
+func TestAutoApprove_UnsafeFlag_NotAutoApproved(t *testing.T) {
+	// sed is in CommonReadonlyRules, but sed -i (in-place edit) is
+	// rejected by the unsafe-flag detector. Must NOT auto-approve.
+	b, rec := newPermTestBackend(t)
+	b.autoApproveRules = autoapprove.Compile(autoapprove.CommonReadonlyRules)
+
+	b.onPermissionAsked(PermissionRequest{
+		ID:         "per-sed",
+		SessionID:  "sess-perm",
+		Permission: PermBash,
+		Patterns:   []string{"sed -i 's/old/new/g' file.txt"},
+	})
+
+	if posts := rec.findallPath("/permission/per-sed/reply"); len(posts) != 0 {
+		t.Errorf("sed -i should NOT be auto-approved, got reply: %v", posts)
+	}
+	id, _, _ := rec.promptInfo()
+	if id != "per-sed" {
+		t.Errorf("sed -i should prompt user, got id=%q", id)
+	}
+}
+
+func TestAutoApprove_NoRules_NoAutoApprove(t *testing.T) {
+	// With no compiled rules, nothing should be auto-approved.
+	b, rec := newPermTestBackend(t)
+	// autoApproveRules left nil
+
+	b.onPermissionAsked(PermissionRequest{
+		ID:         "per-norules",
+		SessionID:  "sess-perm",
+		Permission: PermBash,
+		Patterns:   []string{"ls"},
+	})
+
+	if posts := rec.findallPath("/permission/per-norules/reply"); len(posts) != 0 {
+		t.Errorf("nil rules should not auto-approve, got: %v", posts)
+	}
+	id, _, _ := rec.promptInfo()
+	if id != "per-norules" {
+		t.Errorf("expected user prompt, got id=%q", id)
+	}
+}
+
+func TestAutoApprove_ExternalDirectory_NotAutoApproved(t *testing.T) {
+	// external_directory is opencode's boundary guard; foci's engine
+	// doesn't evaluate it (it has its own path-scope logic).
+	b, rec := newPermTestBackend(t)
+	b.autoApproveRules = autoapprove.Compile(autoapprove.CommonReadonlyRules)
+
+	b.onPermissionAsked(PermissionRequest{
+		ID:         "per-ext",
+		SessionID:  "sess-perm",
+		Permission: "external_directory",
+		Patterns:   []string{"/media/neo/*"},
+	})
+
+	if posts := rec.findallPath("/permission/per-ext/reply"); len(posts) != 0 {
+		t.Errorf("external_directory should not be auto-approved, got: %v", posts)
+	}
+}
+
+func (r *permRecorder) findallPath(suffix string) []permRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []permRequest
+	for _, req := range r.requests {
+		if strings.HasSuffix(req.Path, suffix) {
+			out = append(out, req)
+		}
+	}
+	return out
 }
