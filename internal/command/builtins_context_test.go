@@ -115,6 +115,32 @@ func TestContextCommandNoApiCalls(t *testing.T) {
 	}
 }
 
+// TestContextCommandConversationUnavailable: a delegated backend has API calls
+// (so the header renders) but foci holds no messages and no backend breakdown —
+// the conversation block degrades to "data unavailable", never a table of zeroes.
+func TestContextCommandConversationUnavailable(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []log.APIEntry{
+		{Timestamp: now, Session: "main/i0", Input: 60000, CacheRead: 40000, CacheWrite: 5000},
+	})
+
+	info := testContextInfo()
+	info.Messages = MessageBreakdown{} // no transcript access (CC backend)
+	cmd := ContextCommand()
+
+	result, err := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "Conversation: data unavailable") {
+		t.Errorf("expected graceful 'data unavailable', got:\n%s", result.Text)
+	}
+	if strings.Contains(result.Text, "~0 tokens (0 msgs)") {
+		t.Errorf("should not render a zero table:\n%s", result.Text)
+	}
+}
+
 // TestContextCommandOtherSession verifies correct message when API calls exist but not for current session.
 func TestContextCommandOtherSession(t *testing.T) {
 	now := time.Now().UTC()

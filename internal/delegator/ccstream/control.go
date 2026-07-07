@@ -91,9 +91,15 @@ func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindo
 		if err := json.Unmarshal(env.Response.Response, &payload); err != nil {
 			return nil, fmt.Errorf("unmarshal context_usage payload: %w", err)
 		}
+		cats := make([]delegator.ContextCategory, len(payload.Categories))
+		for i, c := range payload.Categories {
+			cats[i] = delegator.ContextCategory{Name: c.Name, Tokens: c.Tokens}
+		}
 		return &delegator.ContextWindow{
-			MaxTokens: payload.MaxTokens,
-			Model:     payload.Model,
+			MaxTokens:   payload.MaxTokens,
+			Model:       payload.Model,
+			TotalTokens: payload.TotalTokens,
+			Categories:  cats,
 		}, nil
 	case <-ctx.Done():
 		// Clean up on timeout.

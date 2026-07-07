@@ -3109,7 +3109,7 @@ func TestGetContextWindow(t *testing.T) {
 	}
 
 	// Simulate CC returning the response via OnControlResponse.
-	resp := fmt.Sprintf(`{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{"totalTokens":50000,"maxTokens":200000,"percentage":25,"autoCompactThreshold":160000,"model":"claude-sonnet-4-6"}}}`, reqID)
+	resp := fmt.Sprintf(`{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{"totalTokens":50000,"maxTokens":200000,"percentage":25,"autoCompactThreshold":160000,"model":"claude-sonnet-4-6","categories":[{"name":"System prompt","tokens":12000},{"name":"Messages","tokens":38000}]}}}`, reqID)
 	b.OnControlResponse(json.RawMessage(resp))
 
 	// Read result.
@@ -3122,6 +3122,12 @@ func TestGetContextWindow(t *testing.T) {
 	}
 	if r.wnd.Model != "claude-sonnet-4-6" {
 		t.Errorf("Model = %q, want %q", r.wnd.Model, "claude-sonnet-4-6")
+	}
+	if r.wnd.TotalTokens != 50000 {
+		t.Errorf("TotalTokens = %d, want 50000", r.wnd.TotalTokens)
+	}
+	if len(r.wnd.Categories) != 2 || r.wnd.Categories[1].Name != "Messages" || r.wnd.Categories[1].Tokens != 38000 {
+		t.Errorf("Categories = %+v, want [System prompt:12000, Messages:38000]", r.wnd.Categories)
 	}
 
 	pw.Close()
