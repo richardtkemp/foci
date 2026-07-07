@@ -264,10 +264,23 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 		}
 		return "New message", true
 	case fap.Media:
-		if f.Caption != "" {
-			return truncatePreview(f.Caption), true
+		// #1061: prefer the real filename over a generic "Sent a file", and fold in any
+		// caption ("report.pdf — here you go"). Mirrors the android live-frame preview
+		// (MediaPreview.mediaListLabel) so the reconnect/hello seed matches what the app
+		// shows for live messages. With no filename, a caption is shown alone, else a
+		// "Sent a <noun>" fallback.
+		name := strings.TrimSpace(f.Name)
+		caption := strings.TrimSpace(f.Caption)
+		if name == "" {
+			if caption != "" {
+				return truncatePreview(caption), true
+			}
+			return "Sent " + mediaNoun(f.MIME), true
 		}
-		return "Sent " + mediaNoun(f.MIME), true
+		if caption != "" {
+			return truncatePreview(name + " — " + caption), true
+		}
+		return truncatePreview(name), true
 	case fap.Notification:
 		return truncatePreview(f.Text), true
 	case fap.Interactive:
