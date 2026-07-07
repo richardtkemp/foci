@@ -40,7 +40,9 @@ type AppInvoker interface {
 // and the agent never sees the tool vanish between registrations.
 func NewAppAndroidTool(invoker func() (AppInvoker, bool)) *Tool {
 	return &Tool{
-		Name: "app_android",
+		Name:       "app_android",
+		ExecExport: true,
+		Positional: []string{"action"},
 		Description: `Invoke a tool on the user's connected Android device (via Tasker).
 action="list" returns the device's allowlisted tasks as JSON.
 action="perform" runs a named task; pass its args as par1 (stringly-typed; structured args go as JSON-stringified in par1) and optionally par2.
