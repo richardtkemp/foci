@@ -16,6 +16,7 @@ type testHandler struct {
 	OnThinkingDelta func(delta string)
 	OnToolStart     func(id, name, input string)
 	OnToolEnd       func(id, name, output string, isError bool)
+	OnSubagentEnd   func(groupKey string)
 	OnTurnComplete  func(result *delegator.TurnResult)
 
 	PostToolNudgeFunc  func(toolName, toolInput string, isError bool) []string
@@ -34,6 +35,7 @@ func (h *testHandler) session() *delegator.SessionEvents {
 		OnThinkingDelta: h.OnThinkingDelta,
 		OnToolStart:     h.OnToolStart,
 		OnToolEnd:       h.OnToolEnd,
+		OnSubagentEnd:   h.OnSubagentEnd,
 	}
 }
 
@@ -60,6 +62,7 @@ func applyHandler(b *Backend, h *testHandler) {
 		OnThinkingDelta: h.OnThinkingDelta,
 		OnToolStart:     h.OnToolStart,
 		OnToolEnd:       h.OnToolEnd,
+		OnSubagentEnd:   h.OnSubagentEnd,
 	})
 	b.beginTurn(&delegator.TurnEvents{
 		OnTurnComplete:     h.OnTurnComplete,

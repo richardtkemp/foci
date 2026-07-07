@@ -100,7 +100,10 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// Subagent progress is ancillary — route it to the renderer (which
 		// hands it to the platform's per-subagent control if supported) but do
 		// NOT set s.delivered, so it never suppresses the real final reply.
-		s.renderer.OnSubagentReply(e.GroupKey, e.Text)
+		s.renderer.OnSubagentReply(e.GroupKey, e.Label, e.Text)
+
+	case turnevent.SubagentEnd:
+		s.renderer.OnSubagentEnd(e.GroupKey)
 
 	case turnevent.ThinkingDelta:
 		s.renderer.OnThinkingDelta(e.Delta)

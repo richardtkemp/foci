@@ -36,7 +36,7 @@ func newHandlerTestBackend(t *testing.T) *Backend {
 		OnThinkingDelta: func(d string) { thinkingDeltas = append(thinkingDeltas, d) },
 		OnToolStart:     func(id, name, input string) { toolStarts = append(toolStarts, toolCall{id, name, input}) },
 		OnToolEnd:       func(id, name, output string, isErr bool) { toolEnds = append(toolEnds, toolCall{id, name, output}) },
-		OnSubagentText:  func(group, text string) { subagentTexts = append(subagentTexts, text) },
+		OnSubagentText:  func(group, label, text string) { subagentTexts = append(subagentTexts, text) },
 	})
 	b.beginTurn(&delegator.TurnEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },
@@ -452,10 +452,9 @@ func TestOnMessagePartUpdated_ToolRunningDedupedByCallID(t *testing.T) {
 // message.part.updated — subtask
 // ---------------------------------------------------------------------------
 
-func TestOnMessagePartUpdated_SubtaskSurfacesBlockquotedDescription(t *testing.T) {
-	// Verifies subtask descriptions are surfaced via OnSubagentText
-	// with a "> " blockquote prefix — mirrors ccstream's blockquote
-	// rule for subagent visibility.
+func TestOnMessagePartUpdated_SubtaskSurfacesRawDescription(t *testing.T) {
+	// Verifies subtask descriptions are surfaced via OnSubagentText as RAW text —
+	// blockquote is now a per-platform presentation choice applied downstream.
 	b := newHandlerTestBackend(t)
 	c := b.captures()
 
@@ -468,7 +467,7 @@ func TestOnMessagePartUpdated_SubtaskSurfacesBlockquotedDescription(t *testing.T
 	if len(*c.subagentTexts) != 1 {
 		t.Fatalf("subagentTexts = %d, want 1", len(*c.subagentTexts))
 	}
-	want := "> Searching for foo() usages"
+	want := "Searching for foo() usages"
 	if (*c.subagentTexts)[0] != want {
 		t.Errorf("subagentText = %q, want %q", (*c.subagentTexts)[0], want)
 	}

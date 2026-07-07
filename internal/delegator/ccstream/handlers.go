@@ -84,8 +84,12 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				}
 				switch {
 				case se.OnSubagentText != nil:
-					se.OnSubagentText(groupKey, blockquote(block.Text))
+					// Raw text + label; blockquote is now a per-platform choice
+					// applied downstream (tg/discord), not baked in here.
+					se.OnSubagentText(groupKey, b.agents.Description(groupKey), block.Text)
 				case se.OnText != nil:
+					// Legacy no-subagent-callback consumer still wants a readable
+					// blockquoted intermediate.
 					se.OnText(blockquote(block.Text))
 				}
 			}

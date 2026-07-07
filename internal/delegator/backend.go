@@ -402,7 +402,8 @@ type StartOptions struct {
 // without having to match by name or rely on ordering.
 type SessionEvents struct {
 	OnText          func(text string)                           // complete text block from the agent
-	OnSubagentText  func(groupKey, text string)                 // complete text block from a subagent (Task tool); groupKey = parent tool_use id
+	OnSubagentText  func(groupKey, label, text string)          // raw text block from a subagent (Task tool); groupKey = parent tool_use id, label = agent description
+	OnSubagentEnd   func(groupKey string)                       // a subagent run (groupKey) completed (its Agent tool_use resolved)
 	OnTextDelta     func(delta string)                          // streaming text delta (content_block_delta)
 	OnThinkingDelta func(delta string)                          // streaming thinking delta (content_block_delta)
 	OnToolStart     func(id, name, input string)                // tool execution began

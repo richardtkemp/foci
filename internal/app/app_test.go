@@ -1027,6 +1027,25 @@ func drainEnv(t *testing.T, c *wsClient) []envFrame {
 	}
 }
 
+// appBackend delivers subagent progress as distinct, seq-tracked subagent.text /
+// subagent.end frames (not blockquoted ordinary messages), so the app can collapse
+// a run and open its trace on demand.
+func TestAppBackend_SubagentFrames(t *testing.T) {
+	h := newTestHub()
+	c := fakeClient()
+	c.hub = h
+	b := h.ensureBinding(c, "ag", "conv-1")
+	be := newAppBackend(b)
+
+	be.DeliverSubagentText("toolu_1", "Explore", "found it")
+	be.DeliverSubagentEnd("toolu_1")
+	ds := drainEnv(t, c)
+
+	if len(ds) != 2 || ds[0].t != fap.TypeSubagentText || ds[1].t != fap.TypeSubagentEnd {
+		t.Fatalf("frames = %+v, want [subagent.text subagent.end]", ds)
+	}
+}
+
 func TestReliability_SeqSurvivesReconnect(t *testing.T) {
 	h := newTestHub()
 	c1 := fakeClient()

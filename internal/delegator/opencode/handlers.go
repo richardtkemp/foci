@@ -14,7 +14,6 @@ package opencode
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -307,17 +306,15 @@ func (b *Backend) handleToolPart(part Part) {
 	}
 }
 
-// handleSubtaskPart surfaces subtask descriptions as blockquoted
-// OnSubagentText — mirrors ccstream's SubagentSurfacesBlockquotedText.
-// Full subtask streaming is future work; v1 surfaces only the
-// description so the user can see what's happening.
+// handleSubtaskPart surfaces subtask descriptions via OnSubagentText. Text is
+// raw — blockquote (for tg/discord) is applied downstream now, not here. Full
+// subtask streaming is future work; v1 surfaces only the description.
 func (b *Backend) handleSubtaskPart(part Part) {
 	if part.Description == "" {
 		return
 	}
-	quoted := "> " + strings.ReplaceAll(part.Description, "\n", "\n> ")
 	if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
-		se.OnSubagentText(part.ID, quoted)
+		se.OnSubagentText(part.ID, "", part.Description)
 	}
 }
 

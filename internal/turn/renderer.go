@@ -124,12 +124,35 @@ func (r *TurnRenderer) OnReply(text string) {
 // UI such as Telegram's rolling "Hide this" button. Otherwise it falls back to
 // ordinary intermediate delivery via OnReply (the historical behaviour, where
 // subagent text arrived through OnText).
-func (r *TurnRenderer) OnSubagentReply(groupKey, text string) {
+func (r *TurnRenderer) OnSubagentReply(groupKey, label, text string) {
 	if sd, ok := r.platform.(SubagentDeliverer); ok && groupKey != "" {
-		sd.DeliverSubagentText(groupKey, text)
+		sd.DeliverSubagentText(groupKey, label, text)
 		return
 	}
-	r.OnReply(text)
+	// Fallback (no per-subagent UI, e.g. discord): render as a blockquoted
+	// intermediate reply so subagent progress stays visually distinct. The
+	// delegator no longer pre-blockquotes, so apply it here at the presentation edge.
+	r.OnReply(blockquote(text))
+}
+
+// OnSubagentEnd signals a subagent run completed. Only platforms with per-subagent
+// UI act on it; others (whose subagent text arrived as ordinary replies) have
+// nothing to finalize.
+func (r *TurnRenderer) OnSubagentEnd(groupKey string) {
+	if sd, ok := r.platform.(SubagentDeliverer); ok && groupKey != "" {
+		sd.DeliverSubagentEnd(groupKey)
+	}
+}
+
+// blockquote prefixes every line with "> " for markdown blockquote rendering —
+// the presentation the delegator used to apply to all subagent text, now moved
+// here so only the platforms that want it (this fallback, telegram) get it.
+func blockquote(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = "> " + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // resetStream recreates the stream buffer for the next segment and clears the

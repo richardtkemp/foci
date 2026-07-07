@@ -50,9 +50,12 @@ type Platform interface {
 type SubagentDeliverer interface {
 	// DeliverSubagentText delivers one subagent progress message. groupKey
 	// identifies the originating subagent (its parent tool_use id) so the
-	// platform can group its messages, roll a control button forward to the
-	// newest, and delete the group on demand. text is the already-formatted body.
-	DeliverSubagentText(groupKey, text string)
+	// platform can group its messages; label is the agent's description. text is
+	// RAW — the platform applies its own presentation (tg/discord blockquote it).
+	DeliverSubagentText(groupKey, label, text string)
+	// DeliverSubagentEnd signals the subagent run (groupKey) completed, letting
+	// the platform finalize its UI (e.g. flip a collapsed entry to "completed").
+	DeliverSubagentEnd(groupKey string)
 }
 
 // StreamSink is the live streaming handle returned by OpenStream. It is
