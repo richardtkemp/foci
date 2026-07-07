@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -49,7 +50,7 @@ func AndroidCommand() *Command {
 		Name:        "android",
 		Description: "Onboard the native Android app (pairing wizard)",
 		Category:    "session",
-		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			reg := androidRegistry(cc)
 			if reg == nil || cc.SecretsStore == nil {
 				return Response{Text: "Android onboarding wizard is not available."}, nil
@@ -60,14 +61,14 @@ func AndroidCommand() *Command {
 			// Not enabled yet → offer to enable the app provider first.
 			if cc.Config == nil || cc.Config.Platform("app") == nil {
 				w.step = androidStepConfirmEnable
-				reg.SetWizard(w)
+				reg.SetWizard(req.SessionKey, w)
 				return Response{Text: "📱 Android onboarding\n\nThe app provider isn't enabled yet. Enabling it appends `[[platforms]] id = \"app\"` to foci.toml.\n\nEnable it now? (`yes`/`no`)"}, nil
 			}
 
 			// Enabled — go straight to the host; the pairing key is minted once we
 			// have it (the hub is live).
 			w.step = androidStepHost
-			reg.SetWizard(w)
+			reg.SetWizard(req.SessionKey, w)
 			return Response{Text: "📱 Android onboarding\n\n" + androidHostPrompt}, nil
 		},
 	}
@@ -149,6 +150,33 @@ func newAndroidWizard(cc CommandContext) *androidWizard {
 		w.mintPairKey = cc.AndroidDeps.MintPairKey
 	}
 	return w
+}
+
+// wizardKindAndroid is the persisted-snapshot kind tag for androidWizard.
+const wizardKindAndroid = "android"
+
+// androidWizardSnapshot persists the step + collected values. pendingDoc (a QR
+// temp file) is transient and regenerated, never persisted; mintPairKey is
+// re-injected from the CommandContext at restore.
+type androidWizardSnapshot struct {
+	Step        int    `json:"step"`
+	JustEnabled bool   `json:"justEnabled,omitempty"`
+	Host        string `json:"host,omitempty"`
+}
+
+func (w *androidWizard) WizardKind() string { return wizardKindAndroid }
+
+func (w *androidWizard) SnapshotWizard() ([]byte, error) {
+	return json.Marshal(androidWizardSnapshot{Step: w.step, JustEnabled: w.justEnabled, Host: w.host})
+}
+
+func (w *androidWizard) RestoreWizard(data []byte) error {
+	var s androidWizardSnapshot
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	w.step, w.justEnabled, w.host = s.Step, s.JustEnabled, s.Host
+	return nil
 }
 
 // Handle processes a wizard step and returns the response.

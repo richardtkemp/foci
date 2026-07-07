@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -33,6 +34,45 @@ type configSetWizard struct {
 
 func newConfigSetWizard(deps ConfigSetDeps) *configSetWizard {
 	return &configSetWizard{deps: deps}
+}
+
+// wizardKindConfigSet is the persisted-snapshot kind tag for configSetWizard.
+const wizardKindConfigSet = "config-set"
+
+// configSetWizardSnapshot persists only the step + section/key; field and
+// target carry validator funcs, so they are RE-DERIVED from the deps' LookupFn
+// at restore (exactly as handleKey derived them).
+type configSetWizardSnapshot struct {
+	Step    int    `json:"step"`
+	Section string `json:"section,omitempty"`
+	Key     string `json:"key,omitempty"`
+}
+
+func (w *configSetWizard) WizardKind() string { return wizardKindConfigSet }
+
+func (w *configSetWizard) SnapshotWizard() ([]byte, error) {
+	return json.Marshal(configSetWizardSnapshot{Step: w.step, Section: w.section, Key: w.key})
+}
+
+func (w *configSetWizard) RestoreWizard(data []byte) error {
+	var s configSetWizardSnapshot
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	w.step, w.section, w.key = s.Step, s.Section, s.Key
+	if w.key != "" {
+		field, ok := w.deps.LookupFn(w.section + "." + w.key)
+		if !ok {
+			return fmt.Errorf("config field %s.%s no longer exists", w.section, w.key)
+		}
+		w.field = field
+		if w.section == "agent" {
+			w.target = config.SetTarget{Section: "agents", AgentID: w.deps.AgentID, Key: w.key}
+		} else {
+			w.target = config.SetTarget{Section: w.section, Key: w.key}
+		}
+	}
+	return nil
 }
 
 // Handle processes a wizard step and returns the response.

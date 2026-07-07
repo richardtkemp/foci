@@ -61,23 +61,25 @@ func TestIsRoutableCommand(t *testing.T) {
 	t.Parallel()
 	reg := command.NewRegistry()
 	reg.Register(&command.Command{
-		Name:    "status",
-		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) { return command.Response{}, nil },
+		Name: "status",
+		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
+			return command.Response{}, nil
+		},
 	})
 	tests := []struct {
 		text string
 		want bool
 	}{
-		{"/status", true},                                  // real command
-		{"/status arg", true},                              // command with args
-		{"/", true},                                        // bare slash → empty name, routes
+		{"/status", true},     // real command
+		{"/status arg", true}, // command with args
+		{"/", true},           // bare slash → empty name, routes
 		{"/home/rich/git/embed/chroma.py:75 - why?", false}, // the scout bug: path, not command
-		{"/etc/hosts", false},                              // path
-		{"/usr/local/bin/foci is broken", false},           // path with trailing words
-		{".status", true},                                  // known dot command
-		{".sigh", false},                                   // unknown dot → falls through as text
-		{"hello world", false},                             // plain text
-		{"", false},                                        // empty
+		{"/etc/hosts", false},                               // path
+		{"/usr/local/bin/foci is broken", false},            // path with trailing words
+		{".status", true},                                   // known dot command
+		{".sigh", false},                                    // unknown dot → falls through as text
+		{"hello world", false},                              // plain text
+		{"", false},                                         // empty
 	}
 	for _, tt := range tests {
 		t.Run(tt.text, func(t *testing.T) {
@@ -96,15 +98,15 @@ func TestIsSlashPath(t *testing.T) {
 		text string
 		want bool
 	}{
-		{"/status", false},                                 // command, no embedded slash
-		{"/status arg", false},                             // command with args
-		{"/", false},                                       // bare slash → empty name
+		{"/status", false},     // command, no embedded slash
+		{"/status arg", false}, // command with args
+		{"/", false},           // bare slash → empty name
 		{"/home/rich/git/embed/chroma.py:75 - why?", true}, // the scout bug
-		{"/etc/hosts", true},                               // path
-		{"/usr/local/bin/foci is broken", true},            // path with trailing words
-		{"  /etc/hosts", true},                             // leading whitespace trimmed
-		{"hello world", false},                             // not slash-prefixed
-		{"", false},                                        // empty
+		{"/etc/hosts", true},                    // path
+		{"/usr/local/bin/foci is broken", true}, // path with trailing words
+		{"  /etc/hosts", true},                  // leading whitespace trimmed
+		{"hello world", false},                  // not slash-prefixed
+		{"", false},                             // empty
 	}
 	for _, tt := range tests {
 		t.Run(tt.text, func(t *testing.T) {
@@ -120,7 +122,7 @@ func TestIsSlashPath(t *testing.T) {
 // returned as a consumed WizardReply.
 func TestTryInterceptWizardActive(t *testing.T) {
 	reg := command.NewRegistry()
-	reg.SetWizard(&fakeWizard{response: "wizard says hello", done: false})
+	reg.SetWizard("", &fakeWizard{response: "wizard says hello", done: false})
 
 	ic := newTestInterceptor(reg)
 	msg := &InterceptMessage{Text: "anything", UserID: "u1", ChatID: 1}
@@ -138,7 +140,7 @@ func TestTryInterceptWizardActive(t *testing.T) {
 // subsequent messages fall through to normal dispatch.
 func TestTryInterceptWizardDone(t *testing.T) {
 	reg := command.NewRegistry()
-	reg.SetWizard(&fakeWizard{response: "done!", done: true})
+	reg.SetWizard("", &fakeWizard{response: "done!", done: true})
 
 	ic := newTestInterceptor(reg)
 
@@ -444,7 +446,7 @@ func TestTryInterceptNoConditions(t *testing.T) {
 func TestTryInterceptEmptyText(t *testing.T) {
 	reg := command.NewRegistry()
 	// Even with an active wizard, empty text should skip the wizard check.
-	reg.SetWizard(&fakeWizard{response: "should not see this", done: false})
+	reg.SetWizard("", &fakeWizard{response: "should not see this", done: false})
 
 	ic := newTestInterceptor(reg)
 	msg := &InterceptMessage{Text: "", UserID: "u1", ChatID: 1}

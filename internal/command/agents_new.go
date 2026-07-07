@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"foci/internal/provision"
+	"foci/internal/question"
 )
 
 // AgentNewDeps holds dependencies for the /agents new wizard.
@@ -62,6 +64,11 @@ type agentWizard struct {
 	backend            string // "api" or a registered backend name
 	charMode, copyFrom string
 
+	// preflight carries the platform pre-flight warnings raised at the name
+	// step; the backend prompt surfaces them (both the chat text and the
+	// structured PendingStep must include them, so they live here).
+	preflight string
+
 	// Overridable for testing:
 	createFn func(w *agentWizard) (string, error)
 }
@@ -112,15 +119,15 @@ func (w *agentWizard) handleName(text string) (string, bool) {
 
 	// Run platform pre-flight checks (keyed on the agent id) — surfaced on the
 	// backend prompt, the next step.
-	var warning string
+	w.preflight = ""
 	if w.deps.PreFlightFn != nil {
 		if warnings := w.deps.PreFlightFn(w.id); len(warnings) > 0 {
-			warning = "\n⚠️  " + strings.Join(warnings, "\n⚠️  ")
+			w.preflight = "\n⚠️  " + strings.Join(warnings, "\n⚠️  ")
 		}
 	}
 
 	w.step = stepBackend
-	return w.backendPrompt() + warning, false
+	return w.backendPrompt() + w.preflight, false
 }
 
 func (w *agentWizard) handleModel(text string) (string, bool) {
@@ -202,6 +209,81 @@ func (w *agentWizard) handleBackend(text string) (string, bool) {
 
 	w.step = stepModel
 	return "Model — `opus`, `sonnet`, `haiku`, or full model ID (default: `sonnet`):", false
+}
+
+// wizardKindAgentsNew is the persisted-snapshot kind tag for agentWizard.
+const wizardKindAgentsNew = "agents-new"
+
+// agentWizardSnapshot is agentWizard's persisted state: the step index plus
+// every collected value. Deps and createFn are re-injected at restore.
+type agentWizardSnapshot struct {
+	Step      int    `json:"step"`
+	ID        string `json:"id,omitempty"`
+	Display   string `json:"display,omitempty"`
+	Model     string `json:"model,omitempty"`
+	ModelRaw  string `json:"modelRaw,omitempty"`
+	Backend   string `json:"backend,omitempty"`
+	CharMode  string `json:"charMode,omitempty"`
+	CopyFrom  string `json:"copyFrom,omitempty"`
+	Preflight string `json:"preflight,omitempty"`
+}
+
+func (w *agentWizard) WizardKind() string { return wizardKindAgentsNew }
+
+func (w *agentWizard) SnapshotWizard() ([]byte, error) {
+	return json.Marshal(agentWizardSnapshot{
+		Step: w.step, ID: w.id, Display: w.display, Model: w.model, ModelRaw: w.modelRaw,
+		Backend: w.backend, CharMode: w.charMode, CopyFrom: w.copyFrom, Preflight: w.preflight,
+	})
+}
+
+func (w *agentWizard) RestoreWizard(data []byte) error {
+	var s agentWizardSnapshot
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	w.step, w.id, w.display, w.model, w.modelRaw = s.Step, s.ID, s.Display, s.Model, s.ModelRaw
+	w.backend, w.charMode, w.copyFrom, w.preflight = s.Backend, s.CharMode, s.CopyFrom, s.Preflight
+	return nil
+}
+
+// PendingStep implements WizardStepProvider: it describes the current step as
+// structured data for out-of-band (app) rendering. Only the two choice steps
+// are structured — option labels are fed back into Handle verbatim when
+// picked, so they must be valid Handle inputs. The free-text steps (name,
+// model) return nil: the transport falls back to the plain prompt text, which
+// also carries validation re-asks.
+func (w *agentWizard) PendingStep() *question.Question {
+	switch w.step {
+	case stepBackend:
+		backends := w.availableBackends()
+		opts := make([]question.Option, 0, len(backends)+1)
+		for _, b := range backends {
+			desc := "Delegated backend"
+			if b == defaultBackend {
+				desc = "Delegated backend (default)"
+			}
+			opts = append(opts, question.Option{Label: b, Description: desc})
+		}
+		opts = append(opts, question.Option{Label: apiBackend, Description: "In-process, no delegation"})
+		return &question.Question{
+			Header:   "Backend",
+			Question: "How should this agent run?" + w.preflight,
+			Options:  opts,
+		}
+	case stepCharMode:
+		return &question.Question{
+			Header:   "Character files",
+			Question: "Which character files should the agent start with? Type `copy <agent-id>` to copy another agent's.",
+			Options: []question.Option{
+				{Label: "defaults", Description: "Copied from defaults (recommended)"},
+				{Label: "openclaw", Description: "Copied from openclaw"},
+				{Label: "blank", Description: "Blank templates"},
+			},
+		}
+	default:
+		return nil // free-text step (name, model) — plain prompt text
+	}
 }
 
 func (w *agentWizard) handleCharMode(text string) (string, bool) {

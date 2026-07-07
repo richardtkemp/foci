@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"foci/internal/platform"
+	"foci/internal/session"
 )
 
 // KeyboardOption is an alias for platform.ButtonChoice.
@@ -81,31 +82,24 @@ type Command struct {
 	ChainKeyboard   func(ctx context.Context, subcommand string, cc CommandContext) []KeyboardOption
 }
 
-// WizardHandler is implemented by interactive wizards that take over message routing.
-// While a wizard is active, all messages are routed to Handle() instead of normal
-// command dispatch or the agent queue.
-type WizardHandler interface {
-	Handle(text string) (response string, done bool)
-}
-
-// WizardDocProvider is an optional wizard capability: after Handle produces its
-// reply, a wizard implementing this may also return a file to send alongside it
-// (e.g. a QR image). The path is consumed once; the platform layer sends and
-// then removes it.
-type WizardDocProvider interface {
-	PendingDoc() (path string)
-}
-
-// Registry holds registered slash commands and dispatches them.
+// Registry holds registered slash commands and dispatches them. The wizard
+// fields back the per-session interactive-wizard machinery in wizard.go.
 type Registry struct {
 	commands map[string]*Command
-	wizard   WizardHandler
-	wizardMu sync.Mutex
+
+	wizardMu    sync.Mutex
+	wizards     map[string]*wizardEntry // scope (session key) → active wizard
+	wizardGen   uint64                  // monotonic; mints wizardEntry.gen
+	wizardStore *session.SessionIndex   // nil = no persistence
+	wizardAgent string                  // agent_metadata owner for persistence
 }
 
 // NewRegistry creates an empty command registry.
 func NewRegistry() *Registry {
-	return &Registry{commands: make(map[string]*Command)}
+	return &Registry{
+		commands: make(map[string]*Command),
+		wizards:  make(map[string]*wizardEntry),
+	}
 }
 
 // Register adds a command to the registry. When cmd.Subcommands is non-empty
@@ -460,47 +454,4 @@ func levenshtein(a, b string) int {
 		prev, curr = curr, prev
 	}
 	return prev[len(b)]
-}
-
-// SetWizard activates a wizard that intercepts all messages.
-func (r *Registry) SetWizard(w WizardHandler) {
-	r.wizardMu.Lock()
-	defer r.wizardMu.Unlock()
-	r.wizard = w
-}
-
-// ClearWizard removes the active wizard.
-func (r *Registry) ClearWizard() {
-	r.wizardMu.Lock()
-	defer r.wizardMu.Unlock()
-	r.wizard = nil
-}
-
-// HandleMessage routes a message to the active wizard, if any.
-// Returns (response, true) if the wizard handled the message, or ("", false)
-// if no wizard is active. Handles /cancel and /stop to abort the wizard. docPath
-// is a file to send alongside the reply (e.g. a QR image) when the wizard
-// implements WizardDocProvider, else "".
-func (r *Registry) HandleMessage(text string) (response string, docPath string, handled bool) {
-	r.wizardMu.Lock()
-	defer r.wizardMu.Unlock()
-
-	if r.wizard == nil {
-		return "", "", false
-	}
-
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "/cancel" || lower == "/stop" || lower == ".cancel" || lower == ".stop" {
-		r.wizard = nil
-		return "Wizard cancelled.", "", true
-	}
-
-	resp, done := r.wizard.Handle(text)
-	if p, ok := r.wizard.(WizardDocProvider); ok {
-		docPath = p.PendingDoc()
-	}
-	if done {
-		r.wizard = nil
-	}
-	return resp, docPath, true
 }

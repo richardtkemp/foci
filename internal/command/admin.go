@@ -77,7 +77,7 @@ func ConfigCommand() *Command {
 					if cc.ConfigSetDeps == nil {
 						return Response{Text: "Config set is not available."}, nil
 					}
-					text, err := configSet(cc.ConfigSetDeps, req.Args)
+					text, err := configSet(cc.ConfigSetDeps, req.SessionKey, req.Args)
 					return Response{Text: text}, err
 				},
 			},
@@ -126,8 +126,12 @@ func ConfigCommand() *Command {
 	return cmd
 }
 
-// configSet handles /config set — either starts a wizard (bare) or does a direct set.
-func configSet(deps *ConfigSetDeps, args string) (string, error) {
+// configSet handles /config set — either starts a wizard (bare) or does a direct
+// set. scope is the requesting session's key (the wizard is scoped to it). The
+// keyboard fast-forwards route through Registry.HandleMessage rather than
+// calling the wizard directly, so completion clears the wizard and every
+// advance checkpoints persistence.
+func configSet(deps *ConfigSetDeps, scope, args string) (string, error) {
 	if args != "" && strings.Contains(args, "=") {
 		return ConfigSetDirect(*deps, args)
 	}
@@ -144,28 +148,21 @@ func configSet(deps *ConfigSetDeps, args string) (string, error) {
 	}
 
 	w := newConfigSetWizard(*deps)
-	deps.Registry.SetWizard(w)
+	deps.Registry.SetWizard(scope, w)
 
 	// "section key" → skip to value prompt (from key keyboard button).
 	if len(parts) == 2 {
-		resp, done := w.Handle(parts[0])
-		if done {
-			deps.Registry.ClearWizard()
+		resp, _, _ := deps.Registry.HandleMessage(scope, parts[0])
+		if !deps.Registry.WizardActive(scope) {
 			return resp, nil
 		}
-		resp, done = w.Handle(parts[1])
-		if done {
-			deps.Registry.ClearWizard()
-		}
+		resp, _, _ = deps.Registry.HandleMessage(scope, parts[1])
 		return resp, nil
 	}
 
 	// Single arg = section name.
 	if args != "" {
-		resp, done := w.Handle(args)
-		if done {
-			deps.Registry.ClearWizard()
-		}
+		resp, _, _ := deps.Registry.HandleMessage(scope, args)
 		return resp, nil
 	}
 

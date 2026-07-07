@@ -776,10 +776,10 @@ func TestSetWizard(t *testing.T) {
 		done: false,
 	}
 
-	reg.SetWizard(wizard)
+	reg.SetWizard("", wizard)
 
 	// Verify wizard was set by calling HandleMessage
-	resp, _, handled := reg.HandleMessage("hello")
+	resp, _, handled := reg.HandleMessage("", "hello")
 	if !handled {
 		t.Error("HandleMessage should indicate wizard handled the message")
 	}
@@ -797,11 +797,11 @@ func TestClearWizard(t *testing.T) {
 		},
 	}
 
-	reg.SetWizard(wizard)
-	reg.ClearWizard()
+	reg.SetWizard("", wizard)
+	reg.ClearWizard("")
 
 	// After clearing, HandleMessage should not handle messages
-	_, _, handled := reg.HandleMessage("test")
+	_, _, handled := reg.HandleMessage("", "test")
 	if handled {
 		t.Error("HandleMessage should not handle after wizard is cleared")
 	}
@@ -814,8 +814,8 @@ func TestHandleMessageWizardCancel(t *testing.T) {
 		responses: map[string]string{},
 	}
 
-	reg.SetWizard(wizard)
-	resp, _, handled := reg.HandleMessage("/cancel")
+	reg.SetWizard("", wizard)
+	resp, _, handled := reg.HandleMessage("", "/cancel")
 
 	if !handled {
 		t.Error("HandleMessage should handle /cancel")
@@ -825,7 +825,7 @@ func TestHandleMessageWizardCancel(t *testing.T) {
 	}
 
 	// Wizard should be cleared
-	_, _, handled = reg.HandleMessage("test")
+	_, _, handled = reg.HandleMessage("", "test")
 	if handled {
 		t.Error("wizard should be cleared after /cancel")
 	}
@@ -838,8 +838,8 @@ func TestHandleMessageWizardStop(t *testing.T) {
 		responses: map[string]string{},
 	}
 
-	reg.SetWizard(wizard)
-	resp, _, handled := reg.HandleMessage("/stop")
+	reg.SetWizard("", wizard)
+	resp, _, handled := reg.HandleMessage("", "/stop")
 
 	if !handled {
 		t.Error("HandleMessage should handle /stop")
@@ -849,7 +849,7 @@ func TestHandleMessageWizardStop(t *testing.T) {
 	}
 
 	// Wizard should be cleared
-	_, _, handled = reg.HandleMessage("test")
+	_, _, handled = reg.HandleMessage("", "test")
 	if handled {
 		t.Error("wizard should be cleared after /stop")
 	}
@@ -859,9 +859,9 @@ func TestHandleMessageWizardStop(t *testing.T) {
 func TestHandleMessageWizardDotStop(t *testing.T) {
 	reg := NewRegistry()
 	wizard := &mockWizard{responses: map[string]string{}}
-	reg.SetWizard(wizard)
+	reg.SetWizard("", wizard)
 
-	resp, _, handled := reg.HandleMessage(".stop")
+	resp, _, handled := reg.HandleMessage("", ".stop")
 	if !handled {
 		t.Error("HandleMessage should handle .stop")
 	}
@@ -869,7 +869,7 @@ func TestHandleMessageWizardDotStop(t *testing.T) {
 		t.Errorf("response = %q, want 'cancelled'", resp)
 	}
 	// Wizard should be cleared
-	_, _, handled = reg.HandleMessage("test")
+	_, _, handled = reg.HandleMessage("", "test")
 	if handled {
 		t.Error("wizard should be cleared after .stop")
 	}
@@ -879,16 +879,16 @@ func TestHandleMessageWizardDotStop(t *testing.T) {
 func TestHandleMessageWizardDotCancel(t *testing.T) {
 	reg := NewRegistry()
 	wizard := &mockWizard{responses: map[string]string{}}
-	reg.SetWizard(wizard)
+	reg.SetWizard("", wizard)
 
-	resp, _, handled := reg.HandleMessage(".cancel")
+	resp, _, handled := reg.HandleMessage("", ".cancel")
 	if !handled {
 		t.Error("HandleMessage should handle .cancel")
 	}
 	if !strings.Contains(resp, "cancelled") {
 		t.Errorf("response = %q, want 'cancelled'", resp)
 	}
-	_, _, handled = reg.HandleMessage("test")
+	_, _, handled = reg.HandleMessage("", "test")
 	if handled {
 		t.Error("wizard should be cleared after .cancel")
 	}
@@ -904,8 +904,8 @@ func TestHandleMessageWizardDone(t *testing.T) {
 		done: true, // Wizard finishes after this handle
 	}
 
-	reg.SetWizard(wizard)
-	resp, _, handled := reg.HandleMessage("input")
+	reg.SetWizard("", wizard)
+	resp, _, handled := reg.HandleMessage("", "input")
 
 	if !handled {
 		t.Error("HandleMessage should handle the message")
@@ -915,7 +915,7 @@ func TestHandleMessageWizardDone(t *testing.T) {
 	}
 
 	// Wizard should be cleared since it returned done=true
-	_, _, handled = reg.HandleMessage("another")
+	_, _, handled = reg.HandleMessage("", "another")
 	if handled {
 		t.Error("wizard should be cleared when it returns done=true")
 	}

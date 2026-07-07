@@ -45,10 +45,10 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	// yet; its binding is created downstream in routeUserText.
 	if convID := inboundConvID(in.Frame); convID != "" {
 		if b := h.convForReliability(convID); b != nil {
-		if !b.acceptInbound(in.ID, in.Seq) {
-			return
-		}
-		b.ackInbound(client, in.Ack)
+			if !b.acceptInbound(in.ID, in.Seq) {
+				return
+			}
+			b.ackInbound(client, in.Ack)
 		}
 	}
 
@@ -122,6 +122,11 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
+
+	case fap.WizardResponse:
+		// Off the socket goroutine: HandleMessage runs wizard logic that may
+		// block (e.g. config/secrets writes), like command dispatch.
+		safeGo("wizard-response", func() { h.handleWizardResponse(f) })
 
 	case fap.Command:
 		h.routeCommand(client, f)
@@ -403,6 +408,10 @@ func (h *Hub) dispatchCommand(conn *appConn, b *convBinding, req command.Request
 	}
 	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "user", Text: userText})
 
+	// Snapshot the session's wizard generation so maybeStartWizard can tell
+	// whether this dispatch activated a (new) wizard for it.
+	wizardGenBefore := conn.commands.WizardGen(req.SessionKey)
+
 	resp, handled, err := conn.commands.Dispatch(ctx, req, conn.cmdCtx)
 	switch {
 	case err != nil:
@@ -412,8 +421,13 @@ func (h *Hub) dispatchCommand(conn *appConn, b *convBinding, req command.Request
 		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system", Text: "unknown command: /" + req.Name})
 		return
 	}
-	for _, part := range commandParts(resp) {
-		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system", Text: part})
+	// A command that activated a wizard delivers its prompt as a structured
+	// wizard.step frame (capable clients only) — the plain-text render below
+	// would duplicate it.
+	if !h.maybeStartWizard(conn, b, resp, userText, req.SessionKey, wizardGenBefore) {
+		for _, part := range commandParts(resp) {
+			b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system", Text: part})
+		}
 	}
 	if resp.DocPath != "" {
 		_ = conn.SendDocumentToChat(b.chatID, resp.DocPath, "")
@@ -440,6 +454,8 @@ func inboundConvID(frame any) string {
 	case fap.ClientMessage:
 		return f.ConversationID
 	case fap.InteractiveResponse:
+		return f.ConversationID
+	case fap.WizardResponse:
 		return f.ConversationID
 	case fap.Command:
 		return f.ConversationID
