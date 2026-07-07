@@ -137,6 +137,12 @@ can_run_background = "check.sh"     # optional gate executable (exit 0 = allowed
 - **Telegram delivery:** None (silent).
 - **Cost:** Variable. The `can_run_background` gate can prevent overspend.
 
+### Gating against outstanding background work (#1068/#1070, spec §4)
+
+Reflection, keepalive, and memory passes are **system injects**: for a delegated (CC) agent they route through `EnqueueInjectWait` into the main session's inbox worker, which holds them until no delivering work is active *or pending*. "Pending" covers the whole background-work window — from the moment a turn backgrounds a subagent or `run_in_background` Bash until the resulting autonomous run completes — reported by the backend's `AwaitingAutonomousRun()`. Running an inject during that window would rebind the shared session sink and swallow the autonomous run's output, so the worker waits.
+
+Consequence for the schedulers: these fires use the process-lifetime context, not a per-fire timeout, so a fire can block for as long as background work is outstanding. This does **not** wedge the runner — each branch type has its own in-flight flag (`keepaliveRunning`, `reflectionRunning`, …) that simply skips re-firing that type while one is parked, and the other timers keep ticking. The worst case (a completion notification that never arrives) is bounded by the tracker's max-age prune (`[cc_backend].background_task_max_age`, default 30m): once the stale entry is pruned the gate opens and the held inject runs. A manual `/compact` is a user-initiated slash command, not a system inject, so it is never held by this gate.
+
 ## Shutdown
 
 Keepalive runners are stopped first during graceful shutdown, before the HTTP server is closed. This prevents new timer-triggered branches from starting while in-flight agent turns complete.

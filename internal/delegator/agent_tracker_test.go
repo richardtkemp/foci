@@ -161,17 +161,62 @@ func TestSubagentTracker_RemoveOneEmpty(t *testing.T) {
 }
 
 // TestSubagentTracker_PruneExpired verifies a spawn with no completion signal is
-// dropped after agentMaxAge, so Pending() can't stay stuck > 0 now that the
+// dropped after defaultAgentMaxAge, so Pending() can't stay stuck > 0 now that the
 // tracker survives turn boundaries.
 func TestSubagentTracker_PruneExpired(t *testing.T) {
 	t.Parallel()
 	tr := &SubagentTracker{}
 	tr.pending = []TrackedSubagent{
-		{ID: "stale", added: time.Now().Add(-agentMaxAge - time.Minute)},
+		{ID: "stale", added: time.Now().Add(-defaultAgentMaxAge - time.Minute)},
 		{ID: "live", added: time.Now()},
 	}
 	if n := tr.Pending(); n != 1 {
 		t.Fatalf("Pending() = %d, want 1 (stale spawn pruned)", n)
+	}
+}
+
+// TestSubagentTracker_MaxAgeConfigurable verifies a custom MaxAge overrides the
+// 30m default — the unwedge backstop is tunable for long background jobs
+// ([cc_backend].background_task_max_age).
+func TestSubagentTracker_MaxAgeConfigurable(t *testing.T) {
+	t.Parallel()
+	tr := &SubagentTracker{MaxAge: time.Minute}
+	tr.pending = []TrackedSubagent{
+		{ID: "stale", added: time.Now().Add(-2 * time.Minute)}, // older than custom 1m
+		{ID: "live", added: time.Now()},
+	}
+	if n := tr.Pending(); n != 1 {
+		t.Fatalf("Pending() = %d, want 1 (spawn older than MaxAge=1m pruned)", n)
+	}
+	// A spawn younger than the custom MaxAge but older than nothing survives.
+	tr2 := &SubagentTracker{MaxAge: time.Hour}
+	tr2.pending = []TrackedSubagent{
+		{ID: "old-but-within", added: time.Now().Add(-40 * time.Minute)}, // pruned at 30m default, kept at 1h
+	}
+	if n := tr2.Pending(); n != 1 {
+		t.Fatalf("Pending() = %d, want 1 (40m spawn kept under MaxAge=1h)", n)
+	}
+}
+
+// TestExtractBashBackground verifies detection of CC's run_in_background Bash flag.
+func TestExtractBashBackground(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"backgrounded", `{"command":"sleep 60","run_in_background":true}`, true},
+		{"foreground explicit", `{"command":"ls","run_in_background":false}`, false},
+		{"flag absent", `{"command":"ls"}`, false},
+		{"malformed", `not json`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ExtractBashBackground(json.RawMessage(tc.raw)); got != tc.want {
+				t.Errorf("ExtractBashBackground(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 

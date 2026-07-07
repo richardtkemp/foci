@@ -591,6 +591,25 @@ func (a *Agent) resolveSessionBackend(ctx context.Context, sk string) (delegator
 	return nil, nil
 }
 
+// injectGatePollInterval is the backstop tick for the inject gate's wait loop.
+// The adoption edge broadcasts via InFlightWaitCh, but a pending-background-work
+// transition (a tracked subagent/Bash completing) has no channel, so the wait
+// polls backendAwaitingAutonomousRun at this cadence (ALARP: a poll beats new
+// callback plumbing for a rare, bounded wait). Not configurable — a fixed 1s
+// tick on an already-blocked worker.
+const injectGatePollInterval = 1 * time.Second
+
+// backendAwaitingAutonomousRun is the nil-safe wrapper over
+// DelegatedManager.BackendAwaitingAutonomousRun: false for API agents (no
+// DelegatedManager) and for idle/non-tracking backends. Used by the inbox
+// inject gate to hold system injects across the background-work window (spec §4).
+func (a *Agent) backendAwaitingAutonomousRun(sk string) bool {
+	if a.DelegatedManager == nil {
+		return false
+	}
+	return a.DelegatedManager.BackendAwaitingAutonomousRun(sk)
+}
+
 // InboxTurnActive reports whether the given session has a turn in flight,
 // according to the per-session inbox flag. Returns false for unknown
 // sessions. Used by tests and diagnostics.
@@ -695,16 +714,27 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 				// adopted run clears — the only in-flight-delivering state a
 				// free worker can observe is an autonomous run, so this never
 				// blocks against a normal platform turn.
-				if a.IsInFlightDelivering(env.SessionKey) {
-					log.Extra("inbox", "gate_wait sk=%s reason=autonomous_in_flight — holding injection until the adopted autonomous run clears (#1070)", env.SessionKey)
+				// The gate also holds while the backend reports pending
+				// background work (a spawned subagent / run_in_background Bash
+				// not yet completed) or a live/imminent autonomous run — the
+				// whole background-work window, not just an adopted run (spec §4,
+				// backendAwaitingAutonomousRun). A pending→run→clear transition
+				// has no InFlightWaitCh edge, so the wait also polls as a backstop.
+				gated := func() bool {
+					return a.IsInFlightDelivering(env.SessionKey) || a.backendAwaitingAutonomousRun(env.SessionKey)
 				}
-				for a.IsInFlightDelivering(env.SessionKey) {
+				if gated() {
+					log.Extra("inbox", "gate_wait sk=%s reason=autonomous_or_pending — holding injection until the run and any pending background work clear (#1070/spec§4)", env.SessionKey)
+				}
+				for gated() {
 					wait := a.InFlightWaitCh(env.SessionKey)
 					select {
 					case <-ctx.Done():
 						return
 					case <-wait:
-						// State changed — re-check.
+						// Adoption edge fired — re-check.
+					case <-time.After(injectGatePollInterval):
+						// Pending-work transitions have no broadcast — poll.
 					}
 				}
 				a.runInject(inb, env)

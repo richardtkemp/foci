@@ -34,6 +34,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.model = opts.Model
 	b.systemPrompt = opts.SystemPrompt
 	b.autoApproveRules = parseAutoApproveRules(opts.AutoApproveRules)
+	b.agents.MaxAge = opts.SubagentMaxAge
 
 	// Build command args.
 	args := []string{

@@ -129,6 +129,23 @@ type mockBackendDT struct {
 	turnInFlight  bool
 	sessionFile   string
 	sessionEvents *delegator.SessionEvents // captured by AttachSessionEvents; Inject splices delivery callbacks back into handler
+	awaiting      bool                     // AwaitingAutonomousRun() return, guarded by mu (#1068 Phase 2 gate tests)
+}
+
+// setAwaiting toggles the AwaitingAutonomousRun() result under mu so the inbox
+// worker (another goroutine) sees the change safely.
+func (m *mockBackendDT) setAwaiting(v bool) {
+	m.mu.Lock()
+	m.awaiting = v
+	m.mu.Unlock()
+}
+
+// AwaitingAutonomousRun satisfies delegator.AutonomousRunAwaiter for the inject-
+// gate tests.
+func (m *mockBackendDT) AwaitingAutonomousRun() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.awaiting
 }
 
 func (m *mockBackendDT) Start(_ context.Context, _ delegator.StartOptions) error  { return nil }

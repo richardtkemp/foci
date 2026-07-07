@@ -43,6 +43,14 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 // clobber each other's TurnEvents — exactly one wins; the loser waits for
 // completion and retries.
 func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
+	// Pending background work (a spawned subagent or run_in_background Bash not
+	// yet completed) will chain an autonomous run that owns delivery, so a
+	// SourceSystem turn must not begin during the pending window (spec §4).
+	// Checked before turnMu — Pending() takes the tracker's own lock, and the
+	// retry loop re-checks, so the TOCTOU gap is benign.
+	if b.agents.Pending() > 0 {
+		return delegator.ErrTurnInFlight
+	}
 	b.turnMu.Lock()
 	if b.turnActive || b.autonomousActive {
 		b.turnMu.Unlock()
@@ -61,6 +69,23 @@ func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
 	fireAutonomousEnd()
 	b.resetTurnScratch()
 	return nil
+}
+
+// AwaitingAutonomousRun reports whether a delivering autonomous run is active,
+// pending (a spawned background task not yet completed), or imminently expected
+// (within the post-run chain grace). The inbox consults this to hold system
+// injects across the whole background-work window (spec §4). Pending() is read
+// before turnMu to avoid nesting the tracker lock under turnMu.
+func (b *Backend) AwaitingAutonomousRun() bool {
+	if b.agents.Pending() > 0 {
+		return true
+	}
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	if b.autonomousActive {
+		return true
+	}
+	return !b.lastAutonomousEnd.IsZero() && time.Since(b.lastAutonomousEnd) < autonomousInjectGrace
 }
 
 // beginTurnLocked initialises per-turn state. Caller must hold turnMu and must

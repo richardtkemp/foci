@@ -274,6 +274,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			TmuxCols:         p.cfg.Tools.TmuxCols,
 			TmuxRows:         p.cfg.Tools.TmuxRows,
 			AutoApproveRules: autoApproveRules,
+			// Prune threshold for tracked background tasks (subagents,
+			// run_in_background Bash). Empty/invalid → 0, and the tracker falls
+			// back to its 30m default. Unwedge backstop for the pending-work gate.
+			SubagentMaxAge: func() time.Duration {
+				d, _ := time.ParseDuration(p.cfg.CCBackend.BackgroundTaskMaxAge)
+				return d
+			}(),
 			// claude_binary is read from the same merged map ccstream
 			// consumes, but RunOnce doesn't see backendConfig — fold it
 			// onto StartOpts so DelegatedManager.RunOnce honours it.

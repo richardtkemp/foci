@@ -142,10 +142,16 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				se.OnToolStart(block.ID, block.Name, inputStr)
 			}
 
-			// Track Agent tool calls for status reporting (same as tmux backend).
+			// Track background work for status reporting AND the pending-work gate
+			// (spec §4). Agent-tool subagents and run_in_background Bash both
+			// outlive their turn and drive a task_notification / autonomous run on
+			// completion, so both must count toward Pending(). A synchronous Bash
+			// completes inside the turn and is not tracked.
 			if block.Name == "Agent" {
 				desc := delegator.ExtractAgentDescription(block.Input)
 				b.agents.Add(block.ID, desc)
+			} else if block.Name == "Bash" && delegator.ExtractBashBackground(block.Input) {
+				b.agents.Add(block.ID, "background command")
 			}
 
 		case "thinking":
