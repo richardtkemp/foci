@@ -1001,6 +1001,7 @@ func TestEvictOtherDeviceSockets_EmptyDeviceIDNoOp(t *testing.T) {
 
 type envFrame struct {
 	t   string
+	id  string
 	seq int64
 	ack int64
 }
@@ -1014,13 +1015,14 @@ func drainEnv(t *testing.T, c *wsClient) []envFrame {
 		case b := <-c.send:
 			var env struct {
 				T   string `json:"t"`
+				ID  string `json:"id"`
 				Seq int64  `json:"seq"`
 				Ack int64  `json:"ack"`
 			}
 			if err := json.Unmarshal(b, &env); err != nil {
 				t.Fatalf("bad wire frame: %v", err)
 			}
-			out = append(out, envFrame{t: env.T, seq: env.Seq, ack: env.Ack})
+			out = append(out, envFrame{t: env.T, id: env.ID, seq: env.Seq, ack: env.Ack})
 		default:
 			return out
 		}
@@ -1114,25 +1116,26 @@ func TestReliability_OfflineBuffersThenReplays(t *testing.T) {
 }
 
 func TestReliability_InboundDedup(t *testing.T) {
+	c := fakeClient()
 	b := &convBinding{convID: "c1", seen: make(map[string]struct{})}
-	if !b.acceptInbound("id-1", 1) {
+	if !b.acceptInbound(c, "id-1", 1) {
 		t.Fatal("first frame must be accepted")
 	}
-	if b.acceptInbound("id-1", 1) {
+	if b.acceptInbound(c, "id-1", 1) {
 		t.Fatal("duplicate id must be rejected")
 	}
-	if !b.acceptInbound("id-2", 2) {
+	if !b.acceptInbound(c, "id-2", 2) {
 		t.Fatal("new id must be accepted")
 	}
-	if b.clientSeqHW != 2 {
-		t.Errorf("clientSeqHW = %d, want 2", b.clientSeqHW)
+	if got := b.clientStates[c].seqHW; got != 2 {
+		t.Errorf("seqHW = %d, want 2", got)
 	}
 }
 
 func TestReliability_OutboundAckStampsClientSeq(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}
-	b.acceptInbound("u1", 7) // client's outbound seq high-water is 7
+	b.acceptInbound(c, "u1", 7) // this client's inbound seq high-water is 7
 	b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
 	ds := drainEnv(t, c)
 	if len(ds) != 1 || ds[0].ack != 7 {

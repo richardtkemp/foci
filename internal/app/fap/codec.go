@@ -37,6 +37,24 @@ func Encode(frame ServerFrame, seq, ack int64, id, ts string) (string, error) {
 	return string(out), nil
 }
 
+// StampAck rewrites only the envelope `ack` of an already-encoded wire, leaving
+// id/ts/seq/type/payload byte-identical (the canonical copy is encoded once with
+// ack=0 and buffered/stored; each client is sent a copy stamped with ITS own
+// inbound high-water). Preserving id is what keeps client-side dedup working
+// across the live and replayed copies.
+func StampAck(wire string, ack int64) (string, error) {
+	var env Envelope
+	if err := json.Unmarshal([]byte(wire), &env); err != nil {
+		return "", fmt.Errorf("fap: stampAck decode: %w", err)
+	}
+	env.Ack = ack
+	out, err := json.Marshal(env)
+	if err != nil {
+		return "", fmt.Errorf("fap: stampAck encode: %w", err)
+	}
+	return string(out), nil
+}
+
 // Inbound is a decoded app->server frame plus its envelope metadata. Frame is
 // one of the concrete *Client* payload types, or nil for an unknown `t`
 // (forward-compatibility — unknown inbound frames are ignored, not fatal).

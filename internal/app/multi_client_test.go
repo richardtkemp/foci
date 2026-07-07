@@ -213,3 +213,179 @@ func TestAttach_SameSocketReattachIsHarmless(t *testing.T) {
 		t.Fatalf("after re-attaching same socket, %d clients, want 1", got)
 	}
 }
+
+// TestRemoveClient_PromptSurvivesWhileAnotherClientLive: a registered prompt must
+// not be purged when ONE of several attached devices disconnects — the surviving
+// device's Allow/Deny taps would otherwise hit an unknown prompt id and hang the
+// backend permission request (#1). It is purged only when the last device leaves.
+func TestRemoveClient_PromptSurvivesWhileAnotherClientLive(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+	b := h.ensureBinding(nil, agentID, "conv-1")
+
+	phone := fakeClient()
+	tablet := fakeClient()
+	h.addClient(phone)
+	h.addClient(tablet)
+	b.attach(phone)
+	b.attach(tablet)
+	h.registerPrompt("p1", b)
+
+	h.removeClient(phone)
+	if h.bindingForPrompt("p1") == nil {
+		t.Fatal("prompt purged while tablet still attached — surviving device's buttons would break")
+	}
+	h.removeClient(tablet)
+	if h.bindingForPrompt("p1") != nil {
+		t.Error("prompt not purged after the last device disconnected")
+	}
+}
+
+// TestSend_PerClientAck: each attached device is acked for ITS OWN inbound
+// high-water, never the max across devices (#2) — a lagging device must not be told
+// we received seqs it never sent. The buffered canonical copy stays ack=0 and keeps
+// the same envelope id, so client-side dedup still matches across the copies.
+func TestSend_PerClientAck(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+	b := h.ensureBinding(nil, agentID, "conv-1")
+
+	phone := fakeClient()
+	tablet := fakeClient()
+	b.attach(phone)
+	b.attach(tablet)
+	b.acceptInbound(phone, "p9", 9)
+	b.acceptInbound(tablet, "t3", 3)
+
+	b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"})
+
+	pe := drainEnv(t, phone)
+	te := drainEnv(t, tablet)
+	if len(pe) != 1 || pe[0].ack != 9 {
+		t.Fatalf("phone ack = %v, want 9 (its own inbound high-water)", pe)
+	}
+	if len(te) != 1 || te[0].ack != 3 {
+		t.Fatalf("tablet ack = %v, want 3 (its own inbound high-water)", te)
+	}
+	if pe[0].id == "" || pe[0].id != te[0].id {
+		t.Errorf("stamped copies must share envelope id, got phone=%q tablet=%q", pe[0].id, te[0].id)
+	}
+	b.mu.Lock()
+	bufWire := b.buffer[len(b.buffer)-1].wire
+	b.mu.Unlock()
+	in, err := fap.Decode(bufWire)
+	if err != nil {
+		t.Fatalf("decode buffered wire: %v", err)
+	}
+	if in.ID != pe[0].id {
+		t.Errorf("buffered id %q != sent id %q — dedup would break", in.ID, pe[0].id)
+	}
+	if in.Ack != 0 {
+		t.Errorf("buffered canonical copy ack = %d, want 0", in.Ack)
+	}
+}
+
+// TestFeatures_UnionAcrossClients: capability gating is the UNION across attached
+// devices, order-independent, so an incapable device can't switch off a feature the
+// capable one supports (#3). When the capable device detaches with another still
+// live, the union recomputes (feature drops); when the LAST device leaves, the last
+// union is retained for offline gating.
+func TestFeatures_UnionAcrossClients(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+	newCapable := func() *wsClient {
+		c := fakeClient()
+		c.features = map[string]struct{}{featureWizard: {}}
+		return c
+	}
+
+	// Incapable attaches first, capable second: union still has the feature.
+	b1 := h.ensureBinding(nil, agentID, "conv-1")
+	b1.attach(fakeClient())
+	cap1 := newCapable()
+	b1.attach(cap1)
+	if !b1.supportsFeature(featureWizard) {
+		t.Error("incapable-first: union must include the capable client's feature")
+	}
+	// Capable detaches, incapable remains: union recomputes, feature drops.
+	b1.detachIf(cap1)
+	if b1.supportsFeature(featureWizard) {
+		t.Error("after capable detached (incapable still live), feature must drop from the union")
+	}
+
+	// Reverse order: capable first, incapable second — still true.
+	b2 := h.ensureBinding(nil, agentID, "conv-2")
+	b2.attach(newCapable())
+	b2.attach(fakeClient())
+	if !b2.supportsFeature(featureWizard) {
+		t.Error("capable-first: incapable second must not narrow the union")
+	}
+
+	// Sole capable client detaches (goes offline): last union retained.
+	b3 := h.ensureBinding(nil, agentID, "conv-3")
+	cap3 := newCapable()
+	b3.attach(cap3)
+	b3.detachIf(cap3)
+	if !b3.supportsFeature(featureWizard) {
+		t.Error("last client detached → last union must be retained for offline gating")
+	}
+}
+
+// TestAckInbound_IgnoresUnattachedSocket: an ack from a socket not attached to the
+// binding must be ignored, not recorded — a ghost entry would pin the trim floor
+// forever (#4).
+func TestAckInbound_IgnoresUnattachedSocket(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+	b := h.ensureBinding(nil, agentID, "conv-1")
+
+	b.attach(fakeClient())
+	ghost := fakeClient() // never attached
+	b.ackInbound(ghost, 5)
+
+	b.mu.Lock()
+	_, exists := b.clientStates[ghost]
+	b.mu.Unlock()
+	if exists {
+		t.Error("ack from unattached socket created a clientState — would pin the trim floor")
+	}
+}
+
+// TestResume_SeedsReaderAckSoTrimProceeds: a pure-reader device attached via resume
+// is ack-seeded from its resume point, so once the other clients catch up the buffer
+// trims — without the seed the reader's ackHW=0 would block trimming forever (#4).
+func TestResume_SeedsReaderAckSoTrimProceeds(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+	b := h.ensureBinding(nil, agentID, "conv-1")
+
+	sender := fakeClient()
+	b.attach(sender)
+	for i := 0; i < 5; i++ {
+		b.send(fap.Notification{ConversationID: "conv-1", MessageID: "m", Text: "n"})
+	}
+	drain(t, sender)
+
+	reader := fakeClient()
+	reader.hub = h
+	h.resumeConversations(reader, []fap.ResumePoint{{ConversationID: "conv-1", Ack: 5}})
+	drain(t, reader)
+
+	b.ackInbound(sender, 5)
+	b.mu.Lock()
+	n := len(b.buffer)
+	b.mu.Unlock()
+	if n != 0 {
+		t.Errorf("buffer = %d after both clients at ack 5, want 0 (reader was seeded, not blocking)", n)
+	}
+}

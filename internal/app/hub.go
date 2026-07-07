@@ -1033,6 +1033,10 @@ func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 			continue
 		}
 		b.attach(client)
+		// Seed this client's acked high-water from its resume point so a pure
+		// reader (which never sends a frame, hence never hits ackInbound) doesn't
+		// pin the trim floor at 0 forever (#4).
+		b.seedClientAck(client, rp.Ack)
 		b.replayTo(client, rp.Ack)
 	}
 }
@@ -1265,30 +1269,38 @@ func (h *Hub) addClient(c *wsClient) {
 func (h *Hub) removeClient(c *wsClient) {
 	c.mu.Lock()
 	bindings := make([]*convBinding, 0, len(c.convByID))
-	convIDs := make(map[string]struct{}, len(c.convByID))
-	for id, b := range c.convByID {
+	for _, b := range c.convByID {
 		bindings = append(bindings, b)
-		convIDs[id] = struct{}{}
 	}
 	c.mu.Unlock()
+
+	// Detach this socket from its conversations FIRST, so hasLiveClients below
+	// reflects it leaving. The durable state (buffer/seen/seq) is retained.
+	for _, b := range bindings {
+		b.detachIf(c)
+	}
+	// A prompt's buttons only die if NO device is left on its conversation. With
+	// multiple devices attached, purging on any one disconnect would strand the
+	// survivors' Allow/Deny taps on an unknown prompt id (#1). Compute the now-
+	// dead conversations (b.mu, no h.mu held — the two are never nested).
+	dead := make(map[string]struct{}, len(bindings))
+	for _, b := range bindings {
+		if !b.hasLiveClients() {
+			dead[b.convID] = struct{}{}
+		}
+	}
 
 	h.mu.Lock()
 	delete(h.clients, c)
 	// Durable conversation state survives a disconnect (reconnect resumes its seq
-	// stream + replay buffer), so bySession is NOT cleared. Only drop live
-	// interactive prompts whose conversation lived on this socket — their buttons
-	// die with it.
+	// stream + replay buffer), so bySession is NOT cleared. Drop live interactive
+	// prompts only for conversations with no remaining device.
 	for pid, b := range h.prompts {
-		if _, ok := convIDs[b.convID]; ok {
+		if _, ok := dead[b.convID]; ok {
 			delete(h.prompts, pid)
 		}
 	}
 	h.mu.Unlock()
-
-	// Detach this socket from its conversations; the durable state is retained.
-	for _, b := range bindings {
-		b.detachIf(c)
-	}
 }
 
 // OpenSessionsForAgent returns the deduped session keys of the conversations the
@@ -1348,6 +1360,16 @@ type bufferedFrame struct {
 // and replay buffer must persist across the sockets a phone churns through.
 // `client` is the currently-attached socket, nil when the device is offline
 // (sends still buffer for later replay / push).
+// clientState is one attached socket's reliability high-water pair. Devices
+// number their client→server streams independently, so seqHW (what we've
+// received FROM this client, stamped as the ack on frames sent TO it) and ackHW
+// (what this client has acked of OUR stream, which floors replay-buffer trimming)
+// must be per-client, never shared across devices.
+type clientState struct {
+	ackHW int64 // highest outbound seq this client has acknowledged
+	seqHW int64 // highest inbound seq seen from this client
+}
+
 type convBinding struct {
 	convID     string
 	sessionKey string
@@ -1360,15 +1382,14 @@ type convBinding struct {
 
 	notifyOffline func(p pushPayload) // fires a wake push for offline visible frames; nil = no push
 
-	mu          sync.Mutex
-	clients     map[*wsClient]struct{} // live sockets currently bound (≥1 when online); multi-device: a phone and tablet can both be attached
-	clientAcks  map[*wsClient]int64    // per-client inbound ack high-water; the binding trims its replay buffer only past the min across these
-	features    map[string]struct{}    // last hello's advertised capabilities; cached so checks survive disconnect
-	seq         int64                  // server→app outbound seq high-water
-	clientSeqHW int64                  // highest client→server seq seen across all clients (stamped into outbound ack)
-	buffer      []bufferedFrame        // sent frames retained for replay (trimmed by ack/depth/TTL)
-	seen        map[string]struct{}    // inbound dedup by envelope id
-	seenOrder   []string               // FIFO eviction order for seen
+	mu           sync.Mutex
+	clients      map[*wsClient]struct{}     // live sockets currently bound (≥1 when online); multi-device: a phone and tablet can both be attached
+	clientStates map[*wsClient]*clientState // per-client reliability state (ack/seq high-water); NOT shared — each device numbers its stream independently
+	features     map[string]struct{}        // UNION of advertised capabilities across attached clients; cached so checks survive disconnect
+	seq          int64                      // server→app outbound seq high-water
+	buffer       []bufferedFrame            // sent frames retained for replay (trimmed by ack/depth/TTL)
+	seen         map[string]struct{}        // inbound dedup by envelope id
+	seenOrder    []string                   // FIFO eviction order for seen
 
 	// Unified activity inputs (see resolveActivity for precedence). turnKind /
 	// turnDetail are turn-scoped, driven by appSink off the turn-event stream;
@@ -1400,12 +1421,6 @@ type convBinding struct {
 // attach(nil) is the socketless restore path (startup binding reconstruction):
 // it clears the live set without touching the durable buffer.
 func (b *convBinding) attach(client *wsClient) {
-	var feats map[string]struct{}
-	if client != nil {
-		client.mu.Lock()
-		feats = client.features
-		client.mu.Unlock()
-	}
 	b.mu.Lock()
 	if b.clients == nil {
 		b.clients = make(map[*wsClient]struct{})
@@ -1413,16 +1428,21 @@ func (b *convBinding) attach(client *wsClient) {
 	if client == nil {
 		// Socketless restore: clear any live sockets (none should exist at
 		// startup, but be safe) without evicting them — close is the caller's
-		// responsibility, not attach's. Just drop our references.
+		// responsibility, not attach's. Just drop our references. Leave the
+		// cached feature union intact so checks still resolve while offline.
 		b.clients = make(map[*wsClient]struct{})
-		b.clientAcks = nil
+		b.clientStates = nil
 		b.mu.Unlock()
 		return
 	}
 	b.clients[client] = struct{}{}
-	// Cache the capability set; attach(nil) on disconnect leaves the last-known
-	// set intact so checks still resolve while offline.
-	b.features = feats
+	if b.clientStates == nil {
+		b.clientStates = make(map[*wsClient]*clientState)
+	}
+	if b.clientStates[client] == nil {
+		b.clientStates[client] = &clientState{}
+	}
+	b.recomputeFeaturesLocked()
 	b.mu.Unlock()
 	client.mu.Lock()
 	client.convByID[b.convID] = b
@@ -1432,12 +1452,65 @@ func (b *convBinding) attach(client *wsClient) {
 // detachIf removes `client` from the live set iff it is currently attached.
 // Other attached sockets (a different device on the same conversation) stay
 // live — only the specified socket is detached. The durable state (buffer,
-// seen, ack high-water) is retained.
+// seen) is retained; the feature union is recomputed across who's left.
 func (b *convBinding) detachIf(client *wsClient) {
 	b.mu.Lock()
 	delete(b.clients, client)
-	delete(b.clientAcks, client)
+	delete(b.clientStates, client)
+	b.recomputeFeaturesLocked()
 	b.mu.Unlock()
+}
+
+// hasLiveClients reports whether any socket is still attached to this binding.
+func (b *convBinding) hasLiveClients() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.clients) > 0
+}
+
+// recomputeFeaturesLocked rebuilds b.features as the UNION of advertised caps
+// across currently-attached clients, so a less-capable device attaching second
+// can't narrow gating for the whole binding. When the LAST client detaches
+// (empty set) the previous union is retained, so offline checks keep resolving;
+// while any client remains the union reflects exactly who's attached (an
+// all-incapable set legitimately narrows it). Caller holds b.mu; this locks each
+// client's mu (b.mu → client.mu order).
+func (b *convBinding) recomputeFeaturesLocked() {
+	if len(b.clients) == 0 {
+		return
+	}
+	union := make(map[string]struct{})
+	for c := range b.clients {
+		c.mu.Lock()
+		for f := range c.features {
+			union[f] = struct{}{}
+		}
+		c.mu.Unlock()
+	}
+	b.features = union
+}
+
+// seedClientAck raises an attached client's acked high-water — used on resume so
+// a pure-reader device (never sends a frame, so never enters ackInbound) still
+// floors the trim from its resume point instead of pinning the buffer forever.
+func (b *convBinding) seedClientAck(client *wsClient, ack int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if st := b.clientStates[client]; st != nil && ack > st.ackHW {
+		st.ackHW = ack
+	}
+}
+
+// featuresCSV serializes the cached feature union for persistence.
+func (b *convBinding) featuresCSV() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	feats := make([]string, 0, len(b.features))
+	for f := range b.features {
+		feats = append(feats, f)
+	}
+	sort.Strings(feats)
+	return strings.Join(feats, ",")
 }
 
 // currentSeq returns the outbound seq high-water (used by the interactive
@@ -1534,11 +1607,31 @@ func (b *convBinding) lastActivity() int64 {
 	return b.lastActMs
 }
 
+// stampAck rewrites a canonical (ack=0) wire's envelope ack for one client,
+// falling back to the original wire on a zero ack or an encode error (never
+// drops the frame — a slightly stale ack only delays the client's outbox trim).
+func stampAck(wire string, ack int64) string {
+	if ack <= 0 {
+		return wire
+	}
+	out, err := fap.StampAck(wire, ack)
+	if err != nil {
+		log.Errorf("app", "stampAck: %v", err)
+		return wire
+	}
+	return out
+}
+
 func (b *convBinding) send(frame fap.ServerFrame) {
 	b.mu.Lock()
 	b.seq++
-	seq, ack := b.seq, b.clientSeqHW
-	wire, err := fap.Encode(frame, seq, ack, "", "")
+	seq := b.seq
+	// Encode the canonical wire once with ack=0; the buffer + durable store keep
+	// this copy (its envelope id must stay identical to what each client sees, or
+	// client-side dedup breaks). Each client's own inbound high-water is stamped
+	// as the ack at enqueue below — devices number their streams independently, so
+	// a shared max-ack would ack a lagging device for seqs it never sent (#2).
+	wire, err := fap.Encode(frame, seq, 0, "", "")
 	if err != nil {
 		b.mu.Unlock()
 		log.Errorf("app", "encode %s: %v", frame.Type(), err)
@@ -1552,36 +1645,43 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	}
 	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: now})
 	b.trimBufferLocked()
-	// Snapshot the live socket set under the lock; enqueue outside it so a
-	// slow/stalled socket's enqueueBlockWait can't hold b.mu and wedge every
-	// other client's send (and every other conversation on this binding's mu).
-	clients := make([]*wsClient, 0, len(b.clients))
+	// Snapshot the live socket set + each client's ack (its own inbound seqHW)
+	// under the lock; enqueue outside it so a slow/stalled socket's
+	// enqueueBlockWait can't hold b.mu and wedge every other client's send.
+	type target struct {
+		c   *wsClient
+		ack int64
+	}
+	targets := make([]target, 0, len(b.clients))
 	for c := range b.clients {
-		clients = append(clients, c)
+		var ack int64
+		if st := b.clientStates[c]; st != nil {
+			ack = st.seqHW
+		}
+		targets = append(targets, target{c, ack})
 	}
 	notify := b.notifyOffline
 	store := b.store
 	sessionKey := b.sessionKey
 	b.mu.Unlock()
 
-	// Persist verbatim to the durable backstop (async; survives restart + the
-	// in-memory depth/TTL bound, so a long-offline phone can backfill it). The
-	// visible flag marks user-facing content vs transient frames (typing).
+	// Persist the canonical (ack=0) wire to the durable backstop (async; survives
+	// restart + the in-memory depth/TTL bound, so a long-offline phone can backfill
+	// it). The visible flag marks user-facing content vs transient frames (typing).
 	if store != nil {
 		store.Append(b.convID, b.agentID, seq, wire, now.UnixMilli(), visible, preview)
 	}
 
-	// Fan out: every attached device receives the frame. Per-client seq is
-	// shared (one outbound stream per conversation); each client's app dedups
-	// by envelope id and tracks its own resume point independently.
-	for _, c := range clients {
-		c.enqueue(wire)
+	// Fan out: every attached device receives the frame, ack-stamped for ITS own
+	// stream. Per-client app dedups by envelope id and tracks its own resume point.
+	for _, t := range targets {
+		t.c.enqueue(stampAck(wire, t.ack))
 	}
 
 	// Fully offline (no live socket at all): the frame is buffered for replay.
 	// Fire a coalesced wake push for user-visible content so some device
 	// reconnects and replays it.
-	if len(clients) == 0 && notify != nil && visible {
+	if len(targets) == 0 && notify != nil && visible {
 		notify(pushPayload{
 			ConvID:     b.convID,
 			Preview:    preview,
@@ -1631,22 +1731,35 @@ func (b *convBinding) ackInbound(client *wsClient, ack int64) {
 		return
 	}
 	b.mu.Lock()
-	if b.clientAcks == nil {
-		b.clientAcks = make(map[*wsClient]int64)
-	}
-	if ack > b.clientAcks[client] {
-		b.clientAcks[client] = ack
-	}
-	// If any attached client hasn't acked yet, bail — their resume point may
-	// still need frames we'd otherwise trim.
-	if len(b.clientAcks) < len(b.clients) {
-		b.mu.Unlock()
+	defer b.mu.Unlock()
+	// #4: ignore acks from a socket not attached to this binding — the reliability
+	// gate can run before routeUserTurn attaches, and a ghost entry would pin the
+	// trim floor forever.
+	if _, live := b.clients[client]; !live {
 		return
 	}
+	if b.clientStates == nil {
+		b.clientStates = make(map[*wsClient]*clientState)
+	}
+	st := b.clientStates[client]
+	if st == nil {
+		st = &clientState{}
+		b.clientStates[client] = st
+	}
+	if ack > st.ackHW {
+		st.ackHW = ack
+	}
+	// Trim only past what EVERY attached client has confirmed. A client still at
+	// ackHW 0 (just connected, mid-replay, and not resume-seeded) hasn't confirmed
+	// anything — bail rather than trim frames its resume point may still need.
 	minAck := int64(1 << 62)
-	for _, a := range b.clientAcks {
-		if a < minAck {
-			minAck = a
+	for c := range b.clients {
+		s := b.clientStates[c]
+		if s == nil || s.ackHW == 0 {
+			return
+		}
+		if s.ackHW < minAck {
+			minAck = s.ackHW
 		}
 	}
 	drop := 0
@@ -1656,13 +1769,13 @@ func (b *convBinding) ackInbound(client *wsClient, ack int64) {
 	if drop > 0 {
 		b.buffer = append(b.buffer[:0:0], b.buffer[drop:]...)
 	}
-	b.mu.Unlock()
 }
 
-// acceptInbound dedups an inbound frame by envelope id and advances the client
-// seq high-water. Returns false if the frame is a duplicate (a resent outbox
-// entry after reconnect) and must be dropped.
-func (b *convBinding) acceptInbound(id string, seq int64) bool {
+// acceptInbound dedups an inbound frame by envelope id and advances THIS
+// client's inbound seq high-water (stamped as the ack on frames sent back to it).
+// Returns false if the frame is a duplicate (a resent outbox entry after
+// reconnect) and must be dropped.
+func (b *convBinding) acceptInbound(client *wsClient, id string, seq int64) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.seen == nil {
@@ -1680,8 +1793,18 @@ func (b *convBinding) acceptInbound(id string, seq int64) bool {
 			delete(b.seen, old)
 		}
 	}
-	if seq > b.clientSeqHW {
-		b.clientSeqHW = seq
+	// Created even if attach hasn't run yet: the gate can fire before
+	// routeUserTurn attaches, and this client's seqHW must not be lost.
+	if b.clientStates == nil {
+		b.clientStates = make(map[*wsClient]*clientState)
+	}
+	st := b.clientStates[client]
+	if st == nil {
+		st = &clientState{}
+		b.clientStates[client] = st
+	}
+	if seq > st.seqHW {
+		st.seqHW = seq
 	}
 	return true
 }
@@ -1735,6 +1858,12 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 			pending = append(pending, bf.wire)
 		}
 	}
+	// Buffered/stored wire is the canonical ack=0 copy; stamp this client's own
+	// inbound high-water so the replayed ack matches the live-send semantics.
+	var ack int64
+	if st := b.clientStates[client]; st != nil {
+		ack = st.seqHW
+	}
 	store := b.store
 	convID := b.convID
 	b.mu.Unlock()
@@ -1757,12 +1886,12 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 			if hasMem && sf.seq >= memFloor {
 				break
 			}
-			client.enqueue(substituteResolvedAsk(sf.wire, orphaned))
+			client.enqueue(stampAck(substituteResolvedAsk(sf.wire, orphaned), ack))
 			storeCount++
 		}
 	}
 	for _, wire := range pending {
-		client.enqueue(substituteResolvedAsk(wire, orphaned))
+		client.enqueue(stampAck(substituteResolvedAsk(wire, orphaned), ack))
 	}
 	log.Debugf("app", "replayTo: conv=%s fromSeq=%d memFloor=%d fromStore=%d fromBuffer=%d", convID, fromSeq, memFloor, storeCount, len(pending))
 }
