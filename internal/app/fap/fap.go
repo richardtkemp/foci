@@ -43,6 +43,7 @@ const (
 	TypeError           = "error"
 	TypePong            = "pong"
 	TypeTranscript      = "transcript"
+	TypeToolInvoke      = "tool.invoke"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -55,6 +56,7 @@ const (
 	TypeConversationOpenSet    = "conversation.openSet"
 	TypeRead                   = "read"
 	TypePing                   = "ping"
+	TypeToolResult             = "tool.result"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
@@ -426,6 +428,24 @@ type Pong struct{}
 
 func (Pong) Type() string { return TypePong }
 
+// ToolInvoke asks the connected device to run a tool it hosts (e.g. the
+// `app/android` tool backed by Tasker). NOT conversation-scoped — encoded with
+// seq=0/ack=0 and bypasses the reliability layer entirely. The server re-issues
+// on reconnect if it still needs a result.
+//
+// The device replies with one or more ToolResult frames carrying the same
+// InvocationID: an immediate status="pending" if the work doesn't finish in
+// the server's sync window, then a follow-up status="completed" (or "error")
+// when it actually does. The server correlates by InvocationID.
+type ToolInvoke struct {
+	InvocationID string          `json:"invocationId"`
+	Tool         string          `json:"tool"`             // device-side handler name (v1: "android")
+	Action       string          `json:"action"`           // handler verb (e.g. "list", "perform")
+	Args         json.RawMessage `json:"args,omitempty"`   // handler-specific JSON; omitted → empty object
+}
+
+func (ToolInvoke) Type() string { return TypeToolInvoke }
+
 // --- App -> Server frame payloads (mirror Kotlin ClientFrame) ---
 
 // ClientHello is the app greeting: identity, resume points, push token.
@@ -552,6 +572,23 @@ type ConversationList struct{}
 
 // Ping is the payload-less keepalive (payload-less).
 type Ping struct{}
+
+// ToolResult is the device's reply to a ToolInvoke. Carries the matching
+// InvocationID so the server can correlate. Status is one of:
+//   - "completed": the work finished; Output holds the JSON payload.
+//   - "pending":   the work is still running after the server's sync window;
+//                  a later "completed"/"error" frame with the same id will follow.
+//   - "error":     the work failed; Error is a short human-readable message.
+//
+// Fire-and-forget on the wire — NOT conversation-scoped, NOT retried. If the
+// socket drops between invoke and result, the server-side tool call simply
+// times out (the Tasker task may still finish on-device; its result is dropped).
+type ToolResult struct {
+	InvocationID string          `json:"invocationId"`
+	Status       string          `json:"status"`
+	Output       json.RawMessage `json:"output,omitempty"`
+	Error        string          `json:"error,omitempty"`
+}
 
 // --- ULID (mirror Kotlin Ulid.kt) ---
 

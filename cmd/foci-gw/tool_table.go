@@ -334,4 +334,17 @@ var toolTable = []toolEntry{
 		build: func(d *toolDeps) *tools.Tool {
 			return tools.NewRemindTool(d.p.reminderStore, d.p.acfg.ID, d.wakeFn)
 		}},
+
+	{name: "app_android", paths: pathBoth,
+		enabled: func(d *toolDeps) bool { return d.p.cfg.Platform("app") != nil },
+		build: func(d *toolDeps) *tools.Tool {
+			return tools.NewAppAndroidTool(func() (tools.AppInvoker, bool) {
+				conn := d.connMgr.Primary(d.p.acfg.ID)
+				if conn == nil {
+					return nil, false
+				}
+				inv, ok := conn.(tools.AppInvoker)
+				return inv, ok
+			})
+		}},
 }

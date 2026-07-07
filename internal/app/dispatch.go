@@ -133,6 +133,12 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// typing: no upstream surface; read: ack/unread handled by the
 		// reliability gate above.
 
+	case fap.ToolResult:
+		// Not conversation-scoped — no reliability gating above. Hand straight
+		// to the registry, which routes by InvocationID to the waiting
+		// InvokeTool caller (if any; late/unsolicited results are dropped).
+		h.deliverToolResult(f)
+
 	default:
 		// nil Frame (unknown t) — forward-compat, ignore.
 	}

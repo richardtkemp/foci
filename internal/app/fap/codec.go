@@ -104,6 +104,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &ClientTyping{}
 	case TypeRead:
 		dst = &Read{}
+	case TypeToolResult:
+		dst = &ToolResult{}
 	default:
 		return nil, nil // unknown inbound frame — ignored upstream
 	}
@@ -145,6 +147,8 @@ func derefClient(dst any) any {
 	case *ClientTyping:
 		return *v
 	case *Read:
+		return *v
+	case *ToolResult:
 		return *v
 	default:
 		return nil
