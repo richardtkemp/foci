@@ -61,6 +61,19 @@ func (t *SubagentTracker) Add(id, description string) {
 	t.notify()
 }
 
+// Description returns the tracked description for a subagent id, or "" if the id
+// isn't tracked (best-effort label for the app's collapsed trace entry).
+func (t *SubagentTracker) Description(id string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, ag := range t.pending {
+		if ag.ID == id {
+			return ag.Description
+		}
+	}
+	return ""
+}
+
 // pruneLocked drops agents older than agentMaxAge. Caller holds mu; it does
 // not notify (callers already do around their own mutations).
 func (t *SubagentTracker) pruneLocked() {

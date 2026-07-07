@@ -41,6 +41,8 @@ const (
 	TypeInteractiveEdit = "interactive.edit"
 	TypeWizardStep      = "wizard.step"
 	TypeWizardEnd       = "wizard.end"
+	TypeSubagentText    = "subagent.text"
+	TypeSubagentEnd     = "subagent.end"
 	TypeMeta            = "meta"
 	TypeError           = "error"
 	TypePong            = "pong"
@@ -395,6 +397,31 @@ type InteractiveEdit struct {
 }
 
 func (InteractiveEdit) Type() string { return TypeInteractiveEdit }
+
+// SubagentText carries one progress block from a subagent (Task/Agent tool) run,
+// delivered as a distinct frame (not an ordinary blockquoted message) so the app
+// can collapse a run into a single "Agent started" entry and open its full trace
+// on demand. GroupKey is the parent tool_use id shared by every block of one run;
+// Label is the agent's description. Text is raw (no blockquote — that's a tg/discord
+// presentation choice applied there, not here).
+type SubagentText struct {
+	ConversationID string `json:"conversationId"`
+	GroupKey       string `json:"groupKey"`
+	Label          string `json:"label,omitempty"`
+	Text           string `json:"text"`
+}
+
+func (SubagentText) Type() string { return TypeSubagentText }
+
+// SubagentEnd marks a subagent run complete (its Agent tool_use resolved), so the
+// app can flip the run's "started" entry to "completed". Precise per-run signal
+// from the PostToolUse hook's OnToolEnd for the Agent tool.
+type SubagentEnd struct {
+	ConversationID string `json:"conversationId"`
+	GroupKey       string `json:"groupKey"`
+}
+
+func (SubagentEnd) Type() string { return TypeSubagentEnd }
 
 // WizardStep presents the current step of an active command wizard (wire §12).
 // Only sent to clients that advertised the "wizard" feature in their

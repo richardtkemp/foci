@@ -306,8 +306,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			// loggingSink wrapper (per-turn metadata) and inbox.go's
 			// lateDeliverySink fallback (session-scoped). See TODO #747.
 		},
-		OnSubagentText: func(groupKey, text string) {
-			sessionSink.Emit(context.Background(), turnevent.SubagentText{GroupKey: groupKey, Text: text})
+		OnSubagentText: func(groupKey, label, text string) {
+			sessionSink.Emit(context.Background(), turnevent.SubagentText{GroupKey: groupKey, Label: label, Text: text})
+		},
+		OnSubagentEnd: func(groupKey string) {
+			sessionSink.Emit(context.Background(), turnevent.SubagentEnd{GroupKey: groupKey})
 		},
 		OnTextDelta: func(delta string) {
 			sessionSink.Emit(context.Background(), turnevent.TextDelta{Delta: delta})

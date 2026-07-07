@@ -347,6 +347,14 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		se.OnToolEnd(parsed.ToolUseID, parsed.ToolName, output, parsed.IsError)
 	}
 
+	// The top-level Agent tool completing is a subagent run finishing — its
+	// tool_use id is the run's group key. Precise per-run end (agent_id is empty
+	// here: the Agent tool runs at the parent level, so the sidechain filter above
+	// already let it through).
+	if se != nil && se.OnSubagentEnd != nil && parsed.ToolName == "Agent" {
+		se.OnSubagentEnd(parsed.ToolUseID)
+	}
+
 	// Fire any post-tool nudges the caller wants to inject for this tool.
 	// Sends as a plain user message at the default queue priority "next".
 	// CC's mid-turn drain at the next tool boundary

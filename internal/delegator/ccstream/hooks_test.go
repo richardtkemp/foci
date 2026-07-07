@@ -251,6 +251,34 @@ func TestHandleHookResponse_PostToolUse(t *testing.T) {
 	}
 }
 
+// TestHandleHookResponse_AgentToolFiresSubagentEnd proves the top-level Agent
+// tool's completion fires a precise per-run OnSubagentEnd (its tool_use id is the
+// group key), while a non-Agent tool does not.
+func TestHandleHookResponse_AgentToolFiresSubagentEnd(t *testing.T) {
+	b := &Backend{hookInstallID: "install-a"}
+	var ended []string
+	handler := &testHandler{
+		OnToolEnd:     func(id, name, output string, isError bool) {},
+		OnSubagentEnd: func(groupKey string) { ended = append(ended, groupKey) },
+	}
+	applyHandler(b, handler)
+
+	fire := func(toolName, toolUseID string) {
+		stdout, _ := json.Marshal(hookScriptOutput{
+			HookEvent: "PostToolUse", InstallID: "install-a",
+			ToolUseID: toolUseID, ToolName: toolName,
+		})
+		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "PostToolUse", Stdout: string(stdout)})
+		b.handleHookResponse(env)
+	}
+	fire("Read", "toolu_read")   // not an Agent → no subagent end
+	fire("Agent", "toolu_agent") // Agent → precise end keyed by its tool_use id
+
+	if len(ended) != 1 || ended[0] != "toolu_agent" {
+		t.Fatalf("OnSubagentEnd = %v, want [toolu_agent]", ended)
+	}
+}
+
 // TestHandleHookResponse_PostToolUseFailure proves failure envelopes carry
 // the error message (not tool_response) into OnToolEnd with is_error=true.
 func TestHandleHookResponse_PostToolUseFailure(t *testing.T) {

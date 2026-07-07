@@ -34,7 +34,10 @@ func newAppBackend(b *convBinding) *appBackend {
 }
 
 // Compile-time check.
-var _ turn.Platform = (*appBackend)(nil)
+var (
+	_ turn.Platform          = (*appBackend)(nil)
+	_ turn.SubagentDeliverer = (*appBackend)(nil)
+)
 
 // OpenStream begins a live streaming surface for one reply segment. Each segment
 // gets a fresh turnId, so a multi-reply turn (reply → tool → reply) renders as
@@ -79,6 +82,19 @@ func (p *appBackend) EditInPlace(string, turn.Payload) error { return turn.ErrTo
 func (p *appBackend) SendTyping() {}
 
 func (p *appBackend) Logger() *log.ComponentLogger { return p.logger }
+
+// DeliverSubagentText / DeliverSubagentEnd implement turn.SubagentDeliverer so the
+// app receives subagent (Task/Agent tool) progress as distinct, groupable frames
+// — collapsed to one "Agent started/completed" entry client-side — instead of the
+// blockquoted intermediate messages the OnReply fallback produces. Text is raw
+// (the app renders traces in an expandable view, not inline blockquotes).
+func (p *appBackend) DeliverSubagentText(groupKey, label, text string) {
+	p.b.send(fap.SubagentText{ConversationID: p.b.convID, GroupKey: groupKey, Label: label, Text: text})
+}
+
+func (p *appBackend) DeliverSubagentEnd(groupKey string) {
+	p.b.send(fap.SubagentEnd{ConversationID: p.b.convID, GroupKey: groupKey})
+}
 
 // appStreamSink is the live streaming surface for one reply segment. It owns one
 // turnId. Update receives the full accumulated snapshot from the turn-side pump;
