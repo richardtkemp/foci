@@ -1,6 +1,7 @@
 package ccstream
 
 import (
+	"strings"
 	"time"
 
 	"foci/internal/delegator"
@@ -27,6 +28,7 @@ func (b *Backend) onSessionIdle() {
 	active := b.turnActive
 	redispatch := b.redispatchInFlight
 	result := b.stashedResult
+	streamed := b.autonomousStreamed
 	if b.autonomousActive {
 		b.lastAutonomousEnd = time.Now() // opens the post-run grace (see autonomousInjectGrace)
 	}
@@ -34,9 +36,22 @@ func (b *Backend) onSessionIdle() {
 	b.turnMu.Unlock()
 
 	if !active {
-		// Autonomous turn: a run foci didn't open a turn for (slash commands,
-		// task-notification runs after a background-agent/Bash finishes,
-		// proactive ticks). Nothing to complete.
+		// Autonomous run foci opened no turn for (task-notification runs after a
+		// background agent/Bash finishes, back-to-back CC continuations, slash
+		// commands, proactive ticks). Historically the stashed result was dropped
+		// here — but a task-notification run (e.g. a backgrounded sub-agent
+		// completing) produces a real user-facing reply that must still reach the
+		// chat (#1063). Deliver its final text through the session sink, whose
+		// late-delivery fallback sends a standalone message and strips silencing
+		// sentinels — so a [[NO_RESPONSE]] keepalive/proactive tick collapses to
+		// "" and stays silent. Skip when text already streamed this run (the
+		// double-send guard) or when there's no result text.
+		if !streamed && result != nil && strings.TrimSpace(result.Text) != "" {
+			if se := b.sessionEvents.Load(); se != nil && se.OnText != nil {
+				b.logger().Debugf("turn_lifecycle event=autonomous_deliver textlen=%d", len(result.Text))
+				se.OnText(result.Text)
+			}
+		}
 		return
 	}
 	if redispatch {

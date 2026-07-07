@@ -105,6 +105,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	// across blocks ("Hello " + "world!"). See TODO #819.
 	b.turnMu.Lock()
 	needSep := b.turnText.Len() > 0
+	turnActive := b.turnActive
 	b.turnMu.Unlock()
 
 	for _, block := range msg.Message.Content {
@@ -117,6 +118,12 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 					needSep = false
 				}
 				b.turnText.WriteString(block.Text)
+				if !turnActive {
+					// Autonomous run: this text streams to the chat via the
+					// session sink's late-delivery fallback, so onSessionIdle
+					// must not re-deliver the stashed result (#1063).
+					b.autonomousStreamed = true
+				}
 			}
 			b.turnMu.Unlock()
 
@@ -395,6 +402,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		turnActive := b.turnActive
 		if ss.State == "running" && !turnActive {
 			b.autonomousActive = true
+			b.autonomousStreamed = false // fresh run: no text streamed yet
 		}
 		autonomous := b.autonomousActive
 		b.turnMu.Unlock()
