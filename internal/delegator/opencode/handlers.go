@@ -422,6 +422,13 @@ func (b *Backend) handleMessageError(err *MessageError) {
 		}
 	case ErrMessageAborted:
 		log.Debugf(component, "message aborted (expected on /reset hard)")
+	case ErrAPI:
+		var data ApiErrorData
+		if json.Unmarshal(err.Data, &data) == nil {
+			log.Warnf(component, "API error: %s (status=%d, retryable=%v)", data.Message, data.StatusCode, data.IsRetryable)
+		} else {
+			log.Warnf(component, "API error: %s (unparsable data)", err.Name)
+		}
 	default:
 		log.Warnf(component, "message error: %s", err.Name)
 	}
@@ -624,6 +631,21 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 		}
 	case ErrMessageAborted:
 		log.Debugf(component, "session error (aborted — expected on /reset hard)")
+	case ErrAPI:
+		var data ApiErrorData
+		if json.Unmarshal(err.Data, &data) == nil {
+			log.Warnf(component, "session error (API): %s (status=%d, retryable=%v)", data.Message, data.StatusCode, data.IsRetryable)
+			// Inject the error message into the turn text so failInFlightTurn
+			// delivers it to the user instead of the generic "ended unexpectedly"
+			// fallback. Only when no text accumulated — don't clobber partial output.
+			b.turnMu.Lock()
+			if b.turnText.Len() == 0 && data.Message != "" {
+				b.turnText.WriteString("⚠️ " + data.Message)
+			}
+			b.turnMu.Unlock()
+		} else {
+			log.Warnf(component, "session error (API): %s (unparsable data)", err.Name)
+		}
 	default:
 		log.Warnf(component, "session error: %s", err.Name)
 	}
