@@ -144,12 +144,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
 	// Resolve a session's messaging platform (telegram/app/discord) for the
-	// per-session ## Platform block; "" if the session has no connection yet.
+	// per-session ## Platform block from the durable chat claim, so the prompt
+	// (and its compaction-time fingerprint) never depends on connection
+	// liveness. See platformForSession.
+	sessionIdx := p.sessionIndex
 	platformFor := func(sessionKey string) string {
-		if conn := connMgr.ForSessionOrPrimary(sessionKey, agentID); conn != nil {
-			return conn.PlatformName()
-		}
-		return ""
+		return platformForSession(sessionIdx, agentID, sessionKey)
 	}
 	// Parse idle timeout from config (default 3h; see agent.DefaultIdleTimeout).
 	var idleTimeout time.Duration

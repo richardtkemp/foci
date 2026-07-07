@@ -627,13 +627,18 @@ func (m *DelegatedManager) BounceSession(sessionKey string) {
 // already current, so the restart — and the flow interruption it causes — is
 // pure cost.
 //
-// The fingerprint is the same string getOrCreate launches with:
-// buildDelegatedSystemPrompt(character files, skill blocks) via
-// SystemPromptFunc. It therefore captures character-file edits AND skill
-// add/remove (the skill list lives in the prompt) but NOT skill body-content
-// edits (skill bodies are read on demand and never appear in the prompt). Falls
-// back to an unconditional bounce when no SystemPromptFunc is configured (the
-// prompt can't be fingerprinted).
+// The fingerprint is the same string getOrCreate launches with: the full
+// effective prompt from SystemPromptFunc — environment block (## Platform
+// section, shell-tool list, permission allowlist) + character files + skill
+// blocks. It therefore captures character-file edits, skill add/remove (the
+// skill list lives in the prompt), and env-visible changes (permission
+// allowlist edits, shell-tool set, the session's platform claim) — but NOT
+// skill body-content edits (skill bodies are read on demand and never appear
+// in the prompt). The env block resolves the platform from the durable chat
+// claim rather than connection liveness (see cmd/foci-gw platformForSession),
+// so the fingerprint is stable across startup transients and a bounce here
+// always reflects a real change. Falls back to an unconditional bounce when no
+// SystemPromptFunc is configured (the prompt can't be fingerprinted).
 func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool {
 	// Every return path emits one "compaction reload gate:" DEBUG line with an
 	// explicit restart=yes/no token, so a single grep over the log confirms both
