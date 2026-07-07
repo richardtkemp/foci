@@ -71,7 +71,7 @@ func TestStartAll_RestoresFramelessRegisteredConvs(t *testing.T) {
 	if h.convs["c1"] == nil || h.convs["c2"] == nil {
 		t.Fatalf("StartAll must restore both the framed and the frameless conv: %v", h.convs)
 	}
-	if h.convs["c2"].client != nil {
+	if h.convs["c2"].snapshotClient() != nil {
 		t.Error("restored frameless binding must be socketless until the app reconnects")
 	}
 }
@@ -143,7 +143,7 @@ func TestStartAll_RestoresBindings(t *testing.T) {
 	if h.convs["c1"] == nil || h.convs["c2"] == nil {
 		t.Fatalf("StartAll did not restore both bindings: %v", h.convs)
 	}
-	if b := h.convs["c1"]; b.client != nil {
+	if b := h.convs["c1"]; b.snapshotClient() != nil {
 		t.Error("restored binding must be socketless (nil client) until the app reconnects")
 	}
 }

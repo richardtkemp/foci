@@ -85,7 +85,7 @@ func TestChatIDForConv_DeterministicAndPositive(t *testing.T) {
 
 func TestAppSink_StreamingTranslation(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	ctx := context.Background()
 
@@ -147,7 +147,7 @@ func TestAppSink_StreamingTranslation(t *testing.T) {
 
 func TestAppSink_InTurnSnapshot(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	ctx := context.Background()
 
@@ -168,7 +168,7 @@ func TestAppSink_InTurnSnapshot(t *testing.T) {
 // deferred cleanup, or the roster would report a phantom typing indicator.
 func TestAppSink_CleanupClearsInTurn(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 
 	s.Emit(context.Background(), turnevent.TurnStart{})
@@ -183,7 +183,7 @@ func TestAppSink_CleanupClearsInTurn(t *testing.T) {
 
 func TestAppSink_WarmingLifecycle(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	ctx := context.Background()
 
@@ -199,7 +199,7 @@ func TestAppSink_WarmingLifecycle(t *testing.T) {
 
 func TestAppSink_ToolLifecycle(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	ctx := context.Background()
 
@@ -219,7 +219,7 @@ func TestAppSink_ToolLifecycle(t *testing.T) {
 // change (the binding-side change-check dedups no-op transitions).
 func TestConvBinding_ActivityResolver(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 
 	// Turn-scoped thinking is in flight.
 	b.setTurnActivity(fap.ActivityKindThinking, "")
@@ -273,7 +273,7 @@ func TestConvBinding_ActivityResolver(t *testing.T) {
 
 func TestAppSink_ThinkingSnapshot(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	ctx := context.Background()
 
@@ -314,7 +314,7 @@ func activityKinds(got []decoded) []string {
 
 func TestAppSink_ThinkingFrames(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	ctx := context.Background()
 
@@ -341,7 +341,7 @@ func TestAppSink_ThinkingFrames(t *testing.T) {
 
 func TestAppSink_NoThinkingFramesWhenAbsent(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	ctx := context.Background()
 
@@ -365,7 +365,7 @@ func TestAppSink_NoThinkingFramesWhenAbsent(t *testing.T) {
 // suppress.
 func TestAppSink_MultiReplyNoDoubleDelivery(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	ctx := context.Background()
 
@@ -403,7 +403,7 @@ func TestAppSink_MultiReplyNoDoubleDelivery(t *testing.T) {
 
 func TestAppSink_NonStreamedFinalText(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	// No deltas — a single complete reply.
 	s.Emit(context.Background(), turnevent.TurnComplete{FinalText: "done"})
@@ -419,7 +419,7 @@ func TestAppSink_NonStreamedFinalText(t *testing.T) {
 
 func TestAppSink_SilentFinalSuppressed(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	s.Emit(context.Background(), turnevent.TurnComplete{FinalText: "[[NO_RESPONSE]]"})
 
@@ -451,7 +451,7 @@ func newTestHub() *Hub {
 func TestSendToSession_EmitsMessageFrame(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
-	b := &convBinding{convID: "c1", sessionKey: "ag/c7", client: c}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c7", clients: map[*wsClient]struct{}{c: {}}}
 	h.bySession[b.sessionKey] = b
 
 	conn := &appConn{hub: h, agentID: "ag"}
@@ -477,7 +477,7 @@ func TestSendToSession_FallsBackToDefaultChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := fakeClient()
-	def := &convBinding{convID: "cdef", sessionKey: "ag/cdef/9", agentID: "ag", chatID: 42, client: c}
+	def := &convBinding{convID: "cdef", sessionKey: "ag/cdef/9", agentID: "ag", chatID: 42, clients: map[*wsClient]struct{}{c: {}}}
 	h.convs[def.convID] = def
 
 	conn := &appConn{hub: h, agentID: "ag"}
@@ -504,7 +504,7 @@ func TestSendToSession_StaleDefaultFallsToLatest(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := fakeClient()
-	other := &convBinding{convID: "cother", sessionKey: "ag/c99", agentID: "ag", chatID: 99, client: c}
+	other := &convBinding{convID: "cother", sessionKey: "ag/c99", agentID: "ag", chatID: 99, clients: map[*wsClient]struct{}{c: {}}}
 	h.convs[other.convID] = other
 
 	conn := &appConn{hub: h, agentID: "ag"}
@@ -568,8 +568,8 @@ func TestNotifyUnbound_TargetsDefaultConversationOnly(t *testing.T) {
 	h := newTestHub()
 	h.deps = platform.ProviderDeps{SessionIndex: idx}
 	cDef, cOther := fakeClient(), fakeClient()
-	def := &convBinding{convID: "cdef", sessionKey: "ag/c42", agentID: "ag", chatID: 42, client: cDef}
-	other := &convBinding{convID: "cother", sessionKey: "ag/c99", agentID: "ag", chatID: 99, client: cOther}
+	def := &convBinding{convID: "cdef", sessionKey: "ag/c42", agentID: "ag", chatID: 42, clients: map[*wsClient]struct{}{cDef: {}}}
+	other := &convBinding{convID: "cother", sessionKey: "ag/c99", agentID: "ag", chatID: 99, clients: map[*wsClient]struct{}{cOther: {}}}
 	h.convs[def.convID] = def
 	h.convs[other.convID] = other
 	if err := idx.SetDefaultChat("ag", "app", 42); err != nil {
@@ -591,7 +591,7 @@ func TestNotifyUnbound_TargetsDefaultConversationOnly(t *testing.T) {
 func TestSendToSession_SilentSuppressed(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
-	b := &convBinding{convID: "c1", sessionKey: "ag/c7", client: c}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c7", clients: map[*wsClient]struct{}{c: {}}}
 	h.bySession[b.sessionKey] = b
 
 	conn := &appConn{hub: h, agentID: "ag"}
@@ -622,7 +622,7 @@ func boundConn(t *testing.T) (*Hub, *wsClient, *convBinding, *appConn) {
 	h := newTestHub()
 	c := fakeClient()
 	c.hub = h
-	b := &convBinding{convID: "c1", sessionKey: "ag/c7", client: c, chatID: 7}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c7", clients: map[*wsClient]struct{}{c: {}}, chatID: 7}
 	h.bySession[b.sessionKey] = b
 	c.convByID["c1"] = b
 	conn := &appConn{hub: h, agentID: "ag", bound: b.sessionKey}
@@ -1105,7 +1105,7 @@ func TestReliability_InboundDedup(t *testing.T) {
 
 func TestReliability_OutboundAckStampsClientSeq(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}
 	b.acceptInbound("u1", 7) // client's outbound seq high-water is 7
 	b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
 	ds := drainEnv(t, c)
@@ -1116,12 +1116,12 @@ func TestReliability_OutboundAckStampsClientSeq(t *testing.T) {
 
 func TestReliability_AckTrimsBuffer(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}
 	for i := 0; i < 5; i++ {
 		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"}) // seq 1..5
 	}
 	drainEnv(t, c)
-	b.ackInbound(3)
+	b.ackInbound(c, 3)
 	b.mu.Lock()
 	n, first := len(b.buffer), b.buffer[0].seq
 	b.mu.Unlock()
@@ -1132,7 +1132,7 @@ func TestReliability_AckTrimsBuffer(t *testing.T) {
 
 func TestReliability_BufferTrimsByDepth(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c, seen: make(map[string]struct{})}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}
 	for i := 0; i < defaultReplayBufferDepth+50; i++ {
 		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
 	}
@@ -1364,7 +1364,7 @@ func TestOnlineSend_NoPush(t *testing.T) {
 	var got []string
 	b := &convBinding{
 		convID:        "c1",
-		client:        c,
+		clients: map[*wsClient]struct{}{c: {}},
 		seen:          make(map[string]struct{}),
 		notifyOffline: func(p pushPayload) { got = append(got, p.Preview) },
 	}
@@ -1550,7 +1550,7 @@ func TestServeHistory_ReportsSeqHighWater(t *testing.T) {
 
 func TestSink_EmitsStatusChips(t *testing.T) {
 	c := fakeClient()
-	b := &convBinding{convID: "c1", client: c}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 	s.statusFn = func() string { return "5m" }
 	s.emitMeta(turnevent.TurnComplete{Model: "claude"})

@@ -1343,11 +1343,12 @@ type convBinding struct {
 	notifyOffline func(p pushPayload) // fires a wake push for offline visible frames; nil = no push
 
 	mu          sync.Mutex
-	client      *wsClient           // current socket; nil when offline
-	features    map[string]struct{} // last hello's advertised capabilities; cached so checks survive disconnect
-	seq         int64               // server→app outbound seq high-water
-	clientSeqHW int64               // highest client→server seq seen (stamped into outbound ack)
-	buffer      []bufferedFrame     // sent frames retained for replay (trimmed by ack/depth/TTL)
+	clients     map[*wsClient]struct{} // live sockets currently bound (≥1 when online); multi-device: a phone and tablet can both be attached
+	clientAcks  map[*wsClient]int64    // per-client inbound ack high-water; the binding trims its replay buffer only past the min across these
+	features    map[string]struct{}    // last hello's advertised capabilities; cached so checks survive disconnect
+	seq         int64                  // server→app outbound seq high-water
+	clientSeqHW int64                  // highest client→server seq seen across all clients (stamped into outbound ack)
+	buffer      []bufferedFrame        // sent frames retained for replay (trimmed by ack/depth/TTL)
 	seen      map[string]struct{} // inbound dedup by envelope id
 	seenOrder []string            // FIFO eviction order for seen
 
@@ -1370,6 +1371,16 @@ type convBinding struct {
 
 // attach points the durable state at a (re)connected socket and registers it in
 // the socket's per-conversation map so inbound frames resolve back to it.
+//
+// Multi-device: a conversation may have MANY live sockets simultaneously — a
+// phone and a tablet both looking at the same chat. Each attached socket
+// receives every outbound frame (fan-out in [send]); per-client ack state
+// ([clientAcks]) drives replay-buffer trimming. The previous single-client
+// model silently shadowed the displaced socket, leaving it deaf; this design
+// keeps both live.
+//
+// attach(nil) is the socketless restore path (startup binding reconstruction):
+// it clears the live set without touching the durable buffer.
 func (b *convBinding) attach(client *wsClient) {
 	var feats map[string]struct{}
 	if client != nil {
@@ -1378,31 +1389,36 @@ func (b *convBinding) attach(client *wsClient) {
 		client.mu.Unlock()
 	}
 	b.mu.Lock()
-	b.client = client
-	// Cache the capability set; attach(nil) on disconnect leaves the last-known
-	// set intact so checks still resolve while offline.
-	if client != nil {
-		b.features = feats
+	if b.clients == nil {
+		b.clients = make(map[*wsClient]struct{})
 	}
-	b.mu.Unlock()
-	// A nil client is the socketless case (startup binding restore): the durable
-	// binding exists and buffers/persists, but there is no socket to register it
-	// against. Reconnect's ensureBinding re-attaches the real socket later.
 	if client == nil {
+		// Socketless restore: clear any live sockets (none should exist at
+		// startup, but be safe) without evicting them — close is the caller's
+		// responsibility, not attach's. Just drop our references.
+		b.clients = make(map[*wsClient]struct{})
+		b.clientAcks = nil
+		b.mu.Unlock()
 		return
 	}
+	b.clients[client] = struct{}{}
+	// Cache the capability set; attach(nil) on disconnect leaves the last-known
+	// set intact so checks still resolve while offline.
+	b.features = feats
+	b.mu.Unlock()
 	client.mu.Lock()
 	client.convByID[b.convID] = b
 	client.mu.Unlock()
 }
 
-// detachIf clears the attached socket iff it is still `client` (a newer socket
-// may already have taken over). The durable state itself is retained.
+// detachIf removes `client` from the live set iff it is currently attached.
+// Other attached sockets (a different device on the same conversation) stay
+// live — only the specified socket is detached. The durable state (buffer,
+// seen, ack high-water) is retained.
 func (b *convBinding) detachIf(client *wsClient) {
 	b.mu.Lock()
-	if b.client == client {
-		b.client = nil
-	}
+	delete(b.clients, client)
+	delete(b.clientAcks, client)
 	b.mu.Unlock()
 }
 
@@ -1518,7 +1534,13 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	}
 	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: now})
 	b.trimBufferLocked()
-	client := b.client
+	// Snapshot the live socket set under the lock; enqueue outside it so a
+	// slow/stalled socket's enqueueBlockWait can't hold b.mu and wedge every
+	// other client's send (and every other conversation on this binding's mu).
+	clients := make([]*wsClient, 0, len(b.clients))
+	for c := range b.clients {
+		clients = append(clients, c)
+	}
 	notify := b.notifyOffline
 	store := b.store
 	sessionKey := b.sessionKey
@@ -1531,22 +1553,24 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 		store.Append(b.convID, b.agentID, seq, wire, now.UnixMilli(), visible, preview)
 	}
 
-	if client != nil {
-		client.enqueue(wire)
-		return
+	// Fan out: every attached device receives the frame. Per-client seq is
+	// shared (one outbound stream per conversation); each client's app dedups
+	// by envelope id and tracks its own resume point independently.
+	for _, c := range clients {
+		c.enqueue(wire)
 	}
-	// Offline: the frame is buffered for replay. Fire a coalesced wake push for
-	// user-visible content so the device reconnects and replays it.
-	if notify != nil {
-		if visible {
-			notify(pushPayload{
-				ConvID:     b.convID,
-				Preview:    preview,
-				AgentID:    b.agentID,
-				SessionKey: sessionKey,
-				ChatID:     b.chatID,
-			})
-		}
+
+	// Fully offline (no live socket at all): the frame is buffered for replay.
+	// Fire a coalesced wake push for user-visible content so some device
+	// reconnects and replays it.
+	if len(clients) == 0 && notify != nil && visible {
+		notify(pushPayload{
+			ConvID:     b.convID,
+			Preview:    preview,
+			AgentID:    b.agentID,
+			SessionKey: sessionKey,
+			ChatID:     b.chatID,
+		})
 	}
 }
 
@@ -1575,15 +1599,40 @@ func (b *convBinding) trimBufferLocked() {
 	}
 }
 
-// ackInbound trims the replay buffer to frames the client has not yet confirmed
-// (envelope.ack high-water from an inbound frame).
-func (b *convBinding) ackInbound(ack int64) {
+// ackInbound records the piggybacked ack from `client` and trims the replay
+// buffer to frames ALL attached clients have confirmed. Without per-client
+// tracking, a second device reconnecting with ack=0 would let the buffer trim
+// past frames the first device hadn't acked yet — losing replay history for
+// the lagging device.
+//
+// If any attached client has not yet sent an ack (e.g. just connected, mid-
+// replay), no trimming happens — their resume point may be far behind and we
+// can't safely advance past them.
+func (b *convBinding) ackInbound(client *wsClient, ack int64) {
 	if ack <= 0 {
 		return
 	}
 	b.mu.Lock()
+	if b.clientAcks == nil {
+		b.clientAcks = make(map[*wsClient]int64)
+	}
+	if ack > b.clientAcks[client] {
+		b.clientAcks[client] = ack
+	}
+	// If any attached client hasn't acked yet, bail — their resume point may
+	// still need frames we'd otherwise trim.
+	if len(b.clientAcks) < len(b.clients) {
+		b.mu.Unlock()
+		return
+	}
+	minAck := int64(1<<62)
+	for _, a := range b.clientAcks {
+		if a < minAck {
+			minAck = a
+		}
+	}
 	drop := 0
-	for drop < len(b.buffer) && b.buffer[drop].seq <= ack {
+	for drop < len(b.buffer) && b.buffer[drop].seq <= minAck {
 		drop++
 	}
 	if drop > 0 {

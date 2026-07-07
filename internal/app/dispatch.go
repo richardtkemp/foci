@@ -45,10 +45,10 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	// yet; its binding is created downstream in routeUserText.
 	if convID := inboundConvID(in.Frame); convID != "" {
 		if b := h.convForReliability(convID); b != nil {
-			if !b.acceptInbound(in.ID, in.Seq) {
-				return
-			}
-			b.ackInbound(in.Ack)
+		if !b.acceptInbound(in.ID, in.Seq) {
+			return
+		}
+		b.ackInbound(client, in.Ack)
 		}
 	}
 

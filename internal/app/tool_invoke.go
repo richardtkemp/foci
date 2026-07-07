@@ -130,11 +130,17 @@ func (h *Hub) liveClientForAgent(agentID string) *wsClient {
 	return nil
 }
 
-// snapshotClient returns the binding's current client under its lock.
+// snapshotClient returns any one of the binding's currently-attached live
+// sockets (multi-device: a conversation may have several). Returns nil when no
+// socket is attached. The tool.invoke routing uses this when picking any one
+// device to invoke on — it doesn't yet care which device answers.
 func (b *convBinding) snapshotClient() *wsClient {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.client
+	for c := range b.clients {
+		return c
+	}
+	return nil
 }
 
 // deliverToolResult is called from the inbound dispatcher when a ToolResult
