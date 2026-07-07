@@ -276,6 +276,14 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
+	// background_task_max_age is optional (empty → 30m default at use-time), so
+	// validate only when set — else a typo would silently fall back to 30m.
+	if v := cfg.CCBackend.BackgroundTaskMaxAge; v != "" {
+		if _, err := time.ParseDuration(v); err != nil {
+			return fmt.Errorf("[cc_backend] background_task_max_age = %q: %w", v, err)
+		}
+	}
+
 	// Special case: tmux_memory_check_interval allows "0" to disable
 	if cfg.Tools.TmuxMemoryCheckInterval != "0" {
 		if _, err := time.ParseDuration(cfg.Tools.TmuxMemoryCheckInterval); err != nil {
