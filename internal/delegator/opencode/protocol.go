@@ -129,6 +129,11 @@ const (
 	PartRetry      = "retry"
 )
 
+// taskTool is the tool name opencode uses for subagent (subtask) spawns.
+// When a tool part carries this name, its lifecycle maps to subagent
+// start/end events. Matches TaskTool.id in opencode's tool/task.ts.
+const taskTool = "task"
+
 // Part is the wire shape in a message.part.updated SSE event's `part`
 // field. Discriminated by Type. Only the fields relevant to the active
 // Type are populated; the rest carry zero values.

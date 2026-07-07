@@ -419,11 +419,12 @@ func (s *Server) finalizeExit(reason error) {
 				Type:       EventSessionError,
 				Properties: payload,
 			}
-			for _, be := range backends {
-				// Non-blocking push — if the dispatcher is wedged the
-				// channel may be full; the WARN route already fires for
-				// drops, so this is consistent with steady-state drops.
-				select {
+		for _, be := range backends {
+			be.agents.ClearAll() // subprocess gone: pending subagents can never complete
+			// Non-blocking push — if the dispatcher is wedged the
+			// channel may be full; the WARN route already fires for
+			// drops, so this is consistent with steady-state drops.
+			select {
 				case be.events <- syntheticEvent:
 				default:
 					log.Warnf(component, "finalizeExit: %s events channel full; cannot deliver session.error", be.sessionID)
