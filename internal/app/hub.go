@@ -499,9 +499,11 @@ func (h *Hub) ServeReplay(w http.ResponseWriter, r *http.Request) {
 
 	frames := h.frames.Range(convID, fromSeq, limit)
 	log.Debugf("app", "replay GET: conv=%s fromSeq=%d returned=%d more=%v", convID, fromSeq, len(frames), len(frames) == limit)
+	// Same closed-ask substitution as the reconnect replayTo path (see there).
+	orphaned := h.frames.OrphanedResolvedAsks(convID)
 	out := make([]map[string]any, 0, len(frames))
 	for _, f := range frames {
-		out = append(out, map[string]any{"seq": f.seq, "wire": f.wire})
+		out = append(out, map[string]any{"seq": f.seq, "wire": substituteResolvedAsk(f.wire, orphaned)})
 	}
 	resp := map[string]any{
 		"conversationId": convID,
@@ -1684,6 +1686,40 @@ func (b *convBinding) acceptInbound(id string, seq int64) bool {
 	return true
 }
 
+// substituteResolvedAsk rewrites the wire of an `interactive` frame whose prompt
+// is in `orphaned` (closed, but with no stored resolve frame) into an
+// `interactive.edit` at the same seq/id/ts. On a cold replay the prompt row was
+// never inserted, so the client's resolve() UPDATE touches nothing and the ask
+// silently doesn't render — instead of resurrecting as a live prompt. Same seq
+// keeps the reliable stream contiguous (a dropped frame would stall the client's
+// resume mark forever). Any other frame is returned unchanged.
+func substituteResolvedAsk(wire string, orphaned map[string]struct{}) string {
+	if len(orphaned) == 0 {
+		return wire
+	}
+	var env fap.Envelope
+	if json.Unmarshal([]byte(wire), &env) != nil || env.T != fap.TypeInteractive {
+		return wire
+	}
+	var p struct {
+		ConversationID string `json:"conversationId"`
+		PromptID       string `json:"promptId"`
+	}
+	if json.Unmarshal(env.D, &p) != nil {
+		return wire
+	}
+	if _, ok := orphaned[p.PromptID]; !ok {
+		return wire
+	}
+	out, err := fap.Encode(
+		fap.InteractiveEdit{ConversationID: p.ConversationID, PromptID: p.PromptID},
+		env.Seq, env.Ack, env.ID, env.TS)
+	if err != nil {
+		return wire
+	}
+	return out
+}
+
 // replayTo re-sends buffered frames with seq > fromSeq to the socket, in seq
 // order — the reconnect resume path.
 func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
@@ -1703,6 +1739,12 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 	convID := b.convID
 	b.mu.Unlock()
 
+	// Asks closed on another platform (or before durable resolve tracking) have no
+	// stored resolve frame, so their open `interactive` frame would resurrect as a
+	// live prompt on cold replay. Rewrite each to a same-seq resolve so it renders
+	// closed instead. Empty (the common case) makes the substitution a no-op.
+	orphaned := store.OrphanedResolvedAsks(convID)
+
 	// Backfill the gap the in-memory buffer can't cover — frames trimmed by
 	// depth/TTL, or lost when this process restarted — from the durable store,
 	// before the in-memory frames. memFloor is where memory takes over: store
@@ -1715,12 +1757,12 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 			if hasMem && sf.seq >= memFloor {
 				break
 			}
-			client.enqueue(sf.wire)
+			client.enqueue(substituteResolvedAsk(sf.wire, orphaned))
 			storeCount++
 		}
 	}
 	for _, wire := range pending {
-		client.enqueue(wire)
+		client.enqueue(substituteResolvedAsk(wire, orphaned))
 	}
 	log.Debugf("app", "replayTo: conv=%s fromSeq=%d memFloor=%d fromStore=%d fromBuffer=%d", convID, fromSeq, memFloor, storeCount, len(pending))
 }

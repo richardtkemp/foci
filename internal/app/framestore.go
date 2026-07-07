@@ -325,6 +325,82 @@ func (s *frameStore) NeedsLegacyAskSweep() bool {
 	return uv < 1
 }
 
+// OrphanedResolvedAsks returns the promptIDs, in one conversation, of asks that
+// are closed (answered or cancelled) but carry no durable resolve frame — so on a
+// cold replay their open `interactive` frame would resurrect as a live prompt.
+// The set is `open − resolvedByEdit − stillOpen`:
+//   - resolvedByEdit: an `interactive.edit` for the prompt is also stored, so its
+//     own resolution replays and closes it — leave it alone.
+//   - stillOpen: the prompt still has an app_prompts row, deleted only on resolve,
+//     so its presence means the ask is genuinely open — preserve it.
+//
+// What remains is asks whose row was deleted on resolve (answer/cancel) with no
+// stored edit frame — resolved on another platform, or post-dating the one-time
+// legacy sweep. The caller substitutes these on replay so they render closed.
+func (s *frameStore) OrphanedResolvedAsks(convID string) map[string]struct{} {
+	if s == nil {
+		return nil
+	}
+	// LIKE-prefilter to interactive/interactive.edit envelopes so a conversation
+	// with thousands of message frames only parses its handful of ask frames.
+	rows, err := s.db.Query(
+		`SELECT wire FROM app_frames WHERE conv_id = ? AND wire LIKE '%"t":"interactive%'`, convID)
+	if err != nil {
+		log.Errorf("app", "frame store OrphanedResolvedAsks scan (conv=%s): %v", convID, err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	open := map[string]struct{}{}
+	resolvedByEdit := map[string]struct{}{}
+	for rows.Next() {
+		var wire string
+		if rows.Scan(&wire) != nil {
+			continue
+		}
+		var env fap.Envelope
+		if json.Unmarshal([]byte(wire), &env) != nil {
+			continue
+		}
+		var p struct {
+			PromptID string `json:"promptId"`
+		}
+		_ = json.Unmarshal(env.D, &p)
+		if p.PromptID == "" {
+			continue
+		}
+		switch env.T {
+		case fap.TypeInteractiveEdit:
+			resolvedByEdit[p.PromptID] = struct{}{}
+		case fap.TypeInteractive:
+			open[p.PromptID] = struct{}{}
+		}
+	}
+	if len(open) == 0 {
+		return nil
+	}
+	stillOpen := map[string]struct{}{}
+	if prows, err := s.db.Query(`SELECT prompt_id FROM app_prompts WHERE conv_id = ?`, convID); err == nil {
+		for prows.Next() {
+			var id string
+			if prows.Scan(&id) == nil {
+				stillOpen[id] = struct{}{}
+			}
+		}
+		_ = prows.Close()
+	}
+	out := map[string]struct{}{}
+	for id := range open {
+		if _, resolved := resolvedByEdit[id]; resolved {
+			continue
+		}
+		if _, isOpen := stillOpen[id]; isOpen {
+			continue
+		}
+		out[id] = struct{}{}
+	}
+	return out
+}
+
 // LegacyOpenAsks returns interactive prompts stored before durable resolution
 // tracking existed and never resolved: an `interactive` frame with no matching
 // `interactive.edit` and no app_prompts row (that index is populated only from

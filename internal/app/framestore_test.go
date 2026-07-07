@@ -114,6 +114,82 @@ func TestFrameStore_LegacyOpenAsks(t *testing.T) {
 	}
 }
 
+func TestFrameStore_OrphanedResolvedAsks(t *testing.T) {
+	s := tempFrameStore(t)
+	enc := func(f fap.ServerFrame, seq int64) string {
+		w, err := fap.Encode(f, seq, 0, "", "")
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return w
+	}
+	// p1: interactive, never resolved, not indexed → orphaned (closed elsewhere,
+	// no durable resolve frame) → substitute on replay.
+	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 1, sentMs: 1,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "p1", Text: "allow?"}, 1)})
+	// p2: interactive + a later resolve frame → its edit replays and closes it → leave alone.
+	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 2, sentMs: 2,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "p2"}, 2)})
+	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 3, sentMs: 3,
+		wire: enc(fap.InteractiveEdit{ConversationID: "c1", PromptID: "p2", Text: "done"}, 3)})
+	// p3: interactive but still tracked in app_prompts → genuinely open → leave alone.
+	s.insert(frameWrite{convID: "c1", agentID: "clutch", seq: 4, sentMs: 4,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "p3"}, 4)})
+	s.PutPrompt("p3", "c1", "clutch", 4)
+	// p4: interactive in a DIFFERENT conversation, orphaned there — must not leak
+	// into c1's set (replay is per-conversation).
+	s.insert(frameWrite{convID: "c2", agentID: "clutch", seq: 1, sentMs: 5,
+		wire: enc(fap.Interactive{ConversationID: "c2", PromptID: "p4"}, 1)})
+
+	got := s.OrphanedResolvedAsks("c1")
+	if len(got) != 1 {
+		t.Fatalf("OrphanedResolvedAsks(c1) = %v, want just {p1}", got)
+	}
+	if _, ok := got["p1"]; !ok {
+		t.Fatalf("OrphanedResolvedAsks(c1) = %v, want p1 present", got)
+	}
+}
+
+func TestSubstituteResolvedAsk(t *testing.T) {
+	enc := func(f fap.ServerFrame, seq int64) string {
+		w, err := fap.Encode(f, seq, 0, "id-fixed", "ts-fixed")
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return w
+	}
+	orphaned := map[string]struct{}{"p1": {}}
+
+	// An orphaned interactive → rewritten to interactive.edit at the SAME seq/id/ts.
+	openWire := enc(fap.Interactive{ConversationID: "c1", PromptID: "p1", Text: "allow?",
+		Choices: []fap.Choice{{Label: "Yes", Data: "p1:0"}}}, 7)
+	out := substituteResolvedAsk(openWire, orphaned)
+	var env fap.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("unmarshal substituted wire: %v", err)
+	}
+	if env.T != fap.TypeInteractiveEdit {
+		t.Errorf("substituted type = %q, want %q", env.T, fap.TypeInteractiveEdit)
+	}
+	if env.Seq != 7 {
+		t.Errorf("substituted seq = %d, want 7 (contiguity preserved)", env.Seq)
+	}
+	if env.ID != "id-fixed" || env.TS != "ts-fixed" {
+		t.Errorf("substituted id/ts = %q/%q, want id-fixed/ts-fixed (stable across replays)", env.ID, env.TS)
+	}
+
+	// A non-orphaned interactive → unchanged (its own resolve frame will close it).
+	other := enc(fap.Interactive{ConversationID: "c1", PromptID: "p2"}, 8)
+	if got := substituteResolvedAsk(other, orphaned); got != other {
+		t.Errorf("non-orphaned interactive was rewritten:\n got %s\nwant %s", got, other)
+	}
+	// A non-interactive frame (e.g. a text message) → unchanged.
+	msg := enc(fap.ServerMessage{ConversationID: "c1", Text: "hi"}, 9)
+	if got := substituteResolvedAsk(msg, orphaned); got != msg {
+		t.Errorf("non-interactive frame was rewritten:\n got %s\nwant %s", got, msg)
+	}
+}
+
 func TestFrameStore_InsertMaxSeqRange(t *testing.T) {
 	s := tempFrameStore(t)
 	now := time.Now().UnixMilli()
@@ -222,6 +298,44 @@ func TestReplayTo_BackfillsFromStoreBelowMemFloor(t *testing.T) {
 		if f.seq != int64(i+1) {
 			t.Fatalf("frame %d has seq %d, want %d — gap/dupe/misorder (%+v)", i, f.seq, i+1, ds)
 		}
+	}
+}
+
+// replayTo must rewrite a closed-but-unresolved ask (no stored resolve frame, no
+// app_prompts row) into a same-seq interactive.edit, while leaving a genuinely
+// open ask (still indexed) as a live interactive.
+func TestReplayTo_SubstitutesOrphanedAsk(t *testing.T) {
+	s := tempFrameStore(t)
+	now := time.Now().UnixMilli()
+	enc := func(f fap.ServerFrame, seq int64) string {
+		w, err := fap.Encode(f, seq, 0, "", "")
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return w
+	}
+	s.insert(frameWrite{convID: "c1", seq: 1, wire: mkWire(t, "c1", 1), sentMs: now, visible: true})
+	// seq 2: orphaned closed ask → must become interactive.edit.
+	s.insert(frameWrite{convID: "c1", seq: 2, sentMs: now, visible: true,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "closed", Text: "allow?"}, 2)})
+	// seq 3: still-open ask (indexed) → must stay interactive.
+	s.insert(frameWrite{convID: "c1", seq: 3, sentMs: now, visible: true,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "open", Text: "allow?"}, 3)})
+	s.PutPrompt("open", "c1", "ag", now)
+
+	b := &convBinding{convID: "c1", store: s, seq: 3, seen: map[string]struct{}{}}
+	c := fakeClient()
+	b.replayTo(c, 0)
+	ds := drainEnv(t, c)
+
+	if len(ds) != 3 {
+		t.Fatalf("replay emitted %d frames, want 3 (%+v)", len(ds), ds)
+	}
+	if ds[1].seq != 2 || ds[1].t != fap.TypeInteractiveEdit {
+		t.Errorf("seq 2 = %q@%d, want interactive.edit@2 (orphaned ask closed)", ds[1].t, ds[1].seq)
+	}
+	if ds[2].seq != 3 || ds[2].t != fap.TypeInteractive {
+		t.Errorf("seq 3 = %q@%d, want interactive@3 (open ask preserved)", ds[2].t, ds[2].seq)
 	}
 }
 
