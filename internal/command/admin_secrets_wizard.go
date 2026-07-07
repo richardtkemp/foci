@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -16,6 +17,32 @@ type secretsSetWizard struct {
 
 func newSecretsSetWizard(store SecretsStore) *secretsSetWizard {
 	return &secretsSetWizard{store: store}
+}
+
+// wizardKindSecretsSet is the persisted-snapshot kind tag for secretsSetWizard.
+// Only the step + section/key persist — never a secret value (values are
+// written straight to the store as they're entered, not held on the wizard).
+const wizardKindSecretsSet = "secrets-set"
+
+type secretsSetWizardSnapshot struct {
+	Step    int    `json:"step"`
+	Section string `json:"section,omitempty"`
+	Key     string `json:"key,omitempty"`
+}
+
+func (w *secretsSetWizard) WizardKind() string { return wizardKindSecretsSet }
+
+func (w *secretsSetWizard) SnapshotWizard() ([]byte, error) {
+	return json.Marshal(secretsSetWizardSnapshot{Step: w.step, Section: w.section, Key: w.key})
+}
+
+func (w *secretsSetWizard) RestoreWizard(data []byte) error {
+	var s secretsSetWizardSnapshot
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	w.step, w.section, w.key = s.Step, s.Section, s.Key
+	return nil
 }
 
 // Handle processes a wizard step and returns the response.
@@ -110,6 +137,28 @@ type secretsHostsAddWizard struct {
 
 func newSecretsHostsAddWizard(store SecretsStore, section string) *secretsHostsAddWizard {
 	return &secretsHostsAddWizard{store: store, section: section}
+}
+
+// wizardKindSecretsHostsAdd is the persisted-snapshot kind tag for secretsHostsAddWizard.
+const wizardKindSecretsHostsAdd = "secrets-hosts-add"
+
+type secretsHostsAddSnapshot struct {
+	Section string `json:"section"`
+}
+
+func (w *secretsHostsAddWizard) WizardKind() string { return wizardKindSecretsHostsAdd }
+
+func (w *secretsHostsAddWizard) SnapshotWizard() ([]byte, error) {
+	return json.Marshal(secretsHostsAddSnapshot{Section: w.section})
+}
+
+func (w *secretsHostsAddWizard) RestoreWizard(data []byte) error {
+	var s secretsHostsAddSnapshot
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	w.section = s.Section
+	return nil
 }
 
 // Handle takes user input as a host and adds it.

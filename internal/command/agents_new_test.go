@@ -517,7 +517,7 @@ func TestRegistryHandleMessage(t *testing.T) {
 	reg := NewRegistry()
 
 	// No wizard: should pass through
-	resp, _, ok := reg.HandleMessage("hello")
+	resp, _, ok := reg.HandleMessage("", "hello")
 	if ok {
 		t.Error("expected false with no wizard")
 	}
@@ -527,10 +527,10 @@ func TestRegistryHandleMessage(t *testing.T) {
 
 	// Set a wizard
 	w := &testWizard{responses: []string{"step 1 done", "all done"}, doneAt: 1}
-	reg.SetWizard(w)
+	reg.SetWizard("", w)
 
 	// First message goes to wizard
-	resp, _, ok = reg.HandleMessage("input 1")
+	resp, _, ok = reg.HandleMessage("", "input 1")
 	if !ok {
 		t.Error("expected wizard to handle message")
 	}
@@ -539,7 +539,7 @@ func TestRegistryHandleMessage(t *testing.T) {
 	}
 
 	// Second message completes wizard
-	resp, _, ok = reg.HandleMessage("input 2")
+	resp, _, ok = reg.HandleMessage("", "input 2")
 	if !ok {
 		t.Error("expected wizard to handle message")
 	}
@@ -548,7 +548,7 @@ func TestRegistryHandleMessage(t *testing.T) {
 	}
 
 	// After completion, wizard should be cleared
-	_, _, ok = reg.HandleMessage("input 3")
+	_, _, ok = reg.HandleMessage("", "input 3")
 	if ok {
 		t.Error("wizard should be cleared after done")
 	}
@@ -558,9 +558,9 @@ func TestRegistryHandleMessage(t *testing.T) {
 func TestRegistryHandleMessageCancel(t *testing.T) {
 	reg := NewRegistry()
 	w := &testWizard{responses: []string{"should not see"}, doneAt: 99}
-	reg.SetWizard(w)
+	reg.SetWizard("", w)
 
-	resp, _, ok := reg.HandleMessage("/cancel")
+	resp, _, ok := reg.HandleMessage("", "/cancel")
 	if !ok {
 		t.Error("expected wizard intercept for /cancel")
 	}
@@ -568,7 +568,7 @@ func TestRegistryHandleMessageCancel(t *testing.T) {
 		t.Errorf("resp = %q", resp)
 	}
 
-	_, _, ok = reg.HandleMessage("hello")
+	_, _, ok = reg.HandleMessage("", "hello")
 	if ok {
 		t.Error("wizard should be cleared after cancel")
 	}
@@ -578,9 +578,9 @@ func TestRegistryHandleMessageCancel(t *testing.T) {
 func TestRegistryHandleMessageStop(t *testing.T) {
 	reg := NewRegistry()
 	w := &testWizard{responses: []string{"should not see"}, doneAt: 99}
-	reg.SetWizard(w)
+	reg.SetWizard("", w)
 
-	resp, _, ok := reg.HandleMessage("/stop")
+	resp, _, ok := reg.HandleMessage("", "/stop")
 	if !ok {
 		t.Error("expected wizard intercept for /stop")
 	}
@@ -617,7 +617,7 @@ func TestAgentsNewSubcommand(t *testing.T) {
 		t.Errorf("expected Agent name prompt, got %q", result.Text)
 	}
 
-	_, _, ok := reg.HandleMessage("test-input")
+	_, _, ok := reg.HandleMessage("", "test-input")
 	if !ok {
 		t.Error("wizard should be active after /agents new")
 	}

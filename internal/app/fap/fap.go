@@ -39,6 +39,8 @@ const (
 	TypeMedia           = "media"
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
+	TypeWizardStep      = "wizard.step"
+	TypeWizardEnd       = "wizard.end"
 	TypeMeta            = "meta"
 	TypeError           = "error"
 	TypePong            = "pong"
@@ -48,6 +50,7 @@ const (
 	// app -> server
 	TypeCommand                = "command"
 	TypeInteractiveResponse    = "interactive.response"
+	TypeWizardResponse         = "wizard.response"
 	TypeConversationOpen       = "conversation.open"
 	TypeConversationList       = "conversation.list"
 	TypeConversationRename     = "conversation.rename"
@@ -393,6 +396,54 @@ type InteractiveEdit struct {
 
 func (InteractiveEdit) Type() string { return TypeInteractiveEdit }
 
+// WizardStep presents the current step of an active command wizard (wire §12).
+// Only sent to clients that advertised the "wizard" feature in their
+// ClientHello. WizardID is stable across the wizard's life; StepID is minted
+// per step and must be echoed back in WizardResponse (staleness guard). Each
+// new step — including a validation re-ask — is a fresh WizardStep with the
+// same WizardID; the app replaces the step in place. Step reuses the batched-
+// ask Question shape: empty Choices ⇒ free-text step, and no Cancel choice is
+// sent (the app's wizard screen has its own Cancel). ExpiresAt (RFC3339) is
+// advisory for the app's UI.
+type WizardStep struct {
+	ConversationID string           `json:"conversationId"`
+	WizardID       string           `json:"wizardId"`
+	StepID         string           `json:"stepId"`
+	Title          string           `json:"title,omitempty"`
+	Step           Question         `json:"step"`
+	Media          *WizardStepMedia `json:"media,omitempty"`
+	ExpiresAt      string           `json:"expiresAt,omitempty"`
+}
+
+// WizardStepMedia references a blob accompanying a wizard step (e.g. the
+// /android pairing QR from a WizardDocProvider). The app fetches the bytes via
+// blob GET (§9) and renders them inline in the wizard screen, above the step.
+type WizardStepMedia struct {
+	BlobID string `json:"blobId"`
+	MIME   string `json:"mime"`
+	Name   string `json:"name,omitempty"`
+}
+
+func (WizardStep) Type() string { return TypeWizardStep }
+
+// Wizard end statuses (WizardEnd.Status).
+const (
+	WizardDone      = "done"
+	WizardCancelled = "cancelled"
+	WizardExpired   = "expired"
+)
+
+// WizardEnd terminates a wizard on the app: Status is "done", "cancelled" or
+// "expired"; Text is the terminal summary (may be empty for expired).
+type WizardEnd struct {
+	ConversationID string `json:"conversationId"`
+	WizardID       string `json:"wizardId"`
+	Status         string `json:"status"`
+	Text           string `json:"text,omitempty"`
+}
+
+func (WizardEnd) Type() string { return TypeWizardEnd }
+
 // Transcript returns a voice note's STT text to the app for editing before send
 // (the TranscribeOnly path) rather than routing it to the agent.
 type Transcript struct {
@@ -439,9 +490,9 @@ func (Pong) Type() string { return TypePong }
 // when it actually does. The server correlates by InvocationID.
 type ToolInvoke struct {
 	InvocationID string          `json:"invocationId"`
-	Tool         string          `json:"tool"`             // device-side handler name (v1: "android")
-	Action       string          `json:"action"`           // handler verb (e.g. "list", "perform")
-	Args         json.RawMessage `json:"args,omitempty"`   // handler-specific JSON; omitted → empty object
+	Tool         string          `json:"tool"`           // device-side handler name (v1: "android")
+	Action       string          `json:"action"`         // handler verb (e.g. "list", "perform")
+	Args         json.RawMessage `json:"args,omitempty"` // handler-specific JSON; omitted → empty object
 }
 
 func (ToolInvoke) Type() string { return TypeToolInvoke }
@@ -505,6 +556,17 @@ type InteractiveResponse struct {
 	PromptID       string   `json:"promptId"`
 	Data           string   `json:"data,omitempty"`
 	Answers        []string `json:"answers,omitempty"`
+}
+
+// WizardResponse answers the current step of an active wizard. Data is the
+// chosen Choice.Data ("qa:<index>"), the "qa:cancel" sentinel, or free typed
+// text (verbatim). StepID must match the last-emitted WizardStep or the
+// response is dropped as stale.
+type WizardResponse struct {
+	ConversationID string `json:"conversationId"`
+	WizardID       string `json:"wizardId"`
+	StepID         string `json:"stepId"`
+	Data           string `json:"data,omitempty"`
 }
 
 // ConversationOpen creates/opens a conversation for an agent.
@@ -577,7 +639,7 @@ type Ping struct{}
 // InvocationID so the server can correlate. Status is one of:
 //   - "completed": the work finished; Output holds the JSON payload.
 //   - "pending":   the work is still running after the server's sync window;
-//                  a later "completed"/"error" frame with the same id will follow.
+//     a later "completed"/"error" frame with the same id will follow.
 //   - "error":     the work failed; Error is a short human-readable message.
 //
 // Fire-and-forget on the wire — NOT conversation-scoped, NOT retried. If the

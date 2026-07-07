@@ -432,19 +432,21 @@ func TestAppSink_SilentFinalSuppressed(t *testing.T) {
 
 func newTestHub() *Hub {
 	return &Hub{
-		deps:         platform.ProviderDeps{},
-		blobs:        newBlobStore(),
-		tokens:       newPushTokens(),
-		devices:      newDeviceStore(""),
-		pairKeys:     newPairKeyStore(),
-		authLim:      newAuthLimiter(authFailMax, authFailWindow),
-		agents:       make(map[string]*appConn),
-		convs:        make(map[string]*convBinding),
-		bySession:    make(map[string]*convBinding),
-		clients:      make(map[*wsClient]struct{}),
-		prompts:      make(map[string]*convBinding),
-		batchPrompts: make(map[string]*batchPrompt),
-		notifs:       make(map[string]*convBinding),
+		deps:          platform.ProviderDeps{},
+		blobs:         newBlobStore(),
+		tokens:        newPushTokens(),
+		devices:       newDeviceStore(""),
+		pairKeys:      newPairKeyStore(),
+		authLim:       newAuthLimiter(authFailMax, authFailWindow),
+		agents:        make(map[string]*appConn),
+		convs:         make(map[string]*convBinding),
+		bySession:     make(map[string]*convBinding),
+		clients:       make(map[*wsClient]struct{}),
+		prompts:       make(map[string]*convBinding),
+		batchPrompts:  make(map[string]*batchPrompt),
+		notifs:        make(map[string]*convBinding),
+		wizards:       make(map[string]*wizardSession),
+		wizardByScope: make(map[string]string),
 	}
 }
 
@@ -1030,8 +1032,8 @@ func TestReliability_SeqSurvivesReconnect(t *testing.T) {
 	c1 := fakeClient()
 	c1.hub = h
 	b := h.ensureBinding(c1, "ag", "conv-1")
-	b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"})  // seq 1
-	b.send(fap.Activity{ConversationID: "conv-1", Kind: "idle"}) // seq 2
+	b.send(fap.Activity{ConversationID: "conv-1", Kind: "typing"}) // seq 1
+	b.send(fap.Activity{ConversationID: "conv-1", Kind: "idle"})   // seq 2
 	drainEnv(t, c1)
 
 	h.removeClient(c1) // disconnect; durable state survives
@@ -1364,7 +1366,7 @@ func TestOnlineSend_NoPush(t *testing.T) {
 	var got []string
 	b := &convBinding{
 		convID:        "c1",
-		clients: map[*wsClient]struct{}{c: {}},
+		clients:       map[*wsClient]struct{}{c: {}},
 		seen:          make(map[string]struct{}),
 		notifyOffline: func(p pushPayload) { got = append(got, p.Preview) },
 	}

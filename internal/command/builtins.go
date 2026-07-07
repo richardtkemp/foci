@@ -358,7 +358,7 @@ func AgentsCommand() *Command {
 				w := newAgentWizard(*cc.AgentNewDeps)
 				// Need registry reference — pass via AgentNewDeps.Registry
 				if cc.AgentNewDeps.Registry != nil {
-					cc.AgentNewDeps.Registry.SetWizard(w)
+					cc.AgentNewDeps.Registry.SetWizard(req.SessionKey, w)
 				}
 				return Response{Text: "🧙 New Agent Wizard\n\nAgent name (e.g. `Greek Tutor`):"}, nil
 			}

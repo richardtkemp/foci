@@ -89,7 +89,7 @@ func SecretsCommand() *Command {
 				Description: "Set a secret value",
 				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 					return secretsExec(cc, func(store SecretsStore) (Response, error) {
-						return secretsSetDispatch(cc, store, strings.Fields(req.Args))
+						return secretsSetDispatch(cc, store, req.SessionKey, strings.Fields(req.Args))
 					})
 				},
 			},
@@ -107,7 +107,7 @@ func SecretsCommand() *Command {
 				Description: "Manage allowed hosts for a secret section",
 				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 					return secretsExec(cc, func(store SecretsStore) (Response, error) {
-						return secretsHostsDispatch(cc, store, strings.Fields(req.Args))
+						return secretsHostsDispatch(cc, store, req.SessionKey, strings.Fields(req.Args))
 					})
 				},
 			},
@@ -221,12 +221,13 @@ func secretsChainHosts(store SecretsStore, args []string) []KeyboardOption {
 	}
 }
 
-// secretsSetDispatch handles "set" subcommand routing including wizard activation.
-func secretsSetDispatch(cc CommandContext, store SecretsStore, args []string) (Response, error) {
+// secretsSetDispatch handles "set" subcommand routing including wizard
+// activation. scope is the requesting session's key (wizards are per-session).
+func secretsSetDispatch(cc CommandContext, store SecretsStore, scope string, args []string) (Response, error) {
 	switch len(args) {
 	case 0:
 		// Bare "set" — activate wizard if available.
-		return secretsActivateSetWizard(cc, store, "", "")
+		return secretsActivateSetWizard(cc, store, scope, "", "")
 	case 1:
 		// "set <section.key>" — might be from direct input.
 		if strings.Contains(args[0], ".") {
@@ -240,7 +241,7 @@ func secretsSetDispatch(cc CommandContext, store SecretsStore, args []string) (R
 			return secretsSetDirect(store, args)
 		}
 		// "set <section> <key>" — from keyboard chain. Activate wizard at value step.
-		return secretsActivateSetWizard(cc, store, args[0], args[1])
+		return secretsActivateSetWizard(cc, store, scope, args[0], args[1])
 	default:
 		// "set <section.key> <value>" or "set <section> <key> <value>"
 		if strings.Contains(args[0], ".") {
@@ -257,8 +258,10 @@ func secretsSetDispatch(cc CommandContext, store SecretsStore, args []string) (R
 	}
 }
 
-// secretsActivateSetWizard starts the set wizard, optionally pre-populating section and key.
-func secretsActivateSetWizard(cc CommandContext, store SecretsStore, section, key string) (Response, error) {
+// secretsActivateSetWizard starts the set wizard for scope, optionally
+// pre-populating section and key. State is seeded BEFORE SetWizard so the
+// persisted snapshot reflects the fast-forwarded step.
+func secretsActivateSetWizard(cc CommandContext, store SecretsStore, scope, section, key string) (Response, error) {
 	reg := secretsRegistry(cc)
 	if reg == nil {
 		// No registry — fall back to usage.
@@ -266,13 +269,13 @@ func secretsActivateSetWizard(cc CommandContext, store SecretsStore, section, ke
 	}
 
 	w := newSecretsSetWizard(store)
-	reg.SetWizard(w)
 
 	if section != "" && key != "" {
 		// Fast-forward: section and key already known, skip to value prompt.
 		w.section = section
 		w.key = key
 		w.step = 1
+		reg.SetWizard(scope, w)
 
 		hosts := store.SectionAllowedHosts(section)
 		hostsStr := "(none)"
@@ -283,6 +286,7 @@ func secretsActivateSetWizard(cc CommandContext, store SecretsStore, section, ke
 	}
 
 	// Bare — prompt for section.key.
+	reg.SetWizard(scope, w)
 	return Response{Text: "Enter secret name (section.key format, e.g. custom.api_key):"}, nil
 }
 
@@ -313,8 +317,9 @@ func secretsRemoveDirect(store SecretsStore, name string) (Response, error) {
 	return Response{Text: fmt.Sprintf("Secret %s removed.", name)}, nil
 }
 
-// secretsHostsDispatch handles "hosts" subcommand routing including wizard activation.
-func secretsHostsDispatch(cc CommandContext, store SecretsStore, args []string) (Response, error) {
+// secretsHostsDispatch handles "hosts" subcommand routing including wizard
+// activation. scope is the requesting session's key (wizards are per-session).
+func secretsHostsDispatch(cc CommandContext, store SecretsStore, scope string, args []string) (Response, error) {
 	if len(args) == 0 {
 		return Response{Text: "Usage: /secrets hosts <section> [add <host> | remove <host> | clear]"}, nil
 	}
@@ -334,7 +339,7 @@ func secretsHostsDispatch(cc CommandContext, store SecretsStore, args []string) 
 	case "add":
 		if len(args) < 3 {
 			// Activate hosts-add wizard.
-			return secretsActivateHostsAddWizard(cc, store, section)
+			return secretsActivateHostsAddWizard(cc, store, scope, section)
 		}
 		host := strings.ToLower(strings.TrimSpace(args[2]))
 		store.AddAllowedHost(section, host)
@@ -369,14 +374,14 @@ func secretsHostsDispatch(cc CommandContext, store SecretsStore, args []string) 
 }
 
 // secretsActivateHostsAddWizard starts the hosts-add wizard for a section.
-func secretsActivateHostsAddWizard(cc CommandContext, store SecretsStore, section string) (Response, error) {
+func secretsActivateHostsAddWizard(cc CommandContext, store SecretsStore, scope, section string) (Response, error) {
 	reg := secretsRegistry(cc)
 	if reg == nil {
 		return Response{Text: "Usage: /secrets hosts <section> add <host>"}, nil
 	}
 
 	w := newSecretsHostsAddWizard(store, section)
-	reg.SetWizard(w)
+	reg.SetWizard(scope, w)
 
 	hosts := store.SectionAllowedHosts(section)
 	current := "(none)"

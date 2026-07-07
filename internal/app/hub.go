@@ -84,11 +84,20 @@ type Hub struct {
 	batchPrompts map[string]*batchPrompt // promptID → batched-ask callback (app-only multi-question form)
 	notifs       map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
 	toolCalls    *toolCallRegistry       // InvocationID → waiting InvokeTool caller
+
+	wizardMu      sync.Mutex
+	wizards       map[string]*wizardSession // wizardId → live out-of-band wizard session
+	wizardByScope map[string]string         // wizard scope (session key) → wizardId
 }
 
 // featureInteractiveBatch is the ClientHello capability a client advertises to
 // receive multi-question asks as one batched form (vs sequential prompts).
 const featureInteractiveBatch = "interactiveBatch"
+
+// featureWizard is the ClientHello capability a client advertises to receive
+// command wizards as structured wizard.step/wizard.end frames (out-of-band
+// rendering) instead of plain system messages.
+const featureWizard = "wizard"
 
 // batchPrompt holds the in-flight callback for one batched (multi-question) ask.
 // The app returns all answers in a single InteractiveResponse.Answers; onResp
@@ -148,21 +157,23 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	}
 
 	h := &Hub{
-		frames:       frames,
-		deps:         deps,
-		pairKeys:     newPairKeyStore(),
-		blobs:        blobs,
-		tokens:       tokens,
-		devices:      newDeviceStore(devicePath),
-		authLim:      newAuthLimiter(authFailMax, authFailWindow),
-		agents:       make(map[string]*appConn),
-		convs:        make(map[string]*convBinding),
-		bySession:    make(map[string]*convBinding),
-		clients:      make(map[*wsClient]struct{}),
-		prompts:      make(map[string]*convBinding),
-		batchPrompts: make(map[string]*batchPrompt),
-		notifs:       make(map[string]*convBinding),
-		toolCalls:    newToolCallRegistry(),
+		frames:        frames,
+		deps:          deps,
+		pairKeys:      newPairKeyStore(),
+		blobs:         blobs,
+		tokens:        tokens,
+		devices:       newDeviceStore(devicePath),
+		authLim:       newAuthLimiter(authFailMax, authFailWindow),
+		agents:        make(map[string]*appConn),
+		convs:         make(map[string]*convBinding),
+		bySession:     make(map[string]*convBinding),
+		clients:       make(map[*wsClient]struct{}),
+		prompts:       make(map[string]*convBinding),
+		batchPrompts:  make(map[string]*batchPrompt),
+		notifs:        make(map[string]*convBinding),
+		toolCalls:     newToolCallRegistry(),
+		wizards:       make(map[string]*wizardSession),
+		wizardByScope: make(map[string]string),
 	}
 	if appCfg != nil {
 		h.host = appCfg.Host
@@ -574,6 +585,11 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 	}
 	h.agents[params.AgentID] = conn
 	h.mu.Unlock()
+
+	// Re-link persisted out-of-band wizard sessions to the wizards the command
+	// Registry restored at startup, so a server restart doesn't strand an app
+	// mid-wizard (wizard.go).
+	h.restoreWizardSessions(conn, params.AgentID)
 
 	// App is interactive (like telegram): steer dispatch follows the
 	// agent's behavior config (steer_mode), mirroring telegram/discord.
@@ -1349,8 +1365,8 @@ type convBinding struct {
 	seq         int64                  // server→app outbound seq high-water
 	clientSeqHW int64                  // highest client→server seq seen across all clients (stamped into outbound ack)
 	buffer      []bufferedFrame        // sent frames retained for replay (trimmed by ack/depth/TTL)
-	seen      map[string]struct{} // inbound dedup by envelope id
-	seenOrder []string            // FIFO eviction order for seen
+	seen        map[string]struct{}    // inbound dedup by envelope id
+	seenOrder   []string               // FIFO eviction order for seen
 
 	// Unified activity inputs (see resolveActivity for precedence). turnKind /
 	// turnDetail are turn-scoped, driven by appSink off the turn-event stream;
@@ -1625,7 +1641,7 @@ func (b *convBinding) ackInbound(client *wsClient, ack int64) {
 		b.mu.Unlock()
 		return
 	}
-	minAck := int64(1<<62)
+	minAck := int64(1 << 62)
 	for _, a := range b.clientAcks {
 		if a < minAck {
 			minAck = a

@@ -82,9 +82,9 @@ type InterceptMessage struct {
 type InterceptResult struct {
 	Consumed bool
 	// If Consumed, at most one of these is set:
-	WizardReply    string       // wizard handled it, send this reply
-	WizardDocPath  string       // optional file to send after WizardReply (e.g. a QR image), then remove
-	Outcome     *CommandOutcome // command dispatched, render this
+	WizardReply   string          // wizard handled it, send this reply
+	WizardDocPath string          // optional file to send after WizardReply (e.g. a QR image), then remove
+	Outcome       *CommandOutcome // command dispatched, render this
 	// Consumed && WizardReply=="" && Outcome==nil → silently consumed (stale/idle drop)
 
 	// Text is the final message text after any transforms have been applied.
@@ -97,9 +97,15 @@ type InterceptResult struct {
 // Returns an InterceptResult describing what happened. The caller is
 // responsible for platform-specific rendering based on the result.
 func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) InterceptResult {
-	// Wizard intercept — route all messages to active wizard before normal dispatch.
+	// Wizard intercept — route the message to this session's active wizard (if
+	// any) before normal dispatch. Wizards are scoped by session key, so a chat
+	// can only advance its own wizard, never another conversation's.
 	if msg.Text != "" {
-		if result, docPath, ok := i.Commands.HandleMessage(msg.Text); ok {
+		scope := ""
+		if i.SessionKeyFn != nil {
+			scope = i.SessionKeyFn()
+		}
+		if result, docPath, ok := i.Commands.HandleMessage(scope, msg.Text); ok {
 			return InterceptResult{Consumed: true, WizardReply: result, WizardDocPath: docPath, Text: msg.Text}
 		}
 	}

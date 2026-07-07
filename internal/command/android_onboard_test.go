@@ -48,7 +48,7 @@ func TestAndroidWizard_EnabledPath_MintsKey(t *testing.T) {
 	}
 
 	// The wizard is now active; feeding it the host mints + emits the key.
-	out, doc, ok := reg.HandleMessage("https://app.example.com/")
+	out, doc, ok := reg.HandleMessage("", "https://app.example.com/")
 	if !ok {
 		t.Fatal("wizard should be active after /android on the enabled path")
 	}
@@ -103,7 +103,7 @@ func TestAndroidWizard_NotEnabledPath_EnablesThenRestarts(t *testing.T) {
 	}
 
 	// Confirm enabling: appends the app platform and advances to the host step.
-	out, _, ok := reg.HandleMessage("yes")
+	out, _, ok := reg.HandleMessage("", "yes")
 	if !ok {
 		t.Fatal("wizard should be active to confirm enable")
 	}
@@ -115,7 +115,7 @@ func TestAndroidWizard_NotEnabledPath_EnablesThenRestarts(t *testing.T) {
 	}
 
 	// Host step after enabling → restart-confirm prompt, NOT a key (hub not live).
-	out, _, _ = reg.HandleMessage("app.example.com")
+	out, _, _ = reg.HandleMessage("", "app.example.com")
 	if strings.Contains(out, "PAIRKEY-TEST") {
 		t.Errorf("no key should be minted before the restart; got: %q", out)
 	}
@@ -124,7 +124,7 @@ func TestAndroidWizard_NotEnabledPath_EnablesThenRestarts(t *testing.T) {
 	}
 
 	// Confirm restart → restartFunc fires and the wizard finishes.
-	out, _, _ = reg.HandleMessage("yes")
+	out, _, _ = reg.HandleMessage("", "yes")
 	if !called {
 		t.Error("restartFunc should have been invoked on 'yes'")
 	}

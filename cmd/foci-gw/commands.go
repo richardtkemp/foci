@@ -37,15 +37,15 @@ type cmdRegParams struct {
 	compactionThreshold float64
 
 	// Shared infrastructure
-	cfg                 *config.Config
-	configPath          string
-	sessions            *session.Store
-	sessionIndex        *session.SessionIndex
-	client              provider.Client
-	clientProvider      provider.ClientProvider
-	store               *secrets.Store
-	bwStore             *bitwarden.Store
-	startTime           time.Time
+	cfg            *config.Config
+	configPath     string
+	sessions       *session.Store
+	sessionIndex   *session.SessionIndex
+	client         provider.Client
+	clientProvider provider.ClientProvider
+	store          *secrets.Store
+	bwStore        *bitwarden.Store
+	startTime      time.Time
 
 	// Stores
 	todoStore *memory.TodoStore
@@ -272,6 +272,13 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			}
 		}
 	}
+
+	// In-flight wizards survive restarts (mirrors the ask tool's ask_pending):
+	// checkpoint to the session index on every mutation, and restore whatever a
+	// previous process left mid-flow now that the full CommandContext exists to
+	// re-inject each wizard's deps.
+	cmds.EnableWizardPersistence(p.sessionIndex, p.acfg.ID)
+	cmds.RestoreWizards(cc)
 
 	return cmds, cc
 }

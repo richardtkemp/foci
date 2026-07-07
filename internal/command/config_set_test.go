@@ -337,7 +337,7 @@ func TestConfigSetSectionKey(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	deps.Registry = registry
 
-	text, err := configSet(&deps, "agent_loop max_output_tokens")
+	text, err := configSet(&deps, "", "agent_loop max_output_tokens")
 	if err != nil {
 		t.Fatalf("configSet: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestConfigSetSectionKeyValue(t *testing.T) {
 		return "", nil
 	})
 
-	text, err := configSet(&deps, "debug messages_in_log true")
+	text, err := configSet(&deps, "", "debug messages_in_log true")
 	if err != nil {
 		t.Fatalf("configSet: %v", err)
 	}
