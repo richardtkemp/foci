@@ -186,6 +186,16 @@ type Backend struct {
 	onCompactionStart func()              // fired when status="compacting"
 	onCompactionDone  func(preTokens int) // fired on compact_boundary
 	onAuthFailure     func(detail string) // fired when CC reports a 401 auth failure (#843)
+	// onAutonomousStart/onAutonomousEnd bracket a CC autonomous run (one foci
+	// opened no turn for). onAutonomousStart fires on the false→true edge of
+	// autonomousActive; onAutonomousEnd fires on the true→false edge, from
+	// whichever site ends the run — CC idle, subprocess exit, or a foci turn
+	// adopting it. The agent wires these to markInFlight/release so the run is
+	// adopted as an in-flight delivering turn and concurrent injections are held
+	// (#1070). Set before Start, read-only after. Both edges route through
+	// setAutonomousActiveLocked so the pair is always balanced.
+	onAutonomousStart func()
+	onAutonomousEnd   func()
 
 	// outstanding tracks every prompt awaiting a user response (permissions,
 	// AskUserQuestion sequences, MCP elicitations) under one lifecycle layer.

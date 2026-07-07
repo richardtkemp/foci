@@ -400,12 +400,16 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.turnMu.Lock()
 		b.stateEventsSeen = true
 		turnActive := b.turnActive
+		var fireAutonomousStart func()
 		if ss.State == "running" && !turnActive {
-			b.autonomousActive = true
+			fireAutonomousStart = b.setAutonomousActiveLocked(true)
 			b.autonomousStreamed = false // fresh run: no text streamed yet
 		}
 		autonomous := b.autonomousActive
 		b.turnMu.Unlock()
+		if fireAutonomousStart != nil {
+			fireAutonomousStart()
+		}
 		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v autonomous=%v", ss.State, turnActive, autonomous)
 		if ss.State == "idle" {
 			b.onSessionIdle()

@@ -206,6 +206,19 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 	}
 }
 
+// AdoptAutonomousRun marks a CC autonomous run — one foci opened no turn for —
+// as an in-flight *delivering* turn for sessionKey and returns the one-shot
+// release closure to invoke when the run ends. "The agent is taking a turn":
+// adopting the run makes IsTurnInFlight/IsInFlightDelivering true for its
+// duration, so the inbox worker holds concurrent reflection/keepalive
+// injections (inbox.go #1070 gate) that would otherwise run their RunInference,
+// rebind the shared session-scoped se.OnText to a NopSink, and silently drop
+// the autonomous run's text (#1068). Wired to the delegated backend's
+// onAutonomousStart/onAutonomousEnd callbacks via DelegatedManager.
+func (a *Agent) AdoptAutonomousRun(sessionKey string) func() {
+	return a.markInFlight(sessionKey, true)
+}
+
 // touchLastActivity writes the current unix timestamp to the session's
 // last_activity metadata key, recording that this session is currently
 // executing a turn. No-op if SessionIndex is nil (test agents) or base is
