@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -280,56 +279,13 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	var (
 		preAnswerFired     bool
 		preAnswerFirstText string
-		thinkingBuf        strings.Builder // accumulates thinking deltas for conversation log
 	)
 
-	// Wire session-scoped delivery callbacks via SessionEvents. These live
-	// for the session's lifetime, so text/thinking/tool events emitted by
-	// the backend are never dropped on per-turn handler nilling — that was
-	// the failure mode pre-TODO #747. Re-attached on every RunInference,
-	// idempotent (replace) by AttachSessionEvents.
-	//
-	// The captured sink is the session router (atomic.Pointer-protected,
-	// session-scoped, lazy-built once per session). The router forwards to
-	// the registered per-turn StreamingSink during a turn and to the
-	// fallback SessionSink for late-arriving text outside any turn.
-	//
-	// ctx for emits is intentionally not captured: turnCtx is per-turn and
-	// would be stale by the time late-delivery text fires. context.Background
-	// is correct for content events — cancellation logic lives on
-	// TurnComplete which is emitted by turn.RunTurn with the per-turn ctx.
-	sessionSink := turnevent.SinkFromContext(ts.Ctx)
-	sessionEvents := &delegator.SessionEvents{
-		OnText: func(text string) {
-			sessionSink.Emit(context.Background(), turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
-			// Conversation DB log moves to the sink layer in run_turn.go's
-			// loggingSink wrapper (per-turn metadata) and inbox.go's
-			// lateDeliverySink fallback (session-scoped). See TODO #747.
-		},
-		OnSubagentStart: func(groupKey, label string) {
-			sessionSink.Emit(context.Background(), turnevent.SubagentStart{GroupKey: groupKey, Label: label})
-		},
-		OnSubagentText: func(groupKey, text string) {
-			sessionSink.Emit(context.Background(), turnevent.SubagentText{GroupKey: groupKey, Text: text})
-		},
-		OnSubagentEnd: func(groupKey string) {
-			sessionSink.Emit(context.Background(), turnevent.SubagentEnd{GroupKey: groupKey})
-		},
-		OnTextDelta: func(delta string) {
-			sessionSink.Emit(context.Background(), turnevent.TextDelta{Delta: delta})
-		},
-		OnThinkingDelta: func(delta string) {
-			sessionSink.Emit(context.Background(), turnevent.ThinkingDelta{Delta: delta})
-			thinkingBuf.WriteString(delta)
-		},
-		OnToolStart: func(id, name, input string) {
-			sessionSink.Emit(context.Background(), turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
-		},
-		OnToolEnd: func(id, name, output string, isError bool) {
-			sessionSink.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
-		},
-	}
-	be.AttachSessionEvents(sessionEvents)
+	// Session-scoped delivery (SessionEvents) is attached once at backend
+	// acquisition (setBackendCallbacks → Agent.AttachDelivery), bound around the
+	// session router — not rebuilt here per turn. Rebuilding it from the ctx sink
+	// was the #1068 poison. This turn's thinking deltas accumulate into the
+	// session buffer AttachDelivery installed; DrainThinking empties it below.
 
 	// Per-turn bookkeeping callbacks via TurnEvents. These hold per-turn
 	// state (preAnswerFired, toolCount, ts) and may legitimately be nil
@@ -445,7 +401,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 				ts.FinalText = preAnswerFirstText
 			}
 			// Log accumulated thinking to conversation DB.
-			if thinking := thinkingBuf.String(); thinking != "" {
+			if thinking := a.DrainThinking(ts.SessionKey); thinking != "" {
 				a.logConversationThinking(ts.ConvChatID, ts.Meta, ts.SessionKey, thinking)
 			}
 			bt.LogUsage(ts)
