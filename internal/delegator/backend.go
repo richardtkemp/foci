@@ -381,6 +381,16 @@ type Capabilities struct {
 	PreAnswerNudge bool
 }
 
+// SkipPermissions reports whether the backend config disables the permission
+// prompt flow entirely (CC's --dangerously-skip-permissions). The single
+// accessor for every reader — backend launch args (ccstream/cctmux) and the
+// environment block's Command Approval gate — so the system prompt can never
+// describe an approval regime the backend isn't actually enforcing.
+func SkipPermissions(cfg map[string]any) bool {
+	v, ok := cfg["skip_permissions"].(bool)
+	return ok && v
+}
+
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
 	WorkDir          string            // agent workspace directory (becomes cwd)

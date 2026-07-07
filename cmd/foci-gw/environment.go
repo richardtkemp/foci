@@ -8,14 +8,43 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
 	"foci/internal/log"
 	"foci/internal/procx"
+	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 	"foci/shared/prompts"
 )
+
+// platformForSession resolves which messaging platform (telegram/app/discord)
+// a session belongs to, for the environment block's "## Platform" section.
+//
+// This is an identity question — "whose chat is this?" — answered from the
+// durable platform-ownership claim that chatmeta registers on first contact
+// (SessionIndex.PlatformForChat). It is deliberately NOT the routing question
+// ("which live connection can deliver right now?", ForSessionOrPrimary):
+// coupling the prompt to connection liveness made it time-sensitive — a block
+// built during a startup transient differed from the same block rebuilt at
+// the compaction prompt-fingerprint check, forcing a pointless session bounce
+// — and chat-less keys (named sessions like "main/research") hit the
+// ambiguous-routing WARN on every rebuild while being told another platform's
+// formatting rules. Returns "" (no section) for keys with no chat ID or no
+// registered claim; branch keys carry the parent's chat ID, so a branch
+// resolves identically to its parent and their prompts stay byte-identical
+// for cache sharing (docs/CACHING.md).
+func platformForSession(idx *session.SessionIndex, agentID, sessionKey string) string {
+	if idx == nil {
+		return ""
+	}
+	chatID := session.ChatIDFromKey(sessionKey)
+	if chatID == 0 {
+		return ""
+	}
+	return idx.PlatformForChat(agentID, chatID)
+}
 
 // checkSystemPromptSizes logs warnings if system prompt files exceed thresholds.
 // The thresholds are the per-agent effective values (override → global).
@@ -343,7 +372,7 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	// opencode has its own permission model.
 	// skip_permissions bypasses all prompts, so a Command Approval section would
 	// just be confusing noise — omit it entirely (everything is permitted).
-	if skip, _ := acfg.BackendConfig["skip_permissions"].(bool); acfg.Backend == "claude-code" && !skip {
+	if acfg.Backend == "claude-code" && !delegator.SkipPermissions(acfg.BackendConfig) {
 		writeCommandApproval(&b, rc, cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig["allowed_tools"]))
 	}
 

@@ -85,6 +85,9 @@ Character files are loaded into memory at startup and rebuilt from disk only on 
 ### Session branching (cache sharing)
 Branch sessions copy the parent's system prompt + message history at a point in time. Because the prefix is byte-identical, the API hits cache (read pricing) instead of re-tokenizing (write pricing).
 
+### Per-platform prompt variance
+The environment block's `## Platform` section is keyed to the session's messaging platform, so sessions of the same agent on *different* platforms (e.g. main chat on Telegram, a conversation on the app) have different system prompts and therefore separate cache prefixes — each pays its own cache write. This is a deliberate trade-off for platform-correct guidance. Within one platform, prompts stay shared: the platform is resolved from the durable chat claim (`platformForSession` → `SessionIndex.PlatformForChat`), not from live connection routing, so a branch key (which carries the parent's chat ID) always resolves to the parent's platform and the branch/facet sharing described above is preserved. Chat-less named sessions have no `## Platform` section at all.
+
 ### Facet forking
 Forked sessions share the parent's system prompt prefix. Since the prefix is identical, the fork benefits from the existing cache immediately.
 

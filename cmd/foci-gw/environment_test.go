@@ -1,10 +1,12 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/session"
 )
 
 func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
@@ -191,5 +193,49 @@ func TestWriteCommandApproval_ReadonlyDisabled(t *testing.T) {
 	}
 	if strings.Contains(out, "CC pre-approved") {
 		t.Error("CC pre-approved line should be absent when no --allowedTools are configured")
+	}
+}
+
+// TestPlatformForSession proves the ## Platform section is keyed on the
+// durable chat claim (identity), not connection liveness (routing): a claimed
+// chat resolves to its owning platform, a branch key resolves identically to
+// its parent (byte-identical prompts → cache sharing, docs/CACHING.md), and
+// chat-less or unclaimed keys yield "" (no section) instead of a fallback
+// platform's guidance.
+func TestPlatformForSession(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+
+	const agentID = "main"
+	const chatID = int64(12345)
+	// Simulate chatmeta's first-contact registration of platform ownership.
+	if err := idx.SetChatMetadata(agentID, "telegram", chatID, "registered", "true"); err != nil {
+		t.Fatalf("SetChatMetadata: %v", err)
+	}
+
+	parentKey := session.NewChatSessionKey(agentID, chatID)
+	if got := platformForSession(idx, agentID, parentKey); got != "telegram" {
+		t.Errorf("claimed chat: got %q, want telegram", got)
+	}
+	// A branch key carries the parent's chat ID, so it must resolve to the
+	// same platform — the prompt-prefix cache-sharing property.
+	branchKey := parentKey + "/b1700000000"
+	if got := platformForSession(idx, agentID, branchKey); got != "telegram" {
+		t.Errorf("branch key: got %q, want telegram (same as parent)", got)
+	}
+	// Named session: no chat ID in the key → no platform, no section.
+	if got := platformForSession(idx, agentID, agentID+"/research"); got != "" {
+		t.Errorf("named session: got %q, want empty", got)
+	}
+	// Chat with no registered claim (first message not yet processed).
+	if got := platformForSession(idx, agentID, session.NewChatSessionKey(agentID, 999)); got != "" {
+		t.Errorf("unclaimed chat: got %q, want empty", got)
+	}
+	// Nil index (test agents / no persistence).
+	if got := platformForSession(nil, agentID, parentKey); got != "" {
+		t.Errorf("nil index: got %q, want empty", got)
 	}
 }

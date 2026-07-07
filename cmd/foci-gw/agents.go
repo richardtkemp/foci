@@ -248,21 +248,19 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.AskRouter = out.askRouter
 
 	// Per-agent environment block, rebuilt per session so the ## Platform block
-	// matches the session's messaging platform. Crontab count is captured once.
+	// matches the session's messaging platform (resolved from the durable chat
+	// claim — see platformForSession). Crontab count is captured once.
 	crontabCount := 0
 	if p.resolved.Environment.Enabled {
 		crontabCount = countCrontabJobs()
 	}
-	envConnMgr := p.connMgr
+	envSessionIdx := p.sessionIndex
 	envAgentID := acfg.ID
 	envBlockFunc := func(sessionKey string) string {
 		if !p.resolved.Environment.Enabled {
 			return ""
 		}
-		sessionPlatform := ""
-		if conn := envConnMgr.ForSessionOrPrimary(sessionKey, envAgentID); conn != nil {
-			sessionPlatform = conn.PlatformName()
-		}
+		sessionPlatform := platformForSession(envSessionIdx, envAgentID, sessionKey)
 		return buildEnvironmentAPI(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), shared.promptSearchDirs, sessionPlatform)
 	}
 
