@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"foci/internal/log"
 )
 
 // SubagentTracker tracks spawned subagent (CC Agent tool) calls and emits an
@@ -88,6 +90,14 @@ func (t *SubagentTracker) pruneLocked() {
 	kept := t.pending[:0]
 	for _, ag := range t.pending {
 		if ag.added.Before(cutoff) {
+			// A prune means a completion signal was never received. It's the
+			// backstop, not the normal path — a run_in_background Bash whose
+			// task_notification CC never emits would sit here holding system
+			// injects until now. Warn so that quiet failure is visible rather
+			// than a silent 30m stall (raise background_task_max_age if it was a
+			// genuinely long job).
+			log.Warnf("delegated", "subagent tracker: pruned %q (id=%s) after %s with no completion signal — background work held system injects until this prune",
+				ag.Description, ag.ID, time.Since(ag.added).Round(time.Second))
 			continue
 		}
 		kept = append(kept, ag)
