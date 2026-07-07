@@ -95,8 +95,8 @@ func (p *appProvider) SetupAgentConnection(params platform.AgentConnectionParams
 // these are no-ops. Per-agent lifecycle callbacks ARE implemented: they are
 // stored on the per-agent appConn (PrimaryBot) and fired from routeUserTurn /
 // routeCommand (OnUserMessage) and appConn.WrapTurn (OnTurnComplete/OnTurnEnd).
-func (p *appProvider) SetupSharedFacet(platform.SharedFacetParams)                  {}
-func (p *appProvider) RestoreFacetSessions(platform.RestoreParams)                  {}
+func (p *appProvider) SetupSharedFacet(platform.SharedFacetParams) {}
+func (p *appProvider) RestoreFacetSessions(platform.RestoreParams) {}
 func (p *appProvider) SetLifecycleCallback(agentID string, event platform.LifecycleEvent, fn func()) {
 	if p.hub == nil {
 		return

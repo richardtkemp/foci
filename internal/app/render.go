@@ -159,10 +159,10 @@ type noopTracker struct{}
 // Compile-time check.
 var _ turn.SinkTracker = noopTracker{}
 
-func (noopTracker) LastMsgID() string                            { return "" }
-func (noopTracker) ResetMsgID()                                  {}
-func (noopTracker) CleanupPreview()                              {}
+func (noopTracker) LastMsgID() string                               { return "" }
+func (noopTracker) ResetMsgID()                                     {}
+func (noopTracker) CleanupPreview()                                 {}
 func (noopTracker) ObserveToolCall(string, string, json.RawMessage) {}
-func (noopTracker) ObserveToolResult(string, string, string, bool) {}
-func (noopTracker) NotifyRetry(string)                          {}
-func (noopTracker) ClearRetryNotification()                     {}
+func (noopTracker) ObserveToolResult(string, string, string, bool)  {}
+func (noopTracker) NotifyRetry(string)                              {}
+func (noopTracker) ClearRetryNotification()                         {}

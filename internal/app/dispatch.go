@@ -45,7 +45,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	// yet; its binding is created downstream in routeUserText.
 	if convID := inboundConvID(in.Frame); convID != "" {
 		if b := h.convForReliability(convID); b != nil {
-			if !b.acceptInbound(in.ID, in.Seq) {
+			if !b.acceptInbound(client, in.ID, in.Seq) {
 				return
 			}
 			b.ackInbound(client, in.Ack)
@@ -65,23 +65,23 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
 		h.pushRoster(client)
-		// Persist advertised caps per resumed conv (resolved via its binding) so
-		// capability checks survive a server restart, which rebuilds bindings
-		// caps-less before the app reconnects.
+		// Reconnect resume: re-attach (which recomputes the capability union across
+		// attached clients) + replay each conversation the client still has
+		// unrendered frames for.
+		h.resumeConversations(client, f.Resume)
+		// Persist the capability UNION (not just this client's caps) per resumed
+		// conv, so a restart that rebuilds bindings caps-less still resolves checks
+		// against every device that was attached.
 		if idx := h.deps.SessionIndex; idx != nil {
-			csv := strings.Join(f.Features, ",")
 			for _, rp := range f.Resume {
 				h.mu.RLock()
 				b := h.convs[rp.ConversationID]
 				h.mu.RUnlock()
 				if b != nil {
-					_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "features", csv)
+					_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "features", b.featuresCSV())
 				}
 			}
 		}
-		// Reconnect resume: re-attach + replay each conversation the client still
-		// has unrendered frames for.
-		h.resumeConversations(client, f.Resume)
 		// Seed the open-set from the resume points' open flags.
 		open := make(map[string]struct{})
 		for _, rp := range f.Resume {
@@ -560,7 +560,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	if !existed {
 		// First message on a cold binding: record its envelope id so the gate
 		// drops the replayed copy after a reconnect.
-		b.acceptInbound(inID, inSeq)
+		b.acceptInbound(client, inID, inSeq)
 	}
 	text, atts = h.transcribeVoice(conn, text, atts)
 	if transcribeOnly {

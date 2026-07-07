@@ -201,7 +201,7 @@ func TestRouteUserTurn_SeedsDedupForReplay(t *testing.T) {
 		t.Fatal("binding not created by first message")
 	}
 	// A replayed copy carries the same envelope id; the gate must now drop it.
-	if b.acceptInbound("env-A", 1) {
+	if b.acceptInbound(c, "env-A", 1) {
 		t.Error("replayed first message accepted — dedup set was not seeded")
 	}
 }
