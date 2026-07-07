@@ -194,6 +194,20 @@ func (m *DelegatedManager) getManaged(sessionKey string) (*managedBackend, bool)
 	return mb, ok
 }
 
+// BackendAwaitingAutonomousRun reports whether the (already-running) backend for
+// sessionKey is holding across background work — a pending subagent/Bash, a live
+// autonomous run, or the post-run grace (spec §4). Non-creating: an idle session
+// with no live backend, or a backend that doesn't implement AutonomousRunAwaiter
+// (cctmux/opencode), reports false. The inbox uses it to gate system injects.
+func (m *DelegatedManager) BackendAwaitingAutonomousRun(sessionKey string) bool {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok || !mb.be.IsRunning() {
+		return false
+	}
+	aw, ok := mb.be.(delegator.AutonomousRunAwaiter)
+	return ok && aw.AwaitingAutonomousRun()
+}
+
 // clearPermission unblocks any WaitForPermission waiters on this backend.
 func (mb *managedBackend) clearPermission() {
 	mb.permMu.Lock()

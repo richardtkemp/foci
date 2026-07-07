@@ -1252,9 +1252,21 @@ Applies to every agent whose `backend` is `claude-code` or `claude-code-tmux`:
 #
 # Set to an empty list to disable, or override with your own rules:
 # default_allowed_tools = ["Write(/tmp/**)", "Bash(git:*)"]
+
+# background_task_max_age — how long a spawned background task (an Agent-tool
+# subagent or a run_in_background Bash) stays tracked without a completion
+# signal before it is pruned. The tracker holds system injections (reflection,
+# keepalive, memory) while background work is outstanding so their output can't
+# poison the resulting autonomous run's delivery; the prune is the backstop that
+# unwedges the gate if a completion notification is ever missed. Empty → 30m.
+# Raise it above your longest background job's runtime so a genuinely-long job
+# isn't pruned (and its injections released) while still running.
+# background_task_max_age = "30m"
 ```
 
 The factory default grants CC agents free read/write access to `/tmp` so they can use the system scratch directory without a permission round-trip. Override if your deployment uses a different scratch path or wants a tighter default.
+
+`background_task_max_age` only needs raising if you routinely background jobs (subagents or `run_in_background` Bash) that run longer than 30 minutes; the default is well beyond any typical run.
 
 ### Available backends
 

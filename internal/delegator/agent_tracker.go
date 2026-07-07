@@ -21,6 +21,13 @@ type SubagentTracker struct {
 	pending []TrackedSubagent
 	start   time.Time
 
+	// MaxAge bounds how long a spawn lingers without a completion signal before
+	// pruneLocked drops it. Zero → defaultAgentMaxAge. Set from config at backend
+	// Start (ccstream); the prune is the unwedge backstop for the pending-work
+	// gate (spec §4) — a task whose completion notification is missed can't hold
+	// system injects forever.
+	MaxAge time.Duration
+
 	// OnStatus is called when the subagent status changes. The argument is a
 	// plain DETAIL string: the running-subagent descriptions (comma-joined) while
 	// any are running, or "" when none are. It maps cleanly onto the app's
@@ -35,13 +42,23 @@ type TrackedSubagent struct {
 	added       time.Time
 }
 
-// agentMaxAge bounds how long a spawn stays tracked without a completion
+// defaultAgentMaxAge bounds how long a spawn stays tracked without a completion
 // signal. The tracker now survives turn boundaries (a background subagent
 // outlives the turn that spawned it), so a missed completion — RemoveOne is
 // FIFO, not ID-matched, in ccstream — can no longer be swept by a per-turn
 // clear; this prune is the backstop so Pending() can't stay stuck > 0. Set
-// well beyond any real subagent's runtime.
-const agentMaxAge = 30 * time.Minute
+// well beyond any real subagent's runtime. Overridable per-tracker via MaxAge
+// (config [cc_backend].background_task_max_age).
+const defaultAgentMaxAge = 30 * time.Minute
+
+// maxAge resolves the effective prune threshold — the configured MaxAge, or the
+// default when unset.
+func (t *SubagentTracker) maxAge() time.Duration {
+	if t.MaxAge > 0 {
+		return t.MaxAge
+	}
+	return defaultAgentMaxAge
+}
 
 // Add registers a new subagent spawn. Duplicate IDs are silently ignored
 // (handles --include-partial-messages replays in ccstream).
@@ -67,7 +84,7 @@ func (t *SubagentTracker) pruneLocked() {
 	if len(t.pending) == 0 {
 		return
 	}
-	cutoff := time.Now().Add(-agentMaxAge)
+	cutoff := time.Now().Add(-t.maxAge())
 	kept := t.pending[:0]
 	for _, ag := range t.pending {
 		if ag.added.Before(cutoff) {
@@ -170,4 +187,19 @@ func ExtractAgentDescription(raw json.RawMessage) string {
 		return input.Description
 	}
 	return ""
+}
+
+// ExtractBashBackground reports whether a Bash tool_use input requests
+// backgrounding (CC's native `run_in_background` parameter). A backgrounded
+// Bash outlives its turn and, on completion, drives a task_notification /
+// autonomous run — so it must be tracked like a subagent for the pending-work
+// gate. A synchronous Bash (flag absent/false) returns false and is not tracked.
+func ExtractBashBackground(raw json.RawMessage) bool {
+	var input struct {
+		RunInBackground bool `json:"run_in_background"`
+	}
+	if json.Unmarshal(raw, &input) == nil {
+		return input.RunInBackground
+	}
+	return false
 }

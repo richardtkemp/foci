@@ -245,6 +245,15 @@ type CCBackendConfig struct {
 	// binary (bin/cc-stub) that mimics the CC stream-json protocol.
 	// Per-agent backend_config.claude_binary takes precedence if set.
 	ClaudeBinary string `toml:"claude_binary"`
+
+	// BackgroundTaskMaxAge bounds how long a spawned background task (an
+	// Agent-tool subagent or a run_in_background Bash) stays tracked without a
+	// completion signal before the prune drops it. The prune is the unwedge
+	// backstop for the pending-work gate that holds system injects while
+	// background work is outstanding (spec §4): a task whose completion
+	// notification is missed can't hold injects forever. Empty → 30m. Set well
+	// beyond any real background job's runtime.
+	BackgroundTaskMaxAge string `toml:"background_task_max_age" desc:"max age a tracked background task lingers before prune (unwedges the pending-work gate)" type:"duration"`
 }
 
 // GroupsConfig assigns named models to groups and call sites.

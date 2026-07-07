@@ -226,6 +226,20 @@ type ActivityChecker interface {
 	LastActivity() time.Time
 }
 
+// AutonomousRunAwaiter is optionally implemented by backends that track
+// background work (Agent-tool subagents, run_in_background Bash) and autonomous
+// runs. The inbox consults it to hold system injects across the whole
+// background-work lifetime — from the spawn until the resulting autonomous run
+// completes — not just while a run is visibly active (spec §4). Backends that
+// don't track this (cctmux, opencode) don't implement it and are treated as
+// never awaiting.
+type AutonomousRunAwaiter interface {
+	// AwaitingAutonomousRun reports whether a delivering autonomous run is
+	// active, pending (a spawned background task not yet completed), or
+	// imminently expected (within the post-run chain grace).
+	AwaitingAutonomousRun() bool
+}
+
 // CommandOutputCapturer is optionally implemented by backends that can
 // capture local command output from the agent's TUI by polling for stable
 // pane content. The tmux backend implements this; the stream backend
@@ -405,6 +419,7 @@ type StartOptions struct {
 	TmuxCols         int               // tmux window width (0 = use tools.tmux_cols default)
 	TmuxRows         int               // tmux window height (0 = use tools.tmux_rows default)
 	AutoApproveRules []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
+	SubagentMaxAge   time.Duration     // prune threshold for tracked background tasks (0 = tracker default 30m); from [cc_backend].background_task_max_age
 
 	// ClaudeBinary overrides the path to the `claude` executable that
 	// delegated/RunOnce launches. Empty = use "claude" (resolved via
