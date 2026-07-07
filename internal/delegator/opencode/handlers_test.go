@@ -3,6 +3,7 @@ package opencode
 import (
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"foci/internal/delegator"
@@ -513,6 +514,9 @@ func TestOnMessageUpdated_AssistantSetsModelAndUsage(t *testing.T) {
 	if usage.CacheReadInputTokens != 8900 {
 		t.Errorf("cache.read = %d", usage.CacheReadInputTokens)
 	}
+	if usage.CacheCreationInputTokens != 1100 {
+		t.Errorf("cache.write = %d", usage.CacheCreationInputTokens)
+	}
 }
 
 func TestOnMessageUpdated_AssistantEmptyModelPreserved(t *testing.T) {
@@ -913,5 +917,140 @@ func TestTextDelivery_PostIdleFiresSessionEvents(t *testing.T) {
 
 	if len(*c.texts) == 0 {
 		t.Error("OnText did not fire post-idle — SessionEvents invariant broken")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// session.status — typing indicator (replaces commented TypingRestarted/NoTypingOnEndTurn)
+// ---------------------------------------------------------------------------
+
+func TestOnSessionStatus_BusyFiresTypingTrue(t *testing.T) {
+	// Verifies StatusBusy fires typingFunc(true) — the typing indicator
+	// starts when the session reports busy.
+	var typing atomic.Bool
+	b := newHandlerTestBackend(t)
+	b.typingFunc = func(on bool) { typing.Store(on) }
+
+	b.onSessionStatus(b.sessionID, SessionStatus{Type: StatusBusy})
+
+	if !typing.Load() {
+		t.Error("typingFunc(false) on StatusBusy; want true")
+	}
+}
+
+func TestOnSessionStatus_IdleDoesNotFireTypingTrue(t *testing.T) {
+	// Verifies StatusIdle does NOT fire typingFunc(true) — session.idle
+	// handles completion; this status is belt-and-suspenders.
+	var typing atomic.Bool
+	b := newHandlerTestBackend(t)
+	b.typingFunc = func(on bool) { typing.Store(on) }
+
+	b.onSessionStatus(b.sessionID, SessionStatus{Type: StatusIdle})
+
+	if typing.Load() {
+		t.Error("typingFunc(true) fired on StatusIdle; session.idle should handle it")
+	}
+}
+
+func TestOnSessionStatus_WrongSessionIgnored(t *testing.T) {
+	// Verifies session.status from a different session is silently ignored.
+	var fired bool
+	b := newHandlerTestBackend(t)
+	b.typingFunc = func(bool) { fired = true }
+
+	b.onSessionStatus("other-session", SessionStatus{Type: StatusBusy})
+
+	if fired {
+		t.Error("typingFunc fired for a different session ID")
+	}
+}
+
+func TestOnSessionStatus_NilTypingFunc(t *testing.T) {
+	// Verifies onSessionStatus doesn't panic when typingFunc is nil.
+	b := newHandlerTestBackend(t)
+	b.typingFunc = nil
+
+	b.onSessionStatus(b.sessionID, SessionStatus{Type: StatusBusy})
+}
+
+// ---------------------------------------------------------------------------
+// TurnResult usage — full flow + edge cases
+// (replaces commented OnResult_OutputTokensFromModelUsage, _FallbackToResultUsage, _ClearsLastUsage)
+// ---------------------------------------------------------------------------
+
+func TestTurnResult_UsageFromMessageUpdatedThroughSessionIdle(t *testing.T) {
+	// Full flow: onMessageUpdated with Tokens → onSessionIdle → TurnResult.Usage
+	// carries all four token fields (input, output, cache.read, cache.write).
+	// The existing BuildsTurnResult test manually sets lastUsage; this drives
+	// the real onMessageUpdated path to verify the wiring.
+	b := newHandlerTestBackend(t)
+	c := b.captures()
+
+	b.beginTurn(&delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) {
+		*c.completed = r
+	}})
+
+	b.onMessageUpdated(Message{
+		Role:       "assistant",
+		ModelID:    "claude-sonnet-4",
+		ProviderID: "anthropic",
+		Tokens: &MessageTokens{
+			Input:  2000,
+			Output: 800,
+			Cache: struct {
+				Read  int `json:"read"`
+				Write int `json:"write"`
+			}{Read: 15000, Write: 3000},
+		},
+	})
+
+	b.onSessionIdle(b.sessionID)
+
+	if *c.completed == nil {
+		t.Fatal("OnTurnComplete not called")
+	}
+	r := *c.completed
+	if r.Usage == nil {
+		t.Fatal("result.Usage nil")
+	}
+	if r.Usage.InputTokens != 2000 {
+		t.Errorf("InputTokens = %d, want 2000", r.Usage.InputTokens)
+	}
+	if r.Usage.OutputTokens != 800 {
+		t.Errorf("OutputTokens = %d, want 800", r.Usage.OutputTokens)
+	}
+	if r.Usage.CacheReadInputTokens != 15000 {
+		t.Errorf("CacheReadInputTokens = %d, want 15000", r.Usage.CacheReadInputTokens)
+	}
+	if r.Usage.CacheCreationInputTokens != 3000 {
+		t.Errorf("CacheCreationInputTokens = %d, want 3000", r.Usage.CacheCreationInputTokens)
+	}
+}
+
+func TestTurnResult_NilUsageWhenNoTokensReceived(t *testing.T) {
+	// Edge case: if no assistant message carried Tokens (e.g. an error
+	// turn), TurnResult.Usage should be nil, not a crash.
+	b := newHandlerTestBackend(t)
+	c := b.captures()
+
+	b.beginTurn(&delegator.TurnEvents{OnTurnComplete: func(r *delegator.TurnResult) {
+		*c.completed = r
+	}})
+
+	// message.updated with no Tokens — lastUsage stays nil.
+	b.onMessageUpdated(Message{
+		Role:       "assistant",
+		ModelID:    "claude-sonnet-4",
+		ProviderID: "anthropic",
+		Tokens:     nil,
+	})
+
+	b.onSessionIdle(b.sessionID)
+
+	if *c.completed == nil {
+		t.Fatal("OnTurnComplete not called")
+	}
+	if (*c.completed).Usage != nil {
+		t.Errorf("result.Usage = %+v, want nil when no Tokens received", (*c.completed).Usage)
 	}
 }
