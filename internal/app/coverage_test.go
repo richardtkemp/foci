@@ -280,10 +280,10 @@ func TestDispatchCommand_EmitsResponseParts(t *testing.T) {
 		},
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
-	b := &convBinding{convID: "c1", sessionKey: "ag/c1", client: fakeClientFor(h)}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}
 	h.dispatchCommand(conn, b, command.Request{Name: "ping"})
 
-	got := drain(t, b.client)
+	got := drain(t, b.snapshotClient())
 	// 3 frames: user echo "/ping" + two system response parts.
 	if len(got) != 3 {
 		t.Fatalf("command parts = %v", types(got))
@@ -302,9 +302,9 @@ func TestDispatchCommand_EmitsResponseParts(t *testing.T) {
 func TestDispatchCommand_UnknownCommand(t *testing.T) {
 	h := newTestHub()
 	conn := &appConn{hub: h, agentID: "ag", commands: command.NewRegistry()}
-	b := &convBinding{convID: "c1", client: fakeClientFor(h)}
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}
 	h.dispatchCommand(conn, b, command.Request{Name: "nope"})
-	got := drain(t, b.client)
+	got := drain(t, b.snapshotClient())
 	// 2 frames: user echo "/nope" + the unknown-command system message.
 	if len(got) != 2 {
 		t.Fatalf("want 2 frames (user echo + unknown), got %v", types(got))
@@ -327,10 +327,10 @@ func TestDispatchCommand_EchoesUserCommandWithArgs(t *testing.T) {
 		},
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
-	b := &convBinding{convID: "c1", sessionKey: "ag/c1", client: fakeClientFor(h)}
+	b := &convBinding{convID: "c1", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}
 	h.dispatchCommand(conn, b, command.Request{Name: "plan", Args: "paint a room"})
 
-	got := drain(t, b.client)
+	got := drain(t, b.snapshotClient())
 	if len(got) != 2 {
 		t.Fatalf("want 2 frames (user echo + response), got %v", types(got))
 	}
@@ -354,7 +354,7 @@ func TestClientHello_RepliesRosterRegistersTokenAndResumes(t *testing.T) {
 	c := fakeClientFor(h)
 
 	// Pre-existing durable conversation with buffered frames seq 1..3.
-	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", client: c, seen: map[string]struct{}{}}
+	b := &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{c: {}}, seen: map[string]struct{}{}}
 	h.convs["c1"] = b
 	for i := 0; i < 3; i++ {
 		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
