@@ -33,12 +33,12 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"http_request", "web_search", "web_fetch", "memory_search",
 		"scratchpad", "todo", "task_list", "bitwarden_search",
 		"bitwarden_unlock", "mcp", "send_to_chat", "send_to_session",
-		"ask", "spawn", "remind",
+		"ask", "spawn", "remind", "app_android",
 	}
 	wantExec := []string{
 		"summary", "http_request", "web_search", "web_fetch",
 		"memory_search", "todo", "send_to_chat", "send_to_session",
-		"ask", "remind",
+		"ask", "remind", "app_android",
 	}
 
 	if !equalStrings(api, wantAPI) {
