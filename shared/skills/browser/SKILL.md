@@ -1,6 +1,6 @@
 ---
 name: browser
-description: Browser tool — full action and parameter reference
+description: Drive a live browser via accessibility-tree snapshots — navigate, click, fill forms, select, press keys, screenshot. Use when a task needs interacting with a real web page (logins, JS-rendered content, multi-step flows), not a static read (that's web_fetch).
 ---
 
 # Browser Tool Reference
