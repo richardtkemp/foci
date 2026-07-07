@@ -71,3 +71,25 @@ func TestProbeDir(t *testing.T) {
 		t.Errorf("probeDir(%q) = %q, want %q", dir, result, dir)
 	}
 }
+
+// Verifies the FOCI_TMPDIR override ladder: a usable override wins over the
+// shared Root (hermetic test runs / multi-instance hosts); an unusable
+// override falls through to the default ladder instead of failing (a bad
+// value degrades gracefully); no override behaves as before.
+func TestResolveRoot(t *testing.T) {
+	override := t.TempDir()
+	if got := resolveRoot(override); got != override {
+		t.Errorf("usable override: resolveRoot(%q) = %q, want the override", override, got)
+	}
+
+	// Unusable override (can't be created) falls through to the ladder —
+	// the result must be a real writable dir, not "" and not the override.
+	if got := resolveRoot("/proc/nonexistent"); got == "" || got == "/proc/nonexistent" {
+		t.Errorf("unusable override: resolveRoot = %q, want a fallback dir", got)
+	}
+
+	// No override: same ladder as before (Root or its fallbacks).
+	if got := resolveRoot(""); got == "" {
+		t.Error("empty override: resolveRoot returned empty string")
+	}
+}
