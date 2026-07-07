@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"foci/internal/delegator"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -309,30 +308,32 @@ type ContextInfo struct {
 func ContextCommand() *Command {
 	return &Command{
 		Name:        "context",
-		Description: "Context window breakdown: system prompt, conversation, compaction status",
+		Description: "Context window usage, system prompt breakdown, compaction status",
 		Category:    "observability",
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			// Try backend's get_context_usage first (exact, zero API cost).
-			if text, err := contextFromBackend(ctx, cc); err == nil {
-				return Response{Text: text}, nil
-			}
-
-			// Fallback: estimate from foci's own state.
+			// Build context info first — provides session key, context limit,
+			// system prompt breakdown, and optional exact token counts.
 			infoFn := cc.ContextInfoFn
 			if infoFn == nil {
 				infoFn = buildContextInfo
 			}
 			info := infoFn(ctx, cc)
+			sk := info.SessionKey
 
-			entries := log.ReadAPILog(cc.APILogPath)
-			var lastInput, lastCacheRead, lastCacheWrite, lastOutput int
-			for i := len(entries) - 1; i >= 0; i-- {
-				if entries[i].Session == info.SessionKey {
-					lastInput = entries[i].Input
-					lastCacheRead = entries[i].CacheRead
-					lastCacheWrite = entries[i].CacheWrite
-					lastOutput = entries[i].Output
-					break
+			// Context tokens: primary from api.db (durable, same source as
+			// /status), fallback to api.jsonl (process-local, for tests and
+			// very early startup). Also check CountTokensFn for exact counts
+			// (API backend path where foci counts tokens itself).
+			var contextTokens int
+			stats, _ := log.QuerySessionStats(sk)
+			if stats != nil {
+				contextTokens = stats.ContextTokens
+			}
+			if contextTokens == 0 {
+				for _, e := range log.ReadAPILog(cc.APILogPath) {
+					if e.Session == sk {
+						contextTokens = e.Input + e.CacheRead + e.CacheWrite
+					}
 				}
 			}
 
@@ -340,31 +341,44 @@ func ContextCommand() *Command {
 			if info.CountTokensFn != nil {
 				tc, _ = info.CountTokensFn(ctx)
 			}
-
-			totalTokens := lastInput + lastCacheRead + lastCacheWrite
-			if tc == nil && totalTokens == 0 {
-				return Response{Text: "No API calls yet for this session."}, nil
-			}
-
-			headerTokens := totalTokens
-			useExact := tc != nil
-			if useExact {
+			// Exact token count from CountTokensFn overrides the DB/log estimate.
+			headerTokens := contextTokens
+			if tc != nil && tc.Total > 0 {
 				headerTokens = tc.Total
 			}
 
-			threshTokens := int(float64(info.ContextLimit) * info.CompactionThresh)
-			percentUsed := float64(headerTokens) / float64(info.ContextLimit) * 100
-			percentThresh := info.CompactionThresh * 100
+			// Context window: from session meta (learned via GetContextWindow)
+			// or from the context info's model-derived default.
+			contextLimit := info.ContextLimit
+			if cc.Agent != nil {
+				if agentLimit := cc.Agent.SessionContextLimit(sk); agentLimit > 0 {
+					contextLimit = agentLimit
+				}
+			}
+			if contextLimit <= 0 {
+				contextLimit = 200000 // last-resort fallback
+			}
+
+			if headerTokens == 0 {
+				return Response{Text: "No API calls yet for this session."}, nil
+			}
+
+			compactionThresh := cc.CompactionThreshold
+			if compactionThresh == 0 {
+				compactionThresh = info.CompactionThresh
+			}
+			threshTokens := int(float64(contextLimit) * compactionThresh)
+			percentUsed := float64(headerTokens) / float64(contextLimit) * 100
+			percentThresh := compactionThresh * 100
 
 			var sb strings.Builder
-
+			sb.WriteString("```\n")
 			tokenLabel := display.FormatCommas(headerTokens)
-			if !useExact {
+			if tc == nil {
 				tokenLabel = "~" + tokenLabel
 			}
-			sb.WriteString("```\n")
 			fmt.Fprintf(&sb, "Context: %s / %s tokens (%.1f%%)\n",
-				tokenLabel, display.FormatCommas(info.ContextLimit), percentUsed)
+				tokenLabel, display.FormatCommas(contextLimit), percentUsed)
 			fmt.Fprintf(&sb, "Compaction at: %s (%.0f%%)\n",
 				display.FormatCommas(threshTokens), percentThresh)
 			if headerTokens >= threshTokens {
@@ -375,8 +389,10 @@ func ContextCommand() *Command {
 			}
 			sb.WriteString("```")
 
+			// System prompt breakdown (tc already built above).
+
 			sb.WriteString("\n\n```\n")
-			if useExact {
+			if tc != nil {
 				fmt.Fprintf(&sb, "System prompt: %s tokens\n", display.FormatCommas(tc.System))
 				maxNameLen := 0
 				for _, s := range tc.Sections {
@@ -422,7 +438,7 @@ func ContextCommand() *Command {
 
 			mb := info.Messages
 			sb.WriteString("\n\n```\n")
-			if useExact {
+			if tc != nil {
 				fmt.Fprintf(&sb, "Conversation: %s tokens (%d messages)\n",
 					display.FormatCommas(tc.Conversation), mb.UserCount+mb.AssistantCount)
 			} else {
@@ -440,81 +456,9 @@ func ContextCommand() *Command {
 			}
 			sb.WriteString("```")
 
-			sb.WriteString("\n\n```\n")
-			fmt.Fprintf(&sb, "Last API call tokens:\n")
-			fmt.Fprintf(&sb, "  input:       %s\n", display.FormatCommas(lastInput))
-			fmt.Fprintf(&sb, "  cache_read:  %s\n", display.FormatCommas(lastCacheRead))
-			fmt.Fprintf(&sb, "  cache_write: %s\n", display.FormatCommas(lastCacheWrite))
-			fmt.Fprintf(&sb, "  output:      %s\n", display.FormatCommas(lastOutput))
-			sb.WriteString("```")
-
 			return Response{Text: sb.String()}, nil
 		},
 	}
-}
-
-// contextFromBackend tries to get context usage from the delegated backend's
-// get_context_usage control request. Returns formatted text, or error if
-// unavailable (no backend, doesn't implement ContextUsageQuerier, etc.).
-func contextFromBackend(ctx context.Context, cc CommandContext) (string, error) {
-	if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
-		return "", fmt.Errorf("no delegated manager")
-	}
-	sk := tools.SessionKeyFromContext(ctx)
-	if sk == "" {
-		return "", fmt.Errorf("no session key")
-	}
-	be, err := cc.Agent.DelegatedManager.Get(ctx, sk)
-	if err != nil {
-		return "", err
-	}
-	cuq, ok := be.(delegator.ContextUsageQuerier)
-	if !ok {
-		return "", fmt.Errorf("backend does not implement ContextUsageQuerier")
-	}
-	usage, err := cuq.GetContextUsage(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	// Use foci's compaction threshold, not CC's autoCompactThreshold.
-	threshTokens := int(float64(usage.MaxTokens) * cc.CompactionThreshold)
-	percentUsed := float64(usage.TotalTokens) / float64(usage.MaxTokens) * 100
-	percentThresh := cc.CompactionThreshold * 100
-
-	var sb strings.Builder
-	sb.WriteString("```\n")
-	fmt.Fprintf(&sb, "Context: %s / %s tokens (%.1f%%)\n",
-		display.FormatCommas(usage.TotalTokens), display.FormatCommas(usage.MaxTokens), percentUsed)
-	fmt.Fprintf(&sb, "Model: %s\n", usage.Model)
-	fmt.Fprintf(&sb, "Compaction at: %s (%.0f%%)\n",
-		display.FormatCommas(threshTokens), percentThresh)
-	if usage.TotalTokens >= threshTokens {
-		sb.WriteString("Status: at/above threshold\n")
-	} else {
-		remaining := threshTokens - usage.TotalTokens
-		fmt.Fprintf(&sb, "Status: %s tokens until compaction\n", display.FormatCommas(remaining))
-	}
-	sb.WriteString("```")
-
-	// Category breakdown.
-	if len(usage.Categories) > 0 {
-		sb.WriteString("\n\n```\n")
-		maxNameLen := 0
-		for _, c := range usage.Categories {
-			if len(c.Name) > maxNameLen {
-				maxNameLen = len(c.Name)
-			}
-		}
-		for _, c := range usage.Categories {
-			pct := float64(c.Tokens) / float64(usage.MaxTokens) * 100
-			fmt.Fprintf(&sb, "  %-*s  %6s tokens  (%4.1f%%)\n",
-				maxNameLen, c.Name, display.FormatCommas(c.Tokens), pct)
-		}
-		sb.WriteString("```")
-	}
-
-	return sb.String(), nil
 }
 
 // buildContextInfo constructs ContextInfo from CommandContext.

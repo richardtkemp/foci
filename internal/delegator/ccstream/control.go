@@ -54,10 +54,9 @@ func (b *Backend) SetModel(ctx context.Context, model string) error {
 	return b.SendControl(ctx, &delegator.SetModelRequest{Model: model})
 }
 
-// GetContextUsage sends a get_context_usage control request and returns the
-// parsed response. Zero API cost — CC computes this locally. ~650ms on a
-// persistent session.
-func (b *Backend) GetContextUsage(ctx context.Context) (*delegator.ContextUsage, error) {
+// GetContextWindow sends a get_context_usage control request and returns the
+// model's context window size. Zero API cost — CC computes this locally.
+func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindow, error) {
 	reqID := newRequestID()
 
 	// Arm response channel before sending.
@@ -92,17 +91,9 @@ func (b *Backend) GetContextUsage(ctx context.Context) (*delegator.ContextUsage,
 		if err := json.Unmarshal(env.Response.Response, &payload); err != nil {
 			return nil, fmt.Errorf("unmarshal context_usage payload: %w", err)
 		}
-		cats := make([]delegator.ContextCategory, len(payload.Categories))
-		for i, c := range payload.Categories {
-			cats[i] = delegator.ContextCategory{Name: c.Name, Tokens: c.Tokens}
-		}
-		return &delegator.ContextUsage{
-			TotalTokens:          payload.TotalTokens,
-			MaxTokens:            payload.MaxTokens,
-			Percentage:           payload.Percentage,
-			AutoCompactThreshold: payload.AutoCompactThreshold,
-			Model:                payload.Model,
-			Categories:           cats,
+		return &delegator.ContextWindow{
+			MaxTokens: payload.MaxTokens,
+			Model:     payload.Model,
 		}, nil
 	case <-ctx.Done():
 		// Clean up on timeout.
