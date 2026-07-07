@@ -36,7 +36,7 @@ func newHandlerTestBackend(t *testing.T) *Backend {
 		OnThinkingDelta: func(d string) { thinkingDeltas = append(thinkingDeltas, d) },
 		OnToolStart:     func(id, name, input string) { toolStarts = append(toolStarts, toolCall{id, name, input}) },
 		OnToolEnd:       func(id, name, output string, isErr bool) { toolEnds = append(toolEnds, toolCall{id, name, output}) },
-		OnSubagentText:  func(group, label, text string) { subagentTexts = append(subagentTexts, text) },
+		OnSubagentText:  func(group, text string) { subagentTexts = append(subagentTexts, text) },
 	})
 	b.beginTurn(&delegator.TurnEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },

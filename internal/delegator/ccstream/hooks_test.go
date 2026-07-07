@@ -59,6 +59,16 @@ func TestBuildHookSettingsJSON(t *testing.T) {
 			t.Errorf("%s hook.timeout = %d, want %d", event, h.Timeout, hookTimeoutSeconds)
 		}
 	}
+
+	// PreToolUse is installed ONLY for the Agent tool (the subagent-start signal),
+	// not "*" — else every tool call would spawn an extra hook process.
+	pre, ok := parsed.Hooks[eventPreToolUse]
+	if !ok || len(pre) != 1 {
+		t.Fatalf("PreToolUse matchers = %v, want exactly one", pre)
+	}
+	if pre[0].Matcher != agentToolMatcher {
+		t.Errorf("PreToolUse matcher = %q, want %q", pre[0].Matcher, agentToolMatcher)
+	}
 }
 
 // TestBuildHookCommand_Format proves the generated command string is a
@@ -276,6 +286,38 @@ func TestHandleHookResponse_AgentToolFiresSubagentEnd(t *testing.T) {
 
 	if len(ended) != 1 || ended[0] != "toolu_agent" {
 		t.Fatalf("OnSubagentEnd = %v, want [toolu_agent]", ended)
+	}
+}
+
+// TestHandleHookResponse_AgentPreToolUseFiresSubagentStart proves the Agent tool's
+// PreToolUse fires a precise subagent START (groupKey + description) and does NOT
+// fire OnToolEnd; a non-Agent PreToolUse fires nothing.
+func TestHandleHookResponse_AgentPreToolUseFiresSubagentStart(t *testing.T) {
+	b := &Backend{hookInstallID: "install-a"}
+	type start struct{ groupKey, label string }
+	var started []start
+	toolEnds := 0
+	applyHandler(b, &testHandler{
+		OnToolEnd:       func(id, name, output string, isError bool) { toolEnds++ },
+		OnSubagentStart: func(groupKey, label string) { started = append(started, start{groupKey, label}) },
+	})
+
+	fire := func(toolName, toolUseID, toolInput string) {
+		stdout, _ := json.Marshal(hookScriptOutput{
+			HookEvent: "PreToolUse", InstallID: "install-a",
+			ToolUseID: toolUseID, ToolName: toolName, ToolInput: toolInput,
+		})
+		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "PreToolUse", Stdout: string(stdout)})
+		b.handleHookResponse(env)
+	}
+	fire("Read", "toolu_read", "")                                 // not Agent → nothing
+	fire("Agent", "toolu_agent", `{"description":"Search for X"}`) // Agent → start w/ label
+
+	if len(started) != 1 || started[0] != (start{"toolu_agent", "Search for X"}) {
+		t.Fatalf("OnSubagentStart = %+v, want [{toolu_agent Search for X}]", started)
+	}
+	if toolEnds != 0 {
+		t.Errorf("PreToolUse fired OnToolEnd %d times, want 0", toolEnds)
 	}
 }
 

@@ -66,22 +66,29 @@ type TextBlock struct {
 	Phase Phase
 }
 
-// SubagentText carries a complete text block produced by a subagent (a Task/
-// Agent tool invocation). GroupKey identifies the originating subagent (its
-// parent tool_use id) so platforms that support per-subagent message control
-// — Telegram's rolling "Hide this" button, the app's collapsed trace — can group
-// a subagent's messages. Label is the agent's description. Text is RAW (each
-// platform applies its own presentation: tg/discord blockquote it, the app shows
-// it in an expandable trace).
-type SubagentText struct {
+// SubagentStart marks a subagent run beginning (its Agent tool_use spawned), from
+// the PreToolUse hook. GroupKey is the parent tool_use id shared by the run's text
+// events; Label is the agent's description. Start and end are both hook-sourced so
+// a broken hook produces neither (no orphaned "never finishes" run).
+type SubagentStart struct {
 	GroupKey string
 	Label    string
+}
+
+// SubagentText carries a complete text block produced by a subagent (a Task/
+// Agent tool invocation). GroupKey identifies the originating subagent (its parent
+// tool_use id) so platforms that support per-subagent grouping — Telegram's rolling
+// "Hide this" button, the app's collapsed trace — can group its messages. Text is
+// RAW; each platform applies its own presentation (tg/discord blockquote it in the
+// renderer, the app shows it in an expandable trace).
+type SubagentText struct {
+	GroupKey string
 	Text     string
 }
 
 // SubagentEnd marks a subagent run complete (its Agent tool_use resolved), so a
 // platform can finalize the run's UI — e.g. the app flipping "started" to
-// "completed". GroupKey matches the run's SubagentText events.
+// "completed". GroupKey matches the run's SubagentStart/Text events.
 type SubagentEnd struct {
 	GroupKey string
 }
@@ -143,6 +150,7 @@ type TurnComplete struct {
 func (TurnStart) turnEvent()     {}
 func (TextDelta) turnEvent()     {}
 func (TextBlock) turnEvent()     {}
+func (SubagentStart) turnEvent() {}
 func (SubagentText) turnEvent()  {}
 func (SubagentEnd) turnEvent()   {}
 func (ThinkingDelta) turnEvent() {}

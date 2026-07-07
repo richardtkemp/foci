@@ -100,6 +100,40 @@ func newTestRenderer(backend *mockBackend, tracker *mockTracker, display TurnDis
 	return NewTurnRenderer(backend, tracker, display, newTestSB)
 }
 
+// mockSubagentBackend is a Platform that also implements SubagentDeliverer, for
+// testing subagent presentation. raw toggles SubagentTextRaw.
+type mockSubagentBackend struct {
+	*mockBackend
+	raw   bool
+	texts []string
+}
+
+func (m *mockSubagentBackend) DeliverSubagentStart(string, string) {}
+func (m *mockSubagentBackend) DeliverSubagentText(_, text string)   { m.texts = append(m.texts, text) }
+func (m *mockSubagentBackend) DeliverSubagentEnd(string)            {}
+func (m *mockSubagentBackend) SubagentTextRaw() bool                { return m.raw }
+
+// The renderer heads each blockquoted subagent block with the agent name (from
+// the start event) for non-raw platforms, and passes text through unchanged for
+// the app (raw).
+func TestRenderer_SubagentHeader(t *testing.T) {
+	nonRaw := &mockSubagentBackend{mockBackend: newMockBackend()}
+	r := NewTurnRenderer(nonRaw, &mockTracker{}, TurnDisplay{}, newTestSB)
+	r.OnSubagentStart("g1", "Explore")
+	r.OnSubagentReply("g1", "found it")
+	if len(nonRaw.texts) != 1 || nonRaw.texts[0] != "**Explore**\n> found it" {
+		t.Fatalf("non-raw text = %q, want [\"**Explore**\\n> found it\"]", nonRaw.texts)
+	}
+
+	raw := &mockSubagentBackend{mockBackend: newMockBackend(), raw: true}
+	r2 := NewTurnRenderer(raw, &mockTracker{}, TurnDisplay{}, newTestSB)
+	r2.OnSubagentStart("g2", "Plan")
+	r2.OnSubagentReply("g2", "done")
+	if len(raw.texts) != 1 || raw.texts[0] != "done" {
+		t.Fatalf("raw text = %q, want [done]", raw.texts)
+	}
+}
+
 // liveSBFactory returns a factory producing live StreamBuffers that share the
 // given sink. The sink's surfacedRet/msgIDsRet drive the renderer's surfaced
 // branch. Because the renderer recreates the buffer per segment, the same sink

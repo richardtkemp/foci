@@ -2,7 +2,6 @@ package ccstream
 
 import (
 	"encoding/json"
-	"strings"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -84,13 +83,11 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				}
 				switch {
 				case se.OnSubagentText != nil:
-					// Raw text + label; blockquote is now a per-platform choice
-					// applied downstream (tg/discord), not baked in here.
-					se.OnSubagentText(groupKey, b.agents.Description(groupKey), block.Text)
+					// Raw text; the label rides SubagentStart, and blockquote is a
+					// per-platform choice applied in the renderer, not here.
+					se.OnSubagentText(groupKey, block.Text)
 				case se.OnText != nil:
-					// Legacy no-subagent-callback consumer still wants a readable
-					// blockquoted intermediate.
-					se.OnText(blockquote(block.Text))
+					se.OnText(block.Text)
 				}
 			}
 		}
@@ -604,13 +601,4 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 			se.OnThinkingDelta(env.Event.Delta.Thinking)
 		}
 	}
-}
-
-// blockquote prefixes every line with "> " for markdown blockquote rendering.
-func blockquote(text string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = "> " + line
-	}
-	return strings.Join(lines, "\n")
 }

@@ -1027,9 +1027,9 @@ func drainEnv(t *testing.T, c *wsClient) []envFrame {
 	}
 }
 
-// appBackend delivers subagent progress as distinct, seq-tracked subagent.text /
-// subagent.end frames (not blockquoted ordinary messages), so the app can collapse
-// a run and open its trace on demand.
+// appBackend delivers subagent progress as distinct, seq-tracked
+// subagent.start/text/end frames (not blockquoted ordinary messages), so the app
+// can collapse a run and open its trace on demand.
 func TestAppBackend_SubagentFrames(t *testing.T) {
 	h := newTestHub()
 	c := fakeClient()
@@ -1037,12 +1037,17 @@ func TestAppBackend_SubagentFrames(t *testing.T) {
 	b := h.ensureBinding(c, "ag", "conv-1")
 	be := newAppBackend(b)
 
-	be.DeliverSubagentText("toolu_1", "Explore", "found it")
+	be.DeliverSubagentStart("toolu_1", "Explore")
+	be.DeliverSubagentText("toolu_1", "found it")
 	be.DeliverSubagentEnd("toolu_1")
 	ds := drainEnv(t, c)
 
-	if len(ds) != 2 || ds[0].t != fap.TypeSubagentText || ds[1].t != fap.TypeSubagentEnd {
-		t.Fatalf("frames = %+v, want [subagent.text subagent.end]", ds)
+	if len(ds) != 3 || ds[0].t != fap.TypeSubagentStart ||
+		ds[1].t != fap.TypeSubagentText || ds[2].t != fap.TypeSubagentEnd {
+		t.Fatalf("frames = %+v, want [subagent.start subagent.text subagent.end]", ds)
+	}
+	if !be.SubagentTextRaw() {
+		t.Error("app SubagentTextRaw() = false, want true")
 	}
 }
 

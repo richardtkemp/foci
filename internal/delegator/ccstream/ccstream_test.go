@@ -1638,9 +1638,9 @@ func TestOnAssistant_SubagentSurfacesBlockquotedText(t *testing.T) {
 		},
 	})
 
-	// Text is surfaced as a blockquote.
-	if len(textEvents) != 1 || textEvents[0] != "> sub-agent reply" {
-		t.Errorf("textEvents = %v, want [> sub-agent reply]", textEvents)
+	// Text is surfaced raw (blockquote is applied downstream in the renderer).
+	if len(textEvents) != 1 || textEvents[0] != "sub-agent reply" {
+		t.Errorf("textEvents = %v, want [sub-agent reply]", textEvents)
 	}
 	// Tool calls are NOT forwarded.
 	if len(toolStarts) != 0 {
@@ -1662,9 +1662,11 @@ func TestOnAssistant_SubagentSurfacesBlockquotedText(t *testing.T) {
 
 // TestOnAssistant_SubagentMultilineBlockquote verifies that multiline
 // sub-agent text gets every line prefixed with "> ".
-func TestOnAssistant_SubagentMultilineBlockquote(t *testing.T) {
+func TestOnAssistant_SubagentTextRaw(t *testing.T) {
 	t.Parallel()
 
+	// Subagent text is emitted RAW now — blockquote (for tg/discord) is applied
+	// downstream in the renderer, not baked in here.
 	var textEvents []string
 	b := &Backend{}
 	applyHandler(b, &testHandler{
@@ -1681,7 +1683,7 @@ func TestOnAssistant_SubagentMultilineBlockquote(t *testing.T) {
 		},
 	})
 
-	want := "> line one\n> line two\n> line three"
+	want := "line one\nline two\nline three"
 	if len(textEvents) != 1 || textEvents[0] != want {
 		t.Errorf("textEvents = %v, want [%s]", textEvents, want)
 	}
