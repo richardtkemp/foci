@@ -62,6 +62,23 @@ grep -r "pattern" .
 ack "pattern"
 ```
 
+## ripgrep (rg) — fast, but different defaults and a flag trap
+
+`rg` is much faster than ack and fine to reach for — but don't assume its flags or
+filtering match ack's:
+
+- **`-r` means `--replace`, not "recursive".** rg is recursive by default. `rg -rn X`
+  parses as `-r n` → "replace every match with the string `n`", so matches print
+  mangled: `VoiceOverlay` → `nOverlay`, `seekTo` → `n`. It looks like a display/pipe
+  bug; it is self-inflicted. For line numbers use `-n` (or `--line-number`); recursion
+  needs no flag. (Bit me 2026-07-07 — I misfiled it as a foci output bug.)
+- **Filtering isn't ack's.** rg honours `.gitignore`/`.ignore` and skips hidden files +
+  binaries by default; ack skips build artifacts via its own built-in list but *shows*
+  hidden dotfiles. So outside a git repo rg won't auto-skip build dirs, and inside one it
+  hides dotfiles ack would surface — pick per what you're hunting (`rg -uu` disables the
+  ignore/hidden filtering; `ack -f` lists what ack would search).
+- File-type filters differ: ack `--python`/`--js` vs rg `-t py`/`-t js`.
+
 ## Configuration
 
 Local `.ackrc` files affect searches run from that directory (based on pwd), not searches looking into that directory from elsewhere.
