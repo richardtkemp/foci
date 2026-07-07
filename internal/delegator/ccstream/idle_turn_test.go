@@ -416,3 +416,66 @@ func TestIdleKeyed_WaitForTurnUnblocksAtIdle(t *testing.T) {
 		t.Fatalf("WaitForTurn should return once idle completed the turn: %v", err)
 	}
 }
+
+// TestPreAnswerRedispack_ResetsOutputTokens is a regression test for the
+// cost double-count bug: turnOutputTokens must reset between pre-answer
+// nudge rounds so round-2's FinalUsage carries only round-2's output,
+// not the cross-round sum. Without the reset, the agent layer writes
+// PriorCallUsage(round1_out) + FinalUsage(round1_out + round2_out),
+// double-counting round-1's output in the api.db cost sum.
+func TestPreAnswerRedispatch_ResetsOutputTokens(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	b.typingFunc = func(bool) {}
+
+	fired := false
+	var completed *delegator.TurnResult
+	handler := &testHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },
+		PreAnswerNudgeFunc: func(_ *delegator.TurnResult) string {
+			if fired {
+				return ""
+			}
+			fired = true
+			return "revise"
+		},
+	}
+	applyHandler(b, handler)
+	stateEvent(b, "running")
+
+	// Round 1: 100 output tokens.
+	b.OnResult(&ResultMessage{
+		Subtype:    "success",
+		Usage:      TokenUsage{OutputTokens: 100},
+		ModelUsage: map[string]ModelUsage{},
+	})
+	stateEvent(b, "idle")
+
+	// Nudge should have fired; turn stays open.
+	if completed != nil {
+		t.Fatal("turn should not complete after round-1 + nudge")
+	}
+
+	// Round 2: 80 output tokens.
+	stateEvent(b, "running")
+	b.OnResult(&ResultMessage{
+		Subtype:    "success",
+		Usage:      TokenUsage{OutputTokens: 80},
+		ModelUsage: map[string]ModelUsage{},
+	})
+	stateEvent(b, "idle")
+
+	if completed == nil {
+		t.Fatal("turn should complete after round-2")
+	}
+	if completed.Usage == nil {
+		t.Fatal("completed result has nil Usage")
+	}
+	// Round-2's FinalUsage must carry only round-2's output (80),
+	// NOT the accumulated sum (100 + 80 = 180).
+	if got := completed.Usage.OutputTokens; got != 80 {
+		t.Errorf("round-2 OutputTokens = %d, want 80 (not accumulated); if 180, the turnOutputTokens reset is missing", got)
+	}
+}
