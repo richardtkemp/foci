@@ -1,4 +1,4 @@
-package ccstream
+package autoapprove
 
 import (
 	"encoding/json"
@@ -140,11 +140,11 @@ func TestParseAutoApproveRule(t *testing.T) {
 	}
 	for _, tt := range tests {
 		r := parseAutoApproveRule(tt.rule)
-		if r.toolName != tt.wantTool {
-			t.Errorf("parseAutoApproveRule(%q).toolName = %q, want %q", tt.rule, r.toolName, tt.wantTool)
+		if r.ToolName != tt.wantTool {
+			t.Errorf("parseAutoApproveRule(%q).ToolName = %q, want %q", tt.rule, r.ToolName, tt.wantTool)
 		}
-		if r.pattern != tt.wantPat {
-			t.Errorf("parseAutoApproveRule(%q).pattern = %q, want %q", tt.rule, r.pattern, tt.wantPat)
+		if r.Pattern != tt.wantPat {
+			t.Errorf("parseAutoApproveRule(%q).Pattern = %q, want %q", tt.rule, r.Pattern, tt.wantPat)
 		}
 	}
 }
@@ -153,7 +153,7 @@ func TestParseAutoApproveRule(t *testing.T) {
 // including wildcards, question marks, and literal matching.
 func TestGlobMatch(t *testing.T) {
 	tests := []struct {
-		pattern string
+		Pattern string
 		str     string
 		want    bool
 	}{
@@ -184,9 +184,9 @@ func TestGlobMatch(t *testing.T) {
 		{"?", "", false},
 	}
 	for _, tt := range tests {
-		got := globMatch(tt.pattern, tt.str)
+		got := globMatch(tt.Pattern, tt.str)
 		if got != tt.want {
-			t.Errorf("globMatch(%q, %q) = %v, want %v", tt.pattern, tt.str, got, tt.want)
+			t.Errorf("globMatch(%q, %q) = %v, want %v", tt.Pattern, tt.str, got, tt.want)
 		}
 	}
 }
@@ -195,7 +195,7 @@ func TestGlobMatch(t *testing.T) {
 // for auto-approve rule patterns.
 func TestMatchPattern(t *testing.T) {
 	tests := []struct {
-		pattern string
+		Pattern string
 		str     string
 		want    bool
 	}{
@@ -215,9 +215,9 @@ func TestMatchPattern(t *testing.T) {
 		{"gcalcli *", "gcalcli", false},
 	}
 	for _, tt := range tests {
-		got := matchPattern(tt.pattern, tt.str)
+		got := matchPattern(tt.Pattern, tt.str)
 		if got != tt.want {
-			t.Errorf("matchPattern(%q, %q) = %v, want %v", tt.pattern, tt.str, got, tt.want)
+			t.Errorf("matchPattern(%q, %q) = %v, want %v", tt.Pattern, tt.str, got, tt.want)
 		}
 	}
 }
@@ -226,7 +226,7 @@ func TestMatchPattern(t *testing.T) {
 // tool input JSON for different tool types.
 func TestExtractMatchString(t *testing.T) {
 	tests := []struct {
-		toolName string
+		ToolName string
 		input    string
 		want     string
 	}{
@@ -245,9 +245,9 @@ func TestExtractMatchString(t *testing.T) {
 		{"Bash", ``, ""},
 	}
 	for _, tt := range tests {
-		got := extractMatchString(tt.toolName, json.RawMessage(tt.input))
+		got := extractMatchString(tt.ToolName, json.RawMessage(tt.input))
 		if got != tt.want {
-			t.Errorf("extractMatchString(%q, %s) = %q, want %q", tt.toolName, tt.input, got, tt.want)
+			t.Errorf("extractMatchString(%q, %s) = %q, want %q", tt.ToolName, tt.input, got, tt.want)
 		}
 	}
 }
@@ -343,7 +343,7 @@ func TestCommonReadonlyRulesParseSuccessfully(t *testing.T) {
 		t.Fatalf("expected %d parsed rules, got %d", len(CommonReadonlyRules), len(parsed))
 	}
 	for i, r := range parsed {
-		if r.toolName == "" {
+		if r.ToolName == "" {
 			t.Errorf("CommonReadonlyRules[%d] = %q: empty tool name", i, CommonReadonlyRules[i])
 		}
 	}
@@ -357,7 +357,7 @@ func TestCommonSafeWriteRulesParseSuccessfully(t *testing.T) {
 		t.Fatalf("expected %d parsed rules, got %d", len(CommonSafeWriteRules), len(parsed))
 	}
 	for i, r := range parsed {
-		if r.toolName == "" {
+		if r.ToolName == "" {
 			t.Errorf("CommonSafeWriteRules[%d] = %q: empty tool name", i, CommonSafeWriteRules[i])
 		}
 	}
@@ -395,11 +395,11 @@ func TestFociShellRulesForDerivesFromExecNames(t *testing.T) {
 
 	parsed := parseAutoApproveRules(rules)
 	for i, p := range parsed {
-		if p.toolName != "Bash" {
-			t.Errorf("rule[%d] toolName = %q, want Bash", i, p.toolName)
+		if p.ToolName != "Bash" {
+			t.Errorf("rule[%d] toolName = %q, want Bash", i, p.ToolName)
 		}
-		if p.pattern != names[i] {
-			t.Errorf("rule[%d] pattern = %q, want %q", i, p.pattern, names[i])
+		if p.Pattern != names[i] {
+			t.Errorf("rule[%d] pattern = %q, want %q", i, p.Pattern, names[i])
 		}
 	}
 

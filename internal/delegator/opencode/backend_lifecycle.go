@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/log"
 )
 
@@ -59,6 +60,8 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 
 	b.agentID = opts.AgentID
 	b.startOpts = opts
+	b.workDir = opts.WorkDir
+	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
 
 	// Ensure the shell.env plugin exists BEFORE acquiring the server.
 	// opencode loads plugins at subprocess startup; if we write it after
