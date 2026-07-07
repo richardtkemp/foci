@@ -54,6 +54,11 @@ func (b *Backend) SetModel(ctx context.Context, model string) error {
 	return b.SendControl(ctx, &delegator.SetModelRequest{Model: model})
 }
 
+// Capabilities advertises ccstream's full mid-turn nudge support.
+func (b *Backend) Capabilities() delegator.Capabilities {
+	return delegator.Capabilities{PostToolNudge: true, PreAnswerNudge: true}
+}
+
 // GetContextWindow sends a get_context_usage control request and returns the
 // model's context window size. Zero API cost — CC computes this locally.
 func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindow, error) {

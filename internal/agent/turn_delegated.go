@@ -334,8 +334,19 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// Per-turn bookkeeping callbacks via TurnEvents. These hold per-turn
 	// state (preAnswerFired, toolCount, ts) and may legitimately be nil
 	// between turns; the backend tolerates that.
-	turnEvents := &delegator.TurnEvents{
-		PostToolNudgeFunc: func(toolName, toolInput string, isError bool) []string {
+	//
+	// Gate the mid-turn callbacks on backend capabilities: opencode can't
+	// inject messages mid-turn (HTTP/SSE, no stdin pipe), so wiring them
+	// up would be dead code. Turn-start nudges (every_n_turns, regex) are
+	// unaffected — they're prepended to the prompt in InjectNudges.
+	caps := delegator.Capabilities{PostToolNudge: true, PreAnswerNudge: true}
+	if bc, ok := be.(delegator.BackendCapabilities); ok {
+		caps = bc.Capabilities()
+	}
+
+	var postToolNudgeFunc func(toolName, toolInput string, isError bool) []string
+	if caps.PostToolNudge {
+		postToolNudgeFunc = func(toolName, toolInput string, isError bool) []string {
 			if a.Nudger == nil || !nudgesAllowed(ts) {
 				return nil
 			}
@@ -354,8 +365,12 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			a.logger().Debugf("nudge: injected %d reminder(s) after tool %q (count=%d, err=%v) for session %s",
 				len(out), toolName, toolCount, isError, ts.SessionKey)
 			return out
-		},
-		PreAnswerNudgeFunc: func(result *delegator.TurnResult) string {
+		}
+	}
+
+	var preAnswerNudgeFunc func(result *delegator.TurnResult) string
+	if caps.PreAnswerNudge {
+		preAnswerNudgeFunc = func(result *delegator.TurnResult) string {
 			if preAnswerFired || a.Nudger == nil || !a.NudgePreAnswerGate || !nudgesAllowed(ts) {
 				return ""
 			}
@@ -386,7 +401,12 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			a.logger().Infof("nudge: pre-answer gate fired for session %s (tool_count=%d)",
 				ts.SessionKey, toolCount)
 			return wrapNudge(reminder)
-		},
+		}
+	}
+
+	turnEvents := &delegator.TurnEvents{
+		PostToolNudgeFunc:  postToolNudgeFunc,
+		PreAnswerNudgeFunc: preAnswerNudgeFunc,
 	}
 	turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
 		// Guard the whole completion with sync.Once: the delegated backend's

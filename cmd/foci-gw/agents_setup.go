@@ -166,9 +166,28 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 	cooldown := nc.NudgeCooldown
 	maxPerBatch := nc.NudgeMaxPerBatch
 	allRules := append(braindeadRules, append(charRules, append(defaultRules, scratchpadRules...)...)...)
+
+	// Determine backend capabilities for nudge rule filtering.
+	// Turn-start triggers (every_n_turns, regex) work on all backends;
+	// mid-turn triggers (every_n_tools, after_error, tool_pattern,
+	// pre_answer) require a backend with stdin-pipe injection (ccstream).
+	// opencode is HTTP-based and can't inject mid-turn.
+	backendType := acfg.Backend
+	isOpencode := backendType == "opencode"
+	schedOpts := nudge.SchedulerOpts{
+		Cooldown:     cooldown,
+		MaxPerBatch:  maxPerBatch,
+		CanPostTool:  !isOpencode,
+		CanPreAnswer: !isOpencode,
+	}
+
 	if len(allRules) > 0 {
 		rs := &nudge.RuleSet{Rules: allRules}
-		ag.Nudger = nudge.NewScheduler(rs, cooldown, maxPerBatch)
+		if isOpencode {
+			ag.Nudger = nudge.NewSchedulerOpts(rs, schedOpts)
+		} else {
+			ag.Nudger = nudge.NewScheduler(rs, cooldown, maxPerBatch)
+		}
 		log.Infof("main", "agent %s: loaded %d nudge rules (%d braindead, %d character, %d default, %d scratchpad)", acfg.ID, len(allRules), len(braindeadRules), len(charRules), len(defaultRules), len(scratchpadRules))
 	}
 
@@ -200,7 +219,11 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		// safety "braindead" rule must survive reloads, not just the first build.
 		merged := append(braindeadRules, append(reloaded, append(defaultRules, scratchpadRules...)...)...)
 		if len(merged) > 0 {
-			ag.Nudger = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, cooldown, maxPerBatch)
+			if isOpencode {
+				ag.Nudger = nudge.NewSchedulerOpts(&nudge.RuleSet{Rules: merged}, schedOpts)
+			} else {
+				ag.Nudger = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, cooldown, maxPerBatch)
+			}
 		}
 	}
 

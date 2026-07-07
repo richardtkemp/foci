@@ -104,3 +104,21 @@ func ContentHash(contents []string) string {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
+
+// TriggerRequiresPostTool reports whether a trigger type needs mid-turn
+// post-tool injection (PostToolNudgeFunc). These triggers can only fire
+// on backends that advertise CanPostToolNudge.
+func TriggerRequiresPostTool(triggerType string) bool {
+	switch triggerType {
+	case "every_n_tools", "after_error", "tool_pattern":
+		return true
+	default:
+		return false
+	}
+}
+
+// TriggerRequiresPreAnswer reports whether a trigger type needs mid-turn
+// pre-answer injection (PreAnswerNudgeFunc).
+func TriggerRequiresPreAnswer(triggerType string) bool {
+	return triggerType == "pre_answer"
+}

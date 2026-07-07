@@ -1,6 +1,7 @@
 package nudge
 
 import (
+	"foci/internal/log"
 	"regexp"
 	"sync"
 )
@@ -42,21 +43,57 @@ type Scheduler struct {
 	recent []toolEvent
 }
 
+// SchedulerOpts configures optional Scheduler behaviour.
+type SchedulerOpts struct {
+	Cooldown       int
+	MaxPerBatch    int
+	// CanPostTool gates every_n_tools, after_error, and tool_pattern
+	// triggers. Rules requiring this that are present in the RuleSet but
+	// unsupported get a warning and are silently skipped at evaluation.
+	CanPostTool    bool
+	// CanPreAnswer gates pre_answer triggers.
+	CanPreAnswer   bool
+}
+
 // NewScheduler creates a Scheduler from a RuleSet.
 // cooldown is the minimum tool calls between repeating the same reminder.
 // maxPerBatch is the maximum reminders injected per tool batch.
 func NewScheduler(rs *RuleSet, cooldown, maxPerBatch int) *Scheduler {
+	return NewSchedulerOpts(rs, SchedulerOpts{Cooldown: cooldown, MaxPerBatch: maxPerBatch, CanPostTool: true, CanPreAnswer: true})
+}
+
+// NewSchedulerOpts creates a Scheduler with full options including
+// backend capability gating.
+func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 	if rs == nil {
 		return nil
 	}
+	cooldown := opts.Cooldown
 	if cooldown <= 0 {
 		cooldown = 5
 	}
+	maxPerBatch := opts.MaxPerBatch
 	if maxPerBatch <= 0 {
 		maxPerBatch = 1
 	}
+	canPostTool := opts.CanPostTool
+	canPreAnswer := opts.CanPreAnswer
+
+	var activeRules []Rule
+	for _, r := range rs.Rules {
+		if TriggerRequiresPostTool(r.Trigger.Type) && !canPostTool {
+			log.Warnf("WARN nudge: rule %q uses trigger %q which requires post-tool injection — not supported by this backend. Rule will be skipped.", truncate(r.Text, 60), r.Trigger.Type)
+			continue
+		}
+		if TriggerRequiresPreAnswer(r.Trigger.Type) && !canPreAnswer {
+			log.Warnf("WARN nudge: rule %q uses trigger %q which requires pre-answer injection — not supported by this backend. Rule will be skipped.", truncate(r.Text, 60), r.Trigger.Type)
+			continue
+		}
+		activeRules = append(activeRules, r)
+	}
+
 	s := &Scheduler{
-		rules:              rs.Rules,
+		rules:              activeRules,
 		cooldown:           cooldown,
 		maxPerBatch:        maxPerBatch,
 		lastFired:          make(map[int]int),
@@ -329,4 +366,11 @@ func (s *Scheduler) matchesRecentLocked(idx int, t Trigger) bool {
 		}
 	}
 	return true
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

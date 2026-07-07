@@ -358,6 +358,29 @@ type ContextWindowQuerier interface {
 	GetContextWindow(ctx context.Context) (*ContextWindow, error)
 }
 
+// BackendCapabilities is optionally implemented by backends to advertise
+// which nudge delivery mechanisms they support. Backends that don't
+// implement this interface are assumed to support everything (backward
+// compat for cctmux or any hypothetical backend).
+type BackendCapabilities interface {
+	Capabilities() Capabilities
+}
+
+// Capabilities describes which mid-turn injection mechanisms the backend
+// supports. Turn-start nudges (every_n_turns, regex) work on all backends
+// because they're prepended to the prompt before the turn begins; the
+// fields here gate only the mid-turn mechanisms.
+type Capabilities struct {
+	// PostToolNudge indicates the backend can inject messages at tool
+	// boundaries mid-turn. Required for every_n_tools, after_error, and
+	// tool_pattern trigger types.
+	PostToolNudge bool
+
+	// PreAnswerNudge indicates the backend can inject a message before
+	// the model returns its final answer. Required for pre_answer trigger.
+	PreAnswerNudge bool
+}
+
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
 	WorkDir          string            // agent workspace directory (becomes cwd)
