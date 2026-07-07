@@ -686,9 +686,36 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		case env := <-inb.ch:
 			// System injection: run it serialised with this session's platform
 			// turns (the worker is idle between turns here) rather than in a
-			// detached goroutine that races them. No platform gates apply — the
-			// worker only dequeues while idle, so nothing is in flight.
+			// detached goroutine that races them.
 			if env.Inject != nil {
+				// Autonomous-run gate (TODO #1070). Normally when the worker
+				// dequeues an injection nothing is in flight — a platform turn
+				// occupies the worker synchronously (driveAndDrainOrphans
+				// blocks below), so the worker only reaches here while idle.
+				// The exception is a CC *autonomous* run: foci opened no turn
+				// for it, so the worker stays idle while CC self-resumes. foci
+				// adopts that run as an in-flight delivering turn
+				// (markInFlight(sk, true) via the backend's onAutonomousStart
+				// callback). Running an injection now would call
+				// AttachSessionEvents and rebind the shared session-scoped
+				// se.OnText to the injection's NopSink (a reflection has no
+				// sink on ctx), silently dropping the autonomous run's
+				// remaining text blocks (#1068). Hold the injection until the
+				// adopted run clears — the only in-flight-delivering state a
+				// free worker can observe is an autonomous run, so this never
+				// blocks against a normal platform turn.
+				if a.IsInFlightDelivering(env.SessionKey) {
+					log.Extra("inbox", "gate_wait sk=%s reason=autonomous_in_flight — holding injection until the adopted autonomous run clears (#1070)", env.SessionKey)
+				}
+				for a.IsInFlightDelivering(env.SessionKey) {
+					wait := a.InFlightWaitCh(env.SessionKey)
+					select {
+					case <-ctx.Done():
+						return
+					case <-wait:
+						// State changed — re-check.
+					}
+				}
 				a.runInject(inb, env)
 				continue
 			}

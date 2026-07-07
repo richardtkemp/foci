@@ -31,8 +31,9 @@ func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
 // messages to the fold path instead.
 func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnMu.Lock()
-	b.beginTurnLocked(turn)
+	fireAutonomousEnd := b.beginTurnLocked(turn)
 	b.turnMu.Unlock()
+	fireAutonomousEnd()
 	b.resetTurnScratch()
 }
 
@@ -55,16 +56,19 @@ func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
 		b.turnMu.Unlock()
 		return delegator.ErrTurnInFlight
 	}
-	b.beginTurnLocked(turn)
+	fireAutonomousEnd := b.beginTurnLocked(turn)
 	b.turnMu.Unlock()
+	fireAutonomousEnd()
 	b.resetTurnScratch()
 	return nil
 }
 
-// beginTurnLocked initialises per-turn state. Caller must hold turnMu.
-func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
+// beginTurnLocked initialises per-turn state. Caller must hold turnMu and must
+// invoke the returned callback (the autonomous-run end hook, fired when a foci
+// turn adopts an in-flight autonomous run) AFTER releasing turnMu.
+func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) func() {
 	b.turnActive = true
-	b.autonomousActive = false // a foci turn now owns the run (adoption)
+	fireAutonomousEnd := b.setAutonomousActiveLocked(false) // a foci turn now owns the run (adoption)
 	b.turnEvents = turn
 	b.turnText.Reset()
 	b.turnTools = 0
@@ -74,6 +78,7 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnOutputTokens = 0
 	b.turnCalls = 0
 	b.redispatchInFlight = false
+	return fireAutonomousEnd
 }
 
 // resetTurnScratch clears the non-turnMu turn-start state: cached usage

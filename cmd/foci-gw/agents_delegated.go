@@ -383,7 +383,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				log.Warnf("agent/"+agentID, "system notice send failed for session=%s: %v", sessionKey, err)
 			}
 		},
-		IdleTimeout: idleTimeout,
+		// Adopt CC autonomous runs as in-flight delivering turns so the inbox
+		// worker holds concurrent reflection/keepalive injections that would
+		// otherwise poison the run's shared session sink (#1070).
+		AdoptAutonomousRun: ag.AdoptAutonomousRun,
+		IdleTimeout:        idleTimeout,
 	}
 
 	return finalizeParams{

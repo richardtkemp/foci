@@ -40,3 +40,15 @@ func (b *Backend) SetOnSubagentStatus(fn func(detail string)) { b.agents.OnStatu
 // failure (a 401). Used to trigger automated re-login (#843). Must be set
 // before Start.
 func (b *Backend) SetOnAuthFailure(fn func(detail string)) { b.onAuthFailure = fn }
+
+// SetOnAutonomousStart registers a hook fired when the backend detects CC has
+// begun an autonomous run (session_state:running with no foci turn open). The
+// agent wires this to markInFlight so the run is adopted as an in-flight
+// delivering turn (#1070). Must be set before Start.
+func (b *Backend) SetOnAutonomousStart(fn func()) { b.onAutonomousStart = fn }
+
+// SetOnAutonomousEnd registers a hook fired when an autonomous run ends (CC
+// idle, subprocess exit, or a foci turn adopting the run). Paired with
+// SetOnAutonomousStart to release the agent's in-flight adoption. Must be set
+// before Start.
+func (b *Backend) SetOnAutonomousEnd(fn func()) { b.onAutonomousEnd = fn }
