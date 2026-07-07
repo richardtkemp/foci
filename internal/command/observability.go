@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"foci/internal/delegator"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -437,28 +438,89 @@ func ContextCommand() *Command {
 			sb.WriteString("```")
 
 			mb := info.Messages
+			cats := contextBreakdownFromBackend(ctx, cc)
 			sb.WriteString("\n\n```\n")
-			if tc != nil {
+			hasMessages := mb.UserCount+mb.AssistantCount > 0 || mb.ToolResultChars > 0
+			switch {
+			case tc != nil:
+				// API backend: foci holds the messages and counts exact tokens.
 				fmt.Fprintf(&sb, "Conversation: %s tokens (%d messages)\n",
 					display.FormatCommas(tc.Conversation), mb.UserCount+mb.AssistantCount)
-			} else {
+				writeMessageRoles(&sb, mb)
+			case len(cats) > 0:
+				// Delegated backend (CC) owns the transcript, so foci can't split
+				// by role — but CC reports its own authoritative breakdown. Show it.
+				sb.WriteString("Context breakdown (reported by the backend):\n")
+				maxNameLen := 0
+				for _, c := range cats {
+					if len(c.Name) > maxNameLen {
+						maxNameLen = len(c.Name)
+					}
+				}
+				for _, c := range cats {
+					var pct float64
+					if contextLimit > 0 {
+						pct = float64(c.Tokens) / float64(contextLimit) * 100
+					}
+					fmt.Fprintf(&sb, "  %-*s  %s tokens  (%.1f%%)\n",
+						maxNameLen, c.Name, display.FormatCommas(c.Tokens), pct)
+				}
+			case hasMessages:
+				// foci holds the messages but has no exact count — estimate from chars.
 				totalConvChars := mb.UserChars + mb.AssistantChars + mb.ToolResultChars
 				fmt.Fprintf(&sb, "Conversation: ~%s tokens (%d messages)\n",
 					display.FormatCommas(totalConvChars/4), mb.UserCount+mb.AssistantCount)
-			}
-			fmt.Fprintf(&sb, "  User messages     ~%s tokens (%d msgs)\n",
-				display.FormatCommas(mb.UserChars/4), mb.UserCount)
-			fmt.Fprintf(&sb, "  Assistant         ~%s tokens (%d msgs)\n",
-				display.FormatCommas(mb.AssistantChars/4), mb.AssistantCount)
-			if mb.ToolResultChars > 0 {
-				fmt.Fprintf(&sb, "  Tool results      ~%s tokens\n",
-					display.FormatCommas(mb.ToolResultChars/4))
+				writeMessageRoles(&sb, mb)
+			default:
+				// Delegated backend, no transcript access and no backend breakdown —
+				// don't render a table of zeroes.
+				sb.WriteString("Conversation: data unavailable\n")
 			}
 			sb.WriteString("```")
 
 			return Response{Text: sb.String()}, nil
 		},
 	}
+}
+
+// writeMessageRoles renders the per-role conversation lines (char-estimated
+// tokens) shared by the exact-count and estimate branches of /context.
+func writeMessageRoles(sb *strings.Builder, mb MessageBreakdown) {
+	fmt.Fprintf(sb, "  User messages     ~%s tokens (%d msgs)\n",
+		display.FormatCommas(mb.UserChars/4), mb.UserCount)
+	fmt.Fprintf(sb, "  Assistant         ~%s tokens (%d msgs)\n",
+		display.FormatCommas(mb.AssistantChars/4), mb.AssistantCount)
+	if mb.ToolResultChars > 0 {
+		fmt.Fprintf(sb, "  Tool results      ~%s tokens\n",
+			display.FormatCommas(mb.ToolResultChars/4))
+	}
+}
+
+// contextBreakdownFromBackend asks the delegated backend for its own context
+// usage breakdown (CC computes this locally — no API call). Returns nil when
+// there's no delegated backend, it doesn't support the query, or the query
+// fails; the caller degrades to "data unavailable" rather than showing zeroes.
+func contextBreakdownFromBackend(ctx context.Context, cc CommandContext) []delegator.ContextCategory {
+	if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
+		return nil
+	}
+	sk := tools.SessionKeyFromContext(ctx)
+	if sk == "" {
+		return nil
+	}
+	be, err := cc.Agent.DelegatedManager.Get(ctx, sk)
+	if err != nil {
+		return nil
+	}
+	cwq, ok := be.(delegator.ContextWindowQuerier)
+	if !ok {
+		return nil
+	}
+	win, err := cwq.GetContextWindow(ctx)
+	if err != nil {
+		return nil
+	}
+	return win.Categories
 }
 
 // buildContextInfo constructs ContextInfo from CommandContext.

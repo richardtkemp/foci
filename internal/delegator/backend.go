@@ -327,15 +327,29 @@ type PlanResponder interface {
 	CancelPlanWithFeedback(requestID, feedback string) error
 }
 
-// ContextWindow holds the model's context window size. Returned by backends
+// ContextWindow holds the model's context window size and, when the backend
+// reports one, its own self-computed usage breakdown. Returned by backends
 // that can look up the real limit (e.g. opencode's /config/providers, CC's
-// get_context_usage control request). The token count itself is NOT included
-// here — it comes from api.db (QuerySessionStats), which is durable and
-// always available, unlike in-memory backend state which is cleared at turn
-// boundaries.
+// get_context_usage control request).
+//
+// The HEADER token total shown by /context comes from api.db (QuerySessionStats),
+// which is durable and survives a restart — NOT from TotalTokens here, which is
+// in-memory backend state cleared at turn boundaries. Categories is the only
+// source of the per-section breakdown though (CC computes it locally, exactly),
+// so it drives /context's breakdown block; empty means the backend can't break
+// it down (e.g. opencode) and /context degrades to "data unavailable".
 type ContextWindow struct {
-	MaxTokens int    // total context window size for the current model
-	Model     string // model name (e.g. "claude-sonnet-4-6")
+	MaxTokens   int               // total context window size for the current model
+	Model       string            // model name (e.g. "claude-sonnet-4-6")
+	TotalTokens int               // backend's in-memory used-token count (0 after restart)
+	Categories  []ContextCategory // per-section breakdown, when the backend reports one
+}
+
+// ContextCategory is a single row in a backend's context-usage breakdown, e.g.
+// "System prompt" / "Messages" / "Free space" with its token count.
+type ContextCategory struct {
+	Name   string
+	Tokens int
 }
 
 // ContextWindowQuerier is optionally implemented by backends that can look up
