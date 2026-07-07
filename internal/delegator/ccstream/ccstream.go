@@ -106,6 +106,13 @@ type Backend struct {
 	// short grace after it (autonomousInjectGrace), SourceSystem injects still
 	// defer in tryBeginTurn — see there.
 	lastAutonomousEnd time.Time
+	// autonomousStreamed records whether any top-level assistant text was
+	// streamed to the session sink (se.OnText) during the current autonomous
+	// run. When true, the run's text already reached the chat via the
+	// late-delivery fallback, so onSessionIdle must NOT re-deliver the stashed
+	// result (double-send guard). Reset when an autonomous run begins. See
+	// onSessionIdle's autonomous branch (#1063).
+	autonomousStreamed bool
 	turnEvents        *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
 	turnResultCh   chan *ResultMessage   // buffered(1), receives result
 	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
