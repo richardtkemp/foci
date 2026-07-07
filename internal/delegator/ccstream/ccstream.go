@@ -197,6 +197,19 @@ type Backend struct {
 	onAutonomousStart func()
 	onAutonomousEnd   func()
 
+	// edgeCallbacks is the FIFO of pending onAutonomousStart/End callbacks.
+	// setAutonomousActiveLocked appends here under turnMu (so enqueue order ==
+	// true state-transition order); drainEdgeCallbacks fires them under fireMu
+	// in that order. This is what keeps a start (reader goroutine) and an
+	// adopting end (turn goroutine) from firing reversed — which would release
+	// before adopt and leak a phantom in-flight adoption, wedging the inject
+	// gate until the next run.
+	edgeCallbacks []func()
+	// fireMu serialises drainEdgeCallbacks so exactly one goroutine fires the
+	// queued edges, in order. Distinct from turnMu — never held across turnMu,
+	// and the fired callbacks (markInFlight) are agent-side, so no lock cycle.
+	fireMu sync.Mutex
+
 	// outstanding tracks every prompt awaiting a user response (permissions,
 	// AskUserQuestion sequences, MCP elicitations) under one lifecycle layer.
 	// The kind-specific stores (pendingPerms, pendingElicits) keep their own

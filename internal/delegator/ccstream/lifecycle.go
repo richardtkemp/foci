@@ -436,13 +436,13 @@ func (b *Backend) finalizeExit(reason error) {
 		turn := b.turnEvents
 		b.turnEvents = nil
 		b.turnActive = false
-		fireAutonomousEnd := b.setAutonomousActiveLocked(false) // subprocess gone: no idle will clear it
+		b.setAutonomousActiveLocked(false) // subprocess gone: no idle will clear it
 		b.stashedResult = nil
 		b.stashedResultMsg = nil
 		b.redispatchInFlight = false
 		resultCh := b.turnResultCh
 		b.turnMu.Unlock()
-		fireAutonomousEnd()
+		b.drainEdgeCallbacks()
 		b.agents.ClearAll() // subprocess gone: pending agents can never complete
 		log.Debugf(component, "finalizeExit: post-turnMu turn_nil=%v turn_otc_nil=%v elapsed=%s", turn == nil, turn == nil || turn.OnTurnComplete == nil, time.Since(start))
 
