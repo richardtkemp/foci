@@ -610,6 +610,36 @@ func (a *Agent) backendAwaitingAutonomousRun(sk string) bool {
 	return a.DelegatedManager.BackendAwaitingAutonomousRun(sk)
 }
 
+// waitInjectGate blocks until sk has no delivering work active or pending — an
+// adopted autonomous run (IsInFlightDelivering) or the backend's whole
+// background-work window (backendAwaitingAutonomousRun, spec §4). Running an
+// inject during that window rebinds the shared session sink to the inject's
+// NopSink and swallows the run's output (#1068). Returns false if ctx is
+// cancelled while waiting (the worker should stop), true when the gate is open.
+// The adoption edge broadcasts via InFlightWaitCh; a pending→run→clear
+// transition has no channel, so it also polls at injectGatePollInterval. Applied
+// at every runInject site — the dequeue path and the post-batch heldInjects loop.
+func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
+	gated := func() bool {
+		return a.IsInFlightDelivering(sk) || a.backendAwaitingAutonomousRun(sk)
+	}
+	if gated() {
+		log.Extra("inbox", "gate_wait sk=%s reason=autonomous_or_pending — holding injection until the run and any pending background work clear (#1070/spec§4)", sk)
+	}
+	for gated() {
+		wait := a.InFlightWaitCh(sk)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-wait:
+			// Adoption edge fired — re-check.
+		case <-time.After(injectGatePollInterval):
+			// Pending-work transitions have no broadcast — poll.
+		}
+	}
+	return true
+}
+
 // InboxTurnActive reports whether the given session has a turn in flight,
 // according to the per-session inbox flag. Returns false for unknown
 // sessions. Used by tests and diagnostics.
@@ -698,44 +728,13 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// turns (the worker is idle between turns here) rather than in a
 			// detached goroutine that races them.
 			if env.Inject != nil {
-				// Autonomous-run gate (TODO #1070). Normally when the worker
-				// dequeues an injection nothing is in flight — a platform turn
-				// occupies the worker synchronously (driveAndDrainOrphans
-				// blocks below), so the worker only reaches here while idle.
-				// The exception is a CC *autonomous* run: foci opened no turn
-				// for it, so the worker stays idle while CC self-resumes. foci
-				// adopts that run as an in-flight delivering turn
-				// (markInFlight(sk, true) via the backend's onAutonomousStart
-				// callback). Running an injection now would call
-				// AttachSessionEvents and rebind the shared session-scoped
-				// se.OnText to the injection's NopSink (a reflection has no
-				// sink on ctx), silently dropping the autonomous run's
-				// remaining text blocks (#1068). Hold the injection until the
-				// adopted run clears — the only in-flight-delivering state a
-				// free worker can observe is an autonomous run, so this never
-				// blocks against a normal platform turn.
-				// The gate also holds while the backend reports pending
-				// background work (a spawned subagent / run_in_background Bash
-				// not yet completed) or a live/imminent autonomous run — the
-				// whole background-work window, not just an adopted run (spec §4,
-				// backendAwaitingAutonomousRun). A pending→run→clear transition
-				// has no InFlightWaitCh edge, so the wait also polls as a backstop.
-				gated := func() bool {
-					return a.IsInFlightDelivering(env.SessionKey) || a.backendAwaitingAutonomousRun(env.SessionKey)
-				}
-				if gated() {
-					log.Extra("inbox", "gate_wait sk=%s reason=autonomous_or_pending — holding injection until the run and any pending background work clear (#1070/spec§4)", env.SessionKey)
-				}
-				for gated() {
-					wait := a.InFlightWaitCh(env.SessionKey)
-					select {
-					case <-ctx.Done():
-						return
-					case <-wait:
-						// Adoption edge fired — re-check.
-					case <-time.After(injectGatePollInterval):
-						// Pending-work transitions have no broadcast — poll.
-					}
+				// Hold the injection while a delivering autonomous run is live
+				// or its background-work window is open (#1070/spec §4). The
+				// worker reaching here while such work is live is exactly the
+				// autonomous case (a platform turn occupies the worker
+				// synchronously below), never a normal platform turn.
+				if !a.waitInjectGate(ctx, env.SessionKey) {
+					return
 				}
 				a.runInject(inb, env)
 				continue
@@ -823,7 +822,14 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			steerer := turnevent.SteererFunc(inb.drainSteerTexts)
 			heldInjects = append(heldInjects, a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)...)
 			inb.turnActive.Store(false)
+			// The just-finished platform turn may have spawned background work
+			// (a subagent / run_in_background Bash) whose autonomous run now owns
+			// delivery — so each held inject passes the same gate as the dequeue
+			// path, not a direct runInject (the Phase 3 bypass fix).
 			for _, inj := range heldInjects {
+				if !a.waitInjectGate(ctx, inj.SessionKey) {
+					return
+				}
 				a.runInject(inb, inj)
 			}
 		}

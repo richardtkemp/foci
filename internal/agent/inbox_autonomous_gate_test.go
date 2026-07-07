@@ -1,10 +1,66 @@
 package agent
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// TestWaitInjectGate_HoldsUntilClear covers the Phase 3 extracted gate helper
+// applied at both runInject sites (the dequeue path and the post-batch
+// heldInjects loop). It blocks while the backend reports pending/autonomous
+// work and returns true once that clears — released here via the poll backstop
+// since a pending→clear transition has no InFlightWaitCh edge.
+func TestWaitInjectGate_HoldsUntilClear(t *testing.T) {
+	a := newTestAgent(t)
+	be := &mockBackendDT{}
+	be.setAwaiting(true)
+	mgr := newMockDelegatedManager(t, be)
+	a.DelegatedManager = mgr
+
+	returned := make(chan bool, 1)
+	go func() { returned <- a.waitInjectGate(context.Background(), "test/s") }()
+	select {
+	case <-returned:
+		t.Fatal("waitInjectGate returned while the backend was awaiting; expected to block")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	be.setAwaiting(false)
+	select {
+	case ok := <-returned:
+		if !ok {
+			t.Fatal("waitInjectGate returned false when the gate opened, want true")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitInjectGate did not return after awaiting cleared")
+	}
+}
+
+// TestWaitInjectGate_CtxCancelReturnsFalse pins the shutdown contract both call
+// sites depend on: a cancelled ctx makes the gate return false so the worker
+// stops rather than spinning.
+func TestWaitInjectGate_CtxCancelReturnsFalse(t *testing.T) {
+	a := newTestAgent(t)
+	be := &mockBackendDT{}
+	be.setAwaiting(true)
+	mgr := newMockDelegatedManager(t, be)
+	a.DelegatedManager = mgr
+
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan bool, 1)
+	go func() { returned <- a.waitInjectGate(ctx, "test/s") }()
+	cancel()
+	select {
+	case ok := <-returned:
+		if ok {
+			t.Fatal("waitInjectGate returned true on ctx cancel, want false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waitInjectGate did not return on ctx cancel")
+	}
+}
 
 // TestInbox_Inject_HeldWhileAutonomousDelivering is the #1070 repro. When CC
 // runs an autonomous turn (one foci opened no turn for), foci learns of it via

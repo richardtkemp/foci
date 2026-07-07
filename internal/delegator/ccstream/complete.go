@@ -32,9 +32,9 @@ func (b *Backend) onSessionIdle() {
 	if b.autonomousActive {
 		b.lastAutonomousEnd = time.Now() // opens the post-run grace (see autonomousInjectGrace)
 	}
-	fireAutonomousEnd := b.setAutonomousActiveLocked(false) // idle ends any autonomous turn
+	b.setAutonomousActiveLocked(false) // idle ends any autonomous turn
 	b.turnMu.Unlock()
-	fireAutonomousEnd()
+	b.drainEdgeCallbacks()
 
 	if !active {
 		// Autonomous run foci opened no turn for (task-notification runs after a
@@ -71,32 +71,57 @@ func (b *Backend) onSessionIdle() {
 }
 
 // setAutonomousActiveLocked edge-triggers the autonomous-run lifecycle
-// callbacks. It sets b.autonomousActive and, when the value actually changes,
-// returns the matching callback (onAutonomousStart on false→true,
-// onAutonomousEnd on true→false) for the caller to invoke AFTER releasing
-// turnMu; with no edge it returns a no-op. Firing outside the lock is
-// mandatory: onAutonomousStart/End re-enter the agent (markInFlight and its
-// wait-channel notifications) and must not run under b.turnMu.
+// callbacks. It sets b.autonomousActive and, on a real edge, ENQUEUES the
+// matching callback (onAutonomousStart on false→true, onAutonomousEnd on
+// true→false) onto edgeCallbacks. The caller must invoke drainEdgeCallbacks
+// AFTER releasing turnMu — firing outside the lock is mandatory (the callbacks
+// re-enter the agent via markInFlight and must not run under b.turnMu).
+//
+// Enqueue happens under turnMu (the caller holds it), so queue order == the
+// true flip order. drainEdgeCallbacks then fires in that order, which is what
+// stops a reader-goroutine start and a turn-goroutine adopting end from firing
+// reversed (release-before-adopt would leak the adoption and wedge the gate).
 //
 // Every site that flips autonomousActive routes through here so the
-// onAutonomousStart/onAutonomousEnd pair stays balanced regardless of which
-// transition ends the run — CC idle (onSessionIdle), subprocess exit
-// (lifecycle.go), or a foci turn adopting the run (beginTurnLocked). An
-// unbalanced pair would leak the agent's in-flight-delivering adoption and
-// wedge the injection gate (#1070).
-func (b *Backend) setAutonomousActiveLocked(active bool) func() {
+// start/end pair stays balanced regardless of which transition ends the run —
+// CC idle (onSessionIdle), subprocess exit (lifecycle.go), or a foci turn
+// adopting the run (beginTurnLocked) (#1070).
+func (b *Backend) setAutonomousActiveLocked(active bool) {
 	if b.autonomousActive == active {
-		return func() {}
+		return
 	}
 	b.autonomousActive = active
 	fn := b.onAutonomousEnd
 	if active {
 		fn = b.onAutonomousStart
 	}
-	if fn == nil {
-		return func() {}
+	if fn != nil {
+		b.edgeCallbacks = append(b.edgeCallbacks, fn)
 	}
-	return fn
+}
+
+// drainEdgeCallbacks fires queued autonomous-run edge callbacks in FIFO order.
+// fireMu serialises drainers so exactly one fires the edges in order; turnMu is
+// taken only to pop each callback and released before firing it (the callbacks
+// re-enter the agent and must not run under turnMu). A concurrent drainer blocks
+// on fireMu, then finds an empty queue. The queue is never cleared out-of-band:
+// draining preserves start/end pairing (an unpaired start always has its end
+// enqueued before drain, e.g. at finalizeExit), whereas clearing would drop an
+// adopt while its release still fired — underflowing the in-flight counter.
+func (b *Backend) drainEdgeCallbacks() {
+	b.fireMu.Lock()
+	defer b.fireMu.Unlock()
+	for {
+		b.turnMu.Lock()
+		if len(b.edgeCallbacks) == 0 {
+			b.turnMu.Unlock()
+			return
+		}
+		fn := b.edgeCallbacks[0]
+		b.edgeCallbacks = b.edgeCallbacks[1:]
+		b.turnMu.Unlock()
+		fn()
+	}
 }
 
 // tryPreAnswerRedispatch runs the pre-answer nudge gate against the turn's
