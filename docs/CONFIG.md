@@ -1365,6 +1365,14 @@ dir = "/var/data/foci/sessions"
 
 ---
 
+## Runtime Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `FOCI_TMPDIR` | Overrides the canonical temp root (default `/tmp/foci`, falling back to `/tmp/foci-<uid>` then the OS temp dir if unwritable). All foci temp state — exec-bridge sockets, spawn sandboxes, app blobs, session-env files — lives under this root. Set it to run two foci instances on one host without sharing temp state; the Makefile test targets set it (alongside `TMPDIR`) to a per-run directory so tests never touch a live install's temp state. An unusable value falls through to the default ladder. |
+
+---
+
 ## Recommended Directory Layout
 
 For new installs, `setup.sh` creates this structure:
