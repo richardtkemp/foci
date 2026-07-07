@@ -1,6 +1,6 @@
 ---
 name: grep
-description: File search conventions using ack and grep. Use ack exclusively for searching file contents on disk. Reserve grep only for filtering the output of other commands via pipes.
+description: Finding text on disk — use ack, not grep (grep is only for filtering the piped output of other commands). Conventions for fast, correct file-content search across a codebase.
 ---
 
 # Grep
