@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"foci/internal/delegator"
 	"foci/internal/log"
 )
 
@@ -71,9 +72,15 @@ const hookTimeoutSeconds = 10
 
 // Hook event names foci installs under.
 const (
+	eventPreToolUse         = "PreToolUse"
 	eventPostToolUse        = "PostToolUse"
 	eventPostToolUseFailure = "PostToolUseFailure"
 )
+
+// agentToolMatcher scopes the PreToolUse hook to the Agent (subagent-spawn) tool
+// only, so ordinary tool calls don't each spawn an extra hook process — the Pre
+// hook exists solely to surface a precise subagent start.
+const agentToolMatcher = "Agent"
 
 // newInstallID generates a short random identifier used to distinguish one
 // backend's hook events from another's when multiple backends share a
@@ -142,14 +149,16 @@ func fociHookSpec(hookCmd string) hookSpec {
 // the claude subprocess.
 func buildHookSettingsJSON(hookCmd string) (string, error) {
 	spec := fociHookSpec(hookCmd)
-	matcher := []hookMatcher{{
+	allTools := []hookMatcher{{
 		Matcher: "*",
 		Hooks:   []hookSpec{spec},
 	}}
 	top := map[string]any{
 		"hooks": hooksConfig{
-			eventPostToolUse:        matcher,
-			eventPostToolUseFailure: matcher,
+			// PreToolUse only for the Agent tool — a precise subagent start.
+			eventPreToolUse:         {{Matcher: agentToolMatcher, Hooks: []hookSpec{spec}}},
+			eventPostToolUse:        allTools,
+			eventPostToolUseFailure: allTools,
 		},
 	}
 	body, err := json.Marshal(top)
@@ -295,7 +304,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return
 	}
-	if env.HookEvent != eventPostToolUse && env.HookEvent != eventPostToolUseFailure {
+	if env.HookEvent != eventPreToolUse && env.HookEvent != eventPostToolUse && env.HookEvent != eventPostToolUseFailure {
 		return
 	}
 	if env.Stdout == "" {
@@ -333,12 +342,23 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		return
 	}
 
+	se := b.sessionEvents.Load()
+
+	// PreToolUse (installed only for the Agent tool) is the precise subagent START
+	// — its tool_use id is the run's group key. Both start and end are hook-sourced,
+	// so a missing/broken hook yields neither (no zombie "never finishes" run).
+	if env.HookEvent == eventPreToolUse {
+		if se != nil && se.OnSubagentStart != nil && parsed.ToolName == "Agent" {
+			se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(json.RawMessage(parsed.ToolInput)))
+		}
+		return
+	}
+
 	// Tool delivery (OnToolEnd) goes through SessionEvents — always-live so
 	// late tool results from a stacked turn don't drop. Post-tool nudges
 	// are bookkeeping (require knowledge of the active turn's nudge
 	// scheduler), so they read TurnEvents which may legitimately be nil
 	// between turns.
-	se := b.sessionEvents.Load()
 	if se != nil && se.OnToolEnd != nil {
 		output := parsed.ToolResponse
 		if parsed.IsError && parsed.Error != "" {

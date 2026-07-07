@@ -20,7 +20,7 @@ func newSubagentTestBackend() (*telegramBackend, *Bot, *mockClient) {
 func TestSubagentRollingButton(t *testing.T) {
 	be, _, mock := newSubagentTestBackend()
 
-	be.DeliverSubagentText("toolu_abc", "", "first")
+	be.DeliverSubagentText("toolu_abc", "first")
 	if mock.sends != 1 {
 		t.Fatalf("after msg 1: sends=%d, want 1", mock.sends)
 	}
@@ -36,7 +36,7 @@ func TestSubagentRollingButton(t *testing.T) {
 		t.Fatalf("msg 1 sent without an inline keyboard (markup=%T)", mock.lastSendOpts.ReplyMarkup)
 	}
 
-	be.DeliverSubagentText("toolu_abc", "", "second")
+	be.DeliverSubagentText("toolu_abc", "second")
 	if mock.sends != 2 {
 		t.Fatalf("after msg 2: sends=%d, want 2", mock.sends)
 	}
@@ -57,8 +57,8 @@ func TestSubagentRollingButton(t *testing.T) {
 func TestSubagentHideDeletesAndSuppresses(t *testing.T) {
 	be, b, mock := newSubagentTestBackend()
 
-	be.DeliverSubagentText("toolu_xyz", "", "one")
-	be.DeliverSubagentText("toolu_xyz", "", "two")
+	be.DeliverSubagentText("toolu_xyz", "one")
+	be.DeliverSubagentText("toolu_xyz", "two")
 	if mock.sends != 2 {
 		t.Fatalf("setup: sends=%d, want 2", mock.sends)
 	}
@@ -74,7 +74,7 @@ func TestSubagentHideDeletesAndSuppresses(t *testing.T) {
 	}
 
 	// Further messages from the same subagent are suppressed.
-	be.DeliverSubagentText("toolu_xyz", "", "three")
+	be.DeliverSubagentText("toolu_xyz", "three")
 	if mock.sends != 2 {
 		t.Fatalf("after suppress: sends=%d, want 2 (msg 3 dropped)", mock.sends)
 	}
@@ -85,8 +85,8 @@ func TestSubagentHideDeletesAndSuppresses(t *testing.T) {
 func TestSubagentSeparateGroups(t *testing.T) {
 	be, _, mock := newSubagentTestBackend()
 
-	be.DeliverSubagentText("toolu_A", "", "a1")
-	be.DeliverSubagentText("toolu_B", "", "b1")
+	be.DeliverSubagentText("toolu_A", "a1")
+	be.DeliverSubagentText("toolu_B", "b1")
 	// Two distinct groups, each its first message → no strips yet.
 	if mock.markupEdits != 0 {
 		t.Fatalf("markupEdits=%d, want 0 (different subagents, no cross-strip)", mock.markupEdits)

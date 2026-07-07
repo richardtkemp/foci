@@ -96,11 +96,14 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 			log.Debugf("turn-sink", "sink=%p TextBlock(final): text_len=%d (no-op — final text carried by TurnComplete)", s, len(e.Text))
 		}
 
+	case turnevent.SubagentStart:
+		s.renderer.OnSubagentStart(e.GroupKey, e.Label)
+
 	case turnevent.SubagentText:
 		// Subagent progress is ancillary — route it to the renderer (which
 		// hands it to the platform's per-subagent control if supported) but do
 		// NOT set s.delivered, so it never suppresses the real final reply.
-		s.renderer.OnSubagentReply(e.GroupKey, e.Label, e.Text)
+		s.renderer.OnSubagentReply(e.GroupKey, e.Text)
 
 	case turnevent.SubagentEnd:
 		s.renderer.OnSubagentEnd(e.GroupKey)

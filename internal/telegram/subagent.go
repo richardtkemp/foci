@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -46,7 +45,7 @@ func subagentToken(chatID int64, parentToolUseID string) string {
 // strip ordering guarantees a button is always visible (no zero-button window).
 // The per-group mutex serialises fast bursts so the button can't land on a stale
 // message.
-func (b *telegramBackend) DeliverSubagentText(groupKey, _ /*label*/, text string) {
+func (b *telegramBackend) DeliverSubagentText(groupKey, text string) {
 	b.bot.reapSubagentGroups()
 	token := subagentToken(b.chatID, groupKey)
 	gAny, _ := b.bot.subagentStore.LoadOrStore(token, &subagentGroup{chatID: b.chatID})
@@ -58,9 +57,9 @@ func (b *telegramBackend) DeliverSubagentText(groupKey, _ /*label*/, text string
 		return // user hid this subagent — drop the rest
 	}
 
-	// Text arrives raw now (the delegator no longer pre-blockquotes); prefix "> "
-	// so ConvertToTelegramHTML renders it as a <blockquote>, as before.
-	html := ConvertToTelegramHTML(subagentBlockquote(text), b.opts)
+	// text is already blockquoted by the renderer (SubagentTextRaw()==false), so
+	// ConvertToTelegramHTML renders it as a <blockquote>.
+	html := ConvertToTelegramHTML(text, b.opts)
 	rows := buildButtonRows([]platform.ButtonChoice{{Label: "🙈 Hide this", Data: token}}, "sa:")
 	markup := gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
 	sent, err := b.bot.client.SendMessage(b.chatID, html, &gotgbot.SendMessageOpts{
@@ -87,20 +86,14 @@ func (b *telegramBackend) DeliverSubagentText(groupKey, _ /*label*/, text string
 	}
 }
 
-// DeliverSubagentEnd is a no-op on Telegram: a run's messages simply stop, and the
-// rolling Hide button already sits on the last one. The app uses this to flip a
-// collapsed entry to "completed"; Telegram has no such collapsed state.
-func (b *telegramBackend) DeliverSubagentEnd(string) {}
-
-// subagentBlockquote prefixes every line with "> " so ConvertToTelegramHTML
-// renders the raw subagent text as a <blockquote>.
-func subagentBlockquote(text string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = "> " + line
-	}
-	return strings.Join(lines, "\n")
-}
+// DeliverSubagentStart / DeliverSubagentEnd are no-ops on Telegram: each subagent
+// message already carries the agent-name header (composed by the renderer) and the
+// rolling Hide button sits on the newest one, so there's no separate collapsed
+// entry to open or close. SubagentTextRaw is false — Telegram wants the renderer's
+// blockquoted-with-header presentation.
+func (b *telegramBackend) DeliverSubagentStart(string, string) {}
+func (b *telegramBackend) DeliverSubagentEnd(string)           {}
+func (b *telegramBackend) SubagentTextRaw() bool               { return false }
 
 // stripSubagentButton removes the inline keyboard from a prior subagent message
 // so only the newest message carries the rolling Hide button.

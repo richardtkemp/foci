@@ -48,14 +48,21 @@ type Platform interface {
 // implement it receive subagent text as ordinary intermediate replies via the
 // renderer's OnReply fallback.
 type SubagentDeliverer interface {
-	// DeliverSubagentText delivers one subagent progress message. groupKey
-	// identifies the originating subagent (its parent tool_use id) so the
-	// platform can group its messages; label is the agent's description. text is
-	// RAW — the platform applies its own presentation (tg/discord blockquote it).
-	DeliverSubagentText(groupKey, label, text string)
+	// DeliverSubagentStart signals a subagent run (groupKey) began; label is the
+	// agent's description. Lets a platform open a collapsed entry the run's text
+	// attaches to.
+	DeliverSubagentStart(groupKey, label string)
+	// DeliverSubagentText delivers one subagent progress block for groupKey. The
+	// renderer applies blockquote unless SubagentTextRaw reports true, so the
+	// platform receives text already in its preferred presentation.
+	DeliverSubagentText(groupKey, text string)
 	// DeliverSubagentEnd signals the subagent run (groupKey) completed, letting
 	// the platform finalize its UI (e.g. flip a collapsed entry to "completed").
 	DeliverSubagentEnd(groupKey string)
+	// SubagentTextRaw reports whether this platform wants subagent text raw (the
+	// app, which renders traces in an expandable view) rather than blockquoted
+	// (telegram, whose inline messages read as blockquotes).
+	SubagentTextRaw() bool
 }
 
 // StreamSink is the live streaming handle returned by OpenStream. It is

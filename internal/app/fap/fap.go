@@ -41,6 +41,7 @@ const (
 	TypeInteractiveEdit = "interactive.edit"
 	TypeWizardStep      = "wizard.step"
 	TypeWizardEnd       = "wizard.end"
+	TypeSubagentStart   = "subagent.start"
 	TypeSubagentText    = "subagent.text"
 	TypeSubagentEnd     = "subagent.end"
 	TypeMeta            = "meta"
@@ -398,24 +399,33 @@ type InteractiveEdit struct {
 
 func (InteractiveEdit) Type() string { return TypeInteractiveEdit }
 
-// SubagentText carries one progress block from a subagent (Task/Agent tool) run,
-// delivered as a distinct frame (not an ordinary blockquoted message) so the app
-// can collapse a run into a single "Agent started" entry and open its full trace
-// on demand. GroupKey is the parent tool_use id shared by every block of one run;
-// Label is the agent's description. Text is raw (no blockquote — that's a tg/discord
-// presentation choice applied there, not here).
-type SubagentText struct {
+// SubagentStart marks a subagent (Task/Agent tool) run beginning, so the app can
+// create a collapsed "Agent started" entry that its text blocks attach to. GroupKey
+// is the parent tool_use id; Label the agent's description. From the PreToolUse hook
+// — the app creates a run's entry ONLY on this frame, so a broken hook (no start)
+// means text with no group renders inline, never a "never finishes" run.
+type SubagentStart struct {
 	ConversationID string `json:"conversationId"`
 	GroupKey       string `json:"groupKey"`
 	Label          string `json:"label,omitempty"`
+}
+
+func (SubagentStart) Type() string { return TypeSubagentStart }
+
+// SubagentText carries one progress block from a subagent run, attached to its
+// SubagentStart by GroupKey. Text is raw (no blockquote — that's a tg/discord
+// presentation choice applied in the renderer, not here).
+type SubagentText struct {
+	ConversationID string `json:"conversationId"`
+	GroupKey       string `json:"groupKey"`
 	Text           string `json:"text"`
 }
 
 func (SubagentText) Type() string { return TypeSubagentText }
 
 // SubagentEnd marks a subagent run complete (its Agent tool_use resolved), so the
-// app can flip the run's "started" entry to "completed". Precise per-run signal
-// from the PostToolUse hook's OnToolEnd for the Agent tool.
+// app flips the run's "started" entry to "completed". Precise per-run signal from
+// the PostToolUse hook's OnToolEnd for the Agent tool.
 type SubagentEnd struct {
 	ConversationID string `json:"conversationId"`
 	GroupKey       string `json:"groupKey"`

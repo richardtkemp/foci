@@ -42,6 +42,12 @@ type TurnRenderer struct {
 	// streamedThinkingLive is true when thinking was written to the current
 	// StreamBuffer, so the Content() fallback knows to strip it.
 	streamedThinkingLive bool
+
+	// subagentLabels maps a subagent run's group key to its agent name (from
+	// SubagentStart), so each blockquoted progress block can be headed with the
+	// name for the non-raw platforms. Populated on start, dropped on end. Accessed
+	// only from the serial sink-dispatch goroutine, so it needs no lock.
+	subagentLabels map[string]string
 }
 
 // NewTurnRenderer creates a TurnRenderer with the given platform, tracker, and
@@ -124,21 +130,57 @@ func (r *TurnRenderer) OnReply(text string) {
 // UI such as Telegram's rolling "Hide this" button. Otherwise it falls back to
 // ordinary intermediate delivery via OnReply (the historical behaviour, where
 // subagent text arrived through OnText).
-func (r *TurnRenderer) OnSubagentReply(groupKey, label, text string) {
-	if sd, ok := r.platform.(SubagentDeliverer); ok && groupKey != "" {
-		sd.DeliverSubagentText(groupKey, label, text)
+func (r *TurnRenderer) OnSubagentReply(groupKey, text string) {
+	// Presentation is applied HERE, once — the delegator emits raw. The app opts
+	// out (SubagentTextRaw) to render traces expandably with the name on its chip;
+	// every other surface gets the agent-name header + blockquoted body:
+	//   **Explore**
+	//   > found the bug in foo.go
+	sd, ok := r.platform.(SubagentDeliverer)
+	if ok && groupKey != "" && sd.SubagentTextRaw() {
+		sd.DeliverSubagentText(groupKey, text)
 		return
 	}
-	// Fallback (no per-subagent UI, e.g. discord): render as a blockquoted
-	// intermediate reply so subagent progress stays visually distinct. The
-	// delegator no longer pre-blockquotes, so apply it here at the presentation edge.
-	r.OnReply(blockquote(text))
+	body := r.subagentHeader(groupKey) + blockquote(text)
+	if ok && groupKey != "" {
+		sd.DeliverSubagentText(groupKey, body)
+		return
+	}
+	r.OnReply(body)
+}
+
+// subagentHeader returns the bold agent-name line for a run, or "" if unknown
+// (start not seen — e.g. a broken hook). Safe on a nil map.
+func (r *TurnRenderer) subagentHeader(groupKey string) string {
+	if label := r.subagentLabels[groupKey]; label != "" {
+		return "**" + label + "**\n"
+	}
+	return ""
+}
+
+// OnSubagentStart signals a subagent run began. It caches the agent name for the
+// text header (all platforms) and opens a collapsed entry on platforms that
+// support one (the app).
+func (r *TurnRenderer) OnSubagentStart(groupKey, label string) {
+	if groupKey == "" {
+		return
+	}
+	if label != "" {
+		if r.subagentLabels == nil {
+			r.subagentLabels = map[string]string{}
+		}
+		r.subagentLabels[groupKey] = label
+	}
+	if sd, ok := r.platform.(SubagentDeliverer); ok {
+		sd.DeliverSubagentStart(groupKey, label)
+	}
 }
 
 // OnSubagentEnd signals a subagent run completed. Only platforms with per-subagent
 // UI act on it; others (whose subagent text arrived as ordinary replies) have
 // nothing to finalize.
 func (r *TurnRenderer) OnSubagentEnd(groupKey string) {
+	delete(r.subagentLabels, groupKey)
 	if sd, ok := r.platform.(SubagentDeliverer); ok && groupKey != "" {
 		sd.DeliverSubagentEnd(groupKey)
 	}

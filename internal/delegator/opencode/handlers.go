@@ -314,7 +314,7 @@ func (b *Backend) handleSubtaskPart(part Part) {
 		return
 	}
 	if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
-		se.OnSubagentText(part.ID, "", part.Description)
+		se.OnSubagentText(part.ID, part.Description)
 	}
 }
 
