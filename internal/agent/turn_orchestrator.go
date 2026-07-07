@@ -112,6 +112,22 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 		return "", err
 	}
 
+	// Phase 3.5: register this turn's delivery sink on the session router, for
+	// system turns only. A platform turn already registered its streaming sink in
+	// RunTurn (its ctx sink IS the router); a system turn (reflection/keepalive/
+	// memory) reaches here with a NopSink/BufferSink ctx sink and must register it
+	// so its output is suppressed/captured rather than falling through to the
+	// router's late-delivery fallback (which would leak reflection text to chat).
+	// Registering HERE — after RunInference's exclusive begin was accepted, not
+	// before dispatch — is what stops a mid-wait system turn from clobbering a
+	// concurrent autonomous run's delivery (the #1068 poison). Cleared after
+	// post-turn's completion wait so a later autonomous run falls through to
+	// late-delivery.
+	if router := a.sessionRouter(ts.SessionKey); turnevent.SinkFromContext(ctx) != turnevent.Sink(router) {
+		router.Register(turnevent.SinkFromContext(ctx))
+		defer router.Clear()
+	}
+
 	// Phase 4: Post-turn (sync for API, async for delegated)
 	a.runPostTurn(tc, ts)
 	return ts.FinalText, nil

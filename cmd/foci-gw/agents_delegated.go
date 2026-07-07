@@ -16,6 +16,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/relogin"
+	"foci/internal/route"
 	"foci/internal/secrets"
 	"foci/internal/tools"
 	"foci/internal/voice"
@@ -143,6 +144,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Wire DelegatedManager: lazy per-session Backend creation.
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
+	// Late-delivery fallback for the session router (#1068 Phase 1): resolve the
+	// current delivering connection at Emit time. PolicyRootFallback suppresses
+	// branch/facet sessions (their reply belongs to the facet, not the parent).
+	ag.ResolveLateConn = func(sessionKey string) platform.Connection {
+		conn, _ := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyRootFallback)
+		return conn
+	}
 	// Resolve a session's messaging platform (telegram/app/discord) for the
 	// per-session ## Platform block from the durable chat claim, so the prompt
 	// (and its compaction-time fingerprint) never depends on connection
@@ -387,6 +395,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// worker holds concurrent reflection/keepalive injections that would
 		// otherwise poison the run's shared session sink (#1070).
 		AdoptAutonomousRun: ag.AdoptAutonomousRun,
+		AttachDelivery:     ag.AttachDelivery,
 		IdleTimeout:        idleTimeout,
 	}
 

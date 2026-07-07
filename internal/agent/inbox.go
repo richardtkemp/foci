@@ -238,15 +238,6 @@ type sessionInbox struct {
 
 	workerStarted sync.Once
 
-	// router is the session-scoped delivery dispatcher (see
-	// session_router.go). Lazy-built on the first Drive call by
-	// sessionRouterFor — needs the Driver in scope to construct the
-	// late-delivery fallback. After construction the field stays alive
-	// for the session; only the per-turn sink registered on it changes
-	// per turn. Read/written exclusively from the per-session worker
-	// goroutine, so a plain pointer is safe.
-	router *sessionRouter
-
 	// cancelMu guards turnCancel. Set by the session worker before each
 	// turn; cleared on turn return. Agent.CancelSession reads under the
 	// mutex to fire /stop with race safety against the worker's turn
@@ -895,71 +886,138 @@ func (a *Agent) CancelSession(sk string) bool {
 	return true
 }
 
-// sessionRouterFor returns inb's sessionRouter, lazy-constructing it on
-// first call. The fallback sink is built agent-side from the driver's
-// platform.Connection — see lateDeliverySink. Called only from the
-// per-session worker goroutine, so the read-then-init is single-threaded
-// and safe without locking.
-func (a *Agent) sessionRouterFor(inb *sessionInbox, driver Driver) *sessionRouter {
-	if inb.router != nil {
-		return inb.router
-	}
-	inb.router = newSessionRouter(a.lateDeliverySink(inb.sk, driver))
-	return inb.router
+// sessionRouter returns sk's delivery router, building it once (shared across
+// every turn on the session and bound into SessionEvents once at backend
+// acquisition — #1068 Phase 1). Its fallback (resolvingLateSink) resolves the
+// delivering connection at Emit time, so the router is correct for a session
+// that connects, disconnects, or reconnects after it was built — no Driver in
+// scope, no rebuild.
+func (a *Agent) sessionRouter(sk string) *sessionRouter {
+	a.routersMu.Lock()
+	defer a.routersMu.Unlock()
+	return a.sessionRouterLocked(sk)
 }
 
-// lateDeliverySink builds the SessionRouter's fallback sink for sk, the
-// destination for events that arrive when no per-turn sink is registered
-// (the rearm-counter scenario from TODO #745). Uses the driver's
-// platform.Connection if exposed; returns nil otherwise so the router
-// falls back to NopSink (appropriate for non-interactive drivers).
-//
-// Replaces the per-driver NewLateDeliverySink method (TODO #746 Stage D)
-// — sink construction is platform-agnostic, so it belongs in the agent.
-func (a *Agent) lateDeliverySink(sk string, driver Driver) turnevent.Sink {
-	// No live connection → warn instead of silently discarding. A non-empty
-	// reply that lands here reached no chat at all (a mis-folded/orphaned turn).
-	// Defensive: the #1038 investigation showed this path discards silently, so
-	// if a reply ever does orphan here it's now visible rather than invisible.
-	warn := discardWarnSink{logWarn: func(finalText string) {
-		a.logger().Warnf("late-delivery: no delivering connection for sk=%s — discarded a %d-char reply (it reached no chat)", sk, len(finalText))
-	}}
-	if driver == nil {
-		return warn
+// sessionRouterLocked is sessionRouter's body; callers already holding
+// routersMu (AttachDelivery) use it to build the router and SessionEvents in
+// one critical section.
+func (a *Agent) sessionRouterLocked(sk string) *sessionRouter {
+	if r := a.routers[sk]; r != nil {
+		return r
 	}
-	conn := driver.Connection()
+	if a.routers == nil {
+		a.routers = make(map[string]*sessionRouter)
+	}
+	r := newSessionRouter(resolvingLateSink{a: a, sk: sk})
+	a.routers[sk] = r
+	return r
+}
+
+// AttachDelivery binds sk's session-scoped delivery callbacks to be. Built once
+// per session key (around sk's router) and cached, so a respawned backend
+// re-attaches the same closures — the attach happens at backend acquisition
+// (setBackendCallbacks), never per turn. Delivery flows through the router;
+// thinking deltas also accumulate into a session-scoped buffer that DrainThinking
+// empties per turn. Replaces the per-RunInference attach that bound to the ctx
+// sink and poisoned concurrent autonomous runs (#1068 Phase 1).
+func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
+	a.routersMu.Lock()
+	se := a.sessionEvents[sk]
+	if se == nil {
+		if a.sessionEvents == nil {
+			a.sessionEvents = make(map[string]*delegator.SessionEvents)
+		}
+		if a.thinkingBufs == nil {
+			a.thinkingBufs = make(map[string]*strings.Builder)
+		}
+		router := a.sessionRouterLocked(sk)
+		buf := &strings.Builder{}
+		a.thinkingBufs[sk] = buf
+		se = &delegator.SessionEvents{
+			OnText: func(text string) {
+				router.Emit(context.Background(), turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
+			},
+			OnSubagentStart: func(groupKey, label string) {
+				router.Emit(context.Background(), turnevent.SubagentStart{GroupKey: groupKey, Label: label})
+			},
+			OnSubagentText: func(groupKey, text string) {
+				router.Emit(context.Background(), turnevent.SubagentText{GroupKey: groupKey, Text: text})
+			},
+			OnSubagentEnd: func(groupKey string) {
+				router.Emit(context.Background(), turnevent.SubagentEnd{GroupKey: groupKey})
+			},
+			OnTextDelta: func(delta string) {
+				router.Emit(context.Background(), turnevent.TextDelta{Delta: delta})
+			},
+			OnThinkingDelta: func(delta string) {
+				router.Emit(context.Background(), turnevent.ThinkingDelta{Delta: delta})
+				buf.WriteString(delta)
+			},
+			OnToolStart: func(id, name, input string) {
+				router.Emit(context.Background(), turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
+			},
+			OnToolEnd: func(id, name, output string, isError bool) {
+				router.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
+			},
+		}
+		a.sessionEvents[sk] = se
+	}
+	a.routersMu.Unlock()
+	be.AttachSessionEvents(se)
+}
+
+// DrainThinking returns and clears sk's accumulated thinking text (the thinking
+// deltas streamed since the last drain). Called at turn completion to log the
+// turn's thinking to the conversation DB. Safe without extra synchronisation on
+// the buffer: the backend dispatches thinking deltas and OnTurnComplete on the
+// same stream-reader goroutine, so writes and this drain never overlap.
+func (a *Agent) DrainThinking(sk string) string {
+	a.routersMu.Lock()
+	defer a.routersMu.Unlock()
+	buf := a.thinkingBufs[sk]
+	if buf == nil {
+		return ""
+	}
+	s := buf.String()
+	buf.Reset()
+	return s
+}
+
+// resolvingLateSink is the session router's fallback — where events go when no
+// per-turn sink is registered (an autonomous run, or text arriving after a turn
+// cleared, the rearm-counter scenario from TODO #745). It resolves the current
+// delivering connection at Emit time via Agent.ResolveLateConn (route.ConnFor);
+// a connection-less session logs the orphaned final text rather than silently
+// dropping it (#1038).
+type resolvingLateSink struct {
+	a  *Agent
+	sk string
+}
+
+func (s resolvingLateSink) Emit(ctx context.Context, ev turnevent.Event) {
+	var conn platform.Connection
+	if s.a.ResolveLateConn != nil {
+		conn = s.a.ResolveLateConn(s.sk)
+	}
 	if conn == nil {
-		return warn
+		if tc, ok := ev.(turnevent.TurnComplete); ok && strings.TrimSpace(tc.FinalText) != "" {
+			s.a.logger().Warnf("late-delivery: no delivering connection for sk=%s — discarded a %d-char reply (it reached no chat)", s.sk, len(tc.FinalText))
+		}
+		return
 	}
 	logFn := func(trigger string, err error) {
-		a.logger().Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
+		s.a.logger().Warnf("late-delivery send failed sk=%s trigger=%s: %v", s.sk, trigger, err)
 	}
-	// Conversation-DB logging for late-delivered text. No per-turn
-	// metadata available at this scope (the fallback fires when no per-
-	// turn sink is registered) — log with empty user fields, session
-	// key only. This is best-effort — late delivery is rare and the
-	// session/text fields are the load-bearing identifiers.
-	return newLoggingSink(
-		turn.NewSessionSink(conn, sk, "late-delivery", turn.WithSessionSinkErrorHandler(logFn)),
-		a, 0, &TurnMetadata{}, sk,
-	)
+	// Best-effort conversation-DB logging; no per-turn metadata at this scope.
+	newLoggingSink(
+		turn.NewSessionSink(conn, s.sk, "late-delivery", turn.WithSessionSinkErrorHandler(logFn)),
+		s.a, 0, &TurnMetadata{}, s.sk,
+	).Emit(ctx, ev)
 }
 
-// discardWarnSink is the late-delivery fallback for a session with no live
-// delivering connection. It logs any non-empty final turn text rather than
-// silently dropping it, so an orphaned/mis-folded reply is visible instead of
-// vanishing (defensive hygiene surfaced by the #1038 investigation).
-type discardWarnSink struct {
-	logWarn func(finalText string)
+func (s resolvingLateSink) DeliversToPlatform() bool {
+	return s.a.ResolveLateConn != nil && s.a.ResolveLateConn(s.sk) != nil
 }
-
-func (s discardWarnSink) Emit(_ context.Context, ev turnevent.Event) {
-	if tc, ok := ev.(turnevent.TurnComplete); ok && strings.TrimSpace(tc.FinalText) != "" {
-		s.logWarn(tc.FinalText)
-	}
-}
-
-func (discardWarnSink) DeliversToPlatform() bool { return false }
 
 // driveAndDrainOrphans runs a single batched turn plus the orphan/extras
 // drain loop. Split out so the worker stays readable. After the primary
@@ -979,7 +1037,7 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 		a.logger().Warnf("inbox: no driver on envelope sk=%s, dropping batch (%d msgs)", inb.sk, len(batch))
 		return nil
 	}
-	router := a.sessionRouterFor(inb, driver)
+	router := a.sessionRouter(inb.sk)
 	a.driveOnce(ctx, inb, batch, steerer, router, driver)
 	var heldInjects []Envelope
 	for {

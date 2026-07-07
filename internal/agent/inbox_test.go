@@ -1273,7 +1273,7 @@ func (d *routerObservingDriver) seenRouters() []*sessionRouter {
 			out = append(out, nil)
 			continue
 		}
-		out = append(out, inb.router)
+		out = append(out, d.a.sessionRouter(sk))
 	}
 	return out
 }

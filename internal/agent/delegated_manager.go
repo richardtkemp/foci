@@ -64,6 +64,12 @@ type DelegatedManager struct {
 	// NewBackend creates a fresh Backend instance (does not start it).
 	NewBackend func() (delegator.Delegator, error)
 
+	// AttachDelivery binds session-scoped delivery (SessionEvents) to a backend
+	// at creation/respawn (setBackendCallbacks), so it is attached ONCE per
+	// backend rather than rebuilt per turn (#1068 Phase 1). Nil in tests that
+	// don't exercise delivery.
+	AttachDelivery func(be delegator.Delegator, sessionKey string)
+
 	// StartOpts returns the StartOptions for a new Backend.
 	// Label and ResumeSessionID are set by the manager.
 	StartOpts delegator.StartOptions
@@ -815,6 +821,12 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	mb.be.SetOnSessionReady(func(sessionID string) {
 		m.saveResumeID(sk(), sessionID)
 	})
+
+	// Bind session-scoped delivery once, here at acquisition — the SessionEvents
+	// live for the backend's lifetime and are never rebuilt per turn (#1068).
+	if m.AttachDelivery != nil {
+		m.AttachDelivery(mb.be, sk())
+	}
 
 	// Adopt CC autonomous runs as in-flight delivering turns (#1070). The
 	// setters live on the concrete CC backend, not the Delegator interface, so

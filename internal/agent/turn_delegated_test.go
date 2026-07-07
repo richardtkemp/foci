@@ -1482,17 +1482,21 @@ func TestDelegatedTransport_OnText_LogsEachMessage(t *testing.T) {
 
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	mgr.AttachDelivery = a.AttachDelivery
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 
 	// The session key must start with the agent ID so resolveConvLog routes
 	// to the right DB.
 	sk := agentID + "/c12345"
 	// Wrap the test's BufferSink with loggingSink so intermediate TextBlock
-	// events fire conversation-DB logging — production wires this in
-	// Agent.RunTurn (per-turn) and lateDeliverySink (fallback). Tests that
-	// call RunInference directly need to wire it themselves.
+	// events fire conversation-DB logging. SessionEvents now binds to the session
+	// router (not the ctx sink), so — mirroring production, where Agent.RunTurn /
+	// the orchestrator register the per-turn sink — a test driving RunInference
+	// directly registers its sink on the router itself.
 	meta := &TurnMetadata{UserID: "u1", Username: "dick"}
 	wrappedSink := newLoggingSink(turnevent.NewBufferSink(), a, 42, meta, sk)
+	a.sessionRouter(sk).Register(wrappedSink)
+	defer a.sessionRouter(sk).Clear()
 	ctx := turnevent.WithSink(context.Background(), wrappedSink)
 	ts := NewTurnState(ctx, sk, []string{"hi"}, nil)
 	ts.Prompt = "hi"
@@ -1537,6 +1541,65 @@ func TestDelegatedTransport_OnText_LogsEachMessage(t *testing.T) {
 	}
 	if texts[0] != "message one" || texts[1] != "message two" || texts[2] != "message three" {
 		t.Errorf("sent texts = %v, want [message one, message two, message three]", texts)
+	}
+}
+
+// captureTextSink records intermediate TextBlock texts routed to it.
+type captureTextSink struct{ got *[]string }
+
+func (c captureTextSink) Emit(_ context.Context, ev turnevent.Event) {
+	if tb, ok := ev.(turnevent.TextBlock); ok {
+		*c.got = append(*c.got, tb.Text)
+	}
+}
+func (captureTextSink) DeliversToPlatform() bool { return true }
+
+// TestDelegatedTransport_SinkLessTurnBindsRouterNotNopSink is the #1068 Phase 1
+// regression. A sink-less (system) turn used to bind the session's shared
+// SessionEvents to NopSink — SinkFromContext(ctx) of a no-sink ctx — for the
+// session lifetime, so a concurrent autonomous run's OnText vanished. Now
+// SessionEvents binds to the session ROUTER, so the backend's OnText reaches
+// whatever the router forwards to. Proven here: a sink registered on the router
+// receives the backend's OnText even though the turn's own ctx carries no sink.
+func TestDelegatedTransport_SinkLessTurnBindsRouterNotNopSink(t *testing.T) {
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+			if handler != nil {
+				if handler.OnText != nil {
+					handler.OnText("one")
+					handler.OnText("two")
+					handler.OnText("three")
+				}
+				if handler.OnTurnComplete != nil {
+					handler.OnTurnComplete(&delegator.TurnResult{Text: "onetwothree", Model: "test-model"})
+				}
+			}
+			return nil, nil
+		},
+	}
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	mgr.AttachDelivery = a.AttachDelivery
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+	sk := "test/c999"
+	var got []string
+	a.sessionRouter(sk).Register(captureTextSink{got: &got})
+	defer a.sessionRouter(sk).Clear()
+
+	// context.Background carries NO sink → SinkFromContext == NopSink: exactly the
+	// sink-less system turn that used to poison the binding.
+	ts := NewTurnState(context.Background(), sk, []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	<-ts.CompletionChan
+
+	if len(got) != 3 {
+		t.Fatalf("router sink got %d texts, want 3 — SessionEvents must bind the router, not the ctx's NopSink; got=%v", len(got), got)
 	}
 }
 

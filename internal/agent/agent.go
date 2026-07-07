@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -183,6 +184,32 @@ type Agent struct {
 	inboxSteerMode bool                                                              // urgent-steer dispatch enabled
 	inboxBackend   func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager
 	turnObserver   func(sk string, batch []Envelope)                                 // test seam — see SetTurnObserver / TODO #746 Stage C
+
+	// Per-session delivery routers (#1068 Phase 1). Built ONCE per session key,
+	// shared by every turn on that session (platform turns register their
+	// streaming sink; system turns register NopSink/BufferSink post-accept; an
+	// autonomous run — no registration — falls through to the router's
+	// late-delivery fallback). SessionEvents binds to this router once, so a
+	// system turn can never rebind the session to NopSink (the #1068 poison).
+	routers   map[string]*sessionRouter
+	routersMu sync.Mutex
+	// sessionEvents caches the session-scoped delivery callbacks (SessionEvents)
+	// per session key, bound ONCE around that session's router. Attached to the
+	// backend at acquisition (setBackendCallbacks → AttachDelivery), not rebuilt
+	// per turn — that per-turn rebuild from the ctx sink was the #1068 poison.
+	// Guarded by routersMu (same per-session lock as routers).
+	sessionEvents map[string]*delegator.SessionEvents
+	// thinkingBufs accumulates a session's streamed thinking deltas between
+	// turns. Session-scoped because SessionEvents (which writes to it) now lives
+	// for the backend's lifetime; DrainThinking reads-and-resets it at each turn's
+	// completion to log that turn's thinking. Guarded by routersMu.
+	thinkingBufs map[string]*strings.Builder
+	// ResolveLateConn resolves the current delivering connection for a session
+	// key, for the router's late-delivery fallback. Called at Emit time so it
+	// tracks connect/disconnect (a session that reconnects starts delivering
+	// again with no router rebuild). Wired from cmd/foci-gw via route.ConnFor;
+	// nil (tests / no connection manager) → the fallback discards-and-warns.
+	ResolveLateConn func(sk string) platform.Connection
 }
 
 // TransformMessage applies compiled message transforms to the text.
