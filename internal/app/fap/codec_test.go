@@ -266,6 +266,54 @@ func TestDecode_UnknownFrameIsIgnoredNotFatal(t *testing.T) {
 	}
 }
 
+func TestDecode_ToolResult(t *testing.T) {
+	cases := []struct {
+		name string
+		wire string
+		want ToolResult
+	}{
+		{
+			"completed",
+			`{"t":"tool.result","id":"r","ts":"t","d":{"invocationId":"inv-1","status":"completed","output":{"battery":82}}}`,
+			ToolResult{InvocationID: "inv-1", Status: "completed", Output: json.RawMessage(`{"battery":82}`)},
+		},
+		{
+			"pending no output",
+			`{"t":"tool.result","id":"r","ts":"t","d":{"invocationId":"inv-1","status":"pending"}}`,
+			ToolResult{InvocationID: "inv-1", Status: "pending"},
+		},
+		{
+			"error",
+			`{"t":"tool.result","id":"r","ts":"t","d":{"invocationId":"inv-1","status":"error","error":"Tasker not installed"}}`,
+			ToolResult{InvocationID: "inv-1", Status: "error", Error: "Tasker not installed"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in, err := Decode(tc.wire)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			got, ok := in.Frame.(ToolResult)
+			if !ok {
+				t.Fatalf("Frame type = %T, want ToolResult", in.Frame)
+			}
+			if got.InvocationID != tc.want.InvocationID {
+				t.Errorf("InvocationID: got %q want %q", got.InvocationID, tc.want.InvocationID)
+			}
+			if got.Status != tc.want.Status {
+				t.Errorf("Status: got %q want %q", got.Status, tc.want.Status)
+			}
+			if tc.want.Error != "" && got.Error != tc.want.Error {
+				t.Errorf("Error: got %q want %q", got.Error, tc.want.Error)
+			}
+			if tc.want.Output != nil && string(got.Output) != string(tc.want.Output) {
+				t.Errorf("Output: got %s want %s", got.Output, tc.want.Output)
+			}
+		})
+	}
+}
+
 func TestDecode_MalformedEnvelopeErrors(t *testing.T) {
 	if _, err := Decode(`not json`); err == nil {
 		t.Error("expected error on malformed envelope")
@@ -332,6 +380,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		Meta{ConversationID: "c", Model: "opus", Gap: "5m", PrevCostUsd: &cost, Tokens: &Tokens{In: 1}},
 		ErrorFrame{Code: "boom", Message: "bad"},
 		Pong{},
+		ToolInvoke{InvocationID: "inv", Tool: "android", Action: "list", Args: json.RawMessage(`{}`)},
 	}
 	for _, f := range frames {
 		wire, err := Encode(f, 0, 0, "id", "ts")

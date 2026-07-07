@@ -83,6 +83,7 @@ type Hub struct {
 	prompts      map[string]*convBinding // promptID → binding (live interactive prompts)
 	batchPrompts map[string]*batchPrompt // promptID → batched-ask callback (app-only multi-question form)
 	notifs       map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
+	toolCalls    *toolCallRegistry       // InvocationID → waiting InvokeTool caller
 }
 
 // featureInteractiveBatch is the ClientHello capability a client advertises to
@@ -161,6 +162,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		prompts:      make(map[string]*convBinding),
 		batchPrompts: make(map[string]*batchPrompt),
 		notifs:       make(map[string]*convBinding),
+		toolCalls:    newToolCallRegistry(),
 	}
 	if appCfg != nil {
 		h.host = appCfg.Host

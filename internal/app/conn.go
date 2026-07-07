@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -91,6 +92,17 @@ func (c *appConn) SessionKey() string { return c.bound }
 
 func (c *appConn) DefaultSessionKey() string        { return c.bound }
 func (c *appConn) DefaultSessionKeyOrEmpty() string { return c.bound }
+
+// InvokeTool routes an agent tool call to a connected device via FAP
+// `tool.invoke`. Delegates to the Hub, which finds a live wsClient for this
+// agent, registers a pending caller, and awaits the matching `tool.result`.
+// Returns ErrNoLiveDevice if the agent has no connected app device.
+//
+// The Hub is the routing authority (it owns the agent→client map); the appConn
+// is just the per-agent handle the tool layer reaches via connMgr.
+func (c *appConn) InvokeTool(ctx context.Context, tool, action string, args json.RawMessage) (fap.ToolResult, error) {
+	return c.hub.InvokeTool(ctx, c.agentID, tool, action, args)
+}
 
 // SetSessionKey / SetSessionKeyDirect / SetChatID satisfy platform.Connection
 // but are no-ops for the app: a view's session is fixed at mint time (the
