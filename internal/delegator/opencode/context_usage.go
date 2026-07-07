@@ -35,6 +35,13 @@ type providerInfo struct {
 	} `json:"models"`
 }
 
+// Capabilities advertises opencode's limitations: no mid-turn message
+// injection (HTTP/SSE-based, no stdin pipe). Post-tool and pre-answer
+// nudges are silently unsupported.
+func (b *Backend) Capabilities() delegator.Capabilities {
+	return delegator.Capabilities{PostToolNudge: false, PreAnswerNudge: false}
+}
+
 // GetContextWindow implements delegator.ContextWindowQuerier. Returns the
 // model's real context window from /config/providers (cached per model).
 func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindow, error) {
