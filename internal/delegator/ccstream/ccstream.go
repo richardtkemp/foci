@@ -106,6 +106,9 @@ type Backend struct {
 	// short grace after it (autonomousInjectGrace), SourceSystem injects still
 	// defer in tryBeginTurn — see there.
 	lastAutonomousEnd time.Time
+	// lastGraceLogEnd dedups the Phase 4 grace-instrumentation log to one line
+	// per grace window (guarded by turnMu) rather than one per inject retry.
+	lastGraceLogEnd time.Time
 	// autonomousStreamed records whether any top-level assistant text was
 	// streamed to the session sink (se.OnText) during the current autonomous
 	// run. When true, the run's text already reached the chat via the

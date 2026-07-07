@@ -61,6 +61,15 @@ func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
 	// SourceSystem inject (reflection) out of that gap so it can't steal the
 	// next run into its silent sink (#1048).
 	if !b.lastAutonomousEnd.IsZero() && time.Since(b.lastAutonomousEnd) < autonomousInjectGrace {
+		// Reaching here means Pending()==0 and no active run (earlier returns),
+		// so the pending-work gate would NOT have blocked this — the grace is the
+		// sole guard. Log once per window (Phase 4 instrument-for-removal, #1048):
+		// if production never shows this line, the grace is redundant and can go.
+		if !b.lastAutonomousEnd.Equal(b.lastGraceLogEnd) {
+			b.lastGraceLogEnd = b.lastAutonomousEnd
+			b.logger().Infof("autonomous grace blocked a system inject the pending-work gate would not have (%.1fs since last run end) — #1048 grace instrumented for removal",
+				time.Since(b.lastAutonomousEnd).Seconds())
+		}
 		b.turnMu.Unlock()
 		return delegator.ErrTurnInFlight
 	}
