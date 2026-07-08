@@ -61,10 +61,13 @@ func TestEnsureBlankSystemPlugin_WritesPlugin(t *testing.T) {
 	}
 	src := string(data)
 	if !strings.Contains(src, "experimental.chat.system.transform") {
-		t.Errorf("plugin missing the transform hook:\n%s", src)
+		t.Errorf("plugin missing the system.transform hook:\n%s", src)
+	}
+	if !strings.Contains(src, "experimental.session.compacting") {
+		t.Errorf("plugin missing the session.compacting hook:\n%s", src)
 	}
 	if !strings.Contains(src, "input.sessionID") {
-		t.Errorf("plugin should read per-session file by input.sessionID:\n%s", src)
+		t.Errorf("plugin should read per-session files by input.sessionID:\n%s", src)
 	}
 }
 
@@ -73,10 +76,39 @@ func TestEnsureBlankSystemPlugin_EmptyWorkDir(t *testing.T) {
 	EnsureBlankSystemPlugin("")
 }
 
-func TestBlankSystemPluginSource_ContainsSysDir(t *testing.T) {
-	dir := "/tmp/foci/session-system-test"
-	src := blankSystemPluginSource(dir)
-	if !strings.Contains(src, dir) {
-		t.Errorf("source missing templated sysDir %q:\n%s", dir, src)
+func TestWriteSessionCompactFile_CreatesFile(t *testing.T) {
+	sessionID := "sess-compact-write-123"
+	prompt := "Summarize the conversation into the foci handoff format."
+	t.Cleanup(func() { RemoveSessionCompactFile(sessionID) })
+
+	WriteSessionCompactFile(sessionID, prompt)
+
+	data, err := os.ReadFile(sessionCompactPath(sessionID))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != prompt {
+		t.Errorf("file content = %q, want %q", string(data), prompt)
+	}
+}
+
+func TestRemoveSessionCompactFile_Deletes(t *testing.T) {
+	sessionID := "sess-compact-remove-123"
+	WriteSessionCompactFile(sessionID, "prompt")
+	RemoveSessionCompactFile(sessionID)
+	if _, err := os.Stat(sessionCompactPath(sessionID)); !os.IsNotExist(err) {
+		t.Errorf("file still present after remove: err=%v", err)
+	}
+}
+
+func TestBlankSystemPluginSource_ContainsDirs(t *testing.T) {
+	sysDir := "/tmp/foci/session-system-test"
+	compactDir := "/tmp/foci/session-compact-test"
+	src := blankSystemPluginSource(sysDir, compactDir)
+	if !strings.Contains(src, sysDir) {
+		t.Errorf("source missing templated sysDir %q:\n%s", sysDir, src)
+	}
+	if !strings.Contains(src, compactDir) {
+		t.Errorf("source missing templated compactDir %q:\n%s", compactDir, src)
 	}
 }

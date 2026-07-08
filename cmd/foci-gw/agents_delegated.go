@@ -20,6 +20,7 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/tools"
 	"foci/internal/voice"
+	"foci/shared/prompts"
 )
 
 // configureDelegated sets up delegated transport agent state: DelegatedManager
@@ -269,7 +270,16 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// set via /effort — apply_flag_settings is runtime-only. Returns
 			// "" when no override is set (CC uses the model default). (#840)
 			EffortFunc:       func(sk string) string { return ag.SessionEffort(sk) },
-			AgentID:          agentID,
+			// Drive opencode's internal compaction (/summarize) with foci's
+			// compaction-summary.md — the SAME resolution the CC backend uses
+			// (internal/agent/compaction.go) — instead of opencode's built-in
+			// template, via the blank-system plugin's session.compacting hook.
+			// Resolved fresh per Start (mirrors SystemPromptFunc); "" leaves
+			// opencode's default compaction prompt untouched.
+			CompactionPromptFunc: func(string) string {
+				return prompts.ResolvePrompt(ag.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), ag.PromptSearchDirs...)
+			},
+			AgentID: agentID,
 			ExecRegistry:     registry,
 			TmuxCols:         p.cfg.Tools.TmuxCols,
 			TmuxRows:         p.cfg.Tools.TmuxRows,
