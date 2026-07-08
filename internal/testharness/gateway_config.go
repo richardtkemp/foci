@@ -28,6 +28,11 @@ type testConfigOpts struct {
 	HTTPPort        int    // kernel-assigned ephemeral port; 0 falls back to foci's default 18791 (collides under t.Parallel)
 	SocketPath      string // short /tmp path for the same-user unix socket; "" lets foci default to DataDir (sun_path hazard)
 	ExtraConfigTOML string // appended verbatim at the end of the config
+	// SuppressNudgeExtraction emits nudge_auto_extract=false per agent so the
+	// startup nudge-rule RunOnce (a delegated cc-stub spawn) doesn't race the
+	// one-shot script tests write. Default-on for the harness; the handful of
+	// tests that assert extraction runs clear it via EnableNudgeExtraction.
+	SuppressNudgeExtraction bool
 }
 
 // writeTestConfig writes a minimal foci.toml at path. The config defines
@@ -185,6 +190,15 @@ model = "stub"
 		// global (which writeTestConfig points at the auto-built cc-stub).
 		if a.ClaudeBinary != "" {
 			fmt.Fprintf(&sb, "claude_binary = %q\n", a.ClaudeBinary)
+		}
+
+		// Suppress the startup nudge-rule extraction RunOnce (a delegated
+		// cc-stub spawn on first activity) unless the test opts in. It
+		// otherwise races the one-shot script tests write. Per-agent
+		// [agents.nudge] overrides global [nudge] via config.Merge, so this
+		// stays robust even when a test injects its own global [nudge].
+		if o.SuppressNudgeExtraction {
+			sb.WriteString("\n[agents.nudge]\nnudge_auto_extract = false\n")
 		}
 
 		// Per-agent [agents.permissions] only emitted when at least one

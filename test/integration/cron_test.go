@@ -1140,6 +1140,12 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 		ExtraConfigTOML:   "\n[reflection]\ninterval_enabled = false\n\n[maintenance]\nconsolidation_enabled = true\nconsolidation_time = \"24h\"\n",
 		SeedAgentMetadata: map[string]map[string]string{"alpha": {"consolidation_last": overdue}},
 		ReadyTimeout:      30 * time.Second,
+		// This test counts the startup nudge-rule RunOnce as one of its 3
+		// expected invocations (nudge + bootstrap + consolidation) and relies
+		// on the post-restart boot reusing the cached rules (adding no nudge
+		// invocation). Opt into extraction so that logic holds — the harness
+		// suppresses it by default.
+		EnableNudgeExtraction: true,
 	})
 
 	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})

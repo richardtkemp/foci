@@ -191,6 +191,16 @@ type HarnessOptions struct {
 	// surviving startup. An explicit SeedAgentMetadata entry for
 	// first_run_completed always wins over this default.
 	EnableOnboarding bool
+	// EnableNudgeExtraction opts INTO startup nudge-rule extraction. By
+	// default (false) the harness writes nudge_auto_extract=false per agent,
+	// suppressing the delegated `claude --print` RunOnce foci fires on first
+	// activity to extract nudge rules from the character files. That RunOnce
+	// spawns the SAME one-shot cc-stub and races the script a test writes via
+	// WriteCCStubScript — the extraction turn consumes the queued script, so
+	// the test's own turn gets "no file" and the assertion that keyed off the
+	// script never fires (a dominant flake source across the Ask/Permissions/
+	// Cron families). Set true only in tests that assert the extractor runs.
+	EnableNudgeExtraction bool
 }
 
 // Harness drives one foci-gw subprocess against a Telegram stub. Tests
@@ -412,17 +422,18 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	gwSock := filepath.Join(gwSockDir, "gw.sock")
 
 	writeTestConfig(t, configPath, testConfigOpts{
-		DataDir:         dataDir,
-		LogsDir:         logsDir,
-		ClaudeBinary:    claudeBinary,
-		TelegramBase:    tgStub.URL(),
-		SecretsPath:     secretsPath,
-		Agents:          opts.Agents,
-		Workspaces:      workspaces,
-		RecorderPath:    recorderPath,
-		HTTPPort:        httpPort,
-		SocketPath:      gwSock,
-		ExtraConfigTOML: opts.ExtraConfigTOML,
+		DataDir:                 dataDir,
+		LogsDir:                 logsDir,
+		ClaudeBinary:            claudeBinary,
+		TelegramBase:            tgStub.URL(),
+		SecretsPath:             secretsPath,
+		Agents:                  opts.Agents,
+		Workspaces:              workspaces,
+		RecorderPath:            recorderPath,
+		HTTPPort:                httpPort,
+		SocketPath:              gwSock,
+		ExtraConfigTOML:         opts.ExtraConfigTOML,
+		SuppressNudgeExtraction: !opts.EnableNudgeExtraction,
 	})
 	if !opts.SkipSecretsFile {
 		writeTestSecrets(t, secretsPath, opts.Agents, opts.ExtraSecretsTOML)
