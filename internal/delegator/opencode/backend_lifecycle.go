@@ -63,13 +63,15 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.workDir = opts.WorkDir
 	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
 
-	// Ensure the shell.env plugin and foci agent config exist BEFORE
-	// acquiring the server. opencode loads plugins and agent configs at
-	// subprocess startup; if we write them after acquireServer starts the
-	// subprocess, they won't be loaded until the next server restart.
-	// Both are idempotent so they're cheap to call on every Start.
+	// Ensure the foci plugins exist BEFORE acquiring the server. opencode
+	// loads plugins at subprocess startup; if we write them after
+	// acquireServer starts the subprocess, they won't be loaded until the
+	// next server restart. Both are idempotent so they're cheap on every Start.
+	//   - session-env: per-session FOCI_SOCK/BASH_ENV routing (shell.env hook)
+	//   - blank-system: suppresses opencode's default system prompt so only
+	//     foci's prompt (POST "system" field) reaches the model
 	EnsureSessionEnvPlugin(opts.WorkDir)
-	EnsureFociAgentConfig(opts.WorkDir)
+	EnsureBlankSystemPlugin(opts.WorkDir)
 
 	if b.server == nil {
 		srv, err := acquireServer(opts.AgentID, b.serverConfigFromOpts(opts), opts.Env)
@@ -145,17 +147,20 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		}
 	}
 
-	// Resolve and store the system prompt. Supplied dynamically via the
-	// "system" field in every POST /prompt_async body — opencode's foci
-	// agent config has a minimal prompt (" ") so opencode's default system
-	// prompt is skipped entirely.
+	// Resolve and store the system prompt (rebuilt from disk here so a resume/
+	// compaction-bounce picks up character-file edits). It reaches the model
+	// two ways: written to the per-session file that the blank-system plugin
+	// reads to REPLACE opencode's default (blank_system.go), and — as a
+	// fallback if that file is ever missing — sent in the "system" field of
+	// every POST /prompt_async body.
 	if opts.SystemPromptFunc != nil {
 		b.systemPrompt = opts.SystemPromptFunc(b.sessionID)
 	} else {
 		b.systemPrompt = opts.SystemPrompt
 	}
+	WriteSessionSystemFile(b.sessionID, b.systemPrompt)
 
-	_ = resumed // resumed sessions no longer need special prompt handling — system field is supplied on every POST
+	_ = resumed // resume handled above via SystemPromptFunc rebuild + per-session file rewrite
 
 	b.mu.Lock()
 	b.running = true
@@ -198,9 +203,10 @@ func (b *Backend) Close() error {
 		return nil
 	}
 
-	// Remove the per-session env mapping so the plugin doesn't read a
-	// stale entry for a closed session.
+	// Remove the per-session plugin data (env mapping + system prompt) so the
+	// plugins don't read stale entries for a closed session.
 	RemoveSessionEnvFile(b.sessionID)
+	RemoveSessionSystemFile(b.sessionID)
 
 	// Deregister from Server — stops the dispatcher and waits for any
 	// in-flight handler call to complete (dispatcher contract). Safe to

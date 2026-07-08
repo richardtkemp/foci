@@ -88,12 +88,6 @@ func RemoveSessionEnvFile(sessionID string) {
 	_ = os.Remove(sessionEnvPath(sessionID))
 }
 
-// sessionEnvPluginPath returns the path to the generated plugin file in
-// the agent's workspace.
-func sessionEnvPluginPath(workDir string) string {
-	return filepath.Join(workDir, ".opencode", "plugin", sessionEnvPluginFn)
-}
-
 // EnsureSessionEnvPlugin writes the shell.env plugin file into the workspace
 // if it doesn't exist or has stale content. The plugin reads per-session
 // env files from tempdir and injects them into every bash spawn, overriding
@@ -106,26 +100,33 @@ func EnsureSessionEnvPlugin(workDir string) {
 	if workDir == "" {
 		return
 	}
-	envDir := sessionEnvDir()
-	want := sessionEnvPluginSource(envDir)
+	ensureWorkspacePlugin(workDir, sessionEnvPluginFn, sessionEnvPluginSource(sessionEnvDir()))
+}
 
-	path := sessionEnvPluginPath(workDir)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Warnf("opencode", "session-env: mkdir plugin %s: %v", dir, err)
+// ensureWorkspacePlugin writes a foci-generated plugin file into the agent
+// workspace's .opencode/plugin/ dir if it's missing or its content is stale.
+// Shared by every foci opencode plugin (session-env, blank-system). Idempotent:
+// skips the write when content already matches (avoids touching mtime on every
+// session start, which could trigger file-watchers). Best-effort — errors are
+// logged, never fatal. Must run BEFORE the server is acquired: opencode loads
+// plugins at subprocess startup.
+func ensureWorkspacePlugin(workDir, filename, content string) {
+	if workDir == "" {
 		return
 	}
-
-	// Skip write if content is already current (avoids touching mtime on
-	// every session start, which could trigger file-watchers).
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == want {
+	path := filepath.Join(workDir, ".opencode", "plugin", filename)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		log.Warnf("opencode", "plugin: mkdir %s: %v", filepath.Dir(path), err)
 		return
 	}
-	if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
-		log.Warnf("opencode", "session-env: write plugin: %v", err)
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
 		return
 	}
-	log.Debugf("opencode", "session-env: wrote plugin to %s", path)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		log.Warnf("opencode", "plugin: write %s: %v", path, err)
+		return
+	}
+	log.Debugf("opencode", "plugin: wrote %s", path)
 }
 
 // sessionEnvPluginSource returns the TypeScript source for the shell.env

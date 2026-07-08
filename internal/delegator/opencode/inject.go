@@ -22,7 +22,6 @@ package opencode
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -419,32 +418,15 @@ func (b *Backend) postMessage(ctx context.Context, suffix string, body []byte) e
 // URLs. noReply:true tells opencode to treat the message as context-
 // only (used by injectSystemPrompt); false is the normal "expect a
 // reply" path.
+//
+// No `agent` field: the normal turn uses opencode's DEFAULT agent. foci's
+// system prompt is supplied via the "system" field, and the blank-system
+// plugin (blank_system.go) strips opencode's own default. We must NOT request
+// a named "foci" agent — that agent isn't registered, and opencode fails the
+// whole request with an opaque UnknownError (jammed all opencode agents
+// 2026-07-08). Plan mode's agent:"plan" goes through buildPromptBodyWithAgent.
 func buildPromptBody(text string, attachments []delegator.Attachment, noReply bool, systemPrompt string) []byte {
-	type part struct {
-		Type string `json:"type"`
-		Text string `json:"text,omitempty"`
-		Mime string `json:"mime,omitempty"`
-		URL  string `json:"url,omitempty"`
-	}
-	parts := make([]part, 0, 1+len(attachments))
-	parts = append(parts, part{Type: "text", Text: text})
-	for _, att := range attachments {
-		dataURL := "data:" + att.MimeType + ";base64," + base64.StdEncoding.EncodeToString(att.Data)
-		parts = append(parts, part{
-			Type: "file",
-			Mime: att.MimeType,
-			URL:  dataURL,
-		})
-	}
-	body := map[string]any{"parts": parts, "agent": fociAgentName}
-	if noReply {
-		body["noReply"] = true
-	}
-	if systemPrompt != "" {
-		body["system"] = systemPrompt
-	}
-	out, _ := json.Marshal(body)
-	return out
+	return buildPromptBodyWithAgent(text, attachments, noReply, "", systemPrompt)
 }
 
 // ---------------------------------------------------------------------------
