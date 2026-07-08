@@ -169,7 +169,37 @@ func (e *Extractor) NeedsExtraction() (string, bool) {
 	if existing == nil {
 		return hash, true
 	}
-	return hash, existing.ContentHash != hash
+	if existing.ContentHash != hash {
+		return hash, true
+	}
+	// Even when character files are unchanged, force re-extraction if the
+	// stored rules contain trigger types this backend can't evaluate — e.g.
+	// after a backend switch (claude-code → opencode) that dropped post-tool
+	// or pre-answer injection. Re-extraction regenerates the file offering
+	// only supported trigger types, so the scheduler stops skip-warning the
+	// dead rules on every load. Self-heals without a character-file edit.
+	if e.hasUnsupportedTriggers(existing.Rules) {
+		log.Infof("nudge", "existing rules use triggers unsupported by this backend — forcing re-extraction")
+		return hash, true
+	}
+	return hash, false
+}
+
+// hasUnsupportedTriggers reports whether any stored rule uses a trigger type
+// the current backend can't evaluate, given this Extractor's capabilities.
+// Mirrors the gating the scheduler applies (TriggerRequiresPostTool /
+// TriggerRequiresPreAnswer), so a rule that would be silently skipped at
+// load time instead triggers a regeneration.
+func (e *Extractor) hasUnsupportedTriggers(rules []Rule) bool {
+	for _, r := range rules {
+		if TriggerRequiresPostTool(r.Trigger.Type) && !e.canPostTool {
+			return true
+		}
+		if TriggerRequiresPreAnswer(r.Trigger.Type) && !e.canPreAnswer {
+			return true
+		}
+	}
+	return false
 }
 
 // Extract runs rule extraction via a branch session and saves the results.
