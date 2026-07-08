@@ -160,6 +160,14 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	}
 	WriteSessionSystemFile(b.sessionID, b.systemPrompt)
 
+	// Resolve the compaction summary prompt (foci's compaction-summary.md) and
+	// write it to the per-session file the plugin's session.compacting hook
+	// reads, so opencode's internal /summarize follows foci's format. Empty =
+	// leave opencode's default compaction template.
+	if opts.CompactionPromptFunc != nil {
+		WriteSessionCompactFile(b.sessionID, opts.CompactionPromptFunc(b.sessionID))
+	}
+
 	_ = resumed // resume handled above via SystemPromptFunc rebuild + per-session file rewrite
 
 	b.mu.Lock()
@@ -203,10 +211,11 @@ func (b *Backend) Close() error {
 		return nil
 	}
 
-	// Remove the per-session plugin data (env mapping + system prompt) so the
-	// plugins don't read stale entries for a closed session.
+	// Remove the per-session plugin data (env mapping + system + compaction
+	// prompts) so the plugins don't read stale entries for a closed session.
 	RemoveSessionEnvFile(b.sessionID)
 	RemoveSessionSystemFile(b.sessionID)
+	RemoveSessionCompactFile(b.sessionID)
 
 	// Deregister from Server — stops the dispatcher and waits for any
 	// in-flight handler call to complete (dispatcher contract). Safe to

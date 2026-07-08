@@ -451,6 +451,15 @@ type StartOptions struct {
 	// the latest level and lets each session carry its own. Its result
 	// populates Effort for that Start. (#840)
 	EffortFunc func(sessionKey string) string
+
+	// CompactionPromptFunc, when non-nil, is called at each session Start to
+	// resolve the compaction summary prompt fresh from disk (mirroring
+	// SystemPromptFunc). Backends that drive their OWN compaction (opencode's
+	// internal /summarize) use it to make that summary follow foci's
+	// compaction-summary.md instead of the backend's built-in template — via
+	// the blank-system plugin's session.compacting hook. Empty result / nil =
+	// leave the backend's default compaction prompt untouched.
+	CompactionPromptFunc func(sessionKey string) string
 }
 
 // SessionEvents are the session-scoped, always-callable delivery callbacks.
