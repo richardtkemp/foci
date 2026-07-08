@@ -557,7 +557,7 @@ func promptsDiff(ctx context.Context, data PromptsData, name string, cc CommandC
 	content.WriteString(diff)
 	content.WriteString("\n```\n")
 
-	tmpFile, err := os.CreateTemp(tempdir.Dir(), "prompt-diff-*.md")
+	tmpFile, err := tempdir.Create("prompt-diff-*.md")
 	if err != nil {
 		return Response{}, fmt.Errorf("create temp file: %w", err)
 	}

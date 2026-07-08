@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/tempdir"
 	"foci/internal/tools"
 
 	"github.com/go-rod/rod"
@@ -74,7 +75,7 @@ func (m *BrowserManager) Start() error {
 		}
 		l = l.UserDataDir(m.config.UserDataDir)
 	} else {
-		dir, err := os.MkdirTemp("", "foci-browser-*")
+		dir, err := tempdir.Mkdir("foci-browser-*")
 		if err != nil {
 			return fmt.Errorf("create browser profile dir: %w", err)
 		}

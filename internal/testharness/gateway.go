@@ -19,6 +19,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 
 	"foci/internal/session"
+	"foci/internal/testtemp"
 )
 
 // AgentSpec describes one agent to wire up in a test foci-gw.
@@ -393,7 +394,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	// (TODO #804) — the default socket path lives under DataDir, which embeds
 	// the test name and overflows 108 bytes for long-named tests, failing
 	// bind with "invalid argument". Allocate a short /tmp dir instead.
-	gwSockDir, err := os.MkdirTemp("/tmp", "fgw")
+	gwSockDir, err := testtemp.Mkdir("fgw")
 	if err != nil {
 		return nil, fmt.Errorf("alloc gateway-socket dir: %w", err)
 	}
@@ -428,7 +429,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	// with "invalid argument" for the longest-named L2 tests (TODO #804).
 	// Allocate a short, test-name-independent dir directly under /tmp so the
 	// full path stays ~25 chars regardless of test name or TMPDIR.
-	sockDir, err := os.MkdirTemp("/tmp", "fcs")
+	sockDir, err := testtemp.Mkdir("fcs")
 	if err != nil {
 		t.Fatalf("testharness: alloc control-socket dir: %v", err)
 	}
@@ -972,7 +973,7 @@ func sharedBinary(t *testing.T, repoRoot, pkg string) string {
 	t.Helper()
 	sharedBinMu.Lock()
 	if sharedBinDir == "" {
-		d, err := os.MkdirTemp("", "foci-l2-bin")
+		d, err := testtemp.Mkdir("foci-l2-bin")
 		if err != nil {
 			sharedBinMu.Unlock()
 			t.Fatalf("shared bin dir: %v", err)

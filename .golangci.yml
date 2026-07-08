@@ -42,11 +42,22 @@ linters-settings:
     # (otherwise child processes can read /home/foci/config/secrets.toml).
     # Allowed callers: internal/procx/procx.go (the helper itself, which
     # holds the bootstrap probe and the spawn entry points).
+    #
+    # Ban raw os.MkdirTemp / os.CreateTemp. All temp file/dir creation
+    # must go through tempdir.Mkdir / tempdir.Create / tempdir.SpawnMkdir
+    # (production) or testtemp.Mkdir / testtemp.Create (tests) so temp
+    # files land under /tmp/foci or /tmp/fgw, not scattered in /tmp.
+    # Exempted: tempdir.go/testtemp.go (the helpers), log/rotate.go,
+    # spill.go, http.go (atomic O_EXCL writes in a target dir).
     forbid:
       - p: ^exec\.Command$
         msg: "use procx.Spawn (raw exec.Command leaks the foci-secrets group to children)"
       - p: ^exec\.CommandContext$
         msg: "use procx.Spawn (raw exec.CommandContext leaks the foci-secrets group to children)"
+      - p: ^os\.MkdirTemp$
+        msg: "use tempdir.Mkdir / tempdir.SpawnMkdir / testtemp.Mkdir (raw os.MkdirTemp scatters files in /tmp)"
+      - p: ^os\.CreateTemp$
+        msg: "use tempdir.Create / testtemp.Create (raw os.CreateTemp scatters files in /tmp)"
     analyze-types: false
 
   errcheck:
@@ -95,5 +106,28 @@ issues:
     # caller of exec.Command* — it contains the spawn helpers (Spawn /
     # SpawnSetsid) and the CAP_SETGID probe.
     - path: internal/procx/procx\.go
+      linters:
+        - forbidigo
+
+    # forbidigo exemption: temp helpers are the sole permitted callers of
+    # os.MkdirTemp / os.CreateTemp — they implement the sanctioned wrappers
+    # (Mkdir, Create, SpawnMkdir) that the rest of the codebase must use.
+    - path: internal/tempdir/tempdir\.go
+      linters:
+        - forbidigo
+    - path: internal/testtemp/testtemp\.go
+      linters:
+        - forbidigo
+
+    # forbidigo exemption: atomic O_EXCL writes in a target directory (not
+    # temp scattering) — these create temp files inside a specific log/spill/
+    # download dir for crash-safe rename, not under the OS temp root.
+    - path: internal/log/rotate\.go
+      linters:
+        - forbidigo
+    - path: internal/tools/spill/spill\.go
+      linters:
+        - forbidigo
+    - path: internal/tools/http\.go
       linters:
         - forbidigo

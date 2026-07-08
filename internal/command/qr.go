@@ -5,6 +5,8 @@ import (
 	"os"
 
 	qrcode "github.com/skip2/go-qrcode"
+
+	"foci/internal/tempdir"
 )
 
 // pairingQRFile renders data as a QR-code PNG in a temp file and returns its
@@ -15,7 +17,7 @@ func pairingQRFile(data string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("qr encode: %w", err)
 	}
-	f, err := os.CreateTemp("", "foci-pair-*.png")
+	f, err := tempdir.Create("foci-pair-*.png")
 	if err != nil {
 		return "", err
 	}

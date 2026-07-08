@@ -151,7 +151,7 @@ func wireAgentPlatformCallbacks(
 		if !resolved.PlatformNotify(c.PlatformName()).CompactionDebug {
 			return
 		}
-		f, err := os.CreateTemp(tempdir.Dir(), "compaction-summary-*.md")
+		f, err := tempdir.Create("compaction-summary-*.md")
 		if err != nil {
 			log.Warnf("agent", "compaction debug: create temp file: %v", err)
 			return

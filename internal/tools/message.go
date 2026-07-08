@@ -11,6 +11,7 @@ import (
 	"foci/internal/convo"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/tempdir"
 	"foci/internal/voice"
 )
 
@@ -139,7 +140,7 @@ func prepareNamedFile(filePath, name string) (string, func(), error) {
 	if err != nil {
 		return "", noop, fmt.Errorf("resolve source path: %w", err)
 	}
-	tmpDir, err := os.MkdirTemp("", "foci-send-")
+	tmpDir, err := tempdir.Mkdir("foci-send-")
 	if err != nil {
 		return "", noop, fmt.Errorf("create temp dir: %w", err)
 	}
