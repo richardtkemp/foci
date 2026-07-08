@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"foci/internal/tempdir"
 )
 
 func testRegistry() *Registry {
@@ -119,6 +121,62 @@ func TestExecBridgeStableReuse(t *testing.T) {
 	}
 	if res, errMsg := callBridge(t, b3.SockPath(), `{"tool":"echo_tool","params":{"text":"back"}}`); errMsg != "" || res != "echo: back" {
 		t.Fatalf("fresh bridge not callable: res=%q err=%q", res, errMsg)
+	}
+}
+
+func TestExecBridgeStableStaleSocketRemoved(t *testing.T) {
+	// Restart-reconnect contract: a leftover socket file from a dead prior
+	// process (nothing listening) must be removed so the new listener can bind
+	// the stable path. This is the case os.Remove exists for — it must keep
+	// working after the live-socket guard was added.
+	t.Parallel()
+	r := testRegistry()
+	key := t.Name()
+	sock := fmt.Sprintf("%s/exec-%s.sock", tempdir.Dir(), strings.ReplaceAll(key, "/", "-"))
+
+	// A stale socket file with no listener behind it (DialTimeout will refuse).
+	if err := os.WriteFile(sock, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("seed stale socket file: %v", err)
+	}
+	if socketIsLive(sock) {
+		t.Fatal("seeded stale file reported live — probe is wrong")
+	}
+
+	b, err := NewExecBridgeStable(r, context.Background(), key)
+	if err != nil {
+		t.Fatalf("NewExecBridgeStable over stale file: %v", err)
+	}
+	defer b.Close()
+	if res, errMsg := callBridge(t, b.SockPath(), `{"tool":"echo_tool","params":{"text":"hi"}}`); errMsg != "" || res != "echo: hi" {
+		t.Fatalf("bridge over cleared stale file not callable: res=%q err=%q", res, errMsg)
+	}
+}
+
+func TestExecBridgeStableLiveSocketRefused(t *testing.T) {
+	// Hijack guard: if a DIFFERENT live process is already listening at the
+	// stable path (identical session key + shared FOCI_TMPDIR — the cross-test
+	// hijack, TODO #804), NewExecBridgeStable must refuse rather than os.Remove
+	// the live socket and steal it.
+	t.Parallel()
+	r := testRegistry()
+	key := t.Name()
+	sock := fmt.Sprintf("%s/exec-%s.sock", tempdir.Dir(), strings.ReplaceAll(key, "/", "-"))
+
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("seed live listener: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	if _, err := NewExecBridgeStable(r, context.Background(), key); err == nil {
+		t.Fatal("NewExecBridgeStable hijacked a live socket instead of erroring")
+	} else if !strings.Contains(err.Error(), "refusing to hijack") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The pre-existing listener must survive — not have been unlinked/stolen.
+	if !socketIsLive(sock) {
+		t.Fatal("pre-existing live socket was removed despite the refusal")
 	}
 }
 

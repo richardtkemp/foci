@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"foci/internal/log"
 	"foci/internal/peercred"
@@ -83,8 +84,22 @@ func NewExecBridgeStable(registry *Registry, ctx context.Context, stableID strin
 	}
 
 	// Remove stale socket from a previous process (if any). Safe now: no live
-	// bridge for this path exists in this process (checked above), so any socket
-	// at this path is one left behind by a prior foci invocation.
+	// bridge for this path exists in THIS process (checked above), so any socket
+	// at this path should be one left behind by a prior foci invocation — a dead
+	// file that net.Listen would otherwise reject with EADDRINUSE.
+	//
+	// But "should be" is a load-bearing assumption: the in-process memo above
+	// only sees this process's bridges. If a *different* live process is
+	// listening at this exact path (identical session key + shared FOCI_TMPDIR —
+	// the cross-test hijack, TODO #804), os.Remove would silently unlink its live
+	// socket and steal the path, corrupting that session's routing. Production's
+	// singleflight makes this a can't-happen, so treat it as the bug it is:
+	// probe liveness first, and if something answers, refuse to hijack and fail
+	// loudly rather than clobber it. A genuine stale socket refuses the dial
+	// (ECONNREFUSED), so this never fires on the normal restart-reconnect path.
+	if socketIsLive(sockPath) {
+		return nil, fmt.Errorf("exec bridge: a live socket is already listening at %s (session %q) — refusing to hijack it; this indicates two processes sharing one socket path (see TODO #804)", sockPath, stableID)
+	}
 	_ = os.Remove(sockPath)
 
 	b, err := newExecBridge(registry, ctx, sockPath, funcsPath)
@@ -93,6 +108,20 @@ func NewExecBridgeStable(registry *Registry, ctx context.Context, stableID strin
 	}
 	stableBridges[sockPath] = b
 	return b, nil
+}
+
+// socketIsLive reports whether a process is actively accepting connections on
+// the unix socket at path. A stale socket file left by a dead process refuses
+// the dial (ECONNREFUSED), so this distinguishes "safe to os.Remove and rebind"
+// (false) from "a live listener owns this path" (true). The dial closes
+// immediately — it's a liveness probe, not a real client.
+func socketIsLive(path string) bool {
+	conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func newExecBridge(registry *Registry, ctx context.Context, sockPath, funcsPath string) (*ExecBridge, error) {
