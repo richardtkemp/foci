@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/internal/agent/turnevent"
@@ -159,7 +160,7 @@ func TestNeedsExtraction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewExtractor(dir, []string{"SOUL.md"}, 0640)
+	e := NewExtractor(dir, []string{"SOUL.md"}, 0640, true, true)
 
 	// First time: no rules file → needs extraction
 	hash1, needed := e.NeedsExtraction()
@@ -198,7 +199,7 @@ func TestNeedsExtractionNoFiles(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	e := NewExtractor(dir, []string{"NONEXISTENT.md"}, 0640)
+	e := NewExtractor(dir, []string{"NONEXISTENT.md"}, 0640, true, true)
 
 	_, needed := e.NeedsExtraction()
 	if needed {
@@ -231,7 +232,7 @@ func TestExtractEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewExtractor(dir, []string{"SOUL.md"}, 0640)
+	e := NewExtractor(dir, []string{"SOUL.md"}, 0640, true, true)
 	handler := &mockHandler{
 		response: `[{"text": "Verify first", "source_file": "SOUL.md", "source_text": "Always verify", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
 	}
@@ -284,7 +285,7 @@ func TestExtractViaRunOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewExtractor(dir, []string{"CRAFT.md"}, 0640)
+	e := NewExtractor(dir, []string{"CRAFT.md"}, 0640, true, true)
 	runner := &mockRunner{
 		response: `[{"text": "Check first", "source_file": "CRAFT.md", "source_text": "Check before acting", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
 	}
@@ -294,8 +295,9 @@ func TestExtractViaRunOnce(t *testing.T) {
 	}
 
 	// Verify the prompt was the extraction prompt.
-	if runner.gotPrompt != ExtractionPrompt {
-		t.Errorf("expected ExtractionPrompt, got %q", runner.gotPrompt[:50])
+	expectedPrompt := e.buildExtractionPrompt()
+	if runner.gotPrompt != expectedPrompt {
+		t.Errorf("expected extraction prompt, got %q", runner.gotPrompt[:50])
 	}
 	// Verify empty system prompt for extraction.
 	if runner.gotSysPrompt != "" {
@@ -321,5 +323,30 @@ func TestExtractViaRunOnce(t *testing.T) {
 	}
 	if runner2.gotPrompt != "" {
 		t.Error("expected RunOnce not to be called on unchanged files")
+	}
+}
+
+func TestExtractionPromptCapabilities(t *testing.T) {
+	// Verifies the prompt only includes trigger types the backend supports.
+	t.Parallel()
+
+	full := NewExtractor("", nil, 0640, true, true).buildExtractionPrompt()
+	restricted := NewExtractor("", nil, 0640, false, false).buildExtractionPrompt()
+
+	// Full prompt includes all trigger types.
+	for _, trigger := range []string{"every_n_tools", "pre_answer", "after_error", "regex", "tool_pattern"} {
+		if !strings.Contains(full, trigger) {
+			t.Errorf("full prompt missing trigger %q", trigger)
+		}
+	}
+
+	// Restricted prompt (opencode backend) only includes regex.
+	for _, trigger := range []string{"every_n_tools", "pre_answer", "after_error", "tool_pattern"} {
+		if strings.Contains(restricted, trigger) {
+			t.Errorf("restricted prompt should not include trigger %q", trigger)
+		}
+	}
+	if !strings.Contains(restricted, "regex") {
+		t.Errorf("restricted prompt must include regex trigger")
 	}
 }
