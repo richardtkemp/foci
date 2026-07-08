@@ -15,6 +15,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/tools"
 	"foci/internal/voice"
 )
 
@@ -103,6 +104,13 @@ func (c *appConn) DefaultSessionKeyOrEmpty() string { return c.bound }
 func (c *appConn) InvokeTool(ctx context.Context, tool, action string, args json.RawMessage) (fap.ToolResult, error) {
 	return c.hub.InvokeTool(ctx, c.agentID, tool, action, args)
 }
+
+// Compile-time guard: *appConn MUST satisfy tools.AppInvoker, because the
+// app_android tool resolves its invoker via a runtime conn.(tools.AppInvoker)
+// assertion (cmd/foci-gw/tool_table.go). A signature drift (e.g. a mirror
+// return type) would silently fail that assertion at runtime and leave the tool
+// reporting "no device connected" — this line turns that into a build error.
+var _ tools.AppInvoker = (*appConn)(nil)
 
 // SetSessionKey / SetSessionKeyDirect / SetChatID satisfy platform.Connection
 // but are no-ops for the app: a view's session is fixed at mint time (the

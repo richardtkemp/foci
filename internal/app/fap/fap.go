@@ -689,6 +689,16 @@ type ToolResult struct {
 	Error        string          `json:"error,omitempty"`
 }
 
+// ToolResult.Status values. "pending" is a NON-terminal keepalive: the device
+// emits it when a task overruns its own sync window, and a later "completed"/
+// "error" frame with the same InvocationID follows. "completed"/"error" are
+// terminal — the InvokeTool waiter returns on those.
+const (
+	ToolStatusCompleted = "completed"
+	ToolStatusPending   = "pending"
+	ToolStatusError     = "error"
+)
+
 // --- ULID (mirror Kotlin Ulid.kt) ---
 
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"

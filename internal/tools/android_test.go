@@ -7,10 +7,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/app/fap"
 )
 
 type fakeInvoker struct {
-	result AppToolResult
+	result fap.ToolResult
 	err    error
 	calls  int
 	last   struct {
@@ -20,14 +22,14 @@ type fakeInvoker struct {
 	block chan struct{} // optional: hold the call until closed
 }
 
-func (f *fakeInvoker) InvokeTool(ctx context.Context, tool, action string, args json.RawMessage) (AppToolResult, error) {
+func (f *fakeInvoker) InvokeTool(ctx context.Context, tool, action string, args json.RawMessage) (fap.ToolResult, error) {
 	f.calls++
 	f.last.tool, f.last.action, f.last.args = tool, action, args
 	if f.block != nil {
 		select {
 		case <-f.block:
 		case <-ctx.Done():
-			return AppToolResult{}, ctx.Err()
+			return fap.ToolResult{}, ctx.Err()
 		}
 	}
 	return f.result, f.err
@@ -45,7 +47,7 @@ func TestAppAndroidTool_NoInvoker(t *testing.T) {
 }
 
 func TestAppAndroidTool_ListAction(t *testing.T) {
-	fake := &fakeInvoker{result: AppToolResult{
+	fake := &fakeInvoker{result: fap.ToolResult{
 		Status: "completed",
 		Output: json.RawMessage(`{"tasks":[{"task":"foci_battery","description":"battery level"}]}`),
 	}}
@@ -66,7 +68,7 @@ func TestAppAndroidTool_ListAction(t *testing.T) {
 }
 
 func TestAppAndroidTool_PerformAction(t *testing.T) {
-	fake := &fakeInvoker{result: AppToolResult{
+	fake := &fakeInvoker{result: fap.ToolResult{
 		Status: "completed",
 		Output: json.RawMessage(`{"level":82,"charging":true}`),
 	}}
@@ -92,19 +94,19 @@ func TestAppAndroidTool_PerformAction(t *testing.T) {
 }
 
 func TestAppAndroidTool_PendingResult(t *testing.T) {
-	fake := &fakeInvoker{result: AppToolResult{Status: "pending", Error: "still running"}}
+	fake := &fakeInvoker{result: fap.ToolResult{Status: "pending", Error: "still running"}}
 	tool := NewAppAndroidTool(func() (AppInvoker, bool) { return fake, true })
 	res, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"perform","task":"slow"}`))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if !strings.Contains(res.Text, "still running") || !strings.Contains(res.Text, "dropped") {
-		t.Errorf("expected pending + dropped message, got %q", res.Text)
+	if !strings.Contains(res.Text, "still running") || !strings.Contains(res.Text, "won't be delivered") {
+		t.Errorf("expected pending + not-delivered message, got %q", res.Text)
 	}
 }
 
 func TestAppAndroidTool_ErrorResult(t *testing.T) {
-	fake := &fakeInvoker{result: AppToolResult{Status: "error", Error: "task not found"}}
+	fake := &fakeInvoker{result: fap.ToolResult{Status: "error", Error: "task not found"}}
 	tool := NewAppAndroidTool(func() (AppInvoker, bool) { return fake, true })
 	res, err := tool.Execute(context.Background(), json.RawMessage(`{"action":"perform","task":"ghost"}`))
 	if err != nil {
