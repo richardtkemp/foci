@@ -133,26 +133,64 @@ type Bot struct {
 	mediaGroupMu sync.Mutex
 	mediaGroups  map[string]*mediaGroupEntry
 
-	// forceIPv4, when latched true, makes the bot's HTTP transport dial
-	// api.telegram.org over IPv4 only. switchToIPv4 sets it after a sustained
-	// run of IPv6 read timeouts (TODO #809); revertToDualStack clears it again
-	// once polling recovers, so a transient blackhole doesn't abandon IPv6 for
-	// the process lifetime (bounded by maxIPv4Reverts to stop flapping).
-	// Pointer (not value) so the dialer closure — built in NewBot before this
-	// struct exists — and the poll loop share one flag without copying an
-	// atomic. nil on test-constructed bots (struct literal); always read via
-	// ipv4Latched(), never directly.
-	forceIPv4 *atomic.Bool
-	// transport is the bot's HTTP transport. switchToIPv4/revertToDualStack call
-	// CloseIdleConnections on it so pooled sockets for the abandoned address
-	// family are dropped and the next dial re-resolves. nil on test bots.
-	transport *http.Transport
+	// lastSendAt is the Unix-nano time of the most recent outbound message send
+	// (stamped by activityClient wrapping the send methods). The poll loop reads
+	// it to tell whether a getUpdates stall overlapped active use — inbound
+	// delayed while the bot was mid-conversation (WARN) — vs a fully idle window
+	// (INFO). Pointer so the wrapper, built in NewBot before this struct exists,
+	// and the poll loop share one atomic. nil on test-constructed bots.
+	lastSendAt *atomic.Int64
 }
 
-// ipv4Latched reports whether the bot has switched to IPv4-only dialing.
-// Safe on test-constructed bots where forceIPv4 is nil.
-func (b *Bot) ipv4Latched() bool {
-	return b.forceIPv4 != nil && b.forceIPv4.Load()
+// activityClient wraps a botClient to stamp lastSendAt on every outbound
+// message send. Embedding the interface delegates the non-sending methods
+// (GetFile, SetMyCommands, callback-answer, delete, typing action) unchanged;
+// only the message-bearing sends count as activity.
+type activityClient struct {
+	botClient
+	lastSendAt *atomic.Int64
+}
+
+func (c activityClient) stamp() { c.lastSendAt.Store(time.Now().UnixNano()) }
+
+func (c activityClient) SendMessage(chatID int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error) {
+	c.stamp()
+	return c.botClient.SendMessage(chatID, text, opts)
+}
+
+func (c activityClient) EditMessageText(text string, opts *gotgbot.EditMessageTextOpts) (*gotgbot.Message, bool, error) {
+	c.stamp()
+	return c.botClient.EditMessageText(text, opts)
+}
+
+func (c activityClient) SendDocument(chatID int64, doc gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error) {
+	c.stamp()
+	return c.botClient.SendDocument(chatID, doc, opts)
+}
+
+func (c activityClient) SendVoice(chatID int64, voice gotgbot.InputFileOrString, opts *gotgbot.SendVoiceOpts) (*gotgbot.Message, error) {
+	c.stamp()
+	return c.botClient.SendVoice(chatID, voice, opts)
+}
+
+func (c activityClient) SendVideo(chatID int64, video gotgbot.InputFileOrString, opts *gotgbot.SendVideoOpts) (*gotgbot.Message, error) {
+	c.stamp()
+	return c.botClient.SendVideo(chatID, video, opts)
+}
+
+func (c activityClient) SendPhoto(chatID int64, photo gotgbot.InputFileOrString, opts *gotgbot.SendPhotoOpts) (*gotgbot.Message, error) {
+	c.stamp()
+	return c.botClient.SendPhoto(chatID, photo, opts)
+}
+
+func (c activityClient) SendAudio(chatID int64, audio gotgbot.InputFileOrString, opts *gotgbot.SendAudioOpts) (*gotgbot.Message, error) {
+	c.stamp()
+	return c.botClient.SendAudio(chatID, audio, opts)
+}
+
+func (c activityClient) SendAnimation(chatID int64, animation gotgbot.InputFileOrString, opts *gotgbot.SendAnimationOpts) (*gotgbot.Message, error) {
+	c.stamp()
+	return c.botClient.SendAnimation(chatID, animation, opts)
 }
 
 // BotDisplayConfig groups all display-related settings. Write-once at startup
@@ -265,38 +303,15 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		// so the override is uniform across getUpdates, sendMessage, etc.
 		defaultReqOpts.APIURL = apiBase
 	}
-	// IPv6 fallback dialer.
-	//
-	// Telegram's IPv6 address for api.telegram.org (2001:67c:4e8:f004::9) has
-	// intermittently *blackholed*: the TCP handshake completes but subsequent
-	// reads stall until the client timeout, so getUpdates long-polls fail in a
-	// sustained run while IPv4 stays perfectly healthy (TODO #809; the scout
-	// outage on 2026-06-07 ran 34 min / 36 consecutive failures). Happy-eyeballs
-	// (RFC 6555) does NOT save us here: it only races connection *setup*, and the
-	// v6 setup succeeds — the stall is on the data path, after the handshake.
-	//
-	// So we install a custom dialer whose address family can be flipped at
-	// runtime. Normal operation dials dual-stack ("tcp", v6-preferred). When the
-	// poll loop sees the timeout signature (see classifyPollError / switchToIPv4
-	// in bot_poll.go) it latches forceIPv4, and every subsequent dial uses
-	// "tcp4" — IPv4 only. The latch is NOT permanent: revertToDualStack clears
-	// it once polling recovers, because the observed blackhole self-healed in
-	// ~34 min (#809) and v6 is the preferred path. A persistent blackhole that
-	// keeps re-tripping the switch latches IPv4 for the process after
-	// maxIPv4Reverts flap cycles. A fresh process always starts dual-stack.
-	forceIPv4 := &atomic.Bool{}
+	// Custom transport for the connection pool: the default
+	// MaxIdleConnsPerHost=2 is too low — the getUpdates long-poll holds one
+	// connection while the worker sends typing indicators + messages on another,
+	// starving the receiver goroutine's callback/command handling.
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
 		MaxIdleConnsPerHost: 8,
-		// A custom DialContext disables Go's automatic HTTP/2 upgrade unless we
-		// opt back in; keep H2 so behaviour matches the previous bare transport.
-		ForceAttemptHTTP2: true,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if forceIPv4.Load() {
-				network = "tcp4"
-			}
-			return dialer.DialContext(ctx, network, addr)
-		},
+		ForceAttemptHTTP2:   true,
+		DialContext:         dialer.DialContext,
 	}
 	// Construct via connectBot so a transient DNS/network blip at boot
 	// (e.g. systemd brings foci up before DNS is ready) doesn't permanently
@@ -320,10 +335,11 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		allowed[u] = true
 	}
 
+	lastSendAt := &atomic.Int64{}
 	bot := &Bot{
 		log:          lg,
 		api:          api,
-		client:       api,
+		client:       activityClient{botClient: api, lastSendAt: lastSendAt},
 		handler:      handler,
 		commands:     cmds,
 		lastMsgStore: lastMsgStore,
@@ -331,8 +347,7 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		agentID:      agentID,
 		botToken:     token,
 		apiBase:      apiBase,
-		forceIPv4:    forceIPv4,
-		transport:    transport,
+		lastSendAt:   lastSendAt,
 		chatmeta: &chatmeta.Resolver{
 			AgentID:      agentID,
 			PlatformName: platformName,
