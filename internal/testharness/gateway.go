@@ -181,6 +181,16 @@ type HarnessOptions struct {
 	// scheduler fires promptly despite a long interval. Written via the same
 	// SessionIndex foci-gw reads at startup.
 	SeedAgentMetadata map[string]map[string]string
+	// EnableOnboarding opts INTO the first-run onboarding turn. By default
+	// (false) the harness seeds first_run_completed=true for every agent so
+	// no onboarding prompt fires — the onboarding turn injects a startup CC
+	// call that races the one-shot cc-stub script write (WriteCCStubScript
+	// after StartGateway), stealing the script a test queued for its own
+	// turn and making the test flaky. Set true only in tests that actually
+	// exercise onboarding; then don't rely on a pre-written cc-stub script
+	// surviving startup. An explicit SeedAgentMetadata entry for
+	// first_run_completed always wins over this default.
+	EnableOnboarding bool
 }
 
 // Harness drives one foci-gw subprocess against a Telegram stub. Tests
@@ -461,14 +471,44 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	// by which point t.Failed() reflects the test's final verdict.
 	t.Cleanup(func() { auditWeight(t) })
 
-	if len(opts.SeedAgentMetadata) > 0 {
-		seedAgentMetadata(t, filepath.Join(dataDir, "state.db"), opts.SeedAgentMetadata)
+	seed := mergeOnboardingSeed(opts)
+	if len(seed) > 0 {
+		seedAgentMetadata(t, filepath.Join(dataDir, "state.db"), seed)
 	}
 
 	if err := h.spawnGateway(); err != nil {
 		return nil, err
 	}
 	return h, nil
+}
+
+// mergeOnboardingSeed builds the agent_metadata seed map to write before
+// foci-gw spawns. Unless opts.EnableOnboarding is set, it seeds
+// first_run_completed=true for every configured agent so the first-run
+// onboarding turn is suppressed (it would otherwise inject a startup CC call
+// that races one-shot cc-stub script writes — see EnableOnboarding). Any
+// explicit opts.SeedAgentMetadata entry overrides the default, so a test can
+// still force onboarding for a specific agent by seeding
+// first_run_completed="false" (or by setting EnableOnboarding and omitting the
+// key). Returns a fresh map; never mutates opts.SeedAgentMetadata.
+func mergeOnboardingSeed(opts HarnessOptions) map[string]map[string]string {
+	out := make(map[string]map[string]string)
+	if !opts.EnableOnboarding {
+		for _, a := range opts.Agents {
+			out[a.ID] = map[string]string{"first_run_completed": "true"}
+		}
+	}
+	for agentID, kv := range opts.SeedAgentMetadata {
+		dst := out[agentID]
+		if dst == nil {
+			dst = make(map[string]string)
+			out[agentID] = dst
+		}
+		for k, v := range kv {
+			dst[k] = v
+		}
+	}
+	return out
 }
 
 // seedAgentMetadata writes the requested agent_metadata rows into the session
