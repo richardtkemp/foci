@@ -213,7 +213,7 @@ type HarnessOptions struct {
 // itself stay within sockaddr_un.sun_path (108 incl NUL) — the necessary
 // condition for ANY unix socket ever placed under a test's TempDir (real
 // sockets need headroom on top, which is why harness sockets live in short
-// /tmp/fcs*//tmp/fgw* dirs instead; TODO #804). Enforced at build time by
+// dirs under /tmp/fgw/ instead; TODO #804). Enforced at build time by
 // TestIntegrationTestNamesFitSunPath.
 const MaxIntegTestNameLen = 107 - len("/tmp/foci/integration-1234567890/") - 10 - len("/001")
 
@@ -239,6 +239,11 @@ type Harness struct {
 	// socket_path). Allocated under a short /tmp dir — not DataDir — so
 	// long test names can't overflow sun_path (TODO #804).
 	gwSock string
+
+	// execTmpDir is this test's private FOCI_TMPDIR, passed to the gateway so
+	// its exec-bridge sockets are isolated from other concurrent tests (see the
+	// allocation in tryStartGateway for the collision it prevents).
+	execTmpDir string
 
 	// Spawn-time invariants captured so Restart can re-run spawnGateway
 	// without re-doing the build / config / stub-setup work.
@@ -421,6 +426,24 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	t.Cleanup(func() { _ = os.RemoveAll(gwSockDir) })
 	gwSock := filepath.Join(gwSockDir, "gw.sock")
 
+	// Per-test FOCI_TMPDIR. The exec-bridge stable socket lives at
+	// <tempdir.Dir()>/exec-<agentID>-c<chatID>.sock (execbridge.go:70) with NO
+	// pid — so if two concurrently-running tests share a session key (many
+	// tests hardcode the same UserID → same chatID → same "alpha/c<id>"),
+	// their gateways collide on ONE socket path under the shared run-level
+	// FOCI_TMPDIR, and NewExecBridgeStable's os.Remove+Listen lets the later
+	// gateway HIJACK the socket — routing the first test's foci_* tool calls to
+	// the wrong gateway (writes land in the wrong store / posts to the wrong
+	// Telegram stub). Giving each gateway its own short FOCI_TMPDIR isolates
+	// the sockets so identical session keys never collide across tests. Via
+	// testtemp (root /tmp/fgw, or FOCI_TEST_TMPDIR under `make`) so the path
+	// stays short — respecting the sun_path 108-byte limit — and consolidated.
+	execTmpDir, err := testtemp.Mkdir("fet")
+	if err != nil {
+		return nil, fmt.Errorf("alloc exec-tmpdir: %w", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(execTmpDir) })
+
 	writeTestConfig(t, configPath, testConfigOpts{
 		DataDir:                 dataDir,
 		LogsDir:                 logsDir,
@@ -469,6 +492,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		workspaces:   workspaces,
 		controlSock:  controlSock,
 		gwSock:       gwSock,
+		execTmpDir:   execTmpDir,
 		gwBin:        gwBin,
 		binDir:       binDir,
 		ccStubBin:    stubBin,
@@ -557,7 +581,21 @@ func (h *Harness) spawnGateway() error {
 	// procx.Spawn is the production secrets-dropping wrapper and must not wrap
 	// the test process.
 	cmd := exec.CommandContext(ctx, h.gwBin, "-config", h.configPath) //nolint:forbidigo // integration harness launches the gw under test
-	cmd.Env = append(os.Environ(),
+	// Drop any inherited FOCI_TMPDIR (the `make integration` runner sets it to
+	// the shared run-level TESTDIR); we replace it with this test's private
+	// execTmpDir below so the gateway's temp files — crucially the exec-bridge
+	// sockets — are isolated per test. tempdir.resolve reads FOCI_TMPDIR via
+	// os.Getenv (first match wins), so appending isn't enough; the inherited
+	// value must be removed.
+	baseEnv := os.Environ()[:0:0]
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "FOCI_TMPDIR=") {
+			continue
+		}
+		baseEnv = append(baseEnv, kv)
+	}
+	cmd.Env = append(baseEnv,
+		"FOCI_TMPDIR="+h.execTmpDir,
 		"CCSTUB_RECORDER="+h.recorderPath,
 		"CCSTUB_SCRIPT_DIR="+h.scriptDir,
 		// Pin the early log-init path to the test tempdir so foci-gw
