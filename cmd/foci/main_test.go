@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/testtemp"
 )
 
 // testBinary is the path to the CLI binary built once in TestMain.
@@ -18,7 +20,7 @@ var testBinary string
 
 func TestMain(m *testing.M) {
 	// Build the CLI binary once for all tests.
-	dir, err := os.MkdirTemp("", "foci-test-*")
+	dir, err := os.MkdirTemp(testtemp.Dir(), "foci-test-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create temp dir: %v\n", err)
 		os.Exit(1)

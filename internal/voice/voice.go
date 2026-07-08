@@ -193,7 +193,7 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 		cmd = "edge-tts"
 	}
 
-	tmpFile, err := os.CreateTemp(tempdir.Dir(), "foci-tts-*.mp3")
+	tmpFile, err := tempdir.Create("foci-tts-*.mp3")
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}

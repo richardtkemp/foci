@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"foci/internal/testtemp"
 )
 
 func TestMain(m *testing.M) {
@@ -20,7 +22,7 @@ func TestMain(m *testing.M) {
 		os.Unsetenv(k)
 	}
 
-	dir, _ := os.MkdirTemp(os.TempDir(), "foci-tmux-test-*")
+	dir, _ := os.MkdirTemp(testtemp.Dir(), "foci-tmux-test-*")
 	tmuxSocketPath = filepath.Join(dir, "tmux.sock")
 
 	// Pre-start the tmux server so parallel tests don't race on startup.

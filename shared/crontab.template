@@ -8,5 +8,9 @@
 # (same-user auth via kernel peer credentials — no API key needed).
 #   PATH=/usr/local/bin:/usr/bin:/bin
 
+# Daily 04:13: sweep test temp dirs older than 24h (created by go test runs
+# outside the Makefile, which uses its own per-run TESTDIR + cleanup).
+13 4 * * * find /tmp/fgw -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} +
+
 # Weekly Mon 02:40: character review
 40 2 * * 1 foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/weekly-character-review.md 2>&1 >> HOMEDIR/logs/cron.log

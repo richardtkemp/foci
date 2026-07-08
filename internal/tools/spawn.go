@@ -172,7 +172,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			switch p.Context {
 			case "raw":
 				client, model, format := resolveSpawnGroup(deps.GroupResolver, p.Model, config.CallSpawnRaw, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
-				tempDir, err := os.MkdirTemp(tempdir.SpawnDir(), "foci-spawn-*")
+				tempDir, err := tempdir.SpawnMkdir("foci-spawn-*")
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
@@ -389,7 +389,7 @@ func spawnGuardResult(toolName, result string, limit int) string {
 	if len(result) <= limit {
 		return result
 	}
-	f, err := os.CreateTemp(tempdir.Dir(), "spawn-result-"+toolName+"-*.txt")
+	f, err := tempdir.Create("spawn-result-" + toolName + "-*.txt")
 	if err != nil {
 		return result // fallback: return original
 	}

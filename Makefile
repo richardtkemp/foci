@@ -64,7 +64,7 @@ test:
 	# cc-stub) do NOT inherit the lock — a lingering child must not keep the
 	# lock held after the runner exits, or the next run would block forever.
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	( flock 9; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... 9<&- ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS ) 9</tmp/heavy
+	( flock 9; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... 9<&- ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS ) 9</tmp/heavy
 
 # Integration tests (L2): real foci-gw subprocess against stubbed CC and
 # stubbed Telegram. Build-tagged so they only run under this target — not
@@ -76,7 +76,7 @@ integration:
 	@mkdir -p $(TESTDIR)
 	# Read-only lock fd (9<) — see the `test` target above for why (fs.protected_regular).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( flock 9; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) ./test/integration/... ./internal/testharness/... 9<&- ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS ) 9</tmp/heavy
+	@( flock 9; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) ./test/integration/... ./internal/testharness/... 9<&- ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS ) 9</tmp/heavy
 
 # bucket-audit: the differential half of weight-bucket detection. Runs the
 # L2 suite at low (-parallel=2) and high (-parallel=IPARALLEL) concurrency
@@ -90,22 +90,22 @@ bucket-audit:
 	$(eval TESTDIR := /tmp/foci/bktaudit-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "--- low (-parallel=2) ---"
-	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
+	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
 	@echo "--- high (-parallel=$(IPARALLEL)) ---"
-	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
+	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
 	@rm -rf $(TESTDIR)
 
 coverage:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Test Coverage ==="
-	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage-report:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Generating Coverage Report ==="
-	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
+	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
 	@rm -rf $(TESTDIR)
 	@go tool cover -func=coverage.out | tail -20
 	@echo ""
@@ -116,7 +116,7 @@ coverage-html:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Generating HTML Coverage Report ==="
-	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
+	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
 	@rm -rf $(TESTDIR)
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report saved to coverage.html"
@@ -129,7 +129,7 @@ coverage-check:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
-	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
+	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
 	@rm -rf $(TESTDIR)
 	@if grep -q '^FAIL' .test-output.tmp; then \
 		rm -f .test-output.tmp; \
@@ -177,10 +177,11 @@ lint: find-disconnected-tests
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
-	@# internal/testharness is test-only scaffolding: it is reachable solely
-	@# from -tags=integration tests, which deadcode ./... does not compile, so it
-	@# always appears unreachable. Exclude it to keep this gate on app code only.
-	@output=$$($(GOBIN)/deadcode ./... | grep -v '/testharness/'); \
+	@# internal/testharness and internal/testtemp are test-only scaffolding:
+	# reachable solely from -tags=integration tests and _test.go files, which
+	# deadcode ./... does not compile, so they always appear unreachable.
+	@# Exclude them to keep this gate on app code only.
+	@output=$$($(GOBIN)/deadcode ./... | grep -v -e '/testharness/' -e '/testtemp/'); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@./bin/find-disconnected-tests ./...
@@ -189,7 +190,8 @@ lint: find-disconnected-tests
 	@# (ParallelWait/ParallelHeavy/ParallelWeight) so it is throttled by the
 	@# weighted budget and covered by the bucket auditor. A bare t.Parallel()
 	@# runs unthrottled and silently escapes both — forbid it here since
-	@# forbidigo is disabled for _test.go files.
+	@# forbidigo is disabled for _test.go files (see .golangci.yml), so
+	@# enforce this here via grep instead.
 	@bad=$$(grep -rnE '^[[:space:]]*t\.Parallel\(\)' test/integration/ || true); \
 	if [ -n "$$bad" ]; then \
 		echo "bare t.Parallel() in L2 tests — use testharness.ParallelWait/ParallelHeavy/ParallelWeight:"; \

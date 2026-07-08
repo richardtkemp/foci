@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/testtemp"
 )
 
 // marshalParams is a test helper that JSON-marshals params and fails the test on error.
@@ -685,7 +686,7 @@ func TestBrowserPersistentProfile(t *testing.T) {
 
 	// Own the temp dir (not t.TempDir) so cleanup runs strictly after Stop and
 	// tolerates chromium's async shutdown writes ("directory not empty").
-	base, err := os.MkdirTemp("", "foci-persist-test-*")
+	base, err := os.MkdirTemp(testtemp.Dir(), "foci-persist-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}

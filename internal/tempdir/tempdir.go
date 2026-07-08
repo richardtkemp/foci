@@ -88,3 +88,18 @@ func SpawnDir() string {
 	_ = os.MkdirAll(dir, 0o1777)
 	return dir
 }
+
+// Mkdir creates a temp directory under the foci temp root.
+func Mkdir(pattern string) (string, error) {
+	return os.MkdirTemp(Dir(), pattern)
+}
+
+// Create creates a temp file under the foci temp root.
+func Create(pattern string) (*os.File, error) {
+	return os.CreateTemp(Dir(), pattern)
+}
+
+// SpawnMkdir creates a temp directory under the spawn subdirectory.
+func SpawnMkdir(pattern string) (string, error) {
+	return os.MkdirTemp(SpawnDir(), pattern)
+}
