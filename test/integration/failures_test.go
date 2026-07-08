@@ -846,13 +846,13 @@ func TestL2_Failures_TelegramGetUpdatesConnectionDropReconnects(t *testing.T) {
 	}
 }
 
-// TestL2_Failures_TelegramGetUpdatesPersistent5xxEscalatesLog proves
-// foci escalates the get-updates failure log from Debug to Error after
-// errorEscalateThreshold (5) consecutive failures. The stub returns
-// 502 to every getUpdates call until cleared; the test polls stderr
-// for the "5 consecutive failures" line. Per-method fault scope means
-// getMe stays clean, so the gateway came ready normally.
-func TestL2_Failures_TelegramGetUpdatesPersistent5xxEscalatesLog(t *testing.T) {
+// TestL2_Failures_TelegramGetUpdatesFailureRunSummaryLog proves foci
+// summarises a run of get-updates failures once on RECOVERY (the failure log
+// is recovery-only since the activity-gated rework — no per-failure ERROR).
+// getUpdates fails 5x (the episode-log threshold) then the 6th poll succeeds,
+// firing the "N consecutive failures" recovery line. Per-method fault scope
+// means getMe stays clean, so the gateway came ready normally.
+func TestL2_Failures_TelegramGetUpdatesFailureRunSummaryLog(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 8404
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -861,22 +861,22 @@ func TestL2_Failures_TelegramGetUpdatesPersistent5xxEscalatesLog(t *testing.T) {
 	})
 	stub := h.TelegramStub()
 
-	// 5 errors × 3s sleep = ~15s before the escalate log. Give a
-	// generous 30s budget. Persistent so the consecutive counter
-	// doesn't reset before threshold.
-	stub.InjectErrorPersistent("getUpdates", 502, "Bad Gateway")
-	defer stub.ClearInjections("getUpdates")
-
-	if !waitForStderr(h, "consecutive failures", 30*time.Second) {
-		t.Fatalf("expected 'consecutive failures' escalate log after 5x 502; stderr:\n%s", stderrTail(h.Stderr()))
+	// Queue exactly the episode-log threshold (5) of one-shot 502s: getUpdates
+	// fails 5x then the 6th poll succeeds and logs the recovery summary. Under
+	// the exponential backoff (1+2+4+8+16s) recovery lands at ~31s, so budget
+	// generously.
+	for i := 0; i < 5; i++ {
+		stub.InjectError("getUpdates", 502, "Bad Gateway")
 	}
 
-	// Lift the fault and confirm a fresh message processes — the
-	// poll loop should resume cleanly once getUpdates returns 200.
-	stub.ClearInjections("getUpdates")
-	pushUserMessage(t, h, "alpha", userID, "after-escalate-recovery")
-	if !waitForUserMessage(t, h, "workspaces/alpha", "after-escalate-recovery", 30*time.Second) {
-		t.Fatalf("post-escalate message never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	if !waitForStderr(h, "consecutive failures", 60*time.Second) {
+		t.Fatalf("expected recovery-summary 'consecutive failures' log after 5x 502 then recovery; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Confirm the poll loop resumed cleanly: a fresh message processes.
+	pushUserMessage(t, h, "alpha", userID, "after-recovery")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after-recovery", 30*time.Second) {
+		t.Fatalf("post-recovery message never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 }
 
