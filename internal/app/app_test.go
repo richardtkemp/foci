@@ -145,6 +145,26 @@ func TestAppSink_StreamingTranslation(t *testing.T) {
 	}
 }
 
+// #1082: subagent progress must reach the app as a raw subagent.text frame,
+// not be dropped (which left the subagent chip showing with empty content).
+func TestAppSink_SubagentTextDeliversFrame(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+
+	s.Emit(context.Background(), turnevent.SubagentText{GroupKey: "g1", Text: "found it in foo.go"})
+
+	var got string
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeSubagentText {
+			got, _ = d.d["text"].(string)
+		}
+	}
+	if got != "found it in foo.go" {
+		t.Fatalf("SubagentText must reach the app as a raw subagent.text frame; got %q", got)
+	}
+}
+
 func TestAppSink_InTurnSnapshot(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
