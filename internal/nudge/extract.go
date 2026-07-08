@@ -13,8 +13,13 @@ import (
 	"foci/internal/platform"
 )
 
-// ExtractionPrompt is sent to the model to extract rules from character files.
-const ExtractionPrompt = `Your character files are loaded in the system prompt. Read through them and identify
+// buildExtractionPrompt constructs the extraction prompt, including only
+// trigger types the backend can actually evaluate. This prevents the model
+// from wasting extraction budget on rules the scheduler will silently skip.
+func (e *Extractor) buildExtractionPrompt() string {
+	var b strings.Builder
+
+	b.WriteString(`Your character files are loaded in the system prompt. Read through them and identify
 statements that look like rules — things you should or shouldn't do, patterns to watch
 for, failure modes to avoid.
 
@@ -32,11 +37,18 @@ For each rule you extract, output a JSON object:
   "priority": "high|medium|low"
 }
 
-Trigger types (pick the most appropriate):
-- {"type": "every_n_tools", "n": N} — remind every N individual tool calls during a turn
-- {"type": "pre_answer"} — remind just before returning a final answer to the user
+`)
+
+	b.WriteString("Trigger types (pick the most appropriate):\n")
+
+	// regex works on all backends (turn-start, no injection needed).
+	b.WriteString(`- {"type": "regex", "pattern": "regex"} — remind when the user's message matches this pattern
+`)
+
+	// Post-tool triggers: every_n_tools, after_error, tool_pattern.
+	if e.canPostTool {
+		b.WriteString(`- {"type": "every_n_tools", "n": N} — remind every N individual tool calls during a turn
 - {"type": "after_error"} — remind when a tool call returns an error
-- {"type": "regex", "pattern": "regex"} — remind when the user's message matches this pattern
 - {"type": "tool_pattern", "tool_pattern": "regex", "input_pattern": "regex", "consecutive": N}
   — remind when the most recent tool calls match. tool_pattern matches the
   tool name (e.g. "^Read$", "^(Read|Grep|Glob)$"); input_pattern matches the
@@ -46,18 +58,50 @@ Trigger types (pick the most appropriate):
   about a specific kind of work (reading without engaging, editing character
   files, running destructive bash). Common tool names: Read, Write, Edit,
   Bash, Grep, Glob, Task, WebFetch, WebSearch, TodoWrite.
+`)
+	}
 
-Use your judgment on trigger type and frequency. For every_n_tools rules, keep N high —
+	// Pre-answer trigger.
+	if e.canPreAnswer {
+		b.WriteString(`- {"type": "pre_answer"} — remind just before returning a final answer to the user
+`)
+	}
+
+	b.WriteString("\n")
+
+	if e.canPostTool {
+		b.WriteString(`Use your judgment on trigger type and frequency. For every_n_tools rules, keep N high —
 every 15 tool calls is already quite frequent. Only the most critical rules should
 fire that often; most should use N=25 or higher. Rules about edge cases can have
 even higher N or more specific triggers. tool_pattern is usually a better fit
 than every_n_tools when the rule has a clear "what kind of tool use" signal.
 
-Limit: return at most ONE rule for "pre_answer" and at most ONE rule for "after_error".
-If multiple rules would use the same trigger type, synthesize them into a single
+`)
+	}
+
+	// Per-type limits — only mention available constrained types.
+	if e.canPostTool || e.canPreAnswer {
+		b.WriteString("Limit: return at most ONE rule")
+		var constrained []string
+		if e.canPreAnswer {
+			constrained = append(constrained, `"pre_answer"`)
+		}
+		if e.canPostTool {
+			constrained = append(constrained, `"after_error"`)
+		}
+		switch len(constrained) {
+		case 1:
+			b.WriteString(" for " + constrained[0] + ".\n")
+		case 2:
+			b.WriteString(" for " + constrained[0] + " and at most ONE rule for " + constrained[1] + ".\n")
+		}
+		b.WriteString(`If multiple rules would use the same trigger type, synthesize them into a single
 combined nudge that covers all the key points. Keep the combined text under 50 words.
 
-For "regex" triggers: the regex is tested against the user's message with
+`)
+	}
+
+	b.WriteString(`For "regex" triggers: the regex is tested against the user's message with
 re.MatchString (substring match, not full-string match). Be careful that what
 you write will actually do what you intend:
 - Use \b word boundaries to avoid matching substrings (e.g. \bcc\b not cc)
@@ -67,21 +111,31 @@ you write will actually do what you intend:
 
 Return a JSON array. If no extractable rules exist, return [].
 
-Respond with ONLY the JSON array. No explanation, no preamble, no markdown formatting.`
+Respond with ONLY the JSON array. No explanation, no preamble, no markdown formatting.`)
+
+	return b.String()
+}
 
 // Extractor handles LLM-based rule extraction from character files.
 type Extractor struct {
-	workspaceDir string
-	fileOrder    []string
-	fileMode     os.FileMode
+	workspaceDir  string
+	fileOrder     []string
+	fileMode      os.FileMode
+	canPostTool   bool
+	canPreAnswer  bool
 }
 
 // NewExtractor creates an Extractor for the given workspace.
-func NewExtractor(workspaceDir string, fileOrder []string, fileMode os.FileMode) *Extractor {
+// canPostTool and canPreAnswer mirror SchedulerOpts capabilities: the
+// extraction prompt only lists trigger types the backend can evaluate,
+// so the model doesn't produce rules the scheduler will discard.
+func NewExtractor(workspaceDir string, fileOrder []string, fileMode os.FileMode, canPostTool, canPreAnswer bool) *Extractor {
 	return &Extractor{
 		workspaceDir: workspaceDir,
 		fileOrder:    fileOrder,
 		fileMode:     fileMode,
+		canPostTool:  canPostTool,
+		canPreAnswer: canPreAnswer,
 	}
 }
 
@@ -131,7 +185,7 @@ func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionK
 
 	buf := turnevent.NewBufferSink()
 	extractCtx := turnevent.WithSink(ctx, buf)
-	if err := handler.HandleMessage(extractCtx, sessionKey, []string{ExtractionPrompt}, nil); err != nil {
+	if err := handler.HandleMessage(extractCtx, sessionKey, []string{e.buildExtractionPrompt()}, nil); err != nil {
 		return fmt.Errorf("nudge extraction: %w", err)
 	}
 
@@ -164,7 +218,7 @@ func (e *Extractor) ExtractViaRunOnce(ctx context.Context, runner OneShotRunner)
 
 	log.Infof("nudge", "extracting nudge rules via RunOnce (hash=%s)", hash[:16])
 
-	response, err := runner.RunOnce(ctx, ExtractionPrompt, "")
+	response, err := runner.RunOnce(ctx, e.buildExtractionPrompt(), "")
 	if err != nil {
 		return fmt.Errorf("nudge extraction (RunOnce): %w", err)
 	}
