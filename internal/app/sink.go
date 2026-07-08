@@ -18,10 +18,7 @@ import (
 //   - the agent activity indicator, driven off the turn boundary as structured
 //     fap.Activity frames (the renderer's SendTyping is a no-op for the app);
 //   - the structured fap.Meta frame on turn completion (model/cost/tokens —
-//     the typed replacement for the [meta] text blob the Telegram bridge injects);
-//   - dropping SubagentText, which the app has no surface for yet. Forwarding it
-//     would route through OnReply and prematurely finalize the in-flight reply
-//     stream, fragmenting the main message.
+//     the typed replacement for the [meta] text blob the Telegram bridge injects).
 //
 // One appSink per turn on one conversation.
 type appSink struct {
@@ -78,8 +75,11 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.SubagentText:
-		// No app surface for subagent progress yet; dropping it avoids OnReply
-		// prematurely finalizing the in-flight reply stream. See type doc.
+		// Route to the renderer: OnSubagentReply sends it as a distinct
+		// fap.SubagentText frame (the app is a raw SubagentDeliverer, #1067),
+		// NOT through OnReply, so it delivers the subagent's content to its chip
+		// without fragmenting the in-flight main reply stream.
+		s.inner.Emit(ctx, ev)
 
 	case turnevent.ThinkingDelta, turnevent.ThinkingBlock:
 		s.b.setTurnActivity(fap.ActivityKindThinking, "")
