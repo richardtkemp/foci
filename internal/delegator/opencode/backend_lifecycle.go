@@ -63,12 +63,13 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.workDir = opts.WorkDir
 	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
 
-	// Ensure the shell.env plugin exists BEFORE acquiring the server.
-	// opencode loads plugins at subprocess startup; if we write it after
-	// acquireServer starts the subprocess, the plugin won't be loaded
-	// until the next server restart. EnsureSessionEnvPlugin is idempotent
-	// so it's cheap to call on every Start.
+	// Ensure the shell.env plugin and foci agent config exist BEFORE
+	// acquiring the server. opencode loads plugins and agent configs at
+	// subprocess startup; if we write them after acquireServer starts the
+	// subprocess, they won't be loaded until the next server restart.
+	// Both are idempotent so they're cheap to call on every Start.
 	EnsureSessionEnvPlugin(opts.WorkDir)
+	EnsureFociAgentConfig(opts.WorkDir)
 
 	if b.server == nil {
 		srv, err := acquireServer(opts.AgentID, b.serverConfigFromOpts(opts), opts.Env)
@@ -144,18 +145,17 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		}
 	}
 
-	// Inject system prompt for new sessions only. A resumed session
-	// already has the prompt in its message history (injected at original
-	// creation); reinjecting would append a duplicate. If the character
-	// files changed since the session was created, the next /reset or
-	// compaction picks up the new prompt.
-	if !resumed {
-		if prompt := opts.SystemPrompt; prompt != "" {
-			if err := b.injectSystemPrompt(ctx, prompt); err != nil {
-				log.Warnf(b.logComponent(), "system prompt injection failed: %v", err)
-			}
-		}
+	// Resolve and store the system prompt. Supplied dynamically via the
+	// "system" field in every POST /prompt_async body — opencode's foci
+	// agent config has a minimal prompt (" ") so opencode's default system
+	// prompt is skipped entirely.
+	if opts.SystemPromptFunc != nil {
+		b.systemPrompt = opts.SystemPromptFunc(b.sessionID)
+	} else {
+		b.systemPrompt = opts.SystemPrompt
 	}
+
+	_ = resumed // resumed sessions no longer need special prompt handling — system field is supplied on every POST
 
 	b.mu.Lock()
 	b.running = true
@@ -342,37 +342,6 @@ func (b *Backend) resumeSession(ctx context.Context, id string) (bool, error) {
 		respBody, _ := io.ReadAll(resp.Body)
 		return false, fmt.Errorf("GET /session/%s: HTTP %d: %s", id, resp.StatusCode, string(respBody))
 	}
-}
-
-// injectSystemPrompt POSTs the prompt as a noReply user message so
-// opencode treats it as context-only and doesn't trigger an AI response.
-// Mirrors ccstream's --append-system-prompt behaviour.
-func (b *Backend) injectSystemPrompt(ctx context.Context, prompt string) error {
-	body, err := json.Marshal(map[string]any{
-		"noReply": true,
-		"parts": []map[string]string{
-			{"type": "text", "text": prompt},
-		},
-	})
-	if err != nil {
-		return err
-	}
-	url := fmt.Sprintf("%s/session/%s/message", b.server.baseURL, b.sessionID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("POST /session/%s/message: HTTP %d: %s", b.sessionID, resp.StatusCode, string(respBody))
-	}
-	return nil
 }
 
 // serverConfigFromOpts builds a serverConfig from StartOptions + the

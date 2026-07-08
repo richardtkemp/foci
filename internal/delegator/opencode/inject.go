@@ -204,7 +204,7 @@ func (b *Backend) injectUser(ctx context.Context, inj delegator.Inject) error {
 	// every subsequent inject to the mid-turn path). Mirrors ccstream's
 	// sendToPane.
 	b.beginTurn(inj.Turn)
-	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments); err != nil {
+	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments, b.systemPrompt); err != nil {
 		b.cancelTurn()
 		return err
 	}
@@ -220,7 +220,7 @@ func (b *Backend) injectSystem(ctx context.Context, inj delegator.Inject) error 
 	if err := b.tryBeginTurn(inj.Turn); err != nil {
 		return err
 	}
-	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments); err != nil {
+	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments, b.systemPrompt); err != nil {
 		b.cancelTurn()
 		return err
 	}
@@ -277,7 +277,7 @@ func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 	// reverses the begin (see injectUser).
 	log.Debugf(b.logComponent(), "inject: steer at idle — degrading to user-idle")
 	b.beginTurn(inj.Turn)
-	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments); err != nil {
+	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments, b.systemPrompt); err != nil {
 		b.cancelTurn()
 		return err
 	}
@@ -335,8 +335,8 @@ func splitSlashCommand(text string) (name, rest string) {
 // Attachments become file parts with data: URLs (per §6.1). opencode
 // treats them as first-class multimodal content — same as if the user
 // had pasted an image into the TUI.
-func (b *Backend) sendPrompt(ctx context.Context, text string, attachments []delegator.Attachment) error {
-	body := buildPromptBody(text, attachments, false)
+func (b *Backend) sendPrompt(ctx context.Context, text string, attachments []delegator.Attachment, systemPrompt string) error {
+	body := buildPromptBody(text, attachments, false, systemPrompt)
 	return b.postMessage(ctx, "/prompt_async", body)
 }
 
@@ -419,7 +419,7 @@ func (b *Backend) postMessage(ctx context.Context, suffix string, body []byte) e
 // URLs. noReply:true tells opencode to treat the message as context-
 // only (used by injectSystemPrompt); false is the normal "expect a
 // reply" path.
-func buildPromptBody(text string, attachments []delegator.Attachment, noReply bool) []byte {
+func buildPromptBody(text string, attachments []delegator.Attachment, noReply bool, systemPrompt string) []byte {
 	type part struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
@@ -436,9 +436,12 @@ func buildPromptBody(text string, attachments []delegator.Attachment, noReply bo
 			URL:  dataURL,
 		})
 	}
-	body := map[string]any{"parts": parts}
+	body := map[string]any{"parts": parts, "agent": fociAgentName}
 	if noReply {
 		body["noReply"] = true
+	}
+	if systemPrompt != "" {
+		body["system"] = systemPrompt
 	}
 	out, _ := json.Marshal(body)
 	return out
@@ -485,7 +488,7 @@ func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegat
 	turn := turnFactory()
 	b.beginTurn(turn)
 	log.Infof(b.logComponent(), "flushSteerBuf: sending %d queued message(s) as follow-up turn", len(buf))
-	return b.sendPrompt(ctx, combined, nil)
+	return b.sendPrompt(ctx, combined, nil, b.systemPrompt)
 }
 
 // ---------------------------------------------------------------------------

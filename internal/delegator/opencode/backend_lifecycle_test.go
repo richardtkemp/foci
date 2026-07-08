@@ -2,9 +2,7 @@ package opencode
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,30 +114,21 @@ func TestBackend_Start_AcquiresServerAndCreatesSession(t *testing.T) {
 	_ = b.Close()
 }
 
-func TestBackend_Start_InjectsSystemPromptAsNoReply(t *testing.T) {
-	// Verifies that when StartOptions.SystemPrompt is set, Start POSTs
-	// it to /session/:id/message with noReply:true so opencode treats it
-	// as context-only (no AI response). Mirrors ccstream's
-	// --append-system-prompt flag.
+func TestBackend_Start_StoresSystemPrompt(t *testing.T) {
+	// Verifies that Start stores opts.SystemPrompt on the Backend for
+	// dynamic supply via the POST body's "system" field. The old
+	// approach (POST /session/:id/message with noReply) is gone — the
+	// prompt is now a true system message, not a user message.
 	const prompt = "You are a helpful test assistant."
-	var (
-		mu         sync.Mutex
-		gotMessage bool
-		bodyBytes  []byte
-		gotPath    string
-	)
+	var gotMessagePost bool
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" && r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"sess-prompt","title":""}`))
 			return
 		}
-		if r.URL.Path == "/session/sess-prompt/message" && r.Method == http.MethodPost {
-			mu.Lock()
-			gotMessage = true
-			gotPath = r.URL.Path
-			bodyBytes, _ = io.ReadAll(r.Body)
-			mu.Unlock()
+		if r.URL.Path == "/session/sess-prompt/message" {
+			gotMessagePost = true
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -154,65 +143,38 @@ func TestBackend_Start_InjectsSystemPromptAsNoReply(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if !gotMessage {
-		t.Fatal("system prompt was not POSTed to /session/:id/message")
+	if b.systemPrompt != prompt {
+		t.Errorf("b.systemPrompt = %q, want %q", b.systemPrompt, prompt)
 	}
-	if gotPath != "/session/sess-prompt/message" {
-		t.Errorf("message POST path = %q, want /session/sess-prompt/message", gotPath)
-	}
-
-	// Verify noReply:true + parts[0].text == prompt.
-	var body struct {
-		NoReply bool `json:"noReply"`
-		Parts   []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"parts"`
-	}
-	if err := json.Unmarshal(bodyBytes, &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if !body.NoReply {
-		t.Error("noReply = false, want true (system prompt must not trigger AI response)")
-	}
-	if len(body.Parts) != 1 || body.Parts[0].Type != "text" || body.Parts[0].Text != prompt {
-		t.Errorf("parts = %+v, want [{type:text text:%q}]", body.Parts, prompt)
+	if gotMessagePost {
+		t.Error("should not POST to /session/:id/message — system prompt is now supplied via POST body 'system' field")
 	}
 	_ = b.Close()
 }
 
-func TestBackend_Start_InjectsSystemPrompt(t *testing.T) {
-	// The manager resolves SystemPromptFunc into opts.SystemPrompt before Start,
-	// so opencode injects opts.SystemPrompt directly (like ccstream/cctmux) and
-	// never reads SystemPromptFunc itself — the unified prompt-resolution contract.
+func TestBackend_Start_StoresSystemPromptFromFunc(t *testing.T) {
+	// Verifies SystemPromptFunc is resolved and stored on the Backend.
 	const wantPrompt = "resolved-system-prompt"
-	var gotBody []byte
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" && r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"sess-func"}`))
 			return
 		}
-		if r.URL.Path == "/session/sess-func/message" {
-			gotBody, _ = io.ReadAll(r.Body)
-			w.WriteHeader(http.StatusOK)
-			return
-		}
 		http.NotFound(w, r)
 	})
 
 	err := b.Start(context.Background(), delegator.StartOptions{
-		AgentID:      "test-agent",
-		SystemPrompt: wantPrompt,
+		AgentID: "test-agent",
+		SystemPromptFunc: func(sessionID string) string {
+			return wantPrompt
+		},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-
-	if !strings.Contains(string(gotBody), wantPrompt) {
-		t.Errorf("body did not contain the resolved system prompt %q: %s", wantPrompt, string(gotBody))
+	if b.systemPrompt != wantPrompt {
+		t.Errorf("b.systemPrompt = %q, want %q", b.systemPrompt, wantPrompt)
 	}
 	_ = b.Close()
 }

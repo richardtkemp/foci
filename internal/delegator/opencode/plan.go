@@ -53,14 +53,14 @@ func (b *Backend) sendPromptWithAgent(ctx context.Context, text, agent string) e
 	if b.server == nil || b.sessionID == "" {
 		return fmt.Errorf("opencode: no session")
 	}
-	body := buildPromptBodyWithAgent(text, nil, false, agent)
+	body := buildPromptBodyWithAgent(text, nil, false, agent, b.systemPrompt)
 	return b.postMessage(ctx, "/prompt_async", body)
 }
 
 // buildPromptBodyWithAgent extends buildPromptBody with an optional
 // `agent` field. When non-empty, opencode uses the named agent for
 // this request only.
-func buildPromptBodyWithAgent(text string, attachments []delegator.Attachment, noReply bool, agent string) []byte {
+func buildPromptBodyWithAgent(text string, attachments []delegator.Attachment, noReply bool, agent string, systemPrompt string) []byte {
 	type part struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
@@ -79,6 +79,9 @@ func buildPromptBodyWithAgent(text string, attachments []delegator.Attachment, n
 	}
 	if agent != "" {
 		body["agent"] = agent
+	}
+	if systemPrompt != "" {
+		body["system"] = systemPrompt
 	}
 	out, _ := json.Marshal(body)
 	return out

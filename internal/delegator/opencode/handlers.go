@@ -485,7 +485,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		if followUp := turn.PreAnswerNudgeFunc(result); followUp != "" {
 			log.Debugf(b.logComponent(), "onSessionIdle: pre-answer nudge fired, re-sending")
 			b.beginTurn(turn) // reuse same TurnEvents
-			_ = b.sendPrompt(context.Background(), followUp, nil)
+			_ = b.sendPrompt(context.Background(), followUp, nil, b.systemPrompt)
 			return // don't complete — wait for the next session.idle
 		}
 	}
