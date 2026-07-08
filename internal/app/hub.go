@@ -51,7 +51,8 @@ const (
 	defaultReplayStoreFile   = "app-frames.db"     // durable replay-frame DB, relative to data_dir
 	maxSeenInbound           = 4096                // per-conversation inbound dedup window (mirrors client)
 	defaultDevicesFile       = "app-devices.json"
-	maxReplayPage            = 2000 // max frames returned per durable-store backfill read
+	maxReplayPage            = 10000 // max frames per GET /app/replay page (HTTP backfill; the app applies a page as ONE Room transaction, so big pages are cheap)
+	maxResumeStoreReplay     = 2000  // max durable-store frames pushed over the ws on reconnect resume — the app dispatches ws frames one-by-one, so keep this burst modest
 )
 
 // Hub multiplexes all live app WebSockets. It owns the per-agent appConn
@@ -1879,10 +1880,10 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 	// before the in-memory frames. memFloor is where memory takes over: store
 	// frames at seq >= memFloor would duplicate `pending`, so stop there. No
 	// in-memory frames (hasMem == false) → the store supplies everything > fromSeq.
-	// A gap larger than maxReplayPage is finished by the client via GET /app/replay.
+	// A gap larger than maxResumeStoreReplay is finished by the client via GET /app/replay.
 	storeCount := 0
 	if store != nil && (!hasMem || fromSeq < memFloor-1) {
-		for _, sf := range store.Range(convID, fromSeq, maxReplayPage) {
+		for _, sf := range store.Range(convID, fromSeq, maxResumeStoreReplay) {
 			if hasMem && sf.seq >= memFloor {
 				break
 			}
