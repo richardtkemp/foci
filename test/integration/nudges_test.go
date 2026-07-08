@@ -698,13 +698,14 @@ func TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 7400
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
-		ReadyTimeout: 30 * time.Second,
+		Agents:                []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout:          30 * time.Second,
+		EnableNudgeExtraction: true, // this test asserts the extractor RunOnce fires
 	})
 
 	// Deliberately do NOT seed nudge-rules.json — that's the precondition
-	// for auto-extract to fire. nudge_enable and nudge_auto_extract both
-	// default to true in the resolved config.
+	// for auto-extract to fire. nudge_enable defaults true; EnableNudgeExtraction
+	// keeps nudge_auto_extract=true (the harness suppresses it by default).
 	pushUserMessage(t, h, "alpha", userID, "trigger first activity")
 
 	// The extractor uses DelegatedManager.RunOnce which spawns cc-stub
