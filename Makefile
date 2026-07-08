@@ -47,24 +47,31 @@ find-disconnected-tests:
 	cd scripts/find-disconnected-tests && go build -o ../../bin/find-disconnected-tests .
 
 test:
-	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
+	$(eval LOGFILE := $(TESTDIR).log)
 	@mkdir -p $(TESTDIR)
-	# /tmp/heavy serialises the test runner against any other heavy build
-	# (e.g. a concurrent `update.sh` deploy build) that holds the same lock,
-	# so they don't starve each other for CPU and trip deadline-sensitive
-	# waits. Other heavy builds should flock the same path reciprocally.
-	# Open the lock READ-ONLY (9<): /tmp is world-writable + sticky, and with
-	# fs.protected_regular=2 the kernel denies WRITE-opening a lock file there
-	# owned by the other shared account (rich vs foci). A read-only fd is exempt,
-	# and an exclusive flock on it is still mutually exclusive across users; the
-	# `|| : >` seeds the file only when missing (creator owns it, umask 0002 keeps
-	# it readable by all).
-	# The lock is held on FD 9 by THIS subshell only: `9<&-` closes it for the
-	# go test command, so go test and its spawned subprocesses (foci-gw,
-	# cc-stub) do NOT inherit the lock — a lingering child must not keep the
-	# lock held after the runner exits, or the next run would block forever.
+	@# /tmp/heavy serialises the test runner against any other heavy build
+	@# (e.g. a concurrent `update.sh` deploy build) that holds the same lock,
+	@# so they don't starve each other for CPU and trip deadline-sensitive
+	@# waits. Other heavy builds should flock the same path reciprocally.
+	@# Open the lock READ-ONLY (9<): /tmp is world-writable + sticky, and with
+	@# fs.protected_regular=2 the kernel denies WRITE-opening a lock file there
+	@# owned by the other shared account (rich vs foci). A read-only fd is exempt,
+	@# and an exclusive flock on it is still mutually exclusive across users; the
+	@# `|| : >` seeds the file only when missing (creator owns it, umask 0002 keeps
+	@# it readable by all).
+	@# The lock is held on FD 9 by THIS subshell only: `9<&-` closes it for the
+	@# go test command, so go test and its spawned subprocesses (foci-gw,
+	@# cc-stub) do NOT inherit the lock — a lingering child must not keep the
+	@# lock held after the runner exits, or the next run would block forever.
+	@# Full output → $(LOGFILE) on disk; stdout gets only the failure summary +
+	@# a file ref (see the `integration` target for the rationale). Output is
+	@# retained (no cleanup) under /tmp/fgw — a daily cron sweeps entries >24h.
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	( flock 9; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... 9<&- ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS ) 9</tmp/heavy
+	@( flock 9; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
+	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
+	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:|weight audit' $(LOGFILE) || true; fi ; \
+	  exit $$STATUS ) 9</tmp/heavy
 
 # Integration tests (L2): real foci-gw subprocess against stubbed CC and
 # stubbed Telegram. Build-tagged so they only run under this target — not
@@ -72,11 +79,22 @@ test:
 # architecture, and internal/testharness/ for the scaffolding.
 integration:
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
-	$(eval TESTDIR := /tmp/foci/integration-$(shell date +%s))
+	$(eval TESTDIR := /tmp/fgw/integration-$(shell date +%s))
+	$(eval LOGFILE := $(TESTDIR).log)
 	@mkdir -p $(TESTDIR)
-	# Read-only lock fd (9<) — see the `test` target above for why (fs.protected_regular).
+	@# Full -v output (every RUN/PASS line + on-failure gateway stderr dumps) is
+	@# LARGE — write it to $(LOGFILE) on disk and print only the failure summary
+	@# + a file ref on stdout, so a caller (incl. an agent piping this into
+	@# context) never ingests the whole transcript. Open $(LOGFILE) to review a
+	@# run carefully. Both $(TESTDIR) and $(LOGFILE) are RETAINED (no cleanup) so
+	@# a run's artifacts survive for inspection; they live under /tmp/fgw, which a
+	@# daily cron sweeps for entries >24h.
+	@# Read-only lock fd (9<) — see the `test` target above for why (fs.protected_regular).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( flock 9; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) ./test/integration/... ./internal/testharness/... 9<&- ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS ) 9</tmp/heavy
+	@( flock 9; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... ./internal/testharness/... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
+	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
+	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:|weight audit' $(LOGFILE) || true; fi ; \
+	  exit $$STATUS ) 9</tmp/heavy
 
 # bucket-audit: the differential half of weight-bucket detection. Runs the
 # L2 suite at low (-parallel=2) and high (-parallel=IPARALLEL) concurrency
