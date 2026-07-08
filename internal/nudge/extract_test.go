@@ -207,6 +207,87 @@ func TestNeedsExtractionNoFiles(t *testing.T) {
 	}
 }
 
+func TestNeedsExtractionUnsupportedTriggers(t *testing.T) {
+	// When character files are unchanged (hash matches) but the stored rules
+	// contain trigger types this backend can't evaluate, re-extraction is
+	// forced so the file self-heals after a backend switch.
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be careful"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileOrder := []string{"SOUL.md"}
+
+	// Extractor with full caps to compute the current hash.
+	full := NewExtractor(dir, fileOrder, 0640, true, true)
+	hash, _ := full.NeedsExtraction()
+
+	// Store rules (matching the current hash) that include post-tool and
+	// pre-answer triggers — legal under a claude-code backend.
+	rs := &RuleSet{
+		ContentHash: hash,
+		Rules: []Rule{
+			{Text: "regex", Trigger: Trigger{Type: "regex", Pattern: "(?i)x"}},
+			{Text: "tool", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "Bash"}},
+			{Text: "pre", Trigger: Trigger{Type: "pre_answer"}},
+		},
+	}
+	if err := SaveRules(RulesPath(dir), rs, 0640); err != nil {
+		t.Fatal(err)
+	}
+
+	// Full-caps backend: all triggers supported → no re-extraction despite
+	// the hash matching.
+	if _, needed := full.NeedsExtraction(); needed {
+		t.Error("full-caps backend should not need extraction when hash matches")
+	}
+
+	// Opencode-style backend (no post-tool, no pre-answer): the stored
+	// tool_pattern/pre_answer rules are unsupported → force re-extraction
+	// even though the hash is unchanged.
+	limited := NewExtractor(dir, fileOrder, 0640, false, false)
+	if _, needed := limited.NeedsExtraction(); !needed {
+		t.Error("limited-caps backend should force re-extraction for unsupported triggers")
+	}
+
+	// A backend missing only pre-answer still self-heals a pre_answer rule.
+	noPre := NewExtractor(dir, fileOrder, 0640, true, false)
+	if _, needed := noPre.NeedsExtraction(); !needed {
+		t.Error("post-tool-only backend should re-extract for a pre_answer rule")
+	}
+}
+
+func TestNeedsExtractionAllSupportedNoReextract(t *testing.T) {
+	// A limited backend whose stored rules use only supported triggers must
+	// NOT loop-force extraction on every load.
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be careful"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileOrder := []string{"SOUL.md"}
+
+	limited := NewExtractor(dir, fileOrder, 0640, false, false)
+	hash, _ := limited.NeedsExtraction()
+
+	rs := &RuleSet{
+		ContentHash: hash,
+		Rules: []Rule{
+			{Text: "regex", Trigger: Trigger{Type: "regex", Pattern: "(?i)x"}},
+			{Text: "turns", Trigger: Trigger{Type: "every_n_turns", N: 3}},
+		},
+	}
+	if err := SaveRules(RulesPath(dir), rs, 0640); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, needed := limited.NeedsExtraction(); needed {
+		t.Error("limited backend with only supported triggers should not re-extract")
+	}
+}
+
 // mockHandler implements BranchHandler for testing.
 type mockHandler struct {
 	response string
