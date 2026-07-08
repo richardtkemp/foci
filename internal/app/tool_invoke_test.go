@@ -49,18 +49,24 @@ func TestToolCallRegistry_DeregisterRemoves(t *testing.T) {
 	}
 }
 
-func TestToolCallRegistry_LateCompletionDropped(t *testing.T) {
+func TestToolCallRegistry_DeliversPendingThenTerminal(t *testing.T) {
+	// A single invocation can carry a "pending" keepalive followed by a terminal
+	// result. The registry's buffered channel must queue BOTH (in order) so the
+	// InvokeTool loop can drain the keepalive and return on the terminal — a
+	// buffer of 1 would drop the terminal and lose the result.
 	r := newToolCallRegistry()
 	p, _ := r.register("inv-3")
 	if !r.deliver(fap.ToolResult{InvocationID: "inv-3", Status: "pending"}) {
-		t.Fatal("first deliver returned false")
+		t.Fatal("pending deliver returned false")
 	}
-	if r.deliver(fap.ToolResult{InvocationID: "inv-3", Status: "completed"}) {
-		t.Error("second deliver returned true; expected dropped (first wins)")
+	if !r.deliver(fap.ToolResult{InvocationID: "inv-3", Status: "completed"}) {
+		t.Fatal("terminal deliver returned false; the keepalive must not drop the terminal")
 	}
-	got := <-p.result
-	if got.Status != "pending" {
-		t.Errorf("got %q, expected pending (first writer wins)", got.Status)
+	if got := <-p.result; got.Status != "pending" {
+		t.Errorf("first frame: got %q want pending", got.Status)
+	}
+	if got := <-p.result; got.Status != "completed" {
+		t.Errorf("second frame: got %q want completed", got.Status)
 	}
 }
 
@@ -146,6 +152,113 @@ func TestInvokeTool_HappyPath(t *testing.T) {
 
 	if h.toolCalls.deliver(fap.ToolResult{InvocationID: invokeFrame.InvocationID, Status: "completed"}) {
 		t.Error("registry still had a waiter after InvokeTool returned")
+	}
+}
+
+// TestInvokeTool_PendingKeepaliveThenCompleted asserts a "pending" frame is
+// treated as a keepalive: InvokeTool keeps waiting and returns the later
+// terminal result rather than returning (and dropping) at the pending.
+func TestInvokeTool_PendingKeepaliveThenCompleted(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+	b := h.ensureBinding(nil, agentID, "conv-1")
+	client := fakeClient()
+	b.attach(client)
+
+	type outcome struct {
+		res fap.ToolResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := h.InvokeTool(context.Background(), agentID, "android", "perform", nil)
+		done <- outcome{res, err}
+	}()
+
+	// Pull the invoke frame to learn the invocation id.
+	var inv fap.ToolInvoke
+	select {
+	case wire := <-client.send:
+		var env struct {
+			T string          `json:"t"`
+			D json.RawMessage `json:"d"`
+		}
+		if err := json.Unmarshal(wire, &env); err != nil {
+			t.Fatalf("decode envelope: %v", err)
+		}
+		if err := json.Unmarshal(env.D, &inv); err != nil {
+			t.Fatalf("decode ToolInvoke: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ToolInvoke never reached client")
+	}
+
+	// Keepalive first, then the real result.
+	h.deliverToolResult(fap.ToolResult{InvocationID: inv.InvocationID, Status: fap.ToolStatusPending})
+	h.deliverToolResult(fap.ToolResult{InvocationID: inv.InvocationID, Status: fap.ToolStatusCompleted, Output: json.RawMessage(`{"ok":true}`)})
+
+	select {
+	case o := <-done:
+		if o.err != nil {
+			t.Fatalf("InvokeTool err: %v", o.err)
+		}
+		if o.res.Status != fap.ToolStatusCompleted {
+			t.Errorf("status: got %q want completed (pending should not have terminated the wait)", o.res.Status)
+		}
+		if string(o.res.Output) != `{"ok":true}` {
+			t.Errorf("output: got %q", o.res.Output)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("InvokeTool never returned the terminal result after a pending keepalive")
+	}
+}
+
+// TestInvokeTool_PendingThenTimeout asserts that if only a "pending" keepalive
+// arrives and the ctx expires, InvokeTool surfaces status=pending (not a bare
+// ctx error) so the caller can tell the agent the task is still running.
+func TestInvokeTool_PendingThenTimeout(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+	b := h.ensureBinding(nil, agentID, "conv-1")
+	client := fakeClient()
+	b.attach(client)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	done := make(chan fap.ToolResult, 1)
+	go func() {
+		res, _ := h.InvokeTool(ctx, agentID, "android", "perform", nil)
+		done <- res
+	}()
+
+	var inv fap.ToolInvoke
+	select {
+	case wire := <-client.send:
+		var env struct {
+			T string          `json:"t"`
+			D json.RawMessage `json:"d"`
+		}
+		_ = json.Unmarshal(wire, &env)
+		_ = json.Unmarshal(env.D, &inv)
+	case <-time.After(time.Second):
+		t.Fatal("ToolInvoke never reached client")
+	}
+
+	h.deliverToolResult(fap.ToolResult{InvocationID: inv.InvocationID, Status: fap.ToolStatusPending})
+
+	select {
+	case res := <-done:
+		if res.Status != fap.ToolStatusPending {
+			t.Errorf("status: got %q want pending on timeout-after-keepalive", res.Status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("InvokeTool didn't return after ctx timeout")
 	}
 }
 

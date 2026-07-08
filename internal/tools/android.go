@@ -5,22 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-)
 
-// AppToolResult is the device-side tool's reply, mirroring the FAP
-// `tool.result` payload. Status is "completed" / "pending" / "error".
-type AppToolResult struct {
-	Status string
-	Output json.RawMessage
-	Error  string
-}
+	"foci/internal/app/fap"
+)
 
 // AppInvoker routes a tool call to a connected app device and awaits its
 // result. Implemented by *app.appConn (via the platform.Connection it
 // satisfies); resolved at tool call time so a missing device returns
 // gracefully rather than crashing registration.
+//
+// Returns fap.ToolResult directly (not a mirror struct) so *appConn — whose
+// InvokeTool returns fap.ToolResult — actually satisfies this interface. An
+// earlier local mirror (AppToolResult) had the same fields but a distinct type,
+// so the runtime conn.(AppInvoker) assertion in tool_table.go always failed and
+// the tool reported "no device" even when one was connected. fap is a leaf
+// package (already imported by ask.go), so depending on it here is cycle-free.
 type AppInvoker interface {
-	InvokeTool(ctx context.Context, tool, action string, args json.RawMessage) (AppToolResult, error)
+	InvokeTool(ctx context.Context, tool, action string, args json.RawMessage) (fap.ToolResult, error)
 }
 
 // NewAppAndroidTool creates the `app_android` tool — the agent-facing half of
@@ -28,12 +29,21 @@ type AppInvoker interface {
 // Android device and awaits the reply.
 //
 // v1 limitations the description calls out to the agent:
-//   - The on-device allowlist is empty by default; the user edits the app's
-//     TaskerAllowlist to expose tasks. "list" returns whatever the user exposed.
-//   - If the device's sync window (10s) expires, the device returns
-//     status="pending" and the result is dropped (no async injection yet).
+//   - The on-device allowlist is empty by default; the user edits it in the
+//     app's Advanced settings to expose tasks. "list" returns what's exposed.
+//   - A task that overruns the device's sync window sends status="pending" as a
+//     keepalive; the server keeps waiting (up to appToolInvokeTimeout) for the
+//     real result, so slow tasks resolve synchronously. Only a task that also
+//     exceeds that budget returns pending-with-no-result to the agent.
 //   - If no device is connected, the tool returns an error string (not a Go
 //     error) so the agent can react rather than abort the turn.
+
+// appToolInvokeTimeout bounds how long the server waits for a device tool.result
+// (including across "pending" keepalives). It MUST exceed the device's own hard
+// cap for tracking a task, so the device always sends a terminal result before
+// the server gives up — otherwise a slow result is lost. Device cap is ~55s
+// (see AndroidTaskerToolHandler); 60s here leaves margin for round-trips.
+const appToolInvokeTimeout = 60 * time.Second
 //
 // The invoker resolver is a func() so a missing app connection at process start
 // doesn't disable the tool — it just returns "no device" when actually called,
@@ -78,10 +88,10 @@ Returns an error string if no device is connected. A "pending" result means the 
 			argsObj := map[string]any{"task": p.Task, "par1": p.Par1, "par2": p.Par2}
 			argsJSON, _ := json.Marshal(argsObj)
 
-			// Bound the wait even if the caller's ctx has no deadline. The
-			// device's sync window is 10s; 60s leaves headroom for slow
-			// round-trips and any Tasker settling.
-			ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			// Bound the wait even if the caller's ctx has no deadline. A device
+			// "pending" keepalive doesn't end this wait — InvokeTool keeps
+			// waiting for the terminal result up to appToolInvokeTimeout.
+			ctx, cancel := context.WithTimeout(ctx, appToolInvokeTimeout)
 			defer cancel()
 
 			res, err := inv.InvokeTool(ctx, "android", p.Action, argsJSON)
@@ -89,19 +99,20 @@ Returns an error string if no device is connected. A "pending" result means the 
 				return TextResult(fmt.Sprintf("Error: %v", err)), nil
 			}
 			switch res.Status {
-			case "completed":
+			case fap.ToolStatusCompleted:
 				if len(res.Output) > 0 {
 					return TextResult(string(res.Output)), nil
 				}
 				return TextResult("(task completed; no output)"), nil
-			case "pending":
-				msg := "Task is still running on the device past the sync window."
+			case fap.ToolStatusPending:
+				// Only reached if the task ran longer than appToolInvokeTimeout —
+				// the device kept it running but the server gave up waiting.
+				msg := fmt.Sprintf("Task is still running on the device and did not finish within %s; its result won't be delivered.", appToolInvokeTimeout)
 				if res.Error != "" {
 					msg += " " + res.Error
 				}
-				msg += " The result is dropped (no async delivery yet)."
 				return TextResult(msg), nil
-			case "error":
+			case fap.ToolStatusError:
 				return TextResult(fmt.Sprintf("Device tool error: %s", res.Error)), nil
 			default:
 				return TextResult(fmt.Sprintf("Unknown status %q: %s", res.Status, res.Error)), nil

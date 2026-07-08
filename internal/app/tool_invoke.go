@@ -37,7 +37,11 @@ func newToolCallRegistry() *toolCallRegistry {
 // register adds a pending caller and returns it (with its result channel) plus
 // a deregister func the caller MUST defer. The deregister is idempotent.
 func (r *toolCallRegistry) register(invocationID string) (*pendingToolCall, func()) {
-	p := &pendingToolCall{result: make(chan fap.ToolResult, 1)}
+	// Buffered >1: a single invocation can deliver several frames (one or more
+	// "pending" keepalives then a terminal). The InvokeTool loop drains them in
+	// order; the buffer keeps a terminal from being dropped if it races in
+	// before the loop re-selects.
+	p := &pendingToolCall{result: make(chan fap.ToolResult, 8)}
 	r.mu.Lock()
 	r.pending[invocationID] = p
 	r.mu.Unlock()
@@ -100,11 +104,30 @@ func (h *Hub) InvokeTool(ctx context.Context, agentID, tool, action string, args
 	})
 	log.Debugf("app.tool", "invoked tool=%s action=%s inv=%s agent=%s", tool, action, invocationID, agentID)
 
-	select {
-	case res := <-pending.result:
-		return res, nil
-	case <-ctx.Done():
-		return fap.ToolResult{}, ctx.Err()
+	// A "pending" frame is a keepalive, NOT a terminal: the device's task
+	// overran its own sync window but is still running. Keep waiting (bounded by
+	// ctx) for the terminal "completed"/"error" rather than returning — and
+	// dropping — the eventual result. Without this, the device's 10s pending
+	// short-circuits the server's larger wait budget and slow tasks vanish.
+	sawPending := false
+	for {
+		select {
+		case res := <-pending.result:
+			if res.Status == fap.ToolStatusPending {
+				sawPending = true
+				log.Debugf("app.tool", "tool pending inv=%s agent=%s — awaiting terminal result", invocationID, agentID)
+				continue
+			}
+			return res, nil
+		case <-ctx.Done():
+			// Budget exhausted. If we saw a keepalive, surface pending (task is
+			// still running on-device) rather than a bare context error, so the
+			// caller can tell the agent it didn't finish in time.
+			if sawPending {
+				return fap.ToolResult{InvocationID: invocationID, Status: fap.ToolStatusPending}, nil
+			}
+			return fap.ToolResult{}, ctx.Err()
+		}
 	}
 }
 
