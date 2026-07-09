@@ -32,6 +32,7 @@ func newTestBackendServer(t *testing.T, handler http.HandlerFunc) (*httptest.Ser
 		http:     hs.Client(),
 		agentID:  "test-agent",
 		sessions: map[string]*Backend{},
+		running:  true, // injected server is live (httptest is serving)
 	}
 	b := &Backend{
 		server:      srv,

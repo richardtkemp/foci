@@ -252,11 +252,19 @@ type Backend struct {
 	agents delegator.SubagentTracker
 }
 
-// IsRunning reports whether the OpenCode subprocess is alive.
+// IsRunning reports whether the OpenCode subprocess is alive. It gates on the
+// shared Server's liveness, not just b.running: when the subprocess dies
+// unexpectedly, finalizeExit clears the Server's running flag but cannot reach
+// into every registered Backend's b.running. Without the server check IsRunning
+// would stay true, DelegatedManager.getOrCreate would hand back this Backend,
+// and every subsequent turn would dial the dead port forever (connection
+// refused) instead of respawning a fresh server + resuming the session.
 func (b *Backend) IsRunning() bool {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.running
+	running := b.running
+	srv := b.server
+	b.mu.Unlock()
+	return running && srv != nil && srv.isAlive()
 }
 
 // SessionID returns the OpenCode session identifier.
