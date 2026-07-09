@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"foci/internal/log"
-	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/shared/prompts"
 )
@@ -57,19 +56,20 @@ func (a *Agent) PrepareSessionEndMemory(sessionKey, orientTemplate string, skipM
 		}
 	}
 
-	branchKey, err := a.Sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
-		NoResetHook:         true,
-		BranchType:          "session-end-memory",
-		OrientationTemplate: orientTemplate,
-	})
-	if err != nil {
-		log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)
+	// Session-end always forks a branch (BranchStrategyFor returns BranchFork for
+	// session-end-memory on every agent) — even for delegated agents, whose
+	// backend can't fork a conversation. See the session-end case in
+	// BranchStrategyFor for the full rationale: the branch key is a bookkeeping
+	// handle we remap the live backend onto so it finishes memory in the
+	// background while a fresh session takes over the original key.
+	branchKey, ok := a.createMemoryBranch(sessionKey, "session-end-memory", orientTemplate)
+	if !ok {
 		return "", false
 	}
-	a.SetSessionNoCompact(branchKey, true)
 
 	// Hand the live delegated backend (and its resume ID) to the branch so
-	// reflection reaches the CC session that holds the context.
+	// reflection reaches the CC session that holds the context. (No-op for API
+	// agents, which have no live backend.)
 	if a.DelegatedManager != nil {
 		a.DelegatedManager.RemapSession(sessionKey, branchKey)
 	}
