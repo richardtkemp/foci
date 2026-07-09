@@ -342,6 +342,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.mu.Lock()
 		b.sessionID = init.SessionID
 		b.initMsg = &init
+		b.permMode = init.PermissionMode
 		b.lastModel = init.Model
 		b.mu.Unlock()
 		b.readyOnce.Do(func() { close(b.readyCh) })

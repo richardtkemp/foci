@@ -201,4 +201,5 @@ func (fakeDelegator) SessionID() string                                   { retu
 func (fakeDelegator) SessionFilePath() string                             { return "" }
 func (fakeDelegator) WaitReady(context.Context) error                     { return nil }
 func (fakeDelegator) CheckReady(context.Context) (bool, error)            { return true, nil }
+func (fakeDelegator) StatusDetail() string                                  { return "" }
 func (fakeDelegator) Close() error                                        { return nil }

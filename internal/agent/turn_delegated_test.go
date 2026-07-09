@@ -166,6 +166,7 @@ func (m *mockBackendDT) Interrupt(_ context.Context) error                { retu
 func (m *mockBackendDT) SessionID() string                                { return "" }
 func (m *mockBackendDT) WaitReady(_ context.Context) error                { return nil }
 func (m *mockBackendDT) CheckReady(_ context.Context) (bool, error)       { return true, nil }
+func (m *mockBackendDT) StatusDetail() string                              { return "" }
 func (m *mockBackendDT) Close() error                                     { return nil }
 
 func (m *mockBackendDT) SessionFilePath() string {

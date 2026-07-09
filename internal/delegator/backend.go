@@ -178,6 +178,12 @@ type Delegator interface {
 	// not-authenticated (avoids spuriously launching a login flow).
 	CheckReady(ctx context.Context) (ready bool, err error)
 
+	// StatusDetail returns backend-specific status text for /status display
+	// (e.g. CC's permission mode). Appended to the common backend info
+	// (liveness, last-event, session) by DelegatedManager.BackendInfo.
+	// Empty string means no additional detail.
+	StatusDetail() string
+
 	// Close shuts down the agent subprocess gracefully.
 	Close() error
 }

@@ -1029,6 +1029,10 @@ func (m *DelegatedManager) BackendInfo(sessionKey string, compacting bool) strin
 		info += fmt.Sprintf(" | session: %s", sid)
 	}
 
+	if detail := mb.be.StatusDetail(); detail != "" {
+		info += " | " + detail
+	}
+
 	return info
 }
 
