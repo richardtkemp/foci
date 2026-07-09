@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"foci/internal/tempdir"
 )
 
 func testRegistry() *Registry {
@@ -76,107 +74,38 @@ func TestExecBridgeLifecycle(t *testing.T) {
 	}
 }
 
-func TestExecBridgeStableReuse(t *testing.T) {
-	// Regression guard: a second NewExecBridgeStable for the same session key
-	// within one process must reuse the live bridge rather than os.Remove-ing
-	// its socket. The recreate bug deleted a healthy, in-use socket and left the
-	// session's FOCI_SOCK pointing at a dead path forever.
+func TestSessionExecBridgeUniquePerInstance(t *testing.T) {
+	// #1120 guard: two bridges for the SAME session key must get DIFFERENT
+	// socket paths, so tearing one down can never close the other's socket. On
+	// /reset a dying backend (remapped to a branch key) and a fresh backend
+	// briefly coexist under the same key — see NewSessionExecBridge.
 	t.Parallel()
 	r := testRegistry()
 	key := t.Name() // unique across tests / parallel-safe
 
-	b1, err := NewExecBridgeStable(r, context.Background(), key)
+	b1, err := NewSessionExecBridge(r, context.Background(), key)
 	if err != nil {
-		t.Fatalf("first NewExecBridgeStable: %v", err)
+		t.Fatalf("first NewSessionExecBridge: %v", err)
 	}
 	defer b1.Close()
-	sock := b1.SockPath()
-
-	// Second create for the same key returns the SAME bridge, not a recreate.
-	b2, err := NewExecBridgeStable(r, context.Background(), key)
+	b2, err := NewSessionExecBridge(r, context.Background(), key)
 	if err != nil {
-		t.Fatalf("second NewExecBridgeStable: %v", err)
+		t.Fatalf("second NewSessionExecBridge: %v", err)
 	}
-	if b2 != b1 {
-		t.Fatalf("second create did not reuse the live bridge: got %p, want %p", b2, b1)
-	}
-	if b2.SockPath() != sock {
-		t.Fatalf("sock path changed: got %q, want %q", b2.SockPath(), sock)
+	defer b2.Close()
+
+	if b1.SockPath() == b2.SockPath() {
+		t.Fatalf("two bridges for key %q share socket path %q — teardown of one would kill the other", key, b1.SockPath())
 	}
 
-	// The reused bridge must still be callable — the bug left a dead socket.
-	if res, errMsg := callBridge(t, sock, `{"tool":"echo_tool","params":{"text":"hi"}}`); errMsg != "" || res != "echo: hi" {
-		t.Fatalf("reused bridge not callable: res=%q err=%q", res, errMsg)
+	// Both must be independently live...
+	if res, errMsg := callBridge(t, b1.SockPath(), `{"tool":"echo_tool","params":{"text":"one"}}`); errMsg != "" || res != "echo: one" {
+		t.Fatalf("b1 not callable: res=%q err=%q", res, errMsg)
 	}
-
-	// After Close, a fresh create yields a new, working bridge (eviction works).
+	// ...and closing b1 must NOT affect b2 (the #1120 failure mode).
 	b1.Close()
-	b3, err := NewExecBridgeStable(r, context.Background(), key)
-	if err != nil {
-		t.Fatalf("NewExecBridgeStable after Close: %v", err)
-	}
-	defer b3.Close()
-	if b3 == b1 {
-		t.Fatal("post-Close create returned the evicted bridge, not a fresh one")
-	}
-	if res, errMsg := callBridge(t, b3.SockPath(), `{"tool":"echo_tool","params":{"text":"back"}}`); errMsg != "" || res != "echo: back" {
-		t.Fatalf("fresh bridge not callable: res=%q err=%q", res, errMsg)
-	}
-}
-
-func TestExecBridgeStableStaleSocketRemoved(t *testing.T) {
-	// Restart-reconnect contract: a leftover socket file from a dead prior
-	// process (nothing listening) must be removed so the new listener can bind
-	// the stable path. This is the case os.Remove exists for — it must keep
-	// working after the live-socket guard was added.
-	t.Parallel()
-	r := testRegistry()
-	key := t.Name()
-	sock := fmt.Sprintf("%s/exec-%s.sock", tempdir.Dir(), strings.ReplaceAll(key, "/", "-"))
-
-	// A stale socket file with no listener behind it (DialTimeout will refuse).
-	if err := os.WriteFile(sock, []byte("stale"), 0o600); err != nil {
-		t.Fatalf("seed stale socket file: %v", err)
-	}
-	if socketIsLive(sock) {
-		t.Fatal("seeded stale file reported live — probe is wrong")
-	}
-
-	b, err := NewExecBridgeStable(r, context.Background(), key)
-	if err != nil {
-		t.Fatalf("NewExecBridgeStable over stale file: %v", err)
-	}
-	defer b.Close()
-	if res, errMsg := callBridge(t, b.SockPath(), `{"tool":"echo_tool","params":{"text":"hi"}}`); errMsg != "" || res != "echo: hi" {
-		t.Fatalf("bridge over cleared stale file not callable: res=%q err=%q", res, errMsg)
-	}
-}
-
-func TestExecBridgeStableLiveSocketRefused(t *testing.T) {
-	// Hijack guard: if a DIFFERENT live process is already listening at the
-	// stable path (identical session key + shared FOCI_TMPDIR — the cross-test
-	// hijack, TODO #804), NewExecBridgeStable must refuse rather than os.Remove
-	// the live socket and steal it.
-	t.Parallel()
-	r := testRegistry()
-	key := t.Name()
-	sock := fmt.Sprintf("%s/exec-%s.sock", tempdir.Dir(), strings.ReplaceAll(key, "/", "-"))
-
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatalf("seed live listener: %v", err)
-	}
-	defer func() { _ = ln.Close() }()
-
-	if _, err := NewExecBridgeStable(r, context.Background(), key); err == nil {
-		t.Fatal("NewExecBridgeStable hijacked a live socket instead of erroring")
-	} else if !strings.Contains(err.Error(), "refusing to hijack") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// The pre-existing listener must survive — not have been unlinked/stolen.
-	if !socketIsLive(sock) {
-		t.Fatal("pre-existing live socket was removed despite the refusal")
+	if res, errMsg := callBridge(t, b2.SockPath(), `{"tool":"echo_tool","params":{"text":"two"}}`); errMsg != "" || res != "echo: two" {
+		t.Fatalf("b2 died when b1 closed — shared-socket regression: res=%q err=%q", res, errMsg)
 	}
 }
 

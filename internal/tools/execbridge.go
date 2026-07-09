@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"foci/internal/log"
 	"foci/internal/peercred"
@@ -20,17 +19,6 @@ import (
 
 // bridgeCounter provides unique socket paths across concurrent exec calls.
 var bridgeCounter atomic.Int64
-
-// stableBridges memoises live stable-path bridges keyed by socket path, so a
-// second NewExecBridgeStable for the same session key within one process
-// reuses the existing bridge instead of os.Remove-ing a live socket. Without
-// this, a recreate (e.g. after a transient "dead" detection) clobbers a
-// healthy, in-use socket — the session's FOCI_SOCK then points at a dead path
-// forever. Presence in the map ⇔ live: Close evicts before tearing down.
-var (
-	stableMu      sync.Mutex
-	stableBridges = make(map[string]*ExecBridge)
-)
 
 // ExecBridge creates a per-exec unix socket that exposes ExecExport tools
 // as shell functions inside subprocess commands.
@@ -55,73 +43,30 @@ func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error)
 	return newExecBridge(registry, ctx, sockPath, funcsPath)
 }
 
-// NewExecBridgeStable creates an exec bridge with a stable socket path derived
-// from stableID (typically a foci session key). The socket survives process
-// restarts: on creation, any existing stale socket at the same path is removed
-// and a new listener is started. This allows long-lived backend sessions (e.g.
-// Claude Code) to reconnect after a foci restart without needing new env vars.
+// NewSessionExecBridge creates an exec bridge for a delegated backend session.
+// The socket path is UNIQUE PER BACKEND INSTANCE — it embeds the session key
+// (for log/debug correlation), the gateway pid (to isolate separate gateway
+// processes sharing one FOCI_TMPDIR, e.g. concurrent tests), and a
+// process-local counter (the actual per-instance discriminator):
 //
-// Within a single process, exactly one live bridge exists per session key: a
-// second call reuses it rather than recreating (which would delete a live,
-// in-use socket). os.Remove therefore only ever touches a socket left behind by
-// a previous process, as intended.
-func NewExecBridgeStable(registry *Registry, ctx context.Context, stableID string) (*ExecBridge, error) {
-	// Sanitize: session keys may contain slashes (e.g. "clutch/c123/b456")
-	safe := strings.ReplaceAll(stableID, "/", "-")
-	sockPath := fmt.Sprintf("%s/exec-%s.sock", tempdir.Dir(), safe)
-	funcsPath := fmt.Sprintf("%s/exec-%s-funcs.sh", tempdir.Dir(), safe)
-
-	// The lock spans creation only, not the bridge's lifetime; creation is fast
-	// (local socket listen + small file write, no remote IO). Within foci the
-	// sole caller (DelegatedManager.getOrCreate) is singleflighted per key, so
-	// concurrent creation for one key does not occur — the lock is correctness
-	// belt-and-braces against any future caller.
-	stableMu.Lock()
-	defer stableMu.Unlock()
-
-	if existing, ok := stableBridges[sockPath]; ok {
-		return existing, nil
-	}
-
-	// Remove stale socket from a previous process (if any). Safe now: no live
-	// bridge for this path exists in THIS process (checked above), so any socket
-	// at this path should be one left behind by a prior foci invocation — a dead
-	// file that net.Listen would otherwise reject with EADDRINUSE.
-	//
-	// But "should be" is a load-bearing assumption: the in-process memo above
-	// only sees this process's bridges. If a *different* live process is
-	// listening at this exact path (identical session key + shared FOCI_TMPDIR —
-	// the cross-test hijack, TODO #804), os.Remove would silently unlink its live
-	// socket and steal the path, corrupting that session's routing. Production's
-	// singleflight makes this a can't-happen, so treat it as the bug it is:
-	// probe liveness first, and if something answers, refuse to hijack and fail
-	// loudly rather than clobber it. A genuine stale socket refuses the dial
-	// (ECONNREFUSED), so this never fires on the normal restart-reconnect path.
-	if socketIsLive(sockPath) {
-		return nil, fmt.Errorf("exec bridge: a live socket is already listening at %s (session %q) — refusing to hijack it; this indicates two processes sharing one socket path (see TODO #804)", sockPath, stableID)
-	}
-	_ = os.Remove(sockPath)
-
-	b, err := newExecBridge(registry, ctx, sockPath, funcsPath)
-	if err != nil {
-		return nil, err
-	}
-	stableBridges[sockPath] = b
-	return b, nil
-}
-
-// socketIsLive reports whether a process is actively accepting connections on
-// the unix socket at path. A stale socket file left by a dead process refuses
-// the dial (ECONNREFUSED), so this distinguishes "safe to os.Remove and rebind"
-// (false) from "a live listener owns this path" (true). The dial closes
-// immediately — it's a liveness probe, not a real client.
-func socketIsLive(path string) bool {
-	conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
+//	exec-<session-key>-<gw-pid>-<n>.sock
+//
+// Per-instance is deliberate. Two backends can transiently exist for the same
+// session key: on /reset the dying session's backend is remapped onto a branch
+// key to finish memory formation in the background while a fresh backend takes
+// over the original key (see Agent.BranchStrategyFor's session-end case). If
+// both derived their bridge path from the session key alone they would share
+// one socket, and the dying backend's teardown would close the fresh session's
+// bridge out from under it (the #1120 outage). A unique path per instance makes
+// that impossible: Close on one bridge can never touch another's socket. The
+// path is not reused, so there is no stale socket to remove before listening.
+func NewSessionExecBridge(registry *Registry, ctx context.Context, sessionKey string) (*ExecBridge, error) {
+	// Sanitize: session keys may contain slashes (e.g. "clutch/c123/b456").
+	safe := strings.ReplaceAll(sessionKey, "/", "-")
+	n := bridgeCounter.Add(1)
+	sockPath := fmt.Sprintf("%s/exec-%s-%d-%d.sock", tempdir.Dir(), safe, os.Getpid(), n)
+	funcsPath := fmt.Sprintf("%s/exec-%s-%d-%d-funcs.sh", tempdir.Dir(), safe, os.Getpid(), n)
+	return newExecBridge(registry, ctx, sockPath, funcsPath)
 }
 
 func newExecBridge(registry *Registry, ctx context.Context, sockPath, funcsPath string) (*ExecBridge, error) {
@@ -170,14 +115,7 @@ func (b *ExecBridge) SockPath() string { return b.sockPath }
 func (b *ExecBridge) FuncsPath() string { return b.funcsPath }
 
 // Close stops the listener, waits for in-flight connections, and removes files.
-// For a stable-path bridge it also evicts the entry from the stableBridges memo
-// (must happen under the lock so NewExecBridgeStable observes a consistent
-// state); for an ephemeral bridge the delete is a harmless no-op.
 func (b *ExecBridge) Close() {
-	stableMu.Lock()
-	delete(stableBridges, b.sockPath)
-	stableMu.Unlock()
-
 	b.cancel()
 	_ = b.listener.Close()
 	b.wg.Wait()

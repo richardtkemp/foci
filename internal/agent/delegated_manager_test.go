@@ -11,6 +11,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/session"
+	"foci/internal/tools"
 )
 
 // ---------------------------------------------------------------------------
@@ -1779,6 +1780,45 @@ func TestRemapSession_NoOpGuards(t *testing.T) {
 	}
 	if got := mgr.loadResumeID(key); got != "resume-uuid-123" {
 		t.Errorf("resume ID = %q, want resume-uuid-123 after no-op remaps", got)
+	}
+}
+
+func TestSessionEnd_FreshBridgePathDiffersFromRemapped(t *testing.T) {
+	// #1120 end-to-end: on /reset the live backend is remapped onto a branch key
+	// (to finish memory formation in the background) while a fresh backend takes
+	// over the original key. Their exec bridges must NOT share a socket path — if
+	// they did, reaping the dying branch would close the fresh session's bridge
+	// and kill its foci_* tools.
+	idx := newTestSessionIndex(t)
+	mgr, _ := newTestManager(t, idx)
+	mgr.StartOpts.ExecRegistry = tools.NewRegistry() // wire bridges for this test
+
+	rootKey := "test-agent/c1"
+	branchKey := "test-agent/c1/b1700000000"
+
+	if _, err := mgr.Get(context.Background(), rootKey); err != nil {
+		t.Fatalf("Get(root): %v", err)
+	}
+	mbOld, ok := mgr.getManaged(rootKey)
+	if !ok || mbOld.bridge == nil {
+		t.Fatal("root backend has no exec bridge — ExecRegistry not wired")
+	}
+	oldSock := mbOld.bridge.SockPath()
+
+	// /reset: remap the live backend onto the branch key (background memory)...
+	mgr.RemapSession(rootKey, branchKey)
+	// ...and a fresh backend takes over the original key.
+	if _, err := mgr.Get(context.Background(), rootKey); err != nil {
+		t.Fatalf("Get(root, fresh): %v", err)
+	}
+	mbFresh, ok := mgr.getManaged(rootKey)
+	if !ok || mbFresh.bridge == nil {
+		t.Fatal("fresh backend has no exec bridge")
+	}
+	freshSock := mbFresh.bridge.SockPath()
+
+	if freshSock == oldSock {
+		t.Fatalf("fresh session bridge %q matches the remapped backend's %q — reaping the branch would kill the live session's tools (#1120)", freshSock, oldSock)
 	}
 }
 

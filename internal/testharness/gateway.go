@@ -426,18 +426,17 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	t.Cleanup(func() { _ = os.RemoveAll(gwSockDir) })
 	gwSock := filepath.Join(gwSockDir, "gw.sock")
 
-	// Per-test FOCI_TMPDIR. The exec-bridge stable socket lives at
-	// <tempdir.Dir()>/exec-<agentID>-c<chatID>.sock (execbridge.go:70) with NO
-	// pid — so if two concurrently-running tests share a session key (many
-	// tests hardcode the same UserID → same chatID → same "alpha/c<id>"),
-	// their gateways collide on ONE socket path under the shared run-level
-	// FOCI_TMPDIR, and NewExecBridgeStable's os.Remove+Listen lets the later
-	// gateway HIJACK the socket — routing the first test's foci_* tool calls to
-	// the wrong gateway (writes land in the wrong store / posts to the wrong
-	// Telegram stub). Giving each gateway its own short FOCI_TMPDIR isolates
-	// the sockets so identical session keys never collide across tests. Via
-	// testtemp (root /tmp/fgw, or FOCI_TEST_TMPDIR under `make`) so the path
-	// stays short — respecting the sun_path 108-byte limit — and consolidated.
+	// Per-test FOCI_TMPDIR isolates each gateway's exec-bridge sockets and temp
+	// state. Exec-bridge sockets live at
+	// <tempdir.Dir()>/exec-<agentID>-c<chatID>-<gwpid>-<n>.sock (execbridge.go,
+	// NewSessionExecBridge). The gateway pid + per-instance counter already make
+	// paths unique across processes, so two concurrently-running tests that share
+	// a session key (many hardcode the same UserID → same chatID → same
+	// "alpha/c<id>") can no longer collide on one socket even under a shared
+	// FOCI_TMPDIR. A dedicated short FOCI_TMPDIR per gateway is still used for
+	// clean isolation of all its temp files, via testtemp (root /tmp/fgw, or
+	// FOCI_TEST_TMPDIR under `make`) so the path stays within the sun_path
+	// 108-byte limit and is consolidated.
 	execTmpDir, err := testtemp.Mkdir("fet")
 	if err != nil {
 		return nil, fmt.Errorf("alloc exec-tmpdir: %w", err)

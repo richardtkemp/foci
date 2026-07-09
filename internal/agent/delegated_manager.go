@@ -327,7 +327,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		}
 		var bridgeErr error
 		if sessionKey != "" {
-			bridge, bridgeErr = tools.NewExecBridgeStable(reg, bridgeCtx, sessionKey)
+			bridge, bridgeErr = tools.NewSessionExecBridge(reg, bridgeCtx, sessionKey)
 		} else {
 			bridge, bridgeErr = tools.NewExecBridge(reg, bridgeCtx)
 		}
