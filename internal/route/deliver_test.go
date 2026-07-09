@@ -31,9 +31,8 @@ func (f *fakeConnMgr) ForSessionOrPrimary(sk, agentID string) platform.Connectio
 func (f *fakeConnMgr) AllForAgent(agentID string) []platform.Connection { return f.all }
 
 // TestConnFor proves the outbound cascade: a session's own connection wins
-// under every policy; with none, PolicyStrict stops, PolicyRootFallback
-// suppresses branch sessions but falls back for roots, and PolicyFallback
-// always falls back to the primary.
+// under every policy; with none, PolicyStrict stops and PolicyFallback falls
+// back to the primary (for any session, branch or root).
 func TestConnFor(t *testing.T) {
 	own := &fakeConn{name: "own"}
 	primary := &fakeConn{name: "primary"}
@@ -43,7 +42,7 @@ func TestConnFor(t *testing.T) {
 	}
 
 	// Session's own connection wins regardless of policy.
-	for _, p := range []Policy{PolicyStrict, PolicyFallback, PolicyRootFallback} {
+	for _, p := range []Policy{PolicyStrict, PolicyFallback} {
 		if c, o := ConnFor(cm, "a", "a/c1", p); c != own || o != DeliveredToSession {
 			t.Errorf("policy %s with live session conn: got (%v, %s)", p, c, o)
 		}
@@ -54,15 +53,10 @@ func TestConnFor(t *testing.T) {
 		t.Errorf("strict without conn: got (%v, %s), want (nil, none)", c, o)
 	}
 
-	// Root-fallback: branch sessions are suppressed, roots fall back.
-	if c, o := ConnFor(cm, "a", "a/c2/b1700", PolicyRootFallback); c != nil || o != DeliverySuppressed {
-		t.Errorf("root-fallback branch: got (%v, %s), want (nil, suppressed)", c, o)
+	// Plain fallback reaches the primary for both roots and branches.
+	if c, o := ConnFor(cm, "a", "a/c2", PolicyFallback); c != primary || o != DeliveredViaPrimary {
+		t.Errorf("fallback root: got (%v, %s), want (primary, primary)", c, o)
 	}
-	if c, o := ConnFor(cm, "a", "a/c2", PolicyRootFallback); c != primary || o != DeliveredViaPrimary {
-		t.Errorf("root-fallback root: got (%v, %s), want (primary, primary)", c, o)
-	}
-
-	// Plain fallback: even branches reach the primary.
 	if c, o := ConnFor(cm, "a", "a/c2/b1700", PolicyFallback); c != primary || o != DeliveredViaPrimary {
 		t.Errorf("fallback branch: got (%v, %s), want (primary, primary)", c, o)
 	}

@@ -52,15 +52,9 @@ func defaultSessionKeyFor(ag *agent.Agent, agentID string) string {
 //  1. DELIVER-TO-CHAT — deliverToSessionChat(): run a turn on a session and
 //     render its output to that session's own platform chat. The single shared
 //     primitive behind restart changelogs, scheduled wakes, proactive warnings,
-//     backgrounded async-tool results, and cross-agent send_to_session. These
-//     read like distinct "paths" but differ ONLY in the routing policy handed
-//     to route.ConnFor:
-//        • PolicyFallback     — same-agent system events; if the session has no
-//                               live connection, deliver via the agent's primary
-//                               chat (a wake must reach the user).
-//        • PolicyRootFallback — agent-initiated cross-session replies; a
-//                               branch/facet session with no connection is
-//                               SUPPRESSED, not leaked into the parent's chat.
+//     backgrounded async-tool results, and cross-agent send_to_session. When the
+//     session has no live connection of its own, delivery falls back to the
+//     agent's primary chat (route.PolicyFallback).
 //
 //  2. CAPTURE-AND-RELAY — relayResponseToCaller(): the one shape that is NOT a
 //     plain delivery. It runs a turn on the TARGET session but CAPTURES its
@@ -123,8 +117,7 @@ func newAsyncNotifier(
 			return
 		}
 		// DELIVER-TO-CHAT: the result belongs to the target's own chat.
-		// PolicyRootFallback keeps a facet's reply out of the parent's chat.
-		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, route.PolicyRootFallback)
+		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message)
 	})
 }
 
@@ -158,13 +151,13 @@ func relayResponseToCaller(
 			return
 		}
 
-		// Relay it to the caller's own chat as a normal injected turn
-		// (same-agent → PolicyFallback). Running it through HandleMessage on the
-		// caller maintains role alternation and lets the agent process/relay it.
+		// Relay it to the caller's own chat as a normal injected turn. Running
+		// it through HandleMessage on the caller maintains role alternation and
+		// lets the agent process/relay it.
 		formattedResp := "Response from session " + targetSession + ":\n" + resp
 		injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
 			"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
-		deliverToSessionChat(getAgent(), ctx, trigger, connMgr, callerAgentID, callerSession, injected, route.PolicyFallback)
+		deliverToSessionChat(getAgent(), ctx, trigger, connMgr, callerAgentID, callerSession, injected)
 	})
 }
 
@@ -173,8 +166,7 @@ func relayResponseToCaller(
 // path (see the taxonomy above) for send_to_session (trigger "session_notify",
 // via=agent) and the ask tool's answer/grader delivery (trigger "ask_grader",
 // via=ask-grader). Cross-agent by nature: the target key names its own owning
-// agent, resolved here. PolicyRootFallback keeps a facet's reply out of the
-// parent's chat.
+// agent, resolved here.
 func newSessionNotifyFn(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
@@ -192,7 +184,7 @@ func newSessionNotifyFn(
 			log.Errorf(trigger, "unknown agent %q for session %s", sk.AgentID, targetSessionKey)
 			return
 		}
-		deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message, route.PolicyRootFallback)
+		deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message)
 	})
 }
 
@@ -243,34 +235,27 @@ func enqueueInject(ag *agent.Agent, sessionKey, trigger string, body func()) {
 // async-tool results, and cross-agent send_to_session.
 //
 // (ag, agentID) is the ALREADY-RESOLVED owner of sessionKey — resolution differs
-// per caller and stays at the call site; this only delivers. policy selects the
-// fallback when the session has no live connection: PolicyFallback delivers via
-// the agent's primary chat; PolicyRootFallback suppresses branch/facet sessions
-// rather than leaking their output into the parent's chat.
+// per caller and stays at the call site; this only delivers. Uses
+// route.PolicyFallback: if the session has no live connection of its own,
+// delivery falls back to the agent's primary chat.
 func deliverToSessionChat(
 	ag *agent.Agent,
 	ctx context.Context,
 	trigger string,
 	connMgr platform.ConnectionManager,
 	agentID, sessionKey, message string,
-	policy route.Policy,
 ) {
 	enqueueInject(ag, sessionKey, trigger, func() {
-		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, policy)
+		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
 		notifyCtx := agent.WithTrigger(ctx, trigger)
 		if conn == nil {
-			// No deliverable connection. Still run the turn (it lands in the
-			// session JSONL); just don't render to a chat. Distinguish a
-			// deliberate branch suppression (debug) from a genuine no-conn (warn).
+			// No deliverable connection anywhere. Still run the turn (it lands
+			// in the session JSONL); just don't render to a chat.
 			if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
 				log.Errorf(trigger, "error for session %s: %v", sessionKey, err)
 				return
 			}
-			if outcome == route.DeliverySuppressed {
-				log.Debugf(trigger, "branch session %s has no dedicated connection, skipping platform delivery", sessionKey)
-			} else {
-				log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", agentID, sessionKey)
-			}
+			log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", agentID, sessionKey)
 			return
 		}
 		if outcome == route.DeliveredViaPrimary {
@@ -334,9 +319,8 @@ func buildWakeScheduler(
 				// which serialises with any in-flight turn on THIS session —
 				// no manual in-flight wait needed. A facet key queues on the
 				// facet's own inbox, so a turn on another session does not
-				// delay the wake (#719). PolicyFallback: a wake must reach the
-				// user even if the session has no live connection.
-				deliverToSessionChat(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), route.PolicyFallback)
+				// delay the wake (#719).
+				deliverToSessionChat(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message))
 				wakesMu.Lock()
 				delete(wakes, id)
 				wakesMu.Unlock()

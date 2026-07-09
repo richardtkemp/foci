@@ -146,10 +146,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
 	// Late-delivery fallback for the session router (#1068 Phase 1): resolve the
-	// current delivering connection at Emit time. PolicyRootFallback suppresses
-	// branch/facet sessions (their reply belongs to the facet, not the parent).
+	// current delivering connection at Emit time, falling back to the agent's
+	// primary when the session has no live connection of its own.
 	ag.ResolveLateConn = func(sessionKey string) platform.Connection {
-		conn, _ := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyRootFallback)
+		conn, _ := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
 		return conn
 	}
 	// Resolve a session's messaging platform (telegram/app/discord) for the
