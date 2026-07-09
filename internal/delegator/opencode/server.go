@@ -60,15 +60,13 @@ type Server struct {
 	// permission requests up to the owning Backend (else they'd be dropped
 	// and the subagent — and the parent turn — would block forever).
 	// childToCallID extends this: child session ID → parent tool callID,
-	// so child text events can be grouped with their OnSubagentStart/End.
-	// pendingTaskCalls tracks in-flight task tool calls per parent session
-	// (FIFO), consumed when a child session is created. All guarded by
-	// sessionsMu.
-	sessionsMu         sync.RWMutex
-	sessions           map[string]*Backend
-	childToParent      map[string]string
-	childToCallID      map[string]string
-	pendingTaskCalls   map[string][]string // parentSessionID → FIFO of callIDs
+	// learned from the Task tool's part metadata (trackTaskTool), so child
+	// text events can be grouped with their OnSubagentStart/End.
+	// Both guarded by sessionsMu.
+	sessionsMu    sync.RWMutex
+	sessions      map[string]*Backend
+	childToParent map[string]string
+	childToCallID map[string]string
 
 	// SSE subscriber cancel.
 	subscriberCancel context.CancelFunc
@@ -109,7 +107,6 @@ func newServer(agentID string, cfg serverConfig) *Server {
 		sessions:          make(map[string]*Backend),
 		childToParent:     make(map[string]string),
 		childToCallID:     make(map[string]string),
-		pendingTaskCalls:  make(map[string][]string),
 		http:              &http.Client{Timeout: 30 * time.Second},
 		closeGracefulWait: defaultCloseGracefulWait,
 		closeSigtermWait:  defaultCloseSigtermWait,
