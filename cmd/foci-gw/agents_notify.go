@@ -38,15 +38,52 @@ func defaultSessionKeyFor(ag *agent.Agent, agentID string) string {
 	return res.SessionKey
 }
 
-// newAsyncNotifier creates the async notifier callback for exec/tmux auto-background results.
-// getAgent is a lazy getter since the agent is nil at creation time.
+// ───────────────────────────────────────────────────────────────────────────
+// Injection delivery paths
 //
-// agentResolverFn resolves a session-key's agent ID to the owning agent's
-// instance. For cross-agent targets (e.g. send_to_session with reply_to=caller
-// addressing another agent's session), the *target's* Agent must handle the
-// message — running it on the caller's Agent puts the foreign session in the
-// wrong workdir/backend/permission scope. Mirrors the routing already done by
-// newSessionNotifyFn (reply_to=session path).
+// An "injection" is a turn NOT triggered by a direct inbound platform message —
+// a system event (restart/wake/warning), a backgrounded tool result, or a
+// cross-session send. Each runs on a session's inbox worker (via Inject.Run) so
+// it serialises with that session's platform turns and defers behind a pending
+// foci_ask, instead of racing them in a detached goroutine.
+//
+// Despite the several trigger names, there are only TWO shapes:
+//
+//  1. DELIVER-TO-CHAT — deliverToSessionChat(): run a turn on a session and
+//     render its output to that session's own platform chat. The single shared
+//     primitive behind restart changelogs, scheduled wakes, proactive warnings,
+//     backgrounded async-tool results, and cross-agent send_to_session. These
+//     read like distinct "paths" but differ ONLY in the routing policy handed
+//     to route.ConnFor:
+//        • PolicyFallback     — same-agent system events; if the session has no
+//                               live connection, deliver via the agent's primary
+//                               chat (a wake must reach the user).
+//        • PolicyRootFallback — agent-initiated cross-session replies; a
+//                               branch/facet session with no connection is
+//                               SUPPRESSED, not leaked into the parent's chat.
+//
+//  2. CAPTURE-AND-RELAY — relayResponseToCaller(): the one shape that is NOT a
+//     plain delivery. It runs a turn on the TARGET session but CAPTURES its
+//     output with a BufferSink instead of delivering it, then relays that text
+//     to a DIFFERENT (calling) session. Because it READS the turn's output
+//     rather than showing it, it cannot collapse into deliverToSessionChat.
+//     Used only by send_to_session with reply_to=caller.
+//
+// Owner resolution (which Agent owns the target session) differs per caller and
+// stays at each call site; the primitives below take an already-resolved Agent.
+// ───────────────────────────────────────────────────────────────────────────
+
+// newAsyncNotifier builds the callback fired when a backgrounded tool
+// (exec/tmux auto-background) completes and reports its result. The result
+// either goes to the target session's own chat (DELIVER-TO-CHAT) or, when
+// reply_to names a calling session, is captured and relayed back to it
+// (CAPTURE-AND-RELAY). See the path taxonomy above.
+//
+// getAgent is a lazy getter (the agent is nil at construction time).
+// agentResolverFn resolves a session key's agent ID to its owning instance: for
+// a cross-agent target the TARGET's Agent must run the turn — running it on the
+// caller's Agent would put the foreign session in the wrong
+// workdir/backend/permission scope.
 func newAsyncNotifier(
 	getAgent func() *agent.Agent,
 	agentID string,
@@ -63,116 +100,81 @@ func newAsyncNotifier(
 			trigger = "async_notify"
 		}
 
-		// Resolve which Agent owns the target session. Defaults to the
-		// caller's Agent (same-agent fast path); switches to the target's
-		// Agent if the session key parses to a different agent ID. An
-		// unknown agent ID is a hard error — the message has nowhere to go.
-		targetAg := getAgent()
-		targetAgentID := agentID
+		// Resolve which Agent owns the target session: the caller's Agent
+		// (same-agent fast path), or the target's Agent when the key names a
+		// different agent. An unknown agent is a hard drop — nowhere to go.
+		targetAg, targetAgentID := getAgent(), agentID
 		if sk, err := session.ParseSessionKey(target); err == nil && sk.AgentID != agentID {
 			inst := agentResolverFn(sk.AgentID)
 			if inst == nil {
 				log.Errorf(trigger, "unknown target agent %q for session %s, message dropped", sk.AgentID, target)
 				return
 			}
-			targetAg = inst.ag
-			targetAgentID = sk.AgentID
+			targetAg, targetAgentID = inst.ag, sk.AgentID
 		}
-
 		if targetAg == nil {
 			log.Errorf(trigger, "no target agent for session %s, injection dropped", target)
 			return
 		}
 
-		// Run the injection on the target session's inbox worker — serialised
-		// with its platform turns (and deferred while a foci_ask is pending, for
-		// non-control triggers) instead of in a detached goroutine that races them.
-		run := func() {
-			// Best-effort: a panic here (e.g. nil receiver on an unconfigured
-			// Agent) shouldn't take down the foci process. Log and move on.
-			defer func() {
-				if r := recover(); r != nil {
-					log.Errorf(trigger, "async notifier run panicked: %v (target=%s)", r, target)
-				}
-			}()
-
-			// If replyToSession is set, route the target's response back
-			// to the calling session via an injected [SESSION RESPONSE].
-			if replyToSession != "" {
-				notifyCtx := agent.WithTrigger(ctx, trigger)
-				buf := turnevent.NewBufferSink()
-				notifyCtx = turnevent.WithSink(notifyCtx, buf)
-
-				if err := targetAg.HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
-					log.Errorf(trigger, "error processing on target %s: %v", target, err)
-					return
-				}
-				resp := buf.FinalText()
-				if resp == "" {
-					return
-				}
-
-				// Route the target session's response through HandleMessage on
-				// the calling session. This maintains role alternation and lets
-				// the agent process/relay the response. The reply lands in the
-				// caller's session, so the caller's Agent (getAgent()) and
-				// agentID are correct here.
-				formattedResp := "Response from session " + target + ":\n" + resp
-				injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
-					"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
-				deliverInjectedTurn(getAgent(), ctx, trigger, connMgr, agentID, replyToSession, injected)
-				return
-			}
-
-			// Otherwise deliver the response to the target session's chat.
-			// Use targetAgentID for routing so cross-agent dispatches reach
-			// the target's bot (not the caller's first-primary fallback).
-			// PolicyRootFallback: a branch session without its own facet
-			// connection is suppressed rather than leaked into the parent's
-			// chat; the response still lands in the branch JSONL.
-			conn, outcome := route.ConnFor(connMgr, targetAgentID, target, route.PolicyRootFallback)
-
-			notifyCtx := agent.WithTrigger(ctx, trigger)
-			if conn == nil {
-				if err := targetAg.HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
-					log.Errorf(trigger, "error: %v", err)
-					return
-				}
-				if outcome == route.DeliverySuppressed {
-					log.Debugf(trigger, "branch session %s has no dedicated connection, skipping platform delivery", target)
-				} else {
-					log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", targetAgentID, target)
-				}
-				return
-			}
-
-		// Typing/activity indicator: turnSinkForConn selects appSink for app
-			// connections (activity frames) or SessionSink for TG/Discord (SetTyping).
-			sink, cleanup := turnSinkForConn(conn, target, trigger)
-			if cleanup != nil {
-				defer cleanup()
-			}
-			notifyCtx = turnevent.WithSink(notifyCtx, sink)
-
-			if err := targetAg.HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
-				log.Errorf(trigger, "error: %v", err)
-				return
-			}
+		if replyToSession != "" {
+			// CAPTURE-AND-RELAY: run on the target, hand its output to the caller.
+			relayResponseToCaller(getAgent, ctx, connMgr, agentID, targetAg, target, replyToSession, message, trigger)
+			return
 		}
-		targetAg.Enqueue(agent.Envelope{
-			SessionKey: target,
-			Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
-		})
+		// DELIVER-TO-CHAT: the result belongs to the target's own chat.
+		// PolicyRootFallback keeps a facet's reply out of the parent's chat.
+		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, route.PolicyRootFallback)
 	})
 }
 
-// newSessionNotifyFn creates the session notify callback for cross-agent message routing.
-// When a send_to_session tool targets another agent's session, this function handles
-// dispatching the message to the target agent and delivering the response.
-// newSessionNotifyFn builds a SessionNotifyFn that injects a message into a
-// target session's inbox. trigger is the turn trigger it stamps — "session_notify"
-// for inter-agent send_to_session (via=agent), "ask_grader" for the ask tool's
-// answer/grader delivery (via=ask-grader).
+// relayResponseToCaller runs the target session's turn, CAPTURES its output with
+// a BufferSink instead of delivering it anywhere, then relays that text to the
+// calling session as an injected [SESSION RESPONSE].
+//
+// This is the one injection shape that cannot be a deliverToSessionChat: every
+// other path DELIVERS its turn's output to a platform chat; this one READS the
+// output so it can hand it to a different session. Two turns on two sessions — a
+// capture on the target, a delivery on the caller — is why it can't collapse
+// into a single deliver call. See the path taxonomy above.
+func relayResponseToCaller(
+	getAgent func() *agent.Agent,
+	ctx context.Context,
+	connMgr platform.ConnectionManager,
+	callerAgentID string,
+	targetAg *agent.Agent,
+	targetSession, callerSession, message, trigger string,
+) {
+	enqueueInject(targetAg, targetSession, trigger, func() {
+		// Capture the target's output instead of delivering it to a chat.
+		buf := turnevent.NewBufferSink()
+		notifyCtx := turnevent.WithSink(agent.WithTrigger(ctx, trigger), buf)
+		if err := targetAg.HandleMessage(notifyCtx, targetSession, []string{message}, nil); err != nil {
+			log.Errorf(trigger, "error processing on target %s: %v", targetSession, err)
+			return
+		}
+		resp := buf.FinalText()
+		if resp == "" {
+			return
+		}
+
+		// Relay it to the caller's own chat as a normal injected turn
+		// (same-agent → PolicyFallback). Running it through HandleMessage on the
+		// caller maintains role alternation and lets the agent process/relay it.
+		formattedResp := "Response from session " + targetSession + ":\n" + resp
+		injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
+			"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
+		deliverToSessionChat(getAgent(), ctx, trigger, connMgr, callerAgentID, callerSession, injected, route.PolicyFallback)
+	})
+}
+
+// newSessionNotifyFn builds the callback that injects a message into a target
+// session and delivers the response to that session's chat — the DELIVER-TO-CHAT
+// path (see the taxonomy above) for send_to_session (trigger "session_notify",
+// via=agent) and the ask tool's answer/grader delivery (trigger "ask_grader",
+// via=ask-grader). Cross-agent by nature: the target key names its own owning
+// agent, resolved here. PolicyRootFallback keeps a facet's reply out of the
+// parent's chat.
 func newSessionNotifyFn(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
@@ -182,55 +184,15 @@ func newSessionNotifyFn(
 	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
 		sk, err := session.ParseSessionKey(targetSessionKey)
 		if err != nil {
-			log.Errorf("session_notify", "invalid session key %q: %v", targetSessionKey, err)
+			log.Errorf(trigger, "invalid session key %q: %v", targetSessionKey, err)
 			return
 		}
-		targetAgentID := sk.AgentID
-
-		inst := agentResolverFn(targetAgentID)
+		inst := agentResolverFn(sk.AgentID)
 		if inst == nil {
-			log.Errorf("session_notify", "unknown agent %q for session %s", targetAgentID, targetSessionKey)
+			log.Errorf(trigger, "unknown agent %q for session %s", sk.AgentID, targetSessionKey)
 			return
 		}
-
-		// Run on the target session's inbox worker — serialised with its
-		// platform turns and deferred behind a pending foci_ask — rather than
-		// in a detached goroutine that would race (and steer) them.
-		run := func() {
-			// PolicyRootFallback: same branch-suppression rule as the async
-			// notifier — a reply meant for a facet must not leak into the
-			// parent's chat via the primary fallback.
-			conn, outcome := route.ConnFor(connMgr, targetAgentID, targetSessionKey, route.PolicyRootFallback)
-			notifyCtx := agent.WithTrigger(ctx, trigger)
-			if conn == nil {
-				if err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, []string{message}, nil); err != nil {
-					log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
-					return
-				}
-				if outcome == route.DeliverySuppressed {
-					log.Debugf("session_notify", "branch session %s has no dedicated connection, skipping platform delivery", targetSessionKey)
-				} else {
-					log.Warnf("session_notify", "no connection for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)
-				}
-				return
-			}
-
-			sink, cleanup := turnSinkForConn(conn, targetSessionKey, "session_notify")
-			if cleanup != nil {
-				defer cleanup()
-			}
-			notifyCtx = turnevent.WithSink(notifyCtx, sink)
-
-			if err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, []string{message}, nil); err != nil {
-				log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
-			}
-		}
-		if !inst.ag.Enqueue(agent.Envelope{
-			SessionKey: targetSessionKey,
-			Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
-		}) {
-			log.Errorf("session_notify", "inbox rejected message for session %s", targetSessionKey)
-		}
+		deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message, route.PolicyRootFallback)
 	})
 }
 
@@ -251,32 +213,64 @@ func turnSinkForConn(conn platform.Connection, sessionKey, trigger string) (turn
 		})), nil
 }
 
-// deliverInjectedTurn queues a HandleMessage turn on the session's inbox
-// worker and delivers the response to the user's platform connection. Used by
-// all system-initiated injections (restart changelog, scheduled wakes,
-// proactive warnings, inter-session replies). Queueing means the turn
-// serialises with the session's platform turns and defers behind a pending
-// foci_ask — system injections never steer an in-flight turn, they wait
-// gracefully for it to complete. Fire-and-forget: a rejected enqueue (full
-// inbox) is logged and dropped.
-func deliverInjectedTurn(
+// enqueueInject queues body as a system injection on sessionKey's inbox worker —
+// the ONE place injection queueing/serialisation/safety is defined. body runs
+// wrapped in panic recovery (a bad injection must never crash the foci process),
+// and a rejected enqueue (full inbox) is logged and dropped. Queueing serialises
+// the turn with the session's platform turns and defers it behind a pending
+// foci_ask — a system injection waits for an in-flight turn, never steers it.
+func enqueueInject(ag *agent.Agent, sessionKey, trigger string, body func()) {
+	run := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Errorf(trigger, "injection panicked: %v (session=%s)", r, sessionKey)
+			}
+		}()
+		body()
+	}
+	if !ag.Enqueue(agent.Envelope{
+		SessionKey: sessionKey,
+		Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
+	}) {
+		log.Warnf(trigger, "inbox rejected injected turn for session %s", sessionKey)
+	}
+}
+
+// deliverToSessionChat runs a system-injected turn on sessionKey and renders its
+// response to that session's platform chat — the shared DELIVER-TO-CHAT
+// primitive (see the path taxonomy above), used by restart changelogs, scheduled
+// wakes, proactive warnings, inter-session reply delivery, backgrounded
+// async-tool results, and cross-agent send_to_session.
+//
+// (ag, agentID) is the ALREADY-RESOLVED owner of sessionKey — resolution differs
+// per caller and stays at the call site; this only delivers. policy selects the
+// fallback when the session has no live connection: PolicyFallback delivers via
+// the agent's primary chat; PolicyRootFallback suppresses branch/facet sessions
+// rather than leaking their output into the parent's chat.
+func deliverToSessionChat(
 	ag *agent.Agent,
 	ctx context.Context,
 	trigger string,
 	connMgr platform.ConnectionManager,
-	agentID string,
-	sessionKey string,
-	message string,
+	agentID, sessionKey, message string,
+	policy route.Policy,
 ) {
-	run := func() {
-		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
-		triggerCtx := agent.WithTrigger(ctx, trigger)
+	enqueueInject(ag, sessionKey, trigger, func() {
+		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, policy)
+		notifyCtx := agent.WithTrigger(ctx, trigger)
 		if conn == nil {
-			if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
-				log.Errorf(trigger, "error: %v", err)
+			// No deliverable connection. Still run the turn (it lands in the
+			// session JSONL); just don't render to a chat. Distinguish a
+			// deliberate branch suppression (debug) from a genuine no-conn (warn).
+			if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
+				log.Errorf(trigger, "error for session %s: %v", sessionKey, err)
 				return
 			}
-			log.Warnf(trigger, "no connection for session %s agent %s, response not delivered", sessionKey, agentID)
+			if outcome == route.DeliverySuppressed {
+				log.Debugf(trigger, "branch session %s has no dedicated connection, skipping platform delivery", sessionKey)
+			} else {
+				log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", agentID, sessionKey)
+			}
 			return
 		}
 		if outcome == route.DeliveredViaPrimary {
@@ -289,18 +283,12 @@ func deliverInjectedTurn(
 		if cleanup != nil {
 			defer cleanup()
 		}
-		triggerCtx = turnevent.WithSink(triggerCtx, sink)
+		notifyCtx = turnevent.WithSink(notifyCtx, sink)
 
-		if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
-			log.Errorf(trigger, "error: %v", err)
+		if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
+			log.Errorf(trigger, "error for session %s: %v", sessionKey, err)
 		}
-	}
-	if !ag.Enqueue(agent.Envelope{
-		SessionKey: sessionKey,
-		Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
-	}) {
-		log.Warnf(trigger, "inbox rejected injected turn for session %s", sessionKey)
-	}
+	})
 }
 
 // buildWakeScheduler creates the agent-scoped wake-scheduling machinery and
@@ -342,12 +330,13 @@ func buildWakeScheduler(
 					log.Warnf("remind", "no session for agent %s, skipping", agentID)
 					return
 				}
-				// deliverInjectedTurn queues on the session's inbox worker,
+				// deliverToSessionChat queues on the session's inbox worker,
 				// which serialises with any in-flight turn on THIS session —
 				// no manual in-flight wait needed. A facet key queues on the
 				// facet's own inbox, so a turn on another session does not
-				// delay the wake (#719).
-				deliverInjectedTurn(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message))
+				// delay the wake (#719). PolicyFallback: a wake must reach the
+				// user even if the session has no live connection.
+				deliverToSessionChat(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), route.PolicyFallback)
 				wakesMu.Lock()
 				delete(wakes, id)
 				wakesMu.Unlock()
