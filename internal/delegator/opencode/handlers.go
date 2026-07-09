@@ -160,7 +160,7 @@ func (b *Backend) handleChildEvent(ev rawEvent) {
 }
 
 // ---------------------------------------------------------------------------
-// message.part.updated — text deltas, tool lifecycle, reasoning, subtasks
+// message.part.updated — text deltas, tool lifecycle, reasoning
 // ---------------------------------------------------------------------------
 
 func (b *Backend) onMessagePartUpdated(part Part, delta string) {
@@ -196,9 +196,6 @@ func (b *Backend) onMessagePartUpdated(part Part, delta string) {
 
 	case PartTool:
 		b.handleToolPart(part)
-
-	case PartSubtask:
-		b.handleSubtaskPart(part)
 
 	case PartCompaction:
 		b.handleCompactionPart()
@@ -237,7 +234,7 @@ func (b *Backend) onMessagePartDelta(p eventMessagePartDelta) {
 	case PartReasoning:
 		b.handleReasoningPart(Part{}, p.Delta)
 	default:
-		// tool, subtask, file, etc. — not streamed via deltas.
+		// tool, file, etc. — not streamed via deltas.
 	}
 }
 
@@ -362,18 +359,6 @@ func (b *Backend) handleToolPart(part Part) {
 				se.OnSubagentEnd(part.CallID)
 			}
 		}
-	}
-}
-
-// handleSubtaskPart surfaces subtask descriptions via OnSubagentText. Text is
-// raw — blockquote (for tg/discord) is applied downstream now, not here. Full
-// subtask streaming is future work; v1 surfaces only the description.
-func (b *Backend) handleSubtaskPart(part Part) {
-	if part.Description == "" {
-		return
-	}
-	if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
-		se.OnSubagentText(part.ID, part.Description)
 	}
 }
 
