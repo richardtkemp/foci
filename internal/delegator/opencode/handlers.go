@@ -685,7 +685,9 @@ func (b *Backend) failInFlightTurn(reason string) {
 	// an abort drain is notable — for a steered turn it could indicate a
 	// stray abort event mis-attributed. The turn-1 abort itself (aborting=true)
 	// legitimately completes with partial/no output, so is suppressed here.
-	if !wasAborting && turn != nil && text == "" && tools == 0 {
+	// MessageAbortedError is always a deliberate POST /abort (steer or manual
+	// stop) — never an unexpected session death — so it's also suppressed.
+	if !wasAborting && reason != ErrMessageAborted && turn != nil && text == "" && tools == 0 {
 		log.Warnf(b.logComponent(), "failInFlightTurn: active turn ended with no text/tools on %s — possible premature error on steered turn", reason)
 	}
 
