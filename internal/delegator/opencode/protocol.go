@@ -309,6 +309,12 @@ const (
 type rawEvent struct {
 	Type       string          `json:"type"`
 	Properties json.RawMessage `json:"properties"`
+
+	// childCallID is set internally when an event is rerouted from a child
+	// (subagent) session to the parent Backend, so handleEvent can route
+	// child text to OnSubagentText without polluting the parent's turn state.
+	// Not present on the wire.
+	childCallID string
 }
 
 // Typed event payloads — one per Event* constant the dispatcher cares

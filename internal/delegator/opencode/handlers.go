@@ -24,6 +24,13 @@ import (
 // appropriate On* handler. Unknown events are logged at DEBUG and
 // dropped — forward-compatible against new opencode event types.
 func (b *Backend) handleEvent(ev rawEvent) {
+	// Child session events are tagged with childCallID by the subscriber.
+	// Route them to a dedicated handler that fires OnSubagentText without
+	// touching the parent's turn state (turnText, turnTools, etc.).
+	if ev.childCallID != "" {
+		b.handleChildEvent(ev)
+		return
+	}
 	log.Debugf(b.logComponent(), "handleEvent: %s", ev.Type)
 	switch ev.Type {
 	case EventMessagePartUpdated:
@@ -116,6 +123,39 @@ func (b *Backend) handleEvent(ev rawEvent) {
 
 	default:
 		log.Debugf(b.logComponent(), "handlers: unhandled event %s", ev.Type)
+	}
+}
+
+// handleChildEvent processes events rerouted from child (subagent) sessions.
+// Only completed text parts are surfaced — via OnSubagentText, keyed by the
+// parent tool callID — so the app can display the subagent's output grouped
+// with its OnSubagentStart/End. Everything else is dropped. Critically, this
+// path never touches the parent's turn state (turnText, turnTools, etc.),
+// mirroring ccstream's guard where ParentToolUseID != nil returns before any
+// accumulation.
+func (b *Backend) handleChildEvent(ev rawEvent) {
+	switch ev.Type {
+	case EventMessagePartUpdated:
+		var p eventMessagePartUpdated
+		if err := json.Unmarshal(ev.Properties, &p); err != nil {
+			return
+		}
+		// Only surface completed text parts (time.end set). This matches
+		// ccstream's per-assistant-message delivery: each text block fires
+		// one OnSubagentText call with the full block text.
+		if p.Part.Type != PartText || p.Part.Text == "" {
+			return
+		}
+		if p.Part.Time == nil || p.Part.Time.End == 0 {
+			return // streaming delta or incomplete — skip for now
+		}
+		if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
+			se.OnSubagentText(ev.childCallID, p.Part.Text)
+		}
+		// Keep typing indicator alive during subagent work.
+		if b.typingFunc != nil {
+			b.typingFunc(true)
+		}
 	}
 }
 
