@@ -165,8 +165,14 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		}
 		ag.SkillDirs = reloadSkillsDirs
 		notifyAgentID := acfg.ID
-		ag.SkillChangeNotify = func(text string) {
-			if conn := p.connMgr.Primary(notifyAgentID); conn != nil {
+		ag.SkillChangeNotify = func(sessionKey, text string) {
+			conn := p.connMgr.ForSessionOrPrimary(sessionKey, notifyAgentID)
+			if conn == nil {
+				return
+			}
+			if sn, ok := conn.(platform.SessionNotifier); ok {
+				sn.SendNotificationToSession(sessionKey, text)
+			} else {
 				conn.SendNotification(text)
 			}
 		}

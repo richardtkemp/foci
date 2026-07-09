@@ -61,6 +61,6 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 	}
 
 	if skillBefore != nil {
-		a.detectAndNotifySkillChanges(skillBefore)
+		a.detectAndNotifySkillChanges(targetKey, skillBefore)
 	}
 }

@@ -206,9 +206,15 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		WarningDispatcher:     warningDispatcher,
 		ChatWarningDispatcher: chatWarningDispatcher,
 		IsDelegatedAgent:      inst.ag.DelegatedManager != nil,
-		SkillDirs:             inst.skillsDirs,
-		NotifySkillChange: func(text string) {
-			if conn := p.connMgr.Primary(agentID); conn != nil {
+		SkillDirs: inst.skillsDirs,
+		NotifySkillChange: func(sessionKey, text string) {
+			conn := p.connMgr.ForSessionOrPrimary(sessionKey, agentID)
+			if conn == nil {
+				return
+			}
+			if sn, ok := conn.(platform.SessionNotifier); ok {
+				sn.SendNotificationToSession(sessionKey, text)
+			} else {
 				conn.SendNotification(text)
 			}
 		},
