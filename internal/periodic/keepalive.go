@@ -23,6 +23,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/skills"
 
 	"foci/internal/memory"
 	"foci/internal/provider"
@@ -120,6 +121,13 @@ type Runner struct {
 
 	isDelegatedAgent bool // reflection needs quiet period in delegated mode; consolidation uses RunOnce
 
+	// skillDirs are the skill directories to scan for creation/update detection
+	// during reflection. nil = feature disabled.
+	skillDirs []string
+	// notifySkillChange is called with a formatted message when reflection creates
+	// or updates a skill. nil = notifications disabled.
+	notifySkillChange func(text string)
+
 	mu                  sync.Mutex
 	lastCacheWarmed     time.Time
 	lastInteraction     time.Time
@@ -169,6 +177,17 @@ type RunnerConfig struct {
 	// because reflection runs IN the live session, and consolidation dispatches
 	// via Agent.RunOnce rather than Agent.Branch.
 	IsDelegatedAgent bool
+
+	// SkillDirs are the skill directories to scan for creation/update detection
+	// during the reflection pass. When non-empty and NotifyOnSkillCreation is
+	// true in the reflection config, the runner snapshots skill files before
+	// firing reflection, diffs after, and calls NotifySkillChange with the result.
+	SkillDirs []string
+
+	// NotifySkillChange is called with a formatted message when reflection
+	// creates or updates a skill. Typically wired to send a platform notification.
+	// nil = no notification (feature disabled even if config enables it).
+	NotifySkillChange func(text string)
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
@@ -192,6 +211,8 @@ func New(cfg RunnerConfig) *Runner {
 		warningDispatcher:     cfg.WarningDispatcher,
 		chatWarningDispatcher: cfg.ChatWarningDispatcher,
 		isDelegatedAgent:      cfg.IsDelegatedAgent,
+		skillDirs:             cfg.SkillDirs,
+		notifySkillChange:     cfg.NotifySkillChange,
 		lastCacheWarmed:       now,
 		lastInteraction:       now,
 		lastReflection:        now,
@@ -642,6 +663,13 @@ func (r *Runner) maybeReflection() {
 
 	r.log.Infof("firing reflection pass for agent %s (%d sessions)", r.agentID, len(keys))
 
+	// Snapshot skill files before reflection so we can detect creation/update
+	// after the pass completes.
+	var skillBefore skills.SkillSnapshot
+	if r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && r.notifySkillChange != nil {
+		skillBefore = skills.Snapshot(r.skillDirs)
+	}
+
 	go func() {
 		defer func() {
 			r.mu.Lock()
@@ -653,6 +681,15 @@ func (r *Runner) maybeReflection() {
 			t := time.Now()
 			if r.agent.Branch("reflection", key, promptText, true) {
 				r.sessionIndex.StampReflection(key, t)
+			}
+		}
+
+		// Detect and notify on skill creation/update.
+		if skillBefore != nil {
+			after := skills.Snapshot(r.skillDirs)
+			changes := skills.Diff(skillBefore, after)
+			if msg := skills.FormatChanges(changes); msg != "" {
+				r.notifySkillChange(msg)
 			}
 		}
 	}()
@@ -675,9 +712,23 @@ func (r *Runner) ReflectSessionIfDue(sessionKey string) {
 	if promptText == "" {
 		return
 	}
+
+	var skillBefore skills.SkillSnapshot
+	if r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && r.notifySkillChange != nil {
+		skillBefore = skills.Snapshot(r.skillDirs)
+	}
+
 	t := time.Now()
 	if r.agent.Branch("reflection", sessionKey, promptText, true) {
 		r.sessionIndex.StampReflection(sessionKey, t)
+	}
+
+	if skillBefore != nil {
+		after := skills.Snapshot(r.skillDirs)
+		changes := skills.Diff(skillBefore, after)
+		if msg := skills.FormatChanges(changes); msg != "" {
+			r.notifySkillChange(msg)
+		}
 	}
 }
 

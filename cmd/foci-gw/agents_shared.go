@@ -246,6 +246,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		agentCfg:         acfg,
 		resolved:         p.resolved,
 		promptSearchDirs: s.promptSearchDirs,
+		skillsDirs:       fp.skillsDirs,
 		webhooks:         p.resolved.Webhooks,
 		tmuxClearAll:     fp.tmuxClearAll,
 		tmuxWatchCount:   fp.tmuxWatchCount,

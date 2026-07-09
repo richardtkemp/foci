@@ -1054,7 +1054,8 @@ type ReflectionConfig struct {
 	SessionEndPrompt   *string `toml:"session_end_prompt"                    desc:"session end reflection prompt file path"`                         // prompt override (nil = embedded, "none" = disabled)
 	CompactionEnabled  *bool   `toml:"compaction_enabled"     default:"true" desc:"reflection before compaction"`                                    // reflect before compaction
 	CompactionPrompt   *string `toml:"compaction_prompt"                     desc:"compaction reflection prompt file path"`                          // prompt override (nil = embedded, "none" = disabled)
-	BackendQuietPeriod *string `toml:"backend_quiet_period"   default:"5m"   desc:"min idle time before reflection in backend mode" type:"duration"` // min idle before firing in backend mode
+	BackendQuietPeriod      *string `toml:"backend_quiet_period"        default:"5m"   desc:"min idle time before reflection in backend mode" type:"duration"` // min idle before firing in backend mode
+	NotifyOnSkillCreation   *bool   `toml:"notify_on_skill_creation"     default:"true" desc:"notify the user when reflection creates or updates a skill"`       // notify user on skill creation/update during reflection
 }
 
 // SchedulerConfig controls the periodic scheduler that drives all four timers

@@ -40,6 +40,7 @@ type agentInstance struct {
 	agentCfg         config.AgentConfig
 	resolved         *config.ResolvedAgentConfig // pre-merged agent+global config
 	promptSearchDirs []string                    // directories to search for prompt files
+	skillsDirs       []string                    // skill directories (shared + per-agent) for reflection detection
 	tmuxClearAll     func()                      // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount   func() int                  // returns number of active tmux watches
 	webhooks         map[string]string           // hook ID → prompt path (merged from global + per-agent)
