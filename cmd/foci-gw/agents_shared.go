@@ -12,6 +12,7 @@ import (
 	mcpkg "foci/internal/mcp"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/route"
 	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/workspace"
@@ -166,15 +167,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		ag.SkillDirs = reloadSkillsDirs
 		notifyAgentID := acfg.ID
 		ag.SkillChangeNotify = func(sessionKey, text string) {
-			conn := p.connMgr.ForSessionOrPrimary(sessionKey, notifyAgentID)
-			if conn == nil {
-				return
-			}
-			if sn, ok := conn.(platform.SessionNotifier); ok {
-				sn.SendNotificationToSession(sessionKey, text)
-			} else {
-				conn.SendNotification(text)
-			}
+			route.NotifySessionChat(p.connMgr, notifyAgentID, sessionKey, text)
 		}
 	}
 
