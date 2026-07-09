@@ -15,24 +15,15 @@ import (
 // branch type and the branch session key.
 type BranchDoneFunc func(branchType, branchKey string)
 
-// branchTypesForMainSession lists branch types that should be injected into
-// the existing CC session rather than creating a new one. These need the
-// parent's conversation context and are short-lived.
-var branchTypesForMainSession = map[string]bool{
-	"reflection":         true,
-	"session-end-memory": true,
-	"compaction-memory":  true,
-	"keepalive":          true,
-}
-
 // buildBranchFunc returns a function that creates a branch session from a
 // caller-specified parent session and runs a single turn with the given prompt.
 // If onDone is non-nil, it is called after the turn completes with the
 // branch type and branch session key.
 //
-// For delegated agents (CC), branching is handled differently:
-//   - Types in branchTypesForMainSession → inject into existing CC session
-//   - Other types → spin up a new CC session with an independent key
+// For delegated agents (CC), branching is handled differently — the strategy
+// comes from the single authority, agent.BranchStrategyFor:
+//   - BranchInPlace (reflection, keepalive) → inject into the existing CC session
+//   - BranchIndependent (background, …)     → spin up a new independent CC session
 func buildBranchFunc(
 	agentID string,
 	ag *agent.Agent,
@@ -87,7 +78,7 @@ func buildBranchFunc(
 func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, promptText string, ctx context.Context) bool {
 	turnCtx := agent.WithTrigger(ctx, branchType)
 
-	if branchTypesForMainSession[branchType] {
+	if ag.BranchStrategyFor(branchType) == agent.BranchInPlace {
 		// Inject into the existing CC session — it has the conversation
 		// context. Routed through the session's inbox worker: these are
 		// system turns and must serialise with (never steer) any in-flight

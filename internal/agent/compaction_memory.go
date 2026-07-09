@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"foci/internal/log"
-	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/shared/prompts"
 )
@@ -29,20 +28,15 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 
-	// Delegated agents: inject into existing session (CC has the context).
-	// API agents: create a branch so the parent session isn't modified.
+	// Delegated agents inject into the existing session (CC holds the live
+	// context); API agents branch so the parent session isn't modified. The
+	// choice comes from the single branch authority — see BranchStrategyFor.
 	targetKey := sessionKey
-	if a.DelegatedManager == nil {
-		branchKey, err := a.Sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
-			NoResetHook:         true,
-			BranchType:          "compaction-memory",
-			OrientationTemplate: orientTemplate,
-		})
-		if err != nil {
-			log.Errorf("compaction-memory", "branch error for session %s: %v", sessionKey, err)
+	if a.BranchStrategyFor("compaction-memory") == BranchFork {
+		branchKey, ok := a.createMemoryBranch(sessionKey, "compaction-memory", orientTemplate)
+		if !ok {
 			return
 		}
-		a.SetSessionNoCompact(branchKey, true)
 		targetKey = branchKey
 	}
 
