@@ -52,12 +52,17 @@ import (
 
 // SecurityGroupName is the OS group whose presence in a process's
 // supplementary group set grants read access to foci's secrets file.
-// Setup strips this group's GID from child processes' credentials.
 //
 // Duplicated as a string literal here (rather than imported from
 // internal/secrets) so this package stays leaf and can be imported by
 // internal/secrets/bitwarden et al. without an import cycle.
 const SecurityGroupName = "foci-secrets"
+
+// securityDropGroups is the full set of supplementary groups that Setup strips
+// from child processes. The primary one is foci-secrets (secrets.toml access);
+// foci-askgw grants access to the askgw socket, so agent subprocesses must not
+// inherit it either. Kept here (not imported) for the same leaf-package reason.
+var securityDropGroups = []string{SecurityGroupName, "foci-askgw"}
 
 // childCredential is set by Setup to drop the foci-secrets supplementary
 // group from exec'd child processes while preserving all other groups
@@ -98,7 +103,7 @@ var setupErr error
 // Every other combination is safe. (P2-12.)
 func credentialSetupError(found bool, probeErr error) error {
 	if found && probeErr != nil {
-		return fmt.Errorf("process holds %s group but cannot drop it from children (CAP_SETGID unavailable): %w", SecurityGroupName, probeErr)
+		return fmt.Errorf("process holds a security group but cannot drop it from children (CAP_SETGID unavailable): %w", probeErr)
 	}
 	return nil
 }
@@ -113,20 +118,24 @@ func setupImpl() {
 		return
 	}
 
-	// Look up the foci-secrets group. If it doesn't exist, there's
-	// nothing to protect against — skip credential setup entirely.
-	secretsGrp, err := user.LookupGroup(SecurityGroupName)
-	if err != nil {
-		log.Debugf("exec", "group %q not found — skipping child credential setup", SecurityGroupName)
-		return
+	// Resolve GIDs for all drop groups. Groups that don't exist are
+	// silently skipped (nothing to protect against for that group).
+	dropGIDs := make(map[uint32]string)
+	for _, name := range securityDropGroups {
+		grp, err := user.LookupGroup(name)
+		if err != nil {
+			log.Debugf("exec", "group %q not found — skipping", name)
+			continue
+		}
+		g, err := strconv.ParseUint(grp.Gid, 10, 32)
+		if err != nil {
+			log.Warnf("exec", "cannot parse %s group GID %q: %v", name, grp.Gid, err)
+			setupErr = fmt.Errorf("cannot parse %s group GID %q to verify drop: %w", name, grp.Gid, err)
+			return
+		}
+		dropGIDs[uint32(g)] = name // #nosec G115
 	}
-	secretsGID, err := strconv.ParseUint(secretsGrp.Gid, 10, 32)
-	if err != nil {
-		log.Warnf("exec", "cannot parse %s group GID %q: %v", SecurityGroupName, secretsGrp.Gid, err)
-		// Can't compute the GID to filter out, so we can't verify we've
-		// dropped foci-secrets from children — fail closed rather than risk
-		// leaking the group. (Mirrors the Getgroups failure branch below.)
-		setupErr = fmt.Errorf("cannot parse %s group GID %q to verify drop: %w", SecurityGroupName, secretsGrp.Gid, err)
+	if len(dropGIDs) == 0 {
 		return
 	}
 
@@ -134,42 +143,39 @@ func setupImpl() {
 	currentGroups, err := syscall.Getgroups()
 	if err != nil {
 		log.Warnf("exec", "cannot read supplementary groups: %v", err)
-		// Can't verify whether we hold (and must drop) foci-secrets — fail
-		// closed rather than risk leaking the group to children. (P2-12.)
-		setupErr = fmt.Errorf("cannot read supplementary groups to verify %s drop: %w", SecurityGroupName, err)
+		setupErr = fmt.Errorf("cannot read supplementary groups to verify drop: %w", err)
 		return
 	}
 
-	// Build filtered list: all groups EXCEPT foci-secrets
+	// Build filtered list: all groups EXCEPT those in dropGIDs.
 	var filteredGroups []uint32
 	found := false
 	for _, g := range currentGroups {
-		// #nosec G115 - GID values are always non-negative and within uint64 range
-		if uint64(g) == secretsGID {
+		if name, drop := dropGIDs[uint32(g)]; drop { //nolint:gosec // G115: GID values are non-negative
 			found = true
-			continue // drop foci-secrets
+			log.Debugf("exec", "will drop group %s (gid %d) from children", name, g)
+			continue
 		}
-		filteredGroups = append(filteredGroups, uint32(g)) // #nosec G115 - GID values are always non-negative and within uint32 range
+		filteredGroups = append(filteredGroups, uint32(g)) // #nosec G115
 	}
 
 	if !found {
-		// Process doesn't have foci-secrets — nothing to drop
-		log.Debugf("exec", "process does not have %s group — skipping child credential setup", SecurityGroupName)
+		log.Debugf("exec", "process does not hold any drop groups — skipping child credential setup")
 		return
 	}
 
 	// Look up primary GID
-	primaryGID := uint32(gid) // #nosec G115 - GID values are always non-negative and within uint32 range
+	primaryGID := uint32(gid) // #nosec G115
 	if u, err := user.Current(); err == nil {
 		if g, err := strconv.ParseUint(u.Gid, 10, 32); err == nil {
-			primaryGID = uint32(g) // #nosec G115 - GID values are always non-negative and within uint32 range
+			primaryGID = uint32(g) // #nosec G115
 		}
 	}
 
 	cred := &syscall.Credential{
-		Uid:    uint32(uid), // #nosec G115 - UID values are always non-negative and within uint32 range
+		Uid:    uint32(uid), // #nosec G115
 		Gid:    primaryGID,
-		Groups: filteredGroups, // all groups except foci-secrets
+		Groups: filteredGroups,
 	}
 
 	// Probe: try spawning a trivial process with the credential.
@@ -181,17 +187,15 @@ func setupImpl() {
 		Credential: cred,
 	}
 	if err := probe.Run(); err != nil {
-		log.Warnf("exec", "cannot drop %s group (CAP_SETGID not available): %v", SecurityGroupName, err)
+		log.Warnf("exec", "cannot drop security groups (CAP_SETGID not available): %v", err)
 		log.Warnf("exec", "child processes will inherit parent groups — add AmbientCapabilities=CAP_SETGID to systemd unit")
-		// found is true here (we passed the !found check above): the process
-		// holds foci-secrets but cannot drop it. Fail closed. (P2-12.)
 		setupErr = credentialSetupError(true, err)
 		return
 	}
 
 	// The probe proved CAP_SETGID is in our permitted/effective sets. Now clear
 	// the AMBIENT set so children don't inherit CAP_SETGID across execve and
-	// re-add the foci-secrets group themselves (P0-1). The credential mechanism
+	// re-add the dropped groups themselves (P0-1). The credential mechanism
 	// keeps working because it relies on the parent's effective caps, not the
 	// ambient set.
 	if err := clearAmbientCaps(); err != nil {
@@ -199,8 +203,12 @@ func setupImpl() {
 	}
 
 	childCredential = cred
-	log.Debugf("exec", "child credential: uid=%d gid=%d groups=%v (dropped %s gid %d)",
-		uid, primaryGID, filteredGroups, SecurityGroupName, secretsGID)
+	droppedNames := make([]string, 0, len(dropGIDs))
+	for _, name := range dropGIDs {
+		droppedNames = append(droppedNames, name)
+	}
+	log.Debugf("exec", "child credential: uid=%d gid=%d groups=%v (dropped %v)",
+		uid, primaryGID, filteredGroups, droppedNames)
 }
 
 // childAttr returns a SysProcAttr that creates a new process group and

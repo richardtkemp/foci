@@ -91,6 +91,8 @@ config.Load(path)                                        ← validates values; l
   → plat.StartAll(ctx)                                     ← starts all provider connections
   → startup notifications (inline in main.go)              ← uses connMgr.AllForAgent() for fan-out
   → http.Server{...}                                       ← http.go (registerHTTPHandlers)
+  → startUnixSocket(...)                                   ← unix_socket.go (same-user auth, no API key)
+  → setupAskgw(cfg, agents, connMgr)                       ← askgw_setup.go (opt-in [askgw] enabled=true; NDJSON Unix socket for external Apps to ask humans questions via foci's interactive button surface)
   → checkDelegatedReadiness(...)                           ← notifications.go (probe each delegated backend; fire relogin if not ready — gate active before first-run injection)
   → handleRestartAndFirstRun(...)                          ← notifications.go (restart + welcome via HandleMessage)
   → block on signal → runShutdown(...)                     ← shutdown.go

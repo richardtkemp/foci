@@ -149,6 +149,16 @@ func (c *Config) ResolveAllPaths() {
 	// Keepalive.Prompt and Background.Prompt: path resolution handled by prompts.ResolvePrompt at runtime.
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 	ResolvePathPtr(c.Environment.DocsPath)
+	if c.Askgw.Enabled {
+		if c.Askgw.SocketPath == "" {
+			c.Askgw.SocketPath = c.DataPath("askgw.sock")
+		} else {
+			c.Askgw.SocketPath = ResolvePath(c.Askgw.SocketPath)
+		}
+		if c.Askgw.MaxFrameBytes == 0 {
+			c.Askgw.MaxFrameBytes = 1 << 20
+		}
+	}
 	for i := range c.Platforms {
 		ResolvePathPtr(c.Platforms[i].Display.ReceivedFilesDir)
 	}

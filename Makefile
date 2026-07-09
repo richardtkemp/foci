@@ -251,6 +251,7 @@ FOCI_USER     ?= foci
 FOCI_HOME     ?= /home/$(FOCI_USER)
 INSTALL_DIR   ?= /usr/local/bin
 SECRETS_GROUP ?= foci-secrets
+ASKGW_GROUP   ?= foci-askgw
 SERVICE_NAME  ?= foci
 SERVICE_FILE  := /etc/systemd/system/$(SERVICE_NAME).service
 SECRETS_FILE  := $(FOCI_HOME)/config/secrets.toml
@@ -284,8 +285,11 @@ install-bin:
 	@for b in $(DEPLOY_BINS); do echo "  install $$b"; install -m 755 bin/$$b $(INSTALL_DIR)/$$b; done
 
 install-unit:
+	getent group $(SECRETS_GROUP) >/dev/null 2>&1 || groupadd $(SECRETS_GROUP)
+	getent group $(ASKGW_GROUP) >/dev/null 2>&1 || groupadd $(ASKGW_GROUP)
 	sed -e 's|@FOCI_USER@|$(FOCI_USER)|g' \
 	    -e 's|@SECRETS_GROUP@|$(SECRETS_GROUP)|g' \
+	    -e 's|@ASKGW_GROUP@|$(ASKGW_GROUP)|g' \
 	    -e 's|@FOCI_HOME@|$(FOCI_HOME)|g' \
 	    -e 's|@SERVICE_PATH@|$(SERVICE_PATH)|g' \
 	    -e 's|@INSTALL_DIR@|$(INSTALL_DIR)|g' \
@@ -307,6 +311,7 @@ install-polkit:
 provision:
 	id $(FOCI_USER) >/dev/null 2>&1 || useradd --system --home-dir $(FOCI_HOME) --create-home --shell /bin/bash $(FOCI_USER)
 	getent group $(SECRETS_GROUP) >/dev/null 2>&1 || groupadd $(SECRETS_GROUP)
+	getent group $(ASKGW_GROUP) >/dev/null 2>&1 || groupadd $(ASKGW_GROUP)
 	@if ! getent group crontab >/dev/null 2>&1; then \
 	  if   command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y cron || true; \
 	  elif command -v dnf     >/dev/null 2>&1; then dnf install -y cronie || true; \
