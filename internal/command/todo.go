@@ -448,13 +448,18 @@ func todoEditCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respon
 // todoShowCmd shows detailed info for a single todo item.
 func todoShowCmd(store *memory.TodoStore, agentID string, args todoArgs) (Response, error) {
 	if len(args.ids) == 0 {
-		return Response{Text: "Usage: /todo show <id>"}, nil
+		return Response{Text: "Usage: /todo show <id> [id ...]"}, nil
 	}
-	item, err := store.Get(agentID, args.ids[0])
-	if err != nil {
-		return Response{}, fmt.Errorf("get todo: %w", err)
+	var parts []string
+	for _, id := range args.ids {
+		item, err := store.Get(agentID, id)
+		if err != nil {
+			parts = append(parts, fmt.Sprintf("#%d: %v", id, err))
+			continue
+		}
+		parts = append(parts, formatTodoDetail(item))
 	}
-	return Response{Text: formatTodoDetail(item)}, nil
+	return Response{Text: strings.Join(parts, "\n\n")}, nil
 }
 
 // todoSearchCmd searches todos by text.
