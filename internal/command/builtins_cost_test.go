@@ -25,7 +25,7 @@ func TestCostCommandUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	for _, want := range []string{"/cost today", "/cost 24h", "/cost week", "/cost <days>"} {
+	for _, want := range []string{"/cost session", "/cost today", "/cost 24h", "/cost week", "/cost <days>"} {
 		if !strings.Contains(result.Text, want) {
 			t.Errorf("missing %q in usage:\n%s", want, result.Text)
 		}
@@ -68,8 +68,8 @@ func TestCostCommandToday(t *testing.T) {
 	}
 }
 
-// TestCostCommandSession verifies sessions are sorted by cost in descending order.
-func TestCostCommandSession(t *testing.T) {
+// TestCostCommandTodaySorting verifies sessions are sorted by cost in descending order.
+func TestCostCommandTodaySorting(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
 		{Timestamp: now, Session: "session-a", CostUSD: 0.010},
@@ -78,7 +78,7 @@ func TestCostCommandSession(t *testing.T) {
 	})
 
 	cmd := CostCommand()
-	result, err := cmd.Execute(context.Background(), Request{Args: "session"}, costCC(path))
+	result, err := cmd.Execute(context.Background(), Request{Args: "today"}, costCC(path))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -90,6 +90,50 @@ func TestCostCommandSession(t *testing.T) {
 	bIdx := strings.Index(result.Text, "session-b")
 	if aIdx > bIdx {
 		t.Errorf("expected session-a before session-b (sorted by cost desc):\n%s", result.Text)
+	}
+}
+
+// TestCostCommandSession verifies the session subcommand filters to the current session only.
+func TestCostCommandSession(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []log.APIEntry{
+		{Timestamp: now, Session: "main/i0/0/abc", CostUSD: 0.010, Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 300},
+		{Timestamp: now, Session: "main/i0/0/abc", CostUSD: 0.020, Input: 800, Output: 300, CacheRead: 1500, CacheWrite: 0},
+		{Timestamp: now, Session: "other/session", CostUSD: 0.500, Input: 5000, Output: 2000, CacheRead: 10000, CacheWrite: 5000},
+	})
+
+	cmd := CostCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "session", SessionKey: "main/i0/0/abc"}, costCC(path))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "$0.0300") {
+		t.Errorf("expected total $0.0300 for this session, got:\n%s", result.Text)
+	}
+	if strings.Contains(result.Text, "0.500") || strings.Contains(result.Text, "other/session") {
+		t.Errorf("should not contain other session's cost:\n%s", result.Text)
+	}
+	if !strings.Contains(result.Text, "2 calls") {
+		t.Errorf("expected 2 calls for this session:\n%s", result.Text)
+	}
+}
+
+// TestCostCommandSessionNoData verifies graceful handling when no calls exist for the session.
+func TestCostCommandSessionNoData(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []log.APIEntry{
+		{Timestamp: now, Session: "other/session", CostUSD: 0.500},
+	})
+
+	cmd := CostCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "session", SessionKey: "main/i0/0/abc"}, costCC(path))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "no API calls") {
+		t.Errorf("expected no-calls message, got:\n%s", result.Text)
 	}
 }
 

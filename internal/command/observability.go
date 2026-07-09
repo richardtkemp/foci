@@ -212,8 +212,18 @@ func CostCommand() *Command {
 		Category:    "observability",
 		Subcommands: []Subcommand{
 			{
+				Name:        "session",
+				Description: "This session's cost so far",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					entries, err := readEntries(cc)
+					if err != nil {
+						return Response{Text: err.Error()}, nil
+					}
+					return Response{Text: costSession(entries, req.SessionKey)}, nil
+				},
+			},
+			{
 				Name:        "today",
-				Aliases:     []string{"session"},
 				Description: "Today's costs by session",
 				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
 					entries, err := readEntries(cc)

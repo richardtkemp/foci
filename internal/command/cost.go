@@ -14,7 +14,37 @@ import (
 
 // costUsage returns the help text for /cost subcommands.
 func costUsage() string {
-	return "/cost today — today's costs by session\n/cost 24h — last 24 hours with category breakdown\n/cost week — 7-day summary with daily breakdown\n/cost <days> — total for last N days"
+	return "/cost session — this session's cost so far\n/cost today — today's costs by session\n/cost 24h — last 24 hours with category breakdown\n/cost week — 7-day summary with daily breakdown\n/cost <days> — total for last N days"
+}
+
+// costSession shows the total cost for the current session only.
+func costSession(entries []log.APIEntry, sessionKey string) string {
+	filtered := filterEntries(entries, func(e log.APIEntry) bool {
+		return e.Session == sessionKey
+	})
+	total, count := sumCosts(filtered)
+	if count == 0 {
+		return fmt.Sprintf("This session: no API calls logged yet.")
+	}
+	cr, cw, inp, out := categoryCosts(filtered)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "💰 This session: $%.4f (%s calls)\n", total, display.FormatCommas(count))
+
+	cols := []display.Column{
+		{Header: "Category"},
+		{Header: "Cost", Align: display.AlignRight},
+	}
+	tableRows := [][]string{
+		{"Cache reads", fmt.Sprintf("$%.4f", cr)},
+		{"Cache writes", fmt.Sprintf("$%.4f", cw)},
+		{"Input", fmt.Sprintf("$%.4f", inp)},
+		{"Output", fmt.Sprintf("$%.4f", out)},
+	}
+	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.4f", total)})
+	b.WriteByte('\n')
+	b.WriteString(display.MarkdownTable(cols, tableRows))
+	return b.String()
 }
 
 // costToday shows today's total with per-session breakdown.
