@@ -9,6 +9,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/startup"
 	"foci/shared/prompts"
@@ -188,7 +189,7 @@ func handleRestartAndFirstRun(
 			}
 
 			msg := prompts.FormatInjectedMessage(tag, time.Now(), body)
-			deliverInjectedTurn(inst.ag, ctx, "restart", connMgr, agentID, sk, msg)
+			deliverToSessionChat(inst.ag, ctx, "restart", connMgr, agentID, sk, msg, route.PolicyFallback)
 		}()
 	}
 
