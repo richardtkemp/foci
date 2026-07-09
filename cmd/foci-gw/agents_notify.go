@@ -146,14 +146,12 @@ func newAsyncNotifier(
 				return
 			}
 
-			// Typing indicator is driven by SessionSink on TurnStart /
-			// TurnComplete — the Bot.SetTyping implementation on both
-			// telegram and discord starts its own 4s refresh ticker
-			// internally, so one call at turn start is sufficient.
-			sink := turn.NewSessionSink(conn, target, trigger,
-				turn.WithSessionSinkErrorHandler(func(t string, err error) {
-					log.Errorf(t, "platform delivery: %v", err)
-				}))
+		// Typing/activity indicator: turnSinkForConn selects appSink for app
+			// connections (activity frames) or SessionSink for TG/Discord (SetTyping).
+			sink, cleanup := turnSinkForConn(conn, target, trigger)
+			if cleanup != nil {
+				defer cleanup()
+			}
 			notifyCtx = turnevent.WithSink(notifyCtx, sink)
 
 			if err := targetAg.HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
@@ -217,10 +215,10 @@ func newSessionNotifyFn(
 				return
 			}
 
-			sink := turn.NewSessionSink(conn, targetSessionKey, "session_notify",
-				turn.WithSessionSinkErrorHandler(func(t string, err error) {
-					log.Errorf(t, "platform delivery for session %s: %v", targetSessionKey, err)
-				}))
+			sink, cleanup := turnSinkForConn(conn, targetSessionKey, "session_notify")
+			if cleanup != nil {
+				defer cleanup()
+			}
 			notifyCtx = turnevent.WithSink(notifyCtx, sink)
 
 			if err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, []string{message}, nil); err != nil {
@@ -234,6 +232,23 @@ func newSessionNotifyFn(
 			log.Errorf("session_notify", "inbox rejected message for session %s", targetSessionKey)
 		}
 	})
+}
+
+// turnSinkForConn returns the best turn-event sink for a connection. For app
+// connections (which implement agent.Driver), uses the driver's appSink so the
+// app receives activity frames (warming → thinking → typing → idle). For
+// Telegram/Discord, falls back to SessionSink (drives SetTyping). The returned
+// cleanup func (nil for SessionSink) must be deferred.
+func turnSinkForConn(conn platform.Connection, sessionKey, trigger string) (turnevent.Sink, func()) {
+	if driver, ok := conn.(agent.Driver); ok {
+		if sink, cleanup := driver.NewTurnSink(agent.Envelope{SessionKey: sessionKey}); sink != nil {
+			return sink, cleanup
+		}
+	}
+	return turn.NewSessionSink(conn, sessionKey, trigger,
+		turn.WithSessionSinkErrorHandler(func(t string, err error) {
+			log.Errorf(t, "platform delivery: %v", err)
+		})), nil
 }
 
 // deliverInjectedTurn queues a HandleMessage turn on the session's inbox
@@ -268,23 +283,9 @@ func deliverInjectedTurn(
 			log.Infof(trigger, "session %s has no live connection — delivering via agent %s primary", sessionKey, agentID)
 		}
 
-		// For app connections, use the driver's own turn sink (appSink) so the
-		// app receives activity frames (warming → thinking → typing → idle) —
-		// appSink delivers both activity and text, replacing SessionSink's
-		// SendToSession path. No double delivery: only one sink owns text.
-		// For Telegram/Discord, SessionSink drives SetTyping (the platform
-		// typing indicator) — the Driver type assertion selects the right path.
-		var sink turnevent.Sink
-		var cleanup func()
-		if driver, ok := conn.(agent.Driver); ok {
-			sink, cleanup = driver.NewTurnSink(agent.Envelope{SessionKey: sessionKey})
-		}
-		if sink == nil {
-			sink = turn.NewSessionSink(conn, sessionKey, trigger,
-				turn.WithSessionSinkErrorHandler(func(t string, err error) {
-					log.Errorf(t, "platform delivery: %v", err)
-				}))
-		}
+		// turnSinkForConn selects appSink for app connections (activity frames)
+		// or SessionSink for TG/Discord (SetTyping).
+		sink, cleanup := turnSinkForConn(conn, sessionKey, trigger)
 		if cleanup != nil {
 			defer cleanup()
 		}
