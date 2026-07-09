@@ -105,14 +105,11 @@ func TestConnection(t *testing.T) {
 
 func TestWrapTurn_LifecycleAndNotificationBuffering(t *testing.T) {
 	// Proves WrapTurn marks the turn active while fn runs (so notifications
-	// sent mid-turn are buffered, not delivered), then drains the buffer and
-	// fires OnTurnEnd and OnTurnComplete after fn returns.
+	// sent mid-turn are buffered, not delivered), then drains the buffer after
+	// fn returns. The session/keepalive hooks are no longer WrapTurn's job —
+	// they fire at the turn boundary in Agent.HandleMessage.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.SetChatID(12345)
-
-	var endFired, completeFired bool
-	b.OnTurnEnd = func() { endFired = true }
-	b.OnTurnComplete = func() { completeFired = true }
 
 	err := b.WrapTurn(context.Background(), func() error {
 		if !b.turnActive.Load() {
@@ -133,25 +130,20 @@ func TestWrapTurn_LifecycleAndNotificationBuffering(t *testing.T) {
 	if mock.sentCount() != 1 {
 		t.Errorf("sends = %d, want 1 (buffered notification drained)", mock.sentCount())
 	}
-	if !endFired || !completeFired {
-		t.Errorf("hooks fired end=%v complete=%v, want both", endFired, completeFired)
-	}
 }
 
-func TestWrapTurn_ErrorPropagatesAndStillCompletes(t *testing.T) {
-	// Proves a turn error is returned to the caller while the lifecycle
-	// hooks still fire (error handling must not skip cleanup).
+func TestWrapTurn_ErrorPropagates(t *testing.T) {
+	// Proves a turn error is returned to the caller (error handling must not
+	// swallow it) while notification-draining cleanup still runs.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	var completeFired bool
-	b.OnTurnComplete = func() { completeFired = true }
 
 	wantErr := errors.New("turn failed")
 	err := b.WrapTurn(context.Background(), func() error { return wantErr })
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
-	if !completeFired {
-		t.Error("OnTurnComplete should fire even on error")
+	if b.turnActive.Load() {
+		t.Error("turnActive should be false after WrapTurn even on error")
 	}
 }
 

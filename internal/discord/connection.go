@@ -76,8 +76,6 @@ type Bot struct {
 	pool               *Pool
 	OnSessionKeyChange func(botID, sessionKey string)
 	OnUserMessage      func()
-	OnTurnComplete     func()
-	OnTurnEnd          func()
 
 	transcriber voice.STT
 	tts         voice.TTS

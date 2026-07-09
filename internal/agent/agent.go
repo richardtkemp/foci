@@ -187,6 +187,15 @@ type Agent struct {
 	inboxBackend   func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager
 	turnObserver   func(sk string, batch []Envelope)                                 // test seam — see SetTurnObserver / TODO #746 Stage C
 
+	// Session-lifecycle hooks fired at the turn boundary in HandleMessage, so
+	// EVERY backend turn (platform-driven AND system-injected) fires them —
+	// unlike the platform Driver's WrapTurn, which injections bypass. Wired by
+	// the gateway to the keepalive Runner: onTurnComplete → NotifyCacheWarmed
+	// (a turn just warmed the cache), onTurnEnd → NotifyTurnEnd (flush warnings
+	// deferred during the turn). Both nil in tests that don't set them.
+	onTurnComplete func()
+	onTurnEnd      func()
+
 	// Per-session delivery routers (#1068 Phase 1). Built ONCE per session key,
 	// shared by every turn on that session (platform turns register their
 	// streaming sink; system turns register NopSink/BufferSink post-accept; an
@@ -347,6 +356,18 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 			Model:     ts.FinalModel,
 			Err:       err,
 		})
+		// Session-lifecycle hooks — fired at the ONE boundary every backend
+		// turn passes through (platform turns via turn.RunTurn→HandleMessage,
+		// injections via HandleMessage directly), so system injections warm
+		// the keepalive cache clock and flush deferred warnings just like
+		// platform turns. Fired unconditionally (mirrors the platform Driver's
+		// WrapTurn, which fired them regardless of turn error).
+		if a.onTurnComplete != nil {
+			a.onTurnComplete()
+		}
+		if a.onTurnEnd != nil {
+			a.onTurnEnd()
+		}
 	}()
 
 	_, err = a.OrchestrateFullTurn(ctx, tc, ts)

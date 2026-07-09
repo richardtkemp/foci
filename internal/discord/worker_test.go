@@ -9,15 +9,11 @@ import (
 )
 
 // TestWrapTurnLifecycle verifies WrapTurn sets the turn-active flag for the
-// duration of the turn, fires OnTurnComplete and OnTurnEnd, and drains
-// notifications buffered during the turn.
+// duration of the turn and drains notifications buffered during the turn. The
+// session/keepalive hooks moved to Agent.HandleMessage — no longer WrapTurn's.
 func TestWrapTurnLifecycle(t *testing.T) {
 	b, fs, _ := newTestBot(t, "a")
 	b.SetChatID(42)
-
-	var completed, ended bool
-	b.OnTurnComplete = func() { completed = true }
-	b.OnTurnEnd = func() { ended = true }
 
 	err := b.WrapTurn(context.Background(), func() error {
 		if !b.turnActive.Load() {
@@ -32,27 +28,19 @@ func TestWrapTurnLifecycle(t *testing.T) {
 	if b.turnActive.Load() {
 		t.Error("expected turnActive cleared after turn")
 	}
-	if !completed || !ended {
-		t.Errorf("expected hooks fired, completed=%v ended=%v", completed, ended)
-	}
 	if got := fs.lastSend(t); got.content != "buffered during turn" {
 		t.Errorf("expected buffered notification drained, got %q", got.content)
 	}
 }
 
 // TestWrapTurnErrorPassthrough verifies turn errors are returned and the
-// completion hooks still fire.
+// turn-active flag is still cleared.
 func TestWrapTurnErrorPassthrough(t *testing.T) {
 	b, _, _ := newTestBot(t, "a")
-	var completed bool
-	b.OnTurnComplete = func() { completed = true }
 
 	wantErr := errors.New("turn failed")
 	if err := b.WrapTurn(context.Background(), func() error { return wantErr }); !errors.Is(err, wantErr) {
 		t.Errorf("expected error passthrough, got %v", err)
-	}
-	if !completed {
-		t.Error("expected OnTurnComplete after error")
 	}
 	if b.turnActive.Load() {
 		t.Error("expected turnActive cleared after error")

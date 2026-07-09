@@ -152,28 +152,18 @@ func (b *Bot) Connection() platform.Connection {
 	return b
 }
 
-// WrapTurn implements agent.Driver. The bot's lifecycle envelope around
-// each agent turn. Two distinct concerns are bundled here:
-//
-// Platform-delivery hygiene (only meaningful when rendering to this bot's
-// live connection):
+// WrapTurn implements agent.Driver. The bot's platform-delivery-hygiene
+// envelope around each agent turn — only the concerns meaningful when
+// rendering to this bot's live connection:
 //   - turnActive flag (read by SendNotification to buffer notifications
 //     during streaming output)
 //   - drainPendingNotifications (sends queued notifications after the turn)
 //   - error sanitisation + cancellation handling
 //
-// Session/keepalive hooks (gateway-set in main.go; wired to the per-agent
-// periodic.Runner — a per-backend-turn concern, NOT platform-specific):
-//   - OnTurnComplete → Runner.NotifyCacheWarmed(): stamps lastCacheWarmed
-//     so the keepalive scheduler pushes back its next cache-warming turn
-//     (a real turn just warmed the cache). Fires once fn returns.
-//   - OnTurnEnd → Runner.NotifyTurnEnd(): flushes agent/chat warnings that
-//     were deferred while the turn was in flight. Fires last, in cleanup.
-//
-// NB: injected turns (scheduled wakes, notifies, warnings) run via
-// Agent.HandleMessage, which does NOT pass through WrapTurn — so they
-// currently miss the session/keepalive hooks above. See the injection
-// paths in cmd/foci-gw/agents_notify.go.
+// The session/keepalive hooks (cache-warm tracking, warning flush) do NOT
+// live here — they fire at the turn boundary in Agent.HandleMessage (see
+// Agent.SetTurnLifecycleHooks) so system-injected turns, which bypass
+// WrapTurn, fire them too.
 //
 // Agent.RunTurn (invoked via fn) does the actual turn execution. Cancel
 // ctx + per-session /stop wiring lives in agent.driveOnce.
@@ -182,9 +172,6 @@ func (b *Bot) WrapTurn(ctx context.Context, fn func() error) error {
 	defer func() {
 		b.turnActive.Store(false)
 		b.drainPendingNotifications()
-		if b.OnTurnEnd != nil {
-			b.OnTurnEnd()
-		}
 	}()
 
 	err := fn()
@@ -198,10 +185,6 @@ func (b *Bot) WrapTurn(ctx context.Context, fn func() error) error {
 		// a separate concern.
 		_ = ctx
 		b.logger().Errorf("agent error: %s", b.sanitizeError(err))
-	}
-
-	if b.OnTurnComplete != nil {
-		b.OnTurnComplete()
 	}
 	return err
 }

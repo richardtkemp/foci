@@ -129,28 +129,22 @@ func (b *Bot) Connection() platform.Connection {
 	return b
 }
 
-// WrapTurn implements agent.Driver. Discord-side lifecycle envelope
-// around each agent turn — turnActive flag, notification drain,
-// OnTurnEnd / OnTurnComplete hooks, error sanitisation. See the
-// telegram Bot.WrapTurn for the equivalent on Telegram. TODO #746
-// Stage C.
+// WrapTurn implements agent.Driver. Discord-side platform-delivery-hygiene
+// envelope around each agent turn — turnActive flag, notification drain,
+// error sanitisation. The session/keepalive hooks (cache-warm, warning
+// flush) fire at the turn boundary in Agent.HandleMessage, not here, so
+// system-injected turns fire them too. See the telegram Bot.WrapTurn for
+// the equivalent on Telegram. TODO #746 Stage C.
 func (b *Bot) WrapTurn(_ context.Context, fn func() error) error {
 	b.turnActive.Store(true)
 	defer func() {
 		b.turnActive.Store(false)
 		b.drainPendingNotifications()
-		if b.OnTurnEnd != nil {
-			b.OnTurnEnd()
-		}
 	}()
 
 	err := fn()
 	if err != nil {
 		b.logger().Errorf("agent error: %s", b.sanitizeError(err))
-	}
-
-	if b.OnTurnComplete != nil {
-		b.OnTurnComplete()
 	}
 	return err
 }

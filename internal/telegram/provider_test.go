@@ -137,22 +137,18 @@ func TestProviderAgentPreFlight(t *testing.T) {
 }
 
 func TestProviderSetLifecycleCallback(t *testing.T) {
-	// Proves SetLifecycleCallback wires each lifecycle event to the agent's
-	// primary bot and silently ignores unknown agents.
+	// Proves SetLifecycleCallback wires OnUserMessage (the sole remaining
+	// platform lifecycle event — turn-boundary hooks moved to the Agent) to
+	// the agent's primary bot and silently ignores unknown agents.
 	p := &telegramProvider{mgr: NewBotManager()}
 	bot := newBotForTest()
 	p.mgr.AddPrimary("scout", bot)
 
-	called := map[platform.LifecycleEvent]bool{}
-	for _, ev := range []platform.LifecycleEvent{platform.OnUserMessage, platform.OnTurnComplete, platform.OnTurnEnd} {
-		ev := ev
-		p.SetLifecycleCallback("scout", ev, func() { called[ev] = true })
-	}
+	var fired bool
+	p.SetLifecycleCallback("scout", platform.OnUserMessage, func() { fired = true })
 	bot.OnUserMessage()
-	bot.OnTurnComplete()
-	bot.OnTurnEnd()
-	if len(called) != 3 {
-		t.Errorf("called = %v, want all three lifecycle events wired", called)
+	if !fired {
+		t.Error("OnUserMessage not wired")
 	}
 
 	// Unknown agent: must not panic.

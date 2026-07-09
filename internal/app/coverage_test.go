@@ -606,67 +606,37 @@ func TestRouteCommand_FiresOnUserMessage(t *testing.T) {
 	}
 }
 
-// TestWrapTurn_FiresCompleteThenEnd asserts the turn lifecycle hooks fire in
-// the right order: OnTurnComplete once the turn body returns, OnTurnEnd last
-// (deferred) — and both fire even when the turn body errors (matching
-// telegram.Bot.WrapTurn, which fires OnTurnComplete unconditionally).
-func TestWrapTurn_FiresCompleteThenEnd(t *testing.T) {
+// TestWrapTurn_ErrorPassthrough asserts appConn.WrapTurn is a straight
+// pass-through: it returns the turn body's error unchanged. The session/
+// keepalive hooks that used to fire here moved to Agent.HandleMessage.
+func TestWrapTurn_ErrorPassthrough(t *testing.T) {
 	conn := &appConn{}
-	var order []string
-	conn.OnTurnComplete = func() { order = append(order, "complete") }
-	conn.OnTurnEnd = func() { order = append(order, "end") }
-
 	turnErr := errors.New("boom")
-	got := conn.WrapTurn(context.Background(), func() error { return turnErr })
-
-	if got != turnErr {
+	if got := conn.WrapTurn(context.Background(), func() error { return turnErr }); got != turnErr {
 		t.Errorf("WrapTurn returned %v, want the original error passthrough", got)
 	}
-	if len(order) != 2 || order[0] != "complete" || order[1] != "end" {
-		t.Fatalf("lifecycle order = %v, want [complete end]", order)
-	}
-}
-
-// TestWrapTurn_NilHooksSafe ensures WrapTurn stays safe when no callbacks are
-// wired (tests, or an agent the gateway hasn't registered hooks for).
-func TestWrapTurn_NilHooksSafe(t *testing.T) {
-	conn := &appConn{}
 	if err := conn.WrapTurn(context.Background(), func() error { return nil }); err != nil {
-		t.Fatalf("nil-hook WrapTurn errored: %v", err)
+		t.Fatalf("nil-error WrapTurn errored: %v", err)
 	}
 }
 
-// TestSetLifecycleCallback_StoresOnConn verifies the provider stores each
-// lifecycle event on the per-agent appConn (the fix for the former no-op).
+// TestSetLifecycleCallback_StoresOnConn verifies the provider stores the
+// OnUserMessage callback on the per-agent appConn (the sole remaining platform
+// lifecycle event — turn-boundary hooks moved to the Agent).
 func TestSetLifecycleCallback_StoresOnConn(t *testing.T) {
 	h := newTestHub()
 	h.agents["ag"] = &appConn{hub: h, agentID: "ag"}
 	p := &appProvider{hub: h}
 
-	for _, ev := range []platform.LifecycleEvent{platform.OnUserMessage, platform.OnTurnComplete, platform.OnTurnEnd} {
-		marker := false
-		p.SetLifecycleCallback("ag", ev, func() { marker = true })
-		conn := h.PrimaryBot("ag")
-		switch ev {
-		case platform.OnUserMessage:
-			if conn.OnUserMessage == nil {
-				t.Fatal("OnUserMessage not stored")
-			}
-			conn.OnUserMessage()
-		case platform.OnTurnComplete:
-			if conn.OnTurnComplete == nil {
-				t.Fatal("OnTurnComplete not stored")
-			}
-			conn.OnTurnComplete()
-		case platform.OnTurnEnd:
-			if conn.OnTurnEnd == nil {
-				t.Fatal("OnTurnEnd not stored")
-			}
-			conn.OnTurnEnd()
-		}
-		if !marker {
-			t.Errorf("event %d: stored callback did not fire", ev)
-		}
+	marker := false
+	p.SetLifecycleCallback("ag", platform.OnUserMessage, func() { marker = true })
+	conn := h.PrimaryBot("ag")
+	if conn.OnUserMessage == nil {
+		t.Fatal("OnUserMessage not stored")
+	}
+	conn.OnUserMessage()
+	if !marker {
+		t.Error("stored OnUserMessage callback did not fire")
 	}
 }
 

@@ -151,13 +151,8 @@ func (p *telegramProvider) SetLifecycleCallback(agentID string, event platform.L
 	if bot == nil {
 		return
 	}
-	switch event {
-	case platform.OnUserMessage:
+	if event == platform.OnUserMessage {
 		bot.OnUserMessage = fn
-	case platform.OnTurnComplete:
-		bot.OnTurnComplete = fn
-	case platform.OnTurnEnd:
-		bot.OnTurnEnd = fn
 	}
 }
 

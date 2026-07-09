@@ -898,6 +898,17 @@ func (a *Agent) SetTurnObserver(fn func(sk string, batch []Envelope)) {
 	a.turnObserver = fn
 }
 
+// SetTurnLifecycleHooks wires the session-lifecycle callbacks fired at the
+// turn boundary in HandleMessage — onTurnComplete after the turn's completion
+// event, onTurnEnd last. Fired for every backend turn regardless of origin
+// (platform or system injection), which is why they live on the Agent rather
+// than the platform Driver's WrapTurn (injections bypass WrapTurn). Either may
+// be nil. Wired once at gateway setup.
+func (a *Agent) SetTurnLifecycleHooks(onComplete, onEnd func()) {
+	a.onTurnComplete = onComplete
+	a.onTurnEnd = onEnd
+}
+
 // CancelSession cancels the in-flight turn for sk, if any. Used by /stop
 // (and any other consumer that needs per-session cancellation precision).
 // No-op if the session has no inbox or no turn is currently in flight.

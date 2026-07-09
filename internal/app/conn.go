@@ -53,13 +53,12 @@ type appConn struct {
 	// Platform lifecycle callbacks, wired by the gateway via
 	// SetLifecycleCallback (mirror of telegram.Bot's hooks). OnUserMessage
 	// fires on each inbound user message/command (drives the periodic runner's
-	// lastInteraction — reflection/consolidation/reset-idle-guard gate on it);
-	// OnTurnComplete/OnTurnEnd fire at turn completion (cache-warm + warning
-	// flush). Stored on the per-agent PrimaryBot instance; set once at startup,
-	// read concurrently during turns — the same set-once contract as telegram.
-	OnUserMessage  func()
-	OnTurnComplete func()
-	OnTurnEnd      func()
+	// lastInteraction — reflection/consolidation/reset-idle-guard gate on it).
+	// Stored on the per-agent PrimaryBot instance; set once at startup, read
+	// concurrently during turns — the same set-once contract as telegram. The
+	// turn-boundary hooks (cache-warm, warning flush) moved to the Agent (see
+	// Agent.SetTurnLifecycleHooks) so injected turns fire them too.
+	OnUserMessage func()
 
 	// bound is the session this view is pinned to. The stored per-agent instance
 	// (PrimaryBot) leaves it empty; hub.BotForSession mints a shallow copy with
@@ -474,22 +473,14 @@ func toChoices(buttons []platform.ButtonChoice) []fap.Choice {
 
 // --- agent.Driver ---
 
-// WrapTurn runs the turn and fires the platform lifecycle hooks. Typing
-// lifecycle is handled by the streaming sink (TurnStart/TurnComplete), but the
-// gateway-level hooks (cache-warm + warning flush) belong here — same shape as
-// telegram.Bot.WrapTurn. OnTurnComplete fires once fn returns (success or
-// error); OnTurnEnd fires last in the deferred cleanup.
-func (c *appConn) WrapTurn(ctx context.Context, fn func() error) error {
-	defer func() {
-		if c.OnTurnEnd != nil {
-			c.OnTurnEnd()
-		}
-	}()
-	err := fn()
-	if c.OnTurnComplete != nil {
-		c.OnTurnComplete()
-	}
-	return err
+// WrapTurn runs the turn. The app has no platform-delivery-hygiene state to
+// manage (typing lifecycle is handled by the streaming sink's
+// TurnStart/TurnComplete), and the session/keepalive hooks (cache-warm,
+// warning flush) now fire at the turn boundary in Agent.HandleMessage (see
+// Agent.SetTurnLifecycleHooks), so this is a straight pass-through kept only
+// to satisfy agent.Driver.
+func (c *appConn) WrapTurn(_ context.Context, fn func() error) error {
+	return fn()
 }
 
 // NewTurnSink builds the per-turn streaming sink bound to the envelope's

@@ -81,8 +81,6 @@ type Bot struct {
 	pool               *Pool                             // back-reference to pool (secondary bots only)
 	OnSessionKeyChange func(username, sessionKey string) // fires after SetSessionKey (fork/release)
 	OnUserMessage      func()                            // fires on each inbound user message (for keepalive interaction tracking)
-	OnTurnComplete     func()                            // fires after each agent turn completes (for cache warming tracking)
-	OnTurnEnd          func()                            // fires after turn's final message is sent and cleanup is done
 	botToken           string                            // for building file download URLs
 	apiBase            string                            // override for /file/bot<token>/<path> base URL ("" = api.telegram.org)
 

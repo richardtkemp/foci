@@ -64,6 +64,44 @@ func TestHandleMessageEndTurn(t *testing.T) {
 	}
 }
 
+func TestHandleMessage_FiresTurnLifecycleHooks(t *testing.T) {
+	// Proves the session-lifecycle hooks fire at the HandleMessage boundary —
+	// the ONE path every backend turn (platform-driven AND system-injected)
+	// passes through. This is what lets injected turns warm the keepalive
+	// cache clock and flush deferred warnings, which they previously missed by
+	// bypassing the platform Driver's WrapTurn.
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("done"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  session.NewStore(t.TempDir()),
+		Tools:     tools.NewRegistry(),
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "claude-haiku-4-5",
+	}
+
+	var completeFired, endFired bool
+	ag.SetTurnLifecycleHooks(
+		func() { completeFired = true },
+		func() { endFired = true },
+	)
+
+	if _, err := ag.hmTest(context.Background(), "test/imain", "Hi"); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if !completeFired || !endFired {
+		t.Errorf("lifecycle hooks fired complete=%v end=%v, want both", completeFired, endFired)
+	}
+}
+
 func TestHandleMessageWithToolUse(t *testing.T) {
 	// Proves that tool_use responses trigger tool execution and a follow-up API call,
 	// and that all four messages (user, assistant-with-tool, tool-result, final-assistant)
