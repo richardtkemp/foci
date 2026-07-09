@@ -37,7 +37,7 @@ The group (`foci-askgw`) is created at install time by `make provision`. The foc
 
 ## Using askgw from a client application
 
-Connect to the Unix socket, send an `ask` frame as a single line of JSON, and read the `answer` frame back. The protocol is `askgw/1` — see the [askgw protocol reference](https://github.com/richardtkemp/ai-sudo/blob/main/docs/askgw-protocol.md) for full frame specifications.
+Connect to the Unix socket, send an `ask` frame as a single line of JSON, and read the `answer` frame back. The protocol is `askgw/1` — see the [server protocol reference](ASKGW-PROTOCOL.md) for how foci handles frames, or the [client protocol reference](https://github.com/richardtkemp/ai-sudo/blob/main/docs/askgw-protocol.md) for client-side frame specifications.
 
 ```bash
 #!/bin/bash
