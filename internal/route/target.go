@@ -53,8 +53,7 @@ type Target struct {
 	Policy Policy
 }
 
-// ParsePolicy validates a policy name. PolicyRootFallback is internal-only
-// (senders choose it in code, not on the wire).
+// ParsePolicy validates a policy name.
 func ParsePolicy(s string) (Policy, error) {
 	switch Policy(s) {
 	case PolicyFallback, PolicyStrict, PolicyBroadcast:
