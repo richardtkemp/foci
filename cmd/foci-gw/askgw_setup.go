@@ -74,7 +74,7 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 
 	timeout := time.Duration(cfg.Askgw.DefaultTimeoutSecs) * time.Second
 
-	srv := askgw.NewServer(askgw.ServerDeps{
+	srv, err := askgw.NewServer(askgw.ServerDeps{
 		SocketPath:     cfg.Askgw.SocketPath,
 		AllowedUIDs:    cfg.Askgw.AllowedUIDs,
 		MaxFrameBytes:  cfg.Askgw.MaxFrameBytes,
@@ -84,6 +84,10 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		CancelPrompt:   cancelPrompt,
 		ResolveSession: resolveSession,
 	})
+	if err != nil {
+		log.Errorf("askgw", "config error: %v", err)
+		return nil
+	}
 	if err := srv.Start(); err != nil {
 		log.Errorf("askgw", "failed to start: %v", err)
 		return nil

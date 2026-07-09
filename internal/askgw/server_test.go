@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -24,17 +25,20 @@ func (c *capturedCallback) fire(data string)         { c.mu.Lock(); cb := c.cb; 
 func startTestServer(t *testing.T, present PresentFn, resolve ResolveSessionFn) (*Server, string) {
 	t.Helper()
 	sockPath := filepath.Join(t.TempDir(), "askgw-test.sock")
-	uid := uint32(os.Getuid()) // #nosec G115
+	uid := strconv.Itoa(os.Getuid())
 
-	srv := NewServer(ServerDeps{
+	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
-		AllowedUIDs:    []uint32{uid},
+		AllowedUIDs:    []string{uid},
 		MaxFrameBytes:  1 << 20,
 		DefaultTimeout: 0,
 		Present:        present,
 		CancelPrompt:   func(string, string) {},
 		ResolveSession: resolve,
 	})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 	if err := srv.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
@@ -191,14 +195,17 @@ func TestE2E_Cancel(t *testing.T) {
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
 	sockPath := filepath.Join(t.TempDir(), "askgw-cancel.sock")
-	uid := uint32(os.Getuid()) // #nosec G115
-	srv := NewServer(ServerDeps{
+	uid := strconv.Itoa(os.Getuid())
+	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
-		AllowedUIDs:    []uint32{uid},
+		AllowedUIDs:    []string{uid},
 		Present:        present,
 		CancelPrompt:   cancelPrompt,
 		ResolveSession: resolve,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -365,14 +372,17 @@ func TestE2E_ConnectionDropCancelsPending(t *testing.T) {
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
 	sockPath := filepath.Join(t.TempDir(), "askgw-drop.sock")
-	uid := uint32(os.Getuid()) // #nosec G115
-	srv := NewServer(ServerDeps{
+	uid := strconv.Itoa(os.Getuid())
+	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
-		AllowedUIDs:    []uint32{uid},
+		AllowedUIDs:    []string{uid},
 		Present:        present,
 		CancelPrompt:   cancelPrompt,
 		ResolveSession: resolve,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -408,13 +418,16 @@ func TestE2E_RejectBadUID(t *testing.T) {
 		t.Skip("test requires non-root user")
 	}
 	sockPath := filepath.Join(t.TempDir(), "askgw-baduid.sock")
-	srv := NewServer(ServerDeps{
+	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
-		AllowedUIDs:    []uint32{99999},
+		AllowedUIDs:    []string{"99999"},
 		Present:        func(string, string, string, string, string, []question.Choice, func(string)) bool { return true },
 		CancelPrompt:   func(string, string) {},
 		ResolveSession: func(string) (string, string) { return "a", "a/c" },
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -506,15 +519,18 @@ func TestE2E_GatewayTimeout(t *testing.T) {
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
 	sockPath := filepath.Join(t.TempDir(), "askgw-timeout.sock")
-	uid := uint32(os.Getuid()) // #nosec G115
-	srv := NewServer(ServerDeps{
+	uid := strconv.Itoa(os.Getuid())
+	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
-		AllowedUIDs:    []uint32{uid},
+		AllowedUIDs:    []string{uid},
 		DefaultTimeout: 100 * time.Millisecond,
 		Present:        present,
 		CancelPrompt:   func(string, string) {},
 		ResolveSession: resolve,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -544,15 +560,18 @@ func TestE2E_FrameTimeoutOverride(t *testing.T) {
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
 	sockPath := filepath.Join(t.TempDir(), "askgw-fto.sock")
-	uid := uint32(os.Getuid()) // #nosec G115
-	srv := NewServer(ServerDeps{
+	uid := strconv.Itoa(os.Getuid())
+	srv, err := NewServer(ServerDeps{
 		SocketPath:     sockPath,
-		AllowedUIDs:    []uint32{uid},
+		AllowedUIDs:    []string{uid},
 		DefaultTimeout: 10 * time.Second,
 		Present:        present,
 		CancelPrompt:   func(string, string) {},
 		ResolveSession: resolve,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
