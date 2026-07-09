@@ -851,6 +851,41 @@ func TestTodoShow(t *testing.T) {
 	}
 }
 
+func TestTodoShowMultipleIDs(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "first item", "high", "work")
+	store.Add(testAgent, "second item", "low", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "show 1 2"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "#1 first item") {
+		t.Errorf("missing #1: %s", resp.Text)
+	}
+	if !contains(resp.Text, "#2 second item") {
+		t.Errorf("missing #2: %s", resp.Text)
+	}
+
+	// Non-existent ID shows error but doesn't abort the rest.
+	resp, err = cmd.Execute(context.Background(), Request{Args: "show 1 999 2"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "#1 first item") {
+		t.Errorf("missing #1 before error: %s", resp.Text)
+	}
+	if !contains(resp.Text, "#999:") {
+		t.Errorf("missing error for #999: %s", resp.Text)
+	}
+	if !contains(resp.Text, "#2 second item") {
+		t.Errorf("missing #2 after error: %s", resp.Text)
+	}
+}
+
 // TestTodoRm verifies hard-deleting a todo.
 func TestTodoRm(t *testing.T) {
 	store := newTestTodoStore(t)
