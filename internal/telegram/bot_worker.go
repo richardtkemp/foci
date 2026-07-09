@@ -152,16 +152,28 @@ func (b *Bot) Connection() platform.Connection {
 	return b
 }
 
-// WrapTurn implements agent.Driver. The bot's platform-side lifecycle
-// envelope around each agent turn:
+// WrapTurn implements agent.Driver. The bot's lifecycle envelope around
+// each agent turn. Two distinct concerns are bundled here:
 //
+// Platform-delivery hygiene (only meaningful when rendering to this bot's
+// live connection):
 //   - turnActive flag (read by SendNotification to buffer notifications
 //     during streaming output)
 //   - drainPendingNotifications (sends queued notifications after the turn)
-//   - OnTurnEnd hook (gateway-set callback, e.g. cache cleanup)
-//   - OnTurnComplete hook (gateway-set callback, e.g. cache warming
-//     telemetry)
 //   - error sanitisation + cancellation handling
+//
+// Session/keepalive hooks (gateway-set in main.go; wired to the per-agent
+// periodic.Runner — a per-backend-turn concern, NOT platform-specific):
+//   - OnTurnComplete → Runner.NotifyCacheWarmed(): stamps lastCacheWarmed
+//     so the keepalive scheduler pushes back its next cache-warming turn
+//     (a real turn just warmed the cache). Fires once fn returns.
+//   - OnTurnEnd → Runner.NotifyTurnEnd(): flushes agent/chat warnings that
+//     were deferred while the turn was in flight. Fires last, in cleanup.
+//
+// NB: injected turns (scheduled wakes, notifies, warnings) run via
+// Agent.HandleMessage, which does NOT pass through WrapTurn — so they
+// currently miss the session/keepalive hooks above. See the injection
+// paths in cmd/foci-gw/agents_notify.go.
 //
 // Agent.RunTurn (invoked via fn) does the actual turn execution. Cancel
 // ctx + per-session /stop wiring lives in agent.driveOnce.
