@@ -192,18 +192,40 @@ func TestSessionFilePath(t *testing.T) {
 }
 
 func TestIsRunning(t *testing.T) {
-	// Verifies IsRunning reflects the running state under the mutex.
+	// IsRunning gates on BOTH b.running AND the shared Server's liveness. A
+	// backend whose subprocess died (finalizeExit cleared the Server's running
+	// flag but not b.running) must report not-running, so DelegatedManager
+	// respawns it instead of dialing the dead port forever (connection refused).
 	t.Parallel()
 
 	b := &Backend{}
 	if b.IsRunning() {
 		t.Error("IsRunning = true initially, want false")
 	}
+
+	// b.running set but no server yet → not running.
 	b.mu.Lock()
 	b.running = true
 	b.mu.Unlock()
+	if b.IsRunning() {
+		t.Error("IsRunning = true with nil server, want false")
+	}
+
+	// Live server attached → running.
+	srv := &Server{running: true}
+	b.mu.Lock()
+	b.server = srv
+	b.mu.Unlock()
 	if !b.IsRunning() {
-		t.Error("IsRunning = false after setting true")
+		t.Error("IsRunning = false with live server, want true")
+	}
+
+	// Server dies (finalizeExit clears its running flag) → not running.
+	srv.mu.Lock()
+	srv.running = false
+	srv.mu.Unlock()
+	if b.IsRunning() {
+		t.Error("IsRunning = true after server died, want false")
 	}
 }
 
