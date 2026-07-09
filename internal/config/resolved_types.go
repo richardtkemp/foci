@@ -253,26 +253,28 @@ func resolveBackground(m BackgroundConfig) ResolvedBackground {
 }
 
 type ResolvedReflection struct {
-	IntervalEnabled    bool // default true
-	Interval           string
-	IntervalPrompt     string
-	SessionEndEnabled  bool // default true
-	SessionEndPrompt   string
-	CompactionEnabled  bool // default true
-	CompactionPrompt   string
-	BackendQuietPeriod string // default "5m"
+	IntervalEnabled       bool // default true
+	Interval              string
+	IntervalPrompt        string
+	SessionEndEnabled     bool // default true
+	SessionEndPrompt      string
+	CompactionEnabled     bool // default true
+	CompactionPrompt      string
+	BackendQuietPeriod    string // default "5m"
+	NotifyOnSkillCreation bool   // default true
 }
 
 func resolveReflection(m ReflectionConfig) ResolvedReflection {
 	return ResolvedReflection{
-		IntervalEnabled:    DerefBool(m.IntervalEnabled),
-		Interval:           DerefStr(m.Interval),
-		IntervalPrompt:     DerefStr(m.IntervalPrompt),
-		SessionEndEnabled:  DerefBool(m.SessionEndEnabled),
-		SessionEndPrompt:   DerefStr(m.SessionEndPrompt),
-		CompactionEnabled:  DerefBool(m.CompactionEnabled),
-		CompactionPrompt:   DerefStr(m.CompactionPrompt),
-		BackendQuietPeriod: DerefStr(m.BackendQuietPeriod),
+		IntervalEnabled:       DerefBool(m.IntervalEnabled),
+		Interval:              DerefStr(m.Interval),
+		IntervalPrompt:        DerefStr(m.IntervalPrompt),
+		SessionEndEnabled:     DerefBool(m.SessionEndEnabled),
+		SessionEndPrompt:      DerefStr(m.SessionEndPrompt),
+		CompactionEnabled:     DerefBool(m.CompactionEnabled),
+		CompactionPrompt:      DerefStr(m.CompactionPrompt),
+		BackendQuietPeriod:    DerefStr(m.BackendQuietPeriod),
+		NotifyOnSkillCreation: DerefBool(m.NotifyOnSkillCreation),
 	}
 }
 

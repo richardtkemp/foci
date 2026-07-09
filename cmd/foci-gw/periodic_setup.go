@@ -206,6 +206,12 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		WarningDispatcher:     warningDispatcher,
 		ChatWarningDispatcher: chatWarningDispatcher,
 		IsDelegatedAgent:      inst.ag.DelegatedManager != nil,
+		SkillDirs:             inst.skillsDirs,
+		NotifySkillChange: func(text string) {
+			if conn := p.connMgr.Primary(agentID); conn != nil {
+				conn.SendNotification(text)
+			}
+		},
 	})
 	runner.Start(p.ctx)
 	inst.kaRunner = runner

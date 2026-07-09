@@ -301,6 +301,7 @@ system_files = [
 # session_end_prompt = ""
 # compaction_enabled = true
 # compaction_prompt = ""
+# notify_on_skill_creation = true
 
 # ─── Anthropic ────────────────────────────────────────────────────────
 # API keys go in secrets.toml. These are non-secret settings only.
@@ -569,6 +570,7 @@ bind = "127.0.0.1"
 # session_end_prompt = ""
 # compaction_enabled = true
 # compaction_prompt = ""
+# notify_on_skill_creation = true          # notify the user when reflection creates or updates a skill
 
 # ─── Blocked Paths ───────────────────────────────────────────────────
 # Soft guardrails for write/edit tools. Returns rebuke as tool result (not error).
