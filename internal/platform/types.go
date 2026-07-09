@@ -422,8 +422,10 @@ type LifecycleEvent int
 
 const (
 	OnUserMessage LifecycleEvent = iota
-	OnTurnComplete
-	OnTurnEnd // fires after turn's final message is sent and cleanup is done
+	// Turn-boundary lifecycle (cache-warm tracking, warning flush) moved off
+	// the platform onto the Agent — see Agent.SetTurnLifecycleHooks — so
+	// system-injected turns fire them too. Only message-receipt events remain
+	// as platform lifecycle callbacks.
 )
 
 // ToolDetailStore is the interface for platform-specific tool detail persistence.

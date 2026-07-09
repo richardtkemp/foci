@@ -169,14 +169,10 @@ func TestProviderSetLifecycleCallback(t *testing.T) {
 
 	var called []string
 	p.SetLifecycleCallback("a", platform.OnUserMessage, func() { called = append(called, "user") })
-	p.SetLifecycleCallback("a", platform.OnTurnComplete, func() { called = append(called, "complete") })
-	p.SetLifecycleCallback("a", platform.OnTurnEnd, func() { called = append(called, "end") })
-	p.SetLifecycleCallback("ghost", platform.OnTurnEnd, func() {}) // no bot: no-op
+	p.SetLifecycleCallback("ghost", platform.OnUserMessage, func() {}) // no bot: no-op
 
 	bot.OnUserMessage()
-	bot.OnTurnComplete()
-	bot.OnTurnEnd()
-	if len(called) != 3 || called[0] != "user" || called[1] != "complete" || called[2] != "end" {
+	if len(called) != 1 || called[0] != "user" {
 		t.Errorf("unexpected callback wiring %v", called)
 	}
 }
