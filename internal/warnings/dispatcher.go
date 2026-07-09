@@ -14,6 +14,7 @@ type DispatchFunc func(warningText string)
 
 // DispatcherConfig holds all the dependencies for creating a Dispatcher.
 type DispatcherConfig struct {
+	Name                  string // log-component suffix (e.g. "agent", "chat") so skip/dispatch lines are distinguishable
 	Queue                 *Queue
 	PeerQueues            []*Queue // additional queues to suppress during dispatch (prevents cross-queue feedback)
 	DispatchFn            DispatchFunc
@@ -47,8 +48,12 @@ type Dispatcher struct {
 
 // NewDispatcher creates a Dispatcher from the given config.
 func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
+	component := "warnings"
+	if cfg.Name != "" {
+		component += ":" + cfg.Name
+	}
 	return &Dispatcher{
-		log:                   log.NewComponentLogger("warnings"),
+		log:                   log.NewComponentLogger(component),
 		queue:                 cfg.Queue,
 		peerQueues:            cfg.PeerQueues,
 		dispatchFn:            cfg.DispatchFn,
@@ -97,6 +102,7 @@ func (d *Dispatcher) MaybeFire() {
 	}
 
 	if sinceLastDispatch < interval {
+		d.log.Debugf("throttled: %s since last dispatch < %s interval; deferring pending warnings", sinceLastDispatch.Round(time.Second), interval)
 		return
 	}
 

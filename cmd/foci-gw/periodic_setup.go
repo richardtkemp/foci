@@ -132,6 +132,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	var warningDispatcher *warnings.Dispatcher
 	if hasAgentWarnings {
 		warningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
+			Name:       "agent",
 			Queue:      inst.ag.Warnings(),
 			PeerQueues: []*warnings.Queue{inst.ag.ChatWarnings()},
 			// Defer proactive warnings only while the session they'd be injected
@@ -164,6 +165,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	var chatWarningDispatcher *warnings.Dispatcher
 	if hasChatWarnings {
 		chatWarningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
+			Name:       "chat",
 			Queue:      inst.ag.ChatWarnings(),
 			PeerQueues: []*warnings.Queue{inst.ag.Warnings()},
 			FormatFn: func(body string) string {
