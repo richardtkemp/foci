@@ -12,6 +12,7 @@ import (
 	"foci/internal/periodic"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/warnings"
 	"foci/shared/prompts"
@@ -210,15 +211,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		IsDelegatedAgent:      inst.ag.DelegatedManager != nil,
 		SkillDirs: inst.skillsDirs,
 		NotifySkillChange: func(sessionKey, text string) {
-			conn := p.connMgr.ForSessionOrPrimary(sessionKey, agentID)
-			if conn == nil {
-				return
-			}
-			if sn, ok := conn.(platform.SessionNotifier); ok {
-				sn.SendNotificationToSession(sessionKey, text)
-			} else {
-				conn.SendNotification(text)
-			}
+			route.NotifySessionChat(p.connMgr, agentID, sessionKey, text)
 		},
 	})
 	runner.Start(p.ctx)

@@ -45,16 +45,7 @@ func wireAgentPlatformCallbacks(
 		ag.CacheBustAlert.Add(func(sess string, prev, cur int) {
 			msg := fmt.Sprintf("⚠️ %s: cache bust, cache_read dropped %d → %d", sess, prev, cur)
 			log.Warnf("agent", "%s", msg)
-			c, outcome := route.ConnFor(connMgr, acfg.ID, sess, route.PolicyFallback)
-			if c == nil {
-				log.Warnf("agent", "cache-bust notice for %s: no connection (%s)", sess, outcome)
-				return
-			}
-			if sn, ok := c.(platform.SessionNotifier); ok {
-				sn.SendNotificationToSession(sess, msg)
-			} else {
-				c.SendNotification(msg)
-			}
+			route.NotifySessionChat(connMgr, acfg.ID, sess, msg)
 		})
 	}
 
