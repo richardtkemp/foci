@@ -268,14 +268,26 @@ func deliverInjectedTurn(
 			log.Infof(trigger, "session %s has no live connection — delivering via agent %s primary", sessionKey, agentID)
 		}
 
-		// Typing indicator is driven by SessionSink on TurnStart /
-		// TurnComplete — the Bot.SetTyping implementation on both telegram
-		// and discord starts its own 4s refresh ticker internally, so one
-		// call at turn start is sufficient.
-		sink := turn.NewSessionSink(conn, sessionKey, trigger,
-			turn.WithSessionSinkErrorHandler(func(t string, err error) {
-				log.Errorf(t, "platform delivery: %v", err)
-			}))
+		// For app connections, use the driver's own turn sink (appSink) so the
+		// app receives activity frames (warming → thinking → typing → idle) —
+		// appSink delivers both activity and text, replacing SessionSink's
+		// SendToSession path. No double delivery: only one sink owns text.
+		// For Telegram/Discord, SessionSink drives SetTyping (the platform
+		// typing indicator) — the Driver type assertion selects the right path.
+		var sink turnevent.Sink
+		var cleanup func()
+		if driver, ok := conn.(agent.Driver); ok {
+			sink, cleanup = driver.NewTurnSink(agent.Envelope{SessionKey: sessionKey})
+		}
+		if sink == nil {
+			sink = turn.NewSessionSink(conn, sessionKey, trigger,
+				turn.WithSessionSinkErrorHandler(func(t string, err error) {
+					log.Errorf(t, "platform delivery: %v", err)
+				}))
+		}
+		if cleanup != nil {
+			defer cleanup()
+		}
 		triggerCtx = turnevent.WithSink(triggerCtx, sink)
 
 		if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
