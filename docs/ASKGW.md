@@ -8,123 +8,6 @@ Some applications need human judgement but run unattended — as daemons, cron j
 
 Example: [ai-sudo](https://github.com/richardtkemp/ai-sudo) uses askgw to forward sudo approval requests to the user's phone instead of blocking a terminal no one is watching.
 
-## Protocol
-
-**Transport:** newline-delimited JSON over a Unix socket (default: `~/data/askgw.sock`).
-
-**Version:** `"askgw/1"` — every frame includes `"protocol": "askgw/1"`.
-
-### Frame types
-
-| Direction | Type | Purpose |
-|-----------|------|---------|
-| App → foci | `ask` | Present one or more questions to the human |
-| App → foci | `cancel` | Withdraw a pending question |
-| App → foci | `notify` | Informational (tolerated, no action) |
-| foci → App | `answer` | The human's response (or timeout/dismissed/unavailable) |
-| foci → App | `ack` | Question accepted and presented |
-| foci → App | `error` | Validation failure or server error |
-
-### `ask` frame
-
-```json
-{
-  "protocol": "askgw/1",
-  "type": "ask",
-  "id": "my-unique-id",
-  "source": "myapp",
-  "title": "Deploy to production?",
-  "urgency": "normal",
-  "timeout_seconds": 120,
-  "agent": "arnix",
-  "questions": [
-    {
-      "key": "deploy",
-      "header": "Deployment",
-      "question": "Deploy v1.2.3 to production?",
-      "multiSelect": false,
-      "options": [
-        { "label": "Yes", "description": "Deploy now" },
-        { "label": "No", "description": "Abort" }
-      ]
-    }
-  ]
-}
-```
-
-**Validation rules:**
-- `id` is required, must be unique per connection, and **must not contain `:`** (used internally for button routing).
-- `questions` must be non-empty. Each question needs a unique `key`, non-empty `question` text, and at least one option.
-- Option labels must be non-empty and unique within a question.
-
-**Multi-question flows:** When `questions` has multiple entries, they're presented one at a time. The answer to each advances to the next. The final `answer` frame includes all responses keyed by question `key`.
-
-### `answer` frame
-
-```json
-{
-  "protocol": "askgw/1",
-  "type": "answer",
-  "id": "my-unique-id",
-  "status": "answered",
-  "answers": {
-    "deploy": "Yes"
-  }
-}
-```
-
-**Status values:**
-
-| Status | Meaning |
-|--------|---------|
-| `answered` | Human selected an option |
-| `timeout` | No response within the timeout |
-| `dismissed` | Human dismissed the prompt |
-| `unavailable` | No active session / agent unavailable |
-
-For single-select questions, `answers[key]` is the selected option label as a JSON string. For multi-select, it's a JSON array of labels.
-
-### `cancel` frame
-
-```json
-{
-  "protocol": "askgw/1",
-  "type": "cancel",
-  "id": "my-unique-id",
-  "reason": "never mind"
-}
-```
-
-Withdraws a pending question. Foci cancels the prompt UI and tears down the entry.
-
-### `error` frame
-
-```json
-{
-  "protocol": "askgw/1",
-  "type": "error",
-  "id": "my-unique-id",
-  "code": "malformed",
-  "message": "ask frame missing id"
-}
-```
-
-Fatal errors (`bad_protocol`, `malformed` on envelope decode) close the connection. Non-fatal errors return the error frame and continue processing.
-
-## Sequence
-
-```
-App                           Foci
- |                             |
- |--- ask (id, questions) ---->|
- |<-- ack (id) --------------- |  (question presented to human)
- |                             |
- |                        human responds
- |                             |
- |<-- answer (id, answers) ----|
- |                             |
-```
-
 ## Security
 
 **Socket ownership:** The socket is owned by group `foci-askgw` (configurable), mode `0660`. The parent directory must not be group- or world-writable.
@@ -152,7 +35,9 @@ max_frame_bytes = 1048576                     # 1 MiB default
 
 The group (`foci-askgw`) is created at install time by `make provision`. The foci gateway process runs with `SupplementaryGroups=... foci-askgw`.
 
-## Example client (shell)
+## Using askgw from a client application
+
+Connect to the Unix socket, send an `ask` frame as a single line of JSON, and read the `answer` frame back. The protocol is `askgw/1` — see the [askgw protocol reference](https://github.com/richardtkemp/ai-sudo/blob/main/docs/askgw-protocol.md) for full frame specifications.
 
 ```bash
 #!/bin/bash
