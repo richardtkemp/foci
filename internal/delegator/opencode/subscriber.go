@@ -379,6 +379,13 @@ func (s *Server) route(ev rawEvent) {
 		s.recordSessionParent(ev.Properties)
 	}
 
+	// Track task tool lifecycle so recordSessionParent can assign child
+	// sessions to the right tool call. Runs before the event reaches the
+	// dispatcher, preserving the tool-start → session.created ordering.
+	if ev.Type == EventMessagePartUpdated {
+		s.trackTaskTool(ev.Properties)
+	}
+
 	sid := extractSessionID(ev.Properties)
 	if sid == "" {
 		// Global event (server.connected, tui.*, file.*, vcs.*) — no
@@ -404,9 +411,9 @@ func (s *Server) route(ev rawEvent) {
 		// to the owning Backend and route the permission there so the human
 		// can answer it. The permission's session ID is the child's, but the
 		// reply endpoint (POST /permission/{id}/reply) is keyed by permission
-		// ID, so the parent Backend can answer it. Non-permission child events
-		// stay dropped (unchanged) — we don't want subagent text/idle surfacing
-		// on the parent session.
+		// ID, so the parent Backend can answer it. Child text events are
+		// also routed to the parent — tagged with childCallID so handleEvent
+		// can deliver them via OnSubagentText without polluting turn state.
 		if isPermissionEvent(ev.Type) {
 			if pbe := s.resolveParentBackend(sid); pbe != nil {
 				log.Debugf(s.logComponent(), "routing child session %s %s to parent session %s", sid, ev.Type, pbe.sessionID)
@@ -419,6 +426,14 @@ func (s *Server) route(ev rawEvent) {
 				// stream) and re-route once resolved (#969).
 				go s.resolveChildPermissionViaAPI(sid, ev)
 				return
+			}
+		}
+		if be == nil && isChildTextEvent(ev.Type) {
+			if pbe := s.resolveParentBackend(sid); pbe != nil {
+				if callID := s.callIDForChild(sid); callID != "" {
+					ev.childCallID = callID
+					be = pbe
+				}
 			}
 		}
 		if be == nil {
@@ -436,15 +451,65 @@ func (s *Server) route(ev rawEvent) {
 }
 
 // isPermissionEvent reports whether an event type is a permission lifecycle
-// event — the only child-session events route() reroutes to a parent Backend.
+// event — child-session events route() reroutes to a parent Backend.
 func isPermissionEvent(t string) bool {
 	return t == EventPermissionAsked || t == EventPermissionUpdated || t == EventPermissionReplied
+}
+
+// isChildTextEvent reports whether an event type carries text content from a
+// subagent that should be surfaced on the parent session via OnSubagentText.
+func isChildTextEvent(t string) bool {
+	return t == EventMessagePartUpdated
+}
+
+// trackTaskTool inspects a message.part.updated event for task tool
+// lifecycle, maintaining the pendingTaskCalls FIFO per parent session so
+// recordSessionParent can assign child sessions to the right tool call.
+// Runs synchronously in the subscriber goroutine, ahead of the dispatcher,
+// so the ordering is preserved: tool-start → session.created → child text.
+func (s *Server) trackTaskTool(props json.RawMessage) {
+	var p eventMessagePartUpdated
+	if err := json.Unmarshal(props, &p); err != nil {
+		return
+	}
+	if p.Part.Type != PartTool || p.Part.Tool != taskTool {
+		return
+	}
+	sid := p.Part.SessionID
+	if sid == "" || p.Part.CallID == "" || p.Part.State == nil {
+		return
+	}
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	switch p.Part.State.Status {
+	case ToolStateRunning, ToolStatePending:
+		s.pendingTaskCalls[sid] = append(s.pendingTaskCalls[sid], p.Part.CallID)
+	case ToolStateCompleted, ToolStateError:
+		calls := s.pendingTaskCalls[sid]
+		for i, c := range calls {
+			if c == p.Part.CallID {
+				s.pendingTaskCalls[sid] = append(calls[:i], calls[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+// callIDForChild looks up the parent tool callID assigned to a child session.
+func (s *Server) callIDForChild(childSID string) string {
+	s.sessionsMu.RLock()
+	defer s.sessionsMu.RUnlock()
+	return s.childToCallID[childSID]
 }
 
 // recordSessionParent records a child→parent session link from a
 // session.created event's .info (a Session with .id and .parentID). No-op if
 // the payload lacks either id or parentID (top-level/root sessions have no
 // parent). Lazily allocates the map so Server literals in tests work.
+//
+// Also resolves the child→callID link: the parent session's oldest pending
+// task tool call (FIFO from trackTaskTool) is assigned to this child, so
+// child text events can be grouped with the matching OnSubagentStart/End.
 func (s *Server) recordSessionParent(props []byte) {
 	var p struct {
 		Info struct {
@@ -456,11 +521,20 @@ func (s *Server) recordSessionParent(props []byte) {
 		return
 	}
 	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
 	if s.childToParent == nil {
 		s.childToParent = make(map[string]string)
 	}
 	s.childToParent[p.Info.ID] = p.Info.ParentID
-	s.sessionsMu.Unlock()
+
+	// Assign the parent's oldest pending task call to this child session.
+	if calls := s.pendingTaskCalls[p.Info.ParentID]; len(calls) > 0 {
+		if s.childToCallID == nil {
+			s.childToCallID = make(map[string]string)
+		}
+		s.childToCallID[p.Info.ID] = calls[0]
+		s.pendingTaskCalls[p.Info.ParentID] = calls[1:]
+	}
 }
 
 // resolveParentBackend walks a child session ID up its parent chain
