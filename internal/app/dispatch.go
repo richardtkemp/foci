@@ -518,6 +518,33 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		}
 	}
 
+	// Apply message transforms (mirrors the Telegram/Discord interceptor).
+	// A transform can rewrite the text or turn it into a command (e.g. "st" → "/stop").
+	if text != "" {
+		aid := agentID
+		if aid == "" {
+			aid = h.defaultAgentID()
+		}
+		if conn := h.PrimaryBot(aid); conn != nil && conn.agentRef != nil {
+			if transformed := conn.agentRef.TransformMessage(text); transformed != text {
+				text = transformed
+				// A transform may have produced a command — try dispatching it.
+				if text != "" && (text[0] == '/' || text[0] == '.') && conn.commands != nil {
+					if dispatch.IsRoutableCommand(text, conn.commands) {
+						name, args, _ := strings.Cut(text[1:], " ")
+						h.routeCommand(client, fap.Command{
+							ConversationID: convID,
+							AgentID:        agentID,
+							Name:           name,
+							Args:           args,
+						})
+						return
+					}
+				}
+			}
+		}
+	}
+
 	client.mu.Lock()
 	deviceID := client.deviceID
 	client.mu.Unlock()

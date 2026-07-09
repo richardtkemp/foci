@@ -39,6 +39,7 @@ const defaultPromptTTL = 24 * time.Hour
 type agentCore interface {
 	Enqueue(agent.Envelope) bool
 	MetaStatus(sessionKey string) (gap string)
+	TransformMessage(text string) string
 }
 
 type appConn struct {
