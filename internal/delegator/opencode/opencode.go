@@ -98,7 +98,7 @@ func releaseServer(agentID string, s *Server) {
 	}
 	delete(serverPool, agentID)
 	serverPoolMu.Unlock()
-	// Close outside the mutex — bounded shutdown so worst-case ~9s, but
+	// Close outside the mutex — bounded shutdown so worst-case ~4.5s, but
 	// we don't want to hold the pool lock for any of that.
 	go func() { _ = s.Close() }()
 }
