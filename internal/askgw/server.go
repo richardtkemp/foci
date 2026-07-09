@@ -43,7 +43,7 @@ type Server struct {
 
 type ServerDeps struct {
 	SocketPath     string
-	AllowedUIDs    []uint32
+	AllowedUIDs    []string
 	MaxFrameBytes  int
 	DefaultTimeout time.Duration
 	Group          string
@@ -53,9 +53,13 @@ type ServerDeps struct {
 	ResolveSession ResolveSessionFn
 }
 
-func NewServer(deps ServerDeps) *Server {
+func NewServer(deps ServerDeps) (*Server, error) {
 	uidSet := make(map[uint32]bool, len(deps.AllowedUIDs))
-	for _, uid := range deps.AllowedUIDs {
+	for _, s := range deps.AllowedUIDs {
+		uid, err := resolveUID(s)
+		if err != nil {
+			return nil, fmt.Errorf("askgw: resolve allowed_uid %q: %w", s, err)
+		}
 		uidSet[uid] = true
 	}
 	maxBytes := deps.MaxFrameBytes
@@ -72,7 +76,7 @@ func NewServer(deps ServerDeps) *Server {
 		present:        deps.Present,
 		cancelPrompt:   deps.CancelPrompt,
 		resolveSession: deps.ResolveSession,
-	}
+	}, nil
 }
 
 func (s *Server) Start() error {

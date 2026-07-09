@@ -6,7 +6,7 @@ type AskgwConfig struct {
 	Enabled             bool     `toml:"enabled"`
 	SocketPath          string   `toml:"socket_path"`
 	Group               string   `toml:"group"                 default:"foci-askgw"`
-	AllowedUIDs         []uint32 `toml:"allowed_uids"`
+	AllowedUIDs         []string `toml:"allowed_uids"`
 	DefaultAgent        string   `toml:"default_agent"`
 	DefaultTimeoutSecs  int      `toml:"default_timeout_seconds"`
 	MaxFrameBytes       int      `toml:"max_frame_bytes"        default:"1048576"`
