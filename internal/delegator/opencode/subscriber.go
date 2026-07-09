@@ -351,7 +351,7 @@ func (s *Server) runSubscriber(ctx context.Context) {
 	sub := NewSubscriber(resp.Body, onEvent, onHeartbeat)
 	sub.component = component
 	err := sub.Run(ctx)
-	if err == io.EOF {
+	if err == io.EOF || errors.Is(err, context.Canceled) {
 		log.Infof(component, "subscriber: end of stream")
 	} else {
 		log.Warnf(component, "subscriber: stopped: %v", err)

@@ -296,7 +296,7 @@ func TestServer_Close_GracefulDisposeBeforeSIGTERM(t *testing.T) {
 
 	// Close should return quickly because the "subprocess" exited on
 	// its own (no SIGTERM/SIGKILL fallback needed). With closeGracefulWait
-	// at its default 5s, an ungraceful path would take ≥5s; the dispose
+	// at its default 500ms, an ungraceful path would take ≥500ms; the dispose
 	// path returns in ~20ms.
 	if elapsed > time.Second {
 		t.Errorf("Close took %s; expected dispose path to exit fast", elapsed)

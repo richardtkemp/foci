@@ -28,12 +28,16 @@ import (
 
 // Close-ladder default waits. Copied into per-Server fields (Server.close*Wait)
 // by newServer so a test can shorten them on its own Server without mutating a
-// shared package global — the data race behind #975. Production keeps the ~9s
-// worst-case in the bounded-shutdown contract; matches ccstream's budget.
+// shared package global — the data race behind #975.
+//
+// opencode's /instance/dispose disposes the AI instance and closes the HTTP
+// listener but the Node/Bun process never self-terminates (lingering event-loop
+// handles). The graceful wait is a token courtesy, not a real expectation —
+// SIGTERM is always needed. Worst-case Close is ~4.5s.
 const (
-	defaultCloseGracefulWait = 5 * time.Second // wait for clean exit before SIGTERM
-	defaultCloseSigtermWait  = 2 * time.Second // wait after SIGTERM before SIGKILL
-	defaultCloseSigkillWait  = 2 * time.Second // wait after SIGKILL before abandoning the waiter goroutine
+	defaultCloseGracefulWait = 500 * time.Millisecond // token courtesy wait; process never self-exits
+	defaultCloseSigtermWait  = 2 * time.Second        // wait after SIGTERM before SIGKILL
+	defaultCloseSigkillWait  = 2 * time.Second        // wait after SIGKILL before abandoning the waiter goroutine
 )
 
 var (
@@ -137,9 +141,14 @@ func (s *Server) Start(ctx context.Context) error {
 		err := cmd.Wait()
 		s.mu.Lock()
 		s.exitErr = err
+		closing := s.closing
 		s.mu.Unlock()
 		if err != nil {
-			log.Warnf(component, "subprocess exited: %s", describeExitError(err))
+			if closing {
+				log.Infof(component, "subprocess exited: %s", describeExitError(err))
+			} else {
+				log.Warnf(component, "subprocess exited: %s", describeExitError(err))
+			}
 		} else {
 			log.Infof(component, "subprocess exited cleanly (status 0)")
 		}
@@ -166,7 +175,7 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // Close runs the shutdown kill-ladder exactly once (closeOnce-gated).
-// Returns within ~9s worst-case (closeGracefulWait + closeSigtermWait +
+// Returns within ~4.5s worst-case (closeGracefulWait + closeSigtermWait +
 // closeSigkillWait) regardless of subprocess behaviour — the liveness
 // backstop is the final abandon-waiter case in the ladder.
 //
@@ -201,9 +210,9 @@ func (s *Server) closeInner() {
 		s.subscriberCancel()
 	}
 
-	// Graceful shutdown ladder, mirroring ccstream's contract:
-	//   1. POST /instance/dispose (opencode's documented shutdown path)
-	//   2. wait closeGracefulWait for clean exit
+	// Graceful shutdown ladder:
+	//   1. POST /instance/dispose (disposes AI instance, closes HTTP listener)
+	//   2. wait closeGracefulWait (token courtesy — process never self-exits)
 	//   3. SIGTERM
 	//   4. wait closeSigtermWait
 	//   5. SIGKILL
@@ -211,8 +220,7 @@ func (s *Server) closeInner() {
 	//   7. abandon the waiter goroutine (liveness backstop)
 	//
 	// Each rung has a bounded timeout so worst-case Close returns in
-	// ~9s regardless of subprocess behaviour — same invariant as
-	// ccstream's Close.
+	// ~4.5s regardless of subprocess behaviour.
 	if s.baseURL != "" {
 		// Best-effort; if the POST fails (network already gone, server
 		// unresponsive), we fall through to SIGTERM. Short client timeout
@@ -226,7 +234,6 @@ func (s *Server) closeInner() {
 
 	exitSeen := waitForExit(s.waitCh, s.closeGracefulWait)
 	if !exitSeen {
-		log.Warnf(component, "subprocess (pid=%d) did not exit after %s, sending SIGTERM", pid, s.closeGracefulWait)
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Signal(syscall.SIGTERM)
 		}
