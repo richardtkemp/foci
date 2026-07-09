@@ -147,7 +147,7 @@ type Agent struct {
 	ReloginTrigger                          func(reason, sessionKey string) bool    // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
 	Reflection                              config.ResolvedReflection               // resolved reflection config (agent+global merged)
 	SkillDirs                               []string                                 // skill directories (shared + per-agent) for reflection creation/update detection
-	SkillChangeNotify                       func(string)                             // called with a formatted message when reflection creates/updates a skill; nil = disabled
+	SkillChangeNotify                       func(string, string)                     // called with (sessionKey, formatted message) when reflection creates/updates a skill; nil = disabled
 	DefaultPlatform                         string                                  // configured default_platform (per-agent, else global); preferred for default-session resolution and delivery fallback
 	ResetOrientTemplateFn                   func() string                           // resolves orientation template for session reset; nil = no orientation
 	ReloadSystemFn                          func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op

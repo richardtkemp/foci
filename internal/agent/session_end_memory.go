@@ -102,7 +102,7 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 	}
 
 	if skillBefore != nil {
-		a.detectAndNotifySkillChanges(skillBefore)
+		a.detectAndNotifySkillChanges(branchKey, skillBefore)
 	}
 
 	if a.DelegatedManager != nil {
@@ -132,10 +132,10 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 // detectAndNotifySkillChanges diffs the current skill state against before and
 // fires the SkillChangeNotify callback if anything changed. Shared by all
 // reflection paths (interval, session-end, compaction).
-func (a *Agent) detectAndNotifySkillChanges(before skills.SkillSnapshot) {
+func (a *Agent) detectAndNotifySkillChanges(sessionKey string, before skills.SkillSnapshot) {
 	after := skills.Snapshot(a.SkillDirs)
 	changes := skills.Diff(before, after)
 	if msg := skills.FormatChanges(changes); msg != "" {
-		a.SkillChangeNotify(msg)
+		a.SkillChangeNotify(sessionKey, msg)
 	}
 }

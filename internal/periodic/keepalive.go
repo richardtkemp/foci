@@ -125,8 +125,9 @@ type Runner struct {
 	// during reflection. nil = feature disabled.
 	skillDirs []string
 	// notifySkillChange is called with a formatted message when reflection creates
-	// or updates a skill. nil = notifications disabled.
-	notifySkillChange func(text string)
+	// or updates a skill. The session key identifies which session's chat to route
+	// the notification to. nil = notifications disabled.
+	notifySkillChange func(sessionKey, text string)
 
 	mu                  sync.Mutex
 	lastCacheWarmed     time.Time
@@ -184,10 +185,10 @@ type RunnerConfig struct {
 	// firing reflection, diffs after, and calls NotifySkillChange with the result.
 	SkillDirs []string
 
-	// NotifySkillChange is called with a formatted message when reflection
-	// creates or updates a skill. Typically wired to send a platform notification.
-	// nil = no notification (feature disabled even if config enables it).
-	NotifySkillChange func(text string)
+	// NotifySkillChange is called with a session key and formatted message when
+	// reflection creates or updates a skill. The session key routes the
+	// notification to the correct chat. nil = no notification.
+	NotifySkillChange func(sessionKey, text string)
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
@@ -689,7 +690,7 @@ func (r *Runner) maybeReflection() {
 			after := skills.Snapshot(r.skillDirs)
 			changes := skills.Diff(skillBefore, after)
 			if msg := skills.FormatChanges(changes); msg != "" {
-				r.notifySkillChange(msg)
+				r.notifySkillChange(keys[0], msg)
 			}
 		}
 	}()
@@ -727,7 +728,7 @@ func (r *Runner) ReflectSessionIfDue(sessionKey string) {
 		after := skills.Snapshot(r.skillDirs)
 		changes := skills.Diff(skillBefore, after)
 		if msg := skills.FormatChanges(changes); msg != "" {
-			r.notifySkillChange(msg)
+			r.notifySkillChange(sessionKey, msg)
 		}
 	}
 }
