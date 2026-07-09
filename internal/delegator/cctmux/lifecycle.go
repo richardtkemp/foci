@@ -353,6 +353,9 @@ func (b *Backend) IsRunning() bool {
 	return pane.isAlive(context.Background())
 }
 
+// StatusDetail returns empty — the legacy tmux backend has no status detail.
+func (b *Backend) StatusDetail() string { return "" }
+
 func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

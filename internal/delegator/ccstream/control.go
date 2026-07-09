@@ -18,6 +18,9 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 			Model:   r.Model,
 		})
 	case *delegator.SetPermissionModeRequest:
+		b.mu.Lock()
+		b.permMode = r.Mode
+		b.mu.Unlock()
 		return b.writer.SendControl(newRequestID(), &SetPermissionModeRequest{
 			Subtype: "set_permission_mode",
 			Mode:    r.Mode,
@@ -57,6 +60,16 @@ func (b *Backend) SetModel(ctx context.Context, model string) error {
 // Capabilities advertises ccstream's full mid-turn nudge support.
 func (b *Backend) Capabilities() delegator.Capabilities {
 	return delegator.Capabilities{PostToolNudge: true, PreAnswerNudge: true}
+}
+
+// StatusDetail returns the current CC permission mode for /status display.
+func (b *Backend) StatusDetail() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.permMode != "" {
+		return "permission mode: " + b.permMode
+	}
+	return ""
 }
 
 // GetContextWindow sends a get_context_usage control request and returns the

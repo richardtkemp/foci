@@ -68,6 +68,7 @@ type Backend struct {
 	closing   bool          // set by Close() before shutdown; tells OnReaderStopped this is expected
 	sessionID string        // from init message
 	initMsg   *InitMessage  // from init message
+	permMode  string        // permission mode (from init, updated on /mode)
 	readyCh   chan struct{} // closed when init received
 	readyOnce sync.Once     // ensures readyCh closed once
 	initReqID string        // request_id of the initialize control request

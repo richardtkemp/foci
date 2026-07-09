@@ -11,7 +11,6 @@ import (
 
 	"foci/internal/display"
 	"foci/internal/log"
-	"foci/internal/timeutil"
 	"foci/internal/tools"
 )
 
@@ -117,46 +116,32 @@ func StatusCommand() *Command {
 			sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
 			fmt.Fprintf(&sb, "📊 Session: %s\n", sk)
-			fmt.Fprintf(&sb, "   Messages: %d | Status: %s\n", mc, status)
-			fmt.Fprintf(&sb, "   Created: %s | Active: %s\n", created, active)
 
-			// Unified activity — sourced from the same app binding/resolver the
-			// app renders, so /status and the app agree. Only shown when this
-			// session has an app binding (ActivityFunc reports ok); otherwise
-			// gracefully omitted (non-app platforms have no such surface).
+			// Activity is the primary status — sourced from the same app
+			// binding/resolver the app renders, so /status and the app agree.
+			// Falls back to the session lifecycle status (idle/processing/
+			// compacting) when no app binding is available (non-app platforms).
+			activityStr := status
 			if cc.ActivityFunc != nil {
 				if kind, detail, ok := cc.ActivityFunc(sk); ok {
-					line := "🎯 Activity: " + kind
+					activityStr = kind
 					if detail != "" {
-						line += " " + detail
+						activityStr += " " + detail
 					}
-					fmt.Fprintf(&sb, "   %s\n", line)
 				}
 			}
+			fmt.Fprintf(&sb, "   Messages: %d | Status: %s\n", mc, activityStr)
+			fmt.Fprintf(&sb, "   Created: %s | Active: %s\n", created, active)
 
-			// Permission mode — always shown so the user knows the current
-			// permission posture. Empty session metadata = CC's baseline "default".
-			pmDisplay := cc.Agent.SessionPermissionMode(sk)
-			if pmDisplay == "" {
-				pmDisplay = "default"
-			}
-			fmt.Fprintf(&sb, "   Mode: %s\n", pmDisplay)
-
-			fmt.Fprintf(&sb, "\n⏱️  Uptime: %s (started %s)\n",
-				display.FormatDuration(time.Since(cc.StartTime)),
-				timeutil.Format(cc.StartTime))
+			fmt.Fprintf(&sb, "\n⏱️  Uptime: %s\n",
+				display.FormatDuration(time.Since(cc.StartTime)))
 
 			if contextTokens > 0 && contextLimit > 0 {
 				pct := float64(contextTokens) / float64(contextLimit) * 100
-				threshTokens := int(float64(contextLimit) * cc.CompactionThreshold)
-				remaining := threshTokens - contextTokens
-				if remaining < 0 {
-					remaining = 0
-				}
 				fmt.Fprintf(&sb, "\n📈 Context: %.1f%% (%s / %s tokens)\n",
 					pct, display.FormatCommas(contextTokens), display.FormatCommas(contextLimit))
-				fmt.Fprintf(&sb, "   Compaction at %.0f%% (%sk tokens remaining)\n",
-					cc.CompactionThreshold*100, display.FormatCommas(remaining/1000))
+				fmt.Fprintf(&sb, "   Compaction at %.0f%%\n",
+					cc.CompactionThreshold*100)
 			}
 
 			if sessionCalls > 0 {

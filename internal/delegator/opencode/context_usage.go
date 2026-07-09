@@ -42,6 +42,9 @@ func (b *Backend) Capabilities() delegator.Capabilities {
 	return delegator.Capabilities{PostToolNudge: false, PreAnswerNudge: false}
 }
 
+// StatusDetail returns empty — opencode has no permission-mode concept.
+func (b *Backend) StatusDetail() string { return "" }
+
 // GetContextWindow implements delegator.ContextWindowQuerier. Returns the
 // model's real context window from /config/providers (cached per model).
 func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindow, error) {
