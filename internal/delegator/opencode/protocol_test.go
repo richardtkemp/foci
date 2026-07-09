@@ -345,31 +345,6 @@ func TestPart_ToolError(t *testing.T) {
 	}
 }
 
-func TestPart_Subtask(t *testing.T) {
-	// Verifies subtask parts parse — these drive Step 7's blockquote-
-	// styled subagent visibility.
-	raw := `{
-		"id": "pt-sub1",
-		"type": "subtask",
-		"prompt": "Find all usages of foo()",
-		"description": "Searching for foo() usages",
-		"agent": "explore"
-	}`
-	var p Part
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if p.Type != PartSubtask {
-		t.Errorf("Type = %q, want %q", p.Type, PartSubtask)
-	}
-	if p.Description != "Searching for foo() usages" {
-		t.Errorf("Description = %q", p.Description)
-	}
-	if p.Agent != "explore" {
-		t.Errorf("Agent = %q", p.Agent)
-	}
-}
-
 func TestPart_Compaction(t *testing.T) {
 	raw := `{
 		"id": "pt-comp",

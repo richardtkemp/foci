@@ -119,7 +119,6 @@ const (
 	PartReasoning  = "reasoning"
 	PartTool       = "tool"
 	PartFile       = "file"
-	PartSubtask    = "subtask"
 	PartCompaction = "compaction"
 	PartStepStart  = "step-start"
 	PartStepFinish = "step-finish"

@@ -449,31 +449,6 @@ func TestOnMessagePartUpdated_ToolRunningDedupedByCallID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// message.part.updated — subtask
-// ---------------------------------------------------------------------------
-
-func TestOnMessagePartUpdated_SubtaskSurfacesRawDescription(t *testing.T) {
-	// Verifies subtask descriptions are surfaced via OnSubagentText as RAW text —
-	// blockquote is now a per-platform presentation choice applied downstream.
-	b := newHandlerTestBackend(t)
-	c := b.captures()
-
-	b.onMessagePartUpdated(Part{
-		Type:        PartSubtask,
-		ID:          "subtask-1",
-		Description: "Searching for foo() usages",
-	}, "")
-
-	if len(*c.subagentTexts) != 1 {
-		t.Fatalf("subagentTexts = %d, want 1", len(*c.subagentTexts))
-	}
-	want := "Searching for foo() usages"
-	if (*c.subagentTexts)[0] != want {
-		t.Errorf("subagentText = %q, want %q", (*c.subagentTexts)[0], want)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // message.updated — model + usage extraction
 // ---------------------------------------------------------------------------
 
