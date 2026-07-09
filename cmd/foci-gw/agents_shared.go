@@ -163,6 +163,13 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 			}
 			return []provider.SystemBlock{{Type: "text", Text: reg.SystemBlock(reloadWorkspace)}}, reg.Len()
 		}
+		ag.SkillDirs = reloadSkillsDirs
+		notifyAgentID := acfg.ID
+		ag.SkillChangeNotify = func(text string) {
+			if conn := p.connMgr.Primary(notifyAgentID); conn != nil {
+				conn.SendNotification(text)
+			}
+		}
 	}
 
 	// Nudge system.

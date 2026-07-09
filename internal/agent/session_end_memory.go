@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/skills"
 	"foci/shared/prompts"
 )
 
@@ -88,11 +89,20 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 
 	log.Infof("session-end-memory", "firing on %s", branchKey)
 
+	var skillBefore skills.SkillSnapshot
+	if a.Reflection.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
+		skillBefore = skills.Snapshot(a.SkillDirs)
+	}
+
 	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	hookCtx = WithTrigger(hookCtx, "session_end_memory")
 	if err := a.HandleMessage(hookCtx, branchKey, []string{prompt}, nil); err != nil {
 		log.Warnf("session-end-memory", "failed for %s: %v", branchKey, err)
+	}
+
+	if skillBefore != nil {
+		a.detectAndNotifySkillChanges(skillBefore)
 	}
 
 	if a.DelegatedManager != nil {
@@ -117,4 +127,15 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 	a.RunSessionEndMemory(ctx, branchKey)
+}
+
+// detectAndNotifySkillChanges diffs the current skill state against before and
+// fires the SkillChangeNotify callback if anything changed. Shared by all
+// reflection paths (interval, session-end, compaction).
+func (a *Agent) detectAndNotifySkillChanges(before skills.SkillSnapshot) {
+	after := skills.Snapshot(a.SkillDirs)
+	changes := skills.Diff(before, after)
+	if msg := skills.FormatChanges(changes); msg != "" {
+		a.SkillChangeNotify(msg)
+	}
 }

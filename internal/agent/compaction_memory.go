@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/skills"
 	"foci/shared/prompts"
 )
 
@@ -47,10 +48,19 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 
 	log.Infof("compaction-memory", "firing for %s → %s", sessionKey, targetKey)
 
+	var skillBefore skills.SkillSnapshot
+	if a.Reflection.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
+		skillBefore = skills.Snapshot(a.SkillDirs)
+	}
+
 	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	hookCtx = WithTrigger(hookCtx, "compaction_memory")
 	if err := a.HandleMessage(hookCtx, targetKey, []string{prompt}, nil); err != nil {
 		log.Warnf("compaction-memory", "failed for %s: %v", targetKey, err)
+	}
+
+	if skillBefore != nil {
+		a.detectAndNotifySkillChanges(skillBefore)
 	}
 }
