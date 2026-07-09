@@ -144,6 +144,10 @@ func (cfg *Config) Validate() error {
 		return err
 	}
 
+	if err := cfg.validateAskgw(); err != nil {
+		return err
+	}
+
 	// Validate timezone if configured.
 	if cfg.Timezone != "" {
 		if _, err := time.LoadLocation(cfg.Timezone); err != nil {
@@ -503,6 +507,29 @@ func (cfg *Config) validateDefaultPlatforms() error {
 	for _, a := range cfg.Agents {
 		if err := check(fmt.Sprintf("agent %q", a.ID), a.DefaultPlatform); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (cfg *Config) validateAskgw() error {
+	a := cfg.Askgw
+	if !a.Enabled {
+		return nil
+	}
+	if len(a.AllowedUIDs) == 0 {
+		return fmt.Errorf("[askgw] enabled = true but allowed_uids is empty — at least one peer uid is required")
+	}
+	if a.DefaultAgent != "" {
+		found := false
+		for _, ag := range cfg.Agents {
+			if ag.ID == a.DefaultAgent {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("[askgw] default_agent = %q: no such agent configured", a.DefaultAgent)
 		}
 	}
 	return nil

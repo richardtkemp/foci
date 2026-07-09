@@ -584,6 +584,12 @@ Subcommands:
 		log.Infof("http", "unix socket listening on %s (same-user auth, no API key required)", gwSocketPath)
 	}
 
+	// ========== askgw (ask-gateway for external Apps) ==========
+	askgwSrv := setupAskgw(cfg, agents, agentOrder, connMgr)
+	if askgwSrv != nil {
+		defer askgwSrv.Close()
+	}
+
 	// Log startup
 	var agentNames []string
 	for _, id := range agentOrder {

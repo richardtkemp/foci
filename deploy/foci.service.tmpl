@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=@FOCI_USER@
-SupplementaryGroups=@SECRETS_GROUP@ crontab
+SupplementaryGroups=@SECRETS_GROUP@ crontab @ASKGW_GROUP@
 AmbientCapabilities=CAP_SETGID
 CapabilityBoundingSet=CAP_SETGID
 NoNewPrivileges=yes
