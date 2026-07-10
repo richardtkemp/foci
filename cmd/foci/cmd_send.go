@@ -10,7 +10,7 @@ type sendFlags struct {
 	agent       string
 	session     string
 	model       string // model override (group name, alias, or developer/model_id)
-	gateFlags          // ifActive / ifInactive / ifUserActive / ifUserInactive (TODO #753)
+	gateFlags          // ifWarm / ifCold / ifUserActive / ifUserInactive (TODO #753)
 	messageText string // explicit --message-text / -mt
 	messageFile string // explicit --message-file / -mf
 	async       bool   // fire-and-forget mode
@@ -144,9 +144,10 @@ and the agent's response is delivered to the chat. Use --sync/--wait to block
 until the response is available.
 
 Activity gates (TODO #753):
-  --if-active / --if-inactive consult SESSION-level activity — whether THIS session
-    ran a turn within the duration. A turn currently in flight always counts as
-    active. Use these for keepalives that should yield to running work.
+  --if-warm / --if-cold consult SESSION cache-warmth — whether THIS session ran a
+    turn (any trigger) within the duration. A turn currently in flight always
+    counts as warm. Use these for keepalives that should yield to running work.
+    (Aliases: --if-active / --if-inactive.)
   --if-user-active / --if-user-inactive consult USER-attention activity — whether
     the user themselves messaged this agent within the duration. Use these for
     nudges that should only fire when the user is engaged (or away).
@@ -156,8 +157,8 @@ Flags:
   -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main)
   --broadcast               Deliver the response to every live surface for the agent (telegram, app, …)
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
-  --if-active <dur>         Skip if this session has not run a turn within duration (env: FOCI_IF_ACTIVE)
-  --if-inactive <dur>       Skip if this session has run a turn within duration (env: FOCI_IF_INACTIVE)
+  --if-warm <dur>           Skip if this session has not run a turn within duration (env: FOCI_IF_WARM; alias --if-active)
+  --if-cold <dur>           Skip if this session has run a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
   --if-user-active <dur>    Skip if user has not touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
   --if-user-inactive <dur>  Skip if user has touched this agent within duration (env: FOCI_IF_USER_INACTIVE)
   --sync, --wait            Wait for the response (env: FOCI_SYNC)
@@ -215,16 +216,17 @@ and the agent's response is delivered to the chat. Use --sync/--wait to block
 until the response is available.
 
 Activity gates (TODO #753):
-  --if-active / --if-inactive consult SESSION-level activity (whether the target
-    session ran a turn within the duration; a turn in flight always counts).
+  --if-warm / --if-cold consult SESSION cache-warmth (whether the target session
+    ran a turn within the duration; a turn in flight always counts).
+    (Aliases: --if-active / --if-inactive.)
   --if-user-active / --if-user-inactive consult USER-attention activity (whether
     the user touched this agent within the duration).
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
-  --if-active <dur>         Skip if target session has not run a turn within duration (env: FOCI_IF_ACTIVE)
-  --if-inactive <dur>       Skip if target session has run a turn within duration (env: FOCI_IF_INACTIVE)
+  --if-warm <dur>           Skip if target session has not run a turn within duration (env: FOCI_IF_WARM; alias --if-active)
+  --if-cold <dur>           Skip if target session has run a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
   --if-user-active <dur>    Skip if user has not touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
   --if-user-inactive <dur>  Skip if user has touched this agent within duration (env: FOCI_IF_USER_INACTIVE)
   --no-compact              Skip compaction if context limit reached (env: FOCI_NO_COMPACT)

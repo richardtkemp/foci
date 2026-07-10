@@ -77,14 +77,14 @@ Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
 
 Activity gates (evaluated server-side; skip the command unless/if the target
-session has run a turn recently — a turn in flight always counts as active):
-  --if-active <dur>         Skip unless this session ran a turn within duration (env: FOCI_IF_ACTIVE)
-  --if-inactive <dur>       Skip if this session ran a turn within duration (env: FOCI_IF_INACTIVE)
+session has run a turn recently — a turn in flight always counts as warm):
+  --if-warm <dur>           Skip unless this session ran a turn within duration (env: FOCI_IF_WARM; alias --if-active)
+  --if-cold <dur>           Skip if this session ran a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
   --if-user-active <dur>    Skip unless the user touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
   --if-user-inactive <dur>  Skip if the user touched this agent within duration (env: FOCI_IF_USER_INACTIVE)
 
 Example (overnight reset that won't interrupt active or in-flight work):
-  foci command --if-inactive 55m -a helen /reset
+  foci command --if-cold 55m -a helen /reset
 `)
 }
 
