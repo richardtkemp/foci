@@ -95,7 +95,7 @@ func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
 
 	// Create parent and branch
 	store.TestAppend("bot/c100", msg("user", "hello"))
-	store.createBranchFile("bot/c100", "bot/c100/b1000000001", false, "")
+	store.createBranchFile("bot/c100", "bot/c100/b1000000001", false, "", "")
 	idx.Rebuild(store)
 
 	// Set parent to old, but branch is still active

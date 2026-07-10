@@ -327,6 +327,30 @@ func migrateLegacyStateDB(db *sql.DB) {
 	migrateLegacySessionIndexRows(db)
 }
 
+// migrateSessionTypeTaxonomy remaps session_index.session_type from the old
+// coarse vocabulary (chat / branch / cron / unknown) to the unified taxonomy.
+//   - 'cron' (the old /branch endpoint branches) → 'background-task'.
+//   - 'branch' can't be refined for old rows — their BranchMeta predates the
+//     branch_type field — so it falls back to 'unknown'; NEW branches are
+//     stamped with their real type at creation.
+//   - i-roots (independent sessions) were previously classified 'unknown' and
+//     become 'independent'.
+// Idempotent: after it runs, no row matches the WHERE clauses.
+func migrateSessionTypeTaxonomy(db *sql.DB) {
+	stmts := []string{
+		`UPDATE session_index SET session_type = 'background-task' WHERE session_type = 'cron'`,
+		`UPDATE session_index SET session_type = 'unknown' WHERE session_type = 'branch'`,
+		`UPDATE session_index SET session_type = 'independent'
+		   WHERE is_root = 1 AND session_type = 'unknown'
+		     AND substr(session_key, instr(session_key, '/') + 1, 1) = 'i'`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Warnf("session", "taxonomy migration: %v", err)
+		}
+	}
+}
+
 // migrateLegacySessionMetadata re-keys session_metadata rows, newest version
 // winning on conflict.
 func migrateLegacySessionMetadata(db *sql.DB) {

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/session"
 )
 
 // TestWebhook_SyncSuccess tests the happy path: known agent, configured hook ID,
@@ -208,20 +210,36 @@ func TestWebhook_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestWebhook_NoSession returns 412 when the agent has no default session.
-func TestWebhook_NoSession(t *testing.T) {
+// TestWebhook_NoSession_StartsIndependent proves that a webhook with no
+// ?session= no longer 412s when the agent has no default chat session. A
+// webhook is an external event source, not a human conversation: absent an
+// explicit session it defaults to a per-hook INDEPENDENT session
+// (agent/i<hookID>, here test-agent/itest), created lazily (RungCreated) and
+// dispatched to — so the request is ACCEPTED and delivered.
+func TestWebhook_NoSession_StartsIndependent(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt text"), 0644)
 
-	d, _ := httpTestSetup(t, httpTestOpts{promptDir: dir, webhooks: map[string]string{"test": "test.md"}, noSession: true})
+	d, mock := httpTestSetup(t, httpTestOpts{promptDir: dir, webhooks: map[string]string{"test": "test.md"}, noSession: true})
 	mux := newTestMux(d)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/test?sync=true", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusPreconditionFailed {
-		t.Errorf("status = %d, want 412; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["response"] != mockReply {
+		t.Errorf("response = %q, want %q", resp["response"], mockReply)
+	}
+	// The webhook prompt reached the backend (the lazily-created independent
+	// session dispatched rather than erroring with "no active session").
+	if !strings.Contains(mock.lastText(), "prompt text") {
+		t.Errorf("agent message missing prompt text, got: %s", mock.lastText())
 	}
 }
 
@@ -237,9 +255,12 @@ func TestWebhook_IfInactive(t *testing.T) {
 
 	d, _ := httpTestSetup(t, httpTestOpts{promptDir: dir, webhooks: map[string]string{"test": "test.md"}})
 
-	// Simulate recent session activity under the stable key the gate
-	// consults directly.
-	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now())
+	// A no-session webhook defaults to the per-hook independent session
+	// (test-agent/itest). Seed that row and mark it recently active under the
+	// stable key the gate consults directly, so if_inactive skips.
+	hookSessionKey := "test-agent/itest"
+	d.sessionIndex.Upsert(session.SessionIndexEntry{SessionKey: hookSessionKey, FilePath: "x", SessionType: session.SessionTypeIndependent, Status: session.SessionStatusActive})
+	d.sessionIndex.TouchCacheTouch(hookSessionKey, time.Now())
 
 	mux := newTestMux(d)
 

@@ -31,7 +31,7 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	s.TestAppend(parentKey, msg("user", "how are you"))
 	s.TestAppend(parentKey, msg("assistant", "good"))
 
-	if err := s.createBranchFile(parentKey, branchKey, false, ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "", ""); err != nil {
 		t.Fatalf("createBranchFile: %v", err)
 	}
 
@@ -59,6 +59,63 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	}
 }
 
+func TestCreateBranchStampsSessionType(t *testing.T) {
+	// Proves the end-to-end branch_type stamping: a branch created with a real
+	// branch_type ("facet") persists it to BranchMeta on disk AND surfaces the
+	// derived session_type (facet) through the SessionIndex via the create event.
+	s := NewStore(t.TempDir())
+	idx := newTestSessionIndex(t)
+
+	// Wire store events into the index (mirrors production wiring).
+	s.OnSessionEvent(func(e SessionEvent) {
+		if e.Status == SessionStatusActive {
+			idx.Upsert(SessionIndexEntry{
+				SessionKey:       e.Key,
+				FilePath:         e.FilePath,
+				CreatedAt:        e.CreatedAt,
+				ParentSessionKey: e.ParentKey,
+				SessionType:      e.Type,
+				Status:           SessionStatusActive,
+			})
+		}
+	})
+
+	parentKey := "main/imain"
+	s.TestAppend(parentKey, msg("user", "hello"))
+
+	branchKey, err := s.CreateBranchWithOptions(parentKey, BranchOptions{BranchType: "facet"})
+	if err != nil {
+		t.Fatalf("CreateBranchWithOptions: %v", err)
+	}
+
+	// Index reflects the derived session_type.
+	got, err := idx.Get(branchKey)
+	if err != nil {
+		t.Fatalf("idx.Get(%q): %v", branchKey, err)
+	}
+	if got.SessionType != SessionTypeFacet {
+		t.Errorf("index SessionType = %q, want %q", got.SessionType, SessionTypeFacet)
+	}
+
+	// Query by type also finds it.
+	entries, _ := idx.Query(QueryOptions{SessionType: string(SessionTypeFacet)})
+	if len(entries) != 1 || entries[0].SessionKey != branchKey {
+		t.Errorf("Query by facet type = %+v, want single %q", entries, branchKey)
+	}
+
+	// BranchMeta round-trips the raw branch_type from disk.
+	meta, err := s.GetBranchMeta(branchKey)
+	if err != nil {
+		t.Fatalf("GetBranchMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatalf("GetBranchMeta returned nil for branch %q", branchKey)
+	}
+	if meta.BranchType != "facet" {
+		t.Errorf("BranchMeta.BranchType = %q, want %q", meta.BranchType, "facet")
+	}
+}
+
 func TestLoadFullRecoversParentPrefixFromArchive(t *testing.T) {
 	// Proves that when a branch's parent root.jsonl has been rotated away to a
 	// timestamped archive (e.g. by compaction), LoadFull recovers the parent
@@ -74,7 +131,7 @@ func TestLoadFullRecoversParentPrefixFromArchive(t *testing.T) {
 	s.TestAppend(parentKey, msg("user", "how are you"))
 	s.TestAppend(parentKey, msg("assistant", "good"))
 
-	if err := s.createBranchFile(parentKey, branchKey, false, ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "", ""); err != nil {
 		t.Fatalf("createBranchFile: %v", err)
 	}
 	s.TestAppend(branchKey, msg("user", "branch q"))
@@ -122,7 +179,7 @@ func TestLoadFullRecoversParentPrefixAfterCompaction(t *testing.T) {
 	s.TestAppend(parentKey, msg("assistant", "good"))
 
 	branchKey := "main/c123/b1000000001"
-	if err := s.createBranchFile(parentKey, branchKey, false, ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "", ""); err != nil {
 		t.Fatalf("createBranchFile: %v", err)
 	}
 	s.TestAppend(branchKey, msg("user", "branch q"))
@@ -156,7 +213,7 @@ func TestLoadFullRecoversParentPrefixAfterReset(t *testing.T) {
 	s.TestAppend(parentKey, msg("assistant", "two"))
 
 	branchKey := "main/c123/b1000000001"
-	if err := s.createBranchFile(parentKey, branchKey, false, ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "", ""); err != nil {
 		t.Fatalf("createBranchFile: %v", err)
 	}
 	s.TestAppend(branchKey, msg("user", "branch q"))
@@ -190,7 +247,7 @@ func TestBranchOfBranchMintsSibling(t *testing.T) {
 	s.TestAppend(rootKey, msg("user", "hello"))
 
 	firstBranch := "main/c123/b1000000001"
-	if err := s.createBranchFile(rootKey, firstBranch, false, ""); err != nil {
+	if err := s.createBranchFile(rootKey, firstBranch, false, "", ""); err != nil {
 		t.Fatalf("create first branch: %v", err)
 	}
 	s.TestAppend(firstBranch, msg("user", "branch work"))
@@ -236,7 +293,7 @@ func TestBranchParentContinuesGrowing(t *testing.T) {
 	s.TestAppend(parentKey, msg("user", "one"))
 	s.TestAppend(parentKey, msg("assistant", "two"))
 
-	s.createBranchFile(parentKey, branchKey, false, "")
+	s.createBranchFile(parentKey, branchKey, false, "", "")
 
 	s.TestAppend(parentKey, msg("user", "three"))
 	s.TestAppend(parentKey, msg("assistant", "four"))
@@ -264,7 +321,7 @@ func TestBranchFromEmptyParent(t *testing.T) {
 	parentKey := "main/imain"
 	branchKey := "main/imain/b1000000001"
 
-	s.createBranchFile(parentKey, branchKey, false, "")
+	s.createBranchFile(parentKey, branchKey, false, "", "")
 	s.TestAppend(branchKey, msg("user", "branch only"))
 
 	msgs, err := s.LoadFull(branchKey)
@@ -392,7 +449,7 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 
 	s.TestAppend(parentKey, msg("user", "parent msg"))
 	s.TestAppend(parentKey, msg("assistant", "parent reply"))
-	s.createBranchFile(parentKey, branchKey, false, "")
+	s.createBranchFile(parentKey, branchKey, false, "", "")
 
 	s.TestAppend(branchKey, msg("user", "branch only"))
 	s.TestAppend(branchKey, msg("assistant", "branch reply"))
@@ -491,12 +548,12 @@ func TestCreateBranchCollision(t *testing.T) {
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 
-	if err := s.createBranchFile(parentKey, branchKey, false, "first branch orientation"); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "first branch orientation", ""); err != nil {
 		t.Fatalf("first createBranchFile: %v", err)
 	}
 
 	// Second creation with the same key must fail.
-	err := s.createBranchFile(parentKey, branchKey, false, "OVERWRITE ATTEMPT")
+	err := s.createBranchFile(parentKey, branchKey, false, "OVERWRITE ATTEMPT", "")
 	if err == nil {
 		t.Fatal("expected error on duplicate branch key, got nil")
 	}

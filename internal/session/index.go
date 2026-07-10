@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -14,17 +15,67 @@ import (
 	"foci/internal/timeutil"
 )
 
-// SessionType classifies the purpose of a session.
+// SessionType classifies the purpose of a session. It is stamped once at
+// session creation (derived from the key for roots, from the branch_type for
+// branches — see ClassifySessionKey / SessionTypeForBranch) and preserved
+// thereafter: a per-turn write never re-derives it, so an in-place memory pass
+// running on a chat can never restamp the chat as "reflection".
 type SessionType string
 
 const (
-	SessionTypeChat    SessionType = "chat"
-	SessionTypeFacet   SessionType = "facet"
-	SessionTypeSpawn   SessionType = "spawn"
-	SessionTypeCron    SessionType = "cron"
-	SessionTypeBranch  SessionType = "branch"
-	SessionTypeUnknown SessionType = "unknown"
+	// Conversational — reflect-eligible (see reflectableTypes).
+	SessionTypeChat        SessionType = "chat"        // human chat, starts with no history (c-root)
+	SessionTypeFacet       SessionType = "facet"       // human chat forked from another chat/facet's history
+	SessionTypeIndependent SessionType = "independent" // user-initiated headless work, no presentation layer (i-root)
+
+	// Ephemeral agent work — not reflected.
+	SessionTypeSpawn SessionType = "spawn" // agent-initiated, single task, returns to the agent
+
+	// System — not reflected.
+	SessionTypeReflection     SessionType = "reflection"      // memory-formation pass (reflection/consolidation/compaction/session-end); must not self-induce
+	SessionTypeKeepalive      SessionType = "keepalive"       // cache-warming periodic turn
+	SessionTypeBackgroundTask SessionType = "background-task" // foci-internal task (nudge-extraction, background, /branch endpoint)
+
+	SessionTypeUnknown SessionType = "unknown" // legacy / unclassifiable
 )
+
+// reflectableTypes is the allowlist of session types eligible for reflection /
+// memory formation: genuine conversations (human- or self-driven) that
+// accumulate context worth summarizing. Everything else — spawns, memory
+// passes, keepalive, background tasks — is excluded. Allowlist not denylist, so
+// a NEW system type defaults to not-reflected; a new conversational type must
+// be added here deliberately (guarded by TestSessionTypesCategorised).
+var reflectableTypes = map[SessionType]bool{
+	SessionTypeChat:        true,
+	SessionTypeFacet:       true,
+	SessionTypeIndependent: true,
+}
+
+// IsReflectable reports whether sessions of this type are eligible for
+// reflection / memory formation. It is the single source of truth for the
+// reflection predicates (see reflectableTypesSQL).
+func (t SessionType) IsReflectable() bool { return reflectableTypes[t] }
+
+// IsUserFacing reports whether a human is (or was) the interlocutor — chats,
+// facets, and independent (user-initiated headless) sessions. Drives the
+// /sessions recency sort: user-facing sessions rank by human activity, others
+// by any-turn activity.
+func (t SessionType) IsUserFacing() bool {
+	return t == SessionTypeChat || t == SessionTypeFacet || t == SessionTypeIndependent
+}
+
+// reflectableTypesSQL renders reflectableTypes as a SQL-quoted, comma-separated
+// list for IN clauses, sorted for stable output. Built from the trusted
+// reflectableTypes constant (never user input), so string interpolation into
+// SQL is safe. Single source of truth shared by the reflection predicates.
+func reflectableTypesSQL() string {
+	vals := make([]string, 0, len(reflectableTypes))
+	for t := range reflectableTypes {
+		vals = append(vals, "'"+string(t)+"'")
+	}
+	sort.Strings(vals)
+	return strings.Join(vals, ", ")
+}
 
 // SessionStatus tracks the lifecycle state of a session.
 type SessionStatus string
@@ -133,6 +184,11 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	// One-shot legacy migration: pre-stable-identity installs get their
 	// rows re-keyed (and old schemas the new columns). Idempotent.
 	migrateLegacyStateDB(db)
+
+	// Remap session_type from the old coarse vocabulary to the unified
+	// taxonomy (chat/facet/independent/spawn/reflection/keepalive/
+	// background-task/unknown). Idempotent.
+	migrateSessionTypeTaxonomy(db)
 
 	// Backfill any null last_reflection to now so a fresh install doesn't
 	// stampede all sessions into reflection on first run.
@@ -436,15 +492,17 @@ func (idx *SessionIndex) ReflectionRedundant(sessionKey string) bool {
 	return redundant
 }
 
-// SessionsNeedingReflection returns active chat session keys for an agent where
-// activity has occurred since the last reflection pass (or it has never run).
+// SessionsNeedingReflection returns active reflect-eligible session keys for an
+// agent where activity has occurred since the last reflection pass (or it has
+// never run). Reflect-eligible = the conversational types (chat/facet/
+// independent); see reflectableTypes.
 func (idx *SessionIndex) SessionsNeedingReflection(agentID string) ([]string, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	return idx.querySessionKeysLocked(
 		`SELECT session_key FROM session_index
-		 WHERE agent_id = ? AND session_type = 'chat' AND status = 'active'
+		 WHERE agent_id = ? AND session_type IN (`+reflectableTypesSQL()+`) AND status = 'active'
 		   AND (last_reflection IS NULL OR unixepoch(last_activity_at) > unixepoch(last_reflection))`,
 		agentID,
 	)
@@ -470,12 +528,13 @@ func (idx *SessionIndex) querySessionKeysLocked(query string, args ...interface{
 	return keys, rows.Err()
 }
 
-// SessionNeedsReflection reports whether a single chat session is due for
-// reflection by the same rule as SessionsNeedingReflection — it has had activity
-// since its last reflection (or never reflected). Unlike the bulk query it does
-// NOT filter on status='active': its caller (the final reflection fired when an
-// app session is archived) invokes it as the session transitions out of active,
-// and the "new activity since last reflection" gate is the real condition.
+// SessionNeedsReflection reports whether a single reflect-eligible session is
+// due for reflection by the same rule as SessionsNeedingReflection — it has had
+// activity since its last reflection (or never reflected). Unlike the bulk query
+// it does NOT filter on status='active': its caller (the final reflection fired
+// when an app session is archived) invokes it as the session transitions out of
+// active, and the "new activity since last reflection" gate is the real
+// condition. It still gates on reflect-eligible type (chat/facet/independent).
 func (idx *SessionIndex) SessionNeedsReflection(sessionKey string) bool {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
@@ -483,7 +542,7 @@ func (idx *SessionIndex) SessionNeedsReflection(sessionKey string) bool {
 	var due int
 	err := idx.db.QueryRow(
 		`SELECT 1 FROM session_index
-		 WHERE session_key = ? AND session_type = 'chat'
+		 WHERE session_key = ? AND session_type IN (`+reflectableTypesSQL()+`)
 		   AND (last_reflection IS NULL OR unixepoch(last_activity_at) > unixepoch(last_reflection))`,
 		sessionKey,
 	).Scan(&due)
