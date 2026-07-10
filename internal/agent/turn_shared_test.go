@@ -3,8 +3,6 @@ package agent
 import (
 	"context"
 	"testing"
-
-	"foci/internal/session"
 )
 
 // TestCheckStaleContext_OK verifies CheckStaleContext returns nil for a live context.
@@ -74,37 +72,3 @@ func TestLogConversationRecv_SetsChatID(t *testing.T) {
 	}
 }
 
-// TestRegisterSessionIndex_NilIndex verifies no panic when SessionIndex is nil.
-func TestRegisterSessionIndex_NilIndex(t *testing.T) {
-	a := &Agent{}
-	s := &sharedTurnOps{agent: a}
-	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
-	ts.Meta = &TurnMetadata{}
-
-	// Should not panic.
-	s.RegisterSessionIndex(ts)
-}
-
-// TestRegisterSessionIndex_Upserts verifies session appears in the index.
-func TestRegisterSessionIndex_Upserts(t *testing.T) {
-	idx, err := session.NewSessionIndex(t.TempDir() + "/test.db")
-	if err != nil {
-		t.Fatalf("create index: %v", err)
-	}
-	defer idx.Close()
-
-	a := &Agent{SessionIndex: idx}
-	s := &sharedTurnOps{agent: a}
-	ts := NewTurnState(context.Background(), "clutch/c100", []string{"hi"}, nil)
-	ts.Meta = &TurnMetadata{}
-
-	s.RegisterSessionIndex(ts)
-
-	entry, err := idx.Get("clutch/c100")
-	if err != nil {
-		t.Fatalf("Get after RegisterSessionIndex: %v", err)
-	}
-	if entry.SessionKey != "clutch/c100" {
-		t.Fatalf("entry.SessionKey = %q, want %q", entry.SessionKey, "clutch/c100")
-	}
-}

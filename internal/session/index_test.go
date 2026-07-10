@@ -1595,6 +1595,68 @@ func TestSessionIndex_LastUserActivityForAgent(t *testing.T) {
 	}
 }
 
+func TestRecordTurnActivity_MergedWrite(t *testing.T) {
+	// Proves the single merged upsert: last_cache_touch always advances;
+	// last_activity_at advances only when bumpActivity; last_user_activity_at
+	// advances only when bumpUser; the row is created if missing; and identity
+	// columns (created_at) are preserved across turns.
+	idx := tempIndex(t)
+	key := "bot/c1"
+
+	// First turn (interactive): creates the row, sets all three.
+	idx.RecordTurnActivity(SessionIndexEntry{
+		SessionKey: key, CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat, Status: SessionStatusActive,
+	}, true, true)
+	e, err := idx.Get(key)
+	if err != nil {
+		t.Fatalf("row not created: %v", err)
+	}
+	createdAt := e.CreatedAt
+	if _, ok := idx.LastCacheTouch(key); !ok {
+		t.Fatal("cache touch not set on first turn")
+	}
+	act1 := e.LastActivityAt
+	if _, ok := idx.LastUserActivity(key); !ok {
+		t.Fatal("user activity not set on interactive first turn")
+	}
+
+	// Memory turn (bumpActivity=false, bumpUser=false): cache advances, activity
+	// and user do NOT; created_at preserved.
+	u1, _ := idx.LastUserActivity(key)
+	time.Sleep(1100 * time.Millisecond)
+	idx.RecordTurnActivity(SessionIndexEntry{
+		SessionKey: key, CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat, Status: SessionStatusActive,
+	}, false, false)
+	e, _ = idx.Get(key)
+	if !e.LastActivityAt.Equal(act1) {
+		t.Errorf("memory turn advanced last_activity_at: %v != %v", e.LastActivityAt, act1)
+	}
+	if u2, _ := idx.LastUserActivity(key); !u2.Equal(u1) {
+		t.Errorf("memory turn advanced last_user_activity_at: %v != %v", u2, u1)
+	}
+	if !e.CreatedAt.Equal(createdAt) {
+		t.Errorf("created_at not preserved across turns: %v != %v", e.CreatedAt, createdAt)
+	}
+	c1, _ := idx.LastCacheTouch(key)
+	if !c1.After(act1) {
+		t.Errorf("cache touch did not advance on memory turn: %v", c1)
+	}
+
+	// Non-interactive substantive turn (bumpActivity=true, bumpUser=false):
+	// activity advances, user does NOT.
+	time.Sleep(1100 * time.Millisecond)
+	idx.RecordTurnActivity(SessionIndexEntry{
+		SessionKey: key, CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat, Status: SessionStatusActive,
+	}, true, false)
+	e, _ = idx.Get(key)
+	if !e.LastActivityAt.After(act1) {
+		t.Errorf("substantive turn did not advance last_activity_at: %v", e.LastActivityAt)
+	}
+	if u3, _ := idx.LastUserActivity(key); !u3.Equal(u1) {
+		t.Errorf("non-interactive turn advanced last_user_activity_at: %v != %v", u3, u1)
+	}
+}
+
 func TestSessionIndex_LastUserActivity_PerSession(t *testing.T) {
 	// Proves LastUserActivity is per-session (NOT the agent-wide max): it backs
 	// the session-scoped --if-user-active gate. bot/c1 and bot/c2 report their

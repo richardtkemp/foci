@@ -226,6 +226,53 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 	}
 }
 
+// RecordTurnActivity performs a turn's ENTIRE per-turn timestamp write in one
+// statement: it upserts the session row and sets, atomically,
+//   - last_cache_touch  → always (every turn refreshes the cached prefix),
+//   - last_activity_at   → only when bumpActivity (false for memory-formation
+//     turns, which must not defeat the reflection-skip guard); kept monotonic,
+//   - last_user_activity_at → only when bumpUser (interactive human turns).
+// It replaces the former three separate writes (Upsert + touchCacheFreshness +
+// touchUserActivity). e.CreatedAt carries the turn's `now`. On CONFLICT the
+// IDENTITY columns (created_at, parent, type, agent, chat, is_root) are
+// PRESERVED, not overwritten — so created_at stays the true creation time and a
+// branch's parent is never nulled by a turn (both were incidental churn in the
+// old Upsert path). last_reflection is seeded on INSERT only (#945).
+func (idx *SessionIndex) RecordTurnActivity(e SessionIndexEntry, bumpActivity, bumpUser bool) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	nowStr := timeutil.Format(e.CreatedAt)
+	agentID, chatID, isRoot := keyColumns(e.SessionKey)
+	var userInsert interface{} // NULL on insert unless this is an interactive turn
+	if bumpUser {
+		userInsert = nowStr
+	}
+	_, err := idx.db.Exec(
+		`INSERT INTO session_index
+		   (session_key, file_path, created_at, last_activity_at, last_cache_touch, last_user_activity_at, last_reflection, parent_session_key, session_type, status, agent_id, chat_id, is_root)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(session_key) DO UPDATE SET
+		   file_path = excluded.file_path,
+		   status = excluded.status,
+		   last_cache_touch = excluded.last_cache_touch,
+		   last_activity_at = CASE
+		     WHEN ? AND unixepoch(excluded.last_activity_at) > unixepoch(session_index.last_activity_at) THEN excluded.last_activity_at
+		     ELSE session_index.last_activity_at
+		   END,
+		   last_user_activity_at = CASE
+		     WHEN ? THEN excluded.last_user_activity_at
+		     ELSE session_index.last_user_activity_at
+		   END`,
+		e.SessionKey, e.FilePath, nowStr, nowStr, nowStr, userInsert, nowStr,
+		nullableString(e.ParentSessionKey), e.SessionType, e.Status, agentID, chatID, isRoot,
+		bumpActivity, bumpUser,
+	)
+	if err != nil {
+		log.Errorf("session", "record turn activity %q: %v", e.SessionKey, err)
+	}
+}
+
 // UpdateActivity updates the last_activity_at timestamp for a session without a full upsert.
 func (idx *SessionIndex) UpdateActivity(sessionKey string, activityAt time.Time) {
 	idx.mu.Lock()

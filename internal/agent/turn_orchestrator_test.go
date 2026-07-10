@@ -149,7 +149,6 @@ func (s *asyncStubContract) AcquireTurnLock(*TurnState) func()     { return func
 func (s *asyncStubContract) IncrementProcessing(*TurnState) func() { return func() {} }
 func (s *asyncStubContract) RegisterTurn(*TurnState) func()        { return func() {} }
 func (s *asyncStubContract) CheckStaleContext(*TurnState) error    { return nil }
-func (s *asyncStubContract) RegisterSessionIndex(*TurnState)       {}
 func (s *asyncStubContract) LogConversationRecv(*TurnState)        {}
 func (s *asyncStubContract) TouchActivity(*TurnState)              {}
 func (s *asyncStubContract) LoadSessionMeta(*TurnState)            {}
@@ -188,7 +187,6 @@ func (s *errorStubContract) AcquireTurnLock(*TurnState) func()     { return func
 func (s *errorStubContract) IncrementProcessing(*TurnState) func() { return func() {} }
 func (s *errorStubContract) RegisterTurn(*TurnState) func()        { return func() {} }
 func (s *errorStubContract) CheckStaleContext(*TurnState) error    { return nil }
-func (s *errorStubContract) RegisterSessionIndex(*TurnState)       {}
 func (s *errorStubContract) LogConversationRecv(*TurnState)        {}
 func (s *errorStubContract) TouchActivity(*TurnState)              {}
 func (s *errorStubContract) LoadSessionMeta(*TurnState)            {}

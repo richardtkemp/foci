@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -308,9 +309,16 @@ func seedCacheTestRow(idx *session.SessionIndex, key string) {
 	})
 }
 
-// TestTouchCacheFreshness_WritesRow verifies the helper stamps last_cache_touch
-// on the session's own row within ±2s of now.
-func TestTouchCacheFreshness_WritesRow(t *testing.T) {
+// recordTurnActivityTS builds a minimal TurnState for driving recordTurnActivity.
+func recordTurnActivityTS(key, trigger string) *TurnState {
+	ts := NewTurnState(context.Background(), key, []string{"x"}, nil)
+	ts.Trigger = trigger
+	return ts
+}
+
+// TestRecordTurnActivity_WritesCacheTouch verifies the single per-turn write
+// stamps last_cache_touch on the session's own row within ±2s of now.
+func TestRecordTurnActivity_WritesCacheTouch(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -321,7 +329,7 @@ func TestTouchCacheFreshness_WritesRow(t *testing.T) {
 	seedCacheTestRow(idx, testBaseA)
 
 	before := time.Now().Add(-2 * time.Second)
-	a.touchCacheFreshness(testBaseA)
+	a.recordTurnActivity(recordTurnActivityTS(testBaseA, "keepalive"))
 	after := time.Now().Add(2 * time.Second)
 
 	got, ok := idx.LastCacheTouch(testBaseA)
@@ -333,9 +341,10 @@ func TestTouchCacheFreshness_WritesRow(t *testing.T) {
 	}
 }
 
-// TestTouchCacheFreshness_Monotonic verifies repeated calls keep advancing the
-// timestamp (never go backwards).
-func TestTouchCacheFreshness_Monotonic(t *testing.T) {
+// TestRecordTurnActivity_CreatesRowIfMissing verifies the write is an UPSERT: a
+// turn on a key with no index row creates it (subsuming the old
+// RegisterSessionIndex), unlike the former UPDATE-only touchCacheFreshness.
+func TestRecordTurnActivity_CreatesRowIfMissing(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -343,29 +352,19 @@ func TestTouchCacheFreshness_Monotonic(t *testing.T) {
 	defer idx.Close()
 
 	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
-	seedCacheTestRow(idx, testBaseA)
+	a.recordTurnActivity(recordTurnActivityTS(testBaseA, "user"))
 
-	a.touchCacheFreshness(testBaseA)
-	first, ok := idx.LastCacheTouch(testBaseA)
-	if !ok {
-		t.Fatalf("first cache touch not written")
+	if _, err := idx.Get(testBaseA); err != nil {
+		t.Fatalf("row not created by recordTurnActivity: %v", err)
 	}
-
-	time.Sleep(1100 * time.Millisecond)
-	a.touchCacheFreshness(testBaseA)
-	second, ok := idx.LastCacheTouch(testBaseA)
-	if !ok {
-		t.Fatalf("second cache touch not written")
-	}
-	if second.Before(first) {
-		t.Fatalf("second cache touch %v before first %v (not monotonic)", second, first)
+	if _, ok := idx.LastCacheTouch(testBaseA); !ok {
+		t.Fatalf("last_cache_touch not written on freshly-created row")
 	}
 }
 
-// TestTouchCacheFreshness_BranchBumpsRoot verifies that a branch turn stamps
-// BOTH its own row and its root's row — the branch shares (and thus warms) the
-// root's cached prefix.
-func TestTouchCacheFreshness_BranchIsOwnKeyOnly(t *testing.T) {
+// TestRecordTurnActivity_BranchOwnKeyOnly verifies a branch turn stamps its own
+// cache row but NOT its root's (root is warmed only at branch creation).
+func TestRecordTurnActivity_BranchOwnKeyOnly(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -377,38 +376,19 @@ func TestTouchCacheFreshness_BranchIsOwnKeyOnly(t *testing.T) {
 	seedCacheTestRow(idx, testBaseA)
 	seedCacheTestRow(idx, branchKey)
 
-	a.touchCacheFreshness(branchKey)
+	a.recordTurnActivity(recordTurnActivityTS(branchKey, "keepalive"))
 
 	if _, ok := idx.LastCacheTouch(branchKey); !ok {
 		t.Fatalf("branch %s cache touch not written", branchKey)
 	}
-	// A branch TURN must not warm root — root is warmed only at branch creation
-	// (TouchRootCacheForBranch).
 	if _, ok := idx.LastCacheTouch(testBaseA); ok {
 		t.Fatalf("root %s cache touch wrongly written by a branch turn", testBaseA)
 	}
 }
 
-// TestTouchCacheFreshness_NoSessionIndex verifies the helper is safe when
-// SessionIndex is nil (test agents, partially-constructed Agents).
-func TestTouchCacheFreshness_NoSessionIndex(t *testing.T) {
+// TestRecordTurnActivity_NoSessionIndex verifies the write is safe when
+// SessionIndex is nil (partially-constructed Agents).
+func TestRecordTurnActivity_NoSessionIndex(t *testing.T) {
 	a := &Agent{AgentID: "test-agent"}
-	a.touchCacheFreshness(testBaseA) // must not panic
-}
-
-// TestTouchCacheFreshness_NoRow verifies the helper is a harmless no-op when
-// the session row doesn't exist (UPDATE affects 0 rows).
-func TestTouchCacheFreshness_NoRow(t *testing.T) {
-	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatalf("NewSessionIndex: %v", err)
-	}
-	defer idx.Close()
-
-	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
-	a.touchCacheFreshness(testBaseA)
-
-	if _, ok := idx.LastCacheTouch(testBaseA); ok {
-		t.Fatalf("cache touch written for %s despite no row existing", testBaseA)
-	}
+	a.recordTurnActivity(recordTurnActivityTS(testBaseA, "user")) // must not panic
 }
