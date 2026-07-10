@@ -123,7 +123,7 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 	}
 
 	// Last-user-activity is recorded per-session in the turn path (see
-	// Agent.touchUserActivity, gated on isUserTrigger) — not here.
+	// Agent.touchUserActivity, gated on isInteractiveTrigger) — not here.
 	if b.OnUserMessage != nil {
 		b.OnUserMessage()
 	}
