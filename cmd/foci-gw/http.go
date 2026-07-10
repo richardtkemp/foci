@@ -71,7 +71,7 @@ func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
 		if in.InFlight {
 			return true
 		}
-		return isUserActive(in.AgentID, within)
+		return isUserActive(in.SessionBase, within)
 	}
 
 	// sessionActiveWithin: did this session execute a turn within the
@@ -96,8 +96,8 @@ func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
 		active         func(time.Duration) bool
 		skipWhenActive bool
 	}{
-		{in.IfUserActive, "if_user_active", in.AgentID, "skipped: no recent user activity", userActiveWithin, false},
-		{in.IfUserInactive, "if_user_inactive", in.AgentID, "skipped: user recently active", userActiveWithin, true},
+		{in.IfUserActive, "if_user_active", in.SessionBase, "skipped: no recent user activity", userActiveWithin, false},
+		{in.IfUserInactive, "if_user_inactive", in.SessionBase, "skipped: user recently active", userActiveWithin, true},
 		{in.IfActive, "if_active", in.SessionBase, "skipped: no recent activity", sessionActiveWithin, false},
 		{in.IfInactive, "if_inactive", in.SessionBase, "skipped: session recently active", sessionActiveWithin, true},
 	}

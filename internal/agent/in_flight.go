@@ -245,19 +245,14 @@ func (a *Agent) touchCacheFreshness(sessionKey string) {
 // touchUserActivity records that a human interacted with this session now. Only
 // called for real-time interactive turns (telegram/app/discord/voice), so it is
 // the clean "a human spoke" signal — no /send, cron, keepalive, agent, or memory
-// turns. Bumps the
-// root too (a human message on a branch also counts as agent-level attention),
-// so LastUserActivityForAgent's derived max sees it. No-op if SessionIndex is
-// nil or the key is empty.
+// turns. Writes the OWN key only — a human interaction on a branch/child is
+// activity on THAT session, not on its root (mirroring last_activity_at, which
+// is also own-key-only). Agent-level consumers still see it: LastUserActivityForAgent
+// takes a max over ALL the agent's sessions, so the child's own row counts.
+// No-op if SessionIndex is nil or the key is empty.
 func (a *Agent) touchUserActivity(sessionKey string) {
 	if a.SessionIndex == nil || sessionKey == "" {
 		return
 	}
-	now := time.Now()
-	a.SessionIndex.TouchUserActivity(sessionKey, now)
-	if sk, err := session.ParseSessionKey(sessionKey); err == nil {
-		if root := sk.Root().String(); root != sessionKey {
-			a.SessionIndex.TouchUserActivity(root, now)
-		}
-	}
+	a.SessionIndex.TouchUserActivity(sessionKey, time.Now())
 }

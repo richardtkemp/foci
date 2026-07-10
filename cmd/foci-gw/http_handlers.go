@@ -80,11 +80,17 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 		return inst, ok
 	}
 
-	isUserActive := func(agentID string, within time.Duration) bool {
+	// Scoped to the RESOLVED target session (not the agent-wide max): the gate
+	// asks "did a human touch THIS session recently", matching what the caller
+	// is about to send to.
+	isUserActive := func(sessionKey string, within time.Duration) bool {
 		if d.sessionIndex == nil {
 			return true
 		}
-		last, ok := d.sessionIndex.LastUserActivityForAgent(agentID)
+		if sessionKey == "" {
+			return false
+		}
+		last, ok := d.sessionIndex.LastUserActivity(sessionKey)
 		if !ok {
 			return false
 		}
