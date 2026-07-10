@@ -349,3 +349,22 @@ func TestOrchestrator_UserActivityGatedByTrigger(t *testing.T) {
 		t.Fatalf("voice turn did not write last_user_activity")
 	}
 }
+
+// TestOrchestrator_CentralLastMessageTimeWrite verifies OrchestrateFullTurn
+// writes lastMessageTime centrally (after ComposePrompt) — the write that used
+// to live in each transport. Covers the F2 consolidation.
+func TestOrchestrator_CentralLastMessageTimeWrite(t *testing.T) {
+	a := &Agent{AgentID: "test-agent"}
+	tc := &stubContract{}
+	ts := NewTurnState(context.Background(), orchestratorTestKey, []string{"hi"}, nil)
+	// Stub LoadSessionMeta is a no-op, so provide the meta the central write targets.
+	ts.SessionMeta = &sessionMeta{}
+
+	before := time.Now().Add(-time.Second)
+	if _, err := a.OrchestrateFullTurn(context.Background(), tc, ts); err != nil {
+		t.Fatalf("OrchestrateFullTurn: %v", err)
+	}
+	if ts.SessionMeta.lastMessageTime.Before(before) {
+		t.Fatalf("central write did not set lastMessageTime: got %v", ts.SessionMeta.lastMessageTime)
+	}
+}

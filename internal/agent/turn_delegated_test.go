@@ -92,10 +92,8 @@ func TestDelegatedTransport_ComposePrompt(t *testing.T) {
 	if !strings.Contains(ts.Prompt, "hello world") {
 		t.Errorf("Prompt should contain user text, got: %q", ts.Prompt)
 	}
-	// lastMessageTime should have been updated.
-	if ts.SessionMeta.lastMessageTime.IsZero() {
-		t.Error("lastMessageTime should be non-zero after ComposePrompt")
-	}
+	// lastMessageTime is now written centrally by OrchestrateFullTurn (after
+	// ComposePrompt), not by the transport — covered at the orchestrator level.
 }
 
 // ---------------------------------------------------------------------------
@@ -1722,9 +1720,8 @@ func TestDelegatedTransport_UpdateSessionMeta_Tracking(t *testing.T) {
 	tr.UpdateSessionMeta(ts)
 
 	sm := ts.SessionMeta
-	if sm.lastMessageTime != started {
-		t.Errorf("lastMessageTime = %v, want %v", sm.lastMessageTime, started)
-	}
+	// lastMessageTime moved to OrchestrateFullTurn (central write); UpdateSessionMeta
+	// only tracks tokens/cost now.
 	if sm.prevInput != 5000 {
 		t.Errorf("prevInput = %d, want 5000", sm.prevInput)
 	}

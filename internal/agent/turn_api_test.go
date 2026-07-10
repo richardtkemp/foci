@@ -831,9 +831,8 @@ func TestUpdateSessionMeta_Updates(t *testing.T) {
 
 	tr.UpdateSessionMeta(ts)
 
-	if ts.SessionMeta.lastMessageTime != ts.StartedAt {
-		t.Errorf("lastMessageTime = %v, want %v", ts.SessionMeta.lastMessageTime, ts.StartedAt)
-	}
+	// lastMessageTime moved to OrchestrateFullTurn (central write); UpdateSessionMeta
+	// only tracks tokens/cost now.
 	if ts.SessionMeta.prevCost != 0.0042 {
 		t.Errorf("prevCost = %f, want 0.0042", ts.SessionMeta.prevCost)
 	}
