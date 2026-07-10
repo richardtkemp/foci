@@ -74,9 +74,17 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// per-session (child-distinct, matching the in-flight tracking above), and a
 	// branch turn ALSO bumps its root because it warms the root's shared cache.
 	// Feeds the --if-active / --if-inactive send gate ("is this session's cache
-	// warm?"). The per-receive-path last_user_activity write (telegram/discord)
-	// is deliberately separate — it tracks user attention, not cache freshness.
+	// warm?").
 	a.touchCacheFreshness(ts.SessionKey)
+	// touchUserActivity is the narrower "a human spoke" signal: bumped only on
+	// real-time interactive input (telegram/app/discord/voice), excluding HTTP
+	// /send (foci send, cron), webhooks, wakes, agent-to-agent, and memory
+	// passes. isInteractiveTrigger — NOT isUserTrigger, which also counts /send
+	// and "" for nudge/logging purposes. Feeds --if-user-active and the warning
+	// dispatcher's cadence choice. Deliberately separate from cache freshness.
+	if isInteractiveTrigger(ts.Trigger) {
+		a.touchUserActivity(ts.SessionKey)
+	}
 
 	// Phase 2: Preparation
 	tc.LoadSessionMeta(ts)

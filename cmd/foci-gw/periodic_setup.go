@@ -117,12 +117,17 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	warningInactiveInterval, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveInactiveInterval)
 	warningActivityThreshold, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveActivityThreshold)
 	agentID := acfg.ID
+	// The dispatcher's active/inactive cadence keys off genuine human attention,
+	// so read the clean per-session last_user_activity signal (derived max over
+	// the agent's sessions) — NOT lastMessageTime, which any system-initiated
+	// turn (keepalive/reflection/cron) advances, making keepalive agents look
+	// permanently user-active.
 	lastUserMsgFn := func() time.Time {
-		sk := defaultSessionKeyFor(inst.ag, agentID)
-		if sk == "" {
+		if inst.ag == nil || inst.ag.SessionIndex == nil {
 			return time.Time{}
 		}
-		return inst.ag.LastUserMessageTime(sk)
+		last, _ := inst.ag.SessionIndex.LastUserActivityForAgent(agentID)
+		return last
 	}
 
 	// Proactive warning dispatcher (agent session injection).

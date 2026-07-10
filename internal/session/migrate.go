@@ -313,6 +313,7 @@ func migrateLegacyStateDB(db *sql.DB) {
 		`ALTER TABLE session_index ADD COLUMN last_activity_at TEXT`,
 		`ALTER TABLE session_index ADD COLUMN last_reflection TEXT`,
 		`ALTER TABLE session_index ADD COLUMN last_cache_touch TEXT`,
+		`ALTER TABLE session_index ADD COLUMN last_user_activity_at TEXT`,
 		`ALTER TABLE session_index ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE session_index ADD COLUMN chat_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_index ADD COLUMN is_root INTEGER NOT NULL DEFAULT 0`,

@@ -122,10 +122,8 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 		}
 	}
 
-	// Record last real user activity (for --if-active gating on CLI commands).
-	if !b.isSecondary && b.agentID != "" && b.sessionIndex != nil {
-		_ = b.sessionIndex.SetAgentMetadata(b.agentID, "last_user_activity", fmt.Sprintf("%d", time.Now().Unix()))
-	}
+	// Last-user-activity is recorded per-session in the turn path (see
+	// Agent.touchUserActivity, gated on isUserTrigger) — not here.
 	if b.OnUserMessage != nil {
 		b.OnUserMessage()
 	}

@@ -74,6 +74,7 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 			last_activity_at   TEXT,
 			last_reflection    TEXT,
 			last_cache_touch   TEXT,
+			last_user_activity_at TEXT,
 			parent_session_key TEXT,
 			session_type       TEXT NOT NULL,
 			status             TEXT NOT NULL DEFAULT 'active',
@@ -280,6 +281,47 @@ func (idx *SessionIndex) LastCacheTouch(sessionKey string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return t, true
+}
+
+// TouchUserActivity records that a human interacted with this session at time
+// `at`. Written only on user-triggered turns (telegram/app/discord/voice), so
+// unlike last_cache_touch it excludes cron/keepalive/agent/memory turns — it is
+// the clean "a human spoke recently" signal. No-op if the row doesn't exist.
+func (idx *SessionIndex) TouchUserActivity(sessionKey string, at time.Time) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	_, err := idx.db.Exec(
+		`UPDATE session_index SET last_user_activity_at = ? WHERE session_key = ?`,
+		timeutil.Format(at),
+		sessionKey,
+	)
+	if err != nil {
+		log.Warnf("session", "touch user activity for %q: %v", sessionKey, err)
+	}
+}
+
+// LastUserActivityForAgent returns the most recent human-interaction time across
+// all of an agent's sessions (a derived max over last_user_activity_at), and
+// whether any is recorded. Backs the --if-user-active gate and the warning
+// dispatcher's active/inactive cadence choice. Agent-scoped by design: "has a
+// human interacted with this agent recently?" regardless of which session.
+func (idx *SessionIndex) LastUserActivityForAgent(agentID string) (time.Time, bool) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	// max over unixepoch, not the raw text: RFC3339 strings with different
+	// timezone offsets (GMT/BST across a DST boundary) don't sort lexically.
+	var epoch sql.NullInt64
+	err := idx.db.QueryRow(
+		`SELECT max(unixepoch(last_user_activity_at)) FROM session_index
+		 WHERE agent_id = ? AND last_user_activity_at IS NOT NULL`,
+		agentID,
+	).Scan(&epoch)
+	if err != nil || !epoch.Valid {
+		return time.Time{}, false
+	}
+	return time.Unix(epoch.Int64, 0), true
 }
 
 // StampReflection records when the reflection pass was dispatched for a session.
