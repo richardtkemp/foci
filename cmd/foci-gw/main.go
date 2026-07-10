@@ -366,7 +366,6 @@ Subcommands:
 				continue
 			}
 			inst.ag.RestoreSessionOverrides(sk)
-			inst.ag.SeedSessionMeta(sk)
 			restored[sk] = true
 		}
 

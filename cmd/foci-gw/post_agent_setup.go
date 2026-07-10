@@ -220,10 +220,13 @@ func setupToolDetailCleanup(
 				for _, id := range agentOrder {
 					inst := agents[id]
 					sk := defaultSessionKeyFor(inst.ag, id)
-					if sk == "" {
+					if sk == "" || inst.ag.SessionIndex == nil {
 						continue
 					}
-					if t := inst.ag.LastUserMessageTime(sk); !t.IsZero() && time.Since(t) < 10*time.Minute {
+					// "Recent activity" for the vacuum-safety gate means any turn
+					// touched this session lately — read last_cache_touch (the DB
+					// any-turn signal), not the in-mem lastMessageTime.
+					if t, ok := inst.ag.SessionIndex.LastCacheTouch(sk); ok && time.Since(t) < 10*time.Minute {
 						allIdle = false
 						break
 					}

@@ -201,6 +201,26 @@ func (a *Agent) AdoptAutonomousRun(sessionKey string) func() {
 	return a.markInFlight(sessionKey, true)
 }
 
+// recordCacheTouch captures the PREVIOUS cache-touch (the prior turn's request
+// time, for cache-bust idle detection) onto the session meta, then records this
+// turn's cache touch. Must run at turn entry, before inference — the capture has
+// to read last_cache_touch BEFORE touchCacheFreshness bumps it.
+func (a *Agent) recordCacheTouch(sessionKey string) {
+	if a.SessionIndex == nil || sessionKey == "" {
+		return
+	}
+	prev, ok := a.SessionIndex.LastCacheTouch(sessionKey)
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	if ok {
+		sm.prevRequestTime = prev
+	} else {
+		sm.prevRequestTime = time.Time{}
+	}
+	a.metaMu.Unlock()
+	a.touchCacheFreshness(sessionKey)
+}
+
 // touchCacheFreshness records that this session's cached context was hit by a
 // turn now, feeding the --if-active / --if-inactive send gate. Bumped on EVERY
 // turn regardless of trigger (user, cron, CLI, reflection, memory) because any

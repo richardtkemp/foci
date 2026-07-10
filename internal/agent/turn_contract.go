@@ -167,7 +167,7 @@ type TurnState struct {
 	TurnID     uint64
 
 	// StartedAt is when the turn began. Set once by the orchestrator.
-	// Used for lastMessageTime, cache bust idle detection, etc.
+	// Used as the lastMessageTime fallback for system turns (no ReceivedAt).
 	StartedAt time.Time
 
 	// ReceivedAt is when the user message that triggered this turn was first

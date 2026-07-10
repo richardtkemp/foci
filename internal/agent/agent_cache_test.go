@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,6 +140,14 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	// Cache-bust idle detection reads prevRequestTime, captured from the DB's
+	// last_cache_touch at turn entry — so the agent needs a SessionIndex (as it
+	// always has in production).
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
 
 	var alerts []string
 	ag := &Agent{
@@ -146,6 +155,7 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 		Sessions:               store,
 		Tools:                  registry,
 		Bootstrap:              bootstrap,
+		SessionIndex:           idx,
 		Model:                  "claude-haiku-4-5",
 		CacheBustDetect:        true,
 		CacheBustIdleThreshold: 1 * time.Millisecond, // very short threshold for test

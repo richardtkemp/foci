@@ -21,7 +21,11 @@ func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *pro
 		if idleThresh == 0 {
 			idleThresh = 10 * time.Minute
 		}
-		idle := !sm.lastMessageTime.IsZero() && now.Sub(sm.lastMessageTime) > idleThresh
+		// Idle is measured from the PREVIOUS request (prevRequestTime = the
+		// last_cache_touch captured at this turn's entry), not the message
+		// received-time — the cache TTL clock starts when a request refreshes the
+		// cache, so request time is the correct basis for "did it lapse naturally".
+		idle := !sm.prevRequestTime.IsZero() && now.Sub(sm.prevRequestTime) > idleThresh
 		if !idle && resp.Usage.CacheReadInputTokens < sm.prevCacheRead {
 			for _, fn := range a.CacheBustAlert {
 				fn(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"foci/internal/modelinfo"
-	"foci/internal/provider"
 	"foci/internal/session"
 )
 
@@ -249,135 +248,31 @@ func TestRestoreSessionOverrides_NilSessionIndex(t *testing.T) {
 	}
 }
 
-func TestParseMetaTime(t *testing.T) {
-	// Proves that parseMetaTime correctly extracts the RFC3339 timestamp from well-formed [meta] headers and returns false for missing, malformed, or unrelated strings.
-	tests := []struct {
-		name    string
-		text    string
-		wantOK  bool
-		wantStr string // RFC3339 string of expected time
-	}{
-		{
-			name:    "valid meta with gap",
-			text:    "[meta] time=2026-02-23T15:43:13Z gap=3h12m model=claude-haiku-4-5",
-			wantOK:  true,
-			wantStr: "2026-02-23T15:43:13Z",
-		},
-		{
-			name:    "valid meta first message",
-			text:    "[meta] time=2026-01-01T00:00:00Z gap=none model=claude-haiku-4-5",
-			wantOK:  true,
-			wantStr: "2026-01-01T00:00:00Z",
-		},
-		{
-			name:   "no meta prefix",
-			text:   "hello world",
-			wantOK: false,
-		},
-		{
-			name:   "meta prefix but no time field",
-			text:   "[meta] gap=none model=claude-haiku-4-5",
-			wantOK: false,
-		},
-		{
-			name:   "invalid time format",
-			text:   "[meta] time=not-a-time gap=none",
-			wantOK: false,
-		},
-		{
-			name:   "empty string",
-			text:   "",
-			wantOK: false,
-		},
-		{
-			name:   "restart marker (not meta)",
-			text:   "[System restarted at 2026-02-23T15:43:13Z]",
-			wantOK: false,
-		},
+
+func TestHydrateLastMessageTimeFromCacheTouch(t *testing.T) {
+	// Proves the restart baseline for lastMessageTime now comes from the DB
+	// (last_cache_touch) via lazy hydration in getSessionMeta — replacing the
+	// old disk-parsing SeedSessionMeta.
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
 	}
+	defer idx.Close()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := parseMetaTime(tt.text)
-			if ok != tt.wantOK {
-				t.Fatalf("parseMetaTime(%q) ok = %v, want %v", tt.text, ok, tt.wantOK)
-			}
-			if ok && got.Format(time.RFC3339) != tt.wantStr {
-				t.Errorf("parseMetaTime(%q) = %v, want %v", tt.text, got.Format(time.RFC3339), tt.wantStr)
-			}
-		})
-	}
-}
+	sessionKey := "test/chydrate"
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  sessionKey,
+		CreatedAt:   time.Now().Add(-time.Hour),
+		SessionType: session.ClassifySessionKey(sessionKey),
+		Status:      session.SessionStatusActive,
+	})
+	touch := time.Now().Add(-30 * time.Minute)
+	idx.TouchCacheTouch(sessionKey, touch)
 
-func TestSeedSessionMeta(t *testing.T) {
-	// Proves that SeedSessionMeta reads the most recent [meta] timestamp from a populated session so that a restarted agent knows when the last message was sent.
-	store := session.NewStore(t.TempDir())
-	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
-
-	sessionKey := "test/iseed"
-
-	// Seed with empty session — should not panic
-	ag.SeedSessionMeta(sessionKey)
+	// Fresh agent (simulating restart): first getSessionMeta hydrates from DB.
+	ag := &Agent{SessionIndex: idx}
 	sm := ag.getSessionMeta(sessionKey)
-	if !sm.lastMessageTime.IsZero() {
-		t.Error("lastMessageTime should be zero for empty session")
-	}
-
-	// Add some messages with meta headers
-	store.TestAppend(sessionKey, provider.Message{
-		Role:    "user",
-		Content: provider.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
-	})
-	store.TestAppend(sessionKey, provider.Message{
-		Role:    "assistant",
-		Content: provider.TextContent("Hi there!"),
-	})
-	store.TestAppend(sessionKey, provider.Message{
-		Role:    "user",
-		Content: provider.TextContent("[meta] time=2026-02-23T12:30:00Z gap=2h30m model=claude-haiku-4-5\nHow are you?"),
-	})
-	store.TestAppend(sessionKey, provider.Message{
-		Role:    "assistant",
-		Content: provider.TextContent("Good!"),
-	})
-
-	// Seed from a fresh agent (simulating restart)
-	ag2 := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
-	ag2.SeedSessionMeta(sessionKey)
-
-	sm2 := ag2.getSessionMeta(sessionKey)
-	expected := time.Date(2026, 2, 23, 12, 30, 0, 0, time.UTC)
-	if !sm2.lastMessageTime.Equal(expected) {
-		t.Errorf("lastMessageTime = %v, want %v", sm2.lastMessageTime, expected)
-	}
-}
-
-func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
-	// Proves that SeedSessionMeta ignores non-meta user messages (e.g. restart markers) and correctly returns the timestamp from the last genuine [meta] header.
-	store := session.NewStore(t.TempDir())
-	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
-
-	sessionKey := "test/iseedskip"
-
-	// First message has meta, second user message is a restart marker (no meta)
-	store.TestAppend(sessionKey, provider.Message{
-		Role:    "user",
-		Content: provider.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
-	})
-	store.TestAppend(sessionKey, provider.Message{
-		Role:    "assistant",
-		Content: provider.TextContent("Hi!"),
-	})
-	store.TestAppend(sessionKey, provider.Message{
-		Role:    "user",
-		Content: provider.TextContent("[System restarted at 2026-02-23T11:00:00Z]"),
-	})
-
-	ag.SeedSessionMeta(sessionKey)
-
-	sm := ag.getSessionMeta(sessionKey)
-	expected := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
-	if !sm.lastMessageTime.Equal(expected) {
-		t.Errorf("lastMessageTime = %v, want %v (should skip restart marker and find first meta)", sm.lastMessageTime, expected)
+	if diff := sm.lastMessageTime.Sub(touch); diff > time.Second || diff < -time.Second {
+		t.Errorf("hydrated lastMessageTime = %v, want ~%v (from last_cache_touch)", sm.lastMessageTime, touch)
 	}
 }
