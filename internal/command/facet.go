@@ -43,6 +43,7 @@ func forkFacet(ctx context.Context, _ Request, cc CommandContext) (string, error
 		secConn.SetSessionKey("")
 		return "", fmt.Errorf("create branch: %w", err)
 	}
+	cc.Agent.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
 
 	// Facet sessions default to no_compact=true (short-lived, shouldn't trigger compaction).
 	if cc.AgentConfig.Sessions.FacetNoCompact == nil || *cc.AgentConfig.Sessions.FacetNoCompact {

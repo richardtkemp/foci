@@ -365,7 +365,7 @@ func TestTouchCacheFreshness_Monotonic(t *testing.T) {
 // TestTouchCacheFreshness_BranchBumpsRoot verifies that a branch turn stamps
 // BOTH its own row and its root's row — the branch shares (and thus warms) the
 // root's cached prefix.
-func TestTouchCacheFreshness_BranchBumpsRoot(t *testing.T) {
+func TestTouchCacheFreshness_BranchIsOwnKeyOnly(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -382,8 +382,10 @@ func TestTouchCacheFreshness_BranchBumpsRoot(t *testing.T) {
 	if _, ok := idx.LastCacheTouch(branchKey); !ok {
 		t.Fatalf("branch %s cache touch not written", branchKey)
 	}
-	if _, ok := idx.LastCacheTouch(testBaseA); !ok {
-		t.Fatalf("root %s cache touch not written by branch turn", testBaseA)
+	// A branch TURN must not warm root — root is warmed only at branch creation
+	// (TouchRootCacheForBranch).
+	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Fatalf("root %s cache touch wrongly written by a branch turn", testBaseA)
 	}
 }
 

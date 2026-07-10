@@ -84,5 +84,6 @@ func (a *Agent) createMemoryBranch(parentKey, branchType, orientTemplate string)
 		return "", false
 	}
 	a.SetSessionNoCompact(branchKey, true)
+	a.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
 	return branchKey, true
 }
