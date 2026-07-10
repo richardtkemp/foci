@@ -80,7 +80,7 @@ func mockGateway() *httptest.Server {
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
 	})
 
-	mux.HandleFunc("/wake", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/branch", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Agent      string `json:"agent"`
 			Text       string `json:"text"`

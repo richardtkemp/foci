@@ -118,7 +118,7 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 // resolveTargetSession resolves an endpoint's (agent, session-selector) pair
 // through the single route.Resolver ladder, writing the appropriate HTTP error
 // on failure. Every endpoint that takes a session selector resolves here, so
-// /send, /wake, /command, and /webhook behave identically: exact key → named
+// /send, /branch, /command, and /webhook behave identically: exact key → named
 // session → chat alias → create-named; empty selector → the agent's default
 // session. Returns ok=false after an error response has been written.
 func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, selector, policy, endpoint string) (route.Resolution, route.Receipt, bool) {
@@ -361,8 +361,8 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 	}
 }
 
-// handleWake returns the handler for POST /wake.
-func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
+// handleBranch returns the handler for POST /branch.
+func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -397,24 +397,24 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 
 		inst, ok := resolveAgent(req.Agent)
 		if !ok {
-			log.Warnf("http", "POST /wake: unknown agent %q", req.Agent)
+			log.Warnf("http", "POST /branch: unknown agent %q", req.Agent)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
 
 		if req.Text == "" {
-			req.Text = "[WAKE]"
+			req.Text = "[BRANCH]"
 		}
 
 		// Resolve parent session before gating so the activity gate can
 		// consult the parent's last_activity / IsTurnInFlight. Branch turns
 		// record last_activity against their parent root, so a turn running
 		// in any branch correctly registers as activity under the parent.
-		wakeRes, wakeRcpt, ok := resolveTargetSession(d, w, inst.id, req.Session, "", "/wake")
+		branchRes, branchRcpt, ok := resolveTargetSession(d, w, inst.id, req.Session, "", "/branch")
 		if !ok {
 			return
 		}
-		parentKey := wakeRes.SessionKey
+		parentKey := branchRes.SessionKey
 
 		parentBase := parentKey
 		if !gate(w, activityGateInputs{
@@ -425,38 +425,38 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			IfUserInactive: req.IfUserInactive,
 			IfActive:       req.IfActive,
 			IfInactive:     req.IfInactive,
-			LogTag:         "wake",
-			Endpoint:       "/wake",
+			LogTag:         "branch",
+			Endpoint:       "/branch",
 		}) {
 			return
 		}
 
 		// Delegated agents (e.g. Claude Code backend) don't support
-		// /wake's branching semantics — CC owns its session lifecycle and
+		// /branch's branching semantics — CC owns its session lifecycle and
 		// foci can't fork it. Fall through to /send semantics: deliver
 		// the text to the parent session directly. We log a warning so
 		// callers know the requested isolation (no_compact, no_reset_hook,
 		// silent, fresh-branch context) did not happen.
 		if inst.ag.DelegatedManager != nil {
-			log.Warnf("wake", "agent %q is delegated — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)", inst.id, req.NoCompact, req.NoResetHook, req.Silent)
+			log.Warnf("branch", "agent %q is delegated — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)", inst.id, req.NoCompact, req.NoResetHook, req.Silent)
 			if req.Model != "" {
 				if err := applyModelOverride(inst, parentKey, req.Model, d.cfg.Models); err != nil {
 					http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
 					return
 				}
 			}
-			sendCtx := agent.WithTrigger(d.ctx, "wake")
+			sendCtx := agent.WithTrigger(d.ctx, "branch")
 			if req.Async {
-				asyncDispatch(w, inst, d.connMgr, sendCtx, parentKey, req.Text, "wake", req.Silent, route.PolicyFallback, wakeRcpt)
+				asyncDispatch(w, inst, d.connMgr, sendCtx, parentKey, req.Text, "branch", req.Silent, route.PolicyFallback, branchRcpt)
 				return
 			}
 			resp, err := runAgentQueued(sendCtx, inst.ag, parentKey, req.Text)
 			if err != nil {
-				log.Errorf("wake", "send fallback error: %v", err)
+				log.Errorf("branch", "send fallback error: %v", err)
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
-			writeJSONReceipt(w, resp, wakeRcpt)
+			writeJSONReceipt(w, resp, branchRcpt)
 			return
 		}
 
@@ -468,7 +468,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			OrientationTemplate: orientTemplate,
 		})
 		if err != nil {
-			log.Errorf("wake", "branch error: %v", err)
+			log.Errorf("branch", "branch error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -480,21 +480,21 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			}
 		}
 
-		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async, req.Silent)
+		log.Infof("branch", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async, req.Silent)
 
-		wakeCtx := agent.WithTrigger(d.ctx, "wake")
+		branchCtx := agent.WithTrigger(d.ctx, "branch")
 		if req.NoCompact {
 			inst.ag.SetSessionNoCompact(branchKey, true)
 		}
 
 		if req.Async {
-			asyncDispatch(w, inst, d.connMgr, wakeCtx, branchKey, req.Text, "wake", req.Silent, route.PolicyFallback, route.Receipt{SessionKey: branchKey, Via: "branch"})
+			asyncDispatch(w, inst, d.connMgr, branchCtx, branchKey, req.Text, "branch", req.Silent, route.PolicyFallback, route.Receipt{SessionKey: branchKey, Via: "branch"})
 			return
 		}
 
-		resp, err := runAgentQueued(wakeCtx, inst.ag, branchKey, req.Text)
+		resp, err := runAgentQueued(branchCtx, inst.ag, branchKey, req.Text)
 		if err != nil {
-			log.Errorf("wake", "error: %v", err)
+			log.Errorf("branch", "error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -558,7 +558,7 @@ func intPtrOr(p *int, def int) int {
 const webhookMaxBodyBytes = 1 << 20
 
 // jsonMaxBodyBytes caps the request body of the JSON control endpoints
-// (/send, /command, /wake). These carry short control messages, so 1 MB is
+// (/send, /command, /branch). These carry short control messages, so 1 MB is
 // generous; the cap stops an unbounded body from being buffered into memory.
 const jsonMaxBodyBytes = 1 << 20
 

@@ -92,7 +92,7 @@ func ReceivedAtFromContext(ctx context.Context) time.Time {
 
 // isUserTrigger returns true if the trigger represents a human-initiated message
 // (typed via a messaging platform, spoken via voice, or sent via HTTP /send).
-// Returns false for system-initiated triggers (keepalive, wake, cron, warnings, etc.).
+// Returns false for system-initiated triggers (keepalive, branch, cron, warnings, etc.).
 func isUserTrigger(trigger string) bool {
 	if _, ok := platformTriggers.Load(trigger); ok {
 		return true
@@ -135,7 +135,7 @@ func isInteractiveTrigger(trigger string) bool {
 // always fire a redundant reflection. These triggers are therefore excluded
 // from last_activity_at bumps (RegisterSessionIndex / TouchActivity).
 //
-// Note: this is deliberately narrow. Keepalive, background work, wake, and
+// Note: this is deliberately narrow. Keepalive, background work, branch, and
 // cron turns DO count as activity — autonomous work is worth reflecting on.
 // Only the reflection/memory passes themselves are excluded, because only they
 // would self-trigger the guard.
@@ -167,7 +167,8 @@ func nudgesAllowed(ts *TurnState) bool {
 //   - agent: an inter-agent send_to_session
 //   - ask-grader: the ask tool's answer/grader result delivery
 //   - webhook: an inbound webhook POST
-//   - wake: a /wake poke (scheduled cron job, self-scheduled wakeup)
+//   - branch: an external branch turn (foci branch CLI / HTTP /branch)
+//   - wake: a self-scheduled wakeup (remind wake=true)
 //   - background: a periodic self-maintenance tick (keepalive/reflection/consolidation)
 //   - memory: a memory-maintenance write (post-compaction, session-end)
 //   - system: a system-initiated notification (restart changelog, proactive warning)
@@ -195,7 +196,9 @@ func triggerToPlatform(trigger string) string {
 		return "ask-grader"
 	case "webhook":
 		return "webhook"
-	case "wake", "cron", "scheduled_wake":
+	case "branch":
+		return "branch"
+	case "scheduled_wake":
 		return "wake"
 	case "keepalive", "reflection", "consolidation", "background":
 		return "background"

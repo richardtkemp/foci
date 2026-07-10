@@ -171,17 +171,17 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-// registerHTTPHandlers registers all HTTP endpoints (/send, /status, /command, /wake, /webhook, /voice).
+// registerHTTPHandlers registers all HTTP endpoints (/send, /status, /command, /branch, /webhook, /voice).
 func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	resolveAgent, gate := buildResolvers(d)
 
 	mux.HandleFunc("/send", handleSend(d, resolveAgent, gate))
 	mux.HandleFunc("/status", handleStatus(d, resolveAgent))
 	mux.HandleFunc("/command", handleCommand(d, resolveAgent, gate))
-	mux.HandleFunc("/wake", handleWake(d, resolveAgent, gate))
+	mux.HandleFunc("/branch", handleBranch(d, resolveAgent, gate))
 	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, gate))
 
-	endpointList := "/send, /status, /command, /wake, /webhook/{agent}/{hookid}"
+	endpointList := "/send, /status, /command, /branch, /webhook/{agent}/{hookid}"
 	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
 		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
 		endpointList += ", /voice (ws)"
@@ -257,7 +257,7 @@ func runAgentBuffered(ctx context.Context, ag *agent.Agent, sessionKey, text str
 // runAgentBuffered — which drives the turn on the calling goroutine and can
 // therefore race an in-flight turn — the queued turn serialises with the
 // session's platform turns and defers behind a pending foci_ask: system
-// input (HTTP /send, wake fall-through, webhook) never steers running work,
+// input (HTTP /send, branch fall-through, webhook) never steers running work,
 // it waits gracefully for turn completion. The InjectMeta trigger is taken
 // from the ctx trigger label.
 //
