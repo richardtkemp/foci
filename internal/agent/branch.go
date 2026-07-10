@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+
 	"foci/internal/log"
 	"foci/internal/session"
 )
@@ -31,6 +33,18 @@ const (
 	// the turn completes). Used for DELEGATED background / consolidation work
 	// that must not touch the main conversation at all.
 	BranchIndependent
+
+	// BranchForkBackend creates a branch session whose BACKEND conversation is a
+	// REAL fork of the parent — the backend implements delegator.BackendBrancher
+	// (e.g. the CC stream backend clones its transcript). The branch starts with
+	// the parent's full context in an isolated session and the parent keeps
+	// running untouched. This is the payoff of backend branching: chosen for
+	// every delegated branch (reflection, background, session-end, the /branch
+	// endpoint) whose backend can fork, replacing both BranchInPlace (which
+	// polluted the main thread) and BranchIndependent (which started empty).
+	// Falls back at execution time to in-place/independent when there's no
+	// parent backend session to fork yet.
+	BranchForkBackend
 )
 
 // BranchStrategyFor returns how a memory/reflection turn of branchType should
@@ -43,30 +57,78 @@ func (a *Agent) BranchStrategyFor(branchType string) BranchStrategy {
 	}
 
 	// Delegated (backend-managed, e.g. Claude Code) agents.
-	switch branchType {
-	case "session-end-memory":
-		// A delegated backend cannot fork a conversation — so why "branch" on
-		// session end? The branch key is NOT a conversation fork; it is a
-		// bookkeeping handle. On /reset (and reclaim) we need two things at
-		// once: (1) the dying session must still write its memories from the
-		// FULL live context, and (2) the user must get a fresh session
-		// immediately, without blocking on that memory pass. We get both by
-		// creating a branch session key and REMAPPING the live backend onto it
-		// (see DelegatedManager.RemapSession): the old CC process keeps running
-		// under the branch key and finishes memory formation in the background,
-		// while a brand-new CC process takes over the original key for the next
-		// message. Without the separate key the fresh session would collide with
-		// the still-reflecting old one on the same key — they would share, and
-		// then tear down, a single backend + exec bridge (the outage in #1120).
-		// So the "branch" buys the old and new sessions independent lifecycles;
-		// it is deliberately a fork of the SESSION KEY, not of the model history.
+
+	// session-end-memory is excluded from the backend-fork generalisation: it
+	// remaps the live backend onto a bookkeeping branch key so it finishes
+	// memory while a fresh session takes the original key (#1120).
+	// RunSessionEndMemory owns that flow and resets the branch backend itself; it
+	// does NOT use a transcript fork. Keep returning BranchFork so the
+	// single-authority contract matches what that code actually does.
+	if branchType == "session-end-memory" {
 		return BranchFork
+	}
+
+	// The payoff of backend branching: for every other delegated branch
+	// (reflection, keepalive, compaction-memory, background, consolidation, the
+	// /branch endpoint), when the backend can fork its conversation we make a
+	// REAL isolated fork that starts from the parent's full context and leaves
+	// the parent running — replacing the old compromises (in-place polluted the
+	// main thread; independent started empty). Callers must quiesce the parent
+	// while the fork clones the transcript (see ForkBackendBranch).
+	if a.DelegatedManager.BackendCanBranch() {
+		return BranchForkBackend
+	}
+
+	// Backend can't fork — legacy per-type behaviour.
+	switch branchType {
 	case "reflection", "keepalive", "compaction-memory":
 		return BranchInPlace
 	default:
 		// background / consolidation / maintenance: isolated one-off sessions.
 		return BranchIndependent
 	}
+}
+
+// ForkBackendBranch realises the BranchForkBackend strategy: it creates a branch
+// session and forks the parent's BACKEND conversation into it, returning the
+// branch key ready to run a turn on. The parent is left untouched.
+//
+// ok=false means the fork couldn't be performed — the backend can't branch, or
+// the parent has no started backend session to fork yet. No branch session is
+// created in that case (nothing to clean up); the caller should fall back to
+// its in-place / independent path.
+//
+// PRECONDITION: the parent must be quiescent (no in-flight turn) for the
+// duration of this call — the fork copies the parent's transcript on disk, and
+// a concurrent turn writing to it would produce a torn copy. Callers that are
+// NOT already running inside the parent's inbox worker MUST wrap this in
+// a.EnqueueInjectWait(ctx, parentKey, …). Callers already in the worker (e.g.
+// the post-turn compaction-memory hook) hold that exclusivity already.
+func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts session.BranchOptions) (string, bool) {
+	if a.DelegatedManager == nil {
+		return "", false
+	}
+	// Fork the backend conversation FIRST — only mint the branch key if it
+	// succeeds, so a failed/impossible fork leaves no orphan branch session.
+	forkedID, err := a.DelegatedManager.ForkParentSession(ctx, parentKey)
+	if err != nil {
+		log.Warnf(opts.BranchType, "backend fork of %s failed: %v", parentKey, err)
+		return "", false
+	}
+	if forkedID == "" {
+		return "", false // nothing to fork (caller falls back)
+	}
+	branchKey, err := a.Sessions.CreateBranchWithOptions(parentKey, opts)
+	if err != nil {
+		log.Errorf(opts.BranchType, "fork branch key create for %s: %v", parentKey, err)
+		return "", false
+	}
+	// Point the branch key at the forked backend session so the next turn on it
+	// resumes the clone (full parent context) via the normal getOrCreate path.
+	a.DelegatedManager.saveResumeID(branchKey, forkedID)
+	a.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
+	log.Infof(opts.BranchType, "backend fork %s → %s (%s)", parentKey, branchKey, forkedID)
+	return branchKey, true
 }
 
 // createMemoryBranch creates the branch session used by the BranchFork strategy:

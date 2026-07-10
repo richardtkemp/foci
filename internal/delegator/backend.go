@@ -401,6 +401,43 @@ type Capabilities struct {
 	PreAnswerNudge bool
 }
 
+// BackendBrancher is optionally implemented by backends that can fork their
+// underlying conversation session into a new, independent backend session —
+// i.e. the backend "can branch". A foci branch key backed by such a fork
+// starts its first delegated turn with the PARENT's full backend context,
+// instead of an empty session (BranchIndependent) or a shared in-place turn.
+//
+// Backends that don't implement this interface are treated as unable to
+// branch; the branch machinery falls back to the existing behaviour. The
+// method is a pure fork operation and MUST NOT require a started/running
+// backend — callers may invoke it on a freshly-constructed (unstarted)
+// backend instance, since the fork is performed against on-disk session
+// state, not a live process.
+type BackendBrancher interface {
+	ForkSession(ctx context.Context, req ForkRequest) (ForkResult, error)
+}
+
+// ForkRequest identifies the backend conversation to fork.
+type ForkRequest struct {
+	// ParentSessionID is the backend session id to fork (for CC, its UUID).
+	ParentSessionID string
+	// WorkDir is the agent workspace (cwd); backends that key session storage
+	// by cwd (CC's ~/.claude/projects/<slug>/) need it to locate the session.
+	WorkDir string
+	// TruncateAfter, when >0, forks only the first N messages of the parent
+	// conversation (a mid-conversation branch). 0 forks the whole
+	// conversation. v1 CC support treats any >0 value as unsupported —
+	// reserved; see the backend-branch plan's "Deferred" section.
+	TruncateAfter int
+}
+
+// ForkResult carries the new backend session id, ready to be resumed.
+type ForkResult struct {
+	// SessionID is the new backend session id (for CC, a fresh UUID whose
+	// on-disk session is a copy of the parent's, ready for --resume).
+	SessionID string
+}
+
 // SkipPermissions reports whether the backend config disables the permission
 // prompt flow entirely (CC's --dangerously-skip-permissions). The single
 // accessor for every reader — backend launch args (ccstream/cctmux) and the

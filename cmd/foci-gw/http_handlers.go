@@ -431,14 +431,61 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			return
 		}
 
-		// Delegated agents (e.g. Claude Code backend) don't support
-		// /branch's branching semantics — CC owns its session lifecycle and
-		// foci can't fork it. Fall through to /send semantics: deliver
-		// the text to the parent session directly. We log a warning so
-		// callers know the requested isolation (no_compact, no_reset_hook,
-		// silent, fresh-branch context) did not happen.
+		// Delegated agents: attempt a REAL backend-conversation fork when the
+		// backend supports it (implements delegator.BackendBrancher — e.g. the
+		// CC stream backend, which clones its transcript). The forked branch
+		// starts with the parent's full context. Backends that can't branch
+		// (opencode), or a parent whose backend session hasn't started yet,
+		// fall through to /send semantics against the parent — preserving the
+		// prior behaviour and its "options ignored" warning.
 		if inst.ag.DelegatedManager != nil {
-			log.Warnf("branch", "agent %q is delegated — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)", inst.id, req.NoCompact, req.NoResetHook, req.Silent)
+			if inst.ag.BranchStrategyFor("branch") == agent.BranchForkBackend {
+				orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt))
+				orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
+				// Clone the parent transcript with the parent held quiescent (run
+				// the fork inside the parent's inbox worker) so no turn writes the
+				// transcript mid-copy.
+				var branchKey string
+				var ok bool
+				if err := inst.ag.EnqueueInjectWait(d.ctx, parentKey, "branch-fork", func() {
+					branchKey, ok = inst.ag.ForkBackendBranch(d.ctx, parentKey, session.BranchOptions{
+						NoResetHook:         req.NoResetHook,
+						BranchType:          "branch",
+						OrientationTemplate: orientTemplate,
+					})
+				}); err != nil {
+					log.Warnf("branch", "agent %q fork-lock error, falling through to send: %v", inst.id, err)
+				}
+				if ok {
+					if req.Model != "" {
+						if err := applyModelOverride(inst, branchKey, req.Model, d.cfg.Models); err != nil {
+							http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
+							return
+						}
+					}
+					branchCtx := agent.WithTrigger(d.ctx, "branch")
+					if req.NoCompact {
+						inst.ag.SetSessionNoCompact(branchKey, true)
+					}
+					log.Infof("branch", "delegated backend fork %s from %s, text=%q no_compact=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.Async, req.Silent)
+					if req.Async {
+						asyncDispatch(w, inst, d.connMgr, branchCtx, branchKey, req.Text, "branch", req.Silent, route.PolicyFallback, route.Receipt{SessionKey: branchKey, Via: "branch"})
+						return
+					}
+					resp, err := runAgentQueued(branchCtx, inst.ag, branchKey, req.Text)
+					if err != nil {
+						log.Errorf("branch", "error: %v", err)
+						http.Error(w, "internal error", http.StatusInternalServerError)
+						return
+					}
+					writeJSONReceipt(w, resp, route.Receipt{SessionKey: branchKey, Via: "branch"})
+					return
+				}
+			}
+
+			// Backend can't branch, or nothing to fork yet — fall through to
+			// /send semantics against the parent, as before.
+			log.Warnf("branch", "agent %q not backend-branchable — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)", inst.id, req.NoCompact, req.NoResetHook, req.Silent)
 			if req.Model != "" {
 				if err := applyModelOverride(inst, parentKey, req.Model, d.cfg.Models); err != nil {
 					http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)

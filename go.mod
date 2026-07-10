@@ -18,6 +18,7 @@ require (
 	github.com/blevesearch/bleve/v2 v2.5.7
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/go-rod/rod v0.116.2
+	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/openai/openai-go/v3 v3.24.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
@@ -63,7 +64,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/json-iterator/go v0.0.0-20171115153421-f7279a603ede // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
