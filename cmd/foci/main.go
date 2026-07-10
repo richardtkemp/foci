@@ -225,7 +225,7 @@ func main() {
 	switch cmd {
 	case "send":
 		err = cmdSend(base, args)
-	case "branch", "wake":
+	case "branch":
 		err = cmdBranch(base, args)
 	case "status":
 		err = cmdStatus(base, args)

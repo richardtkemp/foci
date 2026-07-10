@@ -91,7 +91,7 @@ func (g *gateFlags) applyEnvDefaults() {
 
 // addToBody writes each non-empty gate value into the JSON request body under
 // its wire key (if_active, if_inactive, …). The server reads these keys on the
-// /send, /command, /wake, and /webhook endpoints.
+// /send, /command, /branch, and /webhook endpoints.
 func (g *gateFlags) addToBody(body map[string]interface{}) {
 	for _, s := range g.specs() {
 		if *s.dst != "" {

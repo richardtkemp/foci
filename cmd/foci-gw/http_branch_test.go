@@ -8,15 +8,15 @@ import (
 	"time"
 )
 
-// TestWake_RunsWithWakeTrigger proves the /wake happy path with the gate open:
+// TestWake_RunsWithWakeTrigger proves the /branch happy path with the gate open:
 // 200, the response body carries the backend's reply, and the turn executes
-// with the "wake" trigger label (which downstream code uses to distinguish
-// wake turns from user turns).
+// with the "branch" trigger label (which downstream code uses to distinguish
+// branch turns from user turns).
 func TestWake_RunsWithWakeTrigger(t *testing.T) {
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
-	w := postJSON(mux, "/wake", `{"text":"morning check"}`)
+	w := postJSON(mux, "/branch", `{"text":"morning check"}`)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
@@ -30,15 +30,15 @@ func TestWake_RunsWithWakeTrigger(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("backend calls = %d, want 1", len(calls))
 	}
-	if calls[0].trigger != "wake" {
-		t.Errorf("trigger = %q, want wake", calls[0].trigger)
+	if calls[0].trigger != "branch" {
+		t.Errorf("trigger = %q, want branch", calls[0].trigger)
 	}
 	if !strings.Contains(calls[0].text, "morning check") {
 		t.Errorf("backend saw %q, want the wake text", calls[0].text)
 	}
 }
 
-// TestWake_GateClosedSkips proves /wake honours the activity gate: with recent
+// TestWake_GateClosedSkips proves /branch honours the activity gate: with recent
 // last_activity on the target session and if_inactive set, the wake is skipped
 // (200 with the canned skip response), no branch turn runs, and the agent
 // backend is never touched. The gate matrix is unit-tested elsewhere; this
@@ -48,7 +48,7 @@ func TestWake_GateClosedSkips(t *testing.T) {
 	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now())
 	mux := newTestMux(d)
 
-	w := postJSON(mux, "/wake", `{"text":"keepalive","if_inactive":"1h"}`)
+	w := postJSON(mux, "/branch", `{"text":"keepalive","if_inactive":"1h"}`)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
@@ -63,7 +63,7 @@ func TestWake_GateClosedSkips(t *testing.T) {
 	}
 }
 
-// TestWake_BranchFlow proves a non-delegated /wake runs its turn on a fresh
+// TestWake_BranchFlow proves a non-delegated /branch runs its turn on a fresh
 // branch of the parent session, not on the parent itself: the receipt reports
 // a branch key (resolved_via "branch"), the turn's messages land in the branch
 // session file, and the parent session file is untouched.
@@ -71,7 +71,7 @@ func TestWake_BranchFlow(t *testing.T) {
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
-	w := postJSON(mux, "/wake", `{"text":"branch work"}`)
+	w := postJSON(mux, "/branch", `{"text":"branch work"}`)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())

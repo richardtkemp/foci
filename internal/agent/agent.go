@@ -279,7 +279,7 @@ func (a *Agent) ResolveCallSite(callSite, sessionKey string) (provider.Client, s
 // TurnDetail describes one in-flight turn for shutdown diagnostics.
 type TurnDetail struct {
 	SessionKey string
-	Trigger    string // "user", "keepalive", "wake", "scheduled_wake", "telegram", "async_notify"
+	Trigger    string // "user", "keepalive", "branch", "scheduled_wake", "telegram", "async_notify"
 	ToolName   string // currently executing tool, or empty
 	StartTime  time.Time
 }

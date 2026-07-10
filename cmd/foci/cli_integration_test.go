@@ -30,7 +30,6 @@ func TestCLIIntegration(t *testing.T) {
 		// Default mode is async — returns "queued"
 		{"send", []string{"send", "hello"}, "queued", false},
 		{"branch", []string{"branch"}, "queued", false},
-		{"wake alias", []string{"wake"}, "queued", false},
 
 		// --sync returns full response
 		{"send --sync", []string{"send", "--sync", "hello"}, "echo: hello", false},
@@ -53,9 +52,7 @@ func TestCLIIntegration(t *testing.T) {
 		// -a flag (space-separated) — use --sync to get content-based responses
 		{"send with -a", []string{"send", "--sync", "-a", "research", "hello"}, "[research] echo: hello", false},
 		{"branch with -a", []string{"branch", "--sync", "-a", "research"}, "[research] wake ok", false},
-		{"wake alias with -a", []string{"wake", "--sync", "-a", "research"}, "[research] wake ok", false},
 		{"branch with -a and text", []string{"branch", "--sync", "-a", "research", "check news"}, "[research] wake ok", false},
-		{"wake alias with -a and text", []string{"wake", "--sync", "-a", "research", "check news"}, "[research] wake ok", false},
 		{"status with -a", []string{"status", "-a", "research"}, "[research] status: idle", false},
 		{"eval with -a", []string{"eval", "-a", "research", "ls"}, "[research] echo: Run this command", false},
 		{"command with -a", []string{"command", "-a", "research", "/ping"}, "[research] pong", false},

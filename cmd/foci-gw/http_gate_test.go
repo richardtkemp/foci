@@ -208,8 +208,8 @@ func TestCheckActivityGate_KeepaliveBugRegression(t *testing.T) {
 		SessionBase: "clutch/c5970082313",
 		InFlight:    true,
 		IfInactive:  "45m",
-		LogTag:      "wake",
-		Endpoint:    "/wake",
+		LogTag:      "branch",
+		Endpoint:    "/branch",
 	}
 
 	w := httptest.NewRecorder()

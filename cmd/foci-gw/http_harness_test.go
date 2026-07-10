@@ -28,7 +28,7 @@ const (
 // mockCall records one SendMessage invocation for assertions.
 type mockCall struct {
 	text    string // last user message text in the request
-	trigger string // agent trigger label from ctx ("user", "wake", "webhook", ...)
+	trigger string // agent trigger label from ctx ("user", "branch", "webhook", ...)
 }
 
 // mockClient is a minimal provider.Client for HTTP endpoint tests: it returns
@@ -110,7 +110,7 @@ type httpTestOpts struct {
 
 // httpTestSetup builds httpHandlerDeps around a single mockClient-backed
 // agent — the shared harness for every HTTP endpoint test (/send, /command,
-// /wake, /webhook, and the endpoint-registration tests, which override deps
+// /branch, /webhook, and the endpoint-registration tests, which override deps
 // fields before calling newTestMux).
 func httpTestSetup(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *mockClient) {
 	t.Helper()

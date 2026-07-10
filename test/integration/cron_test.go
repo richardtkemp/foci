@@ -1877,7 +1877,7 @@ func TestL2_Cron_BranchOneshotEndToEnd(t *testing.T) {
 	})
 
 	// Prime alpha so the gateway has an active session to branch from.
-	// /wake errors with 412 "no active session" otherwise.
+	// /branch errors with 412 "no active session" otherwise.
 	token := h.AgentBotToken("alpha")
 	h.TelegramStub().PushUpdate(token, gotgbot.Update{
 		Message: &gotgbot.Message{
@@ -1891,7 +1891,7 @@ func TestL2_Cron_BranchOneshotEndToEnd(t *testing.T) {
 	}
 
 	// `foci branch --oneshot -a alpha -mf <file>` ultimately POSTs to
-	// /wake with {agent: "alpha", text: <file contents>, no_compact:true,
+	// /branch with {agent: "alpha", text: <file contents>, no_compact:true,
 	// no_reset_hook: true, silent: true, async: true}. We drive the HTTP
 	// side directly via the unix socket — this exercises the same gateway
 	// path the CLI takes, which is the L2 unit under test.
@@ -1908,15 +1908,15 @@ func TestL2_Cron_BranchOneshotEndToEnd(t *testing.T) {
 	}
 	bodyBytes, _ := json.Marshal(body)
 	client := gwUnixClient(sockPath)
-	resp, err := client.Post("http://foci-gw/wake", "application/json", strings.NewReader(string(bodyBytes)))
+	resp, err := client.Post("http://foci-gw/branch", "application/json", strings.NewReader(string(bodyBytes)))
 	if err != nil {
-		t.Fatalf("POST /wake: %v", err)
+		t.Fatalf("POST /branch: %v", err)
 	}
 	defer resp.Body.Close()
 	// Async dispatch returns 202 Accepted; sync would be 200 OK. Either
 	// indicates the gateway accepted the work — failure modes are 4xx/5xx.
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /wake: status %d", resp.StatusCode)
+		t.Fatalf("POST /branch: status %d", resp.StatusCode)
 	}
 
 	if !waitForUserMessage(t, h, "workspaces/alpha", promptBody, 20*time.Second) {
@@ -1958,14 +1958,14 @@ func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
 		"async":         true,
 	}
 	bodyBytes, _ := json.Marshal(body)
-	resp, err := client.Post("http://foci-gw/wake", "application/json", strings.NewReader(string(bodyBytes)))
+	resp, err := client.Post("http://foci-gw/branch", "application/json", strings.NewReader(string(bodyBytes)))
 	if err != nil {
-		t.Fatalf("POST /wake: %v", err)
+		t.Fatalf("POST /branch: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("POST /wake for missing agent: status %d, want 400", resp.StatusCode)
+		t.Errorf("POST /branch for missing agent: status %d, want 400", resp.StatusCode)
 	}
 	respBytes := make([]byte, 4096)
 	n, _ := resp.Body.Read(respBytes)
@@ -1978,7 +1978,7 @@ func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	after := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 	if after != before {
-		t.Errorf("rejected /wake still produced recorder entries (before=%d after=%d)", before, after)
+		t.Errorf("rejected /branch still produced recorder entries (before=%d after=%d)", before, after)
 	}
 }
 
@@ -1989,7 +1989,7 @@ func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
 // branch invocation.
 //
 // Implementation note: cmdBranch's resolveMessage() reads the message
-// file BEFORE issuing the HTTP /wake request, so the failure path is
+// file BEFORE issuing the HTTP /branch request, so the failure path is
 // purely CLI-side. We don't need to wire the CLI's transport to the
 // harness gateway — the file read fails before any connection attempt.
 // We still pass --addr <unreachable> for hygiene to guarantee the CLI

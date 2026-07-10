@@ -237,7 +237,6 @@ Flags:
   -mt, --message-text       Message text (env: FOCI_MESSAGE_TEXT)
   -mf, --message-file       Read message from file (env: FOCI_MESSAGE_FILE)
 
-Aliased as 'wake'.
 `)
 }
 
@@ -347,5 +346,5 @@ func cmdBranch(base string, args []string) error {
 	if model != "" {
 		body["model"] = model
 	}
-	return postJSON(base+"/wake", body)
+	return postJSON(base+"/branch", body)
 }

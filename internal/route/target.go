@@ -5,7 +5,7 @@
 // tool), the Resolver that turns a Target into a session key via one
 // documented ladder, and the Receipt vocabulary describing how a target was
 // resolved. There is exactly one resolution ladder — an alias that resolves
-// on /send resolves identically on /wake, /webhook, and send_to_session.
+// on /send resolves identically on /branch, /webhook, and send_to_session.
 package route
 
 import (

@@ -191,8 +191,7 @@ func TestTriggerToPlatform(t *testing.T) {
 		{"reflection", "background"},
 		{"consolidation", "background"},
 		{"background", "background"},
-		{"wake", "wake"},
-		{"cron", "wake"},
+		{"branch", "branch"},
 		{"scheduled_wake", "wake"},
 		{"restart", "system"},
 		{"proactive_warning", "system"},
@@ -389,14 +388,14 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 		DuplicateMessages: true,
 	}
 
-	// Wake trigger should NOT duplicate
-	wakeCtx := WithTrigger(context.Background(), "wake")
-	ag.hmTest(wakeCtx, "test/iwake", "Do the thing")
+	// Branch trigger should NOT duplicate
+	branchCtx := WithTrigger(context.Background(), "branch")
+	ag.hmTest(branchCtx, "test/ibranch", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
 	text := provider.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Do the thing"); count != 1 {
-		t.Errorf("wake trigger should not duplicate: expected 1 occurrence, got %d", count)
+		t.Errorf("branch trigger should not duplicate: expected 1 occurrence, got %d", count)
 	}
 
 	// Keepalive trigger should NOT duplicate
