@@ -283,6 +283,30 @@ func (idx *SessionIndex) LastCacheTouch(sessionKey string) (time.Time, bool) {
 	return t, true
 }
 
+// LastUserActivity returns the most recent human-interaction time for a SINGLE
+// session (not the agent-wide max — that is LastUserActivityForAgent). Backs the
+// --if-user-active / --if-user-inactive send gate, which scopes to the resolved
+// target session: "did a human touch THIS session recently", not "anywhere on
+// this agent".
+func (idx *SessionIndex) LastUserActivity(sessionKey string) (time.Time, bool) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	var raw sql.NullString
+	err := idx.db.QueryRow(
+		`SELECT last_user_activity_at FROM session_index WHERE session_key = ?`,
+		sessionKey,
+	).Scan(&raw)
+	if err != nil || !raw.Valid || raw.String == "" {
+		return time.Time{}, false
+	}
+	t, perr := time.Parse(time.RFC3339, raw.String)
+	if perr != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
 // TouchUserActivity records that a human interacted with this session at time
 // `at`. Written only on user-triggered turns (telegram/app/discord/voice), so
 // unlike last_cache_touch it excludes cron/keepalive/agent/memory turns — it is

@@ -1594,3 +1594,29 @@ func TestSessionIndex_LastUserActivityForAgent(t *testing.T) {
 		t.Fatalf("LastUserActivityForAgent(bot) = %v, want ~%v (max over bot's sessions)", got, newer)
 	}
 }
+
+func TestSessionIndex_LastUserActivity_PerSession(t *testing.T) {
+	// Proves LastUserActivity is per-session (NOT the agent-wide max): it backs
+	// the session-scoped --if-user-active gate. bot/c1 and bot/c2 report their
+	// OWN times, and a session with no user activity reports (_, false) even
+	// though a sibling session of the same agent is active.
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	idx.Upsert(SessionIndexEntry{SessionKey: "bot/c1", CreatedAt: now, SessionType: SessionTypeChat, Status: SessionStatusActive})
+	idx.Upsert(SessionIndexEntry{SessionKey: "bot/c2", CreatedAt: now, SessionType: SessionTypeChat, Status: SessionStatusActive})
+
+	older := now.Add(-time.Hour)
+	idx.TouchUserActivity("bot/c1", older)
+	// bot/c2 gets NO user activity.
+
+	if got, ok := idx.LastUserActivity("bot/c1"); !ok || got.Sub(older) > time.Second || got.Sub(older) < -time.Second {
+		t.Fatalf("LastUserActivity(bot/c1) = %v ok=%v, want ~%v", got, ok, older)
+	}
+	if _, ok := idx.LastUserActivity("bot/c2"); ok {
+		t.Errorf("LastUserActivity(bot/c2) reported activity; want none (per-session, not agent-max)")
+	}
+	if _, ok := idx.LastUserActivity("bot/nonexistent"); ok {
+		t.Errorf("LastUserActivity(unknown) reported activity; want none")
+	}
+}
