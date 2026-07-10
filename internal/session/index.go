@@ -73,6 +73,7 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 			created_at         TEXT NOT NULL,
 			last_activity_at   TEXT,
 			last_reflection    TEXT,
+			last_cache_touch   TEXT,
 			parent_session_key TEXT,
 			session_type       TEXT NOT NULL,
 			status             TEXT NOT NULL DEFAULT 'active',
@@ -237,6 +238,48 @@ func (idx *SessionIndex) UpdateActivity(sessionKey string, activityAt time.Time)
 	if err != nil {
 		log.Warnf("session", "update activity for %q: %v", sessionKey, err)
 	}
+}
+
+// TouchCacheTouch records that the session's cached context was hit by a turn
+// at time `at`. Unlike last_activity_at this is memory-INCLUDED and bumped by
+// branch turns against their root: it answers "was this session's prompt cache
+// warmed recently?" for the --if-active / --if-inactive send gate, where a
+// reflection/branch turn genuinely refreshes the shared cache and so counts.
+// No-op if the row doesn't exist yet (UPDATE affects 0 rows) — the gate treats
+// an absent value as inactive, same as before.
+func (idx *SessionIndex) TouchCacheTouch(sessionKey string, at time.Time) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	_, err := idx.db.Exec(
+		`UPDATE session_index SET last_cache_touch = ? WHERE session_key = ?`,
+		timeutil.Format(at),
+		sessionKey,
+	)
+	if err != nil {
+		log.Warnf("session", "touch cache for %q: %v", sessionKey, err)
+	}
+}
+
+// LastCacheTouch returns the most recent cache-touch time for a session and
+// whether one is recorded. Backs the --if-active / --if-inactive send gate.
+func (idx *SessionIndex) LastCacheTouch(sessionKey string) (time.Time, bool) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	var raw sql.NullString
+	err := idx.db.QueryRow(
+		`SELECT last_cache_touch FROM session_index WHERE session_key = ?`,
+		sessionKey,
+	).Scan(&raw)
+	if err != nil || !raw.Valid || raw.String == "" {
+		return time.Time{}, false
+	}
+	t, perr := time.Parse(time.RFC3339, raw.String)
+	if perr != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // StampReflection records when the reflection pass was dispatched for a session.

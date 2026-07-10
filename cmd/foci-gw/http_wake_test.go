@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -46,7 +45,7 @@ func TestWake_RunsWithWakeTrigger(t *testing.T) {
 // pins that the handler actually consults it.
 func TestWake_GateClosedSkips(t *testing.T) {
 	d, mock := httpTestSetup(t, httpTestOpts{})
-	d.sessionIndex.SetSessionMetadata(testSessionKey, "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
+	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now())
 	mux := newTestMux(d)
 
 	w := postJSON(mux, "/wake", `{"text":"keepalive","if_inactive":"1h"}`)

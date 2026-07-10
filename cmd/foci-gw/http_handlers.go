@@ -99,15 +99,11 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 		if d.sessionIndex == nil || sessionBase == "" {
 			return false
 		}
-		raw, err := d.sessionIndex.GetSessionMetadata(sessionBase, "last_activity")
-		if err != nil || raw == "" {
+		touched, ok := d.sessionIndex.LastCacheTouch(sessionBase)
+		if !ok {
 			return false
 		}
-		ts, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
-			return false
-		}
-		return time.Since(time.Unix(ts, 0)) <= within
+		return time.Since(touched) <= within
 	}
 
 	gate := func(w http.ResponseWriter, in activityGateInputs) bool {

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -72,12 +71,12 @@ func TestCommand_Unknown(t *testing.T) {
 // reset from firing on a session that is still active or mid-turn.
 //
 // Mirrors TestWebhook_IfInactive: same stubConnMgr session base and same
-// last_activity seeding via session_metadata.
+// cache-touch seeding via session_index.last_cache_touch.
 func TestCommand_IfInactive(t *testing.T) {
 	d, _ := httpTestSetup(t, httpTestOpts{})
 
 	// Recent session activity → an --if-inactive command must skip.
-	d.sessionIndex.SetSessionMetadata(testSessionKey, "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
+	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now())
 
 	mux := newTestMux(d)
 
