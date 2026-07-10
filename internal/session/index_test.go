@@ -754,67 +754,58 @@ func TestDefaultSessionKeyForAgent_MostActiveDefaultWins(t *testing.T) {
 
 func TestDefaultSessionKeyForAgent_Fallback(t *testing.T) {
 	// Proves DefaultSessionKeyForAgent falls back to the most recently
-	// user-active is_root=1 active CHAT session when no default chat is set —
-	// and that a non-chat root (spawn/cron/unknown) is NOT handed back, even if
-	// it is the most recently active session overall.
+	// user-active is_root=1 active session when no default chat is set — and
+	// that an instance root ('i', classified 'unknown') is eligible: is_root=1
+	// already excludes branches/spawns, so a non-chat root here is the agent's
+	// legitimate primary session, not something to drop.
 	idx := tempIndex(t)
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// Two chat roots: c999 recently user-active, cold dormant.
+	// A chat root, user-active 2h ago; an instance root, user-active now.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "scout/c999",
-		FilePath:       "/tmp/recent.jsonl",
-		CreatedAt:      now.Add(-2 * time.Hour),
-		LastActivityAt: now,
-		SessionType:    SessionTypeChat,
-		Status:         SessionStatusActive,
-	})
-	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "scout/cold",
-		FilePath:       "/tmp/cold.jsonl",
+		FilePath:       "/tmp/chat.jsonl",
 		CreatedAt:      now.Add(-3 * time.Hour),
 		LastActivityAt: now.Add(-2 * time.Hour),
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
-	// A non-chat root, most recently active of all — must be excluded.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "scout/iwork",
-		FilePath:       "/tmp/spawn.jsonl",
+		FilePath:       "/tmp/instance.jsonl",
 		CreatedAt:      now.Add(-time.Hour),
 		LastActivityAt: now,
 		SessionType:    SessionTypeUnknown,
 		Status:         SessionStatusActive,
 	})
-	idx.TouchUserActivity("scout/c999", now)
-	idx.TouchUserActivity("scout/cold", now.Add(-2*time.Hour))
-	idx.TouchUserActivity("scout/iwork", now) // ignored: not a chat root
+	idx.TouchUserActivity("scout/c999", now.Add(-2*time.Hour))
+	idx.TouchUserActivity("scout/iwork", now)
 
 	key := idx.DefaultSessionKeyForAgent("scout")
-	if key != "scout/c999" {
-		t.Errorf("expected most recently user-active chat root scout/c999, got %q", key)
+	if key != "scout/iwork" {
+		t.Errorf("expected most recently user-active root scout/iwork (instance root eligible), got %q", key)
 	}
 }
 
-func TestDefaultSessionKeyForAgent_FallbackExcludesNonChatOnlyRoots(t *testing.T) {
-	// Proves that when an agent's ONLY active root is a non-chat session
-	// (spawn/cron/unknown), the fallback returns "" rather than routing a
-	// user-facing default into a non-chat session.
+func TestDefaultSessionKeyForAgent_FallbackReturnsInstanceRoot(t *testing.T) {
+	// Proves that when an agent's ONLY active root is an instance root ('i',
+	// classified 'unknown') — e.g. an agent that received a /send before any
+	// chat binding — the fallback still returns it rather than "". Regression
+	// guard: an earlier session_type='chat' filter wrongly dropped it.
 	idx := tempIndex(t)
 	now := time.Now().UTC().Truncate(time.Second)
 
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "scout/iwork",
-		FilePath:       "/tmp/spawn.jsonl",
+		SessionKey:     "scout/imain",
+		FilePath:       "/tmp/instance.jsonl",
 		CreatedAt:      now,
 		LastActivityAt: now,
 		SessionType:    SessionTypeUnknown,
 		Status:         SessionStatusActive,
 	})
-	idx.TouchUserActivity("scout/iwork", now)
 
-	if key := idx.DefaultSessionKeyForAgent("scout"); key != "" {
-		t.Errorf("expected empty (only non-chat root), got %q", key)
+	if key := idx.DefaultSessionKeyForAgent("scout"); key != "scout/imain" {
+		t.Errorf("expected instance root scout/imain, got %q", key)
 	}
 }
 

@@ -1303,13 +1303,17 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 		return NewChatSessionKey(agentID, chatID)
 	}
 
-	// Fallback: most recently user-active chat root for the agent. Restrict to
-	// session_type='chat' so a spawn/cron/facet root (is_root=1 but not a real
-	// user-facing chat) can't be handed back as an agent's default session.
+	// Fallback: most recently user-active active ROOT for the agent. is_root=1
+	// already excludes branches AND independent spawns (both ChildType != 0, so
+	// is_root=0) — the only roots this can return are chat roots ('c') and an
+	// agent's primary instance root ('i', classified 'unknown'), both of which
+	// are legitimate user-facing default sessions. No session_type filter: it
+	// would wrongly drop the instance root (e.g. an agent that received /send
+	// before any chat binding), breaking default resolution.
 	var key string
 	err = idx.db.QueryRow(
 		`SELECT session_key FROM session_index
-		 WHERE agent_id = ? AND is_root = 1 AND status = 'active' AND session_type = 'chat'
+		 WHERE agent_id = ? AND is_root = 1 AND status = 'active'
 		 ORDER BY unixepoch(last_user_activity_at) DESC NULLS LAST, unixepoch(created_at) DESC
 		 LIMIT 1`,
 		agentID,
