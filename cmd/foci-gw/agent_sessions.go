@@ -54,6 +54,7 @@ func buildBranchFunc(
 			log.Errorf(branchType, "[%s] branch error: %v", agentID, err)
 			return false
 		}
+		ag.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
 
 		turnCtx := agent.WithTrigger(ctx, branchType)
 		if noCompact {

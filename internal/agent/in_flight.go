@@ -222,22 +222,32 @@ func (a *Agent) recordCacheTouch(sessionKey string) {
 }
 
 // touchCacheFreshness records that this session's cached context was hit by a
-// turn now, feeding the --if-active / --if-inactive send gate. Bumped on EVERY
-// turn regardless of trigger (user, cron, CLI, reflection, memory) because any
-// turn reusing the cached prefix genuinely refreshes it. A branch turn ALSO
-// bumps its root: the branch shares the root's cached prefix, so its turn keeps
-// the root warm. No-op if SessionIndex is nil (test agents) or the key is empty.
+// turn now, feeding the --if-warm / --if-cold send gate. Bumped on EVERY turn
+// regardless of trigger (user, cron, CLI, reflection, memory) because any turn
+// reusing the cached prefix genuinely refreshes it. OWN key only: a branch turn
+// warms the ROOT's shared prefix only at the moment of branching (see
+// TouchRootCacheForBranch), not on every subsequent branch turn — once root
+// continues past the branch point the shared prefix no longer covers root's
+// tail. No-op if SessionIndex is nil (test agents) or the key is empty.
 func (a *Agent) touchCacheFreshness(sessionKey string) {
 	if a.SessionIndex == nil || sessionKey == "" {
 		return
 	}
-	now := time.Now()
-	a.SessionIndex.TouchCacheTouch(sessionKey, now)
-	// A branch warms its root's shared cache — bump the root too, unless this
-	// key already is the root.
-	if sk, err := session.ParseSessionKey(sessionKey); err == nil {
-		if root := sk.Root().String(); root != sessionKey {
-			a.SessionIndex.TouchCacheTouch(root, now)
+	a.SessionIndex.TouchCacheTouch(sessionKey, time.Now())
+}
+
+// TouchRootCacheForBranch records that creating a branch warmed its root's
+// shared cached prefix — a ONE-TIME touch at the moment of branching, called
+// from the branch-creation sites (createMemoryBranch, buildBranchFunc, the facet
+// command). Branch turns themselves no longer bump the root (touchCacheFreshness
+// is own-key only). No-op for a root key, a nil index, or an empty key.
+func (a *Agent) TouchRootCacheForBranch(branchKey string) {
+	if a.SessionIndex == nil || branchKey == "" {
+		return
+	}
+	if sk, err := session.ParseSessionKey(branchKey); err == nil {
+		if root := sk.Root().String(); root != branchKey {
+			a.SessionIndex.TouchCacheTouch(root, time.Now())
 		}
 	}
 }

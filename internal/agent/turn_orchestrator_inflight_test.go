@@ -247,12 +247,12 @@ func TestOrchestrator_RateLimitGateSkipsInFlightAndTouch(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_BranchTurnKeysInFlightByBranchAndCacheByBoth verifies the
-// key semantics for branch turns: the in-flight counter tracks the branch's OWN
-// key (branches are distinct identities — a facet turn must not couple to the
-// parent), while the cache touch lands on BOTH the branch AND its root (the
-// branch shares and thereby warms the root's cached prefix).
-func TestOrchestrator_BranchTurnKeysInFlightByBranchAndCacheByBoth(t *testing.T) {
+// TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly verifies the key
+// semantics for branch turns: the in-flight counter tracks the branch's OWN key
+// (branches are distinct identities — a facet turn must not couple to the
+// parent), and the cache touch lands on the branch key ONLY. Root is warmed just
+// once at branch CREATION (TouchRootCacheForBranch), not on every branch turn.
+func TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -294,12 +294,43 @@ func TestOrchestrator_BranchTurnKeysInFlightByBranchAndCacheByBoth(t *testing.T)
 		t.Fatal("orchestrator did not return")
 	}
 
-	// Cache touch lands under BOTH the branch key and the root key.
+	// Cache touch lands under the branch key ONLY — the branch turn must not
+	// advance root's cache (root is warmed only at branch creation).
 	if _, ok := idx.LastCacheTouch(orchestratorTestBranchKey); !ok {
 		t.Error("branch turn did not write cache touch under the branch key")
 	}
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
+		t.Error("branch turn wrongly wrote cache touch under the root key (should only happen at branch creation)")
+	}
+}
+
+// TestTouchRootCacheForBranch verifies the one-time creation-time root warm: it
+// stamps last_cache_touch on the branch's ROOT (not the branch key), and is a
+// no-op when handed a root key.
+func TestTouchRootCacheForBranch(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+	seedCacheTestRow(idx, orchestratorTestKey)
+	seedCacheTestRow(idx, orchestratorTestBranchKey)
+
+	a.TouchRootCacheForBranch(orchestratorTestBranchKey)
+
 	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
-		t.Error("branch turn did not write cache touch under the root key")
+		t.Error("TouchRootCacheForBranch did not warm the root's cache")
+	}
+	if _, ok := idx.LastCacheTouch(orchestratorTestBranchKey); ok {
+		t.Error("TouchRootCacheForBranch wrongly touched the branch key (should touch root only)")
+	}
+
+	// No-op for a root key: nothing to warm above it.
+	a.TouchRootCacheForBranch(orchestratorTestKey)
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
+		t.Error("sanity: root cache should still be present")
 	}
 }
 
