@@ -262,15 +262,16 @@ func (idx *SessionIndex) TouchCacheTouch(sessionKey string, at time.Time) {
 	}
 }
 
-// LastCacheTouch returns the most recent cache-touch time for a session and
-// whether one is recorded. Backs the --if-active / --if-inactive send gate.
-func (idx *SessionIndex) LastCacheTouch(sessionKey string) (time.Time, bool) {
+// lastSessionTimestamp reads one RFC3339 timestamp column for a single session
+// and reports whether a usable value is present. `column` is an internal
+// constant identifier (never user input), so interpolating it is safe.
+func (idx *SessionIndex) lastSessionTimestamp(sessionKey, column string) (time.Time, bool) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	var raw sql.NullString
 	err := idx.db.QueryRow(
-		`SELECT last_cache_touch FROM session_index WHERE session_key = ?`,
+		"SELECT "+column+" FROM session_index WHERE session_key = ?", //nolint:gosec // column is a fixed internal identifier
 		sessionKey,
 	).Scan(&raw)
 	if err != nil || !raw.Valid || raw.String == "" {
@@ -283,28 +284,19 @@ func (idx *SessionIndex) LastCacheTouch(sessionKey string) (time.Time, bool) {
 	return t, true
 }
 
+// LastCacheTouch returns the most recent cache-touch time for a session and
+// whether one is recorded. Backs the --if-warm / --if-cold send gate.
+func (idx *SessionIndex) LastCacheTouch(sessionKey string) (time.Time, bool) {
+	return idx.lastSessionTimestamp(sessionKey, "last_cache_touch")
+}
+
 // LastUserActivity returns the most recent human-interaction time for a SINGLE
 // session (not the agent-wide max — that is LastUserActivityForAgent). Backs the
 // --if-user-active / --if-user-inactive send gate, which scopes to the resolved
 // target session: "did a human touch THIS session recently", not "anywhere on
 // this agent".
 func (idx *SessionIndex) LastUserActivity(sessionKey string) (time.Time, bool) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	var raw sql.NullString
-	err := idx.db.QueryRow(
-		`SELECT last_user_activity_at FROM session_index WHERE session_key = ?`,
-		sessionKey,
-	).Scan(&raw)
-	if err != nil || !raw.Valid || raw.String == "" {
-		return time.Time{}, false
-	}
-	t, perr := time.Parse(time.RFC3339, raw.String)
-	if perr != nil {
-		return time.Time{}, false
-	}
-	return t, true
+	return idx.lastSessionTimestamp(sessionKey, "last_user_activity_at")
 }
 
 // TouchUserActivity records that a human interacted with this session at time
