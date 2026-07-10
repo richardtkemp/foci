@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
@@ -138,12 +137,10 @@ func TestOrchestrator_InFlightStaysTrueDuringDelegatedWait(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_TouchLastActivityWritesRow verifies that running a turn
-// through OrchestrateFullTurn writes the last_activity row keyed by the
-// session's root key. Covers Stage B's promise that "every turn-init path
-// participates" via the single chokepoint, and that the row is keyed
-// correctly for the gate to consult later.
-func TestOrchestrator_TouchLastActivityWritesRow(t *testing.T) {
+// TestOrchestrator_CacheTouchWritesRow verifies that running a turn through
+// OrchestrateFullTurn stamps last_cache_touch on the session's own row. Covers
+// the single chokepoint's promise that "every turn-init path participates".
+func TestOrchestrator_CacheTouchWritesRow(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -154,43 +151,39 @@ func TestOrchestrator_TouchLastActivityWritesRow(t *testing.T) {
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 	}
+	// The stub's RegisterSessionIndex is a no-op, so seed the row (production's
+	// real RegisterSessionIndex creates it before touchCacheFreshness runs).
+	seedCacheTestRow(idx, orchestratorTestKey)
 
-	// Confirm no prior row.
-	if raw, _ := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity); raw != "" {
-		t.Fatalf("pre-call: last_activity = %q, want empty", raw)
+	// Confirm no prior cache touch.
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
+		t.Fatalf("pre-call: cache touch already present")
 	}
 
 	tc := &stubContract{}
 	ts := NewTurnState(context.Background(), orchestratorTestKey, []string{"hi"}, nil)
 
-	before := time.Now().Unix()
+	before := time.Now().Add(-2 * time.Second)
 	_, err = a.OrchestrateFullTurn(context.Background(), tc, ts)
-	after := time.Now().Unix()
+	after := time.Now().Add(2 * time.Second)
 	if err != nil {
 		t.Fatalf("OrchestrateFullTurn: %v", err)
 	}
 
-	raw, err := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity)
-	if err != nil {
-		t.Fatalf("GetSessionMetadata: %v", err)
+	got, ok := idx.LastCacheTouch(orchestratorTestKey)
+	if !ok {
+		t.Fatalf("post-call: cache touch not written")
 	}
-	if raw == "" {
-		t.Fatalf("post-call: last_activity not written")
-	}
-	got, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		t.Fatalf("parse last_activity %q: %v", raw, err)
-	}
-	if got < before || got > after {
-		t.Fatalf("last_activity %d outside expected window [%d, %d]", got, before, after)
+	if got.Before(before) || got.After(after) {
+		t.Fatalf("cache touch %v outside expected window [%v, %v]", got, before, after)
 	}
 }
 
-// TestOrchestrator_TouchLastActivityWritesEvenOnError verifies that a turn
-// failing mid-flight still records last_activity. The agent attempted a
-// turn — that's activity, regardless of inference outcome. Touch happens
-// in Phase 1b before RunInference, so the error path doesn't skip it.
-func TestOrchestrator_TouchLastActivityWritesEvenOnError(t *testing.T) {
+// TestOrchestrator_CacheTouchWritesEvenOnError verifies that a turn failing
+// mid-flight still records the cache touch. The agent attempted a turn — that
+// warmed the cache, regardless of inference outcome. Touch happens in Phase 1b
+// before RunInference, so the error path doesn't skip it.
+func TestOrchestrator_CacheTouchWritesEvenOnError(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -201,6 +194,7 @@ func TestOrchestrator_TouchLastActivityWritesEvenOnError(t *testing.T) {
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 	}
+	seedCacheTestRow(idx, orchestratorTestKey)
 
 	tc := &errorStubContract{}
 	ts := NewTurnState(context.Background(), orchestratorTestKey, []string{"hi"}, nil)
@@ -210,9 +204,8 @@ func TestOrchestrator_TouchLastActivityWritesEvenOnError(t *testing.T) {
 		t.Fatalf("expected error from RunInference")
 	}
 
-	raw, _ := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity)
-	if raw == "" {
-		t.Fatalf("last_activity not written despite error path")
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
+		t.Fatalf("cache touch not written despite error path")
 	}
 
 	// inFlight must still drop back to zero on the error path.
@@ -221,10 +214,10 @@ func TestOrchestrator_TouchLastActivityWritesEvenOnError(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_RateLimitGateSkipsInFlightAndTouch verifies that when
-// the rate-limit gate rejects the turn before it really starts, neither
-// the inFlight counter nor last_activity are touched. This protects the
-// "rate-limited != activity" semantic.
+// TestOrchestrator_RateLimitGateSkipsInFlightAndTouch verifies that when the
+// rate-limit gate rejects the turn before it really starts, neither the
+// inFlight counter nor the cache touch are bumped. Protects the "rate-limited
+// != cache warmed" semantic (the turn never ran, so it touched nothing).
 func TestOrchestrator_RateLimitGateSkipsInFlightAndTouch(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -236,6 +229,7 @@ func TestOrchestrator_RateLimitGateSkipsInFlightAndTouch(t *testing.T) {
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 	}
+	seedCacheTestRow(idx, orchestratorTestKey)
 
 	tc := &rateLimitedStubContract{}
 	ts := NewTurnState(context.Background(), orchestratorTestKey, []string{"hi"}, nil)
@@ -248,18 +242,17 @@ func TestOrchestrator_RateLimitGateSkipsInFlightAndTouch(t *testing.T) {
 	if a.IsTurnInFlight(orchestratorTestKey) {
 		t.Fatalf("after rate-limit reject: IsTurnInFlight(%s) = true, want false", orchestratorTestKey)
 	}
-	if raw, _ := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity); raw != "" {
-		t.Fatalf("rate-limit reject wrote last_activity = %q (should be untouched)", raw)
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); ok {
+		t.Fatalf("rate-limit reject wrote a cache touch (should be untouched)")
 	}
 }
 
-// TestOrchestrator_BranchTurnKeysInFlightByBranchAndActivityByRoot verifies
-// the split key semantics for branch turns: the in-flight counter tracks the
-// branch's OWN key (branches are distinct identities — a facet turn must not
-// couple to the parent), while last_activity is recorded against the parent
-// ROOT key (so keepalive/CLI gates targeting the main session see the
-// activity).
-func TestOrchestrator_BranchTurnKeysInFlightByBranchAndActivityByRoot(t *testing.T) {
+// TestOrchestrator_BranchTurnKeysInFlightByBranchAndCacheByBoth verifies the
+// key semantics for branch turns: the in-flight counter tracks the branch's OWN
+// key (branches are distinct identities — a facet turn must not couple to the
+// parent), while the cache touch lands on BOTH the branch AND its root (the
+// branch shares and thereby warms the root's cached prefix).
+func TestOrchestrator_BranchTurnKeysInFlightByBranchAndCacheByBoth(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -270,6 +263,8 @@ func TestOrchestrator_BranchTurnKeysInFlightByBranchAndActivityByRoot(t *testing
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 	}
+	seedCacheTestRow(idx, orchestratorTestKey)
+	seedCacheTestRow(idx, orchestratorTestBranchKey)
 
 	const delay = 100 * time.Millisecond
 	tc := &asyncStubContract{completionDelay: delay}
@@ -299,11 +294,11 @@ func TestOrchestrator_BranchTurnKeysInFlightByBranchAndActivityByRoot(t *testing
 		t.Fatal("orchestrator did not return")
 	}
 
-	// last_activity lands under the ROOT key, not the branch key.
-	if raw, _ := idx.GetSessionMetadata(orchestratorTestKey, sessionMetaLastActivity); raw == "" {
-		t.Error("branch turn did not write last_activity under the root key")
+	// Cache touch lands under BOTH the branch key and the root key.
+	if _, ok := idx.LastCacheTouch(orchestratorTestBranchKey); !ok {
+		t.Error("branch turn did not write cache touch under the branch key")
 	}
-	if raw, _ := idx.GetSessionMetadata(orchestratorTestBranchKey, sessionMetaLastActivity); raw != "" {
-		t.Errorf("branch turn wrote last_activity under the branch key = %q, want empty", raw)
+	if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
+		t.Error("branch turn did not write cache touch under the root key")
 	}
 }

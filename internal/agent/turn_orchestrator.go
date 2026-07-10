@@ -6,7 +6,6 @@ import (
 
 	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
-	"foci/internal/session"
 )
 
 // OrchestrateFullTurn executes a complete turn through the TurnContract pipeline.
@@ -68,28 +67,16 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	tc.RegisterSessionIndex(ts)
 	tc.LogConversationRecv(ts)
 	tc.TouchActivity(ts)
-	// touchLastActivity records that *this session* is doing something *now*,
-	// regardless of trigger (user, cron, CLI, webhook, agent-to-agent,
-	// system-injected). Single chokepoint covers every turn-init path. Keyed
-	// by the ROOT key (branch turns record against their parent root) so the
-	// gate consults the specific session a CLI send would target (the agent's
-	// main session) rather than being confused by activity in unrelated
-	// branches or sub-agents. The per-receive-path last_user_activity write
-	// (telegram/discord) is deliberately separate — it tracks user attention,
-	// not agent activity, and lives in agent_metadata rather than
-	// session_metadata.
-	//
-	// NOTE: this deliberately stays root-collapsed while in-flight tracking
-	// above uses the per-key (child-distinct) identity. last_activity feeds
-	// DefaultSessionKeyForAgent's most-recently-active ordering; promoting
-	// facet/branch keys into that ordering is a separate question from the
-	// in-flight coupling fixed in TODO #719, so it is left root-collapsed
-	// pending its own analysis.
-	activityKey := ts.SessionKey
-	if sk, err := session.ParseSessionKey(ts.SessionKey); err == nil {
-		activityKey = sk.Root().String()
-	}
-	a.touchLastActivity(activityKey)
+	// touchCacheFreshness records that *this session's* cached context was hit
+	// by a turn *now*, regardless of trigger (user, cron, CLI, webhook,
+	// agent-to-agent, system-injected, memory) — any turn reusing the cached
+	// prefix refreshes it. Single chokepoint covers every turn-init path. Keyed
+	// per-session (child-distinct, matching the in-flight tracking above), and a
+	// branch turn ALSO bumps its root because it warms the root's shared cache.
+	// Feeds the --if-active / --if-inactive send gate ("is this session's cache
+	// warm?"). The per-receive-path last_user_activity write (telegram/discord)
+	// is deliberately separate — it tracks user attention, not cache freshness.
+	a.touchCacheFreshness(ts.SessionKey)
 
 	// Phase 2: Preparation
 	tc.LoadSessionMeta(ts)

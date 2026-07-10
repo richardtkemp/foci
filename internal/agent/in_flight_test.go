@@ -2,7 +2,6 @@ package agent
 
 import (
 	"path/filepath"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -298,128 +297,116 @@ func TestInFlight_WaitChPerBase(t *testing.T) {
 	}
 }
 
-// TestTouchLastActivity_WritesRow verifies the helper writes the row keyed
-// by session base and the timestamp parses as a unix epoch within ±2s of
-// time.Now.
-func TestTouchLastActivity_WritesRow(t *testing.T) {
+// seedCacheTestRow inserts a minimal session_index row so TouchCacheTouch (an
+// UPDATE) has something to write to.
+func seedCacheTestRow(idx *session.SessionIndex, key string) {
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  key,
+		CreatedAt:   time.Now().Add(-time.Hour),
+		SessionType: session.ClassifySessionKey(key),
+		Status:      session.SessionStatusActive,
+	})
+}
+
+// TestTouchCacheFreshness_WritesRow verifies the helper stamps last_cache_touch
+// on the session's own row within ±2s of now.
+func TestTouchCacheFreshness_WritesRow(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
 	}
 	defer idx.Close()
 
-	a := &Agent{
-		AgentID:      "test-agent",
-		SessionIndex: idx,
-	}
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+	seedCacheTestRow(idx, testBaseA)
 
-	before := time.Now().Unix()
-	a.touchLastActivity(testBaseA)
-	after := time.Now().Unix()
+	before := time.Now().Add(-2 * time.Second)
+	a.touchCacheFreshness(testBaseA)
+	after := time.Now().Add(2 * time.Second)
 
-	raw, err := idx.GetSessionMetadata(testBaseA, sessionMetaLastActivity)
-	if err != nil {
-		t.Fatalf("GetSessionMetadata: %v", err)
+	got, ok := idx.LastCacheTouch(testBaseA)
+	if !ok {
+		t.Fatalf("last_cache_touch not written for %s", testBaseA)
 	}
-	if raw == "" {
-		t.Fatalf("last_activity not written (empty value)")
-	}
-	got, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		t.Fatalf("parse last_activity %q: %v", raw, err)
-	}
-	if got < before || got > after {
-		t.Fatalf("last_activity %d outside expected window [%d, %d]", got, before, after)
+	if got.Before(before) || got.After(after) {
+		t.Fatalf("last_cache_touch %v outside window [%v, %v]", got, before, after)
 	}
 }
 
-// TestTouchLastActivity_Idempotent verifies repeated calls keep advancing
-// the timestamp without error. Each call overwrites the previous value.
-func TestTouchLastActivity_Idempotent(t *testing.T) {
+// TestTouchCacheFreshness_Monotonic verifies repeated calls keep advancing the
+// timestamp (never go backwards).
+func TestTouchCacheFreshness_Monotonic(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
 	}
 	defer idx.Close()
 
-	a := &Agent{
-		AgentID:      "test-agent",
-		SessionIndex: idx,
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+	seedCacheTestRow(idx, testBaseA)
+
+	a.touchCacheFreshness(testBaseA)
+	first, ok := idx.LastCacheTouch(testBaseA)
+	if !ok {
+		t.Fatalf("first cache touch not written")
 	}
 
-	a.touchLastActivity(testBaseA)
-	first, err := idx.GetSessionMetadata(testBaseA, sessionMetaLastActivity)
-	if err != nil || first == "" {
-		t.Fatalf("first read: err=%v val=%q", err, first)
-	}
-
-	// Sleep long enough that a new unix-second tick is likely.
 	time.Sleep(1100 * time.Millisecond)
-	a.touchLastActivity(testBaseA)
-	second, err := idx.GetSessionMetadata(testBaseA, sessionMetaLastActivity)
-	if err != nil || second == "" {
-		t.Fatalf("second read: err=%v val=%q", err, second)
+	a.touchCacheFreshness(testBaseA)
+	second, ok := idx.LastCacheTouch(testBaseA)
+	if !ok {
+		t.Fatalf("second cache touch not written")
 	}
-
-	firstN, _ := strconv.ParseInt(first, 10, 64)
-	secondN, _ := strconv.ParseInt(second, 10, 64)
-	if secondN < firstN {
-		t.Fatalf("second timestamp %d < first %d (not monotonic)", secondN, firstN)
+	if second.Before(first) {
+		t.Fatalf("second cache touch %v before first %v (not monotonic)", second, first)
 	}
 }
 
-// TestTouchLastActivity_PerBase verifies that writes under one base do not
-// affect another base's row. Confirms the per-session keying.
-func TestTouchLastActivity_PerBase(t *testing.T) {
+// TestTouchCacheFreshness_BranchBumpsRoot verifies that a branch turn stamps
+// BOTH its own row and its root's row — the branch shares (and thus warms) the
+// root's cached prefix.
+func TestTouchCacheFreshness_BranchBumpsRoot(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
 	}
 	defer idx.Close()
 
-	a := &Agent{
-		AgentID:      "test-agent",
-		SessionIndex: idx,
-	}
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+	branchKey := testBaseA + "/b1700000000"
+	seedCacheTestRow(idx, testBaseA)
+	seedCacheTestRow(idx, branchKey)
 
-	a.touchLastActivity(testBaseA)
-	rawA, _ := idx.GetSessionMetadata(testBaseA, sessionMetaLastActivity)
-	rawB, _ := idx.GetSessionMetadata(testBaseB, sessionMetaLastActivity)
-	if rawA == "" {
-		t.Fatalf("touchLastActivity(%s): row not written", testBaseA)
+	a.touchCacheFreshness(branchKey)
+
+	if _, ok := idx.LastCacheTouch(branchKey); !ok {
+		t.Fatalf("branch %s cache touch not written", branchKey)
 	}
-	if rawB != "" {
-		t.Fatalf("touchLastActivity(%s) leaked into %s row: got %q, want empty", testBaseA, testBaseB, rawB)
+	if _, ok := idx.LastCacheTouch(testBaseA); !ok {
+		t.Fatalf("root %s cache touch not written by branch turn", testBaseA)
 	}
 }
 
-// TestTouchLastActivity_NoSessionIndex verifies the helper is safe when
+// TestTouchCacheFreshness_NoSessionIndex verifies the helper is safe when
 // SessionIndex is nil (test agents, partially-constructed Agents).
-func TestTouchLastActivity_NoSessionIndex(t *testing.T) {
+func TestTouchCacheFreshness_NoSessionIndex(t *testing.T) {
 	a := &Agent{AgentID: "test-agent"}
-	// Must not panic.
-	a.touchLastActivity(testBaseA)
+	a.touchCacheFreshness(testBaseA) // must not panic
 }
 
-// TestTouchLastActivity_EmptyBase verifies the helper is a no-op when base
-// is empty (defensive — prevents writing to an "" session row, which would
-// be meaningless).
-func TestTouchLastActivity_EmptyBase(t *testing.T) {
+// TestTouchCacheFreshness_NoRow verifies the helper is a harmless no-op when
+// the session row doesn't exist (UPDATE affects 0 rows).
+func TestTouchCacheFreshness_NoRow(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
 	}
 	defer idx.Close()
 
-	a := &Agent{
-		AgentID:      "test-agent",
-		SessionIndex: idx,
-	}
-	a.touchLastActivity("")
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+	a.touchCacheFreshness(testBaseA)
 
-	// Confirm nothing got written under the empty base.
-	raw, _ := idx.GetSessionMetadata("", sessionMetaLastActivity)
-	if raw != "" {
-		t.Fatalf("touchLastActivity with empty base wrote %q under empty key", raw)
+	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Fatalf("cache touch written for %s despite no row existing", testBaseA)
 	}
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -227,10 +226,11 @@ func TestWebhook_NoSession(t *testing.T) {
 }
 
 // TestWebhook_IfInactive tests that the if_inactive query param skips when
-// the targeted session has recent activity. Under TODO #753 semantics,
-// "activity" is read from session_metadata.last_activity (any turn-init
-// path) rather than agent_metadata.last_user_activity (user inbound only).
-// The narrower user-only behaviour now lives behind --if-user-inactive.
+// the targeted session has recent activity. "Activity" here means cache
+// freshness — read from session_index.last_cache_touch (bumped by any turn-init
+// path, memory turns included) rather than agent_metadata.last_user_activity
+// (user inbound only). The narrower user-only behaviour lives behind
+// --if-user-inactive.
 func TestWebhook_IfInactive(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt"), 0644)
@@ -239,7 +239,7 @@ func TestWebhook_IfInactive(t *testing.T) {
 
 	// Simulate recent session activity under the stable key the gate
 	// consults directly.
-	d.sessionIndex.SetSessionMetadata(testSessionKey, "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
+	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now())
 
 	mux := newTestMux(d)
 
@@ -271,7 +271,7 @@ func TestWebhook_IfUserInactive_LegacyUserActivityOnly(t *testing.T) {
 	// Recent SESSION activity (cron-injected turn) but NO recent user
 	// activity. --if-user-inactive should still allow the request through
 	// (user has not been engaged), even though the session has been busy.
-	d.sessionIndex.SetSessionMetadata(testSessionKey, "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
+	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now())
 
 	mux := newTestMux(d)
 

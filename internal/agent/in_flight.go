@@ -1,28 +1,10 @@
 package agent
 
 import (
-	"fmt"
 	"time"
-)
 
-// sessionMetaLastActivity is the session_metadata key holding the unix
-// timestamp of the most recent turn executed under this session base,
-// regardless of trigger (user, cron, CLI, webhook, agent-to-agent,
-// system-injected). Written from OrchestrateFullTurn so every turn-init
-// path participates uniformly. Used by --if-active / --if-inactive gates
-// to answer "has this session been doing anything recently?" (TODO #753).
-//
-// Stored against the session key. Session keys are stable identities
-// (compaction archives in place), and branches have their own keys — so CLI
-// sends targeting the agent's *main* session consult that session's row;
-// activity in branches or sub-agents does not falsely keep the main session
-// "warm" for keepalive purposes.
-//
-// Distinct from "last_user_activity" (still in agent_metadata, written by
-// internal/telegram/bot_receive.go and internal/discord/receive.go) which
-// tracks primary-bot user messages only — that key is deliberately untouched
-// to preserve the user-attention gate's "cron cannot defeat itself" property.
-const sessionMetaLastActivity = "last_activity"
+	"foci/internal/session"
+)
 
 // IsTurnInFlight returns true if any turn is currently executing under
 // OrchestrateFullTurn for the in-flight identity of the given session key —
@@ -158,8 +140,8 @@ func (a *Agent) notifyInFlightChangedLocked(base string) {
 //	done := a.markInFlight(ts.SessionKey, delivering)
 //	defer done()
 //
-// The orchestrator pairs this with touchLastActivity at turn entry so that
-// both signals — runtime "doing something now" and persistent "did something
+// The orchestrator pairs this with touchCacheFreshness at turn entry so that
+// both signals — runtime "doing something now" and persistent "cache warmed
 // at time T" — track every turn-init path through the single chokepoint.
 //
 // Both increment and decrement notify InFlightWaitCh listeners by
@@ -219,20 +201,23 @@ func (a *Agent) AdoptAutonomousRun(sessionKey string) func() {
 	return a.markInFlight(sessionKey, true)
 }
 
-// touchLastActivity writes the current unix timestamp to the session's
-// last_activity metadata key, recording that this session is currently
-// executing a turn. No-op if SessionIndex is nil (test agents) or base is
-// empty.
-//
-// Errors are swallowed (logged at debug, not warn) — a transient DB write
-// failure should not abort the turn. The next turn refreshes the timestamp.
-func (a *Agent) touchLastActivity(base string) {
-	if a.SessionIndex == nil || base == "" {
+// touchCacheFreshness records that this session's cached context was hit by a
+// turn now, feeding the --if-active / --if-inactive send gate. Bumped on EVERY
+// turn regardless of trigger (user, cron, CLI, reflection, memory) because any
+// turn reusing the cached prefix genuinely refreshes it. A branch turn ALSO
+// bumps its root: the branch shares the root's cached prefix, so its turn keeps
+// the root warm. No-op if SessionIndex is nil (test agents) or the key is empty.
+func (a *Agent) touchCacheFreshness(sessionKey string) {
+	if a.SessionIndex == nil || sessionKey == "" {
 		return
 	}
-	val := fmt.Sprintf("%d", time.Now().Unix())
-	if err := a.SessionIndex.SetSessionMetadata(base, sessionMetaLastActivity, val); err != nil {
-		a.logger().Debugf("touchLastActivity: SetSessionMetadata(%s, %s, %s): %v",
-			base, sessionMetaLastActivity, val, err)
+	now := time.Now()
+	a.SessionIndex.TouchCacheTouch(sessionKey, now)
+	// A branch warms its root's shared cache — bump the root too, unless this
+	// key already is the root.
+	if sk, err := session.ParseSessionKey(sessionKey); err == nil {
+		if root := sk.Root().String(); root != sessionKey {
+			a.SessionIndex.TouchCacheTouch(root, now)
+		}
 	}
 }
