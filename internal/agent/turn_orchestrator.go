@@ -96,6 +96,14 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	if err := tc.ComposePrompt(ts); err != nil {
 		return "", err
 	}
+	// lastMessageTime feeds the [meta] gap= display only (cache-bust reads
+	// prevRequestTime instead). Update it HERE — after ComposePrompt read the
+	// previous value for this turn's gap, so the NEXT turn measures from this
+	// message. Single central write covering both transports, replacing the
+	// former per-transport sites (turn_delegated / turn_api).
+	if ts.SessionMeta != nil {
+		ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
+	}
 	tc.BuildSystemAndTools(ts)
 	tc.InjectNudges(ts)
 

@@ -83,10 +83,6 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 		}
 	}
 
-	// Update lastMessageTime AFTER composition so the gap is calculated
-	// against the previous message, not the current one.
-	ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
-
 	return nil
 }
 
@@ -501,7 +497,6 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	if ts.SessionMeta == nil || ts.FinalUsage == nil {
 		return
 	}
-	ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
 	// Header token chips: input/output/cache_write sum across all terminal
 	// calls (distinct per-call deltas); cache_read is last-call only (cumulative
 	// — summing the gate's rounds double-counts the same context). DisplayUsage()
