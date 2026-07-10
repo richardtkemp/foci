@@ -129,7 +129,6 @@ func (s *stubContract) AcquireTurnLock(*TurnState) func()     { return func() {}
 func (s *stubContract) IncrementProcessing(*TurnState) func() { return func() {} }
 func (s *stubContract) RegisterTurn(*TurnState) func()        { return func() {} }
 func (s *stubContract) CheckStaleContext(*TurnState) error    { return nil }
-func (s *stubContract) RegisterSessionIndex(*TurnState)       {}
 func (s *stubContract) LogConversationRecv(*TurnState)        {}
 func (s *stubContract) TouchActivity(*TurnState)              {}
 func (s *stubContract) LoadSessionMeta(*TurnState)            {}

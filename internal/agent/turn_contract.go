@@ -47,10 +47,6 @@ type TurnContract interface {
 
 	// --- Phase 1b: Post-lock logging and tracking ---
 
-	// RegisterSessionIndex ensures this session appears in the session
-	// index for memory formation and state tracking. Shared.
-	RegisterSessionIndex(ts *TurnState)
-
 	// LogConversationRecv logs the inbound message to the conversation log. Shared.
 	LogConversationRecv(ts *TurnState)
 
@@ -307,38 +303,6 @@ func (s *sharedTurnOps) CheckStaleContext(ts *TurnState) error {
 	return ts.Ctx.Err()
 }
 
-// RegisterSessionIndex ensures the session exists in the session index.
-// The API path gets this implicitly via store.Append → fireEvent → Upsert,
-// but the delegated path never calls Append (CC owns its session file).
-// Calling Upsert directly covers both paths uniformly.
-// For delegated sessions, includes the CC JSONL file path so the pruner
-// doesn't treat the entry as an orphan (no foci session file exists).
-func (s *sharedTurnOps) RegisterSessionIndex(ts *TurnState) {
-	if s.agent.SessionIndex == nil {
-		return
-	}
-	// Memory-formation turns (reflection / session-end memory) inject into the
-	// main session on delegated agents. Registering them would advance
-	// last_activity_at and defeat the reflection-skip guard. The main session
-	// is already registered (these passes only fire on existing sessions), so
-	// skip the bump entirely. See isMemoryTrigger.
-	if isMemoryTrigger(ts.Trigger) {
-		return
-	}
-	now := time.Now()
-	filePath := ""
-	if s.agent.DelegatedManager != nil {
-		filePath = s.agent.DelegatedManager.SessionFilePath(ts.SessionKey)
-	}
-	s.agent.SessionIndex.Upsert(session.SessionIndexEntry{
-		SessionKey:     ts.SessionKey,
-		FilePath:       filePath,
-		CreatedAt:      now,
-		LastActivityAt: now,
-		SessionType:    session.ClassifySessionKey(ts.SessionKey),
-		Status:         session.SessionStatusActive,
-	})
-}
 
 // LogConversationRecv logs the inbound user message. Extracted from
 // agent.go:335-350 and turn_delegated.go:25-32.

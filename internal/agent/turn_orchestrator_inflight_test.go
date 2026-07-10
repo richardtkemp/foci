@@ -22,7 +22,6 @@ func (s *rateLimitedStubContract) AcquireTurnLock(*TurnState) func()     { retur
 func (s *rateLimitedStubContract) IncrementProcessing(*TurnState) func() { return func() {} }
 func (s *rateLimitedStubContract) RegisterTurn(*TurnState) func()        { return func() {} }
 func (s *rateLimitedStubContract) CheckStaleContext(*TurnState) error    { return nil }
-func (s *rateLimitedStubContract) RegisterSessionIndex(*TurnState)       {}
 func (s *rateLimitedStubContract) LogConversationRecv(*TurnState)        {}
 func (s *rateLimitedStubContract) TouchActivity(*TurnState)              {}
 func (s *rateLimitedStubContract) LoadSessionMeta(*TurnState)            {}
@@ -151,8 +150,8 @@ func TestOrchestrator_CacheTouchWritesRow(t *testing.T) {
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 	}
-	// The stub's RegisterSessionIndex is a no-op, so seed the row (production's
-	// real RegisterSessionIndex creates it before touchCacheFreshness runs).
+	// Seed the row: in production recordTurnActivity upserts it, but this test
+	// drives a stub contract, so create it up front for the cache-touch assertions.
 	seedCacheTestRow(idx, orchestratorTestKey)
 
 	// Confirm no prior cache touch.

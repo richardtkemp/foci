@@ -64,28 +64,16 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	}
 
 	// Phase 1b: Logging & tracking
-	tc.RegisterSessionIndex(ts)
 	tc.LogConversationRecv(ts)
 	tc.TouchActivity(ts)
-	// recordCacheTouch records that *this session's* cached context was hit by a
-	// turn *now*, regardless of trigger (user, cron, CLI, webhook, agent-to-agent,
-	// system-injected, memory) — any turn reusing the cached prefix refreshes it.
-	// Single chokepoint covers every turn-init path. Keyed per-session
-	// (child-distinct, matching the in-flight tracking above), and a branch turn
-	// ALSO bumps its root because it warms the root's shared cache. Feeds the
-	// --if-active / --if-inactive send gate. It also captures the PREVIOUS
-	// cache-touch (prior request time) onto the session meta first, for cache-bust
-	// idle detection which reads it mid-inference.
-	a.recordCacheTouch(ts.SessionKey)
-	// touchUserActivity is the narrower "a human spoke" signal: bumped only on
-	// real-time interactive input (telegram/app/discord/voice), excluding HTTP
-	// /send (foci send, cron), webhooks, wakes, agent-to-agent, and memory
-	// passes. isInteractiveTrigger — NOT isUserTrigger, which also counts /send
-	// and "" for nudge/logging purposes. Feeds --if-user-active and the warning
-	// dispatcher's cadence choice. Deliberately separate from cache freshness.
-	if isInteractiveTrigger(ts.Trigger) {
-		a.touchUserActivity(ts.SessionKey)
-	}
+	// recordTurnActivity is the SINGLE per-turn timestamp write: one upsert that
+	// captures the prior request time (for cache-bust) then sets last_cache_touch
+	// (every turn — any trigger refreshes the cached prefix), last_activity_at
+	// (skipped for memory-formation turns, so reflection isn't defeated), and
+	// last_user_activity_at (only real-time interactive input — telegram/app/
+	// discord/voice, NOT /send/cron/webhook/agent/memory). Replaces the former
+	// separate RegisterSessionIndex + recordCacheTouch + touchUserActivity writes.
+	a.recordTurnActivity(ts)
 
 	// Phase 2: Preparation
 	tc.LoadSessionMeta(ts)

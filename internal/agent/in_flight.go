@@ -201,16 +201,23 @@ func (a *Agent) AdoptAutonomousRun(sessionKey string) func() {
 	return a.markInFlight(sessionKey, true)
 }
 
-// recordCacheTouch captures the PREVIOUS cache-touch (the prior turn's request
-// time, for cache-bust idle detection) onto the session meta, then records this
-// turn's cache touch. Must run at turn entry, before inference — the capture has
-// to read last_cache_touch BEFORE touchCacheFreshness bumps it.
-func (a *Agent) recordCacheTouch(sessionKey string) {
-	if a.SessionIndex == nil || sessionKey == "" {
+// recordTurnActivity performs a turn's ENTIRE per-turn timestamp write. It first
+// captures the PREVIOUS request time (last_cache_touch as of turn entry) onto
+// the session meta for cache-bust idle detection — that capture MUST read the
+// old value before the write overwrites it — then issues the single
+// RecordTurnActivity upsert that sets, atomically: last_cache_touch (always),
+// last_activity_at (unless a memory-formation turn), and last_user_activity_at
+// (only interactive human turns). Replaces the former separate RegisterSessionIndex
+// + touchCacheFreshness + touchUserActivity writes. Must run at turn entry,
+// before inference. Own key only — root warmth is handled at branch creation by
+// TouchRootCacheForBranch.
+func (a *Agent) recordTurnActivity(ts *TurnState) {
+	if a.SessionIndex == nil || ts.SessionKey == "" {
 		return
 	}
-	prev, ok := a.SessionIndex.LastCacheTouch(sessionKey)
-	sm := a.getSessionMeta(sessionKey)
+	// Capture prior request time before the bump (cache-bust reads it mid-inference).
+	prev, ok := a.SessionIndex.LastCacheTouch(ts.SessionKey)
+	sm := a.getSessionMeta(ts.SessionKey)
 	a.metaMu.Lock()
 	if ok {
 		sm.prevRequestTime = prev
@@ -218,28 +225,24 @@ func (a *Agent) recordCacheTouch(sessionKey string) {
 		sm.prevRequestTime = time.Time{}
 	}
 	a.metaMu.Unlock()
-	a.touchCacheFreshness(sessionKey)
-}
 
-// touchCacheFreshness records that this session's cached context was hit by a
-// turn now, feeding the --if-warm / --if-cold send gate. Bumped on EVERY turn
-// regardless of trigger (user, cron, CLI, reflection, memory) because any turn
-// reusing the cached prefix genuinely refreshes it. OWN key only: a branch turn
-// warms the ROOT's shared prefix only at the moment of branching (see
-// TouchRootCacheForBranch), not on every subsequent branch turn — once root
-// continues past the branch point the shared prefix no longer covers root's
-// tail. No-op if SessionIndex is nil (test agents) or the key is empty.
-func (a *Agent) touchCacheFreshness(sessionKey string) {
-	if a.SessionIndex == nil || sessionKey == "" {
-		return
+	filePath := ""
+	if a.DelegatedManager != nil {
+		filePath = a.DelegatedManager.SessionFilePath(ts.SessionKey)
 	}
-	a.SessionIndex.TouchCacheTouch(sessionKey, time.Now())
+	a.SessionIndex.RecordTurnActivity(session.SessionIndexEntry{
+		SessionKey:  ts.SessionKey,
+		FilePath:    filePath,
+		CreatedAt:   time.Now(),
+		SessionType: session.ClassifySessionKey(ts.SessionKey),
+		Status:      session.SessionStatusActive,
+	}, !isMemoryTrigger(ts.Trigger), isInteractiveTrigger(ts.Trigger))
 }
 
 // TouchRootCacheForBranch records that creating a branch warmed its root's
 // shared cached prefix — a ONE-TIME touch at the moment of branching, called
 // from the branch-creation sites (createMemoryBranch, buildBranchFunc, the facet
-// command). Branch turns themselves no longer bump the root (touchCacheFreshness
+// command). Branch turns themselves no longer bump the root (recordTurnActivity
 // is own-key only). No-op for a root key, a nil index, or an empty key.
 func (a *Agent) TouchRootCacheForBranch(branchKey string) {
 	if a.SessionIndex == nil || branchKey == "" {
@@ -252,17 +255,3 @@ func (a *Agent) TouchRootCacheForBranch(branchKey string) {
 	}
 }
 
-// touchUserActivity records that a human interacted with this session now. Only
-// called for real-time interactive turns (telegram/app/discord/voice), so it is
-// the clean "a human spoke" signal — no /send, cron, keepalive, agent, or memory
-// turns. Writes the OWN key only — a human interaction on a branch/child is
-// activity on THAT session, not on its root (mirroring last_activity_at, which
-// is also own-key-only). Agent-level consumers still see it: LastUserActivityForAgent
-// takes a max over ALL the agent's sessions, so the child's own row counts.
-// No-op if SessionIndex is nil or the key is empty.
-func (a *Agent) touchUserActivity(sessionKey string) {
-	if a.SessionIndex == nil || sessionKey == "" {
-		return
-	}
-	a.SessionIndex.TouchUserActivity(sessionKey, time.Now())
-}
