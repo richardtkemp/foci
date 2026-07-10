@@ -324,6 +324,16 @@ type AgentSessionsOverride struct {
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"`
 	MaxSystemPromptFile             *int    `toml:"max_system_prompt_chars_file"  desc:"per-file char warning threshold (overrides global [sessions])"`
 	MaxSystemPromptTotal            *int    `toml:"max_system_prompt_chars_total" desc:"total system prompt char warning threshold (overrides global [sessions])"`
+	EphemeralRetentionDays          *int    `toml:"ephemeral_retention_days"      desc:"delete ephemeral backend transcripts older than this many days (overrides global [sessions]; 0 = never)" min:"0"`
+}
+
+// EffectiveEphemeralRetentionDays returns the per-agent ephemeral-session
+// retention (days) if the agent overrides it, else the global [sessions] value.
+func (a AgentSessionsOverride) EffectiveEphemeralRetentionDays(global int) int {
+	if a.EphemeralRetentionDays != nil {
+		return *a.EphemeralRetentionDays
+	}
+	return global
 }
 
 // EffectiveMaxSystemPromptFile returns the per-agent per-file char warning
@@ -767,6 +777,8 @@ type SessionsConfig struct {
 
 	ArchiveAfter string `toml:"archive_after" default:"24h"`  // gzip idle sessions after this duration (default "24h")
 	FileMode     string `toml:"file_mode"     default:"0600"` // octal file permissions for session files (default "0600")
+
+	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"30" desc:"delete ephemeral (branch/fork) backend transcripts older than this many days (0 = never)" min:"0"` // daily GC of stale ephemeral session files
 }
 
 type MemorySource struct {

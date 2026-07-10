@@ -415,6 +415,21 @@ type Capabilities struct {
 // state, not a live process.
 type BackendBrancher interface {
 	ForkSession(ctx context.Context, req ForkRequest) (ForkResult, error)
+	// CleanupSession deletes the on-disk backend session identified by
+	// req.SessionID (typically a fork produced by ForkSession), reclaiming
+	// ephemeral clones so their transcripts don't accumulate. Deleting an
+	// already-absent session is NOT an error. Like ForkSession it is a pure
+	// filesystem operation and must not require a started backend.
+	CleanupSession(ctx context.Context, req CleanupRequest) error
+}
+
+// CleanupRequest identifies a backend session to delete.
+type CleanupRequest struct {
+	// SessionID is the backend session id to delete (for CC, its UUID).
+	SessionID string
+	// WorkDir is the agent workspace (cwd); needed to locate the session for
+	// backends that key storage by cwd (CC's ~/.claude/projects/<slug>/).
+	WorkDir string
 }
 
 // ForkRequest identifies the backend conversation to fork.

@@ -69,6 +69,25 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	return delegator.ForkResult{SessionID: newID}, nil
 }
 
+// CleanupSession implements delegator.BackendBrancher: it deletes the CC
+// transcript for req.SessionID (~/.claude/projects/<slug>/<uuid>.jsonl),
+// reclaiming an ephemeral fork. A missing file is not an error. Pure
+// filesystem operation — no running backend required.
+func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest) error {
+	if req.SessionID == "" || req.WorkDir == "" {
+		return fmt.Errorf("ccstream cleanup: empty session id or workdir")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("ccstream cleanup: home dir: %w", err)
+	}
+	path := filepath.Join(home, ccProjectsDir, projectSlug(req.WorkDir), req.SessionID+".jsonl")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("ccstream cleanup: remove %s: %w", path, err)
+	}
+	return nil
+}
+
 // forkTranscript copies src to dst line by line, replacing every occurrence of
 // oldID with newID. Because session UUIDs are globally unique strings and the
 // per-message uuid/parentUuid fields hold DIFFERENT values, a plain per-line

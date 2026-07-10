@@ -86,6 +86,10 @@ type BackgroundAgent interface {
 	// ResetSession performs a soft session reset (memory formation + key rotation).
 	// Only called when a reset_time is configured.
 	ResetSession(ctx context.Context, sessionKey string) error
+	// CleanupEphemeralSessions deletes ephemeral (branch/fork) backend transcript
+	// files older than retentionDays. Files only. Returns the number deleted.
+	// Only called when ephemeral_retention_days > 0.
+	CleanupEphemeralSessions(ctx context.Context, retentionDays int) int
 }
 
 // Runner manages keepalive, background work, and reflection timers for an agent.
@@ -144,6 +148,10 @@ type Runner struct {
 	consolidationRunning bool
 	resetRunning         bool
 
+	// Ephemeral-session cleanup
+	ephemeralRetentionDays int       // 0 = disabled
+	lastEphemeralCleanup   time.Time // last daily GC run
+
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -161,6 +169,10 @@ type RunnerConfig struct {
 	PromptSearchDirs   []string // directories to search for prompt files (agent workspace, shared)
 	TodoStore          *memory.TodoStore
 	SessionIndex       *session.SessionIndex
+
+	// EphemeralRetentionDays is the age (days) beyond which ephemeral (branch/
+	// fork) backend transcripts are deleted by the daily cleanup. 0 = disabled.
+	EphemeralRetentionDays int
 
 	// Agent is the single dependency the schedulers drive. Wired from
 	// cmd/foci-gw/periodic_setup.go to an adapter over the agent instance.
@@ -207,6 +219,8 @@ func New(cfg RunnerConfig) *Runner {
 		todoStore:          cfg.TodoStore,
 		sessionIndex:       cfg.SessionIndex,
 		openSessionsFn:     cfg.OpenSessionsFn,
+
+		ephemeralRetentionDays: cfg.EphemeralRetentionDays,
 
 		agent:                 cfg.Agent,
 		warningDispatcher:     cfg.WarningDispatcher,
@@ -365,6 +379,7 @@ func (r *Runner) run(ctx context.Context) {
 			r.maybeReflection()
 			r.maybeConsolidation()
 			r.maybeReset(ctx)
+			r.maybeEphemeralCleanup(ctx)
 			if r.warningDispatcher != nil {
 				r.warningDispatcher.MaybeFire()
 			}
@@ -830,6 +845,28 @@ func (r *Runner) maybeConsolidation() {
 			r.agent.Branch("consolidation", parentKey, promptText, true)
 		}
 	}()
+}
+
+// maybeEphemeralCleanup runs the daily GC of stale ephemeral (branch/fork)
+// backend transcript files. Fires at most once per 24h (and shortly after
+// boot). Disabled when ephemeral_retention_days is 0. Files only — session_index
+// rows are left intact.
+func (r *Runner) maybeEphemeralCleanup(ctx context.Context) {
+	if r.ephemeralRetentionDays <= 0 || r.agent == nil {
+		return
+	}
+	now := timeutil.Now()
+	r.mu.Lock()
+	if !r.lastEphemeralCleanup.IsZero() && now.Sub(r.lastEphemeralCleanup) < 24*time.Hour {
+		r.mu.Unlock()
+		return
+	}
+	r.lastEphemeralCleanup = now
+	r.mu.Unlock()
+
+	if n := r.agent.CleanupEphemeralSessions(ctx, r.ephemeralRetentionDays); n > 0 {
+		r.log.Infof("ephemeral cleanup: deleted %d stale transcript(s) older than %dd", n, r.ephemeralRetentionDays)
+	}
 }
 
 // maybeReset fires the scheduled daily session reset (reset_time). A soft reset

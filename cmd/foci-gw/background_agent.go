@@ -70,3 +70,7 @@ func (b *backgroundAgent) ResetSession(ctx context.Context, sessionKey string) e
 	_, err := b.inst.ag.ResetSession(ctx, sessionKey)
 	return err
 }
+
+func (b *backgroundAgent) CleanupEphemeralSessions(ctx context.Context, retentionDays int) int {
+	return b.inst.ag.CleanupEphemeralSessions(ctx, retentionDays)
+}

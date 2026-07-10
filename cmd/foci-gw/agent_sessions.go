@@ -134,7 +134,8 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 		log.Infof(branchType, "[%s] delegated: backend fork %s from %s", agentID, branchKey, parentKey)
 		// These internal passes (reflection/keepalive/background/…) are one-offs:
 		// close the forked backend after the turn so its CC process doesn't leak
-		// until the idle reaper. The parent session is untouched.
+		// until the idle reaper. The cloned transcript file is left for the daily
+		// ephemeral-session GC (it outlives this process). Parent is untouched.
 		defer ag.DelegatedManager.ResetSession(branchKey)
 		if err := ag.HandleMessage(turnCtx, branchKey, []string{promptText}, nil); err != nil {
 			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, branchKey, err)
