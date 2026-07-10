@@ -549,6 +549,52 @@ func TestSessionsIndexSortedByLastActive(t *testing.T) {
 	}
 }
 
+func TestSessionsIndexHybridSort(t *testing.T) {
+	// Verifies the hybrid recency sort: a chat is ranked by last_user_activity_at
+	// (human touch), NOT last_activity_at (any turn), while a non-chat session is
+	// ranked by last_activity_at. chatA has the most recent ANY-activity but an
+	// old human touch, so it must sink below both a recently human-touched chat
+	// and a recently active non-chat.
+	now := time.Now().UTC()
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	idx := newTestSessionIndex(t)
+	cc.SessionIndex = idx
+
+	// chatA: any-activity now, but human last touched 2h ago → ranks by 2h.
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: "bot/cA", CreatedAt: now.Add(-3 * time.Hour), LastActivityAt: now,
+		SessionType: session.SessionTypeChat, Status: session.SessionStatusActive,
+	})
+	idx.TouchUserActivity("bot/cA", now.Add(-2*time.Hour))
+	// chatB: human touched 5m ago → ranks by 5m (newest).
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: "bot/cB", CreatedAt: now.Add(-3 * time.Hour), LastActivityAt: now.Add(-time.Hour),
+		SessionType: session.SessionTypeChat, Status: session.SessionStatusActive,
+	})
+	idx.TouchUserActivity("bot/cB", now.Add(-5*time.Minute))
+	// spawnC: non-chat, any-activity 30m ago, no human touch → ranks by 30m.
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: "bot/iC", CreatedAt: now.Add(-3 * time.Hour), LastActivityAt: now.Add(-30 * time.Minute),
+		SessionType: session.SessionTypeUnknown, Status: session.SessionStatusActive,
+	})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Expected order by recency: cB (5m) < iC (30m) < cA (2h), newest first.
+	bIdx := strings.Index(result.Text, "bot/cB")
+	cIdx := strings.Index(result.Text, "bot/iC")
+	aIdx := strings.Index(result.Text, "bot/cA")
+	if bIdx == -1 || cIdx == -1 || aIdx == -1 {
+		t.Fatalf("expected all sessions in output, got %q", result.Text)
+	}
+	if !(bIdx < cIdx && cIdx < aIdx) {
+		t.Errorf("hybrid sort wrong: want cB<iC<cA, got cB@%d iC@%d cA@%d (chatA's recent any-activity must not float it up)", bIdx, cIdx, aIdx)
+	}
+}
+
 // TestSessionsIndexSortFallsBackToCreatedAt verifies that when a session has a
 // zero-value LastActivityAt, the sort uses CreatedAt as the fallback timestamp.
 // A session with a recent LastActivityAt should appear before one that only has

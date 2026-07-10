@@ -326,16 +326,22 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 		return msg + ".", nil
 	}
 
+	// Hybrid recency sort: a user-visible chat is ranked by when a HUMAN last
+	// touched it (last_user_activity_at) — automated keepalive/cron turns
+	// shouldn't float a dormant chat to the top. Non-chat sessions (facet,
+	// spawn, branch, instance) have little/no user activity, so they rank by
+	// any-turn activity (last_activity_at). Both fall back to created_at.
+	sortKey := func(e session.SessionIndexEntry) time.Time {
+		if e.SessionType == session.SessionTypeChat && !e.LastUserActivityAt.IsZero() {
+			return e.LastUserActivityAt
+		}
+		if !e.LastActivityAt.IsZero() {
+			return e.LastActivityAt
+		}
+		return e.CreatedAt
+	}
 	sort.Slice(entries, func(i, j int) bool {
-		ti := entries[i].LastActivityAt
-		if ti.IsZero() {
-			ti = entries[i].CreatedAt
-		}
-		tj := entries[j].LastActivityAt
-		if tj.IsZero() {
-			tj = entries[j].CreatedAt
-		}
-		return ti.After(tj)
+		return sortKey(entries[i]).After(sortKey(entries[j]))
 	})
 
 	totalCount := len(entries)

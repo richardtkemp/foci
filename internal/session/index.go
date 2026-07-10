@@ -39,13 +39,14 @@ const (
 
 // SessionIndexEntry represents a row in the session_index table.
 type SessionIndexEntry struct {
-	SessionKey       string
-	FilePath         string
-	CreatedAt        time.Time
-	LastActivityAt   time.Time // updated on every session append; zero if never set
-	ParentSessionKey string    // empty if root session
-	SessionType      SessionType
-	Status           SessionStatus
+	SessionKey         string
+	FilePath           string
+	CreatedAt          time.Time
+	LastActivityAt     time.Time // updated on every session append; zero if never set
+	LastUserActivityAt time.Time // last human interaction (interactive only); zero if never
+	ParentSessionKey   string    // empty if root session
+	SessionType        SessionType
+	Status             SessionStatus
 }
 
 // SessionIndex maintains a SQLite index of all session files.
@@ -482,7 +483,7 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	query := `SELECT session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status
+	query := `SELECT session_key, file_path, created_at, last_activity_at, last_user_activity_at, parent_session_key, session_type, status
 	          FROM session_index WHERE 1=1`
 	var args []interface{}
 
@@ -521,13 +522,16 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 	for rows.Next() {
 		var e SessionIndexEntry
 		var createdStr, activityStr string
-		var parentKey sql.NullString
+		var userActivityStr, parentKey sql.NullString
 
-		if err := rows.Scan(&e.SessionKey, &e.FilePath, &createdStr, &activityStr, &parentKey, &e.SessionType, &e.Status); err != nil {
+		if err := rows.Scan(&e.SessionKey, &e.FilePath, &createdStr, &activityStr, &userActivityStr, &parentKey, &e.SessionType, &e.Status); err != nil {
 			return nil, err
 		}
 		e.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		e.LastActivityAt, _ = time.Parse(time.RFC3339, activityStr)
+		if userActivityStr.Valid {
+			e.LastUserActivityAt, _ = time.Parse(time.RFC3339, userActivityStr.String)
+		}
 		if parentKey.Valid {
 			e.ParentSessionKey = parentKey.String
 		}
