@@ -23,7 +23,19 @@ func TestParseSendFlags(t *testing.T) {
 			wantRest: []string{"hello", "world"},
 		},
 		{
-			name:         "--if-active with value",
+			name:         "--if-warm with value (canonical)",
+			args:         []string{"--if-warm", "8h", "hello"},
+			wantIfActive: "8h",
+			wantRest:     []string{"hello"},
+		},
+		{
+			name:           "--if-cold=value (canonical)",
+			args:           []string{"--if-cold=30m", "hello"},
+			wantIfInactive: "30m",
+			wantRest:       []string{"hello"},
+		},
+		{
+			name:         "--if-active with value (alias)",
 			args:         []string{"--if-active", "8h", "hello"},
 			wantIfActive: "8h",
 			wantRest:     []string{"hello"},
@@ -127,11 +139,11 @@ func TestParseSendFlags(t *testing.T) {
 			if flags.session != tt.wantSession {
 				t.Errorf("session = %q, want %q", flags.session, tt.wantSession)
 			}
-			if flags.ifActive != tt.wantIfActive {
-				t.Errorf("ifActive = %q, want %q", flags.ifActive, tt.wantIfActive)
+			if flags.ifWarm != tt.wantIfActive {
+				t.Errorf("ifWarm = %q, want %q", flags.ifWarm, tt.wantIfActive)
 			}
-			if flags.ifInactive != tt.wantIfInactive {
-				t.Errorf("ifInactive = %q, want %q", flags.ifInactive, tt.wantIfInactive)
+			if flags.ifCold != tt.wantIfInactive {
+				t.Errorf("ifCold = %q, want %q", flags.ifCold, tt.wantIfInactive)
 			}
 			if flags.ifUserActive != tt.wantIfUserActive {
 				t.Errorf("ifUserActive = %q, want %q", flags.ifUserActive, tt.wantIfUserActive)
