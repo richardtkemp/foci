@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -30,18 +29,19 @@ import (
 type agentResolver func(agentID string) (*agentInstance, bool)
 
 // userActivityChecker reports whether a real user has interacted with the agent
-// (Telegram/Discord inbound) within the given duration. Reads `last_user_activity`
-// from agent_metadata. This is the narrow signal used by --if-user-active /
-// --if-user-inactive — independent of any agent turns triggered by cron, CLI,
-// webhook, or the agent itself.
+// within the given duration. Reads the derived max of session_index
+// last_user_activity_at (written only on real-time interactive turns —
+// telegram/app/discord/voice). This is the narrow signal used by
+// --if-user-active / --if-user-inactive — independent of any agent turns
+// triggered by /send, cron, webhook, or the agent itself.
 type userActivityChecker func(agentID string, within time.Duration) bool
 
-// sessionActivityChecker reports whether the session at the given base has
-// executed any turn within the given duration. Reads `last_activity` from
-// session_metadata, which is written by OrchestrateFullTurn for every
-// turn-init path (TODO #753). This is the broad signal used by --if-active /
-// --if-inactive together with the in-flight short-circuit applied at the
-// gate site.
+// sessionActivityChecker reports whether the session at the given base has had
+// its cached context touched by any turn within the given duration. Reads
+// session_index.last_cache_touch, bumped by OrchestrateFullTurn on every
+// turn-init path (memory turns included — they warm the cache). This is the
+// broad cache-freshness signal used by --if-active / --if-inactive together
+// with the in-flight short-circuit applied at the gate site.
 type sessionActivityChecker func(sessionBase string, within time.Duration) bool
 
 // activityGateInputs bundles the per-request facts the gate needs to evaluate
@@ -84,15 +84,11 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 		if d.sessionIndex == nil {
 			return true
 		}
-		raw, err := d.sessionIndex.GetAgentMetadata(agentID, "last_user_activity")
-		if err != nil || raw == "" {
+		last, ok := d.sessionIndex.LastUserActivityForAgent(agentID)
+		if !ok {
 			return false
 		}
-		ts, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
-			return false
-		}
-		return time.Since(time.Unix(ts, 0)) <= within
+		return time.Since(last) <= within
 	}
 
 	isSessionActive := func(sessionBase string, within time.Duration) bool {

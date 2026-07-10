@@ -236,13 +236,6 @@ func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
 				_ = idx.SetAgentMetadata(parts[1], "first_run_completed", "true")
 			}
 
-		case strings.HasPrefix(key, "agent/") && strings.HasSuffix(key, "/last_user_activity"):
-			// agent/<id>/last_user_activity — value is a unix timestamp (int64)
-			parts := strings.SplitN(key, "/", 3)
-			if len(parts) == 3 {
-				_ = idx.SetAgentMetadata(parts[1], "last_user_activity", strVal)
-			}
-
 		case strings.HasPrefix(key, "agent/") && strings.Contains(key, "/chat/") && strings.HasSuffix(key, "/username"):
 			// agent/<id>/chat/<cid>/username
 			parts := strings.SplitN(key, "/", 5) // agent, <id>, chat, <cid>, username

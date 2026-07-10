@@ -125,11 +125,10 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 		}
 	}
 
-	// Record last real user activity (for --if-active gating on CLI commands).
-	// Only primary bots track this — secondary (facet) bots don't count.
-	if !b.isSecondary && b.agentID != "" && b.sessionIndex != nil {
-		_ = b.sessionIndex.SetAgentMetadata(b.agentID, "last_user_activity", fmt.Sprintf("%d", time.Now().Unix()))
-	}
+	// Last-user-activity is recorded per-session in the turn path (see
+	// Agent.touchUserActivity, gated on isUserTrigger) — not here. That keeps it
+	// keyed by the session the message lands on, includes facet/secondary bots,
+	// and derives the agent-level value as a max over sessions.
 	if b.OnUserMessage != nil {
 		b.OnUserMessage()
 	}

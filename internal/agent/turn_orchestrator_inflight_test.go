@@ -302,3 +302,50 @@ func TestOrchestrator_BranchTurnKeysInFlightByBranchAndCacheByBoth(t *testing.T)
 		t.Error("branch turn did not write cache touch under the root key")
 	}
 }
+
+// TestOrchestrator_UserActivityGatedByTrigger verifies the split between the two
+// signals: EVERY turn bumps last_cache_touch (cache freshness), but only a
+// real-time interactive turn bumps last_user_activity (human attention). Both a
+// keepalive turn AND an HTTP /send ("user") warm the cache without counting as
+// user activity — only interactive input (here: voice) does.
+func TestOrchestrator_UserActivityGatedByTrigger(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+	seedCacheTestRow(idx, orchestratorTestKey)
+
+	// The orchestrator sets ts.Trigger from the context (WithTrigger), so the
+	// trigger must be injected there, not on the TurnState struct.
+
+	// Neither a keepalive turn nor an HTTP /send ("user") is interactive input:
+	// both warm the cache but must NOT count as user activity.
+	for _, trig := range []string{"keepalive", "user"} {
+		tc := &stubContract{}
+		ctx := WithTrigger(context.Background(), trig)
+		ts := NewTurnState(ctx, orchestratorTestKey, []string{"hi"}, nil)
+		if _, err := a.OrchestrateFullTurn(ctx, tc, ts); err != nil {
+			t.Fatalf("%s turn: %v", trig, err)
+		}
+		if _, ok := idx.LastCacheTouch(orchestratorTestKey); !ok {
+			t.Fatalf("%s turn did not write cache touch", trig)
+		}
+		if _, ok := idx.LastUserActivityForAgent("test-agent"); ok {
+			t.Fatalf("%s turn wrongly wrote last_user_activity", trig)
+		}
+	}
+
+	// A voice turn IS real-time interactive input → user activity.
+	tcV := &stubContract{}
+	ctxV := WithTrigger(context.Background(), "voice")
+	tsV := NewTurnState(ctxV, orchestratorTestKey, []string{"hi"}, nil)
+	if _, err := a.OrchestrateFullTurn(ctxV, tcV, tsV); err != nil {
+		t.Fatalf("voice turn: %v", err)
+	}
+	if _, ok := idx.LastUserActivityForAgent("test-agent"); !ok {
+		t.Fatalf("voice turn did not write last_user_activity")
+	}
+}

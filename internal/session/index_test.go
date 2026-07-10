@@ -1465,3 +1465,34 @@ func TestConvRefs_ReturnsPersistedConvIDRows(t *testing.T) {
 		t.Fatalf("ConvRefs = %v, want {01AAA: ag1, 01BBB: ag2}", got)
 	}
 }
+
+func TestSessionIndex_LastUserActivityForAgent(t *testing.T) {
+	// Proves the agent-level user-activity signal is a max over that agent's
+	// sessions (derived, not separately stored), scoped per agent, and using
+	// unixepoch ordering (not lexical) so DST offset changes sort correctly.
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	idx.Upsert(SessionIndexEntry{SessionKey: "bot/c1", CreatedAt: now, SessionType: SessionTypeChat, Status: SessionStatusActive})
+	idx.Upsert(SessionIndexEntry{SessionKey: "bot/c2", CreatedAt: now, SessionType: SessionTypeChat, Status: SessionStatusActive})
+	idx.Upsert(SessionIndexEntry{SessionKey: "other/c1", CreatedAt: now, SessionType: SessionTypeChat, Status: SessionStatusActive})
+
+	// No user activity recorded yet.
+	if _, ok := idx.LastUserActivityForAgent("bot"); ok {
+		t.Fatalf("expected no user activity for bot, got ok")
+	}
+
+	older := now.Add(-time.Hour)
+	newer := now.Add(-time.Minute)
+	idx.TouchUserActivity("bot/c1", older)
+	idx.TouchUserActivity("bot/c2", newer)
+	idx.TouchUserActivity("other/c1", now) // different agent — must not leak
+
+	got, ok := idx.LastUserActivityForAgent("bot")
+	if !ok {
+		t.Fatalf("expected user activity for bot after touches")
+	}
+	if diff := got.Sub(newer); diff > time.Second || diff < -time.Second {
+		t.Fatalf("LastUserActivityForAgent(bot) = %v, want ~%v (max over bot's sessions)", got, newer)
+	}
+}
