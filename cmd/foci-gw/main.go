@@ -449,7 +449,7 @@ Subcommands:
 		promptTTL = d
 	}
 	setupInteractiveCleanup(ctx, promptTTL)
-	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, ctx)
+	setupToolDetailCleanup(toolDetailStore, ctx)
 	// L2 integration-test lifecycle control. Opens a UNIX-domain socket
 	// at FOCI_TESTHARNESS_CONTROL_SOCK if set; otherwise no-op. Tests
 	// drive per-agent backend close / etc. via a simple line protocol.
