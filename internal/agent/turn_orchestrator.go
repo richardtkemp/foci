@@ -67,15 +67,16 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	tc.RegisterSessionIndex(ts)
 	tc.LogConversationRecv(ts)
 	tc.TouchActivity(ts)
-	// touchCacheFreshness records that *this session's* cached context was hit
-	// by a turn *now*, regardless of trigger (user, cron, CLI, webhook,
-	// agent-to-agent, system-injected, memory) — any turn reusing the cached
-	// prefix refreshes it. Single chokepoint covers every turn-init path. Keyed
-	// per-session (child-distinct, matching the in-flight tracking above), and a
-	// branch turn ALSO bumps its root because it warms the root's shared cache.
-	// Feeds the --if-active / --if-inactive send gate ("is this session's cache
-	// warm?").
-	a.touchCacheFreshness(ts.SessionKey)
+	// recordCacheTouch records that *this session's* cached context was hit by a
+	// turn *now*, regardless of trigger (user, cron, CLI, webhook, agent-to-agent,
+	// system-injected, memory) — any turn reusing the cached prefix refreshes it.
+	// Single chokepoint covers every turn-init path. Keyed per-session
+	// (child-distinct, matching the in-flight tracking above), and a branch turn
+	// ALSO bumps its root because it warms the root's shared cache. Feeds the
+	// --if-active / --if-inactive send gate. It also captures the PREVIOUS
+	// cache-touch (prior request time) onto the session meta first, for cache-bust
+	// idle detection which reads it mid-inference.
+	a.recordCacheTouch(ts.SessionKey)
 	// touchUserActivity is the narrower "a human spoke" signal: bumped only on
 	// real-time interactive input (telegram/app/discord/voice), excluding HTTP
 	// /send (foci send, cron), webhooks, wakes, agent-to-agent, and memory

@@ -15,7 +15,20 @@ import (
 
 // sessionMeta tracks per-session state for metadata injection.
 type sessionMeta struct {
+	// lastMessageTime is the received-time of the message that triggered the
+	// PREVIOUS turn (ts.UserMessageTime — ReceivedAt, or StartedAt for system
+	// turns). Its sole consumer is the [meta] gap= display (time since the last
+	// message). Read during ComposePrompt (previous value), rewritten after.
+	// NOT a user-only signal; see #1116.
 	lastMessageTime time.Time
+
+	// prevRequestTime is the last_cache_touch value captured at THIS turn's
+	// entry — i.e. the PREVIOUS turn's request time. Cache-bust idle detection
+	// reads it mid-inference to tell whether a cache_read drop is explained by
+	// the prompt-cache TTL lapsing (idle) vs an unexpected bust. Distinct from
+	// lastMessageTime: it tracks request time (when the cache was refreshed),
+	// not message-received time. See #1116.
+	prevRequestTime time.Time
 	prevCost        float64
 	prevInput       int
 	prevOutput      int
@@ -609,12 +622,14 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 	m, ok := a.meta[key]
 	if !ok {
 		m = &sessionMeta{}
-		// Hydrate lastMessageTime from the session index so that
-		// LastUserMessageTime-based gates work correctly after a restart
-		// (in-memory meta is empty, but the DB has last_activity_at).
+		// Hydrate lastMessageTime from the session index so the [meta] gap=
+		// and cache-bust idle detection have a sane baseline after a restart
+		// (in-memory meta is empty). last_cache_touch is the matching signal —
+		// last turn of any trigger, which is what lastMessageTime tracks at
+		// runtime. This runs before the first post-restart turn's gap is read.
 		if a.SessionIndex != nil {
-			if entry, err := a.SessionIndex.Get(key); err == nil && !entry.LastActivityAt.IsZero() {
-				m.lastMessageTime = entry.LastActivityAt
+			if t, ok := a.SessionIndex.LastCacheTouch(key); ok {
+				m.lastMessageTime = t
 			}
 		}
 		a.meta[key] = m
@@ -675,47 +690,6 @@ func (a *Agent) ResetCacheBaseline(sessionKey string) {
 	a.getSessionMeta(sessionKey).prevCacheRead = 0
 }
 
-// SeedSessionMeta loads the session history and extracts the last user message's
-// [meta] time= timestamp to seed lastMessageTime. This ensures the first turn
-// after a restart shows a correct gap instead of gap=none.
-func (a *Agent) SeedSessionMeta(key string) {
-	msgs, err := a.Sessions.Load(key)
-	if err != nil || len(msgs) == 0 {
-		return
-	}
-	// Walk backwards to find last user message with a meta timestamp
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role != "user" {
-			continue
-		}
-		text := provider.TextOf(msgs[i].Content)
-		if t, ok := parseMetaTime(text); ok {
-			sm := a.getSessionMeta(key)
-			sm.lastMessageTime = t
-			return
-		}
-	}
-}
-
-// parseMetaTime extracts the timestamp from a [meta] time=... header line.
-func parseMetaTime(text string) (time.Time, bool) {
-	if !strings.HasPrefix(text, "[meta] ") {
-		return time.Time{}, false
-	}
-	idx := strings.Index(text, "time=")
-	if idx < 0 {
-		return time.Time{}, false
-	}
-	s := text[idx+5:]
-	if sp := strings.IndexByte(s, ' '); sp > 0 {
-		s = s[:sp]
-	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return t, true
-}
 
 // formatCost formats a dollar cost, trimming unnecessary trailing zeros.
 // $0.0000 → "$0", $1.2300 → "$1.23", $0.0016 → "$0.0016".
@@ -736,13 +710,4 @@ func formatCost(cost float64) string {
 		s = s[:i+1]
 	}
 	return s
-}
-
-// LastUserMessageTime returns the last user message time for the session.
-// Used by keepalive proactive warning dispatch to determine user activity.
-func (a *Agent) LastUserMessageTime(sessionKey string) time.Time {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	return sm.lastMessageTime
 }
