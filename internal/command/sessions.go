@@ -106,13 +106,17 @@ var knownSessionStatuses = map[string]bool{
 	"all":       true,
 }
 
-// knownSessionTypes is the set of valid type filter values.
+// knownSessionTypes is the set of valid type filter values (mirrors the
+// SessionType constants in internal/session).
 var knownSessionTypes = map[string]bool{
-	"chat":   true,
-	"spawn":  true,
-	"cron":   true,
-	"facet":  true,
-	"branch": true,
+	"chat":            true,
+	"facet":           true,
+	"independent":     true,
+	"spawn":           true,
+	"reflection":      true,
+	"keepalive":       true,
+	"background-task": true,
+	"unknown":         true,
 }
 
 // parseIndexArgs parses flexible filter arguments for /sessions index.
@@ -326,13 +330,14 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 		return msg + ".", nil
 	}
 
-	// Hybrid recency sort: a user-visible chat is ranked by when a HUMAN last
-	// touched it (last_user_activity_at) — automated keepalive/cron turns
-	// shouldn't float a dormant chat to the top. Non-chat sessions (facet,
-	// spawn, branch, instance) have little/no user activity, so they rank by
-	// any-turn activity (last_activity_at). Both fall back to created_at.
+	// Hybrid recency sort: a user-facing session (chat/facet/independent) is
+	// ranked by when a HUMAN last touched it (last_user_activity_at) — automated
+	// keepalive/background turns shouldn't float a dormant chat to the top.
+	// Non-user-facing sessions (spawn, reflection, keepalive, background-task)
+	// have little/no user activity, so they rank by any-turn activity
+	// (last_activity_at). Both fall back to created_at.
 	sortKey := func(e session.SessionIndexEntry) time.Time {
-		if e.SessionType == session.SessionTypeChat && !e.LastUserActivityAt.IsZero() {
+		if e.SessionType.IsUserFacing() && !e.LastUserActivityAt.IsZero() {
 			return e.LastUserActivityAt
 		}
 		if !e.LastActivityAt.IsZero() {

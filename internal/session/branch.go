@@ -25,6 +25,11 @@ type BranchMeta struct {
 	BranchPoint int    `json:"branch_point"`
 	NoResetHook bool   `json:"no_reset_hook,omitempty"` // skip pre-reset memory hook
 	Orientation string `json:"orientation,omitempty"`   // orientation text for first turn
+	// BranchType is the creation-time purpose (facet, reflection, keepalive,
+	// spawn, …). Persisted so a scan/rebuild recovers the fine-grained
+	// session_type from disk — the key alone can't express it. Empty for
+	// legacy branch files created before this field existed (→ unknown).
+	BranchType string `json:"branch_type,omitempty"`
 }
 
 // Template placeholders for orientation text. These are substituted by
@@ -75,7 +80,7 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 		}
 
 		orientation := resolveOrientation(opts.OrientationTemplate, branchKey, parentKey, opts.BranchType)
-		err = s.createBranchFile(parentKey, branchKey, opts.NoResetHook, orientation)
+		err = s.createBranchFile(parentKey, branchKey, opts.NoResetHook, orientation, opts.BranchType)
 		if err == nil {
 			return branchKey, nil
 		}
@@ -88,7 +93,7 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 
 // createBranchFile performs a single attempt to create a branch file with
 // exclusive semantics. Returns errBranchFileExists if the file already exists.
-func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, orientation string) error {
+func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, orientation, branchType string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -103,6 +108,7 @@ func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, 
 		BranchPoint: len(parentMsgs),
 		NoResetHook: noResetHook,
 		Orientation: orientation,
+		BranchType:  branchType,
 	}
 
 	path, err := s.SessionPath(branchKey)
@@ -135,7 +141,7 @@ func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, 
 		branchKey, parentKey, meta.BranchPoint, noResetHook, orientation != "")
 	s.fireEvent(SessionEvent{
 		Key:       branchKey,
-		Type:      ClassifySessionKey(branchKey),
+		Type:      SessionTypeForBranch(branchType),
 		Status:    SessionStatusActive,
 		ParentKey: parentKey,
 		FilePath:  path,

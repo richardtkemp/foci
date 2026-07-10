@@ -186,7 +186,7 @@ func (s *Store) TestAppend(key string, msg provider.Message) error {
 // TestCreateBranch is for testing only - creates a branch file with a specific key.
 // Production code should use CreateBranchWithOptions which generates the key internally.
 func (s *Store) TestCreateBranch(parentKey, branchKey string) error {
-	return s.createBranchFile(parentKey, branchKey, false, "")
+	return s.createBranchFile(parentKey, branchKey, false, "", "")
 }
 
 // TestAppendAll is for testing only - appends multiple messages without SessionWriter guard.
@@ -560,23 +560,49 @@ func (s *Store) fireEvent(e SessionEvent) {
 	}
 }
 
-// ClassifySessionKey determines the SessionType from a session key.
-// With the new format, chat vs independent is structural, and branch is
-// identifiable by child type. Semantic subtypes (spawn, facet, cron)
-// are metadata and cannot be distinguished from the key alone.
+// ClassifySessionKey determines the SessionType from a session key alone.
+// This is authoritative only for ROOTS: a c-root is a chat, an i-root is an
+// independent session. Any child (b or i) cannot be classified from the key —
+// all branches look alike — so the real type comes from the creation-time
+// branch_type (stamped at creation, recovered from BranchMeta during a scan;
+// see SessionTypeForBranch). For a bare child key with no branch context this
+// returns unknown as a safe fallback.
 func ClassifySessionKey(key string) SessionType {
 	k, err := ParseSessionKey(key)
 	if err != nil {
 		return SessionTypeUnknown
 	}
-	if k.ChildType == 'b' {
-		return SessionTypeBranch
-	}
 	if k.ChildType != 0 {
-		return SessionTypeUnknown // independent spawn — can't distinguish subtypes
+		return SessionTypeUnknown // branch/spawn — real type is the branch_type
 	}
-	if k.Type == 'c' {
+	switch k.Type {
+	case 'c':
 		return SessionTypeChat
+	case 'i':
+		return SessionTypeIndependent
 	}
 	return SessionTypeUnknown
+}
+
+// SessionTypeForBranch maps a branch's creation-time branch_type to its
+// persisted session_type. This is the authoritative classifier for branch
+// sessions, because the key can't express these distinctions (every b-child
+// looks identical). The memory-formation branch_types collapse to a single
+// "reflection" type — they differ only in trigger, which the session_type's
+// consumers (reflection eligibility, cost attribution) don't care about.
+func SessionTypeForBranch(branchType string) SessionType {
+	switch branchType {
+	case "facet":
+		return SessionTypeFacet
+	case "spawn":
+		return SessionTypeSpawn
+	case "reflection", "consolidation", "compaction-memory", "session-end-memory":
+		return SessionTypeReflection
+	case "keepalive":
+		return SessionTypeKeepalive
+	case "background", "nudge-extraction", "branch":
+		return SessionTypeBackgroundTask
+	default:
+		return SessionTypeUnknown
+	}
 }

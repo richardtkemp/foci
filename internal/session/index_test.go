@@ -288,17 +288,18 @@ func TestKeyColumns(t *testing.T) {
 }
 
 func TestClassifySessionKey(t *testing.T) {
-	// Proves that ClassifySessionKey correctly identifies chat, branch, and unknown
-	// session types from their key format, including edge cases like independent
-	// keys that can't be further distinguished from the key alone.
+	// Proves that ClassifySessionKey correctly identifies chat, independent, and
+	// unknown session types from their key format. Roots classify from the key
+	// (c→chat, i→independent); any child (b or i) classifies as unknown because
+	// the key alone can't recover the branch_type.
 	tests := []struct {
 		key  string
 		want SessionType
 	}{
 		{"bot/c123", SessionTypeChat},
-		{"bot/i123", SessionTypeUnknown},            // independent — can't distinguish facet/spawn/cron from key alone
-		{"bot/c123/b456", SessionTypeBranch},        // branch child type
-		{"bot/i123/b456", SessionTypeBranch},        // branch from independent parent
+		{"bot/i123", SessionTypeIndependent},        // independent i-root
+		{"bot/c123/b456", SessionTypeUnknown},       // branch child — real type is the branch_type
+		{"bot/i123/b456", SessionTypeUnknown},       // branch from independent parent
 		{"bot/c123/i456", SessionTypeUnknown},       // independent spawn child
 		{"bot/c123/1709590000", SessionTypeUnknown}, // old versioned format — no longer parses
 		{"agent:bot:unknown:thing", SessionTypeUnknown},
@@ -322,7 +323,7 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 	store.TestAppend("bot/c100", msg("user", "hello"))
 	store.TestAppend("bot/c200", msg("user", "world"))
 	branchKey := "bot/c100/b1000000001"
-	store.createBranchFile("bot/c100", branchKey, false, "")
+	store.createBranchFile("bot/c100", branchKey, false, "", "spawn")
 
 	// Create index and rebuild
 	idx := tempIndex(t)
@@ -343,9 +344,9 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 	if len(entries) != 2 {
 		t.Errorf("expected 2 chat sessions, got %d", len(entries))
 	}
-	entries, _ = idx.Query(QueryOptions{SessionType: string(SessionTypeBranch)})
+	entries, _ = idx.Query(QueryOptions{SessionType: string(SessionTypeSpawn)})
 	if len(entries) != 1 {
-		t.Errorf("expected 1 branch session, got %d", len(entries))
+		t.Errorf("expected 1 spawn (branch) session, got %d", len(entries))
 	}
 
 	// Verify parent key on branch
@@ -442,13 +443,13 @@ func TestSessionIndex_BranchEventFiring(t *testing.T) {
 	store.TestAppend("bot/c100", msg("user", "hello"))
 
 	// Create branch
-	store.createBranchFile("bot/c100", "bot/c100/b1000000001", false, "")
+	store.createBranchFile("bot/c100", "bot/c100/b1000000001", false, "", "spawn")
 	count, _ := idx.Count()
 	if count != 2 {
 		t.Fatalf("expected 2 after branch create, got %d", count)
 	}
 
-	entries, _ := idx.Query(QueryOptions{SessionType: string(SessionTypeBranch)})
+	entries, _ := idx.Query(QueryOptions{SessionType: string(SessionTypeSpawn)})
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 branch, got %d", len(entries))
 	}
@@ -820,7 +821,7 @@ func TestDefaultSessionKeyForAgent_ExcludesChildren(t *testing.T) {
 		FilePath:       "/tmp/branch.jsonl",
 		CreatedAt:      time.Now(),
 		LastActivityAt: time.Now(),
-		SessionType:    SessionTypeBranch,
+		SessionType:    SessionTypeSpawn,
 		Status:         SessionStatusActive,
 	})
 
@@ -1284,13 +1285,13 @@ func TestSessionsNeedingReflection(t *testing.T) {
 	})
 	idx.UpdateActivity("agent1/c33", base.Add(time.Hour))
 
-	// Case 4: Non-chat session (branch) — should be excluded.
+	// Case 4: Non-chat session (spawn branch) — should be excluded.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "agent1/c1/b2000000000",
 		FilePath:       "f4",
 		CreatedAt:      base,
 		LastActivityAt: base,
-		SessionType:    SessionTypeBranch,
+		SessionType:    SessionTypeSpawn,
 		Status:         SessionStatusActive,
 	})
 	// No stamp — would qualify if it were a chat session.

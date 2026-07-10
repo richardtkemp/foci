@@ -464,7 +464,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
 		branchKey, err := d.sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
 			NoResetHook:         req.NoResetHook,
-			BranchType:          "cron",
+			BranchType:          "branch",
 			OrientationTemplate: orientTemplate,
 		})
 		if err != nil {
@@ -605,9 +605,19 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 
 		q := r.URL.Query()
 
+		// A webhook is an external event source, not a human conversation — its
+		// turns must not land in the user's chat. Absent an explicit ?session=,
+		// default to a per-hook INDEPENDENT session (agent/i<hookID>), created
+		// lazily and classified as session_type "independent". An explicit
+		// ?session= still wins (e.g. to route a hook into a named session).
+		sessionSel := q.Get("session")
+		if sessionSel == "" {
+			sessionSel = hookID
+		}
+
 		// Resolve session before gating so the activity gate can consult
 		// last_activity / IsTurnInFlight for the targeted session.
-		webhookRes, webhookRcpt, ok := resolveTargetSession(d, w, inst.id, q.Get("session"), "", "/webhook")
+		webhookRes, webhookRcpt, ok := resolveTargetSession(d, w, inst.id, sessionSel, "", "/webhook")
 		if !ok {
 			return
 		}

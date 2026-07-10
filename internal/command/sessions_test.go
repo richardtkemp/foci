@@ -345,7 +345,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 	idx.Upsert(session.SessionIndexEntry{
 		SessionKey:  "bot/ibg-789",
 		CreatedAt:   now.Add(-2 * time.Hour),
-		SessionType: session.SessionTypeCron,
+		SessionType: session.SessionTypeKeepalive,
 		Status:      session.SessionStatusCompacted,
 	})
 
@@ -385,7 +385,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 	}
 
 	// Filter by type and status
-	result, err = cmd.Execute(context.Background(), Request{Args: "index cron compacted"}, cc)
+	result, err = cmd.Execute(context.Background(), Request{Args: "index keepalive compacted"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}

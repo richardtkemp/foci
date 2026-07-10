@@ -179,8 +179,15 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 				}
 
 				var parentKey string
+				// Roots classify from the key; branches recover their
+				// fine-grained type from the persisted branch_type (the key
+				// alone can't distinguish facet/reflection/spawn/…).
+				sessionType := ClassifySessionKey(key)
 				if bm, _ := s.readBranchMeta(key); bm != nil {
 					parentKey = bm.ParentKey
+					if bm.BranchType != "" {
+						sessionType = SessionTypeForBranch(bm.BranchType)
+					}
 				}
 
 				results[i] = SessionIndexEntry{
@@ -194,7 +201,7 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 					// degrades to creation order.
 					LastActivityAt:   af.modTime,
 					ParentSessionKey: parentKey,
-					SessionType:      ClassifySessionKey(key),
+					SessionType:      sessionType,
 					Status:           SessionStatusActive,
 				}
 			}
