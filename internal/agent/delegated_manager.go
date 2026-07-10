@@ -947,7 +947,7 @@ func (m *DelegatedManager) CleanupBackendSession(ctx context.Context, sessionID 
 	if !ok {
 		return nil
 	}
-	return br.CleanupSession(ctx, delegator.CleanupRequest{SessionID: sessionID, WorkDir: m.StartOpts.WorkDir})
+	return br.CleanupSession(ctx, delegator.CleanupRequest{SessionID: sessionID, WorkDir: m.StartOpts.WorkDir, AgentID: m.StartOpts.AgentID})
 }
 
 // ForkParentSession forks parentKey's backend conversation and returns the new
@@ -976,6 +976,7 @@ func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey stri
 	res, err := br.ForkSession(ctx, delegator.ForkRequest{
 		ParentSessionID: parentID,
 		WorkDir:         m.StartOpts.WorkDir,
+		AgentID:         m.StartOpts.AgentID,
 	})
 	if err != nil {
 		return "", fmt.Errorf("fork parent %s (%s): %w", parentKey, parentID, err)

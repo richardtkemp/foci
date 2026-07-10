@@ -430,6 +430,10 @@ type CleanupRequest struct {
 	// WorkDir is the agent workspace (cwd); needed to locate the session for
 	// backends that key storage by cwd (CC's ~/.claude/projects/<slug>/).
 	WorkDir string
+	// AgentID identifies the agent; backends that route through a shared
+	// per-agent server (opencode) need it to find that server. Ignored by
+	// backends keyed only by path (CC).
+	AgentID string
 }
 
 // ForkRequest identifies the backend conversation to fork.
@@ -439,6 +443,10 @@ type ForkRequest struct {
 	// WorkDir is the agent workspace (cwd); backends that key session storage
 	// by cwd (CC's ~/.claude/projects/<slug>/) need it to locate the session.
 	WorkDir string
+	// AgentID identifies the agent; backends that route through a shared
+	// per-agent server (opencode) need it to find that server. Ignored by
+	// backends keyed only by path (CC).
+	AgentID string
 	// TruncateAfter, when >0, forks only the first N messages of the parent
 	// conversation (a mid-conversation branch). 0 forks the whole
 	// conversation. v1 CC support treats any >0 value as unsupported —
