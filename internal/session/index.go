@@ -568,29 +568,41 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Preserve last_reflection before clearing — the rebuild can't
-	// reconstruct this from disk, and losing it resets reflection
-	// scheduling for all sessions.
-	savedReflection := make(map[string]string)
-	rows, err := idx.db.Query(`SELECT session_key, last_reflection FROM session_index WHERE last_reflection IS NOT NULL`)
+	// Preserve the activity timestamps before clearing — the rebuild can't
+	// reconstruct any of these from disk (the scan only re-derives
+	// last_activity_at from file modtime). Losing last_reflection resets
+	// reflection scheduling; losing last_user_activity_at resets the
+	// default-session routing order; losing last_cache_touch resets the
+	// --if-active gate and cache-bust idle baseline. File-backed rows are
+	// DELETEd and re-INSERTed below (which would null these columns), so
+	// snapshot and restore them for every row that has any set.
+	type preservedStamps struct{ reflection, userActivity, cacheTouch sql.NullString }
+	saved := make(map[string]preservedStamps)
+	rows, err := idx.db.Query(
+		`SELECT session_key, last_reflection, last_user_activity_at, last_cache_touch
+		   FROM session_index
+		  WHERE last_reflection IS NOT NULL
+		     OR last_user_activity_at IS NOT NULL
+		     OR last_cache_touch IS NOT NULL`)
 	if err != nil {
 		// Fail closed: if we can't read the timestamps we're about to clear,
 		// don't proceed to DELETE — that would silently wipe every session's
-		// last_reflection (unreconstructable from disk). Abort and keep the
-		// existing index intact for this cycle.
-		return 0, fmt.Errorf("preserve last_reflection: %w", err)
+		// unreconstructable activity timestamps. Abort and keep the existing
+		// index intact for this cycle.
+		return 0, fmt.Errorf("preserve activity timestamps: %w", err)
 	}
 	for rows.Next() {
-		var key, stamp string
-		if err := rows.Scan(&key, &stamp); err != nil {
+		var key string
+		var p preservedStamps
+		if err := rows.Scan(&key, &p.reflection, &p.userActivity, &p.cacheTouch); err != nil {
 			_ = rows.Close()
-			return 0, fmt.Errorf("preserve last_reflection (scan): %w", err)
+			return 0, fmt.Errorf("preserve activity timestamps (scan): %w", err)
 		}
-		savedReflection[key] = stamp
+		saved[key] = p
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return 0, fmt.Errorf("preserve last_reflection (rows): %w", err)
+		return 0, fmt.Errorf("preserve activity timestamps (rows): %w", err)
 	}
 	_ = rows.Close()
 
@@ -644,13 +656,20 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 		count++
 	}
 
-	// Restore preserved last_reflection timestamps.
-	if len(savedReflection) > 0 {
-		updateStmt, err := tx.Prepare(`UPDATE session_index SET last_reflection = ? WHERE session_key = ?`)
+	// Restore preserved activity timestamps. COALESCE keeps a re-derived value
+	// if the saved one is NULL (only overwrites when we actually snapshotted a
+	// non-NULL stamp), so a column set by the re-INSERT isn't clobbered to NULL.
+	if len(saved) > 0 {
+		updateStmt, err := tx.Prepare(
+			`UPDATE session_index
+			    SET last_reflection        = COALESCE(?, last_reflection),
+			        last_user_activity_at  = COALESCE(?, last_user_activity_at),
+			        last_cache_touch       = COALESCE(?, last_cache_touch)
+			  WHERE session_key = ?`)
 		if err == nil {
 			defer func() { _ = updateStmt.Close() }()
-			for key, stamp := range savedReflection {
-				_, _ = updateStmt.Exec(stamp, key)
+			for key, p := range saved {
+				_, _ = updateStmt.Exec(p.reflection, p.userActivity, p.cacheTouch, key)
 			}
 		}
 	}
@@ -1248,13 +1267,15 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 		if err == nil && chatID != 0 {
 			return NewChatSessionKey(agentID, chatID)
 		}
-		// Preferred platform's most recently active registered chat.
+		// Preferred platform's most recently active registered chat. Filter on
+		// registered='true' (the universal real-chat signal set on first contact
+		// by every platform) so a stray alias/features/archived row can't qualify.
 		err = idx.db.QueryRow(
-			`SELECT cm.chat_id FROM (SELECT DISTINCT agent_id, platform, chat_id FROM chat_metadata) cm
+			`SELECT cm.chat_id FROM (SELECT DISTINCT agent_id, platform, chat_id FROM chat_metadata WHERE key = 'registered' AND value = 'true') cm
 			 LEFT JOIN session_index si
 			   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
 			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.chat_id != 0
-			 ORDER BY unixepoch(si.last_activity_at) DESC NULLS LAST
+			 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST
 			 LIMIT 1`,
 			agentID, preferredPlatform,
 		).Scan(&chatID)
@@ -1265,16 +1286,16 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 	}
 
 	// Any default chat. The is_default flag is platform-scoped; the session
-	// key is derived from (agent, chat). Order by the derived session's
+	// key is derived from (agent, chat). Order by the derived session's user
 	// activity so an agent with defaults on several platforms resolves to the
-	// live one.
+	// one a human touched most recently.
 	var chatID int64
 	err := idx.db.QueryRow(
 		`SELECT cm.chat_id FROM chat_metadata cm
 		 LEFT JOIN session_index si
 		   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
 		 WHERE cm.agent_id = ? AND cm.key = 'is_default' AND cm.value = 'true'
-		 ORDER BY unixepoch(si.last_activity_at) DESC NULLS LAST
+		 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST
 		 LIMIT 1`,
 		agentID,
 	).Scan(&chatID)
@@ -1282,12 +1303,14 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 		return NewChatSessionKey(agentID, chatID)
 	}
 
-	// Fallback: most recently active root session for the agent.
+	// Fallback: most recently user-active chat root for the agent. Restrict to
+	// session_type='chat' so a spawn/cron/facet root (is_root=1 but not a real
+	// user-facing chat) can't be handed back as an agent's default session.
 	var key string
 	err = idx.db.QueryRow(
 		`SELECT session_key FROM session_index
-		 WHERE agent_id = ? AND is_root = 1 AND status = 'active'
-		 ORDER BY unixepoch(last_activity_at) DESC, unixepoch(created_at) DESC
+		 WHERE agent_id = ? AND is_root = 1 AND status = 'active' AND session_type = 'chat'
+		 ORDER BY unixepoch(last_user_activity_at) DESC NULLS LAST, unixepoch(created_at) DESC
 		 LIMIT 1`,
 		agentID,
 	).Scan(&key)
