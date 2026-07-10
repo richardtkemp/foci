@@ -964,6 +964,10 @@ func (h *Hub) sessionKeyForChat(agentID string, chatID int64) string {
 		if v, err := idx.GetChatMetadata(agentID, "app", chatID, "session_key"); err == nil && v != "" {
 			return v
 		}
+		// registered='true' is the universal "real user-facing chat" signal
+		// (telegram/discord write it via chatmeta.Resolver.RegisterChat). It's
+		// what default-session routing filters on, so an app conversation is
+		// treated as a routable chat rather than incidental metadata.
 		_ = idx.SetChatMetadata(agentID, "app", chatID, "registered", "true")
 	}
 	return session.NewChatSessionKey(agentID, chatID)
