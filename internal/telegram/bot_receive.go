@@ -126,7 +126,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	}
 
 	// Last-user-activity is recorded per-session in the turn path (see
-	// Agent.touchUserActivity, gated on isUserTrigger) — not here. That keeps it
+	// Agent.touchUserActivity, gated on isInteractiveTrigger) — not here. That keeps it
 	// keyed by the session the message lands on, includes facet/secondary bots,
 	// and derives the agent-level value as a max over sessions.
 	if b.OnUserMessage != nil {
