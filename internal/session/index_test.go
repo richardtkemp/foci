@@ -729,7 +729,8 @@ func TestDefaultSessionKeyForAgent_MostActiveDefaultWins(t *testing.T) {
 		t.Fatalf("set discord default: %v", err)
 	}
 
-	// telegram chat is dormant, discord chat is live.
+	// telegram chat is dormant, discord chat is live. Routing orders by
+	// last_user_activity_at (a human touched it recently), not raw activity.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey: "helen/c100", FilePath: "a",
 		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-48 * time.Hour),
@@ -740,6 +741,8 @@ func TestDefaultSessionKeyForAgent_MostActiveDefaultWins(t *testing.T) {
 		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
+	idx.TouchUserActivity("helen/c100", now.Add(-48*time.Hour))
+	idx.TouchUserActivity("helen/c200", now)
 
 	if key := idx.DefaultSessionKeyForAgent("helen"); key != "helen/c200" {
 		t.Errorf("expected most recently active default helen/c200, got %q", key)
@@ -750,31 +753,68 @@ func TestDefaultSessionKeyForAgent_MostActiveDefaultWins(t *testing.T) {
 }
 
 func TestDefaultSessionKeyForAgent_Fallback(t *testing.T) {
-	// Proves DefaultSessionKeyForAgent falls back to the most recently active
-	// is_root=1 active session from session_index when no default chat is set.
+	// Proves DefaultSessionKeyForAgent falls back to the most recently
+	// user-active is_root=1 active CHAT session when no default chat is set —
+	// and that a non-chat root (spawn/cron/unknown) is NOT handed back, even if
+	// it is the most recently active session overall.
 	idx := tempIndex(t)
 	now := time.Now().UTC().Truncate(time.Second)
 
+	// Two chat roots: c999 recently user-active, cold dormant.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "scout/c999",
-		FilePath:       "/tmp/old.jsonl",
+		FilePath:       "/tmp/recent.jsonl",
 		CreatedAt:      now.Add(-2 * time.Hour),
-		LastActivityAt: now.Add(-2 * time.Hour),
+		LastActivityAt: now,
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "scout/cold",
+		FilePath:       "/tmp/cold.jsonl",
+		CreatedAt:      now.Add(-3 * time.Hour),
+		LastActivityAt: now.Add(-2 * time.Hour),
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+	// A non-chat root, most recently active of all — must be excluded.
+	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "scout/iwork",
-		FilePath:       "/tmp/live.jsonl",
+		FilePath:       "/tmp/spawn.jsonl",
 		CreatedAt:      now.Add(-time.Hour),
 		LastActivityAt: now,
 		SessionType:    SessionTypeUnknown,
 		Status:         SessionStatusActive,
 	})
+	idx.TouchUserActivity("scout/c999", now)
+	idx.TouchUserActivity("scout/cold", now.Add(-2*time.Hour))
+	idx.TouchUserActivity("scout/iwork", now) // ignored: not a chat root
 
 	key := idx.DefaultSessionKeyForAgent("scout")
-	if key != "scout/iwork" {
-		t.Errorf("expected most recently active root scout/iwork, got %q", key)
+	if key != "scout/c999" {
+		t.Errorf("expected most recently user-active chat root scout/c999, got %q", key)
+	}
+}
+
+func TestDefaultSessionKeyForAgent_FallbackExcludesNonChatOnlyRoots(t *testing.T) {
+	// Proves that when an agent's ONLY active root is a non-chat session
+	// (spawn/cron/unknown), the fallback returns "" rather than routing a
+	// user-facing default into a non-chat session.
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "scout/iwork",
+		FilePath:       "/tmp/spawn.jsonl",
+		CreatedAt:      now,
+		LastActivityAt: now,
+		SessionType:    SessionTypeUnknown,
+		Status:         SessionStatusActive,
+	})
+	idx.TouchUserActivity("scout/iwork", now)
+
+	if key := idx.DefaultSessionKeyForAgent("scout"); key != "" {
+		t.Errorf("expected empty (only non-chat root), got %q", key)
 	}
 }
 
@@ -1345,13 +1385,15 @@ func TestRebuildIndex_PreservesBackendSessionRows(t *testing.T) {
 	}
 	defer idx.Close() //nolint:errcheck
 
-	// Two backend sessions (no files): telegram chat active recently,
+	// Two backend sessions (no files): telegram chat user-active recently,
 	// discord chat stale. Both chats flagged is_default on their platforms.
 	now := time.Now()
 	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c111", SessionType: SessionTypeChat, Status: SessionStatusActive,
 		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-time.Hour)})
 	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c222", SessionType: SessionTypeChat, Status: SessionStatusActive,
 		CreatedAt: now.Add(-24 * time.Hour), LastActivityAt: now.Add(-30 * 24 * time.Hour)})
+	idx.TouchUserActivity("ag/c111", now.Add(-time.Hour))
+	idx.TouchUserActivity("ag/c222", now.Add(-30*24*time.Hour))
 	if err := idx.SetDefaultChat("ag", "telegram", 111); err != nil {
 		t.Fatal(err)
 	}
@@ -1364,7 +1406,7 @@ func TestRebuildIndex_PreservesBackendSessionRows(t *testing.T) {
 		t.Fatalf("RebuildIndex: %v", err)
 	}
 
-	// Backend rows survive with their activity...
+	// Backend rows survive with their activity AND user-activity timestamps...
 	e, err := idx.Get("ag/c111")
 	if err != nil {
 		t.Fatalf("backend row wiped by rebuild: %v", err)
@@ -1372,10 +1414,45 @@ func TestRebuildIndex_PreservesBackendSessionRows(t *testing.T) {
 	if e.LastActivityAt.Before(now.Add(-2 * time.Hour)) {
 		t.Errorf("activity not preserved: %v", e.LastActivityAt)
 	}
-	// ...so the default-chat tiebreak still picks the recently-active chat,
-	// not an arbitrary one.
+	// ...so the default-chat tiebreak (now ordered by last_user_activity_at)
+	// still picks the recently user-active chat, not an arbitrary one.
 	if got := idx.DefaultSessionKeyForAgent("ag"); got != "ag/c111" {
-		t.Errorf("DefaultSessionKeyForAgent = %q, want ag/c111 (most recent activity)", got)
+		t.Errorf("DefaultSessionKeyForAgent = %q, want ag/c111 (most recent user activity)", got)
+	}
+}
+
+func TestRebuildIndex_PreservesActivityStampsForFileBackedRows(t *testing.T) {
+	// Proves the rebuild restores last_user_activity_at and last_cache_touch for
+	// FILE-BACKED rows — which are DELETEd and re-INSERTed from the disk scan
+	// (the scan only re-derives last_activity_at). Without preservation the
+	// re-INSERT would null them, wiping the routing order and the --if-active
+	// baseline on every rebuild.
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	entry := SessionIndexEntry{
+		SessionKey: "ag/c777", FilePath: "/tmp/c777.jsonl",
+		CreatedAt: now.Add(-time.Hour), LastActivityAt: now.Add(-time.Hour),
+		SessionType: SessionTypeChat, Status: SessionStatusActive,
+	}
+	idx.Upsert(entry)
+	userAt := now.Add(-10 * time.Minute)
+	cacheAt := now.Add(-2 * time.Minute)
+	idx.TouchUserActivity("ag/c777", userAt)
+	idx.TouchCacheTouch("ag/c777", cacheAt)
+
+	// Rebuild re-supplies the same file-backed entry from the "scan".
+	if _, err := idx.RebuildIndex([]SessionIndexEntry{entry}); err != nil {
+		t.Fatalf("RebuildIndex: %v", err)
+	}
+
+	gotUser, ok := idx.LastUserActivityForAgent("ag")
+	if !ok || !gotUser.Equal(userAt) {
+		t.Errorf("last_user_activity_at not preserved: got %v (ok=%v), want %v", gotUser, ok, userAt)
+	}
+	gotCache, ok := idx.LastCacheTouch("ag/c777")
+	if !ok || !gotCache.Equal(cacheAt) {
+		t.Errorf("last_cache_touch not preserved: got %v (ok=%v), want %v", gotCache, ok, cacheAt)
 	}
 }
 
@@ -1392,11 +1469,13 @@ func TestDefaultSessionKeyForAgentOn(t *testing.T) {
 	defer idx.Close() //nolint:errcheck
 
 	now := time.Now()
-	// Discord chat 222 far more active than telegram chat 111; both pinned.
+	// Discord chat 222 far more user-active than telegram chat 111; both pinned.
 	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c111", SessionType: SessionTypeChat, Status: SessionStatusActive,
 		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-24 * time.Hour)})
 	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c222", SessionType: SessionTypeChat, Status: SessionStatusActive,
 		CreatedAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-time.Minute)})
+	idx.TouchUserActivity("ag/c111", now.Add(-24*time.Hour))
+	idx.TouchUserActivity("ag/c222", now.Add(-time.Minute))
 	if err := idx.SetChatMetadata("ag", "telegram", 111, "registered", "true"); err != nil {
 		t.Fatal(err)
 	}
@@ -1428,6 +1507,34 @@ func TestDefaultSessionKeyForAgentOn(t *testing.T) {
 	// No presence on the preferred platform → falls through to discord's pin.
 	if got := idx.DefaultSessionKeyForAgentOn("ag", "app"); got != "ag/c222" {
 		t.Errorf("absent-platform fallthrough = %q, want ag/c222", got)
+	}
+}
+
+func TestDefaultSessionKeyForAgentOn_RegisteredFilter(t *testing.T) {
+	// Proves the preferred-platform "most recently active registered chat" rung
+	// only considers chats with registered='true' — a chat carrying some other
+	// metadata row (alias/features/etc.) but never registered is NOT eligible,
+	// even if it is the more recently user-active of the two.
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c111", SessionType: SessionTypeChat,
+		Status: SessionStatusActive, CreatedAt: now.Add(-2 * time.Hour), LastActivityAt: now.Add(-time.Hour)})
+	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c999", SessionType: SessionTypeChat,
+		Status: SessionStatusActive, CreatedAt: now.Add(-2 * time.Hour), LastActivityAt: now})
+	idx.TouchUserActivity("ag/c111", now.Add(-time.Hour))
+	idx.TouchUserActivity("ag/c999", now) // more recent, but not registered
+
+	// 111 is a registered telegram chat; 999 only ever got an alias row.
+	if err := idx.SetChatMetadata("ag", "telegram", 111, "registered", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetChatMetadata("ag", "telegram", 999, "alias", "scratch"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := idx.DefaultSessionKeyForAgentOn("ag", "telegram"); got != "ag/c111" {
+		t.Errorf("registered-filter rung = %q, want ag/c111 (c999 excluded: not registered)", got)
 	}
 }
 
