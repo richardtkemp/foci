@@ -138,6 +138,29 @@ func (idx *SessionIndex) RecordCCResume(sessionKey, resumeID string) {
 // CCResumeAt returns the CC resume ID that was live for a session at moment
 // `at`: the newest observation at or before it. ok=false means no CC session
 // had been observed by then.
+// AllCCResumes returns every CC resume ID ever recorded for sessionKey (newest
+// first). Used by ephemeral-session cleanup to find every transcript file a
+// session produced over its life (each post-compaction JSONL is a distinct ID).
+func (idx *SessionIndex) AllCCResumes(sessionKey string) []string {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	rows, err := idx.db.Query(
+		`SELECT resume_id FROM cc_resume_history WHERE session_key = ?
+		 ORDER BY unixepoch(observed_at) DESC`, sessionKey)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close() // nolint:errcheck
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil && id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func (idx *SessionIndex) CCResumeAt(sessionKey string, at time.Time) (resumeID string, observedAt time.Time, ok bool) {
 	return idx.timelineLookup(
 		`SELECT resume_id, observed_at FROM cc_resume_history

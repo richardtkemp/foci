@@ -932,6 +932,24 @@ func (m *DelegatedManager) BackendCanBranch() bool {
 	return ok
 }
 
+// CleanupBackendSession deletes the on-disk backend session file for sessionID
+// (via BackendBrancher.CleanupSession). No-op if the backend can't branch or
+// sessionID is empty. A pure filesystem delete — no process is spawned.
+func (m *DelegatedManager) CleanupBackendSession(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	be, err := m.NewBackend()
+	if err != nil {
+		return err
+	}
+	br, ok := be.(delegator.BackendBrancher)
+	if !ok {
+		return nil
+	}
+	return br.CleanupSession(ctx, delegator.CleanupRequest{SessionID: sessionID, WorkDir: m.StartOpts.WorkDir})
+}
+
 // ForkParentSession forks parentKey's backend conversation and returns the new
 // backend session id (a clone ready to resume). The parent is left untouched.
 //

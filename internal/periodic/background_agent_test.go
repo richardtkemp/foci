@@ -15,6 +15,7 @@ type fakeBackgroundAgent struct {
 	canFireFn        func(ctx context.Context, sessionKey string) (bool, string)
 	runOnceFn        func(ctx context.Context, prompt, systemPrompt string) (string, error)
 	resetFn          func(ctx context.Context, sessionKey string) error
+	cleanupFn        func(ctx context.Context, retentionDays int) int
 }
 
 func (f *fakeBackgroundAgent) Branch(branchType, parentKey, promptText string, noCompact bool) bool {
@@ -66,4 +67,11 @@ func (f *fakeBackgroundAgent) ResetSession(ctx context.Context, sessionKey strin
 		return f.resetFn(ctx, sessionKey)
 	}
 	return nil
+}
+
+func (f *fakeBackgroundAgent) CleanupEphemeralSessions(ctx context.Context, retentionDays int) int {
+	if f.cleanupFn != nil {
+		return f.cleanupFn(ctx, retentionDays)
+	}
+	return 0
 }

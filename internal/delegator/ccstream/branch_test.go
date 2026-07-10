@@ -107,6 +107,49 @@ func TestForkSessionErrors(t *testing.T) {
 	}
 }
 
+func TestCleanupSession(t *testing.T) {
+	home, _ := writeParentTranscript(t)
+	t.Setenv("HOME", home)
+	b := &Backend{}
+
+	// Fork, then clean up the fork — the file must be gone, parent untouched.
+	res, err := b.ForkSession(context.Background(), delegator.ForkRequest{
+		ParentSessionID: testParentUUID, WorkDir: testWorkDir,
+	})
+	if err != nil {
+		t.Fatalf("ForkSession: %v", err)
+	}
+	forkPath := filepath.Join(home, ccProjectsDir, projectSlug(testWorkDir), res.SessionID+".jsonl")
+	if _, err := os.Stat(forkPath); err != nil {
+		t.Fatalf("fork not created: %v", err)
+	}
+	if err := b.CleanupSession(context.Background(), delegator.CleanupRequest{
+		SessionID: res.SessionID, WorkDir: testWorkDir,
+	}); err != nil {
+		t.Fatalf("CleanupSession: %v", err)
+	}
+	if _, err := os.Stat(forkPath); !os.IsNotExist(err) {
+		t.Errorf("fork transcript not deleted: stat err = %v", err)
+	}
+	// Parent still present.
+	parentPath := filepath.Join(home, ccProjectsDir, projectSlug(testWorkDir), testParentUUID+".jsonl")
+	if _, err := os.Stat(parentPath); err != nil {
+		t.Errorf("parent transcript was deleted: %v", err)
+	}
+
+	// Deleting an already-absent session is not an error.
+	if err := b.CleanupSession(context.Background(), delegator.CleanupRequest{
+		SessionID: "nonexistent-uuid", WorkDir: testWorkDir,
+	}); err != nil {
+		t.Errorf("cleanup of missing session should be nil, got %v", err)
+	}
+
+	// Missing args error.
+	if err := b.CleanupSession(context.Background(), delegator.CleanupRequest{WorkDir: testWorkDir}); err == nil {
+		t.Error("expected error for empty session id")
+	}
+}
+
 // TestForkSessionExclusive ensures a UUID collision fails loudly rather than
 // clobbering an existing transcript.
 func TestForkSessionExclusive(t *testing.T) {

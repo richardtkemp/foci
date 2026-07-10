@@ -510,6 +510,42 @@ func (idx *SessionIndex) SessionsNeedingReflection(agentID string) ([]string, er
 
 // querySessionKeysLocked runs a query whose result is a single session_key
 // column and collects the values. Caller must hold idx.mu.
+// EphemeralCleanupTypes are the session_type values the daily GC reclaims:
+// pure system / ephemeral agent work whose backend transcripts are throwaway.
+// Conversational types (chat/facet/independent) and legacy 'unknown' are never
+// touched, regardless of age.
+var EphemeralCleanupTypes = []SessionType{
+	SessionTypeReflection,
+	SessionTypeKeepalive,
+	SessionTypeBackgroundTask,
+	SessionTypeSpawn,
+}
+
+// EphemeralSessionsOlderThan returns the keys of ephemeral system/agent sessions
+// (EphemeralCleanupTypes) for agentID whose last activity — or creation, if
+// never active — predates cutoff. Used by the daily cleanup to find stale
+// throwaway sessions whose backend transcripts can be reclaimed. Gating on
+// session_type (not is_root) keeps user conversations and their branches safe.
+func (idx *SessionIndex) EphemeralSessionsOlderThan(agentID string, cutoff time.Time) ([]string, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	args := []interface{}{agentID}
+	placeholders := make([]string, len(EphemeralCleanupTypes))
+	for i, t := range EphemeralCleanupTypes {
+		placeholders[i] = "?"
+		args = append(args, string(t))
+	}
+	args = append(args, timeutil.Format(cutoff))
+
+	return idx.querySessionKeysLocked(
+		`SELECT session_key FROM session_index
+		 WHERE agent_id = ?
+		   AND session_type IN (`+strings.Join(placeholders, ",")+`)
+		   AND unixepoch(COALESCE(NULLIF(last_activity_at, ''), created_at)) < unixepoch(?)`,
+		args...)
+}
+
 func (idx *SessionIndex) querySessionKeysLocked(query string, args ...interface{}) ([]string, error) {
 	rows, err := idx.db.Query(query, args...)
 	if err != nil {

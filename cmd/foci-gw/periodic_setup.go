@@ -203,6 +203,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		TodoStore:          p.todoStore,
 		SessionIndex:       p.sessionIndex,
 
+		EphemeralRetentionDays: acfg.Sessions.EffectiveEphemeralRetentionDays(p.cfg.Sessions.EphemeralRetentionDays),
+
 		// The schedulers' single dependency: branch dispatch, in-flight checks,
 		// rate-limit/can_run_background gating, reset, etc. (see background_agent.go). Test
 		// overrides and the consolidation RunOnce/Branch and reset_time feature

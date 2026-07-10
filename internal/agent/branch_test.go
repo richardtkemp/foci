@@ -16,6 +16,10 @@ func (b *brancherBackend) ForkSession(_ context.Context, _ delegator.ForkRequest
 	return delegator.ForkResult{SessionID: "forked"}, nil
 }
 
+func (b *brancherBackend) CleanupSession(_ context.Context, _ delegator.CleanupRequest) error {
+	return nil
+}
+
 // TestBranchStrategyFor locks the branching-decision matrix for a delegated
 // agent whose backend CANNOT fork its conversation (NewBackend nil): inject in
 // place for non-terminal passes, fork (+remap, handled by the caller) for
