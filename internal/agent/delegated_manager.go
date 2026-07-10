@@ -916,6 +916,73 @@ func (m *DelegatedManager) RemapSession(oldKey, newKey string) {
 	}
 }
 
+// BackendCanBranch reports whether this agent's backend can fork its
+// conversation (implements delegator.BackendBrancher). It constructs an
+// unstarted backend instance and probes the interface — no process is spawned.
+// Used by BranchStrategyFor to choose BranchForkBackend.
+func (m *DelegatedManager) BackendCanBranch() bool {
+	if m.NewBackend == nil {
+		return false
+	}
+	be, err := m.NewBackend()
+	if err != nil {
+		return false
+	}
+	_, ok := be.(delegator.BackendBrancher)
+	return ok
+}
+
+// ForkParentSession forks parentKey's backend conversation and returns the new
+// backend session id (a clone ready to resume). The parent is left untouched.
+//
+// It resolves the parent's live backend session id (or persisted cc_resume_id),
+// then asks a freshly-constructed (unstarted) backend to fork that session on
+// disk. Returns ("", nil) when the fork can't happen (backend not
+// branch-capable, or the parent has no known backend session yet — the caller
+// should fall back), and ("", err) on a genuine fork failure. It deliberately
+// does NOT create a branch session key or persist anything: the caller mints
+// the branch key only on success, so a failed fork leaves no orphan.
+func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey string) (string, error) {
+	parentID := m.parentSessionID(parentKey)
+	if parentID == "" {
+		return "", nil // no known backend session to fork
+	}
+	be, err := m.NewBackend()
+	if err != nil {
+		return "", fmt.Errorf("fork parent: new backend: %w", err)
+	}
+	br, ok := be.(delegator.BackendBrancher)
+	if !ok {
+		return "", nil // backend can't branch
+	}
+	res, err := br.ForkSession(ctx, delegator.ForkRequest{
+		ParentSessionID: parentID,
+		WorkDir:         m.StartOpts.WorkDir,
+	})
+	if err != nil {
+		return "", fmt.Errorf("fork parent %s (%s): %w", parentKey, parentID, err)
+	}
+	if res.SessionID == "" {
+		return "", fmt.Errorf("fork parent %s (%s): empty forked session id", parentKey, parentID)
+	}
+	return res.SessionID, nil
+}
+
+// parentSessionID returns the authoritative backend session id for a key: the
+// live backend's current SessionID() if one is running (it may hold a UUID not
+// yet persisted), otherwise the saved cc_resume_id.
+func (m *DelegatedManager) parentSessionID(sessionKey string) string {
+	m.mu.Lock()
+	if mb, ok := m.backends[sessionKey]; ok && mb.be.IsRunning() {
+		if id := mb.be.SessionID(); id != "" {
+			m.mu.Unlock()
+			return id
+		}
+	}
+	m.mu.Unlock()
+	return m.loadResumeID(sessionKey)
+}
+
 // loadResumeID reads a saved CC session UUID from state.db.
 func (m *DelegatedManager) loadResumeID(sessionKey string) string {
 	if m.SessionIndex == nil {

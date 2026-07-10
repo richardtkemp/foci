@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/shared/prompts"
 )
@@ -28,16 +29,36 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 
-	// Delegated agents inject into the existing session (CC holds the live
-	// context); API agents branch so the parent session isn't modified. The
-	// choice comes from the single branch authority — see BranchStrategyFor.
+	// The target depends on the single branch authority (BranchStrategyFor):
+	//   - BranchFork (API): a history-reading branch, parent unmodified.
+	//   - BranchForkBackend (delegated + branch-capable): a REAL transcript fork.
+	//     This hook already runs inside the parent's inbox worker (post-turn
+	//     phase), so the parent is exclusive — clone directly, no EnqueueInjectWait
+	//     (which would deadlock). Reset the forked backend after the turn.
+	//   - otherwise (BranchInPlace): inject into the live session.
 	targetKey := sessionKey
-	if a.BranchStrategyFor("compaction-memory") == BranchFork {
+	var forkedBranch string
+	switch a.BranchStrategyFor("compaction-memory") {
+	case BranchFork:
 		branchKey, ok := a.createMemoryBranch(sessionKey, "compaction-memory", orientTemplate)
 		if !ok {
 			return
 		}
 		targetKey = branchKey
+	case BranchForkBackend:
+		branchKey, ok := a.ForkBackendBranch(ctx, sessionKey, session.BranchOptions{
+			NoResetHook:         true,
+			BranchType:          "compaction-memory",
+			OrientationTemplate: orientTemplate,
+		})
+		if ok {
+			targetKey = branchKey
+			forkedBranch = branchKey
+		}
+		// !ok → fall back to in-place (targetKey stays sessionKey).
+	}
+	if forkedBranch != "" {
+		defer a.DelegatedManager.ResetSession(forkedBranch)
 	}
 
 	log.Infof("compaction-memory", "firing for %s → %s", sessionKey, targetKey)
