@@ -198,42 +198,32 @@ func setupInteractiveCleanup(ctx context.Context, maxAge time.Duration) {
 	}()
 }
 
-// setupToolDetailCleanup starts periodic tool detail expiry when all users are idle.
-func setupToolDetailCleanup(
-	toolDetailStore platform.ToolDetailStore,
-	agents map[string]*agentInstance,
-	agentOrder []string,
-	ctx context.Context,
-) {
+// setupToolDetailCleanup runs tool-detail expiry + incremental vacuum once a day
+// at 03:00 local time, unconditionally. Previously gated on all agents being idle
+// >10 min, which never fired for a permanently-active agent; 03:00 is quiet enough
+// that the vacuum's DB lock doesn't matter.
+func setupToolDetailCleanup(toolDetailStore platform.ToolDetailStore, ctx context.Context) {
 	if toolDetailStore == nil {
 		return
 	}
+	const vacuumHour = 3 // 03:00 local — low-traffic, so the incremental vacuum's lock is harmless
 	go func() {
-		ticker := time.NewTicker(10 * time.Minute)
-		defer ticker.Stop()
 		for {
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day(), vacuumHour, 0, 0, 0, now.Location())
+			if !next.After(now) {
+				// Rebuild via time.Date (not Add(24h)) so 03:00 stays stable across DST.
+				next = time.Date(now.Year(), now.Month(), now.Day()+1, vacuumHour, 0, 0, 0, now.Location())
+			}
+			timer := time.NewTimer(next.Sub(now))
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
-				allIdle := true
-				for _, id := range agentOrder {
-					inst := agents[id]
-					sk := defaultSessionKeyFor(inst.ag, id)
-					if sk == "" || inst.ag.SessionIndex == nil {
-						continue
-					}
-					// "Recent activity" for the vacuum-safety gate means any turn
-					// touched this session lately — read last_cache_touch (the DB
-					// any-turn signal), not the in-mem lastMessageTime.
-					if t, ok := inst.ag.SessionIndex.LastCacheTouch(sk); ok && time.Since(t) < 10*time.Minute {
-						allIdle = false
-						break
-					}
-				}
-				if allIdle {
-					toolDetailStore.ExpireAndVacuum()
-				}
+			case <-timer.C:
+				// Unconditional: run daily regardless of activity, so a
+				// permanently-busy agent still gets its tool_call_details pruned.
+				toolDetailStore.ExpireAndVacuum()
 			}
 		}
 	}()
