@@ -49,6 +49,12 @@ func (r *Resolver) RegisterChat(chatID int64) {
 	if _, seen := r.registered.LoadOrStore(chatID, struct{}{}); seen {
 		return
 	}
+	// registered='true' is the universal "this is a real user-facing chat"
+	// signal: written here on first contact by every messaging platform
+	// (telegram/discord here, app in Hub.sessionKeyForChat). Default-session
+	// routing (SessionIndex.DefaultSessionKeyForAgentOn) filters candidate
+	// chats on it, so a chat carrying only some other metadata row
+	// (alias/username/features) can't be mistaken for a routable chat.
 	if err := r.Index.SetChatMetadata(r.AgentID, r.PlatformName, chatID, "registered", "true"); err != nil {
 		r.Logger().Errorf("register chat %d: %v", chatID, err)
 		r.registered.Delete(chatID) // retry on next contact
