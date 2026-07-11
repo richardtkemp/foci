@@ -178,7 +178,7 @@ func TestMain_Subagent(t *testing.T) {
 // capped so each emitted line stays well under the ccstream reader scanner
 // limit (1MB per line). Without this, a big file read would DoS the stream.
 func TestMain_TruncatesLargeToolResponse(t *testing.T) {
-	// Build a ~128KB response to exceed the 64KB cap.
+	// Build a ~128KB response to exceed the maxFieldBytes cap.
 	big := strings.Repeat("x", 128*1024)
 	// Encode as JSON string so it's valid tool_response RawMessage.
 	encoded, err := json.Marshal(big)

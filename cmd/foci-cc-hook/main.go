@@ -33,12 +33,26 @@ import (
 // which hook_response events belong to which backend.
 const installIDFlag = "--install"
 
-// maxFieldBytes bounds the size of tool_response / error fields in the
-// emitted JSON so each hook_response line from CC stays well under the
-// ccstream reader's 1MB scanner limit (internal/delegator/ccstream/reader.go
-// maxTokenSize). Without truncation, a multi-MB file read would blow the
-// scanner and tear down the ccstream backend via OnReaderStopped.
-const maxFieldBytes = 64 * 1024
+// maxFieldBytes bounds the size of tool_response / tool_input / error fields
+// in the emitted JSON. Two independent constraints, the tighter of which sets
+// the value:
+//
+//  1. Each hook_response line from CC must stay under the ccstream reader's
+//     1MB scanner limit (internal/delegator/ccstream/reader.go maxTokenSize) —
+//     without a cap, a multi-MB file read would blow the scanner and tear down
+//     the backend via OnReaderStopped.
+//  2. Foci's only consumer of tool_response is the tool-call display: the
+//     result hint (one line) and the "Show full" expansion, which is itself
+//     hard-capped at 4096 bytes for the whole message (telegram/discord
+//     formatToolCallWithResult, maxLen=4096). tool_input feeds nudge matching
+//     and Agent-description extraction, both of which read small fields.
+//
+// So nothing foci renders or matches on needs more than ~4KB; the old 64KB was
+// a scanner-safety margin, not a consumer requirement. 4KB satisfies both
+// constraints and slashes the dominant contributor to the CC session JSONL
+// (the hook_success attachments — ~40% of the file). See docs/WIRING.md
+// "Hook output path".
+const maxFieldBytes = 4 * 1024
 
 // hookInput mirrors the JSON envelope CC writes to the hook's stdin for
 // PostToolUse / PostToolUseFailure events. See claude-code
@@ -116,8 +130,9 @@ func main() {
 	if len(in.ToolInput) > 0 {
 		// Forward the raw tool_input JSON so downstream nudge rules can match
 		// on any field (Bash.command, Read.file_path, Grep.pattern, etc.).
-		// Truncate to the same 64KB cap as tool_response — Write/Edit content
-		// is the realistic outlier; everything else is comfortably under 1KB.
+		// Truncate to the same maxFieldBytes cap as tool_response — Write/Edit
+		// content is the realistic outlier; everything else is comfortably
+		// under 1KB, and nudge matching only reads small fields.
 		out.ToolInput = truncate(string(in.ToolInput), maxFieldBytes)
 	}
 	if len(in.ToolResponse) > 0 {
