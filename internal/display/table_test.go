@@ -419,6 +419,31 @@ func TestFormatCommas(t *testing.T) {
 	}
 }
 
+func TestFormatTokensAbbrev(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{0, "0"},
+		{512, "512"},
+		{999, "999"},
+		{1000, "1k"},
+		{200000, "200k"},
+		{374686, "375k"},   // rounds to nearest thousand
+		{999600, "1M"},     // 1000k boundary promotes to M
+		{1000000, "1M"},    // trailing .0 trimmed
+		{1234567, "1.2M"},
+		{1500000, "1.5M"},
+		{10000000, "10M"},
+		{-1500000, "-1.5M"},
+	}
+	for _, tt := range tests {
+		if got := FormatTokensAbbrev(tt.n); got != tt.want {
+			t.Errorf("FormatTokensAbbrev(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
 func TestFormatBytes(t *testing.T) {
 	tests := []struct {
 		n    int64

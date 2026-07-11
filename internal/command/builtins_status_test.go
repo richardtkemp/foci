@@ -56,7 +56,7 @@ func TestStatusCommand(t *testing.T) {
 		"2h30m",
 		"$0.00",   // session cost
 		"2 calls", // session call count
-		"200,000", // context limit
+		"200k", // context limit (abbreviated, #1149)
 	}
 	for _, check := range checks {
 		if !strings.Contains(result.Text, check) {

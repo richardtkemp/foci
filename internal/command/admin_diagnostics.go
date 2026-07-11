@@ -139,7 +139,7 @@ func StatusCommand() *Command {
 			if contextTokens > 0 && contextLimit > 0 {
 				pct := float64(contextTokens) / float64(contextLimit) * 100
 				fmt.Fprintf(&sb, "\n📈 Context: %.1f%% (%s / %s tokens)\n",
-					pct, display.FormatCommas(contextTokens), display.FormatCommas(contextLimit))
+					pct, display.FormatTokensAbbrev(contextTokens), display.FormatTokensAbbrev(contextLimit))
 				fmt.Fprintf(&sb, "   Compaction at %.0f%%\n",
 					cc.CompactionThreshold*100)
 			}
