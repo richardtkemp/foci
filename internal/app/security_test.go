@@ -317,11 +317,13 @@ func TestSecurity_BlobGet_PathTraversalRejected(t *testing.T) {
 			t.Errorf("blob get %q returned 200 — must be rejected", p)
 		}
 	}
-	// A well-formed unknown id → 404 (no traversal, no info leak beyond "absent").
+	// A well-formed absent id → 410 Gone (existed, reaped by TTL; no traversal, no info
+	// leak beyond "absent"). 410 not 404 so a synced client re-fetching expired media
+	// doesn't read as a 404-probing scanner to a WAF/IPS.
 	w := httptest.NewRecorder()
 	h.ServeBlobGet(w, secReq(http.MethodGet, "/app/blob/01ABCDEF01ABCDEF01ABCDEF01", "", "Bearer "+devTok))
-	if w.Code != http.StatusNotFound {
-		t.Errorf("unknown blob id code = %d, want 404", w.Code)
+	if w.Code != http.StatusGone {
+		t.Errorf("absent blob id code = %d, want 410", w.Code)
 	}
 }
 

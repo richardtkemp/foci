@@ -196,7 +196,13 @@ func (h *Hub) ServeBlobGet(w http.ResponseWriter, r *http.Request) {
 	}
 	meta, ok := h.blobs.get(id)
 	if !ok {
-		http.Error(w, "blob not found", http.StatusNotFound)
+		// The request is authenticated with a valid device token and the id is a
+		// well-formed blob ref the client saw in history — so an absent blob means it
+		// existed and was reaped by TTL, not a missing resource. Return 410 Gone (not
+		// 404): it's the correct semantics AND keeps clients off scanner-detection
+		// scenarios (CrowdSec http-probing et al. count 404/403/400 bursts, not 410)
+		// when a synced client re-fetches expired media across a whole conversation.
+		http.Error(w, "blob expired", http.StatusGone)
 		return
 	}
 	f, err := os.Open(meta.path)
