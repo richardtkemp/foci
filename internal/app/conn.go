@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -133,9 +134,12 @@ func (c *appConn) SendToSession(sessionKey, text string) error {
 	if clean == "" {
 		return nil
 	}
-	b := c.sendBinding(sessionKey)
+	b, fellBack := c.sendBinding(sessionKey)
 	if b == nil {
 		return nil
+	}
+	if fellBack {
+		clean = misdeliveryBanner(sessionKey, b.convID, clean)
 	}
 	b.send(fap.ServerMessage{
 		ConversationID: b.convID,
@@ -147,9 +151,12 @@ func (c *appConn) SendToSession(sessionKey, text string) error {
 }
 
 func (c *appConn) SendInjectedMessage(sessionKey, text string) error {
-	b := c.sendBinding(sessionKey)
+	b, fellBack := c.sendBinding(sessionKey)
 	if b == nil {
 		return nil
+	}
+	if fellBack {
+		text = misdeliveryBanner(sessionKey, b.convID, text)
 	}
 	b.send(fap.ServerMessage{
 		ConversationID: b.convID,
@@ -165,9 +172,9 @@ func (c *appConn) SendInjectedMessage(sessionKey, text string) error {
 // never opened — it falls back to the agent's default app chat so the message
 // surfaces instead of vanishing (#959). It logs LOUDLY either way, so the
 // never-bound case is never a silent recovery and we can see how often it fires.
-func (c *appConn) sendBinding(sessionKey string) *convBinding {
+func (c *appConn) sendBinding(sessionKey string) (b *convBinding, fellBack bool) {
 	if b := c.hub.bindingForSession(sessionKey); b != nil {
-		return b
+		return b, false
 	}
 	// No binding for this session — resolve (or create) the agent's default
 	// conversation. The app can mint conversations freely, so an unsolicited
@@ -175,12 +182,30 @@ func (c *appConn) sendBinding(sessionKey string) *convBinding {
 	b, via := c.hub.deliverBinding(c.agentID)
 	if b == nil {
 		log.Warnf("app", "unsolicited send to unbound session %q (agent %s) DROPPED: conversation creation failed", sessionKey, c.agentID)
-		return nil
+		return nil, false
 	}
 	if sessionKey != "" {
+		// A session-TARGETED send whose own conversation couldn't be found: it's
+		// being routed to a different conversation. fellBack=true so the caller
+		// annotates it as misdelivered (a session-blind send, sessionKey=="",
+		// has no intended target to miss — that's normal routing, not a miss).
 		log.Infof("app", "unsolicited send to unbound session %q (agent %s) routed to %s conversation %s", sessionKey, c.agentID, via, b.convID)
+		return b, true
 	}
-	return b
+	return b, false
+}
+
+// misdeliveryBanner wraps a message that could not reach its addressed session's
+// own conversation and was routed to another (the deliverBinding fallback). Per
+// Dick's spec (2026-07-11): a visible top-and-bottom banner naming the intended
+// session and the conversation it actually landed in, so a misrouted message is
+// never silently absorbed into the wrong chat. There is no "target convID" to
+// cite — the fallback fires precisely because the session has no bound
+// conversation — so the banner names the session key as the thing not found.
+func misdeliveryBanner(sessionKey, deliveredConvID, text string) string {
+	line := fmt.Sprintf("⚠ Addressed to session %s — no conversation for it could be found; delivered to %s instead.", sessionKey, deliveredConvID)
+	const sep = "———"
+	return line + "\n" + sep + "\n" + text + "\n" + sep + "\n" + line
 }
 
 func (c *appConn) SendText(text string) error {
