@@ -33,6 +33,10 @@ type appSink struct {
 	// statusFn supplies the meta-frame gap chip.
 	// nil = that field is omitted (e.g. a sink with no agent context).
 	statusFn func() string
+
+	// cacheExpiryFn returns the prompt-cache expiry (unix ms) as of now, pushed on
+	// turn completion. nil = no agent context, so the frame is skipped.
+	cacheExpiryFn func() int64
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -105,6 +109,9 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.inner.Emit(ctx, ev)
 		s.b.setTurnActivity(fap.ActivityKindIdle, "")
 		s.emitMeta(e)
+		if s.cacheExpiryFn != nil {
+			s.b.setCacheExpiry(s.cacheExpiryFn())
+		}
 
 	default:
 		s.inner.Emit(ctx, ev)

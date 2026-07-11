@@ -184,6 +184,34 @@ func TestAppSink_InTurnSnapshot(t *testing.T) {
 	}
 }
 
+func TestAppSink_CacheExpiryOnTurnComplete(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	s.cacheExpiryFn = func() int64 { return 1234000 }
+	ctx := context.Background()
+
+	s.Emit(ctx, turnevent.TurnStart{})
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "x"})
+
+	var n int
+	var got int64
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeCacheExpiry {
+			n++
+			if v, ok := d.d["expiryMs"].(float64); ok {
+				got = int64(v)
+			}
+		}
+	}
+	if n != 1 || got != 1234000 {
+		t.Fatalf("want one cacheExpiry frame expiryMs=1234000, got n=%d ms=%d", n, got)
+	}
+	if b.info().CacheExpiryMs != 1234000 {
+		t.Fatalf("info snapshot CacheExpiryMs = %d, want 1234000", b.info().CacheExpiryMs)
+	}
+}
+
 // A turn abandoned without TurnComplete must still clear the snapshot via the
 // deferred cleanup, or the roster would report a phantom typing indicator.
 func TestAppSink_CleanupClearsInTurn(t *testing.T) {
