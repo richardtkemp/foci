@@ -507,11 +507,50 @@ func TestSendToSession_FallsBackToDefaultChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := drain(t, c)
-	if len(got) != 1 || got[0].t != fap.TypeMessage || got[0].d["text"] != "surfaced" {
-		t.Fatalf("want one message 'surfaced' on the default chat, got %v", types(got))
+	txt, _ := got[0].d["text"].(string)
+	if len(got) != 1 || got[0].t != fap.TypeMessage || !strings.Contains(txt, "surfaced") {
+		t.Fatalf("want one message containing 'surfaced' on the default chat, got %v", types(got))
+	}
+	// Session-targeted send whose own conversation was missing → misdelivery
+	// banner wraps the payload naming the intended session (Dick, 2026-07-11).
+	if !strings.Contains(txt, "Addressed to session ag/never-bound/1") || !strings.Contains(txt, "delivered to cdef") {
+		t.Errorf("misdelivery banner missing/incorrect; got text: %q", txt)
 	}
 	if got[0].d["conversationId"] != "cdef" {
 		t.Errorf("routed to conv %v, want cdef (default chat)", got[0].d["conversationId"])
+	}
+}
+
+func TestSendToSession_MisdeliveryBannerShapeAndBlindSendUnwrapped(t *testing.T) {
+	// A session-TARGETED send whose conversation is missing gets a top-and-bottom
+	// banner around the original text (Dick, 2026-07-11). A session-BLIND send
+	// (sessionKey == "") is normal routing, not a miss — it must NOT be wrapped.
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	c := fakeClient()
+	def := &convBinding{convID: "cland", sessionKey: "ag/cland", agentID: "ag", chatID: 7, clients: map[*wsClient]struct{}{c: {}}}
+	h.convs[def.convID] = def
+	conn := &appConn{hub: h, agentID: "ag"}
+
+	// Targeted → wrapped, banner top and bottom, original text in the middle.
+	if err := conn.SendToSession("ag/c-missing/1", "the payload"); err != nil {
+		t.Fatal(err)
+	}
+	txt, _ := drain(t, c)[0].d["text"].(string)
+	banner := "⚠ Addressed to session ag/c-missing/1 — no conversation for it could be found; delivered to cland instead."
+	want := banner + "\n———\nthe payload\n———\n" + banner
+	if txt != want {
+		t.Errorf("banner shape mismatch:\n got: %q\nwant: %q", txt, want)
+	}
+
+	// Blind send → unwrapped.
+	if err := conn.SendToSession("", "blind hello"); err != nil {
+		t.Fatal(err)
+	}
+	btxt, _ := drain(t, c)[0].d["text"].(string)
+	if btxt != "blind hello" {
+		t.Errorf("session-blind send must not be wrapped; got %q", btxt)
 	}
 }
 
@@ -534,8 +573,12 @@ func TestSendToSession_StaleDefaultFallsToLatest(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := drain(t, c)
-	if len(got) != 1 || got[0].t != "message" {
+	txt, _ := got[0].d["text"].(string)
+	if len(got) != 1 || got[0].t != "message" || !strings.Contains(txt, "lost") {
 		t.Fatalf("send must deliver to the latest live conversation, got %v", types(got))
+	}
+	if !strings.Contains(txt, "Addressed to session ag/inever-bound") {
+		t.Errorf("misdelivery banner missing; got text: %q", txt)
 	}
 	if got[0].d["conversationId"] != "cother" {
 		t.Errorf("routed to conv %v, want cother", got[0].d["conversationId"])
