@@ -24,9 +24,10 @@ type fakeAgent struct {
 	env *agent.Envelope
 }
 
-func (f *fakeAgent) Enqueue(e agent.Envelope) bool { f.env = &e; return true }
-func (f *fakeAgent) MetaStatus(string) string      { return "" }
-func (f *fakeAgent) TransformMessage(t string) string { return t }
+func (f *fakeAgent) Enqueue(e agent.Envelope) bool                { f.env = &e; return true }
+func (f *fakeAgent) MetaStatus(string) string                     { return "" }
+func (f *fakeAgent) CacheExpiry(_ string, at time.Time) time.Time { return at.Add(5 * time.Minute) }
+func (f *fakeAgent) TransformMessage(t string) string             { return t }
 
 // registerFakeAgent wires a conn backed by a fakeAgent into the hub.
 func registerFakeAgent(h *Hub, agentID string) *fakeAgent {

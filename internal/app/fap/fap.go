@@ -36,6 +36,7 @@ const (
 	TypeMessage         = "message"
 	TypeNotification    = "notification"
 	TypeActivity        = "activity"
+	TypeCacheExpiry     = "cacheExpiry"
 	TypeMedia           = "media"
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
@@ -192,6 +193,10 @@ type ConversationInfo struct {
 	// chat to backfill. LastActivityTs is unix ms of the last visible frame.
 	LastActivityTs int64  `json:"lastActivityTs,omitempty"`
 	LastPreview    string `json:"lastPreview,omitempty"`
+	// CacheExpiryMs is the roster snapshot of the CacheExpiry frame — the unix ms
+	// after which the prompt cache is cold. 0 = unknown/cold (e.g. after a server
+	// restart, which busts the cache). Reseeds a reconnecting client.
+	CacheExpiryMs int64 `json:"cacheExpiryMs,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.
@@ -349,6 +354,18 @@ type Activity struct {
 }
 
 func (Activity) Type() string { return TypeActivity }
+
+// CacheExpiry carries the wall-clock time (unix ms) at which this conversation's
+// Anthropic prompt cache goes cold if untouched — the session's last cache-touch
+// plus the model's cache TTL. Ephemeral and server-authoritative: emitted once
+// per completed turn (a turn refreshes the cache), the client derives warm/cold
+// by comparing ExpiryMs to now, so it needs no knowledge of the TTL. App-only.
+type CacheExpiry struct {
+	ConversationID string `json:"conversationId"`
+	ExpiryMs       int64  `json:"expiryMs"`
+}
+
+func (CacheExpiry) Type() string { return TypeCacheExpiry }
 
 // Media references an out-of-band blob the app fetches via GET /app/blob/<id>.
 // The bytes never travel over the WebSocket — only this reference does.

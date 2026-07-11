@@ -1411,6 +1411,8 @@ type convBinding struct {
 
 	lastPreview string // last visible frame's preview; seeds the roster row
 	lastActMs   int64  // last visible frame's send time (unix ms); seeds the roster row
+
+	cacheExpiryMs int64 // last-emitted prompt-cache expiry (unix ms); seeds the roster snapshot, 0 = unknown/cold
 }
 
 // attach points the durable state at a (re)connected socket and registers it in
@@ -1531,7 +1533,7 @@ func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	kind, detail := b.resolveActivity()
-	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Activity: string(kind), ActivityDetail: detail, LastActivityTs: b.lastActMs, LastPreview: b.lastPreview}
+	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Activity: string(kind), ActivityDetail: detail, LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs}
 }
 
 // resolveActivity collapses the turn-scoped and session-scoped inputs to a
@@ -1562,6 +1564,22 @@ func (b *convBinding) setTurnActivity(kind fap.ActivityKind, detail string) {
 		b.turnKind = kind
 		b.turnDetail = detail
 	})
+}
+
+// setCacheExpiry records the prompt-cache expiry (unix ms) and sends a
+// CacheExpiry frame, deduping on an unchanged value. Called by appSink at turn
+// completion (a turn refreshes the cache).
+func (b *convBinding) setCacheExpiry(ms int64) {
+	b.mu.Lock()
+	changed := ms != b.cacheExpiryMs
+	if changed {
+		b.cacheExpiryMs = ms
+	}
+	convID := b.convID
+	b.mu.Unlock()
+	if changed {
+		b.send(fap.CacheExpiry{ConversationID: convID, ExpiryMs: ms})
+	}
 }
 
 // setSubagentDetail records the session-scoped running-subagent descriptions

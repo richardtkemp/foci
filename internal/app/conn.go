@@ -40,6 +40,7 @@ const defaultPromptTTL = 24 * time.Hour
 type agentCore interface {
 	Enqueue(agent.Envelope) bool
 	MetaStatus(sessionKey string) (gap string)
+	CacheExpiry(sessionKey string, at time.Time) time.Time
 	TransformMessage(text string) string
 }
 
@@ -524,6 +525,7 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	if c.agentRef != nil {
 		sk := env.SessionKey
 		sink.statusFn = func() string { return c.agentRef.MetaStatus(sk) }
+		sink.cacheExpiryFn = func() int64 { return c.agentRef.CacheExpiry(sk, time.Now()).UnixMilli() }
 	}
 	return sink, sink.cleanup
 }
