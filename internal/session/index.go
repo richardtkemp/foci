@@ -682,14 +682,40 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 	return entries, rows.Err()
 }
 
-// Delete removes a session from the index.
+// Delete removes a session from the index — and cascades to its metadata and
+// resume-history via purgeLocked, so a deleted session leaves no orphan rows.
 func (idx *SessionIndex) Delete(sessionKey string) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	idx.purgeLocked(sessionKey)
+}
 
-	_, err := idx.db.Exec(`DELETE FROM session_index WHERE session_key = ?`, sessionKey)
-	if err != nil {
-		log.Errorf("session", "delete index entry %q: %v", sessionKey, err)
+// PurgeSession removes every trace of a session key from the mutable session
+// tables (index row, all session_metadata, cc_resume_history) in one locked
+// pass — the cascade a bare `DELETE FROM session_index` lacks. Deleting an
+// index row alone stranded its metadata + resume-history (the orphan rows that
+// accumulated behind reinstalled/pruned app chats, surfaced 2026-07-11).
+// session_archives is deliberately NOT purged: it is a durable historical
+// record with its own retention lifecycle.
+func (idx *SessionIndex) PurgeSession(sessionKey string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.purgeLocked(sessionKey)
+}
+
+// purgeLocked is the cascade body; the caller MUST hold idx.mu. Shared by
+// Delete, PurgeSession, and the PruneOrphans loop (which already holds the
+// lock). Each delete is independently idempotent; all writes to the index
+// serialise on idx.mu, so the sequence is atomic w.r.t. other index ops.
+func (idx *SessionIndex) purgeLocked(sessionKey string) {
+	for _, stmt := range []string{
+		`DELETE FROM session_index     WHERE session_key = ?`,
+		`DELETE FROM session_metadata  WHERE session_key = ?`,
+		`DELETE FROM cc_resume_history WHERE session_key = ?`,
+	} {
+		if _, err := idx.db.Exec(stmt, sessionKey); err != nil {
+			log.Errorf("session", "purge session %q: %v", sessionKey, err)
+		}
 	}
 }
 
@@ -893,7 +919,10 @@ func (idx *SessionIndex) PruneOrphans() int {
 	}
 
 	for _, key := range orphans {
-		_, _ = idx.db.Exec(`DELETE FROM session_index WHERE session_key = ?`, key)
+		// Cascade: an orphaned session's metadata + resume-history must go with
+		// its index row, else they strand (the accumulation this fixes). We hold
+		// idx.mu, so call the lock-free body directly.
+		idx.purgeLocked(key)
 		log.Infof("session", "pruned orphan index entry: %s", key)
 	}
 	return len(orphans)
@@ -1432,11 +1461,26 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 		// Preferred platform's most recently active registered chat. Filter on
 		// registered='true' (the universal real-chat signal set on first contact
 		// by every platform) so a stray alias/features/archived row can't qualify.
+		//
+		// Reachability guard (app only): a "registered" app chat is a real,
+		// deliverable conversation only once it has a persisted conv_id. A chat
+		// registered but never opened (no conv_id) is a phantom — resolving the
+		// default to it yields a session with no binding, so interactive prompts
+		// fail (errNoBinding) and plain messages misdeliver via the fallback
+		// (helen vocab-cron landed on such a phantom, 2026-07-11). conv_id is an
+		// app concept; telegram/discord treat 'registered' as reachable, so the
+		// guard is scoped to the app platform and other platforms are unaffected.
+		convGuard := ""
+		if preferredPlatform == "app" {
+			convGuard = `AND EXISTS (SELECT 1 FROM chat_metadata cid
+			     WHERE cid.agent_id = cm.agent_id AND cid.platform = cm.platform
+			       AND cid.chat_id = cm.chat_id AND cid.key = 'conv_id') `
+		}
 		err = idx.db.QueryRow(
 			`SELECT cm.chat_id FROM (SELECT DISTINCT agent_id, platform, chat_id FROM chat_metadata WHERE key = 'registered' AND value = 'true') cm
 			 LEFT JOIN session_index si
 			   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
-			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.chat_id != 0
+			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.chat_id != 0 `+convGuard+`
 			 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST
 			 LIMIT 1`,
 			agentID, preferredPlatform,

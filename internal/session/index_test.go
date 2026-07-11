@@ -1530,6 +1530,94 @@ func TestDefaultSessionKeyForAgentOn_RegisteredFilter(t *testing.T) {
 	}
 }
 
+func TestDefaultSessionKeyForAgentOn_AppConvIDGuard(t *testing.T) {
+	// On the app, a registered chat is pickable only once it has a conv_id (a
+	// real opened conversation). A registered-but-never-opened phantom (no
+	// conv_id) must be skipped even when it is the MORE recently active, so the
+	// default resolves to a real, bindable conversation (helen vocab-cron landed
+	// on such a phantom and its ask hit errNoBinding, 2026-07-11).
+	idx := tempIndex(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// c555 = real (registered + conv_id), less recently active.
+	// c777 = phantom (registered, NO conv_id), MORE recently active.
+	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c555", SessionType: SessionTypeChat,
+		Status: SessionStatusActive, CreatedAt: now.Add(-2 * time.Hour), LastActivityAt: now.Add(-time.Hour)})
+	idx.Upsert(SessionIndexEntry{SessionKey: "ag/c777", SessionType: SessionTypeChat,
+		Status: SessionStatusActive, CreatedAt: now.Add(-2 * time.Hour), LastActivityAt: now})
+	idx.TouchUserActivity("ag/c555", now.Add(-time.Hour))
+	idx.TouchUserActivity("ag/c777", now) // phantom is more recent
+
+	set := func(chat int64, key, val string) {
+		if err := idx.SetChatMetadata("ag", "app", chat, key, val); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(555, "registered", "true")
+	set(555, "conv_id", "01CONVREAL")
+	set(777, "registered", "true") // phantom: no conv_id
+
+	if got := idx.DefaultSessionKeyForAgentOn("ag", "app"); got != "ag/c555" {
+		t.Errorf("app conv_id guard = %q, want ag/c555 (c777 excluded: phantom, no conv_id)", got)
+	}
+
+	// The guard is app-only: the SAME phantom-vs-real shape on telegram (which
+	// has no conv_id concept) is NOT guarded — most-recent wins regardless.
+	if err := idx.SetChatMetadata("ag", "telegram", 555, "registered", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetChatMetadata("ag", "telegram", 777, "registered", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.DefaultSessionKeyForAgentOn("ag", "telegram"); got != "ag/c777" {
+		t.Errorf("telegram (unguarded) = %q, want ag/c777 (most-recent, conv_id irrelevant)", got)
+	}
+}
+
+func TestPurgeSession_CascadesMetadataAndResumeHistory(t *testing.T) {
+	// Deleting a session must not strand its metadata or resume-history — the
+	// orphan-row accumulation fixed 2026-07-11. Delete(), PurgeSession(), and
+	// PruneOrphans() all cascade through purgeLocked.
+	seed := func(idx *SessionIndex, key, path string) {
+		idx.Upsert(SessionIndexEntry{SessionKey: key, FilePath: path, SessionType: SessionTypeChat,
+			Status: SessionStatusActive, CreatedAt: time.Now().UTC()})
+		if err := idx.SetSessionMetadata(key, "cc_resume_id", "rid-"+key); err != nil {
+			t.Fatal(err)
+		}
+		idx.RecordCCResume(key, "rid-"+key)
+	}
+	assertGone := func(idx *SessionIndex, key string) {
+		t.Helper()
+		if idx.SessionExists(key) {
+			t.Errorf("%s: session_index row survived", key)
+		}
+		if v, _ := idx.GetSessionMetadata(key, "cc_resume_id"); v != "" {
+			t.Errorf("%s: session_metadata stranded (%q)", key, v)
+		}
+		if r := idx.AllCCResumes(key); len(r) != 0 {
+			t.Errorf("%s: cc_resume_history stranded (%v)", key, r)
+		}
+	}
+
+	// (a) Delete cascades.
+	idx := tempIndex(t)
+	seed(idx, "ag/c1", "")
+	idx.Delete("ag/c1")
+	assertGone(idx, "ag/c1")
+
+	// (b) PurgeSession cascades.
+	seed(idx, "ag/c2", "")
+	idx.PurgeSession("ag/c2")
+	assertGone(idx, "ag/c2")
+
+	// (c) PruneOrphans cascades: a session whose backing file is missing.
+	seed(idx, "ag/c3", "/nonexistent/definitely/missing.jsonl")
+	if n := idx.PruneOrphans(); n != 1 {
+		t.Fatalf("PruneOrphans pruned %d, want 1", n)
+	}
+	assertGone(idx, "ag/c3")
+}
+
 func TestConvRefs_ReturnsPersistedConvIDRows(t *testing.T) {
 	// Proves ConvRefs returns exactly the platform's conv_id rows (the chatID
 	// hash preimages written at binding creation), skipping other keys, other
