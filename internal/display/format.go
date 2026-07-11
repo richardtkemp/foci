@@ -46,6 +46,32 @@ func FormatCommas(n int) string {
 	return result.String()
 }
 
+// FormatTokensAbbrev formats a token count compactly for status displays:
+// 1_000_000 -> "1M", 1_500_000 -> "1.5M", 374_686 -> "375k", 512 -> "512".
+// Base-1000 units (k, M): one decimal for millions (trailing ".0" trimmed),
+// nearest whole thousand for k, raw below 1000. Keeps context/quota readouts
+// glanceable instead of showing full comma-grouped counts (#1149).
+func FormatTokensAbbrev(n int) string {
+	if n < 0 {
+		return "-" + FormatTokensAbbrev(-n)
+	}
+	switch {
+	case n >= 1_000_000:
+		s := strconv.FormatFloat(float64(n)/1_000_000, 'f', 1, 64)
+		return strings.TrimSuffix(s, ".0") + "M"
+	case n >= 1_000:
+		// Round to nearest thousand; promote to M at the 1000k boundary
+		// (e.g. 999_600 -> "1M", not "1000k").
+		k := (n + 500) / 1000
+		if k >= 1000 {
+			return FormatTokensAbbrev(k * 1000)
+		}
+		return strconv.Itoa(k) + "k"
+	default:
+		return strconv.Itoa(n)
+	}
+}
+
 // FormatBytes formats a byte count as human-readable (e.g. "1.5 KB").
 func FormatBytes(n int64) string {
 	const unit = 1024
