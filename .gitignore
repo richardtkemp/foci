@@ -11,6 +11,7 @@ tasks/
 /foci-gw
 /foci
 /foci-call
+/foci-cc-hook
 .gocache/
 .gopath/
 .go/
