@@ -62,13 +62,12 @@ func costSession(entries []log.APIEntry, sessionKey string, idx *session.Session
 		{Header: "Category"},
 		{Header: "Cost", Align: display.AlignRight},
 	}
-	tableRows := [][]string{
-		{"Cache reads", fmt.Sprintf("$%.4f", cr)},
-		{"Cache writes", fmt.Sprintf("$%.4f", cw)},
-		{"Input", fmt.Sprintf("$%.4f", inp)},
-		{"Output", fmt.Sprintf("$%.4f", out)},
+	labels := []string{"Cache reads", "Cache writes", "Input", "Output", "Total"}
+	costCells := moneyCol([]float64{cr, cw, inp, out, total}, 4)
+	tableRows := make([][]string, len(labels))
+	for i, l := range labels {
+		tableRows[i] = []string{l, costCells[i]}
 	}
-	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.4f", total)})
 	b.WriteString("\n\n")
 	b.WriteString(display.MarkdownTable(cols, tableRows))
 	return b.String()
@@ -141,18 +140,24 @@ func costToday(entries []log.APIEntry, idx *session.SessionIndex, breakdown bool
 			{Header: "Cost", Align: display.AlignRight},
 			{Header: "Calls", Align: display.AlignRight},
 		}
-		tableRows := make([][]string, 0, len(shown)+1)
+		costVals := make([]float64, 0, len(shown)+1)
 		for _, sc := range shown {
+			costVals = append(costVals, sc.cost)
+		}
+		costVals = append(costVals, total)
+		costCells := moneyCol(costVals, 2)
+		tableRows := make([][]string, 0, len(shown)+2)
+		for i, sc := range shown {
 			tableRows = append(tableRows, []string{
 				sc.name,
-				fmt.Sprintf("$%.2f", sc.cost),
+				costCells[i],
 				display.FormatCommas(sc.calls),
 			})
 		}
 		if extra > 0 {
 			tableRows = append(tableRows, []string{fmt.Sprintf("  +%d more", extra), "", ""})
 		}
-		tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total), display.FormatCommas(count)})
+		tableRows = append(tableRows, []string{"Total", costCells[len(shown)], display.FormatCommas(count)})
 		b.WriteByte('\n')
 		b.WriteString(display.MarkdownTable(cols, tableRows))
 	}
@@ -179,13 +184,12 @@ func cost24h(entries []log.APIEntry, idx *session.SessionIndex, breakdown bool) 
 		{Header: "Category"},
 		{Header: "Cost", Align: display.AlignRight},
 	}
-	tableRows := [][]string{
-		{"Cache reads", fmt.Sprintf("$%.2f", cr)},
-		{"Cache writes", fmt.Sprintf("$%.2f", cw)},
-		{"Input", fmt.Sprintf("$%.2f", inp)},
-		{"Output", fmt.Sprintf("$%.2f", out)},
+	labels := []string{"Cache reads", "Cache writes", "Input", "Output", "Total"}
+	costCells := moneyCol([]float64{cr, cw, inp, out, total}, 2)
+	tableRows := make([][]string, len(labels))
+	for i, l := range labels {
+		tableRows[i] = []string{l, costCells[i]}
 	}
-	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total)})
 	b.WriteByte('\n')
 	b.WriteString(display.MarkdownTable(cols, tableRows))
 	return b.String()
@@ -220,13 +224,21 @@ func costWeek(entries []log.APIEntry, idx *session.SessionIndex, breakdown bool)
 		{Header: "Date"},
 		{Header: "Cost", Align: display.AlignRight},
 	}
-	tableRows := make([][]string, 0, 9)
+	days := make([]string, 7)
+	costVals := make([]float64, 0, 9)
 	for i := 0; i < 7; i++ {
 		day := startOfToday.AddDate(0, 0, -i).Format("2006-01-02")
-		tableRows = append(tableRows, []string{day, fmt.Sprintf("$%.2f", dayCosts[day])})
+		days[i] = day
+		costVals = append(costVals, dayCosts[day])
 	}
-	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total)})
-	tableRows = append(tableRows, []string{"Mean/day", fmt.Sprintf("$%.2f", mean)})
+	costVals = append(costVals, total, mean)
+	costCells := moneyCol(costVals, 2)
+	tableRows := make([][]string, 0, 9)
+	for i := 0; i < 7; i++ {
+		tableRows = append(tableRows, []string{days[i], costCells[i]})
+	}
+	tableRows = append(tableRows, []string{"Total", costCells[7]})
+	tableRows = append(tableRows, []string{"Mean/day", costCells[8]})
 	b.WriteByte('\n')
 	b.WriteString(display.MarkdownTable(cols, tableRows))
 	return b.String()
@@ -308,23 +320,33 @@ func renderTypeBreakdown(filtered []log.APIEntry, typeMap map[string]string, hea
 		{Header: "Cost", Align: display.AlignRight},
 		{Header: "Mean/sess", Align: display.AlignRight},
 	}
-	rows := make([][]string, 0, len(types)+1)
+	costVals := make([]float64, 0, len(types)+1)
+	meanVals := make([]float64, 0, len(types))
 	for _, t := range types {
 		a := aggs[t]
-		ns := len(a.sessions)
 		var mean float64
-		if ns > 0 {
+		if ns := len(a.sessions); ns > 0 {
 			mean = a.cost / float64(ns)
 		}
+		costVals = append(costVals, a.cost)
+		meanVals = append(meanVals, mean)
+	}
+	costVals = append(costVals, total)
+	costCells := moneyCol(costVals, 2)
+	meanCells := moneyCol(meanVals, 4)
+
+	rows := make([][]string, 0, len(types)+1)
+	for i, t := range types {
+		a := aggs[t]
 		rows = append(rows, []string{
 			t,
-			display.FormatCommas(ns),
+			display.FormatCommas(len(a.sessions)),
 			display.FormatCommas(a.calls),
-			fmt.Sprintf("$%.2f", a.cost),
-			fmt.Sprintf("$%.4f", mean),
+			costCells[i],
+			meanCells[i],
 		})
 	}
-	rows = append(rows, []string{"Total", "", display.FormatCommas(totalCalls), fmt.Sprintf("$%.2f", total), ""})
+	rows = append(rows, []string{"Total", "", display.FormatCommas(totalCalls), costCells[len(types)], ""})
 	b.WriteString("\n\n")
 	b.WriteString(display.MarkdownTable(cols, rows))
 	return b.String()
@@ -417,6 +439,26 @@ func startLine(t time.Time) string {
 		return ""
 	}
 	return fmt.Sprintf("Started %s (%s)", t.Local().Format("2006-01-02 15:04"), display.RelativeTime(t))
+}
+
+// moneyCol renders a column of dollar amounts as equal-width, backtick-wrapped
+// cells so the decimals line up under right-alignment (accounting style). The
+// pad spaces sit inside the inline-code span, which the app renders monospace
+// and preserves verbatim.
+func moneyCol(vals []float64, decimals int) []string {
+	nums := make([]string, len(vals))
+	width := 0
+	for i, v := range vals {
+		nums[i] = strconv.FormatFloat(v, 'f', decimals, 64)
+		if len(nums[i]) > width {
+			width = len(nums[i])
+		}
+	}
+	cells := make([]string, len(vals))
+	for i, n := range nums {
+		cells[i] = "`$" + strings.Repeat(" ", width-len(n)) + n + "`"
+	}
+	return cells
 }
 
 // filterEntries returns entries matching the predicate.
