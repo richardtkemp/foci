@@ -46,7 +46,10 @@ type mockBackendDM struct {
 	sessionEvents    *delegator.SessionEvents
 	sendCommandFn    func(context.Context, string) error
 	closeFn          func() error
+	cacheTTL         time.Duration
 }
+
+func (m *mockBackendDM) CacheTTL() time.Duration { return m.cacheTTL }
 
 func (m *mockBackendDM) Start(_ context.Context, opts delegator.StartOptions) error {
 	m.mu.Lock()
@@ -2030,6 +2033,26 @@ func TestRegisterPromptCancelListener_UnknownSession(t *testing.T) {
 	mgr.RegisterPromptCancelListener("nonexistent-sk", "req-x", func(string) {
 		t.Error("listener should not fire for unknown session")
 	})
+}
+
+func TestCacheTTL(t *testing.T) {
+	mgr, mocks := newTestManager(t, nil)
+
+	if got := mgr.CacheTTL("test-agent/c1"); got != 0 {
+		t.Errorf("no live backend: got %v, want 0", got)
+	}
+
+	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := mgr.CacheTTL("test-agent/c1"); got != 0 {
+		t.Errorf("backend reporting 0: got %v, want 0", got)
+	}
+
+	(*mocks)[0].cacheTTL = time.Hour
+	if got := mgr.CacheTTL("test-agent/c1"); got != time.Hour {
+		t.Errorf("backend reporting 1h: got %v, want 1h", got)
+	}
 }
 
 // contains is a test helper that checks if a string contains a substring.
