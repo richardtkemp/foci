@@ -271,14 +271,16 @@ Subcommands:
 			sk := defaultSessionKeyFor(inst.ag, id)
 			var mc int
 			var lastAct string
+			model := inst.ag.Model
 			if sk != "" {
 				mc, _ = inst.ag.Sessions.MessageCount(sk)
 				lastAct = inst.ag.Sessions.LastActivity(sk)
+				model = inst.ag.SessionModel(sk)
 			}
 			infos = append(infos, command.AgentInfo{
 				ID:           id,
 				SessionKey:   sk,
-				Model:        inst.ag.Model,
+				Model:        model,
 				MessageCount: mc,
 				LastActivity: lastAct,
 			})

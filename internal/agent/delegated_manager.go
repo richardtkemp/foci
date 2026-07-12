@@ -330,6 +330,11 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	if opts.EffortFunc != nil {
 		opts.Effort = opts.EffortFunc(sessionKey)
 	}
+	if opts.ModelFunc != nil {
+		if m := opts.ModelFunc(sessionKey); m != "" {
+			opts.Model = m
+		}
+	}
 
 	// Create the exec bridge so shell functions (foci_todo, foci_send_to_chat, etc.)
 	// are available in the backend's shell environment. The bridge is created here

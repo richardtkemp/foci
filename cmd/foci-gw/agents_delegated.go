@@ -270,6 +270,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// set via /effort — apply_flag_settings is runtime-only. Returns
 			// "" when no override is set (CC uses the model default). (#840)
 			EffortFunc:       func(sk string) string { return ag.SessionEffort(sk) },
+			ModelFunc:        func(sk string) string { return ag.SessionModel(sk) },
 			// Drive opencode's internal compaction (/summarize) with foci's
 			// compaction-summary.md — the SAME resolution the CC backend uses
 			// (internal/agent/compaction.go) — instead of opencode's built-in
