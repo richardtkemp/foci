@@ -229,11 +229,21 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 		if s.conn != nil {
 			s.conn.SetTyping(true)
 		}
+	case turnevent.SubagentStart:
+		if sd, ok := s.conn.(SessionSubagentDeliverer); ok {
+			sd.DeliverSubagentStartToSession(s.sessionKey, e.GroupKey, e.Label)
+		}
+	case turnevent.SubagentEnd:
+		if sd, ok := s.conn.(SessionSubagentDeliverer); ok {
+			sd.DeliverSubagentEndToSession(s.sessionKey, e.GroupKey)
+		}
 	case turnevent.SubagentText:
-		// Notify/wake flows have no rolling-button surface; deliver subagent
-		// progress as plain session text. Do not set delivered — it must not
-		// suppress the final reply.
+		// Do not set delivered — subagent progress must not suppress the final reply.
 		if s.conn == nil {
+			return
+		}
+		if sd, ok := s.conn.(SessionSubagentDeliverer); ok && e.GroupKey != "" {
+			sd.DeliverSubagentTextToSession(s.sessionKey, e.GroupKey, e.Text)
 			return
 		}
 		text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.Text))
