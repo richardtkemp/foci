@@ -898,6 +898,48 @@ func TestInteractive_BatchRoundTrip(t *testing.T) {
 	}
 }
 
+// TestInteractive_BatchProgressSyncAndStreamedResolve: answers streamed one at a
+// time via InteractiveProgress are mirrored to attached clients and accumulated
+// server-side, so the completion frame can carry NO answers and still resolve
+// from the accumulated set. A Done edit fans out so other clients close the form.
+func TestInteractive_BatchProgressSyncAndStreamedResolve(t *testing.T) {
+	h, c, b, conn := boundConn(t)
+	c.features = map[string]struct{}{featureInteractiveBatch: {}}
+	b.attach(c)
+
+	var got []string
+	conn.SendInteractiveBatch("req-p",
+		[]platform.BatchQuestion{
+			{Text: "Color?", Choices: []platform.ButtonChoice{{Label: "Red", Data: "qa:0"}}},
+			{Text: "Size?", Choices: []platform.ButtonChoice{{Label: "Large", Data: "qa:1"}}},
+		},
+		func(answers []string) { got = answers })
+	drain(t, c) // consume the interactive frame
+
+	// One question answered → mirrored to the attached clients as a progress edit.
+	h.handleInteractiveProgress(fap.InteractiveProgress{ConversationID: "c1", PromptID: "req-p", Index: 0, Answer: "qa:0"})
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeInteractiveProgressEdit {
+		t.Fatalf("progress frames = %v, want [interactive.progressEdit]", types(ds))
+	}
+	if ds[0].d["done"] == true {
+		t.Errorf("mid-stream progress edit must not be Done")
+	}
+
+	// Completion carries NO answers — resolves from the accumulated set.
+	h.handleInteractiveResponse(c, fap.InteractiveResponse{ConversationID: "c1", PromptID: "req-p"})
+	if len(got) != 2 || got[0] != "qa:0" || got[1] != "" {
+		t.Errorf("streamed resolve answers = %v, want [qa:0 <empty>]", got)
+	}
+	if _, ok := h.batchPromptByID("req-p"); ok {
+		t.Error("registration should be cleared after resolve")
+	}
+	dd := drain(t, c)
+	if len(dd) != 1 || dd[0].t != fap.TypeInteractiveProgressEdit || dd[0].d["done"] != true {
+		t.Fatalf("resolve frames = %v, want one Done progressEdit", types(dd))
+	}
+}
+
 // A client that did NOT advertise the capability declines batching, so the ask
 // layer falls back to sequential presentation. No frame is emitted here.
 func TestInteractive_BatchDeclinedWhenUncapable(t *testing.T) {

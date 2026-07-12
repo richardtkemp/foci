@@ -40,6 +40,9 @@ const (
 	TypeMedia           = "media"
 	TypeInteractive     = "interactive"
 	TypeInteractiveEdit = "interactive.edit"
+	// InteractiveProgressEdit syncs a batched ask's accumulated answers to the
+	// other attached clients (Done=true when resolved, so they close the form).
+	TypeInteractiveProgressEdit = "interactive.progressEdit"
 	TypeWizardStep      = "wizard.step"
 	TypeWizardEnd       = "wizard.end"
 	TypeSubagentStart   = "subagent.start"
@@ -54,6 +57,7 @@ const (
 	// app -> server
 	TypeCommand                = "command"
 	TypeInteractiveResponse    = "interactive.response"
+	TypeInteractiveProgress    = "interactive.progress"
 	TypeWizardResponse         = "wizard.response"
 	TypeConversationOpen       = "conversation.open"
 	TypeConversationList       = "conversation.list"
@@ -416,6 +420,19 @@ type InteractiveEdit struct {
 
 func (InteractiveEdit) Type() string { return TypeInteractiveEdit }
 
+// InteractiveProgressEdit carries a batched ask's accumulated answers out to the
+// OTHER attached clients so a form can be part-answered on one device and
+// finished on another. Answers is positional (empty entry = still unanswered).
+// Done=true means the ask resolved — clients close the form.
+type InteractiveProgressEdit struct {
+	ConversationID string   `json:"conversationId"`
+	PromptID       string   `json:"promptId"`
+	Answers        []string `json:"answers"`
+	Done           bool     `json:"done,omitempty"`
+}
+
+func (InteractiveProgressEdit) Type() string { return TypeInteractiveProgressEdit }
+
 // SubagentStart marks a subagent (Task/Agent tool) run beginning, so the app can
 // create a collapsed "Agent started" entry that its text blocks attach to. GroupKey
 // is the parent tool_use id; Label the agent's description. From the PreToolUse hook
@@ -611,6 +628,19 @@ type InteractiveResponse struct {
 	Data           string   `json:"data,omitempty"`
 	Answers        []string `json:"answers,omitempty"`
 }
+
+// InteractiveProgress reports one answered question of a batched ask as the user
+// fills it in, so the server accumulates the answer set and mirrors it to the
+// other clients. Index is the question's position; Answer the chosen
+// Choice.Data ("qa:<index>") or typed string.
+type InteractiveProgress struct {
+	ConversationID string `json:"conversationId"`
+	PromptID       string `json:"promptId"`
+	Index          int    `json:"index"`
+	Answer         string `json:"answer"`
+}
+
+func (InteractiveProgress) Type() string { return TypeInteractiveProgress }
 
 // WizardResponse answers the current step of an active wizard. Data is the
 // chosen Choice.Data ("qa:<index>"), the "qa:cancel" sentinel, or free typed

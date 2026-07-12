@@ -161,6 +161,21 @@ func TestDecode_InteractiveResponse(t *testing.T) {
 	}
 }
 
+func TestDecode_InteractiveProgress(t *testing.T) {
+	wire := `{"t":"interactive.progress","id":"r2","d":{"conversationId":"c1","promptId":"p1","index":2,"answer":"qa:1"}}`
+	in, err := Decode(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := in.Frame.(InteractiveProgress)
+	if !ok {
+		t.Fatalf("frame type = %T, want InteractiveProgress", in.Frame)
+	}
+	if p.PromptID != "p1" || p.Index != 2 || p.Answer != "qa:1" {
+		t.Errorf("decoded progress wrong: %+v", p)
+	}
+}
+
 func TestDecode_ClientHello(t *testing.T) {
 	wire := `{"t":"hello","id":"h1","d":{"client":{"app":"foci","os":"android","version":"1.0","deviceId":"dev-9"},"pushToken":"ptok","resume":[{"conversationId":"c1","ack":7}]}}`
 	in, err := Decode(wire)

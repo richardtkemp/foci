@@ -108,6 +108,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &Command{}
 	case TypeInteractiveResponse:
 		dst = &InteractiveResponse{}
+	case TypeInteractiveProgress:
+		dst = &InteractiveProgress{}
 	case TypeWizardResponse:
 		dst = &WizardResponse{}
 	case TypeConversationOpen:
@@ -153,6 +155,8 @@ func derefClient(dst any) any {
 	case *Command:
 		return *v
 	case *InteractiveResponse:
+		return *v
+	case *InteractiveProgress:
 		return *v
 	case *WizardResponse:
 		return *v
