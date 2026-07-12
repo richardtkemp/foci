@@ -841,6 +841,9 @@ type ConfigFieldDesc struct {
 	Min         *float64 `json:"min,omitempty"`
 	Max         *float64 `json:"max,omitempty"`
 	Choices     []string `json:"choices,omitempty"`
+	// NeedsRestart: a change to this field only takes effect after a full
+	// server restart (the value is captured at startup, not read live).
+	NeedsRestart bool `json:"needsRestart"`
 	// GlobalKey, on section=="agent" fields only, is the "section.key" address of
 	// the GLOBAL field this per-agent field overrides (e.g. "agent_loop.max_tool_loops"
 	// for "loop.max_tool_loops"). Empty = per-agent only, no global counterpart.

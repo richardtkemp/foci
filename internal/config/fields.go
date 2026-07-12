@@ -26,7 +26,19 @@ type ConfigField struct {
 	Type        FieldType // value type
 	Description string    // one-line description
 	Default     string    // built-in default (the `default` struct tag; "" when none)
+	// NeedsRestart is true when a change to this field only takes effect after
+	// a full server restart, because the value is captured at startup (copied
+	// into an agent/subsystem/listener) rather than read from the live config
+	// at use time. Derived from the `hot` struct tag: fields whose every
+	// behavior-deciding read goes through the live config carry hot:"<when>"
+	// (when ∈ immediate/turn/session/event — how soon a live-config update
+	// would be observed). No tag = restart required, the conservative default
+	// for new fields.
+	NeedsRestart bool
 }
+
+// validHotTags are the allowed `hot` struct tag values; enforced by test.
+var validHotTags = map[string]bool{"immediate": true, "turn": true, "session": true, "event": true}
 
 // Constraint defines validation rules for a config field value.
 type Constraint struct {
@@ -171,11 +183,12 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 		}
 
 		*fields = append(*fields, ConfigField{
-			Section:     section,
-			Key:         key,
-			Type:        fieldType,
-			Description: desc,
-			Default:     f.Tag.Get("default"),
+			Section:      section,
+			Key:          key,
+			Type:         fieldType,
+			Description:  desc,
+			Default:      f.Tag.Get("default"),
+			NeedsRestart: !validHotTags[f.Tag.Get("hot")],
 		})
 
 		// Parse constraints from tags
