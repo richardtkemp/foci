@@ -51,6 +51,25 @@ func TestCalculateCostOpus(t *testing.T) {
 	}
 }
 
+func TestCalculateCostByFamily(t *testing.T) {
+	cases := []struct {
+		model string
+		want  float64 // 1M input cost
+	}{
+		{"claude-opus-4-8", 15.0},            // newer opus, not in registry → opus family
+		{"anthropic/claude-opus-4-9", 15.0},  // provider prefix + future version
+		{"claude-sonnet-4-6", 3.0},           // newer sonnet → sonnet family
+		{"claude-fable-6", 10.0},             // newer fable → fable family
+		{"claude-haiku-9-9", 1.0},            // newer haiku → haiku family
+		{"gemini-3.0-pro", 0.15},             // unknown gemini → flash family
+	}
+	for _, c := range cases {
+		if got := Cost(c.model, 1_000_000, 0, 0, 0); got != c.want {
+			t.Errorf("Cost(%q) 1M input = %f, want %f", c.model, got, c.want)
+		}
+	}
+}
+
 func TestCalculateCostGemini(t *testing.T) {
 	// 1M input on gemini-2.5-flash = $0.15
 	cost := Cost("gemini-2.5-flash", 1_000_000, 0, 0, 0)
