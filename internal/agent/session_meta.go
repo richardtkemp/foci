@@ -11,6 +11,7 @@ import (
 	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/session"
 )
 
 // sessionMeta tracks per-session state for metadata injection.
@@ -61,6 +62,12 @@ type sessionStringSetting struct {
 	getter       func(*sessionMeta) string  // read field value
 	setter       func(*sessionMeta, string) // write field value
 	agentDefault func(*Agent) string        // agent-level default (nil = returns "")
+	// rootFallback: when a non-root (branch/independent) session has no own
+	// value, inherit the root session's value before falling to the agent
+	// default. Set on the model tuple (model/endpoint/format) so a branch
+	// launches on the SAME model the root is live on — the prompt cache is
+	// per-model and a branch exists precisely to reuse root's warm cache.
+	rootFallback bool
 }
 
 var (
@@ -87,17 +94,20 @@ var (
 		getter:       func(sm *sessionMeta) string { return sm.model },
 		setter:       func(sm *sessionMeta, v string) { sm.model = v },
 		agentDefault: func(a *Agent) string { return a.Model },
+		rootFallback: true,
 	}
 	settingModelEndpoint = sessionStringSetting{
-		prefix: "model_endpoint",
-		getter: func(sm *sessionMeta) string { return sm.modelEndpoint },
-		setter: func(sm *sessionMeta, v string) { sm.modelEndpoint = v },
+		prefix:       "model_endpoint",
+		getter:       func(sm *sessionMeta) string { return sm.modelEndpoint },
+		setter:       func(sm *sessionMeta, v string) { sm.modelEndpoint = v },
+		rootFallback: true,
 	}
 	settingModelFormat = sessionStringSetting{
 		prefix:       "model_format",
 		getter:       func(sm *sessionMeta) string { return sm.modelFormat },
 		setter:       func(sm *sessionMeta, v string) { sm.modelFormat = v },
 		agentDefault: func(a *Agent) string { return a.Format },
+		rootFallback: true,
 	}
 	settingShowToolCalls = sessionStringSetting{
 		prefix:       "show_tool_calls",
@@ -139,32 +149,49 @@ var allSessionStringSettings = []sessionStringSetting{
 	settingPermissionMode,
 }
 
-// sessionStringWithDefault returns a session-specific override
-// or the agent-wide default if the override is empty.
-func (a *Agent) sessionStringWithDefault(sessionKey string, getter func(*sessionMeta) string, defaultVal string) string {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	val := getter(sm)
-	if val != "" {
-		return val
-	}
-	return defaultVal
-}
-
 // setSessionString sets a per-session string override and persists it.
 func (a *Agent) setSessionString(sessionKey, prefix, value string, setter func(*sessionMeta, string)) {
 	a.setMetaLocked(sessionKey, func(sm *sessionMeta) { setter(sm, value) })
 	a.persistSessionString(sessionKey, prefix, value)
 }
 
-// getStringSetting returns the session-specific value for a setting, falling back to the agent default.
+// getStringSetting returns the session-specific value for a setting. Resolution
+// order: own override → (for rootFallback settings on a non-root session) the
+// root session's value → the agent default.
 func (a *Agent) getStringSetting(sessionKey string, s sessionStringSetting) string {
-	def := ""
-	if s.agentDefault != nil {
-		def = s.agentDefault(a)
+	if val := a.readSessionString(sessionKey, s.getter); val != "" {
+		return val
 	}
-	return a.sessionStringWithDefault(sessionKey, s.getter, def)
+	if s.rootFallback {
+		if rootKey, ok := rootKeyIfChild(sessionKey); ok {
+			if val := a.readSessionString(rootKey, s.getter); val != "" {
+				return val
+			}
+		}
+	}
+	if s.agentDefault != nil {
+		return s.agentDefault(a)
+	}
+	return ""
+}
+
+// readSessionString reads a single string field from a session's meta under lock.
+func (a *Agent) readSessionString(sessionKey string, getter func(*sessionMeta) string) string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return getter(sm)
+}
+
+// rootKeyIfChild returns the root session key string and true when sessionKey is
+// a non-root (branch/independent) child; ok is false for root keys or unparseable
+// input.
+func rootKeyIfChild(sessionKey string) (string, bool) {
+	sk, err := session.ParseSessionKey(sessionKey)
+	if err != nil || sk.IsRoot() {
+		return "", false
+	}
+	return sk.Root().String(), true
 }
 
 // setStringSetting sets a per-session string setting and persists it.
@@ -472,16 +499,27 @@ func (a *Agent) SessionFormat(sessionKey string) string {
 	return a.getStringSetting(sessionKey, settingModelFormat)
 }
 
-// SessionClient returns the effective client for the session.
-// Returns the per-session client override if set, otherwise the agent-wide default.
+// SessionClient returns the effective client for the session. Resolution mirrors
+// the model tuple: own override → root session's client (for a non-root child) →
+// the agent-wide default.
 func (a *Agent) SessionClient(sessionKey string) provider.Client {
+	if c := a.readSessionClient(sessionKey); c != nil {
+		return c
+	}
+	if rootKey, ok := rootKeyIfChild(sessionKey); ok {
+		if c := a.readSessionClient(rootKey); c != nil {
+			return c
+		}
+	}
+	return a.Client
+}
+
+// readSessionClient reads a session's client override under lock (nil if unset).
+func (a *Agent) readSessionClient(sessionKey string) provider.Client {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	defer a.metaMu.Unlock()
-	if sm.client != nil {
-		return sm.client
-	}
-	return a.Client
+	return sm.client
 }
 
 // SessionNoCompact returns the effective no_compact setting for the session.

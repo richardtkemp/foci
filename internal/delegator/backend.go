@@ -529,6 +529,13 @@ type StartOptions struct {
 	// populates Effort for that Start. (#840)
 	EffortFunc func(sessionKey string) string
 
+	// ModelFunc, when non-nil, resolves the launch model fresh per session at
+	// each Start (mirroring EffortFunc). Without it every launch/resume/branch
+	// uses the static agent-default Model, which forces a session that switched
+	// models — or a branch inheriting its root's model — back onto the default
+	// and misses the per-model prompt cache. Non-empty result populates Model.
+	ModelFunc func(sessionKey string) string
+
 	// CompactionPromptFunc, when non-nil, is called at each session Start to
 	// resolve the compaction summary prompt fresh from disk (mirroring
 	// SystemPromptFunc). Backends that drive their OWN compaction (opencode's
