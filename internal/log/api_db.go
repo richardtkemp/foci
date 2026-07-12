@@ -50,12 +50,15 @@ func InitAPIDB(path string) error {
 	// Migrations for existing DBs (ALTER TABLE is a no-op if column exists).
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN provider TEXT DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN pre_messages INTEGER`)
-	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN new_session TEXT`)
+	// new_session was wired end-to-end but never written by any producer (dead
+	// plumbing for a compaction-rotation feature that never landed). Drop it from
+	// existing DBs; the Exec is a no-op (ignored error) once the column is gone.
+	_, _ = db.Exec(`ALTER TABLE api_calls DROP COLUMN new_session`)
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages, new_session)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -155,7 +158,7 @@ func ReadAPIDBLog() []APIEntry {
 		       COALESCE(cost_usd, 0), COALESCE(duration_ms, 0),
 		       COALESCE(stop_reason, ''), call_type,
 		       COALESCE(session_file, ''), COALESCE(session_line, 0),
-		       COALESCE(pre_messages, 0), COALESCE(new_session, '')
+		       COALESCE(pre_messages, 0)
 		FROM api_calls ORDER BY ts ASC`)
 	if err != nil {
 		std.event(ERROR, "api_db", "read log query error: %v", err)
@@ -171,7 +174,7 @@ func ReadAPIDBLog() []APIEntry {
 			&tsStr, &e.Provider, &e.Session, &e.Model,
 			&e.Input, &e.Output, &e.CacheRead, &e.CacheWrite,
 			&e.CostUSD, &e.DurationMS, &e.StopReason, &e.CallType,
-			&e.SessionFile, &e.SessionLine, &e.PreMessages, &e.NewSession,
+			&e.SessionFile, &e.SessionLine, &e.PreMessages,
 		); err != nil {
 			continue
 		}
@@ -197,10 +200,6 @@ func (a *apiDB) insert(entry APIEntry) {
 	if entry.PreMessages > 0 {
 		preMessages = &entry.PreMessages
 	}
-	var newSession *string
-	if entry.NewSession != "" {
-		newSession = &entry.NewSession
-	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -210,7 +209,7 @@ func (a *apiDB) insert(entry APIEntry) {
 		entry.Input, entry.Output, entry.CacheRead, entry.CacheWrite,
 		entry.CostUSD, entry.DurationMS, entry.StopReason,
 		entry.CallType, sessionFile, sessionLine,
-		preMessages, newSession,
+		preMessages,
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)

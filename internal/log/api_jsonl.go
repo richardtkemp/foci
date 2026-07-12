@@ -29,7 +29,6 @@ type APIEntry struct {
 	SessionFile string    `json:"session_file,omitempty"` // path to session JSONL file
 	SessionLine int       `json:"session_line,omitempty"` // line number in session file (conversation calls)
 	PreMessages int       `json:"pre_messages,omitempty"` // message count before compaction
-	NewSession  string    `json:"new_session,omitempty"`  // new session key after compaction rotation
 }
 
 // PayloadEntry is a full API request/response record.
