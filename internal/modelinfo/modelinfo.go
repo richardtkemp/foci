@@ -184,15 +184,18 @@ func Caching(model string) bool {
 }
 
 // Cost returns the estimated cost in USD for an API request.
-// Falls back to family defaults: gemini → flash pricing,
-// OpenAI → $5/$15 approximation, everything else → haiku pricing.
+// An exact registry hit wins; otherwise pricing is by model FAMILY (opus,
+// fable, sonnet, haiku, gemini) so a new version — opus-4-8, sonnet-4-6, … —
+// inherits its family's rates without needing a per-version registry entry.
+// Final fallbacks: OpenAI → $5/$15 approximation, everything else → haiku.
 func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 	bare := normalize(model)
 	m, ok := registry[bare]
 	if !ok {
+		m, ok = familyPricing(bare)
+	}
+	if !ok {
 		switch {
-		case strings.HasPrefix(bare, "gemini-"):
-			m = registry["gemini-2.5-flash"]
 		case IsOpenAI(bare):
 			m = Model{InputPer1M: 5.00, OutputPer1M: 15.00}
 		default:
@@ -205,6 +208,26 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 		float64(output)/mtok*m.OutputPer1M +
 		float64(cacheRead)/mtok*m.CacheReadPer1M +
 		float64(cacheWrite)/mtok*m.CacheWritePer1M
+}
+
+// familyPricing maps a bare model name to a canonical per-family price entry by
+// family keyword, so pricing tracks the family ("opus costs this much") rather
+// than an exact version string. The canonical entries are the registry's
+// current members of each family.
+func familyPricing(bare string) (Model, bool) {
+	switch {
+	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
+		return registry["claude-fable-5"], true
+	case strings.Contains(bare, "opus"):
+		return registry["claude-opus-4-6"], true
+	case strings.Contains(bare, "sonnet"):
+		return registry["claude-sonnet-4-5"], true
+	case strings.Contains(bare, "haiku"):
+		return registry["claude-haiku-4-5"], true
+	case strings.Contains(bare, "gemini"):
+		return registry["gemini-2.5-flash"], true
+	}
+	return Model{}, false
 }
 
 // ModelMeta holds structural metadata about a model from [models.*] config.
