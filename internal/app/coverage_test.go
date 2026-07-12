@@ -367,7 +367,7 @@ func TestClientHello_RepliesRosterRegistersTokenAndResumes(t *testing.T) {
 	h.dispatchInbound(c, []byte(hello))
 
 	// Token registered.
-	if got := h.tokens.all(); len(got) != 1 || got[0] != "ptok" {
+	if got := h.tokens.tokensExcluding(nil); len(got) != 1 || got[0] != "ptok" {
 		t.Errorf("push token not registered on hello: %v", got)
 	}
 	// First reply is the hello/roster; then seq 3 is replayed (seq > ack 2).
@@ -493,8 +493,8 @@ func TestFCMSend_DeadTokenPrunedNotRetried(t *testing.T) {
 	if got := atomic.LoadInt32(&attempts); got != 1 {
 		t.Errorf("attempts = %d, want 1 (404 is permanent)", got)
 	}
-	if len(tokens.all()) != 0 {
-		t.Errorf("dead token not pruned: %v", tokens.all())
+	if len(tokens.tokensExcluding(nil)) != 0 {
+		t.Errorf("dead token not pruned: %v", tokens.tokensExcluding(nil))
 	}
 }
 
