@@ -374,13 +374,15 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// here: the Agent tool runs at the parent level, so the sidechain filter above
 	// already let it through).
 	if parsed.ToolName == "Agent" {
-		// Drain and stop the foreground transcript tail BEFORE the end signal so
-		// every subagent text block lands in the chit before it's marked
-		// complete. No-op for background / untailed subagents.
+		// Drain and stop the foreground transcript tail so every subagent text block
+		// lands in the chit. No-op for background / untailed subagents.
+		//
+		// The END signal is NOT fired here: a BACKGROUND Agent tool_use resolves the
+		// instant the task is launched, so this PostToolUse fires while the subagent
+		// runs on — marking the chit complete prematurely. The real end (fg and bg
+		// alike) is task_notification:completed (handlers.go). Logged for comparison.
 		b.subagentTails().finalize(parsed.ToolUseID)
-		if se != nil && se.OnSubagentEnd != nil {
-			se.OnSubagentEnd(parsed.ToolUseID)
-		}
+		b.logger().Infof("subagent_end signal=agent_post_tool_use tuid=%s", parsed.ToolUseID)
 	}
 
 	// Fire any post-tool nudges the caller wants to inject for this tool.
