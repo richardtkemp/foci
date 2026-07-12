@@ -632,6 +632,21 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	a.logger().Infof("session=%s hit threshold: %d/%d tokens (%d%%, delegated)",
 		ts.SessionKey, totalTokens, ctxLimit, int(float64(totalTokens)/float64(ctxLimit)*100))
 
+	// Defer compaction while background work is in flight. Compaction sends CC's
+	// /compact, which rewrites the transcript and restarts the context — running
+	// it while an Agent-tool subagent (or a run_in_background Bash, or the
+	// autonomous run its completion triggers) is still active would sever that
+	// work from the session it reports back into. backendAwaitingAutonomousRun is
+	// true from a subagent spawn through the resulting autonomous run's grace
+	// window (spec §4), so this holds across the whole background-work lifetime.
+	// The threshold check re-fires every turn, so compaction simply runs on the
+	// next turn once the work has drained — deferred, not skipped. Placed before
+	// memory formation so a deferred compaction doesn't prematurely form memory.
+	if a.backendAwaitingAutonomousRun(ts.SessionKey) {
+		a.logger().Infof("session=%s compaction deferred: background work (subagent/autonomous run) in flight (delegated)", ts.SessionKey)
+		return
+	}
+
 	if a.SessionNoCompact(ts.SessionKey) {
 		percent := int(float64(totalTokens) / float64(ctxLimit) * 100)
 		a.logger().Infof("session=%s context at %d%% capacity for no_compact session (delegated)", ts.SessionKey, percent)
