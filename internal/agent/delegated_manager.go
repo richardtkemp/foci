@@ -902,13 +902,32 @@ func (m *DelegatedManager) RemapSession(oldKey, newKey string) {
 		return
 	}
 	m.mu.Lock()
+	var remapped *managedBackend
 	if mb, ok := m.backends[oldKey]; ok {
 		delete(m.backends, oldKey)
 		mb.sessionKey = newKey
 		m.backends[newKey] = mb
+		remapped = mb
 		log.Infof("delegated", "backend remapped %s → %s", oldKey, newKey)
 	}
 	m.mu.Unlock()
+
+	// Re-point session-scoped delivery from oldKey's router to newKey's.
+	// SessionEvents are bound to a router ONCE, at acquisition (AttachDelivery
+	// in setBackendCallbacks — never per turn, #1068), captured around the key's
+	// string at that moment. RemapSession alone leaves the backend emitting into
+	// oldKey's router, but the branch turn that now drives this backend registers
+	// its sink on newKey's router (a.sessionRouter(ts.SessionKey), turn_orchestrator).
+	// For a session-end/reflection turn that sink is a NopSink — meant to suppress
+	// the reflection text. Without this re-attach the two routers diverge: the
+	// NopSink lands on newKey's router while the backend's output falls through
+	// oldKey's late-delivery fallback and leaks the reflection/memory text to the
+	// app. Re-attaching binds the backend to newKey's router so the NopSink
+	// actually suppresses it. Safe re: #1068 — this is a one-time lifecycle
+	// re-attach (like acquisition), not a per-turn ctx-sink rebind.
+	if remapped != nil && m.AttachDelivery != nil {
+		m.AttachDelivery(remapped.be, newKey)
+	}
 
 	if id := m.loadResumeID(oldKey); id != "" {
 		m.saveResumeID(newKey, id)

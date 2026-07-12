@@ -1760,6 +1760,44 @@ func TestRemapSession_MovesBackendAndResumeID(t *testing.T) {
 	}
 }
 
+func TestRemapSession_ReattachesDeliveryToNewKey(t *testing.T) {
+	// Proves RemapSession re-points session-scoped delivery (SessionEvents) from
+	// oldKey to newKey. SessionEvents are bound to a router keyed by the string
+	// captured at acquisition (#1068 — attached once, never per turn); without a
+	// re-attach the backend keeps emitting into oldKey's router while the branch
+	// turn that now drives it registers its (NopSink) sink on newKey's router,
+	// so session-end reflection/memory text leaks through oldKey's late-delivery
+	// fallback to the app instead of being suppressed.
+	idx := newTestSessionIndex(t)
+	mgr, _ := newTestManager(t, idx)
+
+	var mu sync.Mutex
+	var attaches []string // sessionKeys AttachDelivery was called with, in order
+	mgr.AttachDelivery = func(_ delegator.Delegator, sk string) {
+		mu.Lock()
+		attaches = append(attaches, sk)
+		mu.Unlock()
+	}
+
+	oldKey := "test-agent/c1"
+	newKey := "test-agent/c1/b1700000000"
+
+	if _, err := mgr.Get(context.Background(), oldKey); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	mgr.RemapSession(oldKey, newKey)
+
+	mu.Lock()
+	defer mu.Unlock()
+	// First attach is acquisition (oldKey); the remap must add a second for newKey.
+	if len(attaches) < 2 {
+		t.Fatalf("AttachDelivery called %d time(s) %v, want a re-attach after remap", len(attaches), attaches)
+	}
+	if last := attaches[len(attaches)-1]; last != newKey {
+		t.Errorf("last AttachDelivery key = %q, want %q (delivery must follow the backend to the new key)", last, newKey)
+	}
+}
+
 func TestRemapSession_NoOpGuards(t *testing.T) {
 	// Proves that RemapSession does nothing when oldKey == newKey or newKey is
 	// empty — the backend stays where it is and the resume ID row is untouched.
