@@ -1267,6 +1267,44 @@ func (h *Hub) broadcastSettings(settings map[string]string) {
 	}
 }
 
+// broadcastReadExcept fans a read watermark out to every client EXCEPT the one
+// that sent it (which already advanced locally). Safe to send to a client that
+// lacks the conversation — its read advance is monotonic and no-ops.
+func (h *Hub) broadcastReadExcept(convID, messageID string, sender *wsClient) {
+	frame := fap.ReadSync{ConversationID: convID, MessageID: messageID}
+	h.mu.RLock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		if c != sender {
+			clients = append(clients, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range clients {
+		c.sendRaw(frame)
+	}
+}
+
+// pushReads replays the stored read watermark of every live conversation to a
+// just-connected client, so a device offline during a read catches up.
+func (h *Hub) pushReads(client *wsClient) {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return
+	}
+	h.mu.RLock()
+	bindings := make([]*convBinding, 0, len(h.convs))
+	for _, b := range h.convs {
+		bindings = append(bindings, b)
+	}
+	h.mu.RUnlock()
+	for _, b := range bindings {
+		if v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, "last_read"); err == nil && v != "" {
+			client.sendRaw(fap.ReadSync{ConversationID: b.convID, MessageID: v})
+		}
+	}
+}
+
 // --- interactive prompt registry (slice 2) ---
 //
 // Maps a live prompt's ID to its conversation binding so foci's proactive
