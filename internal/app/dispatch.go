@@ -66,6 +66,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
 		h.pushRoster(client)
 		h.pushSettings(client)
+		h.pushReads(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
 		// attached clients) + replay each conversation the client still has
 		// unrendered frames for.
@@ -141,9 +142,11 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.Ping:
 		client.sendRaw(fap.Pong{})
 
-	case fap.ClientTyping, fap.Read:
-		// typing: no upstream surface; read: ack/unread handled by the
-		// reliability gate above.
+	case fap.ClientTyping:
+		// No upstream surface.
+
+	case fap.Read:
+		h.handleRead(client, f)
 
 	case fap.ToolResult:
 		// Not conversation-scoped — no reliability gating above. Hand straight
@@ -380,6 +383,25 @@ func (h *Hub) handleSettingPut(f fap.SettingPut) {
 		return
 	}
 	h.broadcastSettings(h.storeAppSetting(f.Key, f.Value))
+}
+
+// handleRead persists a conversation's read watermark and mirrors it to the
+// user's other devices. The reliability gate already consumed the frame's ack;
+// this adds the cross-device half.
+func (h *Hub) handleRead(client *wsClient, f fap.Read) {
+	if f.MessageID == "" {
+		return
+	}
+	h.mu.RLock()
+	b := h.convs[f.ConversationID]
+	h.mu.RUnlock()
+	if b == nil {
+		return
+	}
+	if idx := h.deps.SessionIndex; idx != nil {
+		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", f.MessageID)
+	}
+	h.broadcastReadExcept(f.ConversationID, f.MessageID, client)
 }
 
 // routeCommand dispatches a slash command through the agent's command registry,

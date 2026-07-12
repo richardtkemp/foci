@@ -70,6 +70,7 @@ const (
 	TypeToolResult             = "tool.result"
 	TypeSettingPut             = "setting.put"
 	TypeSettingsSnapshot       = "settings.snapshot"
+	TypeReadSync               = "read.sync"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
@@ -676,6 +677,18 @@ type Read struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
 }
+
+// ReadSync mirrors a conversation's read watermark to a user's other devices
+// (server->client). Sent to the other clients when one device reads (a Read
+// frame), and replayed per-conversation after a hello so a device that was
+// offline during the read catches up. The client advances its read line
+// monotonically, so a stale/backward watermark is a safe no-op.
+type ReadSync struct {
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+}
+
+func (ReadSync) Type() string { return TypeReadSync }
 
 // ConversationRename sets (or clears, when Title is empty) a user-friendly alias
 // for a conversation. Persisted server-side; echoed back in ConversationInfo.Title.
