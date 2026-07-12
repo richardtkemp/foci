@@ -100,6 +100,15 @@ const featureInteractiveBatch = "interactiveBatch"
 // rendering) instead of plain system messages.
 const featureWizard = "wizard"
 
+// featureSettingsSync is the ClientHello capability a client advertises to
+// receive the synced app-preferences bag (settings.snapshot) and mirror its own
+// changes back via setting.put.
+const featureSettingsSync = "settingsSync"
+
+// systemStateAppSettings is the system_state key under which the whole synced
+// app-preferences bag is stored as a JSON object.
+const systemStateAppSettings = "app_settings"
+
 // batchPrompt holds the in-flight callback for one batched (multi-question) ask.
 // The app returns all answers in a single InteractiveResponse.Answers; onResp
 // feeds them back into the ask layer (tools.AskPresentBatchFn's onResponse).
@@ -296,6 +305,9 @@ func (h *Hub) caps() fap.Caps {
 		}
 	}
 	h.mu.RUnlock()
+	if h.deps.SessionIndex != nil {
+		c.Features = append(c.Features, featureSettingsSync)
+	}
 	return c
 }
 
@@ -1193,6 +1205,65 @@ func (h *Hub) pushRosterAll() {
 	h.mu.RUnlock()
 	for _, c := range clients {
 		c.sendRaw(hello)
+	}
+}
+
+func (h *Hub) loadAppSettings() map[string]string {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return map[string]string{}
+	}
+	raw, err := idx.GetSystemState(systemStateAppSettings)
+	if err != nil || raw == "" {
+		return map[string]string{}
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return map[string]string{}
+	}
+	return m
+}
+
+// storeAppSetting applies one key=value to the persisted bag and returns the
+// merged map for fan-out. Last-write-wins.
+func (h *Hub) storeAppSetting(key, value string) map[string]string {
+	m := h.loadAppSettings()
+	m[key] = value
+	if idx := h.deps.SessionIndex; idx != nil {
+		if b, err := json.Marshal(m); err == nil {
+			_ = idx.SetSystemState(systemStateAppSettings, string(b))
+		}
+	}
+	return m
+}
+
+func (h *Hub) pushSettings(client *wsClient) {
+	client.mu.Lock()
+	_, ok := client.features[featureSettingsSync]
+	client.mu.Unlock()
+	if !ok {
+		return
+	}
+	client.sendRaw(fap.SettingsSnapshot{Settings: h.loadAppSettings()})
+}
+
+// broadcastSettings fans the bag out to every settings-capable client, so a
+// change on one device reconciles on the others without a reconnect.
+func (h *Hub) broadcastSettings(settings map[string]string) {
+	snap := fap.SettingsSnapshot{Settings: settings}
+	h.mu.RLock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+	for _, c := range clients {
+		c.mu.Lock()
+		_, ok := c.features[featureSettingsSync]
+		c.mu.Unlock()
+		if ok {
+			c.sendRaw(snap)
+		}
 	}
 }
 

@@ -68,6 +68,8 @@ const (
 	TypeRead                   = "read"
 	TypePing                   = "ping"
 	TypeToolResult             = "tool.result"
+	TypeSettingPut             = "setting.put"
+	TypeSettingsSnapshot       = "settings.snapshot"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
@@ -712,6 +714,25 @@ type ConversationArchive struct {
 type ConversationOpenSet struct {
 	ConversationIDs []string `json:"conversationIds"`
 }
+
+// SettingPut mirrors one synced app-preference to the server (client->server).
+// The server is a dumb store: it persists Key=Value under the global app-settings
+// bag and rebroadcasts the full SettingsSnapshot to every settings-capable client.
+// The client owns which keys are synced (its whitelist); the server never
+// interprets a value.
+type SettingPut struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// SettingsSnapshot is the full synced-preferences bag (server->client), pushed
+// after the hello and re-broadcast on every change — the settings analogue of the
+// roster push. Last-write-wins across devices.
+type SettingsSnapshot struct {
+	Settings map[string]string `json:"settings"`
+}
+
+func (SettingsSnapshot) Type() string { return TypeSettingsSnapshot }
 
 // ConversationList re-requests the roster (payload-less).
 type ConversationList struct{}
