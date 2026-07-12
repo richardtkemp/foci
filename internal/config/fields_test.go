@@ -303,3 +303,45 @@ func checkDescTags(t *testing.T, typ reflect.Type, section, prefix string, field
 		}
 	}
 }
+
+func TestHotTagValuesValid(t *testing.T) {
+	// A typo'd `hot` tag would silently register as needs-restart; catch it here.
+	seen := map[string]bool{}
+	var walk func(typ reflect.Type)
+	walk = func(typ reflect.Type) {
+		if seen[typ.String()] {
+			return
+		}
+		seen[typ.String()] = true
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			ft := f.Type
+			if ft.Kind() == reflect.Ptr {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				walk(ft)
+				continue
+			}
+			if hot, ok := f.Tag.Lookup("hot"); ok && !validHotTags[hot] {
+				t.Errorf("field %s.%s has invalid hot tag %q (valid: immediate, turn, session, event)", typ.String(), f.Name, hot)
+			}
+		}
+	}
+	for _, typ := range globalSections {
+		walk(typ)
+	}
+	walk(reflect.TypeOf(AgentConfig{}))
+}
+
+func TestNeedsRestartDefaultsTrue(t *testing.T) {
+	// No field is currently hot (2026-07 audit: every value is snapshotted at
+	// startup, and no live-apply mechanism exists). A field may only claim hot
+	// once live-apply lands and its use-time chain is verified — update this
+	// test alongside that work.
+	for _, f := range configFields {
+		if !f.NeedsRestart {
+			t.Errorf("field %s.%s claims hot (NeedsRestart=false) — verify a live-apply mechanism exists before allowing this", f.Section, f.Key)
+		}
+	}
+}
