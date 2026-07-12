@@ -213,60 +213,59 @@ func CostCommand() *Command {
 		Subcommands: []Subcommand{
 			{
 				Name:        "session",
-				Description: "This session's cost so far",
+				Description: "This session's cost so far (add `breakdown` for by-type)",
 				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 					entries, err := readEntries(cc)
 					if err != nil {
 						return Response{Text: err.Error()}, nil
 					}
-					return Response{Text: costSession(entries, req.SessionKey)}, nil
+					return Response{Text: costSession(entries, req.SessionKey, cc.SessionIndex, breakdownRequested(req.Args))}, nil
 				},
 			},
 			{
 				Name:        "today",
-				Description: "Today's costs by session",
-				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+				Description: "Today's costs by session (add `breakdown` for by-type)",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 					entries, err := readEntries(cc)
 					if err != nil {
 						return Response{Text: err.Error()}, nil
 					}
-					return Response{Text: costToday(entries)}, nil
+					return Response{Text: costToday(entries, cc.SessionIndex, breakdownRequested(req.Args))}, nil
 				},
 			},
 			{
 				Name:        "24h",
-				Description: "Last 24 hours with category breakdown",
-				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+				Description: "Last 24 hours with category breakdown (add `breakdown` for by-type)",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 					entries, err := readEntries(cc)
 					if err != nil {
 						return Response{Text: err.Error()}, nil
 					}
-					return Response{Text: cost24h(entries)}, nil
+					return Response{Text: cost24h(entries, cc.SessionIndex, breakdownRequested(req.Args))}, nil
 				},
 			},
 			{
 				Name:        "week",
-				Description: "7-day summary with daily breakdown",
-				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+				Description: "7-day summary with daily breakdown (add `breakdown` for by-type)",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 					entries, err := readEntries(cc)
 					if err != nil {
 						return Response{Text: err.Error()}, nil
 					}
-					return Response{Text: costWeek(entries)}, nil
+					return Response{Text: costWeek(entries, cc.SessionIndex, breakdownRequested(req.Args))}, nil
 				},
 			},
 		},
-		// /cost <days> — numeric arg handled by DefaultExecute.
+		// /cost <days> [breakdown] — numeric arg handled by DefaultExecute.
 		DefaultExecute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			entries, err := readEntries(cc)
 			if err != nil {
 				return Response{Text: err.Error()}, nil
 			}
-			scope := strings.TrimSpace(req.Args)
-			if scope == "" {
+			if strings.TrimSpace(req.Args) == "" {
 				return Response{Text: costUsage()}, nil
 			}
-			return Response{Text: costDays(entries, scope)}, nil
+			return Response{Text: costDays(entries, req.Args, cc.SessionIndex)}, nil
 		},
 	}
 	cmd.buildSubcommandDispatch()
