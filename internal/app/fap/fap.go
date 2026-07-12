@@ -48,6 +48,7 @@ const (
 	TypeSubagentStart   = "subagent.start"
 	TypeSubagentText    = "subagent.text"
 	TypeSubagentEnd     = "subagent.end"
+	TypeExternalPrompt  = "external.prompt"
 	TypeMeta            = "meta"
 	TypeError           = "error"
 	TypePong            = "pong"
@@ -340,6 +341,19 @@ type ServerMessage struct {
 }
 
 func (ServerMessage) Type() string { return TypeMessage }
+
+// ExternalPrompt surfaces a prompt the agent received via the external HTTP
+// /send endpoint (foci send CLI / raw API) as its own client-side entry — a
+// user-side "chit" the app renders on the user edge, click-to-reveal the raw
+// Text. Without it the app sees only the agent's response, never what drove the
+// turn. Text is the verbatim prompt (foci send applies no wrapper).
+type ExternalPrompt struct {
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+	Text           string `json:"text"`
+}
+
+func (ExternalPrompt) Type() string { return TypeExternalPrompt }
 
 // Notification is a system-styled notice (Direct bypasses turn buffering).
 type Notification struct {
