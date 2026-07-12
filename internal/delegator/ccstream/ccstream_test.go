@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -188,12 +190,28 @@ func TestSessionID(t *testing.T) {
 }
 
 func TestSessionFilePath(t *testing.T) {
-	// Verifies SessionFilePath always returns empty string for the stream backend.
+	// Empty when the session id isn't known yet, or when workDir is unset —
+	// there's no transcript to point at.
 	t.Parallel()
 
-	b := &Backend{}
-	if p := b.SessionFilePath(); p != "" {
-		t.Errorf("SessionFilePath = %q, want empty", p)
+	if p := (&Backend{}).SessionFilePath(); p != "" {
+		t.Errorf("SessionFilePath (no id/workdir) = %q, want empty", p)
+	}
+	if p := (&Backend{workDir: "/home/foci/clutch"}).SessionFilePath(); p != "" {
+		t.Errorf("SessionFilePath (no id) = %q, want empty", p)
+	}
+
+	// Once the session id and workdir are known, the path resolves to the CC
+	// transcript under ~/.claude/projects/<slug>/<id>.jsonl — the same
+	// construction ForkSession uses to locate a parent transcript.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	b := &Backend{sessionID: "sess-abc", workDir: "/home/foci/clutch"}
+	want := filepath.Join(home, ccProjectsDir, "-home-foci-clutch", "sess-abc.jsonl")
+	if p := b.SessionFilePath(); p != want {
+		t.Errorf("SessionFilePath = %q, want %q", p, want)
 	}
 }
 

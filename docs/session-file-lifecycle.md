@@ -142,6 +142,27 @@ root.2026-03-13T10-30-00Z.jsonl.gz (gzipped, original deleted)
 - Archives are read by the branch loader when a branch's parent was
   compacted/reset after the branch was created (P2-5 prefix recovery)
 
+## Coding-Agent Transcripts (ccstream)
+
+For the `claude-code` (ccstream) backend the conversation lives in Claude
+Code's own transcript, `~/.claude/projects/<cwd-slug>/<sessionID>.jsonl`, not a
+foci `root.jsonl`. `Backend.SessionFilePath()` derives that path from the live
+session id + workdir (the same construction `ForkSession` uses to locate a
+parent), so the session-index row carries it like any native file. Consequences:
+
+- **ArchiveSweep** gzips a CC transcript once its chat is idle beyond
+  `archive_after` — subject to the same guards (never the current session per
+  agent+chat, never one with an active branch). A returning user on a
+  long-idle chat resumes into a fresh CC session, because a gzipped transcript
+  is no longer `claude --resume`-able. The `.jsonl` naming means sibling
+  transcripts in the same project dir are never swept as "archive files"
+  (`gzipArchiveFiles` keys on `<stem>.`, which a distinct UUID can't match).
+- **PruneOrphans** drops the index row (and its `cc_resume_id`) if the
+  transcript is manually deleted. It only scans `status='active'`, so archived
+  rows don't collide.
+- The `opencode` backend has no transcript file (server-stored); its
+  `SessionFilePath()` stays `""` and these sweeps skip it.
+
 ## Summary Table
 
 | Event | New File? | New Key? | Old File |
