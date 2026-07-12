@@ -39,6 +39,16 @@ func seedFamily(t *testing.T, idx *session.SessionIndex) (root string, earliest 
 	return root, earliest
 }
 
+func TestMoneyCol_Aligns(t *testing.T) {
+	cells := moneyCol([]float64{113.9299, 0.0474}, 4)
+	if cells[0] != "`$113.9299`" {
+		t.Errorf("cells[0] = %q, want `$113.9299`", cells[0])
+	}
+	if cells[1] != "`$  0.0474`" {
+		t.Errorf("cells[1] = %q, want `$  0.0474` (padded to align)", cells[1])
+	}
+}
+
 func TestBreakdownRequested(t *testing.T) {
 	for _, tc := range []struct {
 		args string
