@@ -47,11 +47,17 @@ func (p *pushTokens) set(deviceID, token string) {
 	p.mu.Unlock()
 }
 
-func (p *pushTokens) all() []string {
+// tokensExcluding returns the registration tokens for every device NOT in
+// exclude — the currently-connected devices, which receive frames over their
+// live socket and so need no wake push.
+func (p *pushTokens) tokensExcluding(exclude map[string]bool) []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	out := make([]string, 0, len(p.tokens))
-	for _, t := range p.tokens {
+	for id, t := range p.tokens {
+		if exclude[id] {
+			continue
+		}
 		out = append(out, t)
 	}
 	return out
@@ -153,8 +159,17 @@ func newFCMPusher(ctx context.Context, path string, tokens *pushTokens, window t
 // notify fires a coalesced wake push for a conversation that received offline
 // content. Coalescing drops repeat pushes for the same conversation inside the
 // quiet window — the app reconnects + replays, so a single wake suffices.
-func (p *fcmPusher) notify(payload pushPayload) {
+func (p *fcmPusher) notify(payload pushPayload, exclude map[string]bool) {
 	if p == nil {
+		return
+	}
+	// Wake every capable device that isn't already connected. A device with a
+	// live socket receives the frame over it, so a connected desktop must not
+	// suppress an offline phone's wake. Coalesce only when there's a real target:
+	// all-connected traffic must not bump the window and drop a later push for a
+	// device that goes offline within it.
+	tokens := p.tokens.tokensExcluding(exclude)
+	if len(tokens) == 0 {
 		return
 	}
 	p.mu.Lock()
@@ -165,7 +180,7 @@ func (p *fcmPusher) notify(payload pushPayload) {
 	p.lastPush[payload.ConvID] = time.Now()
 	p.mu.Unlock()
 
-	for _, tok := range p.tokens.all() {
+	for _, tok := range tokens {
 		safeGo("fcm-push", func() { p.send(tok, payload) })
 	}
 }

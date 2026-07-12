@@ -246,9 +246,36 @@ func durationOr(s string, fallback time.Duration) time.Duration {
 // display name and session title from the payload's identity fields so the
 // client notification shows who the message is from.
 func (h *Hub) pushNotify(p pushPayload) {
+	if h.pusher == nil {
+		return
+	}
 	p.AgentName, _ = h.agentDisplay(p.AgentID)
 	p.SessionTitle = h.aliasForChat(p.AgentID, p.ChatID)
-	h.pusher.notify(p)
+	h.pusher.notify(p, h.connectedDeviceIDs())
+}
+
+// connectedDeviceIDs returns the set of device IDs that currently hold at least
+// one live socket. Such devices receive frames over that socket, so they are
+// excluded from wake pushes. Snapshots the client set under h.mu, then reads
+// each deviceID under its own lock (never both at once — attach takes b.mu
+// before client.mu, so nesting the other way here could deadlock).
+func (h *Hub) connectedDeviceIDs() map[string]bool {
+	h.mu.RLock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+	ids := make(map[string]bool, len(clients))
+	for _, c := range clients {
+		c.mu.Lock()
+		id := c.deviceID
+		c.mu.Unlock()
+		if id != "" {
+			ids[id] = true
+		}
+	}
+	return ids
 }
 
 // caps reports the server capability set advertised in `hello`, including the
@@ -1701,10 +1728,11 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 		t.c.enqueue(stampAck(wire, t.ack))
 	}
 
-	// Fully offline (no live socket at all): the frame is buffered for replay.
-	// Fire a coalesced wake push for user-visible content so some device
-	// reconnects and replays it.
-	if len(targets) == 0 && notify != nil && visible {
+	// Wake every capable device that isn't currently connected — even if another
+	// device is attached to this conversation live (the pusher excludes connected
+	// devices, so an attached desktop no longer suppresses an offline phone's
+	// wake). Offline devices reconnect and replay the buffered frame.
+	if notify != nil && visible {
 		notify(pushPayload{
 			ConvID:     b.convID,
 			Preview:    preview,
