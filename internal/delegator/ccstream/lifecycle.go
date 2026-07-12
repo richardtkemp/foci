@@ -238,6 +238,13 @@ func (b *Backend) closeInner() {
 	b.closing = true
 	b.mu.Unlock()
 
+	// Cancel any foreground subagent tailers so their goroutines don't outlive
+	// the process. Safe even if never started.
+	b.subagentTailMu.Lock()
+	mgr := b.subagentTailMgr
+	b.subagentTailMu.Unlock()
+	mgr.stopAll()
+
 	// Never started (e.g. a unit-test backend, or Start failed before launch):
 	// nothing to tear down.
 	if !started {
