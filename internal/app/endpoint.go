@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"foci/internal/app/fap"
 )
 
 // activeHub is the hub of the configured app provider, set at Init. The HTTP
@@ -88,6 +90,23 @@ func SetSubagentDetail(sessionKey, detail string) {
 	}
 	if b := h.bindingForSession(sessionKey); b != nil {
 		b.setSubagentDetail(detail)
+	}
+}
+
+// DeliverExternalPrompt surfaces a prompt received via the external HTTP /send
+// endpoint to the app clients bound to sessionKey, as a durable ExternalPrompt
+// frame. No-op when the app provider is not running or the session has no live
+// binding (foci send to a telegram/discord-only agent surfaces via that
+// transport's injected-message header instead).
+func DeliverExternalPrompt(sessionKey, text string) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	if b := h.bindingForSession(sessionKey); b != nil {
+		b.send(fap.ExternalPrompt{ConversationID: b.convID, MessageID: fap.NewULID(), Text: text})
 	}
 }
 

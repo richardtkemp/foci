@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/app"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -242,6 +243,8 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 				return
 			}
 		}
+
+		app.DeliverExternalPrompt(sessionKey, req.Text)
 
 		sendCtx := agent.WithTrigger(d.ctx, "user")
 		if req.Async {
