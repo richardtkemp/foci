@@ -51,6 +51,27 @@ func TestCalculateCostOpus(t *testing.T) {
 	}
 }
 
+func TestUnpricedModelWarnsOnce(t *testing.T) {
+	var got []string
+	UnpricedModelHook = func(m string) { got = append(got, m) }
+	t.Cleanup(func() {
+		UnpricedModelHook = nil
+		unpricedMu.Lock()
+		unpricedSeen = map[string]bool{}
+		unpricedMu.Unlock()
+	})
+
+	Cost("mystery-model-x", 100, 0, 0, 0)
+	Cost("mystery-model-x", 200, 0, 0, 0) // same model again
+	Cost("gpt-7", 100, 0, 0, 0)           // openai fallback also counts
+	Cost("claude-opus-4-8", 100, 0, 0, 0) // family match → NO warn
+
+	want := []string{"mystery-model-x", "gpt-7"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("unpriced warnings = %v, want %v", got, want)
+	}
+}
+
 func TestCalculateCostByFamily(t *testing.T) {
 	cases := []struct {
 		model string

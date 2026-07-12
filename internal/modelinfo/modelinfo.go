@@ -3,7 +3,34 @@
 // package instead of maintaining their own copies.
 package modelinfo
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
+
+// UnpricedModelHook, if set, is invoked once per distinct model that resolves
+// to a fallback rate (no exact registry hit and no family match). Wired at
+// startup to a log warning. A hook rather than a direct log call because
+// modelinfo is a leaf package and internal/log imports it.
+var UnpricedModelHook func(model string)
+
+var (
+	unpricedMu   sync.Mutex
+	unpricedSeen = map[string]bool{}
+)
+
+func noteUnpriced(bare string) {
+	if UnpricedModelHook == nil {
+		return
+	}
+	unpricedMu.Lock()
+	first := !unpricedSeen[bare]
+	unpricedSeen[bare] = true
+	unpricedMu.Unlock()
+	if first {
+		UnpricedModelHook(bare)
+	}
+}
 
 // Model holds the static attributes of a model.
 type Model struct {
@@ -195,6 +222,7 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 		m, ok = familyPricing(bare)
 	}
 	if !ok {
+		noteUnpriced(bare)
 		switch {
 		case IsOpenAI(bare):
 			m = Model{InputPer1M: 5.00, OutputPer1M: 15.00}
