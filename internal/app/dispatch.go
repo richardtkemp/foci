@@ -67,6 +67,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.pushRoster(client)
 		h.pushSettings(client)
 		h.pushReads(client)
+		h.pushDrafts(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
 		// attached clients) + replay each conversation the client still has
 		// unrendered frames for.
@@ -121,6 +122,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.SettingPut:
 		h.handleSettingPut(f)
+
+	case fap.DraftPut:
+		h.handleDraft(client, f)
 
 	case fap.ClientMessage:
 		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer), f.TranscribeOnly)
@@ -402,6 +406,24 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", f.MessageID)
 	}
 	h.broadcastReadExcept(f.ConversationID, f.MessageID, client)
+}
+
+// handleDraft persists a conversation's unsent composer text and mirrors it to
+// the user's other devices. Empty Text is a valid clear (composer emptied /
+// message sent) — unlike handleRead, there is no non-empty guard. Fire-and-
+// forget: DraftPut is not conversation-reliability-scoped (see inboundConvID),
+// so there is no ack to fold here.
+func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
+	h.mu.RLock()
+	b := h.convs[f.ConversationID]
+	h.mu.RUnlock()
+	if b == nil {
+		return
+	}
+	if idx := h.deps.SessionIndex; idx != nil {
+		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "draft", f.Text)
+	}
+	h.broadcastDraftExcept(f.ConversationID, f.Text, client)
 }
 
 // routeCommand dispatches a slash command through the agent's command registry,

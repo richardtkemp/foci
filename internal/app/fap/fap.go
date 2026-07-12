@@ -71,6 +71,10 @@ const (
 	TypeSettingPut             = "setting.put"
 	TypeSettingsSnapshot       = "settings.snapshot"
 	TypeReadSync               = "read.sync"
+	// TypeDraftPut (app->server) mirrors a conversation's unsent composer text;
+	// TypeDraftSync (server->app) fans it to the user's other devices.
+	TypeDraftPut  = "draft.put"
+	TypeDraftSync = "draft.sync"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
@@ -689,6 +693,30 @@ type ReadSync struct {
 }
 
 func (ReadSync) Type() string { return TypeReadSync }
+
+// DraftPut mirrors a conversation's unsent composer text to the server
+// (app->server). The app sends it on a "leave" event — the user swipes away
+// from the chat, backgrounds the app, or the screen goes off — NOT per
+// keystroke. The server is a dumb store: it persists Text under the chat's
+// "draft" metadata key and rebroadcasts a DraftSync to the user's other
+// devices. Empty Text is a valid clear (the composer was emptied / sent).
+// Fire-and-forget like SettingPut — not conversation-reliability-scoped.
+type DraftPut struct {
+	ConversationID string `json:"conversationId"`
+	Text           string `json:"text"`
+}
+
+// DraftSync mirrors a conversation's draft to a user's other devices
+// (server->client). Sent when one device puts a draft (a DraftPut frame), and
+// replayed per-conversation after a hello so a device offline during the edit
+// catches up. Last-write-wins; the client suppresses it while actively typing
+// in that chat (so it never clobbers in-progress input).
+type DraftSync struct {
+	ConversationID string `json:"conversationId"`
+	Text           string `json:"text"`
+}
+
+func (DraftSync) Type() string { return TypeDraftSync }
 
 // ConversationRename sets (or clears, when Title is empty) a user-friendly alias
 // for a conversation. Persisted server-side; echoed back in ConversationInfo.Title.

@@ -130,6 +130,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &ToolResult{}
 	case TypeSettingPut:
 		dst = &SettingPut{}
+	case TypeDraftPut:
+		dst = &DraftPut{}
 	default:
 		return nil, nil // unknown inbound frame — ignored upstream
 	}
@@ -179,6 +181,8 @@ func derefClient(dst any) any {
 	case *ToolResult:
 		return *v
 	case *SettingPut:
+		return *v
+	case *DraftPut:
 		return *v
 	default:
 		return nil
