@@ -65,6 +65,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
 		h.pushRoster(client)
+		h.pushSettings(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
 		// attached clients) + replay each conversation the client still has
 		// unrendered frames for.
@@ -116,6 +117,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.ConversationArchive:
 		h.handleConversationArchive(client, f)
+
+	case fap.SettingPut:
+		h.handleSettingPut(f)
 
 	case fap.ClientMessage:
 		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer), f.TranscribeOnly)
@@ -366,6 +370,16 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 	}
 	log.Infof("app", "archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.sessionKey)
 	h.pushRoster(client)
+}
+
+// handleSettingPut persists one synced app-preference to the global bag and
+// re-broadcasts the merged snapshot to every settings-capable client (including
+// the sender, whose local guard drops the echo).
+func (h *Hub) handleSettingPut(f fap.SettingPut) {
+	if f.Key == "" {
+		return
+	}
+	h.broadcastSettings(h.storeAppSetting(f.Key, f.Value))
 }
 
 // routeCommand dispatches a slash command through the agent's command registry,
