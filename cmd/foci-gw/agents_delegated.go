@@ -23,6 +23,19 @@ import (
 	"foci/shared/prompts"
 )
 
+// backendDefaultModel returns the launch model a delegated backend uses when
+// neither a session override nor a config value picks one. It is the bottom rung
+// of the launch-model ladder (override → config → backend default).
+func backendDefaultModel(backendName string) string {
+	switch backendName {
+	case "claude-code", "claude-code-tmux":
+		return "opus"
+	default:
+		// TODO(#1163): define opencode's default launch model.
+		return ""
+	}
+}
+
 // configureDelegated sets up delegated transport agent state: DelegatedManager
 // with all callbacks, model override, permissions, and exec registry. The
 // agent's shared fields (compaction, warnings, etc.) are already set by
@@ -47,9 +60,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	bs := br.bootstrap
 
 	// Model for the backend — from backend_config, not from the group resolver.
+	// Ladder: config value, then the backend's own default model.
 	model := ""
 	if v, ok := backendConfig["model"].(string); ok {
 		model = v
+	}
+	if model == "" {
+		model = backendDefaultModel(backendName)
 	}
 
 	// For Claude Code-family backends, fold global [cc_backend] settings
@@ -139,8 +156,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	systemPrompt := delegatedSystemPrompt(buildEnv(""), bs.SystemBlocks(), br.extraSystemBlocks)
 
-	// Override model display name to show the backend name.
-	ag.Model = backendName
+	ag.Model = model
 
 	// Wire DelegatedManager: lazy per-session Backend creation.
 	connMgr := p.connMgr
