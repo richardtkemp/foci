@@ -70,6 +70,10 @@ const (
 	TypeToolResult             = "tool.result"
 	TypeSettingPut             = "setting.put"
 	TypeSettingsSnapshot       = "settings.snapshot"
+	TypeConfigGet              = "config.get"
+	TypeConfigPut              = "config.put"
+	TypeConfigUnset            = "config.unset"
+	TypeConfigSchema           = "config.schema"
 	TypeReadSync               = "read.sync"
 	// TypeDraftPut (app->server) mirrors a conversation's unsent composer text;
 	// TypeDraftSync (server->app) fans it to the user's other devices.
@@ -774,6 +778,70 @@ type SettingsSnapshot struct {
 }
 
 func (SettingsSnapshot) Type() string { return TypeSettingsSnapshot }
+
+// ConfigGet asks for the server's editable-config schema + values (wire §13).
+// Payload-less; the reply is a ConfigSchema to the requesting client.
+type ConfigGet struct{}
+
+// ConfigPut sets one server-config key in foci.toml (wire §13). Scope "" is
+// the global section; an agent id targets that agent's [[agents]] block.
+// Value is the raw string the user typed — the server validates + quotes.
+type ConfigPut struct {
+	Scope   string `json:"scope,omitempty"`
+	Section string `json:"section"`
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+}
+
+// ConfigUnset removes one explicitly-set server-config key (wire §13),
+// reverting it to the inherited/default value.
+type ConfigUnset struct {
+	Scope   string `json:"scope,omitempty"`
+	Section string `json:"section"`
+	Key     string `json:"key"`
+}
+
+// ConfigSchema is the server's editable-config description (wire §13): every
+// registry field plus one ConfigScope per editing surface (global first, then
+// one per agent). Sent to the requester after ConfigGet, broadcast to every
+// configEdit client after a successful edit; Error set (requester-only) on a
+// failed edit, with values unchanged.
+type ConfigSchema struct {
+	Fields          []ConfigFieldDesc `json:"fields"`
+	Scopes          []ConfigScope     `json:"scopes"`
+	RestartRequired bool              `json:"restartRequired"`
+	Error           string            `json:"error,omitempty"`
+}
+
+func (ConfigSchema) Type() string { return TypeConfigSchema }
+
+// ConfigFieldDesc is one editable server-config field: its TOML address,
+// wire type name ("string"/"int"/"float"/"bool"/"duration"), description,
+// built-in default, and constraints.
+type ConfigFieldDesc struct {
+	Section     string   `json:"section"`
+	Key         string   `json:"key"`
+	ValueType   string   `json:"type"`
+	Description string   `json:"description,omitempty"`
+	Default     string   `json:"default,omitempty"`
+	Min         *float64 `json:"min,omitempty"`
+	Max         *float64 `json:"max,omitempty"`
+	Choices     []string `json:"choices,omitempty"`
+	// GlobalKey, on section=="agent" fields only, is the "section.key" address of
+	// the GLOBAL field this per-agent field overrides (e.g. "agent_loop.max_tool_loops"
+	// for "loop.max_tool_loops"). Empty = per-agent only, no global counterpart.
+	GlobalKey string `json:"globalKey,omitempty"`
+}
+
+// ConfigScope is one editing surface: the global config (ID "") or one
+// agent's overrides. Values maps "section.key" → the effective value at the
+// scope; Explicit lists the keys literally present in foci.toml there.
+type ConfigScope struct {
+	ID       string            `json:"id"`
+	Label    string            `json:"label,omitempty"`
+	Values   map[string]string `json:"values"`
+	Explicit []string          `json:"explicit"`
+}
 
 // ConversationList re-requests the roster (payload-less).
 type ConversationList struct{}

@@ -204,6 +204,13 @@ Show or edit configuration.
 - `/config available` — unset options with their defaults
 - `/config set [section.key=value]` — edit the config file (direct mode with `=`, or interactive wizard)
 
+The native app can also view and edit the config: its Settings → "Server config"
+page renders the same field registry over `config.get`/`config.put`/`config.unset`
+frames (FAP wire §13), split into "set in foci.toml" vs defaults, per scope
+(global / per-agent `[[agents]]` overrides). Edits use the same comment-preserving
+file writer as `/config set` and take effect on restart. Gated on the client's
+`configEdit` capability; see `internal/app/configedit.go`.
+
 ### `/prompts <subcommand>`
 Show configured prompts and prompt files on disk.
 - `/prompts list` — all prompts with default/custom/disabled status and file paths

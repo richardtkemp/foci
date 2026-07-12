@@ -74,6 +74,7 @@ type Bot struct {
 	dispatcher         *dispatch.Dispatcher      // platform-agnostic command dispatch
 	lastMsgStore       *command.LastMessageStore // for // repeat command
 	allowedUsers       map[string]bool
+	allowedUsersOnly   bool                              // access.allowed_users_only: when true, ONLY listed users pass (empty list blocks everyone)
 	agentID            string                            // agent ID for session key derivation
 	sessionKey         string                            // override session key (facet secondary bots only)
 	sessionMu          sync.RWMutex                      // protects sessionKey (mutable for secondary bots)
@@ -276,6 +277,11 @@ func telegramAPIBaseOf(pc *config.PlatformConfig) string {
 	return pc.Telegram.APIBase
 }
 
+// SetAllowedUsersOnly overrides the access.allowed_users_only enforcement mode
+// (default true): true = only listed users may message (empty list blocks all);
+// false = an empty list allows anyone, a non-empty list still filters.
+func (b *Bot) SetAllowedUsersOnly(v bool) { b.allowedUsersOnly = v }
+
 // NewBot creates a new Telegram bot.
 // agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
 // For secondary (facet) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
@@ -335,17 +341,18 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 
 	lastSendAt := &atomic.Int64{}
 	bot := &Bot{
-		log:          lg,
-		api:          api,
-		client:       activityClient{botClient: api, lastSendAt: lastSendAt},
-		handler:      handler,
-		commands:     cmds,
-		lastMsgStore: lastMsgStore,
-		allowedUsers: allowed,
-		agentID:      agentID,
-		botToken:     token,
-		apiBase:      apiBase,
-		lastSendAt:   lastSendAt,
+		log:              lg,
+		api:              api,
+		client:           activityClient{botClient: api, lastSendAt: lastSendAt},
+		handler:          handler,
+		commands:         cmds,
+		lastMsgStore:     lastMsgStore,
+		allowedUsers:     allowed,
+		allowedUsersOnly: true,
+		agentID:          agentID,
+		botToken:         token,
+		apiBase:          apiBase,
+		lastSendAt:       lastSendAt,
 		chatmeta: &chatmeta.Resolver{
 			AgentID:      agentID,
 			PlatformName: platformName,

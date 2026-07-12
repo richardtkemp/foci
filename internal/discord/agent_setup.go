@@ -108,6 +108,18 @@ func resolveDiscordAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []s
 	return config.SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
 }
 
+// resolveDiscordAllowedUsersOnly resolves access.allowed_users_only for Discord:
+// per-agent platform flag, else global platform flag, else true (strict).
+func resolveDiscordAllowedUsersOnly(acfg config.AgentConfig, cfg *config.Config) bool {
+	if p := acfg.Platform("discord"); p != nil && p.Access.AllowedUsersOnly != nil {
+		return *p.Access.AllowedUsersOnly
+	}
+	if gp := cfg.Platform("discord"); gp != nil && gp.Access.AllowedUsersOnly != nil {
+		return *gp.Access.AllowedUsersOnly
+	}
+	return true
+}
+
 // setupDiscordBots creates and registers Discord bots for an agent.
 func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	acfg := p.AgentConfig
@@ -146,6 +158,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 
 	allowedUsers := resolveDiscordAllowedUsers(acfg, cfg)
 	primaryBot := NewBot(dg, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID)
+	primaryBot.SetAllowedUsersOnly(resolveDiscordAllowedUsersOnly(acfg, cfg))
 
 	// Set bot user ID from the session
 	if dg.State != nil && dg.State.User != nil {

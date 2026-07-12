@@ -41,7 +41,7 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # Each sub-section groups related settings.
 
 # [defaults.loop]
-# max_tool_loops = 25
+# max_tool_loops = 100
 # max_output_tokens = 16384
 # duplicate_messages = false               # send user text twice per API call
 # batch_partial_assistant_messages = false  # accumulate mid-turn text; send on turn end
@@ -168,7 +168,7 @@ system_files = [
 # webhooks = { alert = "alert.md" }
 
 # [agents.loop]
-# max_tool_loops = 25
+# max_tool_loops = 100
 # max_output_tokens = 16384
 # duplicate_messages = false
 
@@ -198,7 +198,6 @@ system_files = [
 # compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
-# compaction_effort = "high"
 # branch_orientation_facet_prompt = "prompts/orient-facet.md"
 # branch_orientation_headless_prompt = "prompts/orient-headless.md"
 
@@ -328,7 +327,6 @@ system_files = [
 id = "telegram"
 # facet_bots = ["bot2", "bot3"]       # shared facet bot pool
 # facet_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
-# message_queue_size = 64
 [platforms.access]
 allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # require_mention = true              # require @mention in group chats
@@ -349,7 +347,6 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # [[platforms]]
 # id = "discord"
 # facet_session_ttl = "60m"            # idle TTL before thread reclaim
-# message_queue_size = 64
 # [platforms.access]
 # allowed_users = ["YOUR_DISCORD_USER_ID"]
 # require_mention = true               # require @mention in guild channels
@@ -375,7 +372,6 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
-# compaction_effort = ""                   # effort for compaction API calls (default: session effort)
 # facet_no_compact = true                  # set no_compact on facet sessions
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000
@@ -401,9 +397,6 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # weight = 0.5
 
 # ─── Database ─────────────────────────────────────────────────────────
-# [database]
-# busy_timeout = "5s"
-
 # ─── Debug ─────────────────────────────────────────────────────────────
 # [debug]
 # log_api_key_suffix = false               # log last 4 chars of API keys on provider calls
@@ -497,9 +490,7 @@ bind = "127.0.0.1"
 # exec_auto_background = 10
 # exec_default_timeout = 30
 # tmux_command_timeout = "5s"
-# web_fetch_timeout = "30s"
 # web_fetch_max_bytes = 1048576
-# web_search_timeout = "15s"
 # max_concurrent_spawns = 3
 # explore_max_depth = 100                # max tool loops for explore spawn mode
 # tool_call_preview_chars = 450

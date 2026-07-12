@@ -69,6 +69,7 @@ type Bot struct {
 	dispatcher         *dispatch.Dispatcher
 	lastMsgStore       *command.LastMessageStore
 	allowedUsers       map[string]bool // Discord user ID strings
+	allowedUsersOnly   bool            // access.allowed_users_only: when true, ONLY listed users pass (empty list blocks everyone)
 	agentID            string
 	sessionKey         string // override session key (facet bots)
 	sessionMu          sync.RWMutex
@@ -186,6 +187,11 @@ func (b *Bot) logger() *log.ComponentLogger {
 // NewBot creates a new Discord bot.
 // agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
 // For secondary (facet) bots, pass agentID="" -- their session key is set dynamically via SetSessionKey.
+// SetAllowedUsersOnly overrides the access.allowed_users_only enforcement mode
+// (default true): true = only listed users may message (empty list blocks all);
+// false = an empty list allows anyone, a non-empty list still filters.
+func (b *Bot) SetAllowedUsersOnly(v bool) { b.allowedUsersOnly = v }
+
 func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.MessageHandler, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string) *Bot {
 	allowed := make(map[string]bool, len(allowedUsers))
 	for _, u := range allowedUsers {
@@ -194,14 +200,15 @@ func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.Messa
 
 	lg := log.NewComponentLogger("discord:" + agentID)
 	bot := &Bot{
-		log:          lg,
-		session:      dg,
-		api:          dg,
-		handler:      handler,
-		commands:     cmds,
-		lastMsgStore: lastMsgStore,
-		allowedUsers: allowed,
-		agentID:      agentID,
+		log:              lg,
+		session:          dg,
+		api:              dg,
+		handler:          handler,
+		commands:         cmds,
+		lastMsgStore:     lastMsgStore,
+		allowedUsers:     allowed,
+		allowedUsersOnly: true,
+		agentID:          agentID,
 		chatmeta: &chatmeta.Resolver{
 			AgentID:      agentID,
 			PlatformName: platformName,

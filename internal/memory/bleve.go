@@ -41,6 +41,7 @@ type BleveIndex struct {
 	// Temporal decay (#352): recency boost applied to relevance-sorted results.
 	// Defaults set in NewBleveIndex; overridden from [memory] config via
 	// SetTemporalDecay. Read under mu inside Search.
+	searchLimit   int // results per Search ([memory] search_limit; 0 = default)
 	temporalDecay     bool
 	decayHalfLifeDays float64
 	decayBoost        float64
@@ -127,6 +128,24 @@ func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce t
 // SetTemporalDecay overrides the recency-boost settings from [memory] config
 // (#352). evergreen may be nil to keep the default patterns. Safe to call once
 // right after construction, before the index is used.
+// SetSearchLimit overrides how many results Search returns ([memory] search_limit);
+// n <= 0 keeps the default. Call once after construction.
+func (b *BleveIndex) SetSearchLimit(n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if n > 0 {
+		b.searchLimit = n
+	}
+}
+
+// searchLimitLocked reads the limit; callers already hold b.mu (Search locks it).
+func (b *BleveIndex) searchLimitLocked() int {
+	if b.searchLimit > 0 {
+		return b.searchLimit
+	}
+	return memorySearchReturn
+}
+
 func (b *BleveIndex) SetTemporalDecay(enabled bool, halfLifeDays, boost float64, evergreen []string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -612,7 +631,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 	}
 
 	req := bleve.NewSearchRequest(finalQuery)
-	req.Size = 20
+	req.Size = b.searchLimitLocked()
 	req.Fields = []string{"path", "source", "mtime"}
 
 	// Highlight content field for snippets
@@ -627,7 +646,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 	default:
 		// relevance: over-fetch so the recency re-rank (#352) can promote a recent
 		// item into the returned set; truncated back to the return limit after.
-		req.Size = memorySearchReturn * 2
+		req.Size = b.searchLimitLocked() * 2
 		req.SortBy([]string{"-_score"})
 	}
 
@@ -682,7 +701,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 		if b.temporalDecay {
 			hl, boost = b.decayHalfLifeDays, b.decayBoost
 		}
-		results = rerankByRecency(results, time.Now(), hl, boost, b.evergreenPatterns, memorySearchReturn, true /* bleve rank: higher is better */)
+		results = rerankByRecency(results, time.Now(), hl, boost, b.evergreenPatterns, b.searchLimitLocked(), true /* bleve rank: higher is better */)
 	}
 
 	return results, nil

@@ -75,7 +75,7 @@ func execPreamble() string {
 // (0 = use default 15000). spillTempDir is the directory for overflow files.
 // extraEnv is a list of additional KEY=VALUE environment variables injected
 // into every child process (e.g. FOCI_ADDR, FOCI_API_KEY).
-func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *tools.AsyncNotifier, workDir string, registry *tools.Registry, spillThreshold int, spillTempDir string, extraEnv []string) *tools.Tool {
+func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *tools.AsyncNotifier, workDir string, registry *tools.Registry, spillThreshold int, spillTempDir string, extraEnv []string, defaultTimeoutSec int) *tools.Tool {
 	st := int64(spillThreshold)
 	if st <= 0 {
 		st = defaultSpillThreshold
@@ -107,12 +107,12 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
-			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry, st, spillTempDir, extraEnv)
+			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry, st, spillTempDir, extraEnv, defaultTimeoutSec)
 		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *tools.AsyncNotifier, workDir string, registry *tools.Registry, spillThreshold int64, spillTempDir string, extraEnv []string) (tools.ToolResult, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *tools.AsyncNotifier, workDir string, registry *tools.Registry, spillThreshold int64, spillTempDir string, extraEnv []string, defaultTimeoutSec int) (tools.ToolResult, error) {
 	p, err := tools.UnmarshalParams[struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
@@ -155,7 +155,12 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		cmd = resolved
 	}
 
-	timeout := tools.ResolveTimeout(p.Timeout, tools.TimeoutConfig{DefaultSec: 30})
+	// Config [tools] exec_default_timeout; <=0 falls back to the built-in 30s.
+	dts := defaultTimeoutSec
+	if dts <= 0 {
+		dts = 30
+	}
+	timeout := tools.ResolveTimeout(p.Timeout, tools.TimeoutConfig{DefaultSec: dts})
 
 	log.Debugf("exec", "session=%s running: %s (timeout=%s background=%v)", tools.SessionKeyFromContext(ctx), truncateCmd(p.Command, 200), timeout, p.Background)
 

@@ -151,8 +151,7 @@ func (p *discordProvider) DefaultPlatformConfig() config.PlatformConfig {
 		Access: config.AccessConfig{
 			RequireMention: &rm,
 		},
-		FacetSessionTTL:  "60m",
-		MessageQueueSize: 64,
+		FacetSessionTTL: "60m",
 		Discord: &config.DiscordSpecific{
 			AutoThread: &at,
 		},

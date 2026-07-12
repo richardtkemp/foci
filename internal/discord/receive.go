@@ -92,7 +92,10 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 	}
 	userID := msg.Author.ID
 
-	if len(b.allowedUsers) > 0 && !b.allowedUsers[userID] {
+	// access.allowed_users_only (default true): only listed users pass — an empty
+	// list blocks everyone. When explicitly false, an empty list allows anyone;
+	// a non-empty list still filters.
+	if denied := !b.allowedUsers[userID] && (b.allowedUsersOnly || len(b.allowedUsers) > 0); denied {
 		b.logger().Warnf("rejected message from %s", formatUserInfo(msg.Author))
 		return queuedMessage{}, false
 	}

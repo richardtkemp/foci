@@ -115,6 +115,9 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 			log.Errorf("telegram", "shared facet bot %q: create: %v", botName, err)
 			continue
 		}
+		if tgPlat.Access.AllowedUsersOnly != nil {
+			facetBot.SetAllowedUsersOnly(*tgPlat.Access.AllowedUsersOnly)
+		}
 		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     sharedSTT,
 			TTSProvider:     sharedTTS,
@@ -198,8 +201,7 @@ func (p *telegramProvider) DefaultPlatformConfig() config.PlatformConfig {
 		Access: config.AccessConfig{
 			RequireMention: &rm,
 		},
-		FacetSessionTTL:  "60m",
-		MessageQueueSize: 64,
+		FacetSessionTTL: "60m",
 		Telegram: &config.TelegramSpecific{
 			LongPollTimeout: "30s",
 			TableWrapLines:  &twl,

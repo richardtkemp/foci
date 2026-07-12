@@ -133,7 +133,6 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 			ShowThinking:  &thinkOff,
 			StreamOutput:  &streamOn,
 		},
-		MessageQueueSize: 64,
 		App: &config.AppSpecific{
 			Push:            &pushOn,
 			ReplayBuffer:    &replayBuf,

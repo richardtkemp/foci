@@ -125,6 +125,14 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.DraftPut:
 		h.handleDraft(client, f)
+	case fap.ConfigGet:
+		h.handleConfigGet(client)
+
+	case fap.ConfigPut:
+		h.handleConfigPut(client, f)
+
+	case fap.ConfigUnset:
+		h.handleConfigUnset(client, f)
 
 	case fap.ClientMessage:
 		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer), f.TranscribeOnly)

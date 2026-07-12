@@ -25,6 +25,7 @@ type ConfigField struct {
 	Key         string    // TOML key within the section
 	Type        FieldType // value type
 	Description string    // one-line description
+	Default     string    // built-in default (the `default` struct tag; "" when none)
 }
 
 // Constraint defines validation rules for a config field value.
@@ -53,7 +54,6 @@ var globalSections = map[string]reflect.Type{
 	"logging":     reflect.TypeOf(LoggingConfig{}),
 	"memory":      reflect.TypeOf(MemoryConfig{}),
 	"http":        reflect.TypeOf(HTTPConfig{}),
-	"database":    reflect.TypeOf(DatabaseConfig{}),
 	"environment": reflect.TypeOf(EnvironmentConfig{}),
 	"anthropic":   reflect.TypeOf(AnthropicConfig{}),
 	"platforms":   reflect.TypeOf(PlatformConfig{}),
@@ -175,6 +175,7 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 			Key:         key,
 			Type:        fieldType,
 			Description: desc,
+			Default:     f.Tag.Get("default"),
 		})
 
 		// Parse constraints from tags

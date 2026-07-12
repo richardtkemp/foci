@@ -1288,7 +1288,7 @@ func TestRunInference_BatchPartialMessages(t *testing.T) {
 	}
 }
 
-// TestRunInference_DefaultMaxLoops verifies that MaxToolLoops defaults to 25
+// TestRunInference_DefaultMaxLoops verifies that MaxToolLoops defaults to 100
 // when set to 0.
 func TestRunInference_DefaultMaxLoops(t *testing.T) {
 	callCount := 0
@@ -1307,14 +1307,14 @@ func TestRunInference_DefaultMaxLoops(t *testing.T) {
 	}
 
 	a := newInferenceAgent(t, client)
-	a.MaxToolLoops = 0 // should default to 25
+	a.MaxToolLoops = 0 // should default to 100
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := newInferenceTS(t, a, client)
 
 	_ = tr.RunInference(ts)
 
-	if callCount != 25 {
-		t.Errorf("API called %d times, want 25 (default MaxToolLoops)", callCount)
+	if callCount != 100 {
+		t.Errorf("API called %d times, want 100 (default MaxToolLoops)", callCount)
 	}
 	if ts.FinalText != "Max tool call depth reached." {
 		t.Errorf("FinalText = %q, want max-depth message", ts.FinalText)
