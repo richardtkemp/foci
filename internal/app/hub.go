@@ -106,6 +106,9 @@ const featureWizard = "wizard"
 type batchPrompt struct {
 	b      *convBinding
 	onResp func(answers []string)
+
+	mu      sync.Mutex
+	answers []string // accumulated per-question answers (streamed via InteractiveProgress)
 }
 
 func newHub(deps platform.ProviderDeps) *Hub {
@@ -1271,9 +1274,9 @@ func (h *Hub) deleteNotification(msgID string) {
 // answered leaks its entry until process exit — bounded by the (rare) count of
 // unanswered batched asks, which the ask layer's 24h TTL caps in practice.
 
-func (h *Hub) registerBatchPrompt(promptID string, b *convBinding, onResp func(answers []string)) {
+func (h *Hub) registerBatchPrompt(promptID string, b *convBinding, questionCount int, onResp func(answers []string)) {
 	h.mu.Lock()
-	h.batchPrompts[promptID] = &batchPrompt{b: b, onResp: onResp}
+	h.batchPrompts[promptID] = &batchPrompt{b: b, onResp: onResp, answers: make([]string, questionCount)}
 	h.mu.Unlock()
 	h.frames.PutPrompt(promptID, b.convID, b.agentID, time.Now().UnixMilli())
 }

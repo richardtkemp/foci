@@ -402,7 +402,7 @@ func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.Bat
 	if !b.supportsFeature(featureInteractiveBatch) {
 		return false, nil // app never advertised batch support → sequential one-at-a-time
 	}
-	c.hub.registerBatchPrompt(promptID, b, onResponse)
+	c.hub.registerBatchPrompt(promptID, b, len(questions), onResponse)
 	qs := make([]fap.Question, len(questions))
 	choiceCounts := make([]string, len(questions))
 	for i, q := range questions {

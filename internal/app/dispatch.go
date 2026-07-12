@@ -123,6 +123,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
 
+	case fap.InteractiveProgress:
+		h.handleInteractiveProgress(f)
+
 	case fap.WizardResponse:
 		// Off the socket goroutine: HandleMessage runs wizard logic that may
 		// block (e.g. config/secrets writes), like command dispatch.
@@ -162,18 +165,23 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 // new question. So if the binding's seq advanced during the callback, we leave
 // the prompt and its registration untouched.
 func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveResponse) {
-	// Batched (multi-question) reply: the app returns every answer at once in
-	// Answers. Route it to the batched-ask callback and skip the single-prompt
-	// machinery. No server-side InteractiveEdit is emitted for the batched form:
-	// the answering app hides its own form on submit and nothing consumes a
-	// server resolve here — intentional, not an oversight (see closed #881).
-	if len(f.Answers) > 0 {
-		log.Debugf("app", "InteractiveResponse(batched): conv=%s prompt=%s answers=%v",
-			f.ConversationID, f.PromptID, f.Answers)
-		if bp, ok := h.batchPromptByID(f.PromptID); ok {
-			h.deleteBatchPrompt(f.PromptID)
-			bp.onResp(f.Answers)
+	// Batched (multi-question) reply. Routed by the batchPrompt registry, not by
+	// "Answers non-empty", so a streamed completion — whose answers already
+	// arrived as InteractiveProgress, leaving Answers empty — still resolves here.
+	// Carried Answers reconcile the accumulated set (covering a dropped progress
+	// frame). A Done edit fans out so a second client viewing the form closes it.
+	if bp, ok := h.batchPromptByID(f.PromptID); ok {
+		h.deleteBatchPrompt(f.PromptID)
+		bp.mu.Lock()
+		for i, a := range f.Answers {
+			if i < len(bp.answers) && a != "" {
+				bp.answers[i] = a
+			}
 		}
+		final := append([]string(nil), bp.answers...)
+		bp.mu.Unlock()
+		bp.b.send(fap.InteractiveProgressEdit{ConversationID: f.ConversationID, PromptID: f.PromptID, Answers: final, Done: true})
+		bp.onResp(final)
 		return
 	}
 
@@ -201,6 +209,25 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 	if edit != "" && b != nil {
 		b.send(fap.InteractiveEdit{ConversationID: f.ConversationID, PromptID: f.PromptID, Text: edit})
 	}
+}
+
+// handleInteractiveProgress records one answered question of a batched ask and
+// mirrors the accumulated answers to the other attached clients, so a form can
+// be part-answered on one device and finished on another.
+func (h *Hub) handleInteractiveProgress(f fap.InteractiveProgress) {
+	bp, ok := h.batchPromptByID(f.PromptID)
+	if !ok {
+		return
+	}
+	bp.mu.Lock()
+	if f.Index < 0 || f.Index >= len(bp.answers) {
+		bp.mu.Unlock()
+		return
+	}
+	bp.answers[f.Index] = f.Answer
+	snapshot := append([]string(nil), bp.answers...)
+	bp.mu.Unlock()
+	bp.b.send(fap.InteractiveProgressEdit{ConversationID: f.ConversationID, PromptID: f.PromptID, Answers: snapshot})
 }
 
 // handleConversationOpen creates a server-assigned conversation for an agent
