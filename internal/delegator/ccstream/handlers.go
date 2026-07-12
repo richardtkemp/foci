@@ -150,6 +150,16 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			if block.Name == "Agent" {
 				desc := delegator.ExtractAgentDescription(block.Input)
 				b.agents.Add(block.ID, desc)
+				// A FOREGROUND subagent's assistant text never reaches the parent
+				// stdout stream, so arm a transcript tail for it (started once
+				// task_started supplies the agent_id). Arm HERE — the earliest,
+				// race-free point: the model emits this tool_use before the task
+				// can start, so expectForeground is set before task_started. A
+				// background subagent already streams its text and must NOT be
+				// tailed (double-delivery).
+				if !delegator.ExtractAgentBackground(block.Input) {
+					b.subagentTails().expectForeground(block.ID)
+				}
 			} else if block.Name == "Bash" && delegator.ExtractBashBackground(block.Input) {
 				b.agents.Add(block.ID, "background command")
 			}
@@ -427,6 +437,17 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			return
 		}
 		switch subtype {
+		case "task_started":
+			// A foreground subagent's assistant text never reaches the parent
+			// stdout stream (CC filters it), so start tailing its transcript to
+			// forward that text into the chit. maybeStart is a no-op unless a
+			// foreground Agent PreToolUse was recorded for this tool_use id, so
+			// background subagents (whose text already streams) are skipped.
+			if task.ToolUseID != "" && task.TaskID != "" {
+				if path := b.subagentTranscriptPath(task.TaskID); path != "" {
+					b.subagentTails().maybeStart(task.ToolUseID, path)
+				}
+			}
 		case "task_notification":
 			if task.Status == "completed" {
 				// Remove one pending subagent. If the tracker had nothing

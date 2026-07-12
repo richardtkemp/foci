@@ -213,3 +213,13 @@ func ExtractBashBackground(raw json.RawMessage) bool {
 	}
 	return false
 }
+
+// ExtractAgentBackground reports whether an Agent (Task) tool_use input requests
+// backgrounding via `run_in_background`. A background subagent's text streams to
+// the parent stdout stream (parent_tool_use_id-tagged assistant messages); a
+// foreground one's does not, so only the foreground case needs transcript
+// tailing. Same `run_in_background` field as Bash; kept separate for a clear
+// call site.
+func ExtractAgentBackground(raw json.RawMessage) bool {
+	return ExtractBashBackground(raw)
+}

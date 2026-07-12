@@ -350,6 +350,8 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	if env.HookEvent == eventPreToolUse {
 		if se != nil && se.OnSubagentStart != nil && parsed.ToolName == "Agent" {
 			se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(json.RawMessage(parsed.ToolInput)))
+			// Foreground transcript tailing is armed earlier, at the Agent
+			// tool_use detection in OnAssistant (race-free vs task_started).
 		}
 		return
 	}
@@ -371,8 +373,14 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// tool_use id is the run's group key. Precise per-run end (agent_id is empty
 	// here: the Agent tool runs at the parent level, so the sidechain filter above
 	// already let it through).
-	if se != nil && se.OnSubagentEnd != nil && parsed.ToolName == "Agent" {
-		se.OnSubagentEnd(parsed.ToolUseID)
+	if parsed.ToolName == "Agent" {
+		// Drain and stop the foreground transcript tail BEFORE the end signal so
+		// every subagent text block lands in the chit before it's marked
+		// complete. No-op for background / untailed subagents.
+		b.subagentTails().finalize(parsed.ToolUseID)
+		if se != nil && se.OnSubagentEnd != nil {
+			se.OnSubagentEnd(parsed.ToolUseID)
+		}
 	}
 
 	// Fire any post-tool nudges the caller wants to inject for this tool.

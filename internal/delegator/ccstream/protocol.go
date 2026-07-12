@@ -449,6 +449,7 @@ type TaskEvent struct {
 	Type        string `json:"type"`    // "system"
 	Subtype     string `json:"subtype"` // "task_started"|"task_progress"|"task_notification"
 	TaskID      string `json:"task_id,omitempty"`
+	ToolUseID   string `json:"tool_use_id,omitempty"` // Agent tool_use id (the run's group key); paired with TaskID on task_started
 	Description string `json:"description,omitempty"`
 	Status      string `json:"status,omitempty"`
 	Summary     string `json:"summary,omitempty"`

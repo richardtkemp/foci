@@ -180,6 +180,13 @@ type Backend struct {
 	// Agent tracking (shared with tmux backend via AgentTracker).
 	agents delegator.SubagentTracker
 
+	// subagentTails tails foreground subagent transcript files and forwards
+	// their assistant text as subagent progress (foreground subagent text is
+	// otherwise absent from the parent stdout stream). Lazily created on first
+	// use via subagentTailMgr; nil-safe. See subagent_tail.go.
+	subagentTailMu  sync.Mutex
+	subagentTailMgr *subagentTailManager
+
 	// Activity tracking — updated on every inbound stream event.
 	lastActivity atomic.Int64 // unix nanos of most recent stream event
 
@@ -247,6 +254,22 @@ func (b *Backend) SessionID() string {
 // not a file path. Callers should use SessionID() instead.
 func (b *Backend) SessionFilePath() string {
 	return ""
+}
+
+// subagentTails returns the lazily-created foreground subagent transcript
+// tailer for this backend. The deliver closure reads the current SessionEvents
+// on each call so text always routes through the live session sink.
+func (b *Backend) subagentTails() *subagentTailManager {
+	b.subagentTailMu.Lock()
+	defer b.subagentTailMu.Unlock()
+	if b.subagentTailMgr == nil {
+		b.subagentTailMgr = newSubagentTailManager(func(groupKey, text string) {
+			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
+				se.OnSubagentText(groupKey, text)
+			}
+		})
+	}
+	return b.subagentTailMgr
 }
 
 // touchActivity records the current time as the most recent stream event.
