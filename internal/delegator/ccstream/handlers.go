@@ -457,6 +457,16 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
 					b.agents.OnStatus("")
 				}
+				// The subagent's true end, for foreground AND background alike (a
+				// background Agent tool_use resolves at launch, so its PostToolUse
+				// end is premature; this fires at actual completion). tool_use_id is
+				// the chit's group key. Logged alongside the old signal to compare.
+				if task.ToolUseID != "" {
+					log.Infof("ccstream", "subagent_end signal=task_notification tuid=%s", task.ToolUseID)
+					if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
+						se.OnSubagentEnd(task.ToolUseID)
+					}
+				}
 			}
 		}
 

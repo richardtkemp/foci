@@ -261,10 +261,11 @@ func TestHandleHookResponse_PostToolUse(t *testing.T) {
 	}
 }
 
-// TestHandleHookResponse_AgentToolFiresSubagentEnd proves the top-level Agent
-// tool's completion fires a precise per-run OnSubagentEnd (its tool_use id is the
-// group key), while a non-Agent tool does not.
-func TestHandleHookResponse_AgentToolFiresSubagentEnd(t *testing.T) {
+// TestHandleHookResponse_AgentToolNoLongerFiresSubagentEnd proves the Agent
+// tool's PostToolUse does NOT fire OnSubagentEnd: a background Agent tool_use
+// resolves at launch, so ending there marks the chit complete while the run
+// continues. The real end is task_notification:completed (see below).
+func TestHandleHookResponse_AgentToolNoLongerFiresSubagentEnd(t *testing.T) {
 	b := &Backend{hookInstallID: "install-a"}
 	var ended []string
 	handler := &testHandler{
@@ -281,8 +282,28 @@ func TestHandleHookResponse_AgentToolFiresSubagentEnd(t *testing.T) {
 		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "PostToolUse", Stdout: string(stdout)})
 		b.handleHookResponse(env)
 	}
-	fire("Read", "toolu_read")   // not an Agent → no subagent end
-	fire("Agent", "toolu_agent") // Agent → precise end keyed by its tool_use id
+	fire("Read", "toolu_read")
+	fire("Agent", "toolu_agent")
+
+	if len(ended) != 0 {
+		t.Fatalf("OnSubagentEnd = %v, want none (end moved to task_notification)", ended)
+	}
+}
+
+// TestOnSystem_TaskNotificationCompleted_FiresSubagentEnd proves the subagent's
+// true end — task_notification:completed — fires OnSubagentEnd keyed by the
+// carried tool_use id (the group key), for both foreground and background runs.
+func TestOnSystem_TaskNotificationCompleted_FiresSubagentEnd(t *testing.T) {
+	b := &Backend{}
+	var ended []string
+	applyHandler(b, &testHandler{
+		OnSubagentEnd: func(groupKey string) { ended = append(ended, groupKey) },
+	})
+
+	raw, _ := json.Marshal(TaskEvent{
+		Subtype: "task_notification", Status: "completed", ToolUseID: "toolu_agent",
+	})
+	b.OnSystem("task_notification", raw)
 
 	if len(ended) != 1 || ended[0] != "toolu_agent" {
 		t.Fatalf("OnSubagentEnd = %v, want [toolu_agent]", ended)
