@@ -25,6 +25,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/memory"
 	"foci/internal/modelcaps"
 	"foci/internal/platform"
@@ -106,6 +107,10 @@ Subcommands:
 		EventFile: earlyLogPath,
 	}); err != nil {
 		log.Fatalf("main", "early log init: %v", err)
+	}
+
+	modelinfo.UnpricedModelHook = func(model string) {
+		log.Warnf("modelinfo", "no pricing for model %q — using fallback rate; add it to the registry or a family match in internal/modelinfo", model)
 	}
 
 	cfg, err := config.Load(configPath)
