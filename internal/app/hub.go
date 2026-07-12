@@ -1285,9 +1285,30 @@ func (h *Hub) broadcastReadExcept(convID, messageID string, sender *wsClient) {
 	}
 }
 
-// pushReads replays the stored read watermark of every live conversation to a
-// just-connected client, so a device offline during a read catches up.
-func (h *Hub) pushReads(client *wsClient) {
+// broadcastDraftExcept fans a conversation's draft out to every client EXCEPT
+// the one that put it (whose composer already holds it). A client that lacks
+// the conversation just stores the draft for its next open; a client actively
+// typing in it suppresses the apply, so this never clobbers in-progress input.
+func (h *Hub) broadcastDraftExcept(convID, text string, sender *wsClient) {
+	frame := fap.DraftSync{ConversationID: convID, Text: text}
+	h.mu.RLock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		if c != sender {
+			clients = append(clients, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range clients {
+		c.sendRaw(frame)
+	}
+}
+
+// pushChatScalar replays a per-chat scalar metadata value (keyed by metaKey) of
+// every live conversation to a just-connected client, so a device offline during
+// the change catches up. frame builds the server frame from the conversationId and
+// stored value; an empty stored value is skipped. Shared by pushDrafts/pushReads.
+func (h *Hub) pushChatScalar(client *wsClient, metaKey string, frame func(convID, value string) fap.ServerFrame) {
 	idx := h.deps.SessionIndex
 	if idx == nil {
 		return
@@ -1299,10 +1320,26 @@ func (h *Hub) pushReads(client *wsClient) {
 	}
 	h.mu.RUnlock()
 	for _, b := range bindings {
-		if v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, "last_read"); err == nil && v != "" {
-			client.sendRaw(fap.ReadSync{ConversationID: b.convID, MessageID: v})
+		if v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, metaKey); err == nil && v != "" {
+			client.sendRaw(frame(b.convID, v))
 		}
 	}
+}
+
+// pushDrafts replays the stored draft of every live conversation to a
+// just-connected client, so a device offline during an edit catches up.
+func (h *Hub) pushDrafts(client *wsClient) {
+	h.pushChatScalar(client, "draft", func(convID, v string) fap.ServerFrame {
+		return fap.DraftSync{ConversationID: convID, Text: v}
+	})
+}
+
+// pushReads replays the stored read watermark of every live conversation to a
+// just-connected client, so a device offline during a read catches up.
+func (h *Hub) pushReads(client *wsClient) {
+	h.pushChatScalar(client, "last_read", func(convID, v string) fap.ServerFrame {
+		return fap.ReadSync{ConversationID: convID, MessageID: v}
+	})
 }
 
 // --- interactive prompt registry (slice 2) ---
