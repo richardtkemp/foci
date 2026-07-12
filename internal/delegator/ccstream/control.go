@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -61,6 +62,15 @@ func (b *Backend) SetModel(ctx context.Context, model string) error {
 func (b *Backend) Capabilities() delegator.Capabilities {
 	return delegator.Capabilities{PostToolNudge: true, PreAnswerNudge: true}
 }
+
+// ccStreamCacheTTL is Claude Code's prompt-cache time-to-live. CC marks its
+// prompt with 1-hour extended cache_control, so a session's cache stays warm
+// for an hour after the last turn (not the Anthropic 5-minute default).
+const ccStreamCacheTTL = time.Hour
+
+// CacheTTL implements delegator.CacheTTLProvider: the prompt-cache warmth
+// window the app uses to grey a cold session's avatar.
+func (b *Backend) CacheTTL() time.Duration { return ccStreamCacheTTL }
 
 // StatusDetail returns the current CC permission mode for /status display.
 func (b *Backend) StatusDetail() string {

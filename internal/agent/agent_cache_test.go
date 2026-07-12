@@ -16,6 +16,44 @@ import (
 	"foci/internal/workspace"
 )
 
+func TestCacheExpiryResolution(t *testing.T) {
+	at := time.Unix(1_000_000, 0)
+
+	t.Run("config override wins", func(t *testing.T) {
+		mgr, mocks := newTestManager(t, nil)
+		if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		(*mocks)[0].cacheTTL = time.Hour
+		ag := &Agent{
+			DelegatedManager: mgr,
+			ModelDefaultsFn:  func(string) config.ModelDefaults { return config.ModelDefaults{CacheTTL: "30m"} },
+		}
+		if got := ag.CacheExpiry("test-agent/c1", at); !got.Equal(at.Add(30 * time.Minute)) {
+			t.Errorf("got %v, want +30m", got.Sub(at))
+		}
+	})
+
+	t.Run("backend TTL when no config", func(t *testing.T) {
+		mgr, mocks := newTestManager(t, nil)
+		if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		(*mocks)[0].cacheTTL = time.Hour
+		ag := &Agent{DelegatedManager: mgr}
+		if got := ag.CacheExpiry("test-agent/c1", at); !got.Equal(at.Add(time.Hour)) {
+			t.Errorf("got %v, want +1h", got.Sub(at))
+		}
+	})
+
+	t.Run("5m default when nothing reports", func(t *testing.T) {
+		ag := &Agent{}
+		if got := ag.CacheExpiry("test-agent/c1", at); !got.Equal(at.Add(5 * time.Minute)) {
+			t.Errorf("got %v, want +5m", got.Sub(at))
+		}
+	})
+}
+
 func TestCacheStrategyInRequest(t *testing.T) {
 	// Verify that the agent sets CacheStrategy on the API request.
 	var receivedReq *provider.MessageRequest

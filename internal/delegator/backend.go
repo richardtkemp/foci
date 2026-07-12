@@ -386,6 +386,17 @@ type BackendCapabilities interface {
 	Capabilities() Capabilities
 }
 
+// CacheTTLProvider is optionally implemented by backends that know their
+// prompt-cache time-to-live — how long the session's cache stays warm after
+// the last touch. Read by the agent layer to compute the per-session
+// cache-warmth expiry the app renders (greyed avatar once cold). Backends that
+// don't implement it fall back to the config cache_ttl / a 5-minute default.
+type CacheTTLProvider interface {
+	// CacheTTL returns the backend's prompt-cache TTL. A non-positive value
+	// means "unknown" — the caller then falls back to config / default.
+	CacheTTL() time.Duration
+}
+
 // Capabilities describes which mid-turn injection mechanisms the backend
 // supports. Turn-start nudges (every_n_turns, regex) work on all backends
 // because they're prepended to the prompt before the turn begins; the

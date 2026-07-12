@@ -194,6 +194,21 @@ func (m *DelegatedManager) getManaged(sessionKey string) (*managedBackend, bool)
 	return mb, ok
 }
 
+// CacheTTL returns the prompt-cache TTL reported by the session's live backend,
+// or 0 if there is no running backend or it doesn't implement CacheTTLProvider.
+// Non-creating.
+func (m *DelegatedManager) CacheTTL(sessionKey string) time.Duration {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok || !mb.be.IsRunning() {
+		return 0
+	}
+	p, ok := mb.be.(delegator.CacheTTLProvider)
+	if !ok {
+		return 0
+	}
+	return p.CacheTTL()
+}
+
 // BackendAwaitingAutonomousRun reports whether the (already-running) backend for
 // sessionKey is holding across background work — a pending subagent/Bash, a live
 // autonomous run, or the post-run grace (spec §4). Non-creating: an idle session

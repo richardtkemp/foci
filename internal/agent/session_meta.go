@@ -230,17 +230,23 @@ func (a *Agent) SessionModel(sessionKey string) string {
 }
 
 // CacheExpiry returns the wall-clock time at which the session's prompt cache
-// goes cold if untouched: `at` plus the model's cache TTL (from [models.*]
-// cache_ttl; the Anthropic 5-minute default when unset or unparseable). Read
-// by the app provider for the per-session cache-warmth indicator.
+// goes cold if untouched: `at` plus the session's cache TTL. TTL resolution, in
+// order: an explicit [models.*] cache_ttl override; else the live backend's own
+// reported TTL (delegator.CacheTTLProvider — ccstream reports CC's 1h); else the
+// Anthropic 5-minute default. Read by the app provider for the per-session
+// cache-warmth indicator.
 func (a *Agent) CacheExpiry(sessionKey string, at time.Time) time.Time {
-	ttl := 5 * time.Minute
 	if a.ModelDefaultsFn != nil {
 		if d, err := time.ParseDuration(a.ModelDefaultsFn(a.SessionModel(sessionKey)).CacheTTL); err == nil && d > 0 {
-			ttl = d
+			return at.Add(d)
 		}
 	}
-	return at.Add(ttl)
+	if a.DelegatedManager != nil {
+		if d := a.DelegatedManager.CacheTTL(sessionKey); d > 0 {
+			return at.Add(d)
+		}
+	}
+	return at.Add(5 * time.Minute)
 }
 
 // BackendType returns the modelcaps backend-type key for this agent — the live
