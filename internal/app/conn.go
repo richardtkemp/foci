@@ -17,6 +17,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tools"
+	"foci/internal/turn"
 	"foci/internal/voice"
 )
 
@@ -72,10 +73,11 @@ type appConn struct {
 }
 
 var (
-	_ platform.Connection        = (*appConn)(nil)
-	_ platform.ButtonSender      = (*appConn)(nil)
-	_ platform.BatchButtonSender = (*appConn)(nil)
-	_ agent.Driver               = (*appConn)(nil)
+	_ platform.Connection           = (*appConn)(nil)
+	_ platform.ButtonSender         = (*appConn)(nil)
+	_ platform.BatchButtonSender    = (*appConn)(nil)
+	_ agent.Driver                  = (*appConn)(nil)
+	_ turn.SessionSubagentDeliverer = (*appConn)(nil)
 )
 
 // errNoBinding is returned by ButtonSender sends when the prompt's conversation
@@ -166,6 +168,24 @@ func (c *appConn) SendInjectedMessage(sessionKey, text string) error {
 		Text:           text,
 	})
 	return nil
+}
+
+func (c *appConn) DeliverSubagentStartToSession(sessionKey, groupKey, label string) {
+	if b, _ := c.sendBinding(sessionKey); b != nil {
+		b.send(fap.SubagentStart{ConversationID: b.convID, GroupKey: groupKey, Label: label})
+	}
+}
+
+func (c *appConn) DeliverSubagentTextToSession(sessionKey, groupKey, text string) {
+	if b, _ := c.sendBinding(sessionKey); b != nil {
+		b.send(fap.SubagentText{ConversationID: b.convID, GroupKey: groupKey, Text: text})
+	}
+}
+
+func (c *appConn) DeliverSubagentEndToSession(sessionKey, groupKey string) {
+	if b, _ := c.sendBinding(sessionKey); b != nil {
+		b.send(fap.SubagentEnd{ConversationID: b.convID, GroupKey: groupKey})
+	}
 }
 
 // sendBinding resolves the target binding for an unsolicited send. When

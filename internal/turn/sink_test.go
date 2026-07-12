@@ -355,6 +355,51 @@ func TestSessionSinkDeliveredFlag(t *testing.T) {
 	}
 }
 
+type fakeSubagentConn struct {
+	fakeSessionConn
+	subText  []string
+	subEnded []string
+}
+
+func (f *fakeSubagentConn) DeliverSubagentStartToSession(_, _, _ string) {}
+func (f *fakeSubagentConn) DeliverSubagentTextToSession(_, groupKey, text string) {
+	f.subText = append(f.subText, groupKey+":"+text)
+}
+func (f *fakeSubagentConn) DeliverSubagentEndToSession(_, groupKey string) {
+	f.subEnded = append(f.subEnded, groupKey)
+}
+
+func TestSessionSinkSubagentTextRoutesToDeliverer(t *testing.T) {
+	conn := &fakeSubagentConn{}
+	sink := NewSessionSink(conn, "sess-1", "late-delivery")
+	ctx := context.Background()
+
+	sink.Emit(ctx, turnevent.SubagentText{GroupKey: "toolu_1", Text: "found it"})
+	sink.Emit(ctx, turnevent.SubagentEnd{GroupKey: "toolu_1"})
+	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "the real reply"})
+
+	if len(conn.subText) != 1 || conn.subText[0] != "toolu_1:found it" {
+		t.Errorf("subText = %v, want [toolu_1:found it]", conn.subText)
+	}
+	if len(conn.subEnded) != 1 || conn.subEnded[0] != "toolu_1" {
+		t.Errorf("subEnded = %v, want [toolu_1]", conn.subEnded)
+	}
+	if len(conn.sendCalls) != 1 || conn.sendCalls[0] != "the real reply" {
+		t.Errorf("sendCalls = %v, want [the real reply] (subagent text must not leak to SendToSession, and must not suppress the final reply)", conn.sendCalls)
+	}
+}
+
+func TestSessionSinkSubagentTextFallsBackWhenNoDeliverer(t *testing.T) {
+	conn := &fakeSessionConn{}
+	sink := NewSessionSink(conn, "sess-1", "late-delivery")
+
+	sink.Emit(context.Background(), turnevent.SubagentText{GroupKey: "toolu_1", Text: "found it"})
+
+	if len(conn.sendCalls) != 1 || conn.sendCalls[0] != "found it" {
+		t.Errorf("sendCalls = %v, want [found it] (fallback for non-deliverer conn)", conn.sendCalls)
+	}
+}
+
 // TestSessionSinkFallsBackToFinalTextWhenSilent asserts that when no
 // intermediate TextBlock arrived, the SessionSink delivers the TurnComplete
 // text — this is the path non-streaming HTTP or injected turns use.

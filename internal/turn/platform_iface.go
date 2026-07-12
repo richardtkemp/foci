@@ -65,6 +65,18 @@ type SubagentDeliverer interface {
 	SubagentTextRaw() bool
 }
 
+// SessionSubagentDeliverer is the session-keyed counterpart of SubagentDeliverer,
+// used by the late-delivery SessionSink (which holds no renderer/backend, only a
+// bare connection). A connection implementing it keeps subagent framing on the
+// out-of-turn path — text arriving after the spawning turn cleared still reaches
+// the per-subagent chit rather than flattening into a plain chat message.
+// Connections that don't implement it fall back to SendToSession as before.
+type SessionSubagentDeliverer interface {
+	DeliverSubagentStartToSession(sessionKey, groupKey, label string)
+	DeliverSubagentTextToSession(sessionKey, groupKey, text string)
+	DeliverSubagentEndToSession(sessionKey, groupKey string)
+}
+
 // StreamSink is the live streaming handle returned by OpenStream. It is
 // platform-side and owns the live message sequence internally. Update is
 // called ONLY by the turn-side pump goroutine; Close is called by
