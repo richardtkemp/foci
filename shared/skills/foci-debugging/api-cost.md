@@ -60,3 +60,30 @@ sqlite3 ~/data/api.db "SELECT ts, cost_usd, cache_write FROM api_calls WHERE cac
 ```
 
 For *why* a cache bust happened (diffing the system prompt), see **cache.md**.
+
+## Joining cost to session metadata (`state.db:session_index`)
+
+To break cost down by `session_type` (chat / reflection / keepalive / unknown), join `api_calls.session` to `session_index.session_key`. The join key is **verbatim equal** — no suffix, no transform:
+
+```bash
+# /usr/bin/sqlite3 (real binary) — the readonly `sqlite3` wrapper BLOCKS ATTACH
+# ("write operation detected"). -readonly makes the ATTACHed db read-only too.
+# The -uri flag is NOT supported in this build (no file:...?mode=ro URIs).
+/usr/bin/sqlite3 -readonly -column -header ~/data/state.db "
+ATTACH '$HOME/data/api.db' AS api;
+SELECT si.session_type,
+       COUNT(DISTINCT si.session_key) AS n_sessions,
+       ROUND(SUM(ac.cost_usd),2)      AS total_usd,
+       ROUND(SUM(ac.cost_usd)*1.0/COUNT(DISTINCT si.session_key),4) AS mean_usd
+FROM session_index si
+JOIN api.api_calls ac ON ac.session = si.session_key
+WHERE si.agent_id='clutch'
+GROUP BY si.session_type ORDER BY total_usd DESC;"
+```
+
+**Gotchas that will mislead you:**
+- **The `|` in `SELECT session_key, session_type` output is sqlite's default column separator, NOT part of the key.** Don't build a `substr(...,instr(...,'|'))` strip — it matches nothing and silently yields zero join hits. Use `-column` mode to see the real values.
+- **Key-form encodes the cost model.** `chat` sessions are **root-form** (`agent/c<chatID>`) and accumulate the whole conversation's cost on one key (expensive). `reflection`/`keepalive`/most `unknown` are **branch-form** (`agent/c<chatID>/b<epoch>`) — typically one cheap spawned call each. A chatID hosts *mixed* types across its branches, so you cannot partition a root key's cost by type.
+- **Coverage is partial.** `api_calls.session` migrated from a legacy `agent:<id>:<kind>:<name>` grammar (e.g. `agent:clutch:cron:background-<epoch>`) to the current `agent/c/b` grammar. Legacy rows predate `session_index` and won't join — expect a large *untyped* remainder (check with `WHERE ac.session LIKE 'agent:%'`). Report the unmatched total as a coverage caveat, don't present the join as complete.
+
+**Do NOT conclude a column is absent from a *grepped* `.schema`.** A keyword filter silently hides every non-matching line. `api_calls` really does have `ts` (indexed), `call_type`, `duration_ms`, `stop_reason` — read the full `.schema api_calls` before asserting otherwise.
