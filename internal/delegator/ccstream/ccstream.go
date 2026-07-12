@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -250,10 +252,26 @@ func (b *Backend) SessionID() string {
 	return b.sessionID
 }
 
-// SessionFilePath returns empty — the stream backend stores session_id directly,
-// not a file path. Callers should use SessionID() instead.
+// SessionFilePath returns the on-disk path of this session's Claude Code
+// transcript (~/.claude/projects/<slug>/<sessionID>.jsonl), or "" if the
+// session id isn't known yet. Unlike SessionID(), which callers use to resume,
+// this path lets foci's session-index sweeps (ArchiveSweep, PruneOrphans)
+// manage CC transcripts on the same lifecycle as native session files: old
+// inactive transcripts get gzipped, and index rows for manually-deleted
+// transcripts get pruned. The path is derived (not stored) from the session id
+// and workdir — the same construction ForkSession uses to locate a parent.
 func (b *Backend) SessionFilePath() string {
-	return ""
+	b.mu.Lock()
+	sid := b.sessionID
+	b.mu.Unlock()
+	if sid == "" || b.workDir == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ccProjectsDir, projectSlug(b.workDir), sid+".jsonl")
 }
 
 // subagentTails returns the lazily-created foreground subagent transcript
