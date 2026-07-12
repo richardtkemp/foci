@@ -1358,6 +1358,54 @@ func TestDelegatedTransport_GatedTurn_TwoRowsNoSpuriousCompaction(t *testing.T) 
 	}
 }
 
+func TestDelegatedTransport_RunCompaction_DeferredWhileSubagentInFlight(t *testing.T) {
+	// Over-threshold context MUST compact — unless background work (an Agent-tool
+	// subagent / run_in_background Bash / the autonomous run its completion
+	// triggers) is in flight, in which case compaction is deferred so /compact
+	// doesn't rewrite the transcript out from under work that reports back into
+	// it. The threshold re-fires every turn, so this is a defer, not a skip.
+	const model = "claude-sonnet-4-5"
+	store := session.NewStore(t.TempDir())
+	comp := compaction.NewCompactor(store, 0.3) // 30% of ~200k = ~60k threshold
+
+	// 150k context is well over the ~60k threshold, so size alone would compact.
+	newTS := func(a *Agent, be *mockBackendDT) *TurnState {
+		ts := NewTurnState(context.Background(), "test/compact-gate", []string{"hi"}, nil)
+		ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
+		ts.Backend = be
+		ts.FinalModel = model
+		ts.FinalUsage = &provider.Usage{InputTokens: 2, OutputTokens: 150, CacheReadInputTokens: 150000}
+		return ts
+	}
+
+	t.Run("in-flight defers", func(t *testing.T) {
+		cmdSent := false
+		be := &mockBackendDT{sendCommandFn: func(_ context.Context, _ string) error { cmdSent = true; return nil }}
+		be.setAwaiting(true) // subagent pending
+		a := &Agent{Model: model, Compactor: comp, DelegatedManager: newMockDelegatedManager(t, be)}
+		tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+		tr.RunCompaction(newTS(a, be))
+		if cmdSent {
+			t.Error("compaction fired while a subagent was in flight — it must be deferred until background work drains")
+		}
+	})
+
+	t.Run("idle compacts", func(t *testing.T) {
+		// Control: same over-threshold size, no background work → compaction runs.
+		cmdSent := false
+		be := &mockBackendDT{sendCommandFn: func(_ context.Context, _ string) error { cmdSent = true; return nil }}
+		be.setAwaiting(false)
+		a := &Agent{Model: model, Compactor: comp, DelegatedManager: newMockDelegatedManager(t, be)}
+		tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+		tr.RunCompaction(newTS(a, be))
+		if !cmdSent {
+			t.Error("compaction did NOT fire on an over-threshold idle session — the gate is blocking the normal path")
+		}
+	})
+}
+
 // TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal
 // verifies that when the second round echoes NoResponseSentinel ("my
 // original answer stands"), FinalText is replaced with round-1's text so
