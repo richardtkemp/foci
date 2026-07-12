@@ -111,6 +111,18 @@ func resolveAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
 	return config.SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
 }
 
+// resolveAllowedUsersOnly resolves access.allowed_users_only for Telegram:
+// per-agent platform flag, else global platform flag, else true (strict).
+func resolveAllowedUsersOnly(acfg config.AgentConfig, cfg *config.Config) bool {
+	if p := acfg.Platform("telegram"); p != nil && p.Access.AllowedUsersOnly != nil {
+		return *p.Access.AllowedUsersOnly
+	}
+	if gp := cfg.Platform("telegram"); gp != nil && gp.Access.AllowedUsersOnly != nil {
+		return *gp.Access.AllowedUsersOnly
+	}
+	return true
+}
+
 // setupTelegramBots creates and registers Telegram bots for an agent.
 func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	acfg := p.AgentConfig
@@ -129,12 +141,14 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	}
 
 	allowedUsers := resolveAllowedUsers(acfg, cfg)
+	allowedOnly := resolveAllowedUsersOnly(acfg, cfg)
 	primaryBot, err := NewBot(telegramToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID,
 		telegramAPIBaseOf(tg))
 	if err != nil {
 		log.Errorf("telegram", "agent %q: create bot: %v (agent will run without platform)", acfg.ID, err)
 		return
 	}
+	primaryBot.SetAllowedUsersOnly(allowedOnly)
 
 	// Resolve require_mention: per-agent platform > global platform (default true).
 	reqMention := true
@@ -223,6 +237,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			log.Errorf("telegram", "agent %q: create facet bot %q: %v", acfg.ID, facetName, err)
 			continue
 		}
+		facetBot.SetAllowedUsersOnly(allowedOnly)
 		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Voice.TTS), config.DerefFloat(acfg.Voice.TTSRate), voice.MergeReplacements(cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)),

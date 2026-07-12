@@ -44,6 +44,10 @@ type Index struct {
 	sweepStop          chan struct{} // closed to stop sweep goroutine
 	mu                 sync.Mutex
 
+	// searchLimit is how many results Search returns (config [memory] search_limit
+	// via SetSearchLimit; defaults to memorySearchReturn).
+	searchLimit int
+
 	// Temporal decay (#352): recency boost on relevance-sorted results. Defaults
 	// set in NewIndex, overridden from [memory] config via SetTemporalDecay.
 	temporalDecay     bool
@@ -77,12 +81,23 @@ func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Dura
 		sources:            sources,
 		conversationWeight: conversationWeight,
 		debounce:           debounce,
+		searchLimit:        memorySearchReturn,
 		// #352 defaults (overridable via SetTemporalDecay).
 		temporalDecay:     true,
 		decayHalfLifeDays: 10,
 		decayBoost:        1.0,
 		evergreenPatterns: []string{"MEMORY.md", "research-*"},
 	}, nil
+}
+
+// SetSearchLimit overrides how many results Search returns ([memory] search_limit);
+// n <= 0 keeps the default. Call once after construction.
+func (idx *Index) SetSearchLimit(n int) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if n > 0 {
+		idx.searchLimit = n
+	}
 }
 
 // SetTemporalDecay overrides the recency-boost settings from [memory] config
@@ -357,6 +372,10 @@ func sanitizeFTS5Query(query string) string {
 func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Result, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	limit := idx.searchLimit
+	if limit <= 0 {
+		limit = memorySearchReturn
+	}
 
 	var extraFilter string
 	var args []interface{}
@@ -394,8 +413,8 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
 			WHERE memory_fts MATCH ?%s
 			ORDER BY sort_mtime %s
-			LIMIT 20
-		`, extraFilter, order)
+			LIMIT %d
+		`, extraFilter, order, limit)
 	default:
 		weightedRankCase := idx.buildWeightedRankCase()
 		sqlStr = fmt.Sprintf(`
@@ -408,8 +427,8 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
 			WHERE memory_fts MATCH ?%s
 			ORDER BY weighted_rank
-			LIMIT 40
-		`, weightedRankCase, extraFilter)
+			LIMIT %d
+		`, weightedRankCase, extraFilter, limit*2)
 	}
 
 	rows, err := idx.db.Query(sqlStr, args...)
@@ -443,7 +462,7 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 		if idx.temporalDecay {
 			hl, boost = idx.decayHalfLifeDays, idx.decayBoost
 		}
-		results = rerankByRecency(results, time.Now(), hl, boost, idx.evergreenPatterns, memorySearchReturn, false)
+		results = rerankByRecency(results, time.Now(), hl, boost, idx.evergreenPatterns, limit, false)
 	}
 	return results, nil
 }

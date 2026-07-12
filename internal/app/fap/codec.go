@@ -132,6 +132,12 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &SettingPut{}
 	case TypeDraftPut:
 		dst = &DraftPut{}
+	case TypeConfigGet:
+		dst = &ConfigGet{}
+	case TypeConfigPut:
+		dst = &ConfigPut{}
+	case TypeConfigUnset:
+		dst = &ConfigUnset{}
 	default:
 		return nil, nil // unknown inbound frame — ignored upstream
 	}
@@ -183,6 +189,12 @@ func derefClient(dst any) any {
 	case *SettingPut:
 		return *v
 	case *DraftPut:
+		return *v
+	case *ConfigGet:
+		return *v
+	case *ConfigPut:
+		return *v
+	case *ConfigUnset:
 		return *v
 	default:
 		return nil

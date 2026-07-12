@@ -92,13 +92,88 @@ func setInSection(lines []string, section, key, value string) (string, []string,
 }
 
 // setInAgentBlock finds the [[agents]] block with the given id and sets the key.
+// A dotted key may already live in a sub-table header form ([agents.loop]
+// max_tool_loops = …) — TOML attributes those headers to the preceding
+// [[agents]] entry — so the locator checks both forms; a NEW key is inserted
+// inline (dotted) BEFORE any sub-table headers, where TOML still allows it.
 func setInAgentBlock(lines []string, agentID, key, value string) (string, []string, error) {
+	loc, err := locateAgentKey(lines, agentID, key)
+	if err != nil {
+		return "", nil, err
+	}
+	if loc.found >= 0 {
+		old := extractValue(lines[loc.found])
+		lines[loc.found] = fmt.Sprintf("%s = %s", loc.lineKey, value)
+		return old, lines, nil
+	}
+	return replaceOrInsertKey(lines, loc.inlineFrom, loc.insertAt, key, value)
+}
+
+// agentKeyLoc is locateAgentKey's result: the line holding the key (-1 when
+// absent) and the key form as written on that line (inline dotted key, or the
+// sub-table leaf), plus the bounds replaceOrInsertKey needs for insertion.
+type agentKeyLoc struct {
+	found      int    // line index of the existing assignment, -1 if absent
+	lineKey    string // key text to keep on the rewritten line
+	inlineFrom int    // first line after the [[agents]] header
+	insertAt   int    // insertion bound for a new inline key (before sub-tables)
+}
+
+// locateAgentKey finds where `key` lives for the [[agents]] block with the
+// given id: first as an inline (possibly dotted) key within the block, then
+// as a leaf inside a contiguous [agents.<sub>] sub-table following it.
+func locateAgentKey(lines []string, agentID, key string) (agentKeyLoc, error) {
 	start, end := findAgentBlock(lines, agentID)
 	if start < 0 {
-		return "", nil, fmt.Errorf("agent %q not found in config file", agentID)
+		return agentKeyLoc{}, fmt.Errorf("agent %q not found in config file", agentID)
+	}
+	loc := agentKeyLoc{found: -1, lineKey: key, inlineFrom: start + 1, insertAt: end}
+
+	active := keyLineRe(key)
+	for i := start + 1; i < end; i++ {
+		if active.MatchString(lines[i]) {
+			loc.found = i
+			return loc, nil
+		}
 	}
 
-	return replaceOrInsertKey(lines, start+1, end, key, value)
+	// Contiguous [agents.*] sub-tables after the block belong to this entry
+	// (only for the LAST [[agents]] block do they follow it directly, but any
+	// sub-tables between this block and the next [[agents]]/other header are
+	// this entry's by TOML's rules — findAgentBlock's `end` stops at the first
+	// header, so walk from there).
+	i := end
+	for i < len(lines) {
+		m := sectionHeaderRe.FindStringSubmatch(lines[i])
+		if m == nil {
+			break
+		}
+		header := strings.ToLower(strings.TrimSpace(m[1]))
+		if !strings.HasPrefix(header, "agents.") {
+			break
+		}
+		bodyEnd := len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			if anySectionRe.MatchString(lines[j]) {
+				bodyEnd = j
+				break
+			}
+		}
+		// [agents.loop] + key "loop.max_tool_loops" → leaf "max_tool_loops".
+		sub := strings.TrimPrefix(header, "agents.")
+		if leaf, ok := strings.CutPrefix(strings.ToLower(key), sub+"."); ok {
+			leafRe := keyLineRe(leaf)
+			for j := i + 1; j < bodyEnd; j++ {
+				if leafRe.MatchString(lines[j]) {
+					loc.found = j
+					loc.lineKey = leaf
+					return loc, nil
+				}
+			}
+		}
+		i = bodyEnd
+	}
+	return loc, nil
 }
 
 // findSectionBounds returns the line range [start, end) for [section].

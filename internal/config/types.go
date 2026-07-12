@@ -253,7 +253,7 @@ type CCBackendConfig struct {
 	// background work is outstanding (spec §4): a task whose completion
 	// notification is missed can't hold injects forever. Empty → 30m. Set well
 	// beyond any real background job's runtime.
-	BackgroundTaskMaxAge string `toml:"background_task_max_age" desc:"max age a tracked background task lingers before prune (unwedges the pending-work gate)" type:"duration"`
+	BackgroundTaskMaxAge string `toml:"background_task_max_age" desc:"Max time a background task can run before being dropped from tracking if no completion signal arrives, freeing up any reminders waiting on it. Empty = 30m" type:"duration"`
 }
 
 // GroupsConfig assigns named models to groups and call sites.
@@ -322,9 +322,9 @@ type AgentSessionsOverride struct {
 	CompactionConfig
 	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"`
-	MaxSystemPromptFile             *int    `toml:"max_system_prompt_chars_file"  desc:"per-file char warning threshold (overrides global [sessions])"`
-	MaxSystemPromptTotal            *int    `toml:"max_system_prompt_chars_total" desc:"total system prompt char warning threshold (overrides global [sessions])"`
-	EphemeralRetentionDays          *int    `toml:"ephemeral_retention_days"      desc:"delete ephemeral backend transcripts older than this many days (overrides global [sessions]; 0 = never)" min:"0"`
+	MaxSystemPromptFile             *int    `toml:"max_system_prompt_chars_file"  desc:"Logs a server-side warning if any single system prompt file, eg a character file, exceeds this many characters. Overrides the global sessions value for this agent"`
+	MaxSystemPromptTotal            *int    `toml:"max_system_prompt_chars_total" desc:"Logs a server-side warning if this agent's combined system prompt exceeds this many characters total. Overrides the global sessions value for this agent"`
+	EphemeralRetentionDays          *int    `toml:"ephemeral_retention_days"      desc:"Auto-deletes old transcripts from short-lived internal sessions, eg reflection, keepalive, background tasks, after this many days. Normal chat history is untouched. 0 = never delete" min:"0"`
 }
 
 // EffectiveEphemeralRetentionDays returns the per-agent ephemeral-session
@@ -362,41 +362,40 @@ type AgentToolsOverride struct {
 
 // CompactionConfig holds compaction settings. Embed in SessionsConfig (global) and AgentConfig (per-agent).
 type CompactionConfig struct {
-	CompactionThreshold                     *float64 `toml:"compaction_threshold"  desc:"compact at this fixed fraction of context window; unset = non-linear curve (smaller fraction of larger windows)" min:"0" max:"1"`
-	CompactionSummaryPrompt                 *string  `toml:"compaction_summary_prompt"             desc:"compaction summary prompt file path"`
-	CompactionHandoffMsg                    *string  `toml:"compaction_handoff_msg"                desc:"compaction handoff message file path"`
-	CompactionPreserveMessages              *int     `toml:"compaction_preserve_messages"          desc:"preserve last N messages through compaction" min:"0"`
-	CompactionEffort                        *string  `toml:"compaction_effort"                     desc:"compaction effort level"`
-	FacetNoCompact                          *bool    `toml:"facet_no_compact"                      desc:"set no_compact on facet sessions (default true)"`
-	ReloadOnCompact                         *bool    `toml:"reload_on_compact"                     desc:"delegated agents: after compaction, bounce the CC session (resume) so character/skill files reload from disk (default true)"`
+	CompactionThreshold        *float64 `toml:"compaction_threshold"  desc:"Fraction of the context window (0 to 1) that must fill before old messages are summarized. Leave unset for a curve that waits longer on larger windows" min:"0" max:"1"`
+	CompactionSummaryPrompt    *string  `toml:"compaction_summary_prompt"             desc:"Path to a file containing the prompt used to ask the model to summarize old messages during compaction"`
+	CompactionHandoffMsg       *string  `toml:"compaction_handoff_msg"                desc:"Path to a file containing the message shown to the model right after compaction to help it pick back up"`
+	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"          desc:"Number of most recent messages kept word-for-word instead of being summarized when compaction runs. 0 = summarize everything. Default 25" min:"0"`
+	FacetNoCompact             *bool    `toml:"facet_no_compact"                      desc:"Facets are short-lived side sessions branched off the main chat. When true, they are never compacted since they do not last long (default true)"`
+	ReloadOnCompact            *bool    `toml:"reload_on_compact"                     desc:"For Claude Code-backed agents, restarts the session after compaction so edits to character or skill files since it started take effect (default true)"`
 }
 
 // NudgeConfig holds nudge system settings.
 // Global: [nudge], per-agent: [[agents]].nudge.*
 type NudgeConfig struct {
-	NudgeEnable                     *bool   `toml:"nudge_enable"                      default:"true"  desc:"enable mid-turn behavioral reminders"`
-	NudgeAutoExtract                *bool   `toml:"nudge_auto_extract"                default:"true"  desc:"auto-extract rules from character files via LLM"`
-	NudgeCooldown                   *int    `toml:"nudge_cooldown"                                    desc:"min tool calls between repeating same reminder"`
-	NudgeMaxPerBatch                *int    `toml:"nudge_max_per_batch"                               desc:"max reminders injected per tool batch"`
-	NudgePreAnswerGate              *bool   `toml:"nudge_pre_answer_gate"                             desc:"enable pre-answer verification gate"`
-	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"          default:"2"   desc:"min tool calls before pre-answer gate fires"`
-	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"              default:"true"  desc:"enable built-in tool/skill reminders"`
-	NudgeDefaultFrequency           *int    `toml:"nudge_default_frequency"             default:"50"  desc:"turns between tool/skill reminders (default 50)"`
-	NudgeDefaultScratchpadFrequency *int    `toml:"nudge_default_scratchpad_frequency"                desc:"turns between scratchpad review reminders (0=disabled, default 20)"`
-	NudgeDefaultBraindeadThreshold  *int    `toml:"nudge_default_braindead_threshold"                 desc:"consecutive tool loops before warning (0=disabled)"`
+	NudgeEnable                     *bool   `toml:"nudge_enable"                      default:"true"  desc:"Turns on nudges, short reminder messages injected while the agent is working to help keep it on track"`
+	NudgeAutoExtract                *bool   `toml:"nudge_auto_extract"                default:"true"  desc:"Has an LLM automatically scan character files for behavioral rules to turn into nudges, instead of writing them by hand"`
+	NudgeCooldown                   *int    `toml:"nudge_cooldown"                                    desc:"Minimum number of tool calls that must pass before the same nudge reminder can fire again, so it does not repeat every batch. Default 5"`
+	NudgeMaxPerBatch                *int    `toml:"nudge_max_per_batch"                               desc:"Maximum number of different nudge reminders that can be injected after a single batch of tool calls. Default 1"`
+	NudgePreAnswerGate              *bool   `toml:"nudge_pre_answer_gate"                             desc:"Before ending a turn, gives the agent one chance to reconsider against pre-answer reminders once it has made a few tool calls. Off by default"`
+	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"          default:"2"   desc:"Minimum tool calls in the current turn before the pre-answer verification gate is allowed to trigger"`
+	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"              default:"true"  desc:"Turns on the built-in reminders that tell the agent which tools and skills are available"`
+	NudgeDefaultFrequency           *int    `toml:"nudge_default_frequency"             default:"50"  desc:"Number of turns between built-in tool and skill reminders"`
+	NudgeDefaultScratchpadFrequency *int    `toml:"nudge_default_scratchpad_frequency"                desc:"Number of turns between reminders to review the agent's scratchpad notes. 0 disables it. Default 20"`
+	NudgeDefaultBraindeadThreshold  *int    `toml:"nudge_default_braindead_threshold"                 desc:"Number of tool calls in a row within one turn before the agent is warned to stop and check it is still on track. 0 disables this check"`
 	NudgeDefaultBraindeadPrompt     *string `toml:"nudge_default_braindead_prompt"`
 }
 
 // SummaryConfig holds tool result summarisation settings.
 // Embed in ToolsConfig (global) and AgentToolsOverride (per-agent).
 type SummaryConfig struct {
-	MaxResultChars       *int  `toml:"max_result_chars"                       desc:"max chars before writing result to file"`
-	MaxSummaryChars      *int  `toml:"max_summary_chars"                      desc:"max chars in summary output"`
-	AutoSummarise        *bool `toml:"auto_summarise"         default:"true"  desc:"auto-summarise oversized tool results"`
-	SummaryContextTurns  *int  `toml:"summary_context_turns"                  desc:"context turns to include in summary"`
-	SummaryContextChars  *int  `toml:"summary_context_chars"                  desc:"max context chars for summary"`
-	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"                desc:"max input chars for summary generation"`
-	MaxImagePixels       *int  `toml:"max_image_pixels"                       desc:"max image pixels before downscaling"`
+	MaxResultChars       *int  `toml:"max_result_chars"                       desc:"When a tool result, eg command output or a fetched page, exceeds this many characters, the full result is saved to a file instead of sent to the model. Default 15000"`
+	MaxSummaryChars      *int  `toml:"max_summary_chars"                      desc:"Oversized tool results up to this many characters get an automatic AI summary instead of just a link to the saved file; larger ones skip it. Default 300000"`
+	AutoSummarise        *bool `toml:"auto_summarise"         default:"true"  desc:"Automatically generates a short AI summary of oversized tool results instead of leaving just a pointer to the saved file"`
+	SummaryContextTurns  *int  `toml:"summary_context_turns"                  desc:"Number of recent conversation turns included as context when auto-summarizing an oversized tool result. Default 5"`
+	SummaryContextChars  *int  `toml:"summary_context_chars"                  desc:"Maximum characters of conversation context sent to the model when auto-summarizing an oversized tool result. Default 6000"`
+	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"                desc:"Maximum characters of the oversized tool result itself fed into the summarizer; the full result is still saved to disk regardless. Default 100000"`
+	MaxImagePixels       *int  `toml:"max_image_pixels"                       desc:"Images larger than this many total pixels, width times height, are resized down before being sent to the model. 0 disables downscaling; default is roughly 1920x1080"`
 }
 
 // Voice WebSocket resource limits (P1-10). Defaults live in the VoiceConfig
@@ -430,35 +429,35 @@ const DefaultMaxFileReadBytes int64 = 50 << 20 // 50 MiB
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
-	TTS                  *string           `toml:"tts"      desc:"TTS provider id"`
-	STT                  *string           `toml:"stt"      desc:"STT provider id"`
-	TTSRate              *float64          `toml:"tts_rate"  desc:"TTS speech rate multiplier"`
+	TTS                  *string           `toml:"tts"      desc:"Which text-to-speech provider to use for voice replies"`
+	STT                  *string           `toml:"stt"      desc:"Which speech-to-text provider to use for transcribing voice messages"`
+	TTSRate              *float64          `toml:"tts_rate"  desc:"Speeds up or slows down text-to-speech playback. 1.0 is normal speed, higher is faster, lower is slower. 0 is treated as 1.0"`
 	TTSReplacements      map[string]string `toml:"tts_replacements"`
 	STTReplacements      map[string]string `toml:"stt_replacements"`
-	MaxFrameBytes        *int              `toml:"max_frame_bytes" default:"1048576"  desc:"max single inbound websocket frame in bytes"`
-	MaxAudioBytes        *int              `toml:"max_audio_bytes" default:"52428800" desc:"max accumulated voice audio buffer in bytes"`
-	MaxConcurrentTurns   *int              `toml:"max_concurrent_turns" default:"4" desc:"max in-flight STT/agent/TTS turns per voice connection"`
-	HTTPTimeout          *string           `toml:"http_timeout" default:"60s" desc:"timeout for STT/TTS HTTP calls"`
-	HTTPMaxResponseBytes *int              `toml:"http_max_response_bytes" default:"67108864" desc:"max STT/TTS HTTP response size in bytes"`
+	MaxFrameBytes        *int              `toml:"max_frame_bytes" default:"1048576"  desc:"Maximum size in bytes of a single incoming voice websocket message; larger frames are rejected (1 MiB)"`
+	MaxAudioBytes        *int              `toml:"max_audio_bytes" default:"52428800" desc:"Maximum total bytes of audio buffered for one voice turn before it is cut off (50 MiB)"`
+	MaxConcurrentTurns   *int              `toml:"max_concurrent_turns" default:"4" desc:"Maximum number of voice turns, speech-to-text plus agent reply plus text-to-speech, that can be in progress at once on one connection"`
+	HTTPTimeout          *string           `toml:"http_timeout" default:"60s" desc:"How long to wait for the speech-to-text or text-to-speech provider to respond before giving up"`
+	HTTPMaxResponseBytes *int              `toml:"http_max_response_bytes" default:"67108864" desc:"Maximum size in bytes of a response from the speech-to-text or text-to-speech provider before it is rejected (64 MiB)"`
 }
 
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().
 // Global: [agent_loop], per-agent: [[agents]].agent_loop.*
 type AgentLoopConfig struct {
-	MaxOutputTokens               *int    `toml:"max_output_tokens"                desc:"max tokens in model response"`
-	MaxToolLoops                  *int    `toml:"max_tool_loops"                   desc:"max tool iterations per turn"`
-	DuplicateMessages             *bool   `toml:"duplicate_messages"               desc:"send user text twice per API call"`
-	BatchPartialAssistantMessages *bool   `toml:"batch_partial_assistant_messages"  desc:"batch partial assistant messages"`
-	BatchPartialJoiner            *string `toml:"batch_partial_joiner"             desc:"joiner string for batched partial messages"`
+	MaxOutputTokens               *int    `toml:"max_output_tokens"                desc:"Maximum number of tokens the model may generate in a single reply. Higher allows longer replies but costs more and takes longer. Default 16384"`
+	MaxToolLoops                  *int    `toml:"max_tool_loops"                   desc:"Maximum tool calls allowed in a single turn; once reached, further tool calls are refused and the turn is forced to end. Default 100"`
+	DuplicateMessages             *bool   `toml:"duplicate_messages"               desc:"Repeats your message text twice in the prompt sent to the model, a technique that can improve instruction-following on some models. Off by default"`
+	BatchPartialAssistantMessages *bool   `toml:"batch_partial_assistant_messages"  desc:"When the agent sends text between tool calls, combine it all into one message at the end of the turn instead of sending each piece right away. Off by default"`
+	BatchPartialJoiner            *string `toml:"batch_partial_joiner"             desc:"Text inserted between chunks when batch_partial_assistant_messages combines them into one message. Empty joins them with nothing in between"`
 }
 
 // BehaviorConfig holds agent behavioral settings.
 // Global: [behavior], per-agent: [[agents]].behavior.*
 type BehaviorConfig struct {
-	SteerMode             *bool    `toml:"steer_mode"               default:"true"  desc:"inject user messages between tool calls"`
-	GroupThrottle         *string  `toml:"group_throttle"                            desc:"group chat throttle duration" type:"duration"`
-	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold" default:"3m"    desc:"warn when turn lock held longer than this" type:"duration"`
-	EnableStopAliases     *bool    `toml:"enable_stop_aliases"      default:"true"  desc:"enable stop command aliases"`
+	SteerMode             *bool    `toml:"steer_mode"               default:"true"  desc:"Lets a message you send while the agent is mid-turn redirect it at the next tool call, instead of waiting for the turn to finish"`
+	GroupThrottle         *string  `toml:"group_throttle"                            desc:"In group chats, buffers messages that do not mention the agent for this long, then delivers them together. A mention flushes the buffer immediately. Empty disables it" type:"duration"`
+	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold" default:"3m"    desc:"Writes a warning to the server log if a turn waits longer than this for the previous turn on the same session to finish. Diagnostic only, not shown to users" type:"duration"`
+	EnableStopAliases     *bool    `toml:"enable_stop_aliases"      default:"true"  desc:"Lets extra words such as wait also work as aliases for stop, which cancels the agent's current turn"`
 	StopAliases           []string `toml:"stop_aliases"`
 }
 
@@ -472,43 +471,43 @@ type SystemConfig struct {
 // ToolConfig holds per-agent tool behavioral overrides.
 // Embed in ToolsConfig (global home) and AgentConfig (per-agent).
 type ToolConfig struct {
-	ExecAutoBackground  *int    `toml:"exec_auto_background"  default:"10"        desc:"seconds before auto-backgrounding exec"`
-	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns" default:"3"         desc:"max concurrent spawn sessions"`
-	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       desc:"max tool loops for explore spawn"`
-	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"max upload file size in bytes"`                                                                                   // 50MB
-	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  desc:"max file size the read/edit tools will load in bytes"`                                                            // 50MB
-	HTTPMaxSpillBytes   *int64  `toml:"http_max_spill_bytes"  default:"52428800"  desc:"max http_request response bytes retained; full body spills to disk past the inline preview (remote DoS ceiling)"` // 50MB
-	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"      desc:"auto-unwatch on inactivity"`
-	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"       desc:"default watch threshold duration" type:"duration"`
-	TmuxSessionTTL      *string `toml:"tmux_session_ttl"      default:"24h"       desc:"auto-kill idle tmux sessions after" type:"duration"`
-	SearchProvider      *string `toml:"search_provider"       default:"brave"     desc:"web search: brave or anthropic" choices:"brave,anthropic"`
-	FetchProvider       *string `toml:"fetch_provider"        default:"builtin"   desc:"web fetch: anthropic or builtin" choices:"anthropic,builtin"`
-	TodoFormat          *string `toml:"todo_format"                                desc:"todo list format: lines or table" choices:"lines,table"`
+	ExecAutoBackground  *int    `toml:"exec_auto_background"  default:"10"        desc:"Seconds an exec command runs before it's automatically moved to the background so the agent isn't blocked waiting on it"`
+	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns" default:"3"         desc:"Maximum number of spawned subagent sessions that can run at once; further spawn requests queue until a slot frees up"`
+	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       desc:"Maximum tool-call iterations an explore-type spawned subagent can make before it's forced to stop and return results"`
+	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"Maximum file size, in bytes, the upload tool will accept (default 50 MiB); larger files are rejected"`                                                // 50MB
+	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  desc:"Maximum file size, in bytes, the read and edit tools will load (default 50 MiB); larger files must be read with an offset/limit range"`               // 50MB
+	HTTPMaxSpillBytes   *int64  `toml:"http_max_spill_bytes"  default:"52428800"  desc:"Maximum bytes of an http_request response kept inline in the conversation (default 50 MiB); anything beyond that is saved to a file on disk instead"` // 50MB
+	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"      desc:"Automatically watch a tmux pane's output after you send it input, and stop watching once it goes quiet, without needing manual watch/unwatch calls"`
+	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"       desc:"How long a tmux pane must produce no new output before a watch is considered idle and reports back (default 30s)" type:"duration"`
+	TmuxSessionTTL      *string `toml:"tmux_session_ttl"      default:"24h"       desc:"Idle tmux sessions are automatically killed after being inactive this long (default 24h); set to 0 to disable auto-kill" type:"duration"`
+	SearchProvider      *string `toml:"search_provider"       default:"brave"     desc:"Backend used for web search: brave calls the Brave Search API, anthropic uses Anthropic's built-in web search" choices:"brave,anthropic"`
+	FetchProvider       *string `toml:"fetch_provider"        default:"builtin"   desc:"Backend used to fetch web pages: builtin fetches directly from this server, anthropic uses Anthropic's hosted fetch tool" choices:"anthropic,builtin"`
+	TodoFormat          *string `toml:"todo_format"                                desc:"How the agent's todo list is rendered in chat: lines shows a simple bullet list, table shows a formatted table" choices:"lines,table"`
 }
 
 type AnthropicConfig struct {
-	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"  desc:"proactive token refresh threshold" type:"duration"`
+	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"  desc:"How far ahead of expiry the server refreshes cached Claude Code login credentials (~/.claude/.credentials.json), an alternate way to authenticate to Anthropic (default 5m)" type:"duration"`
 }
 
 // DisplayConfig holds display-related settings that can be set at any level
 // of the configuration cascade. All fields are pointer types so Merge can
 // distinguish "not set" from "set to zero value".
 type DisplayConfig struct {
-	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         desc:"tool call display: off, preview, full" choices:"off,preview,full"`             // tool call display: off, preview, full
-	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"thinking display: off, compact, true" choices:"off,compact,true"`              // thinking display: off, compact, true
-	StreamOutput          *bool            `toml:"stream_output"           desc:"stream model output"`                                                          // stream model output in real-time
-	StreamInterval        *string          `toml:"stream_interval"         desc:"interval between stream edits" type:"duration"`                                // duration between message edits during streaming
-	Streaming             *bool            `toml:"streaming"               desc:"use streaming API"`                                                            // use streaming API
-	DisplayWidth          *int             `toml:"display_width"           desc:"display width for dividers"`                                                   // display width for dividers
-	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"save received files to this directory"`                                        // save received files to this directory
-	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"header prepended to injected messages"`                                        // header prepended to injected messages
-	Statusline            *string          `toml:"statusline"              desc:"template for the per-message [meta]/[state] header; empty = built-in default"` // per-message header template (#831)
+	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         desc:"How tool-call activity appears in chat: off hides it, preview shows it then replaces it with the final reply, full keeps it visible as a separate message" choices:"off,preview,full"`                             // tool call display: off, preview, full
+	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"How the model's reasoning is shown: off hides it, compact adds a Show thinking toggle button, true prepends it to every reply" choices:"off,compact,true"`                                                         // thinking display: off, compact, true
+	StreamOutput          *bool            `toml:"stream_output"           desc:"Edit the chat message in place as the reply is generated, instead of sending it only once it's complete"`                                                                                                          // stream model output in real-time
+	StreamInterval        *string          `toml:"stream_interval"         desc:"How often the in-progress reply is updated on screen while streaming; lower values look smoother but send more edits to the chat platform" type:"duration"`                                                        // duration between message edits during streaming
+	Streaming             *bool            `toml:"streaming"               desc:"Call the model's streaming API so tokens arrive incrementally, rather than waiting for the full response in one call; separate from stream_output, which controls whether the chat message itself is live-edited"` // use streaming API
+	DisplayWidth          *int             `toml:"display_width"           desc:"Character width used for divider lines and to wrap tables and thinking blocks in chat messages"`                                                                                                                   // display width for dividers
+	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"Local directory where files received from users, such as photos or documents, are saved; leave empty to not save them"`                                                                                            // save received files to this directory
+	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"Text prepended to system-injected messages, such as warnings, so you can tell them apart from normal replies; empty adds no header"`                                                                               // header prepended to injected messages
+	Statusline            *string          `toml:"statusline"              desc:"Template for the small header shown above each reply, such as model name and timing; leave empty to use the built-in default format"`                                                                              // per-message header template (#831)
 }
 
 // AccessConfig holds access control settings that can be set at any level
 // of the configuration cascade.
 type AccessConfig struct {
-	AllowedUsersOnly *bool    `toml:"allowed_users_only" default:"true" desc:"require allowed_users; when false, accept messages from any user"`
+	AllowedUsersOnly *bool    `toml:"allowed_users_only" default:"true" desc:"When enabled (default), only user IDs in allowed_users may message this agent - an empty list blocks everyone. When disabled, an empty list allows anyone; a non-empty list still filters"`
 	AllowedUsers     []string `toml:"allowed_users"`   // platform-specific user IDs allowed to interact
 	RequireMention   *bool    `toml:"require_mention"` // require @mention in group chats
 }
@@ -517,13 +516,13 @@ type AccessConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type NotifyConfig struct {
-	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   desc:"inject warnings into agent session: all, errors, off"`  // inject warnings/errors into agent session
-	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    desc:"send warnings as chat notifications: all, errors, off"` // send warnings/errors as chat notifications
-	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"send notification on startup"`                          // send startup notification
-	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" desc:"send notification on compaction"`                       // send notification on compaction
-	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" desc:"send notification on task list changes"`                // send notification on task list changes
-	CompactionDebug     *bool           `toml:"compaction_debug"                        desc:"send compaction summary as file attachment"`            // send compaction summary as file attachment
-	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    desc:"max identical warnings per window before suppression"`  // max identical warnings per window before suppression (default 3)
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   desc:"Whether internal warnings are fed directly into the agent's own conversation, as if said by the system, so it can see and react: all, errors only, or off"` // inject warnings/errors into agent session
+	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    desc:"Whether internal warnings are sent to you as chat notification messages: all, errors only, or off"`                                                         // send warnings/errors as chat notifications
+	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"Send a chat notification each time this agent starts up"`                                                                                                   // send startup notification
+	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" desc:"Send a chat notification whenever the conversation history is compacted (summarized to free up context space)"`                                             // send notification on compaction
+	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" desc:"Send a chat notification whenever the agent's todo list changes"`                                                                                           // send notification on task list changes
+	CompactionDebug     *bool           `toml:"compaction_debug"                        desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                     // send compaction summary as file attachment
+	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`               // max identical warnings per window before suppression (default 3)
 }
 
 // InjectAgentWarningsLevel returns the resolved injection level (default: off).
@@ -586,11 +585,10 @@ type PlatformConfig struct {
 	Access  AccessConfig  `toml:"access"`
 
 	// Shared platform fields
-	Bot              string   `toml:"bot"`
-	BotSecret        string   `toml:"bot_secret"`
-	FacetBots        []string `toml:"facet_bots"`
-	FacetSessionTTL  string   `toml:"facet_session_ttl"  desc:"idle TTL before facet reclaim" type:"duration"`
-	MessageQueueSize int      `toml:"message_queue_size" desc:"message queue buffer size"`
+	Bot             string   `toml:"bot"`
+	BotSecret       string   `toml:"bot_secret"`
+	FacetBots       []string `toml:"facet_bots"`
+	FacetSessionTTL string   `toml:"facet_session_ttl"  desc:"How long a /facet session, a temporary secondary bot split off from this chat, can sit idle before its slot is reclaimed for reuse (default 60m)" type:"duration"`
 
 	// Platform-specific subsections (at most one non-nil, must match ID)
 	Telegram *TelegramSpecific `toml:"telegram"`
@@ -644,9 +642,9 @@ func (p *PlatformConfig) SafeDisplay() DisplayConfig {
 
 // TelegramSpecific holds Telegram-only config fields.
 type TelegramSpecific struct {
-	LongPollTimeout string  `toml:"long_poll_timeout"`                                                                  // default "30s" (HTTP-client timeout; Telegram-side long-poll derived as -5s)
-	TableWrapLines  *int    `toml:"table_wrap_lines"  desc:"max wrapped lines per table cell"`                          // default 5
-	TableStyle      *string `toml:"table_style"       desc:"table style: pretty or markdown" choices:"pretty,markdown"` // default "pretty"
+	LongPollTimeout string  `toml:"long_poll_timeout"`                                                                                                                                                 // default "30s" (HTTP-client timeout; Telegram-side long-poll derived as -5s)
+	TableWrapLines  *int    `toml:"table_wrap_lines"  desc:"Maximum number of lines a single table cell wraps to before its content is truncated (default 5)"`                                         // default 5
+	TableStyle      *string `toml:"table_style"       desc:"How tables are rendered in chat: pretty uses box-drawing characters, markdown uses plain markdown table syntax" choices:"pretty,markdown"` // default "pretty"
 
 	// APIBase overrides the Telegram Bot API base URL (default
 	// "https://api.telegram.org"). Used by integration tests to point bots
@@ -665,17 +663,17 @@ type DiscordSpecific struct {
 // FAP v1). All tuning knobs are optional pointers so the agent→global→code
 // cascade can resolve them; nil falls back to the code default.
 type AppSpecific struct {
-	Host           string `toml:"host"             desc:"public host the app reconnects to (advertised in hello.caps.host)"`
-	Push           *bool  `toml:"push"             desc:"enable FCM offline wake pushes (requires app.fcm_credentials secret)"`
-	ReplayBuffer   *int   `toml:"replay_buffer"    desc:"max retained server frames per conversation for reconnect replay"`
-	ReplayTTL      string `toml:"replay_ttl"       desc:"max age of a retained in-memory replay frame" type:"duration"`
-	ReplayStoreTTL string `toml:"replay_store_ttl" desc:"max age of a durably-stored replay frame (server-side backfill DB)" type:"duration"`
-	ReplayStorePath string `toml:"replay_store_path" desc:"durable replay-frame DB path, relative to data_dir (default app-frames.db)"`
-	MaxBlobMB      *int   `toml:"max_blob_mb"      desc:"upload size cap for /app/blob in MB"`
-	BlobTTL        string `toml:"blob_ttl"         desc:"time-to-live for stored blobs" type:"duration"`
-	PushCoalesce   string `toml:"push_coalesce"    desc:"min interval between wake pushes per conversation" type:"duration"`
-	FCMCredentials string `toml:"fcm_credentials"  desc:"path to the FCM service-account JSON (overrides the app.fcm_credentials secret)"`
-	DevicesPath    string `toml:"devices_path"     desc:"paired-device store path, relative to data_dir (default app-devices.json)"`
+	Host            string `toml:"host"             desc:"Public hostname the FOCI app should use to reconnect to this server, sent to the app during the initial connection handshake"`
+	Push            *bool  `toml:"push"             desc:"Send a Firebase Cloud Messaging push notification to wake the app when it's offline and a message arrives; requires the app.fcm_credentials secret"`
+	ReplayBuffer    *int   `toml:"replay_buffer"    desc:"Number of recent server messages kept in memory per conversation so the app can catch up on anything missed after reconnecting (default 1000)"`
+	ReplayTTL       string `toml:"replay_ttl"       desc:"Maximum age of a message kept in the in-memory reconnect-replay buffer before it's discarded (default 24h)" type:"duration"`
+	ReplayStoreTTL  string `toml:"replay_store_ttl" desc:"Maximum age of a message kept in the on-disk replay database used to backfill longer gaps after reconnecting (default 30 days)" type:"duration"`
+	ReplayStorePath string `toml:"replay_store_path" desc:"File path, relative to the server's data directory, of the database that durably stores replay messages (default app-frames.db)"`
+	MaxBlobMB       *int   `toml:"max_blob_mb"      desc:"Maximum size, in megabytes, of a file the app can upload via the /app/blob endpoint (default 50)"`
+	BlobTTL         string `toml:"blob_ttl"         desc:"How long an uploaded blob is kept on the server before it's deleted (default 24h)" type:"duration"`
+	PushCoalesce    string `toml:"push_coalesce"    desc:"Minimum time between wake-up push notifications for the same conversation, to avoid a flurry of pushes when several messages arrive close together (default 15s)" type:"duration"`
+	FCMCredentials  string `toml:"fcm_credentials"  desc:"Path to a Firebase Cloud Messaging service-account JSON key file, used instead of the app.fcm_credentials secret for sending wake pushes"`
+	DevicesPath     string `toml:"devices_path"     desc:"File path, relative to the server's data directory, where paired app devices are stored (default app-devices.json)"`
 	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows
 	// any). A slice → set in the TOML file, not via /config set, so no desc tag
 	// (mirrors AccessConfig.AllowedUsers).
@@ -690,9 +688,6 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 	p.Access = Merge(p.Access, defaults.Access)
 	if p.FacetSessionTTL == "" {
 		p.FacetSessionTTL = defaults.FacetSessionTTL
-	}
-	if p.MessageQueueSize == 0 {
-		p.MessageQueueSize = defaults.MessageQueueSize
 	}
 	// Platform-specific: agent inherits the entire sub-block if not set.
 	if p.Telegram == nil && defaults.Telegram != nil {
@@ -767,10 +762,10 @@ type SessionsConfig struct {
 	Dir string `toml:"dir"`
 
 	CompactionConfig          // compaction settings (global defaults, overridable per-agent)
-	CompactionMaxTokens   int `toml:"compaction_max_tokens"         default:"4096"  desc:"max output tokens for summary" min:"0"`      // max output tokens for summary
-	CompactionMinMessages int `toml:"compaction_min_messages"       default:"4"     desc:"min messages before compacting" min:"0"`     // min messages before compacting
-	MaxSystemPromptFile   int `toml:"max_system_prompt_chars_file"  default:"20000" desc:"per-file char warning threshold"`            // per-file char threshold for warnings
-	MaxSystemPromptTotal  int `toml:"max_system_prompt_chars_total" default:"80000" desc:"total system prompt char warning threshold"` // total system prompt char threshold
+	CompactionMaxTokens   int `toml:"compaction_max_tokens"         default:"4096"  desc:"Max tokens the model can generate for the summary when compaction trims old conversation history to fit the context window" min:"0"` // max output tokens for summary
+	CompactionMinMessages int `toml:"compaction_min_messages"       default:"4"     desc:"Minimum number of messages a session needs before compaction (automatic history trimming) is allowed to run" min:"0"`                // min messages before compacting
+	MaxSystemPromptFile   int `toml:"max_system_prompt_chars_file"  default:"20000" desc:"Warn at startup if any single system prompt file (character, skill, etc) exceeds this many characters; does not block anything"`     // per-file char threshold for warnings
+	MaxSystemPromptTotal  int `toml:"max_system_prompt_chars_total" default:"80000" desc:"Warn at startup if the combined size of all system prompt files exceeds this many characters; does not block anything"`              // total system prompt char threshold
 
 	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`    // path to prompt file for user-attached facet branches
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"` // path to prompt file for headless branches (cron, spawn, keepalive)
@@ -778,7 +773,7 @@ type SessionsConfig struct {
 	ArchiveAfter string `toml:"archive_after" default:"24h"`  // gzip idle sessions after this duration (default "24h")
 	FileMode     string `toml:"file_mode"     default:"0600"` // octal file permissions for session files (default "0600")
 
-	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"30" desc:"delete ephemeral (branch/fork) backend transcripts older than this many days (0 = never)" min:"0"` // daily GC of stale ephemeral session files
+	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"30" desc:"Days to keep ephemeral branch and fork session transcripts before automatic daily cleanup deletes them; 0 disables cleanup" min:"0"` // daily GC of stale ephemeral session files
 }
 
 type MemorySource struct {
@@ -793,54 +788,50 @@ type MemorySource struct {
 // Sources are combined additively (not merged) — see load.go.
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
-	SearchBackend      *string        `toml:"search_backend"      default:"bleve" desc:"search backend: fts5 or bleve"`                          // search backend: "fts5" or "bleve"
-	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"delay before reindex" type:"duration"`                                   // delay before reindex (e.g., "500ms", "2s"), default "0s"
-	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"weight for conversation search results" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
-	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"max search results to return"`                           // max search results to return (default 20)
-	SweepInterval      *string        `toml:"sweep_interval"      default:"0"     desc:"periodic full reindex interval; 0=disabled" type:"duration"` // periodic full reindex interval (default "0"=disabled; fsnotify watch already catches file changes). Set e.g. "1h" to re-enable.
+	SearchBackend      *string        `toml:"search_backend"      default:"bleve" desc:"Which engine powers memory search: fts5 also searches conversation history, bleve only searches memory files but adds relevance ranking"`                   // search backend: "fts5" or "bleve"
+	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"How long to wait after a memory file changes before reindexing it, so rapid edits do not trigger repeated reindexing; 0s reindexes immediately" type:"duration"`            // delay before reindex (e.g., "500ms", "2s"), default "0s"
+	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"Relevance multiplier for conversation-history hits in memory search, relative to memory-file hits; 0 excludes them, 1 weighs them equally" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
+	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"Maximum number of results the memory search tool returns for a single query"`                                                                               // max search results to return (default 20)
+	SweepInterval      *string        `toml:"sweep_interval"      default:"0"     desc:"How often to fully rebuild the memory search index from scratch; 0 disables periodic rebuilds since file-watching already catches changes" type:"duration"` // periodic full reindex interval (default "0"=disabled; fsnotify watch already catches file changes). Set e.g. "1h" to re-enable.
 	// Temporal decay (#352, bleve backend): boost recent results in relevance
 	// search. Recency-boost only — old results are never penalised.
-	TemporalDecay     *bool    `toml:"temporal_decay"     default:"true" desc:"boost recent results in memory relevance search (bleve)"`
-	DecayHalfLife     *float64 `toml:"decay_half_life"    default:"10"   desc:"days for the recency boost to halve" min:"0"`
-	DecayBoost        *float64 `toml:"decay_boost"        default:"1"    desc:"max recency multiplier is 1+this (1.0 = up to 2x for brand-new)" min:"0"`
+	TemporalDecay *bool    `toml:"temporal_decay"     default:"true" desc:"Boost more recently modified memory files higher in search relevance ranking; applies to both search backends"`
+	DecayHalfLife *float64 `toml:"decay_half_life"    default:"10"   desc:"Number of days after which the recency boost from temporal_decay has halved in strength" min:"0"`
+	DecayBoost    *float64 `toml:"decay_boost"        default:"1"    desc:"Strength of the recency boost from temporal_decay: a brand-new file's score is multiplied by up to 1+this value" min:"0"`
 	// Basename globs never recency-boosted (default MEMORY.md, research-*). A slice
 	// field, so no desc tag (the /config-set registry only handles scalars).
 	EvergreenPatterns []string `toml:"evergreen_patterns"`
 }
 
-type DatabaseConfig struct {
-	BusyTimeout string `toml:"busy_timeout" default:"5s" desc:"SQLite busy timeout" type:"duration"` // SQLite busy timeout for concurrent access (default "5s")
-}
-
 type HTTPConfig struct {
-	Port                    int    `toml:"port" default:"18791" desc:"HTTP server port" min:"1" max:"65535"`
-	Bind                    string `toml:"bind" default:"127.0.0.1" desc:"HTTP server bind address"`
+	Port                    int    `toml:"port" default:"18791" desc:"TCP port the foci HTTP server listens on" min:"1" max:"65535"`
+	Bind                    string `toml:"bind" default:"127.0.0.1" desc:"Network address the HTTP server binds to; 127.0.0.1 only accepts local connections, 0.0.0.0 accepts connections from other machines"`
 	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout" default:"30s"` // time to wait for in-flight requests on shutdown (default "30s")
 	WSEnabled               bool   `toml:"ws_enabled"`                              // enable /voice WebSocket endpoint (default false)
 	SocketPath              string `toml:"socket_path"`                             // Unix socket path for same-user auth (default: auto-resolved to data dir)
 }
 
 type LoggingConfig struct {
-	Level           string `toml:"level"      default:"INFO" desc:"log level: DEBUG, INFO, WARN, ERROR" choices:"DEBUG,INFO,WARN,ERROR"`
+	Level           string `toml:"level"      default:"INFO" desc:"Minimum severity written to the log file: DEBUG is most verbose, ERROR is least; each level also includes all levels above it" choices:"DEBUG,INFO,WARN,ERROR"`
 	EventFile       string `toml:"event_file" default:"logs/foci.log"`
 	APIFile         string `toml:"api_file"   default:"logs/api.jsonl"`
 	APIDB           string `toml:"api_db" default:"api.db"` // SQLite API call log path (relative to data_dir)
-	ConversationLog *bool  `toml:"conversation_log" default:"true" desc:"enable per-agent conversation logging"`
+	ConversationLog *bool  `toml:"conversation_log" default:"true" desc:"Log each agent's conversation turns to disk; turn this off to avoid persisting conversation content"`
 
-	FullPayload bool   `toml:"full_payload"                         desc:"write full API payloads to file"` // write full API payloads to api-payload.jsonl
-	PayloadFile string `toml:"payload_file"             default:"logs/api-payload.jsonl"`                   // path for full API payload log
+	FullPayload bool   `toml:"full_payload"                         desc:"Write the complete raw request and response sent to the model API to logs/api-payload.jsonl, useful for debugging"` // write full API payloads to api-payload.jsonl
+	PayloadFile string `toml:"payload_file"             default:"logs/api-payload.jsonl"`                                                                                                     // path for full API payload log
 
-	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"  desc:"time window for warning dedup" type:"duration"`                           // time window for warning dedup (default "5m")
-	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"  desc:"min interval between proactive warnings (active user)" type:"duration"`   // min interval between proactive warning turns when user is active (default "5m")
-	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"  default:"1h"  desc:"min interval between proactive warnings (inactive user)" type:"duration"` // min interval when user is inactive (default "1h")
-	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold" default:"10m" desc:"user is active if last message within this window" type:"duration"`       // user is "active" if last message within this window (default "10m")
+	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"  desc:"Time window used to group and rate-limit repeated warnings so identical ones are not injected into the agent repeatedly" type:"duration"` // time window for warning dedup (default "5m")
+	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"  desc:"Minimum time between unprompted warning notifications sent while you have been recently active" type:"duration"`                          // min interval between proactive warning turns when user is active (default "5m")
+	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"  default:"1h"  desc:"Minimum time between unprompted warning notifications sent while you have not been recently active" type:"duration"`                      // min interval when user is inactive (default "1h")
+	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold" default:"10m" desc:"How recently you must have sent a message to count as active for the proactive warning intervals above" type:"duration"`                  // user is "active" if last message within this window (default "10m")
 
-	LogRotation         *bool  `toml:"log_rotation"            default:"true" desc:"enable built-in log rotation"`               // enable built-in log rotation (default true)
-	RotationPeriod      string `toml:"rotation_period"        default:"24h"   desc:"how often to rotate logs" type:"duration"`   // how often to rotate (default "24h")
-	RetentionPeriod     string `toml:"retention_period"       default:"48h"   desc:"keep lines newer than this" type:"duration"` // keep lines newer than this (default "48h")
-	RotationMaxLineSize string `toml:"rotation_max_line_size" default:"64MB"  desc:"max line size for scanner buffer"`           // max line size for scanner buffer (default "64MB")
-	ArchiveDir          string `toml:"archive_dir"`                                                                              // gzip archive directory (default: log_dir/archive/)
-	LogFileMode         string `toml:"log_file_mode"          default:"0600"  desc:"octal file permissions for log files"`       // octal file permissions for log files (default "0600")
+	LogRotation         *bool  `toml:"log_rotation"            default:"true" desc:"Automatically rotate and gzip-archive log files instead of letting them grow forever"`                                                        // enable built-in log rotation (default true)
+	RotationPeriod      string `toml:"rotation_period"        default:"24h"   desc:"How often the log rotation check runs, archiving old log content" type:"duration"`                                                            // how often to rotate (default "24h")
+	RetentionPeriod     string `toml:"retention_period"       default:"48h"   desc:"How long log lines stay in the live log file before being archived; older lines are moved into gzip files under archive_dir" type:"duration"` // keep lines newer than this (default "48h")
+	RotationMaxLineSize string `toml:"rotation_max_line_size" default:"64MB"  desc:"Largest single log line the rotator can read; a longer line is skipped instead of crashing the rotation process"`                             // max line size for scanner buffer (default "64MB")
+	ArchiveDir          string `toml:"archive_dir"`                                                                                                                                                                               // gzip archive directory (default: log_dir/archive/)
+	LogFileMode         string `toml:"log_file_mode"          default:"0600"  desc:"Unix file permissions (octal, e.g. 0600) applied to log files"`                                                                               // octal file permissions for log files (default "0600")
 }
 
 // TTSConfig describes a text-to-speech provider entry.
@@ -882,9 +873,9 @@ type BitwardenConfig struct {
 // [[agents]].permissions are combined (union) — both sets apply.
 // All fields are pointer/slice types for Merge-based resolution.
 type PermissionsConfig struct {
-	AutoApprove                []string `toml:"auto_approve"`                                                                                                                 // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
-	AutoApproveCommonReadonly  *bool    `toml:"auto_approve_common_readonly"  default:"true"  desc:"auto-approve common read-only tools and commands"`                        // enable built-in read-only tool/command allowlist
-	AutoApproveCommonSafeWrite *bool    `toml:"auto_approve_common_safe_write" default:"false" desc:"auto-approve common side-effecting commands (curl, wget, mkdir, touch)"` // enable built-in safe-write allowlist (default false — not path-scoped)
+	AutoApprove                []string `toml:"auto_approve"`                                                                                                                                                                                          // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
+	AutoApproveCommonReadonly  *bool    `toml:"auto_approve_common_readonly"  default:"true"  desc:"Automatically approve a built-in list of safe, read-only tools and shell commands (ls, cat, git status, etc) without prompting"`                   // enable built-in read-only tool/command allowlist
+	AutoApproveCommonSafeWrite *bool    `toml:"auto_approve_common_safe_write" default:"false" desc:"Automatically approve a built-in list of commonly-safe but side-effecting commands like curl, wget, mkdir and touch; not restricted to any path"` // enable built-in safe-write allowlist (default false — not path-scoped)
 	// PromptTTL is how long an unanswered interactive prompt (permission
 	// request, AskUserQuestion) stays live before it auto-expires. On expiry
 	// the prompt is resolved as a denial/cancel so the waiting backend doesn't
@@ -892,7 +883,7 @@ type PermissionsConfig struct {
 	// is capped at the delegated-backend idle timeout — min(prompt_ttl,
 	// idle_timeout) — since a prompt can't outlive the backend that's waiting
 	// on it (the idle reaper clears it). Parsed via time.ParseDuration.
-	PromptTTL string `toml:"prompt_ttl" default:"24h" desc:"lifetime of an unanswered permission/question prompt before it auto-denies"`
+	PromptTTL string `toml:"prompt_ttl" default:"24h" desc:"How long a permission request or question can sit unanswered before it is automatically denied so the agent is not stuck waiting"`
 }
 
 // AutoApproveCommonReadonlyEnabled returns the resolved value (default: true).
@@ -912,8 +903,8 @@ func (p PermissionsConfig) AutoApproveCommonSafeWriteEnabled() bool {
 }
 
 type EnvironmentConfig struct {
-	Enabled  *bool   `toml:"enabled"    default:"true"         desc:"inject environment block"`        // inject environment block as first system block (default true)
-	DocsPath *string `toml:"docs_path"  default:"shared/docs"  desc:"path to platform docs directory"` // path to platform docs directory; relative paths resolve against $HOME
+	Enabled  *bool   `toml:"enabled"    default:"true"         desc:"Include an Environment section in the agent's system prompt describing the platform, active tools and docs it has access to"`                // inject environment block as first system block (default true)
+	DocsPath *string `toml:"docs_path"  default:"shared/docs"  desc:"Directory of platform documentation the agent can reference, listed in the Environment block; relative paths resolve against your home dir"` // path to platform docs directory; relative paths resolve against $HOME
 }
 
 type SkillsConfig struct {
@@ -921,51 +912,49 @@ type SkillsConfig struct {
 }
 
 type ResourcesConfig struct {
-	MemoryGuardEnabled        *bool    `toml:"memory_guard_enabled"        default:"true" desc:"enable system memory guard"`                     // enable system memory guard (default true)
-	MemoryGuardInterval       string   `toml:"memory_guard_interval"       default:"60s"  desc:"memory guard check interval" type:"duration"`    // check interval (default "60s")
-	MemoryWarnPercent         *int     `toml:"memory_warn_percent"         default:"25"   desc:"warn threshold as %% of total RAM"`              // warn threshold as % of total RAM (default 25)
-	MemoryKillPercent         *int     `toml:"memory_kill_percent"         default:"40"   desc:"kill threshold as %% of total RAM"`              // kill threshold as % of total RAM (default 40)
-	MemoryPressureThreshold   *float64 `toml:"memory_pressure_threshold"   default:"10"   desc:"PSI avg10 threshold before acting"`              // PSI avg10 threshold to require before acting (default 10.0)
-	GoroutineMonitorInterval  string   `toml:"goroutine_monitor_interval"  default:"60s"  desc:"goroutine count check interval" type:"duration"` // goroutine count check interval (default "60s")
-	GoroutineMonitorThreshold int      `toml:"goroutine_monitor_threshold"                desc:"goroutine count warning threshold (0=auto)"`     // warn when goroutine count exceeds this (0 = auto: 30 + 25×agents + 5×telegram_bots)
+	MemoryGuardEnabled        *bool    `toml:"memory_guard_enabled"        default:"true" desc:"Watch system RAM use and warn or kill runaway processes when memory runs critically low"`                                                          // enable system memory guard (default true)
+	MemoryGuardInterval       string   `toml:"memory_guard_interval"       default:"60s"  desc:"How often the memory guard checks RAM usage, as a duration like 60s" type:"duration"`                                                              // check interval (default "60s")
+	MemoryWarnPercent         *int     `toml:"memory_warn_percent"         default:"25"   desc:"RAM usage, as a percent of total system memory, above which the memory guard starts warning (if memory pressure is also high)"`                    // warn threshold as % of total RAM (default 25)
+	MemoryKillPercent         *int     `toml:"memory_kill_percent"         default:"40"   desc:"RAM usage, as a percent of total system memory, above which the memory guard kills the largest runaway process (if memory pressure is also high)"` // kill threshold as % of total RAM (default 40)
+	MemoryPressureThreshold   *float64 `toml:"memory_pressure_threshold"   default:"10"   desc:"Linux memory-pressure value (PSI avg10) that must also be reached before the warn or kill percent thresholds take effect"`                         // PSI avg10 threshold to require before acting (default 10.0)
+	GoroutineMonitorInterval  string   `toml:"goroutine_monitor_interval"  default:"60s"  desc:"How often to check the running goroutine count for possible leaks, as a duration like 60s" type:"duration"`                                        // goroutine count check interval (default "60s")
+	GoroutineMonitorThreshold int      `toml:"goroutine_monitor_threshold"                desc:"Log a warning if the goroutine count exceeds this. 0 auto-calculates a threshold from the number of agents and telegram bots configured"`          // warn when goroutine count exceeds this (0 = auto: 30 + 25×agents + 5×telegram_bots)
 }
 
 // BrowserConfig holds configuration for the browser automation tool.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 // TOML: [browser] globally, [[agents]].browser per-agent.
 type BrowserConfig struct {
-	Enabled        *bool    `toml:"enabled"         default:"true" desc:"enable browser tool"`                          // enable browser tool
-	Headless       *bool    `toml:"headless"        default:"true" desc:"run headless"`                                 // run headless
-	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"   desc:"page operation timeout in seconds"`            // page operation timeout in seconds
-	UserDataDir    *string  `toml:"user_data_dir"                  desc:"Chrome user data dir (empty = temp profile)"`  // Chrome user data dir (empty = temp profile)
-	ExecutablePath *string  `toml:"executable_path"                desc:"Chrome executable path (empty = auto-detect)"` // Chrome executable path (empty = auto-detect)
-	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"DOM stability wait interval in seconds"`       // DOM stability wait interval in seconds
-	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"DOM stability diff threshold"`                 // DOM stability diff threshold
+	Enabled        *bool    `toml:"enabled"         default:"true" desc:"Enable the browser automation tool, letting the agent open and control a Chrome browser"`                 // enable browser tool
+	Headless       *bool    `toml:"headless"        default:"true" desc:"Run the automated Chrome browser with no visible window"`                                                 // run headless
+	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"   desc:"Seconds to wait for a browser page operation, like a click or navigation, before it times out"`           // page operation timeout in seconds
+	UserDataDir    *string  `toml:"user_data_dir"                  desc:"Directory Chrome stores its browser profile in. Leave empty to use a fresh temporary profile each time"`  // Chrome user data dir (empty = temp profile)
+	ExecutablePath *string  `toml:"executable_path"                desc:"Path to the Chrome binary to launch. Leave empty to auto-detect an installed Chrome"`                     // Chrome executable path (empty = auto-detect)
+	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"Seconds between page snapshots when waiting for a webpage to stop changing before treating it as loaded"` // DOM stability wait interval in seconds
+	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"How much a page may differ between snapshots, as a fraction from 0 to 1, and still count as stable"`      // DOM stability diff threshold
 }
 
 type ToolsConfig struct {
 	SummaryConfig // global summary/tool-result defaults (resolved via Merge with per-agent)
 	ToolConfig    // global tool behavioral defaults (resolved via Merge with per-agent)
 
-	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results"`                                       // where to write large tool results (default /tmp/foci/tool-results)
-	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"tmux window columns"`                         // tmux window columns on start (default 300)
-	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"tmux window rows"`                            // tmux window rows on start (default 30)
-	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"default timeout for exec in seconds"`         // default timeout for exec commands in seconds (default 30)
-	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s"`                                                           // timeout for tmux control commands (default "5s")
-	WebFetchTimeout         string   `toml:"web_fetch_timeout"          default:"30s"       desc:"HTTP timeout for web fetch" type:"duration"`  // HTTP timeout for web fetch (default "30s")
-	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576"`                                                      // max bytes to read from web fetch (default 1048576 = 1MB)
-	WebSearchTimeout        string   `toml:"web_search_timeout"         default:"15s"       desc:"HTTP timeout for web search" type:"duration"` // HTTP timeout for web search (default "15s")
-	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"    default:"450"       desc:"max chars for tool call preview"`             // max chars for tool call param preview in Telegram (default 450)
-	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval" default:"5m"`                                                           // how often to check tmux RSS (default "5m", "0" disables)
-	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"           default:"10%"`                                                          // warn threshold as % of RAM or absolute (default "10%")
-	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%"`                                                          // critical threshold (default "20%")
-	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%"`                                                          // kill threshold (default "30%")
-	WebSearchMaxUses        int      `toml:"web_search_max_uses"`                                                                               // max searches per API call (0 = unlimited)
-	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"`                                                                        // domain whitelist (mutually exclusive with blocked)
-	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"`                                                                        // domain blacklist
-	WebFetchMaxUses         int      `toml:"web_fetch_max_uses"`                                                                                // max fetches per API call (0 = unlimited)
-	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"`                                                                         // domain whitelist
-	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"`                                                                         // domain blacklist
+	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results"`                                                                                // where to write large tool results (default /tmp/foci/tool-results)
+	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"Number of columns for the tmux terminal window created for running shell commands"`    // tmux window columns on start (default 300)
+	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"Number of rows for the tmux terminal window created for running shell commands"`       // tmux window rows on start (default 30)
+	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"Default number of seconds a shell command may run before it is timed out"`             // default timeout for exec commands in seconds (default 30)
+	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s"`                                                                                                    // timeout for tmux control commands (default "5s")
+	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576"`                                                                                               // max bytes to read from web fetch (default 1048576 = 1MB)
+	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"    default:"450"       desc:"Maximum characters of a tool call's parameters shown in the Telegram preview message"` // max chars for tool call param preview in Telegram (default 450)
+	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval" default:"5m"`                                                                                                    // how often to check tmux RSS (default "5m", "0" disables)
+	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"           default:"10%"`                                                                                                   // warn threshold as % of RAM or absolute (default "10%")
+	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%"`                                                                                                   // critical threshold (default "20%")
+	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%"`                                                                                                   // kill threshold (default "30%")
+	WebSearchMaxUses        int      `toml:"web_search_max_uses"`                                                                                                                        // max searches per API call (0 = unlimited)
+	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"`                                                                                                                 // domain whitelist (mutually exclusive with blocked)
+	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"`                                                                                                                 // domain blacklist
+	WebFetchMaxUses         int      `toml:"web_fetch_max_uses"`                                                                                                                         // max fetches per API call (0 = unlimited)
+	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"`                                                                                                                  // domain whitelist
+	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"`                                                                                                                  // domain blacklist
 }
 
 type MessageTransform struct {
@@ -1048,10 +1037,10 @@ func (e EndpointConfig) URLForFormat(f string) string {
 // KeepaliveConfig controls the cache keepalive timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type KeepaliveConfig struct {
-	Enabled          *bool   `toml:"enabled"                  desc:"enable keepalive timer"`                       // enable keepalive timer
-	Interval         *string `toml:"interval" default:"55m"   desc:"time since cache last warmed" type:"duration"` // time since cache last warmed before firing
-	Prompt           *string `toml:"prompt"                   desc:"keepalive prompt file path"`                   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
-	WarmOpenAppChats *bool   `toml:"warm_open_app_chats"      desc:"warm every chat the app has open, not just the default session"`
+	Enabled          *bool   `toml:"enabled"                  desc:"Enable the keepalive timer, which sends periodic no-op prompts to keep the model provider's prompt cache warm"` // enable keepalive timer
+	Interval         *string `toml:"interval" default:"55m"   desc:"How long since the prompt cache was last warmed before the keepalive timer fires again" type:"duration"`        // time since cache last warmed before firing
+	Prompt           *string `toml:"prompt"                   desc:"Path to a custom keepalive prompt file. Leave unset for the built-in default, or set to none to disable it"`    // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	WarmOpenAppChats *bool   `toml:"warm_open_app_chats"      desc:"When true, keepalive warms every chat currently open in the app instead of just the main session, so their caches stay warm too"`
 }
 
 // ReflectionConfig controls the periodic reflection pass, which captures both
@@ -1059,15 +1048,15 @@ type KeepaliveConfig struct {
 // from recent session activity. All fields are pointer types for Merge-based
 // resolution (per-agent → global).
 type ReflectionConfig struct {
-	IntervalEnabled    *bool   `toml:"interval_enabled"       default:"true" desc:"periodic reflection pass on timer"`                               // periodic reflection on timer
-	Interval           *string `toml:"interval"               default:"1h"   desc:"time between reflection passes" type:"duration"`                  // time between reflections
-	IntervalPrompt     *string `toml:"interval_prompt"                       desc:"interval reflection prompt file path"`                            // prompt override (nil = embedded, "none" = disabled)
-	SessionEndEnabled  *bool   `toml:"session_end_enabled"    default:"true" desc:"run reflection on /reset and reclaim"`                            // reflect on /reset and reclaim
-	SessionEndPrompt   *string `toml:"session_end_prompt"                    desc:"session end reflection prompt file path"`                         // prompt override (nil = embedded, "none" = disabled)
-	CompactionEnabled  *bool   `toml:"compaction_enabled"     default:"true" desc:"reflection before compaction"`                                    // reflect before compaction
-	CompactionPrompt   *string `toml:"compaction_prompt"                     desc:"compaction reflection prompt file path"`                          // prompt override (nil = embedded, "none" = disabled)
-	BackendQuietPeriod      *string `toml:"backend_quiet_period"        default:"5m"   desc:"min idle time before reflection in backend mode" type:"duration"` // min idle before firing in backend mode
-	NotifyOnSkillCreation   *bool   `toml:"notify_on_skill_creation"     default:"true" desc:"notify the user when reflection creates or updates a skill"`       // notify user on skill creation/update during reflection
+	IntervalEnabled       *bool   `toml:"interval_enabled"       default:"true" desc:"Run a reflection pass on a timer to capture memories and skills from recent activity, alongside any other reflection triggers"`                    // periodic reflection on timer
+	Interval              *string `toml:"interval"               default:"1h"   desc:"How long to wait between timer-triggered reflection passes" type:"duration"`                                                                       // time between reflections
+	IntervalPrompt        *string `toml:"interval_prompt"                       desc:"Path to a custom prompt for timer-triggered reflection. Leave unset for the built-in default, or set to none to disable this trigger"`             // prompt override (nil = embedded, "none" = disabled)
+	SessionEndEnabled     *bool   `toml:"session_end_enabled"    default:"true" desc:"Run a reflection pass whenever a session is reset or reclaimed, to capture memories and skills before it ends"`                                    // reflect on /reset and reclaim
+	SessionEndPrompt      *string `toml:"session_end_prompt"                    desc:"Path to a custom prompt for session-end reflection. Leave unset for the built-in default, or set to none to disable this trigger"`                 // prompt override (nil = embedded, "none" = disabled)
+	CompactionEnabled     *bool   `toml:"compaction_enabled"     default:"true" desc:"Run a reflection pass right before a session is compacted, so memories and skills are captured before older messages are summarized away"`         // reflect before compaction
+	CompactionPrompt      *string `toml:"compaction_prompt"                     desc:"Path to a custom prompt for pre-compaction reflection. Leave unset for the built-in default, or set to none to disable this trigger"`              // prompt override (nil = embedded, "none" = disabled)
+	BackendQuietPeriod    *string `toml:"backend_quiet_period"        default:"5m"   desc:"For delegated backends like Claude Code, how long the user must be idle before reflection is injected into the live session" type:"duration"` // min idle before firing in backend mode
+	NotifyOnSkillCreation *bool   `toml:"notify_on_skill_creation"     default:"true" desc:"Send a chat message telling the user when a reflection pass creates or updates a skill"`                                                     // notify user on skill creation/update during reflection
 }
 
 // SchedulerConfig controls the periodic scheduler that drives all four timers
@@ -1076,7 +1065,7 @@ type ReflectionConfig struct {
 // timer's own interval — so lowering it only makes the timers respond sooner.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type SchedulerConfig struct {
-	TickInterval *string `toml:"tick_interval" default:"30s" desc:"periodic scheduler poll cadence" type:"duration"` // how often the periodic timers are checked
+	TickInterval *string `toml:"tick_interval" default:"30s" desc:"How often the scheduler checks whether keepalive, background, reflection or consolidation are due. Only affects polling latency, not how often they fire" type:"duration"` // how often the periodic timers are checked
 }
 
 // MaintenanceConfig controls scheduled housekeeping that runs at a wall-clock
@@ -1086,45 +1075,45 @@ type SchedulerConfig struct {
 // (fixed interval since the last run). All fields are pointer types for
 // Merge-based resolution (per-agent → global).
 type MaintenanceConfig struct {
-	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"curate MEMORY.md periodically"`                                            // curate MEMORY.md periodically
-	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"when to consolidate: HH:MM daily or a duration like 20h"`                  // "HH:MM" daily or duration
-	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"consolidation prompt file path"`                                           // prompt override (nil = embedded, "none" = disabled)
-	ConsolidationMaxIdle *string `toml:"consolidation_max_idle" default:"1h" desc:"skip consolidation if no user activity within this window" type:"duration"` // skip if idle longer than this
-	ResetTime            *string `toml:"reset_time"            default:""     desc:"daily session reset: HH:MM, a duration, or empty to disable"`              // "HH:MM" daily, duration, or "" = never
-	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"skip scheduled reset if user active within this window" type:"duration"`   // skip reset if recently active
+	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"Periodically curate the recent daily memory files into the long-term MEMORY.md file"`                                                                  // curate MEMORY.md periodically
+	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"When to run MEMORY.md consolidation: either a daily clock time like 20:00, or a duration like 20h since the last run"`                                 // "HH:MM" daily or duration
+	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"Path to a custom consolidation prompt file. Leave unset for the built-in default, or set to none to disable consolidation"`                            // prompt override (nil = embedded, "none" = disabled)
+	ConsolidationMaxIdle *string `toml:"consolidation_max_idle" default:"1h" desc:"Skip consolidation if the user has not interacted within this window, since there is nothing new to curate" type:"duration"`                            // skip if idle longer than this
+	ResetTime            *string `toml:"reset_time"            default:""     desc:"When to reset the daily session: a clock time like 04:00, a duration like 24h since the last reset, or empty to never auto-reset"`                     // "HH:MM" daily, duration, or "" = never
+	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"Skip a scheduled session reset if the user interacted within this window, so an active conversation is not wiped out from under them" type:"duration"` // skip reset if recently active
 }
 
 // BackgroundConfig controls the background work timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type BackgroundConfig struct {
-	Enabled        *bool   `toml:"enabled"                  desc:"enable background work timer"`                              // enable background work timer
-	Interval       *string `toml:"interval" default:"15m"   desc:"time since last interaction before firing" type:"duration"` // time since last interaction before firing
-	Prompt         *string `toml:"prompt"                   desc:"background work prompt file path"`                          // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
-	CanRunBackground *string `toml:"can_run_background"       desc:"executable gating background work; exit 0 = allowed, non-zero = skip"`   // path to a script/executable run before each background op; exit 0 permits the work, any non-zero exit skips it. Empty = always allowed.
+	Enabled          *bool   `toml:"enabled"                  desc:"Enable the background work timer, which lets the agent do unprompted work between user interactions"`                                    // enable background work timer
+	Interval         *string `toml:"interval" default:"15m"   desc:"How long since the last user interaction before the background work timer fires" type:"duration"`                                        // time since last interaction before firing
+	Prompt           *string `toml:"prompt"                   desc:"Path to a custom background work prompt file. Leave unset for the built-in default, or set to none to disable background work"`          // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	CanRunBackground *string `toml:"can_run_background"       desc:"Script run to gate background work, reflection and consolidation. Exit code 0 allows it, non-zero skips it. Empty means always allowed"` // path to a script/executable run before each background op; exit 0 permits the work, any non-zero exit skips it. Empty = always allowed.
 }
 
 // DebugConfig holds developer/debugging knobs that can be configured at
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type DebugConfig struct {
-	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      desc:"log last 4 chars of API keys on provider calls"`                // log last 4 chars of API keys on each provider call (default false)
-	MessagesInLog        *bool `toml:"messages_in_log"         desc:"log user message content"`                                      // log user message content to event log (default false for privacy)
-	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" desc:"alert on cache_read drop"`                      // alert when cache_read drops >50% vs previous request
-	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    desc:"suppress cache bust alert if idle > N minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
+	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      desc:"Log the last 4 characters of the API key on every model provider request, useful for confirming which key was used"`                                   // log last 4 chars of API keys on each provider call (default false)
+	MessagesInLog        *bool `toml:"messages_in_log"         desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"`                       // log user message content to event log (default false for privacy)
+	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" desc:"Alert in chat when the provider's prompt-cache hit count drops between requests, which can signal the cache was unexpectedly evicted"` // alert when cache_read drops >50% vs previous request
+	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    desc:"Suppress the cache-bust alert if the session has been idle longer than this many minutes, since the cache naturally expires by then"`  // suppress cache bust alert if session idle > N minutes (default 10)
 
 	// EnablePprof exposes the net/http/pprof endpoints under /debug/pprof/*.
 	// Off by default: they allow CPU/heap profiling and goroutine dumps, so they
 	// are gated behind an explicit opt-in even though the HTTP server is
 	// auth-gated. Process-global (top-level [debug] section).
-	EnablePprof *bool `toml:"enable_pprof" default:"false" desc:"expose /debug/pprof/* profiling endpoints"`
+	EnablePprof *bool `toml:"enable_pprof" default:"false" desc:"Expose Go profiling endpoints at /debug/pprof/* for CPU, memory and goroutine diagnostics. Off by default since profiling data can be sensitive"`
 
 	// Per-package "extra" verbose logging. Each switches on investigation-grade
 	// logging for one package, tagged "xtra:<package>" in the log (grep
 	// "xtra:ccstream", or "xtra:" for all). Process-global (applied once at
 	// startup from the top-level [debug] section); default off. See log.Extra.
-	ExtraCcstreamLogging *bool `toml:"extra_ccstream_logging" default:"false" desc:"verbose ccstream logs tagged xtra:ccstream"` // verbose ccstream turn/steer logging
-	ExtraTelegramLogging *bool `toml:"extra_telegram_logging" default:"false" desc:"verbose telegram logs tagged xtra:telegram"` // verbose telegram poll/transport logging
-	ExtraInboxLogging    *bool `toml:"extra_inbox_logging"    default:"false" desc:"verbose inbox logs tagged xtra:inbox"`       // verbose inbox routing/gate logging
+	ExtraCcstreamLogging *bool `toml:"extra_ccstream_logging" default:"false" desc:"Log verbose details (tagged xtra:ccstream) of the Claude Code backend streaming transport, for debugging delegated Claude Code sessions"` // verbose ccstream turn/steer logging
+	ExtraTelegramLogging *bool `toml:"extra_telegram_logging" default:"false" desc:"Log verbose details (tagged xtra:telegram) of the Telegram bot's polling and message transport, for debugging Telegram connectivity"`     // verbose telegram poll/transport logging
+	ExtraInboxLogging    *bool `toml:"extra_inbox_logging"    default:"false" desc:"Log verbose details (tagged xtra:inbox) of how incoming messages are queued, steered or dropped, for debugging message routing"`          // verbose inbox routing/gate logging
 }
 
 type Config struct {
@@ -1144,7 +1133,6 @@ type Config struct {
 	Platforms          []PlatformConfig          `toml:"platforms"`
 	Sessions           SessionsConfig            `toml:"sessions"`
 	Memory             MemoryConfig              `toml:"memory"`
-	Database           DatabaseConfig            `toml:"database"`
 	HTTP               HTTPConfig                `toml:"http"`
 	Logging            LoggingConfig             `toml:"logging"`
 	TTS                []TTSConfig               `toml:"tts"`
@@ -1162,7 +1150,7 @@ type Config struct {
 	Scheduler          SchedulerConfig           `toml:"scheduler"`
 	Maintenance        MaintenanceConfig         `toml:"maintenance"`
 	Permissions        PermissionsConfig         `toml:"permissions"`
-	CCBackend          CCBackendConfig           `toml:"cc_backend"` // shared defaults for Claude Code delegator backends
+	CCBackend          CCBackendConfig           `toml:"cc_backend"`       // shared defaults for Claude Code delegator backends
 	OpencodeBackend    OpencodeBackendConfig     `toml:"opencode_backend"` // shared defaults for opencode delegator backend
 	Askgw              AskgwConfig               `toml:"askgw"`            // ask-gateway: local socket for external Apps to ask humans questions
 	Commands           []CommandConfig           `toml:"commands"`
@@ -1176,6 +1164,7 @@ type Config struct {
 	SkipSecurityChecks bool                      `toml:"skip_security_checks"`                           // if true, skip startup security checks for secrets.toml
 	ShellEnvFile       *string                   `toml:"shell_env_file"`                                 // rc/env file sourced at startup so tool shells inherit the operator's common env; nil = ladder (~/.bashrc → ~/.zshenv → ~/.profile, first present); "" = load nothing; explicit path = that file. backend_config.env overrides on collision.
 	DefinedKeys        map[string]bool           `toml:"-"`                                              // keys explicitly set in TOML file (populated by Load)
+	SourcePath         string                    `toml:"-"`                                              // absolute-ish path the config was loaded from (populated by Load; used by config editing)
 	UndefinedKeys      []string                  `toml:"-"`                                              // unrecognised TOML keys (populated by Load, logged by caller)
 }
 

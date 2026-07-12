@@ -308,6 +308,9 @@ func (h *Hub) caps() fap.Caps {
 	if h.deps.SessionIndex != nil {
 		c.Features = append(c.Features, featureSettingsSync)
 	}
+	if h.configEditAvailable() {
+		c.Features = append(c.Features, featureConfigEdit)
+	}
 	return c
 }
 

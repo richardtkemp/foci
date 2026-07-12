@@ -340,19 +340,6 @@ http_timeout = "invalid"
 			wantErr: "http_timeout",
 		},
 		{
-			name: "invalid database busy_timeout",
-			toml: `
-[groups]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[[agents]]
-id = "test"
-[database]
-busy_timeout = "invalid"
-`,
-			wantErr: "busy_timeout",
-		},
-		{
 			name: "invalid telegram long_poll_timeout",
 			toml: `
 [groups]
@@ -393,32 +380,6 @@ id = "test"
 tmux_command_timeout = "invalid"
 `,
 			wantErr: "tmux_command_timeout",
-		},
-		{
-			name: "invalid tools web_fetch_timeout",
-			toml: `
-[groups]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[[agents]]
-id = "test"
-[tools]
-web_fetch_timeout = "invalid"
-`,
-			wantErr: "web_fetch_timeout",
-		},
-		{
-			name: "invalid tools web_search_timeout",
-			toml: `
-[groups]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[[agents]]
-id = "test"
-[tools]
-web_search_timeout = "invalid"
-`,
-			wantErr: "web_search_timeout",
 		},
 	}
 

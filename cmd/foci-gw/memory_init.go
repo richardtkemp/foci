@@ -224,6 +224,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 				log.Fatalf("main", "create FTS5 index (%s): %v", label, err)
 			}
 			idx.SetTemporalDecay(rm.TemporalDecay, rm.DecayHalfLife, rm.DecayBoost, rm.EvergreenPatterns) // #352
+			idx.SetSearchLimit(rm.SearchLimit)
 			initOne(fmt.Sprintf("FTS5 (%s)", label), idx, debounce, sweepInterval)
 			backends["fts5"] = idx
 			fts5Idx = idx
@@ -235,6 +236,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 				log.Fatalf("main", "create bleve index (%s): %v", label, err)
 			}
 			bidx.SetTemporalDecay(rm.TemporalDecay, rm.DecayHalfLife, rm.DecayBoost, rm.EvergreenPatterns) // #352
+			bidx.SetSearchLimit(rm.SearchLimit)
 			initOne(fmt.Sprintf("bleve (%s)", label), bidx, debounce, sweepInterval)
 			backends["bleve"] = bidx
 			bleveIdx = bidx

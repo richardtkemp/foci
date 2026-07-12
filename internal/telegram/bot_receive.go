@@ -98,7 +98,10 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	}
 	userID := fmt.Sprintf("%d", msg.From.Id)
 
-	if len(b.allowedUsers) > 0 && !b.allowedUsers[userID] {
+	// access.allowed_users_only (default true): only listed users pass — an empty
+	// list blocks everyone. When explicitly false, an empty list allows anyone;
+	// a non-empty list still filters.
+	if denied := !b.allowedUsers[userID] && (b.allowedUsersOnly || len(b.allowedUsers) > 0); denied {
 		b.logger().Warnf("rejected message from %s", formatUserInfo(msg.From))
 		return queuedMessage{}, false
 	}

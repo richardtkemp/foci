@@ -133,7 +133,7 @@ var toolTable = []toolEntry{
 		tc := d.p.resolved.Tools
 		return shell.NewExecTool(d.agentStore, d.p.bwStore, tc.ExecAutoBackground, d.notifier,
 			d.p.acfg.Workspace, d.registry, d.p.resolved.Summary.MaxResultChars, d.p.cfg.Tools.TempDir,
-			execExtraEnv(d.p))
+			execExtraEnv(d.p), d.p.cfg.Tools.ExecDefaultTimeout)
 	}},
 
 	{name: "tmux", paths: pathAPI, enabled: tmuxAvailable, build: func(d *toolDeps) *tools.Tool {

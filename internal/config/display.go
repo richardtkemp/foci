@@ -142,7 +142,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 			add(sec, "startup_notify", *p.Notify.StartupNotify)
 		}
 		add(sec, "facet_session_ttl", p.FacetSessionTTL)
-		add(sec, "message_queue_size", p.MessageQueueSize)
 		if p.Display.ReceivedFilesDir != nil && *p.Display.ReceivedFilesDir != "" {
 			add(sec, "received_files_dir", *p.Display.ReceivedFilesDir)
 		}
@@ -243,9 +242,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("tools", "max_image_pixels", cfg.Tools.MaxImagePixels)
 	add("tools", "auto_summarise", cfg.Tools.AutoSummarise)
 	add("tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout)
-	add("tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout)
 	add("tools", "web_fetch_max_bytes", cfg.Tools.WebFetchMaxBytes)
-	add("tools", "web_search_timeout", cfg.Tools.WebSearchTimeout)
 	add("tools", "max_concurrent_spawns", cfg.Tools.MaxConcurrentSpawns)
 	add("tools", "explore_max_depth", cfg.Tools.ExploreMaxDepth)
 	add("tools", "tool_call_preview_chars", cfg.Tools.ToolCallPreviewChars)
@@ -266,7 +263,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Skills.Dir != "" {
 		add("skills", "dir", cfg.Skills.Dir)
 	}
-
 
 	// tts
 	for i, e := range cfg.TTS {
@@ -303,7 +299,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("debug", "log_api_key_suffix", cfg.Debug.LogAPIKeySuffix)
 
 	// database
-	add("database", "busy_timeout", cfg.Database.BusyTimeout)
 
 	// message_transforms
 	if len(cfg.MessageTransforms) > 0 {
@@ -548,7 +543,6 @@ type displayConfig struct {
 	TTS         []TTSConfig       `toml:"tts"`
 	STT         []STTConfig       `toml:"stt"`
 	Debug       DebugConfig       `toml:"debug"`
-	Database    DatabaseConfig    `toml:"database"`
 }
 
 // FormatConfigTOML returns a TOML-marshalable representation of the running
@@ -567,7 +561,6 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		TTS:         cfg.TTS,
 		STT:         cfg.STT,
 		Debug:       cfg.Debug,
-		Database:    cfg.Database,
 	}
 
 	var buf bytes.Buffer

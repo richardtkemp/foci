@@ -33,13 +33,11 @@ usage_api_timeout = "15s"
 
 [[platforms]]
 id = "telegram"
-message_queue_size = 128
 [platforms.telegram]
 long_poll_timeout = "70s"
 
 [[platforms]]
 id = "discord"
-message_queue_size = 32
 facet_session_ttl = "30m"
 
 [http]
@@ -49,15 +47,12 @@ graceful_shutdown_timeout = "10s"
 search_limit = 50
 
 [database]
-busy_timeout = "10s"
 
 [tools]
 exec_default_timeout = 60
 max_summary_chars = 500000
 tmux_command_timeout = "10s"
-web_fetch_timeout = "45s"
 web_fetch_max_bytes = 2097152
-web_search_timeout = "20s"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -76,18 +71,12 @@ web_search_timeout = "20s"
 	if tgPlat == nil {
 		t.Fatal("Platform(telegram) = nil")
 	}
-	if tgPlat.MessageQueueSize != 128 {
-		t.Errorf("Platform(telegram).MessageQueueSize = %d, want 128", tgPlat.MessageQueueSize)
-	}
 	if tgPlat.Telegram == nil || tgPlat.Telegram.LongPollTimeout != "70s" {
 		t.Errorf("Platform(telegram).LongPollTimeout = %v, want 70s", tgPlat.Telegram)
 	}
 	dcPlat := cfg.Platform("discord")
 	if dcPlat == nil {
 		t.Fatal("Platform(discord) = nil")
-	}
-	if dcPlat.MessageQueueSize != 32 {
-		t.Errorf("Platform(discord).MessageQueueSize = %d, want 32", dcPlat.MessageQueueSize)
 	}
 	if dcPlat.FacetSessionTTL != "30m" {
 		t.Errorf("Platform(discord).FacetSessionTTL = %q, want 30m", dcPlat.FacetSessionTTL)
@@ -98,9 +87,6 @@ web_search_timeout = "20s"
 	if DerefInt(cfg.Memory.SearchLimit) != 50 {
 		t.Errorf("Memory.SearchLimit = %d, want 50", DerefInt(cfg.Memory.SearchLimit))
 	}
-	if cfg.Database.BusyTimeout != "10s" {
-		t.Errorf("Database.BusyTimeout = %q, want 10s", cfg.Database.BusyTimeout)
-	}
 	if cfg.Tools.ExecDefaultTimeout != 60 {
 		t.Errorf("Tools.ExecDefaultTimeout = %d, want 60", cfg.Tools.ExecDefaultTimeout)
 	}
@@ -110,14 +96,8 @@ web_search_timeout = "20s"
 	if cfg.Tools.TmuxCommandTimeout != "10s" {
 		t.Errorf("Tools.TmuxCommandTimeout = %q, want 10s", cfg.Tools.TmuxCommandTimeout)
 	}
-	if cfg.Tools.WebFetchTimeout != "45s" {
-		t.Errorf("Tools.WebFetchTimeout = %q, want 45s", cfg.Tools.WebFetchTimeout)
-	}
 	if cfg.Tools.WebFetchMaxBytes != 2097152 {
 		t.Errorf("Tools.WebFetchMaxBytes = %d, want 2097152", cfg.Tools.WebFetchMaxBytes)
-	}
-	if cfg.Tools.WebSearchTimeout != "20s" {
-		t.Errorf("Tools.WebSearchTimeout = %q, want 20s", cfg.Tools.WebSearchTimeout)
 	}
 }
 
@@ -157,9 +137,6 @@ id = "test"
 	if DerefInt(cfg.Memory.SearchLimit) != 20 {
 		t.Errorf("default Memory.SearchLimit = %d, want 20", DerefInt(cfg.Memory.SearchLimit))
 	}
-	if cfg.Database.BusyTimeout != "5s" {
-		t.Errorf("default Database.BusyTimeout = %q, want 5s", cfg.Database.BusyTimeout)
-	}
 	if cfg.Tools.ExecDefaultTimeout != 30 {
 		t.Errorf("default Tools.ExecDefaultTimeout = %d, want 30", cfg.Tools.ExecDefaultTimeout)
 	}
@@ -169,14 +146,8 @@ id = "test"
 	if cfg.Tools.TmuxCommandTimeout != "5s" {
 		t.Errorf("default Tools.TmuxCommandTimeout = %q, want 5s", cfg.Tools.TmuxCommandTimeout)
 	}
-	if cfg.Tools.WebFetchTimeout != "30s" {
-		t.Errorf("default Tools.WebFetchTimeout = %q, want 30s", cfg.Tools.WebFetchTimeout)
-	}
 	if cfg.Tools.WebFetchMaxBytes != 1048576 {
 		t.Errorf("default Tools.WebFetchMaxBytes = %d, want 1048576", cfg.Tools.WebFetchMaxBytes)
-	}
-	if cfg.Tools.WebSearchTimeout != "15s" {
-		t.Errorf("default Tools.WebSearchTimeout = %q, want 15s", cfg.Tools.WebSearchTimeout)
 	}
 }
 
@@ -208,7 +179,6 @@ system_files = ["A.md", "B.md"]
 inject_agent_warnings = "all"
 
 [sessions]
-compaction_effort = "low"
 
 [[agents]]
 id = "bare"

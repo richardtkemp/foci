@@ -32,7 +32,7 @@ func TestExecExtraEnv(t *testing.T) {
 	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "", []string{
 		"FOCI_ADDR=127.0.0.1:18791",
 		"FOCI_API_KEY=test-secret-key",
-	})
+	}, 0)
 
 	result, err := runExec(t, tool, "echo $FOCI_ADDR $FOCI_API_KEY")
 	requireNoError(t, err)
@@ -44,7 +44,7 @@ func TestExecWorkDir(t *testing.T) {
 	// Proves that the configured working directory is set on the subprocess by checking pwd output.
 	t.Parallel()
 	dir := t.TempDir()
-	tool := NewExecTool(nil, nil, 0, nil, dir, nil, 0, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, dir, nil, 0, "", nil, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "pwd",
@@ -161,7 +161,7 @@ token = "secret-value-12345"
 		t.Fatalf("Load secrets: %v", err)
 	}
 
-	tool := NewExecTool(store, nil, 0, nil, "", nil, 0, "", nil)
+	tool := NewExecTool(store, nil, 0, nil, "", nil, 0, "", nil, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo {{secret:custom.token}}",
@@ -218,7 +218,7 @@ key = "value"
 		t.Fatalf("Load secrets: %v", err)
 	}
 
-	tool := NewExecTool(store, nil, 0, nil, "", nil, 0, "", nil)
+	tool := NewExecTool(store, nil, 0, nil, "", nil, 0, "", nil, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "cat secrets.toml",
@@ -239,7 +239,7 @@ func TestExecOutputSpill(t *testing.T) {
 	// ResultFile points to the full output on disk.
 	tmpDir := t.TempDir()
 	threshold := 1000
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, threshold, tmpDir, nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, threshold, tmpDir, nil, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "python3 -c 'print(\"x\" * 110000)'",
@@ -284,7 +284,7 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	var called bool
 	tool := NewExecTool(nil, nil, 5, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		called = true
-	}), "", nil, 0, "", nil)
+	}), "", nil, 0, "", nil, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -309,7 +309,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	completeCh := make(chan string, 1)
 	tool := NewExecTool(nil, nil, 1, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
-	}), "", nil, 0, "", nil)
+	}), "", nil, 0, "", nil, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "timeout 1.5 tail -f /dev/null",
@@ -347,7 +347,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 	ch := make(chan result, 1)
 	tool := NewExecTool(nil, nil, 1, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		ch <- result{sk, msg}
-	}), "", nil, 0, "", nil)
+	}), "", nil, 0, "", nil, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "timeout 1.5 tail -f /dev/null",
@@ -586,7 +586,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 		completeCh <- msg
 	})
 	// Use a 10s threshold so the ctx.Done() path fires before the threshold.
-	tool := NewExecTool(nil, nil, 10, notifier, "", nil, 0, "", nil)
+	tool := NewExecTool(nil, nil, 10, notifier, "", nil, 0, "", nil, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo ctx-cancel-result; timeout 0.2 tail -f /dev/null",
@@ -707,7 +707,7 @@ func TestExecAutoBackgroundLeakedChild(t *testing.T) {
 	// The auto-background path had the same leaked-FD bug. A fast command
 	// that leaks a child should still complete before the threshold.
 	t.Parallel()
-	tool := NewExecTool(nil, nil, 5, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {}), "", nil, 0, "", nil)
+	tool := NewExecTool(nil, nil, 5, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {}), "", nil, 0, "", nil, 0)
 
 	start := time.Now()
 	params, _ := json.Marshal(map[string]interface{}{

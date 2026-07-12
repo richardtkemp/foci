@@ -17,10 +17,9 @@ func testConfig() (*Config, AgentConfig) {
 				ShowThinking:  Ptr[ShowThinking](ShowThinkingOff),
 				DisplayWidth:  Ptr[int](44),
 			},
-			Access:           AccessConfig{AllowedUsers: []string{"alice"}},
-			FacetSessionTTL:  "60m",
-			MessageQueueSize: 64,
-			Telegram:         &TelegramSpecific{LongPollTimeout: "65s"},
+			Access:          AccessConfig{AllowedUsers: []string{"alice"}},
+			FacetSessionTTL: "60m",
+			Telegram:        &TelegramSpecific{LongPollTimeout: "65s"},
 		}},
 		Sessions: SessionsConfig{
 			Dir:                   "/data/sessions",
@@ -59,9 +58,7 @@ func testConfig() (*Config, AgentConfig) {
 			TmuxRows:                30,
 			ExecDefaultTimeout:      30,
 			TmuxCommandTimeout:      "5s",
-			WebFetchTimeout:         "30s",
 			WebFetchMaxBytes:        1048576,
-			WebSearchTimeout:        "15s",
 			ToolCallPreviewChars:    450,
 			TmuxMemoryCheckInterval: "5m",
 			TmuxMemoryWarn:          "10%",
@@ -69,7 +66,6 @@ func testConfig() (*Config, AgentConfig) {
 			TmuxMemoryKill:          "30%",
 		},
 		Environment: EnvironmentConfig{Enabled: Ptr[bool](true)},
-		Database:    DatabaseConfig{BusyTimeout: "5s"},
 	}
 	agent := AgentConfig{
 		ID:        "test-agent",

@@ -152,6 +152,9 @@ func Load(path string) (*Config, error) {
 	// fully initialised (the early log init gets rotated away on startup).
 	cfg.UndefinedKeys = UnknownKeys(md, cfg.Groups.Groups)
 
+	// Record where the config came from (config editing writes back to it).
+	cfg.SourcePath = path
+
 	// Record which keys were explicitly set in the TOML file.
 	cfg.DefinedKeys = make(map[string]bool)
 	for _, key := range md.Keys() {

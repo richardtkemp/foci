@@ -90,7 +90,6 @@ auto_thread = true
 | `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"<platform>.<bot>"`. |
 | `facet_bots` | string[] | `[]` | Shared facet bot pool. Bot tokens resolved via `"<platform>.<name>"` secret convention. |
 | `facet_session_ttl` | string | `"60m"` | Idle TTL before a facet bot/thread can be reclaimed. `"0"` disables. |
-| `message_queue_size` | int | `64` | Message queue buffer size. |
 
 #### Access fields (`[platforms.access]`)
 
@@ -430,13 +429,6 @@ Developer and debugging knobs. All off by default.
 | `cache_bust_idle_minutes` | int | `10` | Suppress cache bust alerts if the session was idle longer than this many minutes. Anthropic's cache TTL is 5 min, so any gap >10 min means the cache expired naturally — not a genuine bust. Per-agent override via `[agents.debug]`. |
 | `enable_pprof` | bool | `false` | Expose the `net/http/pprof` profiling endpoints under `/debug/pprof/*` on the gateway HTTP server. Off by default — they allow CPU/heap profiling and goroutine dumps, so enable only when actively profiling. Process-global (top-level `[debug]` only). |
 
-### `[database]`
-
-SQLite database settings.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `busy_timeout` | string | `"5s"` | SQLite busy timeout for concurrent access. Go duration format. High-load systems may need longer waits. |
 
 ### `[models.*]`
 
@@ -574,9 +566,7 @@ Tool behavior settings (global-only fields). Fields that can be overridden per-a
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
 | `exec_default_timeout` | int | `30` | Default timeout for exec commands in seconds. |
 | `tmux_command_timeout` | string | `"5s"` | Timeout for tmux control commands. Go duration format. |
-| `web_fetch_timeout` | string | `"30s"` | HTTP timeout for web fetch operations. Go duration format. |
 | `web_fetch_max_bytes` | int | `1048576` | Max bytes to read from web fetch (1MB default). |
-| `web_search_timeout` | string | `"15s"` | HTTP timeout for web search API calls. Go duration format. |
 | `summary_context_turns` | int | `5` | Number of recent conversation turns included as context when auto-summarising oversized tool results. |
 | `summary_context_chars` | int | `6000` | Max characters of conversation context sent to the cheap model for auto-summary. |
 | `tmux_memory_check_interval` | string | `"5m"` | How often to check tmux server RSS. Go duration format. `"0"` disables monitoring. |
@@ -781,7 +771,7 @@ Override per-agent using the same sub-section names:
 id = "research"
 
 [agents.loop]
-max_tool_loops = 25
+max_tool_loops = 100
 ```
 
 ### Model & Response
@@ -910,7 +900,6 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read live at compaction time (edits take effect immediately). `""` uses embedded default. |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
-| `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
 | `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `shared/prompts/branch-orientation-facet.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `shared/prompts/branch-orientation-headless.md`. |
 | `reload_on_compact` | bool | `true` | For delegated (Claude Code) backends, reload the system prompt from disk at compaction so character-file and skill edits take effect. The reload is a CC session bounce (restart + resume), so it only fires when the prompt rebuilt from disk **differs** from the one the running session launched with — fingerprinted by a hash of the character files plus the skill list. An unchanged prompt means no bounce and no interruption to the flow. It catches character-file edits and skill add/remove (the skill list is in the prompt), but **not** skill body-content edits (skill bodies load on demand and never appear in the prompt). |

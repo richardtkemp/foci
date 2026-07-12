@@ -160,7 +160,6 @@ type ResolvedCompaction struct {
 	CompactionSummaryPrompt    string
 	CompactionHandoffMsg       string
 	CompactionPreserveMessages int
-	CompactionEffort           string
 	FacetNoCompact             bool
 	ReloadOnCompact            bool
 }
@@ -176,7 +175,6 @@ func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 		CompactionSummaryPrompt:    DerefStr(m.CompactionSummaryPrompt),
 		CompactionHandoffMsg:       DerefStr(m.CompactionHandoffMsg),
 		CompactionPreserveMessages: DerefInt(m.CompactionPreserveMessages),
-		CompactionEffort:           DerefStr(m.CompactionEffort),
 		FacetNoCompact:             DerefBool(m.FacetNoCompact),
 		ReloadOnCompact:            m.ReloadOnCompact == nil || *m.ReloadOnCompact, // default ON
 	}
