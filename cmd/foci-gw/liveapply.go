@@ -102,6 +102,11 @@ var (
 	liveApplyResolvedAddrs = []string{
 		"voice.tts", "voice.tts_rate",
 		"agent.voice.tts", "agent.voice.tts_rate",
+		"display.streaming", "agent.display.streaming",
+		"agent_loop.max_tool_loops", "agent.loop.max_tool_loops",
+		"debug.cache_bust_detect", "agent.debug.cache_bust_detect",
+		"debug.cache_bust_idle_minutes", "agent.debug.cache_bust_idle_minutes",
+		"background.can_run_background", "agent.background.can_run_background",
 	}
 )
 

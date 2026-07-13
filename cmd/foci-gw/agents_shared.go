@@ -263,5 +263,6 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 	// zero" from "test set no override". Production code never reads or
 	// writes the override; tests drive it via the control socket.
 	inst.testActiveWorkOverride.Store(-1)
+	ag.LiveConfigFn = inst.LiveConfig
 	return inst
 }

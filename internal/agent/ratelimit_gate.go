@@ -228,7 +228,7 @@ func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey strin
 	}
 
 	// user-provided background gate. Exit 0 = allowed, non-zero = skip.
-	if a.CanRunBackground != "" && !a.runCanRunBackground(ctx, sessionKey, a.resolveEndpoint(sessionKey)) {
+	if a.canRunBackground() != "" && !a.runCanRunBackground(ctx, sessionKey, a.resolveEndpoint(sessionKey)) {
 		return false, "can_run_background declined"
 	}
 
@@ -245,7 +245,7 @@ func (a *Agent) runCanRunBackground(ctx context.Context, sessionKey, endpoint st
 
 	// procx.Spawn strips the foci-secrets group from the child and puts it in
 	// its own process group.
-	cmd := procx.Spawn(cctx, a.CanRunBackground)
+	cmd := procx.Spawn(cctx, a.canRunBackground())
 	cmd.Env = append(os.Environ(),
 		"FOCI_SESSION_KEY="+sessionKey,
 		"FOCI_AGENT_ID="+a.AgentID,
@@ -260,7 +260,7 @@ func (a *Agent) runCanRunBackground(ctx context.Context, sessionKey, endpoint st
 	if errors.As(err, &exitErr) {
 		return false // explicit non-zero exit = decline
 	}
-	a.logger().Warnf("can_run_background %q failed to run: %v", a.CanRunBackground, err)
+	a.logger().Warnf("can_run_background %q failed to run: %v", a.canRunBackground(), err)
 	return true
 }
 
