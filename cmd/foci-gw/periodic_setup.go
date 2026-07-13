@@ -53,9 +53,11 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// it on (cachingOverride); otherwise caching is assumed available — see the
 	// FIXME(#848) block below for why the old client-probe was removed.
 	var cachingOverride *bool
+	var modelKAInterval time.Duration
 	ka := inst.resolved.Keepalive
 	if resolved != nil {
-		modelKAEnabled, modelKAInterval := config.ResolveModelKeepalive(resolved)
+		var modelKAEnabled bool
+		modelKAEnabled, modelKAInterval = config.ResolveModelKeepalive(resolved)
 		if modelKAEnabled {
 			// Model config says keepalive is appropriate — override client check
 			t := true
@@ -92,8 +94,28 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() })
 	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() })
-	if !kaEnabled && !bg.Enabled && !hasReflection(refl) && !hasMaintenance(maint) && !hasAgentWarnings && !hasChatWarnings {
-		return nil
+	// Every agent gets a runner even when nothing is currently enabled: the
+	// live config-apply path (liveapply.go) can switch these features on at
+	// runtime, and an idle runner is one goroutine ticking every 30s.
+
+	// periodicRederive recomputes the runner's live-tunable settings from a
+	// freshly loaded config, preserving the static model-derived keepalive
+	// adjustments made above. Called by the live config-apply path.
+	inst.periodicRederive = func(freshCfg *config.Config, freshAcfg config.AgentConfig) periodic.Settings {
+		rc := config.Resolve(freshCfg, freshAcfg)
+		freshKA := rc.Keepalive
+		if cachingOverride != nil && modelKAInterval > 0 {
+			freshKA.Interval = modelKAInterval.String()
+		}
+		freshKA.Enabled = freshKA.Enabled && cachingAvailable
+		return periodic.Settings{
+			Keepalive:              freshKA,
+			Background:             rc.Background,
+			Reflection:             rc.Reflection,
+			Maintenance:            rc.Maintenance,
+			TickInterval:           rc.Scheduler.TickInterval,
+			EphemeralRetentionDays: freshAcfg.Sessions.EffectiveEphemeralRetentionDays(freshCfg.Sessions.EphemeralRetentionDays),
+		}
 	}
 
 	kaOrientPrompt := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))

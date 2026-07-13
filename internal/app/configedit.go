@@ -82,8 +82,11 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 
 	mode, _ := config.ParseFileMode(cfg.FileMode)
 	if value == nil {
-		_, err := config.UnsetInFile(cfg.SourcePath, target, mode)
-		return err
+		if _, err := config.UnsetInFile(cfg.SourcePath, target, mode); err != nil {
+			return err
+		}
+		h.applyLive(section, key)
+		return nil
 	}
 	if err := field.ValidateValue(*value); err != nil {
 		return err
@@ -92,8 +95,23 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 	if err != nil {
 		return err
 	}
-	_, err = config.SetInFile(cfg.SourcePath, target, formatted, mode)
-	return err
+	if _, err := config.SetInFile(cfg.SourcePath, target, formatted, mode); err != nil {
+		return err
+	}
+	h.applyLive(section, key)
+	return nil
+}
+
+// applyLive pushes a hot field's just-written value into the running process.
+// A failure never fails the edit — the file write already succeeded and the
+// value applies on restart like any restart-required field.
+func (h *Hub) applyLive(section, key string) {
+	if h.deps.ApplyLive == nil {
+		return
+	}
+	if _, err := h.deps.ApplyLive(section, key); err != nil {
+		log.Warnf("app", "config %s.%s written but live apply failed (takes effect on restart): %v", section, key, err)
+	}
 }
 
 func (h *Hub) agentExists(id string) bool {

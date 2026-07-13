@@ -28,17 +28,32 @@ type ConfigField struct {
 	Default     string    // built-in default (the `default` struct tag; "" when none)
 	// NeedsRestart is true when a change to this field only takes effect after
 	// a full server restart, because the value is captured at startup (copied
-	// into an agent/subsystem/listener) rather than read from the live config
-	// at use time. Derived from the `hot` struct tag: fields whose every
-	// behavior-deciding read goes through the live config carry hot:"<when>"
-	// (when ∈ immediate/turn/session/event — how soon a live-config update
-	// would be observed). No tag = restart required, the conservative default
-	// for new fields.
+	// into an agent/subsystem/listener) rather than reachable by the live
+	// config-apply path (cmd/foci-gw/liveapply.go). Derived from the `hot`
+	// struct tag: fields an applier covers carry hot:"<when>" (when ∈
+	// immediate/turn/session/event — how soon a change is observed). A
+	// ",global" suffix (hot:"immediate,global") scopes the tag to the field's
+	// GLOBAL registry row, for shared structs whose agent/platform override
+	// rows have no live consumer. No tag = restart required, the conservative
+	// default for new fields.
 	NeedsRestart bool
 }
 
-// validHotTags are the allowed `hot` struct tag values; enforced by test.
+// validHotTags are the allowed `hot` struct tag timing values; enforced by test.
 var validHotTags = map[string]bool{"immediate": true, "turn": true, "session": true, "event": true}
+
+// hotApplies reports whether a `hot` tag marks the registry row in `section`
+// as live-appliable (see ConfigField.NeedsRestart).
+func hotApplies(tag, section string) bool {
+	timing, scope, _ := strings.Cut(tag, ",")
+	if !validHotTags[timing] {
+		return false
+	}
+	if scope == "global" && (section == "agent" || section == "platforms") {
+		return false
+	}
+	return true
+}
 
 // Constraint defines validation rules for a config field value.
 type Constraint struct {
@@ -188,7 +203,7 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 			Type:         fieldType,
 			Description:  desc,
 			Default:      f.Tag.Get("default"),
-			NeedsRestart: !validHotTags[f.Tag.Get("hot")],
+			NeedsRestart: !hotApplies(f.Tag.Get("hot"), section),
 		})
 
 		// Parse constraints from tags

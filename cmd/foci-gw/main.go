@@ -209,6 +209,12 @@ Subcommands:
 	braveKey, _ := sec.store.Get("brave.api_key")
 	ttsMap, sttMap := initVoice(cfg, sec.store)
 
+	// ========== Live config-apply ==========
+	// Routes config edits to hot fields into the running process; appliers are
+	// registered after agent setup (registerLiveAppliers), edits before that
+	// are file-only like any restart-required field.
+	gwLiveApply = newLiveApply(configPath)
+
 	// ========== Platform messaging ==========
 	plat, err := platform.InitMessaging(cfg, platform.ProviderDeps{
 		Config:       cfg,
@@ -220,6 +226,7 @@ Subcommands:
 		Ctx:          ctx,
 		ResolveSTT:   resolveSTT,
 		ResolveTTS:   resolveTTS,
+		ApplyLive:    gwLiveApply.Apply,
 	})
 	if err != nil {
 		log.Fatalf("main", "init messaging: %v", err)
@@ -401,6 +408,8 @@ Subcommands:
 
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, inst.ag.Model, acfg.Workspace)
 	}
+
+	registerLiveAppliers(gwLiveApply, agents)
 
 	// ========== Post-agent setup ==========
 	if len(agentOrder) > 0 {

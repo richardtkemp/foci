@@ -44,8 +44,12 @@ type agentInstance struct {
 	tmuxClearAll     func()                      // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount   func() int                  // returns number of active tmux watches
 	webhooks         map[string]string           // hook ID → prompt path (merged from global + per-agent)
-	kaRunner         *periodic.Runner            // keepalive & background work timer (nil if disabled)
+	kaRunner         *periodic.Runner            // keepalive & background work timer
 	mcpManager       *mcpkg.Manager              // nil if no MCP servers configured
+
+	// periodicRederive recomputes the runner's live-tunable settings from a
+	// freshly loaded config (set by setupPeriodic, called from liveapply.go).
+	periodicRederive func(*config.Config, config.AgentConfig) periodic.Settings
 
 	// Test-only override fields. Used by the env-gated testharness
 	// control socket (see testharness_control.go). Production code never
@@ -406,14 +410,3 @@ func resolveBlockedPaths(acfg config.AgentConfig, cfg *config.Config) []config.B
 		func(b config.BlockedPath) string { return b.Path })
 }
 
-// hasReflection returns true if any reflection feature is enabled.
-// All three default to true, so returns false only when all are explicitly disabled.
-func hasReflection(r config.ResolvedReflection) bool {
-	return r.IntervalEnabled || r.SessionEndEnabled || r.CompactionEnabled
-}
-
-// hasMaintenance returns true if any scheduled maintenance task is enabled:
-// MEMORY.md consolidation (default on) or a configured reset_time.
-func hasMaintenance(m config.ResolvedMaintenance) bool {
-	return m.ConsolidationEnabled || m.ResetTime != ""
-}

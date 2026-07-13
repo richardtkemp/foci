@@ -468,6 +468,12 @@ type ProviderDeps struct {
 	Ctx          context.Context
 	ResolveSTT   func(map[string]voice.STT, []config.STTConfig, string, map[string]string) voice.STT
 	ResolveTTS   func(map[string]voice.TTS, []config.TTSConfig, string, float64, map[string]string) voice.TTS
+
+	// ApplyLive pushes a just-edited config field into the running process
+	// when the field is hot (has a live applier). Section is the REGISTRY
+	// section ("agent" for per-agent overrides). Returns applied=false for
+	// restart-required fields. nil = live apply unavailable.
+	ApplyLive func(section, key string) (applied bool, err error)
 }
 
 // DisplaySettings holds resolved display configuration values.

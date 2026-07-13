@@ -178,7 +178,7 @@ func (w *configSetWizard) handleValue(text string) (string, bool) {
 		return fmt.Sprintf("Failed to set: %s", err), true
 	}
 
-	return formatSetResult(w.section, w.key, formatted, oldValue), true
+	return formatSetResult(w.field, w.section, w.key, formatted, oldValue), true
 }
 
 // ConfigSetDirect handles the direct /config set section.key=value form.
@@ -236,17 +236,21 @@ func ConfigSetDirect(deps ConfigSetDeps, args string) (string, error) {
 		return "", err
 	}
 
-	return formatSetResult(section, key, formatted, oldValue), nil
+	return formatSetResult(field, section, key, formatted, oldValue), nil
 }
 
-func formatSetResult(section, key, formatted, oldValue string) string {
+func formatSetResult(field config.ConfigField, section, key, formatted, oldValue string) string {
 	var sb strings.Builder
 	if oldValue != "" {
 		fmt.Fprintf(&sb, "Set %s.%s = %s (was %s)", section, key, formatted, oldValue)
 	} else {
 		fmt.Fprintf(&sb, "Set %s.%s = %s", section, key, formatted)
 	}
-	sb.WriteString("\nRestart to take effect.")
+	if field.NeedsRestart {
+		sb.WriteString("\nRestart to take effect.")
+	} else {
+		sb.WriteString("\nApplied live.")
+	}
 	return sb.String()
 }
 

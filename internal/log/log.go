@@ -14,7 +14,7 @@ import (
 )
 
 // Level represents a log severity level.
-type Level int
+type Level int32
 
 const (
 	DEBUG Level = iota
@@ -70,8 +70,8 @@ func ParseLevel(s string) Level {
 
 // Logger writes event log lines and structured API log entries.
 type Logger struct {
-	level       Level
-	eventOut    io.Writer   // foci.log + stderr multiwriter
+	level       atomic.Int32 // Level; atomic so live config-apply can change it under concurrent logging
+	eventOut    io.Writer    // foci.log + stderr multiwriter
 	eventFile   *os.File    // foci.log file handle (nil = stderr only)
 	apiFile     *os.File    // api.jsonl (nil if disabled)
 	payloadFile *os.File    // api-payload.jsonl (nil if disabled)
@@ -85,7 +85,19 @@ type Logger struct {
 }
 
 // std is the global logger instance.
-var std = &Logger{level: INFO, eventOut: os.Stderr}
+var std = newLogger()
+
+func newLogger() *Logger {
+	l := &Logger{eventOut: os.Stderr}
+	l.level.Store(int32(INFO))
+	return l
+}
+
+// SetLevel changes the minimum severity written to the event log. Safe to
+// call at runtime (the live config-apply path for logging.level).
+func SetLevel(level Level) {
+	std.level.Store(int32(level))
+}
 
 // Config holds logging configuration.
 type Config struct {
@@ -183,7 +195,7 @@ func Init(cfg Config) error {
 	}
 	std.buffer = nil
 	std.initialized = true
-	std.level = level
+	std.level.Store(int32(level))
 	std.eventOut = eventOut
 	std.eventFile = eventFile
 	std.apiFile = apiFile
@@ -303,7 +315,7 @@ func SetOutput(w io.Writer) {
 
 // event writes a formatted log line if the level is at or above the configured level.
 func (l *Logger) event(level Level, component string, format string, args ...interface{}) {
-	if level < l.level {
+	if level < Level(l.level.Load()) {
 		return
 	}
 
@@ -391,6 +403,21 @@ func EnableExtra(component string) {
 		}
 	}
 	next[component] = true
+	extraLogging.Store(&next)
+}
+
+// SetExtra sets a component's "xtra:" verbose-logging flag to an explicit
+// state. Unlike EnableExtra it can also turn a component off, so the live
+// config-apply path can toggle [debug] extra_*_logging at runtime. Same
+// copy-on-write discipline: concurrent readers never see a torn map.
+func SetExtra(component string, enabled bool) {
+	next := map[string]bool{}
+	if cur := extraLogging.Load(); cur != nil {
+		for k, v := range *cur {
+			next[k] = v
+		}
+	}
+	next[component] = enabled
 	extraLogging.Store(&next)
 }
 

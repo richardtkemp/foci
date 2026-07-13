@@ -324,7 +324,7 @@ type AgentSessionsOverride struct {
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"`
 	MaxSystemPromptFile             *int    `toml:"max_system_prompt_chars_file"  desc:"Logs a server-side warning if any single system prompt file, eg a character file, exceeds this many characters. Overrides the global sessions value for this agent"`
 	MaxSystemPromptTotal            *int    `toml:"max_system_prompt_chars_total" desc:"Logs a server-side warning if this agent's combined system prompt exceeds this many characters total. Overrides the global sessions value for this agent"`
-	EphemeralRetentionDays          *int    `toml:"ephemeral_retention_days"      desc:"Auto-deletes old transcripts from short-lived internal sessions, eg reflection, keepalive, background tasks, after this many days. Normal chat history is untouched. 0 = never delete" min:"0"`
+	EphemeralRetentionDays          *int    `toml:"ephemeral_retention_days"      hot:"event" desc:"Auto-deletes old transcripts from short-lived internal sessions, eg reflection, keepalive, background tasks, after this many days. Normal chat history is untouched. 0 = never delete" min:"0"`
 }
 
 // EffectiveEphemeralRetentionDays returns the per-agent ephemeral-session
@@ -773,7 +773,7 @@ type SessionsConfig struct {
 	ArchiveAfter string `toml:"archive_after" default:"24h"`  // gzip idle sessions after this duration (default "24h")
 	FileMode     string `toml:"file_mode"     default:"0600"` // octal file permissions for session files (default "0600")
 
-	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"30" desc:"Days to keep ephemeral branch and fork session transcripts before automatic daily cleanup deletes them; 0 disables cleanup" min:"0"` // daily GC of stale ephemeral session files
+	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"30" hot:"event" desc:"Days to keep ephemeral branch and fork session transcripts before automatic daily cleanup deletes them; 0 disables cleanup" min:"0"` // daily GC of stale ephemeral session files
 }
 
 type MemorySource struct {
@@ -812,7 +812,7 @@ type HTTPConfig struct {
 }
 
 type LoggingConfig struct {
-	Level           string `toml:"level"      default:"INFO" desc:"Minimum severity written to the log file: DEBUG is most verbose, ERROR is least; each level also includes all levels above it" choices:"DEBUG,INFO,WARN,ERROR"`
+	Level           string `toml:"level"      default:"INFO" hot:"immediate" desc:"Minimum severity written to the log file: DEBUG is most verbose, ERROR is least; each level also includes all levels above it" choices:"DEBUG,INFO,WARN,ERROR"`
 	EventFile       string `toml:"event_file" default:"logs/foci.log"`
 	APIFile         string `toml:"api_file"   default:"logs/api.jsonl"`
 	APIDB           string `toml:"api_db" default:"api.db"` // SQLite API call log path (relative to data_dir)
@@ -1037,9 +1037,9 @@ func (e EndpointConfig) URLForFormat(f string) string {
 // KeepaliveConfig controls the cache keepalive timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type KeepaliveConfig struct {
-	Enabled          *bool   `toml:"enabled"                  desc:"Enable the keepalive timer, which sends periodic no-op prompts to keep the model provider's prompt cache warm"` // enable keepalive timer
-	Interval         *string `toml:"interval" default:"55m"   desc:"How long since the prompt cache was last warmed before the keepalive timer fires again" type:"duration"`        // time since cache last warmed before firing
-	Prompt           *string `toml:"prompt"                   desc:"Path to a custom keepalive prompt file. Leave unset for the built-in default, or set to none to disable it"`    // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	Enabled          *bool   `toml:"enabled"                  hot:"event" desc:"Enable the keepalive timer, which sends periodic no-op prompts to keep the model provider's prompt cache warm"` // enable keepalive timer
+	Interval         *string `toml:"interval" default:"55m"   hot:"event" desc:"How long since the prompt cache was last warmed before the keepalive timer fires again" type:"duration"`        // time since cache last warmed before firing
+	Prompt           *string `toml:"prompt"                   hot:"event" desc:"Path to a custom keepalive prompt file. Leave unset for the built-in default, or set to none to disable it"`    // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 	WarmOpenAppChats *bool   `toml:"warm_open_app_chats"      desc:"When true, keepalive warms every chat currently open in the app instead of just the main session, so their caches stay warm too"`
 }
 
@@ -1048,15 +1048,15 @@ type KeepaliveConfig struct {
 // from recent session activity. All fields are pointer types for Merge-based
 // resolution (per-agent → global).
 type ReflectionConfig struct {
-	IntervalEnabled       *bool   `toml:"interval_enabled"       default:"true" desc:"Run a reflection pass on a timer to capture memories and skills from recent activity, alongside any other reflection triggers"`                    // periodic reflection on timer
-	Interval              *string `toml:"interval"               default:"1h"   desc:"How long to wait between timer-triggered reflection passes" type:"duration"`                                                                       // time between reflections
-	IntervalPrompt        *string `toml:"interval_prompt"                       desc:"Path to a custom prompt for timer-triggered reflection. Leave unset for the built-in default, or set to none to disable this trigger"`             // prompt override (nil = embedded, "none" = disabled)
+	IntervalEnabled       *bool   `toml:"interval_enabled"       default:"true" hot:"event" desc:"Run a reflection pass on a timer to capture memories and skills from recent activity, alongside any other reflection triggers"`                    // periodic reflection on timer
+	Interval              *string `toml:"interval"               default:"1h"   hot:"event" desc:"How long to wait between timer-triggered reflection passes" type:"duration"`                                                                       // time between reflections
+	IntervalPrompt        *string `toml:"interval_prompt"                       hot:"event" desc:"Path to a custom prompt for timer-triggered reflection. Leave unset for the built-in default, or set to none to disable this trigger"`             // prompt override (nil = embedded, "none" = disabled)
 	SessionEndEnabled     *bool   `toml:"session_end_enabled"    default:"true" desc:"Run a reflection pass whenever a session is reset or reclaimed, to capture memories and skills before it ends"`                                    // reflect on /reset and reclaim
 	SessionEndPrompt      *string `toml:"session_end_prompt"                    desc:"Path to a custom prompt for session-end reflection. Leave unset for the built-in default, or set to none to disable this trigger"`                 // prompt override (nil = embedded, "none" = disabled)
 	CompactionEnabled     *bool   `toml:"compaction_enabled"     default:"true" desc:"Run a reflection pass right before a session is compacted, so memories and skills are captured before older messages are summarized away"`         // reflect before compaction
 	CompactionPrompt      *string `toml:"compaction_prompt"                     desc:"Path to a custom prompt for pre-compaction reflection. Leave unset for the built-in default, or set to none to disable this trigger"`              // prompt override (nil = embedded, "none" = disabled)
-	BackendQuietPeriod    *string `toml:"backend_quiet_period"        default:"5m"   desc:"For delegated backends like Claude Code, how long the user must be idle before reflection is injected into the live session" type:"duration"` // min idle before firing in backend mode
-	NotifyOnSkillCreation *bool   `toml:"notify_on_skill_creation"     default:"true" desc:"Send a chat message telling the user when a reflection pass creates or updates a skill"`                                                     // notify user on skill creation/update during reflection
+	BackendQuietPeriod    *string `toml:"backend_quiet_period"        default:"5m"   hot:"event" desc:"For delegated backends like Claude Code, how long the user must be idle before reflection is injected into the live session" type:"duration"` // min idle before firing in backend mode
+	NotifyOnSkillCreation *bool   `toml:"notify_on_skill_creation"     default:"true" hot:"event" desc:"Send a chat message telling the user when a reflection pass creates or updates a skill"`                                                     // notify user on skill creation/update during reflection
 }
 
 // SchedulerConfig controls the periodic scheduler that drives all four timers
@@ -1065,7 +1065,7 @@ type ReflectionConfig struct {
 // timer's own interval — so lowering it only makes the timers respond sooner.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type SchedulerConfig struct {
-	TickInterval *string `toml:"tick_interval" default:"30s" desc:"How often the scheduler checks whether keepalive, background, reflection or consolidation are due. Only affects polling latency, not how often they fire" type:"duration"` // how often the periodic timers are checked
+	TickInterval *string `toml:"tick_interval" default:"30s" hot:"event" desc:"How often the scheduler checks whether keepalive, background, reflection or consolidation are due. Only affects polling latency, not how often they fire" type:"duration"` // how often the periodic timers are checked
 }
 
 // MaintenanceConfig controls scheduled housekeeping that runs at a wall-clock
@@ -1075,20 +1075,20 @@ type SchedulerConfig struct {
 // (fixed interval since the last run). All fields are pointer types for
 // Merge-based resolution (per-agent → global).
 type MaintenanceConfig struct {
-	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" desc:"Periodically curate the recent daily memory files into the long-term MEMORY.md file"`                                                                  // curate MEMORY.md periodically
-	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  desc:"When to run MEMORY.md consolidation: either a daily clock time like 20:00, or a duration like 20h since the last run"`                                 // "HH:MM" daily or duration
-	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 desc:"Path to a custom consolidation prompt file. Leave unset for the built-in default, or set to none to disable consolidation"`                            // prompt override (nil = embedded, "none" = disabled)
-	ConsolidationMaxIdle *string `toml:"consolidation_max_idle" default:"1h" desc:"Skip consolidation if the user has not interacted within this window, since there is nothing new to curate" type:"duration"`                            // skip if idle longer than this
-	ResetTime            *string `toml:"reset_time"            default:""     desc:"When to reset the daily session: a clock time like 04:00, a duration like 24h since the last reset, or empty to never auto-reset"`                     // "HH:MM" daily, duration, or "" = never
-	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  desc:"Skip a scheduled session reset if the user interacted within this window, so an active conversation is not wiped out from under them" type:"duration"` // skip reset if recently active
+	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" hot:"event" desc:"Periodically curate the recent daily memory files into the long-term MEMORY.md file"`                                                                  // curate MEMORY.md periodically
+	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  hot:"event" desc:"When to run MEMORY.md consolidation: either a daily clock time like 20:00, or a duration like 20h since the last run"`                                 // "HH:MM" daily or duration
+	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 hot:"event" desc:"Path to a custom consolidation prompt file. Leave unset for the built-in default, or set to none to disable consolidation"`                            // prompt override (nil = embedded, "none" = disabled)
+	ConsolidationMaxIdle *string `toml:"consolidation_max_idle" default:"1h" hot:"event" desc:"Skip consolidation if the user has not interacted within this window, since there is nothing new to curate" type:"duration"`                            // skip if idle longer than this
+	ResetTime            *string `toml:"reset_time"            default:""     hot:"event" desc:"When to reset the daily session: a clock time like 04:00, a duration like 24h since the last reset, or empty to never auto-reset"`                     // "HH:MM" daily, duration, or "" = never
+	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  hot:"event" desc:"Skip a scheduled session reset if the user interacted within this window, so an active conversation is not wiped out from under them" type:"duration"` // skip reset if recently active
 }
 
 // BackgroundConfig controls the background work timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type BackgroundConfig struct {
-	Enabled          *bool   `toml:"enabled"                  desc:"Enable the background work timer, which lets the agent do unprompted work between user interactions"`                                    // enable background work timer
-	Interval         *string `toml:"interval" default:"15m"   desc:"How long since the last user interaction before the background work timer fires" type:"duration"`                                        // time since last interaction before firing
-	Prompt           *string `toml:"prompt"                   desc:"Path to a custom background work prompt file. Leave unset for the built-in default, or set to none to disable background work"`          // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	Enabled          *bool   `toml:"enabled"                  hot:"event" desc:"Enable the background work timer, which lets the agent do unprompted work between user interactions"`                                    // enable background work timer
+	Interval         *string `toml:"interval" default:"15m"   hot:"event" desc:"How long since the last user interaction before the background work timer fires" type:"duration"`                                        // time since last interaction before firing
+	Prompt           *string `toml:"prompt"                   hot:"event" desc:"Path to a custom background work prompt file. Leave unset for the built-in default, or set to none to disable background work"`          // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 	CanRunBackground *string `toml:"can_run_background"       desc:"Script run to gate background work, reflection and consolidation. Exit code 0 allows it, non-zero skips it. Empty means always allowed"` // path to a script/executable run before each background op; exit 0 permits the work, any non-zero exit skips it. Empty = always allowed.
 }
 
@@ -1105,15 +1105,15 @@ type DebugConfig struct {
 	// Off by default: they allow CPU/heap profiling and goroutine dumps, so they
 	// are gated behind an explicit opt-in even though the HTTP server is
 	// auth-gated. Process-global (top-level [debug] section).
-	EnablePprof *bool `toml:"enable_pprof" default:"false" desc:"Expose Go profiling endpoints at /debug/pprof/* for CPU, memory and goroutine diagnostics. Off by default since profiling data can be sensitive"`
+	EnablePprof *bool `toml:"enable_pprof" default:"false" hot:"immediate,global" desc:"Expose Go profiling endpoints at /debug/pprof/* for CPU, memory and goroutine diagnostics. Off by default since profiling data can be sensitive"`
 
 	// Per-package "extra" verbose logging. Each switches on investigation-grade
 	// logging for one package, tagged "xtra:<package>" in the log (grep
 	// "xtra:ccstream", or "xtra:" for all). Process-global (applied once at
 	// startup from the top-level [debug] section); default off. See log.Extra.
-	ExtraCcstreamLogging *bool `toml:"extra_ccstream_logging" default:"false" desc:"Log verbose details (tagged xtra:ccstream) of the Claude Code backend streaming transport, for debugging delegated Claude Code sessions"` // verbose ccstream turn/steer logging
-	ExtraTelegramLogging *bool `toml:"extra_telegram_logging" default:"false" desc:"Log verbose details (tagged xtra:telegram) of the Telegram bot's polling and message transport, for debugging Telegram connectivity"`     // verbose telegram poll/transport logging
-	ExtraInboxLogging    *bool `toml:"extra_inbox_logging"    default:"false" desc:"Log verbose details (tagged xtra:inbox) of how incoming messages are queued, steered or dropped, for debugging message routing"`          // verbose inbox routing/gate logging
+	ExtraCcstreamLogging *bool `toml:"extra_ccstream_logging" default:"false" hot:"immediate,global" desc:"Log verbose details (tagged xtra:ccstream) of the Claude Code backend streaming transport, for debugging delegated Claude Code sessions"` // verbose ccstream turn/steer logging
+	ExtraTelegramLogging *bool `toml:"extra_telegram_logging" default:"false" hot:"immediate,global" desc:"Log verbose details (tagged xtra:telegram) of the Telegram bot's polling and message transport, for debugging Telegram connectivity"`     // verbose telegram poll/transport logging
+	ExtraInboxLogging    *bool `toml:"extra_inbox_logging"    default:"false" hot:"immediate,global" desc:"Log verbose details (tagged xtra:inbox) of how incoming messages are queued, steered or dropped, for debugging message routing"`          // verbose inbox routing/gate logging
 }
 
 type Config struct {

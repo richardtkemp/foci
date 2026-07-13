@@ -152,8 +152,70 @@ type Runner struct {
 	ephemeralRetentionDays int       // 0 = disabled
 	lastEphemeralCleanup   time.Time // last daily GC run
 
+	// updateCh delivers live Settings updates into the run loop, so all config
+	// mutation happens on the loop goroutine (no locks on the per-tick reads).
+	// nil on struct-literal Runners (tests) — a nil channel never selects.
+	updateCh chan Settings
+
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+// Settings are the runner knobs that can be updated while it runs (the live
+// config-apply path). Everything else on RunnerConfig is fixed at construction.
+type Settings struct {
+	Keepalive              config.ResolvedKeepalive
+	Background             config.ResolvedBackground
+	Reflection             config.ResolvedReflection
+	Maintenance            config.ResolvedMaintenance
+	TickInterval           string // Go duration string; "" = default
+	EphemeralRetentionDays int
+}
+
+// UpdateSettings hands fresh settings to the run loop. Non-blocking: a pending
+// undelivered update is replaced (only the latest state matters).
+func (r *Runner) UpdateSettings(s Settings) {
+	if r.updateCh == nil {
+		return
+	}
+	for {
+		select {
+		case r.updateCh <- s:
+			return
+		default:
+			select {
+			case <-r.updateCh: // drop the stale pending update
+			default:
+			}
+		}
+	}
+}
+
+// applySettings installs fresh settings; runs on the loop goroutine only.
+func (r *Runner) applySettings(s Settings, ticker *time.Ticker) {
+	// warm_open_app_chats is also baked into the OpenSessionsFn closure at
+	// construction, so a live update cannot fully take effect — keep the boot
+	// value so the two consumers never disagree.
+	s.Keepalive.WarmOpenAppChats = r.kaCfg.WarmOpenAppChats
+	r.kaCfg = s.Keepalive
+	r.bgCfg = s.Background
+	r.reflectCfg = s.Reflection
+	r.maintCfg = s.Maintenance
+	r.ephemeralRetentionDays = s.EphemeralRetentionDays
+
+	newTick := defaultTickInterval
+	if s.TickInterval != "" {
+		if d, ok := r.parseDuration("scheduler tick_interval", s.TickInterval); ok && d > 0 {
+			newTick = d
+		}
+	}
+	if newTick != r.tickInterval {
+		r.tickInterval = newTick
+		if ticker != nil {
+			ticker.Reset(newTick)
+		}
+	}
+	r.log.Infof("live settings applied (ka=%v bg=%v tick=%s)", r.kaCfg.Enabled, r.bgCfg.Enabled, r.tickInterval)
 }
 
 // RunnerConfig holds all the dependencies for creating a Runner.
@@ -240,6 +302,7 @@ func New(cfg RunnerConfig) *Runner {
 		// slot rather than resetting immediately on startup (a persisted value
 		// below overrides this).
 		lastReset: now,
+		updateCh:  make(chan Settings, 1),
 		done:      make(chan struct{}),
 	}
 	// Resolve the tick cadence: config value if valid, else the 30s default.
@@ -367,6 +430,8 @@ func (r *Runner) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case s := <-r.updateCh:
+			r.applySettings(s, ticker)
 		case <-ticker.C:
 			if r.agent != nil {
 				r.agent.DrainRateLimitQueue(ctx)

@@ -42,15 +42,15 @@ func TestExtra_EmitsWhenEnabledTaggedXtra(t *testing.T) {
 	// Redirect output to a buffer; restore on exit.
 	std.mu.Lock()
 	prevOut := std.eventOut
-	prevLevel := std.level
+	prevLevel := Level(std.level.Load())
 	var buf bytes.Buffer
 	std.eventOut = &buf
-	std.level = INFO
+	std.level.Store(int32(INFO))
 	std.mu.Unlock()
 	defer func() {
 		std.mu.Lock()
 		std.eventOut = prevOut
-		std.level = prevLevel
+		std.level.Store(int32(prevLevel))
 		std.mu.Unlock()
 	}()
 
@@ -83,15 +83,15 @@ func TestComponentLoggerExtra_LabelMatchesBaseEnable(t *testing.T) {
 
 	std.mu.Lock()
 	prevOut := std.eventOut
-	prevLevel := std.level
+	prevLevel := Level(std.level.Load())
 	var buf bytes.Buffer
 	std.eventOut = &buf
-	std.level = INFO
+	std.level.Store(int32(INFO))
 	std.mu.Unlock()
 	defer func() {
 		std.mu.Lock()
 		std.eventOut = prevOut
-		std.level = prevLevel
+		std.level.Store(int32(prevLevel))
 		std.mu.Unlock()
 	}()
 
