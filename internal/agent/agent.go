@@ -142,6 +142,7 @@ type Agent struct {
 	ModelMetaFn                             func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
 	ModelDefaultsFn                         func(model string) config.ModelDefaults // returns per-model defaults from [models.*] config; nil = no model defaults
 	CanRunBackground                        string                                  // path to an executable gating background work; exit 0 = allowed, non-zero = skip; "" = always allowed
+	LiveConfigFn                            func() *config.ResolvedAgentConfig      // when set, per-turn getters read the LIVE resolved config so edits apply without restart; nil in direct-constructed agents (tests) → static fields above
 	ServerTools                             []provider.ToolDef                      // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DelegatedManager                        *DelegatedManager                       // nil = traditional agent loop; non-nil = lazy per-session delegated transport management
 	ReloginTrigger                          func(reason, sessionKey string) bool    // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
@@ -229,6 +230,41 @@ type Agent struct {
 	// again with no router rebuild). Wired from cmd/foci-gw via route.ConnFor;
 	// nil (tests / no connection manager) → the fallback discards-and-warns.
 	ResolveLateConn func(sk string) platform.Connection
+}
+
+func (a *Agent) streaming() bool {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Display.Streaming
+	}
+	return a.Streaming
+}
+
+func (a *Agent) maxToolLoops() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Loop.MaxToolLoops
+	}
+	return a.MaxToolLoops
+}
+
+func (a *Agent) cacheBustDetect() bool {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Debug.CacheBustDetect
+	}
+	return a.CacheBustDetect
+}
+
+func (a *Agent) cacheBustIdleThreshold() time.Duration {
+	if a.LiveConfigFn != nil {
+		return time.Duration(a.LiveConfigFn().Debug.CacheBustIdleMinutes) * time.Minute
+	}
+	return a.CacheBustIdleThreshold
+}
+
+func (a *Agent) canRunBackground() string {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Background.CanRunBackground
+	}
+	return a.CanRunBackground
 }
 
 // TransformMessage applies compiled message transforms to the text.

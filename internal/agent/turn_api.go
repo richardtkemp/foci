@@ -220,7 +220,7 @@ func (t *APITransport) InjectNudges(ts *TurnState) {
 func (t *APITransport) RunInference(ts *TurnState) error {
 	a := t.agent
 
-	maxLoops := a.MaxToolLoops
+	maxLoops := a.maxToolLoops()
 	if maxLoops <= 0 {
 		maxLoops = 100
 	}
@@ -283,10 +283,10 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			ts.SessionKey, ts.TurnModel, len(ts.Messages), len(ts.ToolDefs), len(ts.System))
 
 		start := time.Now()
-		a.logger().Debugf("api_call_start session=%s model=%s streaming=%v", ts.SessionKey, ts.TurnModel, a.Streaming)
+		a.logger().Debugf("api_call_start session=%s model=%s streaming=%v", ts.SessionKey, ts.TurnModel, a.streaming())
 
 		var handler *provider.StreamHandler
-		if a.Streaming {
+		if a.streaming() {
 			handler = &provider.StreamHandler{
 				OnTextDelta: func(delta string) {
 					emitTextDelta(ts.Ctx, delta)
