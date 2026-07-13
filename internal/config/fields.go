@@ -451,6 +451,66 @@ var mapFieldSpecs = []MapFieldSpec{
 	{Section: "system.webhooks", Description: "Webhook hook ID → prompt file path (POST /webhook/{agent}/{hookid})", ElementType: FieldString},
 }
 
+// ObjectSubField describes one sub-key of an object-list entry (a column of a
+// [[section]] array-of-tables block).
+type ObjectSubField struct {
+	Key         string
+	Type        FieldType
+	Description string
+}
+
+// ObjectFieldSpec describes a []struct config section addressable as a TOML
+// array-of-tables ([[section]]). Like MapFieldSpec, this is a deliberate,
+// explicit opt-in: walkType skips []struct fields, and the whole list is
+// replaced atomically by SetTableArray (there is no per-element set path — the
+// client always sends the entire array). Section MAY be dotted
+// ("memory.sources" -> [[memory.sources]]).
+type ObjectFieldSpec struct {
+	Section     string
+	Description string
+	Fields      []ObjectSubField
+}
+
+// objectFieldSpecs is the registry of []struct config sections settable via the
+// app config editor as array-of-tables. Kept small and explicit, mirroring
+// mapFieldSpecs — the sub-field shapes here must match the corresponding Go
+// struct's toml-tagged fields (MessageTransform, BlockedPath, MemorySource).
+var objectFieldSpecs = []ObjectFieldSpec{
+	{Section: "message_transforms", Description: "Regex find/replace rules applied to inbound messages", Fields: []ObjectSubField{
+		{Key: "find", Type: FieldString, Description: "Regex pattern to match"},
+		{Key: "replace", Type: FieldString, Description: "Replacement string (supports $1, $2, ...)"},
+	}},
+	{Section: "blocked_paths", Description: "Path prefixes that write/edit tools refuse (with rebuke message)", Fields: []ObjectSubField{
+		{Key: "path", Type: FieldString, Description: "Directory or file prefix to block"},
+		{Key: "rebuke", Type: FieldString, Description: "Message returned when a write/edit is attempted"},
+	}},
+	{Section: "memory.sources", Description: "Memory search index sources (combined additively across all listed dirs)", Fields: []ObjectSubField{
+		{Key: "name", Type: FieldString, Description: "Unique identifier (e.g. canonical, code, docs)"},
+		{Key: "dir", Type: FieldString, Description: "Directory path to index"},
+		{Key: "weight", Type: FieldFloat, Description: "Weight multiplier 0.0-1.0 (1.0 = highest priority)"},
+	}},
+}
+
+// ObjectFields returns the registered settable []struct sections (a copy, so
+// callers can't mutate the registry).
+func ObjectFields() []ObjectFieldSpec {
+	out := make([]ObjectFieldSpec, len(objectFieldSpecs))
+	copy(out, objectFieldSpecs)
+	return out
+}
+
+// ObjectFieldSpecFor returns the spec whose Section matches (case-insensitive),
+// or ok=false when section is not a registered object-list.
+func ObjectFieldSpecFor(section string) (ObjectFieldSpec, bool) {
+	lower := strings.ToLower(section)
+	for _, s := range objectFieldSpecs {
+		if strings.ToLower(s.Section) == lower {
+			return s, true
+		}
+	}
+	return ObjectFieldSpec{}, false
+}
+
 // bareTOMLKeyRe matches a valid unquoted TOML bare key: letters, digits,
 // underscore, dash. Anything else (a literal ".", "/", ":", space, ...)
 // requires quoting to write as a flat key — SetInFile never quotes, so

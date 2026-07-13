@@ -262,3 +262,86 @@ func TestConfigPut_AgentScopeAndUnset(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigGet_EmitsObjectSections proves []struct sections (message_transforms)
+// are advertised as an "object[]"-typed descriptor carrying its sub-field shapes
+// in "fields", with the current entries as a JSON array at Values[section].
+func TestConfigGet_EmitsObjectSections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	os.WriteFile(path, []byte("[[message_transforms]]\nfind = \"foo\"\nreplace = \"bar\"\n"), 0o600)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{Config: &config.Config{SourcePath: path, FileMode: "0600"}}
+	c := fakeClient()
+	c.features = map[string]struct{}{featureConfigEdit: {}}
+	h.clients[c] = struct{}{}
+
+	h.handleConfigGet(c)
+	schema := lastConfigSchema(t, c)
+	if schema == nil {
+		t.Fatal("no config.schema frame")
+	}
+
+	fields, _ := schema["fields"].([]any)
+	var desc map[string]any
+	for _, fe := range fields {
+		f, _ := fe.(map[string]any)
+		if f["section"] == "message_transforms" && f["type"] == "object[]" {
+			desc = f
+		}
+	}
+	if desc == nil {
+		t.Fatal(`no {section:"message_transforms", type:"object[]"} descriptor emitted`)
+	}
+	sub, _ := desc["fields"].([]any)
+	if len(sub) != 2 {
+		t.Errorf("object[] descriptor sub-fields = %d, want 2", len(sub))
+	}
+	if desc["needsRestart"] != true {
+		t.Error("object[] sections are restart-required; needsRestart should be true")
+	}
+
+	global := scopeByID(t, schema, "")
+	gv, _ := global["values"].(map[string]any)
+	got, _ := gv["message_transforms"].(string)
+	if !strings.Contains(got, `"find":"foo"`) || !strings.Contains(got, `"replace":"bar"`) {
+		t.Errorf("message_transforms value = %q, want a JSON array with find/replace", got)
+	}
+}
+
+// TestConfigPut_ObjectListWholeReplace proves a put with an empty key and a JSON
+// array value replaces the whole [[section]] list, and unset clears it.
+func TestConfigPut_ObjectListWholeReplace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	os.WriteFile(path, []byte("data_dir = \"/tmp\"\n\n[[message_transforms]]\nfind = \"old\"\nreplace = \"x\"\n"), 0o600)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{Config: &config.Config{SourcePath: path, FileMode: "0600"}}
+	c := fakeClient()
+	c.features = map[string]struct{}{featureConfigEdit: {}}
+	h.clients[c] = struct{}{}
+
+	h.handleConfigPut(c, fap.ConfigPut{Section: "message_transforms", Key: "", Value: `[{"find":"a","replace":"1"},{"find":"b","replace":"2"}]`})
+	data, _ := os.ReadFile(path)
+	s := string(data)
+	if strings.Contains(s, `find = "old"`) {
+		t.Errorf("old block not replaced:\n%s", s)
+	}
+	if !strings.Contains(s, `find = "a"`) || !strings.Contains(s, `find = "b"`) {
+		t.Errorf("new blocks not written:\n%s", s)
+	}
+	if !strings.Contains(s, `data_dir = "/tmp"`) {
+		t.Errorf("unrelated content clobbered:\n%s", s)
+	}
+
+	// A bad value (unknown sub-field) is rejected and answers only the requester.
+	h.handleConfigPut(c, fap.ConfigPut{Section: "message_transforms", Key: "", Value: `[{"nope":"x"}]`})
+	if schema := lastConfigSchema(t, c); schema == nil || schema["error"] == nil || schema["error"] == "" {
+		t.Error("invalid object-list put must answer with error set")
+	}
+
+	// Unset clears every block.
+	h.handleConfigUnset(c, fap.ConfigUnset{Section: "message_transforms", Key: ""})
+	data, _ = os.ReadFile(path)
+	if strings.Contains(string(data), "[[message_transforms]]") {
+		t.Errorf("unset should remove all blocks:\n%s", data)
+	}
+}

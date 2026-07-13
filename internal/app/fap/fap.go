@@ -869,6 +869,11 @@ type ConfigFieldDesc struct {
 	// the GLOBAL field this per-agent field overrides (e.g. "agent_loop.max_tool_loops"
 	// for "loop.max_tool_loops"). Empty = per-agent only, no global counterpart.
 	GlobalKey string `json:"globalKey,omitempty"`
+	// Fields, on type=="object[]" descriptors only, describes the sub-fields of
+	// one array-of-tables entry (e.g. find/replace for message_transforms). Each
+	// carries its own Key/ValueType/Description; the section's current entries are
+	// a JSON array-of-objects at the scope's Values[section].
+	Fields []ConfigFieldDesc `json:"fields,omitempty"`
 }
 
 // ConfigScope is one editing surface: the global config (ID "") or one

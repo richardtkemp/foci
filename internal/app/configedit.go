@@ -88,6 +88,14 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 	if scope == "" && section == "agent" {
 		return fmt.Errorf("the agent section needs an agent scope")
 	}
+	// Object-list (array-of-tables) sections — message_transforms, blocked_paths,
+	// memory.sources — are addressed with an empty key and carry the WHOLE list as
+	// a JSON array-of-objects; there is no per-element set path. Route them to
+	// SetTableArray, which replaces every [[section]] block atomically.
+	if spec, isObj := config.ObjectFieldSpecFor(section); isObj && key == "" {
+		return h.applyObjectListEdit(cfg, scope, spec, value)
+	}
+
 	field, ok := config.LookupField(section + "." + key)
 	if !ok {
 		return fmt.Errorf("unknown config field %s.%s", section, key)
@@ -120,6 +128,30 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 		return err
 	}
 	h.applyLive(section, key)
+	return nil
+}
+
+// applyObjectListEdit writes a whole array-of-tables section (value non-nil, a
+// JSON array-of-objects) or clears it (value nil). Object-lists are global-only
+// for now — per-agent [[agents.*]] overrides aren't surfaced by the editor yet.
+// They are restart-required (no live applier), so no applyLive call: the file
+// write succeeds and the change takes effect on the next restart.
+func (h *Hub) applyObjectListEdit(cfg *config.Config, scope string, spec config.ObjectFieldSpec, value *string) error {
+	if scope != "" {
+		return fmt.Errorf("object-list section %q has no per-agent scope yet", spec.Section)
+	}
+	mode, _ := config.ParseFileMode(cfg.FileMode)
+	var entries []map[string]any
+	if value != nil {
+		parsed, err := config.ParseObjectListValue(spec, *value)
+		if err != nil {
+			return err
+		}
+		entries = parsed
+	}
+	if _, err := config.SetTableArray(cfg.SourcePath, spec.Section, entries, mode); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -224,6 +256,30 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 		})
 	}
 
+	// Object-list sections (message_transforms, blocked_paths, memory.sources) are
+	// []struct array-of-tables, also outside the scalar registry. Emit one
+	// descriptor each with type "object[]", carrying the entry sub-field shapes in
+	// Fields; the section's current entries are a JSON array at Values[section].
+	// Restart-required (no live applier) so NeedsRestart is set.
+	for _, of := range config.ObjectFields() {
+		sub := make([]fap.ConfigFieldDesc, 0, len(of.Fields))
+		for _, sf := range of.Fields {
+			sub = append(sub, fap.ConfigFieldDesc{
+				Key:         sf.Key,
+				ValueType:   sf.Type.TypeName(),
+				Description: sf.Description,
+			})
+		}
+		descs = append(descs, fap.ConfigFieldDesc{
+			Section:      of.Section,
+			Key:          "",
+			ValueType:    "object[]",
+			Description:  of.Description,
+			NeedsRestart: true,
+			Fields:       sub,
+		})
+	}
+
 	fileGlobal, fileAgents, err := config.ExplicitFileValues(cfg.SourcePath)
 	if err != nil {
 		log.Warnf("app", "config schema: parse %s: %v", cfg.SourcePath, err)
@@ -272,6 +328,21 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 		gScope.Values[mf.Section] = string(b)
 		if len(entries) > 0 {
 			gScope.Explicit = append(gScope.Explicit, mf.Section)
+		}
+	}
+	// Object-list sections: current [[section]] blocks as a JSON array-of-objects.
+	for _, of := range config.ObjectFields() {
+		entries, err := config.TableArrayEntries(cfg.SourcePath, of)
+		if err != nil {
+			continue
+		}
+		b, err := json.Marshal(entries)
+		if err != nil {
+			continue
+		}
+		gScope.Values[of.Section] = string(b)
+		if len(entries) > 0 {
+			gScope.Explicit = append(gScope.Explicit, of.Section)
 		}
 	}
 	sort.Strings(gScope.Explicit)
