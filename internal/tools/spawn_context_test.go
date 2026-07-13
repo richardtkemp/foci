@@ -44,7 +44,7 @@ func TestSpawnContextRaw(t *testing.T) {
 		GroupResolver:  gr,
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",
-		MaxToolLoops:   10,
+		MaxToolLoops:   func() int { return 10 },
 	}
 	tool := NewSpawnTool(deps, nil)
 
@@ -107,7 +107,7 @@ func TestSpawnContextCharacter(t *testing.T) {
 		GroupResolver:  gr,
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",
-		MaxToolLoops:   10,
+		MaxToolLoops:   func() int { return 10 },
 	}
 	tool := NewSpawnTool(deps, nil)
 
@@ -289,7 +289,7 @@ func TestSpawnExploreMode(t *testing.T) {
 		GroupResolver:   gr,
 		FallbackModel:   "anthropic/claude-opus-4-6", // parent uses opus
 		FallbackFormat:  "anthropic",
-		ExploreMaxDepth: 10,
+		ExploreMaxDepth: func() int { return 10 },
 	}
 	tool := NewSpawnTool(deps, nil)
 

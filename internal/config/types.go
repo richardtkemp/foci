@@ -473,7 +473,7 @@ type SystemConfig struct {
 type ToolConfig struct {
 	ExecAutoBackground  *int    `toml:"exec_auto_background"  default:"10"        hot:"immediate" desc:"Seconds an exec command runs before it's automatically moved to the background so the agent isn't blocked waiting on it"`
 	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns" default:"3"         desc:"Maximum number of spawned subagent sessions that can run at once; further spawn requests queue until a slot frees up"`
-	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       desc:"Maximum tool-call iterations an explore-type spawned subagent can make before it's forced to stop and return results"`
+	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       hot:"immediate" desc:"Maximum tool-call iterations an explore-type spawned subagent can make before it's forced to stop and return results"`
 	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  hot:"immediate" desc:"Maximum file size, in bytes, the upload tool will accept (default 50 MiB); larger files are rejected"`                                                // 50MB
 	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  hot:"immediate" desc:"Maximum file size, in bytes, the read and edit tools will load (default 50 MiB); larger files must be read with an offset/limit range"`               // 50MB
 	HTTPMaxSpillBytes   *int64  `toml:"http_max_spill_bytes"  default:"52428800"  hot:"immediate" desc:"Maximum bytes of an http_request response kept inline in the conversation (default 50 MiB); anything beyond that is saved to a file on disk instead"` // 50MB

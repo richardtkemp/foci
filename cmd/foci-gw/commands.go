@@ -188,7 +188,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		AndroidDeps:         androidDeps,
 		TokenCountCache:     command.NewTokenCountCache(),
 		ConfigureFacet:      p.configureFacet,
-		Resolved:            p.resolved,
+		Resolved:            p.resolved, // static-cfg:ignore: plumbing — kept for any consumer that needs the frozen snapshot specifically; ResolvedLive is the live counterpart
 		ResolvedLive:        p.resolvedLive,
 		PprofControl:        pprofControl,
 	}
@@ -258,7 +258,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.DoneCommand())
 
 	// Stop aliases (e.g. "wait" → same as "stop")
-	bc := p.resolved.Behavior
+	bc := p.resolved.Behavior // static-cfg:ignore: decides which command names get REGISTERED — structural, like tool_table.go's SearchProvider/FetchProvider (bucket C)
 	if bc.EnableStopAliases {
 		stopCmd := cmds.Get("stop")
 		for _, alias := range bc.StopAliases {

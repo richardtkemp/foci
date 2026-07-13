@@ -118,6 +118,7 @@ var (
 		"tools.http_max_spill_bytes", "agent.tools.http_max_spill_bytes",
 		"memory.search_backend", "agent.memory.search_backend",
 		"tools.todo_format", "agent.tools.todo_format",
+		"tools.explore_max_depth", "agent.tools.explore_max_depth",
 		"environment.enabled", "agent.environment.enabled",
 		"environment.docs_path", "agent.environment.docs_path",
 		"sessions.compaction_threshold", "agent.sessions.compaction_threshold",
