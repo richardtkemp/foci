@@ -44,6 +44,7 @@ docker/memory/*
 .claude
 .claude/
 .ci.mk
+.remote.mk
 
 # Orphan from a bare `go build` in scripts/find-disconnected-tests/ (module
 # name = foci-find-disconnected-tests). The real build output goes to bin/.

@@ -22,6 +22,12 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 -include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.ci.mk
 -include .ci.mk
 
+# Opt-in remote build offload to a Mac (see the remote-build target). REMOTE_HOST
+# + REMOTE_DIR come from a gitignored .remote.mk, inherited by worktrees via
+# git-common-dir. Empty by default → remote-build errors; nothing else is affected.
+-include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.remote.mk
+-include .remote.mk
+
 .PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check clean setup-hooks
 
 all: build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads
@@ -436,3 +442,19 @@ update:
 	$(MAKE) install-unit
 	$(MAKE) stage-changelog
 	$(MAKE) restart
+
+# Offload a compile of the whole module to a Mac (opt-in), mirroring foci-client's
+# remote-* pattern: rsync the working tree over, build there. Cross-compiles for
+# the Linux deploy target (not the Mac's native darwin) so the linux-only files
+# (e.g. internal/procx/cap_linux.go) are the ones checked. Config in a gitignored
+# .remote.mk:  REMOTE_HOST := mac   REMOTE_DIR := ~/git/foci
+# Additive — no existing target uses it. Requires Go on the remote.
+REMOTE_SSH_TIMEOUT ?= 5
+.PHONY: remote-build
+remote-build:
+	@[ -n "$(REMOTE_HOST)" ] || { echo ">>> set REMOTE_HOST + REMOTE_DIR in .remote.mk to enable remote builds"; exit 1; }
+	@ssh -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes $(REMOTE_HOST) true 2>/dev/null || { echo ">>> '$(REMOTE_HOST)' not reachable"; exit 1; }
+	@echo ">>> Syncing foci -> $(REMOTE_HOST):$(REMOTE_DIR) ..."
+	rsync -az --delete --exclude='.git' --exclude='/bin/' --exclude='.remote.mk' --exclude='.ci.mk' ./ "$(REMOTE_HOST):$(REMOTE_DIR)/"
+	@echo ">>> GOOS=linux GOARCH=amd64 go build ./... on $(REMOTE_HOST) ..."
+	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...'
