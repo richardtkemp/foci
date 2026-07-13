@@ -1195,6 +1195,68 @@ func TestOnAssistant_ModelAndUsageExtraction(t *testing.T) {
 	}
 }
 
+func TestOnAssistant_DropsSyntheticNoResponse(t *testing.T) {
+	// CC's synthetic "No response requested." placeholder is a no-API-call turn:
+	// OnAssistant must drop it before it overwrites the model (the unpriced
+	// <synthetic> sentinel would warn), appends to the turn text, or delivers.
+	t.Parallel()
+
+	b := &Backend{}
+	b.lastModel = "claude-opus-4-20250514" // a prior real turn
+	var texts []string
+	applyHandler(b, &testHandler{OnText: func(s string) { texts = append(texts, s) }})
+
+	b.OnAssistant(&AssistantMessage{
+		Message: BetaMessage{
+			Model:   syntheticModel,
+			Content: []ContentBlock{{Type: "text", Text: "No response requested."}},
+		},
+	})
+
+	b.mu.Lock()
+	model := b.lastModel
+	b.mu.Unlock()
+	if model != "claude-opus-4-20250514" {
+		t.Errorf("lastModel = %q, want the prior real model unchanged (synthetic dropped)", model)
+	}
+	b.turnMu.Lock()
+	tlen := b.turnText.Len()
+	b.turnMu.Unlock()
+	if tlen != 0 {
+		t.Errorf("turnText len = %d, want 0 (synthetic no-response not accumulated)", tlen)
+	}
+	if len(texts) != 0 {
+		t.Errorf("OnText called %d times, want 0 (dropped before delivery)", len(texts))
+	}
+}
+
+func TestOnAssistant_KeepsRealNoResponseText(t *testing.T) {
+	// A REAL-model message that merely contains "No response requested." is a
+	// genuine reply and must NOT be dropped — only the <synthetic> sentinel is.
+	t.Parallel()
+
+	b := &Backend{}
+	var texts []string
+	applyHandler(b, &testHandler{OnText: func(s string) { texts = append(texts, s) }})
+
+	b.OnAssistant(&AssistantMessage{
+		Message: BetaMessage{
+			Model:   "claude-opus-4-20250514",
+			Content: []ContentBlock{{Type: "text", Text: "No response requested."}},
+		},
+	})
+
+	b.mu.Lock()
+	model := b.lastModel
+	b.mu.Unlock()
+	if model != "claude-opus-4-20250514" {
+		t.Errorf("lastModel = %q, want it set (real message not dropped)", model)
+	}
+	if len(texts) != 1 {
+		t.Errorf("OnText called %d times, want 1 (real message delivered)", len(texts))
+	}
+}
+
 func TestOnAssistant_EmptyModel(t *testing.T) {
 	// Verifies OnAssistant does not overwrite lastModel when the assistant
 	// message has an empty model (e.g. partial streaming messages).
