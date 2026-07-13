@@ -40,7 +40,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// leave `resolved` nil; the `if resolved != nil` guards below handle it.
 	var resolved *config.ResolvedModel
 	if inst.ag.DelegatedManager == nil {
-		groupResolver := config.NewGroupResolver(inst.resolved.Groups, p.cfg.Models, p.cfg.HasAPIAgent())
+		groupResolver := config.NewGroupResolver(inst.LiveConfig().Groups, p.cfg.Models, p.cfg.HasAPIAgent())
 		resolved = groupResolver.ResolveCall(config.CallChat)
 	}
 
@@ -54,7 +54,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// FIXME(#848) block below for why the old client-probe was removed.
 	var cachingOverride *bool
 	var modelKAInterval time.Duration
-	ka := inst.resolved.Keepalive
+	ka := inst.LiveConfig().Keepalive
 	if resolved != nil {
 		var modelKAEnabled bool
 		modelKAEnabled, modelKAInterval = config.ResolveModelKeepalive(resolved)
@@ -68,9 +68,9 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		}
 	}
 
-	bg := inst.resolved.Background
-	refl := inst.resolved.Reflection
-	maint := inst.resolved.Maintenance
+	bg := inst.LiveConfig().Background
+	refl := inst.LiveConfig().Reflection
+	maint := inst.LiveConfig().Maintenance
 
 	// Caching availability gates keepalive cache-warming. It's a STATIC model
 	// capability, so we read it from the registry (#848) rather than forcing an
@@ -110,8 +110,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		}
 	}
 
-	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() })
-	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() })
+	hasAgentWarnings := anyNotifyEnabled(inst.LiveConfig(), p.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() })
+	hasChatWarnings := anyNotifyEnabled(inst.LiveConfig(), p.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() })
 	// Every agent gets a runner even when nothing is currently enabled: the
 	// live config-apply path (liveapply.go) can switch these features on at
 	// runtime, and an idle runner is one goroutine ticking every 30s.
@@ -237,7 +237,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		Keepalive:          ka,
 		Background:         bg,
 		Reflection:         refl,
-		TickInterval:       inst.resolved.Scheduler.TickInterval,
+		TickInterval:       inst.LiveConfig().Scheduler.TickInterval,
 		CacheTTL:           cacheTTL,
 		Maintenance:        maint,
 		PromptSearchDirs:   inst.promptSearchDirs,

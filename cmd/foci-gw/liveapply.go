@@ -95,6 +95,14 @@ var (
 		"agent.scheduler.tick_interval",
 		"agent.sessions.ephemeral_retention_days",
 	}
+
+	// Fields read at runtime through agentInstance.LiveConfig(). The applier
+	// re-resolves each agent and swaps the whole snapshot, so any field a
+	// consumer reads via LiveConfig goes hot by adding it here + a `hot` tag.
+	liveApplyResolvedAddrs = []string{
+		"voice.tts", "voice.tts_rate",
+		"agent.voice.tts", "agent.voice.tts_rate",
+	}
 )
 
 // registerLiveAppliers wires the tranche-1 appliers. Called once from main
@@ -120,6 +128,15 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 				continue
 			}
 			inst.kaRunner.UpdateSettings(inst.periodicRederive(fresh, freshAcfg))
+		}
+		return nil
+	})
+
+	la.register(liveApplyResolvedAddrs, func(fresh *config.Config) error {
+		for _, freshAcfg := range fresh.Agents {
+			if inst := agents[freshAcfg.ID]; inst != nil {
+				inst.resolved.Store(config.Resolve(fresh, freshAcfg))
+			}
 		}
 		return nil
 	})

@@ -121,7 +121,7 @@ func handleRestartAndFirstRun(
 		for _, id := range agentOrder {
 			inst := agents[id]
 			for _, conn := range connMgr.AllForAgent(id) {
-				if !inst.resolved.PlatformNotify(conn.PlatformName()).StartupNotify {
+				if !inst.LiveConfig().PlatformNotify(conn.PlatformName()).StartupNotify {
 					continue
 				}
 				name := conn.Username()
@@ -152,7 +152,7 @@ func handleRestartAndFirstRun(
 		if agentNeedsRestart {
 			hasStartupNotify := false
 			for _, conn := range connMgr.AllForAgent(agentID) {
-				if inst.resolved.PlatformNotify(conn.PlatformName()).StartupNotify {
+				if inst.LiveConfig().PlatformNotify(conn.PlatformName()).StartupNotify {
 					hasStartupNotify = true
 					break
 				}
