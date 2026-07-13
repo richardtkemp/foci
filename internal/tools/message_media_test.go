@@ -25,7 +25,7 @@ func TestSendMessageToUserSendAsVideo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: video" {
+	if result.Text != "Sent: clip.mp4" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.videoCalls) != 1 || mock.videoCalls[0] != "/tmp/clip.mp4" {
@@ -51,7 +51,7 @@ func TestSendMessageToUserSendAsVoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: voice note" {
+	if result.Text != "Sent: note.ogg" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.voiceCalls) != 1 {
@@ -74,7 +74,7 @@ func TestSendMessageToUserSendAsDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: document" {
+	if result.Text != "Sent: report.pdf" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.documentCalls) != 1 {
@@ -96,7 +96,7 @@ func TestSendMessageToUserSendAsDefaultIsDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: document" {
+	if result.Text != "Sent: file.bin" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.documentCalls) != 1 {
@@ -169,7 +169,7 @@ func TestSendMessageToUserTextAndVideo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: video+caption" {
+	if result.Text != "Sent: clip.mp4+caption" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.textCalls) != 0 {
@@ -198,7 +198,7 @@ func TestSendMessageToUserSendAsPhoto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: photo" {
+	if result.Text != "Sent: image.jpg" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.photoCalls) != 1 || mock.photoCalls[0] != "/tmp/image.jpg" {
@@ -265,7 +265,7 @@ func TestSendMessageToUserSendAsAudio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: audio" {
+	if result.Text != "Sent: song.mp3" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.audioCalls) != 1 || mock.audioCalls[0] != "/tmp/song.mp3" {
@@ -332,7 +332,7 @@ func TestSendMessageToUserSendAsAnimation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: animation" {
+	if result.Text != "Sent: funny.gif" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.animationCalls) != 1 || mock.animationCalls[0] != "/tmp/funny.gif" {

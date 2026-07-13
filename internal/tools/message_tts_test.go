@@ -144,7 +144,7 @@ func TestSendMessageToUserVoiceFilePathStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: voice note" {
+	if result.Text != "Sent: note.ogg" {
 		t.Errorf("result = %q", result.Text)
 	}
 	// Should use file-based voice, not TTS synthesis

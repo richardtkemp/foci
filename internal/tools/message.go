@@ -45,7 +45,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts fu
 				},
 				"send_as": {
 					"type": "string",
-					"description": "How to send the file: 'document' (default), 'voice', 'video', 'photo', 'audio', or 'animation' (GIF). TTS mode (no file): 'voice' with 'text' and no 'file' synthesizes the text to speech and sends it as a voice note.",
+					"description": "How to send the file: 'document' (default), 'voice', 'video', 'photo', 'audio', or 'animation' (GIF). This is Telegram/Discord DELIVERY semantics only — it picks the native attachment type. The foci app ignores it: the app renders inline images and the media gallery purely by the file's MIME type, so a PNG sent as 'document' and one sent as 'photo' render identically there. TTS mode (no file): 'voice' with 'text' and no 'file' synthesizes the text to speech and sends it as a voice note.",
 					"enum": ["document", "voice", "video", "photo", "audio", "animation"]
 				}
 			}
@@ -248,12 +248,13 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 		if err != nil {
 			return ToolResult{}, fmt.Errorf("send %s: %w", label, err)
 		}
+		summary := filepath.Base(p.FilePath)
 		if caption != "" {
 			logToolSend(sessionKey, target.chatID, fmt.Sprintf("[%s %s + caption: %s]", label, p.FilePath, caption))
-			sent = append(sent, label+"+caption")
+			sent = append(sent, summary+"+caption")
 		} else {
 			logToolSend(sessionKey, target.chatID, fmt.Sprintf("[%s %s]", label, p.FilePath))
-			sent = append(sent, label)
+			sent = append(sent, summary)
 		}
 	}
 
