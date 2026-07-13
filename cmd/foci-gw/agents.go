@@ -170,7 +170,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	groupResolver := shared.groupResolver
 	promptSearchDirs := shared.promptSearchDirs
 
-	gc := p.resolved.Groups
+	gc := p.resolved.Groups // static-cfg:ignore: groups.* fields are all maps, invisible to the field registry (walkType skips maps) — no /config set path exists yet, see bucket D (a30414b8)
 
 	// Resolve agent's primary model via the chat call site
 	primaryResolved := groupResolver.ResolveCall(config.CallChat)
@@ -274,7 +274,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// Environment.Enabled; a live edit that turns Environment on after startup
 	// renders with crontabCount=0 until restart.
 	crontabCount := 0
-	if p.resolved.Environment.Enabled {
+	if p.resolved.Environment.Enabled { // static-cfg:ignore: startup-only gate for an expensive subprocess spawn, see comment above
 		crontabCount = countCrontabJobs()
 	}
 	envSessionIdx := p.sessionIndex
@@ -288,9 +288,14 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		return buildEnvironmentAPI(acfg, p.configPath, p.cfg, rc, crontabCount, p.plat.ActivePlatformNames(), shared.promptSearchDirs, sessionPlatform)
 	}
 
-	// API-specific agent fields
-	al := p.resolved.Loop
-	sc := p.resolved.Summary
+	// API-specific agent fields. Some of these (MaxToolLoops, MaxResultChars,
+	// MaxSummaryInputChars, …) are the Bucket-B static-field-as-fallback
+	// pattern — LiveConfigFn takes over when set. Others (DuplicateMessages,
+	// BatchPartial*, SummaryContext*, MaxImagePixels, AutoSummarise,
+	// MaxOutputTokens) have no live getter yet and are genuinely still
+	// restart-required — a candidate for a future pass, not fixed here.
+	al := p.resolved.Loop    // static-cfg:ignore: see comment above
+	sc := p.resolved.Summary // static-cfg:ignore: see comment above
 
 	ag.Client = client
 	ag.ClientProvider = p.clientProvider
@@ -303,8 +308,8 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.Endpoint = defaultEndpoint
 	ag.ExtraSystemBlocks = bs.extraSystemBlocks
 	ag.CacheStrategy = primaryCacheStrategy
-	ag.CacheBustDetect = p.resolved.Debug.CacheBustDetect
-	ag.CacheBustIdleThreshold = time.Duration(p.resolved.Debug.CacheBustIdleMinutes) * time.Minute
+	ag.CacheBustDetect = p.resolved.Debug.CacheBustDetect                                        // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
+	ag.CacheBustIdleThreshold = time.Duration(p.resolved.Debug.CacheBustIdleMinutes) * time.Minute // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
 	ag.DuplicateMessages = al.DuplicateMessages
 	ag.BatchPartialAssistantMessages = al.BatchPartialAssistantMessages
 	ag.BatchPartialJoiner = al.BatchPartialJoiner
@@ -320,7 +325,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.AutoSummarise = sc.AutoSummarise
 	ag.MaxToolLoops = al.MaxToolLoops
 	ag.MaxOutputTokens = al.MaxOutputTokens
-	ag.Streaming = p.resolved.Display.Streaming
+	ag.Streaming = p.resolved.Display.Streaming // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
 
 	// Pre-compaction memory formation hook
 	compactMemOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))

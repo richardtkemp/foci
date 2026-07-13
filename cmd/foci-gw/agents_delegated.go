@@ -138,7 +138,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Build auto-approve rules from resolved config. bakedPerms is the same
 	// frozen snapshot, reused below so the environment block's Command
 	// Approval description matches what's actually baked into the rules.
-	bakedPerms := p.resolved.Permissions
+	bakedPerms := p.resolved.Permissions // static-cfg:ignore: must match the frozen rules buildAutoApproveRules bakes into the CC session (no live-reload path of its own), see writeCommandApproval
 	autoApproveRules := buildAutoApproveRules(p, registry.ExportedNames())
 
 	// Per-agent environment block for delegated backends ("" when disabled).
@@ -148,7 +148,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// and that rebuild path previously dropped the env block (and with it the
 	// "Foci Shell Tools" list), so CC agents never saw foci_todo etc.
 	crontabCount := 0
-	if p.resolved.Environment.Enabled {
+	if p.resolved.Environment.Enabled { // static-cfg:ignore: startup-only gate for an expensive subprocess spawn
 		crontabCount = countCrontabJobs()
 	}
 	buildEnv := func(sessionPlatform string) string {
@@ -540,7 +540,7 @@ func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string) string, 
 // always-on auto-approve rule via FociShellRulesFor — no toggle, since
 // they're foci's own constrained wrappers.
 func buildAutoApproveRules(p setupParams, fociExecNames []string) []string {
-	perms := p.resolved.Permissions
+	perms := p.resolved.Permissions // static-cfg:ignore: baked into the CC backend's session config once, no live-reload path exists for it
 
 	// Foci shell functions are always auto-approved — derived from the
 	// registry so adding/removing an ExecExport tool updates the rules
