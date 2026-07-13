@@ -149,8 +149,9 @@ type Runner struct {
 	resetRunning         bool
 
 	// Ephemeral-session cleanup
-	ephemeralRetentionDays int       // 0 = disabled
-	lastEphemeralCleanup   time.Time // last daily GC run
+	ephemeralRetentionDays  int       // 0 = disabled
+	lastEphemeralCleanup    time.Time // last daily GC run
+	ephemeralCleanupRunning bool      // guards against overlapping async cleanup runs
 
 	// updateCh delivers live Settings updates into the run loop, so all config
 	// mutation happens on the loop goroutine (no locks on the per-tick reads).
@@ -939,16 +940,31 @@ func (r *Runner) maybeEphemeralCleanup(ctx context.Context) {
 	}
 	now := timeutil.Now()
 	r.mu.Lock()
+	if r.ephemeralCleanupRunning {
+		r.mu.Unlock()
+		return
+	}
 	if !r.lastEphemeralCleanup.IsZero() && now.Sub(r.lastEphemeralCleanup) < 24*time.Hour {
 		r.mu.Unlock()
 		return
 	}
 	r.lastEphemeralCleanup = now
+	r.ephemeralCleanupRunning = true
 	r.mu.Unlock()
 
-	if n := r.agent.CleanupEphemeralSessions(ctx, r.ephemeralRetentionDays); n > 0 {
-		r.log.Infof("ephemeral cleanup: deleted %d stale transcript(s) older than %dd", n, r.ephemeralRetentionDays)
-	}
+	// Run the GC off the tick goroutine so a slow transcript sweep never
+	// stalls keepalive/background timing; ephemeralCleanupRunning guards
+	// against a second run overlapping the first.
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.ephemeralCleanupRunning = false
+			r.mu.Unlock()
+		}()
+		if n := r.agent.CleanupEphemeralSessions(ctx, r.ephemeralRetentionDays); n > 0 {
+			r.log.Infof("ephemeral cleanup: deleted %d stale transcript(s) older than %dd", n, r.ephemeralRetentionDays)
+		}
+	}()
 }
 
 // maybeReset fires the scheduled daily session reset (reset_time). A soft reset
