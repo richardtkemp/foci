@@ -245,20 +245,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 					// Auto-401 has no triggering chat; "" → the agent's default chat.
 					triggerRelogin("401 auth failure: "+firstLine(detail), "")
 				})
-				// On a CC rate/session/usage limit (surfaced as a synthetic
-				// result), suppress this agent's periodic work until the limit
-				// lifts (#1211). Parse the reset time from the notice; clamp to
-				// a sane window and fall back to 1h if it's missing/implausible
-				// (a session limit is a ≤5h rolling window). User turns are
-				// unaffected — they don't consult the gate on the delegated path.
+				// Surface CC's structured rate_limit_event as a warning only —
+				// it reflects API utilization past a threshold, not a block, so
+				// it does NOT gate periodic work (#1211/#1238).
 				sb.SetOnRateLimited(func(detail string) {
-					now := time.Now()
-					until, ok := agent.ParseRateLimitReset(detail, now)
-					if !ok || until.Sub(now) <= 0 || until.Sub(now) > 6*time.Hour {
-						until = now.Add(time.Hour)
-					}
-					ag.MarkRateLimited(until)
-					log.Warnf("agent/"+agentID, "rate/session limit detected (%s) — suppressing periodic work until %s", firstLine(detail), until.Format(time.Kitchen))
+					log.Warnf("agent/"+agentID, "rate limit warning (%s)", detail)
 				})
 			}
 			// Inject auth-failure callback into opencode backends. No

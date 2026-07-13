@@ -2,29 +2,37 @@ package ccstream
 
 import "testing"
 
-func TestLooksLikeRateLimit(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		// The observed CC synthetic limit notices.
-		{"You've hit your session limit · resets 10:30pm (Europe/London)", true},
-		{"You've hit your usage limit · resets 9am (America/New_York)", true},
-		{"Claude API rate limit reached — resets in a bit", true},
-		// The OTHER synthetic CC emits — no "limit"+"reset" pair, must NOT match.
-		{"There's an issue with the selected model (<synthetic>). It may not exist or you may not have access to it.", false},
-		// A limit word without a reset, or a reset without a limit — neither matches.
-		{"you have reached the session limit", false},
-		{"the counter resets tomorrow", false},
-		// Ordinary replies.
-		{"", false},
-		{"Sure, here's the session summary you asked for.", false},
-		{"I reset the config and the limit is now 50.", false}, // "reset"+"limit" but not a limit-phrase
+func TestOnRateLimit(t *testing.T) {
+	var fires []string
+	b := &Backend{}
+	b.onRateLimited = func(detail string) { fires = append(fires, detail) }
+
+	util := 0.99
+	resets := 1752349800.0
+	warn := func() *RateLimitEvent {
+		return &RateLimitEvent{RateLimitInfo: RateLimitInfo{
+			Status: "allowed_warning", RateLimitType: "five_hour", ResetsAt: &resets, Utilization: &util,
+		}}
 	}
-	for _, tc := range cases {
-		if got := looksLikeRateLimit(tc.in); got != tc.want {
-			t.Errorf("looksLikeRateLimit(%q) = %v; want %v", tc.in, got, tc.want)
-		}
+
+	// "allowed" (under threshold) and nil never warn.
+	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{Status: "allowed", RateLimitType: "five_hour"}})
+	b.OnRateLimit(nil)
+	if len(fires) != 0 {
+		t.Fatalf("allowed/nil fired %d warnings, want 0", len(fires))
+	}
+
+	// First warning fires; a repeat of the same (status,type,resetsAt) is deduped.
+	b.OnRateLimit(warn())
+	b.OnRateLimit(warn())
+	if len(fires) != 1 {
+		t.Fatalf("warning+dedup fired %d, want 1", len(fires))
+	}
+
+	// A status transition is a new key → fires again.
+	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{Status: "rejected", RateLimitType: "five_hour", ResetsAt: &resets}})
+	if len(fires) != 2 {
+		t.Fatalf("transition fired %d, want 2", len(fires))
 	}
 }
 

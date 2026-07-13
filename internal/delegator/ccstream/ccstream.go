@@ -161,9 +161,10 @@ type Backend struct {
 	pendingElicits map[string]*pendingElicitation
 
 	// Context tracking (from result/assistant messages)
-	contextWindow int         // from modelUsage.contextWindow
-	lastModel     string      // from assistant message
-	lastUsage     *TokenUsage // per-call usage from last assistant message
+	contextWindow        int         // from modelUsage.contextWindow
+	lastModel            string      // from assistant message
+	lastUsage            *TokenUsage // per-call usage from last assistant message
+	lastRateLimitWarnKey string      // OnRateLimit dedup key (status|type|resetsAt)
 
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
@@ -199,7 +200,7 @@ type Backend struct {
 	onCompactionStart func()              // fired when status="compacting"
 	onCompactionDone  func(preTokens int) // fired on compact_boundary
 	onAuthFailure     func(detail string) // fired when CC reports a 401 auth failure (#843)
-	onRateLimited     func(detail string) // fired when CC serves a synthetic rate/session-limit result (#1211)
+	onRateLimited     func(detail string) // fired with a rate_limit_event warning summary (#1211/#1238)
 	// onAutonomousStart/onAutonomousEnd bracket a CC autonomous run (one foci
 	// opened no turn for). onAutonomousStart fires on the false→true edge of
 	// autonomousActive; onAutonomousEnd fires on the true→false edge, from
