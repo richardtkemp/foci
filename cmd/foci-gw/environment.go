@@ -170,7 +170,11 @@ func writeVisibility(b *strings.Builder, rc *config.ResolvedAgentConfig) {
 // so it knows which tool/Bash calls run without prompting the user, instead of
 // guessing (#950). Rendered from the ccstream rule sets (the source of truth) so
 // it can't drift from what the backend actually approves.
-func writeCommandApproval(b *strings.Builder, rc *config.ResolvedAgentConfig, ccAllowedTools string) {
+// perms must be the same frozen snapshot buildAutoApproveRules (agents_delegated.go)
+// baked into the CC backend's session config, not a live re-read — the
+// backend's rule set has no live-reload path, so this description would
+// otherwise drift from what's actually enforced.
+func writeCommandApproval(b *strings.Builder, perms config.ResolvedPermissions, ccAllowedTools string) {
 	b.WriteString("\n## Command Approval\n")
 	b.WriteString("Tool and Bash calls matching your auto-approve allowlist run WITHOUT prompting the user; everything else prompts. Your effective allowlist:\n")
 	if ccAllowedTools != "" {
@@ -181,16 +185,16 @@ func writeCommandApproval(b *strings.Builder, rc *config.ResolvedAgentConfig, cc
 		fmt.Fprintf(b, "- **CC pre-approved** (auto-run, no prompt — not a restriction): %s\n", ccAllowedTools)
 	}
 	b.WriteString("- **foci tools**: every `foci_*` shell function is always auto-approved.\n")
-	if rc.Permissions.AutoApproveCommonReadonly {
+	if perms.AutoApproveCommonReadonly {
 		fmt.Fprintf(b, "- **read-only** (on): %s\n", strings.Join(stripBashPrefix(ccstream.CommonReadonlyRules), ", "))
 	}
 	swState := "off — these would prompt"
-	if rc.Permissions.AutoApproveCommonSafeWrite {
+	if perms.AutoApproveCommonSafeWrite {
 		swState = "on"
 	}
 	fmt.Fprintf(b, "- **safe-write** (%s): %s\n", swState, strings.Join(stripBashPrefix(ccstream.CommonSafeWriteRules), ", "))
-	if len(rc.Permissions.AutoApproveRules) > 0 {
-		fmt.Fprintf(b, "- **configured for this agent**: %s\n", strings.Join(stripBashPrefix(rc.Permissions.AutoApproveRules), ", "))
+	if len(perms.AutoApproveRules) > 0 {
+		fmt.Fprintf(b, "- **configured for this agent**: %s\n", strings.Join(stripBashPrefix(perms.AutoApproveRules), ", "))
 	}
 	b.WriteString("Everything else — e.g. bare `git`, writable `sqlite3`, `gh create`/`merge`, paths outside the above — prompts for your approval.\n")
 }
@@ -359,7 +363,7 @@ func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config
 // buildEnvironmentDelegated generates the environment block for delegated
 // (CC backend) agents. These agents use Claude Code's built-in tools plus
 // foci shell functions exposed via the exec bridge.
-func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string, shellTools []tools.ExportedTool, searchDirs []string, sessionPlatform string) string {
+func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, bakedPerms config.ResolvedPermissions, crontabCount int, activePlatforms []string, shellTools []tools.ExportedTool, searchDirs []string, sessionPlatform string) string {
 	var b strings.Builder
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms, crontabCount)
 
@@ -373,7 +377,7 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	// skip_permissions bypasses all prompts, so a Command Approval section would
 	// just be confusing noise — omit it entirely (everything is permitted).
 	if acfg.Backend == "claude-code" && !delegator.SkipPermissions(acfg.BackendConfig) {
-		writeCommandApproval(&b, rc, cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig["allowed_tools"]))
+		writeCommandApproval(&b, bakedPerms, cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig["allowed_tools"]))
 	}
 
 	writeVisibility(&b, rc)

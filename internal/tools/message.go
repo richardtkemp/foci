@@ -15,7 +15,7 @@ import (
 	"foci/internal/voice"
 )
 
-func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts voice.TTS) *Tool {
+func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts func() voice.TTS) *Tool {
 	return &Tool{
 		Name:       "send_to_chat",
 		ExecExport: true,
@@ -153,7 +153,7 @@ func prepareNamedFile(filePath, name string) (string, func(), error) {
 	return linkPath, cleanup, nil
 }
 
-func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, tts voice.TTS) (ToolResult, error) {
+func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, ttsFn func() voice.TTS) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		Text     string `json:"text"`
 		FilePath string `json:"file"`
@@ -190,6 +190,10 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 
 	// TTS synthesis: send_as="voice" + text + no file.
 	if p.SendAs == "voice" && p.Text != "" && p.FilePath == "" {
+		var tts voice.TTS
+		if ttsFn != nil {
+			tts = ttsFn()
+		}
 		if tts == nil {
 			return ToolResult{}, fmt.Errorf("tts not configured")
 		}

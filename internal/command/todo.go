@@ -357,9 +357,9 @@ func TodoCommand() *Command {
 
 // resolveTodoFormat returns the effective todo list format: "table" or "lines".
 func resolveTodoFormat(cc CommandContext) string {
-	if cc.Resolved != nil {
-		if cc.Resolved.Tools.TodoFormat != "" {
-			return cc.Resolved.Tools.TodoFormat
+	if cc.ResolvedLive != nil {
+		if f := cc.ResolvedLive.Load().Tools.TodoFormat; f != "" {
+			return f
 		}
 	}
 	return "lines"

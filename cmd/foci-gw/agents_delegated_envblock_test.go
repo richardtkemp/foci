@@ -40,13 +40,15 @@ func wiringFixture(t *testing.T) (setupParams, *sharedAgentSetup) {
 			t.Fatal(err)
 		}
 	}
+	resolved := &config.ResolvedAgentConfig{}
 	p := setupParams{
-		acfg:     config.AgentConfig{ID: "wiretester", Workspace: ws},
-		cfg:      &config.Config{},
-		resolved: &config.ResolvedAgentConfig{},
-		store:    &secrets.Store{},
-		connMgr:  stubConnMgr{},
-		plat:     &platform.Messaging{},
+		acfg:         config.AgentConfig{ID: "wiretester", Workspace: ws},
+		cfg:          &config.Config{},
+		resolved:     resolved,
+		resolvedLive: config.NewLiveValue(resolved),
+		store:        &secrets.Store{},
+		connMgr:      stubConnMgr{},
+		plat:         &platform.Messaging{},
 	}
 	p.resolved.Environment.Enabled = true
 	return p, &sharedAgentSetup{wakeScheduleFn: stubWakeFn}

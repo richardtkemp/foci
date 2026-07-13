@@ -13,14 +13,16 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 	base := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "claude-code"}
 	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
 
-	normal := buildEnvironmentDelegated(base, "/tmp/foci.toml", cfg, config.Resolve(cfg, base), 0, nil, nil, nil, "")
+	rc := config.Resolve(cfg, base)
+	normal := buildEnvironmentDelegated(base, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "")
 	if !strings.Contains(normal, "## Command Approval") {
 		t.Fatal("expected Command Approval section for a normal claude-code agent")
 	}
 
 	skip := base
 	skip.BackendConfig = map[string]any{"skip_permissions": true}
-	skipped := buildEnvironmentDelegated(skip, "/tmp/foci.toml", cfg, config.Resolve(cfg, skip), 0, nil, nil, nil, "")
+	skipRC := config.Resolve(cfg, skip)
+	skipped := buildEnvironmentDelegated(skip, "/tmp/foci.toml", cfg, skipRC, skipRC.Permissions, 0, nil, nil, nil, "")
 	if strings.Contains(skipped, "## Command Approval") {
 		t.Error("skip_permissions should omit the Command Approval section (everything is permitted)")
 	}
@@ -127,7 +129,7 @@ func TestWriteCommandApproval(t *testing.T) {
 	rc.Permissions.AutoApproveCommonReadonly = true
 	rc.Permissions.AutoApproveCommonSafeWrite = false
 	rc.Permissions.AutoApproveRules = []string{"Bash:gh search", "Bash:git -C /home/rich/git/foci"}
-	writeCommandApproval(&b, rc, "Read(/tmp/**), Write(/tmp/**)")
+	writeCommandApproval(&b, rc.Permissions, "Read(/tmp/**), Write(/tmp/**)")
 	out := b.String()
 
 	for _, want := range []string{
@@ -186,7 +188,7 @@ func TestWriteCommandApproval_ReadonlyDisabled(t *testing.T) {
 	var b strings.Builder
 	rc := &config.ResolvedAgentConfig{}
 	rc.Permissions.AutoApproveCommonReadonly = false
-	writeCommandApproval(&b, rc, "")
+	writeCommandApproval(&b, rc.Permissions, "")
 	out := b.String()
 	if strings.Contains(out, "**read-only** (on)") {
 		t.Error("read-only line should be absent when the allowlist is disabled")

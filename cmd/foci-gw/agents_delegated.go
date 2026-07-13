@@ -135,7 +135,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	agLazy := func() *agent.Agent { return ag }
 	registry := buildExecRegistry(p, shared.wakeScheduleFn, agLazy)
 
-	// Build auto-approve rules from resolved config.
+	// Build auto-approve rules from resolved config. bakedPerms is the same
+	// frozen snapshot, reused below so the environment block's Command
+	// Approval description matches what's actually baked into the rules.
+	bakedPerms := p.resolved.Permissions
 	autoApproveRules := buildAutoApproveRules(p, registry.ExportedNames())
 
 	// Per-agent environment block for delegated backends ("" when disabled).
@@ -149,10 +152,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		crontabCount = countCrontabJobs()
 	}
 	buildEnv := func(sessionPlatform string) string {
-		if !p.resolved.Environment.Enabled {
+		rc := p.resolvedLive.Load()
+		if !rc.Environment.Enabled {
 			return ""
 		}
-		return buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools(), shared.promptSearchDirs, sessionPlatform)
+		return buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, rc, bakedPerms, crontabCount, p.plat.ActivePlatformNames(), registry.ExportedTools(), shared.promptSearchDirs, sessionPlatform)
 	}
 	systemPrompt := delegatedSystemPrompt(buildEnv(""), bs.SystemBlocks(), br.extraSystemBlocks)
 
@@ -597,9 +601,12 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	if agLazy != nil {
 		notifier = newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr)
 	}
-	vc := p.resolved.Voice
 	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
-	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
+	resolvedLive := p.resolvedLive
+	agentTTS := func() voice.TTS {
+		vc := resolvedLive.Load().Voice
+		return resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
+	}
 
 	// Delegated agents shell out to `claude --print` (CLISummariser) for the
 	// summary tool, routing through the parent CC subprocess's subscription auth
