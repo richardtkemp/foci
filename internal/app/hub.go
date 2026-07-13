@@ -641,7 +641,7 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 
 	// App is interactive (like telegram): steer dispatch follows the
 	// agent's behavior config (steer_mode), mirroring telegram/discord.
-	ag.SetInboxSteerMode(params.Resolved.Behavior.SteerMode)
+	ag.SetInboxSteerMode(params.Resolved.Behavior.SteerMode) // static-cfg:ignore: fallback, LiveConfigFn takes over via the steerMode() getter (bucket D)
 	ag.StartInbox(h.deps.Ctx)
 	return conn
 }

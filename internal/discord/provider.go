@@ -84,7 +84,7 @@ func (p *discordProvider) SetupAgentConnection(params platform.AgentConnectionPa
 		ResolveSTT:        p.deps.ResolveSTT,
 		ReclaimHook:       params.ReclaimHook,
 		DisplayOverrideFn: params.DisplayOverrideFn,
-		Resolved:          params.Resolved,
+		Resolved:          params.Resolved, // static-cfg:ignore: plumbing — see comment on the ConfigureFacetConn call in agent_setup.go
 		ResolvedLive:      params.ResolvedLive,
 	})
 }

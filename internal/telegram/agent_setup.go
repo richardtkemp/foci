@@ -80,7 +80,10 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			}
 			tBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			tBot.SetCommandContext(p.CommandContext)
-			ApplyAgentDisplaySettings(tBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram"))
+			// bot.display is a per-bot baked fallback layer; the live
+			// per-session override path is DisplayOverrideFn/session_meta.go.
+			// Converting this fallback itself needs its own dedicated pass.
+			ApplyAgentDisplaySettings(tBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram")) // static-cfg:ignore: see comment above
 			tBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 		},
 		DisplayDefaultsFn: func() platform.DisplaySettings {
@@ -162,7 +165,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	primaryBot.requireMention = reqMention
 
 	// Resolve behavior config from pre-merged config.
-	bc := p.Resolved.Behavior
+	bc := p.Resolved.Behavior // static-cfg:ignore: initial construction value; group_throttle live-updates via the OnChange below, steer_mode via LiveConfigFn (bucket D)
 	if gt := newGroupThrottle(bc.GroupThrottle, primaryBot); gt != nil {
 		primaryBot.mq.SetThrottle(gt)
 		log.Infof("telegram", "agent %q: group throttle = %s", acfg.ID, bc.GroupThrottle)
@@ -213,7 +216,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		primaryBot.SetTTS(p.TTS)
 	}
 	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
-	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram"))
+	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram")) // static-cfg:ignore: see comment on the ConfigureFacetConn call above
 	primaryBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 
 	if p.DisplayOverrideFn != nil {
@@ -255,7 +258,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Voice.TTS), config.DerefFloat(acfg.Voice.TTSRate), voice.MergeReplacements(cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)),
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
-			Resolved:        p.Resolved,
+			Resolved:        p.Resolved, // static-cfg:ignore: plumbing — see comment on the ConfigureFacetConn call above
 			ToolDetailStore: p.ToolDetailStore,
 			SessionIndex:    p.SessionIndex,
 		})
@@ -312,7 +315,7 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	if mc.TTSProvider != nil {
 		bot.SetTTS(mc.TTSProvider)
 	}
-	ApplyAgentDisplaySettings(bot, mc.Resolved.PlatformDisplay("telegram"), mc.Resolved.Debug, mc.AgentConfig.Platform("telegram"))
+	ApplyAgentDisplaySettings(bot, mc.Resolved.PlatformDisplay("telegram"), mc.Resolved.Debug, mc.AgentConfig.Platform("telegram")) // static-cfg:ignore: see comment on the ConfigureFacetConn call in SetupAgent
 	bot.fileMode, _ = config.ParseFileMode(mc.GlobalConfig.FileMode)
 	if mc.ToolDetailStore != nil {
 		bot.SetToolDetailStore(mc.ToolDetailStore)

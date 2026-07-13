@@ -200,9 +200,11 @@ setup-hooks:
 vet:
 	go vet ./...
 
-lint: find-disconnected-tests
+lint: find-disconnected-tests find-static-config-reads
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
+	@echo "=== find-static-config-reads (static reads of *config.ResolvedAgentConfig) ==="
+	@./bin/find-static-config-reads ./...
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
 	@# internal/testharness and internal/testtemp are test-only scaffolding:
 	# reachable solely from -tags=integration tests and _test.go files, which
@@ -233,9 +235,7 @@ lint-fix:
 lint-dupl:
 	@$(GOBIN)/golangci-lint run --disable-all -E dupl
 
-# Advisory only — not yet wired into `lint`. The initial backlog of
-# findings needs triaging (fix to read live, or annotate with a same-line
-# `static-cfg:ignore: <reason>` comment) before this can gate CI.
+# Also runs as part of `lint` — this target is for a quick standalone check.
 lint-static-config: find-static-config-reads
 	@./bin/find-static-config-reads ./...
 

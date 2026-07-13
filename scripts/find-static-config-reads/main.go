@@ -25,12 +25,10 @@
 // literal field name avoids re-flagging an already-correct read-once-per-op
 // pattern.
 //
-// This is a discovery/triage tool, not (yet) a hard gate — main.go's
-// bucket-A-D authors expect a large existing backlog. Each finding is
-// either a genuine bug (fix it to read live) or an intentional bake (a
-// structural/restart-required field, a one-time setup diagnostic, etc.) —
-// annotate the latter with a same-line `static-cfg:ignore: <reason>`
-// comment to suppress it.
+// Runs as part of `make lint`. A new finding is either a genuine bug (fix it
+// to read live) or an intentional bake (a structural/restart-required field,
+// a one-time setup diagnostic, etc.) — annotate the latter with a same-line
+// `static-cfg:ignore: <reason>` comment to suppress it.
 //
 // Run with: go run ./scripts/find-static-config-reads/... [package patterns]
 // (defaults to ./... from the invoking directory)
