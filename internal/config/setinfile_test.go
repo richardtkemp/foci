@@ -110,14 +110,16 @@ model = "haiku"
 }
 
 func TestSetInFile_NestedMapSection(t *testing.T) {
-	// Regression test for the MapFieldSpec longest-prefix-match hazard: this
-	// fixture mirrors the real live foci.toml, which has a bare [groups]
-	// section (group name → model) AND a separate explicit [groups.fallbacks]
+	// Regression test for MapFieldSpec's longest-prefix-match: this fixture
+	// mirrors the real live foci.toml, which has a bare [groups] section
+	// (group name → model) AND a separate explicit [groups.fallbacks]
 	// section. LookupField must resolve "groups.fallbacks.stepfun" to
-	// Section="groups.fallbacks" (not the shorter "groups" prefix) — otherwise
-	// this write would try to insert "fallbacks.stepfun = ..." as a dotted key
-	// directly inside [groups]'s own body, which TOML rejects as a duplicate
-	// definition of the groups.fallbacks table once reloaded.
+	// Section="groups.fallbacks" (not the shorter "groups" prefix) — getting
+	// this backwards doesn't corrupt the file (BurntSushi/toml tolerates a
+	// dotted key implicitly opening a table an explicit header later extends
+	// — verified empirically), it just writes "fallbacks.stepfun = ..." into
+	// the wrong (but still valid) place: [groups]'s own body instead of
+	// [groups.fallbacks], confusing on read and in diffs.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `[groups]
@@ -151,7 +153,7 @@ glmturbo = "minimax"
 		t.Errorf("expected exactly one [groups.fallbacks] header, got:\n%s", result)
 	}
 	if strings.Contains(result, "fallbacks.stepfun") {
-		t.Errorf("wrote a dotted fallbacks.stepfun key into [groups]'s own body — duplicate-table hazard:\n%s", result)
+		t.Errorf("wrote a dotted fallbacks.stepfun key into [groups]'s own body — wrong (if not corrupt) placement:\n%s", result)
 	}
 	if !strings.Contains(result, `stepfun = "qwen35"`) {
 		t.Errorf("updated value not found:\n%s", result)

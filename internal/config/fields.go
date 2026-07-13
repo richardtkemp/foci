@@ -403,12 +403,16 @@ func formatNum(v float64) string {
 // Section MAY itself be dotted (e.g. "groups.calls") to address a nested
 // TOML table. When multiple specs' sections share a prefix (e.g. "groups",
 // "groups.calls", "groups.fallbacks"), longer sections must be checked
-// first — matchMapField enforces this. Getting it backwards is a real file
-// corruption risk: this repo's live config already has an explicit
-// [groups.fallbacks] table, and matching the bare "groups" prefix for a
-// "groups.fallbacks.X" key would try to insert a dotted "fallbacks.X = ..."
-// key directly into [groups]'s own body — a duplicate-table definition
-// TOML rejects at load.
+// first — matchMapField enforces this. Getting it backwards does NOT corrupt
+// the file (verified empirically: BurntSushi/toml tolerates a dotted key
+// implicitly opening a table that a LATER explicit [table] header then adds
+// more keys to — the write-order this codebase always produces, since
+// SetInFile always inserts new keys before any following section header) —
+// but it DOES write to the wrong place: matching the bare "groups" prefix
+// for a "groups.fallbacks.X" key would insert a dotted "fallbacks.X = ..."
+// key directly into [groups]'s own body instead of the semantically-correct
+// [groups.fallbacks] table, which is confusing on read and in diffs even
+// though it loads fine. Longest-prefix-first avoids that, not a corruption.
 //
 // Caveat: SetInFile writes a NEW key by creating/appending to an EXPANDED
 // [Section] table header (e.g. [system.webhooks]\nfoo = "bar"), not an
