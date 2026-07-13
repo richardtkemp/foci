@@ -2,6 +2,7 @@ package platform
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/log"
@@ -32,9 +33,11 @@ type QueuedMessage struct {
 // The bot's pump goroutine drains Chan() and hands messages to
 // agent.Enqueue, which decides routing per-session.
 type MessageQueue struct {
-	ch             chan QueuedMessage
-	cmdCh          chan QueuedMessage // commands bypass message routing rules
-	throttle       *GroupThrottle     // nil = disabled
+	ch    chan QueuedMessage
+	cmdCh chan QueuedMessage // commands bypass message routing rules
+	// throttle is atomic (not a plain field) so SetThrottle can swap it from a
+	// live config edit while Enqueue reads it concurrently on other goroutines.
+	throttle       atomic.Pointer[GroupThrottle] // nil = disabled
 	requireMention bool
 	log            *log.ComponentLogger
 }
@@ -61,9 +64,11 @@ func NewMessageQueue(cfg MessageQueueConfig) *MessageQueue {
 	mq := &MessageQueue{
 		ch:             make(chan QueuedMessage, size),
 		cmdCh:          make(chan QueuedMessage, cmdSize),
-		throttle:       cfg.Throttle,
 		requireMention: cfg.RequireMention,
 		log:            cfg.Logger,
+	}
+	if cfg.Throttle != nil {
+		mq.throttle.Store(cfg.Throttle)
 	}
 	return mq
 }
@@ -80,8 +85,10 @@ func NewMessageQueue(cfg MessageQueueConfig) *MessageQueue {
 // Phase 6 (TODO #739) — those decisions need agent-level state that
 // the platform shouldn't reach into.
 func (q *MessageQueue) Enqueue(msg QueuedMessage) {
+	throttle := q.throttle.Load()
+
 	// Rule 1: group + require_mention + not a mention + no throttle → drop.
-	if msg.IsGroupChat && q.requireMention && !msg.IsMention && q.throttle == nil {
+	if msg.IsGroupChat && q.requireMention && !msg.IsMention && throttle == nil {
 		if q.log != nil {
 			q.log.Debugf("queue: dropping non-mention group message from %s", q.senderLabel(msg))
 		}
@@ -89,8 +96,8 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) {
 	}
 
 	// Rule 2: group + throttle → buffer/flush via throttle.
-	if msg.IsGroupChat && q.throttle != nil {
-		q.throttle.Add(msg)
+	if msg.IsGroupChat && throttle != nil {
+		throttle.Add(msg)
 		return
 	}
 
@@ -130,9 +137,15 @@ func (q *MessageQueue) DrainQueue() []QueuedMessage {
 	}
 }
 
-// SetThrottle sets the group throttle. Must be called before messages arrive.
+// SetThrottle swaps the group throttle. Safe to call while messages are
+// arriving (e.g. a live config edit) — Enqueue reads the throttle atomically.
 func (q *MessageQueue) SetThrottle(t *GroupThrottle) {
-	q.throttle = t
+	q.throttle.Store(t)
+}
+
+// GetThrottle returns the current group throttle, or nil if disabled.
+func (q *MessageQueue) GetThrottle() *GroupThrottle {
+	return q.throttle.Load()
 }
 
 // SetRequireMention sets the require_mention flag. Must be called before messages arrive.
@@ -166,8 +179,8 @@ func (q *MessageQueue) CmdChan() <-chan QueuedMessage {
 
 // Stop stops throttle timers and releases resources.
 func (q *MessageQueue) Stop() {
-	if q.throttle != nil {
-		q.throttle.Stop()
+	if throttle := q.throttle.Load(); throttle != nil {
+		throttle.Stop()
 	}
 }
 

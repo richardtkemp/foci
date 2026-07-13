@@ -49,6 +49,10 @@ type AgentSetupParams struct {
 
 	// Resolved holds the pre-merged agent+global config.
 	Resolved *config.ResolvedAgentConfig
+
+	// ResolvedLive lets config-derived handles (the group throttle) subscribe
+	// to live config edits and rebuild themselves.
+	ResolvedLive *config.LiveValue[*config.ResolvedAgentConfig]
 }
 
 // SetupAgent creates and registers platform bots for an agent.
@@ -159,16 +163,24 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 
 	// Resolve behavior config from pre-merged config.
 	bc := p.Resolved.Behavior
-	if dur, err := time.ParseDuration(bc.GroupThrottle); err == nil && dur > 0 {
-		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
-			for _, m := range msgs {
-				primaryBot.mq.PushFlushed(m)
-			}
-		}, primaryBot.log)
+	if gt := newGroupThrottle(bc.GroupThrottle, primaryBot); gt != nil {
 		primaryBot.mq.SetThrottle(gt)
-		log.Infof("telegram", "agent %q: group throttle = %v", acfg.ID, dur)
+		log.Infof("telegram", "agent %q: group throttle = %s", acfg.ID, bc.GroupThrottle)
 	}
 	primaryBot.mq.SetRequireMention(reqMention)
+
+	if p.ResolvedLive != nil {
+		p.ResolvedLive.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
+			if fresh.Behavior.GroupThrottle == old.Behavior.GroupThrottle {
+				return
+			}
+			if oldThrottle := primaryBot.mq.GetThrottle(); oldThrottle != nil {
+				oldThrottle.Stop()
+			}
+			primaryBot.mq.SetThrottle(newGroupThrottle(fresh.Behavior.GroupThrottle, primaryBot))
+			log.Infof("telegram", "agent %q: group throttle live-updated to %q", acfg.ID, fresh.Behavior.GroupThrottle)
+		})
+	}
 
 	// Wire the bot to the agent's Inbox subsystem (Phase 6 — TODO #739).
 	// The agent owns the per-session message queue, steer buffer,
@@ -264,6 +276,21 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			pool.ReclaimHook = p.ReclaimHook
 		}
 	}
+}
+
+// newGroupThrottle parses durStr and returns a throttle that flushes into
+// bot's message queue, or nil if durStr is empty/unparseable/non-positive
+// (throttling disabled).
+func newGroupThrottle(durStr string, bot *Bot) *platform.GroupThrottle {
+	dur, err := time.ParseDuration(durStr)
+	if err != nil || dur <= 0 {
+		return nil
+	}
+	return platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
+		for _, m := range msgs {
+			bot.mq.PushFlushed(m)
+		}
+	}, bot.log)
 }
 
 // FacetBotConfig holds common settings applied to every facet bot.

@@ -96,9 +96,12 @@ var (
 		"agent.sessions.ephemeral_retention_days",
 	}
 
-	// Fields read at runtime through agentInstance.LiveConfig(). The applier
-	// re-resolves each agent and swaps the whole snapshot, so any field a
-	// consumer reads via LiveConfig goes hot by adding it here + a `hot` tag.
+	// Fields consumed off agentInstance.resolved (the LiveValue), either
+	// read-through via LiveConfig()/a func() getter, or by a derived-handle
+	// rebuild registered via resolved.OnChange (compactor, group throttle).
+	// The applier re-resolves each agent and swaps/notifies the whole
+	// snapshot, so any field a consumer reaches this way goes hot by adding
+	// it here + a `hot` tag.
 	liveApplyResolvedAddrs = []string{
 		"voice.tts", "voice.tts_rate",
 		"agent.voice.tts", "agent.voice.tts_rate",
@@ -114,6 +117,10 @@ var (
 		"tools.max_file_read_bytes", "agent.tools.max_file_read_bytes",
 		"tools.http_max_spill_bytes", "agent.tools.http_max_spill_bytes",
 		"memory.search_backend", "agent.memory.search_backend",
+		"sessions.compaction_threshold", "agent.sessions.compaction_threshold",
+		"sessions.compaction_preserve_messages", "agent.sessions.compaction_preserve_messages",
+		"behavior.steer_mode", "agent.behavior.steer_mode",
+		"behavior.group_throttle", "agent.behavior.group_throttle",
 	}
 )
 

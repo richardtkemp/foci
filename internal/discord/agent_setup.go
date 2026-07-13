@@ -50,6 +50,10 @@ type AgentSetupParams struct {
 
 	// Resolved holds the pre-merged agent+global config.
 	Resolved *config.ResolvedAgentConfig
+
+	// ResolvedLive lets config-derived handles (the group throttle) subscribe
+	// to live config edits and rebuild themselves.
+	ResolvedLive *config.LiveValue[*config.ResolvedAgentConfig]
 }
 
 // SetupAgent creates and registers Discord bots for an agent.
@@ -186,14 +190,22 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	bc := p.Resolved.Behavior
 	primaryBot.mq.SetRequireMention(primaryBot.requireMention)
 
-	if dur, err := time.ParseDuration(bc.GroupThrottle); err == nil && dur > 0 {
-		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
-			for _, m := range msgs {
-				primaryBot.mq.PushFlushed(m)
-			}
-		}, primaryBot.log)
+	if gt := newGroupThrottle(bc.GroupThrottle, primaryBot); gt != nil {
 		primaryBot.mq.SetThrottle(gt)
-		log.Infof("discord", "agent %q: group throttle = %v", acfg.ID, dur)
+		log.Infof("discord", "agent %q: group throttle = %s", acfg.ID, bc.GroupThrottle)
+	}
+
+	if p.ResolvedLive != nil {
+		p.ResolvedLive.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
+			if fresh.Behavior.GroupThrottle == old.Behavior.GroupThrottle {
+				return
+			}
+			if oldThrottle := primaryBot.mq.GetThrottle(); oldThrottle != nil {
+				oldThrottle.Stop()
+			}
+			primaryBot.mq.SetThrottle(newGroupThrottle(fresh.Behavior.GroupThrottle, primaryBot))
+			log.Infof("discord", "agent %q: group throttle live-updated to %q", acfg.ID, fresh.Behavior.GroupThrottle)
+		})
 	}
 
 	// Wire the bot to the agent's Inbox subsystem (Phase 6 — TODO #739).
@@ -257,6 +269,21 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 			pool.ReclaimHook = p.ReclaimHook
 		}
 	}
+}
+
+// newGroupThrottle parses durStr and returns a throttle that flushes into
+// bot's message queue, or nil if durStr is empty/unparseable/non-positive
+// (throttling disabled).
+func newGroupThrottle(durStr string, bot *Bot) *platform.GroupThrottle {
+	dur, err := time.ParseDuration(durStr)
+	if err != nil || dur <= 0 {
+		return nil
+	}
+	return platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
+		for _, m := range msgs {
+			bot.mq.PushFlushed(m)
+		}
+	}, bot.log)
 }
 
 // ApplyAgentDisplaySettings sets per-agent display settings on a bot

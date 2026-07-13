@@ -510,6 +510,11 @@ type AgentConnectionParams struct {
 
 	// Resolved holds the pre-merged agent+global config.
 	Resolved *config.ResolvedAgentConfig
+
+	// ResolvedLive is the same value as Resolved, wrapped for OnChange
+	// subscriptions — providers use it to rebuild config-derived handles
+	// (e.g. the group-message throttle) when a live config edit lands.
+	ResolvedLive *config.LiveValue[*config.ResolvedAgentConfig]
 }
 
 // SharedFacetParams holds parameters for setting up shared facet bots.

@@ -36,14 +36,14 @@ func TestWithConfigEmptyValues(t *testing.T) {
 	// overwrite maxTokens or minMessages (zero is not a valid value), but preserveMessages=0
 	// is a valid setting that should be applied as-is.
 	c := NewCompactor(nil, 0.8)
-	original := *c
+	originalMaxTokens, originalMinMessages := c.maxTokens, c.minMessages
 	c.WithConfig(0, 0, 0)
 
 	// Zero values should not override maxTokens/minMessages but preserveMessages=0 is valid
-	if c.maxTokens != original.maxTokens {
+	if c.maxTokens != originalMaxTokens {
 		t.Errorf("maxTokens changed to %d", c.maxTokens)
 	}
-	if c.minMessages != original.minMessages {
+	if c.minMessages != originalMinMessages {
 		t.Errorf("minMessages changed to %d", c.minMessages)
 	}
 	if c.preserveMessages != 0 {
