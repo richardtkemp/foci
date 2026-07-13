@@ -293,6 +293,11 @@ func checkDescTags(t *testing.T, typ reflect.Type, section, prefix string, field
 			continue
 		}
 
+		// A scope tag may legitimately exclude this scope's row (mirrors walkType).
+		if !scopeAllowed(f.Tag.Get("scope"), section) {
+			continue
+		}
+
 		key := tomlTag
 		if prefix != "" {
 			key = prefix + "." + tomlTag
@@ -340,27 +345,40 @@ func TestHotTagValuesValid(t *testing.T) {
 	walk(reflect.TypeOf(AgentConfig{}))
 }
 
-func TestHotGlobalScopeExcludesOverrideRows(t *testing.T) {
-	// hot:"...,global" fields (e.g. DebugConfig extras — their agent/platform
-	// override rows are dead, #1199) must be hot ONLY at the global row.
-	cases := []struct {
-		sectionKey string
-		wantHot    bool
-	}{
-		{"debug.enable_pprof", true},
-		{"agent.debug.enable_pprof", false},
-		{"platforms.debug.enable_pprof", false},
-		{"keepalive.interval", true},
-		{"agent.keepalive.interval", true}, // unscoped hot tag covers override rows
-		{"tools.max_result_chars", false},  // untagged = restart
+func TestScopeAllowlistExcludesRows(t *testing.T) {
+	// A `scope` tag is an allowlist of the scopes at which a field emits a
+	// registry row. Fields that a consumer never reads at a given scope
+	// (#1199) carry scope:"global" or scope:"global,agent" so the config
+	// editor stops advertising a knob that does nothing.
+	present := []string{
+		"debug.enable_pprof",             // scope:"global" — global row kept
+		"debug.cache_bust_detect",        // scope:"global,agent"
+		"agent.debug.cache_bust_detect",  // agent allowed
+		"keepalive.interval",             // no scope tag — all scopes
+		"agent.keepalive.interval",       // no scope tag — all scopes
+		"tools.max_result_chars",         // no scope tag
 	}
-	for _, c := range cases {
-		f, ok := LookupField(c.sectionKey)
-		if !ok {
-			t.Fatalf("field %s not in registry", c.sectionKey)
+	absent := []string{
+		"agent.debug.enable_pprof",           // scope:"global" drops agent
+		"platforms.debug.enable_pprof",       // and platform
+		"agent.voice.max_frame_bytes",        // scope:"global" drops agent
+		"agent.permissions.prompt_ttl",       // scope:"global" drops agent
+		"platforms.debug.cache_bust_detect",  // scope:"global,agent" drops platform
+		"platforms.notify.warning_max_per_window", // scope:"global,agent" drops platform
+	}
+	for _, k := range present {
+		if _, ok := LookupField(k); !ok {
+			t.Errorf("field %s should be in the registry", k)
 		}
-		if got := !f.NeedsRestart; got != c.wantHot {
-			t.Errorf("%s: hot=%v, want %v", c.sectionKey, got, c.wantHot)
+	}
+	for _, k := range absent {
+		if _, ok := LookupField(k); ok {
+			t.Errorf("field %s should be excluded by its scope tag but is in the registry", k)
 		}
+	}
+
+	// The kept rows keep their hot-ness: the global debug toggles are still live-appliable.
+	if f, ok := LookupField("debug.enable_pprof"); !ok || f.NeedsRestart {
+		t.Errorf("debug.enable_pprof should be present and hot (NeedsRestart=false)")
 	}
 }

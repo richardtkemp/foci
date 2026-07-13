@@ -434,11 +434,11 @@ type VoiceConfig struct {
 	TTSRate              *float64          `toml:"tts_rate"  desc:"Speeds up or slows down text-to-speech playback. 1.0 is normal speed, higher is faster, lower is slower. 0 is treated as 1.0"`
 	TTSReplacements      map[string]string `toml:"tts_replacements"`
 	STTReplacements      map[string]string `toml:"stt_replacements"`
-	MaxFrameBytes        *int              `toml:"max_frame_bytes" default:"1048576"  desc:"Maximum size in bytes of a single incoming voice websocket message; larger frames are rejected (1 MiB)"`
-	MaxAudioBytes        *int              `toml:"max_audio_bytes" default:"52428800" desc:"Maximum total bytes of audio buffered for one voice turn before it is cut off (50 MiB)"`
-	MaxConcurrentTurns   *int              `toml:"max_concurrent_turns" default:"4" desc:"Maximum number of voice turns, speech-to-text plus agent reply plus text-to-speech, that can be in progress at once on one connection"`
-	HTTPTimeout          *string           `toml:"http_timeout" default:"60s" desc:"How long to wait for the speech-to-text or text-to-speech provider to respond before giving up"`
-	HTTPMaxResponseBytes *int              `toml:"http_max_response_bytes" default:"67108864" desc:"Maximum size in bytes of a response from the speech-to-text or text-to-speech provider before it is rejected (64 MiB)"`
+	MaxFrameBytes        *int              `toml:"max_frame_bytes" default:"1048576"  scope:"global" desc:"Maximum size in bytes of a single incoming voice websocket message; larger frames are rejected (1 MiB)"`
+	MaxAudioBytes        *int              `toml:"max_audio_bytes" default:"52428800" scope:"global" desc:"Maximum total bytes of audio buffered for one voice turn before it is cut off (50 MiB)"`
+	MaxConcurrentTurns   *int              `toml:"max_concurrent_turns" default:"4" scope:"global" desc:"Maximum number of voice turns, speech-to-text plus agent reply plus text-to-speech, that can be in progress at once on one connection"`
+	HTTPTimeout          *string           `toml:"http_timeout" default:"60s" scope:"global" desc:"How long to wait for the speech-to-text or text-to-speech provider to respond before giving up"`
+	HTTPMaxResponseBytes *int              `toml:"http_max_response_bytes" default:"67108864" scope:"global" desc:"Maximum size in bytes of a response from the speech-to-text or text-to-speech provider before it is rejected (64 MiB)"`
 }
 
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().
@@ -522,7 +522,7 @@ type NotifyConfig struct {
 	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" desc:"Send a chat notification whenever the conversation history is compacted (summarized to free up context space)"`                                             // send notification on compaction
 	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" desc:"Send a chat notification whenever the agent's todo list changes"`                                                                                           // send notification on task list changes
 	CompactionDebug     *bool           `toml:"compaction_debug"                        desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                     // send compaction summary as file attachment
-	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`               // max identical warnings per window before suppression (default 3)
+	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`               // max identical warnings per window before suppression (default 3)
 }
 
 // InjectAgentWarningsLevel returns the resolved injection level (default: off).
@@ -883,7 +883,7 @@ type PermissionsConfig struct {
 	// is capped at the delegated-backend idle timeout — min(prompt_ttl,
 	// idle_timeout) — since a prompt can't outlive the backend that's waiting
 	// on it (the idle reaper clears it). Parsed via time.ParseDuration.
-	PromptTTL string `toml:"prompt_ttl" default:"24h" desc:"How long a permission request or question can sit unanswered before it is automatically denied so the agent is not stuck waiting"`
+	PromptTTL string `toml:"prompt_ttl" default:"24h" scope:"global" desc:"How long a permission request or question can sit unanswered before it is automatically denied so the agent is not stuck waiting"`
 }
 
 // AutoApproveCommonReadonlyEnabled returns the resolved value (default: true).
@@ -1096,24 +1096,24 @@ type BackgroundConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type DebugConfig struct {
-	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      desc:"Log the last 4 characters of the API key on every model provider request, useful for confirming which key was used"`                                   // log last 4 chars of API keys on each provider call (default false)
-	MessagesInLog        *bool `toml:"messages_in_log"         desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"`                       // log user message content to event log (default false for privacy)
-	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" desc:"Alert in chat when the provider's prompt-cache hit count drops between requests, which can signal the cache was unexpectedly evicted"` // alert when cache_read drops >50% vs previous request
-	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    desc:"Suppress the cache-bust alert if the session has been idle longer than this many minutes, since the cache naturally expires by then"`  // suppress cache bust alert if session idle > N minutes (default 10)
+	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      scope:"global" desc:"Log the last 4 characters of the API key on every model provider request, useful for confirming which key was used"`                                   // log last 4 chars of API keys on each provider call (default false)
+	MessagesInLog        *bool `toml:"messages_in_log"         scope:"global,agent" desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"`                       // log user message content to event log (default false for privacy)
+	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" scope:"global,agent" desc:"Alert in chat when the provider's prompt-cache hit count drops between requests, which can signal the cache was unexpectedly evicted"` // alert when cache_read drops >50% vs previous request
+	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    scope:"global,agent" desc:"Suppress the cache-bust alert if the session has been idle longer than this many minutes, since the cache naturally expires by then"`  // suppress cache bust alert if session idle > N minutes (default 10)
 
 	// EnablePprof exposes the net/http/pprof endpoints under /debug/pprof/*.
 	// Off by default: they allow CPU/heap profiling and goroutine dumps, so they
 	// are gated behind an explicit opt-in even though the HTTP server is
 	// auth-gated. Process-global (top-level [debug] section).
-	EnablePprof *bool `toml:"enable_pprof" default:"false" hot:"immediate,global" desc:"Expose Go profiling endpoints at /debug/pprof/* for CPU, memory and goroutine diagnostics. Off by default since profiling data can be sensitive"`
+	EnablePprof *bool `toml:"enable_pprof" default:"false" hot:"immediate" scope:"global" desc:"Expose Go profiling endpoints at /debug/pprof/* for CPU, memory and goroutine diagnostics. Off by default since profiling data can be sensitive"`
 
 	// Per-package "extra" verbose logging. Each switches on investigation-grade
 	// logging for one package, tagged "xtra:<package>" in the log (grep
 	// "xtra:ccstream", or "xtra:" for all). Process-global (applied once at
 	// startup from the top-level [debug] section); default off. See log.Extra.
-	ExtraCcstreamLogging *bool `toml:"extra_ccstream_logging" default:"false" hot:"immediate,global" desc:"Log verbose details (tagged xtra:ccstream) of the Claude Code backend streaming transport, for debugging delegated Claude Code sessions"` // verbose ccstream turn/steer logging
-	ExtraTelegramLogging *bool `toml:"extra_telegram_logging" default:"false" hot:"immediate,global" desc:"Log verbose details (tagged xtra:telegram) of the Telegram bot's polling and message transport, for debugging Telegram connectivity"`     // verbose telegram poll/transport logging
-	ExtraInboxLogging    *bool `toml:"extra_inbox_logging"    default:"false" hot:"immediate,global" desc:"Log verbose details (tagged xtra:inbox) of how incoming messages are queued, steered or dropped, for debugging message routing"`          // verbose inbox routing/gate logging
+	ExtraCcstreamLogging *bool `toml:"extra_ccstream_logging" default:"false" hot:"immediate" scope:"global" desc:"Log verbose details (tagged xtra:ccstream) of the Claude Code backend streaming transport, for debugging delegated Claude Code sessions"` // verbose ccstream turn/steer logging
+	ExtraTelegramLogging *bool `toml:"extra_telegram_logging" default:"false" hot:"immediate" scope:"global" desc:"Log verbose details (tagged xtra:telegram) of the Telegram bot's polling and message transport, for debugging Telegram connectivity"`     // verbose telegram poll/transport logging
+	ExtraInboxLogging    *bool `toml:"extra_inbox_logging"    default:"false" hot:"immediate" scope:"global" desc:"Log verbose details (tagged xtra:inbox) of how incoming messages are queued, steered or dropped, for debugging message routing"`          // verbose inbox routing/gate logging
 }
 
 type Config struct {
