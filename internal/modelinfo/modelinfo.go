@@ -8,6 +8,15 @@ import (
 	"sync"
 )
 
+// syntheticModel is CC's sentinel model name for a zero-cost no-op /
+// session-limit turn. It carries no real pricing, so it is priced at $0 and must
+// never trip the unpriced-model warning. Kept as a local literal (rather than
+// importing the ccstream constant) because modelinfo is a leaf package.
+const syntheticModel = "<synthetic>"
+
+// IsSynthetic reports whether model is CC's zero-cost synthetic sentinel.
+func IsSynthetic(model string) bool { return model == syntheticModel }
+
 // UnpricedModelHook, if set, is invoked once per distinct model that resolves
 // to a fallback rate (no exact registry hit and no family match). Wired at
 // startup to a log warning. A hook rather than a direct log call because
@@ -216,6 +225,11 @@ func Caching(model string) bool {
 // inherits its family's rates without needing a per-version registry entry.
 // Final fallbacks: OpenAI → $5/$15 approximation, everything else → haiku.
 func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
+	// CC's synthetic sentinel is a zero-cost no-op / session-limit turn: there is
+	// nothing to price, and pricing it would spuriously trip the unpriced warning.
+	if IsSynthetic(model) {
+		return 0
+	}
 	bare := normalize(model)
 	m, ok := registry[bare]
 	if !ok {
