@@ -2268,3 +2268,46 @@ func TestDisplayUsage_SumsDeltasButNotCacheRead(t *testing.T) {
 		t.Errorf("CacheReadInputTokens = %d, want 55566 (last call only, never summed)", got.CacheReadInputTokens)
 	}
 }
+
+// TestDelegatedUpdateSessionMeta_SyntheticModelNotRecorded: CC reports
+// "<synthetic>" on results served without an API call; recording it as the
+// session's live model locks branches into an unlaunchable `--model` (the
+// 2026-07-13 keepalive breakage). A real model must still be recorded.
+func TestDelegatedUpdateSessionMeta_SyntheticModelNotRecorded(t *testing.T) {
+	a := &Agent{Model: "claude-fable-5"}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
+	ts.SessionMeta = &sessionMeta{model: "claude-opus-4-8"}
+	ts.FinalUsage = &provider.Usage{}
+
+	ts.FinalModel = SyntheticModel
+	tr.UpdateSessionMeta(ts)
+	if ts.SessionMeta.model != "claude-opus-4-8" {
+		t.Errorf("model = %q after synthetic result, want claude-opus-4-8 kept", ts.SessionMeta.model)
+	}
+
+	ts.FinalModel = "claude-fable-5"
+	tr.UpdateSessionMeta(ts)
+	if ts.SessionMeta.model != "claude-fable-5" {
+		t.Errorf("model = %q after real result, want claude-fable-5 recorded", ts.SessionMeta.model)
+	}
+}
+
+// TestSessionModelFiltersSyntheticPollution: a session meta polluted with the
+// sentinel before the write-guard existed must resolve to the agent default,
+// both directly and via a child session's root fallback.
+func TestSessionModelFiltersSyntheticPollution(t *testing.T) {
+	a := &Agent{Model: "claude-fable-5"}
+	sm := a.getSessionMeta("bot/c100")
+	a.metaMu.Lock()
+	sm.model = SyntheticModel
+	a.metaMu.Unlock()
+
+	if got := a.SessionModel("bot/c100"); got != "claude-fable-5" {
+		t.Errorf("SessionModel(root) = %q, want agent default", got)
+	}
+	if got := a.SessionModel("bot/c100/b1"); got != "claude-fable-5" {
+		t.Errorf("SessionModel(child of polluted root) = %q, want agent default", got)
+	}
+}

@@ -251,9 +251,21 @@ func (a *Agent) SetSessionSpeed(sessionKey, value string) {
 	a.setStringSetting(sessionKey, value, settingSpeed)
 }
 
+// SyntheticModel is Claude Code's sentinel model name on results served
+// without an API call (error turns, no-op replies). It is never a launchable
+// model: UpdateSessionMeta refuses to record it, and SessionModel filters any
+// value persisted before that guard existed.
+const SyntheticModel = "<synthetic>"
+
 // SessionModel returns the effective model for the session.
 func (a *Agent) SessionModel(sessionKey string) string {
-	return a.getStringSetting(sessionKey, settingModel)
+	m := a.getStringSetting(sessionKey, settingModel)
+	if m == SyntheticModel {
+		// Pre-guard pollution (own or root override): fall back to the agent
+		// default rather than handing callers an unlaunchable sentinel.
+		return a.Model
+	}
+	return m
 }
 
 // CacheExpiry returns the wall-clock time at which the session's prompt cache

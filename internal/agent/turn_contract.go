@@ -179,7 +179,7 @@ type TurnState struct {
 	FinalText  string          // response text from the completed turn
 	FinalUsage *provider.Usage // token usage from the LAST terminal call (= current context size); never a fold of prior rounds
 	FinalCost  float64         // calculated cost from logAPIResponse (turn-total: sum across all terminal calls)
-	FinalModel string          // model used (delegated: from JSONL; API: from TurnModel)
+	FinalModel string          // model used (delegated: from JSONL; API: from TurnModel); may be SyntheticModel
 
 	// PriorCallUsages holds usage from terminal API calls that preceded the
 	// final one within a single turn, in chronological order. The delegated
