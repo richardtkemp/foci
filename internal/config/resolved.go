@@ -26,6 +26,12 @@ type ResolvedAgentConfig struct {
 	Display      ResolvedDisplay
 	Notify       ResolvedNotify
 
+	// Telegram-only per-agent table/poll settings (not general display —
+	// see TODO #1235 for generalizing off platforms.telegram.*).
+	TelegramTableWrapLines  int
+	TelegramTableStyle      string
+	TelegramLongPollTimeout string
+
 	Permissions ResolvedPermissions
 
 	// Webhooks is the merged System.Webhooks map (global base + agent overlay).
@@ -107,30 +113,57 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		))
 	}
 
+	// Telegram table/poll settings: agent-platform overrides global-platform
+	// (mirrors the acfg.Platform(name) → cfg.Platform(name) cascade tier used
+	// for Display/Notify above; Load()'s ApplyDefaults already does this cascade
+	// for the production path, but Resolve() must not depend on that having run —
+	// e.g. tests construct Config/AgentConfig directly without calling Load()).
+	var twl int
+	var tstyle, tlpt string
+	if gtg := cfg.Platform("telegram"); gtg != nil && gtg.Telegram != nil {
+		twl = DerefInt(gtg.Telegram.TableWrapLines)
+		tstyle = DerefStr(gtg.Telegram.TableStyle)
+		tlpt = gtg.Telegram.LongPollTimeout
+	}
+	if atg := acfg.Platform("telegram"); atg != nil && atg.Telegram != nil {
+		if atg.Telegram.TableWrapLines != nil {
+			twl = *atg.Telegram.TableWrapLines
+		}
+		if atg.Telegram.TableStyle != nil {
+			tstyle = *atg.Telegram.TableStyle
+		}
+		if atg.Telegram.LongPollTimeout != "" {
+			tlpt = atg.Telegram.LongPollTimeout
+		}
+	}
+
 	return &ResolvedAgentConfig{
-		Loop:            resolveLoop(Merge(acfg.Loop, cfg.AgentLoop)),
-		Behavior:        resolveBehavior(Merge(acfg.Behavior, cfg.Behavior)),
-		Voice:           resolveVoice(Merge(acfg.Voice, cfg.Voice)),
-		Nudge:           resolveNudge(Merge(acfg.Nudge, cfg.Nudge)),
-		System:          resolveSystem(Merge(acfg.System, cfg.System)),
-		Tools:           resolveTool(Merge(acfg.Tools.ToolConfig, cfg.Tools.ToolConfig)),
-		Summary:         resolveSummary(Merge(acfg.Tools.SummaryConfig, cfg.Tools.SummaryConfig)),
-		Compaction:      resolveCompaction(Merge(acfg.Sessions.CompactionConfig, cfg.Sessions.CompactionConfig)),
-		Debug:           resolveDebug(Merge(acfg.Debug, cfg.Debug)),
-		Environment:     resolveEnvironment(Merge(acfg.Environment, cfg.Environment)),
-		Groups:          gc,
-		Keepalive:       resolveKeepalive(Merge(acfg.Keepalive, cfg.Keepalive)),
-		Background:      resolveBackground(Merge(acfg.Background, cfg.Background)),
-		Scheduler:       resolveScheduler(Merge(acfg.Scheduler, cfg.Scheduler)),
-		MemorySearch:    resolveMemorySearch(Merge(acfg.Memory, cfg.Memory)),
-		Reflection:      resolveReflection(Merge(acfg.Reflection, cfg.Reflection)),
-		Maintenance:     resolveMaintenance(Merge(acfg.Maintenance, cfg.Maintenance)),
-		Browser:         resolveBrowser(Merge(acfg.Browser, cfg.Browser)),
-		Display:         resolveDisplay(Merge(displayLayers...)),
-		Notify:          resolveNotify(Merge(acfg.Notify, cfg.Notify)),
-		Permissions:     resolvePermissions(acfg.Permissions, cfg.Permissions),
-		Webhooks:        MergeMaps(cfg.System.Webhooks, acfg.System.Webhooks),
-		platformDisplay: platformDisplay,
-		platformNotify:  platformNotify,
+		Loop:                    resolveLoop(Merge(acfg.Loop, cfg.AgentLoop)),
+		Behavior:                resolveBehavior(Merge(acfg.Behavior, cfg.Behavior)),
+		Voice:                   resolveVoice(Merge(acfg.Voice, cfg.Voice)),
+		Nudge:                   resolveNudge(Merge(acfg.Nudge, cfg.Nudge)),
+		System:                  resolveSystem(Merge(acfg.System, cfg.System)),
+		Tools:                   resolveTool(Merge(acfg.Tools.ToolConfig, cfg.Tools.ToolConfig)),
+		Summary:                 resolveSummary(Merge(acfg.Tools.SummaryConfig, cfg.Tools.SummaryConfig)),
+		Compaction:              resolveCompaction(Merge(acfg.Sessions.CompactionConfig, cfg.Sessions.CompactionConfig)),
+		Debug:                   resolveDebug(Merge(acfg.Debug, cfg.Debug)),
+		Environment:             resolveEnvironment(Merge(acfg.Environment, cfg.Environment)),
+		Groups:                  gc,
+		Keepalive:               resolveKeepalive(Merge(acfg.Keepalive, cfg.Keepalive)),
+		Background:              resolveBackground(Merge(acfg.Background, cfg.Background)),
+		Scheduler:               resolveScheduler(Merge(acfg.Scheduler, cfg.Scheduler)),
+		MemorySearch:            resolveMemorySearch(Merge(acfg.Memory, cfg.Memory)),
+		Reflection:              resolveReflection(Merge(acfg.Reflection, cfg.Reflection)),
+		Maintenance:             resolveMaintenance(Merge(acfg.Maintenance, cfg.Maintenance)),
+		Browser:                 resolveBrowser(Merge(acfg.Browser, cfg.Browser)),
+		Display:                 resolveDisplay(Merge(displayLayers...)),
+		Notify:                  resolveNotify(Merge(acfg.Notify, cfg.Notify)),
+		TelegramTableWrapLines:  twl,
+		TelegramTableStyle:      tstyle,
+		TelegramLongPollTimeout: tlpt,
+		Permissions:             resolvePermissions(acfg.Permissions, cfg.Permissions),
+		Webhooks:                MergeMaps(cfg.System.Webhooks, acfg.System.Webhooks),
+		platformDisplay:         platformDisplay,
+		platformNotify:          platformNotify,
 	}
 }

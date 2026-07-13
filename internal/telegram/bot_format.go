@@ -191,7 +191,7 @@ func emojiForTool(name string) string {
 // formatToolCall formats a tool call for display in Telegram.
 // showMode controls truncation: "full" shows everything, other modes truncate.
 func (b *Bot) formatToolCall(toolName string, params json.RawMessage, showMode string) string {
-	maxChars := b.display.ToolCallPreviewChars
+	maxChars := b.getDisplay().ToolCallPreviewChars
 	if maxChars == 0 {
 		maxChars = 450
 	}

@@ -20,7 +20,7 @@ func warnStreamOutputWithoutStreaming(cfg *config.Config) {
 func checkStreamOutputWithoutStreaming(cfg *config.Config) []string {
 	var warnings []string
 	for _, acfg := range cfg.Agents {
-		streaming := config.Resolve(cfg, acfg).Display.Streaming
+		streaming := config.Resolve(cfg, acfg).Loop.Streaming
 		if streaming {
 			continue // provider streaming is on — no conflict
 		}

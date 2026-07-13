@@ -169,7 +169,7 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 	if len(attachments) > 0 {
 		logText = fmt.Sprintf("[%d attachment(s)] %s", len(attachments), text)
 	}
-	if b.display.MessagesInLog {
+	if b.getDisplay().MessagesInLog {
 		b.logger().Infof("message from %s: %s", formatUserInfo(msg.Author), truncate(logText, 100))
 	} else {
 		b.logger().Debugf("message from %s", formatUserInfo(msg.Author))

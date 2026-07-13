@@ -452,8 +452,8 @@ func (b *Bot) SendText(text string) error {
 // if the session key doesn't contain a chat ID (e.g. independent sessions).
 // Prepends the configured InjectedMessageHeader (if non-empty).
 func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
-	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
-		text = b.display.InjectedMessageHeader + "\n" + text
+	if header := b.getDisplay().InjectedMessageHeader; header != "" && strings.TrimSpace(text) != "" {
+		text = header + "\n" + text
 	}
 	return b.SendToSession(sessionKey, text)
 }

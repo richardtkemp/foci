@@ -129,10 +129,10 @@ var (
 	// snapshot, so any field a consumer reaches this way goes hot by adding
 	// it here + a `hot` tag.
 	liveApplyResolvedAddrs = []string{
-		"voice.tts", "voice.tts_rate",
-		"agent.voice.tts", "agent.voice.tts_rate",
-		"display.streaming", "agent.display.streaming",
+		"voice.tts", "voice.tts_rate", "voice.stt",
+		"agent.voice.tts", "agent.voice.tts_rate", "agent.voice.stt",
 		"agent_loop.max_tool_loops", "agent.loop.max_tool_loops",
+		"agent_loop.streaming", "agent.loop.streaming",
 		"debug.cache_bust_detect", "agent.debug.cache_bust_detect",
 		"debug.cache_bust_idle_minutes", "agent.debug.cache_bust_idle_minutes",
 		"background.can_run_background", "agent.background.can_run_background",
@@ -154,6 +154,9 @@ var (
 		"notify.compaction_notify", "agent.notify.compaction_notify", "platforms.notify.compaction_notify",
 		"notify.task_list_notify", "agent.notify.task_list_notify", "platforms.notify.task_list_notify",
 		"notify.compaction_debug", "agent.notify.compaction_debug", "platforms.notify.compaction_debug",
+		"display.stream_output", "agent.display.stream_output", "platforms.display.stream_output",
+		"debug.messages_in_log", "agent.debug.messages_in_log",
+		"platforms.telegram.table_wrap_lines", "platforms.telegram.table_style", "platforms.telegram.long_poll_timeout",
 	}
 )
 

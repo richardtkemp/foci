@@ -159,7 +159,7 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 		// preserving the network roundtrip buffer. A tg-side timeout of 0
 		// is a short-poll (Telegram returns immediately), which is what
 		// integration tests want against the httptest stub.
-		clientTimeout := b.longPollTimeout
+		clientTimeout := b.getLongPollTimeout()
 		if clientTimeout <= 0 {
 			clientTimeout = 30 * time.Second
 		}

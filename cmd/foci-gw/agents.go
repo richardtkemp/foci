@@ -324,7 +324,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.AutoSummarise = sc.AutoSummarise
 	ag.MaxToolLoops = al.MaxToolLoops
 	ag.MaxOutputTokens = al.MaxOutputTokens
-	ag.Streaming = p.resolved.Display.Streaming // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
+	ag.Streaming = al.Streaming // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
 
 	// Pre-compaction memory formation hook
 	compactMemOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))

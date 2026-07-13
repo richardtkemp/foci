@@ -147,12 +147,12 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 	// is called with non-zero agent and global configs. This catches new
 	// fields being added to the struct without updating Resolve().
 	cfg := &Config{
-		AgentLoop: AgentLoopConfig{MaxToolLoops: Ptr(1)},
+		AgentLoop: AgentLoopConfig{MaxToolLoops: Ptr(1), Streaming: Ptr(true)},
 		Behavior:  BehaviorConfig{SteerMode: Ptr(true), GroupThrottle: Ptr("1s"), EnableStopAliases: Ptr(true), StopAliases: []string{"stop"}},
 		Voice:     VoiceConfig{TTS: Ptr("test")},
 		Nudge:     NudgeConfig{NudgeEnable: Ptr(true), NudgeCooldown: Ptr(1)},
 		System:    SystemConfig{SystemFiles: []string{"a.md"}, Webhooks: map[string]string{"hook": "path"}},
-		Display:   DisplayConfig{Streaming: Ptr(true)},
+		Display:   DisplayConfig{StreamOutput: Ptr(true)},
 		Notify:    NotifyConfig{StartupNotify: Ptr(true)},
 		Tools: ToolsConfig{
 			ToolConfig:    ToolConfig{ExecAutoBackground: Ptr(1)},
@@ -171,6 +171,9 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Scheduler:   SchedulerConfig{TickInterval: Ptr("30s")},
 		Maintenance: MaintenanceConfig{ConsolidationEnabled: Ptr(true), ConsolidationTime: Ptr("20h"), ResetTime: Ptr("04:20"), ResetIdleGuard: Ptr("55m")},
 		Browser:     BrowserConfig{Enabled: Ptr(true)},
+		Platforms: []PlatformConfig{
+			{ID: "telegram", Telegram: &TelegramSpecific{TableWrapLines: Ptr(7), TableStyle: Ptr("markdown"), LongPollTimeout: "45s"}},
+		},
 	}
 	acfg := AgentConfig{} // all nil — global values should fill in
 
@@ -191,7 +194,7 @@ func TestResolve_PlatformDisplayNotify(t *testing.T) {
 	// agent-platform → agent → global-platform → global-defaults.
 	tcd := ToolCallFull
 	cfg := &Config{
-		Display: DisplayConfig{Streaming: Ptr(true)},
+		Display: DisplayConfig{StreamOutput: Ptr(true)},
 		Notify:  NotifyConfig{StartupNotify: Ptr(true)},
 		Platforms: []PlatformConfig{
 			{ID: "telegram", Display: DisplayConfig{ShowToolCalls: &tcd}},
@@ -207,8 +210,8 @@ func TestResolve_PlatformDisplayNotify(t *testing.T) {
 	rc := Resolve(cfg, acfg)
 
 	// Base display: agent → global → all platform defaults
-	if got := rc.Display.Streaming; got != true {
-		t.Error("Display.Streaming should be true (global)")
+	if got := rc.Display.StreamOutput; got != true {
+		t.Error("Display.StreamOutput should be true (global)")
 	}
 	if got := rc.Display.DisplayWidth; got != 80 {
 		t.Error("Display.DisplayWidth should be 80 (agent)")

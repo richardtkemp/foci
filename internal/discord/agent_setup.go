@@ -77,9 +77,10 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			}
 			dBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			dBot.SetCommandContext(p.CommandContext)
-			// bot.display is a per-bot baked fallback layer; the live
-			// per-session override path is DisplayOverrideFn/session_meta.go.
-			// Converting this fallback itself needs its own dedicated pass.
+			// bot.display is a per-bot baked fallback layer, overlaid by the
+			// per-session override path (DisplayOverrideFn/session_meta.go).
+			// The hot-tagged fields (stream_output, messages_in_log) also
+			// live-update via the OnChange below.
 			ApplyAgentDisplaySettings(dBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug) // static-cfg:ignore: see comment above
 			dBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 		},
@@ -209,6 +210,18 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 			primaryBot.mq.SetThrottle(newGroupThrottle(fresh.Behavior.GroupThrottle, primaryBot))
 			log.Infof("discord", "agent %q: group throttle live-updated to %q", acfg.ID, fresh.Behavior.GroupThrottle)
 		})
+
+		// Hot-tagged display/debug fields (display.stream_output,
+		// debug.messages_in_log — #1224): re-run ApplyAgentDisplaySettings
+		// with the fresh resolved values whenever either changes.
+		p.ResolvedLive.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
+			oldDC, freshDC := old.PlatformDisplay("discord"), fresh.PlatformDisplay("discord")
+			if oldDC.StreamOutput == freshDC.StreamOutput && old.Debug.MessagesInLog == fresh.Debug.MessagesInLog {
+				return
+			}
+			ApplyAgentDisplaySettings(primaryBot, freshDC, fresh.Debug)
+			log.Infof("discord", "agent %q: display settings live-updated", acfg.ID)
+		})
 	}
 
 	// Wire the bot to the agent's Inbox subsystem (Phase 6 — TODO #739).
@@ -238,7 +251,10 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	if p.TTS != nil {
 		primaryBot.SetTTS(p.TTS)
 	}
-	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
+	primaryBot.updateDisplay(func(d BotDisplayConfig) BotDisplayConfig {
+		d.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
+		return d
+	})
 	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug) // static-cfg:ignore: see comment on the ConfigureFacetConn call above
 	primaryBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 
@@ -289,36 +305,38 @@ func newGroupThrottle(durStr string, bot *Bot) *platform.GroupThrottle {
 	}, bot.log)
 }
 
-// ApplyAgentDisplaySettings sets per-agent display settings on a bot
-// using pre-resolved config values.
+// ApplyAgentDisplaySettings sets per-agent display settings on a bot using
+// pre-resolved config values. Called once at bot setup, and again from the
+// OnChange hook below whenever a hot-tagged field (stream_output,
+// messages_in_log) changes live.
 func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.ResolvedDebug) {
-	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
-
-	if dc.ShowToolCalls != "" {
-		d.ShowToolCalls = dc.ShowToolCalls
-	}
-	if dc.ShowThinking != "" {
-		d.ShowThinking = dc.ShowThinking
-	}
-	if dc.DisplayWidth != 0 {
-		d.DisplayWidth = dc.DisplayWidth
-	}
-	if dc.ReceivedFilesDir != "" {
-		d.ReceivedFilesDir = dc.ReceivedFilesDir
-	}
-	if dc.StreamOutput {
-		d.StreamOutput = true
-	}
-	if dc.StreamInterval != "" {
-		if dur, err := time.ParseDuration(dc.StreamInterval); err == nil && dur > 0 {
-			d.StreamUpdateInterval = dur
+	bot.updateDisplay(func(d BotDisplayConfig) BotDisplayConfig {
+		if dc.ShowToolCalls != "" {
+			d.ShowToolCalls = dc.ShowToolCalls
 		}
-	}
-	if dc.InjectedMessageHeader != "" {
-		d.InjectedMessageHeader = dc.InjectedMessageHeader
-	}
+		if dc.ShowThinking != "" {
+			d.ShowThinking = dc.ShowThinking
+		}
+		if dc.DisplayWidth != 0 {
+			d.DisplayWidth = dc.DisplayWidth
+		}
+		if dc.ReceivedFilesDir != "" {
+			d.ReceivedFilesDir = dc.ReceivedFilesDir
+		}
+		// dc is always the fully-resolved cascade value (not a partial layer),
+		// so this assigns unconditionally — needed for a live re-apply to be
+		// able to turn a previously-true value back off.
+		d.StreamOutput = dc.StreamOutput
+		if dc.StreamInterval != "" {
+			if dur, err := time.ParseDuration(dc.StreamInterval); err == nil && dur > 0 {
+				d.StreamUpdateInterval = dur
+			}
+		}
+		if dc.InjectedMessageHeader != "" {
+			d.InjectedMessageHeader = dc.InjectedMessageHeader
+		}
 
-	d.MessagesInLog = dbg.MessagesInLog
-
-	bot.display = d
+		d.MessagesInLog = dbg.MessagesInLog
+		return d
+	})
 }

@@ -430,7 +430,7 @@ const DefaultMaxFileReadBytes int64 = 50 << 20 // 50 MiB
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
 	TTS                  *string           `toml:"tts"      hot:"event" desc:"Which text-to-speech provider to use for voice replies"`
-	STT                  *string           `toml:"stt"      desc:"Which speech-to-text provider to use for transcribing voice messages"`
+	STT                  *string           `toml:"stt"      hot:"event" desc:"Which speech-to-text provider to use for transcribing voice messages"`
 	TTSRate              *float64          `toml:"tts_rate"  hot:"event" desc:"Speeds up or slows down text-to-speech playback. 1.0 is normal speed, higher is faster, lower is slower. 0 is treated as 1.0"`
 	TTSReplacements      map[string]string `toml:"tts_replacements"`
 	STTReplacements      map[string]string `toml:"stt_replacements"`
@@ -449,6 +449,7 @@ type AgentLoopConfig struct {
 	DuplicateMessages             *bool   `toml:"duplicate_messages"               desc:"Repeats your message text twice in the prompt sent to the model, a technique that can improve instruction-following on some models. Off by default"`
 	BatchPartialAssistantMessages *bool   `toml:"batch_partial_assistant_messages"  desc:"When the agent sends text between tool calls, combine it all into one message at the end of the turn instead of sending each piece right away. Off by default"`
 	BatchPartialJoiner            *string `toml:"batch_partial_joiner"             desc:"Text inserted between chunks when batch_partial_assistant_messages combines them into one message. Empty joins them with nothing in between"`
+	Streaming                     *bool   `toml:"streaming"                        hot:"turn" desc:"Call the model's streaming API so tokens arrive incrementally, rather than waiting for the full response in one call; separate from display.stream_output, which controls whether the chat message itself is live-edited"` // use streaming API
 }
 
 // BehaviorConfig holds agent behavioral settings.
@@ -495,9 +496,8 @@ type AnthropicConfig struct {
 type DisplayConfig struct {
 	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         desc:"How tool-call activity appears in chat: off hides it, preview shows it then replaces it with the final reply, full keeps it visible as a separate message" choices:"off,preview,full"`                             // tool call display: off, preview, full
 	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"How the model's reasoning is shown: off hides it, compact adds a Show thinking toggle button, true prepends it to every reply" choices:"off,compact,true"`                                                         // thinking display: off, compact, true
-	StreamOutput          *bool            `toml:"stream_output"           desc:"Edit the chat message in place as the reply is generated, instead of sending it only once it's complete"`                                                                                                          // stream model output in real-time
+	StreamOutput          *bool            `toml:"stream_output"           hot:"turn" desc:"Edit the chat message in place as the reply is generated, instead of sending it only once it's complete"`                                                                                                // stream model output in real-time
 	StreamInterval        *string          `toml:"stream_interval"         desc:"How often the in-progress reply is updated on screen while streaming; lower values look smoother but send more edits to the chat platform" type:"duration"`                                                        // duration between message edits during streaming
-	Streaming             *bool            `toml:"streaming"               hot:"turn" scope:"global,agent" desc:"Call the model's streaming API so tokens arrive incrementally, rather than waiting for the full response in one call; separate from stream_output, which controls whether the chat message itself is live-edited"` // use streaming API
 	DisplayWidth          *int             `toml:"display_width"           desc:"Character width used for divider lines and to wrap tables and thinking blocks in chat messages"`                                                                                                                   // display width for dividers
 	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"Local directory where files received from users, such as photos or documents, are saved; leave empty to not save them"`                                                                                            // save received files to this directory
 	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"Text prepended to system-injected messages, such as warnings, so you can tell them apart from normal replies; empty adds no header"`                                                                               // header prepended to injected messages
@@ -642,9 +642,9 @@ func (p *PlatformConfig) SafeDisplay() DisplayConfig {
 
 // TelegramSpecific holds Telegram-only config fields.
 type TelegramSpecific struct {
-	LongPollTimeout string  `toml:"long_poll_timeout"`                                                                                                                                                 // default "30s" (HTTP-client timeout; Telegram-side long-poll derived as -5s)
-	TableWrapLines  *int    `toml:"table_wrap_lines"  desc:"Maximum number of lines a single table cell wraps to before its content is truncated (default 5)"`                                         // default 5
-	TableStyle      *string `toml:"table_style"       desc:"How tables are rendered in chat: pretty uses box-drawing characters, markdown uses plain markdown table syntax" choices:"pretty,markdown"` // default "pretty"
+	LongPollTimeout string  `toml:"long_poll_timeout"  hot:"event" desc:"HTTP-client timeout for getUpdates; the Telegram-side long-poll timeout is derived as this minus 5s (default 30s)"`
+	TableWrapLines  *int    `toml:"table_wrap_lines"  hot:"turn" desc:"Maximum number of lines a single table cell wraps to before its content is truncated (default 5)"`                                         // default 5
+	TableStyle      *string `toml:"table_style"       hot:"turn" desc:"How tables are rendered in chat: pretty uses box-drawing characters, markdown uses plain markdown table syntax" choices:"pretty,markdown"` // default "pretty"
 
 	// APIBase overrides the Telegram Bot API base URL (default
 	// "https://api.telegram.org"). Used by integration tests to point bots
@@ -1097,7 +1097,7 @@ type BackgroundConfig struct {
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type DebugConfig struct {
 	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      scope:"global" desc:"Log the last 4 characters of the API key on every model provider request, useful for confirming which key was used"`                                   // log last 4 chars of API keys on each provider call (default false)
-	MessagesInLog        *bool `toml:"messages_in_log"         scope:"global,agent" desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"`                       // log user message content to event log (default false for privacy)
+	MessagesInLog        *bool `toml:"messages_in_log"         hot:"immediate" scope:"global,agent" desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"`                       // log user message content to event log (default false for privacy)
 	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" hot:"turn" scope:"global,agent" desc:"Alert in chat when the provider's prompt-cache hit count drops between requests, which can signal the cache was unexpectedly evicted"` // alert when cache_read drops >50% vs previous request
 	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    hot:"turn" scope:"global,agent" desc:"Suppress the cache-bust alert if the session has been idle longer than this many minutes, since the cache naturally expires by then"`  // suppress cache bust alert if session idle > N minutes (default 10)
 

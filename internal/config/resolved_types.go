@@ -10,6 +10,7 @@ type ResolvedLoop struct {
 	DuplicateMessages             bool
 	BatchPartialAssistantMessages bool
 	BatchPartialJoiner            string
+	Streaming                     bool
 }
 
 func resolveLoop(m AgentLoopConfig) ResolvedLoop {
@@ -19,6 +20,7 @@ func resolveLoop(m AgentLoopConfig) ResolvedLoop {
 		DuplicateMessages:             DerefBool(m.DuplicateMessages),
 		BatchPartialAssistantMessages: DerefBool(m.BatchPartialAssistantMessages),
 		BatchPartialJoiner:            DerefStr(m.BatchPartialJoiner),
+		Streaming:                     DerefBool(m.Streaming),
 	}
 }
 
@@ -349,7 +351,6 @@ type ResolvedDisplay struct {
 	ShowThinking          string // ShowThinking as string; "" = not configured
 	StreamOutput          bool
 	StreamInterval        string
-	Streaming             bool
 	DisplayWidth          int
 	ReceivedFilesDir      string
 	InjectedMessageHeader string
@@ -370,7 +371,6 @@ func resolveDisplay(m DisplayConfig) ResolvedDisplay {
 		ShowThinking:          st,
 		StreamOutput:          DerefBool(m.StreamOutput),
 		StreamInterval:        DerefStr(m.StreamInterval),
-		Streaming:             DerefBool(m.Streaming),
 		DisplayWidth:          DerefInt(m.DisplayWidth),
 		ReceivedFilesDir:      DerefStr(m.ReceivedFilesDir),
 		InjectedMessageHeader: DerefStr(m.InjectedMessageHeader),

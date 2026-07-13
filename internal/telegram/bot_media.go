@@ -99,8 +99,8 @@ func (b *Bot) SendTextToChat(chatID int64, text string) error {
 // SendInjectedToChat sends an injected/system text message to a specific chat ID.
 // Prepends the configured InjectedMessageHeader (if non-empty).
 func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
-	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
-		text = b.display.InjectedMessageHeader + "\n" + text
+	if header := b.getDisplay().InjectedMessageHeader; header != "" && strings.TrimSpace(text) != "" {
+		text = header + "\n" + text
 	}
 	return b.SendTextToChat(chatID, text)
 }
@@ -367,7 +367,7 @@ func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType stri
 		return "", &fileTooLargeError{size: fileSize}
 	}
 
-	if b.display.ReceivedFilesDir == "" {
+	if b.getDisplay().ReceivedFilesDir == "" {
 		return "", fmt.Errorf("media save directory not configured")
 	}
 
@@ -447,7 +447,8 @@ func uniqueMediaPath(desiredPath string) string {
 // mediaGroupID is the Telegram media_group_id ("" for a standalone file);
 // files in the same album share one timestamp and get sequential _N suffixes.
 func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext, mediaGroupID string) (string, error) {
-	if err := os.MkdirAll(b.display.ReceivedFilesDir, 0o755); err != nil {
+	receivedFilesDir := b.getDisplay().ReceivedFilesDir
+	if err := os.MkdirAll(receivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create media dir: %w", err)
 	}
 	stamp, seq := b.mediaGroupStamp(mediaGroupID)
@@ -456,7 +457,7 @@ func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext, mediaG
 	if seq > 0 {
 		filename = fmt.Sprintf("%s_%d%s", prefix, seq, ext)
 	}
-	path := uniqueMediaPath(filepath.Join(b.display.ReceivedFilesDir, filename))
+	path := uniqueMediaPath(filepath.Join(receivedFilesDir, filename))
 	mode := b.fileMode
 	if mode == 0 {
 		mode = 0640
@@ -479,7 +480,7 @@ func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64, mediaGro
 		return attachment{}, false
 	}
 	att := attachment{data: data, mediaType: mimeType}
-	if b.display.ReceivedFilesDir != "" {
+	if b.getDisplay().ReceivedFilesDir != "" {
 		ext := extForMediaType(mimeType)
 		if ext == ".bin" {
 			ext = extForMIME(mimeType)

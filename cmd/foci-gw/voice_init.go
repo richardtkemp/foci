@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"foci/internal/config"
@@ -154,4 +156,36 @@ func resolveSTT(sttMap map[string]voice.STT, sttEntries []config.STTConfig, sttI
 	}
 	merged := voice.MergeReplacements(entryRepls, replacements)
 	return voice.WrapSTT(stt, merged)
+}
+
+// lazySTT re-resolves the underlying voice.STT on every call instead of once
+// at setup, so voice.stt changes propagate without a restart (unlike
+// resolveSTT's normal callers, which bake the result in at connection setup —
+// see setupPlatformConnections's STT/TTS wiring, #1224).
+type lazySTT struct {
+	resolve func() voice.STT
+}
+
+func (l *lazySTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
+	stt := l.resolve()
+	if stt == nil {
+		return "", fmt.Errorf("no STT provider configured")
+	}
+	return stt.Transcribe(ctx, audioData, filename)
+}
+
+// lazyTTS re-resolves the underlying voice.TTS on every call instead of once
+// at setup, so voice.tts/voice.tts_rate changes propagate without a restart
+// for this consumer too (the send_to_chat tool's own TTS already does this
+// via the agentTTS closure in agents.go; this covers the bot-connection path).
+type lazyTTS struct {
+	resolve func() voice.TTS
+}
+
+func (l *lazyTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
+	tts := l.resolve()
+	if tts == nil {
+		return nil, fmt.Errorf("no TTS provider configured")
+	}
+	return tts.Synthesize(ctx, text)
 }

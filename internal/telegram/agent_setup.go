@@ -80,10 +80,11 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			}
 			tBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			tBot.SetCommandContext(p.CommandContext)
-			// bot.display is a per-bot baked fallback layer; the live
-			// per-session override path is DisplayOverrideFn/session_meta.go.
-			// Converting this fallback itself needs its own dedicated pass.
-			ApplyAgentDisplaySettings(tBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram")) // static-cfg:ignore: see comment above
+			// bot.display is a per-bot baked fallback layer, overlaid by the
+			// per-session override path (DisplayOverrideFn/session_meta.go).
+			// The hot-tagged fields (stream_output, table settings,
+			// messages_in_log) also live-update via the OnChange below.
+			ApplyAgentDisplaySettings(tBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, p.Resolved.TelegramTableWrapLines, p.Resolved.TelegramTableStyle, p.Resolved.TelegramLongPollTimeout) // static-cfg:ignore: see comment above
 			tBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 		},
 		DisplayDefaultsFn: func() platform.DisplaySettings {
@@ -183,6 +184,23 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			primaryBot.mq.SetThrottle(newGroupThrottle(fresh.Behavior.GroupThrottle, primaryBot))
 			log.Infof("telegram", "agent %q: group throttle live-updated to %q", acfg.ID, fresh.Behavior.GroupThrottle)
 		})
+
+		// Hot-tagged display/table/debug fields (display.stream_output,
+		// platforms.telegram.table_wrap_lines/table_style/long_poll_timeout,
+		// debug.messages_in_log — #1224): re-run ApplyAgentDisplaySettings
+		// with the fresh resolved values whenever any of them change.
+		p.ResolvedLive.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
+			oldDC, freshDC := old.PlatformDisplay("telegram"), fresh.PlatformDisplay("telegram")
+			if oldDC.StreamOutput == freshDC.StreamOutput &&
+				old.Debug.MessagesInLog == fresh.Debug.MessagesInLog &&
+				old.TelegramTableWrapLines == fresh.TelegramTableWrapLines &&
+				old.TelegramTableStyle == fresh.TelegramTableStyle &&
+				old.TelegramLongPollTimeout == fresh.TelegramLongPollTimeout {
+				return
+			}
+			ApplyAgentDisplaySettings(primaryBot, freshDC, fresh.Debug, fresh.TelegramTableWrapLines, fresh.TelegramTableStyle, fresh.TelegramLongPollTimeout)
+			log.Infof("telegram", "agent %q: display settings live-updated", acfg.ID)
+		})
 	}
 
 	// Wire the bot to the agent's Inbox subsystem (Phase 6 — TODO #739).
@@ -215,8 +233,11 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	if p.TTS != nil {
 		primaryBot.SetTTS(p.TTS)
 	}
-	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
-	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram")) // static-cfg:ignore: see comment on the ConfigureFacetConn call above
+	primaryBot.updateDisplay(func(d BotDisplayConfig) BotDisplayConfig {
+		d.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
+		return d
+	})
+	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, p.Resolved.TelegramTableWrapLines, p.Resolved.TelegramTableStyle, p.Resolved.TelegramLongPollTimeout) // static-cfg:ignore: see comment on the ConfigureFacetConn call above
 	primaryBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 
 	if p.DisplayOverrideFn != nil {
@@ -315,7 +336,7 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	if mc.TTSProvider != nil {
 		bot.SetTTS(mc.TTSProvider)
 	}
-	ApplyAgentDisplaySettings(bot, mc.Resolved.PlatformDisplay("telegram"), mc.Resolved.Debug, mc.AgentConfig.Platform("telegram")) // static-cfg:ignore: see comment on the ConfigureFacetConn call in SetupAgent
+	ApplyAgentDisplaySettings(bot, mc.Resolved.PlatformDisplay("telegram"), mc.Resolved.Debug, mc.Resolved.TelegramTableWrapLines, mc.Resolved.TelegramTableStyle, mc.Resolved.TelegramLongPollTimeout) // static-cfg:ignore: see comment on the ConfigureFacetConn call in SetupAgent
 	bot.fileMode, _ = config.ParseFileMode(mc.GlobalConfig.FileMode)
 	if mc.ToolDetailStore != nil {
 		bot.SetToolDetailStore(mc.ToolDetailStore)
@@ -333,51 +354,57 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	}
 }
 
-// ApplyAgentDisplaySettings sets per-agent display settings on a bot
-// using pre-resolved config values.
-func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.ResolvedDebug, tg *config.PlatformConfig) {
-	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
-
-	if dc.ShowToolCalls != "" {
-		d.ShowToolCalls = dc.ShowToolCalls
-	}
-	if dc.ShowThinking != "" {
-		d.ShowThinking = dc.ShowThinking
-	}
-	if dc.DisplayWidth != 0 {
-		d.DisplayWidth = dc.DisplayWidth
-	}
-	if dc.ReceivedFilesDir != "" {
-		d.ReceivedFilesDir = dc.ReceivedFilesDir
-	}
-	if dc.StreamOutput {
-		d.StreamOutput = true
-	}
-	if dc.StreamInterval != "" {
-		if dur, err := time.ParseDuration(dc.StreamInterval); err == nil && dur > 0 {
-			d.StreamUpdateInterval = dur
+// ApplyAgentDisplaySettings sets per-agent display settings on a bot using
+// pre-resolved config values. Called once at bot setup, and again from the
+// OnChange hook below whenever a hot-tagged field (stream_output, table
+// settings, messages_in_log, long_poll_timeout) changes live.
+// tableWrapLines/tableStyle/longPollTimeout are the already-resolved
+// Telegram-only settings (config.ResolvedAgentConfig.TelegramTable*, not
+// part of DisplayConfig — see #1235 for generalizing these off
+// platforms.telegram.*). Zero/empty means "never configured anywhere",
+// consistent with how dc's own zero-value fields (e.g. DisplayWidth) are
+// treated below.
+func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.ResolvedDebug, tableWrapLines int, tableStyle string, longPollTimeout string) {
+	bot.updateDisplay(func(d BotDisplayConfig) BotDisplayConfig {
+		if dc.ShowToolCalls != "" {
+			d.ShowToolCalls = dc.ShowToolCalls
 		}
-	}
-	if dc.InjectedMessageHeader != "" {
-		d.InjectedMessageHeader = dc.InjectedMessageHeader
-	}
-
-	// Telegram-specific fields (not in DisplayConfig)
-	if tg != nil && tg.Telegram != nil {
-		if tg.Telegram.TableWrapLines != nil {
-			d.TableWrapLines = *tg.Telegram.TableWrapLines
+		if dc.ShowThinking != "" {
+			d.ShowThinking = dc.ShowThinking
 		}
-		if tg.Telegram.TableStyle != nil {
-			d.TableStyle = *tg.Telegram.TableStyle
+		if dc.DisplayWidth != 0 {
+			d.DisplayWidth = dc.DisplayWidth
 		}
-		if tg.Telegram.LongPollTimeout != "" {
-			if dur, err := time.ParseDuration(tg.Telegram.LongPollTimeout); err == nil && dur > 0 {
-				bot.longPollTimeout = dur
+		if dc.ReceivedFilesDir != "" {
+			d.ReceivedFilesDir = dc.ReceivedFilesDir
+		}
+		// dc is always the fully-resolved cascade value (not a partial layer),
+		// so these assign unconditionally — needed for a live re-apply to be
+		// able to turn a previously-true value back off.
+		d.StreamOutput = dc.StreamOutput
+		if dc.StreamInterval != "" {
+			if dur, err := time.ParseDuration(dc.StreamInterval); err == nil && dur > 0 {
+				d.StreamUpdateInterval = dur
 			}
 		}
+		if dc.InjectedMessageHeader != "" {
+			d.InjectedMessageHeader = dc.InjectedMessageHeader
+		}
+
+		if tableWrapLines != 0 {
+			d.TableWrapLines = tableWrapLines
+		}
+		if tableStyle != "" {
+			d.TableStyle = tableStyle
+		}
+
+		d.MessagesInLog = dbg.MessagesInLog
+		return d
+	})
+
+	if longPollTimeout != "" {
+		if dur, err := time.ParseDuration(longPollTimeout); err == nil && dur > 0 {
+			bot.setLongPollTimeout(dur)
+		}
 	}
-
-	d.MessagesInLog = dbg.MessagesInLog
-
-	bot.display = d
 }
