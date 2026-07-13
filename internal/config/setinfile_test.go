@@ -295,6 +295,154 @@ model = "sonnet"
 	}
 }
 
+func TestSetInFile_AgentDottedKey_CreatesExplicitTable(t *testing.T) {
+	// Proves a NEW dotted per-agent key gets its own [agents.<tablePath>]
+	// table rather than an inline dotted key in the [[agents]] block's own
+	// body — the "upgrade dotted keys to tables" behavior.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`[groups]
+powerful = "anthropic/claude-opus-4-6"
+
+[[agents]]
+id = "main"
+model = "sonnet"
+`), 0o644)
+
+	_, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "main", Key: "loop.max_tool_loops"}, "50", 0640)
+	if err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	result := string(data)
+
+	if strings.Contains(result, "loop.max_tool_loops") {
+		t.Errorf("wrote an inline dotted key instead of upgrading to a table:\n%s", result)
+	}
+	if !strings.Contains(result, "[agents.loop]") {
+		t.Errorf("expected a new [agents.loop] table:\n%s", result)
+	}
+	if !strings.Contains(result, "max_tool_loops = 50") {
+		t.Errorf("leaf key/value not found:\n%s", result)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v\n%s", err, result)
+	}
+	if cfg.Agents[0].Loop.MaxToolLoops == nil || *cfg.Agents[0].Loop.MaxToolLoops != 50 {
+		t.Errorf("decoded Agents[0].Loop.MaxToolLoops = %v, want 50", cfg.Agents[0].Loop.MaxToolLoops)
+	}
+}
+
+func TestSetInFile_AgentDottedKey_ReusesExistingTable(t *testing.T) {
+	// Proves a new leaf under an ALREADY-EXISTING [agents.<tablePath>] table
+	// (just missing this specific leaf) is inserted into that table, not
+	// duplicated as an inline key or a second header.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`[groups]
+powerful = "anthropic/claude-opus-4-6"
+
+[[agents]]
+id = "main"
+model = "sonnet"
+
+[agents.groups.calls]
+existing-site = "fast"
+`), 0o644)
+
+	_, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "main", Key: "groups.calls.new-site"}, `"cheap"`, 0640)
+	if err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	result := string(data)
+
+	if strings.Count(result, "[agents.groups.calls]") != 1 {
+		t.Errorf("expected exactly one [agents.groups.calls] header:\n%s", result)
+	}
+	if strings.Contains(result, "groups.calls.new-site") {
+		t.Errorf("wrote an inline dotted key instead of reusing the existing table:\n%s", result)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v\n%s", err, result)
+	}
+	want := map[string]string{"existing-site": "fast", "new-site": "cheap"}
+	got := cfg.Agents[0].Groups.Calls
+	if len(got) != len(want) || got["existing-site"] != "fast" || got["new-site"] != "cheap" {
+		t.Errorf("decoded Agents[0].Groups.Calls = %+v, want %+v", got, want)
+	}
+}
+
+func TestSetInFile_AgentDottedKey_LongestTableMatchWins(t *testing.T) {
+	// When both [agents.groups] and [agents.groups.calls] exist, a new
+	// "groups.calls.X" key must land in the more specific groups.calls
+	// table, not the shorter groups table.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`[groups]
+powerful = "anthropic/claude-opus-4-6"
+
+[[agents]]
+id = "main"
+model = "sonnet"
+
+[agents.groups]
+myteam = "anthropic/claude-haiku-4-5"
+
+[agents.groups.calls]
+existing-site = "fast"
+`), 0o644)
+
+	_, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "main", Key: "groups.calls.new-site"}, `"cheap"`, 0640)
+	if err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		data, _ := os.ReadFile(path)
+		t.Fatalf("Load: %v\n%s", err, data)
+	}
+	if cfg.Agents[0].Groups.Calls["new-site"] != "cheap" {
+		t.Errorf("Agents[0].Groups.Calls[new-site] = %q, want cheap", cfg.Agents[0].Groups.Calls["new-site"])
+	}
+	// The bare [agents.groups] table must survive untouched.
+	if cfg.Agents[0].Groups.Groups["myteam"] != "anthropic/claude-haiku-4-5" {
+		t.Errorf("Agents[0].Groups.Groups[myteam] corrupted: %+v", cfg.Agents[0].Groups.Groups)
+	}
+}
+
+func TestSetInFile_AgentFlatKey_StillUsesInlineForm(t *testing.T) {
+	// A non-dotted key has no table to "upgrade" to — must keep using the
+	// existing flat inline-key behavior unchanged.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`[[agents]]
+id = "main"
+model = "sonnet"
+`), 0o644)
+
+	_, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "main", Key: "workspace"}, `"/tmp/x"`, 0640)
+	if err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	result := string(data)
+	if strings.Contains(result, "[agents.workspace]") {
+		t.Errorf("flat key wrongly upgraded to a table:\n%s", result)
+	}
+	if !strings.Contains(result, `workspace = "/tmp/x"`) {
+		t.Errorf("value not found:\n%s", result)
+	}
+}
+
 func TestFormatTOMLValue(t *testing.T) {
 	// Proves that FormatTOMLValue correctly formats values for string, int, float,
 	// bool (including yes/no/1/0 aliases), and duration field types, and returns
@@ -593,6 +741,73 @@ deploy = "old-deploy.md"
 			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"])
 		}
 	})
+}
+
+func TestSetInFile_AgentMapSection_RoundTrip(t *testing.T) {
+	// End-to-end per-agent map-field write (#1231): LookupField → the
+	// "agent"→"agents"+AgentID remapping ConfigSetDirect does → SetInFile →
+	// a real Load(). Proves the whole chain, not just the pieces individually.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`[groups]
+powerful = "anthropic/claude-opus-4-6"
+
+[[agents]]
+id = "alpha"
+workspace = "`+filepath.Join(dir, "alpha")+`"
+
+[[agents]]
+id = "beta"
+workspace = "`+filepath.Join(dir, "beta")+`"
+`), 0o644)
+
+	set := func(agentID, settPath, rawValue string) *Config {
+		t.Helper()
+		field, ok := LookupField(settPath)
+		if !ok {
+			t.Fatalf("LookupField(%q) not found", settPath)
+		}
+		if field.Section != "agent" {
+			t.Fatalf("LookupField(%q).Section = %q, want agent", settPath, field.Section)
+		}
+		formatted, err := FormatTOMLValue(rawValue, field.Type)
+		if err != nil {
+			t.Fatalf("FormatTOMLValue: %v", err)
+		}
+		if _, err := SetInFile(path, SetTarget{Section: "agents", AgentID: agentID, Key: field.Key}, formatted, 0640); err != nil {
+			t.Fatalf("SetInFile: %v", err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			data, _ := os.ReadFile(path)
+			t.Fatalf("Load: %v\n--- resulting file ---\n%s", err, data)
+		}
+		return cfg
+	}
+
+	cfg := set("alpha", "agent.groups.myteam", "anthropic/claude-haiku-4-5")
+	if cfg.Agents[0].ID != "alpha" || cfg.Agents[0].Groups.Groups["myteam"] != "anthropic/claude-haiku-4-5" {
+		t.Errorf("Agents[0] (alpha).Groups.Groups = %+v", cfg.Agents[0].Groups.Groups)
+	}
+	// Beta is untouched by alpha's write.
+	if len(cfg.Agents[1].Groups.Groups) != 0 {
+		t.Errorf("Agents[1] (beta).Groups.Groups = %+v, want empty", cfg.Agents[1].Groups.Groups)
+	}
+
+	cfg = set("beta", "agent.system.webhooks.deploy", "deploy.md")
+	if cfg.Agents[1].System.Webhooks["deploy"] != "deploy.md" {
+		t.Errorf("Agents[1] (beta).System.Webhooks = %+v", cfg.Agents[1].System.Webhooks)
+	}
+	// Alpha's earlier group write must survive beta's independent edit.
+	if cfg.Agents[0].Groups.Groups["myteam"] != "anthropic/claude-haiku-4-5" {
+		t.Errorf("alpha's earlier write was lost: %+v", cfg.Agents[0].Groups.Groups)
+	}
+
+	// Resolve() merge: alpha keeps its own override AND inherits the global default.
+	rc := Resolve(cfg, cfg.Agents[0])
+	if rc.Groups.Groups["myteam"] != "anthropic/claude-haiku-4-5" || rc.Groups.Groups["powerful"] != "anthropic/claude-opus-4-6" {
+		t.Errorf("resolved Groups.Groups = %+v", rc.Groups.Groups)
+	}
 }
 
 func TestLookupField_MapSections_RejectsNonBareKey(t *testing.T) {

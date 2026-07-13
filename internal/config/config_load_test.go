@@ -292,7 +292,7 @@ some_key = "value"
 		t.Fatalf("Decode: %v", err)
 	}
 
-	keys := UnknownKeys(md, nil)
+	keys := UnknownKeys(md, nil, nil)
 	if len(keys) == 0 {
 		t.Fatal("expected unknown keys, got none")
 	}
@@ -531,5 +531,65 @@ func TestExtractGroupNames_FastCheapDefaultToPowerful(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLoad_AgentGroupsBareOverridePopulated is an end-to-end regression test
+// for the bug where [[agents]].groups bare overrides (documented in
+// docs/CONFIG.md as overriding [groups] per-agent) silently did nothing:
+// AgentConfig.Groups.Groups uses toml:"-" like the global one, but nothing
+// was ever extracting it from the raw TOML per agent. Goes through the real
+// Load() path (not extractAgentGroupNames directly) so it would have caught
+// the bug even if only the wiring, not the extraction logic itself, were
+// broken.
+func TestLoad_AgentGroupsBareOverridePopulated(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`[groups]
+powerful = "anthropic/claude-opus-4-6"
+
+[[agents]]
+id = "alpha"
+workspace = "`+filepath.Join(dir, "alpha")+`"
+
+[agents.groups]
+myteam = "anthropic/claude-haiku-4-5"
+
+[[agents]]
+id = "beta"
+workspace = "`+filepath.Join(dir, "beta")+`"
+`), 0o644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Agents) != 2 {
+		t.Fatalf("expected 2 agents, got %d", len(cfg.Agents))
+	}
+	if got := cfg.Agents[0].Groups.Groups["myteam"]; got != "anthropic/claude-haiku-4-5" {
+		t.Errorf("Agents[0] (alpha).Groups.Groups[myteam] = %q, want anthropic/claude-haiku-4-5 (full: %v)", got, cfg.Agents[0].Groups.Groups)
+	}
+	// beta has no [agents.groups] override at all — must not pick up alpha's.
+	if len(cfg.Agents[1].Groups.Groups) != 0 {
+		t.Errorf("Agents[1] (beta).Groups.Groups = %v, want empty (no override in file)", cfg.Agents[1].Groups.Groups)
+	}
+	// The extraction must also suppress the "unknown key" warning for the
+	// bare override, same as it does for the global [groups] section.
+	for _, k := range cfg.UndefinedKeys {
+		if k == "agents.groups.myteam" {
+			t.Errorf("agents.groups.myteam wrongly flagged as an unknown key: %v", cfg.UndefinedKeys)
+		}
+	}
+
+	// Merge with the global default per resolved.go's MergeMaps: alpha keeps
+	// its own "myteam" AND inherits global's "powerful" (agent overlay, not
+	// replacement).
+	rc := Resolve(cfg, cfg.Agents[0])
+	if got := rc.Groups.Groups["myteam"]; got != "anthropic/claude-haiku-4-5" {
+		t.Errorf("resolved Groups.Groups[myteam] = %q, want anthropic/claude-haiku-4-5", got)
+	}
+	if got := rc.Groups.Groups["powerful"]; got != "anthropic/claude-opus-4-6" {
+		t.Errorf("resolved Groups.Groups[powerful] = %q, want the global default anthropic/claude-opus-4-6 (agent override must not blow away the whole map)", got)
 	}
 }
