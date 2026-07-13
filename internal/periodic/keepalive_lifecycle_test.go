@@ -11,6 +11,27 @@ import (
 	"foci/internal/session"
 )
 
+// indexWithTouch returns a SessionIndex holding one session `sk` whose
+// last_cache_touch is `touchAgo` before now. Backs the keepalive window-gate
+// tests (keepaliveTargets reads r.sessionIndex.LastCacheTouch). Closed via t.Cleanup.
+func indexWithTouch(t *testing.T, sk string, touchAgo time.Duration) *session.SessionIndex {
+	t.Helper()
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { idx.Close() })
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  sk,
+		FilePath:    "/tmp/test.jsonl",
+		CreatedAt:   time.Now().Add(-24 * time.Hour),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+	idx.TouchCacheTouch(sk, time.Now().Add(-touchAgo))
+	return idx
+}
+
 func TestMaybeKeepalive_Disabled(t *testing.T) {
 	// Verifies that maybeKeepalive is a no-op when the keepalive feature is disabled in config.
 	var calls int
@@ -20,7 +41,6 @@ func TestMaybeKeepalive_Disabled(t *testing.T) {
 		kaCfg: config.ResolvedKeepalive{
 			Enabled: false,
 		},
-		lastCacheWarmed: time.Now().Add(-1 * time.Hour),
 		agent: &fakeBackgroundAgent{
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++
@@ -46,7 +66,6 @@ func TestMaybeKeepalive_BadInterval(t *testing.T) {
 			Enabled:  true,
 			Interval: "invalid",
 		},
-		lastCacheWarmed: time.Now().Add(-1 * time.Hour),
 		agent: &fakeBackgroundAgent{
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++
@@ -63,8 +82,8 @@ func TestMaybeKeepalive_BadInterval(t *testing.T) {
 }
 
 func TestMaybeKeepalive_RecentCache(t *testing.T) {
-	// Verifies that maybeKeepalive skips dispatch when the cache was warmed recently and the
-	// interval has not yet elapsed.
+	// Skips dispatch when the session's cache was touched within the interval
+	// (touched 10m ago, interval 1h → not due yet).
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -73,8 +92,9 @@ func TestMaybeKeepalive_RecentCache(t *testing.T) {
 			Enabled:  true,
 			Interval: "1h",
 		},
-		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
+		sessionIndex: indexWithTouch(t, "test/c1", 10*time.Minute),
 		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1" },
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++
 				return true
@@ -84,14 +104,15 @@ func TestMaybeKeepalive_RecentCache(t *testing.T) {
 	}
 
 	r.maybeKeepalive(context.Background())
+	waitIdle(t, r)
 	if calls != 0 {
 		t.Errorf("keepalive called with recent cache")
 	}
 }
 
 func TestMaybeKeepalive_Fires(t *testing.T) {
-	// Verifies that maybeKeepalive dispatches a branch when enabled, the cache is stale, and
-	// no keepalive is already running.
+	// Dispatches when the session is in the warm window: touched 10m ago, due
+	// (interval 1m), and not yet expired (fake CacheExpiry = touch+1h).
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -101,9 +122,10 @@ func TestMaybeKeepalive_Fires(t *testing.T) {
 			Interval: "1m",
 			Prompt:   "keepalive.md",
 		},
-		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
+		cacheTTL:     time.Hour,
+		sessionIndex: indexWithTouch(t, "test/c1", 10*time.Minute),
 		agent: &fakeBackgroundAgent{
-			sessionKeyFn: func() string { return "test/c1/1" },
+			sessionKeyFn: func() string { return "test/c1" },
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 				calls++
 				return true
@@ -120,6 +142,64 @@ func TestMaybeKeepalive_Fires(t *testing.T) {
 	}
 }
 
+func TestMaybeKeepalive_NeverWarmed(t *testing.T) {
+	// A session with no recorded cache-touch (never warmed / just reset) is
+	// skipped — there is no live cache to keep alive.
+	var calls int
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: "test/c1", FilePath: "/tmp/t.jsonl", CreatedAt: time.Now(),
+		SessionType: session.SessionTypeChat, Status: session.SessionStatusActive,
+	}) // no TouchCacheTouch → last_cache_touch NULL
+
+	r := &Runner{
+		log:          log.NewComponentLogger("keepalive:test"),
+		agentID:      "test",
+		kaCfg:        config.ResolvedKeepalive{Enabled: true, Interval: "1m"},
+		sessionIndex: idx,
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1" },
+			branchFn:     func(_, _, _ string, _ bool) bool { calls++; return true },
+		},
+		done: make(chan struct{}),
+	}
+
+	r.maybeKeepalive(context.Background())
+	waitIdle(t, r)
+	if calls != 0 {
+		t.Errorf("keepalive warmed a never-touched session, want skip")
+	}
+}
+
+func TestMaybeKeepalive_ExpiredCache(t *testing.T) {
+	// A session touched beyond its cache TTL is skipped — warming a dead cache
+	// pays full write cost to establish a fresh one, which keepalive must not do.
+	var calls int
+	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
+		agentID: "test",
+		kaCfg:   config.ResolvedKeepalive{Enabled: true, Interval: "1m"},
+		// Touched 90m ago with a 1h TTL → expired 30m ago.
+		cacheTTL:     time.Hour,
+		sessionIndex: indexWithTouch(t, "test/c1", 90*time.Minute),
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1" },
+			branchFn:     func(_, _, _ string, _ bool) bool { calls++; return true },
+		},
+		done: make(chan struct{}),
+	}
+
+	r.maybeKeepalive(context.Background())
+	waitIdle(t, r)
+	if calls != 0 {
+		t.Errorf("keepalive warmed an expired-cache session, want skip")
+	}
+}
+
 func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
 	// Verifies that maybeKeepalive is a no-op when keepaliveRunning is already true, preventing
 	// concurrent keepalive sessions.
@@ -131,7 +211,6 @@ func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
 			Enabled:  true,
 			Interval: "1m",
 		},
-		lastCacheWarmed:  time.Now().Add(-10 * time.Minute),
 		keepaliveRunning: true,
 		agent: &fakeBackgroundAgent{
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
@@ -648,24 +727,6 @@ func TestNew_WithSessionIndex(t *testing.T) {
 		t.Errorf("lastConsolidation = %v, want %v", r.lastConsolidation, consolidationTime)
 	}
 	r.mu.Unlock()
-}
-
-func TestNotifyCacheWarmed(t *testing.T) {
-	// Verifies that NotifyCacheWarmed advances lastCacheWarmed to a time after the previous value.
-	r := &Runner{
-		log:             log.NewComponentLogger("keepalive:test"),
-		lastCacheWarmed: time.Now().Add(-10 * time.Second),
-		done:            make(chan struct{}),
-	}
-
-	before := r.lastCacheWarmed
-	time.Sleep(10 * time.Millisecond)
-	r.NotifyCacheWarmed()
-	after := r.lastCacheWarmed
-
-	if !after.After(before) {
-		t.Errorf("lastCacheWarmed not updated")
-	}
 }
 
 func TestNotifyInteraction(t *testing.T) {

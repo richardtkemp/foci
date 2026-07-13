@@ -1050,6 +1050,8 @@ Agents can switch endpoints at runtime via `/model endpoint:name` (e.g. `/model 
 
 **Keepalive:** For Anthropic endpoints, the keepalive fires on a configurable interval (default 55m, just under the 1h cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected by developer name via `config.ResolveModelKeepalive()` — these developers have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s. Gemini's `CacheManager` handles its own TTL extension independently.
 
+**Per-session warm window (`keepalive.go` `keepaliveTargets`).** Keepalive is gated per candidate session, not by a single agent-wide timer: a session is warmed only if its `session_index.last_cache_touch` (stamped on every non-memory turn by `recordTurnActivity`) is in the window `[interval, cacheTTL)` — due for a refresh but not yet expired. A session with **no** recorded touch (never warmed, or just reset — `ClearSessionState` nulls it via `SessionIndex.ClearCacheTouch`) is skipped: there is no live cache to keep alive, so keepalive won't fork/inject into a cold session. `cacheTTL` is the backend's static constant (`DelegatedManager.StaticCacheTTL()`, CC = 1h), resolved once at setup; `0` = unknown → interval-only gate. `setupPeriodic` warns at startup if `interval >= cacheTTL` (empty window → warming can never fire). This replaced the former in-memory agent-wide `lastCacheWarmed` field (removed) — `last_cache_touch` is the persisted, per-session source of truth, so the `onTurnComplete` lifecycle hook that fed `lastCacheWarmed` is now nil.
+
 ## Anthropic API Client (`anthropic/`)
 
 Implements `provider.Client` and `provider.StreamingClient`. Uses the official `github.com/anthropics/anthropic-sdk-go` SDK.

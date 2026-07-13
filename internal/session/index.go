@@ -366,6 +366,23 @@ func (idx *SessionIndex) TouchCacheTouch(sessionKey string, at time.Time) {
 	}
 }
 
+// ClearCacheTouch nulls a session's last_cache_touch, marking "no live cache".
+// Called on reset: the backend is gone and the prompt cache with it, so keepalive
+// must not try to warm a corpse until a real turn re-establishes one (LastCacheTouch
+// then reports absent → keepalive skips the session). No-op if the row is absent.
+func (idx *SessionIndex) ClearCacheTouch(sessionKey string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	_, err := idx.db.Exec(
+		`UPDATE session_index SET last_cache_touch = NULL WHERE session_key = ?`,
+		sessionKey,
+	)
+	if err != nil {
+		log.Warnf("session", "clear cache touch for %q: %v", sessionKey, err)
+	}
+}
+
 // lastSessionTimestamp reads one RFC3339 timestamp column for a single session
 // and reports whether a usable value is present. `column` is an internal
 // constant identifier (never user input), so interpolating it is safe.

@@ -103,6 +103,7 @@ type Runner struct {
 	reflectCfg         config.ResolvedReflection
 	maintCfg           config.ResolvedMaintenance
 	tickInterval       time.Duration // poll cadence for the timer loop (resolved from config)
+	cacheTTL           time.Duration // backend/model prompt-cache lifetime; keepalive upper bound (0 = unknown)
 	promptSearchDirs   []string
 	todoStore          *memory.TodoStore
 	sessionIndex       *session.SessionIndex
@@ -134,7 +135,6 @@ type Runner struct {
 	notifySkillChange func(sessionKey, text string)
 
 	mu                  sync.Mutex
-	lastCacheWarmed     time.Time
 	lastInteraction     time.Time
 	keepaliveRunning    bool
 	backgroundRunning   bool
@@ -232,6 +232,13 @@ type RunnerConfig struct {
 	TodoStore          *memory.TodoStore
 	SessionIndex       *session.SessionIndex
 
+	// CacheTTL is the prompt-cache lifetime for this agent's backend/model — a
+	// static constant (CC = 1h; API = the model's configured cache_ttl). The
+	// keepalive window is [interval, CacheTTL): warm a session that's due but
+	// whose cache hasn't yet expired. 0 = unknown → no expiry ceiling (warm on
+	// interval alone). Resolved once at setup because it never varies at runtime.
+	CacheTTL time.Duration
+
 	// EphemeralRetentionDays is the age (days) beyond which ephemeral (branch/
 	// fork) backend transcripts are deleted by the daily cleanup. 0 = disabled.
 	EphemeralRetentionDays int
@@ -277,6 +284,7 @@ func New(cfg RunnerConfig) *Runner {
 		bgCfg:              cfg.Background,
 		reflectCfg:         cfg.Reflection,
 		maintCfg:           cfg.Maintenance,
+		cacheTTL:           cfg.CacheTTL,
 		promptSearchDirs:   cfg.PromptSearchDirs,
 		todoStore:          cfg.TodoStore,
 		sessionIndex:       cfg.SessionIndex,
@@ -290,7 +298,6 @@ func New(cfg RunnerConfig) *Runner {
 		isDelegatedAgent:      cfg.IsDelegatedAgent,
 		skillDirs:             cfg.SkillDirs,
 		notifySkillChange:     cfg.NotifySkillChange,
-		lastCacheWarmed:       now,
 		lastInteraction:       now,
 		lastReflection:        now,
 		// Like lastReflection, anchor to boot so a FRESH agent waits a full
@@ -340,13 +347,6 @@ func (r *Runner) Stop() {
 		r.cancel()
 		<-r.done
 	}
-}
-
-// NotifyCacheWarmed records that the cache was just warmed (API call happened).
-func (r *Runner) NotifyCacheWarmed() {
-	r.mu.Lock()
-	r.lastCacheWarmed = time.Now()
-	r.mu.Unlock()
 }
 
 // NotifyInteraction records user interaction (message received or background branch completed).
@@ -487,7 +487,6 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	}
 
 	r.mu.Lock()
-	elapsed := time.Since(r.lastCacheWarmed)
 	running := r.keepaliveRunning
 	r.mu.Unlock()
 
@@ -495,14 +494,10 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		skip = "already running"
 		return
 	}
-	if elapsed < interval {
-		skip = fmt.Sprintf("cache age %s < interval %s", elapsed.Round(time.Second), interval)
-		return
-	}
 
-	targets := r.keepaliveTargets()
+	targets := r.keepaliveTargets(interval)
 	if len(targets) == 0 {
-		skip = "no ready session"
+		skip = "no session in the warm window"
 		return
 	}
 
@@ -510,10 +505,9 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 
 	r.mu.Lock()
 	r.keepaliveRunning = true
-	r.lastCacheWarmed = time.Now()
 	r.mu.Unlock()
 
-	r.log.Infof("firing keepalive for agent %s (%d session(s), cache age %s)", r.agentID, len(targets), elapsed.Round(time.Second))
+	r.log.Infof("firing keepalive for agent %s (%d session(s))", r.agentID, len(targets))
 
 	go func() {
 		defer func() {
@@ -527,26 +521,46 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	}()
 }
 
-// keepaliveTargets returns the sessions to warm this cycle, each already filtered
-// for an in-flight turn. With warm_open_app_chats and open chats present, it warms
-// every open session; otherwise (or when none are open) it warms the default.
-func (r *Runner) keepaliveTargets() []string {
+// keepaliveTargets returns the sessions to warm this cycle. Candidates are the
+// open app chats (with warm_open_app_chats) or else the default session; each is
+// kept only if it's in the warm WINDOW: its cache was touched at least `interval`
+// ago (due for a refresh) but less than cacheTTL ago (not yet expired). A
+// session with no recorded cache-touch — never warmed, or just reset — is skipped:
+// there is no live cache to keep alive. An in-flight turn also skips it.
+func (r *Runner) keepaliveTargets(interval time.Duration) []string {
+	var candidates []string
 	if r.kaCfg.WarmOpenAppChats && r.openSessionsFn != nil {
-		var ready []string
-		for _, sk := range r.openSessionsFn() {
-			if !r.parentTurnInFlight(sk) {
-				ready = append(ready, sk)
-			}
-		}
-		if len(ready) > 0 {
-			return ready
+		candidates = r.openSessionsFn()
+	}
+	if len(candidates) == 0 {
+		if parentKey, skip := r.readyParentKey(); skip == "" {
+			candidates = []string{parentKey}
 		}
 	}
-	parentKey, skip := r.readyParentKey()
-	if skip != "" {
+	if r.sessionIndex == nil {
 		return nil
 	}
-	return []string{parentKey}
+
+	now := time.Now()
+	var ready []string
+	for _, sk := range candidates {
+		if r.parentTurnInFlight(sk) {
+			continue
+		}
+		touch, ok := r.sessionIndex.LastCacheTouch(sk)
+		if !ok {
+			continue // never warmed / reset — no live cache to keep alive
+		}
+		elapsed := now.Sub(touch)
+		if elapsed < interval {
+			continue // warmed recently — not due yet
+		}
+		if r.cacheTTL > 0 && elapsed >= r.cacheTTL {
+			continue // cache already expired — don't warm a corpse
+		}
+		ready = append(ready, sk)
+	}
+	return ready
 }
 
 func (r *Runner) maybeBackgroundWork(ctx context.Context) {
@@ -624,9 +638,12 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 
 	r.mu.Lock()
 	r.backgroundRunning = true
-	r.lastCacheWarmed = time.Now()
 	r.mu.Unlock()
 
+	// Background work branches off parentKey; TouchRootCacheForBranch stamps the
+	// parent's last_cache_touch at branch creation, so the per-session keepalive
+	// gate sees a fresh touch and won't double-warm right after — no separate
+	// debounce needed here.
 	r.log.Infof("firing background work for agent %s (idle %s)", r.agentID, elapsed.Round(time.Second))
 
 	go func() {
