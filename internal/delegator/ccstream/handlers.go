@@ -2,10 +2,43 @@ package ccstream
 
 import (
 	"encoding/json"
+	"strings"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
 )
+
+const (
+	// syntheticModel is CC's sentinel model for an assistant message it produced
+	// WITHOUT an API call. It has no pricing, so costing it warns.
+	syntheticModel = "<synthetic>"
+	// syntheticNoResponseText is CC's fixed text for such a message when the
+	// agent had nothing to say (a NO_RESPONSE keepalive/proactive tick, a
+	// compaction resume). Mirrors one of platform.silencingSentinels; duplicated
+	// here because a delegator backend must not import the platform layer.
+	syntheticNoResponseText = "No response requested."
+)
+
+// isSyntheticNoResponse reports whether m is CC's synthetic no-response
+// placeholder: the sentinel model carrying nothing but that exact text. Keyed on
+// BOTH the model and the text so a genuine reply that merely quotes the phrase,
+// or a real [[NO_RESPONSE]] the agent emits (which has a real model and cost),
+// is never dropped.
+func isSyntheticNoResponse(m BetaMessage) bool {
+	if m.Model != syntheticModel {
+		return false
+	}
+	var text strings.Builder
+	for _, block := range m.Content {
+		if block.Type == "tool_use" {
+			return false // real work in the turn — not a bare no-response
+		}
+		if block.Type == "text" {
+			text.WriteString(block.Text)
+		}
+	}
+	return strings.TrimSpace(text.String()) == syntheticNoResponseText
+}
 
 // OnAssistant handles assistant messages from CC's stdout.
 //
@@ -21,6 +54,15 @@ import (
 func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	b.touchActivity()
 	isTopLevel := msg.ParentToolUseID == nil
+
+	// CC's synthetic "No response requested." placeholder is a no-API-call turn,
+	// not a real reply: drop it here so it never records the (unpriced, warning-
+	// triggering) <synthetic> model, appends to the turn text, reaches delivery,
+	// or logs. touchActivity above still runs — a NO_RESPONSE keepalive tick did
+	// happen, so liveness/keepalive timing should reflect it.
+	if isTopLevel && isSyntheticNoResponse(msg.Message) {
+		return
+	}
 
 	// Block-type breakdown for diagnostics — distinguishes "model
 	// produced text but it didn't reach delivery" from "model produced
