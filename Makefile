@@ -226,7 +226,8 @@ lint: find-disconnected-tests find-static-config-reads
 	# reachable solely from -tags=integration tests and _test.go files, which
 	# deadcode ./... does not compile, so they always appear unreachable.
 	@# Exclude them to keep this gate on app code only.
-	@output=$$($(GOBIN)/deadcode ./... | grep -v -e '/testharness/' -e '/testtemp/'); \
+	@raw=$$($(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
+	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@./bin/find-disconnected-tests ./...
