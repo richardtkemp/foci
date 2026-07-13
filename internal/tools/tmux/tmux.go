@@ -5,6 +5,8 @@ import (
 	"crypto/md5" // #nosec G501 - used for content checksums, not security
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/procx"
 	"foci/internal/session"
+	"foci/internal/tempdir"
 	"foci/internal/tools"
 )
 
@@ -417,6 +420,51 @@ func runTmuxWithSocket(ctx context.Context, socket string, args ...string) (stri
 // Used by free functions (memory monitor) and test helpers.
 func runTmux(ctx context.Context, args ...string) (string, error) {
 	return runTmuxWithSocket(ctx, tmuxSocketPath, args...)
+}
+
+// tmuxStartDiag probes a tmux server start with verbose logging (-vv) and
+// returns a best-effort diagnostic string explaining why the server won't come
+// up — tmux's own "server exited unexpectedly" carries no detail on its own.
+// It runs `tmux -vv [-S socket] start-server` in a throwaway cwd (where -vv
+// writes tmux-server-*.log) and returns the probe's output plus the tail of any
+// server log. Returns "" if the probe scaffolding itself fails.
+func tmuxStartDiag(socket string) string {
+	dir, err := tempdir.SpawnMkdir("tmux-diag-*")
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	args := []string{"-vv"}
+	if socket != "" {
+		args = append(args, "-S", socket)
+	}
+	args = append(args, "start-server")
+
+	cmdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
+	cmd.Dir = dir // -vv writes tmux-server-*.log / tmux-client-*.log into cwd
+	out, _ := cmd.CombinedOutput()
+
+	var b strings.Builder
+	if s := strings.TrimSpace(string(out)); s != "" {
+		fmt.Fprintf(&b, " | verbose probe: %s", s)
+	}
+	logs, _ := filepath.Glob(filepath.Join(dir, "tmux-server-*.log"))
+	for _, lf := range logs {
+		data, rerr := os.ReadFile(lf) // #nosec G304 - path from our own MkdirTemp
+		if rerr != nil {
+			continue
+		}
+		if len(data) > 600 {
+			data = data[len(data)-600:]
+		}
+		if s := strings.TrimSpace(string(data)); s != "" {
+			fmt.Fprintf(&b, " | %s tail: %s", filepath.Base(lf), s)
+		}
+	}
+	return b.String()
 }
 
 // runTmux executes a tmux command using the instance's socket path.
