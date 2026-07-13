@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"foci/internal/delegator"
@@ -252,17 +253,6 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// safe — the re-login gate single-flights.
 	if msg.IsError && isAuthFailure(text) {
 		b.fireAuthFailure(text)
-	}
-
-	// Detect a rate / session / usage limit surfaced as a synthetic result
-	// (CC serves a no-API-call message like "You've hit your session limit ·
-	// resets 10:30pm (Europe/London)"). CC does NOT emit a structured
-	// rate_limit_event for this — the synthetic result is the only signal —
-	// so fire the hook here to let the agent suppress periodic work until the
-	// limit lifts. Not gated on IsError: the limit result is is_error=false.
-	// (#1211)
-	if looksLikeRateLimit(text) {
-		b.fireRateLimited(text)
 	}
 
 	// Determine model from lastModel (set by OnAssistant, filtered to top-level
@@ -626,16 +616,34 @@ func (b *Backend) OnKeepAlive() {
 	b.touchActivity()
 }
 
-// OnRateLimit handles CC's structured rate_limit_event from stdout.
-//
-// We have NEVER observed CC emit this event in the wild — rate/session/usage
-// limits have only ever surfaced as a synthetic result (handled in OnResult
-// via looksLikeRateLimit). We therefore do not yet act on it. Log at WARN so
-// that if it DOES fire we learn it happens, capture its shape (status, reset,
-// utilization), and can wire it into the rate-limit gate properly. See #1211.
+// OnRateLimit handles CC's structured rate_limit_event: CC emits it on status
+// transitions (allowed → allowed_warning → rejected) with the API's
+// utilization. Past the "allowed" threshold we surface a WARNING via the
+// rate-limit hook — informational only, it does NOT gate periodic work.
+// De-duplicated per (status,type,resetsAt): CC repeats the event, so a warning
+// per event would flood. See #1211/#1238.
 func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	b.touchActivity()
-	log.Warnf("ccstream", "structured rate_limit_event observed (%s) — currently UNHANDLED; wire into gate per #1211", rateLimitEventSummary(ev))
+	if ev == nil {
+		return
+	}
+	info := ev.RateLimitInfo
+	if info.Status == "" || info.Status == "allowed" {
+		return
+	}
+	resetsAt := int64(0)
+	if info.ResetsAt != nil {
+		resetsAt = int64(*info.ResetsAt)
+	}
+	key := fmt.Sprintf("%s|%s|%d", info.Status, info.RateLimitType, resetsAt)
+	b.mu.Lock()
+	dup := b.lastRateLimitWarnKey == key
+	b.lastRateLimitWarnKey = key
+	b.mu.Unlock()
+	if dup {
+		return
+	}
+	b.fireRateLimited(rateLimitEventSummary(ev))
 }
 
 // OnToolProgress handles heartbeats during long-running tool execution.
