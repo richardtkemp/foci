@@ -159,6 +159,22 @@ var (
 		"display.table_style", "agent.display.table_style", "platforms.display.table_style",
 		"debug.messages_in_log", "agent.debug.messages_in_log",
 		"platforms.telegram.long_poll_timeout",
+		// Bucket E (#1230): remaining Agent scalars read live per-use.
+		"agent_loop.max_output_tokens", "agent.loop.max_output_tokens",
+		"agent_loop.duplicate_messages", "agent.loop.duplicate_messages",
+		"agent_loop.batch_partial_assistant_messages", "agent.loop.batch_partial_assistant_messages",
+		"agent_loop.batch_partial_joiner", "agent.loop.batch_partial_joiner",
+		"tools.max_summary_chars", "agent.tools.max_summary_chars",
+		"tools.auto_summarise", "agent.tools.auto_summarise",
+		"tools.summary_context_turns", "agent.tools.summary_context_turns",
+		"tools.summary_context_chars", "agent.tools.summary_context_chars",
+		"tools.max_image_pixels", "agent.tools.max_image_pixels",
+		"sessions.compaction_summary_prompt", "agent.sessions.compaction_summary_prompt",
+		"sessions.compaction_handoff_msg", "agent.sessions.compaction_handoff_msg",
+		"sessions.reload_on_compact", "agent.sessions.reload_on_compact",
+		"behavior.turn_lock_warn_threshold", "agent.behavior.turn_lock_warn_threshold",
+		"display.show_tool_calls", "agent.display.show_tool_calls", "platforms.display.show_tool_calls",
+		"display.statusline", "agent.display.statusline", "platforms.display.statusline",
 	}
 
 	liveApplyWarningAddrs = []string{

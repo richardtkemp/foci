@@ -363,11 +363,11 @@ type AgentToolsOverride struct {
 // CompactionConfig holds compaction settings. Embed in SessionsConfig (global) and AgentConfig (per-agent).
 type CompactionConfig struct {
 	CompactionThreshold        *float64 `toml:"compaction_threshold"  hot:"immediate" desc:"Fraction of the context window (0 to 1) that must fill before old messages are summarized. Leave unset for a curve that waits longer on larger windows" min:"0" max:"1"`
-	CompactionSummaryPrompt    *string  `toml:"compaction_summary_prompt"             desc:"Path to a file containing the prompt used to ask the model to summarize old messages during compaction"`
-	CompactionHandoffMsg       *string  `toml:"compaction_handoff_msg"                desc:"Path to a file containing the message shown to the model right after compaction to help it pick back up"`
+	CompactionSummaryPrompt    *string  `toml:"compaction_summary_prompt"             hot:"immediate" desc:"Path to a file containing the prompt used to ask the model to summarize old messages during compaction"`
+	CompactionHandoffMsg       *string  `toml:"compaction_handoff_msg"                hot:"immediate" desc:"Path to a file containing the message shown to the model right after compaction to help it pick back up"`
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"          hot:"immediate" desc:"Number of most recent messages kept word-for-word instead of being summarized when compaction runs. 0 = summarize everything. Default 25" min:"0"`
 	FacetNoCompact             *bool    `toml:"facet_no_compact"                      desc:"Facets are short-lived side sessions branched off the main chat. When true, they are never compacted since they do not last long (default true)"`
-	ReloadOnCompact            *bool    `toml:"reload_on_compact"                     desc:"For Claude Code-backed agents, restarts the session after compaction so edits to character or skill files since it started take effect (default true)"`
+	ReloadOnCompact            *bool    `toml:"reload_on_compact"                     hot:"immediate" desc:"For Claude Code-backed agents, restarts the session after compaction so edits to character or skill files since it started take effect (default true)"`
 }
 
 // NudgeConfig holds nudge system settings.
@@ -390,12 +390,12 @@ type NudgeConfig struct {
 // Embed in ToolsConfig (global) and AgentToolsOverride (per-agent).
 type SummaryConfig struct {
 	MaxResultChars       *int  `toml:"max_result_chars"                       hot:"immediate" desc:"When a tool result, eg command output or a fetched page, exceeds this many characters, the full result is saved to a file instead of sent to the model. Default 15000"`
-	MaxSummaryChars      *int  `toml:"max_summary_chars"                      desc:"Oversized tool results up to this many characters get an automatic AI summary instead of just a link to the saved file; larger ones skip it. Default 300000"`
-	AutoSummarise        *bool `toml:"auto_summarise"         default:"true"  desc:"Automatically generates a short AI summary of oversized tool results instead of leaving just a pointer to the saved file"`
-	SummaryContextTurns  *int  `toml:"summary_context_turns"                  desc:"Number of recent conversation turns included as context when auto-summarizing an oversized tool result. Default 5"`
-	SummaryContextChars  *int  `toml:"summary_context_chars"                  desc:"Maximum characters of conversation context sent to the model when auto-summarizing an oversized tool result. Default 6000"`
+	MaxSummaryChars      *int  `toml:"max_summary_chars"                      hot:"immediate" desc:"Oversized tool results up to this many characters get an automatic AI summary instead of just a link to the saved file; larger ones skip it. Default 300000"`
+	AutoSummarise        *bool `toml:"auto_summarise"         default:"true"  hot:"immediate" desc:"Automatically generates a short AI summary of oversized tool results instead of leaving just a pointer to the saved file"`
+	SummaryContextTurns  *int  `toml:"summary_context_turns"                  hot:"immediate" desc:"Number of recent conversation turns included as context when auto-summarizing an oversized tool result. Default 5"`
+	SummaryContextChars  *int  `toml:"summary_context_chars"                  hot:"immediate" desc:"Maximum characters of conversation context sent to the model when auto-summarizing an oversized tool result. Default 6000"`
 	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"                hot:"immediate" desc:"Maximum characters of the oversized tool result itself fed into the summarizer; the full result is still saved to disk regardless. Default 100000"`
-	MaxImagePixels       *int  `toml:"max_image_pixels"                       desc:"Images larger than this many total pixels, width times height, are resized down before being sent to the model. 0 disables downscaling; default is roughly 1920x1080"`
+	MaxImagePixels       *int  `toml:"max_image_pixels"                       hot:"immediate" desc:"Images larger than this many total pixels, width times height, are resized down before being sent to the model. 0 disables downscaling; default is roughly 1920x1080"`
 }
 
 // Voice WebSocket resource limits (P1-10). Defaults live in the VoiceConfig
@@ -444,11 +444,11 @@ type VoiceConfig struct {
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().
 // Global: [agent_loop], per-agent: [[agents]].agent_loop.*
 type AgentLoopConfig struct {
-	MaxOutputTokens               *int    `toml:"max_output_tokens"                desc:"Maximum number of tokens the model may generate in a single reply. Higher allows longer replies but costs more and takes longer. Default 16384"`
+	MaxOutputTokens               *int    `toml:"max_output_tokens"                hot:"turn" desc:"Maximum number of tokens the model may generate in a single reply. Higher allows longer replies but costs more and takes longer. Default 16384"`
 	MaxToolLoops                  *int    `toml:"max_tool_loops"                   hot:"turn" desc:"Maximum tool calls allowed in a single turn; once reached, further tool calls are refused and the turn is forced to end. Default 100"`
-	DuplicateMessages             *bool   `toml:"duplicate_messages"               desc:"Repeats your message text twice in the prompt sent to the model, a technique that can improve instruction-following on some models. Off by default"`
-	BatchPartialAssistantMessages *bool   `toml:"batch_partial_assistant_messages"  desc:"When the agent sends text between tool calls, combine it all into one message at the end of the turn instead of sending each piece right away. Off by default"`
-	BatchPartialJoiner            *string `toml:"batch_partial_joiner"             desc:"Text inserted between chunks when batch_partial_assistant_messages combines them into one message. Empty joins them with nothing in between"`
+	DuplicateMessages             *bool   `toml:"duplicate_messages"               hot:"turn" desc:"Repeats your message text twice in the prompt sent to the model, a technique that can improve instruction-following on some models. Off by default"`
+	BatchPartialAssistantMessages *bool   `toml:"batch_partial_assistant_messages"  hot:"turn" desc:"When the agent sends text between tool calls, combine it all into one message at the end of the turn instead of sending each piece right away. Off by default"`
+	BatchPartialJoiner            *string `toml:"batch_partial_joiner"             hot:"turn" desc:"Text inserted between chunks when batch_partial_assistant_messages combines them into one message. Empty joins them with nothing in between"`
 	Streaming                     *bool   `toml:"streaming"                        hot:"turn" desc:"Call the model's streaming API so tokens arrive incrementally, rather than waiting for the full response in one call; separate from display.stream_output, which controls whether the chat message itself is live-edited"` // use streaming API
 }
 
@@ -457,7 +457,7 @@ type AgentLoopConfig struct {
 type BehaviorConfig struct {
 	SteerMode             *bool    `toml:"steer_mode"               default:"true"  hot:"immediate" desc:"Lets a message you send while the agent is mid-turn redirect it at the next tool call, instead of waiting for the turn to finish"`
 	GroupThrottle         *string  `toml:"group_throttle"                            hot:"event" desc:"In group chats, buffers messages that do not mention the agent for this long, then delivers them together. A mention flushes the buffer immediately. Empty disables it" type:"duration"`
-	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold" default:"3m"    desc:"Writes a warning to the server log if a turn waits longer than this for the previous turn on the same session to finish. Diagnostic only, not shown to users" type:"duration"`
+	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold" default:"3m"    hot:"turn" desc:"Writes a warning to the server log if a turn waits longer than this for the previous turn on the same session to finish. Diagnostic only, not shown to users" type:"duration"`
 	EnableStopAliases     *bool    `toml:"enable_stop_aliases"      default:"true"  desc:"Lets extra words such as wait also work as aliases for stop, which cancels the agent's current turn"`
 	StopAliases           []string `toml:"stop_aliases"`
 }
@@ -494,7 +494,7 @@ type AnthropicConfig struct {
 // of the configuration cascade. All fields are pointer types so Merge can
 // distinguish "not set" from "set to zero value".
 type DisplayConfig struct {
-	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         desc:"How tool-call activity appears in chat: off hides it, preview shows it then replaces it with the final reply, full keeps it visible as a separate message" choices:"off,preview,full"`                             // tool call display: off, preview, full
+	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         hot:"turn" desc:"How tool-call activity appears in chat: off hides it, preview shows it then replaces it with the final reply, full keeps it visible as a separate message" choices:"off,preview,full"`                             // tool call display: off, preview, full
 	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"How the model's reasoning is shown: off hides it, compact adds a Show thinking toggle button, true prepends it to every reply" choices:"off,compact,true"`                                                         // thinking display: off, compact, true
 	StreamOutput          *bool            `toml:"stream_output"           hot:"turn" desc:"Edit the chat message in place as the reply is generated, instead of sending it only once it's complete"`                                                                                                // stream model output in real-time
 	StreamInterval        *string          `toml:"stream_interval"         desc:"How often the in-progress reply is updated on screen while streaming; lower values look smoother but send more edits to the chat platform" type:"duration"`                                                        // duration between message edits during streaming
@@ -503,7 +503,7 @@ type DisplayConfig struct {
 	TableStyle            *string          `toml:"table_style"             hot:"turn" desc:"How tables are rendered in chat: pretty uses box-drawing characters, markdown uses plain markdown table syntax. Applies to text-rendering platforms (Telegram, Discord)" choices:"pretty,markdown"` // default "pretty"
 	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"Local directory where files received from users, such as photos or documents, are saved; leave empty to not save them"`                                                                                            // save received files to this directory
 	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"Text prepended to system-injected messages, such as warnings, so you can tell them apart from normal replies; empty adds no header"`                                                                               // header prepended to injected messages
-	Statusline            *string          `toml:"statusline"              desc:"Template for the small header shown above each reply, such as model name and timing; leave empty to use the built-in default format"`                                                                              // per-message header template (#831)
+	Statusline            *string          `toml:"statusline"              hot:"turn" desc:"Template for the small header shown above each reply, such as model name and timing; leave empty to use the built-in default format"`                                                                              // per-message header template (#831)
 }
 
 // AccessConfig holds access control settings that can be set at any level

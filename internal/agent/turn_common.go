@@ -42,7 +42,7 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 	// historical two-line header byte-for-byte. The whole rendered block goes
 	// into MetaPrefix; StateDashboard stays empty (the [state] line, if any, is
 	// inside the rendered template).
-	tmpl := a.Statusline
+	tmpl := a.statusline()
 	if tmpl == "" {
 		tmpl = DefaultStatuslineTemplate
 	}

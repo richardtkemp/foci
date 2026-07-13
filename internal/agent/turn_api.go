@@ -75,7 +75,7 @@ func (t *APITransport) ComposePrompt(ts *TurnState) error {
 	a := t.agent
 
 	// Duplicate messages: suppress when thinking is active with effort > low.
-	ts.EffectiveDuplicate = a.DuplicateMessages
+	ts.EffectiveDuplicate = a.duplicateMessages()
 	if ts.EffectiveDuplicate && ts.TurnThinking != "" && ts.TurnThinking != "off" && ts.TurnEffort != "low" {
 		ts.EffectiveDuplicate = false
 		a.logger().Debugf("session=%s duplicate_messages suppressed: thinking=%s effort=%s",
@@ -224,7 +224,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 	if maxLoops <= 0 {
 		maxLoops = 100
 	}
-	maxOutput := a.MaxOutputTokens
+	maxOutput := a.maxOutputTokens()
 	if maxOutput <= 0 {
 		maxOutput = 16384
 	}
@@ -244,9 +244,9 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 	// sendOrBatchText delivers text respecting batch mode.
 	sendOrBatchText := func(r provider.MessageResponse) {
 		if text := provider.TextOf(r.Content); text != "" {
-			if a.BatchPartialAssistantMessages {
+			if a.batchPartialAssistantMessages() {
 				if batchedText.Len() > 0 {
-					batchedText.WriteString(a.BatchPartialJoiner)
+					batchedText.WriteString(a.batchPartialJoiner())
 				}
 				batchedText.WriteString(text)
 			} else {
@@ -402,9 +402,9 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			ts.FinalText = provider.TextOf(resp.Content)
 
 			// Handle batched partial messages.
-			if a.BatchPartialAssistantMessages && batchedText.Len() > 0 {
+			if a.batchPartialAssistantMessages() && batchedText.Len() > 0 {
 				if ts.FinalText != "" {
-					batchedText.WriteString(a.BatchPartialJoiner)
+					batchedText.WriteString(a.batchPartialJoiner())
 					batchedText.WriteString(ts.FinalText)
 				}
 				ts.FinalText = batchedText.String()
@@ -562,7 +562,7 @@ func (t *APITransport) RunCompaction(ts *TurnState) {
 // logTurnLockWait logs a warning when the turn lock was held longer than the
 // configured threshold, including details about the current holder if found.
 func (a *Agent) logTurnLockWait(sessionKey string, lockDur time.Duration, waiterTrigger string) {
-	warnThreshold := a.TurnLockWarnThreshold
+	warnThreshold := a.turnLockWarnThreshold()
 	if warnThreshold <= 0 {
 		warnThreshold = 3 * time.Minute
 	}

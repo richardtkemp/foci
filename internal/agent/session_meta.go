@@ -113,7 +113,7 @@ var (
 		prefix:       "show_tool_calls",
 		getter:       func(sm *sessionMeta) string { return sm.showToolCalls },
 		setter:       func(sm *sessionMeta, v string) { sm.showToolCalls = v },
-		agentDefault: func(a *Agent) string { return a.ShowToolCalls },
+		agentDefault: func(a *Agent) string { return a.showToolCalls() },
 	}
 	settingDisplayShowThinking = sessionStringSetting{
 		prefix: "display_show_thinking",
