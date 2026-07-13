@@ -26,7 +26,8 @@ func testConfigSetDeps(setFn func(path string, target config.SetTarget, value st
 // TestConfigSetWizardHappyPath walks the three-step wizard (section → key → value)
 // and verifies: each step returns the expected prompt, the wizard terminates after
 // the value step, SetInFileFn receives the correct SetTarget (section, key) and a
-// TOML-quoted string value, and the confirmation includes a restart hint.
+// TOML-quoted string value, and the confirmation reports the live-apply status
+// (max_output_tokens is a hot field, so it applies live rather than needing a restart).
 func TestConfigSetWizardHappyPath(t *testing.T) {
 	var captured config.SetTarget
 	var capturedValue string
@@ -70,8 +71,8 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	if !strings.Contains(resp, "Set agent_loop.max_output_tokens") {
 		t.Errorf("expected confirmation, got %q", resp)
 	}
-	if !strings.Contains(resp, "Restart") {
-		t.Errorf("expected restart hint, got %q", resp)
+	if !strings.Contains(resp, "Applied live.") {
+		t.Errorf("expected live-apply hint (max_output_tokens is hot), got %q", resp)
 	}
 
 	if captured.Section != "agent_loop" {
@@ -82,6 +83,21 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	}
 	if capturedValue != "32768" {
 		t.Errorf("value = %q", capturedValue)
+	}
+}
+
+// TestFormatSetResultRestartVsLive covers both branches of the confirmation
+// message directly, decoupled from any specific field's hot status (which
+// migrates over time as fields gain live-apply support).
+func TestFormatSetResultRestartVsLive(t *testing.T) {
+	live := formatSetResult(config.ConfigField{NeedsRestart: false}, "agent_loop", "max_output_tokens", "32768", "16384")
+	if !strings.Contains(live, "Applied live.") || strings.Contains(live, "Restart") {
+		t.Errorf("hot field: got %q, want an 'Applied live.' hint and no restart mention", live)
+	}
+
+	restart := formatSetResult(config.ConfigField{NeedsRestart: true}, "sec", "key", "v", "")
+	if !strings.Contains(restart, "Restart to take effect.") {
+		t.Errorf("restart field: got %q, want a restart hint", restart)
 	}
 }
 
