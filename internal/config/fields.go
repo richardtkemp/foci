@@ -42,6 +42,41 @@ type ConfigField struct {
 // validHotTags are the allowed `hot` struct tag timing values; enforced by test.
 var validHotTags = map[string]bool{"immediate": true, "turn": true, "session": true, "event": true}
 
+// scopeName maps a registry walk's section to the scope vocabulary used by the
+// `scope` struct tag: the per-agent walk is "agent", the [[platforms]] walk is
+// "platform", and every global section (debug, voice, …) is "global".
+func scopeName(section string) string {
+	switch section {
+	case "agent":
+		return "agent"
+	case "platforms":
+		return "platform"
+	default:
+		return "global"
+	}
+}
+
+// scopeAllowed reports whether a field carrying the given `scope` tag should
+// emit a registry row for `section`. The tag is an ALLOWLIST of scopes
+// ("global", "agent", "platform"); an absent/empty tag allows every scope
+// (the default — a field with no `scope` tag is offered at all three).
+//
+// Use it to stop advertising an override that a field's consumers never read at
+// that scope, e.g. `scope:"global"` for a process-global toggle (debug.enable_pprof)
+// or `scope:"global,agent"` for a per-agent-but-not-per-platform knob.
+func scopeAllowed(tag, section string) bool {
+	if tag == "" {
+		return true
+	}
+	want := scopeName(section)
+	for _, s := range strings.Split(tag, ",") {
+		if strings.TrimSpace(s) == want {
+			return true
+		}
+	}
+	return false
+}
+
 // hotApplies reports whether a `hot` tag marks the registry row in `section`
 // as live-appliable (see ConfigField.NeedsRestart).
 func hotApplies(tag, section string) bool {
@@ -184,6 +219,12 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 		// Scalar field — register if it has a desc tag
 		desc := f.Tag.Get("desc")
 		if desc == "" {
+			continue
+		}
+
+		// Scope allowlist: skip emitting this scope's row when a `scope` tag
+		// excludes it (e.g. a process-global toggle offered only at "global").
+		if !scopeAllowed(f.Tag.Get("scope"), section) {
 			continue
 		}
 
