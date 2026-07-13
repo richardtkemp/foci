@@ -183,32 +183,52 @@ func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
 	return gate
 }
 
-// CanFireBackgroundOperation checks if a background operation can run on the given session.
-// Returns false if:
-//   - The rate limit gate for the session's endpoint is closed
-//   - The configured can_run_background executable exits non-zero
-func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey string) (bool, string) {
-	if sessionKey == "" {
-		return false, "no session key"
-	}
-
-	// Resolve session's endpoint
+// resolveEndpoint returns the endpoint a session's turns run against: its
+// per-session override if set, else the agent default.
+func (a *Agent) resolveEndpoint(sessionKey string) string {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
-	endpoint := sm.modelEndpoint
-	if endpoint == "" {
-		endpoint = a.Endpoint
+	defer a.metaMu.Unlock()
+	if sm.modelEndpoint != "" {
+		return sm.modelEndpoint
 	}
-	a.metaMu.Unlock()
+	return a.Endpoint
+}
 
-	// Check 1: Rate limit gate for this endpoint
+// SessionRateLimited reports whether the given session may NOT fire because its
+// endpoint's rate-limit gate is closed (or the session key is empty). This is
+// the shared gate every periodic scheduler consults — it does NOT run the
+// can_run_background script (that is background-work-only). Returns (true,
+// reason) when blocked, (false, "") when clear.
+func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason string) {
+	if sessionKey == "" {
+		return true, "no session key"
+	}
+	endpoint := a.resolveEndpoint(sessionKey)
 	gate := a.getOrCreateRateLimitGate(endpoint)
-	if limited, until := gate.IsLimited(); limited {
-		return false, fmt.Sprintf("rate limited on %s (resets %s)", endpoint, until.Format(time.Kitchen))
+	if lim, until := gate.IsLimited(); lim {
+		return true, fmt.Sprintf("rate limited on %s (resets %s)", endpoint, until.Format(time.Kitchen))
+	}
+	return false, ""
+}
+
+// CanFireBackgroundOperation checks if a background operation can run on the given session.
+// Returns false if:
+//   - The session key is empty
+//   - The rate limit gate for the session's endpoint is closed (SessionRateLimited)
+//   - The configured can_run_background executable exits non-zero
+//
+// This is the FULL gate (rate limit + can_run_background). Only the
+// background-work scheduler and the memory hooks (compaction / session-end)
+// use it; the other periodic schedulers use SessionRateLimited alone, so the
+// can_run_background script never gates keepalive/reflection/consolidation/reset.
+func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey string) (bool, string) {
+	if limited, reason := a.SessionRateLimited(sessionKey); limited {
+		return false, reason
 	}
 
-	// Check 2: user-provided background gate. Exit 0 = allowed, non-zero = skip.
-	if a.CanRunBackground != "" && !a.runCanRunBackground(ctx, sessionKey, endpoint) {
+	// user-provided background gate. Exit 0 = allowed, non-zero = skip.
+	if a.CanRunBackground != "" && !a.runCanRunBackground(ctx, sessionKey, a.resolveEndpoint(sessionKey)) {
 		return false, "can_run_background declined"
 	}
 

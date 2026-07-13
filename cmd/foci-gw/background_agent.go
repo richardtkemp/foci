@@ -59,6 +59,16 @@ func (b *backgroundAgent) CanFire(ctx context.Context, sessionKey string) (bool,
 	return b.inst.ag.CanFireBackgroundOperation(ctx, sessionKey)
 }
 
+func (b *backgroundAgent) RateLimited(sessionKey string) (bool, string) {
+	// Honour the same L2 control-socket override as CanFire: a locked
+	// (allowed=false) state blocks every scheduler, so "not allowed" maps to
+	// "rate-limited" here. A nil pointer means no override — use the real gate.
+	if s := b.inst.testCanFireOverride.Load(); s != nil {
+		return !s.allowed, s.reason
+	}
+	return b.inst.ag.SessionRateLimited(sessionKey)
+}
+
 func (b *backgroundAgent) RunOnce(ctx context.Context, prompt, systemPrompt string) (string, error) {
 	if b.inst.ag.DelegatedManager == nil {
 		return "", nil
