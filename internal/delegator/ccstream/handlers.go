@@ -212,6 +212,17 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		b.fireAuthFailure(text)
 	}
 
+	// Detect a rate / session / usage limit surfaced as a synthetic result
+	// (CC serves a no-API-call message like "You've hit your session limit ·
+	// resets 10:30pm (Europe/London)"). CC does NOT emit a structured
+	// rate_limit_event for this — the synthetic result is the only signal —
+	// so fire the hook here to let the agent suppress periodic work until the
+	// limit lifts. Not gated on IsError: the limit result is is_error=false.
+	// (#1211)
+	if looksLikeRateLimit(text) {
+		b.fireRateLimited(text)
+	}
+
 	// Determine model from lastModel (set by OnAssistant, filtered to top-level
 	// messages only — subagent models are excluded). Use per-call usage from
 	// the last assistant message (not the result's accumulated total) — this
@@ -573,9 +584,16 @@ func (b *Backend) OnKeepAlive() {
 	b.touchActivity()
 }
 
-// OnRateLimit handles rate limit events from CC's stdout.
-func (b *Backend) OnRateLimit(_ *RateLimitEvent) {
+// OnRateLimit handles CC's structured rate_limit_event from stdout.
+//
+// We have NEVER observed CC emit this event in the wild — rate/session/usage
+// limits have only ever surfaced as a synthetic result (handled in OnResult
+// via looksLikeRateLimit). We therefore do not yet act on it. Log at WARN so
+// that if it DOES fire we learn it happens, capture its shape (status, reset,
+// utilization), and can wire it into the rate-limit gate properly. See #1211.
+func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	b.touchActivity()
+	log.Warnf("ccstream", "structured rate_limit_event observed (%s) — currently UNHANDLED; wire into gate per #1211", rateLimitEventSummary(ev))
 }
 
 // OnToolProgress handles heartbeats during long-running tool execution.

@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -239,4 +242,87 @@ func (a *Agent) runCanRunBackground(ctx context.Context, sessionKey, endpoint st
 	}
 	a.logger().Warnf("can_run_background %q failed to run: %v", a.CanRunBackground, err)
 	return true
+}
+
+// MarkRateLimited closes this agent's rate-limit gate(s) until `until`, so
+// background / periodic work (keepalive, reflection, consolidation, memory
+// compaction) is suppressed while a rate/session limit is in force. A CC
+// "session limit" is account-wide — one subscription across every model — so
+// every known endpoint gate is closed, plus the agent default, matching
+// whatever endpoint CanFireBackgroundOperation resolves for each session.
+//
+// User turns are unaffected: on the delegated path they do not consult this
+// gate (DelegatedTransport.RateLimitGate is a no-op), so a human can still
+// drive the session; only unattended periodic work is held back. The gate
+// auto-reopens once time.Now passes `until` (RateLimitGate.IsLimited).
+func (a *Agent) MarkRateLimited(until time.Time) {
+	a.getOrCreateRateLimitGate("").Close(until) // agent default endpoint
+	a.rateLimitGatesMu.RLock()
+	gates := make([]*RateLimitGate, 0, len(a.rateLimitGates))
+	for _, g := range a.rateLimitGates {
+		gates = append(gates, g)
+	}
+	a.rateLimitGatesMu.RUnlock()
+	for _, g := range gates {
+		g.Close(until)
+	}
+}
+
+var (
+	// resetClockRe extracts the reset clock time from a CC limit notice, e.g.
+	// "…resets 10:30pm (Europe/London)" or "…resets at 9am". Minutes and the
+	// am/pm marker are optional.
+	resetClockRe = regexp.MustCompile(`(?i)reset[s]?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?`)
+	// resetZoneRe extracts an IANA zone in parentheses, e.g. "(Europe/London)".
+	resetZoneRe = regexp.MustCompile(`\(([A-Za-z]+/[A-Za-z_]+)\)`)
+)
+
+// ParseRateLimitReset extracts the absolute reset time from a CC rate/session/
+// usage-limit message such as
+//
+//	"You've hit your session limit · resets 10:30pm (Europe/London)"
+//
+// It returns (resetTime, true) when a clock time is parsed, or (zero, false)
+// when the text carries no recognisable reset clock — callers then apply their
+// own fallback. The clock is interpreted in the message's stated IANA zone if
+// present, else in now's location; a time at/before now rolls forward one day
+// (the limit resets later today or tomorrow).
+func ParseRateLimitReset(detail string, now time.Time) (time.Time, bool) {
+	m := resetClockRe.FindStringSubmatch(detail)
+	if m == nil {
+		return time.Time{}, false
+	}
+	hour, err := strconv.Atoi(m[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	minute := 0
+	if m[2] != "" {
+		minute, _ = strconv.Atoi(m[2])
+	}
+	switch strings.ToLower(m[3]) {
+	case "pm":
+		if hour < 12 {
+			hour += 12
+		}
+	case "am":
+		if hour == 12 {
+			hour = 0
+		}
+	}
+	if hour > 23 || minute > 59 {
+		return time.Time{}, false
+	}
+	loc := now.Location()
+	if z := resetZoneRe.FindStringSubmatch(detail); z != nil {
+		if l, err := time.LoadLocation(z[1]); err == nil {
+			loc = l
+		}
+	}
+	nowLoc := now.In(loc)
+	reset := time.Date(nowLoc.Year(), nowLoc.Month(), nowLoc.Day(), hour, minute, 0, 0, loc)
+	if !reset.After(nowLoc) {
+		reset = reset.Add(24 * time.Hour)
+	}
+	return reset, true
 }

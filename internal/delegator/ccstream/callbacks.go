@@ -41,6 +41,12 @@ func (b *Backend) SetOnSubagentStatus(fn func(detail string)) { b.agents.OnStatu
 // before Start.
 func (b *Backend) SetOnAuthFailure(fn func(detail string)) { b.onAuthFailure = fn }
 
+// SetOnRateLimited registers a hook fired when CC serves a synthetic rate /
+// session / usage limit result (detected via looksLikeRateLimit). The agent
+// wires this to suppress periodic work until the limit lifts (#1211). Must be
+// set before Start.
+func (b *Backend) SetOnRateLimited(fn func(detail string)) { b.onRateLimited = fn }
+
 // SetOnAutonomousStart registers a hook fired when the backend detects CC has
 // begun an autonomous run (session_state:running with no foci turn open). The
 // agent wires this to markInFlight so the run is adopted as an in-flight
