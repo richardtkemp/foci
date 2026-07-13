@@ -96,8 +96,14 @@ func TestConfigGet_SchemaShape(t *testing.T) {
 	if fields, _ := schema["fields"].([]any); len(fields) == 0 {
 		t.Fatal("schema carries no fields")
 	}
-	if schema["restartRequired"] != true {
-		t.Error("v1 schema must set restartRequired")
+	if _, ok := schema["restartRequired"]; ok {
+		t.Error("schema-level restartRequired was removed; per-field needsRestart carries it now")
+	}
+	if fields, _ := schema["fields"].([]any); len(fields) > 0 {
+		f0, _ := fields[0].(map[string]any)
+		if _, ok := f0["needsRestart"]; !ok {
+			t.Error("each field must carry per-field needsRestart metadata")
+		}
 	}
 
 	global := scopeByID(t, schema, "")

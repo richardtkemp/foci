@@ -147,11 +147,10 @@ func (h *Hub) broadcastConfigSchema() {
 // one scope per editing surface. Explicitness and explicit values come from a
 // fresh parse of the FILE (truthful immediately after an edit); non-explicit
 // values fall back to the inherited chain — for an agent scope the global
-// value (file, then running config), then the built-in default. The schema-level
-// RestartRequired stays true while edits land only in foci.toml, never the
-// running process; per-field NeedsRestart records each field's intrinsic
-// consumption pattern (see config.ConfigField.NeedsRestart) so clients can
-// distinguish once live-apply exists.
+// value (file, then running config), then the built-in default. Per-field
+// NeedsRestart records each field's intrinsic consumption pattern (see
+// config.ConfigField.NeedsRestart): hot fields apply live via applyLive on
+// edit, restart-required fields take effect on the next restart.
 func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 	cfg := h.deps.Config
 	fields := config.AllFields()
@@ -269,5 +268,5 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 		scopes = append(scopes, s)
 	}
 
-	return fap.ConfigSchema{Fields: descs, Scopes: scopes, RestartRequired: true, Error: errMsg}
+	return fap.ConfigSchema{Fields: descs, Scopes: scopes, Error: errMsg}
 }

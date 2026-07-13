@@ -821,10 +821,9 @@ type ConfigUnset struct {
 // configEdit client after a successful edit; Error set (requester-only) on a
 // failed edit, with values unchanged.
 type ConfigSchema struct {
-	Fields          []ConfigFieldDesc `json:"fields"`
-	Scopes          []ConfigScope     `json:"scopes"`
-	RestartRequired bool              `json:"restartRequired"`
-	Error           string            `json:"error,omitempty"`
+	Fields []ConfigFieldDesc `json:"fields"`
+	Scopes []ConfigScope     `json:"scopes"`
+	Error  string            `json:"error,omitempty"`
 }
 
 func (ConfigSchema) Type() string { return TypeConfigSchema }
