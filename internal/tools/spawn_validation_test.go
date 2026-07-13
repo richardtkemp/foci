@@ -101,7 +101,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",
 		MaxInherit:     3,
-		MaxToolLoops:   10,
+		MaxToolLoops:   func() int { return 10 },
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -227,7 +227,7 @@ func TestSpawnModelGroups(t *testing.T) {
 		})
 
 		client := newTestAnthropicClient(server.URL, "test-token")
-		deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+		deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
 		tool := NewSpawnTool(deps, nil)
 
 		params, _ := json.Marshal(map[string]string{
@@ -264,7 +264,7 @@ func TestSpawnModelDefault(t *testing.T) {
 	client := newTestAnthropicClient(server.URL, "test-token")
 	// Powerful defaults all groups to the same model
 	gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{"powerful": "anthropic/claude-sonnet-4-5"}}, nil, true)
-	deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-sonnet-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-sonnet-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
 	tool := NewSpawnTool(deps, nil)
 
 	// No model specified — should use parent's default (session model)
@@ -341,7 +341,7 @@ func TestSpawnModelOpenRouter(t *testing.T) {
 				GroupResolver:  gr,
 				FallbackModel:  tt.config,
 				FallbackFormat: "openai",
-				MaxToolLoops:   10,
+				MaxToolLoops:   func() int { return 10 },
 			}
 			tool := NewSpawnTool(deps, nil)
 
@@ -371,7 +371,7 @@ func TestSpawnTimeout(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{

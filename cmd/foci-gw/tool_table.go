@@ -140,7 +140,7 @@ var toolTable = []toolEntry{
 	// drive an already-running watch loop and session timer, so a live swap
 	// needs timer-reset logic, not just a value read — out of scope here.
 	{name: "tmux", paths: pathAPI, enabled: tmuxAvailable, build: func(d *toolDeps) *tools.Tool {
-		tc := d.p.resolved.Tools
+		tc := d.p.resolved.Tools // static-cfg:ignore: see comment above
 		watchSec := 30
 		if dur, err := time.ParseDuration(tc.TmuxWatchThreshold); err == nil {
 			watchSec = int(dur.Seconds())
@@ -157,9 +157,12 @@ var toolTable = []toolEntry{
 		return t
 	}},
 
-	{name: "browser", paths: pathAPI, enabled: func(d *toolDeps) bool { return d.p.resolved.Browser.Enabled },
+	// browser.enabled decides whether the tool gets registered at all, and
+	// bc feeds a whole browser-automation manager (opens a real browser
+	// process) — construction-time only, like tmux above.
+	{name: "browser", paths: pathAPI, enabled: func(d *toolDeps) bool { return d.p.resolved.Browser.Enabled }, // static-cfg:ignore: see comment above
 		build: func(d *toolDeps) *tools.Tool {
-			bc := d.p.resolved.Browser
+			bc := d.p.resolved.Browser // static-cfg:ignore: see comment above
 			// Default the persistent profile to a per-agent dir under the
 			// workspace's gitignored .data/ (alongside the agent's databases),
 			// so non-incognito sessions retain state without colliding with
@@ -204,20 +207,20 @@ var toolTable = []toolEntry{
 	// registered (server-tool vs. brave/fetch), not a scalar within one — a
 	// live swap means re-registering the tool, out of scope here.
 	{name: "web_search", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
-		if d.path == pathAPI && d.p.resolved.Tools.SearchProvider == "anthropic" {
+		if d.path == pathAPI && d.p.resolved.Tools.SearchProvider == "anthropic" { // static-cfg:ignore: see comment above
 			d.out.serverTools = append(d.out.serverTools, buildServerTool("web_search_20250305", "web_search",
 				d.p.cfg.Tools.WebSearchMaxUses, d.p.cfg.Tools.WebSearchAllowedDomains, d.p.cfg.Tools.WebSearchBlockedDomains))
 			return nil
 		}
 		// brave (API only when provider=="brave"; exec path always uses brave)
-		if (d.path == pathExec || d.p.resolved.Tools.SearchProvider == "brave") && d.p.braveKey != "" {
+		if (d.path == pathExec || d.p.resolved.Tools.SearchProvider == "brave") && d.p.braveKey != "" { // static-cfg:ignore: see comment above
 			return tools.NewWebSearchTool(d.p.braveKey)
 		}
 		return nil
 	}},
 
 	{name: "web_fetch", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
-		if d.path == pathAPI && d.p.resolved.Tools.FetchProvider == "anthropic" {
+		if d.path == pathAPI && d.p.resolved.Tools.FetchProvider == "anthropic" { // static-cfg:ignore: see comment above web_search entry
 			d.out.serverTools = append(d.out.serverTools, buildServerTool("web_fetch_20250910", "web_fetch",
 				d.p.cfg.Tools.WebFetchMaxUses, d.p.cfg.Tools.WebFetchAllowedDomains, d.p.cfg.Tools.WebFetchBlockedDomains))
 			return nil
@@ -312,14 +315,14 @@ var toolTable = []toolEntry{
 		return t
 	}},
 
-	// MaxConcurrentSpawns/ExploreMaxDepth stay baked: MaxInherit sizes a
-	// semaphore channel at construction, which can't be live-resized without a
-	// redesign — out of scope here.
+	// MaxConcurrentSpawns stays baked: it sizes a semaphore channel at
+	// construction, which can't be live-resized without a redesign.
+	// MaxToolLoops/ExploreMaxDepth are read fresh per spawn call.
 	{name: "spawn", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		acfg := d.p.acfg
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
-		al := d.p.resolved.Loop
-		tc := d.p.resolved.Tools
+		tc := d.p.resolved.Tools // static-cfg:ignore: MaxConcurrentSpawns sizes a semaphore channel at construction, can't be live-resized without a redesign
+		live := d.p.resolvedLive
 		orientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, d.p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 		spawnDeps := tools.SpawnDeps{
 			Client:              d.client,
@@ -333,8 +336,8 @@ var toolTable = []toolEntry{
 			FallbackModel:       d.resolvedModel,
 			FallbackFormat:      d.defaultFormat,
 			MaxInherit:          tc.MaxConcurrentSpawns,
-			MaxToolLoops:        al.MaxToolLoops,
-			ExploreMaxDepth:     tc.ExploreMaxDepth,
+			MaxToolLoops:        func() int { return live.Load().Loop.MaxToolLoops },
+			ExploreMaxDepth:     func() int { return live.Load().Tools.ExploreMaxDepth },
 			Notifier:            d.notifier,
 			OrientationTemplate: prompts.ResolveOrientationTemplate(orientPath, false, d.promptSearchDirs...),
 			SetNoCompact:        func(sk string, v bool) { d.agLazy().SetSessionNoCompact(sk, v) },

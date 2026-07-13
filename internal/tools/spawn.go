@@ -106,14 +106,31 @@ type SpawnDeps struct {
 	FallbackFunc        provider.FallbackFunc               // nil disables automatic model fallback on transient errors
 	FallbackModel       string                              // agent's default model (developer/model_id) for single-model mode fallback
 	FallbackFormat      string                              // agent's default format for single-model mode fallback
-	MaxInherit          int                                 // semaphore size (from config)
-	MaxToolLoops        int                                 // max tool loops for raw/character spawns
-	ExploreMaxDepth     int                                 // max tool loops for explore spawns
+	MaxInherit          int                                 // semaphore size (from config) — fixed at construction, can't be live-resized
+	MaxToolLoops        func() int                          // max tool loops for raw/character spawns, read fresh per call
+	ExploreMaxDepth     func() int                          // max tool loops for explore spawns, read fresh per call
 	Notifier            *AsyncNotifier                      // async result delivery for inherit mode
 	OrientationTemplate string                              // orientation template for branch sessions ({branch_key}, {parent_key}, {branch_type} resolved at creation)
 	SetNoCompact        func(sessionKey string, value bool) // marks branch sessions as no_compact (prevents compaction)
 	FileMode            os.FileMode                         // permission bits for files created by spawned sessions
 	Store               *secrets.Store                      // secrets store for blocked-path enforcement in isolated tools
+}
+
+// maxToolLoops calls d.MaxToolLoops(), or returns 0 if unset (tests that
+// don't exercise the tool-loop budget).
+func (d SpawnDeps) maxToolLoops() int {
+	if d.MaxToolLoops == nil {
+		return 0
+	}
+	return d.MaxToolLoops()
+}
+
+// exploreMaxDepth calls d.ExploreMaxDepth(), or returns 0 if unset.
+func (d SpawnDeps) exploreMaxDepth() int {
+	if d.ExploreMaxDepth == nil {
+		return 0
+	}
+	return d.ExploreMaxDepth()
 }
 
 // NewSpawnTool creates the unified spawn tool that replaces request_model.
@@ -177,7 +194,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
-				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops, deps.FallbackFunc, deps.ClientProvider)
+				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.maxToolLoops(), deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -196,7 +213,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
-				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops, deps.FallbackFunc, deps.ClientProvider)
+				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.maxToolLoops(), deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -208,7 +225,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth, deps.FallbackFunc, deps.ClientProvider)
+				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.exploreMaxDepth(), deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
 				}

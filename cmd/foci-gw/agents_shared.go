@@ -49,8 +49,8 @@ type sharedAgentSetup struct {
 // resolveSharedSetup performs the common preamble for all agent types:
 // config resolution, prompt search dirs, and group resolver creation.
 func resolveSharedSetup(p setupParams) *sharedAgentSetup {
-	p.resolved = config.Resolve(p.cfg, p.acfg)
-	p.resolvedLive = config.NewLiveValue(p.resolved)
+	p.resolved = config.Resolve(p.cfg, p.acfg)     // static-cfg:ignore: the definition site — this IS the initial snapshot resolvedLive wraps
+	p.resolvedLive = config.NewLiveValue(p.resolved) // static-cfg:ignore: the definition site — see comment above
 
 	promptSearchDirs := []string{
 		filepath.Join(p.acfg.Workspace, "prompts"),
@@ -65,7 +65,7 @@ func resolveSharedSetup(p setupParams) *sharedAgentSetup {
 	// here would also trip the resolver's no-API-agent guard on every use.
 	var groupResolver *config.GroupResolver
 	if !p.acfg.IsDelegated() {
-		groupResolver = config.NewGroupResolver(p.resolved.Groups, p.cfg.Models, p.cfg.HasAPIAgent())
+		groupResolver = config.NewGroupResolver(p.resolved.Groups, p.cfg.Models, p.cfg.HasAPIAgent()) // static-cfg:ignore: groups.* fields are all maps, invisible to the field registry — no /config set path exists yet, see bucket D (a30414b8)
 	}
 
 	return &sharedAgentSetup{
@@ -91,10 +91,13 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		SessionIndex:      s.p.sessionIndex,
 		MessageTransforms: agent.CompileTransforms(resolveMessageTransforms(acfg, s.p.cfg)),
 		PromptSearchDirs:  s.promptSearchDirs,
-		Reflection:        s.p.resolved.Reflection,
-		DefaultPlatform:   s.p.cfg.DefaultPlatformFor(s.p.acfg.ID),
-		ShowToolCalls:     resolveShowToolCalls(s.p.resolved),
-		Statusline:        s.p.resolved.Display.Statusline,
+		// Reflection/ShowToolCalls/Statusline have no live getter yet (unlike
+		// e.g. Streaming) — genuinely restart-required, a candidate for a
+		// future pass.
+		Reflection:      s.p.resolved.Reflection,               // static-cfg:ignore: see comment above
+		DefaultPlatform: s.p.cfg.DefaultPlatformFor(s.p.acfg.ID),
+		ShowToolCalls:   resolveShowToolCalls(s.p.resolved),     // static-cfg:ignore: see comment above
+		Statusline:      s.p.resolved.Display.Statusline,        // static-cfg:ignore: see comment above
 	}
 }
 
@@ -103,8 +106,11 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 // turn-lock warning threshold. Call this after newAgent() and before the
 // transport-specific configuration (configureAPI / configureDelegated).
 func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Compactor) {
-	cpc := p.resolved.Compaction
-	bc := p.resolved.Behavior
+	// CompactionSummaryPromptPath/CompactionHandoffMsg/ReloadOnCompact/
+	// TurnLockWarnThreshold have no live getter yet — genuinely
+	// restart-required, a candidate for a future pass.
+	cpc := p.resolved.Compaction // static-cfg:ignore: see comment above
+	bc := p.resolved.Behavior    // static-cfg:ignore: see comment above
 
 	ag.Compactor = compactor
 	ag.CompactionSummaryPromptPath = cpc.CompactionSummaryPrompt
@@ -119,9 +125,9 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	ag.ResetOrientTemplateFn = func() string {
 		return prompts.ResolveOrientationTemplate(resetOrientPath, false, resetSearchDirs...)
 	}
-	ag.CanRunBackground = p.resolved.Background.CanRunBackground
+	ag.CanRunBackground = p.resolved.Background.CanRunBackground // static-cfg:ignore: fallback, LiveConfigFn takes over (bucket B)
 
-	setupWarningQueue(ag, p.resolved, p.cfg)
+	setupWarningQueue(ag, p.resolved, p.cfg) // static-cfg:ignore: constructs ag.WarningQueue once — a genuine derived-handle candidate for a future OnChange-based pass, not fixed here
 }
 
 // finalizeParams holds optional values for finalize. Nil/zero fields are
@@ -174,7 +180,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 
 	// Nudge system.
 	wsFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
-	setupNudgeSystem(ag, acfg, p.resolved.Nudge, p.sessions, fp.registry, fp.skillRegistry, wsFileMode)
+	setupNudgeSystem(ag, acfg, p.resolved.Nudge, p.sessions, fp.registry, fp.skillRegistry, wsFileMode) // static-cfg:ignore: NudgeConfig has no hot tags yet; NudgeReloadFunc solves a different problem (rules-from-disk reload), see bucket D (a30414b8)
 
 	// Slash commands.
 	var configureFacet func(platform.Connection)
@@ -206,7 +212,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		connMgr:             p.connMgr,
 		groupResolver:       s.groupResolver,
 		fallbackFn:          fp.fallbackFn,
-		resolved:            p.resolved,
+		resolved:            p.resolved, // static-cfg:ignore: plumbing — still consumed by deliberately-baked display/voice setup; resolvedLive is the live counterpart
 		resolvedLive:        p.resolvedLive,
 		configureFacet: func(conn platform.Connection) {
 			if configureFacet != nil {
@@ -255,7 +261,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		resolved:         p.resolvedLive,
 		promptSearchDirs: s.promptSearchDirs,
 		skillsDirs:       fp.skillsDirs,
-		webhooks:         p.resolved.Webhooks,
+		webhooks:         p.resolved.Webhooks, // static-cfg:ignore: system.webhooks is a map, invisible to the field registry — no /config set path exists yet, see bucket D (a30414b8)
 		tmuxClearAll:     fp.tmuxClearAll,
 		tmuxWatchCount:   fp.tmuxWatchCount,
 		mcpManager:       fp.mcpManager,

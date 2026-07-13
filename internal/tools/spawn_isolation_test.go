@@ -25,7 +25,7 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -74,7 +74,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 	reg.Register(NewWriteTool(nil, "", nil, 0640))
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -138,7 +138,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 	reg.Register(NewWriteTool(nil, "", nil, 0640))
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -184,7 +184,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 	reg.Register(NewWriteTool(nil, "", nil, 0640))
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -240,7 +240,7 @@ func TestSpawnRawFileListMultiple(t *testing.T) {
 	reg.Register(NewWriteTool(nil, "", nil, 0640))
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
