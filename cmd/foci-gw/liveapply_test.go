@@ -16,7 +16,7 @@ import (
 // "restart required".
 func TestLiveApplyCoversHotFields(t *testing.T) {
 	covered := map[string]bool{}
-	for _, addrs := range [][]string{liveApplyLoggingAddrs, liveApplyDebugAddrs, liveApplyPeriodicAddrs, liveApplyResolvedAddrs} {
+	for _, addrs := range [][]string{liveApplyLoggingAddrs, liveApplyDebugAddrs, liveApplyPeriodicAddrs, liveApplyResolvedAddrs, liveApplyWarningAddrs} {
 		for _, a := range addrs {
 			if covered[a] {
 				t.Errorf("duplicate applier address %s", a)
@@ -203,5 +203,60 @@ myteam = "anthropic/claude-haiku-4-5"
 	}
 	if got := inst.LiveConfig().Groups.Groups["myteam"]; got != "anthropic/claude-haiku-4-5" {
 		t.Errorf("after Apply, LiveConfig().Groups.Groups[myteam] = %q", got)
+	}
+}
+
+// TestLiveApply_WarningQueuesFlipOnLive proves the #1225 core case: an agent
+// that started with warning injection off has its always-constructed queues
+// enabled live when inject_agent_warnings/inject_chat_warnings are turned on,
+// with the chat queue's errors-only filter applied from the fresh level.
+func TestLiveApply_WarningQueuesFlipOnLive(t *testing.T) {
+	base := &config.Config{
+		Platforms: []config.PlatformConfig{{ID: "telegram"}}, // injection off (default)
+		Agents:    []config.AgentConfig{{ID: "a"}},
+	}
+	rc := config.Resolve(base, base.Agents[0])
+	ag := &agent.Agent{}
+	setupWarningQueue(ag, rc, base)
+
+	if ag.WarningQueue.Enabled() || ag.ChatWarningQueue.Enabled() {
+		t.Fatal("queues should start disabled when injection is off")
+	}
+
+	inst := &agentInstance{id: "a", ag: ag, resolved: config.NewLiveValue(rc)}
+	la := newLiveApply("")
+	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+
+	applier := la.appliers["notify.inject_agent_warnings"]
+	if applier == nil {
+		t.Fatal("no applier registered for notify.inject_agent_warnings")
+	}
+
+	allLvl, errLvl := config.InjectionAll, config.InjectionErrors
+	fresh := &config.Config{
+		Platforms: []config.PlatformConfig{{ID: "telegram", Notify: config.NotifyConfig{
+			InjectAgentWarnings: &allLvl,
+			InjectChatWarnings:  &errLvl,
+		}}},
+		Agents: []config.AgentConfig{{ID: "a"}},
+	}
+	if err := applier(fresh); err != nil {
+		t.Fatalf("applier: %v", err)
+	}
+
+	if !ag.WarningQueue.Enabled() || !ag.ChatWarningQueue.Enabled() {
+		t.Fatal("queues should be enabled after live turn-on")
+	}
+
+	// Agent queue is level=all: WARN passes.
+	ag.WarningQueue.Push("WARN", "config", "noise")
+	if ag.WarningQueue.Len() != 1 {
+		t.Errorf("agent queue Len() = %d, want 1 (all)", ag.WarningQueue.Len())
+	}
+	// Chat queue is level=errors: WARN dropped, ERROR kept.
+	ag.ChatWarningQueue.Push("WARN", "config", "noise")
+	ag.ChatWarningQueue.Push("ERROR", "config", "fatal")
+	if ag.ChatWarningQueue.Len() != 1 {
+		t.Errorf("chat queue Len() = %d, want 1 (errors-only)", ag.ChatWarningQueue.Len())
 	}
 }

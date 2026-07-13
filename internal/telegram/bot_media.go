@@ -474,7 +474,7 @@ func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64, mediaGro
 	data, err := b.downloadFile(fileID)
 	if err != nil {
 		b.logger().Errorf("download attachment: %s", b.sanitizeError(err))
-		if b.handler == nil || b.handler.Warnings() == nil {
+		if b.handler == nil || b.handler.Warnings() == nil || !b.handler.Warnings().Enabled() {
 			b.sendHTMLChunks(chatID, "Could not download attachment — please try again.")
 		}
 		return attachment{}, false
@@ -505,7 +505,7 @@ func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType,
 			return fmt.Sprintf("[%s too large to download (%d MB)]\n\n%s", label, fileSize/(1024*1024), text)
 		}
 		b.logger().Errorf("download %s: %s", mediaType, b.sanitizeError(err))
-		if b.handler == nil || b.handler.Warnings() == nil {
+		if b.handler == nil || b.handler.Warnings() == nil || !b.handler.Warnings().Enabled() {
 			b.sendHTMLChunks(chatID, fmt.Sprintf("Could not download %s — please try again.", label))
 		}
 		return text

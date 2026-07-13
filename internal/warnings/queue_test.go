@@ -583,6 +583,66 @@ func TestQueue_ErrorsOnly_AllowsAllWhenFalse(t *testing.T) {
 	}
 }
 
+// --- Configure / Enabled tests (#1225) ---
+
+func TestQueue_Disabled_DropsEverything(t *testing.T) {
+	// Proves a disabled queue drops both WARN and ERROR pushes.
+	q := NewQueue(0, 0)
+	q.Configure(false, false, 0, 0)
+
+	if q.Enabled() {
+		t.Fatal("Enabled() = true after Configure(false, ...)")
+	}
+	q.Push("ERROR", "config", "fatal")
+	q.Push("WARN", "config", "noise")
+	if q.Len() != 0 {
+		t.Fatalf("Len() = %d, want 0 (disabled)", q.Len())
+	}
+}
+
+func TestQueue_Configure_ReenableAndErrorsOnly(t *testing.T) {
+	// Proves Configure can flip a disabled queue back on with errors-only
+	// filtering live, without reconstructing the queue.
+	q := NewQueue(0, 0)
+	q.Configure(false, false, 0, 0)
+	q.Push("ERROR", "config", "dropped while off")
+
+	q.Configure(true, true, 0, 0) // re-enable, errors-only
+	if !q.Enabled() {
+		t.Fatal("Enabled() = false after re-enable")
+	}
+	q.Push("WARN", "config", "still filtered")
+	q.Push("ERROR", "config", "passes")
+
+	warnings := q.Drain()
+	if len(warnings) != 1 {
+		t.Fatalf("Drain() got %d, want 1 (errors-only after re-enable)", len(warnings))
+	}
+	if !strings.Contains(warnings[0], "passes") {
+		t.Errorf("warnings[0] = %q, want the ERROR entry", warnings[0])
+	}
+}
+
+func TestQueue_Configure_UpdatesRateLimit(t *testing.T) {
+	// Proves Configure changes the rate-limit window live: an identical repeat
+	// is suppressed under maxPerWindow=1 but allowed once the limit is raised.
+	q := NewQueue(1, time.Hour)
+
+	q.Push("WARN", "disk", "full")
+	q.Push("WARN", "disk", "full") // duplicate, suppressed by maxPerWindow=1
+	if q.Len() != 1 {
+		t.Fatalf("Len() = %d, want 1 (rate-limited)", q.Len())
+	}
+
+	q.Drain()
+	q.Configure(true, false, 5, time.Hour)
+	q.Push("WARN", "disk", "full")
+	q.Push("WARN", "disk", "full")
+	if q.Len() != 2 {
+		t.Fatalf("Len() = %d, want 2 (raised limit)", q.Len())
+	}
+}
+
 // --- FormatList tests ---
 
 func TestFormatList(t *testing.T) {

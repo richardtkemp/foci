@@ -322,27 +322,30 @@ func setupRedaction(ag *agent.Agent, p setupParams, agentStore *secrets.Store) {
 // setupWarningQueue configures warning injection queues on the agent.
 // Creates separate queues for agent session injection and chat notifications,
 // each with independent severity filtering based on their InjectionLevel.
+// The queues and their dispatchers are always constructed (a disabled queue
+// drops pushes and its dispatcher no-ops), so an off→on injection-level change
+// can be applied live via applyWarningQueueLevels without spinning up new
+// goroutines (#1225).
 func setupWarningQueue(ag *agent.Agent, rc *config.ResolvedAgentConfig, cfg *config.Config) {
+	ag.WarningQueue = warnings.NewQueue(rc.Notify.WarningMaxPerWindow, 0)
+	ag.ChatWarningQueue = warnings.NewQueue(rc.Notify.WarningMaxPerWindow, 0)
+	applyWarningQueueLevels(ag, rc, cfg)
+}
+
+// applyWarningQueueLevels (re)applies the injection levels and rate-limit window
+// to the agent's warning queues from resolved config. Called at setup and from
+// the live-config applier.
+func applyWarningQueueLevels(ag *agent.Agent, rc *config.ResolvedAgentConfig, cfg *config.Config) {
 	warningWindow, err := time.ParseDuration(cfg.Logging.WarningWindowDuration)
 	if err != nil {
 		warningWindow = 5 * time.Minute
 	}
 
 	agentLevel := maxInjectionLevel(rc, cfg, func(n config.ResolvedNotify) config.InjectionLevel { return n.InjectAgentWarnings })
-	if agentLevel.Enabled() {
-		ag.WarningQueue = warnings.NewQueue(rc.Notify.WarningMaxPerWindow, warningWindow)
-		if !agentLevel.IncludeWarnings() {
-			ag.WarningQueue.SetErrorsOnly(true)
-		}
-	}
+	ag.WarningQueue.Configure(agentLevel.Enabled(), !agentLevel.IncludeWarnings(), rc.Notify.WarningMaxPerWindow, warningWindow)
 
 	chatLevel := maxInjectionLevel(rc, cfg, func(n config.ResolvedNotify) config.InjectionLevel { return n.InjectChatWarnings })
-	if chatLevel.Enabled() {
-		ag.ChatWarningQueue = warnings.NewQueue(rc.Notify.WarningMaxPerWindow, warningWindow)
-		if !chatLevel.IncludeWarnings() {
-			ag.ChatWarningQueue.SetErrorsOnly(true)
-		}
-	}
+	ag.ChatWarningQueue.Configure(chatLevel.Enabled(), !chatLevel.IncludeWarnings(), rc.Notify.WarningMaxPerWindow, warningWindow)
 }
 
 // platformConnectionResult holds the callbacks wired by platform connection setup.

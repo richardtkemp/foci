@@ -169,7 +169,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	if msg.Voice != nil && b.transcriber != nil {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
 			b.logger().Errorf("download voice: %s", b.sanitizeError(err))
-			if b.handler == nil || b.handler.Warnings() == nil {
+			if b.handler == nil || b.handler.Warnings() == nil || !b.handler.Warnings().Enabled() {
 				b.sendReply(msg, "Could not download voice note — please try again.")
 			}
 		} else {

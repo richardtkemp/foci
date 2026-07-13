@@ -54,6 +54,7 @@ type Queue struct {
 	maxPerWindow   int
 	windowDuration time.Duration
 	buckets        map[string]*warningBucket
+	enabled        bool             // when false, Push is a no-op (injection level is off); toggled live via Configure
 	errorsOnly     bool             // when true, Push silently drops non-ERROR entries
 	nowFunc        func() time.Time // for deterministic testing
 	suppressed     atomic.Int32     // when > 0, Push is a no-op (breaks dispatch→warn→push loops)
@@ -61,14 +62,38 @@ type Queue struct {
 
 // NewQueue creates a warning queue with optional rate-limiting.
 // Set maxPerWindow <= 0 to disable rate-limiting (all warnings pass through).
+// The queue starts enabled; callers that gate on an injection level toggle it
+// via Configure.
 func NewQueue(maxPerWindow int, windowDuration time.Duration) *Queue {
 	return &Queue{
 		maxSize:        50,
 		maxPerWindow:   maxPerWindow,
 		windowDuration: windowDuration,
 		buckets:        make(map[string]*warningBucket),
+		enabled:        true,
 		nowFunc:        time.Now,
 	}
+}
+
+// Configure atomically updates the queue's live-tunable settings: whether it
+// accepts pushes at all (enabled), whether it drops non-ERROR entries
+// (errorsOnly), and its rate-limit window. Used to apply config changes without
+// a restart (#1225).
+func (q *Queue) Configure(enabled, errorsOnly bool, maxPerWindow int, windowDuration time.Duration) {
+	q.mu.Lock()
+	q.enabled = enabled
+	q.errorsOnly = errorsOnly
+	q.maxPerWindow = maxPerWindow
+	q.windowDuration = windowDuration
+	q.mu.Unlock()
+}
+
+// Enabled reports whether the queue currently accepts pushes (its injection
+// level is not off).
+func (q *Queue) Enabled() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.enabled
 }
 
 // quietWindow returns the extended window used during quiet mode (12× normal window).
@@ -105,6 +130,11 @@ func (q *Queue) Push(level, component, msg string) {
 
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	// Injection level off — drop everything.
+	if !q.enabled {
+		return
+	}
 
 	// Severity filter: drop WARN-level when errorsOnly is set.
 	if q.errorsOnly && level != "ERROR" {
