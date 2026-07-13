@@ -14,9 +14,9 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode verify-persistence check clean setup-hooks
+.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check clean setup-hooks
 
-all: build cli foci-call foci-cc-hook find-disconnected-tests
+all: build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -45,6 +45,15 @@ foci-cc-hook:
 find-disconnected-tests:
 	@mkdir -p bin
 	cd scripts/find-disconnected-tests && go build -o ../../bin/find-disconnected-tests .
+
+# find-static-config-reads flags every read of the static, non-live
+# *config.ResolvedAgentConfig snapshot (a `resolved`/`Resolved`-named
+# field) instead of a config.LiveValue's Load()/LiveConfig(). Discovery
+# tool for the ongoing bucket A-D live-config migration; lives in its own
+# go.mod for the same reason as find-disconnected-tests.
+find-static-config-reads:
+	@mkdir -p bin
+	cd scripts/find-static-config-reads && go build -o ../../bin/find-static-config-reads .
 
 test:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
@@ -223,6 +232,12 @@ lint-fix:
 # Run specific linter
 lint-dupl:
 	@$(GOBIN)/golangci-lint run --disable-all -E dupl
+
+# Advisory only — not yet wired into `lint`. The initial backlog of
+# findings needs triaging (fix to read live, or annotate with a same-line
+# `static-cfg:ignore: <reason>` comment) before this can gate CI.
+lint-static-config: find-static-config-reads
+	@./bin/find-static-config-reads ./...
 
 # Legacy complexity check (now included in lint)
 complex: vet
