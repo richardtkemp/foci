@@ -765,3 +765,16 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		}
 	}
 }
+
+// TestTmuxStartDiagCapturesFailure verifies the verbose diagnostic probe
+// surfaces tmux's own error instead of an empty string. A socket path well over
+// the ~108-char unix-socket limit makes the server fail to bind deterministically.
+func TestTmuxStartDiagCapturesFailure(t *testing.T) {
+	t.Parallel()
+	tmuxAvailable(t)
+	badSock := filepath.Join(t.TempDir(), strings.Repeat("x", 150)+".sock")
+	diag := tmuxStartDiag(badSock)
+	if strings.TrimSpace(diag) == "" {
+		t.Fatalf("expected diagnostic output for an unusable socket, got empty")
+	}
+}

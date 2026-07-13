@@ -43,7 +43,20 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 
 	out, err := inst.runTmux(ctx, args...)
 	if err != nil {
-		return tools.ToolResult{}, fmt.Errorf("tmux new-session: %s %w", strings.TrimSpace(out), err)
+		// new-session can transiently fail if the tmux server died or failed to
+		// spawn (e.g. "server exited unexpectedly" under fork/resource pressure).
+		// Ensure the server is up and retry once before giving up. start-server
+		// is idempotent — a no-op if a server is already running, so it never
+		// disturbs sibling sessions on a shared socket.
+		log.Warnf("tmux", "new-session failed, restarting server and retrying: session=%s name=%s out=%q err=%v", sessionKey, name, strings.TrimSpace(out), err)
+		if sout, serr := inst.runTmux(ctx, "start-server"); serr != nil {
+			log.Warnf("tmux", "start-server before retry failed: session=%s %s %v", sessionKey, strings.TrimSpace(sout), serr)
+		}
+		out, err = inst.runTmux(ctx, args...)
+		if err != nil {
+			return tools.ToolResult{}, fmt.Errorf("tmux new-session (after retry): %s: %w%s", strings.TrimSpace(out), err, tmuxStartDiag(inst.socketPath))
+		}
+		log.Infof("tmux", "new-session succeeded on retry: session=%s name=%s", sessionKey, name)
 	}
 
 	// Resize window so output isn't truncated to a small default terminal size.
