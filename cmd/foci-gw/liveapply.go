@@ -155,8 +155,10 @@ var (
 		"notify.task_list_notify", "agent.notify.task_list_notify", "platforms.notify.task_list_notify",
 		"notify.compaction_debug", "agent.notify.compaction_debug", "platforms.notify.compaction_debug",
 		"display.stream_output", "agent.display.stream_output", "platforms.display.stream_output",
+		"display.table_wrap_lines", "agent.display.table_wrap_lines", "platforms.display.table_wrap_lines",
+		"display.table_style", "agent.display.table_style", "platforms.display.table_style",
 		"debug.messages_in_log", "agent.debug.messages_in_log",
-		"platforms.telegram.table_wrap_lines", "platforms.telegram.table_style", "platforms.telegram.long_poll_timeout",
+		"platforms.telegram.long_poll_timeout",
 	}
 
 	liveApplyWarningAddrs = []string{

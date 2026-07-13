@@ -40,18 +40,20 @@ func TestNewBotConstruction(t *testing.T) {
 // when no override function is set.
 func TestResolveDisplayDefaults(t *testing.T) {
 	b := &Bot{display: BotDisplayConfig{
-		ShowToolCalls: "preview",
-		ShowThinking:  "compact",
-		StreamOutput:  true,
-		DisplayWidth:  44,
+		ShowToolCalls:  "preview",
+		ShowThinking:   "compact",
+		StreamOutput:   true,
+		DisplayWidth:   44,
+		TableWrapLines: 7,
+		TableStyle:     "markdown",
 	}}
 
 	d := b.resolveDisplay("any/key")
 	if d.ShowToolCalls != "preview" || d.ShowThinking != "compact" || !d.StreamOutput || d.DisplayWidth != 44 {
 		t.Errorf("unexpected display %+v", d)
 	}
-	if d.RenderOpts.MaxWidth != 44 {
-		t.Errorf("expected RenderOpts.MaxWidth 44, got %d", d.RenderOpts.MaxWidth)
+	if d.RenderOpts.MaxWidth != 44 || d.RenderOpts.WrapLines != 7 || d.RenderOpts.Style != "markdown" {
+		t.Errorf("expected RenderOpts {44,7,markdown}, got %+v", d.RenderOpts)
 	}
 }
 

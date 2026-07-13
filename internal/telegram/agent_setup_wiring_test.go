@@ -140,16 +140,16 @@ func TestSetupAgent_DisplaySettingsLiveUpdateViaOnChange(t *testing.T) {
 	// Build a fresh Config/AgentConfig with the hot fields turned on, resolve
 	// it, and store — this is what a live config-file edit ultimately does.
 	freshCfg := &config.Config{
-		Display: config.DisplayConfig{StreamOutput: config.Ptr(true)},
-		Debug:   config.DebugConfig{MessagesInLog: config.Ptr(true)},
+		Display: config.DisplayConfig{
+			StreamOutput:   config.Ptr(true),
+			TableWrapLines: config.Ptr(12),
+			TableStyle:     config.Ptr("markdown"),
+		},
+		Debug: config.DebugConfig{MessagesInLog: config.Ptr(true)},
 		Platforms: []config.PlatformConfig{{
-			ID:     "telegram",
-			Access: p.GlobalConfig.Platforms[0].Access,
-			Telegram: &config.TelegramSpecific{
-				TableWrapLines:  config.Ptr(12),
-				TableStyle:      config.Ptr("markdown"),
-				LongPollTimeout: "20s",
-			},
+			ID:       "telegram",
+			Access:   p.GlobalConfig.Platforms[0].Access,
+			Telegram: &config.TelegramSpecific{LongPollTimeout: "20s"},
 		}},
 	}
 	fresh := config.Resolve(freshCfg, p.AgentConfig)
@@ -269,8 +269,10 @@ func TestApplyAgentDisplaySettings_TelegramSpecific(t *testing.T) {
 	dc := config.ResolvedDisplay{
 		StreamInterval:        "750ms",
 		InjectedMessageHeader: "[sys]",
+		TableWrapLines:        9,
+		TableStyle:            "markdown",
 	}
-	ApplyAgentDisplaySettings(b, dc, config.ResolvedDebug{}, 9, "markdown", "42s")
+	ApplyAgentDisplaySettings(b, dc, config.ResolvedDebug{}, "42s")
 
 	d := b.getDisplay()
 	if d.TableWrapLines != 9 || d.TableStyle != "markdown" {
@@ -288,7 +290,7 @@ func TestApplyAgentDisplaySettings_TelegramSpecific(t *testing.T) {
 
 	// Invalid long-poll duration is ignored.
 	prev := b.getLongPollTimeout()
-	ApplyAgentDisplaySettings(b, config.ResolvedDisplay{}, config.ResolvedDebug{}, 0, "", "bogus")
+	ApplyAgentDisplaySettings(b, config.ResolvedDisplay{}, config.ResolvedDebug{}, "bogus")
 	if b.getLongPollTimeout() != prev {
 		t.Errorf("bogus duration changed timeout to %v", b.getLongPollTimeout())
 	}

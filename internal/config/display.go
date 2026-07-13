@@ -148,14 +148,14 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		if p.Display.DisplayWidth != nil {
 			add(sec, "display_width", *p.Display.DisplayWidth)
 		}
+		if p.Display.TableWrapLines != nil {
+			add(sec, "table_wrap_lines", *p.Display.TableWrapLines)
+		}
+		if p.Display.TableStyle != nil {
+			add(sec, "table_style", *p.Display.TableStyle)
+		}
 		if p.Telegram != nil {
 			add(sec, "long_poll_timeout", p.Telegram.LongPollTimeout)
-			if p.Telegram.TableWrapLines != nil {
-				add(sec, "table_wrap_lines", *p.Telegram.TableWrapLines)
-			}
-			if p.Telegram.TableStyle != nil {
-				add(sec, "table_style", *p.Telegram.TableStyle)
-			}
 		}
 	}
 	if len(cfg.Behavior.StopAliases) > 0 {
@@ -393,11 +393,11 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if tg != nil && tg.Display.DisplayWidth != nil {
 		add("platforms.telegram.display_width", *tg.Display.DisplayWidth)
 	}
-	if tg != nil && tg.Telegram != nil && tg.Telegram.TableWrapLines != nil {
-		add("platforms.telegram.table_wrap_lines", *tg.Telegram.TableWrapLines)
+	if tg != nil && tg.Display.TableWrapLines != nil {
+		add("platforms.telegram.table_wrap_lines", *tg.Display.TableWrapLines)
 	}
-	if tg != nil && tg.Telegram != nil && tg.Telegram.TableStyle != nil {
-		add("platforms.telegram.table_style", *tg.Telegram.TableStyle)
+	if tg != nil && tg.Display.TableStyle != nil {
+		add("platforms.telegram.table_style", *tg.Display.TableStyle)
 	}
 	if agent.Debug.MessagesInLog != nil {
 		add("messages_in_log", *agent.Debug.MessagesInLog)

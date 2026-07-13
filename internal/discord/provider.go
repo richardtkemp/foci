@@ -133,6 +133,8 @@ func (p *discordProvider) DefaultPlatformConfig() config.PlatformConfig {
 	off := config.ToolCallOff
 	thinkOff := config.ShowThinkingOff
 	dw := 60
+	twl := 5
+	ts := "pretty"
 	so := false
 	rm := true
 	sn := true
@@ -148,6 +150,8 @@ func (p *discordProvider) DefaultPlatformConfig() config.PlatformConfig {
 			StreamOutput:   &so,
 			StreamInterval: config.Ptr[string]("1200ms"),
 			DisplayWidth:   &dw,
+			TableWrapLines: &twl,
+			TableStyle:     &ts,
 		},
 		Access: config.AccessConfig{
 			RequireMention: &rm,

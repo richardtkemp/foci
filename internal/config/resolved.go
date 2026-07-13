@@ -26,10 +26,8 @@ type ResolvedAgentConfig struct {
 	Display      ResolvedDisplay
 	Notify       ResolvedNotify
 
-	// Telegram-only per-agent table/poll settings (not general display —
-	// see TODO #1235 for generalizing off platforms.telegram.*).
-	TelegramTableWrapLines  int
-	TelegramTableStyle      string
+	// TelegramLongPollTimeout is the getUpdates HTTP-client timeout — genuinely
+	// Telegram-only (table settings live in Display, shared across platforms).
 	TelegramLongPollTimeout string
 
 	Permissions ResolvedPermissions
@@ -113,28 +111,17 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		))
 	}
 
-	// Telegram table/poll settings: agent-platform overrides global-platform
-	// (mirrors the acfg.Platform(name) → cfg.Platform(name) cascade tier used
-	// for Display/Notify above; Load()'s ApplyDefaults already does this cascade
-	// for the production path, but Resolve() must not depend on that having run —
+	// LongPollTimeout: agent-platform overrides global-platform (mirrors the
+	// acfg.Platform(name) → cfg.Platform(name) cascade tier used for
+	// Display/Notify above; Load()'s ApplyDefaults already does this cascade for
+	// the production path, but Resolve() must not depend on that having run —
 	// e.g. tests construct Config/AgentConfig directly without calling Load()).
-	var twl int
-	var tstyle, tlpt string
+	var tlpt string
 	if gtg := cfg.Platform("telegram"); gtg != nil && gtg.Telegram != nil {
-		twl = DerefInt(gtg.Telegram.TableWrapLines)
-		tstyle = DerefStr(gtg.Telegram.TableStyle)
 		tlpt = gtg.Telegram.LongPollTimeout
 	}
-	if atg := acfg.Platform("telegram"); atg != nil && atg.Telegram != nil {
-		if atg.Telegram.TableWrapLines != nil {
-			twl = *atg.Telegram.TableWrapLines
-		}
-		if atg.Telegram.TableStyle != nil {
-			tstyle = *atg.Telegram.TableStyle
-		}
-		if atg.Telegram.LongPollTimeout != "" {
-			tlpt = atg.Telegram.LongPollTimeout
-		}
+	if atg := acfg.Platform("telegram"); atg != nil && atg.Telegram != nil && atg.Telegram.LongPollTimeout != "" {
+		tlpt = atg.Telegram.LongPollTimeout
 	}
 
 	return &ResolvedAgentConfig{
@@ -158,8 +145,6 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Browser:                 resolveBrowser(Merge(acfg.Browser, cfg.Browser)),
 		Display:                 resolveDisplay(Merge(displayLayers...)),
 		Notify:                  resolveNotify(Merge(acfg.Notify, cfg.Notify)),
-		TelegramTableWrapLines:  twl,
-		TelegramTableStyle:      tstyle,
 		TelegramLongPollTimeout: tlpt,
 		Permissions:             resolvePermissions(acfg.Permissions, cfg.Permissions),
 		Webhooks:                MergeMaps(cfg.System.Webhooks, acfg.System.Webhooks),
