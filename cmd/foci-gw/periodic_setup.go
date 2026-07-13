@@ -92,6 +92,24 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	}
 	kaEnabled := ka.Enabled && cachingAvailable
 
+	// cacheTTL is the backend's static prompt-cache lifetime, resolved once: it
+	// bounds the keepalive window [interval, cacheTTL) and never varies at
+	// runtime. It must come from the STATIC backend constant, not a per-session
+	// lookup — at startup no session is live, and DelegatedManager.CacheTTL
+	// returns 0 for a non-running backend (0 = unknown → no expiry ceiling).
+	var cacheTTL time.Duration
+	if inst.ag.DelegatedManager != nil {
+		cacheTTL = inst.ag.DelegatedManager.StaticCacheTTL()
+	}
+
+	// Warn on a self-defeating config: if the interval is >= the cache TTL the
+	// window is empty and keepalive can never fire, so warming is silently off.
+	if kaEnabled && cacheTTL > 0 {
+		if kaInterval, err := time.ParseDuration(ka.Interval); err == nil && kaInterval >= cacheTTL {
+			log.Warnf("keepalive", "agent %q keepalive interval %s >= backend cache TTL %s: warming can never fire (interval must be shorter than the cache lifetime)", acfg.ID, kaInterval, cacheTTL)
+		}
+	}
+
 	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() })
 	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() })
 	// Every agent gets a runner even when nothing is currently enabled: the
@@ -220,6 +238,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		Background:         bg,
 		Reflection:         refl,
 		TickInterval:       inst.resolved.Scheduler.TickInterval,
+		CacheTTL:           cacheTTL,
 		Maintenance:        maint,
 		PromptSearchDirs:   inst.promptSearchDirs,
 		TodoStore:          p.todoStore,

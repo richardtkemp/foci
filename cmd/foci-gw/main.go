@@ -394,16 +394,15 @@ Subcommands:
 		})
 
 		// Wire lifecycle callbacks to the periodic runner. OnUserMessage is a
-		// message-receipt event and stays on the platform. The turn-boundary
-		// hooks live on the Agent (fired in HandleMessage) so system-injected
-		// turns fire them too, not just platform-driven turns.
+		// message-receipt event and stays on the platform. The turn-end hook lives
+		// on the Agent (fired in HandleMessage) so system-injected turns fire it
+		// too, not just platform-driven turns. onTurnComplete is nil: cache warmth
+		// is tracked per-session via session_index.last_cache_touch (stamped by
+		// recordTurnActivity), which keepalive reads directly.
 		if inst.kaRunner != nil {
 			plat.SetLifecycleCallback(acfg.ID, platform.OnUserMessage,
 				func() { inst.kaRunner.NotifyInteraction() })
-			inst.ag.SetTurnLifecycleHooks(
-				inst.kaRunner.NotifyCacheWarmed,
-				inst.kaRunner.NotifyTurnEnd,
-			)
+			inst.ag.SetTurnLifecycleHooks(nil, inst.kaRunner.NotifyTurnEnd)
 		}
 
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, inst.ag.Model, acfg.Workspace)

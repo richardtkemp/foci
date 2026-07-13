@@ -190,9 +190,10 @@ type Agent struct {
 	// Session-lifecycle hooks fired at the turn boundary in HandleMessage, so
 	// EVERY backend turn (platform-driven AND system-injected) fires them —
 	// unlike the platform Driver's WrapTurn, which injections bypass. Wired by
-	// the gateway to the keepalive Runner: onTurnComplete → NotifyCacheWarmed
-	// (a turn just warmed the cache), onTurnEnd → NotifyTurnEnd (flush warnings
-	// deferred during the turn). Both nil in tests that don't set them.
+	// the gateway to the keepalive Runner: onTurnEnd → NotifyTurnEnd (flush
+	// warnings deferred during the turn). onTurnComplete is currently unused
+	// (cache warmth is tracked via session_index.last_cache_touch) but kept as a
+	// generic hook. Any may be nil.
 	onTurnComplete func()
 	onTurnEnd      func()
 

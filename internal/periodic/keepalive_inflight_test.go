@@ -73,7 +73,7 @@ func TestMaybeKeepalive_SkipsWhenTurnInFlight(t *testing.T) {
 			Interval: "1m",
 			Prompt:   "keepalive.md",
 		},
-		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
+		sessionIndex: indexWithTouch(t, "test/c1", 10*time.Minute),
 		agent: &fakeBackgroundAgent{
 			sessionKeyFn:     func() string { return "test/c1" },
 			isTurnInFlightFn: inFlightFn(t, "test/c1"),

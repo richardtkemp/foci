@@ -748,6 +748,10 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 		if err := a.SessionIndex.DeleteAllSessionMetadata(sessionKey); err != nil {
 			a.logger().Errorf("clear session metadata %s: %v", sessionKey, err)
 		}
+		// last_cache_touch is a session_index COLUMN, not session_metadata, so
+		// DeleteAllSessionMetadata leaves it stale. Null it so keepalive treats
+		// the reset session as having no live cache to warm.
+		a.SessionIndex.ClearCacheTouch(sessionKey)
 	}
 
 	a.logger().Infof("session state cleared %s", sessionKey)

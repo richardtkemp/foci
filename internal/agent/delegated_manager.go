@@ -209,6 +209,25 @@ func (m *DelegatedManager) CacheTTL(sessionKey string) time.Duration {
 	return p.CacheTTL()
 }
 
+// StaticCacheTTL returns the backend type's prompt-cache TTL without needing a
+// running session — it constructs a throwaway backend and reads its constant
+// CacheTTL(). 0 if the backend can't be built or doesn't report a TTL. Used at
+// startup (before any session is live) to validate the keepalive interval.
+func (m *DelegatedManager) StaticCacheTTL() time.Duration {
+	if m.NewBackend == nil {
+		return 0
+	}
+	be, err := m.NewBackend()
+	if err != nil {
+		return 0
+	}
+	p, ok := be.(delegator.CacheTTLProvider)
+	if !ok {
+		return 0
+	}
+	return p.CacheTTL()
+}
+
 // BackendAwaitingAutonomousRun reports whether the (already-running) backend for
 // sessionKey is holding across background work — a pending subagent/Bash, a live
 // autonomous run, or the post-run grace (spec §4). Non-creating: an idle session
