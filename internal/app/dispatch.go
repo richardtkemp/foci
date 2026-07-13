@@ -68,6 +68,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.pushSettings(client)
 		h.pushReads(client)
 		h.pushDrafts(client)
+		h.pushOpenSet(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
 		// attached clients) + replay each conversation the client still has
 		// unrendered frames for.
@@ -100,13 +101,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleConversationOpen(client, f)
 
 	case fap.ConversationOpenSet:
-		open := make(map[string]struct{}, len(f.ConversationIDs))
-		for _, id := range f.ConversationIDs {
-			open[id] = struct{}{}
-		}
-		client.mu.Lock()
-		client.openConvIDs = open
-		client.mu.Unlock()
+		h.handleConversationOpenSet(client, f)
 
 	case fap.ConversationList:
 		h.pushRoster(client)
@@ -421,6 +416,22 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 // message sent) — unlike handleRead, there is no non-empty guard. Fire-and-
 // forget: DraftPut is not conversation-reliability-scoped (see inboundConvID),
 // so there is no ack to fold here.
+// handleConversationOpenSet records this connection's open-set (for keepalive
+// warming), persists it as the user's shared open-set, and mirrors it to the
+// user's other devices so they reconcile their open tabs. Idempotent full
+// replace, last-write-wins.
+func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpenSet) {
+	open := make(map[string]struct{}, len(f.ConversationIDs))
+	for _, id := range f.ConversationIDs {
+		open[id] = struct{}{}
+	}
+	client.mu.Lock()
+	client.openConvIDs = open
+	client.mu.Unlock()
+	h.storeOpenChats(f.ConversationIDs)
+	h.broadcastOpenSetExcept(f.ConversationIDs, client)
+}
+
 func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
 	h.mu.RLock()
 	b := h.convs[f.ConversationID]

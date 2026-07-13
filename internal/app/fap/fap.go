@@ -66,6 +66,7 @@ const (
 	TypeConversationSetDefault = "conversation.setDefault"
 	TypeConversationArchive    = "conversation.archive"
 	TypeConversationOpenSet    = "conversation.openSet"
+	TypeConversationOpenSync   = "conversation.openSync"
 	TypeRead                   = "read"
 	TypePing                   = "ping"
 	TypeToolResult             = "tool.result"
@@ -773,6 +774,19 @@ type ConversationArchive struct {
 type ConversationOpenSet struct {
 	ConversationIDs []string `json:"conversationIds"`
 }
+
+// ConversationOpenSync mirrors the user's open-set to their OTHER devices
+// (server->client). Sent when one device sends a ConversationOpenSet, and
+// replayed after a hello (from the persisted "open_chats" system-state key) so a
+// device offline during the change catches up. Idempotent full replace,
+// last-write-wins; the receiving client reconciles its open tabs to match (opens
+// the missing, closes the extra) and suppresses re-broadcasting the applied set.
+// Focus/selection is NOT carried — that stays device-local.
+type ConversationOpenSync struct {
+	ConversationIDs []string `json:"conversationIds"`
+}
+
+func (ConversationOpenSync) Type() string { return TypeConversationOpenSync }
 
 // SettingPut mirrors one synced app-preference to the server (client->server).
 // The server is a dumb store: it persists Key=Value under the global app-settings

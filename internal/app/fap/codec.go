@@ -180,6 +180,8 @@ func derefClient(dst any) any {
 		return *v
 	case *ConversationOpenSet:
 		return *v
+	case *ConversationOpenSync:
+		return *v
 	case *ClientTyping:
 		return *v
 	case *Read:

@@ -109,6 +109,12 @@ const featureSettingsSync = "settingsSync"
 // app-preferences bag is stored as a JSON object.
 const systemStateAppSettings = "app_settings"
 
+// systemStateOpenChats is the system_state key under which the user's shared
+// open-set (the conversations open across their devices) is stored as a JSON
+// array of conversation ids, so a device offline during a change catches up on
+// reconnect.
+const systemStateOpenChats = "open_chats"
+
 // batchPrompt holds the in-flight callback for one batched (multi-question) ask.
 // The app returns all answers in a single InteractiveResponse.Answers; onResp
 // feeds them back into the ask layer (tools.AskPresentBatchFn's onResponse).
@@ -1240,6 +1246,35 @@ func (h *Hub) storeAppSetting(key, value string) map[string]string {
 	return m
 }
 
+// loadOpenChats reads the persisted shared open-set. Empty (nil) when unset or
+// unreadable.
+func (h *Hub) loadOpenChats() []string {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return nil
+	}
+	raw, err := idx.GetSystemState(systemStateOpenChats)
+	if err != nil || raw == "" {
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil
+	}
+	return ids
+}
+
+// storeOpenChats persists the shared open-set as a JSON array. Last-write-wins.
+func (h *Hub) storeOpenChats(ids []string) {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return
+	}
+	if b, err := json.Marshal(ids); err == nil {
+		_ = idx.SetSystemState(systemStateOpenChats, string(b))
+	}
+}
+
 func (h *Hub) pushSettings(client *wsClient) {
 	client.mu.Lock()
 	_, ok := client.features[featureSettingsSync]
@@ -1304,6 +1339,33 @@ func (h *Hub) broadcastDraftExcept(convID, text string, sender *wsClient) {
 	h.mu.RUnlock()
 	for _, c := range clients {
 		c.sendRaw(frame)
+	}
+}
+
+// broadcastOpenSetExcept fans the user's open-set out to every client EXCEPT the
+// one that sent it (whose pager already holds it). The receiving client
+// reconciles its open tabs to match; the sender is skipped so its own change
+// doesn't echo back.
+func (h *Hub) broadcastOpenSetExcept(ids []string, sender *wsClient) {
+	frame := fap.ConversationOpenSync{ConversationIDs: ids}
+	h.mu.RLock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		if c != sender {
+			clients = append(clients, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range clients {
+		c.sendRaw(frame)
+	}
+}
+
+// pushOpenSet replays the persisted shared open-set to a just-connected client,
+// so a device offline during a change adopts it. Skipped when nothing is stored.
+func (h *Hub) pushOpenSet(client *wsClient) {
+	if ids := h.loadOpenChats(); len(ids) > 0 {
+		client.sendRaw(fap.ConversationOpenSync{ConversationIDs: ids})
 	}
 }
 
