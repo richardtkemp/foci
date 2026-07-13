@@ -72,7 +72,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 			encoded := base64.StdEncoding.EncodeToString(data)
 			contentBlocks = append(contentBlocks, provider.DocumentBlock(mediaType, encoded))
 		} else {
-			data, mediaType = maybeDownscaleImage(sessionKey, data, mediaType, a.MaxImagePixels)
+			data, mediaType = maybeDownscaleImage(sessionKey, data, mediaType, a.maxImagePixels())
 			encoded := base64.StdEncoding.EncodeToString(data)
 			contentBlocks = append(contentBlocks, provider.ImageBlock(mediaType, encoded))
 		}

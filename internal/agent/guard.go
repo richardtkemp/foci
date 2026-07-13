@@ -110,7 +110,8 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 	a.logger().Debugf("session=%s tool result guard: %s produced %d chars (limit %d), saved to %s", sessionKey, toolName, resultLen, maxResultChars, fpath)
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
-	if a.AutoSummarise && client != nil && a.GroupResolver != nil && (a.MaxSummaryChars <= 0 || resultLen <= a.MaxSummaryChars) {
+	maxSummaryChars := a.maxSummaryChars()
+	if a.autoSummarise() && client != nil && a.GroupResolver != nil && (maxSummaryChars <= 0 || resultLen <= maxSummaryChars) {
 		if summary := a.summariseToolResult(ctx, client, sessionKey, toolName, turnModel, result, messages, fpath); summary != "" {
 			return summary
 		}
@@ -125,7 +126,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sessionKey, toolName, _ string, result string, messages []provider.Message, savedPath string) string {
 	summaryClient, model, _ := a.ResolveCallSite(config.CallSummarizeTool, sessionKey)
 
-	convContext := recentContext(messages, a.SummaryContextTurns, a.SummaryContextChars)
+	convContext := recentContext(messages, a.summaryContextTurns(), a.summaryContextChars())
 
 	// Truncate result text embedded in summary prompt to cap memory and tokens.
 	// The full result is already on disk at savedPath.

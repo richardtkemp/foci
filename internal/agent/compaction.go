@@ -69,8 +69,8 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 		}
 	}
 
-	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
-	handoffMsg := a.CompactionHandoffMsg
+	summaryPrompt := prompts.ResolvePrompt(a.compactionSummaryPrompt(), "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
+	handoffMsg := a.compactionHandoffMsg()
 	if handoffMsg == "" {
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
 	}
@@ -116,7 +116,7 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 // passes context.Background because the turn context is already cancelled;
 // manual compaction passes the user command context so /stop can interrupt.
 func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator, sessionKey string) error {
-	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
+	summaryPrompt := prompts.ResolvePrompt(a.compactionSummaryPrompt(), "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
 	if summaryPrompt == "" {
 		return fmt.Errorf("compaction summary prompt is empty")
 	}
@@ -185,7 +185,7 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	// session is already current, so the restart would interrupt the flow for
 	// nothing. The resume nudge is gated on an actual bounce: with no restart
 	// there is no interruption to recover from (pre-#828 compaction is seamless).
-	if a.ReloadOnCompact && a.DelegatedManager != nil {
+	if a.reloadOnCompact() && a.DelegatedManager != nil {
 		if a.DelegatedManager.BounceSessionIfPromptChanged(sessionKey) {
 			a.maybeInjectCompactionResume(sessionKey)
 		}

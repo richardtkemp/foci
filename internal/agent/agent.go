@@ -288,6 +288,116 @@ func (a *Agent) steerMode() bool {
 	return a.inboxSteerMode
 }
 
+func (a *Agent) maxOutputTokens() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Loop.MaxOutputTokens
+	}
+	return a.MaxOutputTokens
+}
+
+func (a *Agent) duplicateMessages() bool {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Loop.DuplicateMessages
+	}
+	return a.DuplicateMessages
+}
+
+func (a *Agent) batchPartialAssistantMessages() bool {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Loop.BatchPartialAssistantMessages
+	}
+	return a.BatchPartialAssistantMessages
+}
+
+func (a *Agent) batchPartialJoiner() string {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Loop.BatchPartialJoiner
+	}
+	return a.BatchPartialJoiner
+}
+
+func (a *Agent) autoSummarise() bool {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Summary.AutoSummarise
+	}
+	return a.AutoSummarise
+}
+
+func (a *Agent) maxSummaryChars() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Summary.MaxSummaryChars
+	}
+	return a.MaxSummaryChars
+}
+
+func (a *Agent) summaryContextTurns() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Summary.SummaryContextTurns
+	}
+	return a.SummaryContextTurns
+}
+
+func (a *Agent) summaryContextChars() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Summary.SummaryContextChars
+	}
+	return a.SummaryContextChars
+}
+
+func (a *Agent) maxImagePixels() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Summary.MaxImagePixels
+	}
+	return a.MaxImagePixels
+}
+
+func (a *Agent) statusline() string {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Display.Statusline
+	}
+	return a.Statusline
+}
+
+func (a *Agent) showToolCalls() string {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Display.ShowToolCalls
+	}
+	return a.ShowToolCalls
+}
+
+func (a *Agent) compactionSummaryPrompt() string {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Compaction.CompactionSummaryPrompt
+	}
+	return a.CompactionSummaryPromptPath
+}
+
+func (a *Agent) compactionHandoffMsg() string {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Compaction.CompactionHandoffMsg
+	}
+	return a.CompactionHandoffMsg
+}
+
+func (a *Agent) reloadOnCompact() bool {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Compaction.ReloadOnCompact
+	}
+	return a.ReloadOnCompact
+}
+
+// turnLockWarnThreshold reads the live resolved string (e.g. "3m") and parses
+// it per call; the baked a.TurnLockWarnThreshold is the pre-parsed fallback for
+// direct-constructed agents (nil LiveConfigFn) and for an unparseable value.
+func (a *Agent) turnLockWarnThreshold() time.Duration {
+	if a.LiveConfigFn != nil {
+		if d, err := time.ParseDuration(a.LiveConfigFn().Behavior.TurnLockWarnThreshold); err == nil {
+			return d
+		}
+	}
+	return a.TurnLockWarnThreshold
+}
+
 // TransformMessage applies compiled message transforms to the text.
 // Returns the original text unchanged if no transforms are configured.
 func (a *Agent) TransformMessage(text string) string {
