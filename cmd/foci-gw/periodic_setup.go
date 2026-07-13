@@ -110,8 +110,6 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		}
 	}
 
-	hasAgentWarnings := anyNotifyEnabled(inst.LiveConfig(), p.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() })
-	hasChatWarnings := anyNotifyEnabled(inst.LiveConfig(), p.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() })
 	// Every agent gets a runner even when nothing is currently enabled: the
 	// live config-apply path (liveapply.go) can switch these features on at
 	// runtime, and an idle runner is one goroutine ticking every 30s.
@@ -175,59 +173,56 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// cross-queue suppression, a failed dispatch here (e.g. "no default session")
 	// generates a WARN that enters the ChatWarnings queue, whose dispatch also
 	// fails and re-enters this queue — an infinite cross-queue feedback loop.
-	var warningDispatcher *warnings.Dispatcher
-	if hasAgentWarnings {
-		warningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
-			Name:       "agent",
-			Queue:      inst.ag.Warnings(),
-			PeerQueues: []*warnings.Queue{inst.ag.ChatWarnings()},
-			// Defer proactive warnings only while the session they'd be injected
-			// into (the most recent one) is mid-turn — not agent-wide.
-			IsProcessingFn: func() bool {
-				sk := defaultSessionKeyFor(inst.ag, agentID)
-				return sk != "" && inst.ag.IsTurnInFlight(sk)
-			},
-			FormatFn: func(body string) string {
-				return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
-			},
-			DispatchFn: func(warningText string) {
-				sk := defaultSessionKeyFor(inst.ag, agentID)
-				if sk == "" {
-					log.Warnf("warning", "[%s] no active session for proactive warning dispatch", agentID)
-					return
-				}
-				deliverToSessionChat(inst.ag, p.ctx, "proactive_warning", p.connMgr, agentID, sk, warningText)
-			},
-			ActiveInterval:        warningActiveInterval,
-			InactiveInterval:      warningInactiveInterval,
-			ActivityThreshold:     warningActivityThreshold,
-			LastUserMessageTimeFn: lastUserMsgFn,
-		})
-	}
+	// Both dispatchers are always constructed; a dispatcher whose queue is
+	// disabled (injection level off) no-ops on MaybeFire, so an off→on level
+	// change applies live without spinning up a goroutine (#1225).
+	warningDispatcher := warnings.NewDispatcher(warnings.DispatcherConfig{
+		Name:       "agent",
+		Queue:      inst.ag.Warnings(),
+		PeerQueues: []*warnings.Queue{inst.ag.ChatWarnings()},
+		// Defer proactive warnings only while the session they'd be injected
+		// into (the most recent one) is mid-turn — not agent-wide.
+		IsProcessingFn: func() bool {
+			sk := defaultSessionKeyFor(inst.ag, agentID)
+			return sk != "" && inst.ag.IsTurnInFlight(sk)
+		},
+		FormatFn: func(body string) string {
+			return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
+		},
+		DispatchFn: func(warningText string) {
+			sk := defaultSessionKeyFor(inst.ag, agentID)
+			if sk == "" {
+				log.Warnf("warning", "[%s] no active session for proactive warning dispatch", agentID)
+				return
+			}
+			deliverToSessionChat(inst.ag, p.ctx, "proactive_warning", p.connMgr, agentID, sk, warningText)
+		},
+		ActiveInterval:        warningActiveInterval,
+		InactiveInterval:      warningInactiveInterval,
+		ActivityThreshold:     warningActivityThreshold,
+		LastUserMessageTimeFn: lastUserMsgFn,
+	})
 
 	// Chat warning dispatcher (platform notifications).
 	// PeerQueues: same cross-queue feedback prevention as above — a failed
 	// SendNotification (e.g. "no channel ID") must not enter the agent queue.
-	var chatWarningDispatcher *warnings.Dispatcher
-	if hasChatWarnings {
-		chatWarningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
-			Name:       "chat",
-			Queue:      inst.ag.ChatWarnings(),
-			PeerQueues: []*warnings.Queue{inst.ag.Warnings()},
-			FormatFn: func(body string) string {
-				return "[system diagnostics]\n" + body
-			},
-			DispatchFn: func(warningText string) {
-				if conn := p.connMgr.Primary(agentID); conn != nil {
-					conn.SendNotification(warningText)
-				}
-			},
-			ActiveInterval:        warningActiveInterval,
-			InactiveInterval:      warningInactiveInterval,
-			ActivityThreshold:     warningActivityThreshold,
-			LastUserMessageTimeFn: lastUserMsgFn,
-		})
-	}
+	chatWarningDispatcher := warnings.NewDispatcher(warnings.DispatcherConfig{
+		Name:       "chat",
+		Queue:      inst.ag.ChatWarnings(),
+		PeerQueues: []*warnings.Queue{inst.ag.Warnings()},
+		FormatFn: func(body string) string {
+			return "[system diagnostics]\n" + body
+		},
+		DispatchFn: func(warningText string) {
+			if conn := p.connMgr.Primary(agentID); conn != nil {
+				conn.SendNotification(warningText)
+			}
+		},
+		ActiveInterval:        warningActiveInterval,
+		InactiveInterval:      warningInactiveInterval,
+		ActivityThreshold:     warningActivityThreshold,
+		LastUserMessageTimeFn: lastUserMsgFn,
+	})
 
 	ka.Enabled = kaEnabled
 	runner := periodic.New(periodic.RunnerConfig{

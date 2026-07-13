@@ -158,6 +158,13 @@ var (
 		"debug.messages_in_log", "agent.debug.messages_in_log",
 		"platforms.telegram.table_wrap_lines", "platforms.telegram.table_style", "platforms.telegram.long_poll_timeout",
 	}
+
+	liveApplyWarningAddrs = []string{
+		"notify.inject_agent_warnings", "agent.notify.inject_agent_warnings", "platforms.notify.inject_agent_warnings",
+		"notify.inject_chat_warnings", "agent.notify.inject_chat_warnings", "platforms.notify.inject_chat_warnings",
+		"notify.warning_max_per_window", "agent.notify.warning_max_per_window",
+		"logging.warning_window_duration",
+	}
 )
 
 // registerLiveAppliers wires the tranche-1 appliers. Called once from main
@@ -192,6 +199,20 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 			if inst := agents[freshAcfg.ID]; inst != nil {
 				inst.resolved.Store(config.Resolve(fresh, freshAcfg))
 			}
+		}
+		return nil
+	})
+
+	// Warning-queue injection levels + rate limit are derived handles (the
+	// queues hold their own live state, not read from the resolved snapshot on
+	// every push), so reconfigure them explicitly on change (#1225).
+	la.register(liveApplyWarningAddrs, func(fresh *config.Config) error {
+		for _, freshAcfg := range fresh.Agents {
+			inst := agents[freshAcfg.ID]
+			if inst == nil || inst.ag == nil {
+				continue
+			}
+			applyWarningQueueLevels(inst.ag, config.Resolve(fresh, freshAcfg), fresh)
 		}
 		return nil
 	})

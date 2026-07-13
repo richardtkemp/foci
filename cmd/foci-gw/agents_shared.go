@@ -127,7 +127,7 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	}
 	ag.CanRunBackground = p.resolved.Background.CanRunBackground // static-cfg:ignore: fallback, LiveConfigFn takes over (bucket B)
 
-	setupWarningQueue(ag, p.resolved, p.cfg) // static-cfg:ignore: constructs ag.WarningQueue once — a genuine derived-handle candidate for a future OnChange-based pass, not fixed here
+	setupWarningQueue(ag, p.resolved, p.cfg) // static-cfg:ignore: queues hold their own live state, reconfigured via liveApplyWarningAddrs (#1225)
 }
 
 // finalizeParams holds optional values for finalize. Nil/zero fields are
