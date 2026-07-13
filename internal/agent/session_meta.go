@@ -275,17 +275,51 @@ func (a *Agent) SessionModel(sessionKey string) string {
 // Anthropic 5-minute default. Read by the app provider for the per-session
 // cache-warmth indicator.
 func (a *Agent) CacheExpiry(sessionKey string, at time.Time) time.Time {
+	ttl := a.cacheTTLFor(sessionKey)
+	// The truthful expiry is last_cache_touch + TTL — the cache was last warmed
+	// at the touch, not "now". Absent a touch (never warmed, or cleared on
+	// reset) the cache is cold, reported as the zero time. Without an index
+	// (degenerate/test agents) fall back to at+TTL, the pre-touch behaviour.
+	if a.SessionIndex != nil {
+		touch, ok := a.SessionIndex.LastCacheTouch(sessionKey)
+		if !ok {
+			return time.Time{}
+		}
+		return touch.Add(ttl)
+	}
+	return at.Add(ttl)
+}
+
+// cacheTTLFor resolves the prompt-cache TTL for a session: config override
+// (ModelDefaultsFn) first, then the live backend's reported TTL, else 5m.
+func (a *Agent) cacheTTLFor(sessionKey string) time.Duration {
 	if a.ModelDefaultsFn != nil {
 		if d, err := time.ParseDuration(a.ModelDefaultsFn(a.SessionModel(sessionKey)).CacheTTL); err == nil && d > 0 {
-			return at.Add(d)
+			return d
 		}
 	}
 	if a.DelegatedManager != nil {
 		if d := a.DelegatedManager.CacheTTL(sessionKey); d > 0 {
-			return at.Add(d)
+			return d
 		}
 	}
-	return at.Add(5 * time.Minute)
+	return 5 * time.Minute
+}
+
+// emitCacheExpiry pushes the session's current truthful cache expiry to the
+// onCacheExpiry hook (if wired). Called after any last_cache_touch write so the
+// client's warmth indicator refreshes on every (re)warm, cold on a cleared
+// touch. Cheap no-op when no hook is set.
+func (a *Agent) emitCacheExpiry(sessionKey string) {
+	if a.onCacheExpiry == nil || sessionKey == "" {
+		return
+	}
+	exp := a.CacheExpiry(sessionKey, time.Now())
+	var ms int64
+	if !exp.IsZero() {
+		ms = exp.UnixMilli()
+	}
+	a.onCacheExpiry(sessionKey, ms)
 }
 
 // BackendType returns the modelcaps backend-type key for this agent — the live
@@ -752,6 +786,7 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 		// DeleteAllSessionMetadata leaves it stale. Null it so keepalive treats
 		// the reset session as having no live cache to warm.
 		a.SessionIndex.ClearCacheTouch(sessionKey)
+		a.emitCacheExpiry(sessionKey) // now cold → client shows expired
 	}
 
 	a.logger().Infof("session state cleared %s", sessionKey)

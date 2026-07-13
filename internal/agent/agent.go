@@ -197,6 +197,13 @@ type Agent struct {
 	onTurnComplete func()
 	onTurnEnd      func()
 
+	// onCacheExpiry, when set, is fired whenever a session's last_cache_touch
+	// changes (turn entry, branch-warms-root, reset-clears). It carries the
+	// truthful prompt-cache expiry (unix ms; 0 = cold) so the app client's
+	// warmth indicator refreshes on ANY cache (re)warm — not only turns that
+	// complete through a live app sink. Wired by the gateway to app.SetCacheExpiry.
+	onCacheExpiry func(sessionKey string, expiryMs int64)
+
 	// Per-session delivery routers (#1068 Phase 1). Built ONCE per session key,
 	// shared by every turn on that session (platform turns register their
 	// streaming sink; system turns register NopSink/BufferSink post-accept; an

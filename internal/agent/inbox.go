@@ -909,6 +909,13 @@ func (a *Agent) SetTurnLifecycleHooks(onComplete, onEnd func()) {
 	a.onTurnEnd = onEnd
 }
 
+// SetOnCacheExpiry wires the callback fired whenever a session's cache warmth
+// changes (see the onCacheExpiry field). Wired once at gateway setup to
+// app.SetCacheExpiry so the client's warmth indicator tracks the DB value.
+func (a *Agent) SetOnCacheExpiry(fn func(sessionKey string, expiryMs int64)) {
+	a.onCacheExpiry = fn
+}
+
 // CancelSession cancels the in-flight turn for sk, if any. Used by /stop
 // (and any other consumer that needs per-session cancellation precision).
 // No-op if the session has no inbox or no turn is currently in flight.

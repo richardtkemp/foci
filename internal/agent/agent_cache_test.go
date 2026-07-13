@@ -54,6 +54,76 @@ func TestCacheExpiryResolution(t *testing.T) {
 	})
 }
 
+func TestCacheExpiryFromTouch(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	ag := &Agent{
+		SessionIndex:    idx,
+		ModelDefaultsFn: func(string) config.ModelDefaults { return config.ModelDefaults{CacheTTL: "1h"} },
+	}
+	sk := "test-agent/c1"
+
+	// No touch recorded → cold (zero time), not now+TTL.
+	if got := ag.CacheExpiry(sk, time.Now()); !got.IsZero() {
+		t.Errorf("no-touch expiry = %v, want zero (cold)", got)
+	}
+
+	// A recorded touch → touch + TTL (NOT now + TTL).
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: sk, FilePath: "/tmp/x.jsonl", CreatedAt: time.Now(),
+		SessionType: session.SessionTypeChat, Status: session.SessionStatusActive,
+	})
+	touch := time.Now().Add(-10 * time.Minute)
+	idx.TouchCacheTouch(sk, touch)
+	want := touch.Add(time.Hour)
+	if got := ag.CacheExpiry(sk, time.Now()); got.Sub(want).Abs() > time.Second {
+		t.Errorf("touch expiry = %v, want ≈%v (touch+1h)", got, want)
+	}
+}
+
+func TestEmitCacheExpiryHook(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	ag := &Agent{
+		SessionIndex:    idx,
+		ModelDefaultsFn: func(string) config.ModelDefaults { return config.ModelDefaults{CacheTTL: "1h"} },
+	}
+	var gotSk string
+	var gotMs int64
+	var calls int
+	ag.SetOnCacheExpiry(func(sk string, ms int64) { calls++; gotSk = sk; gotMs = ms })
+
+	sk := "test-agent/c1"
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: sk, FilePath: "/tmp/x.jsonl", CreatedAt: time.Now(),
+		SessionType: session.SessionTypeChat, Status: session.SessionStatusActive,
+	})
+	touch := time.Now().Add(-5 * time.Minute)
+	idx.TouchCacheTouch(sk, touch)
+
+	ag.emitCacheExpiry(sk)
+	if calls != 1 || gotSk != sk {
+		t.Fatalf("hook fired %d times, sk=%q", calls, gotSk)
+	}
+	wantMs := touch.Add(time.Hour).UnixMilli()
+	if diff := gotMs - wantMs; diff < -1000 || diff > 1000 {
+		t.Errorf("warm ms = %d, want ≈%d (touch+1h)", gotMs, wantMs)
+	}
+
+	// Cleared touch → cold → emit 0.
+	idx.ClearCacheTouch(sk)
+	ag.emitCacheExpiry(sk)
+	if gotMs != 0 {
+		t.Errorf("cold ms = %d, want 0", gotMs)
+	}
+}
+
 func TestCacheStrategyInRequest(t *testing.T) {
 	// Verify that the agent sets CacheStrategy on the API request.
 	var receivedReq *provider.MessageRequest

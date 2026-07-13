@@ -21,7 +21,7 @@ import (
 	_ "foci/internal/telegram"           // register telegram messaging provider
 
 	"foci/internal/agent"
-	_ "foci/internal/app" // registers the app (FAP WebSocket) messaging provider via init
+	"foci/internal/app" // registers the app (FAP WebSocket) messaging provider via init; also SetCacheExpiry
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -404,6 +404,11 @@ Subcommands:
 				func() { inst.kaRunner.NotifyInteraction() })
 			inst.ag.SetTurnLifecycleHooks(nil, inst.kaRunner.NotifyTurnEnd)
 		}
+
+		// Refresh the app client's cache-warmth indicator on ANY last_cache_touch
+		// change (turn entry, branch-warms-root, reset) — not only turns that
+		// complete through a live app sink (#1217).
+		inst.ag.SetOnCacheExpiry(app.SetCacheExpiry)
 
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, inst.ag.Model, acfg.Workspace)
 	}

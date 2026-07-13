@@ -237,6 +237,7 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 		SessionType: session.ClassifySessionKey(ts.SessionKey),
 		Status:      session.SessionStatusActive,
 	}, !isMemoryTrigger(ts.Trigger), isInteractiveTrigger(ts.Trigger))
+	a.emitCacheExpiry(ts.SessionKey) // last_cache_touch just advanced → refresh client
 }
 
 // TouchRootCacheForBranch records that creating a branch warmed its root's
@@ -251,6 +252,7 @@ func (a *Agent) TouchRootCacheForBranch(branchKey string) {
 	if sk, err := session.ParseSessionKey(branchKey); err == nil {
 		if root := sk.Root().String(); root != branchKey {
 			a.SessionIndex.TouchCacheTouch(root, time.Now())
+			a.emitCacheExpiry(root) // branch warmed the root's shared prefix → refresh client
 		}
 	}
 }

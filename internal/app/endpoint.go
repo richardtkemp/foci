@@ -93,6 +93,23 @@ func SetSubagentDetail(sessionKey, detail string) {
 	}
 }
 
+// SetCacheExpiry routes a prompt-cache expiry (unix ms; 0 = cold) to the
+// conversation bound to sessionKey, refreshing its warmth indicator whenever
+// the cache is (re)warmed — not only on a turn that completes through a live app
+// sink. The agent's onCacheExpiry hook is wired here at gateway setup. No-op
+// when the app provider isn't running or the session has no live binding.
+func SetCacheExpiry(sessionKey string, expiryMs int64) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	if b := h.bindingForSession(sessionKey); b != nil {
+		b.setCacheExpiry(expiryMs)
+	}
+}
+
 // DeliverExternalPrompt surfaces a prompt received via the external HTTP /send
 // endpoint to the app clients bound to sessionKey, as a durable ExternalPrompt
 // frame. No-op when the app provider is not running or the session has no live
