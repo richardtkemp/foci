@@ -140,9 +140,9 @@ func (a *Agent) convertAttachmentToText(sessionKey string, att platform.Attachme
 	}
 
 	// Apply size guard: if converted text exceeds MaxResultChars, truncate with hint
-	if a.MaxResultChars > 0 && utf8.RuneCountInString(text) > a.MaxResultChars {
-		a.logger().Infof("session=%s converted %s text too large (%d chars, limit %d), truncating", sessionKey, label, utf8.RuneCountInString(text), a.MaxResultChars)
-		text = text[:a.MaxResultChars]
+	if maxResultChars := a.maxResultChars(); maxResultChars > 0 && utf8.RuneCountInString(text) > maxResultChars {
+		a.logger().Infof("session=%s converted %s text too large (%d chars, limit %d), truncating", sessionKey, label, utf8.RuneCountInString(text), maxResultChars)
+		text = text[:maxResultChars]
 		truncNote := fmt.Sprintf("\n[... truncated — full document is on disk")
 		if att.SavedPath != "" {
 			truncNote += " at " + att.SavedPath

@@ -28,7 +28,7 @@ func TestHTTPRequestBodyFile(t *testing.T) {
 	bodyPath := filepath.Join(t.TempDir(), "payload.json")
 	os.WriteFile(bodyPath, []byte(`{"audio":"base64data","model":"whisper"}`), 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       srv.URL,
 		"method":    "POST",
@@ -69,7 +69,7 @@ allowed_in_body = ["api_key"]
 	bodyPath := filepath.Join(t.TempDir(), "payload.json")
 	os.WriteFile(bodyPath, []byte(`{"key":"{{secret:custom.api_key}}","data":"hello"}`), 0644)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       srv.URL,
 		"method":    "POST",
@@ -91,7 +91,7 @@ allowed_in_body = ["api_key"]
 func TestHTTPRequestBodyFileNotFound(t *testing.T) {
 	// Proves that a nonexistent body_file path returns an error mentioning "body_file" rather than silently sending an empty body.
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",
 		"method":    "POST",
@@ -110,7 +110,7 @@ func TestHTTPRequestBodyFileNotFound(t *testing.T) {
 func TestHTTPRequestBodyFileMutualExclusionWithBody(t *testing.T) {
 	// Proves that specifying both "body" and "body_file" is rejected as mutually exclusive, preventing ambiguous request bodies.
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",
 		"method":    "POST",
@@ -130,7 +130,7 @@ func TestHTTPRequestBodyFileMutualExclusionWithBody(t *testing.T) {
 func TestHTTPRequestBodyFileMutualExclusionWithFiles(t *testing.T) {
 	// Proves that combining body_file and files is rejected as mutually exclusive, since both would attempt to set the request body.
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",
 		"method":    "POST",
@@ -152,7 +152,7 @@ func TestHTTPRequestBodyFileMutualExclusionWithFiles(t *testing.T) {
 func TestHTTPRequestBodyFileIsDirectory(t *testing.T) {
 	// Proves that passing a directory path as body_file returns an error mentioning "directory" rather than attempting to read the directory as file content.
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",
 		"method":    "POST",

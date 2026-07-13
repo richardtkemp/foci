@@ -39,7 +39,7 @@ type fileAttachment struct {
 // maxUploadFileSize is the max file size in bytes for multipart uploads (0 = 50MB default).
 // maxSpillBytes is the ceiling on retained response bytes: the inline text path keeps a
 // preview in the result and spills the full body (up to this cap) to disk (0 = 50MB default).
-func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize, maxSpillBytes int64, notifier *AsyncNotifier, fileMode os.FileMode) *Tool {
+func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs func() int, maxUploadFileSize, maxSpillBytes func() int64, notifier *AsyncNotifier, fileMode os.FileMode) *Tool {
 	return &Tool{
 		Name:        "http_request",
 		ExecExport:  true,
@@ -126,7 +126,7 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, maxUploadFileSize, maxSpillBytes, notifier, fileMode)
+			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs(), maxUploadFileSize(), maxSpillBytes(), notifier, fileMode)
 		},
 	}
 }

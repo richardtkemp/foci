@@ -267,6 +267,20 @@ func (a *Agent) canRunBackground() string {
 	return a.CanRunBackground
 }
 
+func (a *Agent) maxResultChars() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Summary.MaxResultChars
+	}
+	return a.MaxResultChars
+}
+
+func (a *Agent) maxSummaryInputChars() int {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Summary.MaxSummaryInputChars
+	}
+	return a.MaxSummaryInputChars
+}
+
 // TransformMessage applies compiled message transforms to the text.
 // Returns the original text unchanged if no transforms are configured.
 func (a *Agent) TransformMessage(text string) string {

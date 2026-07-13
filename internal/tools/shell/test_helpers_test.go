@@ -11,7 +11,7 @@ import (
 
 // newTestExecTool creates an ExecTool with all-zero/nil defaults.
 func newTestExecTool() *tools.Tool {
-	return NewExecTool(nil, nil, 0, nil, "", nil, 0, "", nil, 0)
+	return NewExecTool(nil, nil, func() int { return 0 }, nil, "", nil, func() int64 { return 0 }, "", nil, 0)
 }
 
 // runExec marshals a command string into exec params and executes it.

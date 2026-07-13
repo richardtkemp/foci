@@ -18,12 +18,12 @@ type APISummariser struct {
 	clientProvider provider.ClientProvider
 	groupResolver  *config.GroupResolver
 	fallbackFn     provider.FallbackFunc
-	maxInputChars  int // 0 disables cap
+	maxInputChars  func() int // rune-count cap on input; 0 disables cap
 }
 
-// NewAPISummariser builds the API-path summariser. maxInputChars is the
-// rune-count cap on input; pass 0 to disable.
-func NewAPISummariser(client provider.Client, clientProvider provider.ClientProvider, groupResolver *config.GroupResolver, fallbackFn provider.FallbackFunc, maxInputChars int) *APISummariser {
+// NewAPISummariser builds the API-path summariser. maxInputChars is called
+// fresh on each Summarise so a live config edit takes effect immediately.
+func NewAPISummariser(client provider.Client, clientProvider provider.ClientProvider, groupResolver *config.GroupResolver, fallbackFn provider.FallbackFunc, maxInputChars func() int) *APISummariser {
 	return &APISummariser{
 		defaultClient:  client,
 		clientProvider: clientProvider,
@@ -54,7 +54,7 @@ func (s *APISummariser) resolveForCall() (provider.Client, string, string) {
 // provider.Send and returns the model's text response. Cost is logged to
 // log.API() with call_type="summary".
 func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, filePath string) (string, error) {
-	content = CapInputChars(content, s.maxInputChars)
+	content = CapInputChars(content, s.maxInputChars())
 
 	client, model, format := s.resolveForCall()
 

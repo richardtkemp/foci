@@ -23,7 +23,7 @@ func TestHTTPRequestSaveToText(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "output.json")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL + "/api",
 		"save_to": savePath,
@@ -64,7 +64,7 @@ func TestHTTPRequestSaveToParentDirs(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "sub", "dir", "output.txt")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"save_to": savePath,
@@ -95,7 +95,7 @@ func TestHTTPRequestBinaryAutoSave(t *testing.T) {
 	defer srv.Close()
 
 	tmpDir := t.TempDir()
-	tool := NewHTTPRequestTool(nil, nil, tmpDir, 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, tmpDir, func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/image.png",
 	})
@@ -143,7 +143,7 @@ func TestHTTPRequestBinaryAutoSaveUniqueAtomic(t *testing.T) {
 	defer srv.Close()
 
 	tmpDir := t.TempDir()
-	tool := NewHTTPRequestTool(nil, nil, tmpDir, 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, tmpDir, func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{"url": srv.URL + "/image.png"})
 
 	savedPath := func() string {
@@ -184,7 +184,7 @@ func TestHTTPRequestTextNotAutoSaved(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL,
 	})
@@ -213,7 +213,7 @@ func TestHTTPRequestSaveFromJSONPath(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "output.txt")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 srv.URL,
 		"save_to":             savePath,
@@ -257,7 +257,7 @@ func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "image.png")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 srv.URL,
 		"save_to":             savePath,
@@ -292,7 +292,7 @@ func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 func TestHTTPRequestSaveFromJSONPathRequiresSaveTo(t *testing.T) {
 	// Proves that using save_from_json_path without save_to returns a validation error, since there is nowhere to write the extracted data.
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 "http://example.com",
 		"save_from_json_path": "data.0.url",
@@ -318,7 +318,7 @@ func TestHTTPRequestSaveToLargeBody(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "big.bin")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"save_to": savePath,
@@ -351,7 +351,7 @@ func TestHTTPRequestMaxResponseBytesOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                srv.URL,
 		"max_response_bytes": 256 * 1024,
@@ -378,7 +378,7 @@ func TestHTTPRequestMaxResponseBytesLargeOverride(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "big.bin")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                srv.URL,
 		"save_to":            savePath,

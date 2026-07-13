@@ -389,12 +389,12 @@ type NudgeConfig struct {
 // SummaryConfig holds tool result summarisation settings.
 // Embed in ToolsConfig (global) and AgentToolsOverride (per-agent).
 type SummaryConfig struct {
-	MaxResultChars       *int  `toml:"max_result_chars"                       desc:"When a tool result, eg command output or a fetched page, exceeds this many characters, the full result is saved to a file instead of sent to the model. Default 15000"`
+	MaxResultChars       *int  `toml:"max_result_chars"                       hot:"immediate" desc:"When a tool result, eg command output or a fetched page, exceeds this many characters, the full result is saved to a file instead of sent to the model. Default 15000"`
 	MaxSummaryChars      *int  `toml:"max_summary_chars"                      desc:"Oversized tool results up to this many characters get an automatic AI summary instead of just a link to the saved file; larger ones skip it. Default 300000"`
 	AutoSummarise        *bool `toml:"auto_summarise"         default:"true"  desc:"Automatically generates a short AI summary of oversized tool results instead of leaving just a pointer to the saved file"`
 	SummaryContextTurns  *int  `toml:"summary_context_turns"                  desc:"Number of recent conversation turns included as context when auto-summarizing an oversized tool result. Default 5"`
 	SummaryContextChars  *int  `toml:"summary_context_chars"                  desc:"Maximum characters of conversation context sent to the model when auto-summarizing an oversized tool result. Default 6000"`
-	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"                desc:"Maximum characters of the oversized tool result itself fed into the summarizer; the full result is still saved to disk regardless. Default 100000"`
+	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"                hot:"immediate" desc:"Maximum characters of the oversized tool result itself fed into the summarizer; the full result is still saved to disk regardless. Default 100000"`
 	MaxImagePixels       *int  `toml:"max_image_pixels"                       desc:"Images larger than this many total pixels, width times height, are resized down before being sent to the model. 0 disables downscaling; default is roughly 1920x1080"`
 }
 
@@ -471,12 +471,12 @@ type SystemConfig struct {
 // ToolConfig holds per-agent tool behavioral overrides.
 // Embed in ToolsConfig (global home) and AgentConfig (per-agent).
 type ToolConfig struct {
-	ExecAutoBackground  *int    `toml:"exec_auto_background"  default:"10"        desc:"Seconds an exec command runs before it's automatically moved to the background so the agent isn't blocked waiting on it"`
+	ExecAutoBackground  *int    `toml:"exec_auto_background"  default:"10"        hot:"immediate" desc:"Seconds an exec command runs before it's automatically moved to the background so the agent isn't blocked waiting on it"`
 	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns" default:"3"         desc:"Maximum number of spawned subagent sessions that can run at once; further spawn requests queue until a slot frees up"`
 	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       desc:"Maximum tool-call iterations an explore-type spawned subagent can make before it's forced to stop and return results"`
-	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"Maximum file size, in bytes, the upload tool will accept (default 50 MiB); larger files are rejected"`                                                // 50MB
-	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  desc:"Maximum file size, in bytes, the read and edit tools will load (default 50 MiB); larger files must be read with an offset/limit range"`               // 50MB
-	HTTPMaxSpillBytes   *int64  `toml:"http_max_spill_bytes"  default:"52428800"  desc:"Maximum bytes of an http_request response kept inline in the conversation (default 50 MiB); anything beyond that is saved to a file on disk instead"` // 50MB
+	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  hot:"immediate" desc:"Maximum file size, in bytes, the upload tool will accept (default 50 MiB); larger files are rejected"`                                                // 50MB
+	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  hot:"immediate" desc:"Maximum file size, in bytes, the read and edit tools will load (default 50 MiB); larger files must be read with an offset/limit range"`               // 50MB
+	HTTPMaxSpillBytes   *int64  `toml:"http_max_spill_bytes"  default:"52428800"  hot:"immediate" desc:"Maximum bytes of an http_request response kept inline in the conversation (default 50 MiB); anything beyond that is saved to a file on disk instead"` // 50MB
 	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"      desc:"Automatically watch a tmux pane's output after you send it input, and stop watching once it goes quiet, without needing manual watch/unwatch calls"`
 	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"       desc:"How long a tmux pane must produce no new output before a watch is considered idle and reports back (default 30s)" type:"duration"`
 	TmuxSessionTTL      *string `toml:"tmux_session_ttl"      default:"24h"       desc:"Idle tmux sessions are automatically killed after being inactive this long (default 24h); set to 0 to disable auto-kill" type:"duration"`
@@ -788,7 +788,7 @@ type MemorySource struct {
 // Sources are combined additively (not merged) — see load.go.
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
-	SearchBackend      *string        `toml:"search_backend"      default:"bleve" desc:"Which engine powers memory search: fts5 also searches conversation history, bleve only searches memory files but adds relevance ranking"`                   // search backend: "fts5" or "bleve"
+	SearchBackend      *string        `toml:"search_backend"      default:"bleve" hot:"immediate" desc:"Which engine powers memory search: fts5 also searches conversation history, bleve only searches memory files but adds relevance ranking"`                   // search backend: "fts5" or "bleve"
 	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"How long to wait after a memory file changes before reindexing it, so rapid edits do not trigger repeated reindexing; 0s reindexes immediately" type:"duration"`            // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"Relevance multiplier for conversation-history hits in memory search, relative to memory-file hits; 0 excludes them, 1 weighs them equally" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"Maximum number of results the memory search tool returns for a single query"`                                                                               // max search results to return (default 20)

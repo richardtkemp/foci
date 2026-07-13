@@ -75,11 +75,7 @@ func execPreamble() string {
 // (0 = use default 15000). spillTempDir is the directory for overflow files.
 // extraEnv is a list of additional KEY=VALUE environment variables injected
 // into every child process (e.g. FOCI_ADDR, FOCI_API_KEY).
-func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *tools.AsyncNotifier, workDir string, registry *tools.Registry, spillThreshold int, spillTempDir string, extraEnv []string, defaultTimeoutSec int) *tools.Tool {
-	st := int64(spillThreshold)
-	if st <= 0 {
-		st = defaultSpillThreshold
-	}
+func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs func() int, notifier *tools.AsyncNotifier, workDir string, registry *tools.Registry, spillThreshold func() int64, spillTempDir string, extraEnv []string, defaultTimeoutSec int) *tools.Tool {
 	return &tools.Tool{
 		Name:        "shell",
 		Description: "Run a shell command and return its output. pipefail, nounset, and failglob are set. Use timeout to set a generous limit on execution time, or set background=true for persistent processes (tmux, daemons) that should survive after the call. {{secret:}} templates may be used but only inside foci_http_request arguments. Most tools are available as foci_$toolname shell functions. You will find foci_send_to_chat and foci_summarize especially useful.",
@@ -107,7 +103,11 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
-			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry, st, spillTempDir, extraEnv, defaultTimeoutSec)
+			st := spillThreshold()
+			if st <= 0 {
+				st = defaultSpillThreshold
+			}
+			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs(), notifier, workDir, registry, st, spillTempDir, extraEnv, defaultTimeoutSec)
 		},
 	}
 }

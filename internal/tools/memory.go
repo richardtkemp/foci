@@ -13,20 +13,25 @@ import (
 
 // NewMemorySearchTool creates the memory_search tool backed by one or more search backends.
 // backends maps backend names (e.g. "fts5", "bleve") to their Searcher implementation.
-// defaultBackend is the preferred backend name. If only one backend exists,
-// the "backend" parameter is hidden from the tool schema.
+// defaultBackend returns the preferred backend name, read fresh on each call so a
+// live config edit takes effect immediately; the initial value also orders the
+// schema's "backend" enum (fixed at construction — only the enum default label
+// is illustrative, not authoritative). If only one backend exists, the
+// "backend" parameter is hidden from the tool schema.
 // convReader provides conversation context lookup (may be nil).
-func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend string, convReader *memory.ConversationReader) *Tool {
+func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend func() string, convReader *memory.ConversationReader) *Tool {
 	// Build ordered name list: default first, then others.
+	initial := defaultBackend()
 	names := make([]string, 0, len(backends))
-	if _, ok := backends[defaultBackend]; ok {
-		names = append(names, defaultBackend)
+	if _, ok := backends[initial]; ok {
+		names = append(names, initial)
 	}
 	for n := range backends {
-		if n != defaultBackend {
+		if n != initial {
 			names = append(names, n)
 		}
 	}
+	fallback := names[0]
 
 	// Build the JSON schema dynamically
 	schema := buildMemorySearchSchema(names)
@@ -38,7 +43,11 @@ func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend str
 		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123#42').",
 		Parameters:  schema,
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return memorySearch(ctx, params, backends, names[0], convReader)
+			def := defaultBackend()
+			if _, ok := backends[def]; !ok {
+				def = fallback
+			}
+			return memorySearch(ctx, params, backends, def, convReader)
 		},
 	}
 }
