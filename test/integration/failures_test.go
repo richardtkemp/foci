@@ -1797,27 +1797,44 @@ func TestL2_Failures_MissingClaudeBinaryFailsAgentStartup(t *testing.T) {
 	t.Errorf("expected stderr to record a missing-binary spawn error; tail:\n%s", stderrTail(h.Stderr()))
 }
 
-// TestL2_Failures_DuplicateBotTokenAcrossAgentsRejected proves
-// agents_setup.go's validator catches two agents pointing at the same
-// Telegram bot token (which would cause cross-talk in the long-poll).
-// Both alpha and beta are given the same fixed BotToken; TryStartGateway
-// should return an error before ready, with stderr naming the conflict.
-func TestL2_Failures_DuplicateBotTokenAcrossAgentsRejected(t *testing.T) {
+// TestL2_Failures_DuplicateBotTokenSkipsExtraAgent proves that when two
+// agents point at the same Telegram bot token, the gateway does NOT abort
+// startup: it logs a loud DUPLICATE BOT TOKEN banner, starts only the first
+// agent (the survivor), and skips the rest — so a config typo can't take the
+// whole gateway down, while still avoiding long-poll cross-talk between the
+// two agents. See buildBotConflictSkipSet in cmd/foci-gw/helpers.go.
+func TestL2_Failures_DuplicateBotTokenSkipsExtraAgent(t *testing.T) {
 	testharness.ParallelWait(t)
 	dupToken := "test-token-duplicate:1"
-	_, err := testharness.TryStartGateway(t, testharness.HarnessOptions{
+	h, err := testharness.TryStartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9100, BotToken: dupToken},
 			{ID: "beta", UserID: 9101, BotToken: dupToken},
 		},
-		ReadyTimeout: 10 * time.Second,
+		ReadyTimeout: 20 * time.Second,
 	})
-	if err == nil {
-		t.Fatalf("expected startup to fail when two agents share the same bot token")
+	if err != nil {
+		t.Fatalf("gateway should start (skipping the duplicate agent), not fail: %v", err)
 	}
-	low := strings.ToLower(err.Error())
-	if !(strings.Contains(low, "duplicate") || strings.Contains(low, "same") || strings.Contains(low, "conflict") || strings.Contains(low, "shared") || strings.Contains(low, "not ready") || strings.Contains(low, "exited")) {
-		t.Errorf("expected duplicate-token-shaped error; got:\n%v", err)
+
+	// The banner is logged during startup, before the survivor reaches ready,
+	// so it is already in stderr by the time TryStartGateway returns; poll
+	// briefly to be robust against buffering.
+	deadline := time.Now().Add(5 * time.Second)
+	var low string
+	for time.Now().Before(deadline) {
+		low = strings.ToLower(h.Stderr())
+		if strings.Contains(low, "duplicate") && strings.Contains(low, "skipped") {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !strings.Contains(low, "duplicate") || !strings.Contains(low, "skipped") {
+		t.Fatalf("expected a duplicate-bot-token skip banner in stderr; tail:\n%s", stderrTail(h.Stderr()))
+	}
+	// The duplicate agent (beta), not the survivor (alpha), is the one skipped.
+	if !strings.Contains(low, "beta") {
+		t.Errorf("expected the skipped agent (beta) to be named; tail:\n%s", stderrTail(h.Stderr()))
 	}
 }
 
