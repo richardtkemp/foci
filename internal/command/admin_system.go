@@ -34,6 +34,11 @@ func VersionCommand() *Command {
 // restartFunc is the function used to trigger a restart. Overridable for testing.
 var restartFunc = doRestart
 
+// Restart triggers a service restart via the same path as the /restart command
+// (systemctl restart, falling back to SIGTERM). Exposed for callers outside the
+// command registry — e.g. the app hub's server.restart frame handler.
+func Restart() (string, error) { return restartFunc() }
+
 // doRestart attempts to restart the service via systemctl, falling back to
 // SIGTERM (relying on a process supervisor or Docker restart policy).
 func doRestart() (string, error) {

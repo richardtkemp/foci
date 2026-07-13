@@ -85,6 +85,10 @@ const (
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
 	TypeTyping = "typing"
+	// TypeServerRestart (app->server) asks the server to restart itself (the same
+	// path as the /restart command). Payload-less; gated on the configEdit
+	// capability. See Hub.handleServerRestart.
+	TypeServerRestart = "server.restart"
 )
 
 // ActivityKind enumerates the server->app agent activity states carried by the
@@ -828,6 +832,10 @@ type ConfigUnset struct {
 	Section string `json:"section"`
 	Key     string `json:"key"`
 }
+
+// ServerRestart (app->server) requests a full server restart. Payload-less; the
+// server runs the same restart path as the /restart command.
+type ServerRestart struct{}
 
 // ConfigSchema is the server's editable-config description (wire §13): every
 // registry field plus one ConfigScope per editing surface (global first, then
