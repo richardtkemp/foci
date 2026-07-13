@@ -283,7 +283,7 @@ func restoreFacetSessions(
 					bot.SetCommandContext(cc)
 				}
 				rc := config.Resolve(cfg, acfg)
-				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, acfg.Platform("telegram"))
+				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramTableWrapLines, rc.TelegramTableStyle, rc.TelegramLongPollTimeout)
 				bot.fileMode, _ = config.ParseFileMode(cfg.FileMode)
 			}
 

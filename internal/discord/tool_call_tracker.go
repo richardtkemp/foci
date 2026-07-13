@@ -33,7 +33,7 @@ func (b *discordTrackerBackend) FormatCompact(toolName string, params json.RawMe
 }
 
 func (b *discordTrackerBackend) FormatFull(toolName string, params json.RawMessage, showMode string) string {
-	return formatToolCallFull(toolName, params, showMode, b.bot.display.ToolCallPreviewChars)
+	return formatToolCallFull(toolName, params, showMode, b.bot.getDisplay().ToolCallPreviewChars)
 }
 
 func (b *discordTrackerBackend) FormatWithResult(toolText, result string) string {

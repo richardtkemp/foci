@@ -16,8 +16,7 @@ func TestLiveConfigFnGettersPreferLiveThenFallBack(t *testing.T) {
 	}
 
 	cur = &config.ResolvedAgentConfig{
-		Display:    config.ResolvedDisplay{Streaming: true},
-		Loop:       config.ResolvedLoop{MaxToolLoops: 99},
+		Loop:       config.ResolvedLoop{MaxToolLoops: 99, Streaming: true},
 		Background: config.ResolvedBackground{CanRunBackground: "/live"},
 	}
 	if !a.streaming() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"foci/internal/command"
 	"foci/internal/config"
@@ -105,6 +106,73 @@ func TestSetupAgent_RegistersPrimaryAndFacetBots(t *testing.T) {
 	}
 }
 
+func TestSetupAgent_DisplaySettingsLiveUpdateViaOnChange(t *testing.T) {
+	// Proves the #1224 OnChange hook: when ResolvedLive.Store fires a fresh
+	// ResolvedAgentConfig with changed stream_output/messages_in_log/table
+	// settings/long-poll timeout, the primary bot's live display state picks
+	// them up without a reconnect — not just that the registry has an
+	// applier (TestLiveApplyCoversHotFields, cmd/foci-gw), but that this
+	// package's own OnChange callback actually applies the change.
+	withStubFactory(t, func(token string, opts *gotgbot.BotOpts) (*gotgbot.Bot, error) {
+		return &gotgbot.Bot{User: gotgbot.User{Id: 99, Username: "bot-" + token}, BotClient: &fakeBotClient{}}, nil
+	})
+
+	p := setupAgentFixture(t)
+	initial := config.Resolve(p.GlobalConfig, p.AgentConfig)
+	live := config.NewLiveValue(initial)
+	p.Resolved = initial
+	p.ResolvedLive = live
+
+	mgr := NewBotManager()
+	if res := SetupAgent(mgr, p); res == nil {
+		t.Fatal("SetupAgent returned nil")
+	}
+	primary := mgr.PrimaryBot("scout")
+	if primary == nil {
+		t.Fatal("primary bot not registered")
+	}
+
+	d := primary.getDisplay()
+	if d.StreamOutput || d.MessagesInLog || d.TableWrapLines != 0 || d.TableStyle != "" {
+		t.Fatalf("initial display = %+v, want all zero/off", d)
+	}
+
+	// Build a fresh Config/AgentConfig with the hot fields turned on, resolve
+	// it, and store — this is what a live config-file edit ultimately does.
+	freshCfg := &config.Config{
+		Display: config.DisplayConfig{StreamOutput: config.Ptr(true)},
+		Debug:   config.DebugConfig{MessagesInLog: config.Ptr(true)},
+		Platforms: []config.PlatformConfig{{
+			ID:     "telegram",
+			Access: p.GlobalConfig.Platforms[0].Access,
+			Telegram: &config.TelegramSpecific{
+				TableWrapLines:  config.Ptr(12),
+				TableStyle:      config.Ptr("markdown"),
+				LongPollTimeout: "20s",
+			},
+		}},
+	}
+	fresh := config.Resolve(freshCfg, p.AgentConfig)
+	live.Store(fresh)
+
+	d = primary.getDisplay()
+	if !d.StreamOutput {
+		t.Error("StreamOutput not live-updated to true")
+	}
+	if !d.MessagesInLog {
+		t.Error("MessagesInLog not live-updated to true")
+	}
+	if d.TableWrapLines != 12 {
+		t.Errorf("TableWrapLines = %d, want 12", d.TableWrapLines)
+	}
+	if d.TableStyle != "markdown" {
+		t.Errorf("TableStyle = %q, want markdown", d.TableStyle)
+	}
+	if primary.getLongPollTimeout() != 20*time.Second {
+		t.Errorf("longPollTimeout = %v, want 20s", primary.getLongPollTimeout())
+	}
+}
+
 func TestSetupAgent_NoTokenReturnsNil(t *testing.T) {
 	// Proves SetupAgent returns nil (agent runs without platform) when the
 	// bot token secret is missing.
@@ -198,38 +266,30 @@ func TestApplyAgentDisplaySettings_TelegramSpecific(t *testing.T) {
 	// timeout, stream interval, injected header) flow into the bot's display
 	// config, with invalid durations ignored.
 	b := newBotForTest()
-	wrap := 9
-	style := "markdown"
 	dc := config.ResolvedDisplay{
 		StreamInterval:        "750ms",
 		InjectedMessageHeader: "[sys]",
 	}
-	tg := &config.PlatformConfig{Telegram: &config.TelegramSpecific{
-		TableWrapLines:  &wrap,
-		TableStyle:      &style,
-		LongPollTimeout: "42s",
-	}}
-	ApplyAgentDisplaySettings(b, dc, config.ResolvedDebug{}, tg)
+	ApplyAgentDisplaySettings(b, dc, config.ResolvedDebug{}, 9, "markdown", "42s")
 
-	if b.display.TableWrapLines != 9 || b.display.TableStyle != "markdown" {
-		t.Errorf("table opts = %d/%q, want 9/markdown", b.display.TableWrapLines, b.display.TableStyle)
+	d := b.getDisplay()
+	if d.TableWrapLines != 9 || d.TableStyle != "markdown" {
+		t.Errorf("table opts = %d/%q, want 9/markdown", d.TableWrapLines, d.TableStyle)
 	}
-	if b.longPollTimeout.Seconds() != 42 {
-		t.Errorf("longPollTimeout = %v, want 42s", b.longPollTimeout)
+	if b.getLongPollTimeout().Seconds() != 42 {
+		t.Errorf("longPollTimeout = %v, want 42s", b.getLongPollTimeout())
 	}
-	if b.display.StreamUpdateInterval.Milliseconds() != 750 {
-		t.Errorf("stream interval = %v, want 750ms", b.display.StreamUpdateInterval)
+	if d.StreamUpdateInterval.Milliseconds() != 750 {
+		t.Errorf("stream interval = %v, want 750ms", d.StreamUpdateInterval)
 	}
-	if b.display.InjectedMessageHeader != "[sys]" {
-		t.Errorf("injected header = %q", b.display.InjectedMessageHeader)
+	if d.InjectedMessageHeader != "[sys]" {
+		t.Errorf("injected header = %q", d.InjectedMessageHeader)
 	}
 
 	// Invalid long-poll duration is ignored.
-	prev := b.longPollTimeout
-	ApplyAgentDisplaySettings(b, config.ResolvedDisplay{}, config.ResolvedDebug{}, &config.PlatformConfig{
-		Telegram: &config.TelegramSpecific{LongPollTimeout: "bogus"},
-	})
-	if b.longPollTimeout != prev {
-		t.Errorf("bogus duration changed timeout to %v", b.longPollTimeout)
+	prev := b.getLongPollTimeout()
+	ApplyAgentDisplaySettings(b, config.ResolvedDisplay{}, config.ResolvedDebug{}, 0, "", "bogus")
+	if b.getLongPollTimeout() != prev {
+		t.Errorf("bogus duration changed timeout to %v", b.getLongPollTimeout())
 	}
 }

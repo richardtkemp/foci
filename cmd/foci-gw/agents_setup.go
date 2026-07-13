@@ -367,7 +367,32 @@ func setupPlatformConnections(
 	reclaimOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	reclaimOrientTemplate := prompts.ResolveOrientationTemplate(reclaimOrientPath, false, promptSearchDirs...)
 
-	vc := p.resolved.Voice // static-cfg:ignore: bot-level default STT/TTS, baked at connection setup like display settings (ApplyAgentDisplaySettings) — needs its own dedicated pass, not fixed here
+	// STT/TTS re-resolve from p.resolvedLive on every call (lazySTT/lazyTTS),
+	// so voice.stt/voice.tts/voice.tts_rate changes reach this bot-connection
+	// path live instead of being baked in once here (#1224). Replacements maps
+	// (tts_replacements/stt_replacements) stay static — map-field addressability
+	// for them is a separate follow-up.
+	//
+	// sttMap/ttsMap are built once at startup from [[stt]]/[[tts]] entries
+	// (provider definitions, not hot-reloadable) — only wrap with the lazy
+	// adapter when at least one provider actually exists. A voice.STT/voice.TTS
+	// interface holding a non-nil *lazySTT/*lazyTTS is itself non-nil even
+	// when resolve() would return nil, which would break every `transcriber
+	// == nil` / `tts == nil` "no provider configured" check downstream.
+	var sttParam voice.STT
+	if len(p.sttMap) > 0 {
+		sttParam = &lazySTT{resolve: func() voice.STT {
+			vc := p.resolvedLive.Load().Voice
+			return resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements))
+		}}
+	}
+	var ttsParam voice.TTS
+	if len(p.ttsMap) > 0 {
+		ttsParam = &lazyTTS{resolve: func() voice.TTS {
+			vc := p.resolvedLive.Load().Voice
+			return resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
+		}}
+	}
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
 		AgentID:        acfg.ID,
 		Handler:        ag,
@@ -375,8 +400,8 @@ func setupPlatformConnections(
 		CommandContext: cc,
 		LastMsgStore:   lastMsgStore,
 		AgentConfig:    acfg,
-		STT:            resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
-		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls),
+		STT:            sttParam,
+		TTS:            ttsParam,
 		ReclaimHook: func(sessionKey string) {
 			ag.FireSessionEndMemory(p.ctx, sessionKey, reclaimOrientTemplate, false)
 			if ag.DelegatedManager != nil {

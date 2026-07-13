@@ -234,7 +234,7 @@ type Agent struct {
 
 func (a *Agent) streaming() bool {
 	if a.LiveConfigFn != nil {
-		return a.LiveConfigFn().Display.Streaming
+		return a.LiveConfigFn().Loop.Streaming
 	}
 	return a.Streaming
 }

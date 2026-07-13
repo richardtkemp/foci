@@ -93,7 +93,8 @@ type Bot struct {
 	sessionIndex platform.SessionIndex
 	chatmeta     *chatmeta.Resolver
 
-	display       BotDisplayConfig
+	displayMu sync.RWMutex // guards display; hot-reloadable fields (stream_output, messages_in_log) can be updated after startup, see updateDisplay
+	display   BotDisplayConfig
 	fileMode      os.FileMode          // permission bits for saved files (media, etc.)
 	toolStore     turn.ToolResultStore // tool-call display state (in-memory + optional SQLite write-through)
 	thinkingStore sync.Map             // message ID (int64) -> thinkingEntry; ephemeral
@@ -113,9 +114,11 @@ type Bot struct {
 	typingCancel context.CancelFunc // non-nil while typing ticker is running
 }
 
-// BotDisplayConfig groups all display-related settings. Write-once at startup
-// via ApplyAgentDisplaySettings; never mutated after. Per-session overrides
-// are handled separately via DisplayOverrideFn.
+// BotDisplayConfig groups all display-related settings. Set at startup via
+// ApplyAgentDisplaySettings; some fields (stream_output, messages_in_log —
+// the `hot`-tagged ones) can be updated later via updateDisplay when their
+// config changes live. Access only through getDisplay/updateDisplay, never
+// the bare field, so concurrent turn processing never races the update.
 type BotDisplayConfig struct {
 	ShowToolCalls         string        // "off", "preview", "full"
 	ShowThinking          string        // "off", "compact", "true"
@@ -128,10 +131,24 @@ type BotDisplayConfig struct {
 	InjectedMessageHeader string        // prepended to injected (system) messages; empty disables
 }
 
+// getDisplay returns a snapshot of the bot's current display settings.
+func (b *Bot) getDisplay() BotDisplayConfig {
+	b.displayMu.RLock()
+	defer b.displayMu.RUnlock()
+	return b.display
+}
+
+// updateDisplay atomically applies fn to the bot's display settings.
+func (b *Bot) updateDisplay(fn func(BotDisplayConfig) BotDisplayConfig) {
+	b.displayMu.Lock()
+	defer b.displayMu.Unlock()
+	b.display = fn(b.display)
+}
+
 // resolveDisplay snapshots all display settings for a turn with the given session key.
 // Applies per-session overrides from displayOverrideFn on top of bot defaults.
 func (b *Bot) resolveDisplay(sessionKey string) turn.TurnDisplay {
-	d := b.display
+	d := b.getDisplay()
 	if b.displayOverrideFn != nil {
 		ov := b.displayOverrideFn(sessionKey)
 		if ov.ShowToolCalls != "" {
@@ -250,21 +267,21 @@ func (b *Bot) SetTTS(t voice.TTS) {
 func (b *Bot) SetDisplayOverrideFn(fn DisplayOverrideFn) { b.displayOverrideFn = fn }
 
 // ShowToolCallsDefault returns the bot's configured show_tool_calls default.
-func (b *Bot) ShowToolCallsDefault() string { return b.display.ShowToolCalls }
+func (b *Bot) ShowToolCallsDefault() string { return b.getDisplay().ShowToolCalls }
 
 // ShowThinkingDefault returns the bot's configured show_thinking default.
-func (b *Bot) ShowThinkingDefault() string { return b.display.ShowThinking }
+func (b *Bot) ShowThinkingDefault() string { return b.getDisplay().ShowThinking }
 
 // StreamOutputDefault returns the bot's configured stream_output default.
-func (b *Bot) StreamOutputDefault() bool { return b.display.StreamOutput }
+func (b *Bot) StreamOutputDefault() bool { return b.getDisplay().StreamOutput }
 
 // DisplayWidthDefault returns the bot's configured display_width default.
-func (b *Bot) DisplayWidthDefault() int { return b.display.DisplayWidth }
+func (b *Bot) DisplayWidthDefault() int { return b.getDisplay().DisplayWidth }
 
 // streamInterval returns the configured stream update interval, defaulting to 1200ms.
 func (b *Bot) streamInterval() time.Duration {
-	if b.display.StreamUpdateInterval > 0 {
-		return b.display.StreamUpdateInterval
+	if d := b.getDisplay(); d.StreamUpdateInterval > 0 {
+		return d.StreamUpdateInterval
 	}
 	return 1200 * time.Millisecond
 }

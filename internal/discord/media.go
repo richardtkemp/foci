@@ -37,7 +37,7 @@ func (b *Bot) downloadAttachment(att *discordgo.MessageAttachment) (attachment, 
 	result := attachment{data: data, mediaType: normalizedMIME}
 
 	// Save to disk if configured
-	if b.display.ReceivedFilesDir != "" {
+	if b.getDisplay().ReceivedFilesDir != "" {
 		ext := extForMediaType(normalizedMIME)
 		if att.Filename != "" {
 			ext = filepath.Ext(att.Filename)
@@ -97,11 +97,12 @@ func downloadURL(url string) ([]byte, error) {
 
 // saveMedia writes media data to disk and returns the saved file path.
 func (b *Bot) saveMedia(data []byte, mediaType string, ext string) (string, error) {
-	if err := os.MkdirAll(b.display.ReceivedFilesDir, 0o755); err != nil {
+	receivedFilesDir := b.getDisplay().ReceivedFilesDir
+	if err := os.MkdirAll(receivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create media dir: %w", err)
 	}
 	filename := fmt.Sprintf("%s_%s%s", timeutil.FormatFilename(timeutil.Now()), mediaType, ext)
-	path := filepath.Join(b.display.ReceivedFilesDir, filename)
+	path := filepath.Join(receivedFilesDir, filename)
 	mode := b.fileMode
 	if mode == 0 {
 		mode = 0640
