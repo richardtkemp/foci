@@ -2,6 +2,7 @@ package config
 
 import (
 	"sort"
+	"sync"
 	"testing"
 )
 
@@ -298,4 +299,62 @@ func TestMixedDevelopers(t *testing.T) {
 			t.Errorf("ResolveCall(%q).Format = %q, want %q", tt.callSite, r.Format, tt.wantFormat)
 		}
 	}
+}
+
+// TestGroupResolver_UpdateChangesResolutionLive proves Update mutates an
+// existing *GroupResolver's state in place — every caller already holding
+// this pointer (agent.Agent.GroupResolver, tool_table.go's APISummariser,
+// command.CommandContext) sees the new resolution on its very next call,
+// with no reconstruction. This is what makes a live /config set edit to
+// groups/groups.calls/groups.fallbacks actually take effect without a
+// restart (cmd/foci-gw/liveapply.go's map-section applier calls Update).
+func TestGroupResolver_UpdateChangesResolutionLive(t *testing.T) {
+	gr := NewGroupResolver(GroupsConfig{
+		Groups: map[string]string{"powerful": "anthropic/claude-opus-4-6"},
+	}, nil, true)
+
+	if r := gr.ResolveCall(CallChat); r == nil || r.ModelID != "claude-opus-4-6" {
+		t.Fatalf("initial ResolveCall(chat) = %+v, want claude-opus-4-6", r)
+	}
+
+	gr.Update(GroupsConfig{
+		Groups: map[string]string{"powerful": "anthropic/claude-sonnet-4-10-20250514"},
+		Calls:  map[string]string{CallChat: "fast"},
+	}, nil, true)
+
+	// The call-site override alone (fast, undefined) should now resolve to
+	// nil — proves callOverrides was actually replaced, not just groups.
+	if r := gr.ResolveCall(CallChat); r != nil {
+		t.Errorf("after Update, ResolveCall(chat) = %+v, want nil (overridden to undefined group fast)", r)
+	}
+	if r := gr.ResolveGroup(GroupPowerful); r == nil || r.ModelID != "claude-sonnet-4-10-20250514" {
+		t.Errorf("after Update, ResolveGroup(powerful) = %+v, want claude-sonnet-4-10-20250514", r)
+	}
+}
+
+// TestGroupResolver_UpdateConcurrentSafe races ResolveCall reads against
+// Update writes to prove the mutex actually guards every field (run with
+// -race). Locks the exact bug this test would have missed: reading map/bool
+// fields without gr.mu.
+func TestGroupResolver_UpdateConcurrentSafe(t *testing.T) {
+	gr := NewGroupResolver(GroupsConfig{
+		Groups: map[string]string{"powerful": "anthropic/claude-opus-4-6"},
+	}, nil, true)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			gr.ResolveCall(CallChat)
+			gr.GroupNames()
+		}()
+		go func() {
+			defer wg.Done()
+			gr.Update(GroupsConfig{
+				Groups: map[string]string{"powerful": "anthropic/claude-sonnet-4-10-20250514"},
+			}, nil, true)
+		}()
+	}
+	wg.Wait()
 }

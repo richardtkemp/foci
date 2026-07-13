@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -391,13 +392,119 @@ func formatNum(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
-// LookupField finds a field by "section.key" (case-insensitive).
+// MapFieldSpec describes a map-typed config section addressable through
+// /config set as "<Section>.<arbitrary-key>=<value>" — an add-or-update,
+// since the key set is user-defined (group names, webhook IDs, ...) and not
+// known at compile time. walkType (below) skips map-kind struct fields
+// entirely for this reason; MapFieldSpec is the deliberate, explicit
+// opt-in for the handful of map fields that need /config set support
+// anyway.
+//
+// Section MAY itself be dotted (e.g. "groups.calls") to address a nested
+// TOML table. When multiple specs' sections share a prefix (e.g. "groups",
+// "groups.calls", "groups.fallbacks"), longer sections must be checked
+// first — matchMapField enforces this. Getting it backwards is a real file
+// corruption risk: this repo's live config already has an explicit
+// [groups.fallbacks] table, and matching the bare "groups" prefix for a
+// "groups.fallbacks.X" key would try to insert a dotted "fallbacks.X = ..."
+// key directly into [groups]'s own body — a duplicate-table definition
+// TOML rejects at load.
+//
+// Caveat: SetInFile writes a NEW key by creating/appending to an EXPANDED
+// [Section] table header (e.g. [system.webhooks]\nfoo = "bar"), not an
+// inline table (webhooks = { foo = "bar" }). If a section already exists in
+// the file in inline-table form, a /config set write creates a second,
+// conflicting [Section] header — TOML rejects the duplicate definition at
+// next load. None of this repo's registered map sections use inline-table
+// form today; migrate any that do to the expanded form before relying on
+// /config set for them.
+type MapFieldSpec struct {
+	Section     string
+	Description string
+	ElementType FieldType
+}
+
+// mapFieldSpecs is the registry of map-typed config sections settable via
+// /config set. Kept deliberately small and explicit (see MapFieldSpec doc) —
+// add an entry here, not a struct-tag mechanism, since only a handful of
+// config maps need this.
+var mapFieldSpecs = []MapFieldSpec{
+	{Section: "groups.calls", Description: "Call site → model group override", ElementType: FieldString},
+	{Section: "groups.fallbacks", Description: "Model → fallback model on transient error (529/5xx/timeout)", ElementType: FieldString},
+	{Section: "groups", Description: "Named model group → model ID (e.g. powerful, fast, cheap, or a custom group name)", ElementType: FieldString},
+	{Section: "system.webhooks", Description: "Webhook hook ID → prompt file path (POST /webhook/{agent}/{hookid})", ElementType: FieldString},
+}
+
+// bareTOMLKeyRe matches a valid unquoted TOML bare key: letters, digits,
+// underscore, dash. Anything else (a literal ".", "/", ":", space, ...)
+// requires quoting to write as a flat key — SetInFile never quotes, so
+// matchMapField refuses any key outside this set. Group/call-site/hook names
+// are conventionally simple slugs so this rarely bites; a raw
+// "developer/model_id" string (which routinely contains "/" and often ".")
+// used directly as a groups.fallbacks key is the one realistic case it
+// blocks — use a [models.*] alias there instead, or edit the file directly.
+var bareTOMLKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// matchMapField finds the longest-prefix MapFieldSpec matching lowerSectionKey
+// (already-lowercased "section.key...") and returns the synthesized field plus
+// the matched spec's Section. ok is false if no spec's section is a prefix, if
+// the match leaves no key remainder (e.g. "groups" alone, or "groups.calls"
+// alone with no trailing key), or if the remainder isn't a valid bare TOML key
+// (see bareTOMLKeyRe) — refusing is safer than SetInFile silently writing an
+// unquoted key that changes TOML's parsed meaning (a dotted key nests tables)
+// or fails to parse at all (most other special characters).
+func matchMapField(lowerSectionKey string) (spec MapFieldSpec, key string, ok bool) {
+	bestLen := -1
+	for _, s := range mapFieldSpecs {
+		prefix := strings.ToLower(s.Section) + "."
+		if !strings.HasPrefix(lowerSectionKey, prefix) {
+			continue
+		}
+		rest := lowerSectionKey[len(prefix):]
+		if !bareTOMLKeyRe.MatchString(rest) {
+			continue // empty, or not a safely-unquoted TOML key
+		}
+		if len(prefix) > bestLen {
+			bestLen = len(prefix)
+			spec = s
+			key = rest
+			ok = true
+		}
+	}
+	return spec, key, ok
+}
+
+// MapFieldSections returns the Section of every registered MapFieldSpec, for
+// cmd/foci-gw's live-apply wiring to register a rebuild-and-swap applier
+// against — kept as a derived accessor (not a hand-copied literal list)
+// so the two stay in lockstep; see MapFieldSpec's doc for why these can't
+// flow through the normal hot-tag/ConfigField coverage test.
+func MapFieldSections() []string {
+	sections := make([]string, len(mapFieldSpecs))
+	for i, s := range mapFieldSpecs {
+		sections[i] = s.Section
+	}
+	return sections
+}
+
+// LookupField finds a field by "section.key" (case-insensitive). Falls back
+// to matchMapField for map-typed sections, whose keys are user-defined and
+// so can never be enumerated as literal ConfigFields ahead of time.
 func LookupField(sectionKey string) (ConfigField, bool) {
 	lower := strings.ToLower(sectionKey)
 	for _, f := range configFields {
 		if strings.ToLower(f.Section+"."+f.Key) == lower {
 			return f, true
 		}
+	}
+	if spec, key, ok := matchMapField(lower); ok {
+		return ConfigField{
+			Section:      spec.Section,
+			Key:          key,
+			Type:         spec.ElementType,
+			Description:  spec.Description,
+			NeedsRestart: false, // registerLiveApplyMapSections (cmd/foci-gw) covers every mapFieldSpecs entry
+		}, true
 	}
 	return ConfigField{}, false
 }

@@ -65,7 +65,7 @@ func resolveSharedSetup(p setupParams) *sharedAgentSetup {
 	// here would also trip the resolver's no-API-agent guard on every use.
 	var groupResolver *config.GroupResolver
 	if !p.acfg.IsDelegated() {
-		groupResolver = config.NewGroupResolver(p.resolved.Groups, p.cfg.Models, p.cfg.HasAPIAgent()) // static-cfg:ignore: groups.* fields are all maps, invisible to the field registry — no /config set path exists yet, see bucket D (a30414b8)
+		groupResolver = config.NewGroupResolver(p.resolved.Groups, p.cfg.Models, p.cfg.HasAPIAgent()) // static-cfg:ignore: initial construction only — live edits arrive via GroupResolver.Update(), registered per-agent in registerLiveAppliers (liveapply.go)
 	}
 
 	return &sharedAgentSetup{
@@ -261,7 +261,6 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		resolved:         p.resolvedLive,
 		promptSearchDirs: s.promptSearchDirs,
 		skillsDirs:       fp.skillsDirs,
-		webhooks:         p.resolved.Webhooks, // static-cfg:ignore: system.webhooks is a map, invisible to the field registry — no /config set path exists yet, see bucket D (a30414b8)
 		tmuxClearAll:     fp.tmuxClearAll,
 		tmuxWatchCount:   fp.tmuxWatchCount,
 		mcpManager:       fp.mcpManager,

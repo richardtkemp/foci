@@ -109,6 +109,59 @@ model = "haiku"
 	}
 }
 
+func TestSetInFile_NestedMapSection(t *testing.T) {
+	// Regression test for the MapFieldSpec longest-prefix-match hazard: this
+	// fixture mirrors the real live foci.toml, which has a bare [groups]
+	// section (group name → model) AND a separate explicit [groups.fallbacks]
+	// section. LookupField must resolve "groups.fallbacks.stepfun" to
+	// Section="groups.fallbacks" (not the shorter "groups" prefix) — otherwise
+	// this write would try to insert "fallbacks.stepfun = ..." as a dotted key
+	// directly inside [groups]'s own body, which TOML rejects as a duplicate
+	// definition of the groups.fallbacks table once reloaded.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	content := `[groups]
+powerful = "qwen35"
+fast = "stepfun"
+cheap = "stepfun"
+
+[groups.fallbacks]
+stepfun = "minimax"
+glmturbo = "minimax"
+`
+	os.WriteFile(path, []byte(content), 0o644)
+
+	field, ok := LookupField("groups.fallbacks.stepfun")
+	if !ok {
+		t.Fatal("LookupField(\"groups.fallbacks.stepfun\") not found")
+	}
+	if field.Section != "groups.fallbacks" || field.Key != "stepfun" {
+		t.Fatalf("field = %+v, want Section=groups.fallbacks Key=stepfun", field)
+	}
+
+	_, err := SetInFile(path, SetTarget{Section: field.Section, Key: field.Key}, `"qwen35"`, 0640)
+	if err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	result := string(data)
+
+	if strings.Count(result, "[groups.fallbacks]") != 1 {
+		t.Errorf("expected exactly one [groups.fallbacks] header, got:\n%s", result)
+	}
+	if strings.Contains(result, "fallbacks.stepfun") {
+		t.Errorf("wrote a dotted fallbacks.stepfun key into [groups]'s own body — duplicate-table hazard:\n%s", result)
+	}
+	if !strings.Contains(result, `stepfun = "qwen35"`) {
+		t.Errorf("updated value not found:\n%s", result)
+	}
+	// [groups] bare group defs must survive untouched.
+	if !strings.Contains(result, `powerful = "qwen35"`) {
+		t.Errorf("[groups] bare defs not preserved:\n%s", result)
+	}
+}
+
 func TestSetInFile_NewSectionBeforeAgents(t *testing.T) {
 	// Proves that a newly-created section is inserted before any [[agents]] blocks
 	// to maintain the conventional ordering of the config file.
@@ -356,5 +409,233 @@ port = 8080
 	}
 	if cfg.Groups.Groups["powerful"] != "anthropic/claude-sonnet-4-5-20250929" {
 		t.Errorf("groups.powerful = %q after round-trip", cfg.Groups.Groups["powerful"])
+	}
+}
+
+// setDirectRoundTrip runs a /config-set-shaped write through LookupField →
+// SetInFile → Load, the same path ConfigSetDirect takes, and returns the
+// reloaded config for the caller to assert against. t.Fatal's on any error.
+func setDirectRoundTrip(t *testing.T, path, settPath, rawValue string) *Config {
+	t.Helper()
+	field, ok := LookupField(settPath)
+	if !ok {
+		t.Fatalf("LookupField(%q) not found", settPath)
+	}
+	formatted, err := FormatTOMLValue(rawValue, field.Type)
+	if err != nil {
+		t.Fatalf("FormatTOMLValue: %v", err)
+	}
+	if _, err := SetInFile(path, SetTarget{Section: field.Section, Key: field.Key}, formatted, 0640); err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		data, _ := os.ReadFile(path)
+		t.Fatalf("Load after set: %v\n--- resulting file ---\n%s", err, data)
+	}
+	return cfg
+}
+
+func TestSetInFile_MapSections_RoundTrip(t *testing.T) {
+	// Diverse add/update scenarios for every registered map section, each
+	// proven by an actual Load() round-trip (not just string-matching the
+	// written bytes) — the only way to be sure the output is valid,
+	// semantically-correct TOML and not just plausible-looking text.
+	t.Run("new group added to existing [groups] with calls+fallbacks after it", func(t *testing.T) {
+		// Mirrors the real live foci.toml shape: bare [groups] followed by
+		// separate [groups.calls] and [groups.fallbacks] tables. Adding a new
+		// bare group name must land inside [groups]'s own bounds, not spill
+		// into or past the following sub-tables.
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`[groups]
+powerful = "anthropic/claude-opus-4-6"
+fast = "anthropic/claude-haiku-4-5"
+
+[groups.calls]
+summarize-file = "cheap"
+
+[groups.fallbacks]
+"anthropic/claude-haiku-4-5" = "anthropic/claude-opus-4-6"
+`), 0o644)
+
+		cfg := setDirectRoundTrip(t, path, "groups.myteam", "openrouter/some-model")
+		if cfg.Groups.Groups["myteam"] != "openrouter/some-model" {
+			t.Errorf("groups.myteam = %q", cfg.Groups.Groups["myteam"])
+		}
+		// Existing entries in all three tables must survive untouched.
+		if cfg.Groups.Groups["powerful"] != "anthropic/claude-opus-4-6" || cfg.Groups.Groups["fast"] != "anthropic/claude-haiku-4-5" {
+			t.Errorf("bare groups corrupted: %+v", cfg.Groups.Groups)
+		}
+		if cfg.Groups.Calls["summarize-file"] != "cheap" {
+			t.Errorf("groups.calls corrupted: %+v", cfg.Groups.Calls)
+		}
+		if cfg.Groups.Fallbacks["anthropic/claude-haiku-4-5"] != "anthropic/claude-opus-4-6" {
+			t.Errorf("groups.fallbacks corrupted: %+v", cfg.Groups.Fallbacks)
+		}
+	})
+
+	t.Run("update existing fallback without disturbing bare groups before it", func(t *testing.T) {
+		// Fallback keys/values are validated as models (validateFallbacks),
+		// which accepts a [models.*] ALIAS as well as a raw developer/model_id
+		// string — and aliases are the realistic case here: a raw model_id
+		// contains "/" (and often ".") which matchMapField refuses as a key
+		// (see bareTOMLKeyRe), so real [groups.fallbacks] keys set live
+		// through /config set have to be aliases. Mirrors the live foci.toml,
+		// whose [groups.fallbacks] entries are all short alias names.
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`[models.opus]
+model = "anthropic/claude-opus-4-6"
+
+[models.haiku]
+model = "anthropic/claude-haiku-4-5"
+
+[models.gemini]
+model = "google/gemini-2.5-flash"
+
+[groups]
+powerful = "opus"
+fast = "haiku"
+cheap = "haiku"
+
+[groups.fallbacks]
+haiku = "opus"
+`), 0o644)
+
+		cfg := setDirectRoundTrip(t, path, "groups.fallbacks.haiku", "gemini")
+		if cfg.Groups.Fallbacks["haiku"] != "gemini" {
+			t.Errorf("groups.fallbacks.haiku = %q, want gemini", cfg.Groups.Fallbacks["haiku"])
+		}
+		if cfg.Groups.Groups["powerful"] != "opus" || cfg.Groups.Groups["cheap"] != "haiku" {
+			t.Errorf("bare groups corrupted by a fallbacks-section edit: %+v", cfg.Groups.Groups)
+		}
+	})
+
+	t.Run("groups.calls created from scratch when only bare [groups] exists", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`[groups]
+powerful = "anthropic/claude-opus-4-6"
+`), 0o644)
+
+		cfg := setDirectRoundTrip(t, path, "groups.calls.summarize-file", "cheap")
+		if cfg.Groups.Calls["summarize-file"] != "cheap" {
+			t.Errorf("groups.calls.summarize-file = %q", cfg.Groups.Calls["summarize-file"])
+		}
+		if cfg.Groups.Groups["powerful"] != "anthropic/claude-opus-4-6" {
+			t.Errorf("bare groups corrupted: %+v", cfg.Groups.Groups)
+		}
+	})
+
+	t.Run("system.webhooks created from scratch when [system] does not exist at all", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`[groups]
+powerful = "anthropic/claude-opus-4-6"
+`), 0o644)
+
+		cfg := setDirectRoundTrip(t, path, "system.webhooks.deploy", "deploy.md")
+		if cfg.System.Webhooks["deploy"] != "deploy.md" {
+			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"])
+		}
+	})
+
+	t.Run("system.webhooks created from scratch alongside an existing [system] with other scalar keys", func(t *testing.T) {
+		// [system] and [system.webhooks] are DISTINCT registry sections
+		// (setInSection matches section headers literally) — proves adding
+		// webhooks doesn't touch [system]'s own unrelated keys.
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`[system]
+system_files = ["notes.md"]
+`), 0o644)
+
+		cfg := setDirectRoundTrip(t, path, "system.webhooks.deploy", "deploy.md")
+		if cfg.System.Webhooks["deploy"] != "deploy.md" {
+			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"])
+		}
+		if len(cfg.System.SystemFiles) != 1 || cfg.System.SystemFiles[0] != "notes.md" {
+			t.Errorf("[system]'s own key corrupted: got %+v", cfg.System.SystemFiles)
+		}
+	})
+
+	t.Run("update existing webhook and add a second one", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`[system.webhooks]
+deploy = "old-deploy.md"
+`), 0o644)
+
+		cfg := setDirectRoundTrip(t, path, "system.webhooks.deploy", "new-deploy.md")
+		if cfg.System.Webhooks["deploy"] != "new-deploy.md" {
+			t.Errorf("system.webhooks.deploy = %q, want new-deploy.md", cfg.System.Webhooks["deploy"])
+		}
+
+		cfg2 := setDirectRoundTrip(t, path, "system.webhooks.alert", "alert.md")
+		if cfg2.System.Webhooks["alert"] != "alert.md" {
+			t.Errorf("system.webhooks.alert = %q", cfg2.System.Webhooks["alert"])
+		}
+		if cfg2.System.Webhooks["deploy"] != "new-deploy.md" {
+			t.Errorf("earlier update lost after adding a second key: %+v", cfg2.System.Webhooks)
+		}
+	})
+
+	t.Run("value containing special TOML characters round-trips", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-opus-4-6\"\n"), 0o644)
+
+		cfg := setDirectRoundTrip(t, path, "system.webhooks.deploy", `prompts/deploy "v2".md`)
+		if cfg.System.Webhooks["deploy"] != `prompts/deploy "v2".md` {
+			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"])
+		}
+	})
+}
+
+func TestLookupField_MapSections_RejectsNonBareKey(t *testing.T) {
+	// A group/call-site/hook name containing a "." would be written as an
+	// unquoted TOML dotted key (implicit nested tables, not the flat entry
+	// intended); "/" and other non-bare-key characters simply fail to parse
+	// as a bare key at all. Both are refused rather than risking a corrupt or
+	// unparseable file — see matchMapField/bareTOMLKeyRe's doc.
+	for _, path := range []string{
+		"groups.calls.foo.bar",
+		"groups.my.team",
+		"system.webhooks.v1.deploy",
+		"groups.fallbacks.anthropic/claude-haiku-4-5", // raw model_id, not an alias
+		"groups.my team",                              // space
+	} {
+		if _, ok := LookupField(path); ok {
+			t.Errorf("LookupField(%q) should be refused (not a bare TOML key), but matched", path)
+		}
+	}
+}
+
+func TestSetInFile_MapSection_PreExistingInlineTable_FailsLoudly(t *testing.T) {
+	// Documents the known limitation noted on MapFieldSpec: SetInFile always
+	// writes an EXPANDED [Section] table, never an inline one. If a section
+	// already exists in inline-table form (webhooks = { ... }, the form
+	// docs/CONFIG.md shows), writing a new key creates a SECOND, conflicting
+	// definition of the same table path. This must fail LOUDLY at Load
+	// (a config that refuses to (re)start is safe; one that silently
+	// corrupts is not) rather than silently picking one definition.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`[system]
+webhooks = { deploy = "deploy.md" }
+`), 0o644)
+
+	field, ok := LookupField("system.webhooks.alert")
+	if !ok {
+		t.Fatal("LookupField(system.webhooks.alert) not found")
+	}
+	if _, err := SetInFile(path, SetTarget{Section: field.Section, Key: field.Key}, `"alert.md"`, 0640); err != nil {
+		t.Fatalf("SetInFile itself should still succeed (it's a pure text edit): %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		data, _ := os.ReadFile(path)
+		t.Fatalf("Load unexpectedly succeeded on a file with both inline and expanded [system.webhooks] — silent corruption risk:\n%s", data)
 	}
 }

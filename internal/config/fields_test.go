@@ -89,6 +89,52 @@ func TestLookupField(t *testing.T) {
 	}
 }
 
+func TestLookupField_MapSections(t *testing.T) {
+	// Proves LookupField's map-field fallback: arbitrary (not pre-enumerated)
+	// keys under a registered map-typed section resolve to a synthesized
+	// field, and longer/more specific prefixes win over shorter ones.
+	cases := []struct {
+		path        string
+		wantSection string
+		wantKey     string
+	}{
+		{"groups.myteam", "groups", "myteam"},
+		{"groups.powerful", "groups", "powerful"},
+		{"groups.calls.summarize-file", "groups.calls", "summarize-file"},
+		{"groups.fallbacks.stepfun", "groups.fallbacks", "stepfun"},
+		{"system.webhooks.deploy", "system.webhooks", "deploy"},
+	}
+	for _, c := range cases {
+		f, ok := LookupField(c.path)
+		if !ok {
+			t.Errorf("LookupField(%q) returned false", c.path)
+			continue
+		}
+		if f.Section != c.wantSection || f.Key != c.wantKey {
+			t.Errorf("LookupField(%q) = section=%q key=%q, want section=%q key=%q",
+				c.path, f.Section, f.Key, c.wantSection, c.wantKey)
+		}
+		if f.NeedsRestart {
+			t.Errorf("LookupField(%q).NeedsRestart = true, want false (live-applied)", c.path)
+		}
+	}
+
+	// A bare map-section prefix with no trailing key isn't addressable.
+	// Note "groups.calls" alone IS addressable — it matches the shorter
+	// "groups" prefix with key="calls" (a group literally named "calls"),
+	// since a bare two-segment path can't tell "address the groups.calls
+	// table" from "define a group named calls" apart from the registered
+	// prefix list. That's fine in practice: TOML itself forbids a "calls"
+	// scalar key coexisting with a [groups.calls] table in the same file, so
+	// the ambiguity self-resolves at reload (whichever is actually declared).
+	if _, ok := LookupField("groups"); ok {
+		t.Error(`LookupField("groups") should return false — no key remainder`)
+	}
+	if _, ok := LookupField("system.webhooks"); ok {
+		t.Error(`LookupField("system.webhooks") should return false — no key remainder`)
+	}
+}
+
 func TestFieldSections(t *testing.T) {
 	// Proves FieldSections returns a deduplicated list of section names that
 	// includes all well-known sections.

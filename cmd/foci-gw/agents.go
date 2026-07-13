@@ -43,7 +43,6 @@ type agentInstance struct {
 	skillsDirs       []string                    // skill directories (shared + per-agent) for reflection detection
 	tmuxClearAll     func()                      // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount   func() int                  // returns number of active tmux watches
-	webhooks         map[string]string           // hook ID → prompt path (merged from global + per-agent)
 	kaRunner         *periodic.Runner            // keepalive & background work timer
 	mcpManager       *mcpkg.Manager              // nil if no MCP servers configured
 
