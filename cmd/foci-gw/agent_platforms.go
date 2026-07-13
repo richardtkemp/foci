@@ -21,7 +21,7 @@ import (
 func wireAgentPlatformCallbacks(
 	ag *agent.Agent,
 	acfg config.AgentConfig,
-	resolved *config.ResolvedAgentConfig,
+	resolvedLive *config.LiveValue[*config.ResolvedAgentConfig],
 	connMgr platform.ConnectionManager,
 	sessionIndex *session.SessionIndex,
 ) {
@@ -62,12 +62,12 @@ func wireAgentPlatformCallbacks(
 	// Task list notify — per-platform resolution.
 	ag.TaskListNotifyFunc.Add(func(sk, msg string) {
 		if c := connMgr.ForSession(sk); c != nil {
-			if resolved.PlatformNotify(c.PlatformName()).TaskListNotify {
+			if resolvedLive.Load().PlatformNotify(c.PlatformName()).TaskListNotify {
 				c.SendNotification(msg)
 			}
 		} else {
 			for _, conn := range connMgr.AllForAgent(acfg.ID) {
-				if resolved.PlatformNotify(conn.PlatformName()).TaskListNotify {
+				if resolvedLive.Load().PlatformNotify(conn.PlatformName()).TaskListNotify {
 					conn.SendNotification(msg)
 				}
 			}
@@ -85,7 +85,7 @@ func wireAgentPlatformCallbacks(
 		// platform's primary even for a non-default user), and a SessionNotifier
 		// delivers to that user's chat rather than the default one (#911).
 		c := connMgr.ForSessionOrPrimary(sk, acfg.ID)
-		if c == nil || !resolved.PlatformNotify(c.PlatformName()).CompactionNotify {
+		if c == nil || !resolvedLive.Load().PlatformNotify(c.PlatformName()).CompactionNotify {
 			return
 		}
 		var msgID string
@@ -100,7 +100,7 @@ func wireAgentPlatformCallbacks(
 	})
 	ag.CompactionNotifyFunc.Add(func(sk, msg string) {
 		c := connMgr.ForSessionOrPrimary(sk, acfg.ID)
-		if c == nil || !resolved.PlatformNotify(c.PlatformName()).CompactionNotify {
+		if c == nil || !resolvedLive.Load().PlatformNotify(c.PlatformName()).CompactionNotify {
 			return
 		}
 		// Try to edit the ⏳ start message in-place rather than sending a new one.
@@ -139,7 +139,7 @@ func wireAgentPlatformCallbacks(
 		if c == nil {
 			return
 		}
-		if !resolved.PlatformNotify(c.PlatformName()).CompactionDebug {
+		if !resolvedLive.Load().PlatformNotify(c.PlatformName()).CompactionDebug {
 			return
 		}
 		f, err := tempdir.Create("compaction-summary-*.md")

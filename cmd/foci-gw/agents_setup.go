@@ -63,7 +63,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 		}
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
-	maxRC := p.resolved.Summary.MaxResultChars
+	maxRC := p.resolved.Summary.MaxResultChars // static-cfg:ignore: one-time startup diagnostic (warns if a skill file is oversized), not a hot path
 	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
 
 	return bootstrapResult{
@@ -77,7 +77,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 // buildCompactor creates a Compactor configured for this agent.
 // Returns the compactor and the resolved compaction threshold.
 func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compaction.Compactor, float64) {
-	cc := p.resolved.Compaction
+	cc := p.resolved.Compaction // static-cfg:ignore: initial construction value; live edits flow through the OnChange registered below (bucket D, a30414b8)
 	compactionThreshold := cc.CompactionThreshold
 	preserveMessages := cc.CompactionPreserveMessages
 	compactor := compaction.NewCompactor(p.sessions, compactionThreshold)
@@ -367,7 +367,7 @@ func setupPlatformConnections(
 	reclaimOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	reclaimOrientTemplate := prompts.ResolveOrientationTemplate(reclaimOrientPath, false, promptSearchDirs...)
 
-	vc := p.resolved.Voice
+	vc := p.resolved.Voice // static-cfg:ignore: bot-level default STT/TTS, baked at connection setup like display settings (ApplyAgentDisplaySettings) — needs its own dedicated pass, not fixed here
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
 		AgentID:        acfg.ID,
 		Handler:        ag,
@@ -391,7 +391,7 @@ func setupPlatformConnections(
 				DisplayWidth:  ag.SessionDisplayWidth(sessionKey),
 			}
 		},
-		Resolved:     p.resolved,
+		Resolved:     p.resolved, // static-cfg:ignore: plumbing — still consumed by the deliberately-baked display/voice setup above, see ResolvedLive for the live counterpart
 		ResolvedLive: p.resolvedLive,
 	})
 	for _, r := range results {
@@ -403,7 +403,7 @@ func setupPlatformConnections(
 		}
 	}
 
-	wireAgentPlatformCallbacks(ag, acfg, p.resolved, p.connMgr, p.sessionIndex)
+	wireAgentPlatformCallbacks(ag, acfg, p.resolvedLive, p.connMgr, p.sessionIndex)
 
 	return result
 }

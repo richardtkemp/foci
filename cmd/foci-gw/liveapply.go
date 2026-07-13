@@ -124,6 +124,9 @@ var (
 		"sessions.compaction_preserve_messages", "agent.sessions.compaction_preserve_messages",
 		"behavior.steer_mode", "agent.behavior.steer_mode",
 		"behavior.group_throttle", "agent.behavior.group_throttle",
+		"notify.compaction_notify", "agent.notify.compaction_notify", "platforms.notify.compaction_notify",
+		"notify.task_list_notify", "agent.notify.task_list_notify", "platforms.notify.task_list_notify",
+		"notify.compaction_debug", "agent.notify.compaction_debug", "platforms.notify.compaction_debug",
 	}
 )
 
