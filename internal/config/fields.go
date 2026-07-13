@@ -538,6 +538,43 @@ func MapFieldSections() []string {
 	return sections
 }
 
+// MapFieldInfo describes a settable map section for the app config schema.
+type MapFieldInfo struct {
+	Section     string
+	Description string
+}
+
+// MapFields returns the registered settable map sections (section + description)
+// so the app config schema can advertise them as editable key→value maps. The
+// scalar field registry (walkType) skips maps; this is the parallel accessor
+// the editor uses to render them.
+func MapFields() []MapFieldInfo {
+	out := make([]MapFieldInfo, len(mapFieldSpecs))
+	for i, s := range mapFieldSpecs {
+		out[i] = MapFieldInfo{Section: s.Section, Description: s.Description}
+	}
+	return out
+}
+
+// MapEntries extracts the direct entries of map section `section` from a
+// flattened "section.key"→value map (as produced by ExplicitFileValues):
+// entryKey→value for every key that is a DIRECT child of section (one segment
+// past the section prefix). The direct-child rule keeps nested map sections
+// separate — e.g. MapEntries("groups", flat) yields "powerful"→"..." but not
+// the "groups.calls.*" entries, which belong to the "groups.calls" section.
+func MapEntries(section string, flat map[string]string) map[string]string {
+	prefix := section + "."
+	out := map[string]string{}
+	for k, v := range flat {
+		rest, ok := strings.CutPrefix(k, prefix)
+		if !ok || strings.Contains(rest, ".") {
+			continue // not under this section, or belongs to a nested map section
+		}
+		out[rest] = v
+	}
+	return out
+}
+
 // LookupField finds a field by "section.key" (case-insensitive). Falls back
 // to matchMapField for map-typed sections, whose keys are user-defined and
 // so can never be enumerated as literal ConfigFields ahead of time.

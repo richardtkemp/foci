@@ -22,6 +22,43 @@ name = "Clutch"
 max_tool_loops = 50
 `
 
+// TestConfigGet_EmitsMapSections proves map sections (groups) are advertised
+// as a "map"-typed field with the current entries carried as a JSON object.
+func TestConfigGet_EmitsMapSections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	os.WriteFile(path, []byte("[groups]\npowerful = \"opus\"\nfast = \"haiku\"\n"), 0o600)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{Config: &config.Config{SourcePath: path, FileMode: "0600"}}
+	c := fakeClient()
+	c.features = map[string]struct{}{featureConfigEdit: {}}
+	h.clients[c] = struct{}{}
+
+	h.handleConfigGet(c)
+	schema := lastConfigSchema(t, c)
+	if schema == nil {
+		t.Fatal("no config.schema frame")
+	}
+
+	fields, _ := schema["fields"].([]any)
+	foundMap := false
+	for _, fe := range fields {
+		f, _ := fe.(map[string]any)
+		if f["section"] == "groups" && f["type"] == "map" {
+			foundMap = true
+		}
+	}
+	if !foundMap {
+		t.Error(`no {section:"groups", valueType:"map"} descriptor emitted`)
+	}
+
+	global := scopeByID(t, schema, "")
+	gv, _ := global["values"].(map[string]any)
+	got, _ := gv["groups"].(string)
+	if !strings.Contains(got, `"powerful":"opus"`) || !strings.Contains(got, `"fast":"haiku"`) {
+		t.Errorf("groups map value = %q, want a JSON object with powerful/fast", got)
+	}
+}
+
 // newConfigEditHub builds a hub whose deps.Config points at a real temp
 // foci.toml, the way main wires the loaded config into providers.
 func newConfigEditHub(t *testing.T) (*Hub, string) {
