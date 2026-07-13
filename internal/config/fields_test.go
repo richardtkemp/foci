@@ -103,6 +103,12 @@ func TestLookupField_MapSections(t *testing.T) {
 		{"groups.calls.summarize-file", "groups.calls", "summarize-file"},
 		{"groups.fallbacks.stepfun", "groups.fallbacks", "stepfun"},
 		{"system.webhooks.deploy", "system.webhooks", "deploy"},
+		// Per-agent overrides ([agents.groups] etc.) route through the SAME
+		// "agent" Section every other per-agent field uses.
+		{"agent.groups.myteam", "agent", "groups.myteam"},
+		{"agent.groups.calls.summarize-file", "agent", "groups.calls.summarize-file"},
+		{"agent.groups.fallbacks.stepfun", "agent", "groups.fallbacks.stepfun"},
+		{"agent.system.webhooks.deploy", "agent", "system.webhooks.deploy"},
 	}
 	for _, c := range cases {
 		f, ok := LookupField(c.path)

@@ -148,9 +148,23 @@ func Load(path string) (*Config, error) {
 	// the Groups map uses toml:"-" (mixed string keys + sub-tables).
 	cfg.Groups.Groups = extractGroupNames(data)
 
+	// Same extraction, per [[agents]].groups (documented in docs/CONFIG.md as
+	// a per-agent override of [groups], but silently did nothing before this
+	// fix — AgentConfig.Groups.Groups also uses toml:"-", and nothing was
+	// ever populating it). No fast/cheap-defaults-to-powerful here (unlike
+	// the global extraction): an agent overriding only "powerful" should
+	// inherit the GLOBAL fast/cheap via resolved.go's MergeMaps, not have
+	// its own fast/cheap silently defaulted from its own powerful override.
+	agentGroupNames := extractAgentGroupNames(data)
+	for i, agentGroups := range agentGroupNames {
+		if i < len(cfg.Agents) {
+			cfg.Agents[i].Groups.Groups = agentGroups
+		}
+	}
+
 	// Collect unknown config keys for the caller to log after logging is
 	// fully initialised (the early log init gets rotated away on startup).
-	cfg.UndefinedKeys = UnknownKeys(md, cfg.Groups.Groups)
+	cfg.UndefinedKeys = UnknownKeys(md, cfg.Groups.Groups, agentGroupNames)
 
 	// Record where the config came from (config editing writes back to it).
 	cfg.SourcePath = path
@@ -334,4 +348,31 @@ func extractGroupNames(rawData []byte) map[string]string {
 	}
 
 	return groups
+}
+
+// extractAgentGroupNames is extractGroupNames' per-agent counterpart:
+// string-valued keys in each [[agents]].groups block, keyed by agent index
+// (matching cfg.Agents' order — array-of-tables decode in declaration
+// order, same as toml.Decode itself uses for cfg.Agents).
+func extractAgentGroupNames(rawData []byte) map[int]map[string]string {
+	var raw struct {
+		Agents []struct {
+			Groups map[string]interface{} `toml:"groups"`
+		} `toml:"agents"`
+	}
+	_, _ = toml.Decode(string(rawData), &raw)
+
+	result := make(map[int]map[string]string)
+	for i, a := range raw.Agents {
+		groups := make(map[string]string)
+		for k, v := range a.Groups {
+			if s, ok := v.(string); ok {
+				groups[k] = s
+			}
+		}
+		if len(groups) > 0 {
+			result[i] = groups
+		}
+	}
+	return result
 }

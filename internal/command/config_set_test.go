@@ -279,6 +279,46 @@ func TestConfigSetDirectMapSection(t *testing.T) {
 	}
 }
 
+// TestConfigSetDirectAgentMapSection verifies "agent.groups.X=Y" (a per-agent
+// override of a map-typed section, #1231) resolves to the SAME SetTarget
+// shape as any other per-agent field (Section="agents", AgentID populated,
+// Key retains the nested "groups.X" path) — zero special-casing needed
+// beyond LookupField's matchMapField returning Section="agent".
+func TestConfigSetDirectAgentMapSection(t *testing.T) {
+	var captured config.SetTarget
+	var capturedValue string
+	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
+		captured = target
+		capturedValue = value
+		return "", nil
+	})
+
+	resp, err := ConfigSetDirect(deps, "agent.groups.myteam=openrouter/some-model")
+	if err != nil {
+		t.Fatalf("ConfigSetDirect: %v", err)
+	}
+	if !strings.Contains(resp, "Set agent.groups.myteam") {
+		t.Errorf("response = %q", resp)
+	}
+	if captured.Section != "agents" || captured.AgentID != "test-agent" {
+		t.Errorf("target = %+v", captured)
+	}
+	if captured.Key != "groups.myteam" {
+		t.Errorf("target.Key = %q, want groups.myteam", captured.Key)
+	}
+	if capturedValue != `"openrouter/some-model"` {
+		t.Errorf("value = %q", capturedValue)
+	}
+
+	_, err = ConfigSetDirect(deps, "agent.system.webhooks.deploy=deploy.md")
+	if err != nil {
+		t.Fatalf("ConfigSetDirect: %v", err)
+	}
+	if captured.Key != "system.webhooks.deploy" {
+		t.Errorf("target.Key = %q, want system.webhooks.deploy", captured.Key)
+	}
+}
+
 // TestConfigSetDirectUnknownField verifies that direct mode returns an error containing
 // "unknown config field" when the section.key path ("nonexistent.field") does not correspond
 // to any known config field, preventing writes to nonexistent configuration keys.

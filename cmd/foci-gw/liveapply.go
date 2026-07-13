@@ -203,7 +203,16 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 	// extra step here is GroupResolver, a derived handle that holds its
 	// own copy (mutex-guarded, see config.GroupResolver.Update) rather than
 	// reading resolved live on every call.
-	la.registerMapSection(config.MapFieldSections(), func(fresh *config.Config) error {
+	//
+	// "agent" (distinct from config.MapFieldSections()'s global section
+	// names) covers per-agent overrides of the same fields — e.g.
+	// Apply("agent", "groups.myteam") for a "agent.groups.myteam=..." edit
+	// (see matchMapField's agent-prefix handling in internal/config/fields.go).
+	// The SAME applier body already covers it: config.Resolve(fresh, freshAcfg)
+	// merges the per-agent override in regardless of which agent's edit
+	// triggered the reload, since it just re-resolves every agent.
+	mapSections := append([]string{"agent"}, config.MapFieldSections()...)
+	la.registerMapSection(mapSections, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {
 			inst := agents[freshAcfg.ID]
 			if inst == nil {

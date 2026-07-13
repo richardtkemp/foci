@@ -457,25 +457,60 @@ var bareTOMLKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // (see bareTOMLKeyRe) — refusing is safer than SetInFile silently writing an
 // unquoted key that changes TOML's parsed meaning (a dotted key nests tables)
 // or fails to parse at all (most other special characters).
+// matchMapField also recognizes an "agent."-prefixed path (e.g.
+// "agent.groups.calls.summarize-file") as the per-agent override of a
+// registered global map section, per docs/CONFIG.md's "[agents.groups]
+// overrides [groups] per-agent" convention (same override shape every other
+// per-agent field already uses). It reuses the SAME global specs rather than
+// a second, hand-duplicated set — matching them after stripping "agent." —
+// and returns Section="agent" (not "agent.groups.calls" or similar): that's
+// what ConfigSetDirect's existing `section == "agent"` branch already
+// expects for every per-agent override, so this needs ZERO changes there.
+// The synthesized Key becomes "<matched-global-section>.<key>" (e.g.
+// "groups.calls.summarize-file"), which SetInFile's agent-block writer then
+// routes to [agents.<matched-global-section>] (setInAgentBlock's dotted-key
+// "upgrade" — see its doc).
+const agentMapPrefix = "agent."
+
 func matchMapField(lowerSectionKey string) (spec MapFieldSpec, key string, ok bool) {
+	target := lowerSectionKey
+	agentScoped := false
+	if rest, cut := strings.CutPrefix(lowerSectionKey, agentMapPrefix); cut {
+		target = rest
+		agentScoped = true
+	}
+
 	bestLen := -1
+	var bestSpec MapFieldSpec
+	var bestKey string
 	for _, s := range mapFieldSpecs {
 		prefix := strings.ToLower(s.Section) + "."
-		if !strings.HasPrefix(lowerSectionKey, prefix) {
+		if !strings.HasPrefix(target, prefix) {
 			continue
 		}
-		rest := lowerSectionKey[len(prefix):]
+		rest := target[len(prefix):]
 		if !bareTOMLKeyRe.MatchString(rest) {
 			continue // empty, or not a safely-unquoted TOML key
 		}
 		if len(prefix) > bestLen {
 			bestLen = len(prefix)
-			spec = s
-			key = rest
-			ok = true
+			bestSpec = s
+			bestKey = rest
 		}
 	}
-	return spec, key, ok
+	if bestLen < 0 {
+		return MapFieldSpec{}, "", false
+	}
+	if !agentScoped {
+		return bestSpec, bestKey, true
+	}
+	return MapFieldSpec{
+			Section:     "agent",
+			Description: bestSpec.Description,
+			ElementType: bestSpec.ElementType,
+		},
+		bestSpec.Section + "." + bestKey,
+		true
 }
 
 // MapFieldSections returns the Section of every registered MapFieldSpec, for

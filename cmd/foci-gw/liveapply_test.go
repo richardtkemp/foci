@@ -146,3 +146,62 @@ id = "a"
 		t.Error(`Apply("nonexistent", "foo") = applied, want false`)
 	}
 }
+
+// TestLiveApply_AgentMapSection is TestLiveApply_MapSection's per-agent
+// counterpart (#1231): a live "agent.groups.myteam=..." edit dispatches
+// through Apply("agent", "groups.myteam") — the "agent" section is a
+// separate registration from the global map sections above (see
+// registerLiveAppliers' comment) but reuses the same rebuild-and-swap
+// applier, since config.Resolve already merges per-agent overrides.
+func TestLiveApply_AgentMapSection(t *testing.T) {
+	base := &config.Config{
+		Groups: config.GroupsConfig{Groups: map[string]string{"powerful": "anthropic/claude-opus-4-6"}},
+		Agents: []config.AgentConfig{{ID: "a"}},
+	}
+	resolved := config.Resolve(base, base.Agents[0])
+	gr := config.NewGroupResolver(resolved.Groups, base.Models, true)
+
+	inst := &agentInstance{
+		id:       "a",
+		ag:       &agent.Agent{GroupResolver: gr},
+		resolved: config.NewLiveValue(resolved),
+	}
+
+	la := newLiveApply("")
+	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+
+	if r := inst.ag.GroupResolver.ResolveGroup("myteam"); r != nil {
+		t.Fatalf("initial ResolveGroup(myteam) = %+v, want nil (not yet defined)", r)
+	}
+
+	configPath := filepath.Join(t.TempDir(), "foci.toml")
+	freshTOML := `
+[groups]
+powerful = "anthropic/claude-opus-4-6"
+
+[[agents]]
+id = "a"
+
+[agents.groups]
+myteam = "anthropic/claude-haiku-4-5"
+`
+	if err := os.WriteFile(configPath, []byte(freshTOML), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	la.configPath = configPath
+
+	applied, err := la.Apply("agent", "groups.myteam")
+	if err != nil {
+		t.Fatalf("Apply(agent, groups.myteam): %v", err)
+	}
+	if !applied {
+		t.Fatal("Apply(agent, groups.myteam) returned applied=false — per-agent map fallback did not fire")
+	}
+
+	if r := inst.ag.GroupResolver.ResolveGroup("myteam"); r == nil || r.ModelID != "claude-haiku-4-5" {
+		t.Errorf("after Apply, GroupResolver.ResolveGroup(myteam) = %+v, want claude-haiku-4-5", r)
+	}
+	if got := inst.LiveConfig().Groups.Groups["myteam"]; got != "anthropic/claude-haiku-4-5" {
+		t.Errorf("after Apply, LiveConfig().Groups.Groups[myteam] = %q", got)
+	}
+}

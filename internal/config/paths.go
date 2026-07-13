@@ -182,8 +182,14 @@ func ParseFlags() (path string, checkConfig bool) {
 // UnknownKeys returns the list of unrecognised key names from the TOML metadata.
 // groupNames filters out [groups] string keys that were extracted separately
 // (they appear undecoded because GroupsConfig uses toml:"-" for the Groups map).
+// agentGroupNames does the same for each [[agents]].groups block (extractAgentGroupNames);
+// the undecoded key path carries no agent index, so this checks membership across
+// the union of all agents' extracted names rather than a specific agent — a false
+// negative here (treating an actually-unknown "agents.groups.X" as known) is only
+// possible if X happens to collide with a DIFFERENT agent's real group name, the
+// same imprecision the global groupNames check already accepts.
 // Exported for testing; Load() calls this internally and logs warnings.
-func UnknownKeys(md toml.MetaData, groupNames map[string]string) []string {
+func UnknownKeys(md toml.MetaData, groupNames map[string]string, agentGroupNames map[int]map[string]string) []string {
 	undecoded := md.Undecoded()
 	if len(undecoded) == 0 {
 		return nil
@@ -194,6 +200,19 @@ func UnknownKeys(md toml.MetaData, groupNames map[string]string) []string {
 		// Skip [groups] string keys — extracted by extractGroupNames.
 		if len(key) == 2 && key[0] == "groups" && groupNames != nil {
 			if _, ok := groupNames[key[1]]; ok {
+				continue
+			}
+		}
+		// Skip [[agents]].groups string keys — extracted by extractAgentGroupNames.
+		if len(key) == 3 && key[0] == "agents" && key[1] == "groups" {
+			known := false
+			for _, names := range agentGroupNames {
+				if _, ok := names[key[2]]; ok {
+					known = true
+					break
+				}
+			}
+			if known {
 				continue
 			}
 		}
