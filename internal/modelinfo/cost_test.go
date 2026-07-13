@@ -72,6 +72,29 @@ func TestUnpricedModelWarnsOnce(t *testing.T) {
 	}
 }
 
+func TestSyntheticModelIsFreeAndNotUnpriced(t *testing.T) {
+	var got []string
+	UnpricedModelHook = func(m string) { got = append(got, m) }
+	t.Cleanup(func() {
+		UnpricedModelHook = nil
+		unpricedMu.Lock()
+		unpricedSeen = map[string]bool{}
+		unpricedMu.Unlock()
+	})
+
+	// The synthetic sentinel prices at $0 regardless of token counts...
+	if cost := Cost("<synthetic>", 1_000_000, 1_000_000, 1_000_000, 1_000_000); cost != 0 {
+		t.Errorf("synthetic cost = %f, want 0", cost)
+	}
+	// ...and must NOT trip the unpriced-model warning.
+	if len(got) != 0 {
+		t.Errorf("synthetic tripped unpriced warning: %v", got)
+	}
+	if !IsSynthetic("<synthetic>") || IsSynthetic("claude-haiku-4-5") {
+		t.Error("IsSynthetic misclassified a model")
+	}
+}
+
 func TestCalculateCostByFamily(t *testing.T) {
 	cases := []struct {
 		model string
