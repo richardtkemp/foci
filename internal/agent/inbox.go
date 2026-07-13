@@ -485,7 +485,7 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// compaction hold and text-only/attachment constraints still apply — a
 	// SteerAlways message can't be folded into a compaction transcript or
 	// carry attachments mid-turn.
-	steerMode := a.inboxSteerMode
+	steerMode := a.steerMode()
 	switch env.Steer {
 	case SteerAlways:
 		steerMode = true

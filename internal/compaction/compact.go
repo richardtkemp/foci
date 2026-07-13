@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"foci/internal/config"
@@ -20,12 +21,17 @@ import (
 
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
-	log              *log.ComponentLogger
-	sessions         *session.Store
-	threshold        float64 // fraction of context window (e.g. 0.8); anchor for the non-linear curve
-	nonlinear        bool    // true = concave curve (default when no explicit compaction_threshold); false = flat threshold
-	maxTokens        int
-	minMessages      int
+	log         *log.ComponentLogger
+	sessions    *session.Store
+	maxTokens   int
+	minMessages int
+
+	// mu guards threshold/nonlinear/preserveMessages: a live config edit can
+	// call the Set* methods concurrently with Compact/ShouldCompactWithLimit
+	// reading them from other sessions' turn goroutines on the same agent.
+	mu               sync.RWMutex
+	threshold        float64                                   // fraction of context window (e.g. 0.8); anchor for the non-linear curve
+	nonlinear        bool                                      // true = concave curve (default when no explicit compaction_threshold); false = flat threshold
 	preserveMessages int                                       // preserve last N messages through compaction (0 disables)
 	ModelMetaFn      func(model string) modelinfo.ModelMeta    // per-model meta from config (context window)
 	ModelCapsFn      func(model string) (modelcaps.Caps, bool) // live caps from this agent's backend record; nil disables
@@ -57,7 +63,9 @@ func (c *Compactor) WithConfig(maxTokens, minMessages, preserveMessages int) *Co
 		c.minMessages = minMessages
 	}
 	if preserveMessages >= 0 {
+		c.mu.Lock()
 		c.preserveMessages = preserveMessages
+		c.mu.Unlock()
 	}
 	return c
 }
@@ -83,13 +91,25 @@ func (c *Compactor) ContextLimit(model string) int {
 
 // Threshold returns the base compaction threshold.
 func (c *Compactor) Threshold() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.threshold
+}
+
+// SetThreshold sets the base compaction threshold (fraction of context window).
+func (c *Compactor) SetThreshold(threshold float64) *Compactor {
+	c.mu.Lock()
+	c.threshold = threshold
+	c.mu.Unlock()
+	return c
 }
 
 // SetNonlinear enables the concave usable-context curve (default when the user
 // sets no explicit compaction_threshold). When false, a flat threshold applies.
 func (c *Compactor) SetNonlinear(nonlinear bool) *Compactor {
+	c.mu.Lock()
 	c.nonlinear = nonlinear
+	c.mu.Unlock()
 	return c
 }
 
@@ -105,25 +125,32 @@ func (c *Compactor) EffectiveThreshold(limit int) int {
 // 0.8) up to a 200k pivot, then anchor·(W/pivot)^-0.32 — ~0.8 of 200k, ~0.48 of
 // 1M, ~0.38 of 2M. An explicit compaction_threshold pins a flat fraction.
 func (c *Compactor) thresholdFraction(limit int) float64 {
-	if !c.nonlinear {
-		return c.threshold
+	c.mu.RLock()
+	threshold, nonlinear := c.threshold, c.nonlinear
+	c.mu.RUnlock()
+	if !nonlinear {
+		return threshold
 	}
 	const pivot = 200_000.0
 	const b = 0.32
 	if limit <= 0 || float64(limit) <= pivot {
-		return c.threshold
+		return threshold
 	}
-	return c.threshold * math.Pow(float64(limit)/pivot, -b)
+	return threshold * math.Pow(float64(limit)/pivot, -b)
 }
 
 // PreserveMessages returns the current preserve messages count.
 func (c *Compactor) PreserveMessages() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.preserveMessages
 }
 
 // SetPreserveMessages sets the preserve messages count.
 func (c *Compactor) SetPreserveMessages(n int) {
+	c.mu.Lock()
 	c.preserveMessages = n
+	c.mu.Unlock()
 }
 
 // safeSplitPoint adjusts splitIdx backward (up to maxWalkBack steps) so that
@@ -284,7 +311,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	//
 	// The split point is: splitIdx = len(messages) - preserveN
 	// Messages [0..splitIdx) are summarised; messages [splitIdx..] are preserved.
-	preserveN := c.preserveMessages
+	preserveN := c.PreserveMessages()
 	if preserveN > len(messages) {
 		preserveN = len(messages)
 	}

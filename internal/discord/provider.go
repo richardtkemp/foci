@@ -85,6 +85,7 @@ func (p *discordProvider) SetupAgentConnection(params platform.AgentConnectionPa
 		ReclaimHook:       params.ReclaimHook,
 		DisplayOverrideFn: params.DisplayOverrideFn,
 		Resolved:          params.Resolved,
+		ResolvedLive:      params.ResolvedLive,
 	})
 }
 

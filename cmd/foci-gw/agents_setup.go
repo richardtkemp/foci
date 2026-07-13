@@ -99,6 +99,18 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 	compactor.FallbackFunc = fallbackFn
 	compactor.ClientProvider = p.clientProvider
 
+	p.resolvedLive.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
+		if fresh.Compaction.CompactionThreshold != old.Compaction.CompactionThreshold {
+			compactor.SetThreshold(fresh.Compaction.CompactionThreshold)
+		}
+		if fresh.Compaction.CompactionThresholdSet != old.Compaction.CompactionThresholdSet {
+			compactor.SetNonlinear(!fresh.Compaction.CompactionThresholdSet)
+		}
+		if fresh.Compaction.CompactionPreserveMessages != old.Compaction.CompactionPreserveMessages {
+			compactor.SetPreserveMessages(fresh.Compaction.CompactionPreserveMessages)
+		}
+	})
+
 	return compactor, compactionThreshold
 }
 
@@ -379,7 +391,8 @@ func setupPlatformConnections(
 				DisplayWidth:  ag.SessionDisplayWidth(sessionKey),
 			}
 		},
-		Resolved: p.resolved,
+		Resolved:     p.resolved,
+		ResolvedLive: p.resolvedLive,
 	})
 	for _, r := range results {
 		if r.ConfigureFacetConn != nil {

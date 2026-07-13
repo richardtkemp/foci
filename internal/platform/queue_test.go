@@ -96,7 +96,7 @@ func TestMessageQueue_GroupThrottleBuffers(t *testing.T) {
 		}
 	}, nil)
 	defer gt.Stop()
-	mq.throttle = gt
+	mq.throttle.Store(gt)
 
 	mq.Enqueue(QueuedMessage{
 		UserID:      "u1",
@@ -204,5 +204,45 @@ func TestMessageQueue_EnqueueCommand(t *testing.T) {
 		}
 	case <-time.After(50 * time.Millisecond):
 		t.Fatal("command not delivered to cmd channel")
+	}
+}
+
+// TestMessageQueue_SetThrottleIsLiveNotBaked proves SetThrottle/GetThrottle
+// swap the throttle a running MessageQueue uses on its very next Enqueue —
+// the mechanism a live config edit to behavior.group_throttle relies on —
+// without reconstructing the queue.
+func TestMessageQueue_SetThrottleIsLiveNotBaked(t *testing.T) {
+	mq := NewMessageQueue(MessageQueueConfig{Size: 64, RequireMention: true})
+	if mq.GetThrottle() != nil {
+		t.Fatal("expected no throttle initially")
+	}
+
+	// No throttle configured yet: a non-mention group message is dropped.
+	mq.Enqueue(QueuedMessage{Text: "buffered?", ChatID: 1, IsGroupChat: true, IsMention: false})
+	select {
+	case msg := <-mq.Chan():
+		t.Fatalf("unexpected message before throttle configured: %v", msg)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	gt := NewGroupThrottle(10*time.Millisecond, func(msgs []QueuedMessage) {
+		for _, m := range msgs {
+			mq.pushToChannel(m)
+		}
+	}, nil)
+	defer gt.Stop()
+	mq.SetThrottle(gt)
+	if mq.GetThrottle() != gt {
+		t.Fatal("GetThrottle did not return the throttle just set")
+	}
+
+	mq.Enqueue(QueuedMessage{Text: "now buffered", ChatID: 1, IsGroupChat: true, IsMention: false})
+	select {
+	case msg := <-mq.Chan():
+		if msg.Text != "now buffered" {
+			t.Fatalf("unexpected text: %s", msg.Text)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("message never flushed through the newly set throttle")
 	}
 }

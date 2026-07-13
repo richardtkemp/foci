@@ -362,10 +362,10 @@ type AgentToolsOverride struct {
 
 // CompactionConfig holds compaction settings. Embed in SessionsConfig (global) and AgentConfig (per-agent).
 type CompactionConfig struct {
-	CompactionThreshold        *float64 `toml:"compaction_threshold"  desc:"Fraction of the context window (0 to 1) that must fill before old messages are summarized. Leave unset for a curve that waits longer on larger windows" min:"0" max:"1"`
+	CompactionThreshold        *float64 `toml:"compaction_threshold"  hot:"immediate" desc:"Fraction of the context window (0 to 1) that must fill before old messages are summarized. Leave unset for a curve that waits longer on larger windows" min:"0" max:"1"`
 	CompactionSummaryPrompt    *string  `toml:"compaction_summary_prompt"             desc:"Path to a file containing the prompt used to ask the model to summarize old messages during compaction"`
 	CompactionHandoffMsg       *string  `toml:"compaction_handoff_msg"                desc:"Path to a file containing the message shown to the model right after compaction to help it pick back up"`
-	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"          desc:"Number of most recent messages kept word-for-word instead of being summarized when compaction runs. 0 = summarize everything. Default 25" min:"0"`
+	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"          hot:"immediate" desc:"Number of most recent messages kept word-for-word instead of being summarized when compaction runs. 0 = summarize everything. Default 25" min:"0"`
 	FacetNoCompact             *bool    `toml:"facet_no_compact"                      desc:"Facets are short-lived side sessions branched off the main chat. When true, they are never compacted since they do not last long (default true)"`
 	ReloadOnCompact            *bool    `toml:"reload_on_compact"                     desc:"For Claude Code-backed agents, restarts the session after compaction so edits to character or skill files since it started take effect (default true)"`
 }
@@ -454,8 +454,8 @@ type AgentLoopConfig struct {
 // BehaviorConfig holds agent behavioral settings.
 // Global: [behavior], per-agent: [[agents]].behavior.*
 type BehaviorConfig struct {
-	SteerMode             *bool    `toml:"steer_mode"               default:"true"  desc:"Lets a message you send while the agent is mid-turn redirect it at the next tool call, instead of waiting for the turn to finish"`
-	GroupThrottle         *string  `toml:"group_throttle"                            desc:"In group chats, buffers messages that do not mention the agent for this long, then delivers them together. A mention flushes the buffer immediately. Empty disables it" type:"duration"`
+	SteerMode             *bool    `toml:"steer_mode"               default:"true"  hot:"immediate" desc:"Lets a message you send while the agent is mid-turn redirect it at the next tool call, instead of waiting for the turn to finish"`
+	GroupThrottle         *string  `toml:"group_throttle"                            hot:"event" desc:"In group chats, buffers messages that do not mention the agent for this long, then delivers them together. A mention flushes the buffer immediately. Empty disables it" type:"duration"`
 	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold" default:"3m"    desc:"Writes a warning to the server log if a turn waits longer than this for the previous turn on the same session to finish. Diagnostic only, not shown to users" type:"duration"`
 	EnableStopAliases     *bool    `toml:"enable_stop_aliases"      default:"true"  desc:"Lets extra words such as wait also work as aliases for stop, which cancels the agent's current turn"`
 	StopAliases           []string `toml:"stop_aliases"`

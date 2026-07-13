@@ -281,6 +281,13 @@ func (a *Agent) maxSummaryInputChars() int {
 	return a.MaxSummaryInputChars
 }
 
+func (a *Agent) steerMode() bool {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Behavior.SteerMode
+	}
+	return a.inboxSteerMode
+}
+
 // TransformMessage applies compiled message transforms to the text.
 // Returns the original text unchanged if no transforms are configured.
 func (a *Agent) TransformMessage(text string) string {
