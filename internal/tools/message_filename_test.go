@@ -194,8 +194,8 @@ func TestSendToChat_FilenameWithCaption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: document+caption" {
-		t.Errorf("result = %q, want %q", result.Text, "Sent: document+caption")
+	if result.Text != "Sent: report.md+caption" {
+		t.Errorf("result = %q, want %q", result.Text, "Sent: report.md+caption")
 	}
 	if len(mock.documentCaptions) != 1 || mock.documentCaptions[0] != "see attached" {
 		t.Errorf("documentCaptions = %v, want [\"see attached\"]", mock.documentCaptions)

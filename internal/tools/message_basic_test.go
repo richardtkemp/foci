@@ -49,7 +49,7 @@ func TestSendMessageToUserDocumentOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: document" {
+	if result.Text != "Sent: report.pdf" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.documentCalls) != 1 || mock.documentCalls[0] != "/tmp/report.pdf" {
@@ -72,7 +72,7 @@ func TestSendMessageToUserVoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: voice note" {
+	if result.Text != "Sent: note.ogg" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.voiceCalls) != 1 || mock.voiceCalls[0] != "/tmp/note.ogg" {
@@ -98,7 +98,7 @@ func TestSendMessageToUserTextAndDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: document+caption" {
+	if result.Text != "Sent: data.csv+caption" {
 		t.Errorf("result = %q", result.Text)
 	}
 	// No standalone text send when caption rides on the document.
@@ -225,7 +225,7 @@ func TestSendMessageToUserCaptionTooLongFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: text + document" {
+	if result.Text != "Sent: text + data.csv" {
 		t.Errorf("result = %q (expected fallback to two-message form)", result.Text)
 	}
 	if len(mock.textCalls) != 1 {
@@ -256,7 +256,7 @@ func TestSendMessageToUserVoiceWithTextDoesNotCaption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: text + voice note" {
+	if result.Text != "Sent: text + note.ogg" {
 		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.textCalls) != 1 {
