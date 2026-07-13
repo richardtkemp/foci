@@ -206,6 +206,130 @@ func renderScalar(v any) (string, bool) {
 	}
 }
 
+// TableArrayEntries reads the [[section]] array-of-tables blocks for spec's
+// (possibly dotted) section from the TOML file at path, returning one
+// map[subfield]value per block. Only sub-keys declared in spec.Fields are
+// included, so a stray or unknown key in the file never reaches the client.
+// Values keep their decoded Go types (string, float64, int64, bool) so a later
+// json.Marshal produces the natural JSON shape the editor expects. An absent
+// section yields an empty (non-nil) slice, not an error.
+func TableArrayEntries(path string, spec ObjectFieldSpec) ([]map[string]any, error) {
+	var raw map[string]any
+	if _, err := toml.DecodeFile(path, &raw); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	parts := strings.Split(spec.Section, ".")
+	cur := raw
+	for _, p := range parts[:len(parts)-1] {
+		m, ok := cur[p].(map[string]any)
+		if !ok {
+			return []map[string]any{}, nil // parent table absent
+		}
+		cur = m
+	}
+	blocks := toTableArrayBlocks(cur[parts[len(parts)-1]])
+	allowed := map[string]bool{}
+	for _, sf := range spec.Fields {
+		allowed[sf.Key] = true
+	}
+	out := make([]map[string]any, 0, len(blocks))
+	for _, b := range blocks {
+		entry := map[string]any{}
+		for k, v := range b {
+			if allowed[k] {
+				entry[k] = v
+			}
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// toTableArrayBlocks normalizes a decoded array-of-tables value to
+// []map[string]any. BurntSushi may yield either []map[string]any or []any of
+// maps depending on input; anything else (or nil) yields no blocks.
+func toTableArrayBlocks(v any) []map[string]any {
+	switch t := v.(type) {
+	case []map[string]any:
+		return t
+	case []any:
+		out := make([]map[string]any, 0, len(t))
+		for _, e := range t {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// ParseObjectListValue decodes the editor's JSON array-of-objects into the
+// []map[string]any that SetTableArray writes, coercing each sub-value to the Go
+// type its ObjectSubField declares (so SetTableArray's formatter emits the right
+// TOML). Unknown sub-keys and type mismatches are rejected.
+func ParseObjectListValue(spec ObjectFieldSpec, jsonStr string) ([]map[string]any, error) {
+	var raw []map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return nil, fmt.Errorf("invalid object list: %w", err)
+	}
+	types := map[string]FieldType{}
+	for _, sf := range spec.Fields {
+		types[sf.Key] = sf.Type
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for i, obj := range raw {
+		entry := map[string]any{}
+		for k, v := range obj {
+			ft, ok := types[k]
+			if !ok {
+				return nil, fmt.Errorf("entry %d: unknown field %q for [[%s]]", i+1, k, spec.Section)
+			}
+			cv, err := coerceObjectValue(v, ft)
+			if err != nil {
+				return nil, fmt.Errorf("entry %d field %q: %w", i+1, k, err)
+			}
+			entry[k] = cv
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// coerceObjectValue converts a JSON-decoded value (string, float64, bool) to the
+// Go type SetTableArray's formatter expects for the given FieldType.
+func coerceObjectValue(v any, ft FieldType) (any, error) {
+	switch ft {
+	case FieldString, FieldDuration:
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("expected a string")
+		}
+		return s, nil
+	case FieldFloat:
+		f, ok := v.(float64)
+		if !ok {
+			return nil, fmt.Errorf("expected a number")
+		}
+		return f, nil
+	case FieldInt:
+		f, ok := v.(float64)
+		if !ok {
+			return nil, fmt.Errorf("expected an integer")
+		}
+		return int64(f), nil
+	case FieldBool:
+		b, ok := v.(bool)
+		if !ok {
+			return nil, fmt.Errorf("expected a boolean")
+		}
+		return b, nil
+	default:
+		return nil, fmt.Errorf("unsupported field type")
+	}
+}
+
 // AgentGlobalSections maps an agent-override key prefix (the AgentConfig
 // field's TOML tag, e.g. "loop") to the GLOBAL registry section holding the
 // same struct type (e.g. "agent_loop") — the section an unset agent override
