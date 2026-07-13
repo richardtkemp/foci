@@ -77,7 +77,10 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			}
 			dBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			dBot.SetCommandContext(p.CommandContext)
-			ApplyAgentDisplaySettings(dBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug)
+			// bot.display is a per-bot baked fallback layer; the live
+			// per-session override path is DisplayOverrideFn/session_meta.go.
+			// Converting this fallback itself needs its own dedicated pass.
+			ApplyAgentDisplaySettings(dBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug) // static-cfg:ignore: see comment above
 			dBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 		},
 		DisplayDefaultsFn: func() platform.DisplaySettings {
@@ -187,7 +190,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	primaryBot.autoThread = autoThread
 
 	// Resolve behavior config from pre-merged config.
-	bc := p.Resolved.Behavior
+	bc := p.Resolved.Behavior // static-cfg:ignore: initial construction value; group_throttle live-updates via the OnChange below, steer_mode via LiveConfigFn (bucket D)
 	primaryBot.mq.SetRequireMention(primaryBot.requireMention)
 
 	if gt := newGroupThrottle(bc.GroupThrottle, primaryBot); gt != nil {
@@ -236,7 +239,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		primaryBot.SetTTS(p.TTS)
 	}
 	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
-	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug)
+	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug) // static-cfg:ignore: see comment on the ConfigureFacetConn call above
 	primaryBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 
 	if p.DisplayOverrideFn != nil {
