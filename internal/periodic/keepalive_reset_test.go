@@ -50,6 +50,28 @@ func TestMaybeReset_Fires(t *testing.T) {
 	}
 }
 
+func TestMaybeReset_SkipsWhenRateLimited(t *testing.T) {
+	// Reset is due and the user is idle, but the endpoint is rate-limited:
+	// reset must skip so it doesn't rotate the session key while the downstream
+	// memory formation is itself rate-limited (which would lose the memory).
+	resetCh := make(chan string, 1)
+	r := newResetRunner(t,
+		config.ResolvedMaintenance{ResetTime: "1h", ResetIdleGuard: "55m"},
+		time.Now().Add(-2*time.Hour),
+		time.Now().Add(-2*time.Hour),
+		resetCh)
+	r.agent.(*fakeBackgroundAgent).rateLimitedFn = func(string) (bool, string) { return true, "rate limited" }
+
+	r.maybeReset(context.Background())
+
+	select {
+	case <-resetCh:
+		t.Fatal("reset fired while rate-limited")
+	case <-time.After(200 * time.Millisecond):
+		// expected: no fire
+	}
+}
+
 func TestMaybeReset_SkipsWhenRecentlyActive(t *testing.T) {
 	resetCh := make(chan string, 1)
 	r := newResetRunner(t,

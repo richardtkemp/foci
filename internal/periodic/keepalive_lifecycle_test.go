@@ -142,6 +142,39 @@ func TestMaybeKeepalive_Fires(t *testing.T) {
 	}
 }
 
+func TestMaybeKeepalive_SkipsWhenRateLimited(t *testing.T) {
+	// Same warm-window setup as _Fires, but the session's endpoint is
+	// rate-limited: keepalive must not warm into a cap.
+	var calls int
+	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
+		agentID: "test",
+		kaCfg: config.ResolvedKeepalive{
+			Enabled:  true,
+			Interval: "1m",
+			Prompt:   "keepalive.md",
+		},
+		cacheTTL:     time.Hour,
+		sessionIndex: indexWithTouch(t, "test/c1", 10*time.Minute),
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn:  func() string { return "test/c1" },
+			rateLimitedFn: func(string) (bool, string) { return true, "rate limited" },
+			branchFn: func(_, _, _ string, _ bool) bool {
+				calls++
+				return true
+			},
+		},
+		done: make(chan struct{}),
+	}
+
+	r.maybeKeepalive(context.Background())
+	waitIdle(t, r)
+
+	if calls != 0 {
+		t.Errorf("keepalive fired into a rate-limited endpoint")
+	}
+}
+
 func TestMaybeKeepalive_NeverWarmed(t *testing.T) {
 	// A session with no recorded cache-touch (never warmed / just reset) is
 	// skipped — there is no live cache to keep alive.

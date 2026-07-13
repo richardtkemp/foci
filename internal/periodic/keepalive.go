@@ -78,8 +78,13 @@ type BackgroundAgent interface {
 	IsTurnInFlight(parentBase string) bool
 	// SessionKey returns the session key background operations run against ("" if none).
 	SessionKey() string
-	// CanFire reports whether a background operation may fire now (rate limit + can_run_background gate).
+	// CanFire reports whether a background operation may fire now (rate limit +
+	// can_run_background gate). Used ONLY by maybeBackgroundWork.
 	CanFire(ctx context.Context, sessionKey string) (allowed bool, reason string)
+	// RateLimited reports whether the given session's endpoint is currently
+	// rate-limited. The shared gate for every model-calling scheduler
+	// (keepalive/reflection/consolidation/reset); does NOT run can_run_background.
+	RateLimited(sessionKey string) (limited bool, reason string)
 	// RunOnce executes a one-shot headless prompt (delegated agents only); used by
 	// consolidation. Only called when the agent is delegated.
 	RunOnce(ctx context.Context, prompt, systemPrompt string) (string, error)
@@ -405,11 +410,26 @@ func (r *Runner) readyParentKey() (parentKey, skip string) {
 	return parentKey, ""
 }
 
-// checkCanFire applies the agent's rate-limit + can_run_background gate for the
-// current default session. Returns "" if the operation may fire, else the skip
-// reason. Used by the background/reflection/consolidation schedulers.
-func (r *Runner) checkCanFire(ctx context.Context) (skip string) {
-	if canFire, reason := r.agent.CanFire(ctx, r.agent.SessionKey()); !canFire {
+// checkCanFire applies the FULL gate (rate limit + can_run_background) for a
+// specific session. Only maybeBackgroundWork uses it — the can_run_background
+// script is background-work-only. Returns "" if the operation may fire, else
+// the skip reason.
+func (r *Runner) checkCanFire(ctx context.Context, sessionKey string) (skip string) {
+	if canFire, reason := r.agent.CanFire(ctx, sessionKey); !canFire {
+		return reason
+	}
+	return ""
+}
+
+// checkRateLimit is the shared gate for every model-calling scheduler
+// (keepalive/reflection/consolidation/reset): it blocks only when the specific
+// session's endpoint is rate-limited, and never runs can_run_background.
+// Returns "" if clear, else the skip reason.
+func (r *Runner) checkRateLimit(sessionKey string) (skip string) {
+	if r.agent == nil {
+		return ""
+	}
+	if limited, reason := r.agent.RateLimited(sessionKey); limited {
 		return reason
 	}
 	return ""
@@ -548,6 +568,9 @@ func (r *Runner) keepaliveTargets(interval time.Duration) []string {
 		if r.parentTurnInFlight(sk) {
 			continue
 		}
+		if skip := r.checkRateLimit(sk); skip != "" {
+			continue // endpoint rate-limited — don't warm into a cap
+		}
 		touch, ok := r.sessionIndex.LastCacheTouch(sk)
 		if !ok {
 			continue // never warmed / reset — no live cache to keep alive
@@ -625,13 +648,16 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		}
 	}
 
-	// Check availability (rate limit + can_run_background gate)
-	if skip = r.checkCanFire(ctx); skip != "" {
+	parentKey, skip := r.readyParentKey()
+	if skip != "" {
 		return
 	}
 
-	parentKey, skip := r.readyParentKey()
-	if skip != "" {
+	// Full gate (rate limit + can_run_background) on the specific parent
+	// session. Background work is the ONLY scheduler that runs the
+	// can_run_background script. Checked after readyParentKey so the (up-to-10s)
+	// script never runs when there's no ready session to fire on anyway.
+	if skip = r.checkCanFire(ctx, parentKey); skip != "" {
 		return
 	}
 
@@ -745,10 +771,15 @@ func (r *Runner) maybeReflection() {
 	// follow-up, which is the wrong source attribution and the wrong timing.
 	// Defer to the next 30s tick. (TODO #760)
 	filtered := keys[:0]
-	busy := 0
+	busy, limited := 0, 0
 	for _, k := range keys {
 		if r.agent.IsTurnInFlight(k) {
 			busy++
+			continue
+		}
+		// Shared rate-limit gate, per specific session (no can_run_background).
+		if lim, _ := r.agent.RateLimited(k); lim {
+			limited++
 			continue
 		}
 		filtered = append(filtered, k)
@@ -757,13 +788,11 @@ func (r *Runner) maybeReflection() {
 	if busy > 0 {
 		r.log.Debugf("reflection: deferred %d session(s) with in-flight turns", busy)
 	}
-	if len(keys) == 0 {
-		skip = "all candidate sessions have in-flight turns"
-		return
+	if limited > 0 {
+		r.log.Debugf("reflection: deferred %d rate-limited session(s)", limited)
 	}
-
-	// Check availability (rate limit + can_run_background gate)
-	if skip = r.checkCanFire(context.Background()); skip != "" {
+	if len(keys) == 0 {
+		skip = "no ready sessions (in-flight or rate-limited)"
 		return
 	}
 
@@ -898,13 +927,13 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
-	// Check availability (rate limit + can_run_background gate)
-	if skip = r.checkCanFire(context.Background()); skip != "" {
+	parentKey, skip := r.readyParentKey()
+	if skip != "" {
 		return
 	}
 
-	parentKey, skip := r.readyParentKey()
-	if skip != "" {
+	// Shared rate-limit gate on the specific parent session (no can_run_background).
+	if skip = r.checkRateLimit(parentKey); skip != "" {
 		return
 	}
 
@@ -1040,6 +1069,14 @@ func (r *Runner) maybeReset(ctx context.Context) {
 
 	parentKey, skip := r.readyParentKey()
 	if skip != "" {
+		return
+	}
+
+	// Shared rate-limit gate on the specific parent session. Skipping here
+	// during a cap is deliberate: reset rotates the session key AND forms
+	// memory, and the downstream memory pass is itself rate-limited — firing
+	// anyway would rotate the key while losing the memory formation.
+	if skip = r.checkRateLimit(parentKey); skip != "" {
 		return
 	}
 

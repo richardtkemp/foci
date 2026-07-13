@@ -13,6 +13,7 @@ type fakeBackgroundAgent struct {
 	isTurnInFlightFn func(parentBase string) bool
 	sessionKeyFn     func() string
 	canFireFn        func(ctx context.Context, sessionKey string) (bool, string)
+	rateLimitedFn    func(sessionKey string) (bool, string)
 	runOnceFn        func(ctx context.Context, prompt, systemPrompt string) (string, error)
 	resetFn          func(ctx context.Context, sessionKey string) error
 	cleanupFn        func(ctx context.Context, retentionDays int) int
@@ -53,6 +54,19 @@ func (f *fakeBackgroundAgent) CanFire(ctx context.Context, sessionKey string) (b
 		return f.canFireFn(ctx, sessionKey)
 	}
 	return true, ""
+}
+
+func (f *fakeBackgroundAgent) RateLimited(sessionKey string) (bool, string) {
+	if f.rateLimitedFn != nil {
+		return f.rateLimitedFn(sessionKey)
+	}
+	// Fall back to canFireFn so tests that only set canFireFn still exercise
+	// the rate-limit-gated schedulers: "can't fire" ⇒ "rate-limited".
+	if f.canFireFn != nil {
+		allowed, reason := f.canFireFn(context.Background(), sessionKey)
+		return !allowed, reason
+	}
+	return false, ""
 }
 
 func (f *fakeBackgroundAgent) RunOnce(ctx context.Context, prompt, systemPrompt string) (string, error) {
