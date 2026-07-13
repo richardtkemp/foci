@@ -410,6 +410,23 @@ func (r *Runner) readyParentKey() (parentKey, skip string) {
 	return parentKey, ""
 }
 
+// readyGatedParent resolves a ready parent session (readyParentKey) and then
+// applies gate to it, in that order — so the gate (which may run an up-to-10s
+// can_run_background subprocess) never fires when there's no ready session to
+// dispatch on anyway. Returns ("", skip) if there's no ready parent or the gate
+// blocks, else (parentKey, ""). The three branch-dispatching schedulers
+// (background, consolidation, reset) share this; they differ only in the gate.
+func (r *Runner) readyGatedParent(gate func(sessionKey string) string) (parentKey, skip string) {
+	parentKey, skip = r.readyParentKey()
+	if skip != "" {
+		return "", skip
+	}
+	if skip = gate(parentKey); skip != "" {
+		return "", skip
+	}
+	return parentKey, ""
+}
+
 // checkCanFire applies the FULL gate (rate limit + can_run_background) for a
 // specific session. Only maybeBackgroundWork uses it — the can_run_background
 // script is background-work-only. Returns "" if the operation may fire, else
@@ -648,16 +665,10 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		}
 	}
 
-	parentKey, skip := r.readyParentKey()
+	// Background work is the ONLY scheduler that runs the full gate (rate limit
+	// + can_run_background script).
+	parentKey, skip := r.readyGatedParent(func(sk string) string { return r.checkCanFire(ctx, sk) })
 	if skip != "" {
-		return
-	}
-
-	// Full gate (rate limit + can_run_background) on the specific parent
-	// session. Background work is the ONLY scheduler that runs the
-	// can_run_background script. Checked after readyParentKey so the (up-to-10s)
-	// script never runs when there's no ready session to fire on anyway.
-	if skip = r.checkCanFire(ctx, parentKey); skip != "" {
 		return
 	}
 
@@ -927,13 +938,9 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
-	parentKey, skip := r.readyParentKey()
-	if skip != "" {
-		return
-	}
-
 	// Shared rate-limit gate on the specific parent session (no can_run_background).
-	if skip = r.checkRateLimit(parentKey); skip != "" {
+	parentKey, skip := r.readyGatedParent(r.checkRateLimit)
+	if skip != "" {
 		return
 	}
 
@@ -1067,16 +1074,12 @@ func (r *Runner) maybeReset(ctx context.Context) {
 		return
 	}
 
-	parentKey, skip := r.readyParentKey()
-	if skip != "" {
-		return
-	}
-
 	// Shared rate-limit gate on the specific parent session. Skipping here
 	// during a cap is deliberate: reset rotates the session key AND forms
 	// memory, and the downstream memory pass is itself rate-limited — firing
 	// anyway would rotate the key while losing the memory formation.
-	if skip = r.checkRateLimit(parentKey); skip != "" {
+	parentKey, skip := r.readyGatedParent(r.checkRateLimit)
+	if skip != "" {
 		return
 	}
 
