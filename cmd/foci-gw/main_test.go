@@ -286,7 +286,7 @@ func TestBuildEnvironmentDelegated(t *testing.T) {
 		{Name: "foci_web_search", Description: "Search the web using Brave Search API."},
 	}
 
-	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, 3, []string{"telegram"}, shellTools, nil, "")
+	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 3, []string{"telegram"}, shellTools, nil, "")
 
 	// Core sections present
 	if !strings.Contains(block, "You are running on **foci**") {

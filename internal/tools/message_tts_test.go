@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"foci/internal/platform"
+	"foci/internal/voice"
 )
 
 // mockTTS provides a mock TTS synthesizer for testing.
@@ -29,7 +30,7 @@ func TestSendMessageToUserVoiceTTS(t *testing.T) {
 	t.Parallel()
 	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, func() voice.TTS { return tts })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello world",
@@ -60,7 +61,7 @@ func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
 	t.Parallel()
 	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, func() voice.TTS { return tts })
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -111,7 +112,7 @@ func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
 	t.Parallel()
 	mock := &mockSender{}
 	tts := &mockTTS{err: fmt.Errorf("API rate limit")}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, func() voice.TTS { return tts })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello",
@@ -132,7 +133,7 @@ func TestSendMessageToUserVoiceFilePathStillWorks(t *testing.T) {
 	t.Parallel()
 	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("should-not-be-used")}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, func() voice.TTS { return tts })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file":    "/tmp/note.ogg",

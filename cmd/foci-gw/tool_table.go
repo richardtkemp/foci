@@ -50,7 +50,7 @@ type toolDeps struct {
 
 	sessionNotify tools.SessionNotifyFn // send_to_session → via=agent
 	askDeliver    tools.SessionNotifyFn // ask answer/grader delivery → via=ask-grader
-	agentTTS      voice.TTS
+	agentTTS      func() voice.TTS
 	blockedPaths  []config.BlockedPath // API-only (write/edit)
 
 	// API-only deps for spawn.

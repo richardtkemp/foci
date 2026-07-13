@@ -207,6 +207,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		groupResolver:       s.groupResolver,
 		fallbackFn:          fp.fallbackFn,
 		resolved:            p.resolved,
+		resolvedLive:        p.resolvedLive,
 		configureFacet: func(conn platform.Connection) {
 			if configureFacet != nil {
 				configureFacet(conn)

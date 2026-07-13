@@ -232,7 +232,11 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
 	}
 	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
-	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, p.resolved.Voice.TTS, p.resolved.Voice.TTSRate, ttsRepls)
+	resolvedLive := p.resolvedLive
+	agentTTS := func() voice.TTS {
+		vc := resolvedLive.Load().Voice
+		return resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
+	}
 
 	// Register all tools from the single data-driven table (see tool_table.go),
 	// which is the one source of truth shared with the delegated exec path.
@@ -264,7 +268,11 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 
 	// Per-agent environment block, rebuilt per session so the ## Platform block
 	// matches the session's messaging platform (resolved from the durable chat
-	// claim — see platformForSession). Crontab count is captured once.
+	// claim — see platformForSession) and its content tracks a live config
+	// edit. Crontab count is a subprocess spawn (crontab -l), too expensive to
+	// re-run per session — captured once from the startup value of
+	// Environment.Enabled; a live edit that turns Environment on after startup
+	// renders with crontabCount=0 until restart.
 	crontabCount := 0
 	if p.resolved.Environment.Enabled {
 		crontabCount = countCrontabJobs()
@@ -272,11 +280,12 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	envSessionIdx := p.sessionIndex
 	envAgentID := acfg.ID
 	envBlockFunc := func(sessionKey string) string {
-		if !p.resolved.Environment.Enabled {
+		rc := resolvedLive.Load()
+		if !rc.Environment.Enabled {
 			return ""
 		}
 		sessionPlatform := platformForSession(envSessionIdx, envAgentID, sessionKey)
-		return buildEnvironmentAPI(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames(), shared.promptSearchDirs, sessionPlatform)
+		return buildEnvironmentAPI(acfg, p.configPath, p.cfg, rc, crontabCount, p.plat.ActivePlatformNames(), shared.promptSearchDirs, sessionPlatform)
 	}
 
 	// API-specific agent fields

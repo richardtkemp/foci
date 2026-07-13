@@ -138,9 +138,16 @@ type CommandContext struct {
 	ReleaseFunc    func() // releases a secondary bot back to its pool; nil = no-op
 	IsSecondaryBot bool   // true for facet/secondary bots
 
-	// Resolved holds the pre-merged agent+global config. Prefer reading
-	// from here instead of calling config.Merge() at runtime.
+	// Resolved holds the pre-merged agent+global config, frozen at agent
+	// construction. Prefer ResolvedLive.Load() for anything read on a hot
+	// field (internal/config/live.go) — Resolved only sees a config edit
+	// after a restart.
 	Resolved *config.ResolvedAgentConfig
+
+	// ResolvedLive is the hot-swappable counterpart to Resolved — the same
+	// snapshot, re-resolved and swapped in by a live config edit. Call
+	// .Load() for the current value instead of reading Resolved directly.
+	ResolvedLive *config.LiveValue[*config.ResolvedAgentConfig]
 
 	// PprofControl toggles or queries the live pprof gate. action is one of
 	// "on", "off", "toggle", "status"; returns the resulting enabled state.

@@ -482,7 +482,7 @@ type ToolConfig struct {
 	TmuxSessionTTL      *string `toml:"tmux_session_ttl"      default:"24h"       desc:"Idle tmux sessions are automatically killed after being inactive this long (default 24h); set to 0 to disable auto-kill" type:"duration"`
 	SearchProvider      *string `toml:"search_provider"       default:"brave"     desc:"Backend used for web search: brave calls the Brave Search API, anthropic uses Anthropic's built-in web search" choices:"brave,anthropic"`
 	FetchProvider       *string `toml:"fetch_provider"        default:"builtin"   desc:"Backend used to fetch web pages: builtin fetches directly from this server, anthropic uses Anthropic's hosted fetch tool" choices:"anthropic,builtin"`
-	TodoFormat          *string `toml:"todo_format"                                desc:"How the agent's todo list is rendered in chat: lines shows a simple bullet list, table shows a formatted table" choices:"lines,table"`
+	TodoFormat          *string `toml:"todo_format"                                hot:"immediate" desc:"How the agent's todo list is rendered in chat: lines shows a simple bullet list, table shows a formatted table" choices:"lines,table"`
 }
 
 type AnthropicConfig struct {
@@ -903,8 +903,8 @@ func (p PermissionsConfig) AutoApproveCommonSafeWriteEnabled() bool {
 }
 
 type EnvironmentConfig struct {
-	Enabled  *bool   `toml:"enabled"    default:"true"         desc:"Include an Environment section in the agent's system prompt describing the platform, active tools and docs it has access to"`                // inject environment block as first system block (default true)
-	DocsPath *string `toml:"docs_path"  default:"shared/docs"  desc:"Directory of platform documentation the agent can reference, listed in the Environment block; relative paths resolve against your home dir"` // path to platform docs directory; relative paths resolve against $HOME
+	Enabled  *bool   `toml:"enabled"    default:"true"         hot:"session" desc:"Include an Environment section in the agent's system prompt describing the platform, active tools and docs it has access to"`                // inject environment block as first system block (default true)
+	DocsPath *string `toml:"docs_path"  default:"shared/docs"  hot:"session" desc:"Directory of platform documentation the agent can reference, listed in the Environment block; relative paths resolve against your home dir"` // path to platform docs directory; relative paths resolve against $HOME
 }
 
 type SkillsConfig struct {

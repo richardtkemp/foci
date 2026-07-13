@@ -71,7 +71,8 @@ type cmdRegParams struct {
 	fallbackFn    provider.FallbackFunc
 
 	// Pre-resolved agent+global config
-	resolved *config.ResolvedAgentConfig
+	resolved     *config.ResolvedAgentConfig
+	resolvedLive *config.LiveValue[*config.ResolvedAgentConfig]
 }
 
 // pprofGate is the process-global live-toggle gate for /debug/pprof/*.
@@ -188,6 +189,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		TokenCountCache:     command.NewTokenCountCache(),
 		ConfigureFacet:      p.configureFacet,
 		Resolved:            p.resolved,
+		ResolvedLive:        p.resolvedLive,
 		PprofControl:        pprofControl,
 	}
 
