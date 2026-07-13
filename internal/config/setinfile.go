@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -329,9 +330,24 @@ func replaceOrInsertKey(lines []string, from, to int, key, value string) (string
 	// First pass: look for an active (uncommented) key line.
 	for i := from; i < to; i++ {
 		if active.MatchString(lines[i]) {
-			old := extractValue(lines[i])
-			lines[i] = fmt.Sprintf("%s = %s", key, value)
-			return old, lines, nil
+			// The value may span multiple lines (a multi-line array/inline
+			// table). Find where it ends by bracket balance, and replace the
+			// whole span with the single new line — otherwise the old body
+			// lines are orphaned and the file is corrupted.
+			end := i
+			for depth := bracketDelta(lines[i]); depth > 0 && end+1 < to; {
+				end++
+				depth += bracketDelta(lines[end])
+			}
+			old := strings.TrimSpace(extractValue(lines[i]))
+			if end > i {
+				old = strings.TrimSpace(strings.Join(append([]string{extractValue(lines[i])}, lines[i+1:end+1]...), " "))
+			}
+			out := make([]string, 0, len(lines)-(end-i))
+			out = append(out, lines[:i]...)
+			out = append(out, fmt.Sprintf("%s = %s", key, value))
+			out = append(out, lines[end+1:]...)
+			return old, out, nil
 		}
 	}
 
@@ -356,6 +372,35 @@ func replaceOrInsertKey(lines []string, from, to int, key, value string) (string
 	result = append(result, newLine)
 	result = append(result, lines[insertAt:]...)
 	return "", result, nil
+}
+
+// bracketDelta returns the net count of unclosed [ and { on a line (opens minus
+// closes), ignoring brackets inside double-quoted strings and after an unquoted
+// '#' comment. A multi-line TOML value's start line has delta > 0; scanning
+// forward until the running total returns to 0 finds the value's last line.
+func bracketDelta(line string) int {
+	depth := 0
+	inStr := false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if inStr {
+			if c == '"' && (i == 0 || line[i-1] != '\\') {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '#':
+			return depth // rest of the line is a comment
+		case '[', '{':
+			depth++
+		case ']', '}':
+			depth--
+		}
+	}
+	return depth
 }
 
 // extractValue extracts the value portion from a "key = value" line.
@@ -411,6 +456,20 @@ func FormatTOMLValue(value string, ft FieldType) (string, error) {
 		default:
 			return "", fmt.Errorf("invalid bool: %q (use true/false)", value)
 		}
+
+	case FieldStringList:
+		// The wire value is a JSON array of strings; emit a single-line TOML
+		// array. Writing single-line keeps replaceOrInsertKey's span logic in
+		// sync (it collapses any prior multi-line array to this one line).
+		var items []string
+		if err := json.Unmarshal([]byte(value), &items); err != nil {
+			return "", fmt.Errorf("invalid string list (expected a JSON array): %w", err)
+		}
+		parts := make([]string, len(items))
+		for i, s := range items {
+			parts[i] = fmt.Sprintf("%q", s)
+		}
+		return "[" + strings.Join(parts, ", ") + "]", nil
 	}
 	return value, nil
 }

@@ -13,11 +13,12 @@ import (
 type FieldType int
 
 const (
-	FieldString   FieldType = iota // bare string, quoted in TOML
-	FieldInt                       // integer
-	FieldFloat                     // float64
-	FieldBool                      // true/false
-	FieldDuration                  // Go duration string (e.g. "5m"), quoted in TOML
+	FieldString     FieldType = iota // bare string, quoted in TOML
+	FieldInt                         // integer
+	FieldFloat                       // float64
+	FieldBool                        // true/false
+	FieldDuration                    // Go duration string (e.g. "5m"), quoted in TOML
+	FieldStringList                  // []string; wire value is a JSON array, TOML value is ["a", "b"]
 )
 
 // ConfigField describes a single settable config key.
@@ -212,8 +213,14 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 			continue
 		}
 
-		// Skip slices and maps — not settable via /config set
-		if f.Type.Kind() == reflect.Slice || f.Type.Kind() == reflect.Map {
+		// Maps are not settable via /config set (they need dynamic-key handling,
+		// see mapFieldSpecs). Slices of strings ARE settable (FieldStringList);
+		// other slice element types are not yet — inferFieldType returns -1 for
+		// them below and they're skipped there.
+		if f.Type.Kind() == reflect.Map {
+			continue
+		}
+		if f.Type.Kind() == reflect.Slice && f.Type.Elem().Kind() != reflect.String {
 			continue
 		}
 
@@ -290,6 +297,11 @@ func inferFieldType(f reflect.StructField) FieldType {
 		return FieldFloat
 	case reflect.String:
 		return FieldString
+	case reflect.Slice:
+		if typ.Elem().Kind() == reflect.String {
+			return FieldStringList
+		}
+		return -1 // other slice element types not settable yet
 	default:
 		return -1 // unsupported
 	}

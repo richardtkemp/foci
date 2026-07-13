@@ -47,6 +47,63 @@ dir = "/tmp/sessions"
 	}
 }
 
+func TestSetInFile_ReplacesMultiLineArray(t *testing.T) {
+	// Proves the multi-line-safe span replacement: a value spanning several lines
+	// (a multi-line TOML array) is fully replaced by the single new line, with no
+	// orphaned body lines left behind (the pre-fix bug corrupted the file).
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	content := `[permissions]
+auto_approve = [          # composable rules
+  "Bash:git *",
+  "Read:*",
+]
+other_key = true
+`
+	os.WriteFile(path, []byte(content), 0o644)
+
+	if _, err := SetInFile(path, SetTarget{Section: "permissions", Key: "auto_approve"}, `["Bash:ls *", "Read:/tmp/*"]`, 0640); err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	result := string(data)
+
+	if !strings.Contains(result, `auto_approve = ["Bash:ls *", "Read:/tmp/*"]`) {
+		t.Errorf("new single-line array not found:\n%s", result)
+	}
+	for _, orphan := range []string{`"Bash:git *"`, `"Read:*"`} {
+		if strings.Contains(result, orphan) {
+			t.Errorf("orphaned old-array fragment %q left in file (corruption):\n%s", orphan, result)
+		}
+	}
+	// No line should be a bare "]" (the old array's dangling close).
+	for _, line := range strings.Split(result, "\n") {
+		if strings.TrimSpace(line) == "]" {
+			t.Errorf("orphaned bare ] line left in file (corruption):\n%s", result)
+		}
+	}
+	if !strings.Contains(result, "other_key = true") {
+		t.Errorf("adjacent key not preserved:\n%s", result)
+	}
+}
+
+func TestFormatTOMLValue_StringList(t *testing.T) {
+	got, err := FormatTOMLValue(`["a","b c","d"]`, FieldStringList)
+	if err != nil {
+		t.Fatalf("FormatTOMLValue: %v", err)
+	}
+	if want := `["a", "b c", "d"]`; got != want {
+		t.Errorf("FormatTOMLValue = %q, want %q", got, want)
+	}
+	if _, err := FormatTOMLValue(`not json`, FieldStringList); err == nil {
+		t.Error("FormatTOMLValue accepted non-JSON string list, want error")
+	}
+	if got, _ := FormatTOMLValue(`[]`, FieldStringList); got != "[]" {
+		t.Errorf("empty list = %q, want []", got)
+	}
+}
+
 func TestSetInFile_InsertNewKey(t *testing.T) {
 	// Proves that SetInFile inserts a new key into an existing section, returns an
 	// empty old value, and places the key within the correct section boundaries.
