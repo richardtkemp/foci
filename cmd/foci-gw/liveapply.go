@@ -22,6 +22,15 @@ type liveApply struct {
 
 	mu       sync.RWMutex
 	appliers map[string]func(fresh *config.Config) error // registry address "section.key" → applier
+
+	// mapSectionAppliers covers map-typed config sections (groups,
+	// groups.calls, groups.fallbacks, system.webhooks — see MapFieldSpec in
+	// internal/config/fields.go), keyed by SECTION alone rather than
+	// "section.key": the key is a user-defined group/webhook name and can't
+	// be pre-enumerated, so Apply falls back here when the exact "section.key"
+	// address has no applier. Any key under a registered section triggers the
+	// same whole-section rebuild.
+	mapSectionAppliers map[string]func(fresh *config.Config) error
 }
 
 // gwLiveApply is the process-wide instance, set early in main (same pattern
@@ -29,7 +38,11 @@ type liveApply struct {
 var gwLiveApply *liveApply
 
 func newLiveApply(configPath string) *liveApply {
-	return &liveApply{configPath: configPath, appliers: map[string]func(*config.Config) error{}}
+	return &liveApply{
+		configPath:         configPath,
+		appliers:           map[string]func(*config.Config) error{},
+		mapSectionAppliers: map[string]func(*config.Config) error{},
+	}
 }
 
 // register maps every address in addrs to fn. One applier typically covers a
@@ -42,12 +55,25 @@ func (la *liveApply) register(addrs []string, fn func(*config.Config) error) {
 	}
 }
 
+// registerMapSection maps a map-typed config section (e.g. "groups.calls")
+// to fn, covering every key under it — see mapSectionAppliers' doc.
+func (la *liveApply) registerMapSection(sections []string, fn func(*config.Config) error) {
+	la.mu.Lock()
+	defer la.mu.Unlock()
+	for _, s := range sections {
+		la.mapSectionAppliers[s] = fn
+	}
+}
+
 // Apply pushes one just-edited field into the running process. Returns false
 // when the field has no applier (restart-required fields). The section is the
 // REGISTRY section ("agent" for per-agent overrides, not "agents").
 func (la *liveApply) Apply(section, key string) (bool, error) {
 	la.mu.RLock()
 	fn := la.appliers[section+"."+key]
+	if fn == nil {
+		fn = la.mapSectionAppliers[section]
+	}
 	la.mu.RUnlock()
 	if fn == nil {
 		return false, nil
@@ -162,6 +188,31 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 		for _, freshAcfg := range fresh.Agents {
 			if inst := agents[freshAcfg.ID]; inst != nil {
 				inst.resolved.Store(config.Resolve(fresh, freshAcfg))
+			}
+		}
+		return nil
+	})
+
+	// Map-typed sections (groups, groups.calls, groups.fallbacks,
+	// system.webhooks): user-defined keys, so they can't flow through the
+	// hot-tag/ConfigField coverage above (config.AllFields() never produces
+	// a "groups.myteam" entry) — registerMapSection is the dedicated
+	// dynamic-key path (see liveApply.mapSectionAppliers doc). Groups.*
+	// and Webhooks already ride along inside ResolvedAgentConfig via
+	// inst.resolved.Store below, same as the ordinary applier above; the
+	// extra step here is GroupResolver, a derived handle that holds its
+	// own copy (mutex-guarded, see config.GroupResolver.Update) rather than
+	// reading resolved live on every call.
+	la.registerMapSection(config.MapFieldSections(), func(fresh *config.Config) error {
+		for _, freshAcfg := range fresh.Agents {
+			inst := agents[freshAcfg.ID]
+			if inst == nil {
+				continue
+			}
+			resolved := config.Resolve(fresh, freshAcfg)
+			inst.resolved.Store(resolved)
+			if inst.ag != nil && inst.ag.GroupResolver != nil {
+				inst.ag.GroupResolver.Update(resolved.Groups, fresh.Models, fresh.HasAPIAgent())
 			}
 		}
 		return nil

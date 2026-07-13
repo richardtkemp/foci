@@ -149,7 +149,7 @@ func httpTestSetup(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *mockClien
 		ag:               ag,
 		cmds:             cmds,
 		promptSearchDirs: []string{opts.promptDir},
-		webhooks:         opts.webhooks,
+		resolved:         config.NewLiveValue(&config.ResolvedAgentConfig{Webhooks: opts.webhooks}),
 	}
 	inst.cc = command.CommandContext{
 		Agent:        ag,

@@ -647,7 +647,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		}
 
 		// Look up hookID in the agent's configured webhooks.
-		promptPath, ok := inst.webhooks[hookID]
+		promptPath, ok := inst.LiveConfig().Webhooks[hookID]
 		if !ok {
 			http.Error(w, fmt.Sprintf("unknown webhook: %q", hookID), http.StatusNotFound)
 			return

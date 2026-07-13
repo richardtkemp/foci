@@ -196,24 +196,23 @@ func ConfigSetDirect(deps ConfigSetDeps, args string) (string, error) {
 		return "", fmt.Errorf("expected section.key=value format")
 	}
 
-	// Split into section.key
-	dotIdx := strings.Index(path, ".")
-	if dotIdx < 0 {
+	if !strings.Contains(path, ".") {
 		return "", fmt.Errorf("expected section.key format (e.g. defaults.model)")
 	}
 
-	section := path[:dotIdx]
-	key := path[dotIdx+1:]
-
-	// Handle dotted agent sub-keys like agent.keepalive.enabled → section=agent, key=keepalive.enabled
-	fullLookup := path
-	field, ok := deps.LookupFn(fullLookup)
+	// Look up the WHOLE path first — LookupFn matches Section+"."+Key as one
+	// string, where Key itself may embed further dots (nested structs, or a
+	// map-typed section's arbitrary user-defined key, e.g. "groups.calls.foo").
+	// So section/key must be derived FROM the successful match, not by
+	// blindly splitting path at its first dot — a map-typed section like
+	// "groups.calls" or "system.webhooks" IS itself dotted, and a naive
+	// first-dot split would misfile the write (see MapFieldSpec doc in
+	// internal/config/fields.go for the concrete corruption risk this avoids).
+	field, ok := deps.LookupFn(path)
 	if !ok {
-		// Maybe it's a dotted sub-key: try section + rest-of-path
-		// e.g. "agent.keepalive.enabled" → lookup "agent.keepalive.enabled"
-		// Already tried above with fullLookup. Try without:
 		return "", fmt.Errorf("unknown config field %q. Use /config set (bare) for interactive mode", path)
 	}
+	section, key := field.Section, field.Key
 
 	formatted, err := config.FormatTOMLValue(rawValue, field.Type)
 	if err != nil {

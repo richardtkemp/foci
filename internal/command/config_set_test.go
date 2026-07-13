@@ -243,6 +243,42 @@ func TestConfigSetDirectAgent(t *testing.T) {
 	}
 }
 
+// TestConfigSetDirectMapSection verifies that direct mode resolves a
+// map-typed section's arbitrary (not pre-enumerated) key — e.g. a new group
+// name, or a nested "groups.calls.<site>" key — to the right SetTarget,
+// exercising the LookupField map fallback end to end through ConfigSetDirect.
+func TestConfigSetDirectMapSection(t *testing.T) {
+	var captured config.SetTarget
+	var capturedValue string
+	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
+		captured = target
+		capturedValue = value
+		return "", nil
+	})
+
+	resp, err := ConfigSetDirect(deps, "groups.myteam=openrouter/some-model")
+	if err != nil {
+		t.Fatalf("ConfigSetDirect: %v", err)
+	}
+	if !strings.Contains(resp, "Set groups.myteam") {
+		t.Errorf("response = %q", resp)
+	}
+	if captured.Section != "groups" || captured.Key != "myteam" {
+		t.Errorf("target = %+v", captured)
+	}
+	if capturedValue != `"openrouter/some-model"` {
+		t.Errorf("value = %q", capturedValue)
+	}
+
+	_, err = ConfigSetDirect(deps, "groups.calls.summarize-file=fast")
+	if err != nil {
+		t.Fatalf("ConfigSetDirect: %v", err)
+	}
+	if captured.Section != "groups.calls" || captured.Key != "summarize-file" {
+		t.Errorf("target = %+v", captured)
+	}
+}
+
 // TestConfigSetDirectUnknownField verifies that direct mode returns an error containing
 // "unknown config field" when the section.key path ("nonexistent.field") does not correspond
 // to any known config field, preventing writes to nonexistent configuration keys.
