@@ -681,11 +681,25 @@ func (r *Runner) maybeReflection() {
 	lastReflection := r.lastReflection
 	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.reflectionRunning
+	consolidationRunning := r.consolidationRunning
+	resetRunning := r.resetRunning
 	r.mu.Unlock()
 
 	nextFire := lastReflection.Add(interval)
 	if running {
 		skip = "already running"
+		return
+	}
+	// Memory-mutating passes are mutually exclusive: reflection, consolidation
+	// and reset all form/curate memory on the same session, so none may run
+	// while another is in flight (consolidation and reset already defer to the
+	// others; this makes reflection defer too).
+	if consolidationRunning {
+		skip = "consolidation running"
+		return
+	}
+	if resetRunning {
+		skip = "reset running"
 		return
 	}
 	if now.Before(nextFire) {
@@ -698,8 +712,10 @@ func (r *Runner) maybeReflection() {
 		return
 	}
 
-	// In delegated mode, reflection runs IN the live CC session (not as
-	// a branch), so wait for user to be quiet before interrupting.
+	// Delegated agents fork a real backend branch off each due session when the
+	// backend supports it (BranchForkBackend), falling back to an in-place turn
+	// only when it can't fork. The fork briefly quiesces the parent to clone its
+	// transcript, so still wait for the user to be quiet before firing.
 	if r.isDelegatedAgent {
 		quietPeriod, qOk := r.parseDuration("backend_quiet_period", r.reflectCfg.BackendQuietPeriod)
 		if qOk && sinceLastInteraction < quietPeriod {
