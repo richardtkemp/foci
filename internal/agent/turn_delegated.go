@@ -513,7 +513,12 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	// protects against in-flight turns clobbering a freshly-set /model alias,
 	// but is cleared immediately after so that the next turn resolves the alias
 	// to its full name (e.g. "sonnet" → "claude-sonnet-4-5-...").
-	if ts.FinalModel != "" && !ts.SessionMeta.modelUserSet {
+	// CC's "<synthetic>" sentinel (a result served without an API call — error
+	// turns, no-op replies) must never become the session's live model: branches
+	// launch on the root's live model, so recording it locks the session into
+	// `--model <synthetic>` → CC model error → another synthetic result,
+	// self-perpetuating (broke keepalive overnight 2026-07-13).
+	if ts.FinalModel != "" && ts.FinalModel != SyntheticModel && !ts.SessionMeta.modelUserSet {
 		ts.SessionMeta.model = ts.FinalModel
 	}
 	ts.SessionMeta.modelUserSet = false
