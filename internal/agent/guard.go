@@ -69,11 +69,12 @@ func detectContentExtension(content string) string {
 
 func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, turnModel string, tr tools.ToolResult, messages []provider.Message) string {
 	result := tr.Text
+	maxResultChars := a.maxResultChars()
 	// Engage if the result is over the char limit OR the tool already spilled
 	// the full body to disk (ResultFile set) — the latter guarantees a
 	// pre-spilled body is surfaced as a pointer/summary even when its inline
 	// preview is short.
-	overLimit := a.MaxResultChars > 0 && utf8.RuneCountInString(result) > a.MaxResultChars
+	overLimit := maxResultChars > 0 && utf8.RuneCountInString(result) > maxResultChars
 	if !overLimit && tr.ResultFile == "" {
 		return result
 	}
@@ -106,7 +107,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 		resultLen = int(tr.ResultSize) // use the full size, not the truncated head
 	}
 
-	a.logger().Debugf("session=%s tool result guard: %s produced %d chars (limit %d), saved to %s", sessionKey, toolName, resultLen, a.MaxResultChars, fpath)
+	a.logger().Debugf("session=%s tool result guard: %s produced %d chars (limit %d), saved to %s", sessionKey, toolName, resultLen, maxResultChars, fpath)
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
 	if a.AutoSummarise && client != nil && a.GroupResolver != nil && (a.MaxSummaryChars <= 0 || resultLen <= a.MaxSummaryChars) {
@@ -116,7 +117,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 	}
 
 	hint := guardHint(result, fpath)
-	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", resultLen, a.MaxResultChars, fpath, hint)
+	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", resultLen, maxResultChars, fpath, hint)
 }
 
 // summariseToolResult calls a cheap model to produce a summary of an oversized tool result.
@@ -129,9 +130,9 @@ func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sess
 	// Truncate result text embedded in summary prompt to cap memory and tokens.
 	// The full result is already on disk at savedPath.
 	summaryInput := result
-	if a.MaxSummaryInputChars > 0 && utf8.RuneCountInString(summaryInput) > a.MaxSummaryInputChars {
-		summaryInput = summaryInput[:a.MaxSummaryInputChars] + // byte slice; may split a multi-byte rune
-			fmt.Sprintf("\n[... truncated — full output is %d chars, only first %d shown]", utf8.RuneCountInString(result), a.MaxSummaryInputChars)
+	if maxSummaryInputChars := a.maxSummaryInputChars(); maxSummaryInputChars > 0 && utf8.RuneCountInString(summaryInput) > maxSummaryInputChars {
+		summaryInput = summaryInput[:maxSummaryInputChars] + // byte slice; may split a multi-byte rune
+			fmt.Sprintf("\n[... truncated — full output is %d chars, only first %d shown]", utf8.RuneCountInString(result), maxSummaryInputChars)
 	}
 
 	var userText string

@@ -41,18 +41,24 @@ const readToolSchema = `{
 // and http_request's body_file/files/save_to in every mode so no caller can
 // silently skip a check.
 type fileScope struct {
-	store        *secrets.Store
-	baseDir      string // non-empty => isolated: the resolved path must stay within it
-	workspace    string // base for relative paths in non-isolated tools
-	maxReadBytes int64  // cap on a file's size before read/edit loads it; <=0 uses the default
+	store     *secrets.Store
+	baseDir   string // non-empty => isolated: the resolved path must stay within it
+	workspace string // base for relative paths in non-isolated tools
+	// maxReadBytes returns the current cap on a file's size before read/edit
+	// loads it; <=0 uses the default. A func (not a captured scalar) so the
+	// read/edit tools observe a live config edit on their next call instead of
+	// freezing the value from tool construction. Nil (e.g. isolated-spawn
+	// scopes and tests that construct a fileScope directly) uses the default.
+	maxReadBytes func() int64
 }
 
 // readLimit returns the effective max file size the read/edit tools will load,
-// falling back to the package default when unset (e.g. isolated-spawn scopes
-// and tests that construct a fileScope directly).
+// falling back to the package default when unset.
 func (fs fileScope) readLimit() int64 {
-	if fs.maxReadBytes > 0 {
-		return fs.maxReadBytes
+	if fs.maxReadBytes != nil {
+		if v := fs.maxReadBytes(); v > 0 {
+			return v
+		}
 	}
 	return config.DefaultMaxFileReadBytes
 }
@@ -114,7 +120,7 @@ func rewriteContainedPaths(raw json.RawMessage, fs fileScope, stringFields []str
 	return out, nil
 }
 
-func NewReadTool(store *secrets.Store, workspace string, maxReadBytes int64) *Tool {
+func NewReadTool(store *secrets.Store, workspace string, maxReadBytes func() int64) *Tool {
 	return &Tool{
 		Name:        "read",
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
@@ -149,7 +155,7 @@ func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.
 	}
 }
 
-func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode, maxReadBytes int64) *Tool {
+func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode, maxReadBytes func() int64) *Tool {
 	return &Tool{
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",

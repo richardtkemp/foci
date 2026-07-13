@@ -604,7 +604,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	// Delegated agents shell out to `claude --print` (CLISummariser) for the
 	// summary tool, routing through the parent CC subprocess's subscription auth
 	// so the call charges mana, not API spend. (API agents use APISummariser.)
-	cliSummariser := tools.NewCLISummariser("", "haiku", p.resolved.Summary.MaxSummaryInputChars)
+	cliSummariser := tools.NewCLISummariser("", "haiku", func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
 
 	// Register the exec-exported subset from the single data-driven table (see
 	// tool_table.go) — the same source of truth that drives the API path. The

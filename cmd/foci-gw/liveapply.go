@@ -107,6 +107,13 @@ var (
 		"debug.cache_bust_detect", "agent.debug.cache_bust_detect",
 		"debug.cache_bust_idle_minutes", "agent.debug.cache_bust_idle_minutes",
 		"background.can_run_background", "agent.background.can_run_background",
+		"tools.max_result_chars", "agent.tools.max_result_chars",
+		"tools.max_summary_input_chars", "agent.tools.max_summary_input_chars",
+		"tools.exec_auto_background", "agent.tools.exec_auto_background",
+		"tools.max_upload_file_size", "agent.tools.max_upload_file_size",
+		"tools.max_file_read_bytes", "agent.tools.max_file_read_bytes",
+		"tools.http_max_spill_bytes", "agent.tools.http_max_spill_bytes",
+		"memory.search_backend", "agent.memory.search_backend",
 	}
 )
 

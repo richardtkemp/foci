@@ -130,12 +130,15 @@ func execExtraEnv(p setupParams) []string {
 // exec path's order is cosmetic (shell-function definition order).
 var toolTable = []toolEntry{
 	{name: "shell", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
-		tc := d.p.resolved.Tools
-		return shell.NewExecTool(d.agentStore, d.p.bwStore, tc.ExecAutoBackground, d.notifier,
-			d.p.acfg.Workspace, d.registry, d.p.resolved.Summary.MaxResultChars, d.p.cfg.Tools.TempDir,
+		live := d.p.resolvedLive
+		return shell.NewExecTool(d.agentStore, d.p.bwStore, func() int { return live.Load().Tools.ExecAutoBackground }, d.notifier,
+			d.p.acfg.Workspace, d.registry, func() int64 { return int64(live.Load().Summary.MaxResultChars) }, d.p.cfg.Tools.TempDir,
 			execExtraEnv(d.p), d.p.cfg.Tools.ExecDefaultTimeout)
 	}},
 
+	// tmux settings stay baked (not Bucket-C-converted): autopilot/watchSec/ttl
+	// drive an already-running watch loop and session timer, so a live swap
+	// needs timer-reset logic, not just a value read — out of scope here.
 	{name: "tmux", paths: pathAPI, enabled: tmuxAvailable, build: func(d *toolDeps) *tools.Tool {
 		tc := d.p.resolved.Tools
 		watchSec := 30
@@ -169,7 +172,8 @@ var toolTable = []toolEntry{
 		}},
 
 	{name: "read", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
-		return tools.NewReadTool(d.agentStore, d.p.acfg.Workspace, d.p.resolved.Tools.MaxFileReadBytes)
+		live := d.p.resolvedLive
+		return tools.NewReadTool(d.agentStore, d.p.acfg.Workspace, func() int64 { return live.Load().Tools.MaxFileReadBytes })
 	}},
 	{name: "write", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
@@ -177,8 +181,9 @@ var toolTable = []toolEntry{
 	}},
 	{name: "edit", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
+		live := d.p.resolvedLive
 		return tools.NewEditTool(d.agentStore, d.p.acfg.Workspace, d.blockedPaths, fileMode,
-			d.p.resolved.Tools.MaxFileReadBytes)
+			func() int64 { return live.Load().Tools.MaxFileReadBytes })
 	}},
 
 	{name: "summary", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
@@ -186,12 +191,18 @@ var toolTable = []toolEntry{
 	}},
 
 	{name: "http_request", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
-		tc := d.p.resolved.Tools
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
+		live := d.p.resolvedLive
 		return tools.NewHTTPRequestTool(d.agentStore, d.p.bwStore, d.p.cfg.Tools.TempDir,
-			tc.ExecAutoBackground, tc.MaxUploadFileSize, tc.HTTPMaxSpillBytes, d.notifier, fileMode)
+			func() int { return live.Load().Tools.ExecAutoBackground },
+			func() int64 { return live.Load().Tools.MaxUploadFileSize },
+			func() int64 { return live.Load().Tools.HTTPMaxSpillBytes },
+			d.notifier, fileMode)
 	}},
 
+	// SearchProvider/FetchProvider stay baked: they pick WHICH tool object gets
+	// registered (server-tool vs. brave/fetch), not a scalar within one — a
+	// live swap means re-registering the tool, out of scope here.
 	{name: "web_search", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
 		if d.path == pathAPI && d.p.resolved.Tools.SearchProvider == "anthropic" {
 			d.out.serverTools = append(d.out.serverTools, buildServerTool("web_search_20250305", "web_search",
@@ -216,7 +227,8 @@ var toolTable = []toolEntry{
 
 	{name: "memory_search", paths: pathBoth, enabled: func(d *toolDeps) bool { return len(d.p.memBackends) > 0 },
 		build: func(d *toolDeps) *tools.Tool {
-			return tools.NewMemorySearchTool(d.p.memBackends, d.p.resolved.MemorySearch.SearchBackend, d.p.convReader)
+			live := d.p.resolvedLive
+			return tools.NewMemorySearchTool(d.p.memBackends, func() string { return live.Load().MemorySearch.SearchBackend }, d.p.convReader)
 		}},
 
 	{name: "scratchpad", paths: pathAPI, enabled: func(d *toolDeps) bool { return d.p.scratchpadStore != nil },
@@ -300,6 +312,9 @@ var toolTable = []toolEntry{
 		return t
 	}},
 
+	// MaxConcurrentSpawns/ExploreMaxDepth stay baked: MaxInherit sizes a
+	// semaphore channel at construction, which can't be live-resized without a
+	// redesign — out of scope here.
 	{name: "spawn", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		acfg := d.p.acfg
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)

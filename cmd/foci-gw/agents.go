@@ -92,6 +92,7 @@ type setupParams struct {
 	acfg                config.AgentConfig
 	cfg                 *config.Config
 	resolved            *config.ResolvedAgentConfig
+	resolvedLive        *config.LiveValue[*config.ResolvedAgentConfig] // hot-swappable; same instance as agentInstance.resolved once finalize() runs
 	configPath          string
 	clientProvider      provider.ClientProvider
 	sessions            *session.Store
@@ -244,7 +245,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		notifier:         notifier,
 		connMgr:          connMgr,
 		agLazy:           agLazy,
-		summariser:       tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, p.resolved.Summary.MaxSummaryInputChars),
+		summariser:       tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars }),
 		wakeFn:           shared.wakeScheduleFn,
 		sessionNotify:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),
 		askDeliver:       newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "ask_grader"),

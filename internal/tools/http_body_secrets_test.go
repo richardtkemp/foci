@@ -29,7 +29,7 @@ api_key = "sk-secret"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -66,7 +66,7 @@ allowed_hosts = ["%s"]
 	bodyPath := filepath.Join(t.TempDir(), "payload.json")
 	os.WriteFile(bodyPath, []byte(`{"key":"{{secret:custom.api_key}}"}`), 0644)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       srv.URL,
 		"method":    "POST",
@@ -96,7 +96,7 @@ allowed_hosts = ["127.0.0.1"]
 	tmpFile := filepath.Join(t.TempDir(), "upload.txt")
 	os.WriteFile(tmpFile, []byte("data"), 0644)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://127.0.0.1:9999",
 		"method": "POST",
@@ -134,7 +134,7 @@ api_key = "sk-secret-header"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"method":  "GET",
@@ -172,7 +172,7 @@ allowed_hosts = ["%s"]
 allowed_in_body = ["api_key"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -205,7 +205,7 @@ allowed_hosts = ["%s"]
 allowed_in_body = ["api_key"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -236,7 +236,7 @@ api_key = "sk-dual-use"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"method":  "POST",
@@ -275,7 +275,7 @@ token = "tok-b"
 allowed_hosts = ["%s"]
 `, host, host))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -303,7 +303,7 @@ func TestBitwardenSecretInBodyAlwaysBlocked(t *testing.T) {
 	bwStore := newTestBWStore(t, mock)
 	bwStore.GetPassword("bw-test-id")
 
-	tool := NewHTTPRequestTool(nil, bwStore, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, bwStore, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://127.0.0.1:9999",
 		"method": "POST",

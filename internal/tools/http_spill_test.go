@@ -33,7 +33,7 @@ func TestHTTPRequestSpillsLargeBody(t *testing.T) {
 	srv := bigBodyServer(t, bodySize)
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), 0, 50*1024*1024, ceiling, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return ceiling }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{
 		"url":                srv.URL,
 		"max_response_bytes": preview,
@@ -71,7 +71,7 @@ func TestHTTPRequestSmallBodyInline(t *testing.T) {
 	srv := bigBodyServer(t, 200)
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), 0, 50*1024*1024, 1<<20, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 1 << 20 }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{"url": srv.URL})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -97,7 +97,7 @@ func TestHTTPRequestCeilingTruncates(t *testing.T) {
 	srv := bigBodyServer(t, bodySize)
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), 0, 50*1024*1024, ceiling, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return ceiling }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{
 		"url":                srv.URL,
 		"max_response_bytes": preview,

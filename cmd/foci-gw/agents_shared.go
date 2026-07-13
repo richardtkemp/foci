@@ -50,6 +50,7 @@ type sharedAgentSetup struct {
 // config resolution, prompt search dirs, and group resolver creation.
 func resolveSharedSetup(p setupParams) *sharedAgentSetup {
 	p.resolved = config.Resolve(p.cfg, p.acfg)
+	p.resolvedLive = config.NewLiveValue(p.resolved)
 
 	promptSearchDirs := []string{
 		filepath.Join(p.acfg.Workspace, "prompts"),
@@ -250,7 +251,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		registry:         fp.registry,
 		bootstrap:        fp.bootstrap,
 		agentCfg:         acfg,
-		resolved:         config.NewLiveValue(p.resolved),
+		resolved:         p.resolvedLive,
 		promptSearchDirs: s.promptSearchDirs,
 		skillsDirs:       fp.skillsDirs,
 		webhooks:         p.resolved.Webhooks,

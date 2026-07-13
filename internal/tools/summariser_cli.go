@@ -31,17 +31,16 @@ import (
 // which defeats the purpose of routing through the subscription. Accepting
 // hooks/LSP/plugin overhead is the price of subscription-mana auth.
 type CLISummariser struct {
-	binary        string // path to claude binary; "claude" by default
-	model         string // model alias (e.g. "haiku")
-	maxInputChars int    // 0 disables cap
+	binary        string     // path to claude binary; "claude" by default
+	model         string     // model alias (e.g. "haiku")
+	maxInputChars func() int // 0 disables cap; called fresh per Summarise
 }
 
 // NewCLISummariser builds the CLI-path summariser.
 //
 // binary is the path to the claude executable; pass "" to use $PATH lookup.
 // model is the Claude model alias (e.g. "haiku"); pass "" for "haiku".
-// maxInputChars caps content size; pass 0 to disable.
-func NewCLISummariser(binary, model string, maxInputChars int) *CLISummariser {
+func NewCLISummariser(binary, model string, maxInputChars func() int) *CLISummariser {
 	if binary == "" {
 		binary = "claude"
 	}
@@ -99,7 +98,7 @@ func CLIOneShot(ctx context.Context, binary, model, systemPrompt string, userMes
 // Summarise spawns `claude --print ...` with stdin = content+prompt envelope
 // and returns the captured stdout.
 func (s *CLISummariser) Summarise(ctx context.Context, content []byte, prompt, filePath string) (string, error) {
-	content = CapInputChars(content, s.maxInputChars)
+	content = CapInputChars(content, s.maxInputChars())
 
 	text, err := CLIOneShot(ctx, s.binary, s.model, summarySystemPrompt, []byte(summaryUserMessage(content, prompt, filePath)))
 	if err != nil {

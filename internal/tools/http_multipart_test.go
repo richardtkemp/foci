@@ -73,7 +73,7 @@ func TestHTTPRequestMultipartSingleFile(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "test.txt")
 	os.WriteFile(tmpFile, []byte("hello multipart"), 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -121,7 +121,7 @@ func TestHTTPRequestMultipartFileAndFormFields(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "photo.jpg")
 	os.WriteFile(tmpFile, []byte{0xFF, 0xD8, 0xFF}, 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -171,7 +171,7 @@ func TestHTTPRequestMultipartMultipleFiles(t *testing.T) {
 	os.WriteFile(file1, []byte("file-a"), 0644)
 	os.WriteFile(file2, []byte("file-b"), 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -199,7 +199,7 @@ func TestHTTPRequestMultipartMultipleFiles(t *testing.T) {
 func TestHTTPRequestMultipartBodyAndFilesConflict(t *testing.T) {
 	// Proves that specifying both "body" and "files" is rejected with a mutually exclusive error, since they would produce conflicting request bodies.
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 
 	// body + files
 	params, _ := json.Marshal(map[string]interface{}{
@@ -222,7 +222,7 @@ func TestHTTPRequestMultipartBodyAndFilesConflict(t *testing.T) {
 func TestHTTPRequestMultipartFileMissing(t *testing.T) {
 	// Proves that referencing a nonexistent file path in the files list returns an error rather than silently skipping the upload.
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
 		"method": "POST",
@@ -255,7 +255,7 @@ func TestHTTPRequestMultipartFileTooLarge(t *testing.T) {
 	f.Truncate(51 * 1024 * 1024)
 	f.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
 		"method": "POST",
@@ -293,7 +293,7 @@ allowed_in_body = ["bot_token"]
 	tmpFile := filepath.Join(t.TempDir(), "doc.pdf")
 	os.WriteFile(tmpFile, []byte("pdf-content"), 0644)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -335,7 +335,7 @@ func TestHTTPRequestMultipartFilenameOverride(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "ugly-temp-name-123.bin")
 	os.WriteFile(tmpFile, []byte("data"), 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -359,7 +359,7 @@ func TestHTTPRequestMultipartFilenameOverride(t *testing.T) {
 func TestHTTPRequestFormFieldsWithoutFiles(t *testing.T) {
 	// Proves that specifying form_fields without any files is rejected, since form_fields only makes sense in a multipart context.
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
 		"method": "POST",
@@ -385,7 +385,7 @@ func TestHTTPRequestMultipartCustomSizeLimit(t *testing.T) {
 	os.WriteFile(filePath, make([]byte, 2*1024), 0644) // 2KB file
 
 	// With a 1KB limit, this should fail
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
 		"method": "POST",
@@ -415,7 +415,7 @@ func TestHTTPRequestMultipartCustomSizeLimitAllows(t *testing.T) {
 	filePath := filepath.Join(dir, "small.bin")
 	os.WriteFile(filePath, []byte("data"), 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 100*1024*1024, 0, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 100 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",

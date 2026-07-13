@@ -27,11 +27,13 @@ func stubWakeFn(int64, time.Duration, string, string) error { return nil }
 // web_fetch, http_request) plus whatever the test enables.
 func minimalSetupParams(t *testing.T, agentID string) setupParams {
 	t.Helper()
+	resolved := &config.ResolvedAgentConfig{}
 	return setupParams{
-		acfg:     config.AgentConfig{ID: agentID},
-		cfg:      &config.Config{},
-		resolved: &config.ResolvedAgentConfig{},
-		connMgr:  stubConnMgr{},
+		acfg:         config.AgentConfig{ID: agentID},
+		cfg:          &config.Config{},
+		resolved:     resolved,
+		resolvedLive: config.NewLiveValue(resolved),
+		connMgr:      stubConnMgr{},
 	}
 }
 
