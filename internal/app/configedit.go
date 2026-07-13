@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -209,6 +210,20 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 		descs = append(descs, d)
 	}
 
+	// Map sections (groups, groups.calls, groups.fallbacks, system.webhooks) are
+	// dynamic-key maps not in the scalar registry. Emit one descriptor each with
+	// type "map"; each scope carries the section's current entries as a JSON
+	// object at Values[section]. Global scope only for now — per-agent map
+	// overrides are addressed but not yet surfaced here.
+	for _, mf := range config.MapFields() {
+		descs = append(descs, fap.ConfigFieldDesc{
+			Section:     mf.Section,
+			Key:         "",
+			ValueType:   "map",
+			Description: mf.Description,
+		})
+	}
+
 	fileGlobal, fileAgents, err := config.ExplicitFileValues(cfg.SourcePath)
 	if err != nil {
 		log.Warnf("app", "config schema: parse %s: %v", cfg.SourcePath, err)
@@ -245,6 +260,18 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 		gScope.Values[full] = v
 		if explicit {
 			gScope.Explicit = append(gScope.Explicit, full)
+		}
+	}
+	// Map sections: current entries as a JSON object, keyed by the map section.
+	for _, mf := range config.MapFields() {
+		entries := config.MapEntries(mf.Section, fileGlobal)
+		b, err := json.Marshal(entries)
+		if err != nil {
+			continue
+		}
+		gScope.Values[mf.Section] = string(b)
+		if len(entries) > 0 {
+			gScope.Explicit = append(gScope.Explicit, mf.Section)
 		}
 	}
 	sort.Strings(gScope.Explicit)

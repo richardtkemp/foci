@@ -49,6 +49,26 @@ func TestStringListFieldsEmitted(t *testing.T) {
 	}
 }
 
+func TestMapEntries(t *testing.T) {
+	flat := map[string]string{
+		"groups.powerful":        "opus",
+		"groups.fast":            "haiku",
+		"groups.calls.summarize": "haiku", // nested map section — not a "groups" entry
+		"notify.startup_notify":  "false", // unrelated
+	}
+	groups := MapEntries("groups", flat)
+	if len(groups) != 2 || groups["powerful"] != "opus" || groups["fast"] != "haiku" {
+		t.Errorf(`MapEntries("groups") = %v, want {powerful:opus, fast:haiku}`, groups)
+	}
+	if _, leaked := groups["calls.summarize"]; leaked {
+		t.Error("nested groups.calls.* leaked into the groups map")
+	}
+	calls := MapEntries("groups.calls", flat)
+	if len(calls) != 1 || calls["summarize"] != "haiku" {
+		t.Errorf(`MapEntries("groups.calls") = %v, want {summarize:haiku}`, calls)
+	}
+}
+
 func TestDescTagsCoverAllSections(t *testing.T) {
 	// Proves that every section in globalSections produces at least one field,
 	// and that agent-level fields are also generated.
