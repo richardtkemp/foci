@@ -687,6 +687,24 @@ func generateShellFunc(t *Tool) string {
   fi
   local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text="" body="" title=""
   while [ $# -gt 0 ]; do
+    # #1218: reject flags that are globally-known but not valid for THIS action
+    # (e.g. edit --status done — --status is a list/search filter that edit's
+    # builder silently ignores, so the close looked like it worked but was a
+    # no-op). action_flags is the per-action allowlist from todoActions. Only
+    # enforced for known actions (non-empty allowlist); an unknown or flagless
+    # action falls through to the master unrecognized-flag handler below.
+    if [ -n "$action_flags" ]; then
+      case "$1" in
+        --*)
+          case " $action_flags " in
+            *" $1 "*) : ;;
+            *)
+              echo "error: flag $1 is not valid for 'foci_todo $action'" >&2
+              echo "valid flags for '$action': $action_flags" >&2
+              return 1 ;;
+          esac ;;
+      esac
+    fi
     case "$1" in
       --text) text="$2"; shift 2 ;;
       --body) body="$2"; shift 2 ;;

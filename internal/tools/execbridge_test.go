@@ -898,6 +898,33 @@ func TestTodoShellFunc_UnknownFlagErrorScopedToAction(t *testing.T) {
 	}
 }
 
+// TestTodoShellFunc_RejectsCrossActionFlag verifies the #1218 fix: a flag that
+// is globally-known to foci_todo but not valid for the current action (e.g.
+// `edit --status done`) is rejected in the flag loop instead of being parsed
+// into its var and silently dropped by the action's JSON builder. The gate is
+// driven by the per-action action_flags allowlist.
+func TestTodoShellFunc_RejectsCrossActionFlag(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		Positional: []string{"action"},
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+	})
+	body := generateShellFunc(r.All()[0])
+
+	if !strings.Contains(body, `if [ -n "$action_flags" ]; then
+      case "$1" in
+        --*)
+          case " $action_flags " in
+            *" $1 "*) : ;;
+            *)
+              echo "error: flag $1 is not valid for 'foci_todo $action'" >&2`) {
+		t.Error("expected per-action flag-validity gate at the top of the flag loop")
+	}
+}
+
 // TestTodoShellFunc_CloseReasonAliases verifies the close-reason alias surface
 // added for TODO #761 and extended later: --notes and --note both parse
 // straight into the reason var, and on complete/drop --text falls back into
