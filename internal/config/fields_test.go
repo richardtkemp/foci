@@ -27,6 +27,28 @@ func TestBuildFieldRegistryNonEmpty(t *testing.T) {
 	}
 }
 
+func TestStringListFieldsEmitted(t *testing.T) {
+	// Proves []string fields (e.g. stop_aliases) now appear in the registry as
+	// FieldStringList with wire type "string[]" (previously skipped entirely).
+	fields, _ := buildFieldRegistry()
+	var found *ConfigField
+	for i := range fields {
+		if fields[i].Key == "stop_aliases" {
+			found = &fields[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("stop_aliases ([]string) not emitted in the field registry")
+	}
+	if found.Type != FieldStringList {
+		t.Errorf("stop_aliases type = %v, want FieldStringList", found.Type)
+	}
+	if got := found.Type.TypeName(); got != "string[]" {
+		t.Errorf("stop_aliases wire type = %q, want string[]", got)
+	}
+}
+
 func TestDescTagsCoverAllSections(t *testing.T) {
 	// Proves that every section in globalSections produces at least one field,
 	// and that agent-level fields are also generated.

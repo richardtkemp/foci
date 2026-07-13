@@ -459,13 +459,13 @@ type BehaviorConfig struct {
 	GroupThrottle         *string  `toml:"group_throttle"                            hot:"event" desc:"In group chats, buffers messages that do not mention the agent for this long, then delivers them together. A mention flushes the buffer immediately. Empty disables it" type:"duration"`
 	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold" default:"3m"    hot:"turn" desc:"Writes a warning to the server log if a turn waits longer than this for the previous turn on the same session to finish. Diagnostic only, not shown to users" type:"duration"`
 	EnableStopAliases     *bool    `toml:"enable_stop_aliases"      default:"true"  desc:"Lets extra words such as wait also work as aliases for stop, which cancels the agent's current turn"`
-	StopAliases           []string `toml:"stop_aliases"`
+	StopAliases           []string `toml:"stop_aliases"              desc:"Extra words that also cancel the agent's current turn, in addition to the built-in stop. One entry per word or phrase"`
 }
 
 // SystemConfig holds system-level agent settings.
 // Global: [system], per-agent: [[agents]].system.*
 type SystemConfig struct {
-	SystemFiles []string          `toml:"system_files"`
+	SystemFiles []string          `toml:"system_files"  desc:"Character/instruction files loaded into the system prompt, in order. Paths relative to the agent's working directory"`
 	Webhooks    map[string]string `toml:"webhooks"`
 }
 
@@ -510,7 +510,7 @@ type DisplayConfig struct {
 // of the configuration cascade.
 type AccessConfig struct {
 	AllowedUsersOnly *bool    `toml:"allowed_users_only" default:"true" desc:"When enabled (default), only user IDs in allowed_users may message this agent - an empty list blocks everyone. When disabled, an empty list allows anyone; a non-empty list still filters"`
-	AllowedUsers     []string `toml:"allowed_users"`   // platform-specific user IDs allowed to interact
+	AllowedUsers     []string `toml:"allowed_users"  desc:"Platform-specific user IDs allowed to interact with this agent. Empty means no allow-list restriction"`   // platform-specific user IDs allowed to interact
 	RequireMention   *bool    `toml:"require_mention"` // require @mention in group chats
 }
 
@@ -589,7 +589,7 @@ type PlatformConfig struct {
 	// Shared platform fields
 	Bot             string   `toml:"bot"`
 	BotSecret       string   `toml:"bot_secret"`
-	FacetBots       []string `toml:"facet_bots"`
+	FacetBots       []string `toml:"facet_bots"  desc:"Bot names used as short-lived facet side-sessions branched off the main chat"`
 	FacetSessionTTL string   `toml:"facet_session_ttl"  desc:"How long a /facet session, a temporary secondary bot split off from this chat, can sit idle before its slot is reclaimed for reuse (default 60m)" type:"duration"`
 
 	// Platform-specific subsections (at most one non-nil, must match ID)
@@ -677,7 +677,7 @@ type AppSpecific struct {
 	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows
 	// any). A slice → set in the TOML file, not via /config set, so no desc tag
 	// (mirrors AccessConfig.AllowedUsers).
-	AllowedDevices []string `toml:"allowed_devices"`
+	AllowedDevices []string `toml:"allowed_devices"  desc:"Device IDs permitted to pair with this agent over the app protocol. Empty means no device allow-list"`
 }
 
 // ApplyDefaults fills zero-value fields from the given defaults.
@@ -794,7 +794,7 @@ type MemoryConfig struct {
 	DecayBoost    *float64 `toml:"decay_boost"        default:"1"    desc:"Strength of the recency boost from temporal_decay: a brand-new file's score is multiplied by up to 1+this value" min:"0"`
 	// Basename globs never recency-boosted (default MEMORY.md, research-*). A slice
 	// field, so no desc tag (the /config-set registry only handles scalars).
-	EvergreenPatterns []string `toml:"evergreen_patterns"`
+	EvergreenPatterns []string `toml:"evergreen_patterns"  desc:"Glob patterns marking memory files that are always kept in context (never aged out)"`
 }
 
 type HTTPConfig struct {
@@ -867,7 +867,7 @@ type BitwardenConfig struct {
 // [[agents]].permissions are combined (union) — both sets apply.
 // All fields are pointer/slice types for Merge-based resolution.
 type PermissionsConfig struct {
-	AutoApprove                []string `toml:"auto_approve"`                                                                                                                                                                                          // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
+	AutoApprove                []string `toml:"auto_approve"  desc:"Tool-call patterns auto-approved without prompting, e.g. \"Bash:git *\". Composable with && || ; per entry"`                                                                                                                                                                                          // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
 	AutoApproveCommonReadonly  *bool    `toml:"auto_approve_common_readonly"  default:"true"  desc:"Automatically approve a built-in list of safe, read-only tools and shell commands (ls, cat, git status, etc) without prompting"`                   // enable built-in read-only tool/command allowlist
 	AutoApproveCommonSafeWrite *bool    `toml:"auto_approve_common_safe_write" default:"false" desc:"Automatically approve a built-in list of commonly-safe but side-effecting commands like curl, wget, mkdir and touch; not restricted to any path"` // enable built-in safe-write allowlist (default false — not path-scoped)
 	// PromptTTL is how long an unanswered interactive prompt (permission
@@ -944,11 +944,11 @@ type ToolsConfig struct {
 	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%"`                                                                                                   // critical threshold (default "20%")
 	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%"`                                                                                                   // kill threshold (default "30%")
 	WebSearchMaxUses        int      `toml:"web_search_max_uses"`                                                                                                                        // max searches per API call (0 = unlimited)
-	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"`                                                                                                                 // domain whitelist (mutually exclusive with blocked)
-	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"`                                                                                                                 // domain blacklist
+	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"  desc:"If set, web search results are restricted to these domains (mutually exclusive with the blocked list)"`                                                                                                                 // domain whitelist (mutually exclusive with blocked)
+	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"  desc:"Domains excluded from web search results (mutually exclusive with the allowed list)"`                                                                                                                 // domain blacklist
 	WebFetchMaxUses         int      `toml:"web_fetch_max_uses"`                                                                                                                         // max fetches per API call (0 = unlimited)
-	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"`                                                                                                                  // domain whitelist
-	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"`                                                                                                                  // domain blacklist
+	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"  desc:"If set, web fetch is restricted to these domains (mutually exclusive with the blocked list)"`                                                                                                                  // domain whitelist
+	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"  desc:"Domains excluded from web fetch (mutually exclusive with the allowed list)"`                                                                                                                  // domain blacklist
 }
 
 type MessageTransform struct {

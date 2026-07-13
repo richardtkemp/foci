@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -34,6 +35,8 @@ func (t FieldType) TypeName() string {
 		return "bool"
 	case FieldDuration:
 		return "duration"
+	case FieldStringList:
+		return "string[]"
 	default:
 		return "string"
 	}
@@ -181,6 +184,23 @@ func renderScalar(v any) (string, bool) {
 		return fmt.Sprintf("%d", t), true
 	case float64:
 		return fmt.Sprintf("%g", t), true
+	case []any:
+		// A string array (e.g. auto_approve): render as a JSON array so the
+		// FieldStringList editor can parse it into chips. Non-string elements
+		// aren't settable yet, so skip (ok=false).
+		items := make([]string, 0, len(t))
+		for _, e := range t {
+			s, isStr := e.(string)
+			if !isStr {
+				return "", false
+			}
+			items = append(items, s)
+		}
+		b, err := json.Marshal(items)
+		if err != nil {
+			return "", false
+		}
+		return string(b), true
 	default:
 		return "", false
 	}
