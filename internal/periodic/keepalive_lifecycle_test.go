@@ -611,6 +611,47 @@ func TestMaybeReflection_AlreadyRunning(t *testing.T) {
 	}
 }
 
+func TestMaybeReflection_SkipsWhenMemoryTaskRunning(t *testing.T) {
+	// Verifies the fully-mutual memory-task mutex: reflection is a no-op when
+	// consolidation OR reset is running, so no two memory passes overlap.
+	for _, tc := range []struct {
+		name                 string
+		consolidationRunning bool
+		resetRunning         bool
+	}{
+		{"consolidation running", true, false},
+		{"reset running", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int
+			r := &Runner{
+				log:     log.NewComponentLogger("keepalive:test"),
+				agentID: "test",
+				reflectCfg: config.ResolvedReflection{
+					IntervalEnabled: true,
+					Interval:        "1h",
+				},
+				lastInteraction:      time.Now().Add(-30 * time.Minute),
+				lastReflection:       time.Now().Add(-2 * time.Hour),
+				consolidationRunning: tc.consolidationRunning,
+				resetRunning:         tc.resetRunning,
+				agent: &fakeBackgroundAgent{
+					branchFn: func(_, _, _ string, _ bool) bool {
+						calls++
+						return true
+					},
+				},
+				done: make(chan struct{}),
+			}
+
+			r.maybeReflection()
+			if calls != 0 {
+				t.Errorf("reflection fired while a memory task was running")
+			}
+		})
+	}
+}
+
 func TestMaybeConsolidation_TooMuchInactivity(t *testing.T) {
 	// Verifies that maybeConsolidation skips dispatch when the last interaction was too long ago,
 	// meaning there is no meaningful recent activity to consolidate.
