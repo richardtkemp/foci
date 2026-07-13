@@ -9,16 +9,12 @@ import (
 
 // setLevel changes the log level at runtime (test-only).
 func setLevel(level Level) {
-	std.mu.Lock()
-	std.level = level
-	std.mu.Unlock()
+	std.level.Store(int32(level))
 }
 
 // getLevel returns the current log level (test-only).
 func getLevel() Level {
-	std.mu.Lock()
-	defer std.mu.Unlock()
-	return std.level
+	return Level(std.level.Load())
 }
 
 // setOutput replaces the event output writer (test-only).
@@ -38,8 +34,8 @@ func filePaths() (event, api, payload string) {
 // initConversation opens a single conversation log (test-only).
 // resetGlobal restores the global logger to its initial state for test isolation.
 func resetGlobal() {
+	std.level.Store(int32(INFO))
 	std.mu.Lock()
-	std.level = INFO
 	std.eventOut = os.Stderr
 	std.apiFile = nil
 	std.payloadFile = nil

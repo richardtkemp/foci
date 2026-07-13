@@ -323,8 +323,14 @@ func TestHotTagValuesValid(t *testing.T) {
 				walk(ft)
 				continue
 			}
-			if hot, ok := f.Tag.Lookup("hot"); ok && !validHotTags[hot] {
-				t.Errorf("field %s.%s has invalid hot tag %q (valid: immediate, turn, session, event)", typ.String(), f.Name, hot)
+			if hot, ok := f.Tag.Lookup("hot"); ok {
+				timing, scope, hasScope := strings.Cut(hot, ",")
+				if !validHotTags[timing] {
+					t.Errorf("field %s.%s has invalid hot timing %q (valid: immediate, turn, session, event)", typ.String(), f.Name, hot)
+				}
+				if hasScope && scope != "global" {
+					t.Errorf("field %s.%s has invalid hot scope %q (valid: global)", typ.String(), f.Name, scope)
+				}
 			}
 		}
 	}
@@ -334,14 +340,27 @@ func TestHotTagValuesValid(t *testing.T) {
 	walk(reflect.TypeOf(AgentConfig{}))
 }
 
-func TestNeedsRestartDefaultsTrue(t *testing.T) {
-	// No field is currently hot (2026-07 audit: every value is snapshotted at
-	// startup, and no live-apply mechanism exists). A field may only claim hot
-	// once live-apply lands and its use-time chain is verified — update this
-	// test alongside that work.
-	for _, f := range configFields {
-		if !f.NeedsRestart {
-			t.Errorf("field %s.%s claims hot (NeedsRestart=false) — verify a live-apply mechanism exists before allowing this", f.Section, f.Key)
+func TestHotGlobalScopeExcludesOverrideRows(t *testing.T) {
+	// hot:"...,global" fields (e.g. DebugConfig extras — their agent/platform
+	// override rows are dead, #1199) must be hot ONLY at the global row.
+	cases := []struct {
+		sectionKey string
+		wantHot    bool
+	}{
+		{"debug.enable_pprof", true},
+		{"agent.debug.enable_pprof", false},
+		{"platforms.debug.enable_pprof", false},
+		{"keepalive.interval", true},
+		{"agent.keepalive.interval", true}, // unscoped hot tag covers override rows
+		{"tools.max_result_chars", false},  // untagged = restart
+	}
+	for _, c := range cases {
+		f, ok := LookupField(c.sectionKey)
+		if !ok {
+			t.Fatalf("field %s not in registry", c.sectionKey)
+		}
+		if got := !f.NeedsRestart; got != c.wantHot {
+			t.Errorf("%s: hot=%v, want %v", c.sectionKey, got, c.wantHot)
 		}
 	}
 }

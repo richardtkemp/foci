@@ -16,6 +16,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/delegator"
+	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -92,7 +93,17 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		LookupFn:        config.LookupField,
 		SetInFileFn: func(path string, target config.SetTarget, value string) (string, error) {
 			fm, _ := config.ParseFileMode(p.cfg.FileMode)
-			return config.SetInFile(path, target, value, fm)
+			old, err := config.SetInFile(path, target, value, fm)
+			if err == nil && gwLiveApply != nil {
+				section := target.Section
+				if section == "agents" { // file target → registry section
+					section = "agent"
+				}
+				if _, applyErr := gwLiveApply.Apply(section, target.Key); applyErr != nil {
+					log.Warnf("config", "%s.%s written but live apply failed (takes effect on restart): %v", section, target.Key, applyErr)
+				}
+			}
+			return old, err
 		},
 		EffectiveValueFn: func(section, key string) string {
 			return config.LookupValue(p.cfg, p.acfg, section, key)
