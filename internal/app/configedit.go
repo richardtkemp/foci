@@ -57,6 +57,26 @@ func (h *Hub) handleConfigUnset(client *wsClient, f fap.ConfigUnset) {
 	h.broadcastConfigSchema()
 }
 
+// handleServerRestart restarts the whole server on request from a config-editing
+// client (the /restart path). Gated on the same configEdit capability as the
+// config put/unset handlers — a client allowed to change restart-only settings
+// is the one that needs to apply them. The restart drops every socket (clients
+// see close code 1012 and fast-reconnect), so there is no reply to send.
+func (h *Hub) handleServerRestart(client *wsClient) {
+	if !h.configEditAvailable() {
+		return
+	}
+	if h.deps.Restart == nil {
+		log.Warnf("app", "server.restart (device %q): no restart function wired", client.deviceID)
+		return
+	}
+	if msg, err := h.deps.Restart(); err != nil {
+		log.Errorf("app", "server.restart (device %q): %v", client.deviceID, err)
+	} else {
+		log.Infof("app", "server.restart (device %q): %s", client.deviceID, msg)
+	}
+}
+
 // applyConfigEdit validates a put (value non-nil) or unset (value nil) against
 // the field registry and performs the file edit.
 func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {

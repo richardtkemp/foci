@@ -129,6 +129,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	case fap.ConfigUnset:
 		h.handleConfigUnset(client, f)
 
+	case fap.ServerRestart:
+		h.handleServerRestart(client)
+
 	case fap.ClientMessage:
 		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer), f.TranscribeOnly)
 

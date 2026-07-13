@@ -474,6 +474,10 @@ type ProviderDeps struct {
 	// section ("agent" for per-agent overrides). Returns applied=false for
 	// restart-required fields. nil = live apply unavailable.
 	ApplyLive func(section, key string) (applied bool, err error)
+
+	// Restart restarts the whole server (systemctl restart / SIGTERM), for the
+	// config page's "restart server" action. nil = restart unavailable.
+	Restart func() (string, error)
 }
 
 // DisplaySettings holds resolved display configuration values.

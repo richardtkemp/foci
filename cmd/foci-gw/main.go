@@ -227,6 +227,7 @@ Subcommands:
 		ResolveSTT:   resolveSTT,
 		ResolveTTS:   resolveTTS,
 		ApplyLive:    gwLiveApply.Apply,
+		Restart:      command.Restart,
 	})
 	if err != nil {
 		log.Fatalf("main", "init messaging: %v", err)
