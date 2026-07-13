@@ -58,17 +58,17 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		}
 		opts = append(opts, availableOption{"agent.platforms.telegram", "display_width", fmt.Sprintf("%d", dw), "display width for dividers"})
 	}
-	if tg == nil || tg.Telegram == nil || tg.Telegram.TableWrapLines == nil {
+	if tg == nil || tg.Display.TableWrapLines == nil {
 		twl := 5
-		if globalTg != nil && globalTg.Telegram != nil && globalTg.Telegram.TableWrapLines != nil {
-			twl = *globalTg.Telegram.TableWrapLines
+		if globalTg != nil && globalTg.Display.TableWrapLines != nil {
+			twl = *globalTg.Display.TableWrapLines
 		}
 		opts = append(opts, availableOption{"agent.platforms.telegram", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell"})
 	}
-	if tg == nil || tg.Telegram == nil || tg.Telegram.TableStyle == nil {
+	if tg == nil || tg.Display.TableStyle == nil {
 		ts := "pretty"
-		if globalTg != nil && globalTg.Telegram != nil && globalTg.Telegram.TableStyle != nil {
-			ts = *globalTg.Telegram.TableStyle
+		if globalTg != nil && globalTg.Display.TableStyle != nil {
+			ts = *globalTg.Display.TableStyle
 		}
 		opts = append(opts, availableOption{"agent.platforms.telegram", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown"})
 	}

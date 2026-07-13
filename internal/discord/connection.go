@@ -125,6 +125,8 @@ type BotDisplayConfig struct {
 	StreamOutput          bool          // stream model output to Discord in real-time
 	StreamUpdateInterval  time.Duration // duration between Discord message edits during streaming (default 1200ms)
 	DisplayWidth          int           // character width for dividers (default 60)
+	TableWrapLines        int           // max wrapped lines per table cell (default 5)
+	TableStyle            string        // "pretty" (default) or "markdown"
 	ToolCallPreviewChars  int           // max chars for tool call preview (default 450)
 	MessagesInLog         bool          // log user message content to event log
 	ReceivedFilesDir      string        // if non-empty, save received files to this directory
@@ -172,7 +174,7 @@ func (b *Bot) resolveDisplay(sessionKey string) turn.TurnDisplay {
 		ShowThinking:  d.ShowThinking,
 		StreamOutput:  d.StreamOutput,
 		DisplayWidth:  d.DisplayWidth,
-		RenderOpts:    display.RenderOpts{MaxWidth: d.DisplayWidth},
+		RenderOpts:    display.RenderOpts{MaxWidth: d.DisplayWidth, WrapLines: d.TableWrapLines, Style: d.TableStyle},
 	}
 }
 

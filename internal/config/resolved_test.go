@@ -172,7 +172,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Maintenance: MaintenanceConfig{ConsolidationEnabled: Ptr(true), ConsolidationTime: Ptr("20h"), ResetTime: Ptr("04:20"), ResetIdleGuard: Ptr("55m")},
 		Browser:     BrowserConfig{Enabled: Ptr(true)},
 		Platforms: []PlatformConfig{
-			{ID: "telegram", Telegram: &TelegramSpecific{TableWrapLines: Ptr(7), TableStyle: Ptr("markdown"), LongPollTimeout: "45s"}},
+			{ID: "telegram", Display: DisplayConfig{TableWrapLines: Ptr(7), TableStyle: Ptr("markdown")}, Telegram: &TelegramSpecific{LongPollTimeout: "45s"}},
 		},
 	}
 	acfg := AgentConfig{} // all nil — global values should fill in

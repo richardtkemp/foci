@@ -61,7 +61,7 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 	}
 
 	rc := config.Resolve(cfg, acfg)
-	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramTableWrapLines, rc.TelegramTableStyle, rc.TelegramLongPollTimeout)
+	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramLongPollTimeout)
 
 	stc, st, dw, mil, rfd, _ := bot.DisplaySettings()
 	if stc != "full" {
@@ -106,7 +106,7 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 	}
 
 	rc := config.Resolve(cfg, acfg)
-	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramTableWrapLines, rc.TelegramTableStyle, rc.TelegramLongPollTimeout)
+	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramLongPollTimeout)
 
 	stc, st, dw, mil, rfd, _ := bot.DisplaySettings()
 	if stc != "preview" {
@@ -142,7 +142,7 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 	cfg := &config.Config{}
 
 	rc := config.Resolve(cfg, acfg)
-	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramTableWrapLines, rc.TelegramTableStyle, rc.TelegramLongPollTimeout)
+	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramLongPollTimeout)
 
 	_, _, _, _, rfd, _ := bot.DisplaySettings()
 	if rfd != "/pre-existing" {
@@ -207,7 +207,7 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 	}
 
 	rc := config.Resolve(cfg, acfg)
-	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramTableWrapLines, rc.TelegramTableStyle, rc.TelegramLongPollTimeout)
+	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramLongPollTimeout)
 
 	stc, st, dw, mil, _, _ := bot.DisplaySettings()
 	// Per-agent platform config (most specific) takes precedence over agent-level

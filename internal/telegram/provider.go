@@ -198,6 +198,8 @@ func (p *telegramProvider) DefaultPlatformConfig() config.PlatformConfig {
 			StreamOutput:   &so,
 			StreamInterval: config.Ptr[string]("250ms"),
 			DisplayWidth:   &dw,
+			TableWrapLines: &twl,
+			TableStyle:     &ts,
 		},
 		Access: config.AccessConfig{
 			RequireMention: &rm,
@@ -205,8 +207,6 @@ func (p *telegramProvider) DefaultPlatformConfig() config.PlatformConfig {
 		FacetSessionTTL: "60m",
 		Telegram: &config.TelegramSpecific{
 			LongPollTimeout: "30s",
-			TableWrapLines:  &twl,
-			TableStyle:      &ts,
 		},
 	}
 }
@@ -283,7 +283,7 @@ func restoreFacetSessions(
 					bot.SetCommandContext(cc)
 				}
 				rc := config.Resolve(cfg, acfg)
-				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramTableWrapLines, rc.TelegramTableStyle, rc.TelegramLongPollTimeout)
+				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramLongPollTimeout)
 				bot.fileMode, _ = config.ParseFileMode(cfg.FileMode)
 			}
 

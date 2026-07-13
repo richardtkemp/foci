@@ -352,6 +352,8 @@ type ResolvedDisplay struct {
 	StreamOutput          bool
 	StreamInterval        string
 	DisplayWidth          int
+	TableWrapLines        int
+	TableStyle            string
 	ReceivedFilesDir      string
 	InjectedMessageHeader string
 	Statusline            string
@@ -372,6 +374,8 @@ func resolveDisplay(m DisplayConfig) ResolvedDisplay {
 		StreamOutput:          DerefBool(m.StreamOutput),
 		StreamInterval:        DerefStr(m.StreamInterval),
 		DisplayWidth:          DerefInt(m.DisplayWidth),
+		TableWrapLines:        DerefInt(m.TableWrapLines),
+		TableStyle:            DerefStr(m.TableStyle),
 		ReceivedFilesDir:      DerefStr(m.ReceivedFilesDir),
 		InjectedMessageHeader: DerefStr(m.InjectedMessageHeader),
 		Statusline:            DerefStr(m.Statusline),

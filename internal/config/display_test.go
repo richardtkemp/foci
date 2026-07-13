@@ -167,12 +167,10 @@ func TestFormatAvailableAllSet(t *testing.T) {
 		Display: DisplayConfig{
 			DisplayWidth:     &displayWidth,
 			ReceivedFilesDir: &recvDir,
+			TableWrapLines:   &tableWrapLines,
+			TableStyle:       &tableStyle,
 		},
 		Access: AccessConfig{AllowedUsers: []string{"123"}},
-		Telegram: &TelegramSpecific{
-			TableWrapLines: &tableWrapLines,
-			TableStyle:     &tableStyle,
-		},
 	}}
 	ttsRate := 1.3
 	agent.Voice.TTSRate = &ttsRate

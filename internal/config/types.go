@@ -499,6 +499,8 @@ type DisplayConfig struct {
 	StreamOutput          *bool            `toml:"stream_output"           hot:"turn" desc:"Edit the chat message in place as the reply is generated, instead of sending it only once it's complete"`                                                                                                // stream model output in real-time
 	StreamInterval        *string          `toml:"stream_interval"         desc:"How often the in-progress reply is updated on screen while streaming; lower values look smoother but send more edits to the chat platform" type:"duration"`                                                        // duration between message edits during streaming
 	DisplayWidth          *int             `toml:"display_width"           desc:"Character width used for divider lines and to wrap tables and thinking blocks in chat messages"`                                                                                                                   // display width for dividers
+	TableWrapLines        *int             `toml:"table_wrap_lines"        hot:"turn" desc:"Maximum number of lines a single table cell wraps to before its content is truncated (default 5). Applies to text-rendering platforms (Telegram, Discord)"`                                            // default 5
+	TableStyle            *string          `toml:"table_style"             hot:"turn" desc:"How tables are rendered in chat: pretty uses box-drawing characters, markdown uses plain markdown table syntax. Applies to text-rendering platforms (Telegram, Discord)" choices:"pretty,markdown"` // default "pretty"
 	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"Local directory where files received from users, such as photos or documents, are saved; leave empty to not save them"`                                                                                            // save received files to this directory
 	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"Text prepended to system-injected messages, such as warnings, so you can tell them apart from normal replies; empty adds no header"`                                                                               // header prepended to injected messages
 	Statusline            *string          `toml:"statusline"              desc:"Template for the small header shown above each reply, such as model name and timing; leave empty to use the built-in default format"`                                                                              // per-message header template (#831)
@@ -642,9 +644,7 @@ func (p *PlatformConfig) SafeDisplay() DisplayConfig {
 
 // TelegramSpecific holds Telegram-only config fields.
 type TelegramSpecific struct {
-	LongPollTimeout string  `toml:"long_poll_timeout"  hot:"event" desc:"HTTP-client timeout for getUpdates; the Telegram-side long-poll timeout is derived as this minus 5s (default 30s)"`
-	TableWrapLines  *int    `toml:"table_wrap_lines"  hot:"turn" desc:"Maximum number of lines a single table cell wraps to before its content is truncated (default 5)"`                                         // default 5
-	TableStyle      *string `toml:"table_style"       hot:"turn" desc:"How tables are rendered in chat: pretty uses box-drawing characters, markdown uses plain markdown table syntax" choices:"pretty,markdown"` // default "pretty"
+	LongPollTimeout string `toml:"long_poll_timeout"  hot:"event" desc:"HTTP-client timeout for getUpdates; the Telegram-side long-poll timeout is derived as this minus 5s (default 30s)"`
 
 	// APIBase overrides the Telegram Bot API base URL (default
 	// "https://api.telegram.org"). Used by integration tests to point bots
@@ -696,12 +696,6 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 	} else if p.Telegram != nil && defaults.Telegram != nil {
 		if p.Telegram.LongPollTimeout == "" {
 			p.Telegram.LongPollTimeout = defaults.Telegram.LongPollTimeout
-		}
-		if p.Telegram.TableWrapLines == nil {
-			p.Telegram.TableWrapLines = defaults.Telegram.TableWrapLines
-		}
-		if p.Telegram.TableStyle == nil {
-			p.Telegram.TableStyle = defaults.Telegram.TableStyle
 		}
 		if p.Telegram.APIBase == "" {
 			p.Telegram.APIBase = defaults.Telegram.APIBase

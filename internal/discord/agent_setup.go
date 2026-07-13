@@ -212,11 +212,14 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		})
 
 		// Hot-tagged display/debug fields (display.stream_output,
-		// debug.messages_in_log — #1224): re-run ApplyAgentDisplaySettings
-		// with the fresh resolved values whenever either changes.
+		// display.table_wrap_lines/table_style, debug.messages_in_log): re-run
+		// ApplyAgentDisplaySettings with the fresh resolved values on any change.
 		p.ResolvedLive.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
 			oldDC, freshDC := old.PlatformDisplay("discord"), fresh.PlatformDisplay("discord")
-			if oldDC.StreamOutput == freshDC.StreamOutput && old.Debug.MessagesInLog == fresh.Debug.MessagesInLog {
+			if oldDC.StreamOutput == freshDC.StreamOutput &&
+				oldDC.TableWrapLines == freshDC.TableWrapLines &&
+				oldDC.TableStyle == freshDC.TableStyle &&
+				old.Debug.MessagesInLog == fresh.Debug.MessagesInLog {
 				return
 			}
 			ApplyAgentDisplaySettings(primaryBot, freshDC, fresh.Debug)
@@ -334,6 +337,12 @@ func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.R
 		}
 		if dc.InjectedMessageHeader != "" {
 			d.InjectedMessageHeader = dc.InjectedMessageHeader
+		}
+		if dc.TableWrapLines != 0 {
+			d.TableWrapLines = dc.TableWrapLines
+		}
+		if dc.TableStyle != "" {
+			d.TableStyle = dc.TableStyle
 		}
 
 		d.MessagesInLog = dbg.MessagesInLog
