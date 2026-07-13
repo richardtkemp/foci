@@ -38,8 +38,8 @@ type agentInstance struct {
 	registry         *tools.Registry
 	bootstrap        *workspace.Bootstrap
 	agentCfg         config.AgentConfig
-	resolved         *config.ResolvedAgentConfig // pre-merged agent+global config
-	promptSearchDirs []string                    // directories to search for prompt files
+	resolved         *config.LiveValue[*config.ResolvedAgentConfig] // hot-swappable pre-merged agent+global config; read via LiveConfig()
+	promptSearchDirs []string                                       // directories to search for prompt files
 	skillsDirs       []string                    // skill directories (shared + per-agent) for reflection detection
 	tmuxClearAll     func()                      // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount   func() int                  // returns number of active tmux watches
@@ -69,6 +69,15 @@ type agentInstance struct {
 	testActiveWorkOverride atomic.Int64
 	testCanFireOverride    atomic.Pointer[testCanFireState]
 	stopped                atomic.Bool
+}
+
+// LiveConfig returns the agent's current resolved config. It is hot-swapped by
+// the config re-resolve applier (liveapply.go), so callers must read through
+// it on each use rather than caching the returned pointer — that is what makes
+// a field consumed here live-appliable. The returned *ResolvedAgentConfig is an
+// immutable snapshot; never mutate it in place.
+func (inst *agentInstance) LiveConfig() *config.ResolvedAgentConfig {
+	return inst.resolved.Load()
 }
 
 // testCanFireState is the override payload for CanFireFunc when set

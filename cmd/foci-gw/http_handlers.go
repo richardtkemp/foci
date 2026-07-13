@@ -584,7 +584,7 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			if !ok {
 				return resolveTTS(d.ttsMap, d.cfg.TTS, "", 0, d.cfg.Voice.TTSReplacements)
 			}
-			vc := inst.resolved.Voice
+			vc := inst.LiveConfig().Voice
 			ttsRepls := voice.MergeReplacements(d.cfg.Voice.TTSReplacements, inst.agentCfg.Voice.TTSReplacements)
 			return resolveTTS(d.ttsMap, d.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
 		},

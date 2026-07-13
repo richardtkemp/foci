@@ -250,7 +250,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		registry:         fp.registry,
 		bootstrap:        fp.bootstrap,
 		agentCfg:         acfg,
-		resolved:         p.resolved,
+		resolved:         config.NewLiveValue(p.resolved),
 		promptSearchDirs: s.promptSearchDirs,
 		skillsDirs:       fp.skillsDirs,
 		webhooks:         p.resolved.Webhooks,

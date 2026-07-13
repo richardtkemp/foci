@@ -429,9 +429,9 @@ const DefaultMaxFileReadBytes int64 = 50 << 20 // 50 MiB
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
-	TTS                  *string           `toml:"tts"      desc:"Which text-to-speech provider to use for voice replies"`
+	TTS                  *string           `toml:"tts"      hot:"event" desc:"Which text-to-speech provider to use for voice replies"`
 	STT                  *string           `toml:"stt"      desc:"Which speech-to-text provider to use for transcribing voice messages"`
-	TTSRate              *float64          `toml:"tts_rate"  desc:"Speeds up or slows down text-to-speech playback. 1.0 is normal speed, higher is faster, lower is slower. 0 is treated as 1.0"`
+	TTSRate              *float64          `toml:"tts_rate"  hot:"event" desc:"Speeds up or slows down text-to-speech playback. 1.0 is normal speed, higher is faster, lower is slower. 0 is treated as 1.0"`
 	TTSReplacements      map[string]string `toml:"tts_replacements"`
 	STTReplacements      map[string]string `toml:"stt_replacements"`
 	MaxFrameBytes        *int              `toml:"max_frame_bytes" default:"1048576"  scope:"global" desc:"Maximum size in bytes of a single incoming voice websocket message; larger frames are rejected (1 MiB)"`
