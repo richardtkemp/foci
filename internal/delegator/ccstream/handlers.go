@@ -243,6 +243,21 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				}
 			} else if block.Name == "Bash" && delegator.ExtractBashBackground(block.Input) {
 				b.agents.Add(block.ID, "background command")
+			} else if block.Name == "TaskStop" {
+				// TaskStop kills a background task, but CC emits NO
+				// task_notification for a stopped task (only for one that
+				// completes naturally) — so the Add above would never be
+				// balanced, leaving the entry stuck in Pending() until the
+				// 30-min max-age prune and needlessly holding the pending-work
+				// gate (spec §4). Decrement one pending entry here. Count-based
+				// like the completion path (RemoveOne, not exact-match): the
+				// tracker feeds a count for the app badge and the gate, exact
+				// tool_use-id matching off a stream/tool event isn't reliable
+				// (see SubagentTracker.RemoveOne), and RemoveOne on an empty
+				// tracker is a safe no-op.
+				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
+					b.agents.OnStatus("")
+				}
 			}
 
 		case "thinking":

@@ -116,3 +116,44 @@ func TestBashBackgroundTracked(t *testing.T) {
 		t.Fatalf("backgrounded Bash not tracked: Pending() = %d, want 1", n)
 	}
 }
+
+// TestTaskStopClearsPending verifies a TaskStop tool_use decrements the tracker.
+// A stopped background task never emits a task_notification, so without this the
+// entry would linger in Pending() until the 30-min prune, holding the gate.
+func TestTaskStopClearsPending(t *testing.T) {
+	t.Parallel()
+
+	mkTool := func(id, name, input string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
+		}}
+	}
+
+	b := &Backend{}
+	applyHandler(b, &testHandler{})
+
+	// Two background commands → Pending() == 2.
+	b.OnAssistant(mkTool("bg1", "Bash", `{"command":"sleep 60","run_in_background":true}`))
+	b.OnAssistant(mkTool("bg2", "Bash", `{"command":"sleep 60","run_in_background":true}`))
+	if n := b.agents.Pending(); n != 2 {
+		t.Fatalf("setup: Pending() = %d, want 2", n)
+	}
+
+	// A TaskStop decrements one.
+	b.OnAssistant(mkTool("stop1", "TaskStop", `{"task_id":"bg1abcd"}`))
+	if n := b.agents.Pending(); n != 1 {
+		t.Fatalf("after one TaskStop: Pending() = %d, want 1", n)
+	}
+
+	// A second TaskStop clears the last.
+	b.OnAssistant(mkTool("stop2", "TaskStop", `{"task_id":"bg2abcd"}`))
+	if n := b.agents.Pending(); n != 0 {
+		t.Fatalf("after two TaskStops: Pending() = %d, want 0", n)
+	}
+
+	// A TaskStop against an empty tracker is a safe no-op (stays 0, no panic).
+	b.OnAssistant(mkTool("stop3", "TaskStop", `{"task_id":"gone"}`))
+	if n := b.agents.Pending(); n != 0 {
+		t.Fatalf("TaskStop on empty tracker: Pending() = %d, want 0", n)
+	}
+}
