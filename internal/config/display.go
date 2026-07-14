@@ -107,6 +107,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("keepalive", "enabled", cfg.Keepalive.Enabled)
 	add("keepalive", "interval", cfg.Keepalive.Interval)
 	add("keepalive", "prompt", cfg.Keepalive.Prompt)
+	add("keepalive", "max_user_idle", cfg.Keepalive.MaxUserIdle)
 
 	// background
 	add("background", "enabled", cfg.Background.Enabled)
@@ -441,6 +442,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if agent.Keepalive.Prompt != nil {
 		add("keepalive.prompt", *agent.Keepalive.Prompt)
+	}
+	if agent.Keepalive.MaxUserIdle != nil {
+		add("keepalive.max_user_idle", *agent.Keepalive.MaxUserIdle)
 	}
 	if agent.Background.Enabled != nil {
 		add("background.enabled", *agent.Background.Enabled)

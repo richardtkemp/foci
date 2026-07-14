@@ -215,6 +215,7 @@ type ResolvedKeepalive struct {
 	Interval         string
 	Prompt           string
 	WarmOpenAppChats bool
+	MaxUserIdle      string
 }
 
 func resolveKeepalive(m KeepaliveConfig) ResolvedKeepalive {
@@ -223,6 +224,7 @@ func resolveKeepalive(m KeepaliveConfig) ResolvedKeepalive {
 		Interval:         DerefStr(m.Interval),
 		Prompt:           DerefStr(m.Prompt),
 		WarmOpenAppChats: DerefBool(m.WarmOpenAppChats),
+		MaxUserIdle:      DerefStr(m.MaxUserIdle),
 	}
 }
 
