@@ -131,6 +131,41 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	return branchKey, true
 }
 
+// ForkSession creates a branch of parentKey ready to run a turn on, using the
+// fork implementation appropriate to the agent. It is THE single entry point
+// every forker routes through — spawn, the /branch endpoint, and the periodic
+// reflection/keepalive/background branches — so the API-vs-backend routing lives
+// in exactly one place:
+//
+//   - Delegated backend that can fork (BranchStrategyFor == BranchForkBackend):
+//     a REAL transcript fork (ForkBackendBranch) — the branch starts with the
+//     parent's full context and the parent keeps running untouched.
+//   - API agent: an API-style session branch reading the parent's on-disk history.
+//
+// ok=false with err==nil means no fork was produced — a delegated backend that
+// can't fork, or one whose backend session hasn't started yet — and the caller
+// applies its own fallback (send-to-parent, an in-place turn, or an error).
+//
+// The clone runs WITHOUT quiescing the parent: the transcript copy is race-safe
+// by construction (ccstream.forkTranscript), so ForkSession is safe to call
+// mid-turn — e.g. from the spawn tool, where routing the fork through the parent's
+// inbox worker (as the periodic path once did) would deadlock.
+func (a *Agent) ForkSession(ctx context.Context, parentKey string, opts session.BranchOptions) (branchKey string, ok bool, err error) {
+	if a.DelegatedManager != nil {
+		if a.BranchStrategyFor(opts.BranchType) != BranchForkBackend {
+			return "", false, nil
+		}
+		bk, forked := a.ForkBackendBranch(ctx, parentKey, opts)
+		return bk, forked, nil
+	}
+	bk, err := a.Sessions.CreateBranchWithOptions(parentKey, opts)
+	if err != nil {
+		return "", false, err
+	}
+	a.TouchRootCacheForBranch(bk) // branching warms root's shared prefix once (ForkBackendBranch does its own)
+	return bk, true, nil
+}
+
 // createMemoryBranch creates the branch session used by the BranchFork strategy:
 // a NoResetHook child of parentKey that reads its history, marked no-compact so
 // it can't summarise itself mid-pass. Shared by the compaction-memory and

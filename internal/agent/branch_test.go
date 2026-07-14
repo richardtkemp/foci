@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"foci/internal/delegator"
+	"foci/internal/session"
 )
 
 // brancherBackend is a mockBackendDM that also implements
@@ -86,4 +87,34 @@ func TestBranchStrategyForBranchCapable(t *testing.T) {
 			t.Errorf("branch-capable %q = %v, want %v", c.branchType, got, c.want)
 		}
 	}
+}
+
+func TestForkSession_Routing(t *testing.T) {
+	t.Run("api agent branches the session store", func(t *testing.T) {
+		a := &Agent{Sessions: session.NewStore(t.TempDir())}
+		bk, ok, err := a.ForkSession(context.Background(), "agent/c123", session.BranchOptions{BranchType: "spawn"})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if !ok || bk == "" {
+			t.Fatalf("api fork: ok=%v bk=%q, want true + nonempty", ok, bk)
+		}
+	})
+
+	t.Run("delegated can-branch, no backend session yet", func(t *testing.T) {
+		mgr := &DelegatedManager{NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil }}
+		a := &Agent{DelegatedManager: mgr}
+		bk, ok, err := a.ForkSession(context.Background(), "agent/c123", session.BranchOptions{BranchType: "spawn"})
+		if err != nil || ok || bk != "" {
+			t.Fatalf("want no fork (ok=false, no err), got bk=%q ok=%v err=%v", bk, ok, err)
+		}
+	})
+
+	t.Run("delegated cannot branch", func(t *testing.T) {
+		a := &Agent{DelegatedManager: &DelegatedManager{}}
+		bk, ok, err := a.ForkSession(context.Background(), "agent/c123", session.BranchOptions{BranchType: "spawn"})
+		if err != nil || ok || bk != "" {
+			t.Fatalf("want no fork (ok=false, no err), got bk=%q ok=%v err=%v", bk, ok, err)
+		}
+	})
 }

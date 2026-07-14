@@ -109,20 +109,13 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 		return injectInPlace()
 
 	case agent.BranchForkBackend:
-		// Clone the parent transcript with the parent held quiescent: run the
-		// fork inside the parent's inbox worker (EnqueueInjectWait) so no turn
-		// writes the transcript mid-copy. Only the clone is under the lock; the
-		// branch turn below runs on the isolated branch key.
-		var branchKey string
-		var ok bool
-		if err := ag.EnqueueInjectWait(ctx, parentKey, agent.ForkCloneTrigger(branchType), func() {
-			branchKey, ok = ag.ForkBackendBranch(ctx, parentKey, session.BranchOptions{
-				NoResetHook:         true,
-				BranchType:          branchType,
-				OrientationTemplate: orientTemplate,
-			})
-		}); err != nil {
-			log.Warnf(branchType, "[%s] session=%s fork-lock error: %v", agentID, parentKey, err)
+		branchKey, ok, err := ag.ForkSession(ctx, parentKey, session.BranchOptions{
+			NoResetHook:         true,
+			BranchType:          branchType,
+			OrientationTemplate: orientTemplate,
+		})
+		if err != nil {
+			log.Warnf(branchType, "[%s] session=%s fork error: %v", agentID, parentKey, err)
 			return false
 		}
 		if !ok {
