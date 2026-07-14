@@ -1372,8 +1372,10 @@ func (h *Hub) pushOpenSet(client *wsClient) {
 // pushChatScalar replays a per-chat scalar metadata value (keyed by metaKey) of
 // every live conversation to a just-connected client, so a device offline during
 // the change catches up. frame builds the server frame from the conversationId and
-// stored value; an empty stored value is skipped. Shared by pushDrafts/pushReads.
-func (h *Hub) pushChatScalar(client *wsClient, metaKey string, frame func(convID, value string) fap.ServerFrame) {
+// stored value. When replayEmpty is false an empty stored value is skipped (right
+// for read watermarks — an empty watermark carries nothing); drafts set it true so
+// a cleared draft still reaches devices that were offline during the clear.
+func (h *Hub) pushChatScalar(client *wsClient, metaKey string, replayEmpty bool, frame func(convID, value string) fap.ServerFrame) {
 	idx := h.deps.SessionIndex
 	if idx == nil {
 		return
@@ -1385,7 +1387,7 @@ func (h *Hub) pushChatScalar(client *wsClient, metaKey string, frame func(convID
 	}
 	h.mu.RUnlock()
 	for _, b := range bindings {
-		if v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, metaKey); err == nil && v != "" {
+		if v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, metaKey); err == nil && (replayEmpty || v != "") {
 			client.sendRaw(frame(b.convID, v))
 		}
 	}
@@ -1394,7 +1396,7 @@ func (h *Hub) pushChatScalar(client *wsClient, metaKey string, frame func(convID
 // pushDrafts replays the stored draft of every live conversation to a
 // just-connected client, so a device offline during an edit catches up.
 func (h *Hub) pushDrafts(client *wsClient) {
-	h.pushChatScalar(client, "draft", func(convID, v string) fap.ServerFrame {
+	h.pushChatScalar(client, "draft", true, func(convID, v string) fap.ServerFrame {
 		return fap.DraftSync{ConversationID: convID, Text: v}
 	})
 }
@@ -1402,7 +1404,7 @@ func (h *Hub) pushDrafts(client *wsClient) {
 // pushReads replays the stored read watermark of every live conversation to a
 // just-connected client, so a device offline during a read catches up.
 func (h *Hub) pushReads(client *wsClient) {
-	h.pushChatScalar(client, "last_read", func(convID, v string) fap.ServerFrame {
+	h.pushChatScalar(client, "last_read", false, func(convID, v string) fap.ServerFrame {
 		return fap.ReadSync{ConversationID: convID, MessageID: v}
 	})
 }

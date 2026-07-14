@@ -73,7 +73,8 @@ func TestHandleDraft_EmptyTextClears(t *testing.T) {
 }
 
 // TestPushDrafts_ReplaysStoredDraft proves a just-connected client is replayed
-// each conversation's stored draft, and that an empty stored draft is skipped.
+// each conversation's stored draft, including an empty one — a cleared draft must
+// reach a device that was offline during the clear (else its box stays wedged).
 func TestPushDrafts_ReplaysStoredDraft(t *testing.T) {
 	idx := newTestIndex(t)
 	h := newTestHub()
@@ -86,18 +87,19 @@ func TestPushDrafts_ReplaysStoredDraft(t *testing.T) {
 	c := fakeClient()
 	h.pushDrafts(c)
 
-	var got map[string]bool = map[string]bool{}
+	got := map[string]string{}
 	for _, f := range drain(t, c) {
 		if f.t == fap.TypeDraftSync {
 			id, _ := f.d["conversationId"].(string)
-			got[id] = true
+			text, _ := f.d["text"].(string)
+			got[id] = text
 		}
 	}
-	if !got["c1"] {
-		t.Error("pushDrafts must replay c1's stored draft")
+	if got["c1"] != "resume me" {
+		t.Errorf("pushDrafts must replay c1's stored draft, got %q", got["c1"])
 	}
-	if got["c2"] {
-		t.Error("pushDrafts must skip an empty stored draft (c2)")
+	if _, ok := got["c2"]; !ok {
+		t.Error("pushDrafts must replay an empty draft as a clear (c2)")
 	}
 }
 
