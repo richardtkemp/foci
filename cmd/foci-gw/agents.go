@@ -146,7 +146,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	if isDelegated {
 		if !delegator.IsRegistered(acfg.Backend) {
-			log.Errorf("agent/"+acfg.ID, "backend %q not registered (missing blank import?)", acfg.Backend)
+			log.Errorf("agent:"+acfg.ID, "backend %q not registered (missing blank import?)", acfg.Backend)
 			return nil
 		}
 		fp, ok = configureDelegated(ag, p, shared, acfg.Backend, acfg.BackendConfig)
@@ -174,7 +174,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// Resolve agent's primary model via the chat call site
 	primaryResolved := groupResolver.ResolveCall(config.CallChat)
 	if primaryResolved == nil {
-		log.Errorf("agent/"+acfg.ID, "cannot resolve chat model (agent skipped)")
+		log.Errorf("agent:"+acfg.ID, "cannot resolve chat model (agent skipped)")
 		return finalizeParams{}, false
 	}
 	defaultEndpoint := primaryResolved.Endpoint
@@ -188,7 +188,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// Resolve the API client for this agent's endpoint+format
 	client := p.clientProvider.GetClient(defaultEndpoint, defaultFormat)
 	if client == nil {
-		log.Errorf("agent/"+acfg.ID, "endpoint %q unavailable for model %q (format: %s)", defaultEndpoint, primaryResolved.ModelID, defaultFormat)
+		log.Errorf("agent:"+acfg.ID, "endpoint %q unavailable for model %q (format: %s)", defaultEndpoint, primaryResolved.ModelID, defaultFormat)
 		return finalizeParams{}, false
 	}
 

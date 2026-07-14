@@ -81,7 +81,7 @@ func resolveSharedSetup(p setupParams) *sharedAgentSetup {
 func (s *sharedAgentSetup) newAgent() *agent.Agent {
 	acfg := s.p.acfg
 	return &agent.Agent{
-		Log:               log.NewComponentLogger("agent/" + acfg.ID),
+		Log:               log.NewComponentLogger("agent:" + acfg.ID),
 		Sessions:          s.p.sessions,
 		Reminders:         s.p.reminderStore,
 		TaskListStore:     s.p.taskListStore,
