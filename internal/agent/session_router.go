@@ -36,6 +36,16 @@ import (
 type sessionRouter struct {
 	fallback turnevent.Sink
 	current  atomic.Pointer[sinkRef]
+
+	// lateStream is an optional streaming sink consulted ONLY when no per-turn
+	// sink is registered — i.e. during a CC autonomous run foci opened no turn
+	// for (#1070/#1257). It lets autonomous output stream to a platform (the app
+	// appSink: text.delta + activity frames) instead of falling to the fallback's
+	// whole-message SessionSink. Deliberately a SEPARATE slot from current: the
+	// autonomous-adoption lifecycle sets/clears it independently of per-turn
+	// Register/Clear, so it can never race with — or clobber — a real turn's sink.
+	// nil (the default) preserves the original current→fallback dispatch.
+	lateStream atomic.Pointer[sinkRef]
 }
 
 // sinkRef wraps a Sink so atomic.Pointer stores a single pointer per
@@ -70,10 +80,31 @@ func (r *sessionRouter) Clear() {
 	r.current.Store(nil)
 }
 
+// SetLateStream installs sink as the late-delivery streaming target used when no
+// per-turn sink is registered (a CC autonomous run). Passing nil clears it.
+// Independent of Register/Clear so the autonomous-adoption lifecycle owns it.
+func (r *sessionRouter) SetLateStream(sink turnevent.Sink) {
+	if sink == nil {
+		r.lateStream.Store(nil)
+		return
+	}
+	r.lateStream.Store(&sinkRef{s: sink})
+}
+
+// ClearLateStream removes the late-delivery streaming sink. Subsequent
+// no-per-turn-sink Emit calls fall back to the fallback again. Idempotent.
+func (r *sessionRouter) ClearLateStream() {
+	r.lateStream.Store(nil)
+}
+
 // Emit implements turnevent.Sink. Dispatches to the current per-turn
 // sink if one is registered; otherwise forwards to the fallback.
 func (r *sessionRouter) Emit(ctx context.Context, ev turnevent.Event) {
 	if ref := r.current.Load(); ref != nil {
+		ref.s.Emit(ctx, ev)
+		return
+	}
+	if ref := r.lateStream.Load(); ref != nil {
 		ref.s.Emit(ctx, ev)
 		return
 	}
@@ -86,6 +117,9 @@ func (r *sessionRouter) Emit(ctx context.Context, ev turnevent.Event) {
 // reach a user-facing platform?" via the same dispatch shape as Emit.
 func (r *sessionRouter) DeliversToPlatform() bool {
 	if ref := r.current.Load(); ref != nil {
+		return ref.s.DeliversToPlatform()
+	}
+	if ref := r.lateStream.Load(); ref != nil {
 		return ref.s.DeliversToPlatform()
 	}
 	return r.fallback.DeliversToPlatform()
