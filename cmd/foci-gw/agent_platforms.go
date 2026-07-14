@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -166,13 +167,15 @@ func wireAgentPlatformCallbacks(
 	}
 }
 
-// sessionBranchAdapter wraps session.Store to implement tools.SessionBrancher.
+// sessionBranchAdapter implements tools.SessionBrancher, routing forks through
+// Agent.ForkSession (backend fork vs API branch) and session paths through the store.
 type sessionBranchAdapter struct {
 	store *session.Store
+	ag    func() *agent.Agent
 }
 
-func (a *sessionBranchAdapter) CreateBranch(parentKey string, opts tools.BranchOptions) (string, error) {
-	return a.store.CreateBranchWithOptions(parentKey, session.BranchOptions{
+func (a *sessionBranchAdapter) ForkSession(ctx context.Context, parentKey string, opts tools.BranchOptions) (string, bool, error) {
+	return a.ag().ForkSession(ctx, parentKey, session.BranchOptions{
 		NoResetHook:         opts.NoResetHook,
 		BranchType:          opts.BranchType,
 		OrientationTemplate: opts.OrientationTemplate,
