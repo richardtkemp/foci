@@ -107,12 +107,20 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 
 	var activeRules []Rule
 	for _, r := range rs.Rules {
+		// Only warn for user-controllable (character) rules — a skipped built-in
+		// (braindead/default/scratchpad) is expected on backends without the
+		// capability and the user can't act on it, so warning is just noise.
+		warn := r.Category == CategoryChar
 		if TriggerRequiresPostTool(r.Trigger.Type) && !canPostTool {
-			log.Warnf("nudge", "%srule %q uses trigger %q which requires post-tool injection — not supported by this backend. Rule will be skipped.", who, truncate(r.Text, 60), r.Trigger.Type)
+			if warn {
+				log.Warnf("nudge", "%srule %q uses trigger %q which requires post-tool injection — not supported by this backend. Rule will be skipped.", who, truncate(r.Text, 60), r.Trigger.Type)
+			}
 			continue
 		}
 		if TriggerRequiresPreAnswer(r.Trigger.Type) && !canPreAnswer {
-			log.Warnf("nudge", "%srule %q uses trigger %q which requires pre-answer injection — not supported by this backend. Rule will be skipped.", who, truncate(r.Text, 60), r.Trigger.Type)
+			if warn {
+				log.Warnf("nudge", "%srule %q uses trigger %q which requires pre-answer injection — not supported by this backend. Rule will be skipped.", who, truncate(r.Text, 60), r.Trigger.Type)
+			}
 			continue
 		}
 		activeRules = append(activeRules, r)

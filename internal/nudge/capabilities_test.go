@@ -73,14 +73,21 @@ func TestNewSchedulerOpts_SkipWarningNamesAgent(t *testing.T) {
 	log.SetWarnHook(func(_ log.Level, _ string, msg string) { msgs = append(msgs, msg) })
 	defer log.SetWarnHook(nil)
 
-	rs := &RuleSet{Rules: []Rule{{Text: "braindead check", Trigger: Trigger{Type: "every_n_tools", N: 3}}}}
+	rs := &RuleSet{Rules: []Rule{
+		{Text: "user rule", Trigger: Trigger{Type: "every_n_tools", N: 3}, Category: CategoryChar},
+		{Text: "builtin braindead", Trigger: Trigger{Type: "every_n_tools", N: 3}, Category: CategoryBraindead},
+	}}
 	NewSchedulerOpts(rs, SchedulerOpts{CanPostTool: false, CanPreAnswer: false, AgentID: "clutch"})
 
+	// Only the user-controllable (char) rule warns; the built-in is skipped silently.
 	if len(msgs) != 1 {
-		t.Fatalf("expected 1 skip warning, got %d: %v", len(msgs), msgs)
+		t.Fatalf("expected 1 skip warning (char rule only), got %d: %v", len(msgs), msgs)
 	}
 	if !strings.HasPrefix(msgs[0], "agent clutch: ") {
 		t.Errorf("skip warning should name the agent, got %q", msgs[0])
+	}
+	if !strings.Contains(msgs[0], "user rule") {
+		t.Errorf("warning should be for the char rule, got %q", msgs[0])
 	}
 }
 
