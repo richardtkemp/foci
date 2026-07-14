@@ -70,7 +70,7 @@ func (idx *SessionIndex) RecordArchive(sessionKey, filePath, reason string) {
 		sessionKey, timeutil.Format(timeutil.Now()), filePath, reason,
 	)
 	if err != nil {
-		log.Warnf("session", "record archive for %s: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("record archive for %s: %v", sessionKey, err)
 	}
 }
 
@@ -124,14 +124,14 @@ func (idx *SessionIndex) RecordCCResume(sessionKey, resumeID string) {
 		return
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		log.Warnf("session", "cc resume history lookup for %s: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("cc resume history lookup for %s: %v", sessionKey, err)
 		return
 	}
 	if _, err := idx.db.Exec(
 		`INSERT OR IGNORE INTO cc_resume_history (session_key, observed_at, resume_id) VALUES (?, ?, ?)`,
 		sessionKey, timeutil.Format(timeutil.Now()), resumeID,
 	); err != nil {
-		log.Warnf("session", "record cc resume for %s: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("record cc resume for %s: %v", sessionKey, err)
 	}
 }
 
