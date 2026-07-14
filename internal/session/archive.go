@@ -128,10 +128,10 @@ func (s *Store) loadParentArchiveUnlocked(key string) ([]provider.Message, bool)
 	}
 	msgs, err := s.loadArchiveFile(archivePath, key)
 	if err != nil {
-		log.Warnf("session", "branch parent %s: archive %s load failed: %v", key, filepath.Base(archivePath), err)
+		sessionLog(key).Warnf("branch parent %s: archive %s load failed: %v", key, filepath.Base(archivePath), err)
 		return nil, false
 	}
-	log.Infof("session", "branch parent %s rotated away — recovered %d-message prefix from archive %s", key, len(msgs), filepath.Base(archivePath))
+	sessionLog(key).Infof("branch parent %s rotated away — recovered %d-message prefix from archive %s", key, len(msgs), filepath.Base(archivePath))
 	return msgs, true
 }
 
@@ -221,7 +221,7 @@ func (s *Store) Reset(key string) error {
 		if err := os.Rename(path, archivePath); err != nil {
 			return fmt.Errorf("reset session file: %w", err)
 		}
-		log.Infof("session", "session reset key=%s archive=%s", key, filepath.Base(archivePath))
+		sessionLog(key).Infof("session reset key=%s archive=%s", key, filepath.Base(archivePath))
 	}
 
 	s.fireEvent(SessionEvent{
@@ -259,7 +259,7 @@ func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 		if err := os.Rename(path, archivePath); err != nil {
 			return fmt.Errorf("rotate session file: %w", err)
 		}
-		log.Infof("session", "session rotated key=%s archive=%s", key, filepath.Base(archivePath))
+		sessionLog(key).Infof("session rotated key=%s archive=%s", key, filepath.Base(archivePath))
 	}
 
 	f, err := s.createFile(path)
@@ -303,7 +303,7 @@ func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 			return fmt.Errorf("write message: %w", err)
 		}
 	}
-	log.Infof("session", "session replaced key=%s messages=%d", key, len(msgs))
+	sessionLog(key).Infof("session replaced key=%s messages=%d", key, len(msgs))
 	s.fireEvent(SessionEvent{
 		Key:         key,
 		Type:        ClassifySessionKey(key),

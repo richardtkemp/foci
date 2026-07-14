@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/timeutil"
 )
@@ -246,7 +245,7 @@ func (s *Store) loadUnlocked(key string) ([]provider.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Debugf("session", "session loaded key=%s messages=%d", key, len(messages))
+	sessionLog(key).Debugf("session loaded key=%s messages=%d", key, len(messages))
 	return messages, nil
 }
 
@@ -308,7 +307,7 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 	// Write session metadata on new files
 	if !exists {
 		now := timeutil.Now()
-		log.Infof("session", "session created key=%s", key)
+		sessionLog(key).Infof("session created key=%s", key)
 		meta := SessionMeta{
 			Type:      "session_meta",
 			CreatedAt: timeutil.Format(now),
@@ -425,7 +424,7 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 	}
 
 	if createdEvent != nil {
-		log.Infof("session", "session created key=%s", key)
+		sessionLog(key).Infof("session created key=%s", key)
 		s.fireEvent(*createdEvent)
 	}
 
@@ -443,7 +442,7 @@ func (s *Store) clearUnlocked(key string) error {
 		return nil
 	}
 	if err == nil {
-		log.Infof("session", "session cleared key=%s", key)
+		sessionLog(key).Infof("session cleared key=%s", key)
 		s.fireEvent(SessionEvent{
 			Key:    key,
 			Status: SessionStatusCleared,

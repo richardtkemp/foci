@@ -278,7 +278,7 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 		isRoot,
 	)
 	if err != nil {
-		log.Errorf("session", "upsert index entry %q: %v", e.SessionKey, err)
+		sessionLog(e.SessionKey).Errorf("upsert index entry %q: %v", e.SessionKey, err)
 	}
 }
 
@@ -325,7 +325,7 @@ func (idx *SessionIndex) RecordTurnActivity(e SessionIndexEntry, bumpActivity, b
 		bumpActivity, bumpUser,
 	)
 	if err != nil {
-		log.Errorf("session", "record turn activity %q: %v", e.SessionKey, err)
+		sessionLog(e.SessionKey).Errorf("record turn activity %q: %v", e.SessionKey, err)
 	}
 }
 
@@ -341,7 +341,7 @@ func (idx *SessionIndex) UpdateActivity(sessionKey string, activityAt time.Time)
 		sessionKey,
 	)
 	if err != nil {
-		log.Warnf("session", "update activity for %q: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("update activity for %q: %v", sessionKey, err)
 	}
 }
 
@@ -362,7 +362,7 @@ func (idx *SessionIndex) TouchCacheTouch(sessionKey string, at time.Time) {
 		sessionKey,
 	)
 	if err != nil {
-		log.Warnf("session", "touch cache for %q: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("touch cache for %q: %v", sessionKey, err)
 	}
 }
 
@@ -379,7 +379,7 @@ func (idx *SessionIndex) ClearCacheTouch(sessionKey string) {
 		sessionKey,
 	)
 	if err != nil {
-		log.Warnf("session", "clear cache touch for %q: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("clear cache touch for %q: %v", sessionKey, err)
 	}
 }
 
@@ -434,7 +434,7 @@ func (idx *SessionIndex) TouchUserActivity(sessionKey string, at time.Time) {
 		sessionKey,
 	)
 	if err != nil {
-		log.Warnf("session", "touch user activity for %q: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("touch user activity for %q: %v", sessionKey, err)
 	}
 }
 
@@ -473,7 +473,7 @@ func (idx *SessionIndex) StampReflection(sessionKey string, at time.Time) {
 		sessionKey,
 	)
 	if err != nil {
-		log.Warnf("session", "stamp reflection for %q: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("stamp reflection for %q: %v", sessionKey, err)
 	}
 }
 
@@ -731,7 +731,7 @@ func (idx *SessionIndex) purgeLocked(sessionKey string) {
 		`DELETE FROM cc_resume_history WHERE session_key = ?`,
 	} {
 		if _, err := idx.db.Exec(stmt, sessionKey); err != nil {
-			log.Errorf("session", "purge session %q: %v", sessionKey, err)
+			sessionLog(sessionKey).Errorf("purge session %q: %v", sessionKey, err)
 		}
 	}
 }
@@ -757,7 +757,7 @@ func (idx *SessionIndex) UpdateStatus(sessionKey string, status SessionStatus) {
 		sessionKey,
 	)
 	if err != nil {
-		log.Warnf("session", "update status for %q: %v", sessionKey, err)
+		sessionLog(sessionKey).Warnf("update status for %q: %v", sessionKey, err)
 	}
 }
 

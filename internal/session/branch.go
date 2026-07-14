@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/timeutil"
 )
@@ -71,7 +70,7 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Second)
-			log.Warnf("session", "branch key collision on %s, retrying (attempt %d/%d)", parentKey, attempt, maxRetries)
+			sessionLog(parentKey).Warnf("branch key collision on %s, retrying (attempt %d/%d)", parentKey, attempt, maxRetries)
 		}
 
 		branchKey, err := branchFromSession(parentKey)
@@ -137,7 +136,7 @@ func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, 
 		return fmt.Errorf("write branch meta: %w", err)
 	}
 
-	log.Infof("session", "branch created key=%s parent=%s branch_point=%d no_reset_hook=%v orientation=%v",
+	sessionLog(branchKey).Infof("branch created key=%s parent=%s branch_point=%d no_reset_hook=%v orientation=%v",
 		branchKey, parentKey, meta.BranchPoint, noResetHook, orientation != "")
 	s.fireEvent(SessionEvent{
 		Key:       branchKey,
@@ -180,7 +179,7 @@ func (s *Store) ConsumeOrientation(key string, idx *SessionIndex) string {
 	// Mark consumed in the index.
 	if idx != nil {
 		if err := idx.SetSessionMetadata(key, "orientation_consumed", "1"); err != nil {
-			log.Warnf("session", "failed to mark orientation consumed for %s: %v", key, err)
+			sessionLog(key).Warnf("failed to mark orientation consumed for %s: %v", key, err)
 		}
 	}
 
@@ -235,7 +234,7 @@ func (s *Store) LoadFull(key string) ([]provider.Message, error) {
 	result := make([]provider.Message, 0, len(prefix)+len(ownMsgs))
 	result = append(result, prefix...)
 	result = append(result, ownMsgs...)
-	log.Debugf("session", "branch loaded key=%s parent_msgs=%d own_msgs=%d total=%d", key, len(prefix), len(ownMsgs), len(result))
+	sessionLog(key).Debugf("branch loaded key=%s parent_msgs=%d own_msgs=%d total=%d", key, len(prefix), len(ownMsgs), len(result))
 	return result, nil
 }
 
