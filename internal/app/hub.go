@@ -1937,7 +1937,7 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	wire, err := fap.Encode(frame, seq, 0, "", "")
 	if err != nil {
 		b.mu.Unlock()
-		log.Errorf("app", "encode %s: %v", frame.Type(), err)
+		log.Errorf("app", "encode %s (conv=%s): %v", frame.Type(), b.convID, err)
 		return
 	}
 	now := time.Now()
