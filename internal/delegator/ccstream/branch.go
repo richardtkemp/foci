@@ -66,7 +66,7 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	newID := uuid.NewString()
 	newPath := filepath.Join(dir, newID+".jsonl")
 
-	if err := forkTranscript(parentPath, newPath, req.ParentSessionID, newID); err != nil {
+	if err := forkTranscript(parentPath, newPath, req.ParentSessionID, newID, b.logger()); err != nil {
 		return delegator.ForkResult{}, err
 	}
 	return delegator.ForkResult{SessionID: newID}, nil
@@ -107,7 +107,7 @@ func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest
 // the fork is simply taken as of the last good record, and any in-flight tail is
 // not part of it (it lands in the parent, never the branch). This is what lets a
 // fork run while the parent has pending background work in flight.
-func forkTranscript(src, dst, oldID, newID string) error {
+func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("ccstream fork: open parent transcript %s: %w", src, err)
@@ -165,7 +165,7 @@ func forkTranscript(src, dst, oldID, newID string) error {
 	if cutBeforeEOF {
 		// Normal when forking a live session mid-write; logged so a genuinely
 		// corrupt interior record (which would also cut the fork short) is visible.
-		log.Debugf("ccstream", "fork: parent %s had an in-flight/partial tail record; branch taken as of the last complete record", src)
+		lg.Debugf("fork: parent %s had an in-flight/partial tail record; branch taken as of the last complete record", src)
 	}
 	return nil
 }

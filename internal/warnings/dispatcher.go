@@ -15,6 +15,7 @@ type DispatchFunc func(warningText string)
 // DispatcherConfig holds all the dependencies for creating a Dispatcher.
 type DispatcherConfig struct {
 	Name                  string // log-component suffix (e.g. "agent", "chat") so skip/dispatch lines are distinguishable
+	AgentID               string // owning agent, appended to the log component so dispatch/throttle lines are attributable
 	Queue                 *Queue
 	PeerQueues            []*Queue // additional queues to suppress during dispatch (prevents cross-queue feedback)
 	DispatchFn            DispatchFunc
@@ -51,6 +52,9 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 	component := "warnings"
 	if cfg.Name != "" {
 		component += ":" + cfg.Name
+	}
+	if cfg.AgentID != "" {
+		component += ":" + cfg.AgentID
 	}
 	return &Dispatcher{
 		log:                   log.NewComponentLogger(component),
@@ -121,7 +125,7 @@ const flushMinInterval = 60 * time.Second
 // flush warnings that were deferred.
 func (d *Dispatcher) FlushPending() {
 	if d.queue == nil || d.dispatchFn == nil {
-		log.Warnf("warnings", "FlushPending: dispatcher not fully wired (queue=%v dispatchFn=%v) — pending warnings dropped", d.queue != nil, d.dispatchFn != nil)
+		d.log.Warnf("FlushPending: dispatcher not fully wired (queue=%v dispatchFn=%v) — pending warnings dropped", d.queue != nil, d.dispatchFn != nil)
 		return
 	}
 	if !d.queue.Pending() {

@@ -75,6 +75,7 @@ type subagentTailManager struct {
 	// the backend so it always reads the current SessionEvents. May be nil in
 	// tests that only exercise lifecycle bookkeeping.
 	deliver func(groupKey, text string)
+	lg      *log.ComponentLogger
 }
 
 type subagentTail struct {
@@ -82,11 +83,15 @@ type subagentTail struct {
 	done chan struct{}
 }
 
-func newSubagentTailManager(deliver func(groupKey, text string)) *subagentTailManager {
+func newSubagentTailManager(deliver func(groupKey, text string), lg *log.ComponentLogger) *subagentTailManager {
+	if lg == nil {
+		lg = log.NewComponentLogger("ccstream")
+	}
 	return &subagentTailManager{
 		expectFg: make(map[string]bool),
 		tails:    make(map[string]*subagentTail),
 		deliver:  deliver,
+		lg:       lg,
 	}
 }
 
@@ -227,7 +232,7 @@ func (m *subagentTailManager) waitForFile(path string, stop <-chan struct{}) *os
 		case <-time.After(subagentTailPoll):
 		}
 		if time.Now().After(deadline) {
-			log.Debugf("ccstream", "subagent tail: transcript never appeared: %s", path)
+			m.lg.Debugf("subagent tail: transcript never appeared: %s", path)
 			return nil
 		}
 	}

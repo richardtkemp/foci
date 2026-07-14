@@ -178,6 +178,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// change applies live without spinning up a goroutine (#1225).
 	warningDispatcher := warnings.NewDispatcher(warnings.DispatcherConfig{
 		Name:       "agent",
+		AgentID:    agentID,
 		Queue:      inst.ag.Warnings(),
 		PeerQueues: []*warnings.Queue{inst.ag.ChatWarnings()},
 		// Defer proactive warnings only while the session they'd be injected
@@ -208,6 +209,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// SendNotification (e.g. "no channel ID") must not enter the agent queue.
 	chatWarningDispatcher := warnings.NewDispatcher(warnings.DispatcherConfig{
 		Name:       "chat",
+		AgentID:    agentID,
 		Queue:      inst.ag.ChatWarnings(),
 		PeerQueues: []*warnings.Queue{inst.ag.Warnings()},
 		FormatFn: func(body string) string {

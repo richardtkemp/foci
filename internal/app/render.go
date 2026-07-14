@@ -30,7 +30,7 @@ type appBackend struct {
 }
 
 func newAppBackend(b *convBinding) *appBackend {
-	return &appBackend{b: b, logger: log.NewComponentLogger("app")}
+	return &appBackend{b: b, logger: log.NewComponentLogger("app:" + b.convID)}
 }
 
 // Compile-time check.

@@ -33,13 +33,22 @@ type Handler interface {
 type Reader struct {
 	r       io.Reader
 	handler Handler
+	lg      *log.ComponentLogger
 }
 
-// NewReader creates a Reader that reads from r and dispatches to handler.
+// NewReader creates a Reader that reads from r and dispatches to handler. The
+// reader borrows the handler's session/agent-scoped logger when it exposes one
+// (the *Backend does), so per-stream parse-drop lines are attributable to the
+// owning agent rather than a bare [ccstream].
 func NewReader(r io.Reader, handler Handler) *Reader {
+	lg := log.NewComponentLogger("ccstream")
+	if h, ok := handler.(interface{ logger() *log.ComponentLogger }); ok {
+		lg = h.logger()
+	}
 	return &Reader{
 		r:       r,
 		handler: handler,
+		lg:      lg,
 	}
 }
 
@@ -114,7 +123,7 @@ func (rd *Reader) dispatch(line []byte) {
 	// Step 1: Discriminate on Type (and optionally Subtype).
 	var env StdoutEnvelope
 	if err := json.Unmarshal(line, &env); err != nil {
-		log.Warnf("ccstream", "dropping unparseable stdout line (envelope): %v", err)
+		rd.lg.Warnf("dropping unparseable stdout line (envelope): %v", err)
 		return
 	}
 
@@ -122,7 +131,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "assistant":
 		var msg AssistantMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			log.Warnf("ccstream", "dropping malformed assistant line: %v", err)
+			rd.lg.Warnf("dropping malformed assistant line: %v", err)
 			return
 		}
 		rd.handler.OnAssistant(&msg)
@@ -130,7 +139,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "result":
 		var msg ResultMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			log.Warnf("ccstream", "dropping malformed result line: %v", err)
+			rd.lg.Warnf("dropping malformed result line: %v", err)
 			return
 		}
 		rd.handler.OnResult(&msg)
@@ -138,29 +147,29 @@ func (rd *Reader) dispatch(line []byte) {
 	case "control_request":
 		var crEnv controlRequestEnvelope
 		if err := json.Unmarshal(line, &crEnv); err != nil {
-			log.Warnf("ccstream", "dropping malformed control_request envelope: %v", err)
+			rd.lg.Warnf("dropping malformed control_request envelope: %v", err)
 			return
 		}
 		switch crEnv.Request.Subtype {
 		case "can_use_tool":
 			var msg PermissionRequest
 			if err := json.Unmarshal(line, &msg); err != nil {
-				log.Warnf("ccstream", "dropping malformed permission_request: %v", err)
+				rd.lg.Warnf("dropping malformed permission_request: %v", err)
 				return
 			}
-			log.Debugf("ccstream", "received permission request req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
+			rd.lg.Debugf("received permission request req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
 			rd.handler.OnPermissionRequest(&msg)
 		case "elicitation":
 			var msg ElicitationRequest
 			if err := json.Unmarshal(line, &msg); err != nil {
-				log.Warnf("ccstream", "dropping malformed elicitation: %v", err)
+				rd.lg.Warnf("dropping malformed elicitation: %v", err)
 				return
 			}
-			log.Debugf("ccstream", "received elicitation req_id=%s server=%s mode=%s",
+			rd.lg.Debugf("received elicitation req_id=%s server=%s mode=%s",
 				msg.RequestID, msg.Request.McpServerName, msg.Request.Mode)
 			rd.handler.OnElicitationRequest(&msg)
 		default:
-			log.Debugf("ccstream", "unknown control_request subtype %q", crEnv.Request.Subtype)
+			rd.lg.Debugf("unknown control_request subtype %q", crEnv.Request.Subtype)
 		}
 
 	case "control_response":
@@ -169,7 +178,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "control_cancel_request":
 		var ce cancelEnvelope
 		if err := json.Unmarshal(line, &ce); err != nil {
-			log.Warnf("ccstream", "dropping malformed control_cancel_request: %v", err)
+			rd.lg.Warnf("dropping malformed control_cancel_request: %v", err)
 			return
 		}
 		rd.handler.OnControlCancelRequest(ce.RequestID)
@@ -177,7 +186,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "tool_progress":
 		var msg ToolProgressMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			log.Warnf("ccstream", "dropping malformed tool_progress: %v", err)
+			rd.lg.Warnf("dropping malformed tool_progress: %v", err)
 			return
 		}
 		rd.handler.OnToolProgress(&msg)
@@ -209,13 +218,13 @@ func (rd *Reader) dispatch(line []byte) {
 	case "rate_limit_event":
 		var msg RateLimitEvent
 		if err := json.Unmarshal(line, &msg); err != nil {
-			log.Warnf("ccstream", "dropping malformed rate_limit_event: %v", err)
+			rd.lg.Warnf("dropping malformed rate_limit_event: %v", err)
 			return
 		}
 		rd.handler.OnRateLimit(&msg)
 
 	default:
-		log.Debugf("ccstream", "unknown message type %q", env.Type)
+		rd.lg.Debugf("unknown message type %q", env.Type)
 	}
 }
 

@@ -64,7 +64,7 @@ func TestSubagentTail_ForegroundStreamsAppendedText(t *testing.T) {
 	path := filepath.Join(dir, "agent-x.jsonl")
 
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 
 	// Foreground start recorded, then task_started fires maybeStart.
 	mgr.expectForeground("tool-1")
@@ -113,7 +113,7 @@ func TestSubagentTail_FinalizeDrainsRemainder(t *testing.T) {
 	path := filepath.Join(dir, "agent-y.jsonl")
 
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 	mgr.expectForeground("tool-2")
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestSubagentTail_BackgroundNotTailed(t *testing.T) {
 	}
 
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 	// No expectForeground → background path.
 	mgr.maybeStart("tool-bg", path)
 
@@ -170,7 +170,7 @@ func TestSubagentTail_BackgroundNotTailed(t *testing.T) {
 // forwarded — input prompt (user), tool_use, tool_result and empty text skipped.
 func TestSubagentTail_DeliverLineFilters(t *testing.T) {
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 	lines := []string{
 		`{"type":"user","isSidechain":true,"message":{"content":[{"type":"text","text":"PROMPT"}]}}`,
 		`{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"tool_use"}]}}`,
