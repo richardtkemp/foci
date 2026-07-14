@@ -306,20 +306,30 @@ func (a *Agent) cacheTTLFor(sessionKey string) time.Duration {
 	return 5 * time.Minute
 }
 
+// CacheExpiryMs returns the session's truthful prompt-cache expiry as unix ms,
+// normalizing the zero time (no cache: never warmed, or cleared on reset) to 0
+// rather than the raw ~-6.2e13 that time.Time{}.UnixMilli() yields. This is the
+// single "expiry → wire ms" conversion, shared by emitCacheExpiry (the hook) and
+// the app sink's cacheExpiryFn, so every no-cache signal is an identical 0 — the
+// client treats 0/absent as WARM (no prefix to re-warm), distinct from a
+// genuinely cold cache (a positive PAST expiry).
+func (a *Agent) CacheExpiryMs(sessionKey string, at time.Time) int64 {
+	exp := a.CacheExpiry(sessionKey, at)
+	if exp.IsZero() {
+		return 0
+	}
+	return exp.UnixMilli()
+}
+
 // emitCacheExpiry pushes the session's current truthful cache expiry to the
 // onCacheExpiry hook (if wired). Called after any last_cache_touch write so the
-// client's warmth indicator refreshes on every (re)warm, cold on a cleared
-// touch. Cheap no-op when no hook is set.
+// client's warmth indicator refreshes on every (re)warm, and to 0 (no cache) on
+// a cleared touch. Cheap no-op when no hook is set.
 func (a *Agent) emitCacheExpiry(sessionKey string) {
 	if a.onCacheExpiry == nil || sessionKey == "" {
 		return
 	}
-	exp := a.CacheExpiry(sessionKey, time.Now())
-	var ms int64
-	if !exp.IsZero() {
-		ms = exp.UnixMilli()
-	}
-	a.onCacheExpiry(sessionKey, ms)
+	a.onCacheExpiry(sessionKey, a.CacheExpiryMs(sessionKey, time.Now()))
 }
 
 // BackendType returns the modelcaps backend-type key for this agent — the live
@@ -786,7 +796,7 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 		// DeleteAllSessionMetadata leaves it stale. Null it so keepalive treats
 		// the reset session as having no live cache to warm.
 		a.SessionIndex.ClearCacheTouch(sessionKey)
-		a.emitCacheExpiry(sessionKey) // now cold → client shows expired
+		a.emitCacheExpiry(sessionKey) // emits 0 (no cache) → client shows WARM, nothing to re-warm
 	}
 
 	a.logger().Infof("session state cleared %s", sessionKey)
