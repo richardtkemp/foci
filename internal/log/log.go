@@ -358,16 +358,16 @@ func NewComponentLogger(component string) *ComponentLogger {
 }
 
 func (cl *ComponentLogger) Debugf(format string, args ...interface{}) {
-	std.event(DEBUG, cl.component, format, args...)
+	Debugf(cl.component, format, args...)
 }
 func (cl *ComponentLogger) Infof(format string, args ...interface{}) {
-	std.event(INFO, cl.component, format, args...)
+	Infof(cl.component, format, args...)
 }
 func (cl *ComponentLogger) Warnf(format string, args ...interface{}) {
-	std.event(WARN, cl.component, format, args...)
+	Warnf(cl.component, format, args...)
 }
 func (cl *ComponentLogger) Errorf(format string, args ...interface{}) {
-	std.event(ERROR, cl.component, format, args...)
+	Errorf(cl.component, format, args...)
 }
 
 // Extra logs a verbose "xtra:" investigation line for this logger's component,
@@ -449,6 +449,10 @@ func Extra(component string, format string, args ...interface{}) {
 }
 
 // Package-level functions for the global logger.
+
+func Debugf(component string, format string, args ...interface{}) {
+	std.event(DEBUG, component, format, args...)
+}
 
 func Infof(component string, format string, args ...interface{}) {
 	std.event(INFO, component, format, args...)

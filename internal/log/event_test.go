@@ -96,6 +96,20 @@ func TestDebugFilteredAtInfoLevel(t *testing.T) {
 	}
 }
 
+func TestPackageLevelDebugf(t *testing.T) {
+	// Verifies the package-level Debugf emits output at DEBUG level.
+	resetGlobal()
+	t.Cleanup(resetGlobal)
+	buf := captureOutput(t)
+	withDebugLevel(t)
+
+	Debugf("pkg", "pkg debug")
+
+	if !strings.Contains(buf.String(), "pkg debug") {
+		t.Errorf("package debug output missing message: %s", buf.String())
+	}
+}
+
 func TestPackageLevelInfof(t *testing.T) {
 	// Verifies the package-level Infof emits output at INFO level.
 	resetGlobal()
