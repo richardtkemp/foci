@@ -2,7 +2,9 @@ package ccstream
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 // ccProjectsDir is where Claude Code stores per-project session transcripts,
@@ -94,6 +97,16 @@ func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest
 // replace rewrites only the "sessionId" fields — the same technique verified
 // manually (cp + sed) before this was written. dst is created O_EXCL so a UUID
 // collision (astronomically unlikely) fails loudly instead of clobbering.
+//
+// The fork is safe to take WITHOUT quiescing the parent's writer. CC transcripts
+// are append-only (earlier bytes never change; new events only extend the file)
+// and one-JSON-object-per-line, so we copy only whole, well-formed records and
+// stop at the first line that is either unterminated (a half-appended trailing
+// record) or not valid JSON (a torn boundary from a non-atomic write). The prefix
+// we copy is immutable under append, so it can't tear even if the writer is busy;
+// the fork is simply taken as of the last good record, and any in-flight tail is
+// not part of it (it lands in the parent, never the branch). This is what lets a
+// fork run while the parent has pending background work in flight.
 func forkTranscript(src, dst, oldID, newID string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -106,16 +119,34 @@ func forkTranscript(src, dst, oldID, newID string) error {
 		return fmt.Errorf("ccstream fork: create branch transcript %s: %w", dst, err)
 	}
 
+	oldB, newB := []byte(oldID), []byte(newID)
 	r := bufio.NewReader(in)
 	w := bufio.NewWriter(out)
+	cutBeforeEOF := false
 	for {
-		// ReadString (not bufio.Scanner) so multi-hundred-KB tool-result
+		// ReadBytes (not bufio.Scanner) so multi-hundred-KB tool-result
 		// lines aren't truncated by the 64KB scanner token cap.
-		line, readErr := r.ReadString('\n')
-		if len(line) > 0 {
-			if _, werr := w.WriteString(strings.ReplaceAll(line, oldID, newID)); werr != nil {
-				return finishFork(out, w, dst, fmt.Errorf("ccstream fork: write: %w", werr))
+		line, readErr := r.ReadBytes('\n')
+		if len(line) == 0 || line[len(line)-1] != '\n' {
+			// No terminating newline: a half-appended trailing record (or EOF
+			// with nothing pending). Exclude it — the fork ends at the last
+			// complete record above.
+			if len(line) > 0 {
+				cutBeforeEOF = true
 			}
+			break
+		}
+		// A complete line must parse as JSON. If it doesn't, the boundary was
+		// torn by a non-atomic write becoming partially visible — stop here and
+		// fork as of the previous good record. json.Valid tolerates the trailing
+		// newline. (Interior CC records are always valid JSON, so in practice this
+		// only ever trips on the tail.)
+		if !json.Valid(line) {
+			cutBeforeEOF = true
+			break
+		}
+		if _, werr := w.Write(bytes.ReplaceAll(line, oldB, newB)); werr != nil {
+			return finishFork(out, w, dst, fmt.Errorf("ccstream fork: write: %w", werr))
 		}
 		if readErr == io.EOF {
 			break
@@ -130,6 +161,11 @@ func forkTranscript(src, dst, oldID, newID string) error {
 	if err := out.Close(); err != nil {
 		_ = os.Remove(dst)
 		return fmt.Errorf("ccstream fork: close branch transcript: %w", err)
+	}
+	if cutBeforeEOF {
+		// Normal when forking a live session mid-write; logged so a genuinely
+		// corrupt interior record (which would also cut the fork short) is visible.
+		log.Debugf("ccstream", "fork: parent %s had an in-flight/partial tail record; branch taken as of the last complete record", src)
 	}
 	return nil
 }
