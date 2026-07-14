@@ -832,12 +832,7 @@ func (r *Runner) maybeReflection() {
 
 	r.log.Infof("firing reflection pass for agent %s (%d sessions)", r.agentID, len(keys))
 
-	// Snapshot skill files before reflection so we can detect creation/update
-	// after the pass completes.
-	var skillBefore skills.SkillSnapshot
-	if r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && r.notifySkillChange != nil {
-		skillBefore = skills.Snapshot(r.skillDirs)
-	}
+	notifySkills := r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && r.notifySkillChange != nil
 
 	go func() {
 		defer func() {
@@ -846,19 +841,25 @@ func (r *Runner) maybeReflection() {
 			r.lastReflection = time.Now()
 			r.mu.Unlock()
 		}()
+		// Snapshot before each reflection branch and diff after it, so a skill
+		// create/update is attributed to the session that was reflected (the
+		// branch's parent) and the notification goes there — not to keys[0].
+		var prev skills.SkillSnapshot
+		if notifySkills {
+			prev = skills.Snapshot(r.skillDirs)
+		}
 		for _, key := range keys {
 			t := time.Now()
-			if r.agent.Branch("reflection", key, promptText, true) {
+			ran := r.agent.Branch("reflection", key, promptText, true)
+			if ran {
 				r.sessionIndex.StampReflection(key, t)
 			}
-		}
-
-		// Detect and notify on skill creation/update.
-		if skillBefore != nil {
-			after := skills.Snapshot(r.skillDirs)
-			changes := skills.Diff(skillBefore, after)
-			if msg := skills.FormatChanges(changes); msg != "" {
-				r.notifySkillChange(keys[0], msg)
+			if notifySkills && ran {
+				after := skills.Snapshot(r.skillDirs)
+				if msg := skills.FormatChanges(skills.Diff(prev, after)); msg != "" {
+					r.notifySkillChange(key, msg)
+				}
+				prev = after
 			}
 		}
 	}()
