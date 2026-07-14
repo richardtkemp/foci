@@ -16,7 +16,6 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/platform"
 )
 
@@ -55,7 +54,7 @@ func (p *appProvider) Init(deps platform.ProviderDeps) (err error) {
 	// ConnectionManager are nil-hub-safe for this degraded state.
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf("app", "recovered panic during Init — app provider disabled: %v\n%s", r, debug.Stack())
+			appLog.Errorf("recovered panic during Init — app provider disabled: %v\n%s", r, debug.Stack())
 			p.hub = nil
 			p.connMgr = disabledConnMgr{}
 		}

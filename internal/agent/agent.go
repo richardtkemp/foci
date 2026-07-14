@@ -24,6 +24,12 @@ import (
 	"foci/internal/workspace"
 )
 
+var (
+	convertLog            = log.NewComponentLogger("convert")
+	delegatedLog          = log.NewComponentLogger("delegated")
+	message_transformsLog = log.NewComponentLogger("message_transforms")
+)
+
 // NoResponseSentinel is the marker that prompts instruct the model to emit
 // when it has nothing to say. The agent strips it before delivery so the
 // user never sees it (and the platform treats it as an empty response).
@@ -90,66 +96,66 @@ type Agent struct {
 	Endpoint        string                // agent's default endpoint (sessions inherit this unless overridden)
 	Log             *log.ComponentLogger  // structured logger for this agent
 
-	EnvironmentBlock                        string                                  // static environment block (fallback; tests). Prod uses EnvironmentBlockFunc.
-	EnvironmentBlockFunc                    func(sessionKey string) string          // per-session environment block (platform-aware); preferred over EnvironmentBlock
-	ExtraSystemBlocks                       []provider.SystemBlock                  // additional system blocks (e.g. skills list), injected before cache marker
-	CacheStrategy                           string                                  // "auto" (top-level) or "explicit" (manual breakpoints) — from primary model config
-	CacheBustDetect                         bool                                    // detect cache busts (cache_read drop >50%)
-	CacheBustIdleThreshold                  time.Duration                           // suppress cache bust alert if session idle > this (default 10m)
-	CacheBustAlert                          HookList[CacheBustFunc]                 // callbacks for cache bust alerts
-	DuplicateMessages                       bool                                    // send user text twice per API call (improves instruction following)
-	BatchPartialAssistantMessages           bool                                    // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
-	BatchPartialJoiner                      string                                  // separator between batched partial messages (default "")
-	MaxResultChars                          int                                     // max chars for tool result before writing to file (0 disables)
-	ToolResultTempDir                       string                                  // where to write large tool results
-	SummaryContextTurns                     int                                     // recent conversation turns for summary context
-	SummaryContextChars                     int                                     // max chars of context to send to cheap model
-	MaxSummaryChars                         int                                     // max chars to auto-summarise (skip cheap model above this)
-	MaxSummaryInputChars                    int                                     // max chars of tool result embedded in summary prompt (0 = no limit)
-	GroupResolver                           *config.GroupResolver                   // resolves call sites to model groups
-	FallbackFunc                            provider.FallbackFunc                   // nil disables automatic model fallback on transient errors
-	MaxImagePixels                          int                                     // max pixels (w*h) for images before downscaling; 0 disables
-	AutoSummarise                           bool                                    // enable auto-summarise of oversized tool results (default true)
-	WarningQueue                            *warnings.Queue                         // nil disables warning injection into session
-	ChatWarningQueue                        *warnings.Queue                         // nil disables chat warning notifications
-	MaxTokensWarnFunc                       HookList[func(string)]                  // callbacks when stop_reason=max_tokens (response truncated)
-	RateLimitFunc                           HookList[func(resetTime time.Time)]     // callbacks when API returns 429 (rate limited)
-	ReloadOnCompact                         bool                                    // delegated: after compaction, bounce the CC session (resume) so character/skill files reload from disk (#828)
-	TaskListNotifyFunc                      HookList[func(string, string)]          // callbacks for task list changes (session key, message)
-	CompactionMemoryFunc                    HookList[func(string)]                  // fires before compaction to save memories (session key)
-	CompactionStartFunc                     HookList[func(string, string)]          // callbacks for compaction start (session key, message) — sent immediately, not buffered
-	CompactionNotifyFunc                    HookList[func(string, string)]          // callbacks for compaction notifications (session key, message)
-	CompactionDebugFunc                     HookList[func(string, string)]          // callbacks for compaction debug (session key, summary text)
-	OnActivity                              HookList[func(string)]                  // callbacks when a session has activity (session key)
-	Redact                                  func(string) string                     // redact secrets from tool output; nil disables
-	SessionIndex                            *session.SessionIndex                   // nil disables state persistence
-	MessageTransforms                       []CompiledTransform                     // compiled regex rules for inbound message transformation
-	CompactionSummaryPromptPath             string                                  // file path; read at compaction time via prompts.ResolvePrompt
-	CompactionHandoffMsg                    string                                  // inline handoff message; empty resolves from search dirs or embedded default
-	PromptSearchDirs                        []string                                // directories to search for prompt files (agent workspace, shared)
-	MaxToolLoops                            int                                     // max tool iterations per turn (default 25)
-	MaxOutputTokens                         int                                     // max tokens in model response (default 16384)
-	Nudger                                  *nudge.Scheduler                        // nil disables nudge reminders; pre-answer gate/min-tools live in its settings
-	NudgeReloadFunc                         func()                                  // called after bootstrap reload to refresh nudge rules; nil disables
-	FirstRunMessage                         atomic.Value                            // string; prepended as separate content block on first HandleMessage, then cleared
-	OnFirstRunConsumed                      func()                                  // fired once when FirstRunMessage is actually consumed into a delivered turn (nil disables); marks onboarding complete
-	TurnLockWarnThreshold                   time.Duration                           // warn if turn lock wait exceeds this (default 3m)
-	ShowToolCalls                           string                                  // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
-	Statusline                              string                                  // per-agent [meta]/[state] header template; "" = DefaultStatuslineTemplate (#831)
-	Streaming                               bool                                    // use streaming API when provider supports it
-	ModelMetaFn                             func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
-	ModelDefaultsFn                         func(model string) config.ModelDefaults // returns per-model defaults from [models.*] config; nil = no model defaults
-	CanRunBackground                        string                                  // path to an executable gating background work; exit 0 = allowed, non-zero = skip; "" = always allowed
-	LiveConfigFn                            func() *config.ResolvedAgentConfig      // when set, per-turn getters read the LIVE resolved config so edits apply without restart; nil in direct-constructed agents (tests) → static fields above
-	ServerTools                             []provider.ToolDef                      // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
-	DelegatedManager                        *DelegatedManager                       // nil = traditional agent loop; non-nil = lazy per-session delegated transport management
-	ReloginTrigger                          func(reason, sessionKey string) bool    // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
-	Reflection                              config.ResolvedReflection               // resolved reflection config (agent+global merged)
-	SkillDirs                               []string                                 // skill directories (shared + per-agent) for reflection creation/update detection
-	SkillChangeNotify                       func(string, string)                     // called with (sessionKey, formatted message) when reflection creates/updates a skill; nil = disabled
-	DefaultPlatform                         string                                  // configured default_platform (per-agent, else global); preferred for default-session resolution and delivery fallback
-	ResetOrientTemplateFn                   func() string                           // resolves orientation template for session reset; nil = no orientation
-	ReloadSystemFn                          func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op
+	EnvironmentBlock              string                                  // static environment block (fallback; tests). Prod uses EnvironmentBlockFunc.
+	EnvironmentBlockFunc          func(sessionKey string) string          // per-session environment block (platform-aware); preferred over EnvironmentBlock
+	ExtraSystemBlocks             []provider.SystemBlock                  // additional system blocks (e.g. skills list), injected before cache marker
+	CacheStrategy                 string                                  // "auto" (top-level) or "explicit" (manual breakpoints) — from primary model config
+	CacheBustDetect               bool                                    // detect cache busts (cache_read drop >50%)
+	CacheBustIdleThreshold        time.Duration                           // suppress cache bust alert if session idle > this (default 10m)
+	CacheBustAlert                HookList[CacheBustFunc]                 // callbacks for cache bust alerts
+	DuplicateMessages             bool                                    // send user text twice per API call (improves instruction following)
+	BatchPartialAssistantMessages bool                                    // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
+	BatchPartialJoiner            string                                  // separator between batched partial messages (default "")
+	MaxResultChars                int                                     // max chars for tool result before writing to file (0 disables)
+	ToolResultTempDir             string                                  // where to write large tool results
+	SummaryContextTurns           int                                     // recent conversation turns for summary context
+	SummaryContextChars           int                                     // max chars of context to send to cheap model
+	MaxSummaryChars               int                                     // max chars to auto-summarise (skip cheap model above this)
+	MaxSummaryInputChars          int                                     // max chars of tool result embedded in summary prompt (0 = no limit)
+	GroupResolver                 *config.GroupResolver                   // resolves call sites to model groups
+	FallbackFunc                  provider.FallbackFunc                   // nil disables automatic model fallback on transient errors
+	MaxImagePixels                int                                     // max pixels (w*h) for images before downscaling; 0 disables
+	AutoSummarise                 bool                                    // enable auto-summarise of oversized tool results (default true)
+	WarningQueue                  *warnings.Queue                         // nil disables warning injection into session
+	ChatWarningQueue              *warnings.Queue                         // nil disables chat warning notifications
+	MaxTokensWarnFunc             HookList[func(string)]                  // callbacks when stop_reason=max_tokens (response truncated)
+	RateLimitFunc                 HookList[func(resetTime time.Time)]     // callbacks when API returns 429 (rate limited)
+	ReloadOnCompact               bool                                    // delegated: after compaction, bounce the CC session (resume) so character/skill files reload from disk (#828)
+	TaskListNotifyFunc            HookList[func(string, string)]          // callbacks for task list changes (session key, message)
+	CompactionMemoryFunc          HookList[func(string)]                  // fires before compaction to save memories (session key)
+	CompactionStartFunc           HookList[func(string, string)]          // callbacks for compaction start (session key, message) — sent immediately, not buffered
+	CompactionNotifyFunc          HookList[func(string, string)]          // callbacks for compaction notifications (session key, message)
+	CompactionDebugFunc           HookList[func(string, string)]          // callbacks for compaction debug (session key, summary text)
+	OnActivity                    HookList[func(string)]                  // callbacks when a session has activity (session key)
+	Redact                        func(string) string                     // redact secrets from tool output; nil disables
+	SessionIndex                  *session.SessionIndex                   // nil disables state persistence
+	MessageTransforms             []CompiledTransform                     // compiled regex rules for inbound message transformation
+	CompactionSummaryPromptPath   string                                  // file path; read at compaction time via prompts.ResolvePrompt
+	CompactionHandoffMsg          string                                  // inline handoff message; empty resolves from search dirs or embedded default
+	PromptSearchDirs              []string                                // directories to search for prompt files (agent workspace, shared)
+	MaxToolLoops                  int                                     // max tool iterations per turn (default 25)
+	MaxOutputTokens               int                                     // max tokens in model response (default 16384)
+	Nudger                        *nudge.Scheduler                        // nil disables nudge reminders; pre-answer gate/min-tools live in its settings
+	NudgeReloadFunc               func()                                  // called after bootstrap reload to refresh nudge rules; nil disables
+	FirstRunMessage               atomic.Value                            // string; prepended as separate content block on first HandleMessage, then cleared
+	OnFirstRunConsumed            func()                                  // fired once when FirstRunMessage is actually consumed into a delivered turn (nil disables); marks onboarding complete
+	TurnLockWarnThreshold         time.Duration                           // warn if turn lock wait exceeds this (default 3m)
+	ShowToolCalls                 string                                  // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
+	Statusline                    string                                  // per-agent [meta]/[state] header template; "" = DefaultStatuslineTemplate (#831)
+	Streaming                     bool                                    // use streaming API when provider supports it
+	ModelMetaFn                   func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
+	ModelDefaultsFn               func(model string) config.ModelDefaults // returns per-model defaults from [models.*] config; nil = no model defaults
+	CanRunBackground              string                                  // path to an executable gating background work; exit 0 = allowed, non-zero = skip; "" = always allowed
+	LiveConfigFn                  func() *config.ResolvedAgentConfig      // when set, per-turn getters read the LIVE resolved config so edits apply without restart; nil in direct-constructed agents (tests) → static fields above
+	ServerTools                   []provider.ToolDef                      // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
+	DelegatedManager              *DelegatedManager                       // nil = traditional agent loop; non-nil = lazy per-session delegated transport management
+	ReloginTrigger                func(reason, sessionKey string) bool    // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
+	Reflection                    config.ResolvedReflection               // resolved reflection config (agent+global merged)
+	SkillDirs                     []string                                // skill directories (shared + per-agent) for reflection creation/update detection
+	SkillChangeNotify             func(string, string)                    // called with (sessionKey, formatted message) when reflection creates/updates a skill; nil = disabled
+	DefaultPlatform               string                                  // configured default_platform (per-agent, else global); preferred for default-session resolution and delivery fallback
+	ResetOrientTemplateFn         func() string                           // resolves orientation template for session reset; nil = no orientation
+	ReloadSystemFn                func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op
 
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name
 	platformMu sync.RWMutex               // protects platforms map access

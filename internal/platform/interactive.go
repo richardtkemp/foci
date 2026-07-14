@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 )
 
 // ButtonCallback is called when an interactive message button is pressed.
@@ -260,7 +259,7 @@ func HandleInteractiveCallback(callbackData string) (editText, choiceData string
 		imMu.Unlock()
 		if bs != nil && mid != "" {
 			if err := bs.EditMessageWithButtons(mid, body, reButtons, "im:"); err != nil {
-				log.Warnf("interactive", "toggle edit %s: %v", mid, err)
+				interactiveLog.Warnf("toggle edit %s: %v", mid, err)
 			}
 		}
 		return "", choice.Data, true
@@ -302,7 +301,7 @@ func CleanupExpiredInteractive(maxAge time.Duration) {
 		}
 		if bs := msg.buttonSender(); bs != nil && msg.msgID != "" {
 			if err := bs.EditMessageText(msg.msgID, expiredInteractiveText); err != nil {
-				log.Warnf("interactive", "edit expired message %s: %v", msg.msgID, err)
+				interactiveLog.Warnf("edit expired message %s: %v", msg.msgID, err)
 			}
 		}
 	}

@@ -47,7 +47,6 @@ import (
 	"sync"
 	"syscall"
 
-	"foci/internal/log"
 )
 
 // SecurityGroupName is the OS group whose presence in a process's
@@ -124,12 +123,12 @@ func setupImpl() {
 	for _, name := range securityDropGroups {
 		grp, err := user.LookupGroup(name)
 		if err != nil {
-			log.Debugf("exec", "group %q not found — skipping", name)
+			execLog.Debugf("group %q not found — skipping", name)
 			continue
 		}
 		g, err := strconv.ParseUint(grp.Gid, 10, 32)
 		if err != nil {
-			log.Warnf("exec", "cannot parse %s group GID %q: %v", name, grp.Gid, err)
+			execLog.Warnf("cannot parse %s group GID %q: %v", name, grp.Gid, err)
 			setupErr = fmt.Errorf("cannot parse %s group GID %q to verify drop: %w", name, grp.Gid, err)
 			return
 		}
@@ -142,7 +141,7 @@ func setupImpl() {
 	// Get current supplementary groups
 	currentGroups, err := syscall.Getgroups()
 	if err != nil {
-		log.Warnf("exec", "cannot read supplementary groups: %v", err)
+		execLog.Warnf("cannot read supplementary groups: %v", err)
 		setupErr = fmt.Errorf("cannot read supplementary groups to verify drop: %w", err)
 		return
 	}
@@ -153,14 +152,14 @@ func setupImpl() {
 	for _, g := range currentGroups {
 		if name, drop := dropGIDs[uint32(g)]; drop { //nolint:gosec // G115: GID values are non-negative
 			found = true
-			log.Debugf("exec", "will drop group %s (gid %d) from children", name, g)
+			execLog.Debugf("will drop group %s (gid %d) from children", name, g)
 			continue
 		}
 		filteredGroups = append(filteredGroups, uint32(g)) // #nosec G115
 	}
 
 	if !found {
-		log.Debugf("exec", "process does not hold any drop groups — skipping child credential setup")
+		execLog.Debugf("process does not hold any drop groups — skipping child credential setup")
 		return
 	}
 
@@ -187,8 +186,8 @@ func setupImpl() {
 		Credential: cred,
 	}
 	if err := probe.Run(); err != nil {
-		log.Warnf("exec", "cannot drop security groups (CAP_SETGID not available): %v", err)
-		log.Warnf("exec", "child processes will inherit parent groups — add AmbientCapabilities=CAP_SETGID to systemd unit")
+		execLog.Warnf("cannot drop security groups (CAP_SETGID not available): %v", err)
+		execLog.Warnf("child processes will inherit parent groups — add AmbientCapabilities=CAP_SETGID to systemd unit")
 		setupErr = credentialSetupError(true, err)
 		return
 	}
@@ -199,7 +198,7 @@ func setupImpl() {
 	// keeps working because it relies on the parent's effective caps, not the
 	// ambient set.
 	if err := clearAmbientCaps(); err != nil {
-		log.Warnf("exec", "could not clear ambient capabilities: %v — children may inherit CAP_SETGID", err)
+		execLog.Warnf("could not clear ambient capabilities: %v — children may inherit CAP_SETGID", err)
 	}
 
 	childCredential = cred
@@ -207,7 +206,7 @@ func setupImpl() {
 	for _, name := range dropGIDs {
 		droppedNames = append(droppedNames, name)
 	}
-	log.Debugf("exec", "child credential: uid=%d gid=%d groups=%v (dropped %v)",
+	execLog.Debugf("child credential: uid=%d gid=%d groups=%v (dropped %v)",
 		uid, primaryGID, filteredGroups, droppedNames)
 }
 

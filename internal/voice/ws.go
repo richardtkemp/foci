@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/session"
 
 	"github.com/gorilla/websocket"
@@ -142,13 +141,13 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 		// Auth is handled by the HTTP auth middleware (http.api_key).
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Errorf("voice-ws", "upgrade: %v", err)
+			voice_wsLog.Errorf("upgrade: %v", err)
 			return
 		}
 		defer func() { _ = ws.Close() }()
 
 		connID := fmt.Sprintf("%d", time.Now().UnixNano())
-		log.Infof("voice-ws", "connected (conn=%s)", connID)
+		voice_wsLog.Infof("connected (conn=%s)", connID)
 
 		c := &conn{
 			ws:  ws,
@@ -169,7 +168,7 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 			})
 		}
 		if err := c.sendJSON(ConnectedMsg{Type: "connected", Agents: items}); err != nil {
-			log.Errorf("voice-ws", "send connected (conn=%s): %v", connID, err)
+			voice_wsLog.Errorf("send connected (conn=%s): %v", connID, err)
 			return
 		}
 
@@ -199,7 +198,7 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 			msgType, data, err := ws.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-					log.Warnf("voice-ws", "read error (conn=%s): %v", connID, err)
+					voice_wsLog.Warnf("read error (conn=%s): %v", connID, err)
 				}
 				break
 			}
@@ -212,7 +211,7 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 			}
 		}
 
-		log.Infof("voice-ws", "disconnected (conn=%s)", connID)
+		voice_wsLog.Infof("disconnected (conn=%s)", connID)
 	}
 }
 
@@ -342,12 +341,12 @@ func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 	c.agentID = sel.AgentID
 	if sel.SessionKey != "" && c.cfg.SessionExists != nil && c.cfg.SessionExists(sel.SessionKey) {
 		c.sessionKey = sel.SessionKey
-		log.Infof("voice-ws", "agent selected: %s (reused session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
+		voice_wsLog.Infof("agent selected: %s (reused session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	} else {
 		// Generate a timestamp-based chat ID for new voice sessions.
 		voiceChatID := int64(time.Now().Unix())
 		c.sessionKey = session.NewChatSessionKey(sel.AgentID, voiceChatID)
-		log.Infof("voice-ws", "agent selected: %s (new session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
+		voice_wsLog.Infof("agent selected: %s (new session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	}
 
 	_ = c.sendJSON(SessionReadyMsg{
@@ -371,10 +370,10 @@ func (c *conn) processAudio(ctx context.Context, connID string, audio []byte, sa
 	wavAudio := wrapPCMInWAV(audio, sampleRate, 1, 16)
 
 	// STT
-	log.Debugf("voice-ws", "transcribing %d bytes (conn=%s)", len(wavAudio), connID)
+	voice_wsLog.Debugf("transcribing %d bytes (conn=%s)", len(wavAudio), connID)
 	text, err := c.cfg.STT.Transcribe(ctx, wavAudio, "voice.wav")
 	if err != nil {
-		log.Errorf("voice-ws", "STT error (conn=%s): %v", connID, err)
+		voice_wsLog.Errorf("STT error (conn=%s): %v", connID, err)
 		c.sendError(fmt.Sprintf("transcription failed: %v", err))
 		return
 	}
@@ -412,7 +411,7 @@ func (c *conn) runAgentPipeline(ctx context.Context, connID string, text string)
 	// Call agent.
 	resp, err := c.cfg.HandleMessage(ctx, c.agentID, c.sessionKey, text)
 	if err != nil {
-		log.Errorf("voice-ws", "agent error (session=%s, conn=%s): %v", c.sessionKey, connID, err)
+		voice_wsLog.Errorf("agent error (session=%s, conn=%s): %v", c.sessionKey, connID, err)
 		c.sendError(fmt.Sprintf("agent error: %v", err))
 		_ = c.sendJSON(ResponseEndMsg{Type: "response_end"})
 		return
@@ -426,7 +425,7 @@ func (c *conn) runAgentPipeline(ctx context.Context, connID string, text string)
 	if tts != nil && resp != "" {
 		audioData, err := tts.Synthesize(ctx, resp)
 		if err != nil {
-			log.Warnf("voice-ws", "TTS error (session=%s, conn=%s): %v", c.sessionKey, connID, err)
+			voice_wsLog.Warnf("TTS error (session=%s, conn=%s): %v", c.sessionKey, connID, err)
 		} else if len(audioData) > 0 {
 			_ = c.sendJSON(AudioStartOutMsg{Type: "audio_start", Format: "mp3"})
 			c.sendAudioChunks(audioData)
@@ -453,7 +452,7 @@ func (c *conn) sendAudioChunks(data []byte) {
 		c.writeMu.Unlock()
 
 		if err != nil {
-			log.Warnf("voice-ws", "write binary (session=%s): %v", c.sessionKey, err)
+			voice_wsLog.Warnf("write binary (session=%s): %v", c.sessionKey, err)
 			return
 		}
 	}

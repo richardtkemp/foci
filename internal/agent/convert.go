@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/procx"
 
@@ -143,7 +142,7 @@ func convertWithPandoc(path, format string) convertResult {
 		if isExecNotFound(err) {
 			return convertResult{Err: fmt.Sprintf("Need pandoc to read .%s files. Install: https://pandoc.org/installing.html", format)}
 		}
-		log.Debugf("convert", "pandoc failed (PATH=%s): %v — stderr: %s", os.Getenv("PATH"), err, strings.TrimSpace(stderr))
+		convertLog.Debugf("pandoc failed (PATH=%s): %v — stderr: %s", os.Getenv("PATH"), err, strings.TrimSpace(stderr))
 		return convertResult{Err: fmt.Sprintf("pandoc conversion failed: %s", strings.TrimSpace(stderr))}
 	}
 	return convertResult{Text: stdout}
@@ -169,7 +168,7 @@ func convertXlsx(path string) convertResult {
 	if err == nil && len(stdout) > 0 {
 		return convertResult{Text: stdout}
 	} else if err != nil && !isExecNotFound(err) {
-		log.Debugf("convert", "ssconvert failed: %v", err)
+		convertLog.Debugf("ssconvert failed: %v", err)
 	}
 
 	// Fall back to pandoc

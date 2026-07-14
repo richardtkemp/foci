@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"foci/internal/app/fap"
-	"foci/internal/log"
 	"foci/internal/sqlite"
 )
 
@@ -124,7 +123,7 @@ func (s *frameStore) Append(convID, agentID string, seq int64, wire string, sent
 		// limited to once/5s so a burst doesn't flood the log.
 		now := time.Now().UnixNano()
 		if last := s.lastInlineWarn.Load(); now-last > int64(5*time.Second) && s.lastInlineWarn.CompareAndSwap(last, now) {
-			log.Warnf("app", "frame store write queue saturated (cap=%d) — writing inline; frames outpacing DB drain", cap(s.writeCh))
+			appLog.Warnf("frame store write queue saturated (cap=%d) — writing inline; frames outpacing DB drain", cap(s.writeCh))
 		}
 		s.insert(w)
 	}
@@ -161,7 +160,7 @@ func (s *frameStore) insert(w frameWrite) {
 		`INSERT OR REPLACE INTO app_frames (conv_id, seq, wire, sent_ms, visible, agent_id, preview) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		w.convID, w.seq, w.wire, w.sentMs, v, w.agentID, w.preview,
 	); err != nil {
-		log.Errorf("app", "frame store insert (conv=%s seq=%d): %v", w.convID, w.seq, err)
+		appLog.Errorf("frame store insert (conv=%s seq=%d): %v", w.convID, w.seq, err)
 	}
 }
 
@@ -187,7 +186,7 @@ func (s *frameStore) RestorableConvs() []restorableConv {
 		`SELECT DISTINCT conv_id, agent_id FROM app_frames WHERE visible = 1 AND agent_id <> ''`,
 	)
 	if err != nil {
-		log.Errorf("app", "frame store RestorableConvs: %v", err)
+		appLog.Errorf("frame store RestorableConvs: %v", err)
 		return nil
 	}
 	defer func() { _ = rows.Close() }()
@@ -195,7 +194,7 @@ func (s *frameStore) RestorableConvs() []restorableConv {
 	for rows.Next() {
 		var c restorableConv
 		if err := rows.Scan(&c.convID, &c.agentID); err != nil {
-			log.Errorf("app", "frame store RestorableConvs scan: %v", err)
+			appLog.Errorf("frame store RestorableConvs scan: %v", err)
 			return out
 		}
 		out = append(out, c)
@@ -213,7 +212,7 @@ func (s *frameStore) MaxSeq(convID string) int64 {
 	}
 	var seq sql.NullInt64
 	if err := s.db.QueryRow(`SELECT MAX(seq) FROM app_frames WHERE conv_id = ?`, convID).Scan(&seq); err != nil {
-		log.Errorf("app", "frame store MaxSeq (conv=%s): %v", convID, err)
+		appLog.Errorf("frame store MaxSeq (conv=%s): %v", convID, err)
 		return 0
 	}
 	if seq.Valid {
@@ -250,7 +249,7 @@ func (s *frameStore) Range(convID string, fromSeq int64, limit int) []storedFram
 		convID, fromSeq, limit,
 	)
 	if err != nil {
-		log.Errorf("app", "frame store Range (conv=%s from=%d): %v", convID, fromSeq, err)
+		appLog.Errorf("frame store Range (conv=%s from=%d): %v", convID, fromSeq, err)
 		return nil
 	}
 	defer func() { _ = rows.Close() }()
@@ -258,7 +257,7 @@ func (s *frameStore) Range(convID string, fromSeq int64, limit int) []storedFram
 	for rows.Next() {
 		var f storedFrame
 		if err := rows.Scan(&f.seq, &f.wire); err != nil {
-			log.Errorf("app", "frame store Range scan: %v", err)
+			appLog.Errorf("frame store Range scan: %v", err)
 			return out
 		}
 		out = append(out, f)
@@ -276,7 +275,7 @@ func (s *frameStore) PutPrompt(promptID, convID, agentID string, createdMs int64
 		`INSERT OR REPLACE INTO app_prompts (prompt_id, conv_id, agent_id, created_ms) VALUES (?, ?, ?, ?)`,
 		promptID, convID, agentID, createdMs,
 	); err != nil {
-		log.Errorf("app", "frame store PutPrompt (prompt=%s): %v", promptID, err)
+		appLog.Errorf("frame store PutPrompt (prompt=%s): %v", promptID, err)
 	}
 }
 
@@ -299,7 +298,7 @@ func (s *frameStore) DeletePrompt(promptID string) {
 		return
 	}
 	if _, err := s.db.Exec(`DELETE FROM app_prompts WHERE prompt_id = ?`, promptID); err != nil {
-		log.Errorf("app", "frame store DeletePrompt (prompt=%s): %v", promptID, err)
+		appLog.Errorf("frame store DeletePrompt (prompt=%s): %v", promptID, err)
 	}
 }
 
@@ -346,7 +345,7 @@ func (s *frameStore) OrphanedResolvedAsks(convID string) map[string]struct{} {
 	rows, err := s.db.Query(
 		`SELECT wire FROM app_frames WHERE conv_id = ? AND wire LIKE '%"t":"interactive%'`, convID)
 	if err != nil {
-		log.Errorf("app", "frame store OrphanedResolvedAsks scan (conv=%s): %v", convID, err)
+		appLog.Errorf("frame store OrphanedResolvedAsks scan (conv=%s): %v", convID, err)
 		return nil
 	}
 	defer func() { _ = rows.Close() }()
@@ -413,7 +412,7 @@ func (s *frameStore) LegacyOpenAsks() []legacyAsk {
 	}
 	rows, err := s.db.Query(`SELECT conv_id, agent_id, wire FROM app_frames`)
 	if err != nil {
-		log.Errorf("app", "frame store LegacyOpenAsks scan: %v", err)
+		appLog.Errorf("frame store LegacyOpenAsks scan: %v", err)
 		return nil
 	}
 	defer func() { _ = rows.Close() }()
@@ -471,7 +470,7 @@ func (s *frameStore) MarkLegacyAsksSwept() {
 		return
 	}
 	if _, err := s.db.Exec(`PRAGMA user_version = 1`); err != nil {
-		log.Errorf("app", "frame store MarkLegacyAsksSwept: %v", err)
+		appLog.Errorf("frame store MarkLegacyAsksSwept: %v", err)
 	}
 }
 
@@ -482,7 +481,7 @@ func (s *frameStore) TrimOlderThan(cutoffMs int64) int64 {
 	}
 	res, err := s.db.Exec(`DELETE FROM app_frames WHERE sent_ms < ?`, cutoffMs)
 	if err != nil {
-		log.Errorf("app", "frame store trim: %v", err)
+		appLog.Errorf("frame store trim: %v", err)
 		return 0
 	}
 	_, _ = s.db.Exec(`DELETE FROM app_prompts WHERE created_ms < ?`, cutoffMs)
@@ -508,7 +507,7 @@ func (s *frameStore) janitor(done <-chan struct{}) {
 		case <-ticker.C:
 			cutoff := time.Now().Add(-s.ttl).UnixMilli()
 			if n := s.TrimOlderThan(cutoff); n > 0 {
-				log.Infof("app", "frame store: trimmed %d frame(s) older than %s", n, s.ttl)
+				appLog.Infof("frame store: trimmed %d frame(s) older than %s", n, s.ttl)
 			}
 		}
 	}
@@ -522,6 +521,6 @@ func (s *frameStore) Close() {
 	close(s.done)
 	s.wg.Wait()
 	if err := s.db.Close(); err != nil {
-		log.Errorf("app", "frame store close: %v", err)
+		appLog.Errorf("frame store close: %v", err)
 	}
 }

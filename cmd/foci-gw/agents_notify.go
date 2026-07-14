@@ -101,13 +101,13 @@ func newAsyncNotifier(
 		if sk, err := session.ParseSessionKey(target); err == nil && sk.AgentID != agentID {
 			inst := agentResolverFn(sk.AgentID)
 			if inst == nil {
-				log.Errorf(trigger, "unknown target agent %q for session %s, message dropped", sk.AgentID, target)
+				log.NewComponentLogger(trigger).Errorf("unknown target agent %q for session %s, message dropped", sk.AgentID, target)
 				return
 			}
 			targetAg, targetAgentID = inst.ag, sk.AgentID
 		}
 		if targetAg == nil {
-			log.Errorf(trigger, "no target agent for session %s, injection dropped", target)
+			log.NewComponentLogger(trigger).Errorf("no target agent for session %s, injection dropped", target)
 			return
 		}
 
@@ -143,7 +143,7 @@ func relayResponseToCaller(
 		buf := turnevent.NewBufferSink()
 		notifyCtx := turnevent.WithSink(agent.WithTrigger(ctx, trigger), buf)
 		if err := targetAg.HandleMessage(notifyCtx, targetSession, []string{message}, nil); err != nil {
-			log.Errorf(trigger, "error processing on target %s: %v", targetSession, err)
+			log.NewComponentLogger(trigger).Errorf("error processing on target %s: %v", targetSession, err)
 			return
 		}
 		resp := buf.FinalText()
@@ -176,12 +176,12 @@ func newSessionNotifyFn(
 	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
 		sk, err := session.ParseSessionKey(targetSessionKey)
 		if err != nil {
-			log.Errorf(trigger, "invalid session key %q: %v", targetSessionKey, err)
+			log.NewComponentLogger(trigger).Errorf("invalid session key %q: %v", targetSessionKey, err)
 			return
 		}
 		inst := agentResolverFn(sk.AgentID)
 		if inst == nil {
-			log.Errorf(trigger, "unknown agent %q for session %s", sk.AgentID, targetSessionKey)
+			log.NewComponentLogger(trigger).Errorf("unknown agent %q for session %s", sk.AgentID, targetSessionKey)
 			return
 		}
 		deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message)
@@ -201,7 +201,7 @@ func turnSinkForConn(conn platform.Connection, sessionKey, trigger string) (turn
 	}
 	return turn.NewSessionSink(conn, sessionKey, trigger,
 		turn.WithSessionSinkErrorHandler(func(t string, err error) {
-			log.Errorf(t, "platform delivery: %v", err)
+			log.NewComponentLogger(t).Errorf("platform delivery: %v", err)
 		})), nil
 }
 
@@ -215,7 +215,7 @@ func enqueueInject(ag *agent.Agent, sessionKey, trigger string, body func()) {
 	run := func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Errorf(trigger, "injection panicked: %v (session=%s)", r, sessionKey)
+				log.NewComponentLogger(trigger).Errorf("injection panicked: %v (session=%s)", r, sessionKey)
 			}
 		}()
 		body()
@@ -224,7 +224,7 @@ func enqueueInject(ag *agent.Agent, sessionKey, trigger string, body func()) {
 		SessionKey: sessionKey,
 		Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
 	}) {
-		log.Warnf(trigger, "inbox rejected injected turn for session %s", sessionKey)
+		log.NewComponentLogger(trigger).Warnf("inbox rejected injected turn for session %s", sessionKey)
 	}
 }
 
@@ -252,14 +252,14 @@ func deliverToSessionChat(
 			// No deliverable connection anywhere. Still run the turn (it lands
 			// in the session JSONL); just don't render to a chat.
 			if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
-				log.Errorf(trigger, "error for session %s: %v", sessionKey, err)
+				log.NewComponentLogger(trigger).Errorf("error for session %s: %v", sessionKey, err)
 				return
 			}
-			log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", agentID, sessionKey)
+			log.NewComponentLogger(trigger).Warnf("no connection for agent %s session %s, response not delivered", agentID, sessionKey)
 			return
 		}
 		if outcome == route.DeliveredViaPrimary {
-			log.Infof(trigger, "session %s has no live connection — delivering via agent %s primary", sessionKey, agentID)
+			log.NewComponentLogger(trigger).Infof("session %s has no live connection — delivering via agent %s primary", sessionKey, agentID)
 		}
 
 		// turnSinkForConn selects appSink for app connections (activity frames)
@@ -271,7 +271,7 @@ func deliverToSessionChat(
 		notifyCtx = turnevent.WithSink(notifyCtx, sink)
 
 		if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
-			log.Errorf(trigger, "error for session %s: %v", sessionKey, err)
+			log.NewComponentLogger(trigger).Errorf("error for session %s: %v", sessionKey, err)
 		}
 	})
 }
@@ -303,7 +303,7 @@ func buildWakeScheduler(
 		go func() {
 			select {
 			case <-time.After(delay):
-				log.Infof("remind", "firing wake id=%d after %v for agent %s: %q", id, delay, agentID, message)
+				remindLog.Infof("firing wake id=%d after %v for agent %s: %q", id, delay, agentID, message)
 				_ = reminderStore.Dismiss(id)
 				// Use the originating session key if stored, otherwise
 				// pick the most recently active session.
@@ -312,7 +312,7 @@ func buildWakeScheduler(
 					sk = defaultSessionKeyFor(getAgent(), agentID)
 				}
 				if sk == "" {
-					log.Warnf("remind", "no session for agent %s, skipping", agentID)
+					remindLog.Warnf("no session for agent %s, skipping", agentID)
 					return
 				}
 				// deliverToSessionChat queues on the session's inbox worker,
@@ -339,7 +339,7 @@ func buildWakeScheduler(
 
 	// Restore pending wakes from DB (survives restart).
 	if pending, err := reminderStore.PendingWakes(agentID); err != nil {
-		log.Errorf("remind", "failed to load pending wakes for %s: %v", agentID, err)
+		remindLog.Errorf("failed to load pending wakes for %s: %v", agentID, err)
 	} else if len(pending) > 0 {
 		for _, r := range pending {
 			delay := time.Until(r.DueAt)
@@ -348,7 +348,7 @@ func buildWakeScheduler(
 			}
 			_ = wakeScheduleFn(r.ID, delay, r.Text, r.SessionKey)
 		}
-		log.Infof("remind", "restored %d pending wake(s) for agent %s", len(pending), agentID)
+		remindLog.Infof("restored %d pending wake(s) for agent %s", len(pending), agentID)
 	}
 
 	return wakeScheduleFn

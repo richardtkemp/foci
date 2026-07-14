@@ -4,7 +4,6 @@ import (
 	"regexp"
 
 	"foci/internal/config"
-	"foci/internal/log"
 )
 
 // CompiledTransform is a pre-compiled regex rule for message transformation.
@@ -20,7 +19,7 @@ func CompileTransforms(rules []config.MessageTransform) []CompiledTransform {
 	for _, r := range rules {
 		re, err := regexp.Compile(r.Find)
 		if err != nil {
-			log.Errorf("message_transforms", "invalid regex %q: %v", r.Find, err)
+			message_transformsLog.Errorf("invalid regex %q: %v", r.Find, err)
 			continue
 		}
 		compiled = append(compiled, CompiledTransform{re: re, replace: r.Replace})

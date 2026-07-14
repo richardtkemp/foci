@@ -19,6 +19,10 @@ import (
 	"foci/shared/prompts"
 )
 
+var (
+	compactionLog = log.NewComponentLogger("compaction")
+)
+
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
 	log         *log.ComponentLogger
@@ -202,7 +206,7 @@ func repairOrphanedToolUse(msgs []provider.Message) []provider.Message {
 			continue
 		}
 
-		log.Warnf("compaction", "repairing %d orphaned tool_use blocks", len(unmatched))
+		compactionLog.Warnf("repairing %d orphaned tool_use blocks", len(unmatched))
 
 		// Build synthetic tool_results.
 		var synthetic []provider.ContentBlock

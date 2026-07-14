@@ -4,9 +4,16 @@ import (
 	"fmt"
 	"strings"
 )
+import
 
 // toolDescriptions maps tool names to short human-readable descriptions.
 // Used by DefaultRules to build reminder text listing available tools.
+"foci/internal/log"
+
+var (
+	nudgeLog = log.NewComponentLogger("nudge")
+)
+
 var toolDescriptions = map[string]string{
 	"shell":            "run commands",
 	"tmux":             "manage terminal sessions",

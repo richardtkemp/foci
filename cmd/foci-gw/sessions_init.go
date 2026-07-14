@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/startup"
 	"foci/internal/timeutil"
@@ -32,27 +31,27 @@ func initSessions(cfg *config.Config) sessionInfra {
 	if cfg.Sessions.FileMode != "" {
 		mode, err := strconv.ParseUint(cfg.Sessions.FileMode, 8, 32)
 		if err != nil {
-			log.Warnf("main", "invalid sessions.file_mode %q: %v (using default 0600)", cfg.Sessions.FileMode, err)
+			mainLog.Warnf("invalid sessions.file_mode %q: %v (using default 0600)", cfg.Sessions.FileMode, err)
 		} else {
 			sessions.SetFileMode(os.FileMode(mode))
-			log.Debugf("main", "session file mode=%04o", mode)
+			mainLog.Debugf("session file mode=%04o", mode)
 		}
 	}
-	log.Debugf("main", "session store dir=%s", cfg.Sessions.Dir)
+	mainLog.Debugf("session store dir=%s", cfg.Sessions.Dir)
 
 	// One-shot legacy migration: flatten pre-stable-identity version
 	// directories before anything reads or indexes session files.
 	if n, err := sessions.MigrateLegacyLayout(); err != nil {
-		log.Errorf("main", "legacy session layout migration: %v", err)
+		mainLog.Errorf("legacy session layout migration: %v", err)
 	} else if n > 0 {
-		log.Infof("main", "migrated %d session(s) from legacy version-directory layout", n)
+		mainLog.Infof("migrated %d session(s) from legacy version-directory layout", n)
 	}
 
 	// State database (SQLite-backed state for sessions, agents, chats, and system)
 	stateDBPath := cfg.DataPath("state.db")
 	sessionIndex, err := session.NewSessionIndex(stateDBPath)
 	if err != nil {
-		log.Errorf("main", "create session index: %v (session index disabled)", err)
+		mainLog.Errorf("create session index: %v (session index disabled)", err)
 	} else {
 		cleanups = append(cleanups, func() { _ = sessionIndex.Close() })
 
@@ -113,9 +112,9 @@ func initSessions(cfg *config.Config) sessionInfra {
 		// Repair sessions with orphaned tool_use blocks (from mid-tool-call restarts).
 		// Runs after event handler is wired so repairs update the index.
 		if n, err := sessions.RepairOrphans(); err != nil {
-			log.Warnf("main", "session repair: %v", err)
+			mainLog.Warnf("session repair: %v", err)
 		} else if n > 0 {
-			log.Infof("main", "repaired %d orphaned session(s) with interrupted tool calls", n)
+			mainLog.Infof("repaired %d orphaned session(s) with interrupted tool calls", n)
 		}
 
 		// Rebuild the session index — skip if last shutdown was clean and the
@@ -123,48 +122,48 @@ func initSessions(cfg *config.Config) sessionInfra {
 		cleanShutdown := startup.WasCleanShutdown(sessionIndex)
 		indexCount := sessionIndex.IndexCount()
 		if cleanShutdown && indexCount > 0 {
-			log.Infof("main", "session index: %d sessions (from db, clean shutdown)", indexCount)
+			mainLog.Infof("session index: %d sessions (from db, clean shutdown)", indexCount)
 		} else {
 			reason := "crash/reboot"
 			if indexCount == 0 {
 				reason = "empty index"
 			}
-			log.Infof("main", "session index: rebuilding (%s)", reason)
+			mainLog.Infof("session index: rebuilding (%s)", reason)
 			if n, err := sessionIndex.Rebuild(sessions); err != nil {
-				log.Warnf("main", "rebuild session index: %v", err)
+				mainLog.Warnf("rebuild session index: %v", err)
 			} else {
-				log.Infof("main", "session index: %d sessions indexed", n)
+				mainLog.Infof("session index: %d sessions indexed", n)
 			}
 		}
 
 		// Background integrity sweep — prune index entries for deleted files.
 		go func() {
 			if n := sessionIndex.PruneOrphans(); n > 0 {
-				log.Infof("main", "session index: pruned %d orphan entries", n)
+				mainLog.Infof("session index: pruned %d orphan entries", n)
 			}
 		}()
 
 		// Start archive sweep goroutine
 		archiveAfter, err := time.ParseDuration(cfg.Sessions.ArchiveAfter)
 		if err != nil {
-			log.Warnf("main", "invalid sessions.archive_after %q: %v (archive sweep disabled)", cfg.Sessions.ArchiveAfter, err)
+			mainLog.Warnf("invalid sessions.archive_after %q: %v (archive sweep disabled)", cfg.Sessions.ArchiveAfter, err)
 		} else {
 			archiveStop := make(chan struct{})
 			archiveTicker := time.NewTicker(6 * time.Hour)
 			go func() {
 				// Run immediately on startup
 				if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter); err != nil {
-					log.Warnf("main", "archive sweep: %v", err)
+					mainLog.Warnf("archive sweep: %v", err)
 				} else if n > 0 {
-					log.Infof("main", "archive sweep: archived %d idle session(s)", n)
+					mainLog.Infof("archive sweep: archived %d idle session(s)", n)
 				}
 				for {
 					select {
 					case <-archiveTicker.C:
 						if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter); err != nil {
-							log.Warnf("main", "archive sweep: %v", err)
+							mainLog.Warnf("archive sweep: %v", err)
 						} else if n > 0 {
-							log.Infof("main", "archive sweep: archived %d idle session(s)", n)
+							mainLog.Infof("archive sweep: archived %d idle session(s)", n)
 						}
 					case <-archiveStop:
 						return
@@ -207,13 +206,13 @@ func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
 		return
 	}
 	if err != nil {
-		log.Warnf("main", "migrate state.json: read: %v", err)
+		mainLog.Warnf("migrate state.json: read: %v", err)
 		return
 	}
 
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		log.Warnf("main", "migrate state.json: parse: %v", err)
+		mainLog.Warnf("migrate state.json: parse: %v", err)
 		return
 	}
 
@@ -299,7 +298,7 @@ func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
 			}
 
 			if !handled {
-				log.Debugf("main", "migrate state.json: skipping unknown key %q", key)
+				mainLog.Debugf("migrate state.json: skipping unknown key %q", key)
 			}
 		}
 		migrated++
@@ -308,9 +307,9 @@ func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
 	// Rename to .migrated
 	migratedPath := jsonPath + ".migrated"
 	if err := os.Rename(jsonPath, migratedPath); err != nil {
-		log.Warnf("main", "migrate state.json: rename: %v", err)
+		mainLog.Warnf("migrate state.json: rename: %v", err)
 	} else {
-		log.Infof("main", "migrated %d state.json keys to SQLite, renamed to %s", migrated, filepath.Base(migratedPath))
+		mainLog.Infof("migrated %d state.json keys to SQLite, renamed to %s", migrated, filepath.Base(migratedPath))
 	}
 
 	// Clean up WAL/SHM files from the old state.json (SQLite-style, but state.json was plain JSON)
@@ -328,7 +327,7 @@ func cleanupStaleSessionMetadata(idx *session.SessionIndex, sessions *session.St
 	}
 	keys, err := idx.SessionKeysWithMetadata("no_compact")
 	if err != nil {
-		log.Warnf("main", "query stale session metadata: %v", err)
+		mainLog.Warnf("query stale session metadata: %v", err)
 		return
 	}
 	var deleted int
@@ -345,6 +344,6 @@ func cleanupStaleSessionMetadata(idx *session.SessionIndex, sessions *session.St
 		}
 	}
 	if deleted > 0 {
-		log.Infof("main", "cleaned up %d stale no_compact entries", deleted)
+		mainLog.Infof("cleaned up %d stale no_compact entries", deleted)
 	}
 }

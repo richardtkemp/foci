@@ -10,6 +10,10 @@ import (
 	"foci/internal/log"
 )
 
+var (
+	delegatedLog = log.NewComponentLogger("delegated")
+)
+
 // SubagentTracker tracks spawned subagent (CC Agent tool) calls and emits an
 // aggregated status detail string via OnStatus. Both the tmux and ccstream
 // backends compose this to report running/complete subagent status.
@@ -96,7 +100,7 @@ func (t *SubagentTracker) pruneLocked() {
 			// injects until now. Warn so that quiet failure is visible rather
 			// than a silent 30m stall (raise background_task_max_age if it was a
 			// genuinely long job).
-			log.Warnf("delegated", "subagent tracker: pruned %q (id=%s) after %s with no completion signal — background work held system injects until this prune",
+			delegatedLog.Warnf("subagent tracker: pruned %q (id=%s) after %s with no completion signal — background work held system injects until this prune",
 				ag.Description, ag.ID, time.Since(ag.added).Round(time.Second))
 			continue
 		}

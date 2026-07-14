@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/secrets"
 	"foci/internal/session"
 
@@ -637,14 +636,14 @@ func InitMessaging(cfg *config.Config, deps ProviderDeps) (*Messaging, error) {
 	var active []MessagingProvider
 	for name, p := range providers {
 		if ok, reason := p.IsConfigured(cfg); !ok {
-			log.Infof("platform", "provider %q not configured, skipping: %s", name, reason)
+			platformLog.Infof("provider %q not configured, skipping: %s", name, reason)
 			continue
 		}
 		if err := p.Init(deps); err != nil {
 			return nil, fmt.Errorf("init provider %q: %w", name, err)
 		}
 		active = append(active, p)
-		log.Infof("platform", "provider %q initialised", name)
+		platformLog.Infof("provider %q initialised", name)
 	}
 
 	m := &Messaging{providers: active}

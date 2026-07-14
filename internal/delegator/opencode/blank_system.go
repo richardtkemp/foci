@@ -34,7 +34,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/internal/log"
 	"foci/internal/tempdir"
 )
 
@@ -74,14 +73,14 @@ func writeSessionFile(kind, dir, sessionID, content string) {
 		return
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Warnf("opencode", "%s: mkdir %s: %v", kind, dir, err)
+		opencodeLog.Warnf("%s: mkdir %s: %v", kind, dir, err)
 		return
 	}
 	if err := os.WriteFile(filepath.Join(dir, sessionID), []byte(content), 0o644); err != nil {
-		log.Warnf("opencode", "%s: write %s: %v", kind, sessionID, err)
+		opencodeLog.Warnf("%s: write %s: %v", kind, sessionID, err)
 		return
 	}
-	log.Debugf("opencode", "%s: wrote prompt for session %s (%d bytes)", kind, sessionID, len(content))
+	opencodeLog.Debugf("%s: wrote prompt for session %s (%d bytes)", kind, sessionID, len(content))
 }
 
 // WriteSessionSystemFile writes foci's resolved system prompt for a session to

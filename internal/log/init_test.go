@@ -402,7 +402,7 @@ func TestPreInitFilteredByLevel(t *testing.T) {
 
 	captureOutput(t)
 
-	Debugf("test", "debug before init")
+	NewComponentLogger("test").Debugf("debug before init")
 	Infof("test", "info before init")
 
 	std.mu.Lock()

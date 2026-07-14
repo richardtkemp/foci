@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"foci/internal/log"
 	"foci/shared/prompts"
 )
 
@@ -40,7 +39,7 @@ func seedDefaultPrompts(dir string, fileMode os.FileMode, liveBackends map[strin
 	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Warnf("main", "seed prompts: mkdir %s: %v", dir, err)
+		mainLog.Warnf("seed prompts: mkdir %s: %v", dir, err)
 		return
 	}
 
@@ -50,9 +49,9 @@ func seedDefaultPrompts(dir string, fileMode os.FileMode, liveBackends map[strin
 			continue // already exists
 		}
 		if err := os.WriteFile(path, []byte(fn()+"\n"), fileMode); err != nil {
-			log.Warnf("main", "seed prompts: write %s: %v", path, err)
+			mainLog.Warnf("seed prompts: write %s: %v", path, err)
 			continue
 		}
-		log.Infof("main", "seeded default prompt: %s", path)
+		mainLog.Infof("seeded default prompt: %s", path)
 	}
 }

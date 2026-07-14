@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 
-	"foci/internal/log"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/tempdir"
@@ -330,7 +329,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 			return ToolResult{}, fmt.Errorf("read response: %w", err)
 		}
 		if parsed, perr := url.Parse(reqURL); perr == nil {
-			log.Debugf("http_request", "session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, len(body))
+			http_requestLog.Debugf("session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, len(body))
 		}
 
 		saveData := body
@@ -371,7 +370,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 				return ToolResult{}, fmt.Errorf("write response to %s: %w", savePath, err)
 			}
 		}
-		log.Debugf("http_request", "session=%s saved %d bytes to %s", sessionKey, len(saveData), savePath)
+		http_requestLog.Debugf("session=%s saved %d bytes to %s", sessionKey, len(saveData), savePath)
 		return TextResult(fmt.Sprintf("%s\nSaved %d bytes to %s", formatHeaders(), len(saveData), savePath)), nil
 	}
 
@@ -404,10 +403,10 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	}
 
 	if parsed, err := url.Parse(reqURL); err == nil {
-		log.Debugf("http_request", "session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, sw.Total())
+		http_requestLog.Debugf("session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, sw.Total())
 	}
 	if sw.Truncated() {
-		log.Warnf("http_request", "session=%s response exceeded spill ceiling %d bytes (got %d) — body truncated on disk", sessionKey, ceiling, sw.Total())
+		http_requestLog.Warnf("session=%s response exceeded spill ceiling %d bytes (got %d) — body truncated on disk", sessionKey, ceiling, sw.Total())
 	}
 
 	// Redact the inline preview (best-effort; the on-disk full body is raw, same

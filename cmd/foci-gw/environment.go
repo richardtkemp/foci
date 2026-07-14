@@ -50,14 +50,14 @@ func platformForSession(idx *session.SessionIndex, agentID, sessionKey string) s
 // The thresholds are the per-agent effective values (override → global).
 func checkSystemPromptSizes(bootstrap *workspace.Bootstrap, maxFileChars, maxTotalChars int, agentID string) {
 	for _, w := range bootstrap.CheckSizes(maxFileChars, maxTotalChars) {
-		log.Warnf(agentID, "%s", w)
+		log.NewComponentLogger(agentID).Warnf("%s", w)
 	}
 }
 
 // checkSkillSizes logs warnings if any skill's SKILL.md exceeds maxResultChars.
 func checkSkillSizes(registry *skills.Registry, maxResultChars int, agentID string) {
 	for _, w := range registry.CheckSizes(maxResultChars) {
-		log.Warnf(agentID, "%s", w)
+		log.NewComponentLogger(agentID).Warnf("%s", w)
 	}
 }
 

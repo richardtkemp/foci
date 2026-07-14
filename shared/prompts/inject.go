@@ -7,8 +7,15 @@ import (
 
 	"foci/internal/timeutil"
 )
+import
 
 // injectionNotePrefix is the stable leading substring of defaultInjectionNote.
+"foci/internal/log"
+
+var (
+	promptsLog = log.NewComponentLogger("prompts")
+)
+
 const injectionNotePrefix = "[SYSTEM INJECTION"
 
 // defaultInjectionNote is the standard context note prepended to all injected messages.

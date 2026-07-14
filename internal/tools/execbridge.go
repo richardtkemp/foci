@@ -12,7 +12,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"foci/internal/log"
 	"foci/internal/peercred"
 	"foci/internal/tempdir"
 )
@@ -104,7 +103,7 @@ func newExecBridge(registry *Registry, ctx context.Context, sockPath, funcsPath 
 	b.wg.Add(1)
 	go b.acceptLoop()
 
-	log.Debugf("execbridge", "session=%s started sock=%s tools=%d", SessionKeyFromContext(ctx), sockPath, b.exportedToolCount())
+	execbridgeLog.Debugf("session=%s started sock=%s tools=%d", SessionKeyFromContext(ctx), sockPath, b.exportedToolCount())
 	return b, nil
 }
 
@@ -121,7 +120,7 @@ func (b *ExecBridge) Close() {
 	b.wg.Wait()
 	_ = os.Remove(b.sockPath)
 	_ = os.Remove(b.funcsPath)
-	log.Debugf("execbridge", "closed sock=%s", b.sockPath)
+	execbridgeLog.Debugf("closed sock=%s", b.sockPath)
 }
 
 func (b *ExecBridge) acceptLoop() {
@@ -151,11 +150,11 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		return
 	}
 	if match, err := peercred.MatchesSelf(uc); err != nil {
-		log.Warnf("execbridge", "peer credential check failed: %v", err)
+		execbridgeLog.Warnf("peer credential check failed: %v", err)
 		writeError(conn, "peer credential check failed")
 		return
 	} else if !match {
-		log.Warnf("execbridge", "peer UID mismatch, rejecting connection")
+		execbridgeLog.Warnf("peer UID mismatch, rejecting connection")
 		writeError(conn, "peer UID mismatch")
 		return
 	}
@@ -186,7 +185,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		return
 	}
 
-	log.Debugf("execbridge", "session=%s call tool=%s", SessionKeyFromContext(b.ctx), req.Tool)
+	execbridgeLog.Debugf("session=%s call tool=%s", SessionKeyFromContext(b.ctx), req.Tool)
 	result, err := tool.Execute(b.ctx, req.Params)
 	if err != nil {
 		// Convergence-point logging: every exec-bridge tool error surfaces
@@ -196,7 +195,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		// dominant case is benign input/validation errors (e.g. a missing
 		// required arg) — agent mistakes, not system faults — and a flood of
 		// WARNs for those drowns out genuine problems.
-		log.Infof("execbridge", "session=%s tool=%s error: %v", SessionKeyFromContext(b.ctx), req.Tool, err)
+		execbridgeLog.Infof("session=%s tool=%s error: %v", SessionKeyFromContext(b.ctx), req.Tool, err)
 		writeError(conn, err.Error())
 		return
 	}

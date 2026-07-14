@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/memory"
 )
 
@@ -90,7 +89,7 @@ func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when
 		return ToolResult{}, fmt.Errorf("schedule wake: %w", err)
 	}
 
-	log.Debugf("remind", "session=%s scheduled wake id=%d in %v: %q", sessionKey, id, dur, text)
+	remindLog.Debugf("session=%s scheduled wake id=%d in %v: %q", sessionKey, id, dur, text)
 	return TextResult(fmt.Sprintf("Wake scheduled in %v: %q", dur, text)), nil
 }
 

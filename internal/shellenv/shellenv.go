@@ -25,6 +25,10 @@ import (
 	"foci/internal/procx"
 )
 
+var (
+	shellenvLog = log.NewComponentLogger("shellenv")
+)
+
 // ladder is the default search order when no explicit file is configured. The
 // first file that exists is loaded; at most one is ever loaded. Ordered
 // bash-first because the delegated backends' tool shells are bash; .zshenv is
@@ -114,23 +118,23 @@ func shellQuote(s string) string {
 func Apply(cfg *string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Warnf("shellenv", "cannot resolve home dir: %v", err)
+		shellenvLog.Warnf("cannot resolve home dir: %v", err)
 		return
 	}
 	path, load := Resolve(cfg, home)
 	if !load {
-		log.Debugf("shellenv", "no shell env file loaded (cfg=%v)", derefOr(cfg, "<ladder>"))
+		shellenvLog.Debugf("no shell env file loaded (cfg=%v)", derefOr(cfg, "<ladder>"))
 		return
 	}
 	env, err := Capture(path)
 	if err != nil {
-		log.Warnf("shellenv", "capture %s failed: %v", path, err)
+		shellenvLog.Warnf("capture %s failed: %v", path, err)
 		return
 	}
 	for k, v := range env {
 		_ = os.Setenv(k, v)
 	}
-	log.Infof("shellenv", "loaded %d vars from %s", len(env), path)
+	shellenvLog.Infof("loaded %d vars from %s", len(env), path)
 }
 
 func derefOr(p *string, dflt string) string {

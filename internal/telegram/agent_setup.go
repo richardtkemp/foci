@@ -16,6 +16,10 @@ import (
 	"foci/internal/voice"
 )
 
+var (
+	telegramLog = log.NewComponentLogger("telegram")
+)
+
 // AgentSetupParams holds all dependencies needed to set up platform bots for an agent.
 type AgentSetupParams struct {
 	Agent           platform.MessageHandler
@@ -153,7 +157,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	primaryBot, err := NewBot(telegramToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID,
 		telegramAPIBaseOf(tg))
 	if err != nil {
-		log.Errorf("telegram", "agent %q: create bot: %v (agent will run without platform)", acfg.ID, err)
+		telegramLog.Errorf("agent %q: create bot: %v (agent will run without platform)", acfg.ID, err)
 		return
 	}
 	primaryBot.SetAllowedUsersOnly(allowedOnly)
@@ -169,7 +173,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	bc := p.Resolved.Behavior // static-cfg:ignore: initial construction value; group_throttle live-updates via the OnChange below, steer_mode via LiveConfigFn (bucket D)
 	if gt := newGroupThrottle(bc.GroupThrottle, primaryBot); gt != nil {
 		primaryBot.mq.SetThrottle(gt)
-		log.Infof("telegram", "agent %q: group throttle = %s", acfg.ID, bc.GroupThrottle)
+		telegramLog.Infof("agent %q: group throttle = %s", acfg.ID, bc.GroupThrottle)
 	}
 	primaryBot.mq.SetRequireMention(reqMention)
 
@@ -182,7 +186,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 				oldThrottle.Stop()
 			}
 			primaryBot.mq.SetThrottle(newGroupThrottle(fresh.Behavior.GroupThrottle, primaryBot))
-			log.Infof("telegram", "agent %q: group throttle live-updated to %q", acfg.ID, fresh.Behavior.GroupThrottle)
+			telegramLog.Infof("agent %q: group throttle live-updated to %q", acfg.ID, fresh.Behavior.GroupThrottle)
 		})
 
 		// Hot-tagged display/table/debug fields (display.stream_output,
@@ -199,7 +203,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 				return
 			}
 			ApplyAgentDisplaySettings(primaryBot, freshDC, fresh.Debug, fresh.TelegramLongPollTimeout)
-			log.Infof("telegram", "agent %q: display settings live-updated", acfg.ID)
+			telegramLog.Infof("agent %q: display settings live-updated", acfg.ID)
 		})
 	}
 
@@ -264,13 +268,13 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	for _, facetName := range facetBots {
 		facetToken := config.ResolveBotToken(facetName, "", p.SecretStore)
 		if facetToken == "" {
-			log.Errorf("telegram", "agent %q: facet bot %q: token not found", acfg.ID, facetName)
+			telegramLog.Errorf("agent %q: facet bot %q: token not found", acfg.ID, facetName)
 			continue
 		}
 		facetBot, err := NewBot(facetToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "",
 			telegramAPIBaseOf(tg))
 		if err != nil {
-			log.Errorf("telegram", "agent %q: create facet bot %q: %v", acfg.ID, facetName, err)
+			telegramLog.Errorf("agent %q: create facet bot %q: %v", acfg.ID, facetName, err)
 			continue
 		}
 		facetBot.SetAllowedUsersOnly(allowedOnly)
@@ -286,7 +290,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		mgr.AddFacet(acfg.ID, facetBot)
 	}
 	if pool := mgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
-		log.Infof("telegram", "agent %q: %d per-agent facet bots ready", acfg.ID, pool.Size())
+		telegramLog.Infof("agent %q: %d per-agent facet bots ready", acfg.ID, pool.Size())
 	}
 
 	// Configure session TTL for per-agent facet pool
@@ -294,7 +298,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		ttl, _ := time.ParseDuration(tg.FacetSessionTTL)
 		if ttl > 0 {
 			pool.SetSessionTTL(ttl, p.Sessions)
-			log.Infof("telegram", "agent %q: facet session TTL = %v", acfg.ID, ttl)
+			telegramLog.Infof("agent %q: facet session TTL = %v", acfg.ID, ttl)
 		}
 		if p.ReclaimHook != nil {
 			pool.ReclaimHook = p.ReclaimHook

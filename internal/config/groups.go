@@ -3,7 +3,6 @@ package config
 import (
 	"sync"
 
-	"foci/internal/log"
 )
 
 // Call site names — each identifies a specific LLM call site in the codebase.
@@ -155,7 +154,7 @@ func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 	}
 	resolved, err := ResolveModel(model, "", models)
 	if err != nil {
-		log.Warnf("config", "group %q is configured but its model failed to resolve: %v", groupName, err)
+		configLog.Warnf("group %q is configured but its model failed to resolve: %v", groupName, err)
 		return nil
 	}
 	return resolved
@@ -174,6 +173,6 @@ func (gr *GroupResolver) warnIfNoAPIAgent(what string) {
 	present := gr.apiAgentsPresent
 	gr.mu.RUnlock()
 	if !present {
-		log.Errorf("config", "BUG: model resolver invoked (%s) but no API-backed agent is configured — claude-code-only deployments must never touch the model groups; this call site should be guarded", what)
+		configLog.Errorf("BUG: model resolver invoked (%s) but no API-backed agent is configured — claude-code-only deployments must never touch the model groups; this call site should be guarded", what)
 	}
 }

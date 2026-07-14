@@ -154,7 +154,7 @@ func validateAndResolveSecrets(
 	hasBWSecrets := len(bwRefs) > 0
 
 	if parsed, err := url.Parse(reqURL); err == nil {
-		log.Debugf("http_request", "session=%s request %s %s secrets=%d (bw=%d)", sessionKey, method, parsed.Hostname(), len(secretRefs), len(bwRefs))
+		http_requestLog.Debugf("session=%s request %s %s secrets=%d (bw=%d)", sessionKey, method, parsed.Hostname(), len(secretRefs), len(bwRefs))
 	}
 
 	// Validate regular secrets against allowed_hosts
@@ -187,7 +187,7 @@ func validateAndResolveSecrets(
 		for _, name := range regularRefs {
 			if store != nil {
 				if val, _ := store.Get(name); len(val) >= 4 {
-					log.Debugf("http_request", "secret %q suffix: ...%s", name, val[len(val)-4:])
+					http_requestLog.Debugf("secret %q suffix: ...%s", name, val[len(val)-4:])
 				}
 			}
 		}

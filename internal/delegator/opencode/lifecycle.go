@@ -104,7 +104,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	component := s.logComponent()
-	log.Infof(component, "launching: %s %s (workdir=%s, baseURL=%s)", binary, strings.Join(args, " "), s.workDir, s.baseURL)
+	log.NewComponentLogger(component).Infof("launching: %s %s (workdir=%s, baseURL=%s)", binary, strings.Join(args, " "), s.workDir, s.baseURL)
 
 	if err := cmd.Start(); err != nil {
 		cmdCancel()
@@ -145,12 +145,12 @@ func (s *Server) Start(ctx context.Context) error {
 		s.mu.Unlock()
 		if err != nil {
 			if closing {
-				log.Infof(component, "subprocess exited: %s", describeExitError(err))
+				log.NewComponentLogger(component).Infof("subprocess exited: %s", describeExitError(err))
 			} else {
-				log.Warnf(component, "subprocess exited: %s", describeExitError(err))
+				log.NewComponentLogger(component).Warnf("subprocess exited: %s", describeExitError(err))
 			}
 		} else {
-			log.Infof(component, "subprocess exited cleanly (status 0)")
+			log.NewComponentLogger(component).Infof("subprocess exited cleanly (status 0)")
 		}
 		s.finalizeExit(err)
 		select {
@@ -170,7 +170,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.running = true
 	s.mu.Unlock()
-	log.Infof(component, "ready: %s", s.baseURL)
+	log.NewComponentLogger(component).Infof("ready: %s", s.baseURL)
 	return nil
 }
 
@@ -200,7 +200,7 @@ func (s *Server) closeInner() {
 	if s.cmd.Process != nil {
 		pid = s.cmd.Process.Pid
 	}
-	log.Infof(component, "closing opencode server (pid=%d)", pid)
+	log.NewComponentLogger(component).Infof("closing opencode server (pid=%d)", pid)
 
 	// Cancel the SSE subscriber ctx (nil only if Start never reached the
 	// subscriber launch). Done early so it stops touching the subprocess —
@@ -240,16 +240,16 @@ func (s *Server) closeInner() {
 		exitSeen = waitForExit(s.waitCh, s.closeSigtermWait)
 	}
 	if !exitSeen {
-		log.Warnf(component, "subprocess (pid=%d) did not exit after SIGTERM, sending SIGKILL", pid)
+		log.NewComponentLogger(component).Warnf("subprocess (pid=%d) did not exit after SIGTERM, sending SIGKILL", pid)
 		if s.cmd.Process != nil {
 			_ = s.cmd.Process.Kill()
 		}
 		exitSeen = waitForExit(s.waitCh, s.closeSigkillWait)
 	}
 	if !exitSeen {
-		log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", s.closeSigkillWait)
+		log.NewComponentLogger(component).Warnf("waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", s.closeSigkillWait)
 	} else {
-		log.Infof(component, "opencode server (pid=%d) exited", pid)
+		log.NewComponentLogger(component).Infof("opencode server (pid=%d) exited", pid)
 	}
 
 	// Cancel the cmd ctx (releases any outstanding cmd resources).
@@ -262,7 +262,7 @@ func (s *Server) closeInner() {
 	select {
 	case <-s.done:
 	case <-time.After(s.closeSigtermWait):
-		log.Warnf(component, "waiter goroutine did not close done channel within %s — abandoning", s.closeSigtermWait)
+		log.NewComponentLogger(component).Warnf("waiter goroutine did not close done channel within %s — abandoning", s.closeSigtermWait)
 	}
 }
 
@@ -342,9 +342,9 @@ func (s *Server) OnSubscriberStopped(err error) {
 	expected := s.closing
 	s.mu.Unlock()
 	if expected {
-		log.Infof(component, "SSE subscriber stopped (server closing)")
+		log.NewComponentLogger(component).Infof("SSE subscriber stopped (server closing)")
 	} else {
-		log.Warnf(component, "SSE subscriber stopped: %v", err)
+		log.NewComponentLogger(component).Warnf("SSE subscriber stopped: %v", err)
 	}
 	s.finalizeExit(err)
 }
@@ -363,9 +363,9 @@ func (s *Server) finalizeExit(reason error) {
 	s.finalizeOnce.Do(func() {
 		component := s.logComponent()
 		start := time.Now()
-		log.Debugf(component, "finalizeExit: enter reason=%v", reason)
+		log.NewComponentLogger(component).Debugf("finalizeExit: enter reason=%v", reason)
 		defer func() {
-			log.Debugf(component, "finalizeExit: exit elapsed=%s", time.Since(start))
+			log.NewComponentLogger(component).Debugf("finalizeExit: exit elapsed=%s", time.Since(start))
 		}()
 
 		s.mu.Lock()
@@ -426,18 +426,18 @@ func (s *Server) finalizeExit(reason error) {
 				Type:       EventSessionError,
 				Properties: payload,
 			}
-		for _, be := range backends {
-			be.agents.ClearAll() // subprocess gone: pending subagents can never complete
-			// Non-blocking push — if the dispatcher is wedged the
-			// channel may be full; the WARN route already fires for
-			// drops, so this is consistent with steady-state drops.
-			select {
+			for _, be := range backends {
+				be.agents.ClearAll() // subprocess gone: pending subagents can never complete
+				// Non-blocking push — if the dispatcher is wedged the
+				// channel may be full; the WARN route already fires for
+				// drops, so this is consistent with steady-state drops.
+				select {
 				case be.events <- syntheticEvent:
 				default:
-					log.Warnf(component, "finalizeExit: %s events channel full; cannot deliver session.error", be.sessionID)
+					log.NewComponentLogger(component).Warnf("finalizeExit: %s events channel full; cannot deliver session.error", be.sessionID)
 				}
 			}
-			log.Warnf(component, "finalizeExit: dispatched session.error to %d session(s)", len(backends))
+			log.NewComponentLogger(component).Warnf("finalizeExit: dispatched session.error to %d session(s)", len(backends))
 		}
 	})
 }
@@ -467,15 +467,15 @@ func (s *Server) captureStderr(r io.Reader) {
 			if line != "" {
 				lower := strings.ToLower(line)
 				if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") || strings.Contains(lower, "panic") {
-					log.Warnf(component, "stderr: %s", line)
+					log.NewComponentLogger(component).Warnf("stderr: %s", line)
 				} else {
-					log.Debugf(component, "stderr: %s", line)
+					log.NewComponentLogger(component).Debugf("stderr: %s", line)
 				}
 			}
 		}
 		if err != nil {
 			if err != io.EOF {
-				log.Warnf(component, "stderr capture stopped: %v", err)
+				log.NewComponentLogger(component).Warnf("stderr capture stopped: %v", err)
 			}
 			return
 		}

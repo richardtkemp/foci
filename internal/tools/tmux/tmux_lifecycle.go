@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"foci/internal/log"
 )
 
 // ClearAll stops all watches, clears the owned sessions map, and stops the
@@ -32,7 +31,7 @@ func (inst *tmuxInstance) ClearAll() {
 	inst.lastSend = make(map[string]time.Time)
 	inst.sendMu.Unlock()
 
-	log.Debugf("tmux", "ClearAll: cleared all watches and owned sessions")
+	tmuxLog.Debugf("ClearAll: cleared all watches and owned sessions")
 }
 
 // ttlReaper periodically checks for idle tmux sessions and kills them.
@@ -81,12 +80,12 @@ func (inst *tmuxInstance) reapExpiredSessions() {
 
 		killed, err := inst.killSessionWithChildren(context.Background(), name)
 		if err != nil {
-			log.Debugf("tmux", "ttl reaper: %s: %v", name, err)
+			tmuxLog.Debugf("ttl reaper: %s: %v", name, err)
 			continue
 		}
-		log.Infof("tmux", "ttl reaper: killed idle session %s (TTL %v exceeded)", name, inst.sessionTTL)
+		tmuxLog.Infof("ttl reaper: killed idle session %s (TTL %v exceeded)", name, inst.sessionTTL)
 		if killed > 0 {
-			log.Debugf("tmux", "ttl reaper: terminated %d child process(es) for %s", killed, name)
+			tmuxLog.Debugf("ttl reaper: terminated %d child process(es) for %s", killed, name)
 		}
 	}
 

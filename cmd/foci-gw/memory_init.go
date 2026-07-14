@@ -177,14 +177,14 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 				time.Sleep(stagger)
 			}
 			if err := b.Reindex(); err != nil {
-				log.Errorf("main", "initial reindex %s: %v", label, err)
+				mainLog.Errorf("initial reindex %s: %v", label, err)
 			} else {
-				log.Infof("main", "%s: initial reindex complete", label)
+				mainLog.Infof("%s: initial reindex complete", label)
 			}
 		}()
 		if debounce > 0 || len(globalMemSources) > 0 || hasPerAgentMemory {
 			if err := b.Watch(); err != nil {
-				log.Errorf("main", "start %s file watching: %v", label, err)
+				mainLog.Errorf("start %s file watching: %v", label, err)
 			}
 		}
 		if sweepInterval > 0 {
@@ -272,7 +272,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if bleveIdx != nil {
 				result.agentBleve[acfg.ID] = bleveIdx
 			}
-			log.Infof("main", "agent %q: memory backend %s with %d sources", acfg.ID, rm.SearchBackend, len(combined))
+			mainLog.Infof("agent %q: memory backend %s with %d sources", acfg.ID, rm.SearchBackend, len(combined))
 		}
 
 		// Conversation hook: route to agent's indices by session key prefix
@@ -327,7 +327,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			ts.SetSearchIndex(idx)
 			go func(aid string) {
 				if err := ts.IndexAllTodos(aid); err != nil {
-					log.Errorf("main", "index todos for agent %s: %v", aid, err)
+					mainLog.Errorf("index todos for agent %s: %v", aid, err)
 				}
 			}(agentID)
 		}
@@ -357,9 +357,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 					dbPath := config.AgentDataPath(acfg.Workspace, "conversation.db")
 					n, err := idx.BackfillConversations(dbPath)
 					if err != nil {
-						log.Errorf("main", "backfill conversations for agent %s: %v", acfg.ID, err)
+						mainLog.Errorf("backfill conversations for agent %s: %v", acfg.ID, err)
 					} else if n > 0 {
-						log.Infof("main", "backfilled %d conversation messages into bleve for agent %s", n, acfg.ID)
+						mainLog.Infof("backfilled %d conversation messages into bleve for agent %s", n, acfg.ID)
 					}
 				}
 			} else if result.sharedBleve != nil {
@@ -368,9 +368,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 					dbPath := config.AgentDataPath(acfg.Workspace, "conversation.db")
 					n, err := result.sharedBleve.BackfillConversations(dbPath)
 					if err != nil {
-						log.Errorf("main", "backfill conversations for agent %s: %v", acfg.ID, err)
+						mainLog.Errorf("backfill conversations for agent %s: %v", acfg.ID, err)
 					} else if n > 0 {
-						log.Infof("main", "backfilled %d conversation messages into bleve for agent %s", n, acfg.ID)
+						mainLog.Infof("backfilled %d conversation messages into bleve for agent %s", n, acfg.ID)
 					}
 				}
 			}
@@ -395,9 +395,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 					dbPath := config.AgentDataPath(acfg.Workspace, "conversation.db")
 					n, err := idx.BackfillConversations(dbPath)
 					if err != nil {
-						log.Errorf("main", "backfill conversations (fts5) for agent %s: %v", acfg.ID, err)
+						mainLog.Errorf("backfill conversations (fts5) for agent %s: %v", acfg.ID, err)
 					} else if n > 0 {
-						log.Infof("main", "backfilled %d conversation messages into FTS5 for agent %s", n, acfg.ID)
+						mainLog.Infof("backfilled %d conversation messages into FTS5 for agent %s", n, acfg.ID)
 					}
 				}
 			} else if result.sharedFTS5 != nil {
@@ -407,9 +407,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 				}
 				n, err := result.sharedFTS5.BackfillConversations(paths...)
 				if err != nil {
-					log.Errorf("main", "backfill conversations (fts5, shared): %v", err)
+					mainLog.Errorf("backfill conversations (fts5, shared): %v", err)
 				} else if n > 0 {
-					log.Infof("main", "backfilled %d conversation messages into shared FTS5", n)
+					mainLog.Infof("backfilled %d conversation messages into shared FTS5", n)
 				}
 			}
 		}()

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/timeutil"
 )
 
@@ -122,7 +121,7 @@ func (s *Store) MigrateLegacyLayout() (int, error) {
 			}
 			if ok {
 				migrated++
-				log.Infof("session", "migrated legacy session layout: %s/%s", agent.Name(), td.Name())
+				sessLog.Infof("migrated legacy session layout: %s/%s", agent.Name(), td.Name())
 			}
 		}
 	}
@@ -188,7 +187,7 @@ func migrateLegacySession(sessionDir string) (bool, error) {
 		}
 		// Version dir should be empty now; remove it (non-fatal if not).
 		if err := os.Remove(versionDir); err != nil {
-			log.Warnf("session", "legacy migration: remove %s: %v", versionDir, err)
+			sessLog.Warnf("legacy migration: remove %s: %v", versionDir, err)
 		}
 	}
 	return true, nil
@@ -335,6 +334,7 @@ func migrateLegacyStateDB(db *sql.DB) {
 //     stamped with their real type at creation.
 //   - i-roots (independent sessions) were previously classified 'unknown' and
 //     become 'independent'.
+//
 // Idempotent: after it runs, no row matches the WHERE clauses.
 func migrateSessionTypeTaxonomy(db *sql.DB) {
 	stmts := []string{
@@ -346,7 +346,7 @@ func migrateSessionTypeTaxonomy(db *sql.DB) {
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
-			log.Warnf("session", "taxonomy migration: %v", err)
+			sessLog.Warnf("taxonomy migration: %v", err)
 		}
 	}
 }
@@ -356,7 +356,7 @@ func migrateSessionTypeTaxonomy(db *sql.DB) {
 func migrateLegacySessionMetadata(db *sql.DB) {
 	rows, err := db.Query(`SELECT DISTINCT session_key FROM session_metadata`)
 	if err != nil {
-		log.Errorf("session", "legacy migration: session_metadata scan: %v", err)
+		sessLog.Errorf("legacy migration: session_metadata scan: %v", err)
 		return
 	}
 	type rekey struct {
@@ -388,12 +388,12 @@ func migrateLegacySessionMetadata(db *sql.DB) {
 			 SELECT ?, key, value FROM session_metadata WHERE session_key = ?`,
 			rk.stable, rk.old,
 		); err != nil {
-			log.Errorf("session", "legacy migration: rekey %s: %v", rk.old, err)
+			sessLog.Errorf("legacy migration: rekey %s: %v", rk.old, err)
 			continue
 		}
 		_, _ = db.Exec(`DELETE FROM session_metadata WHERE session_key = ?`, rk.old)
 	}
-	log.Infof("session", "legacy migration: re-keyed session_metadata for %d session key(s)", len(rekeys))
+	sessLog.Infof("legacy migration: re-keyed session_metadata for %d session key(s)", len(rekeys))
 }
 
 // migrateLegacyChatMetadata converts legacy 'session_key' rows to
@@ -401,7 +401,7 @@ func migrateLegacySessionMetadata(db *sql.DB) {
 func migrateLegacyChatMetadata(db *sql.DB) {
 	rows, err := db.Query(`SELECT agent_id, platform, chat_id, value FROM chat_metadata WHERE key = 'session_key'`)
 	if err != nil {
-		log.Errorf("session", "legacy migration: chat_metadata scan: %v", err)
+		sessLog.Errorf("legacy migration: chat_metadata scan: %v", err)
 		return
 	}
 	type chatRow struct {
@@ -449,7 +449,7 @@ func migrateLegacyChatMetadata(db *sql.DB) {
 			)
 		}
 	}
-	log.Infof("session", "legacy migration: converted %d chat_metadata session_key row(s) to registrations", len(legacy))
+	sessLog.Infof("legacy migration: converted %d chat_metadata session_key row(s) to registrations", len(legacy))
 }
 
 // migrateLegacyAgentMetadata re-keys facet bindings and tmux ownership maps.
@@ -459,7 +459,7 @@ func migrateLegacyAgentMetadata(db *sql.DB) {
 		 WHERE key LIKE 'facet:%' OR key LIKE 'discord_facet:%' OR key IN ('tmux_owned', 'tmux_watches')`,
 	)
 	if err != nil {
-		log.Errorf("session", "legacy migration: agent_metadata scan: %v", err)
+		sessLog.Errorf("legacy migration: agent_metadata scan: %v", err)
 		return
 	}
 	type update struct{ agent, key, value string }
@@ -518,7 +518,7 @@ func migrateLegacyAgentMetadata(db *sql.DB) {
 		_, _ = db.Exec(`UPDATE agent_metadata SET value = ? WHERE agent_id = ? AND key = ?`, u.value, u.agent, u.key)
 	}
 	if len(updates) > 0 {
-		log.Infof("session", "legacy migration: re-keyed %d agent_metadata row(s)", len(updates))
+		sessLog.Infof("legacy migration: re-keyed %d agent_metadata row(s)", len(updates))
 	}
 }
 
@@ -536,7 +536,7 @@ func migrateLegacySessionIndexRows(db *sql.DB) {
 		        COALESCE(parent_session_key, ''), session_type, status
 		 FROM session_index`)
 	if err != nil {
-		log.Errorf("session", "legacy migration: session_index scan: %v", err)
+		sessLog.Errorf("legacy migration: session_index scan: %v", err)
 		return
 	}
 	type row struct {
@@ -582,7 +582,7 @@ func migrateLegacySessionIndexRows(db *sql.DB) {
 			r.stable, r.filePath, r.created, r.activity, nullableString(r.reflection),
 			nullableString(parent), r.sessType, r.status, agentID, chatID, isRoot,
 		); err != nil {
-			log.Errorf("session", "legacy migration: re-key index row %s: %v", r.key, err)
+			sessLog.Errorf("legacy migration: re-key index row %s: %v", r.key, err)
 			continue
 		}
 		_, _ = db.Exec(`DELETE FROM session_index WHERE session_key = ?`, r.key)
@@ -591,5 +591,5 @@ func migrateLegacySessionIndexRows(db *sql.DB) {
 	// rebuild path so file-backed rows reconcile against the migrated files
 	// (RebuildIndex preserves backend rows and their activity).
 	_, _ = db.Exec(`DELETE FROM system_state WHERE key = 'last_clean_shutdown'`)
-	log.Infof("session", "legacy migration: re-keyed %d legacy session_index row(s); file-backed rows will reconcile from disk", len(legacy))
+	sessLog.Infof("legacy migration: re-keyed %d legacy session_index row(s); file-backed rows will reconcile from disk", len(legacy))
 }

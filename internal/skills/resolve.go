@@ -1,6 +1,7 @@
 package skills
 
 import "path/filepath"
+import
 
 // ResolveDirs returns the skill directories to scan, in load order.
 // Shared dir comes first; per-agent dir comes second (wins on name collision).
@@ -8,6 +9,12 @@ import "path/filepath"
 // agentWorkspace is the agent's workspace path.
 // sharedOverride, if non-empty, replaces the default shared dir.
 // agentOverride, if non-empty, replaces the default per-agent dir.
+"foci/internal/log"
+
+var (
+	skillsLog = log.NewComponentLogger("skills")
+)
+
 func ResolveDirs(home, agentWorkspace, sharedOverride, agentOverride string) []string {
 	sharedDir := filepath.Join(home, "shared", "skills")
 	if sharedOverride != "" {

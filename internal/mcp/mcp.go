@@ -22,6 +22,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+var (
+	mcpLog = log.NewComponentLogger("mcp")
+)
+
 // ServerConfig describes one MCP server to connect to.
 type ServerConfig struct {
 	Name    string   `toml:"name"`
@@ -121,20 +125,20 @@ func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf tr
 			transport, err = makeTransport(cfg)
 		}
 		if err != nil {
-			log.Warnf("mcp", "failed to create transport for %q: %v", cfg.Name, err)
+			mcpLog.Warnf("failed to create transport for %q: %v", cfg.Name, err)
 			continue
 		}
 
 		client := mcp.NewClient(&mcp.Implementation{Name: "foci", Version: "1.0.0"}, nil)
 		session, err := client.Connect(ctx, transport, nil)
 		if err != nil {
-			log.Warnf("mcp", "failed to connect to %q: %v", cfg.Name, err)
+			mcpLog.Warnf("failed to connect to %q: %v", cfg.Name, err)
 			continue
 		}
 
 		result, err := session.ListTools(ctx, nil)
 		if err != nil {
-			log.Warnf("mcp", "failed to list tools from %q: %v", cfg.Name, err)
+			mcpLog.Warnf("failed to list tools from %q: %v", cfg.Name, err)
 			_ = session.Close() // best effort cleanup
 			continue
 		}
@@ -147,7 +151,7 @@ func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf tr
 		})
 		m.mu.Unlock()
 
-		log.Infof("mcp", "connected to %q: %d tools", cfg.Name, len(result.Tools))
+		mcpLog.Infof("connected to %q: %d tools", cfg.Name, len(result.Tools))
 	}
 }
 
@@ -258,7 +262,7 @@ func (m *Manager) refreshServers(ctx context.Context) {
 
 	cfg, err := LoadConfig(m.configDir)
 	if err != nil {
-		log.Warnf("mcp", "reload mcp.toml: %v", err)
+		mcpLog.Warnf("reload mcp.toml: %v", err)
 		return
 	}
 
@@ -272,7 +276,7 @@ func (m *Manager) refreshServers(ctx context.Context) {
 		return
 	}
 
-	log.Infof("mcp", "agent %s: mcp.toml changed, reconnecting", m.agentID)
+	mcpLog.Infof("agent %s: mcp.toml changed, reconnecting", m.agentID)
 
 	// Close existing connections.
 	_ = m.Close() // best effort cleanup before reconnecting

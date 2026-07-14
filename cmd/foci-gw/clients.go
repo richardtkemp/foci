@@ -7,7 +7,6 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/gemini"
-	"foci/internal/log"
 	oai "foci/internal/openai"
 	"foci/internal/provider"
 	"foci/internal/secrets"
@@ -54,7 +53,7 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 	entry.once.Do(func() {
 		epCfg, exists := r.cfg.Endpoints[endpointName]
 		if !exists {
-			log.Errorf("main", "endpoint %q not found in config", endpointName)
+			mainLog.Errorf("endpoint %q not found in config", endpointName)
 			return
 		}
 
@@ -72,7 +71,7 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 		if resolver, ok := formatResolvers[format]; ok {
 			client, err := resolver.ResolveClient(r.ctx, endpointName, apiKeyName, baseURL, httpTimeout)
 			if err != nil {
-				log.Errorf("main", "resolve %s client for endpoint %q: %v", format, endpointName, err)
+				mainLog.Errorf("resolve %s client for endpoint %q: %v", format, endpointName, err)
 				return
 			}
 			entry.client = client
@@ -87,7 +86,7 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 				// Built-in gemini endpoint
 				apiKey, _ := r.store.Get("gemini.api_key")
 				if apiKey == "" {
-					log.Errorf("main", "gemini.api_key not found in secrets — gemini endpoint unavailable")
+					mainLog.Errorf("gemini.api_key not found in secrets — gemini endpoint unavailable")
 					return
 				}
 				opts := []gemini.Option{gemini.WithHTTPTimeout(httpTimeout)}
@@ -99,19 +98,19 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 				}
 				gc, err := gemini.NewClient(r.ctx, apiKey, opts...)
 				if err != nil {
-					log.Errorf("main", "create gemini client: %v", err)
+					mainLog.Errorf("create gemini client: %v", err)
 					return
 				}
 				entry.client = gc
-				log.Infof("main", "gemini client ready (cache_ttl=%s)", cacheTTLStr)
+				mainLog.Infof("gemini client ready (cache_ttl=%s)", cacheTTLStr)
 			} else {
-				log.Errorf("main", "gemini format on non-gemini endpoint %q not supported", endpointName)
+				mainLog.Errorf("gemini format on non-gemini endpoint %q not supported", endpointName)
 			}
 
 		case "openai":
 			apiKey, _ := r.store.Get(apiKeyName)
 			if apiKey == "" {
-				log.Errorf("main", "%s not found in secrets — endpoint %q (openai format) unavailable", apiKeyName, endpointName)
+				mainLog.Errorf("%s not found in secrets — endpoint %q (openai format) unavailable", apiKeyName, endpointName)
 				return
 			}
 			opts := []oai.Option{oai.WithHTTPTimeout(httpTimeout)}
@@ -120,7 +119,7 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 				opts = append(opts, oai.WithBaseURL(url))
 			}
 			entry.client = oai.NewClient(apiKey, opts...)
-			log.Infof("main", "openai client ready for endpoint %q (url=%s)", endpointName, url)
+			mainLog.Infof("openai client ready for endpoint %q (url=%s)", endpointName, url)
 		}
 	})
 

@@ -1,7 +1,15 @@
 package voice
 
+import
+
 // Protocol message types for the /voice WebSocket endpoint.
 // All JSON messages are text frames; audio is sent as binary frames.
+"foci/internal/log"
+
+var (
+	voiceLog    = log.NewComponentLogger("voice")
+	voice_wsLog = log.NewComponentLogger("voice-ws")
+)
 
 // --- Client → Server ---
 

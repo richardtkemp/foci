@@ -22,7 +22,6 @@ import (
 	"syscall"
 	"time"
 
-	"foci/internal/log"
 )
 
 // procDir is the procfs mount point. Tests override this to point at a
@@ -52,10 +51,10 @@ func ReapOrphanedServers() int {
 	for i, pid := range orphans {
 		pids[i] = strconv.Itoa(pid)
 	}
-	log.Warnf("opencode", "found %d orphaned opencode process(es) (pids: %s); reaping", len(orphans), strings.Join(pids, ", "))
+	opencodeLog.Warnf("found %d orphaned opencode process(es) (pids: %s); reaping", len(orphans), strings.Join(pids, ", "))
 
 	killed := terminatePids(orphans, sigtermGrace)
-	log.Infof("opencode", "reaped %d/%d orphaned opencode process(es)", killed, len(orphans))
+	opencodeLog.Infof("reaped %d/%d orphaned opencode process(es)", killed, len(orphans))
 	return killed
 }
 
@@ -185,7 +184,7 @@ func terminatePids(pids []int, grace time.Duration) int {
 	for _, pid := range alive {
 		proc, _ := os.FindProcess(pid)
 		if err := proc.Signal(syscall.SIGKILL); err == nil {
-			log.Warnf("opencode", "SIGKILL orphaned opencode process (pid=%d) — did not exit after SIGTERM", pid)
+			opencodeLog.Warnf("SIGKILL orphaned opencode process (pid=%d) — did not exit after SIGTERM", pid)
 		}
 	}
 

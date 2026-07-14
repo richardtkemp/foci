@@ -13,7 +13,6 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -202,7 +201,7 @@ func (c *appConn) sendBinding(sessionKey string) (b *convBinding, fellBack bool)
 	// send always has somewhere sensible to land (see Hub.deliverBinding).
 	b, via := c.hub.deliverBinding(c.agentID)
 	if b == nil {
-		log.Warnf("app", "unsolicited send to unbound session %q (agent %s) DROPPED: conversation creation failed", sessionKey, c.agentID)
+		appLog.Warnf("unsolicited send to unbound session %q (agent %s) DROPPED: conversation creation failed", sessionKey, c.agentID)
 		return nil, false
 	}
 	if sessionKey != "" {
@@ -210,7 +209,7 @@ func (c *appConn) sendBinding(sessionKey string) (b *convBinding, fellBack bool)
 		// being routed to a different conversation. fellBack=true so the caller
 		// annotates it as misdelivered (a session-blind send, sessionKey=="",
 		// has no intended target to miss — that's normal routing, not a miss).
-		log.Infof("app", "unsolicited send to unbound session %q (agent %s) routed to %s conversation %s", sessionKey, c.agentID, via, b.convID)
+		appLog.Infof("unsolicited send to unbound session %q (agent %s) routed to %s conversation %s", sessionKey, c.agentID, via, b.convID)
 		return b, true
 	}
 	return b, false
@@ -429,7 +428,7 @@ func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.Bat
 		qs[i] = fap.Question{Text: q.Text, Header: q.Header, Choices: toChoices(q.Choices)}
 		choiceCounts[i] = strconv.Itoa(len(q.Choices))
 	}
-	log.Debugf("app", "SendInteractiveBatch: conv=%s prompt=%s questions=%d choicesPerQ=[%s]",
+	appLog.Debugf("SendInteractiveBatch: conv=%s prompt=%s questions=%d choicesPerQ=[%s]",
 		b.convID, promptID, len(qs), strings.Join(choiceCounts, ","))
 	b.send(fap.Interactive{
 		ConversationID: b.convID,

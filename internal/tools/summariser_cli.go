@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"foci/internal/log"
 	"foci/internal/procx"
 )
 
@@ -106,7 +105,7 @@ func (s *CLISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 	}
 
 	sessionKey := SessionKeyFromContext(ctx)
-	log.Infof("summary", "session=%s transport=cli model=%s input_bytes=%d output_bytes=%d",
+	summaryLog.Infof("session=%s transport=cli model=%s input_bytes=%d output_bytes=%d",
 		sessionKey, s.model, len(content), len(text))
 
 	if text == "" {

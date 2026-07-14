@@ -9,7 +9,6 @@
 package opencode
 
 import (
-	"foci/internal/log"
 )
 
 // eventHandler is the per-Backend callback invoked for every event
@@ -26,7 +25,7 @@ type eventHandler func(ev rawEvent)
 // Logging at DEBUG gives operators visibility into event flow without
 // the noise of ccstream's per-event reader logs.
 var defaultDispatchHandler eventHandler = func(ev rawEvent) {
-	log.Debugf("opencode", "dispatch: %s", ev.Type)
+	opencodeLog.Debugf("dispatch: %s", ev.Type)
 }
 
 // dispatchLoop is the per-Backend drain goroutine. Reads from b.events

@@ -12,6 +12,10 @@ import (
 	"foci/internal/timeutil"
 )
 
+var (
+	tooldetailLog = log.NewComponentLogger("tooldetail")
+)
+
 // Compile-time check: Store satisfies platform.ToolDetailStore.
 var _ platform.ToolDetailStore = (*Store)(nil)
 
@@ -79,7 +83,7 @@ func (s *Store) Store(messageID int64, compact, fullInput, result string) {
 		 VALUES (?, ?, ?, ?, ?)`,
 		messageID, compact, fullInput, result, timeutil.FormatNano(timeutil.Now()))
 	if err != nil {
-		log.Warnf("tooldetail", "store message_id=%d: %v", messageID, err)
+		tooldetailLog.Warnf("store message_id=%d: %v", messageID, err)
 	}
 }
 
@@ -100,7 +104,7 @@ func (s *Store) LoadAll() (map[int64]Entry, error) {
 		var id int64
 		var entry Entry
 		if err := rows.Scan(&id, &entry.CompactText, &entry.FullInput, &entry.Result); err != nil {
-			log.Warnf("tooldetail", "scan row: %v", err)
+			tooldetailLog.Warnf("scan row: %v", err)
 			continue
 		}
 		result[id] = entry
@@ -119,16 +123,16 @@ func (s *Store) ExpireAndVacuum() {
 	cutoff := timeutil.FormatNano(time.Now().Add(-toolDetailTTL))
 	res, err := s.db.Exec(`DELETE FROM tool_call_details WHERE unixepoch(created_at) <= unixepoch(?)`, cutoff)
 	if err != nil {
-		log.Warnf("tooldetail", "expire: %v", err)
+		tooldetailLog.Warnf("expire: %v", err)
 		return
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
-		log.Infof("tooldetail", "expired %d old tool detail entries", n)
+		tooldetailLog.Infof("expired %d old tool detail entries", n)
 	}
 
 	if _, err := s.db.Exec("PRAGMA incremental_vacuum"); err != nil {
-		log.Warnf("tooldetail", "incremental_vacuum: %v", err)
+		tooldetailLog.Warnf("incremental_vacuum: %v", err)
 	}
 }
 
@@ -136,7 +140,7 @@ func (s *Store) ExpireAndVacuum() {
 func (s *Store) Count() int {
 	var n int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM tool_call_details").Scan(&n); err != nil {
-		log.Warnf("tooldetail", "count: %v", err)
+		tooldetailLog.Warnf("count: %v", err)
 	}
 	return n
 }

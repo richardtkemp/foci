@@ -8,7 +8,14 @@ import (
 	"foci/internal/log"
 )
 
-// PoolBot is what the generic Pool needs from a platform's bot type.
+var (
+	interactiveLog = log.NewComponentLogger("interactive")
+	platformLog    = log.NewComponentLogger(
+
+		// PoolBot is what the generic Pool needs from a platform's bot type.
+		"platform")
+)
+
 type PoolBot interface {
 	SessionKey() string
 	SetSessionKey(string)
@@ -134,7 +141,7 @@ func (p *Pool[B]) collectStaleLocked() []reclaimTarget[B] {
 
 		lastStr := p.sessions.LastActivity(sk)
 		if lastStr == "n/a" {
-			log.Infof(p.name, "reclaiming facet bot (session %s not found)", sk)
+			log.NewComponentLogger(p.name).Infof("reclaiming facet bot (session %s not found)", sk)
 			targets = append(targets, reclaimTarget[B]{bot: e.bot, key: sk})
 			continue
 		}
@@ -145,7 +152,7 @@ func (p *Pool[B]) collectStaleLocked() []reclaimTarget[B] {
 		}
 
 		if now.Sub(lastTime) > p.sessionTTL {
-			log.Infof(p.name, "reclaiming facet bot (session %s idle for %v, TTL %v)",
+			log.NewComponentLogger(p.name).Infof("reclaiming facet bot (session %s idle for %v, TTL %v)",
 				sk, now.Sub(lastTime).Round(time.Second), p.sessionTTL)
 			targets = append(targets, reclaimTarget[B]{bot: e.bot, key: sk})
 		}
@@ -192,11 +199,11 @@ func (p *Pool[B]) Available() int {
 // pool. One implementation shared by Telegram and Discord; it satisfies the
 // per-platform half of ConnectionSource.
 type BotManager[B PooledBot[B]] struct {
-	name    string             // platform tag for logs
-	primary map[string]B       // agentID → primary bot
+	name    string              // platform tag for logs
+	primary map[string]B        // agentID → primary bot
 	pools   map[string]*Pool[B] // agentID → per-agent facet pool
-	shared  *Pool[B]           // shared facet pool (fallback for any agent)
-	all     []B                // all bots for iteration
+	shared  *Pool[B]            // shared facet pool (fallback for any agent)
+	all     []B                 // all bots for iteration
 	mu      sync.RWMutex
 	wg      sync.WaitGroup // tracks running bot goroutines for graceful shutdown
 }
@@ -359,7 +366,7 @@ func (m *BotManager[B]) StartAll(ctx context.Context) {
 			b.Run(ctx)
 		}(bot)
 	}
-	log.Infof(m.name, "started %d bot(s)", len(m.all))
+	log.NewComponentLogger(m.name).Infof("started %d bot(s)", len(m.all))
 }
 
 // Wait blocks until all bot goroutines have returned, including shutdown

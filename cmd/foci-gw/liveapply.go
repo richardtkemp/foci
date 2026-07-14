@@ -85,7 +85,7 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 	if err := fn(fresh); err != nil {
 		return true, fmt.Errorf("live apply %s.%s: %w", section, key, err)
 	}
-	log.Infof("config", "applied %s.%s live", section, key)
+	configLog.Infof("applied %s.%s live", section, key)
 	return true, nil
 }
 

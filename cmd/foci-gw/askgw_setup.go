@@ -5,7 +5,6 @@ import (
 
 	"foci/internal/askgw"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/question"
 )
@@ -68,7 +67,7 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 
 	cancelPrompt := func(msgID, finalText string) {
 		if err := platform.CancelInteractiveMessage(msgID, finalText); err != nil {
-			log.Warnf("askgw", "cancel prompt %s: %v", msgID, err)
+			askgwLog.Warnf("cancel prompt %s: %v", msgID, err)
 		}
 	}
 
@@ -85,11 +84,11 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		ResolveSession: resolveSession,
 	})
 	if err != nil {
-		log.Errorf("askgw", "config error: %v", err)
+		askgwLog.Errorf("config error: %v", err)
 		return nil
 	}
 	if err := srv.Start(); err != nil {
-		log.Errorf("askgw", "failed to start: %v", err)
+		askgwLog.Errorf("failed to start: %v", err)
 		return nil
 	}
 	return srv

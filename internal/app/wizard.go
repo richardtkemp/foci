@@ -32,7 +32,6 @@ import (
 
 	"foci/internal/app/fap"
 	"foci/internal/command"
-	"foci/internal/log"
 	"foci/internal/question"
 )
 
@@ -105,7 +104,7 @@ func (h *Hub) maybeStartWizard(conn *appConn, b *convBinding, resp command.Respo
 	h.wizardMu.Unlock()
 
 	h.sendWizardStep(s, resp.Text, nil)
-	log.Debugf("app", "wizard started: id=%s conv=%s scope=%s title=%q", s.id, b.convID, scope, s.title)
+	appLog.Debugf("wizard started: id=%s conv=%s scope=%s title=%q", s.id, b.convID, scope, s.title)
 	return true
 }
 
@@ -154,7 +153,7 @@ func (h *Hub) handleWizardResponse(f fap.WizardResponse) {
 		return
 	}
 	if f.ConversationID != s.b.convID || f.StepID != s.stepID {
-		log.Debugf("app", "wizard response dropped as stale (conv=%s): id=%s step=%s (want %s)", s.b.convID, f.WizardID, f.StepID, s.stepID)
+		appLog.Debugf("wizard response dropped as stale (conv=%s): id=%s step=%s (want %s)", s.b.convID, f.WizardID, f.StepID, s.stepID)
 		return
 	}
 	reg := s.conn.commands
@@ -185,7 +184,7 @@ func (h *Hub) handleWizardResponse(f fap.WizardResponse) {
 			if meta, err := h.blobs.putFile(docPath, "photo"); err == nil {
 				media = &fap.WizardStepMedia{BlobID: meta.id, MIME: meta.mime, Name: meta.name}
 			} else {
-				log.Warnf("app", "wizard doc blob staging failed (conv=%s), sending in-chat: %v", s.b.convID, err)
+				appLog.Warnf("wizard doc blob staging failed (conv=%s), sending in-chat: %v", s.b.convID, err)
 				_ = s.conn.SendDocumentToChat(s.b.chatID, docPath, "")
 			}
 		} else {
@@ -216,7 +215,7 @@ func (h *Hub) endWizard(s *wizardSession, status, text string) {
 	h.wizardMu.Unlock()
 	h.persistWizardSessions(s.b.agentID)
 	s.b.send(fap.WizardEnd{ConversationID: s.b.convID, WizardID: s.id, Status: status, Text: text})
-	log.Debugf("app", "wizard ended (conv=%s): id=%s status=%s", s.b.convID, s.id, status)
+	appLog.Debugf("wizard ended (conv=%s): id=%s status=%s", s.b.convID, s.id, status)
 }
 
 // endScopeWizard ends the live session (if any) fronting the given wizard
@@ -253,17 +252,17 @@ func (h *Hub) persistWizardSessions(agentID string) {
 	h.wizardMu.Unlock()
 	if len(saved) == 0 {
 		if err := idx.DeleteAgentMetadata(agentID, wizardSessionsMetaKey); err != nil {
-			log.Warnf("app", "clear persisted wizard sessions: %v", err)
+			appLog.Warnf("clear persisted wizard sessions: %v", err)
 		}
 		return
 	}
 	blob, err := json.Marshal(saved)
 	if err != nil {
-		log.Warnf("app", "marshal wizard sessions: %v", err)
+		appLog.Warnf("marshal wizard sessions: %v", err)
 		return
 	}
 	if err := idx.SetAgentMetadata(agentID, wizardSessionsMetaKey, string(blob)); err != nil {
-		log.Warnf("app", "persist wizard sessions: %v", err)
+		appLog.Warnf("persist wizard sessions: %v", err)
 	}
 }
 
@@ -285,7 +284,7 @@ func (h *Hub) restoreWizardSessions(conn *appConn, agentID string) {
 	}
 	var saved map[string]persistedWizardSession
 	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
-		log.Warnf("app", "unmarshal wizard sessions: %v — dropping", err)
+		appLog.Warnf("unmarshal wizard sessions: %v — dropping", err)
 		_ = idx.DeleteAgentMetadata(agentID, wizardSessionsMetaKey)
 		return
 	}
@@ -314,7 +313,7 @@ func (h *Hub) restoreWizardSessions(conn *appConn, agentID string) {
 	}
 	h.persistWizardSessions(agentID) // re-write the cleaned set
 	if restored > 0 {
-		log.Infof("app", "restored %d in-flight wizard session(s) for agent %s", restored, agentID)
+		appLog.Infof("restored %d in-flight wizard session(s) for agent %s", restored, agentID)
 	}
 }
 

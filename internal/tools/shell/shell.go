@@ -21,6 +21,10 @@ import (
 	"foci/internal/tools/spill"
 )
 
+var (
+	execLog = log.NewComponentLogger("exec")
+)
+
 // defaultSpillThreshold is the default byte count kept in memory before
 // overflowing shell output to a temp file. Matches the default MaxResultChars
 // (15K chars ≈ 15KB). Commands producing more output spill to disk
@@ -44,10 +48,10 @@ var cmdSeparatorRe = regexp.MustCompile(`\|{1,2}|;|&&`)
 // and tool-piping shell functions); fall back to sh if bash is not installed.
 var execShell = sync.OnceValue(func() string {
 	if path, err := exec.LookPath("bash"); err == nil {
-		log.Debugf("exec", "using bash: %s", path)
+		execLog.Debugf("using bash: %s", path)
 		return "bash"
 	}
-	log.Infof("exec", "bash not found, falling back to sh (pipefail/failglob unavailable)")
+	execLog.Infof("bash not found, falling back to sh (pipefail/failglob unavailable)")
 	return "sh"
 })
 
@@ -162,7 +166,7 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	}
 	timeout := tools.ResolveTimeout(p.Timeout, tools.TimeoutConfig{DefaultSec: dts})
 
-	log.Debugf("exec", "session=%s running: %s (timeout=%s background=%v)", tools.SessionKeyFromContext(ctx), truncateCmd(p.Command, 200), timeout, p.Background)
+	execLog.Debugf("session=%s running: %s (timeout=%s background=%v)", tools.SessionKeyFromContext(ctx), truncateCmd(p.Command, 200), timeout, p.Background)
 
 	// For explicit background mode, use the original direct approach (no bridge)
 	if p.Background {
@@ -190,7 +194,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		var err error
 		bridge, err = tools.NewExecBridge(registry, ctx)
 		if err != nil {
-			log.Debugf("exec", "session=%s exec bridge creation failed (continuing without): %v", tools.SessionKeyFromContext(ctx), err)
+			execLog.Debugf("session=%s exec bridge creation failed (continuing without): %v", tools.SessionKeyFromContext(ctx), err)
 		} else {
 			defer bridge.Close()
 			cmd = fmt.Sprintf("%s; source %s; %s", execPreamble(), bridge.FuncsPath(), cmd)
@@ -263,7 +267,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		var err error
 		bridge, err = tools.NewExecBridge(registry, bridgeCtx)
 		if err != nil {
-			log.Debugf("exec", "session=%s exec bridge creation failed (continuing without): %v", sessionKey, err)
+			execLog.Debugf("session=%s exec bridge creation failed (continuing without): %v", sessionKey, err)
 		} else {
 			cmd = fmt.Sprintf("%s; source %s; %s", execPreamble(), bridge.FuncsPath(), cmd)
 		}
@@ -388,7 +392,7 @@ func waitAndReap(proc *exec.Cmd, doneRead <-chan struct{}, stdout, stderr io.Rea
 		select {
 		case <-doneRead:
 		case <-time.After(pipeReapGrace):
-			log.Debugf("exec", "pipe reads stuck after process exit — killing process group %d", proc.Process.Pid)
+			execLog.Debugf("pipe reads stuck after process exit — killing process group %d", proc.Process.Pid)
 			_ = syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
 			<-doneRead
 		}
@@ -487,7 +491,7 @@ func formatResult(output string, err error, ctx context.Context, timeout time.Du
 
 	if err != nil {
 		if ctx.Err() != nil {
-			log.Debugf("exec", "session=%s command timed out after %s: %s", tools.SessionKeyFromContext(ctx), timeout, truncateCmd(displayCmd, 100))
+			execLog.Debugf("session=%s command timed out after %s: %s", tools.SessionKeyFromContext(ctx), timeout, truncateCmd(displayCmd, 100))
 		}
 		return result + "\nError: " + err.Error()
 	}

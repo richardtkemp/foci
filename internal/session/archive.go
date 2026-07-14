@@ -16,6 +16,10 @@ import (
 	"foci/internal/timeutil"
 )
 
+var (
+	sessLog = log.NewComponentLogger("session")
+)
+
 // decompressIfGzipped checks if a .jsonl.gz version of the file exists.
 // If found, it decompresses the gzip to the original .jsonl path and
 // removes the .gz file. This transparently restores archived sessions.
@@ -55,7 +59,7 @@ func (s *Store) decompressIfGzipped(jsonlPath string) error {
 	}
 
 	_ = os.Remove(gzPath)
-	log.Infof("session", "decompressed archived session %s", filepath.Base(jsonlPath))
+	sessLog.Infof("decompressed archived session %s", filepath.Base(jsonlPath))
 	return nil
 }
 
@@ -338,7 +342,7 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 	// These must never be archived.
 	currentKeys, err := index.CurrentSessionKeys()
 	if err != nil {
-		log.Warnf("session", "archive sweep: query current session keys: %v (skipping protection)", err)
+		sessLog.Warnf("archive sweep: query current session keys: %v (skipping protection)", err)
 		currentKeys = nil
 	}
 
@@ -363,7 +367,7 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 		// Skip sessions that have active branches referencing them
 		branches, err := index.Query(QueryOptions{})
 		if err != nil {
-			log.Warnf("session", "archive sweep: query branches for %s: %v", entry.SessionKey, err)
+			sessLog.Warnf("archive sweep: query branches for %s: %v", entry.SessionKey, err)
 			continue
 		}
 		hasActiveBranch := false
@@ -379,7 +383,7 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 
 		// Gzip the session file
 		if err := gzipFile(entry.FilePath); err != nil {
-			log.Warnf("session", "archive sweep: gzip %s: %v", entry.FilePath, err)
+			sessLog.Warnf("archive sweep: gzip %s: %v", entry.FilePath, err)
 			continue
 		}
 
@@ -389,7 +393,7 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 		// Update index status
 		index.UpdateStatus(entry.SessionKey, SessionStatusArchived)
 		archived++
-		log.Infof("session", "archived session %s (last active %s)", entry.SessionKey, lastActivity.Format(time.RFC3339))
+		sessLog.Infof("archived session %s (last active %s)", entry.SessionKey, lastActivity.Format(time.RFC3339))
 	}
 
 	return archived, nil
@@ -466,7 +470,7 @@ func gzipArchiveFiles(basePath string) {
 		stemBase := filepath.Base(stem)
 		if strings.HasPrefix(nameNoExt, stemBase+".") && isArchiveFile(name) {
 			if err := gzipFile(full); err != nil {
-				log.Warnf("session", "archive sweep: gzip archive %s: %v", name, err)
+				sessLog.Warnf("archive sweep: gzip archive %s: %v", name, err)
 			}
 		}
 	}

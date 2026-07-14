@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"foci/internal/log"
 
 	"github.com/BurntSushi/toml"
 )
@@ -33,7 +32,7 @@ func ResolveBotToken(botName, botSecret string, secrets SecretGetter) string {
 	}
 	v, ok := secrets.Get(key)
 	if !ok {
-		log.Debugf("config", "ResolveBotToken(%q): secret %q not found in secrets store", botName, key)
+		configLog.Debugf("ResolveBotToken(%q): secret %q not found in secrets store", botName, key)
 		return ""
 	}
 	return v
@@ -52,7 +51,7 @@ func ResolveDiscordToken(botName, botSecret string, secrets SecretGetter) string
 	}
 	v, ok := secrets.Get(key)
 	if !ok {
-		log.Debugf("config", "ResolveDiscordToken(%q): secret %q not found in secrets store", botName, key)
+		configLog.Debugf("ResolveDiscordToken(%q): secret %q not found in secrets store", botName, key)
 		return ""
 	}
 	return v
@@ -70,7 +69,7 @@ func ResolvePath(p string) string {
 	if err != nil {
 		// Every relative path hits the same failure; warn once, not per-path.
 		homeResolveWarnOnce.Do(func() {
-			log.Warnf("config", "could not resolve home dir for relative config paths (left relative): %v", err)
+			configLog.Warnf("could not resolve home dir for relative config paths (left relative): %v", err)
 		})
 		return p
 	}

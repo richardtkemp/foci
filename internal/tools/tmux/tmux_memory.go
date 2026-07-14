@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 )
 
 // TmuxMemoryConfig holds the parsed configuration for the tmux memory monitor.
@@ -76,7 +75,7 @@ func (m *TmuxMemoryMonitor) Start(ctx context.Context) {
 			}
 		}
 	}()
-	log.Infof("tmux_memory", "monitor started (interval=%v, warn=%s, critical=%s, kill=%s)",
+	tmux_memoryLog.Infof("monitor started (interval=%v, warn=%s, critical=%s, kill=%s)",
 		m.cfg.CheckInterval, m.cfg.WarnStr, m.cfg.CriticalStr, m.cfg.KillStr)
 }
 
@@ -103,29 +102,29 @@ func (m *TmuxMemoryMonitor) checkOnce() {
 
 	rssKB, err := getRSS()
 	if err != nil {
-		log.Debugf("tmux_memory", "get tmux RSS: %v", err)
+		tmux_memoryLog.Debugf("get tmux RSS: %v", err)
 		return
 	}
 
 	memTotalKB, err := getMemTotal()
 	if err != nil {
-		log.Warnf("tmux_memory", "get memtotal: %v", err)
+		tmux_memoryLog.Warnf("get memtotal: %v", err)
 		return
 	}
 
 	killKB, err := ParseThreshold(m.cfg.KillStr, memTotalKB)
 	if err != nil {
-		log.Warnf("tmux_memory", "parse kill threshold: %v", err)
+		tmux_memoryLog.Warnf("parse kill threshold: %v", err)
 		return
 	}
 	criticalKB, err := ParseThreshold(m.cfg.CriticalStr, memTotalKB)
 	if err != nil {
-		log.Warnf("tmux_memory", "parse critical threshold: %v", err)
+		tmux_memoryLog.Warnf("parse critical threshold: %v", err)
 		return
 	}
 	warnKB, err := ParseThreshold(m.cfg.WarnStr, memTotalKB)
 	if err != nil {
-		log.Warnf("tmux_memory", "parse warn threshold: %v", err)
+		tmux_memoryLog.Warnf("parse warn threshold: %v", err)
 		return
 	}
 
@@ -143,7 +142,7 @@ func (m *TmuxMemoryMonitor) checkOnce() {
 			m.criticalFired = true
 			m.notifyFn(fmt.Sprintf("🔴 tmux memory CRITICAL: %dMB / %dMB (%.1f%%) — exceeds %s threshold", rssMB, totalMB, pct, m.cfg.CriticalStr))
 		}
-		log.Errorf("tmux_memory", "tmux RSS %dMB (%.1f%%) exceeds kill threshold %s — killing tmux server", rssMB, pct, m.cfg.KillStr)
+		tmux_memoryLog.Errorf("tmux RSS %dMB (%.1f%%) exceeds kill threshold %s — killing tmux server", rssMB, pct, m.cfg.KillStr)
 		m.doKill(rssMB, totalMB, pct)
 		return
 	}
@@ -151,7 +150,7 @@ func (m *TmuxMemoryMonitor) checkOnce() {
 	if rssKB >= criticalKB {
 		if !m.criticalFired {
 			m.criticalFired = true
-			log.Warnf("tmux_memory", "tmux RSS %dMB (%.1f%%) exceeds critical threshold %s", rssMB, pct, m.cfg.CriticalStr)
+			tmux_memoryLog.Warnf("tmux RSS %dMB (%.1f%%) exceeds critical threshold %s", rssMB, pct, m.cfg.CriticalStr)
 			m.notifyFn(fmt.Sprintf("🔴 tmux memory CRITICAL: %dMB / %dMB (%.1f%%) — exceeds %s threshold", rssMB, totalMB, pct, m.cfg.CriticalStr))
 		}
 		// Also ensure warn is marked as fired
@@ -162,7 +161,7 @@ func (m *TmuxMemoryMonitor) checkOnce() {
 	if rssKB >= warnKB {
 		if !m.warnFired {
 			m.warnFired = true
-			log.Warnf("tmux_memory", "tmux RSS %dMB (%.1f%%) exceeds warn threshold %s", rssMB, pct, m.cfg.WarnStr)
+			tmux_memoryLog.Warnf("tmux RSS %dMB (%.1f%%) exceeds warn threshold %s", rssMB, pct, m.cfg.WarnStr)
 			m.notifyFn(fmt.Sprintf("⚠️ tmux memory WARNING: %dMB / %dMB (%.1f%%) — exceeds %s threshold", rssMB, totalMB, pct, m.cfg.WarnStr))
 		}
 		// Clear critical if we dropped below it
@@ -174,7 +173,7 @@ func (m *TmuxMemoryMonitor) checkOnce() {
 
 	// Below all thresholds — reset dedup state
 	if m.warnFired || m.criticalFired {
-		log.Infof("tmux_memory", "tmux RSS %dMB (%.1f%%) back below thresholds", rssMB, pct)
+		tmux_memoryLog.Infof("tmux RSS %dMB (%.1f%%) back below thresholds", rssMB, pct)
 	}
 	m.warnFired = false
 	m.criticalFired = false
@@ -189,7 +188,7 @@ func (m *TmuxMemoryMonitor) doKill(rssMB, totalMB int64, pct float64) {
 
 	sessions, err := killFn()
 	if err != nil {
-		log.Errorf("tmux_memory", "kill-server failed: %v", err)
+		tmux_memoryLog.Errorf("kill-server failed: %v", err)
 		m.notifyFn(fmt.Sprintf("🔴 tmux memory KILL: %dMB / %dMB (%.1f%%) — kill-server FAILED: %v", rssMB, totalMB, pct, err))
 	} else {
 		sessionList := "none"
@@ -316,7 +315,7 @@ func killTmuxServer() ([]string, error) {
 			}
 		}
 	}
-	log.Infof("tmux_memory", "killing tmux server; active sessions: %v", sessions)
+	tmux_memoryLog.Infof("killing tmux server; active sessions: %v", sessions)
 
 	// Kill server
 	if _, err := runTmux(context.Background(), "kill-server"); err != nil {

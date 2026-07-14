@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/session"
 	"foci/shared/prompts"
 )
@@ -110,7 +109,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				}
 				targetKey = key
 				resolvedVia = via
-				log.Infof("send_to_session", "resolved %q → %s (via %s)", p.SessionKey, targetKey, via)
+				send_to_sessionLog.Infof("resolved %q → %s (via %s)", p.SessionKey, targetKey, via)
 			}
 
 			originSession := SessionKeyFromContext(ctx)
@@ -131,7 +130,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				contextNote,
 			)
 
-			log.Infof("send_to_session", "from=%s to=%s reply_to=%s len=%d", originSession, targetKey, p.ReplyTo, len(p.Message))
+			send_to_sessionLog.Infof("from=%s to=%s reply_to=%s len=%d", originSession, targetKey, p.ReplyTo, len(p.Message))
 
 			if p.ReplyTo == "session" {
 				// Route the response to the target session's own chat.

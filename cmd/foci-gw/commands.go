@@ -16,7 +16,6 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/delegator"
-	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -101,7 +100,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 					section = "agent"
 				}
 				if _, applyErr := gwLiveApply.Apply(section, target.Key); applyErr != nil {
-					log.Warnf("config", "%s.%s written but live apply failed (takes effect on restart): %v", section, target.Key, applyErr)
+					configLog.Warnf("%s.%s written but live apply failed (takes effect on restart): %v", section, target.Key, applyErr)
 				}
 			}
 			return old, err

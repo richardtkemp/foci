@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"foci/internal/log"
 )
 
 // defaultProcDir is the real procfs mount point. Tests substitute a fake tree.
@@ -66,7 +65,7 @@ func NewMemoryGuard(cfg MemoryGuardConfig, warnFn WarnFunc) *MemoryGuard {
 // Start launches the background check goroutine.
 func (g *MemoryGuard) Start(ctx context.Context) {
 	if g.cfg.Interval <= 0 {
-		log.Warnf("resources", "memory guard not started: interval=%v (<=0, disabled)", g.cfg.Interval)
+		resourcesLog.Warnf("memory guard not started: interval=%v (<=0, disabled)", g.cfg.Interval)
 		return
 	}
 	monCtx, cancel := context.WithCancel(ctx)
@@ -87,7 +86,7 @@ func (g *MemoryGuard) Start(ctx context.Context) {
 			}
 		}
 	}()
-	log.Infof("memory_guard", "started (interval=%v, warn=%d%%, kill=%d%%, pressure_threshold=%.1f)",
+	memory_guardLog.Infof("started (interval=%v, warn=%d%%, kill=%d%%, pressure_threshold=%.1f)",
 		g.cfg.Interval, g.cfg.WarnPercent, g.cfg.KillPercent, g.cfg.PressureThreshold)
 }
 
@@ -122,13 +121,13 @@ func (g *MemoryGuard) checkOnce() {
 
 	memTotalKB, err := getMemTotal()
 	if err != nil {
-		log.Warnf("memory_guard", "read memtotal: %v", err)
+		memory_guardLog.Warnf("read memtotal: %v", err)
 		return
 	}
 
 	userRSSKB, err := getUserRSS(g.uid)
 	if err != nil {
-		log.Debugf("memory_guard", "read user RSS: %v", err)
+		memory_guardLog.Debugf("read user RSS: %v", err)
 		return
 	}
 
@@ -140,7 +139,7 @@ func (g *MemoryGuard) checkOnce() {
 	if selfErr == nil {
 		selfMB = selfRSSKB / 1024
 	} else {
-		log.Debugf("memory_guard", "read self RSS: %v", selfErr)
+		memory_guardLog.Debugf("read self RSS: %v", selfErr)
 	}
 
 	pct := float64(userRSSKB) / float64(memTotalKB) * 100
@@ -151,7 +150,7 @@ func (g *MemoryGuard) checkOnce() {
 	if int(pct) < g.cfg.WarnPercent {
 		g.mu.Lock()
 		if g.warnFired {
-			log.Infof("memory_guard", "user RSS %dMB (%.1f%%, self %dMB) back below warn threshold", userMB, pct, selfMB)
+			memory_guardLog.Infof("user RSS %dMB (%.1f%%, self %dMB) back below warn threshold", userMB, pct, selfMB)
 		}
 		g.warnFired = false
 		g.mu.Unlock()
@@ -161,12 +160,12 @@ func (g *MemoryGuard) checkOnce() {
 	// Above warn threshold — check pressure before acting
 	pressure, err := getPressure()
 	if err != nil {
-		log.Debugf("memory_guard", "read pressure: %v (skipping action)", err)
+		memory_guardLog.Debugf("read pressure: %v (skipping action)", err)
 		return
 	}
 
 	if pressure < g.cfg.PressureThreshold {
-		log.Debugf("memory_guard", "user RSS %dMB (%.1f%%, self %dMB) above threshold but pressure %.2f < %.1f, no action",
+		memory_guardLog.Debugf("user RSS %dMB (%.1f%%, self %dMB) above threshold but pressure %.2f < %.1f, no action",
 			userMB, pct, selfMB, pressure, g.cfg.PressureThreshold)
 		return
 	}
@@ -190,7 +189,7 @@ func (g *MemoryGuard) checkOnce() {
 	if !alreadyWarned {
 		msg := fmt.Sprintf("system memory WARNING: foci user RSS %dMB / %dMB (%.1f%%, self %dMB) exceeds %d%% threshold (pressure=%.1f)",
 			userMB, totalMB, pct, selfMB, g.cfg.WarnPercent, pressure)
-		log.Warnf("memory_guard", "%s", msg)
+		memory_guardLog.Warnf("%s", msg)
 		if g.warnFn != nil {
 			g.warnFn(msg)
 		}
@@ -212,7 +211,7 @@ func (g *MemoryGuard) doKill(userMB, totalMB, selfMB int64, pct, pressure float6
 
 	pid, comm, rssKB, err := findLargest(g.uid, os.Getpid())
 	if err != nil {
-		log.Errorf("memory_guard", "find largest process: %v", err)
+		memory_guardLog.Errorf("find largest process: %v", err)
 		if g.warnFn != nil {
 			g.warnFn(fmt.Sprintf("system memory CRITICAL: user RSS %dMB / %dMB (%.1f%%, self %dMB), pressure=%.1f (threshold %.1f) — could not find process to kill: %v",
 				userMB, totalMB, pct, selfMB, pressure, g.cfg.PressureThreshold, err))
@@ -223,13 +222,13 @@ func (g *MemoryGuard) doKill(userMB, totalMB, selfMB int64, pct, pressure float6
 	rssMB := rssKB / 1024
 	msg := fmt.Sprintf("system memory KILL: user RSS %dMB / %dMB (%.1f%%, self %dMB), pressure=%.1f (threshold %.1f) — killing %s (pid %d, %dMB RSS)",
 		userMB, totalMB, pct, selfMB, pressure, g.cfg.PressureThreshold, comm, pid, rssMB)
-	log.Errorf("memory_guard", "%s", msg)
+	memory_guardLog.Errorf("%s", msg)
 	if g.warnFn != nil {
 		g.warnFn(msg)
 	}
 
 	if err := killProc(pid); err != nil {
-		log.Errorf("memory_guard", "kill pid %d: %v", pid, err)
+		memory_guardLog.Errorf("kill pid %d: %v", pid, err)
 	}
 }
 
@@ -439,14 +438,14 @@ func killProcess(pid int) error {
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("SIGTERM pid %d: %w", pid, err)
 	}
-	log.Infof("memory_guard", "sent SIGTERM to pid %d", pid)
+	memory_guardLog.Infof("sent SIGTERM to pid %d", pid)
 
 	// Wait up to 5s for the process to exit
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := proc.Signal(syscall.Signal(0)); err != nil {
 			// Process is gone
-			log.Infof("memory_guard", "pid %d exited after SIGTERM", pid)
+			memory_guardLog.Infof("pid %d exited after SIGTERM", pid)
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -456,11 +455,11 @@ func killProcess(pid int) error {
 	if err := proc.Signal(syscall.SIGKILL); err != nil {
 		// May already be gone
 		if err := proc.Signal(syscall.Signal(0)); err != nil {
-			log.Infof("memory_guard", "pid %d exited before SIGKILL", pid)
+			memory_guardLog.Infof("pid %d exited before SIGKILL", pid)
 			return nil
 		}
 		return fmt.Errorf("SIGKILL pid %d: %w", pid, err)
 	}
-	log.Warnf("memory_guard", "sent SIGKILL to pid %d (did not exit within 5s)", pid)
+	memory_guardLog.Warnf("sent SIGKILL to pid %d (did not exit within 5s)", pid)
 	return nil
 }

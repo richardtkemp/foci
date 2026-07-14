@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 )
 
 type connWriter interface {
@@ -15,17 +14,17 @@ type connWriter interface {
 }
 
 type entry struct {
-	connID    uint64
-	askID     string
-	agentID   string
+	connID     uint64
+	askID      string
+	agentID    string
 	sessionKey string
-	w         connWriter
-	questions []AskQuestion
-	current   int
-	answers   map[string]json.RawMessage
-	msgID     string
-	timer     *time.Timer
-	cancelFn  func()
+	w          connWriter
+	questions  []AskQuestion
+	current    int
+	answers    map[string]json.RawMessage
+	msgID      string
+	timer      *time.Timer
+	cancelFn   func()
 }
 
 func (e *entry) currentQuestion() *AskQuestion {
@@ -149,7 +148,7 @@ func (r *Registry) ResolveTimeout(connID uint64, askID string) {
 		ID:       askID,
 		Status:   StatusTimeout,
 	})
-	log.Debugf("askgw", "timeout conn=%d id=%s", connID, askID)
+	askgwLog.Debugf("timeout conn=%d id=%s", connID, askID)
 }
 
 func (r *Registry) resolveDismissed(connID uint64, askID string) {
@@ -163,7 +162,7 @@ func (r *Registry) resolveDismissed(connID uint64, askID string) {
 		ID:       askID,
 		Status:   StatusDismissed,
 	})
-	log.Debugf("askgw", "dismissed conn=%d id=%s", connID, askID)
+	askgwLog.Debugf("dismissed conn=%d id=%s", connID, askID)
 }
 
 func (r *Registry) ResolveUnavailable(w connWriter, askID string) {
@@ -203,5 +202,5 @@ func (r *Registry) sendAnswer(connID uint64, askID string) {
 		Status:   StatusAnswered,
 		Answers:  e.answers,
 	})
-	log.Debugf("askgw", "answered conn=%d id=%s answers=%d", connID, askID, len(e.answers))
+	askgwLog.Debugf("answered conn=%d id=%s answers=%d", connID, askID, len(e.answers))
 }

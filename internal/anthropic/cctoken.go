@@ -12,6 +12,11 @@ import (
 	"foci/internal/log"
 )
 
+var (
+	anthropicLog = log.NewComponentLogger("anthropic")
+	cctokenLog   = log.NewComponentLogger("cctoken")
+)
+
 // defaultExpiryThreshold is the default time before expiry at which a
 // background refresh is triggered.
 const defaultExpiryThreshold = 5 * time.Minute
@@ -74,7 +79,7 @@ func (s *CCTokenSource) Token() (string, error) {
 
 	creds, err := readCCCredentials(s.path)
 	if err != nil {
-		log.Warnf("cctoken", "read %s: %v (using last known token)", s.path, err)
+		cctokenLog.Warnf("read %s: %v (using last known token)", s.path, err)
 		if s.token == "" {
 			return "", fmt.Errorf("no CC token available: %w", err)
 		}
@@ -89,7 +94,7 @@ func (s *CCTokenSource) Token() (string, error) {
 
 	// Update cached state.
 	if creds.AccessToken != s.token {
-		log.Infof("cctoken", "token updated from %s (expires %s)",
+		cctokenLog.Infof("token updated from %s (expires %s)",
 			s.path, time.UnixMilli(creds.ExpiresAt).Format(time.RFC3339))
 		// Fresh token arrived — allow future refresh triggers.
 		s.refreshing = false
@@ -117,7 +122,7 @@ func (s *CCTokenSource) CheckRefresh() {
 		return
 	}
 	if time.Until(s.expiresAt) < s.expiryThreshold {
-		log.Infof("cctoken", "token expires in %s (threshold %s), triggering proactive refresh",
+		cctokenLog.Infof("token expires in %s (threshold %s), triggering proactive refresh",
 			time.Until(s.expiresAt).Round(time.Second), s.expiryThreshold)
 		s.triggerRefresh()
 	}

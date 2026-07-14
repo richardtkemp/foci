@@ -2,7 +2,6 @@ package main
 
 import (
 	"foci/internal/config"
-	"foci/internal/log"
 )
 
 // missingSecret describes a secret that the config expects but the store lacks.
@@ -19,9 +18,9 @@ type missingSecret struct {
 func warnMissingSecrets(cfg *config.Config, store config.SecretGetter) {
 	for _, ms := range checkMissingSecrets(cfg, store) {
 		if ms.downgraded {
-			log.Infof("startup", "missing secret %q (needed by %s) — %s", ms.ref.Key, ms.ref.Context, ms.explanation)
+			startupLog.Infof("missing secret %q (needed by %s) — %s", ms.ref.Key, ms.ref.Context, ms.explanation)
 		} else {
-			log.Warnf("startup", "missing secret %q (needed by %s)", ms.ref.Key, ms.ref.Context)
+			startupLog.Warnf("missing secret %q (needed by %s)", ms.ref.Key, ms.ref.Context)
 		}
 	}
 }

@@ -95,20 +95,20 @@ func Run(ctx context.Context, c Config) {
 	// the load-bearing safety net — every failure path below relies on it.
 	defer g.Release()
 
-	log.Infof(comp, "re-login starting (workdir=%q binary=%q anchorTimeout=%s codeTimeout=%s)",
+	log.NewComponentLogger(comp).Infof("re-login starting (workdir=%q binary=%q anchorTimeout=%s codeTimeout=%s)",
 		c.WorkDir, c.ClaudeBin, c.AnchorTimeout, c.CodeTimeout)
 
 	notify := func(text string) {
 		if c.SendMessage == nil {
-			log.Warnf(comp, "no SendMessage configured — user will not see: %q", firstLineOf(text))
+			log.NewComponentLogger(comp).Warnf("no SendMessage configured — user will not see: %q", firstLineOf(text))
 			return
 		}
 		if err := c.SendMessage(text); err != nil {
-			log.Errorf(comp, "send message to user failed (%q): %v", firstLineOf(text), err)
+			log.NewComponentLogger(comp).Errorf("send message to user failed (%q): %v", firstLineOf(text), err)
 		}
 	}
 	fail := func(reason string) {
-		log.Errorf(comp, "re-login ABORTED: %s", reason)
+		log.NewComponentLogger(comp).Errorf("re-login ABORTED: %s", reason)
 		notify("🔐 Claude Code re-login failed: " + reason + "\nSend /login here to try again.")
 	}
 	// dumpScreen writes a captured TUI screen to the log on a failure path so the
@@ -116,13 +116,13 @@ func Run(ctx context.Context, c Config) {
 	dumpScreen := func(label, screen string) {
 		s := strings.TrimSpace(screen)
 		if s == "" {
-			log.Warnf(comp, "%s: captured screen was EMPTY (tmux pane gone, or claude never rendered?)", label)
+			log.NewComponentLogger(comp).Warnf("%s: captured screen was EMPTY (tmux pane gone, or claude never rendered?)", label)
 			return
 		}
 		if len(s) > maxScreenDump {
 			s = s[len(s)-maxScreenDump:] // keep the most recent (bottom) of the scrollback
 		}
-		log.Warnf(comp, "%s — last captured screen follows:\n%s", label, s)
+		log.NewComponentLogger(comp).Warnf("%s — last captured screen follows:\n%s", label, s)
 	}
 
 	pn := c.newPane(&c)
@@ -134,7 +134,7 @@ func Run(ctx context.Context, c Config) {
 	}
 	defer func() {
 		if err := pn.kill(context.Background()); err != nil {
-			log.Warnf(comp, "kill login pane failed (may leak a tmux session): %v", err)
+			log.NewComponentLogger(comp).Warnf("kill login pane failed (may leak a tmux session): %v", err)
 		}
 	}()
 
@@ -167,7 +167,7 @@ func Run(ctx context.Context, c Config) {
 		fail("could not read the login URL from the screen")
 		return
 	}
-	log.Infof(comp, "login URL extracted (%d chars); opening capture window", len(url))
+	log.NewComponentLogger(comp).Infof("login URL extracted (%d chars); opening capture window", len(url))
 
 	// Step 7: open the capture window and ask the user to sign in. A failure to
 	// relay the URL is fatal — the user can never complete login without it.
@@ -178,7 +178,7 @@ func Run(ctx context.Context, c Config) {
 			return
 		}
 	} else {
-		log.Errorf(comp, "no SendMessage configured — cannot relay login URL; aborting")
+		log.NewComponentLogger(comp).Errorf("no SendMessage configured — cannot relay login URL; aborting")
 		return
 	}
 
@@ -187,7 +187,7 @@ func Run(ctx context.Context, c Config) {
 		fail("timed out waiting for the login code")
 		return
 	}
-	log.Infof(comp, "login code received (%d chars); submitting", len(code))
+	log.NewComponentLogger(comp).Infof("login code received (%d chars); submitting", len(code))
 
 	if err := pn.sendLine(ctx, code); err != nil {
 		fail("could not enter the login code: " + err.Error())
@@ -209,7 +209,7 @@ func Run(ctx context.Context, c Config) {
 
 	// Steps 9–11: pane killed by defer, gate released by defer.
 	notify("✅ Login completed.")
-	log.Infof(comp, "re-login completed for agent %s", c.AgentID)
+	log.NewComponentLogger(comp).Infof("re-login completed for agent %s", c.AgentID)
 }
 
 // waitFor polls the pane until anchor appears in the captured screen or
@@ -225,7 +225,7 @@ func (c *Config) waitFor(ctx context.Context, pn pane, anchor string) (string, b
 		screen, err := pn.capture(ctx)
 		if err != nil {
 			captureErrs++
-			log.Warnf(comp, "capture failed while waiting for %q (err #%d): %v", anchor, captureErrs, err)
+			log.NewComponentLogger(comp).Warnf("capture failed while waiting for %q (err #%d): %v", anchor, captureErrs, err)
 		} else {
 			last = screen
 			if strings.Contains(screen, anchor) {
@@ -233,7 +233,7 @@ func (c *Config) waitFor(ctx context.Context, pn pane, anchor string) (string, b
 			}
 		}
 		if time.Now().After(deadline) {
-			log.Warnf(comp, "gave up waiting for %q after %s (%d capture errors)", anchor, time.Since(start).Round(time.Second), captureErrs)
+			log.NewComponentLogger(comp).Warnf("gave up waiting for %q after %s (%d capture errors)", anchor, time.Since(start).Round(time.Second), captureErrs)
 			return last, false
 		}
 		c.sleep(c.PollInterval)

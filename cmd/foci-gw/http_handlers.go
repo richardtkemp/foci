@@ -17,7 +17,6 @@ import (
 	"foci/internal/app"
 	"foci/internal/command"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/route"
 	"foci/internal/session"
@@ -129,7 +128,7 @@ func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, sel
 		// full canonical target form.
 		parsed, err := route.ParseTarget(agentID + "/" + selector)
 		if err != nil {
-			log.Warnf("http", "POST %s: %v", endpoint, err)
+			httpLog.Warnf("POST %s: %v", endpoint, err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return route.Resolution{}, route.Receipt{}, false
 		}
@@ -139,7 +138,7 @@ func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, sel
 		// An explicit request-level policy field overrides.
 		p, err := route.ParsePolicy(policy)
 		if err != nil {
-			log.Warnf("http", "POST %s: %v", endpoint, err)
+			httpLog.Warnf("POST %s: %v", endpoint, err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return route.Resolution{}, route.Receipt{}, false
 		}
@@ -154,7 +153,7 @@ func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, sel
 		}
 		return res, rcpt, true
 	}
-	log.Warnf("http", "POST %s: %v", endpoint, err)
+	httpLog.Warnf("POST %s: %v", endpoint, err)
 	switch {
 	case errors.Is(err, route.ErrNoSession):
 		http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
@@ -197,7 +196,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 
 		inst, ok := resolveAgent(req.Agent)
 		if !ok {
-			log.Warnf("http", "POST /send: unknown agent %q", req.Agent)
+			httpLog.Warnf("POST /send: unknown agent %q", req.Agent)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
@@ -233,7 +232,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			}
 		}
 
-		log.Infof("http", "send (agent=%s, session=%s): %s", inst.id, sessionKey, req.Text)
+		httpLog.Infof("send (agent=%s, session=%s): %s", inst.id, sessionKey, req.Text)
 
 		if strings.HasPrefix(req.Text, "/") {
 			cmdReq := command.RequestFromText(req.Text, sessionKey, "", 0)
@@ -254,7 +253,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 
 		resp, err := runAgentQueued(sendCtx, inst.ag, sessionKey, req.Text)
 		if err != nil {
-			log.Errorf("http", "send error: %v", err)
+			httpLog.Errorf("send error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -279,7 +278,7 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 		agentID := r.URL.Query().Get("agent")
 		inst, ok := resolveAgent(agentID)
 		if !ok {
-			log.Warnf("http", "GET /status: unknown agent %q", agentID)
+			httpLog.Warnf("GET /status: unknown agent %q", agentID)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
 			return
 		}
@@ -320,7 +319,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		}
 		inst, ok := resolveAgent(req.Agent)
 		if !ok {
-			log.Warnf("http", "POST /command: unknown agent %q", req.Agent)
+			httpLog.Warnf("POST /command: unknown agent %q", req.Agent)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
@@ -355,7 +354,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		if result.DocPath != "" {
 			if conn := d.connMgr.ForSessionOrPrimary(sk, inst.id); conn != nil {
 				if err := conn.SendDocument(result.DocPath, ""); err != nil {
-					log.Warnf("http", "POST /command: send document: %v", err)
+					httpLog.Warnf("POST /command: send document: %v", err)
 				}
 			}
 			_ = os.Remove(result.DocPath)
@@ -400,7 +399,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 
 		inst, ok := resolveAgent(req.Agent)
 		if !ok {
-			log.Warnf("http", "POST /branch: unknown agent %q", req.Agent)
+			httpLog.Warnf("POST /branch: unknown agent %q", req.Agent)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
@@ -450,7 +449,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 				OrientationTemplate: orientTemplate,
 			})
 			if err != nil {
-				log.Errorf("branch", "agent %q fork error: %v", inst.id, err)
+				branchLog.Errorf("agent %q fork error: %v", inst.id, err)
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
@@ -465,14 +464,14 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 				if req.NoCompact {
 					inst.ag.SetSessionNoCompact(branchKey, true)
 				}
-				log.Infof("branch", "delegated backend fork %s from %s, text=%q no_compact=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.Async, req.Silent)
+				branchLog.Infof("delegated backend fork %s from %s, text=%q no_compact=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.Async, req.Silent)
 				if req.Async {
 					asyncDispatch(w, inst, d.connMgr, branchCtx, branchKey, req.Text, "branch", req.Silent, route.PolicyFallback, route.Receipt{SessionKey: branchKey, Via: "branch"})
 					return
 				}
 				resp, err := runAgentQueued(branchCtx, inst.ag, branchKey, req.Text)
 				if err != nil {
-					log.Errorf("branch", "error: %v", err)
+					branchLog.Errorf("error: %v", err)
 					http.Error(w, "internal error", http.StatusInternalServerError)
 					return
 				}
@@ -481,7 +480,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			}
 			// Backend can't branch, or nothing to fork yet — fall through to
 			// /send semantics against the parent, as before.
-			log.Warnf("branch", "agent %q not backend-branchable — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)", inst.id, req.NoCompact, req.NoResetHook, req.Silent)
+			branchLog.Warnf("agent %q not backend-branchable — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)", inst.id, req.NoCompact, req.NoResetHook, req.Silent)
 			if req.Model != "" {
 				if err := applyModelOverride(inst, parentKey, req.Model, d.cfg.Models); err != nil {
 					http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
@@ -495,7 +494,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			}
 			resp, err := runAgentQueued(sendCtx, inst.ag, parentKey, req.Text)
 			if err != nil {
-				log.Errorf("branch", "send fallback error: %v", err)
+				branchLog.Errorf("send fallback error: %v", err)
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
@@ -511,7 +510,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			OrientationTemplate: orientTemplate,
 		})
 		if err != nil {
-			log.Errorf("branch", "branch error: %v", err)
+			branchLog.Errorf("branch error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -523,7 +522,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			}
 		}
 
-		log.Infof("branch", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async, req.Silent)
+		branchLog.Infof("branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async, req.Silent)
 
 		branchCtx := agent.WithTrigger(d.ctx, "branch")
 		if req.NoCompact {
@@ -537,7 +536,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 
 		resp, err := runAgentQueued(branchCtx, inst.ag, branchKey, req.Text)
 		if err != nil {
-			log.Errorf("branch", "error: %v", err)
+			branchLog.Errorf("error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -634,7 +633,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 
 		inst, ok := resolveAgent(agentID)
 		if !ok {
-			log.Warnf("http", "POST /webhook: unknown agent %q", agentID)
+			httpLog.Warnf("POST /webhook: unknown agent %q", agentID)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
 			return
 		}
@@ -715,7 +714,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		// Reuse the session resolved before the gate.
 		sessionKey := webhookSessionKey
 
-		log.Infof("http", "webhook (agent=%s, hook=%s, payload=%d bytes)", inst.id, hookID, len(payload))
+		httpLog.Infof("webhook (agent=%s, hook=%s, payload=%d bytes)", inst.id, hookID, len(payload))
 
 		sendCtx := agent.WithTrigger(d.ctx, "webhook")
 		sync := q.Get("sync") == "true"
@@ -726,7 +725,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 
 		resp, err := runAgentQueued(sendCtx, inst.ag, sessionKey, combined)
 		if err != nil {
-			log.Errorf("http", "webhook error: %v", err)
+			httpLog.Errorf("webhook error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -744,7 +743,7 @@ func applyModelOverride(inst *agentInstance, sessionKey, value string, models ma
 	// meaning for them. Reject cleanly rather than fall through to a confusing
 	// "model not found" resolver error.
 	if inst.ag.DelegatedManager != nil {
-		log.Infof("http", "model override rejected for delegated agent %q (session=%s, value=%q): not supported for claude-code backends", inst.id, sessionKey, value)
+		httpLog.Infof("model override rejected for delegated agent %q (session=%s, value=%q): not supported for claude-code backends", inst.id, sessionKey, value)
 		return fmt.Errorf("per-session model override is not supported for claude-code (delegated) agents")
 	}
 
@@ -777,7 +776,7 @@ func handleReloadCredentials(d httpHandlerDeps) http.HandlerFunc {
 			return
 		}
 		if err := d.reloadCredentials(); err != nil {
-			log.Errorf("http", "POST /-/reload-credentials: %v", err)
+			httpLog.Errorf("POST /-/reload-credentials: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -804,7 +803,7 @@ func handlePprofToggle(gate *atomic.Bool) http.HandlerFunc {
 			}
 			if body.Enabled != nil {
 				gate.Store(*body.Enabled)
-				log.Infof("http", "pprof gate toggled: %v", *body.Enabled)
+				httpLog.Infof("pprof gate toggled: %v", *body.Enabled)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]bool{"enabled": gate.Load()})

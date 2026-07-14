@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"foci/internal/app/fap"
-	"foci/internal/log"
 	"foci/internal/tempdir"
 )
 
@@ -59,7 +58,7 @@ type blobStore struct {
 func newBlobStore() *blobStore {
 	dir := filepath.Join(tempdir.Dir(), "app-blobs")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		log.Warnf("app", "blob store dir %s: %v", dir, err)
+		appLog.Warnf("blob store dir %s: %v", dir, err)
 	}
 	return &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
 }
@@ -233,7 +232,7 @@ func (h *Hub) ServeBlobPost(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "blob too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		log.Errorf("app", "blob upload: %v", err)
+		appLog.Errorf("blob upload: %v", err)
 		http.Error(w, "upload failed", http.StatusInternalServerError)
 		return
 	}

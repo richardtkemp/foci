@@ -29,19 +29,19 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 		log.Fatalf("main", "load secrets: %v", err)
 	}
 	if names := store.Names(); len(names) > 0 {
-		log.Infof("main", "loaded %d secrets: %v", len(names), names)
+		mainLog.Infof("loaded %d secrets: %v", len(names), names)
 	}
 
 	// Startup security checks for secrets.toml
 	if !cfg.SkipSecurityChecks {
 		if warnings := store.CheckSecurity(); len(warnings) > 0 {
 			for _, w := range warnings {
-				log.Warnf("security", "%s", w)
+				securityLog.Warnf("%s", w)
 			}
 		}
 	}
 	if len(cfg.Agents) > 1 && !store.HasAgentRestrictions() {
-		log.Warnf("security", "multiple agents but no allowed_agents/denied_agents in secrets.toml — all agents can access all secrets")
+		securityLog.Warnf("multiple agents but no allowed_agents/denied_agents in secrets.toml — all agents can access all secrets")
 	}
 
 	// On a host that has opted out of the strict secrets posture, let the HTTP
@@ -50,7 +50,7 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 	// leaves skip_security_checks unset and keeps loopback blocked.
 	if cfg.SkipSecurityChecks {
 		tools.PermitLoopbackHTTP()
-		log.Warnf("security", "skip_security_checks set — SSRF guard now permits loopback HTTP targets (dev/test only)")
+		securityLog.Warnf("skip_security_checks set — SSRF guard now permits loopback HTTP targets (dev/test only)")
 	}
 
 	// Auto-generate HTTP API key if not present
@@ -65,7 +65,7 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 			log.Fatalf("main", "save HTTP API key: %v", err)
 		}
 		httpAPIKey = generated
-		log.Infof("main", "generated HTTP API key (for remote/cross-user access): %s", httpAPIKey)
+		mainLog.Infof("generated HTTP API key (for remote/cross-user access): %s", httpAPIKey)
 	}
 
 	// The app provider no longer uses a persisted shared "master" key (#862):
@@ -82,7 +82,7 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 	// foci CLI deliberately skips it (TODO #755 cron-log noise fix).
 	if err := procx.Setup(); err != nil {
 		if cfg.SkipSecurityChecks {
-			log.Warnf("security", "procx child-credential setup failed but skip_security_checks is set — continuing INSECURELY (subprocesses keep the %s group): %v", procx.SecurityGroupName, err)
+			securityLog.Warnf("procx child-credential setup failed but skip_security_checks is set — continuing INSECURELY (subprocesses keep the %s group): %v", procx.SecurityGroupName, err)
 		} else {
 			log.Fatalf("security", "procx child-credential setup failed: %v — subprocesses would inherit the %s group and could read secrets.toml. Fix CAP_SETGID (see docs/SECRETS.md) or set skip_security_checks=true to override.", err, procx.SecurityGroupName)
 		}
@@ -97,9 +97,9 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 		bwStore = bitwarden.New(bwExec, secretTTL)
 
 		if err := bwStore.Refresh(); err != nil {
-			log.Errorf("main", "bitwarden initial refresh: %v", err)
+			mainLog.Errorf("bitwarden initial refresh: %v", err)
 		} else {
-			log.Infof("main", "bitwarden: loaded %d vault items", bwStore.ItemCount())
+			mainLog.Infof("bitwarden: loaded %d vault items", bwStore.ItemCount())
 		}
 
 		// Background refresh ticker
@@ -109,7 +109,7 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 			defer ticker.Stop()
 			for range ticker.C {
 				if err := bwStore.Refresh(); err != nil {
-					log.Warnf("bitwarden", "background refresh: %v", err)
+					bitwardenLog.Warnf("background refresh: %v", err)
 				}
 			}
 		}()

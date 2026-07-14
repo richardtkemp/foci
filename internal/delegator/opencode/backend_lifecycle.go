@@ -56,7 +56,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		return nil
 	}
 
-	log.Infof(b.logComponent(), "Start: agentID=%s workDir=%s", opts.AgentID, opts.WorkDir)
+	log.NewComponentLogger(b.logComponent()).Infof("Start: agentID=%s workDir=%s", opts.AgentID, opts.WorkDir)
 
 	b.agentID = opts.AgentID
 	b.startOpts = opts
@@ -98,7 +98,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		if ok {
 			sessionID = opts.ResumeSessionID
 			resumed = true
-			log.Infof(b.logComponent(), "Start: resumed session id=%s", sessionID)
+			log.NewComponentLogger(b.logComponent()).Infof("Start: resumed session id=%s", sessionID)
 		} else {
 			// Requested session is gone (404). Rather than silently creating a
 			// new session inline, fail Start so DelegatedManager's
@@ -115,7 +115,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 			return fmt.Errorf("opencode: create session: %w", err)
 		}
 		sessionID = newID
-		log.Infof(b.logComponent(), "Start: session created id=%s", sessionID)
+		log.NewComponentLogger(b.logComponent()).Infof("Start: session created id=%s", sessionID)
 	}
 	b.sessionID = sessionID
 
@@ -133,7 +133,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// handler is captured at goroutine-start time.
 	b.SetDispatchHandler(b.handleEvent)
 	b.server.registerSession(b)
-	log.Debugf(b.logComponent(), "Start: registered with server, dispatcher started")
+	log.NewComponentLogger(b.logComponent()).Debugf("Start: registered with server, dispatcher started")
 
 	// Apply default permission mode if configured. opencode's defaults
 	// are permissive (most tools "allow"); foci wants "ask" for side-
@@ -143,7 +143,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		if err := b.patchConfig(ctx, map[string]any{
 			"permission": map[string]string{"*": dp},
 		}); err != nil {
-			log.Warnf(b.logComponent(), "default_permission PATCH failed: %v — using opencode defaults", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("default_permission PATCH failed: %v — using opencode defaults", err)
 		}
 	}
 

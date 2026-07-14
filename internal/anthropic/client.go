@@ -187,19 +187,19 @@ func (c *Client) sendOnce(ctx context.Context, req *MessageRequest) (*MessageRes
 		defer cancel()
 	}
 
-	log.Debugf("anthropic", "sdk_call_start: model=%s", req.Model)
+	anthropicLog.Debugf("sdk_call_start: model=%s", req.Model)
 	callStart := time.Now()
 
 	msg, err := sc.Messages.New(ctx, params, sdkRequestOptions(token, req.Speed)...)
 
 	callDur := time.Since(callStart)
 	if err != nil {
-		log.Debugf("anthropic", "sdk_call_error: duration=%s error=%v", callDur, err)
+		anthropicLog.Debugf("sdk_call_error: duration=%s error=%v", callDur, err)
 		sdkErr := classifySDKError(err)
 		attachWireRequest(sdkErr, wireReq)
 		return nil, sdkErr
 	}
-	log.Debugf("anthropic", "sdk_call_done: duration=%s stop_reason=%s", callDur, msg.StopReason)
+	anthropicLog.Debugf("sdk_call_done: duration=%s stop_reason=%s", callDur, msg.StopReason)
 
 	resp := responseFromSDK(msg)
 	resp.WireRequest = wireReq

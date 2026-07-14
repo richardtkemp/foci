@@ -23,6 +23,10 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+var (
+	memoryLog = log.NewComponentLogger("memory")
+)
+
 // BleveIndex manages a bleve full-text search index over memory files
 // and conversation history. Multiple sources can be indexed, each
 // with a configurable weight multiplier.
@@ -41,7 +45,7 @@ type BleveIndex struct {
 	// Temporal decay (#352): recency boost applied to relevance-sorted results.
 	// Defaults set in NewBleveIndex; overridden from [memory] config via
 	// SetTemporalDecay. Read under mu inside Search.
-	searchLimit   int // results per Search ([memory] search_limit; 0 = default)
+	searchLimit       int // results per Search ([memory] search_limit; 0 = default)
 	temporalDecay     bool
 	decayHalfLifeDays float64
 	decayBoost        float64
@@ -175,7 +179,7 @@ func (b *BleveIndex) Reindex() error {
 
 	start := time.Now()
 	rssStart := readSelfRSSkB()
-	log.Infof("memory", "bleve reindex START %s: rss=%dMB heap=%dMB", b.indexPath, rssStart/1024, heapAllocMB())
+	memoryLog.Infof("bleve reindex START %s: rss=%dMB heap=%dMB", b.indexPath, rssStart/1024, heapAllocMB())
 
 	// Upsert current .md files into a batch.
 	batch := b.index.NewBatch()
@@ -184,7 +188,7 @@ func (b *BleveIndex) Reindex() error {
 	var fileBytes int64
 	for sourceName, sourceCfg := range b.sources {
 		if _, err := os.Stat(sourceCfg.Dir); os.IsNotExist(err) {
-			log.Infof("memory", "bleve: skipping source %q: directory %s does not exist yet", sourceName, sourceCfg.Dir)
+			memoryLog.Infof("bleve: skipping source %q: directory %s does not exist yet", sourceName, sourceCfg.Dir)
 			continue
 		}
 		var srcFiles int
@@ -208,7 +212,7 @@ func (b *BleveIndex) Reindex() error {
 
 			data, err := os.ReadFile(path)
 			if err != nil {
-				log.Warnf("memory", "bleve reindex: skipping unreadable file %s: %v", path, err)
+				memoryLog.Warnf("bleve reindex: skipping unreadable file %s: %v", path, err)
 				return nil // skip unreadable
 			}
 			if len(data) == 0 {
@@ -235,7 +239,7 @@ func (b *BleveIndex) Reindex() error {
 		}
 		fileCount += srcFiles
 		fileBytes += srcBytes
-		log.Infof("memory", "bleve reindex %s: source %q = %d files, %dKB", b.indexPath, sourceName, srcFiles, srcBytes/1024)
+		memoryLog.Infof("bleve reindex %s: source %q = %d files, %dKB", b.indexPath, sourceName, srcFiles, srcBytes/1024)
 	}
 
 	// Prune docs for files that no longer exist on disk. IDs only — no stored
@@ -251,7 +255,7 @@ func (b *BleveIndex) Reindex() error {
 
 	err := b.index.Batch(batch)
 	rssDone := readSelfRSSkB()
-	log.Infof("memory", "bleve reindex DONE %s in %s: %d file docs (%dKB) upserted, %d stale pruned; conv/todo docs untouched; rss=%dMB (Δ+%dMB) heap=%dMB err=%v",
+	memoryLog.Infof("bleve reindex DONE %s in %s: %d file docs (%dKB) upserted, %d stale pruned; conv/todo docs untouched; rss=%dMB (Δ+%dMB) heap=%dMB err=%v",
 		b.indexPath, time.Since(start).Round(time.Millisecond), fileCount, fileBytes/1024, deleted,
 		rssDone/1024, (rssDone-rssStart)/1024, heapAllocMB(), err)
 	return err
@@ -303,7 +307,7 @@ func (b *BleveIndex) collectFileDocIDs() []string {
 
 	result, err := b.index.Search(req)
 	if err != nil {
-		log.Warnf("memory", "collect file doc IDs for reindex: %v", err)
+		memoryLog.Warnf("collect file doc IDs for reindex: %v", err)
 		return nil
 	}
 
@@ -334,7 +338,7 @@ func (b *BleveIndex) IndexConversation(text, session string, rowID int64) {
 		"mtime":   float64(time.Now().Unix()),
 	}
 	if err := b.index.Index(docID, doc); err != nil {
-		log.Errorf("memory", "bleve index conversation: %v", err)
+		memoryLog.Errorf("bleve index conversation: %v", err)
 	}
 }
 
@@ -396,7 +400,7 @@ func (b *BleveIndex) BackfillConversations(dbPath string) (int, error) {
 			"mtime":   mtime,
 		}
 		if err := batch.Index(docID, doc); err != nil {
-			log.Errorf("memory", "bleve backfill index doc: %v", err)
+			memoryLog.Errorf("bleve backfill index doc: %v", err)
 			continue
 		}
 		count++
@@ -458,7 +462,7 @@ func (b *BleveIndex) IndexTodo(agentID string, id int64, text string, mtime floa
 		"todo_id":  float64(id),
 	}
 	if err := b.index.Index(todoDocID(agentID, id), doc); err != nil {
-		log.Errorf("memory", "bleve index todo: %v", err)
+		memoryLog.Errorf("bleve index todo: %v", err)
 	}
 }
 
@@ -468,7 +472,7 @@ func (b *BleveIndex) RemoveTodo(agentID string, id int64) {
 	defer b.mu.Unlock()
 
 	if err := b.index.Delete(todoDocID(agentID, id)); err != nil {
-		log.Errorf("memory", "bleve remove todo: %v", err)
+		memoryLog.Errorf("bleve remove todo: %v", err)
 	}
 }
 
@@ -765,7 +769,7 @@ func (b *BleveIndex) handleFileEvents() {
 			if !ok {
 				return
 			}
-			log.Warnf("memory", "bleve file watcher error: %v", err)
+			memoryLog.Warnf("bleve file watcher error: %v", err)
 		}
 	}
 }
@@ -781,7 +785,7 @@ func (b *BleveIndex) scheduleReindex() {
 
 	b.reindexTimer = time.AfterFunc(b.debounce, func() {
 		if err := b.Reindex(); err != nil {
-			log.Errorf("memory", "bleve auto-reindex failed: %v", err)
+			memoryLog.Errorf("bleve auto-reindex failed: %v", err)
 		}
 	})
 }

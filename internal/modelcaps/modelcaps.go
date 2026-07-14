@@ -167,7 +167,7 @@ func Restore(backend string) {
 	}
 	entries, fetchedAt, err := p.Load(backend)
 	if err != nil {
-		log.Warnf(logComponent, "[%s] restore from db failed: %v", backend, err)
+		log.NewComponentLogger(logComponent).Warnf("[%s] restore from db failed: %v", backend, err)
 		return
 	}
 	if len(entries) == 0 {
@@ -179,7 +179,7 @@ func Restore(backend string) {
 		s.lastFetch = fetchedAt
 	}
 	s.mu.Unlock()
-	log.Infof(logComponent, "[%s] restored %d models from db (fetched %s)",
+	log.NewComponentLogger(logComponent).Infof("[%s] restored %d models from db (fetched %s)",
 		backend, len(entries), fetchedAt.Format(time.RFC3339))
 }
 
@@ -277,7 +277,7 @@ func (s *store) doFetch(ctx context.Context, fetcher Fetcher) error {
 	if err != nil {
 		n := len(s.entries)
 		s.mu.Unlock()
-		log.Warnf(logComponent, "[%s] catalogue refresh failed (keeping %d cached entries): %v", s.backend, n, err)
+		log.NewComponentLogger(logComponent).Warnf("[%s] catalogue refresh failed (keeping %d cached entries): %v", s.backend, n, err)
 		return err
 	}
 	s.entries = entries
@@ -285,14 +285,14 @@ func (s *store) doFetch(ctx context.Context, fetcher Fetcher) error {
 	fetchedAt := s.lastFetch
 	persister := s.persister
 	s.mu.Unlock()
-	log.Infof(logComponent, "[%s] catalogue refreshed: %d models", s.backend, len(entries))
+	log.NewComponentLogger(logComponent).Infof("[%s] catalogue refreshed: %d models", s.backend, len(entries))
 
 	// Persist outside the store lock — DB I/O must not block lookups. Safe to
 	// pass entries by reference: doFetch is single-flighted and the next fetch
 	// builds a fresh map rather than mutating this one.
 	if persister != nil {
 		if err := persister.Save(s.backend, entries, fetchedAt); err != nil {
-			log.Warnf(logComponent, "[%s] persist to db failed: %v", s.backend, err)
+			log.NewComponentLogger(logComponent).Warnf("[%s] persist to db failed: %v", s.backend, err)
 		}
 	}
 	return nil

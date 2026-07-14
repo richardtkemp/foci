@@ -34,7 +34,7 @@ func buildBranchFunc(
 ) periodic.BranchFunc {
 	return func(branchType, parentKey, promptText string, noCompact bool) bool {
 		if parentKey == "" {
-			log.Warnf(branchType, "[%s] no parent session, skipping", agentID)
+			log.NewComponentLogger(branchType).Warnf("[%s] no parent session, skipping", agentID)
 			return false
 		}
 
@@ -51,7 +51,7 @@ func buildBranchFunc(
 			OrientationTemplate: orientTemplate,
 		})
 		if err != nil {
-			log.Errorf(branchType, "[%s] branch error: %v", agentID, err)
+			log.NewComponentLogger(branchType).Errorf("[%s] branch error: %v", agentID, err)
 			return false
 		}
 		ag.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
@@ -62,7 +62,7 @@ func buildBranchFunc(
 		}
 
 		if err := ag.HandleMessage(turnCtx, branchKey, []string{promptText}, nil); err != nil {
-			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, branchKey, err)
+			log.NewComponentLogger(branchType).Warnf("[%s] session=%s turn error: %v", agentID, branchKey, err)
 			return false
 		}
 
@@ -89,16 +89,16 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 	// blocks until the turn has run, preserving the scheduler's completion
 	// semantics.
 	injectInPlace := func() bool {
-		log.Infof(branchType, "[%s] delegated: injecting into main session %s", agentID, parentKey)
+		log.NewComponentLogger(branchType).Infof("[%s] delegated: injecting into main session %s", agentID, parentKey)
 		var turnErr error
 		if err := ag.EnqueueInjectWait(ctx, parentKey, branchType, func() {
 			turnErr = ag.HandleMessage(turnCtx, parentKey, []string{promptText}, nil)
 		}); err != nil {
-			log.Warnf(branchType, "[%s] session=%s inject error: %v", agentID, parentKey, err)
+			log.NewComponentLogger(branchType).Warnf("[%s] session=%s inject error: %v", agentID, parentKey, err)
 			return false
 		}
 		if turnErr != nil {
-			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, parentKey, turnErr)
+			log.NewComponentLogger(branchType).Warnf("[%s] session=%s turn error: %v", agentID, parentKey, turnErr)
 			return false
 		}
 		return true
@@ -115,23 +115,23 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 			OrientationTemplate: orientTemplate,
 		})
 		if err != nil {
-			log.Warnf(branchType, "[%s] session=%s fork error: %v", agentID, parentKey, err)
+			log.NewComponentLogger(branchType).Warnf("[%s] session=%s fork error: %v", agentID, parentKey, err)
 			return false
 		}
 		if !ok {
 			// No parent backend session to fork yet — run in-place instead.
-			log.Infof(branchType, "[%s] delegated: fork unavailable, injecting in-place", agentID)
+			log.NewComponentLogger(branchType).Infof("[%s] delegated: fork unavailable, injecting in-place", agentID)
 			return injectInPlace()
 		}
 		ag.SetSessionNoCompact(branchKey, true)
-		log.Infof(branchType, "[%s] delegated: backend fork %s from %s", agentID, branchKey, parentKey)
+		log.NewComponentLogger(branchType).Infof("[%s] delegated: backend fork %s from %s", agentID, branchKey, parentKey)
 		// These internal passes (reflection/keepalive/background/…) are one-offs:
 		// close the forked backend after the turn so its CC process doesn't leak
 		// until the idle reaper. The cloned transcript file is left for the daily
 		// ephemeral-session GC (it outlives this process). Parent is untouched.
 		defer ag.DelegatedManager.ResetSession(branchKey)
 		if err := ag.HandleMessage(turnCtx, branchKey, []string{promptText}, nil); err != nil {
-			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, branchKey, err)
+			log.NewComponentLogger(branchType).Warnf("[%s] session=%s turn error: %v", agentID, branchKey, err)
 			return false
 		}
 		return true
@@ -144,10 +144,10 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 			Type:    'i',
 			ID:      fmt.Sprintf("%s-%d", branchType, time.Now().Unix()),
 		}.String()
-		log.Infof(branchType, "[%s] delegated: new session %s", agentID, sessionKey)
+		log.NewComponentLogger(branchType).Infof("[%s] delegated: new session %s", agentID, sessionKey)
 
 		if err := ag.HandleMessage(turnCtx, sessionKey, []string{promptText}, nil); err != nil {
-			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, sessionKey, err)
+			log.NewComponentLogger(branchType).Warnf("[%s] session=%s turn error: %v", agentID, sessionKey, err)
 			return false
 		}
 
