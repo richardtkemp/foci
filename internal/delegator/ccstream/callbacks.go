@@ -1,6 +1,8 @@
 package ccstream
 
 import (
+	"time"
+
 	"foci/internal/delegator"
 )
 
@@ -41,11 +43,18 @@ func (b *Backend) SetOnSubagentStatus(fn func(detail string)) { b.agents.OnStatu
 // before Start.
 func (b *Backend) SetOnAuthFailure(fn func(detail string)) { b.onAuthFailure = fn }
 
-// SetOnRateLimited registers a hook fired with a rate_limit_event warning
-// summary when CC reports the API is past the "allowed" threshold. The agent
-// logs a warning; it does NOT gate periodic work (a warning is not a block).
-// Must be set before Start (#1211/#1238).
+// SetOnRateLimited registers a hook fired with a formatted rate_limit_event
+// notice when CC reports the API is past the "allowed" threshold. The agent
+// delivers it to the user's chat; it does NOT gate periodic work (a warning is
+// not a block). Must be set before Start (#1211/#1238).
 func (b *Backend) SetOnRateLimited(fn func(detail string)) { b.onRateLimited = fn }
+
+// SetOnSessionLimit registers a hook fired when CC reports a session limit was
+// hit — a synthetic "You've hit your session limit · resets <time>" message,
+// which (unlike a direct-API 429) never reaches classifyAPIError. The argument
+// is the parsed reset instant; the agent uses it to engage the rate-limit gate.
+// Must be set before Start.
+func (b *Backend) SetOnSessionLimit(fn func(until time.Time)) { b.onSessionLimit = fn }
 
 // SetOnAutonomousStart registers a hook fired when the backend detects CC has
 // begun an autonomous run (session_state:running with no foci turn open). The

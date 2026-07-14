@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/timeutil"
 )
 
 const (
@@ -41,6 +42,31 @@ func isSyntheticNoResponse(m BetaMessage) bool {
 	return strings.TrimSpace(text.String()) == syntheticNoResponseText
 }
 
+// syntheticSessionLimitText returns the text of m when it is CC's synthetic
+// "You've hit your session limit …" message (the sentinel model carrying that
+// phrase), else "". Unlike a direct-API 429, this arrives as an assistant
+// message on the stream and never reaches classifyAPIError, so the delegated
+// backend detects it here to engage the rate-limit gate.
+func syntheticSessionLimitText(m BetaMessage) string {
+	if m.Model != syntheticModel {
+		return ""
+	}
+	var text strings.Builder
+	for _, block := range m.Content {
+		if block.Type == "tool_use" {
+			return "" // real work in the turn — not a bare limit notice
+		}
+		if block.Type == "text" {
+			text.WriteString(block.Text)
+		}
+	}
+	s := strings.TrimSpace(text.String())
+	if strings.Contains(s, "hit your session limit") {
+		return s
+	}
+	return ""
+}
+
 // OnAssistant handles assistant messages from CC's stdout.
 //
 // Sub-agent messages (ParentToolUseID != nil) are filtered out of the
@@ -63,6 +89,18 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	// happen, so liveness/keepalive timing should reflect it.
 	if isTopLevel && isSyntheticNoResponse(msg.Message) {
 		return
+	}
+
+	// A synthetic session-limit message is a signal, not a reply. Intercept it
+	// only when its reset time parses; otherwise let it flow through unchanged
+	// rather than swallow a message we can't act on.
+	if isTopLevel {
+		if s := syntheticSessionLimitText(msg.Message); s != "" {
+			if until, ok := parseSessionLimitReset(s, timeutil.Now()); ok {
+				b.fireSessionLimit(until)
+				return
+			}
+		}
 	}
 
 	// Block-type breakdown for diagnostics — distinguishes "model
@@ -643,7 +681,7 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	if dup {
 		return
 	}
-	b.fireRateLimited(rateLimitEventSummary(ev))
+	b.fireRateLimited(FormatRateLimitNotice(info))
 }
 
 // OnToolProgress handles heartbeats during long-running tool execution.

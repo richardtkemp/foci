@@ -42,6 +42,38 @@ func TestRateLimitGate_ExpiredNotLimited(t *testing.T) {
 	}
 }
 
+func TestEngageRateLimit(t *testing.T) {
+	var got time.Time
+	ag := &Agent{
+		Endpoint:      "test-endpoint",
+		RateLimitFunc: HookList[func(time.Time)]{func(resetTime time.Time) { got = resetTime }},
+	}
+	until := time.Now().Add(2 * time.Hour)
+	ag.EngageRateLimit(until)
+
+	if limited, u := ag.getOrCreateRateLimitGate("test-endpoint").IsLimited(); !limited || !u.Equal(until) {
+		t.Errorf("gate limited=%v until=%v, want true %v", limited, u, until)
+	}
+	if !got.Equal(until) {
+		t.Errorf("RateLimitFunc got %v, want %v", got, until)
+	}
+}
+
+func TestEngageRateLimit_ZeroTimeNoOp(t *testing.T) {
+	called := false
+	ag := &Agent{
+		Endpoint:      "e",
+		RateLimitFunc: HookList[func(time.Time)]{func(time.Time) { called = true }},
+	}
+	ag.EngageRateLimit(time.Time{})
+	if limited, _ := ag.getOrCreateRateLimitGate("e").IsLimited(); limited {
+		t.Error("zero time should not engage the gate")
+	}
+	if called {
+		t.Error("RateLimitFunc should not fire for a zero reset time")
+	}
+}
+
 func TestRateLimitGate_EnqueueAndDrain(t *testing.T) {
 	// Proves that queued items are held while the gate is limited and released in order after expiry.
 	var g RateLimitGate

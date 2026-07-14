@@ -200,7 +200,8 @@ type Backend struct {
 	onCompactionStart func()              // fired when status="compacting"
 	onCompactionDone  func(preTokens int) // fired on compact_boundary
 	onAuthFailure     func(detail string) // fired when CC reports a 401 auth failure (#843)
-	onRateLimited     func(detail string) // fired with a rate_limit_event warning summary (#1211/#1238)
+	onRateLimited     func(detail string) // fired with a rate_limit_event warning notice (#1211/#1238)
+	onSessionLimit    func(until time.Time) // fired when CC reports a session limit was hit (synthetic message), with the parsed reset time
 	// onAutonomousStart/onAutonomousEnd bracket a CC autonomous run (one foci
 	// opened no turn for). onAutonomousStart fires on the false→true edge of
 	// autonomousActive; onAutonomousEnd fires on the true→false edge, from
