@@ -119,12 +119,17 @@ func QuerySessionStats(sessionKey string) (*SessionStats, error) {
 		stats.LastActivity, _ = time.Parse(time.RFC3339, activeStr.String)
 	}
 
-	// Context tokens from the most recent turn (conversation or delegated).
+	// Context tokens from the most recent turn (conversation or delegated)
+	// that actually consumed context. Synthetic turns (no-inference turns
+	// like [[NO_RESPONSE]], model "<synthetic>") log zero tokens; without the
+	// >0 filter, a synthetic turn landing on top of a real one would zero out
+	// contextTokens and suppress the /status Context line entirely.
 	var ctxTokens sql.NullInt64
 	_ = apiLog.db.QueryRow(`
-		SELECT COALESCE(input_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+		SELECT COALESCE(input_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS ctx
 		FROM api_calls
 		WHERE session = ? AND call_type IN ('conversation', 'delegated_turn', '')
+		  AND COALESCE(input_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) > 0
 		ORDER BY ts DESC
 		LIMIT 1`, sessionKey,
 	).Scan(&ctxTokens)
