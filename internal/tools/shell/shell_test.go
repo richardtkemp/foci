@@ -588,17 +588,31 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	// Use a 10s threshold so the ctx.Done() path fires before the threshold.
 	tool := NewExecTool(nil, nil, func() int { return 10 }, notifier, "", nil, func() int64 { return 0 }, "", nil, 0)
 
+	marker := filepath.Join(t.TempDir(), "started")
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo ctx-cancel-result; timeout 0.2 tail -f /dev/null",
+		"command": "echo ctx-cancel-result; touch " + marker + "; timeout 1 tail -f /dev/null",
 		"timeout": 10,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = tools.WithSessionKey(ctx, "test/icancel-42")
 
-	// Cancel the context shortly after starting but before the command finishes
+	// Cancel only once the command is provably running — it writes [marker] before
+	// blocking, so waiting on that instead of a fixed sleep removes the ordering race
+	// that flaked under parallel load (a scheduler stall could let the command finish
+	// before a wall-clock sleep(50ms) fired). The command still self-terminates
+	// (timeout 1) so the auto-backgrounded result is delivered to the notifier.
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				break // command never started; fall through so the test fails loudly below
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 		cancel()
 	}()
 
@@ -620,7 +634,13 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 		t.Fatal("timed out waiting for notifier — result was silently lost")
 	}
 
-	// Pending count should be back to zero
+	// Pending count should be back to zero. MarkDone is deferred after the notify
+	// callback (background.go), so it can run just after we receive on completeCh —
+	// wait for it rather than racing the check.
+	deadline := time.Now().Add(5 * time.Second)
+	for notifier.HasPending("test/icancel-42") && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
 	if notifier.HasPending("test/icancel-42") {
 		t.Error("pending count should be zero after delivery")
 	}
