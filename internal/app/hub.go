@@ -1204,11 +1204,16 @@ func (h *Hub) deliverBinding(agentID string) (*convBinding, string) {
 		return b, "default"
 	}
 
-	// Most recently active existing conversation.
+	// Most recently active existing conversation, excluding archived ones
+	// (archived = hidden from the roster, so delivering there is invisible).
+	var archived map[int64]bool
+	if idx := h.deps.SessionIndex; idx != nil {
+		archived = idx.ArchivedChatsForAgent(agentID, "app")
+	}
 	var latest *convBinding
 	h.mu.RLock()
 	for _, b := range h.convs {
-		if b.agentID != agentID {
+		if b.agentID != agentID || archived[b.chatID] {
 			continue
 		}
 		if latest == nil || b.lastActivity() > latest.lastActivity() {
@@ -1225,6 +1230,19 @@ func (h *Hub) deliverBinding(agentID string) (*convBinding, string) {
 	appLog.Infof("server-created conversation %s for agent %s (no existing conversations)", convID, agentID)
 	h.pushRosterAll()
 	return created, "server-created"
+}
+
+// createDefaultConversation resolves — or, when only archived conversations
+// exist, creates — a non-archived destination for an agent and returns its
+// session key. Errors when the agent has no app connection (nothing to push
+// to). The delivery paths call this via app.CreateDefaultConversation when
+// default resolution finds no non-archived session.
+func (h *Hub) createDefaultConversation(agentID string) (string, error) {
+	if h.PrimaryBot(agentID) == nil {
+		return "", fmt.Errorf("agent %s has no app connection", agentID)
+	}
+	b, _ := h.deliverBinding(agentID)
+	return b.sessionKey, nil
 }
 
 // pushRoster re-advertises the roster to one socket — the ack half of every

@@ -139,6 +139,46 @@ func TestResolve_Default(t *testing.T) {
 	}
 }
 
+// TestResolve_CreateDefault proves that when the default rung finds no
+// non-archived session, a resolver with CreateDefault set mints one (delivery
+// paths), while one without it errors ErrNoSession (warm paths).
+func TestResolve_CreateDefault(t *testing.T) {
+	idx := newTestIndex(t)
+
+	// Without the hook: empty index → ErrNoSession.
+	if _, err := (&Resolver{Index: idx}).Resolve(Target{Agent: "clutch"}); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("no hook: err = %v, want ErrNoSession", err)
+	}
+
+	// With the hook: the created session key comes back on the RungCreated rung.
+	called := ""
+	r := &Resolver{Index: idx, CreateDefault: func(agentID string) (string, error) {
+		called = agentID
+		return agentID + "/cNEW", nil
+	}}
+	got, err := r.Resolve(Target{Agent: "clutch"})
+	if err != nil || got.SessionKey != "clutch/cNEW" || got.Rung != RungCreated {
+		t.Fatalf("hook: got %+v, %v", got, err)
+	}
+	if called != "clutch" {
+		t.Errorf("hook called with %q, want clutch", called)
+	}
+
+	// Hook error propagates (no client to host the conversation).
+	rErr := &Resolver{Index: idx, CreateDefault: func(string) (string, error) {
+		return "", errors.New("no app connection")
+	}}
+	if _, err := rErr.Resolve(Target{Agent: "clutch"}); err == nil || errors.Is(err, ErrNoSession) {
+		t.Fatalf("hook error: err = %v, want the hook's error", err)
+	}
+
+	// The hook does NOT fire when a non-archived default exists.
+	active(t, idx, "clutch/c42")
+	if got, err := r.Resolve(Target{Agent: "clutch"}); err != nil || got.SessionKey != "clutch/c42" || got.Rung != RungDefault {
+		t.Fatalf("existing default: got %+v, %v", got, err)
+	}
+}
+
 // TestResolve_AmbiguousAlias proves an alias matching multiple chats surfaces
 // session.ErrAliasAmbiguous rather than silently picking one.
 func TestResolve_AmbiguousAlias(t *testing.T) {

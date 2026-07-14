@@ -1574,6 +1574,114 @@ func TestDefaultSessionKeyForAgentOn_AppConvIDGuard(t *testing.T) {
 	}
 }
 
+func TestDefaultSessionKeyForAgentOn_ExcludesArchived(t *testing.T) {
+	// An archived chat is hidden from the client, so no resolution rung may
+	// return it. Proves the is_archived filter on the preferred-platform pinned
+	// default (rung 1), the registered-chat rung (rung 2), and the any-default
+	// rung (rung 3).
+	now := time.Now().UTC().Truncate(time.Second)
+
+	t.Run("pinned default archived falls through to registered", func(t *testing.T) {
+		idx := tempIndex(t)
+		// c100 is the pinned app default but archived; c200 is a live registered
+		// app chat. Resolution must skip the archived pin and land on c200.
+		if err := idx.SetDefaultChat("ag", "app", 100); err != nil {
+			t.Fatal(err)
+		}
+		if err := idx.SetArchivedChat("ag", "app", 100, true); err != nil {
+			t.Fatal(err)
+		}
+		idx.Upsert(SessionIndexEntry{SessionKey: "ag/c200", SessionType: SessionTypeChat,
+			Status: SessionStatusActive, CreatedAt: now.Add(-time.Hour), LastActivityAt: now})
+		idx.TouchUserActivity("ag/c200", now)
+		if err := idx.SetChatMetadata("ag", "app", 200, "registered", "true"); err != nil {
+			t.Fatal(err)
+		}
+		if err := idx.SetChatMetadata("ag", "app", 200, "conv_id", "01CONV200"); err != nil {
+			t.Fatal(err)
+		}
+		if got := idx.DefaultSessionKeyForAgentOn("ag", "app"); got != "ag/c200" {
+			t.Errorf("got %q, want ag/c200 (archived pin c100 excluded)", got)
+		}
+	})
+
+	t.Run("archived registered chat skipped for older non-archived", func(t *testing.T) {
+		idx := tempIndex(t)
+		// c777 is more recently active but archived; c555 is older but live.
+		idx.Upsert(SessionIndexEntry{SessionKey: "ag/c555", SessionType: SessionTypeChat,
+			Status: SessionStatusActive, CreatedAt: now.Add(-2 * time.Hour), LastActivityAt: now.Add(-time.Hour)})
+		idx.Upsert(SessionIndexEntry{SessionKey: "ag/c777", SessionType: SessionTypeChat,
+			Status: SessionStatusActive, CreatedAt: now.Add(-2 * time.Hour), LastActivityAt: now})
+		idx.TouchUserActivity("ag/c555", now.Add(-time.Hour))
+		idx.TouchUserActivity("ag/c777", now)
+		set := func(chat int64, key, val string) {
+			if err := idx.SetChatMetadata("ag", "app", chat, key, val); err != nil {
+				t.Fatal(err)
+			}
+		}
+		set(555, "registered", "true")
+		set(555, "conv_id", "01CONV555")
+		set(777, "registered", "true")
+		set(777, "conv_id", "01CONV777")
+		if err := idx.SetArchivedChat("ag", "app", 777, true); err != nil {
+			t.Fatal(err)
+		}
+		if got := idx.DefaultSessionKeyForAgentOn("ag", "app"); got != "ag/c555" {
+			t.Errorf("got %q, want ag/c555 (archived c777 excluded)", got)
+		}
+	})
+
+	t.Run("root rung skips archived chat root", func(t *testing.T) {
+		idx := tempIndex(t)
+		// No is_default, no registered rows — resolution falls to the root rung.
+		// c300 is the most recently user-active root but its chat is archived;
+		// c400 is older but live.
+		idx.Upsert(SessionIndexEntry{SessionKey: "ag/c300", SessionType: SessionTypeChat,
+			Status: SessionStatusActive, CreatedAt: now.Add(-2 * time.Hour), LastActivityAt: now})
+		idx.Upsert(SessionIndexEntry{SessionKey: "ag/c400", SessionType: SessionTypeChat,
+			Status: SessionStatusActive, CreatedAt: now.Add(-2 * time.Hour), LastActivityAt: now.Add(-time.Hour)})
+		idx.TouchUserActivity("ag/c300", now)
+		idx.TouchUserActivity("ag/c400", now.Add(-time.Hour))
+		if err := idx.SetArchivedChat("ag", "app", 300, true); err != nil {
+			t.Fatal(err)
+		}
+		if got := idx.DefaultSessionKeyForAgent("ag"); got != "ag/c400" {
+			t.Errorf("got %q, want ag/c400 (archived root c300 excluded)", got)
+		}
+	})
+
+	t.Run("all archived returns empty", func(t *testing.T) {
+		idx := tempIndex(t)
+		idx.Upsert(SessionIndexEntry{SessionKey: "ag/c500", SessionType: SessionTypeChat,
+			Status: SessionStatusActive, CreatedAt: now, LastActivityAt: now})
+		idx.TouchUserActivity("ag/c500", now)
+		if err := idx.SetArchivedChat("ag", "app", 500, true); err != nil {
+			t.Fatal(err)
+		}
+		if got := idx.DefaultSessionKeyForAgent("ag"); got != "" {
+			t.Errorf("got %q, want empty (only chat is archived)", got)
+		}
+	})
+}
+
+func TestDefaultChatForAgent_ExcludesArchived(t *testing.T) {
+	// DefaultChatForAgent (the pinned-default query telegram/discord/app-pin use,
+	// bypassing the ladder) must also refuse an archived default.
+	idx := tempIndex(t)
+	if err := idx.SetDefaultChat("ag", "telegram", 42); err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.DefaultChatForAgent("ag", "telegram"); got != 42 {
+		t.Fatalf("precondition: got %d, want 42", got)
+	}
+	if err := idx.SetArchivedChat("ag", "telegram", 42, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.DefaultChatForAgent("ag", "telegram"); got != 0 {
+		t.Errorf("got %d, want 0 (archived default excluded)", got)
+	}
+}
+
 func TestPurgeSession_CascadesMetadataAndResumeHistory(t *testing.T) {
 	// Deleting a session must not strand its metadata or resume-history — the
 	// orphan-row accumulation fixed 2026-07-11. Delete(), PurgeSession(), and

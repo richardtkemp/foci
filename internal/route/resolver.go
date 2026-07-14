@@ -46,6 +46,13 @@ type Resolver struct {
 	// agent (per-agent override, else global). nil / "" = no preference —
 	// the most-recently-active platform wins the default-session rung.
 	PreferredPlatform func(agentID string) string
+	// CreateDefault, when set, is called if the default rung finds no
+	// non-archived session: it creates a fresh conversation on a configured
+	// client and returns its session key. Injected only by delivery paths
+	// (send_to_session, agent-initiated sends) — warm/keepalive resolvers
+	// leave it nil so they never mint an empty conversation. It errors when no
+	// client can host the conversation (no app configured for the agent).
+	CreateDefault func(agentID string) (string, error)
 }
 
 // Resolve maps a Target to a session key via the ladder:
@@ -81,6 +88,13 @@ func (r *Resolver) Resolve(t Target) (Resolution, error) {
 		}
 		key := r.Index.DefaultSessionKeyForAgentOn(t.Agent, preferred)
 		if key == "" {
+			if r.CreateDefault != nil {
+				created, err := r.CreateDefault(t.Agent)
+				if err != nil {
+					return Resolution{}, err
+				}
+				return Resolution{SessionKey: created, Rung: RungCreated, Policy: policy}, nil
+			}
 			return Resolution{}, fmt.Errorf("%w: %s", ErrNoSession, t.Agent)
 		}
 		return Resolution{SessionKey: key, Rung: RungDefault, Policy: policy}, nil
