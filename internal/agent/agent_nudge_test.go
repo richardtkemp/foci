@@ -139,16 +139,15 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 		},
 	}
 	sched := nudge.NewScheduler(rs, 5, 1)
+	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 1, PreAnswerGate: true})
 
 	ag := &Agent{
-		Client:                 client,
-		Sessions:               store,
-		Tools:                  registry,
-		Bootstrap:              bootstrap,
-		Model:                  "claude-haiku-4-5",
-		Nudger:                 sched,
-		NudgePreAnswerGate:     true,
-		NudgePreAnswerMinTools: 0, // fire even with 0 tool calls
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+		Nudger:    sched,
 	}
 
 	var intermediateReplies []string

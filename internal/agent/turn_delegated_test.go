@@ -1045,6 +1045,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
 		},
 	}
 	sched := nudge.NewScheduler(rs, 5, 2)
+	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 2, PreAnswerGate: true})
 	sched.StartTurn("hi")
 
 	mgr := newMockDelegatedManager(t, be)
@@ -1052,8 +1053,6 @@ func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
 		Model:                  "test-model",
 		DelegatedManager:       mgr,
 		Nudger:                 sched,
-		NudgePreAnswerGate:     true,
-		NudgePreAnswerMinTools: 0,
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -1122,8 +1121,6 @@ func TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection(t *
 		Model:                  "test-model",
 		DelegatedManager:       mgr,
 		Nudger:                 sched,
-		NudgePreAnswerGate:     true,
-		NudgePreAnswerMinTools: 0, // threshold met — only the trigger gate should suppress
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"reflection prompt"}, nil)
@@ -1173,7 +1170,6 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 		Model:              "test-model",
 		DelegatedManager:   mgr,
 		Nudger:             sched,
-		NudgePreAnswerGate: false, // explicitly disabled
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -1211,6 +1207,7 @@ func TestDelegatedTransport_RunInference_PreAnswerKeepsRoundsSeparate(t *testing
 		},
 	}
 	sched := nudge.NewScheduler(rs, 5, 2)
+	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 2, PreAnswerGate: true})
 	sched.StartTurn("hi")
 
 	mgr := newMockDelegatedManager(t, be)
@@ -1218,8 +1215,6 @@ func TestDelegatedTransport_RunInference_PreAnswerKeepsRoundsSeparate(t *testing
 		Model:                  "test-model",
 		DelegatedManager:       mgr,
 		Nudger:                 sched,
-		NudgePreAnswerGate:     true,
-		NudgePreAnswerMinTools: 0,
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -1427,6 +1422,7 @@ func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *te
 		},
 	}
 	sched := nudge.NewScheduler(rs, 5, 2)
+	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 2, PreAnswerGate: true})
 	sched.StartTurn("hi")
 
 	mgr := newMockDelegatedManager(t, be)
@@ -1434,8 +1430,6 @@ func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *te
 		Model:                  "test-model",
 		DelegatedManager:       mgr,
 		Nudger:                 sched,
-		NudgePreAnswerGate:     true,
-		NudgePreAnswerMinTools: 0,
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)

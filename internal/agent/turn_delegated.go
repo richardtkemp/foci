@@ -329,10 +329,10 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	var preAnswerNudgeFunc func(result *delegator.TurnResult) string
 	if caps.PreAnswerNudge {
 		preAnswerNudgeFunc = func(result *delegator.TurnResult) string {
-			if preAnswerFired || a.Nudger == nil || !a.NudgePreAnswerGate || !nudgesAllowed(ts) {
+			if preAnswerFired || a.Nudger == nil || !a.Nudger.PreAnswerGate() || !nudgesAllowed(ts) {
 				return ""
 			}
-			if toolCount < a.NudgePreAnswerMinTools {
+			if toolCount < a.Nudger.PreAnswerMinTools() {
 				return ""
 			}
 			reminder := a.Nudger.CheckPreAnswer()

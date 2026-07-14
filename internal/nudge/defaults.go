@@ -49,49 +49,41 @@ type SkillSummary struct {
 // defaultBraindeadPrompt is the fallback text when no custom prompt is configured.
 const defaultBraindeadPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
 
-// BraindeadRule builds a nudge rule for the braindead warning.
-// It fires every N tool calls, where N is the configured threshold.
-// Returns nil if threshold <= 0 (disabled).
-func BraindeadRule(threshold int, prompt string) []Rule {
-	if threshold <= 0 {
-		return nil
-	}
-	if prompt == "" {
-		prompt = defaultBraindeadPrompt
-	}
+// BraindeadRule builds the braindead-warning rule. It is always built; the
+// Scheduler gates firing on the live nudge_default_braindead_threshold (0 = off)
+// and substitutes the live nudge_default_braindead_prompt for the text.
+func BraindeadRule() []Rule {
 	return []Rule{{
-		Text:       prompt,
+		Text:       defaultBraindeadPrompt,
 		SourceFile: "builtin",
-		Trigger:    Trigger{Type: "every_n_tools", N: threshold},
+		Trigger:    Trigger{Type: "every_n_tools"},
 		Priority:   "high",
+		Category:   CategoryBraindead,
 	}}
 }
 
-// ScratchpadRule builds a nudge rule that periodically reminds the agent to
-// review, update, or clear scratchpad entries. The condition function gates
-// firing so the nudge is suppressed when the scratchpad is empty.
-// Returns nil if frequency <= 0 (disabled) or condition is nil.
-func ScratchpadRule(frequency int, condition func() bool) []Rule {
-	if frequency <= 0 || condition == nil {
+// ScratchpadRule builds the scratchpad-review reminder. The condition gates
+// firing to when entries exist; the Scheduler additionally gates on the live
+// nudge_default_scratchpad_frequency (0 = off) for its interval. Returns nil
+// only when there is no scratchpad store to check (condition == nil).
+func ScratchpadRule(condition func() bool) []Rule {
+	if condition == nil {
 		return nil
 	}
 	return []Rule{{
 		Text:       "Scratchpad entries exist. Review them — update any that are stale, and clear entries you no longer need. Stale scratchpad entries waste context after compaction.",
 		SourceFile: "builtin",
-		Trigger:    Trigger{Type: "every_n_turns", N: frequency},
+		Trigger:    Trigger{Type: "every_n_turns"},
 		Priority:   "low",
 		Condition:  condition,
+		Category:   CategoryScratchpad,
 	}}
 }
 
 // DefaultRules builds nudge rules for periodic tool/skill reminders.
 // Only tools present in toolNames appear in the reminder text. Skills
 // are appended with their descriptions. Returns nil if nothing to list.
-func DefaultRules(toolNames []string, skills []SkillSummary, frequency int) []Rule {
-	if frequency <= 0 {
-		frequency = 50
-	}
-
+func DefaultRules(toolNames []string, skills []SkillSummary) []Rule {
 	registered := make(map[string]bool, len(toolNames))
 	for _, name := range toolNames {
 		registered[name] = true
@@ -147,7 +139,8 @@ func DefaultRules(toolNames []string, skills []SkillSummary, frequency int) []Ru
 	return []Rule{{
 		Text:       b.String(),
 		SourceFile: "builtin",
-		Trigger:    Trigger{Type: "every_n_turns", N: frequency},
+		Trigger:    Trigger{Type: "every_n_turns"},
 		Priority:   "low",
+		Category:   CategoryDefault,
 	}}
 }

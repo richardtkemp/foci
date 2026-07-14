@@ -189,6 +189,17 @@ var (
 		"notify.warning_max_per_window", "agent.notify.warning_max_per_window",
 		"logging.warning_window_duration",
 	}
+
+	liveApplyNudgeAddrs = []string{
+		"nudge.nudge_enable", "nudge.nudge_auto_extract", "nudge.nudge_cooldown",
+		"nudge.nudge_max_per_batch", "nudge.nudge_pre_answer_gate", "nudge.nudge_pre_answer_min_tools",
+		"nudge.nudge_default_enable", "nudge.nudge_default_frequency", "nudge.nudge_default_scratchpad_frequency",
+		"nudge.nudge_default_braindead_threshold", "nudge.nudge_default_braindead_prompt",
+		"agent.nudge.nudge_enable", "agent.nudge.nudge_auto_extract", "agent.nudge.nudge_cooldown",
+		"agent.nudge.nudge_max_per_batch", "agent.nudge.nudge_pre_answer_gate", "agent.nudge.nudge_pre_answer_min_tools",
+		"agent.nudge.nudge_default_enable", "agent.nudge.nudge_default_frequency", "agent.nudge.nudge_default_scratchpad_frequency",
+		"agent.nudge.nudge_default_braindead_threshold", "agent.nudge.nudge_default_braindead_prompt",
+	}
 )
 
 // registerLiveAppliers wires the tranche-1 appliers. Called once from main
@@ -245,6 +256,20 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 				continue
 			}
 			applyWarningQueueLevels(inst.ag, config.Resolve(fresh, freshAcfg), fresh)
+		}
+		return nil
+	})
+
+	// Nudge scheduler is a derived handle: all rules are built once and firing
+	// is gated on these settings, so a [defaults.nudge] edit reconfigures it in
+	// place (no rebuild, counters preserved) — #1228.
+	la.register(liveApplyNudgeAddrs, func(fresh *config.Config) error {
+		for _, freshAcfg := range fresh.Agents {
+			inst := agents[freshAcfg.ID]
+			if inst == nil || inst.ag == nil || inst.ag.Nudger == nil {
+				continue
+			}
+			inst.ag.Nudger.Configure(nudgeSettings(config.Resolve(fresh, freshAcfg).Nudge))
 		}
 		return nil
 	})

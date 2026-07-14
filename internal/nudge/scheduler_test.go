@@ -672,3 +672,47 @@ func TestStartTurnClearsRecentBuffer(t *testing.T) {
 		t.Errorf("turn2 two Reads: expected [two-reads], got %v", got)
 	}
 }
+
+func TestSchedulerLiveGating(t *testing.T) {
+	// The braindead + default rules are always present; Configure gates their
+	// firing and supplies the live interval/text with no rebuild (#1228).
+	t.Parallel()
+
+	rs := &RuleSet{Rules: []Rule{
+		{Text: "builtin-braindead", Trigger: Trigger{Type: "every_n_tools"}, Category: CategoryBraindead},
+		{Text: "builtin-default", Trigger: Trigger{Type: "every_n_turns"}, Category: CategoryDefault},
+	}}
+	s := NewScheduler(rs, 1, 5)
+
+	// Unconfigured: braindead threshold 0, default disabled → silent.
+	s.StartTurn("hi")
+	if r := s.CheckAfterTools(2, false); len(r) != 0 {
+		t.Errorf("braindead off: unexpected %v", r)
+	}
+
+	// Enable braindead at threshold 2 with a live prompt override.
+	s.Configure(Settings{Cooldown: 1, MaxPerBatch: 5, BraindeadThreshold: 2, BraindeadPrompt: "STOP"})
+	s.StartTurn("hi")
+	if r := s.CheckAfterTools(2, false); len(r) != 1 || r[0] != "STOP" {
+		t.Errorf("braindead on: expected [STOP], got %v", r)
+	}
+
+	// Enable default rules at frequency 2 → fires when turnCount is a multiple.
+	s.Configure(Settings{Cooldown: 1, MaxPerBatch: 5, DefaultEnable: true, DefaultFreq: 2})
+	s.StartTurn("odd") // odd turnCount
+	if r := s.CheckTurnInterval(); len(r) != 0 {
+		t.Errorf("odd turn: unexpected %v", r)
+	}
+	s.StartTurn("even") // next turnCount → multiple of 2
+	if r := s.CheckTurnInterval(); len(r) != 1 || r[0] != "builtin-default" {
+		t.Errorf("even turn freq=2: expected [builtin-default], got %v", r)
+	}
+
+	// Disable default rules → silent even when the interval would match.
+	s.Configure(Settings{Cooldown: 1, MaxPerBatch: 5})
+	s.StartTurn("t")
+	s.StartTurn("t")
+	if r := s.CheckTurnInterval(); len(r) != 0 {
+		t.Errorf("default disabled: unexpected %v", r)
+	}
+}

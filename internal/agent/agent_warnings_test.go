@@ -15,6 +15,14 @@ import (
 	"foci/internal/workspace"
 )
 
+// braindeadScheduler builds the always-present braindead rule and configures the
+// live threshold that gates its firing (the config field is now live, not baked).
+func braindeadScheduler(threshold int) *nudge.Scheduler {
+	s := nudge.NewScheduler(&nudge.RuleSet{Rules: nudge.BraindeadRule()}, 5, 1)
+	s.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 1, BraindeadThreshold: threshold})
+	return s
+}
+
 func TestMaxTokensWarning(t *testing.T) {
 	// Proves that when the API returns stop_reason="max_tokens", the MaxTokensWarnFunc callback fires with a message that includes the session key, while still returning the truncated response to the caller.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -135,14 +143,13 @@ func TestBraindeadWarningInjected(t *testing.T) {
 		},
 	})
 
-	rs := &nudge.RuleSet{Rules: nudge.BraindeadRule(threshold, "")}
 	ag := &Agent{
 		Client:    client,
 		Sessions:  store,
 		Tools:     registry,
 		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
 		Model:     "claude-haiku-4-5",
-		Nudger:    nudge.NewScheduler(rs, 5, 1),
+		Nudger:    braindeadScheduler(threshold),
 	}
 
 	_, err := ag.hmTest(context.Background(), "test/imain", "go")
@@ -207,14 +214,13 @@ func TestBraindeadWarningCooldown(t *testing.T) {
 
 	// cooldown=5 means after firing at tool 2, next eligible is tool 7+.
 	// With 6 total tool calls, multiples of 2 are 2, 4, 6 — only 2 passes cooldown.
-	rs := &nudge.RuleSet{Rules: nudge.BraindeadRule(threshold, "")}
 	ag := &Agent{
 		Client:    client,
 		Sessions:  store,
 		Tools:     registry,
 		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
 		Model:     "claude-haiku-4-5",
-		Nudger:    nudge.NewScheduler(rs, 5, 1),
+		Nudger:    braindeadScheduler(threshold),
 	}
 
 	_, err := ag.hmTest(context.Background(), "test/imain", "go")
@@ -240,8 +246,8 @@ func TestBraindeadWarningCooldown(t *testing.T) {
 }
 
 func TestBraindeadDisabledWhenZero(t *testing.T) {
-	// Proves that BraindeadRule with threshold=0 produces no rules, so
-	// no warning is injected even when the loop runs many iterations.
+	// The braindead rule is always built; a threshold of 0 gates it off in the
+	// Scheduler, so no warning is injected even when the loop runs many iterations.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -275,14 +281,14 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 		},
 	})
 
-	// threshold=0 → BraindeadRule returns nil → no nudger
+	// Scheduler present with the braindead rule, but threshold=0 gates it off.
 	ag := &Agent{
 		Client:    client,
 		Sessions:  store,
 		Tools:     registry,
 		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
 		Model:     "claude-haiku-4-5",
-		// No Nudger set — braindead disabled
+		Nudger:    braindeadScheduler(0),
 	}
 
 	_, err := ag.hmTest(context.Background(), "test/imain", "go")
