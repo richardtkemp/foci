@@ -20,7 +20,7 @@ func TestWaitInjectGate_HoldsUntilClear(t *testing.T) {
 	a.DelegatedManager = mgr
 
 	returned := make(chan bool, 1)
-	go func() { returned <- a.waitInjectGate(context.Background(), "test/s") }()
+	go func() { returned <- a.waitInjectGate(context.Background(), "test/s", "reflection") }()
 	select {
 	case <-returned:
 		t.Fatal("waitInjectGate returned while the backend was awaiting; expected to block")
@@ -38,6 +38,29 @@ func TestWaitInjectGate_HoldsUntilClear(t *testing.T) {
 	}
 }
 
+// TestWaitInjectGate_ForkCloneBypassesGate covers the fork-clone exemption: a
+// "-fork" trigger (ForkCloneTrigger) reads the parent transcript with a race-safe
+// copy and doesn't touch the parent sink, so it must NOT wait out the pending-work
+// window — it returns immediately even while the backend reports awaiting.
+func TestWaitInjectGate_ForkCloneBypassesGate(t *testing.T) {
+	a := newTestAgent(t)
+	be := &mockBackendDT{}
+	be.setAwaiting(true)
+	mgr := newMockDelegatedManager(t, be)
+	a.DelegatedManager = mgr
+
+	returned := make(chan bool, 1)
+	go func() { returned <- a.waitInjectGate(context.Background(), "test/s", ForkCloneTrigger("reflection")) }()
+	select {
+	case ok := <-returned:
+		if !ok {
+			t.Fatal("fork-clone waitInjectGate returned false, want true")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fork-clone waitInjectGate blocked while the backend was awaiting; it must bypass the gate")
+	}
+}
+
 // TestWaitInjectGate_CtxCancelReturnsFalse pins the shutdown contract both call
 // sites depend on: a cancelled ctx makes the gate return false so the worker
 // stops rather than spinning.
@@ -50,7 +73,7 @@ func TestWaitInjectGate_CtxCancelReturnsFalse(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	returned := make(chan bool, 1)
-	go func() { returned <- a.waitInjectGate(ctx, "test/s") }()
+	go func() { returned <- a.waitInjectGate(ctx, "test/s", "reflection") }()
 	cancel()
 	select {
 	case ok := <-returned:

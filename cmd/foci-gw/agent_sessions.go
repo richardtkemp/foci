@@ -115,7 +115,7 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 		// branch turn below runs on the isolated branch key.
 		var branchKey string
 		var ok bool
-		if err := ag.EnqueueInjectWait(ctx, parentKey, branchType+"-fork", func() {
+		if err := ag.EnqueueInjectWait(ctx, parentKey, agent.ForkCloneTrigger(branchType), func() {
 			branchKey, ok = ag.ForkBackendBranch(ctx, parentKey, session.BranchOptions{
 				NoResetHook:         true,
 				BranchType:          branchType,

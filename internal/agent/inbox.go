@@ -619,7 +619,29 @@ func (a *Agent) backendAwaitingAutonomousRun(sk string) bool {
 // The adoption edge broadcasts via InFlightWaitCh; a pending→run→clear
 // transition has no channel, so it also polls at injectGatePollInterval. Applied
 // at every runInject site — the dequeue path and the post-batch heldInjects loop.
-func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
+// forkCloneSuffix marks the inbox trigger of a backend fork-clone step so
+// waitInjectGate can recognise and exempt it from the pending-work gate.
+const forkCloneSuffix = "-fork"
+
+// ForkCloneTrigger is the inbox trigger for the backend fork-clone step of a
+// branch of branchType (e.g. "reflection-fork"). The "-fork" suffix is what
+// waitInjectGate keys on to SKIP the pending-work gate: a fork-clone only READS
+// the parent transcript — a race-safe, append-only copy (see
+// ccstream.forkTranscript) — and never touches the parent's delivery sink, so it
+// needn't wait out the background-work window that a parent-side inject does. The
+// in-place branch turn uses the bare branchType and stays gated.
+func ForkCloneTrigger(branchType string) string { return branchType + forkCloneSuffix }
+
+func isForkCloneTrigger(trigger string) bool { return strings.HasSuffix(trigger, forkCloneSuffix) }
+
+func (a *Agent) waitInjectGate(ctx context.Context, sk, trigger string) bool {
+	// A fork-clone reads the parent transcript with a race-safe copy and doesn't
+	// deliver on the parent's sink, so the pending-work / autonomous gate (spec §4)
+	// doesn't apply. Gating it only delayed reflection/keepalive/background forks
+	// behind long-running background tasks; let it through immediately.
+	if isForkCloneTrigger(trigger) {
+		return true
+	}
 	gated := func() bool {
 		return a.IsInFlightDelivering(sk) || a.backendAwaitingAutonomousRun(sk)
 	}
@@ -733,7 +755,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 				// worker reaching here while such work is live is exactly the
 				// autonomous case (a platform turn occupies the worker
 				// synchronously below), never a normal platform turn.
-				if !a.waitInjectGate(ctx, env.SessionKey) {
+				if !a.waitInjectGate(ctx, env.SessionKey, env.Inject.Trigger) {
 					return
 				}
 				a.runInject(inb, env)
@@ -827,7 +849,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// delivery — so each held inject passes the same gate as the dequeue
 			// path, not a direct runInject (the Phase 3 bypass fix).
 			for _, inj := range heldInjects {
-				if !a.waitInjectGate(ctx, inj.SessionKey) {
+				if !a.waitInjectGate(ctx, inj.SessionKey, inj.Inject.Trigger) {
 					return
 				}
 				a.runInject(inb, inj)
