@@ -259,8 +259,89 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// also needs b.mu, causing a deadlock.
 	ts.sessionFilePath = be.SessionFilePath()
 
-	// Per-turn handler: fires once when the watcher sees end_turn.
-	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
+	// Per-turn bookkeeping callbacks (nudge hooks + OnTurnComplete). Extracted so
+	// adopted autonomous turns build the identical completion accounting.
+	turnEvents := t.buildTurnEvents(ts, be)
+	// Build the attachment list (empty when none); Inject's begin-turn path
+	// honors attachments only at idle+SourceUser, and backends that don't
+	// support structured content blocks (cctmux) silently drop them with a
+	// debug log. The agent layer no longer type-asserts AttachmentSender —
+	// the capability decision lives in the backend.
+	var atts []delegator.Attachment
+	if len(ts.Attachments) > 0 {
+		atts = make([]delegator.Attachment, len(ts.Attachments))
+		for i, a := range ts.Attachments {
+			atts[i] = delegator.Attachment{
+				MimeType: a.MimeType,
+				Data:     a.Data,
+			}
+		}
+	}
+
+	// Foldable turns begin as SourceUser (idle here — the in-flight case
+	// folded above). System turns and explicitly-queued messages begin as
+	// SourceSystem: the backend's exclusive begin rejects with
+	// ErrTurnInFlight instead of folding, so the prompt can never steer
+	// running work. The session inbox worker is the primary serialisation
+	// (system entry points enqueue Inject envelopes); the retry loop below
+	// is a backstop for turns the worker can't see — backend-only runs
+	// (opencode shadow turns) and nested same-session system turns invoked
+	// from a turn's post-phase (compaction_memory, session_end_memory)
+	// racing one.
+	src := delegator.SourceUser
+	if !foldable {
+		src = delegator.SourceSystem
+	}
+
+	t.logger().Debugf("RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
+	for waited := false; ; waited = true {
+		err = be.ImmediateInject(ts.Ctx, delegator.Inject{
+			Source:      src,
+			Text:        ts.Prompt,
+			Attachments: atts,
+			Turn:        turnEvents,
+		})
+		if !errors.Is(err, delegator.ErrTurnInFlight) {
+			break
+		}
+		// Only SourceSystem returns ErrTurnInFlight: a turn is running and
+		// system input must not steer it. Wait for completion, then retry
+		// the exclusive begin. The timeout bounds a lost completion signal
+		// (WaitForTurn wakes a single waiter per completion, and cctmux
+		// registers its waiter only at call time) — on timeout the loop
+		// simply re-checks via another atomic Inject.
+		if !waited {
+			t.logger().Infof("session=%s system turn (trigger=%q) waiting for in-flight turn to complete before dispatch", ts.SessionKey, ts.Trigger)
+		}
+		wctx, cancel := context.WithTimeout(ts.Ctx, systemInjectRetryInterval)
+		werr := be.WaitForTurn(wctx)
+		cancel()
+		if werr != nil && ts.Ctx.Err() != nil {
+			return ts.Ctx.Err()
+		}
+	}
+	t.logger().Debugf("RunInference: Inject(%s, begin-turn) done sk=%s err=%v", src, ts.SessionKey, err)
+	if err == nil {
+		// Primary has reached the backend. Signal the inbox so turnActive
+		// flips true and any further follow-ups can safely steer via
+		// Inject(SourceSteer) instead of racing the primary's write. See
+		// WithOnPrimaryWritten / TODO #777.
+		OnPrimaryWrittenFromContext(ts.Ctx)()
+	}
+	return err
+}
+
+// buildTurnEvents constructs the per-turn bookkeeping callbacks (nudge hooks +
+// OnTurnComplete completion accounting) for a delegated turn. Extracted from
+// RunInference so adopted autonomous turns — which CC initiates with no foci
+// send — build the IDENTICAL completion path (capture FinalText/Usage/Model,
+// pre-answer round handling, thinking log, LogUsage, close CompletionChan).
+// Closures capture ts and per-turn counters, so a fresh TurnEvents is built per
+// turn. Requires ts.sessionFilePath already set (the OnTurnComplete callback may
+// fire inside ensureWatcher, which holds b.mu, so SessionFilePath must be cached
+// before the turn begins).
+func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegator) *delegator.TurnEvents {
+	a := t.agent
 	bt := t
 
 	// Cumulative tool-call state for every_n_tools / after_error nudges.
@@ -417,73 +498,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			close(ts.CompletionChan)
 		})
 	}
-	// Build the attachment list (empty when none); Inject's begin-turn path
-	// honors attachments only at idle+SourceUser, and backends that don't
-	// support structured content blocks (cctmux) silently drop them with a
-	// debug log. The agent layer no longer type-asserts AttachmentSender —
-	// the capability decision lives in the backend.
-	var atts []delegator.Attachment
-	if len(ts.Attachments) > 0 {
-		atts = make([]delegator.Attachment, len(ts.Attachments))
-		for i, a := range ts.Attachments {
-			atts[i] = delegator.Attachment{
-				MimeType: a.MimeType,
-				Data:     a.Data,
-			}
-		}
-	}
-
-	// Foldable turns begin as SourceUser (idle here — the in-flight case
-	// folded above). System turns and explicitly-queued messages begin as
-	// SourceSystem: the backend's exclusive begin rejects with
-	// ErrTurnInFlight instead of folding, so the prompt can never steer
-	// running work. The session inbox worker is the primary serialisation
-	// (system entry points enqueue Inject envelopes); the retry loop below
-	// is a backstop for turns the worker can't see — backend-only runs
-	// (opencode shadow turns) and nested same-session system turns invoked
-	// from a turn's post-phase (compaction_memory, session_end_memory)
-	// racing one.
-	src := delegator.SourceUser
-	if !foldable {
-		src = delegator.SourceSystem
-	}
-
-	t.logger().Debugf("RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
-	for waited := false; ; waited = true {
-		err = be.ImmediateInject(ts.Ctx, delegator.Inject{
-			Source:      src,
-			Text:        ts.Prompt,
-			Attachments: atts,
-			Turn:        turnEvents,
-		})
-		if !errors.Is(err, delegator.ErrTurnInFlight) {
-			break
-		}
-		// Only SourceSystem returns ErrTurnInFlight: a turn is running and
-		// system input must not steer it. Wait for completion, then retry
-		// the exclusive begin. The timeout bounds a lost completion signal
-		// (WaitForTurn wakes a single waiter per completion, and cctmux
-		// registers its waiter only at call time) — on timeout the loop
-		// simply re-checks via another atomic Inject.
-		if !waited {
-			t.logger().Infof("session=%s system turn (trigger=%q) waiting for in-flight turn to complete before dispatch", ts.SessionKey, ts.Trigger)
-		}
-		wctx, cancel := context.WithTimeout(ts.Ctx, systemInjectRetryInterval)
-		werr := be.WaitForTurn(wctx)
-		cancel()
-		if werr != nil && ts.Ctx.Err() != nil {
-			return ts.Ctx.Err()
-		}
-	}
-	t.logger().Debugf("RunInference: Inject(%s, begin-turn) done sk=%s err=%v", src, ts.SessionKey, err)
-	if err == nil {
-		// Primary has reached the backend. Signal the inbox so turnActive
-		// flips true and any further follow-ups can safely steer via
-		// Inject(SourceSteer) instead of racing the primary's write. See
-		// WithOnPrimaryWritten / TODO #777.
-		OnPrimaryWrittenFromContext(ts.Ctx)()
-	}
-	return err
+	return turnEvents
 }
 
 // --- Phase 4: Post-turn ---
