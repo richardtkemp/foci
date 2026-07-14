@@ -70,6 +70,11 @@ type SchedulerOpts struct {
 	CanPostTool    bool
 	// CanPreAnswer gates pre_answer triggers.
 	CanPreAnswer   bool
+	// AgentID names the owning agent in the skip warnings. These warnings are
+	// fanned out to *every* agent's session (post_agent_setup.go's warn hook),
+	// so without the id the reader can't tell which agent's rule was skipped —
+	// especially confusing on a CC session receiving an opencode agent's warning.
+	AgentID        string
 }
 
 // NewScheduler creates a Scheduler from a RuleSet.
@@ -95,15 +100,19 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 	}
 	canPostTool := opts.CanPostTool
 	canPreAnswer := opts.CanPreAnswer
+	who := ""
+	if opts.AgentID != "" {
+		who = "agent " + opts.AgentID + ": "
+	}
 
 	var activeRules []Rule
 	for _, r := range rs.Rules {
 		if TriggerRequiresPostTool(r.Trigger.Type) && !canPostTool {
-			log.Warnf("nudge", "rule %q uses trigger %q which requires post-tool injection — not supported by this backend. Rule will be skipped.", truncate(r.Text, 60), r.Trigger.Type)
+			log.Warnf("nudge", "%srule %q uses trigger %q which requires post-tool injection — not supported by this backend. Rule will be skipped.", who, truncate(r.Text, 60), r.Trigger.Type)
 			continue
 		}
 		if TriggerRequiresPreAnswer(r.Trigger.Type) && !canPreAnswer {
-			log.Warnf("nudge", "rule %q uses trigger %q which requires pre-answer injection — not supported by this backend. Rule will be skipped.", truncate(r.Text, 60), r.Trigger.Type)
+			log.Warnf("nudge", "%srule %q uses trigger %q which requires pre-answer injection — not supported by this backend. Rule will be skipped.", who, truncate(r.Text, 60), r.Trigger.Type)
 			continue
 		}
 		activeRules = append(activeRules, r)

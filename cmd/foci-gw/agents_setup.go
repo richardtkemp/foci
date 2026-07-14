@@ -147,6 +147,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		MaxPerBatch:  nc.NudgeMaxPerBatch,
 		CanPostTool:  !isOpencode,
 		CanPreAnswer: !isOpencode,
+		AgentID:      acfg.ID,
 	}
 	rulesPath := nudge.RulesPath(acfg.Workspace)
 
