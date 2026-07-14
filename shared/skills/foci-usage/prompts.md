@@ -37,7 +37,6 @@ Every inbound message carries a `[meta]` line:
 - `model` — the model for this turn (developer prefix stripped).
 - `via` — delivery channel: `telegram`, `android`, `voice`, `api`, or `cron` for system-initiated turns (keepalive, reflection, scheduled wake), `async` for async tool results, `tmux` for watch notifications.
 - `mana` — remaining quota % + 🟢/🔴 indicator (omitted if no data).
-- `prev_cost` / `prev_tokens` — prior turn's cost and token split (`in`/`out`/`cR` cache-read/`cW` cache-write); omitted on first message.
 
 ## `[state]` and `[reminders]`
 
