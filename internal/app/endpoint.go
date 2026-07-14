@@ -32,9 +32,10 @@ func Enabled() bool {
 	return activeHub != nil
 }
 
-// OpenSessionsForAgent returns the session keys of the chats the agent's app
-// clients currently have open, or nil if the app provider is not running. Used
-// by keepalive when warm_open_app_chats is set.
+// OpenSessionsForAgent returns the session keys of the agent's open chats from
+// the persisted shared open-set (open_chats), or nil if the app provider is not
+// running. Used by keepalive when warm_open_app_chats is set. Persisted rather
+// than live-socket so keepalive keeps warming open chats across app disconnects.
 func OpenSessionsForAgent(agentID string) []string {
 	activeMu.RLock()
 	h := activeHub

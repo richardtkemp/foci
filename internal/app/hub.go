@@ -1584,33 +1584,37 @@ func (h *Hub) removeClient(c *wsClient) {
 	h.mu.Unlock()
 }
 
-// OpenSessionsForAgent returns the deduped session keys of the conversations the
-// agent's app clients currently have open (their pager tabs). Used by keepalive
-// to warm open chats. Snapshots bindings under each client's lock, then reads
-// session keys under the binding lock — never both at once (attach takes b.mu
-// before client.mu, so the reverse order here would deadlock).
+// OpenSessionsForAgent returns the deduped session keys of the agent's open
+// conversations, resolved from the PERSISTED shared open-set (open_chats) rather
+// than live sockets. Used by keepalive to warm open chats.
+//
+// The persisted set is retained when the app backgrounds/disconnects, so keepalive
+// keeps warming the chats the user had open — facet/branch conversations included —
+// even with no client connected. A live-socket source (each client's openConvIDs)
+// abandoned them the instant the app backgrounded: candidates went empty, keepalive
+// fell back to warming only the root, and every non-root open cache silently
+// expired (~1h after its last touch). Persisted open_chats is kept in sync while a
+// client is connected (ConversationOpenSync → storeOpenChats), so it is a strict
+// superset of the live view and correct in both states.
+//
+// Each persisted conv ID is resolved through the durable hub binding registry
+// (h.convs — rebuilt at startup by StartAll, survives socket churn) to its session
+// key, filtered to this agent. Conv IDs with no live binding (should not happen
+// once StartAll has run) are skipped; the binding is the only conv→agent map.
 func (h *Hub) OpenSessionsForAgent(agentID string) []string {
-	h.mu.RLock()
-	clients := make([]*wsClient, 0, len(h.clients))
-	for c := range h.clients {
-		clients = append(clients, c)
+	ids := h.loadOpenChats()
+	if len(ids) == 0 {
+		return nil
 	}
-	h.mu.RUnlock()
-
-	var bindings []*convBinding
-	for _, c := range clients {
-		c.mu.Lock()
-		for convID := range c.openConvIDs {
-			if b := c.convByID[convID]; b != nil {
-				bindings = append(bindings, b)
-			}
-		}
-		c.mu.Unlock()
-	}
-
 	seen := make(map[string]struct{})
-	var out []string
-	for _, b := range bindings {
+	out := make([]string, 0, len(ids))
+	for _, convID := range ids {
+		h.mu.RLock()
+		b := h.convs[convID]
+		h.mu.RUnlock()
+		if b == nil {
+			continue
+		}
 		b.mu.Lock()
 		sk, ag := b.sessionKey, b.agentID
 		b.mu.Unlock()
