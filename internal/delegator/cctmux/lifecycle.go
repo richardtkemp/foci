@@ -11,6 +11,12 @@ import (
 	"foci/internal/log"
 )
 
+// logger returns an agent-scoped logger so this backend's lines name their
+// owning agent ([cctmux:<agentID>]) rather than a bare component.
+func (b *Backend) logger() *log.ComponentLogger {
+	return log.NewComponentLogger("cctmux:" + b.agentID)
+}
+
 func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -156,7 +162,7 @@ func (b *Backend) ensureWatcher(ctx context.Context) error {
 			// Check if the pane is still alive — if CC exited (e.g. bad --resume UUID),
 			// there's no point waiting.
 			if !b.pane.isAlive(ctx) {
-				log.Warnf("backend/cc", "claude process exited (tmux session gone), last: %s", lastErr)
+				b.logger().Warnf("claude process exited (tmux session gone), last: %s", lastErr)
 				return fmt.Errorf("claude process exited — check tmux logs (last: %s)", lastErr)
 			}
 
@@ -177,7 +183,7 @@ func (b *Backend) ensureWatcher(ctx context.Context) error {
 			b.mu.Lock()
 			b.sessionID = sessionID
 			b.mu.Unlock()
-			log.Infof("backend/cc", "session discovered: %s (pid %d)", sessionID, childPID)
+			b.logger().Infof("session discovered: %s (pid %d)", sessionID, childPID)
 			if b.onSessionReady != nil {
 				b.onSessionReady(sessionID)
 			}
