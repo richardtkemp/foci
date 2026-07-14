@@ -564,7 +564,9 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 // kept only if it's in the warm WINDOW: its cache was touched at least `interval`
 // ago (due for a refresh) but less than cacheTTL ago (not yet expired). A
 // session with no recorded cache-touch — never warmed, or just reset — is skipped:
-// there is no live cache to keep alive. An in-flight turn also skips it.
+// there is no live cache to keep alive. An in-flight turn also skips it. A session
+// no human has touched within max_user_idle is skipped too — an abandoned session
+// is left to expire rather than warmed indefinitely.
 func (r *Runner) keepaliveTargets(interval time.Duration) []string {
 	var candidates []string
 	if r.kaCfg.WarmOpenAppChats && r.openSessionsFn != nil {
@@ -579,6 +581,13 @@ func (r *Runner) keepaliveTargets(interval time.Duration) []string {
 		return nil
 	}
 
+	var maxIdle time.Duration
+	if r.kaCfg.MaxUserIdle != "" {
+		if d, ok := r.parseDuration("keepalive max_user_idle", r.kaCfg.MaxUserIdle); ok {
+			maxIdle = d
+		}
+	}
+
 	now := time.Now()
 	var ready []string
 	for _, sk := range candidates {
@@ -587,6 +596,11 @@ func (r *Runner) keepaliveTargets(interval time.Duration) []string {
 		}
 		if skip := r.checkRateLimit(sk); skip != "" {
 			continue // endpoint rate-limited — don't warm into a cap
+		}
+		if maxIdle > 0 {
+			if ua, ok := r.sessionIndex.LastUserActivity(sk); !ok || now.Sub(ua) > maxIdle {
+				continue // no human touched this session within max_user_idle — let it expire
+			}
 		}
 		touch, ok := r.sessionIndex.LastCacheTouch(sk)
 		if !ok {

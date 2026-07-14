@@ -233,6 +233,58 @@ func TestMaybeKeepalive_ExpiredCache(t *testing.T) {
 	}
 }
 
+func TestMaybeKeepalive_SkipsIdleUser(t *testing.T) {
+	// Warm-window session (would fire), but no human has touched it within
+	// max_user_idle (last user activity 100h ago, window 96h) → skip.
+	var calls int
+	idx := indexWithTouch(t, "test/c1", 10*time.Minute)
+	idx.TouchUserActivity("test/c1", time.Now().Add(-100*time.Hour))
+	r := &Runner{
+		log:          log.NewComponentLogger("keepalive:test"),
+		agentID:      "test",
+		kaCfg:        config.ResolvedKeepalive{Enabled: true, Interval: "1m", MaxUserIdle: "96h"},
+		cacheTTL:     time.Hour,
+		sessionIndex: idx,
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1" },
+			branchFn:     func(_, _, _ string, _ bool) bool { calls++; return true },
+		},
+		done: make(chan struct{}),
+	}
+
+	r.maybeKeepalive(context.Background())
+	waitIdle(t, r)
+	if calls != 0 {
+		t.Errorf("keepalive warmed a user-idle session, want skip")
+	}
+}
+
+func TestMaybeKeepalive_FiresWhenUserActive(t *testing.T) {
+	// Same warm window, but a human touched the session within max_user_idle
+	// (1h ago, window 96h) → fires.
+	var calls int
+	idx := indexWithTouch(t, "test/c1", 10*time.Minute)
+	idx.TouchUserActivity("test/c1", time.Now().Add(-time.Hour))
+	r := &Runner{
+		log:          log.NewComponentLogger("keepalive:test"),
+		agentID:      "test",
+		kaCfg:        config.ResolvedKeepalive{Enabled: true, Interval: "1m", MaxUserIdle: "96h", Prompt: "keepalive.md"},
+		cacheTTL:     time.Hour,
+		sessionIndex: idx,
+		agent: &fakeBackgroundAgent{
+			sessionKeyFn: func() string { return "test/c1" },
+			branchFn:     func(_, _, _ string, _ bool) bool { calls++; return true },
+		},
+		done: make(chan struct{}),
+	}
+
+	r.maybeKeepalive(context.Background())
+	waitIdle(t, r)
+	if calls != 1 {
+		t.Errorf("keepalive skipped a user-active session, want fire")
+	}
+}
+
 func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
 	// Verifies that maybeKeepalive is a no-op when keepaliveRunning is already true, preventing
 	// concurrent keepalive sessions.
