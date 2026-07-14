@@ -25,8 +25,8 @@ func renderDefaultMeta(now time.Time, model, platform string, sm *sessionMeta) s
 
 func TestBuildMetaPrefix(t *testing.T) {
 	// Proves the default statusline template emits correct timestamp, gap, model,
-	// platform, and cost fields for both the first message and subsequent messages
-	// with prior-turn data (replacing the old buildMetaPrefix; #831).
+	// and platform — and omits prev_cost/prev_tokens — for both the first message
+	// and subsequent messages with prior-turn data.
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 
 	// First message — no previous turn data
@@ -66,11 +66,11 @@ func TestBuildMetaPrefix(t *testing.T) {
 	if !strings.Contains(prefix, "via=telegram") {
 		t.Errorf("missing platform in prefix: %q", prefix)
 	}
-	if !strings.Contains(prefix, "prev_cost=$0.043") {
-		t.Errorf("missing prev_cost in prefix: %q", prefix)
+	if strings.Contains(prefix, "prev_cost") {
+		t.Errorf("default prefix must not carry prev_cost even with prior data: %q", prefix)
 	}
-	if !strings.Contains(prefix, "prev_tokens=in:2400/out:312/cR:18000/cW:200") {
-		t.Errorf("missing prev_tokens in prefix: %q", prefix)
+	if strings.Contains(prefix, "prev_tokens") {
+		t.Errorf("default prefix must not carry prev_tokens even with prior data: %q", prefix)
 	}
 }
 

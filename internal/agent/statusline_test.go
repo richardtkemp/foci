@@ -31,8 +31,9 @@ func TestStatuslineDefault_FirstMessage(t *testing.T) {
 	}
 }
 
-// TestStatuslineDefault_FullLine proves the default template reproduces a
-// fully-populated [meta] line (cost, tokens) byte-for-byte.
+// TestStatuslineDefault_FullLine proves the default [meta] line even with prior
+// cost/token data present carries only time/gap/model/via — prev_cost and
+// prev_tokens are deliberately not in the default template.
 func TestStatuslineDefault_FullLine(t *testing.T) {
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	sm := &sessionMeta{
@@ -46,8 +47,7 @@ func TestStatuslineDefault_FullLine(t *testing.T) {
 	got := renderTmpl(DefaultStatuslineTemplate, statuslineInputs{
 		now: now, model: "claude-opus-4-8", platform: "telegram", sm: sm,
 	})
-	want := "[meta] time=2026-02-21T05:30:00Z gap=2m0s model=claude-opus-4-8 via=telegram " +
-		"prev_cost=$0.043 prev_tokens=in:2400/out:312/cR:18000/cW:200"
+	want := "[meta] time=2026-02-21T05:30:00Z gap=2m0s model=claude-opus-4-8 via=telegram"
 	if got != want {
 		t.Errorf("full statusline:\n got: %q\nwant: %q", got, want)
 	}

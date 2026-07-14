@@ -38,11 +38,15 @@ import (
 //
 // A line with no placeholders (pure literal) is always kept.
 
-// DefaultStatuslineTemplate reproduces the historical two-line header. Used when
-// an agent has no `statusline` configured. The labels live here (editable);
-// the conditional fields self-omit, rule 2 cleans the spacing, and rule 3 drops
-// the "[state]" line when empty.
-const DefaultStatuslineTemplate = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens}\n[state] {state}\n[ask] {ask}"
+// DefaultStatuslineTemplate is the header used when an agent has no `statusline`
+// configured. The labels live here (editable); the conditional fields self-omit,
+// rule 2 cleans the spacing, and rule 3 drops the "[state]" line when empty.
+//
+// prev_cost / prev_tokens are deliberately NOT in the default: surfacing a
+// running cost/token figure on every turn nudges the agent toward rationing its
+// own budget, which is not a goal we want it optimising for. The {cost}/{tokens}
+// fields still exist (statuslineFields) for anyone who wants them via config.
+const DefaultStatuslineTemplate = "[meta] time={time} gap={gap} model={model} via={via}\n[state] {state}\n[ask] {ask}"
 
 // Statusline command execution bounds. The command runs synchronously before
 // every turn, so these are deliberately tight.
