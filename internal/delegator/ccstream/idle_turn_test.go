@@ -369,9 +369,10 @@ func TestAutonomousInjectGrace(t *testing.T) {
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 	b.typingFunc = func(bool) {}
 	b.AttachSessionEvents(&delegator.SessionEvents{})
+	b.SetOnAutonomousOpen(func() { b.AdoptRunningTurn(&delegator.TurnEvents{}) })
 
-	stateEvent(b, "running") // no foci turn open → autonomous turn
-	stateEvent(b, "idle")    // ends → stamps lastAutonomousEnd, opening the grace
+	stateEvent(b, "running") // no foci turn open → adopted as a first-class turn
+	stateEvent(b, "idle")    // completeTurn stamps lastAutonomousEnd, opening the grace
 
 	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSystem, Text: "reflect", Turn: &delegator.TurnEvents{},

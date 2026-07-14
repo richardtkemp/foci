@@ -186,7 +186,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	// across blocks ("Hello " + "world!"). See TODO #819.
 	b.turnMu.Lock()
 	needSep := b.turnText.Len() > 0
-	turnActive := b.turnActive
 	b.turnMu.Unlock()
 
 	for _, block := range msg.Message.Content {
@@ -199,12 +198,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 					needSep = false
 				}
 				b.turnText.WriteString(block.Text)
-				if !turnActive {
-					// Autonomous run: this text streams to the chat via the
-					// session sink's late-delivery fallback, so onSessionIdle
-					// must not re-deliver the stashed result (#1063).
-					b.autonomousStreamed = true
-				}
 			}
 			b.turnMu.Unlock()
 
@@ -513,14 +506,20 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.turnMu.Lock()
 		b.stateEventsSeen = true
 		turnActive := b.turnActive
-		if ss.State == "running" && !turnActive {
-			b.setAutonomousActiveLocked(true)
-			b.autonomousStreamed = false // fresh run: no text streamed yet
+		autonomousOpen := false
+		if ss.State == "running" && !turnActive && b.onAutonomousOpen != nil {
+			// CC opened a run foci didn't (autonomous: background-agent
+			// completion, task-notification, continuation). Adopt it as a
+			// first-class turn. Enqueue the open so it fires off turnMu but still
+			// synchronously on this reader goroutine (via drainEdgeCallbacks
+			// below, before the next stream event is read) — so the streaming
+			// sink is registered with no early deltas lost (#1261).
+			b.edgeCallbacks = append(b.edgeCallbacks, b.onAutonomousOpen)
+			autonomousOpen = true
 		}
-		autonomous := b.autonomousActive
 		b.turnMu.Unlock()
 		b.drainEdgeCallbacks()
-		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v autonomous=%v", ss.State, turnActive, autonomous)
+		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v autonomous_open=%v", ss.State, turnActive, autonomousOpen)
 		if ss.State == "idle" {
 			b.onSessionIdle()
 		}

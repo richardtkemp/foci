@@ -450,10 +450,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				log.NewComponentLogger("agent:"+agentID).Warnf("system notice send failed for session=%s: %v", sessionKey, err)
 			}
 		},
-		// Adopt CC autonomous runs as in-flight delivering turns so the inbox
-		// worker holds concurrent reflection/keepalive injections that would
-		// otherwise poison the run's shared session sink (#1070).
-		AdoptAutonomousRun: ag.AdoptAutonomousRun,
+		// Adopt CC-initiated runs as first-class foci turns — streaming, in-flight
+		// tracking, accounting, and meta all flow through the normal turn path
+		// (#1261).
+		OpenAutonomousTurn: ag.OpenAutonomousTurn,
 		AttachDelivery:     ag.AttachDelivery,
 		IdleTimeout:        idleTimeout,
 	}

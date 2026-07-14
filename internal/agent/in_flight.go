@@ -1,10 +1,14 @@
 package agent
 
 import (
+	"context"
 	"time"
 
+	"foci/internal/agent/turnevent"
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/turn"
 )
 
 // IsTurnInFlight returns true if any turn is currently executing under
@@ -189,54 +193,96 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 	}
 }
 
-// AdoptAutonomousRun marks a CC autonomous run — one foci opened no turn for —
-// as an in-flight *delivering* turn for sessionKey and returns the one-shot
-// release closure to invoke when the run ends. "The agent is taking a turn":
-// adopting the run makes IsTurnInFlight/IsInFlightDelivering true for its
-// duration, so the inbox worker holds concurrent reflection/keepalive
-// injections (inbox.go #1070 gate) that would otherwise run their RunInference,
-// rebind the shared session-scoped se.OnText to a NopSink, and silently drop
-// the autonomous run's text (#1068). Wired to the delegated backend's
-// onAutonomousStart/onAutonomousEnd callbacks via DelegatedManager.
-func (a *Agent) AdoptAutonomousRun(sessionKey string) func() {
-	releaseInFlight := a.markInFlight(sessionKey, true)
+// openAutonomousTurn adopts a CC-initiated run — one foci did not open with a
+// send (a background-agent completion, task-notification, or back-to-back
+// continuation) — as a FIRST-CLASS foci turn (#1261). Wired to the delegated
+// backend's onAutonomousOpen and fired from the running-edge callback on the
+// backend's reader goroutine, so the streaming sink is registered before the
+// run's first delta is read (no lost events). It builds the platform per-turn
+// sink, a minimal TurnState, and the turn's bookkeeping (buildTurnEvents),
+// begins the turn via AdoptRunningTurn (no send), marks it in flight, and spawns
+// the owning goroutine that awaits completion then runs the post-turn accounting
+// and emits the meta frame — the same lifecycle a foci-initiated turn gets.
+//
+// Making the run turnActive is what gives first-classness for free: fold-in of a
+// user message (IsTurnInFlight → true), the system-inject hold, the pre-answer
+// nudge gate, api.db usage rows, and the meta frame all key on the normal turn
+// path rather than the old whole-message late-delivery fallback.
+func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
+	adopter, ok := be.(interface {
+		AdoptRunningTurn(*delegator.TurnEvents) bool
+	})
+	if !ok {
+		return // backend cannot adopt a running turn (opencode, tests)
+	}
 
-	// #1257: stream the autonomous run to the platform when the delivering
-	// connection is a streaming driver (the app). Register its per-turn streaming
-	// sink as the router's late-stream for the run's duration, so the run's
-	// TextDelta/thinking/tool/activity events — which reach the router's fallback
-	// because no per-turn sink is registered — render as structured frames
-	// (text.delta + activity) instead of the fallback SessionSink's single
-	// whole-message SendToSession. Non-driver connections (Telegram/Discord) have
-	// no such per-turn streaming sink here and keep whole-block late delivery.
-	//
-	// Lifecycle: SetLateStream on adopt, ClearLateStream + cleanup on release. The
-	// backend fires onAutonomousStart/onAutonomousEnd on its reader goroutine —
-	// the same goroutine that drives router.Emit — so set/clear are serialized
-	// with delivery. The late-stream slot is independent of the per-turn `current`
-	// sink, so a real turn adopting the run (which clears the late-stream via the
-	// paired release, then Registers its own sink) never collides.
 	var conn platform.Connection
 	if a.ResolveLateConn != nil {
 		conn = a.ResolveLateConn(sessionKey)
 	}
-	driver, ok := conn.(Driver)
-	if !ok {
-		return releaseInFlight
-	}
-	sink, cleanup := driver.NewTurnSink(Envelope{SessionKey: sessionKey})
-	if sink == nil {
-		return releaseInFlight
-	}
+	sink, cleanup := a.autonomousTurnSink(conn, sessionKey)
+
 	router := a.sessionRouter(sessionKey)
-	router.SetLateStream(sink)
-	return func() {
-		router.ClearLateStream()
+	router.Register(sink) // synchronous — registered before the run's first delta
+
+	t := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ctx := turnevent.WithSink(WithTrigger(context.Background(), "autonomous"), sink)
+	ts := NewTurnState(ctx, sessionKey, nil, nil)
+	ts.StartedAt = time.Now()
+	ts.Meta = &TurnMetadata{}
+	ts.Trigger = "autonomous"
+	ts.Backend = be
+	t.LoadSessionMeta(ts)
+	ts.sessionFilePath = be.SessionFilePath()
+	turnEvents := t.buildTurnEvents(ts, be)
+
+	if !adopter.AdoptRunningTurn(turnEvents) {
+		// A foci-initiated turn raced this open and now owns the run — unwind.
+		router.Clear()
 		if cleanup != nil {
 			cleanup()
 		}
-		releaseInFlight()
+		return
 	}
+
+	sink.Emit(ctx, turnevent.TurnStart{})
+	markDone := a.markInFlight(sessionKey, sink.DeliversToPlatform())
+
+	// Owning goroutine: OnTurnComplete (built into turnEvents) closes
+	// CompletionChan at idle / process exit. Post-turn accounting runs OFF the
+	// reader goroutine; the TurnComplete event emits the meta frame.
+	go func() {
+		<-ts.CompletionChan
+		t.UpdateSessionMeta(ts)
+		t.RunCompaction(ts)
+		sink.Emit(ctx, turnevent.TurnComplete{
+			FinalText: ts.FinalText,
+			Usage:     ts.DisplayUsage(),
+			Cost:      ts.FinalCost,
+			Model:     ts.FinalModel,
+		})
+		if cleanup != nil {
+			cleanup()
+		}
+		router.Clear()
+		markDone()
+	}()
+}
+
+// autonomousTurnSink builds the per-turn delivery sink for an adopted autonomous
+// turn: the app's streaming appSink (text.delta + activity) when the connection
+// is a streaming Driver, a whole-message SessionSink for Telegram/Discord, or a
+// NopSink when no connection is bound (the turn still runs and accounts).
+func (a *Agent) autonomousTurnSink(conn platform.Connection, sessionKey string) (turnevent.Sink, func()) {
+	if driver, ok := conn.(Driver); ok {
+		if sink, cleanup := driver.NewTurnSink(Envelope{SessionKey: sessionKey}); sink != nil {
+			return sink, cleanup
+		}
+	}
+	if conn != nil {
+		return turn.NewSessionSink(conn, sessionKey, "autonomous"), nil
+	}
+	return turnevent.NopSink{}, nil
 }
 
 // recordTurnActivity performs a turn's ENTIRE per-turn timestamp write. It first

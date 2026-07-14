@@ -98,27 +98,22 @@ type Backend struct {
 	// Turn state
 	turnMu         sync.Mutex
 	turnActive     bool
-	// autonomousActive is true while CC runs a turn foci didn't open (an
-	// "autonomous turn": a background-agent-completion or task-notification run
-	// that produces work with no foci TurnEvents). Set on session_state=running
-	// while !turnActive, cleared on idle / turn adoption. It gates SourceSystem
-	// injects (tryBeginTurn) so reflection/keepalive can't inject into — and get
-	// its silent-sink turn to swallow — live autonomous work (#1047).
-	autonomousActive bool
-	// lastAutonomousEnd is when the most recent autonomous run went idle. For a
-	// short grace after it (autonomousInjectGrace), SourceSystem injects still
-	// defer in tryBeginTurn — see there.
+	// turnAutonomous marks a turn foci did NOT open with a send: CC started the
+	// run itself (a background-agent completion, task-notification, or back-to-
+	// back continuation) and foci adopted it as a first-class turn (#1261). Set
+	// by AdoptRunningTurn, read in completeTurn to arm the post-run grace window
+	// (lastAutonomousEnd). Cleared at completion alongside turnActive.
+	turnAutonomous bool
+	// lastAutonomousEnd is when the most recent autonomous (CC-initiated) turn
+	// completed. For a short grace after it (autonomousInjectGrace), SourceSystem
+	// injects still defer in tryBeginTurn — see there. This bridges the gap
+	// between one autonomous turn's idle and a possible back-to-back continuation
+	// (whose own running edge would re-arm turnActive), so a reflection/keepalive
+	// can't slip in and have its silent-sink turn swallow the continuation (#1047).
 	lastAutonomousEnd time.Time
 	// lastGraceLogEnd dedups the Phase 4 grace-instrumentation log to one line
 	// per grace window (guarded by turnMu) rather than one per inject retry.
 	lastGraceLogEnd time.Time
-	// autonomousStreamed records whether any top-level assistant text was
-	// streamed to the session sink (se.OnText) during the current autonomous
-	// run. When true, the run's text already reached the chat via the
-	// late-delivery fallback, so onSessionIdle must NOT re-deliver the stashed
-	// result (double-send guard). Reset when an autonomous run begins. See
-	// onSessionIdle's autonomous branch (#1063).
-	autonomousStreamed bool
 	turnEvents        *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
 	turnResultCh   chan *ResultMessage   // buffered(1), receives result
 	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
@@ -202,24 +197,21 @@ type Backend struct {
 	onAuthFailure     func(detail string) // fired when CC reports a 401 auth failure (#843)
 	onRateLimited     func(detail string) // fired with a rate_limit_event warning notice (#1211/#1238)
 	onSessionLimit    func(until time.Time) // fired when CC reports a session limit was hit (synthetic message), with the parsed reset time
-	// onAutonomousStart/onAutonomousEnd bracket a CC autonomous run (one foci
-	// opened no turn for). onAutonomousStart fires on the false→true edge of
-	// autonomousActive; onAutonomousEnd fires on the true→false edge, from
-	// whichever site ends the run — CC idle, subprocess exit, or a foci turn
-	// adopting it. The agent wires these to markInFlight/release so the run is
-	// adopted as an in-flight delivering turn and concurrent injections are held
-	// (#1070). Set before Start, read-only after. Both edges route through
-	// setAutonomousActiveLocked so the pair is always balanced.
-	onAutonomousStart func()
-	onAutonomousEnd   func()
+	// onAutonomousOpen is fired when the backend detects CC has begun a run foci
+	// did not open (session_state=running while !turnActive). The agent wires it
+	// to openAutonomousTurn, which adopts the in-flight run as a first-class foci
+	// turn (#1261): registers the platform streaming sink, builds TurnEvents, and
+	// calls AdoptRunningTurn so the run streams + accounts + completes like any
+	// turn. Enqueued onto edgeCallbacks at the running edge (under turnMu) and
+	// fired by drainEdgeCallbacks (off turnMu, still synchronous on the reader
+	// goroutine — so the sink is registered before the first delta is read).
+	// Set before Start, read-only after.
+	onAutonomousOpen func()
 
-	// edgeCallbacks is the FIFO of pending onAutonomousStart/End callbacks.
-	// setAutonomousActiveLocked appends here under turnMu (so enqueue order ==
-	// true state-transition order); drainEdgeCallbacks fires them under fireMu
-	// in that order. This is what keeps a start (reader goroutine) and an
-	// adopting end (turn goroutine) from firing reversed — which would release
-	// before adopt and leak a phantom in-flight adoption, wedging the inject
-	// gate until the next run.
+	// edgeCallbacks is the FIFO of pending reader-goroutine callbacks (the
+	// autonomous-open at the running edge). Appended under turnMu (so enqueue
+	// order == true state-transition order); drainEdgeCallbacks fires them under
+	// fireMu in that order, off turnMu.
 	edgeCallbacks []func()
 	// fireMu serialises drainEdgeCallbacks so exactly one goroutine fires the
 	// queued edges, in order. Distinct from turnMu — never held across turnMu,

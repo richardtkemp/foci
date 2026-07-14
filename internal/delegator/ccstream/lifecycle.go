@@ -433,7 +433,7 @@ func (b *Backend) finalizeExit(reason error) {
 		turn := b.turnEvents
 		b.turnEvents = nil
 		b.turnActive = false
-		b.setAutonomousActiveLocked(false) // subprocess gone: no idle will clear it
+		b.turnAutonomous = false
 		b.stashedResult = nil
 		b.stashedResultMsg = nil
 		b.redispatchInFlight = false
