@@ -38,7 +38,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 	wantExec := []string{
 		"summary", "http_request", "web_search", "web_fetch",
 		"memory_search", "todo", "send_to_chat", "send_to_session",
-		"ask", "remind", "app_android",
+		"ask", "spawn", "remind", "app_android",
 	}
 
 	if !equalStrings(api, wantAPI) {

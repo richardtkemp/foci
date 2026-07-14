@@ -36,7 +36,7 @@ type BranchOptions struct {
 
 // SessionBrancher is the session ops needed by spawn inherit mode.
 type SessionBrancher interface {
-	CreateBranch(parentKey string, opts BranchOptions) (string, error)
+	ForkSession(ctx context.Context, parentKey string, opts BranchOptions) (branchKey string, ok bool, err error)
 	SessionPath(key string) (string, error)
 }
 
@@ -548,13 +548,16 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 	}
 
 	// Create branch with NoResetHook (ephemeral session).
-	branchKey, err := deps.Sessions.CreateBranch(parentSession, BranchOptions{
+	branchKey, ok, err := deps.Sessions.ForkSession(ctx, parentSession, BranchOptions{
 		NoResetHook:         true,
 		BranchType:          "spawn",
 		OrientationTemplate: deps.OrientationTemplate,
 	})
 	if err != nil {
-		return ToolResult{}, fmt.Errorf("spawn inherit: create branch: %w", err)
+		return ToolResult{}, fmt.Errorf("spawn inherit: fork: %w", err)
+	}
+	if !ok {
+		return ToolResult{}, fmt.Errorf("spawn inherit: backend cannot fork this session")
 	}
 
 	// Prevent compaction on branch sessions — they're short-lived and should

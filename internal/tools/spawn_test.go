@@ -44,12 +44,15 @@ type mockSessionBrancher struct {
 	err       error
 }
 
-func (m *mockSessionBrancher) CreateBranch(parentKey string, opts BranchOptions) (string, error) {
+func (m *mockSessionBrancher) ForkSession(_ context.Context, parentKey string, opts BranchOptions) (string, bool, error) {
 	m.parentKey = parentKey
 	m.opts = opts
 	// Generate a deterministic branch key from parentKey for test stability.
 	m.branchKey = parentKey + "/b1000000000"
-	return m.branchKey, m.err
+	if m.err != nil {
+		return "", false, m.err
+	}
+	return m.branchKey, true, nil
 }
 
 func (m *mockSessionBrancher) SessionPath(key string) (string, error) {
