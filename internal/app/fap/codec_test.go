@@ -398,6 +398,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ErrorFrame{Code: "boom", Message: "bad"},
 		Pong{},
 		ToolInvoke{InvocationID: "inv", Tool: "android", Action: "list", Args: json.RawMessage(`{}`)},
+		ConversationForeground{ConversationID: "c"},
 	}
 	for _, f := range frames {
 		wire, err := Encode(f, 0, 0, "id", "ts")

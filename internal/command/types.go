@@ -24,7 +24,8 @@ type Request struct {
 	Args       string
 	SessionKey string
 	UserID     string
-	ChatID     int64 // platform conversation identifier
+	ChatID     int64  // platform conversation identifier
+	Source     string // originating transport ("app", "telegram", …); "" for legacy callers
 }
 
 // RequestFromText parses a slash command string like "/status args" into a Request.
@@ -54,6 +55,9 @@ type Response struct {
 	Parts    []string // when set, each part is sent as a separate message
 	DocPath  string
 	Keyboard []KeyboardOption // optional inline keyboard to show with the response
+	// OpenConversationID, when set, asks the requesting client (only) to
+	// foreground this conversation — e.g. the new conversation minted by /facet.
+	OpenConversationID string
 }
 
 // CommandContext bundles all per-agent dependencies that slash commands need.
@@ -132,6 +136,13 @@ type CommandContext struct {
 
 	// Facet configuration callback
 	ConfigureFacet func(platform.Connection)
+
+	// MintFacetConversation surfaces a facet branch to an app client: it creates
+	// a new app conversation bound to sessionKey, adds it to the shared open-set,
+	// and pushes the updated roster to all devices, returning the new conversation
+	// ID. Nil for transports without app conversations (telegram/discord use the
+	// secondary-bot facet pool instead). Injected by the gateway over the app hub.
+	MintFacetConversation func(agentID, sessionKey string) (convID string, err error)
 
 	// Turn cancellation (injected by platform bot)
 	StopFunc       func() // cancels the current agent turn; nil = no-op

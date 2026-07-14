@@ -43,17 +43,22 @@ const (
 	// InteractiveProgressEdit syncs a batched ask's accumulated answers to the
 	// other attached clients (Done=true when resolved, so they close the form).
 	TypeInteractiveProgressEdit = "interactive.progressEdit"
-	TypeWizardStep      = "wizard.step"
-	TypeWizardEnd       = "wizard.end"
-	TypeSubagentStart   = "subagent.start"
-	TypeSubagentText    = "subagent.text"
-	TypeSubagentEnd     = "subagent.end"
-	TypeExternalPrompt  = "external.prompt"
-	TypeMeta            = "meta"
-	TypeError           = "error"
-	TypePong            = "pong"
-	TypeTranscript      = "transcript"
-	TypeToolInvoke      = "tool.invoke"
+	TypeWizardStep              = "wizard.step"
+	TypeWizardEnd               = "wizard.end"
+	TypeSubagentStart           = "subagent.start"
+	TypeSubagentText            = "subagent.text"
+	TypeSubagentEnd             = "subagent.end"
+	TypeExternalPrompt          = "external.prompt"
+	TypeMeta                    = "meta"
+	TypeError                   = "error"
+	TypePong                    = "pong"
+	TypeTranscript              = "transcript"
+	TypeToolInvoke              = "tool.invoke"
+	// TypeConversationForeground (server->app) asks ONE device — the one that
+	// requested it (e.g. via /facet) — to foreground a conversation. Existence
+	// and open-set sync to all devices; focus stays device-local, so this is
+	// sent only to the requesting socket.
+	TypeConversationForeground = "conversation.foreground"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -791,6 +796,15 @@ type ConversationOpenSync struct {
 }
 
 func (ConversationOpenSync) Type() string { return TypeConversationOpenSync }
+
+// ConversationForeground asks the receiving device to foreground (select/open)
+// one conversation (server->client). Unlike ConversationOpenSync it is sent to a
+// single socket — the one that requested it — because focus is device-local.
+type ConversationForeground struct {
+	ConversationID string `json:"conversationId"`
+}
+
+func (ConversationForeground) Type() string { return TypeConversationForeground }
 
 // SettingPut mirrors one synced app-preference to the server (client->server).
 // The server is a dumb store: it persists Key=Value under the global app-settings

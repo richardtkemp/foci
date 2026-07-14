@@ -165,6 +165,20 @@ func ResolvedActivity(sessionKey string) (kind, detail string, ok bool) {
 	return string(k), d, true
 }
 
+// MintFacetConversation surfaces a facet branch to app clients via the active
+// hub (see Hub.mintFacetConversation). Injected into the command layer by the
+// gateway as CommandContext.MintFacetConversation. Errors if the app provider
+// is not running.
+func MintFacetConversation(agentID, sessionKey string) (string, error) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return "", errors.New("app provider not running")
+	}
+	return h.mintFacetConversation(agentID, sessionKey)
+}
+
 // withHub returns an http.HandlerFunc that resolves the active hub (503 if
 // unconfigured) and delegates to fn. Each hub method does its own Bearer auth,
 // so no shared middleware is needed.

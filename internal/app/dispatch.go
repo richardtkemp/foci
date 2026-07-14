@@ -488,11 +488,12 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 		SessionKey: b.sessionKey,
 		UserID:     deviceID,
 		ChatID:     b.chatID,
+		Source:     "app",
 	}
-	safeGo("dispatch-command", func() { h.dispatchCommand(conn, b, req) })
+	safeGo("dispatch-command", func() { h.dispatchCommand(client, conn, b, req) })
 }
 
-func (h *Hub) dispatchCommand(conn *appConn, b *convBinding, req command.Request) {
+func (h *Hub) dispatchCommand(client *wsClient, conn *appConn, b *convBinding, req command.Request) {
 	ctx := h.deps.Ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -540,6 +541,12 @@ func (h *Hub) dispatchCommand(conn *appConn, b *convBinding, req command.Request
 	}
 	if resp.DocPath != "" {
 		_ = conn.SendDocumentToChat(b.chatID, resp.DocPath, "")
+	}
+	// Foreground a conversation on the requesting device only (e.g. the new
+	// conversation /facet just minted). Existence + open-set already synced to
+	// all devices; focus is device-local, so this frame targets one socket.
+	if resp.OpenConversationID != "" && client != nil {
+		client.sendRaw(fap.ConversationForeground{ConversationID: resp.OpenConversationID})
 	}
 }
 
