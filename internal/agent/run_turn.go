@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"foci/internal/agent/turnevent"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/turn"
 )
@@ -136,7 +135,7 @@ func (a *Agent) RunTurn(
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(sk)) {
 			answer := strings.TrimSpace(texts[0])
 			if answer != "" {
-				log.Debugf("ask", "session=%s routing typed text to pending ask req=%s: %q", sk, reqID, answer)
+				a.taggedLog("ask").Debugf("session=%s routing typed text to pending ask req=%s: %q", sk, reqID, answer)
 				a.AskRouter.HandleResponse(reqID, answer)
 				return nil
 			}

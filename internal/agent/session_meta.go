@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
@@ -226,7 +225,7 @@ func (a *Agent) SetSessionEffort(sessionKey, value string) {
 		if _, err := a.SendBackendControl(ctx, sessionKey, &delegator.ApplyFlagSettingsRequest{
 			Settings: map[string]any{"effortLevel": value},
 		}); err != nil {
-			log.Warnf("agent", "session=%s apply_flag_settings effortLevel=%q failed: %v", sessionKey, value, err)
+			a.logger().Warnf("session=%s apply_flag_settings effortLevel=%q failed: %v", sessionKey, value, err)
 		}
 	}()
 }
@@ -449,11 +448,11 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 	// Tell the backend, if one exists and supports control requests.
 	handled, err := a.SendBackendControl(ctx, sessionKey, &delegator.SetModelRequest{Model: rawModel})
 	if err != nil {
-		log.Warnf("agent", "session=%s backend set_model failed: %v", sessionKey, err)
+		a.logger().Warnf("session=%s backend set_model failed: %v", sessionKey, err)
 		return fmt.Errorf("backend model switch failed: %w", err)
 	}
 	if handled {
-		log.Infof("agent", "session=%s model switched via backend to %q", sessionKey, rawModel)
+		a.logger().Infof("session=%s model switched via backend to %q", sessionKey, rawModel)
 	}
 
 	// Query context usage to get the real context window size and resolved
@@ -499,7 +498,7 @@ func (a *Agent) SetPermissionMode(ctx context.Context, sessionKey, mode string) 
 	// control_response to confirm. Bad mode values are validated by the
 	// command layer before we get here.
 	a.SetSessionPermissionMode(sessionKey, mode)
-	log.Infof("agent", "session=%s permission mode switched to %q", sessionKey, mode)
+	a.logger().Infof("session=%s permission mode switched to %q", sessionKey, mode)
 	return nil
 }
 
@@ -531,7 +530,7 @@ func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string
 
 	wnd, err := cwq.GetContextWindow(queryCtx)
 	if err != nil {
-		log.Warnf("agent", "session=%s get_context_window failed: %v", sessionKey, err)
+		a.logger().Warnf("session=%s get_context_window failed: %v", sessionKey, err)
 		return
 	}
 
@@ -546,7 +545,7 @@ func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string
 	}
 	a.metaMu.Unlock()
 
-	log.Infof("agent", "session=%s context_window: %d tokens, model=%s",
+	a.logger().Infof("session=%s context_window: %d tokens, model=%s",
 		sessionKey, wnd.MaxTokens, wnd.Model)
 }
 

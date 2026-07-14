@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 
-	"foci/internal/log"
 	"foci/internal/session"
 )
 
@@ -112,7 +111,7 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	// succeeds, so a failed/impossible fork leaves no orphan branch session.
 	forkedID, err := a.DelegatedManager.ForkParentSession(ctx, parentKey)
 	if err != nil {
-		log.Warnf(opts.BranchType, "backend fork of %s failed: %v", parentKey, err)
+		a.taggedLog(opts.BranchType).Warnf("backend fork of %s failed: %v", parentKey, err)
 		return "", false
 	}
 	if forkedID == "" {
@@ -120,14 +119,14 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	}
 	branchKey, err := a.Sessions.CreateBranchWithOptions(parentKey, opts)
 	if err != nil {
-		log.Errorf(opts.BranchType, "fork branch key create for %s: %v", parentKey, err)
+		a.taggedLog(opts.BranchType).Errorf("fork branch key create for %s: %v", parentKey, err)
 		return "", false
 	}
 	// Point the branch key at the forked backend session so the next turn on it
 	// resumes the clone (full parent context) via the normal getOrCreate path.
 	a.DelegatedManager.saveResumeID(branchKey, forkedID)
 	a.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
-	log.Infof(opts.BranchType, "backend fork %s → %s (%s)", parentKey, branchKey, forkedID)
+	a.taggedLog(opts.BranchType).Infof("backend fork %s → %s (%s)", parentKey, branchKey, forkedID)
 	return branchKey, true
 }
 
@@ -177,7 +176,7 @@ func (a *Agent) createMemoryBranch(parentKey, branchType, orientTemplate string)
 		OrientationTemplate: orientTemplate,
 	})
 	if err != nil {
-		log.Errorf(branchType, "branch error for session %s: %v", parentKey, err)
+		a.taggedLog(branchType).Errorf("branch error for session %s: %v", parentKey, err)
 		return "", false
 	}
 	a.SetSessionNoCompact(branchKey, true)

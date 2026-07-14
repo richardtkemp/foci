@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 )
 
 // SendBackendControl sends a control request to the delegated backend for
@@ -24,7 +23,7 @@ func (a *Agent) SendBackendControl(ctx context.Context, sessionKey string, req d
 
 	cs, ok := be.(delegator.ControlSender)
 	if !ok {
-		log.Debugf("agent", "backend %T does not implement ControlSender", be)
+		a.logger().Debugf("backend %T does not implement ControlSender", be)
 		return false, nil
 	}
 

@@ -193,7 +193,7 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 }
 
 // logCacheDebug logs system prompt size and warns about minimum token thresholds.
-func logCacheDebug(sessionKey string, system []provider.SystemBlock, messages []provider.Message, model string) {
+func logCacheDebug(lg *log.ComponentLogger, sessionKey string, system []provider.SystemBlock, messages []provider.Message, model string) {
 	// Estimate tokens: ~4 chars per token (rough heuristic)
 	const charsPerToken = 4
 
@@ -203,7 +203,7 @@ func logCacheDebug(sessionKey string, system []provider.SystemBlock, messages []
 	}
 	systemTokensEst := systemChars / charsPerToken
 
-	log.Debugf("agent", "cache: session=%s system=%d blocks, ~%d tokens; messages=%d",
+	lg.Debugf("cache: session=%s system=%d blocks, ~%d tokens; messages=%d",
 		sessionKey, len(system), systemTokensEst, len(messages))
 
 	// Warn about minimum token thresholds
@@ -214,7 +214,7 @@ func logCacheDebug(sessionKey string, system []provider.SystemBlock, messages []
 	}
 
 	if len(system) > 0 && systemTokensEst < minTokens {
-		log.Warnf("agent", "session=%s system prompt ~%d tokens is below %s minimum of %d for caching — cache will not activate",
+		lg.Warnf("session=%s system prompt ~%d tokens is below %s minimum of %d for caching — cache will not activate",
 			sessionKey, systemTokensEst, model, minTokens)
 	}
 }

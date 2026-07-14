@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 )
 
 // SendPermissionResponse sends the user's permission decision back to the
@@ -24,11 +23,11 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 	// AskUserQuestion routing — button clicks ("qa:*") and cancellation.
 	if qr, ok := be.(delegator.QuestionResponder); ok && requestID != "" {
 		if choice == "qa:cancel" {
-			log.Debugf("agent/perm", "cancelling question: reqID=%s", requestID)
+			a.taggedLog("agent/perm").Debugf("cancelling question: reqID=%s", requestID)
 			return qr.CancelQuestion(requestID)
 		}
 		if strings.HasPrefix(choice, "qa:") {
-			log.Debugf("agent/perm", "answering question: reqID=%s choice=%q", requestID, choice)
+			a.taggedLog("agent/perm").Debugf("answering question: reqID=%s choice=%q", requestID, choice)
 			return qr.RespondToQuestion(requestID, choice)
 		}
 	}
@@ -37,7 +36,7 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 	// arrive via the turn_delegated.go intercept below, not this path.
 	if er, ok := be.(delegator.ElicitationResponder); ok && requestID != "" {
 		if strings.HasPrefix(choice, "elic:") {
-			log.Debugf("agent/perm", "answering elicitation: reqID=%s choice=%q", requestID, choice)
+			a.taggedLog("agent/perm").Debugf("answering elicitation: reqID=%s choice=%q", requestID, choice)
 			return er.RespondToElicitation(requestID, choice)
 		}
 	}
@@ -55,10 +54,10 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 		if strings.HasPrefix(choice, "allow_always:") {
 			prefix := strings.TrimPrefix(choice, "allow_always:")
 			if rr, ok := be.(ruleResponder); ok {
-				log.Debugf("agent/perm", "responding with rule: reqID=%s prefix=%s", requestID, prefix)
+				a.taggedLog("agent/perm").Debugf("responding with rule: reqID=%s prefix=%s", requestID, prefix)
 				err := rr.RespondToPermissionWithRule(requestID, prefix)
 				if err != nil {
-					log.Errorf("agent/perm", "RespondToPermissionWithRule failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
+					a.taggedLog("agent/perm").Errorf("RespondToPermissionWithRule failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
 				}
 				return err
 			}
@@ -70,10 +69,10 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 		if !allow {
 			msg = "User denied permission"
 		}
-		log.Debugf("agent/perm", "responding via protocol: reqID=%s choice=%q allow=%v", requestID, choice, allow)
+		a.taggedLog("agent/perm").Debugf("responding via protocol: reqID=%s choice=%q allow=%v", requestID, choice, allow)
 		err := pr.RespondToPermission(requestID, allow, msg)
 		if err != nil {
-			log.Errorf("agent/perm", "RespondToPermission failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
+			a.taggedLog("agent/perm").Errorf("RespondToPermission failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
 		}
 		return err
 	}
@@ -90,10 +89,10 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 	if pr, ok := be.(rememberPermResponder); ok && requestID != "" {
 		remember := choice == "always" || strings.HasPrefix(choice, "allow_always")
 		allow := remember || choice == "allow" || strings.HasPrefix(choice, "allow")
-		log.Debugf("agent/perm", "responding via remember-protocol: reqID=%s choice=%q allow=%v remember=%v", requestID, choice, allow, remember)
+		a.taggedLog("agent/perm").Debugf("responding via remember-protocol: reqID=%s choice=%q allow=%v remember=%v", requestID, choice, allow, remember)
 		err := pr.RespondToPermission(requestID, allow, remember)
 		if err != nil {
-			log.Errorf("agent/perm", "RespondToPermission (remember) failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
+			a.taggedLog("agent/perm").Errorf("RespondToPermission (remember) failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
 		}
 		return err
 	}
@@ -121,7 +120,7 @@ func (a *Agent) CancelPendingQuestion(ctx context.Context, sessionKey string) bo
 	if reqID == "" {
 		return false
 	}
-	log.Debugf("agent/perm", "cancelling pending question via /stop: reqID=%s session=%s", reqID, sessionKey)
+	a.taggedLog("agent/perm").Debugf("cancelling pending question via /stop: reqID=%s session=%s", reqID, sessionKey)
 	_ = qr.CancelQuestion(reqID)
 	return true
 }

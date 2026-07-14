@@ -278,7 +278,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			req.Speed = "fast"
 		}
 
-		logCacheDebug(ts.SessionKey, ts.System, ts.Messages, ts.TurnModel)
+		logCacheDebug(a.logger(), ts.SessionKey, ts.System, ts.Messages, ts.TurnModel)
 		a.logger().Debugf("api_request session=%s model=%s messages=%d tools=%d system_blocks=%d",
 			ts.SessionKey, ts.TurnModel, len(ts.Messages), len(ts.ToolDefs), len(ts.System))
 
