@@ -58,8 +58,8 @@ func TestBranchStrategyFor(t *testing.T) {
 
 // TestBranchStrategyForBranchCapable locks the matrix for a delegated agent
 // whose backend CAN fork (BackendBrancher): the payoff — every branch becomes a
-// real backend fork EXCEPT keepalive and compaction-memory, which stay bound to
-// the live session's process/cache/compaction lifecycle.
+// real backend fork EXCEPT session-end-memory, which stays a plain session fork
+// so its lifecycle can be remapped onto the successor session (#1120).
 func TestBranchStrategyForBranchCapable(t *testing.T) {
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil },
