@@ -14,7 +14,8 @@ import (
 // compaction summarises and replaces the history. Creates an async branch so
 // the memory agent sees the full pre-compaction context.
 func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemplate string) {
-	if !a.Reflection.CompactionEnabled {
+	refl := a.reflection()
+	if !refl.CompactionEnabled {
 		return
 	}
 
@@ -24,7 +25,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(a.Reflection.CompactionPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
+	prompt := prompts.ResolvePrompt(refl.CompactionPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
 	if prompt == "" {
 		return
 	}
@@ -64,7 +65,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 	log.Infof("compaction-memory", "firing for %s → %s", sessionKey, targetKey)
 
 	var skillBefore skills.SkillSnapshot
-	if a.Reflection.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
+	if refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
 		skillBefore = skills.Snapshot(a.SkillDirs)
 	}
 

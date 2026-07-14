@@ -26,7 +26,7 @@ import (
 // background work branches which set NoResetHook but should still get
 // reflection).
 func (a *Agent) PrepareSessionEndMemory(sessionKey, orientTemplate string, skipMetaCheck bool) (string, bool) {
-	if !a.Reflection.SessionEndEnabled {
+	if !a.reflection().SessionEndEnabled {
 		return "", false
 	}
 
@@ -82,7 +82,8 @@ func (a *Agent) PrepareSessionEndMemory(sessionKey, orientTemplate string, skipM
 // transports). For delegated agents the branch's backend is destroyed
 // afterwards — reflection is the branch's last act.
 func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
-	prompt := prompts.ResolvePrompt(a.Reflection.SessionEndPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
+	refl := a.reflection()
+	prompt := prompts.ResolvePrompt(refl.SessionEndPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
 	if prompt == "" {
 		return
 	}
@@ -90,7 +91,7 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 	log.Infof("session-end-memory", "firing on %s", branchKey)
 
 	var skillBefore skills.SkillSnapshot
-	if a.Reflection.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
+	if refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
 		skillBefore = skills.Snapshot(a.SkillDirs)
 	}
 
