@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 )
 
 // WaitForTurn blocks until the watcher observes the next turn completion
@@ -192,12 +191,12 @@ func (b *Backend) recordPreSendOffset() {
 	// flood the user with every past response.
 	childPID, err := findChildPID(b.pane.pid)
 	if err != nil {
-		log.Warnf("backend/cc", "recordPreSendOffset: findChildPID(%d) failed: %v", b.pane.pid, err)
+		b.logger().Warnf("recordPreSendOffset: findChildPID(%d) failed: %v", b.pane.pid, err)
 		return // preSendOffset stays at -1 (default)
 	}
 	_, jsonlPath, err := discoverSessionFile(childPID, b.workDir)
 	if err != nil {
-		log.Warnf("backend/cc", "recordPreSendOffset: discoverSessionFile(pid=%d) failed: %v", childPID, err)
+		b.logger().Warnf("recordPreSendOffset: discoverSessionFile(pid=%d) failed: %v", childPID, err)
 		return // preSendOffset stays at -1 (default)
 	}
 	info, err := os.Stat(jsonlPath)
@@ -206,7 +205,7 @@ func (b *Backend) recordPreSendOffset() {
 		return
 	}
 	b.preSendOffset = info.Size()
-	log.Debugf("backend/cc", "recorded pre-send offset: %d bytes", b.preSendOffset)
+	b.logger().Debugf("recorded pre-send offset: %d bytes", b.preSendOffset)
 }
 
 func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
@@ -364,7 +363,7 @@ func (b *Backend) sendCommand(ctx context.Context, command string) error {
 func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	inFlight := b.IsTurnInFlight()
 	if len(inj.Attachments) > 0 {
-		log.Debugf("cctmux", "Inject(%s): %d attachment(s) dropped — tmux backend has no structured content channel",
+		b.logger().Debugf("Inject(%s): %d attachment(s) dropped — tmux backend has no structured content channel",
 			inj.Source, len(inj.Attachments))
 	}
 
@@ -382,7 +381,7 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 			return b.sendToPane(ctx, inj.Text, inj.Turn, false)
 		}
 		if err := b.Interrupt(ctx); err != nil {
-			log.Warnf("cctmux", "Inject(Steer): Interrupt failed: %v (continuing with sendCommand)", err)
+			b.logger().Warnf("Inject(Steer): Interrupt failed: %v (continuing with sendCommand)", err)
 		}
 		return b.sendCommand(ctx, inj.Text)
 
