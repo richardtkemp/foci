@@ -1,7 +1,10 @@
 package ccstream
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,4 +173,124 @@ func TestForkSessionExclusive(t *testing.T) {
 	if data, _ := os.ReadFile(collide); string(data) != "existing\n" {
 		t.Errorf("collision target was modified: %q", data)
 	}
+}
+
+// assertAllValidJSONLines fails if any line in data isn't valid JSON or if data
+// ends mid-line (no trailing newline) — the invariant every fork must uphold.
+func assertAllValidJSONLines(t *testing.T, tag string, data []byte) int {
+	t.Helper()
+	if len(data) == 0 {
+		return 0
+	}
+	if data[len(data)-1] != '\n' {
+		t.Fatalf("%s: fork ended mid-line (no trailing newline):\n%q", tag, data)
+	}
+	n := 0
+	for _, ln := range bytes.Split(bytes.TrimRight(data, "\n"), []byte("\n")) {
+		if len(ln) == 0 {
+			continue
+		}
+		if !json.Valid(ln) {
+			t.Fatalf("%s: fork emitted an invalid-JSON line: %q", tag, ln)
+		}
+		n++
+	}
+	return n
+}
+
+// TestForkTranscriptTailHandling covers the append-safe cut: a fork copies only
+// whole, well-formed records and stops at a half-appended or torn trailing line.
+func TestForkTranscriptTailHandling(t *testing.T) {
+	const oldID, newID = "OLD", "NEW"
+	l1 := `{"sessionId":"OLD","n":1}`
+	l2 := `{"sessionId":"OLD","n":2}`
+
+	cases := []struct {
+		name      string
+		raw       string
+		wantLines int
+	}{
+		{"clean newline-terminated", l1 + "\n" + l2 + "\n", 2},
+		{"partial trailing record (no newline)", l1 + "\n" + l2 + "\n" + `{"sessionId":"OLD","n":3`, 2},
+		{"torn boundary: complete but invalid-JSON tail", l1 + "\n" + l2 + "\n" + "half-written-garbage\n", 2},
+		{"single clean record", l1 + "\n", 1},
+		{"empty file", "", 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "src.jsonl")
+			dst := filepath.Join(dir, "dst.jsonl")
+			if err := os.WriteFile(src, []byte(tc.raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := forkTranscript(src, dst, oldID, newID); err != nil {
+				t.Fatalf("forkTranscript: %v", err)
+			}
+			data, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("read dst: %v", err)
+			}
+			if got := assertAllValidJSONLines(t, tc.name, data); got != tc.wantLines {
+				t.Errorf("fork emitted %d records, want %d\ncontent:\n%s", got, tc.wantLines, data)
+			}
+			if bytes.Contains(data, []byte(oldID)) {
+				t.Errorf("parent id %q survived in fork:\n%s", oldID, data)
+			}
+			if tc.wantLines > 0 && !bytes.Contains(data, []byte(newID)) {
+				t.Errorf("new id %q missing from fork:\n%s", newID, data)
+			}
+		})
+	}
+}
+
+// TestForkTranscriptConcurrentAppend forks a transcript repeatedly WHILE a writer
+// appends records in chunks (content split from its newline, to maximise the odds
+// of catching a mid-line tail). Every fork must be an all-complete, all-valid-JSON
+// prefix — never a torn line. This is the property that lets a fork run without
+// quiescing the parent's writer.
+func TestForkTranscriptConcurrentAppend(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.jsonl")
+
+	var seed bytes.Buffer
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&seed, `{"sessionId":"OLD","n":%d}`+"\n", i)
+	}
+	if err := os.WriteFile(src, seed.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.OpenFile(src, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 200; i < 500; i++ {
+			rec := fmt.Sprintf(`{"sessionId":"OLD","n":%d}`, i)
+			// Content and newline in separate writes → an interleaved fork can
+			// observe the record without its terminating newline yet.
+			_, _ = f.WriteString(rec[:len(rec)/2])
+			_, _ = f.WriteString(rec[len(rec)/2:])
+			_, _ = f.WriteString("\n")
+		}
+	}()
+
+	for i := 0; i < 60; i++ {
+		dst := filepath.Join(dir, fmt.Sprintf("dst-%d.jsonl", i))
+		if err := forkTranscript(src, dst, "OLD", "NEW"); err != nil {
+			t.Fatalf("fork %d: %v", i, err)
+		}
+		data, err := os.ReadFile(dst)
+		if err != nil {
+			t.Fatalf("read fork %d: %v", i, err)
+		}
+		assertAllValidJSONLines(t, fmt.Sprintf("fork-%d", i), data)
+	}
+	<-done
 }
