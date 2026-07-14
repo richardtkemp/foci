@@ -1,7 +1,10 @@
 package nudge
 
 import (
+	"strings"
 	"testing"
+
+	"foci/internal/log"
 )
 
 func TestNewSchedulerOpts_FiltersUnsupportedRules(t *testing.T) {
@@ -62,6 +65,23 @@ func TestNewSchedulerOpts_FiltersUnsupportedRules(t *testing.T) {
 			t.Fatalf("NewScheduler should keep all rules, got %d", len(s.rules))
 		}
 	})
+}
+
+func TestNewSchedulerOpts_SkipWarningNamesAgent(t *testing.T) {
+	log.SetWarnHook(func(log.Level, string, string) {}) // drain any buffered warnings first
+	var msgs []string
+	log.SetWarnHook(func(_ log.Level, _ string, msg string) { msgs = append(msgs, msg) })
+	defer log.SetWarnHook(nil)
+
+	rs := &RuleSet{Rules: []Rule{{Text: "braindead check", Trigger: Trigger{Type: "every_n_tools", N: 3}}}}
+	NewSchedulerOpts(rs, SchedulerOpts{CanPostTool: false, CanPreAnswer: false, AgentID: "clutch"})
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 skip warning, got %d: %v", len(msgs), msgs)
+	}
+	if !strings.HasPrefix(msgs[0], "agent clutch: ") {
+		t.Errorf("skip warning should name the agent, got %q", msgs[0])
+	}
 }
 
 func TestNewSchedulerOpts_NilRuleSet(t *testing.T) {
