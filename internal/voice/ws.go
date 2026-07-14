@@ -169,7 +169,7 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 			})
 		}
 		if err := c.sendJSON(ConnectedMsg{Type: "connected", Agents: items}); err != nil {
-			log.Errorf("voice-ws", "send connected: %v", err)
+			log.Errorf("voice-ws", "send connected (conn=%s): %v", connID, err)
 			return
 		}
 
@@ -453,7 +453,7 @@ func (c *conn) sendAudioChunks(data []byte) {
 		c.writeMu.Unlock()
 
 		if err != nil {
-			log.Warnf("voice-ws", "write binary: %v", err)
+			log.Warnf("voice-ws", "write binary (session=%s): %v", c.sessionKey, err)
 			return
 		}
 	}

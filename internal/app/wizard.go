@@ -154,7 +154,7 @@ func (h *Hub) handleWizardResponse(f fap.WizardResponse) {
 		return
 	}
 	if f.ConversationID != s.b.convID || f.StepID != s.stepID {
-		log.Debugf("app", "wizard response dropped as stale: id=%s step=%s (want %s)", f.WizardID, f.StepID, s.stepID)
+		log.Debugf("app", "wizard response dropped as stale (conv=%s): id=%s step=%s (want %s)", s.b.convID, f.WizardID, f.StepID, s.stepID)
 		return
 	}
 	reg := s.conn.commands
@@ -185,7 +185,7 @@ func (h *Hub) handleWizardResponse(f fap.WizardResponse) {
 			if meta, err := h.blobs.putFile(docPath, "photo"); err == nil {
 				media = &fap.WizardStepMedia{BlobID: meta.id, MIME: meta.mime, Name: meta.name}
 			} else {
-				log.Warnf("app", "wizard doc blob staging failed, sending in-chat: %v", err)
+				log.Warnf("app", "wizard doc blob staging failed (conv=%s), sending in-chat: %v", s.b.convID, err)
 				_ = s.conn.SendDocumentToChat(s.b.chatID, docPath, "")
 			}
 		} else {
@@ -216,7 +216,7 @@ func (h *Hub) endWizard(s *wizardSession, status, text string) {
 	h.wizardMu.Unlock()
 	h.persistWizardSessions(s.b.agentID)
 	s.b.send(fap.WizardEnd{ConversationID: s.b.convID, WizardID: s.id, Status: status, Text: text})
-	log.Debugf("app", "wizard ended: id=%s status=%s", s.id, status)
+	log.Debugf("app", "wizard ended (conv=%s): id=%s status=%s", s.b.convID, s.id, status)
 }
 
 // endScopeWizard ends the live session (if any) fronting the given wizard
