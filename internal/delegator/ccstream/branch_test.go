@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 const (
@@ -166,7 +167,7 @@ func TestForkSessionExclusive(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(dir, testParentUUID+".jsonl")
-	if err := forkTranscript(src, collide, testParentUUID, "new"); err == nil {
+	if err := forkTranscript(src, collide, testParentUUID, "new", log.NewComponentLogger("test")); err == nil {
 		t.Fatal("expected O_EXCL collision error, got nil")
 	}
 	// Existing file must be intact (not clobbered/removed).
@@ -225,7 +226,7 @@ func TestForkTranscriptTailHandling(t *testing.T) {
 			if err := os.WriteFile(src, []byte(tc.raw), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := forkTranscript(src, dst, oldID, newID); err != nil {
+			if err := forkTranscript(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
 				t.Fatalf("forkTranscript: %v", err)
 			}
 			data, err := os.ReadFile(dst)
@@ -283,7 +284,7 @@ func TestForkTranscriptConcurrentAppend(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		dst := filepath.Join(dir, fmt.Sprintf("dst-%d.jsonl", i))
-		if err := forkTranscript(src, dst, "OLD", "NEW"); err != nil {
+		if err := forkTranscript(src, dst, "OLD", "NEW", log.NewComponentLogger("test")); err != nil {
 			t.Fatalf("fork %d: %v", i, err)
 		}
 		data, err := os.ReadFile(dst)
