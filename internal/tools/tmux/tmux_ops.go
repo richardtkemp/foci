@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"foci/internal/display"
-	"foci/internal/log"
 	"foci/internal/tools"
 )
 
@@ -20,7 +19,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 		name = fmt.Sprintf("foci-%d", n)
 	}
 
-	log.Debugf("tmux", "start: session=%s name=%s command=%q workdir=%q keys=%q cols=%d rows=%d watch=%v", sessionKey, name, command, workdir, keys, inst.cols, inst.rows, watch)
+	tmuxLog.Debugf("start: session=%s name=%s command=%q workdir=%q keys=%q cols=%d rows=%d watch=%v", sessionKey, name, command, workdir, keys, inst.cols, inst.rows, watch)
 
 	// Cancel any stale watches for this session name (e.g. from a prior
 	// session that exited naturally before the monitor noticed).
@@ -48,22 +47,22 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 		// Ensure the server is up and retry once before giving up. start-server
 		// is idempotent — a no-op if a server is already running, so it never
 		// disturbs sibling sessions on a shared socket.
-		log.Warnf("tmux", "new-session failed, restarting server and retrying: session=%s name=%s out=%q err=%v", sessionKey, name, strings.TrimSpace(out), err)
+		tmuxLog.Warnf("new-session failed, restarting server and retrying: session=%s name=%s out=%q err=%v", sessionKey, name, strings.TrimSpace(out), err)
 		if sout, serr := inst.runTmux(ctx, "start-server"); serr != nil {
-			log.Warnf("tmux", "start-server before retry failed: session=%s %s %v", sessionKey, strings.TrimSpace(sout), serr)
+			tmuxLog.Warnf("start-server before retry failed: session=%s %s %v", sessionKey, strings.TrimSpace(sout), serr)
 		}
 		out, err = inst.runTmux(ctx, args...)
 		if err != nil {
 			return tools.ToolResult{}, fmt.Errorf("tmux new-session (after retry): %s: %w%s", strings.TrimSpace(out), err, tmuxStartDiag(inst.socketPath))
 		}
-		log.Infof("tmux", "new-session succeeded on retry: session=%s name=%s", sessionKey, name)
+		tmuxLog.Infof("new-session succeeded on retry: session=%s name=%s", sessionKey, name)
 	}
 
 	// Resize window so output isn't truncated to a small default terminal size.
 	if inst.cols > 0 && inst.rows > 0 {
 		out, err = inst.runTmux(ctx, "resize-window", "-t", name, "-x", fmt.Sprintf("%d", inst.cols), "-y", fmt.Sprintf("%d", inst.rows))
 		if err != nil {
-			log.Warnf("tmux", "resize-window: session=%s %s %v", sessionKey, strings.TrimSpace(out), err)
+			tmuxLog.Warnf("resize-window: session=%s %s %v", sessionKey, strings.TrimSpace(out), err)
 		}
 	}
 
@@ -79,7 +78,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 	if watch && inst.notifier != nil {
 		watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec, false)
 		if watchErr != nil {
-			log.Warnf("tmux", "auto-watch failed for %s: session=%s %v", name, sessionKey, watchErr)
+			tmuxLog.Warnf("auto-watch failed for %s: session=%s %v", name, sessionKey, watchErr)
 		} else {
 			result += "\n" + watchRes.Text
 		}
@@ -104,7 +103,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	inst.lastAccess[name] = time.Now()
 	inst.mu.Unlock()
 
-	log.Debugf("tmux", "send: session=%s name=%s keys=%q enter=%v", sessionKey, name, keys, enter)
+	tmuxLog.Debugf("send: session=%s name=%s keys=%q enter=%v", sessionKey, name, keys, enter)
 	LogSendEntry(name, len(keys), enter)
 
 	// Rate-limit: enforce minimum gap between consecutive sends to the same session.
@@ -112,7 +111,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	if last, ok := inst.lastSend[name]; ok {
 		if gap := time.Since(last); gap < sendMinGap {
 			wait := sendMinGap - gap
-			log.Debugf("tmux", "send: session=%s rate-limiting %s, sleeping %v", sessionKey, name, wait)
+			tmuxLog.Debugf("send: session=%s rate-limiting %s, sleeping %v", sessionKey, name, wait)
 			LogSendRateLimiting(gap, wait)
 			time.Sleep(wait)
 		}
@@ -188,10 +187,10 @@ func (inst *tmuxInstance) autopilotWatch(ctx context.Context, sessionKey, name s
 
 	watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec, conditional)
 	if watchErr != nil {
-		log.Warnf("tmux", "autopilot: session=%s auto-watch failed for %s: %v", sessionKey, name, watchErr)
+		tmuxLog.Warnf("autopilot: session=%s auto-watch failed for %s: %v", sessionKey, name, watchErr)
 		return ""
 	}
-	log.Debugf("tmux", "autopilot: session=%s auto-watching %s (conditional=%v)", sessionKey, name, conditional)
+	tmuxLog.Debugf("autopilot: session=%s auto-watching %s (conditional=%v)", sessionKey, name, conditional)
 	return "\n" + watchRes.Text
 }
 
@@ -219,7 +218,7 @@ func (inst *tmuxInstance) verifyKeysInPane(ctx context.Context, name, keys strin
 		return true // nothing meaningful to verify
 	}
 
-	log.Debugf("tmux", "verifyKeysInPane: name=%s needle=%q", name, needle)
+	tmuxLog.Debugf("verifyKeysInPane: name=%s needle=%q", name, needle)
 
 	// Poll every 200ms for up to 2 seconds
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -232,18 +231,18 @@ func (inst *tmuxInstance) verifyKeysInPane(ctx context.Context, name, keys strin
 			// Capture pane content
 			out, err := inst.runTmux(ctx, "capture-pane", "-t", name, "-p")
 			if err != nil {
-				log.Debugf("tmux", "verifyKeysInPane: capture failed: %v", err)
+				tmuxLog.Debugf("verifyKeysInPane: capture failed: %v", err)
 				return false
 			}
 
 			haystack := lettersOnly(out)
 			if strings.Contains(haystack, needle) {
-				log.Debugf("tmux", "verifyKeysInPane: keys confirmed in pane output")
+				tmuxLog.Debugf("verifyKeysInPane: keys confirmed in pane output")
 				return true
 			}
 
 		case <-timeout:
-			log.Debugf("tmux", "verifyKeysInPane: timeout, keys not found in pane output")
+			tmuxLog.Debugf("verifyKeysInPane: timeout, keys not found in pane output")
 			return false
 		case <-ctx.Done():
 			return false
@@ -264,7 +263,7 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 	inst.lastAccess[name] = time.Now()
 	inst.mu.Unlock()
 
-	log.Debugf("tmux", "read: session=%s name=%s lines=%d raw=%v", sessionKey, name, lines, raw)
+	tmuxLog.Debugf("read: session=%s name=%s lines=%d raw=%v", sessionKey, name, lines, raw)
 
 	out, err := inst.runTmux(ctx, "capture-pane", "-t", name, "-p", fmt.Sprintf("-S-%d", lines))
 	if err != nil {
@@ -403,7 +402,7 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (tools.ToolResu
 		return tools.ToolResult{}, fmt.Errorf("session %q not owned by this session", name)
 	}
 
-	log.Debugf("tmux", "kill: session=%s name=%s", sessionKey, name)
+	tmuxLog.Debugf("kill: session=%s name=%s", sessionKey, name)
 
 	// Stop any watches first so the monitor goroutine doesn't fire during cleanup
 	inst.cancelWatchesForSession(name)
@@ -431,10 +430,10 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (tools.ToolResu
 	result := fmt.Sprintf("Session killed: %s", name)
 	if killed > 0 {
 		result += fmt.Sprintf(" (%d child process(es) terminated)", killed)
-		log.Infof("tmux", "kill %s: session=%s terminated %d orphaned child process(es)", name, sessionKey, killed)
+		tmuxLog.Infof("kill %s: session=%s terminated %d orphaned child process(es)", name, sessionKey, killed)
 	}
 	if serverKilled {
-		log.Infof("tmux", "kill %s: session=%s no sessions remain, killed tmux server", name, sessionKey)
+		tmuxLog.Infof("kill %s: session=%s no sessions remain, killed tmux server", name, sessionKey)
 	}
 
 	return tools.TextResult(result), nil

@@ -24,6 +24,10 @@ import (
 	"foci/internal/procx"
 )
 
+var (
+	bitwardenLog = log.NewComponentLogger("bitwarden")
+)
+
 // Item holds vault item metadata (never the password value).
 type Item struct {
 	ID       string   `json:"id"`
@@ -162,7 +166,7 @@ func (s *Store) Refresh() error {
 	s.refreshedAt = time.Now()
 	s.mu.Unlock()
 
-	log.Infof("bitwarden", "refreshed %d items", len(items))
+	bitwardenLog.Infof("refreshed %d items", len(items))
 	return nil
 }
 
@@ -230,7 +234,7 @@ func (s *Store) GetPassword(id string) (string, error) {
 	s.mu.RUnlock()
 
 	// Fetch via executor — may block for user approval
-	log.Infof("bitwarden", "fetching password for %s (requires approval)", id)
+	bitwardenLog.Infof("fetching password for %s (requires approval)", id)
 	val, err := s.exec.Run("get", "password", id)
 	if err != nil {
 		return "", fmt.Errorf("bitwarden unlock denied by administrator: %w", err)
@@ -419,7 +423,7 @@ func (s *Store) cleanup() {
 	for id, cv := range s.values {
 		if now.After(cv.expires) {
 			delete(s.values, id)
-			log.Debugf("bitwarden", "expired cached value for %s", id)
+			bitwardenLog.Debugf("expired cached value for %s", id)
 		}
 	}
 }

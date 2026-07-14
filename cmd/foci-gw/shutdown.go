@@ -10,7 +10,6 @@ import (
 
 	"foci/internal/delegator/opencode"
 	"foci/internal/gemini"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/startup"
@@ -36,10 +35,10 @@ func runShutdown(
 
 	// Record clean shutdown immediately
 	if err := startup.RecordCleanShutdown(sessionIndex); err != nil {
-		log.Warnf("main", "record clean shutdown: %v", err)
+		mainLog.Warnf("record clean shutdown: %v", err)
 	}
 
-	log.Infof("main", "shutting down...")
+	mainLog.Infof("shutting down...")
 
 	// Stop keepalive runners — prevents new timer-triggered branches
 	for _, inst := range agents {
@@ -71,7 +70,7 @@ func runShutdown(
 	// process would exit before those goroutines finish and orphan the subprocess
 	// (#948). This drains the pool and WAITS for the bounded shutdown, so no
 	// `opencode serve` survives a restart. No-op when no opencode agents ran.
-	log.Infof("main", "opencode: closed %d pooled server(s) on shutdown", opencode.CloseAllServers())
+	mainLog.Infof("opencode: closed %d pooled server(s) on shutdown", opencode.CloseAllServers())
 
 	// Close MCP managers
 	for _, inst := range agents {
@@ -149,8 +148,8 @@ func logBusyAgents(agents map[string]*agentInstance, timeout time.Duration) {
 		}
 	}
 	if len(parts) == 0 {
-		log.Warnf("main", "graceful shutdown timed out after %s — agents still processing (no detail available)", timeout)
+		mainLog.Warnf("graceful shutdown timed out after %s — agents still processing (no detail available)", timeout)
 	} else {
-		log.Warnf("main", "graceful shutdown timed out after %s — blocking: %s", timeout, strings.Join(parts, ", "))
+		mainLog.Warnf("graceful shutdown timed out after %s — blocking: %s", timeout, strings.Join(parts, ", "))
 	}
 }

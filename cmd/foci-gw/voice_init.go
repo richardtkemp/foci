@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/secrets"
 	"foci/internal/voice"
 )
@@ -56,28 +55,28 @@ func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voic
 		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
 		t, err := voice.NewTTS(entry, apiKey, httpOpts)
 		if err != nil {
-			log.Warnf("main", "tts[%d] %q: %v", i, entry.ID, err)
+			mainLog.Warnf("tts[%d] %q: %v", i, entry.ID, err)
 			continue
 		}
 		ttsMap[entry.ID] = t
 		if i == 0 {
 			ttsMap[""] = t // default
 		}
-		log.Infof("main", "TTS %q enabled (format=%s voice=%s)", entry.ID, entry.Format, entry.Voice)
+		mainLog.Infof("TTS %q enabled (format=%s voice=%s)", entry.ID, entry.Format, entry.Voice)
 	}
 
 	for i, entry := range cfg.STT {
 		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
 		s, err := voice.NewSTT(entry.Format, entry.Endpoint, apiKey, entry.Model, httpOpts)
 		if err != nil {
-			log.Warnf("main", "stt[%d] %q: %v", i, entry.ID, err)
+			mainLog.Warnf("stt[%d] %q: %v", i, entry.ID, err)
 			continue
 		}
 		sttMap[entry.ID] = s
 		if i == 0 {
 			sttMap[""] = s // default
 		}
-		log.Infof("main", "STT %q enabled (format=%s model=%s)", entry.ID, entry.Format, entry.Model)
+		mainLog.Infof("STT %q enabled (format=%s model=%s)", entry.ID, entry.Format, entry.Model)
 	}
 
 	return ttsMap, sttMap

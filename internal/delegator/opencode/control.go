@@ -43,7 +43,7 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 	case *delegator.ApplyFlagSettingsRequest:
 		// opencode has no apply_flag_settings equivalent. Effort is
 		// CC-only. Fire-and-forget — return nil.
-		log.Debugf(b.logComponent(), "SendControl: ApplyFlagSettings is a no-op for opencode")
+		log.NewComponentLogger(b.logComponent()).Debugf("SendControl: ApplyFlagSettings is a no-op for opencode")
 		return nil
 
 	default:

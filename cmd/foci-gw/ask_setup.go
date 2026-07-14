@@ -3,7 +3,6 @@ package main
 import (
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/question"
 	"foci/internal/tools"
@@ -32,7 +31,7 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 			onResponse(question.CancelData)
 		})
 		if err != nil {
-			log.Warnf("ask", "present question for session=%s failed: %v", sessionKey, err)
+			askLog.Warnf("present question for session=%s failed: %v", sessionKey, err)
 			return ""
 		}
 		return platformMsgID
@@ -56,7 +55,7 @@ func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager) to
 		}
 		batched, err := bs.SendInteractiveBatch(promptID, batchQuestionsFor(qs), onResponse)
 		if err != nil {
-			log.Warnf("ask", "present batched questions for session=%s failed: %v", sessionKey, err)
+			askLog.Warnf("present batched questions for session=%s failed: %v", sessionKey, err)
 			return false
 		}
 		return batched

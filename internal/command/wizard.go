@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/question"
 	"foci/internal/session"
 )
@@ -202,24 +201,24 @@ func (r *Registry) persistWizardsLocked() {
 		}
 		data, err := snap.SnapshotWizard()
 		if err != nil {
-			log.Warnf("command", "wizard snapshot (%s): %v", snap.WizardKind(), err)
+			commandLog.Warnf("wizard snapshot (%s): %v", snap.WizardKind(), err)
 			continue
 		}
 		saved[scope] = persistedWizard{Kind: snap.WizardKind(), Data: data, SavedAt: time.Now()}
 	}
 	if len(saved) == 0 {
 		if err := r.wizardStore.DeleteAgentMetadata(r.wizardAgent, wizardMetaKey); err != nil {
-			log.Warnf("command", "clear persisted wizards: %v", err)
+			commandLog.Warnf("clear persisted wizards: %v", err)
 		}
 		return
 	}
 	blob, err := json.Marshal(saved)
 	if err != nil {
-		log.Warnf("command", "marshal persisted wizards: %v", err)
+		commandLog.Warnf("marshal persisted wizards: %v", err)
 		return
 	}
 	if err := r.wizardStore.SetAgentMetadata(r.wizardAgent, wizardMetaKey, string(blob)); err != nil {
-		log.Warnf("command", "persist wizards: %v", err)
+		commandLog.Warnf("persist wizards: %v", err)
 	}
 }
 
@@ -240,7 +239,7 @@ func (r *Registry) RestoreWizards(cc CommandContext) {
 	}
 	var saved map[string]persistedWizard
 	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
-		log.Warnf("command", "unmarshal persisted wizards: %v — dropping", err)
+		commandLog.Warnf("unmarshal persisted wizards: %v — dropping", err)
 		_ = r.wizardStore.DeleteAgentMetadata(r.wizardAgent, wizardMetaKey)
 		return
 	}
@@ -254,7 +253,7 @@ func (r *Registry) RestoreWizards(cc CommandContext) {
 		}
 		w := newWizardForKind(p.Kind, cc)
 		if w == nil {
-			log.Warnf("command", "persisted wizard kind %q not restorable — dropping", p.Kind)
+			commandLog.Warnf("persisted wizard kind %q not restorable — dropping", p.Kind)
 			continue
 		}
 		snap, ok := w.(WizardSnapshotter)
@@ -262,7 +261,7 @@ func (r *Registry) RestoreWizards(cc CommandContext) {
 			continue
 		}
 		if err := snap.RestoreWizard(p.Data); err != nil {
-			log.Warnf("command", "restore wizard %q: %v — dropping", p.Kind, err)
+			commandLog.Warnf("restore wizard %q: %v — dropping", p.Kind, err)
 			continue
 		}
 		r.wizardGen++
@@ -271,7 +270,7 @@ func (r *Registry) RestoreWizards(cc CommandContext) {
 	}
 	r.persistWizardsLocked()
 	if restored > 0 {
-		log.Infof("command", "restored %d in-flight wizard(s) for agent %s", restored, r.wizardAgent)
+		commandLog.Infof("restored %d in-flight wizard(s) for agent %s", restored, r.wizardAgent)
 	}
 }
 

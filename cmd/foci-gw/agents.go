@@ -40,11 +40,11 @@ type agentInstance struct {
 	agentCfg         config.AgentConfig
 	resolved         *config.LiveValue[*config.ResolvedAgentConfig] // hot-swappable pre-merged agent+global config; read via LiveConfig()
 	promptSearchDirs []string                                       // directories to search for prompt files
-	skillsDirs       []string                    // skill directories (shared + per-agent) for reflection detection
-	tmuxClearAll     func()                      // clears tmux tool state (watches, owned sessions)
-	tmuxWatchCount   func() int                  // returns number of active tmux watches
-	kaRunner         *periodic.Runner            // keepalive & background work timer
-	mcpManager       *mcpkg.Manager              // nil if no MCP servers configured
+	skillsDirs       []string                                       // skill directories (shared + per-agent) for reflection detection
+	tmuxClearAll     func()                                         // clears tmux tool state (watches, owned sessions)
+	tmuxWatchCount   func() int                                     // returns number of active tmux watches
+	kaRunner         *periodic.Runner                               // keepalive & background work timer
+	mcpManager       *mcpkg.Manager                                 // nil if no MCP servers configured
 
 	// periodicRederive recomputes the runner's live-tunable settings from a
 	// freshly loaded config (set by setupPeriodic, called from liveapply.go).
@@ -88,27 +88,27 @@ type testCanFireState struct {
 
 // setupParams holds the shared resources needed by each agent.
 type setupParams struct {
-	acfg                config.AgentConfig
-	cfg                 *config.Config
-	resolved            *config.ResolvedAgentConfig
-	resolvedLive        *config.LiveValue[*config.ResolvedAgentConfig] // hot-swappable; same instance as agentInstance.resolved once finalize() runs
-	configPath          string
-	clientProvider      provider.ClientProvider
-	sessions            *session.Store
-	store               *secrets.Store
-	bwStore             *bitwarden.Store
-	memBackends         map[string]memory.Searcher
-	convReader          *memory.ConversationReader
-	reminderStore       *memory.ReminderStore
-	scratchpadStore     *memory.Scratchpad
-	todoStore           *memory.TodoStore
-	taskListStore       *memory.TaskListStore
-	sessionIndex        *session.SessionIndex
-	ttsMap              map[string]voice.TTS
-	sttMap              map[string]voice.STT
-	braveKey            string
-	gwSocketPath        string         // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
-	skillLoader         *skills.Loader // shared across all agents so the shared skills dir is scanned/warned once, not once per agent
+	acfg            config.AgentConfig
+	cfg             *config.Config
+	resolved        *config.ResolvedAgentConfig
+	resolvedLive    *config.LiveValue[*config.ResolvedAgentConfig] // hot-swappable; same instance as agentInstance.resolved once finalize() runs
+	configPath      string
+	clientProvider  provider.ClientProvider
+	sessions        *session.Store
+	store           *secrets.Store
+	bwStore         *bitwarden.Store
+	memBackends     map[string]memory.Searcher
+	convReader      *memory.ConversationReader
+	reminderStore   *memory.ReminderStore
+	scratchpadStore *memory.Scratchpad
+	todoStore       *memory.TodoStore
+	taskListStore   *memory.TaskListStore
+	sessionIndex    *session.SessionIndex
+	ttsMap          map[string]voice.TTS
+	sttMap          map[string]voice.STT
+	braveKey        string
+	gwSocketPath    string         // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
+	skillLoader     *skills.Loader // shared across all agents so the shared skills dir is scanned/warned once, not once per agent
 
 	startTime       time.Time
 	ctx             context.Context
@@ -146,7 +146,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	if isDelegated {
 		if !delegator.IsRegistered(acfg.Backend) {
-			log.Errorf("agent:"+acfg.ID, "backend %q not registered (missing blank import?)", acfg.Backend)
+			log.NewComponentLogger("agent:"+acfg.ID).Errorf("backend %q not registered (missing blank import?)", acfg.Backend)
 			return nil
 		}
 		fp, ok = configureDelegated(ag, p, shared, acfg.Backend, acfg.BackendConfig)
@@ -174,7 +174,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// Resolve agent's primary model via the chat call site
 	primaryResolved := groupResolver.ResolveCall(config.CallChat)
 	if primaryResolved == nil {
-		log.Errorf("agent:"+acfg.ID, "cannot resolve chat model (agent skipped)")
+		log.NewComponentLogger("agent:" + acfg.ID).Errorf("cannot resolve chat model (agent skipped)")
 		return finalizeParams{}, false
 	}
 	defaultEndpoint := primaryResolved.Endpoint
@@ -188,7 +188,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// Resolve the API client for this agent's endpoint+format
 	client := p.clientProvider.GetClient(defaultEndpoint, defaultFormat)
 	if client == nil {
-		log.Errorf("agent:"+acfg.ID, "endpoint %q unavailable for model %q (format: %s)", defaultEndpoint, primaryResolved.ModelID, defaultFormat)
+		log.NewComponentLogger("agent:"+acfg.ID).Errorf("endpoint %q unavailable for model %q (format: %s)", defaultEndpoint, primaryResolved.ModelID, defaultFormat)
 		return finalizeParams{}, false
 	}
 
@@ -228,7 +228,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 
 	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
 	if len(blockedPaths) > 0 {
-		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
+		setupLog.Infof("agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
 	}
 	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
 	resolvedLive := p.resolvedLive
@@ -307,7 +307,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.Endpoint = defaultEndpoint
 	ag.ExtraSystemBlocks = bs.extraSystemBlocks
 	ag.CacheStrategy = primaryCacheStrategy
-	ag.CacheBustDetect = p.resolved.Debug.CacheBustDetect                                        // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
+	ag.CacheBustDetect = p.resolved.Debug.CacheBustDetect                                          // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
 	ag.CacheBustIdleThreshold = time.Duration(p.resolved.Debug.CacheBustIdleMinutes) * time.Minute // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
 	ag.DuplicateMessages = al.DuplicateMessages
 	ag.BatchPartialAssistantMessages = al.BatchPartialAssistantMessages
@@ -337,19 +337,19 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	setupRedaction(ag, p, agentStore)
 
 	return finalizeParams{
-		bootstrap:           bs.bootstrap,
-		registry:            registry,
-		skillRegistry:       bs.skillRegistry,
-		serverTools:         out.serverTools,
-		client:              client,
-		clientProvider:      p.clientProvider,
-		fallbackFn:          fallbackFn,
-		tmuxTool:            out.tmuxTool,
-		tmuxClearAll:        out.tmuxClearAll,
-		tmuxWatchCount:      out.tmuxWatchCount,
-		ttsRepls:            ttsRepls,
-		mcpManager:          out.mcpMgr,
-		skillsDirs:          bs.skillsDirs,
+		bootstrap:      bs.bootstrap,
+		registry:       registry,
+		skillRegistry:  bs.skillRegistry,
+		serverTools:    out.serverTools,
+		client:         client,
+		clientProvider: p.clientProvider,
+		fallbackFn:     fallbackFn,
+		tmuxTool:       out.tmuxTool,
+		tmuxClearAll:   out.tmuxClearAll,
+		tmuxWatchCount: out.tmuxWatchCount,
+		ttsRepls:       ttsRepls,
+		mcpManager:     out.mcpMgr,
+		skillsDirs:     bs.skillsDirs,
 	}, true
 }
 
@@ -373,7 +373,7 @@ func checkFirstRun(idx *session.SessionIndex, acfg config.AgentConfig) string {
 		return ""
 	}
 
-	log.Infof("main", "agent %s: first run detected, injecting onboarding prompt", acfg.ID)
+	mainLog.Infof("agent %s: first run detected, injecting onboarding prompt", acfg.ID)
 	return prompt
 }
 
@@ -390,13 +390,13 @@ func readAndConsumeWelcomeFile(path string) string {
 	}
 	content := strings.TrimSpace(string(data))
 	if err := os.Remove(path); err != nil {
-		log.Warnf("main", "remove welcome file: %v", err)
+		mainLog.Warnf("remove welcome file: %v", err)
 	}
 	if content == "" {
 		return ""
 	}
 
-	log.Infof("main", "found welcome file (%d bytes)", len(content))
+	mainLog.Infof("found welcome file (%d bytes)", len(content))
 	return content
 }
 
@@ -432,4 +432,3 @@ func resolveBlockedPaths(acfg config.AgentConfig, cfg *config.Config) []config.B
 	return config.SuperveneSlice(acfg.BlockedPaths, cfg.BlockedPaths,
 		func(b config.BlockedPath) string { return b.Path })
 }
-

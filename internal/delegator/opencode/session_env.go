@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/internal/log"
 	"foci/internal/tempdir"
 )
 
@@ -66,18 +65,18 @@ func WriteSessionEnvFile(sessionID string, env map[string]string) {
 	}
 	dir := sessionEnvDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Warnf("opencode", "session-env: mkdir %s: %v", dir, err)
+		opencodeLog.Warnf("session-env: mkdir %s: %v", dir, err)
 		return
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		log.Warnf("opencode", "session-env: marshal: %v", err)
+		opencodeLog.Warnf("session-env: marshal: %v", err)
 		return
 	}
 	if err := os.WriteFile(sessionEnvPath(sessionID), data, 0o644); err != nil {
-		log.Warnf("opencode", "session-env: write %s: %v", sessionID, err)
+		opencodeLog.Warnf("session-env: write %s: %v", sessionID, err)
 	}
-	log.Debugf("opencode", "session-env: wrote mapping for session %s (sock=%s)", sessionID, entry.FociSock)
+	opencodeLog.Debugf("session-env: wrote mapping for session %s (sock=%s)", sessionID, entry.FociSock)
 }
 
 // RemoveSessionEnvFile removes the per-session env mapping. Best-effort.
@@ -116,17 +115,17 @@ func ensureWorkspacePlugin(workDir, filename, content string) {
 	}
 	path := filepath.Join(workDir, ".opencode", "plugin", filename)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		log.Warnf("opencode", "plugin: mkdir %s: %v", filepath.Dir(path), err)
+		opencodeLog.Warnf("plugin: mkdir %s: %v", filepath.Dir(path), err)
 		return
 	}
 	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
 		return
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		log.Warnf("opencode", "plugin: write %s: %v", path, err)
+		opencodeLog.Warnf("plugin: write %s: %v", path, err)
 		return
 	}
-	log.Debugf("opencode", "plugin: wrote %s", path)
+	opencodeLog.Debugf("plugin: wrote %s", path)
 }
 
 // sessionEnvPluginSource returns the TypeScript source for the shell.env

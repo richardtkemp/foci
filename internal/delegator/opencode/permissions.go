@@ -92,7 +92,7 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 
 	// Aliased duplicate: tracked + answered with its primary, but no 2nd prompt.
 	if stored.aliasOf != "" {
-		log.Debugf(b.logComponent(), "permission %s deduped: alias of %s (target=%q)", pp.id, stored.aliasOf, pp.title)
+		log.NewComponentLogger(b.logComponent()).Debugf("permission %s deduped: alias of %s (target=%q)", pp.id, stored.aliasOf, pp.title)
 		return
 	}
 
@@ -102,9 +102,9 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 	// provided — bash command segmentation, unsafe-flag rejection, path
 	// traversal canonicalization, symlink escape detection.
 	if b.checkAutoApprove(pp) {
-		log.Infof(b.logComponent(), "auto-approved: type=%s patterns=%v id=%s", pp.permType, pp.patterns, pp.id)
+		log.NewComponentLogger(b.logComponent()).Infof("auto-approved: type=%s patterns=%v id=%s", pp.permType, pp.patterns, pp.id)
 		if err := b.sendPermissionReply(pp, true, false); err != nil {
-			log.Warnf(b.logComponent(), "auto-approve reply failed (%v) — falling through to user prompt", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("auto-approve reply failed (%v) — falling through to user prompt", err)
 		} else {
 			b.outstanding.Cancel(pp.id, "auto-approved")
 			b.permMu.Lock()
@@ -122,7 +122,7 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 
 	// Regular permission: surface via permPromptFn with Allow/Deny/Always.
 	if b.permPromptFn == nil {
-		log.Warnf(b.logComponent(), "surfacePermission: permPromptFn nil — prompt %s stored but not displayed", pp.id)
+		log.NewComponentLogger(b.logComponent()).Warnf("surfacePermission: permPromptFn nil — prompt %s stored but not displayed", pp.id)
 		return
 	}
 
@@ -208,7 +208,7 @@ func (b *Backend) onPermissionReplied(sessionID, permissionID, response string) 
 	delete(b.pendingPerms, permissionID)
 	b.permMu.Unlock()
 
-	log.Debugf(b.logComponent(), "permission %s replied out-of-band (session=%s): %s", permissionID, sessionID, response)
+	log.NewComponentLogger(b.logComponent()).Debugf("permission %s replied out-of-band (session=%s): %s", permissionID, sessionID, response)
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ func (b *Backend) RespondToPermission(permID string, allow bool, remember bool) 
 			if firstErr == nil {
 				firstErr = err
 			}
-			log.Warnf(b.logComponent(), "reply to permission %s failed: %v", member.id, err)
+			log.NewComponentLogger(b.logComponent()).Warnf("reply to permission %s failed: %v", member.id, err)
 			continue
 		}
 		b.outstanding.Resolve(member.id)
@@ -351,8 +351,8 @@ func (b *Backend) postPermissionResponse(permID, response string, remember bool)
 
 // questionMetadata is the metadata payload for a question-type permission.
 type questionMetadata struct {
-	Header  string         `json:"header"`
-	Text    string         `json:"text"`
+	Header  string           `json:"header"`
+	Text    string           `json:"text"`
 	Options []questionOption `json:"options"`
 }
 
@@ -366,14 +366,14 @@ type questionOption struct {
 // text and calls RespondToQuestion).
 func (b *Backend) handleQuestionPermission(perm Permission) {
 	if b.permPromptFn == nil {
-		log.Warnf(b.logComponent(), "handleQuestionPermission: permPromptFn nil — question %s not displayed", perm.ID)
+		log.NewComponentLogger(b.logComponent()).Warnf("handleQuestionPermission: permPromptFn nil — question %s not displayed", perm.ID)
 		return
 	}
 
 	// Parse the question metadata.
 	var qm questionMetadata
 	if err := json.Unmarshal(perm.Metadata, &qm); err != nil {
-		log.Warnf(b.logComponent(), "handleQuestionPermission: unmarshal metadata: %v", err)
+		log.NewComponentLogger(b.logComponent()).Warnf("handleQuestionPermission: unmarshal metadata: %v", err)
 		// Fall back to the raw title as the prompt text.
 		b.permPromptFn(perm.ID, perm.Title, perm.Title, "", []delegator.PromptChoice{})
 		return

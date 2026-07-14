@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/app/fap"
 )
+import
 
 // AppInvoker routes a tool call to a connected app device and awaits its
 // result. Implemented by *app.appConn (via the platform.Connection it
@@ -20,6 +21,20 @@ import (
 // so the runtime conn.(AppInvoker) assertion in tool_table.go always failed and
 // the tool reported "no device" even when one was connected. fap is a leaf
 // package (already imported by ask.go), so depending on it here is cycle-free.
+"foci/internal/log"
+
+var (
+	askLog             = log.NewComponentLogger("ask")
+	execbridgeLog      = log.NewComponentLogger("execbridge")
+	http_requestLog    = log.NewComponentLogger("http_request")
+	remindLog          = log.NewComponentLogger("remind")
+	send_to_sessionLog = log.NewComponentLogger("send_to_session")
+	spawnLog           = log.NewComponentLogger("spawn")
+	summaryLog         = log.NewComponentLogger("summary")
+	web_fetchLog       = log.NewComponentLogger("web_fetch")
+	web_searchLog      = log.NewComponentLogger("web_search")
+)
+
 type AppInvoker interface {
 	InvokeTool(ctx context.Context, tool, action string, args json.RawMessage) (fap.ToolResult, error)
 }
@@ -44,7 +59,7 @@ type AppInvoker interface {
 // the server gives up — otherwise a slow result is lost. Device cap is ~55s
 // (see AndroidTaskerToolHandler); 60s here leaves margin for round-trips.
 const appToolInvokeTimeout = 60 * time.Second
-//
+
 // The invoker resolver is a func() so a missing app connection at process start
 // doesn't disable the tool — it just returns "no device" when actually called,
 // and the agent never sees the tool vanish between registrations.

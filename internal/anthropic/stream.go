@@ -40,7 +40,7 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 	wireReq, _ := json.Marshal(params)
 	sc := c.ensureSDKClient()
 
-	log.Debugf("anthropic", "stream_call_start: model=%s", req.Model)
+	anthropicLog.Debugf("stream_call_start: model=%s", req.Model)
 
 	// Streaming: bound the gap between chunks with an idle watchdog instead of
 	// a total wall-clock cap, so a long-but-progressing response is not
@@ -59,7 +59,7 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 		wd.Reset()
 		event := stream.Current()
 		if err := msg.Accumulate(event); err != nil {
-			log.Warnf("anthropic", "stream accumulate error: %v", err)
+			anthropicLog.Warnf("stream accumulate error: %v", err)
 		}
 
 		// Fire delta callbacks.

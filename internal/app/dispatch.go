@@ -11,7 +11,6 @@ import (
 	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/dispatch"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -22,7 +21,7 @@ import (
 func (c *wsClient) sendRaw(frame fap.ServerFrame) {
 	wire, err := fap.Encode(frame, 0, 0, "", "")
 	if err != nil {
-		log.Errorf("app", "encode %s: %v", frame.Type(), err)
+		appLog.Errorf("encode %s: %v", frame.Type(), err)
 		return
 	}
 	c.enqueue(wire)
@@ -34,7 +33,7 @@ func (c *wsClient) sendRaw(frame fap.ServerFrame) {
 func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	in, err := fap.Decode(string(data))
 	if err != nil {
-		log.Warnf("app", "drop malformed inbound frame: %v", err)
+		appLog.Warnf("drop malformed inbound frame: %v", err)
 		return
 	}
 
@@ -308,7 +307,7 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
 		if err := idx.SetChatAliasUnique(b.agentID, "app", b.chatID, f.Title); err != nil {
-			log.Warnf("app", "rename %s: persist alias: %v", f.ConversationID, err)
+			appLog.Warnf("rename %s: persist alias: %v", f.ConversationID, err)
 			code, msg := "rename_failed", "Couldn't save that name."
 			if errors.Is(err, session.ErrAliasTaken) {
 				code, msg = "alias_taken", "That name is already used by another chat."
@@ -343,7 +342,7 @@ func (h *Hub) handleConversationSetDefault(client *wsClient, f fap.ConversationS
 			err = idx.ClearDefaultChat(b.agentID, "app")
 		}
 		if err != nil {
-			log.Warnf("app", "setDefault %s (isDefault=%v): %v", f.ConversationID, f.IsDefault, err)
+			appLog.Warnf("setDefault %s (isDefault=%v): %v", f.ConversationID, f.IsDefault, err)
 		}
 	}
 	h.pushRoster(client)
@@ -367,21 +366,21 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 	b := h.convs[f.ConversationID]
 	h.mu.RUnlock()
 	if b == nil {
-		log.Debugf("app", "archive %s: no live binding (flag not set)", f.ConversationID)
+		appLog.Debugf("archive %s: no live binding (flag not set)", f.ConversationID)
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
 		if f.Archived && idx.DefaultChatForAgent(b.agentID, "app") == b.chatID {
-			log.Infof("app", "refused archive of default conversation %s (agent %s)", f.ConversationID, b.agentID)
+			appLog.Infof("refused archive of default conversation %s (agent %s)", f.ConversationID, b.agentID)
 			client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "archive_default", Message: "This is the default chat. Set another default before archiving it."})
 			h.pushRoster(client) // reverts the client's optimistic archived flag
 			return
 		}
 		if err := idx.SetArchivedChat(b.agentID, "app", b.chatID, f.Archived); err != nil {
-			log.Warnf("app", "archive %s (archived=%v): %v", f.ConversationID, f.Archived, err)
+			appLog.Warnf("archive %s (archived=%v): %v", f.ConversationID, f.Archived, err)
 		}
 	}
-	log.Infof("app", "archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.sessionKey)
+	appLog.Infof("archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.sessionKey)
 	h.pushRoster(client)
 }
 
@@ -469,7 +468,7 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 	h.mu.RUnlock()
 	b := h.ensureBinding(client, agentID, f.ConversationID)
 	if existed && f.AgentID != "" && f.AgentID != b.agentID {
-		log.Warnf("app", "frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", f.AgentID, b.agentID, f.ConversationID)
+		appLog.Warnf("frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", f.AgentID, b.agentID, f.ConversationID)
 	}
 	conn := h.PrimaryBot(b.agentID)
 	if conn == nil || conn.commands == nil {
@@ -686,12 +685,12 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	// regressed — route to the owner (b.agentID, authoritative) but make the
 	// mismatch loud so we catch it instead of silently correcting (#906/#907).
 	if existed && frameAgent != "" && frameAgent != b.agentID {
-		log.Warnf("app", "frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", frameAgent, b.agentID, convID)
+		appLog.Warnf("frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", frameAgent, b.agentID, convID)
 	}
 
 	conn := h.PrimaryBot(b.agentID)
 	if conn == nil {
-		log.Warnf("app", "no agent for inbound message (agent=%q conv=%q)", b.agentID, convID)
+		appLog.Warnf("no agent for inbound message (agent=%q conv=%q)", b.agentID, convID)
 		client.sendRaw(fap.ErrorFrame{
 			ConversationID: convID,
 			Code:           "no_agent",
@@ -784,7 +783,7 @@ func (h *Hub) transcribeVoice(conn *appConn, text string, atts []platform.Attach
 		}
 		tr, err := conn.stt.Transcribe(ctx, a.Data, voiceFilename(a))
 		if err != nil {
-			log.Warnf("app", "voice transcribe: %v", err)
+			appLog.Warnf("voice transcribe: %v", err)
 			kept = append(kept, a) // fall back to passing the audio through
 			continue
 		}
@@ -832,7 +831,7 @@ func (h *Hub) resolveAttachments(refs []fap.AttachmentRef) []platform.Attachment
 	for _, r := range refs {
 		meta, ok := h.blobs.get(r.BlobID)
 		if !ok {
-			log.Warnf("app", "inbound attachment blob %q not found", r.BlobID)
+			appLog.Warnf("inbound attachment blob %q not found", r.BlobID)
 			continue
 		}
 		var data []byte
@@ -840,7 +839,7 @@ func (h *Hub) resolveAttachments(refs []fap.AttachmentRef) []platform.Attachment
 			if d, err := os.ReadFile(meta.path); err == nil {
 				data = d
 			} else {
-				log.Warnf("app", "read attachment blob %q: %v", r.BlobID, err)
+				appLog.Warnf("read attachment blob %q: %v", r.BlobID, err)
 			}
 		}
 		out = append(out, platform.Attachment{

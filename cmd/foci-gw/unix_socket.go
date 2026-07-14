@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/peercred"
 )
 
@@ -56,7 +55,7 @@ func startUnixSocket(sockPath string, handler http.Handler) (*http.Server, error
 
 	go func() {
 		if err := srv.Serve(ln); err != http.ErrServerClosed {
-			log.Errorf("http", "unix socket server error: %v", err)
+			httpLog.Errorf("unix socket server error: %v", err)
 		}
 	}()
 
@@ -89,7 +88,7 @@ func injectPeerUID(ctx context.Context, c net.Conn) context.Context {
 	}
 	uid, err := peercred.UID(uc)
 	if err != nil {
-		log.Debugf("http", "unix socket peer cred error: %v", err)
+		httpLog.Debugf("unix socket peer cred error: %v", err)
 		return ctx
 	}
 	return context.WithValue(ctx, peerUIDKey{}, uid)

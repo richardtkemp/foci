@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/timeutil"
 )
 
@@ -52,7 +51,7 @@ func initProvenanceSchema(db *sql.DB) {
 		)`,
 	} {
 		if _, err := db.Exec(ddl); err != nil {
-			log.Errorf("session", "init provenance schema: %v", err)
+			sessLog.Errorf("init provenance schema: %v", err)
 		}
 	}
 }

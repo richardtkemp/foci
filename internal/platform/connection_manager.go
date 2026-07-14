@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 
-	"foci/internal/log"
 	"foci/internal/session"
 )
 
@@ -99,7 +98,7 @@ func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
 					if c := mgr.ForSession(sessionKey); c != nil {
 						return c
 					}
-					log.Debugf("platform", "platform %q claimed chat %d but ForSession returned nil for %s", platformName, chatID, sessionKey)
+					platformLog.Debugf("platform %q claimed chat %d but ForSession returned nil for %s", platformName, chatID, sessionKey)
 				}
 			}
 		}
@@ -149,9 +148,9 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 		// startup transient — typically a callback re-registered from
 		// persisted state before the platform's connection comes up — not
 		// genuine routing ambiguity, so it doesn't warrant a WARN.
-		log.Debugf("platform", "session %s agent %s: platform claimed the chat but its connection isn't up yet; using first available primary", sessionKey, agentID)
+		platformLog.Debugf("session %s agent %s: platform claimed the chat but its connection isn't up yet; using first available primary", sessionKey, agentID)
 	} else {
-		log.Warnf("platform", "ambiguous routing for session %s agent %s: no platform claim, falling back to first primary", sessionKey, agentID)
+		platformLog.Warnf("ambiguous routing for session %s agent %s: no platform claim, falling back to first primary", sessionKey, agentID)
 	}
 	return a.Primary(agentID)
 }

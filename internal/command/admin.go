@@ -8,8 +8,16 @@ import (
 	"foci/internal/config"
 	"foci/internal/display"
 )
+import
 
 // ToolInfo holds data for a single tool in the /tools listing.
+"foci/internal/log"
+
+var (
+	commandLog = log.NewComponentLogger("command")
+	facetLog   = log.NewComponentLogger("facet")
+)
+
 type ToolInfo struct {
 	Name        string
 	Description string

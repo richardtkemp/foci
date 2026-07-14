@@ -14,7 +14,6 @@ import (
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	readability "github.com/go-shiori/go-readability"
 
-	"foci/internal/log"
 )
 
 func NewWebFetchTool() *Tool {
@@ -129,7 +128,7 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 
 	parsed, err := url.Parse(p.URL)
 	if err == nil {
-		log.Debugf("web_fetch", "session=%s fetch url=%s raw=%v", SessionKeyFromContext(ctx), parsed.Hostname(), p.Raw)
+		web_fetchLog.Debugf("session=%s fetch url=%s raw=%v", SessionKeyFromContext(ctx), parsed.Hostname(), p.Raw)
 	}
 
 	// Use the shared SSRF-safe client: web_fetch is the default builtin and is
@@ -242,7 +241,7 @@ func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (Tool
 		return ToolResult{}, fmt.Errorf("parse search results: %w", err)
 	}
 
-	log.Debugf("web_search", "session=%s search query=%q results=%d", SessionKeyFromContext(ctx), p.Query, len(result.Web.Results))
+	web_searchLog.Debugf("session=%s search query=%q results=%d", SessionKeyFromContext(ctx), p.Query, len(result.Web.Results))
 
 	var out strings.Builder
 	for i, r := range result.Web.Results {

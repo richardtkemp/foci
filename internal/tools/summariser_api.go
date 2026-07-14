@@ -75,7 +75,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 	start := time.Now()
 	resp, err := provider.Send(ctx, client, req, nil,
 		s.fallbackFn, s.clientProvider, func(f string, args ...any) {
-			log.Errorf("summary", f, args...)
+			summaryLog.Errorf(f, args...)
 		})
 	if err != nil {
 		return "", fmt.Errorf("summary API call: %w", err)
@@ -87,7 +87,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
 	sessionKey := SessionKeyFromContext(ctx)
-	log.Infof("summary", "session=%s model=%s input=%d output=%d cost=$%.4f duration=%s",
+	summaryLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f duration=%s",
 		sessionKey, model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
 
 	providerFormat := format

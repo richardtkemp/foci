@@ -424,7 +424,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 	defer cancel()
 
 	sessionKey := SessionKeyFromContext(ctx)
-	log.Infof("spawn", "session=%s one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", sessionKey, model, len(system), len(toolDefs), len(prompt))
+	spawnLog.Infof("session=%s one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", sessionKey, model, len(system), len(toolDefs), len(prompt))
 
 	messages := []provider.Message{
 		{Role: "user", Content: provider.TextContent(prompt)},
@@ -442,7 +442,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 		start := time.Now()
 		resp, err := provider.Send(callCtx, client, req, nil,
 			fallbackFn, clientProvider, func(f string, args ...any) {
-				log.Errorf("spawn", f, args...)
+				spawnLog.Errorf(f, args...)
 			})
 		if err != nil {
 			return "", fmt.Errorf("spawn %s: %w", model, err)
@@ -453,7 +453,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 			resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
-		log.Infof("spawn", "session=%s model=%s input=%d output=%d cost=$%.4f stop=%s",
+		spawnLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f stop=%s",
 			sessionKey, model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
 		var sessionFile string
 		if sessions != nil {
@@ -508,7 +508,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 				))
 				continue
 			}
-			log.Debugf("spawn", "session=%s tool_use: %s", sessionKey, block.Name)
+			spawnLog.Debugf("session=%s tool_use: %s", sessionKey, block.Name)
 			result, err := tool.Execute(callCtx, block.Input)
 			if err != nil {
 				toolResults = append(toolResults, provider.ToolResultBlock(
@@ -571,7 +571,7 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		return ToolResult{}, fmt.Errorf("spawn inherit: agent not available")
 	}
 
-	log.Infof("spawn", "inherit branch=%s parent=%s prompt=%d chars timeout=%s",
+	spawnLog.Infof("inherit branch=%s parent=%s prompt=%d chars timeout=%s",
 		branchKey, parentSession, len(prompt), timeout)
 
 	// Async path: launch goroutine, return immediately.

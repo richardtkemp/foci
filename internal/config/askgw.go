@@ -1,5 +1,11 @@
 package config
 
+import "foci/internal/log"
+
+var (
+	configLog = log.NewComponentLogger("config")
+)
+
 const AskgwGroupName = "foci-askgw"
 
 type AskgwConfig struct {

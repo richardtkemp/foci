@@ -126,7 +126,7 @@ type OpenAISTT struct {
 }
 
 func (w *OpenAISTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
-	log.Debugf("voice", "stt audio=%d bytes model=%s key=%s", len(audioData), w.Model, log.FormatKeySuffix(w.APIKey))
+	voiceLog.Debugf("stt audio=%d bytes model=%s key=%s", len(audioData), w.Model, log.FormatKeySuffix(w.APIKey))
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 
@@ -187,7 +187,7 @@ type EdgeTTS struct {
 }
 
 func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
-	log.Debugf("voice", "tts edge-tts text=%d chars voice=%s", len(text), e.Voice)
+	voiceLog.Debugf("tts edge-tts text=%d chars voice=%s", len(text), e.Voice)
 	cmd := e.Command
 	if cmd == "" {
 		cmd = "edge-tts"
@@ -254,7 +254,7 @@ type ttsRequest struct {
 }
 
 func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
-	log.Debugf("voice", "tts openai text=%d chars model=%s key=%s", len(text), o.Model, log.FormatKeySuffix(o.APIKey))
+	voiceLog.Debugf("tts openai text=%d chars model=%s key=%s", len(text), o.Model, log.FormatKeySuffix(o.APIKey))
 	voice := o.Voice
 	if voice == "" {
 		voice = "alloy"

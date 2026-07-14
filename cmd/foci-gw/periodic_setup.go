@@ -6,7 +6,6 @@ import (
 
 	"foci/internal/app"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/modelinfo"
 	"foci/internal/periodic"
@@ -106,7 +105,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// window is empty and keepalive can never fire, so warming is silently off.
 	if kaEnabled && cacheTTL > 0 {
 		if kaInterval, err := time.ParseDuration(ka.Interval); err == nil && kaInterval >= cacheTTL {
-			log.Warnf("keepalive", "agent %q keepalive interval %s >= backend cache TTL %s: warming can never fire (interval must be shorter than the cache lifetime)", acfg.ID, kaInterval, cacheTTL)
+			keepaliveLog.Warnf("agent %q keepalive interval %s >= backend cache TTL %s: warming can never fire (interval must be shorter than the cache lifetime)", acfg.ID, kaInterval, cacheTTL)
 		}
 	}
 
@@ -193,7 +192,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		DispatchFn: func(warningText string) {
 			sk := defaultSessionKeyFor(inst.ag, agentID)
 			if sk == "" {
-				log.Warnf("warning", "[%s] no active session for proactive warning dispatch", agentID)
+				warningLog.Warnf("[%s] no active session for proactive warning dispatch", agentID)
 				return
 			}
 			deliverToSessionChat(inst.ag, p.ctx, "proactive_warning", p.connMgr, agentID, sk, warningText)
@@ -228,18 +227,18 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	ka.Enabled = kaEnabled
 	runner := periodic.New(periodic.RunnerConfig{
-		AgentID:            acfg.ID,
-		Client:             client,
-		CachingOverride:    cachingOverride,
-		Keepalive:          ka,
-		Background:         bg,
-		Reflection:         refl,
-		TickInterval:       inst.LiveConfig().Scheduler.TickInterval,
-		CacheTTL:           cacheTTL,
-		Maintenance:        maint,
-		PromptSearchDirs:   inst.promptSearchDirs,
-		TodoStore:          p.todoStore,
-		SessionIndex:       p.sessionIndex,
+		AgentID:          acfg.ID,
+		Client:           client,
+		CachingOverride:  cachingOverride,
+		Keepalive:        ka,
+		Background:       bg,
+		Reflection:       refl,
+		TickInterval:     inst.LiveConfig().Scheduler.TickInterval,
+		CacheTTL:         cacheTTL,
+		Maintenance:      maint,
+		PromptSearchDirs: inst.promptSearchDirs,
+		TodoStore:        p.todoStore,
+		SessionIndex:     p.sessionIndex,
 
 		EphemeralRetentionDays: acfg.Sessions.EffectiveEphemeralRetentionDays(p.cfg.Sessions.EphemeralRetentionDays),
 
@@ -254,7 +253,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		WarningDispatcher:     warningDispatcher,
 		ChatWarningDispatcher: chatWarningDispatcher,
 		IsDelegatedAgent:      inst.ag.DelegatedManager != nil,
-		SkillDirs: inst.skillsDirs,
+		SkillDirs:             inst.skillsDirs,
 		NotifySkillChange: func(sessionKey, text string) {
 			route.NotifySessionChat(p.connMgr, agentID, sessionKey, text)
 		},
@@ -262,7 +261,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	runner.Start(p.ctx)
 	inst.kaRunner = runner
 
-	log.Infof("main", "agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, kaEnabled, bg.Enabled)
+	mainLog.Infof("agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, kaEnabled, bg.Enabled)
 	return runner
 }
 

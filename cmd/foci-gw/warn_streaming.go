@@ -2,7 +2,6 @@ package main
 
 import (
 	"foci/internal/config"
-	"foci/internal/log"
 )
 
 // warnStreamOutputWithoutStreaming warns at startup if any agent has
@@ -11,7 +10,7 @@ import (
 // does nothing, which is confusing.
 func warnStreamOutputWithoutStreaming(cfg *config.Config) {
 	for _, msg := range checkStreamOutputWithoutStreaming(cfg) {
-		log.Warnf("startup", "%s", msg)
+		startupLog.Warnf("%s", msg)
 	}
 }
 

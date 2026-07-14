@@ -9,7 +9,15 @@ import (
 	"foci/internal/log"
 )
 
-// GoroutineMonitorConfig holds parsed configuration for the goroutine monitor.
+var (
+	goroutine_monitorLog = log.NewComponentLogger("goroutine_monitor")
+	memory_guardLog      = log.NewComponentLogger(
+
+		// GoroutineMonitorConfig holds parsed configuration for the goroutine monitor.
+		"memory_guard")
+	resourcesLog = log.NewComponentLogger("resources")
+)
+
 type GoroutineMonitorConfig struct {
 	Interval  time.Duration
 	Threshold int // static base: warn when goroutine count exceeds this
@@ -45,7 +53,7 @@ func NewGoroutineMonitor(cfg GoroutineMonitorConfig) *GoroutineMonitor {
 // Start launches the background monitoring goroutine.
 func (m *GoroutineMonitor) Start(ctx context.Context) {
 	if m.cfg.Interval <= 0 {
-		log.Warnf("resources", "goroutine monitor not started: interval=%v (<=0, disabled)", m.cfg.Interval)
+		resourcesLog.Warnf("goroutine monitor not started: interval=%v (<=0, disabled)", m.cfg.Interval)
 		return
 	}
 	monCtx, cancel := context.WithCancel(ctx)
@@ -66,7 +74,7 @@ func (m *GoroutineMonitor) Start(ctx context.Context) {
 			}
 		}
 	}()
-	log.Infof("goroutine_monitor", "started (interval=%v, threshold=%d)", m.cfg.Interval, m.cfg.Threshold)
+	goroutine_monitorLog.Infof("started (interval=%v, threshold=%d)", m.cfg.Interval, m.cfg.Threshold)
 }
 
 // Stop stops the monitor and waits for the goroutine to exit.
@@ -87,7 +95,7 @@ func (m *GoroutineMonitor) checkOnce() {
 	}
 
 	count := getCount()
-	log.Debugf("goroutine_monitor", "goroutines=%d", count)
+	goroutine_monitorLog.Debugf("goroutines=%d", count)
 
 	// Effective threshold = static base + any dynamic headroom (live app
 	// sockets etc.), recomputed each tick so the budget tracks reality.
@@ -103,7 +111,7 @@ func (m *GoroutineMonitor) checkOnce() {
 		m.mu.Unlock()
 
 		if !alreadyWarned {
-			log.Warnf("goroutine_monitor", "goroutine count %d exceeds threshold %d — possible leak", count, threshold)
+			goroutine_monitorLog.Warnf("goroutine count %d exceeds threshold %d — possible leak", count, threshold)
 		}
 		return
 	}
@@ -111,7 +119,7 @@ func (m *GoroutineMonitor) checkOnce() {
 	// Back below threshold — reset dedup
 	m.mu.Lock()
 	if m.warnFired {
-		log.Infof("goroutine_monitor", "goroutine count %d back below threshold %d", count, threshold)
+		goroutine_monitorLog.Infof("goroutine count %d back below threshold %d", count, threshold)
 	}
 	m.warnFired = false
 	m.mu.Unlock()

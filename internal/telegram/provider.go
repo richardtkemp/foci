@@ -6,7 +6,6 @@ import (
 
 	"foci/internal/command"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tooldetail"
@@ -49,7 +48,7 @@ func (p *telegramProvider) Init(deps platform.ProviderDeps) error {
 	dbPath := deps.Config.DataPath("tool_details.db")
 	store, err := tooldetail.NewStore(dbPath)
 	if err != nil {
-		log.Errorf("telegram", "create tool detail store: %v (inline keyboard expansion will not persist)", err)
+		telegramLog.Errorf("create tool detail store: %v (inline keyboard expansion will not persist)", err)
 	} else {
 		p.toolDetailStore = store
 	}
@@ -106,14 +105,14 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 	for _, botName := range tgPlat.FacetBots {
 		facetToken := config.ResolveBotToken(botName, "", p.deps.SecretStore)
 		if facetToken == "" {
-			log.Errorf("telegram", "shared facet bot %q: token not found", botName)
+			telegramLog.Errorf("shared facet bot %q: token not found", botName)
 			continue
 		}
 		facetBot, err := NewBot(facetToken, tgPlat.Access.AllowedUsers,
 			params.FirstHandler, cmds, command.NewLastMessageStore(), "",
 			telegramAPIBaseOf(tgPlat))
 		if err != nil {
-			log.Errorf("telegram", "shared facet bot %q: create: %v", botName, err)
+			telegramLog.Errorf("shared facet bot %q: create: %v", botName, err)
 			continue
 		}
 		if tgPlat.Access.AllowedUsersOnly != nil {
@@ -139,7 +138,7 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 		if params.ReclaimHook != nil {
 			pool.ReclaimHook = params.ReclaimHook
 		}
-		log.Infof("telegram", "%d shared facet bots ready", pool.Size())
+		telegramLog.Infof("%d shared facet bots ready", pool.Size())
 	}
 }
 
@@ -234,7 +233,7 @@ func restoreFacetSessions(
 	// Load all facet mappings at once
 	facetMap, err := idx.AgentMetadataByPrefix("_system", "facet:")
 	if err != nil {
-		log.Errorf("telegram", "load facet sessions: %v", err)
+		telegramLog.Errorf("load facet sessions: %v", err)
 		return
 	}
 	if len(facetMap) == 0 {
@@ -268,7 +267,7 @@ func restoreFacetSessions(
 			}
 
 			if sessions.LastActivity(savedKey) == "n/a" {
-				log.Infof("telegram", "facet restore: @%s session %s no longer exists, cleaning up", username, savedKey)
+				telegramLog.Infof("facet restore: @%s session %s no longer exists, cleaning up", username, savedKey)
 				_ = idx.DeleteAgentMetadata("_system", "facet:"+username)
 				return
 			}
@@ -296,11 +295,11 @@ func restoreFacetSessions(
 			}
 
 			restored++
-			log.Infof("telegram", "facet restore: @%s → %s", username, savedKey)
+			telegramLog.Infof("facet restore: @%s → %s", username, savedKey)
 		})
 	}
 	if restored > 0 {
-		log.Infof("telegram", "restored %d facet session(s) from state", restored)
+		telegramLog.Infof("restored %d facet session(s) from state", restored)
 	}
 }
 

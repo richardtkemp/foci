@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/startup"
@@ -55,17 +54,17 @@ func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstan
 			defer wg.Done()
 			be, err := dm.NewBackend()
 			if err != nil {
-				log.Warnf("main", "[%s] readiness probe: build backend: %v", agentID, err)
+				mainLog.Warnf("[%s] readiness probe: build backend: %v", agentID, err)
 				return
 			}
 			ready, err := be.CheckReady(ctx)
 			switch {
 			case err != nil:
-				log.Warnf("main", "[%s] readiness check could not be performed: %v", agentID, err)
+				mainLog.Warnf("[%s] readiness check could not be performed: %v", agentID, err)
 			case ready:
-				log.Infof("main", "[%s] backend ready", agentID)
+				mainLog.Infof("[%s] backend ready", agentID)
 			default:
-				log.Warnf("main", "[%s] backend not ready — recovery initiated (see relogin logs)", agentID)
+				mainLog.Warnf("[%s] backend not ready — recovery initiated (see relogin logs)", agentID)
 			}
 		}()
 	}
@@ -169,7 +168,7 @@ func handleRestartAndFirstRun(
 		go func() {
 			sk := defaultSessionKeyFor(inst.ag, agentID)
 			if sk == "" {
-				log.Warnf("main", "[%s] no active session for restart injection, skipping", agentID)
+				mainLog.Warnf("[%s] no active session for restart injection, skipping", agentID)
 				return
 			}
 
@@ -206,9 +205,9 @@ func handleRestartAndFirstRun(
 			agentID := agentID
 			inst.ag.OnFirstRunConsumed = func() {
 				if err := sessionIndex.SetAgentMetadata(agentID, "first_run_completed", "true"); err != nil {
-					log.Errorf("main", "set first_run_completed for %s: %v", agentID, err)
+					mainLog.Errorf("set first_run_completed for %s: %v", agentID, err)
 				}
-				log.Infof("main", "first-run onboarding completed for %s", agentID)
+				mainLog.Infof("first-run onboarding completed for %s", agentID)
 			}
 		}
 	}

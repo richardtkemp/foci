@@ -5,7 +5,6 @@ import (
 
 	"foci/internal/command"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tooldetail"
@@ -47,7 +46,7 @@ func (p *discordProvider) Init(deps platform.ProviderDeps) error {
 	dbPath := deps.Config.DataPath("discord_tool_details.db")
 	store, err := tooldetail.NewStore(dbPath)
 	if err != nil {
-		log.Errorf("discord", "create tool detail store: %v (inline button expansion will not persist)", err)
+		discordLog.Errorf("create tool detail store: %v (inline button expansion will not persist)", err)
 	} else {
 		p.toolDetailStore = store
 	}
@@ -186,7 +185,7 @@ func restoreFacetSessions(
 	// Load all discord_facet mappings at once
 	facetMap, err := idx.AgentMetadataByPrefix("_system", "discord_facet:")
 	if err != nil {
-		log.Errorf("discord", "load facet sessions: %v", err)
+		discordLog.Errorf("load facet sessions: %v", err)
 		return
 	}
 	if len(facetMap) == 0 {
@@ -220,7 +219,7 @@ func restoreFacetSessions(
 			}
 
 			if sessions.LastActivity(savedKey) == "n/a" {
-				log.Infof("discord", "facet restore: %s session %s no longer exists, cleaning up", botID, savedKey)
+				discordLog.Infof("facet restore: %s session %s no longer exists, cleaning up", botID, savedKey)
 				_ = idx.DeleteAgentMetadata("_system", "discord_facet:"+botID)
 				return
 			}
@@ -248,11 +247,11 @@ func restoreFacetSessions(
 			}
 
 			restored++
-			log.Infof("discord", "facet restore: %s -> %s", botID, savedKey)
+			discordLog.Infof("facet restore: %s -> %s", botID, savedKey)
 		})
 	}
 	if restored > 0 {
-		log.Infof("discord", "restored %d facet session(s) from state", restored)
+		discordLog.Infof("restored %d facet session(s) from state", restored)
 	}
 }
 

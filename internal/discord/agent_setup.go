@@ -18,6 +18,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+var (
+	discordLog = log.NewComponentLogger("discord")
+)
+
 // AgentSetupParams holds all dependencies needed to set up Discord bots for an agent.
 type AgentSetupParams struct {
 	Agent           platform.MessageHandler
@@ -148,7 +152,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	// Create a discordgo session
 	dg, err := discordgo.New("Bot " + discordToken)
 	if err != nil {
-		log.Errorf("discord", "agent %q: create session: %v (agent will run without discord)", acfg.ID, err)
+		discordLog.Errorf("agent %q: create session: %v (agent will run without discord)", acfg.ID, err)
 		return
 	}
 
@@ -160,7 +164,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 
 	// Open the websocket connection
 	if err := dg.Open(); err != nil {
-		log.Errorf("discord", "agent %q: open gateway: %v (agent will run without discord)", acfg.ID, err)
+		discordLog.Errorf("agent %q: open gateway: %v (agent will run without discord)", acfg.ID, err)
 		return
 	}
 
@@ -196,7 +200,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 
 	if gt := newGroupThrottle(bc.GroupThrottle, primaryBot); gt != nil {
 		primaryBot.mq.SetThrottle(gt)
-		log.Infof("discord", "agent %q: group throttle = %s", acfg.ID, bc.GroupThrottle)
+		discordLog.Infof("agent %q: group throttle = %s", acfg.ID, bc.GroupThrottle)
 	}
 
 	if p.ResolvedLive != nil {
@@ -208,7 +212,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 				oldThrottle.Stop()
 			}
 			primaryBot.mq.SetThrottle(newGroupThrottle(fresh.Behavior.GroupThrottle, primaryBot))
-			log.Infof("discord", "agent %q: group throttle live-updated to %q", acfg.ID, fresh.Behavior.GroupThrottle)
+			discordLog.Infof("agent %q: group throttle live-updated to %q", acfg.ID, fresh.Behavior.GroupThrottle)
 		})
 
 		// Hot-tagged display/debug fields (display.stream_output,
@@ -223,7 +227,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 				return
 			}
 			ApplyAgentDisplaySettings(primaryBot, freshDC, fresh.Debug)
-			log.Infof("discord", "agent %q: display settings live-updated", acfg.ID)
+			discordLog.Infof("agent %q: display settings live-updated", acfg.ID)
 		})
 	}
 
@@ -285,7 +289,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		ttl, _ := time.ParseDuration(dc.FacetSessionTTL)
 		if ttl > 0 {
 			pool.SetSessionTTL(ttl, p.Sessions)
-			log.Infof("discord", "agent %q: facet session TTL = %v", acfg.ID, ttl)
+			discordLog.Infof("agent %q: facet session TTL = %v", acfg.ID, ttl)
 		}
 		if p.ReclaimHook != nil {
 			pool.ReclaimHook = p.ReclaimHook

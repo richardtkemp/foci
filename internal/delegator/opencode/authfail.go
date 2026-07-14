@@ -77,10 +77,10 @@ func (b *Backend) fireAuthFailure(detail string) {
 	fn := b.onAuthFailure
 	b.mu.Unlock()
 	if fn != nil {
-		log.Warnf(b.logComponent(), "firing onAuthFailure: %s", detail)
+		log.NewComponentLogger(b.logComponent()).Warnf("firing onAuthFailure: %s", detail)
 		fn(detail)
 	} else {
-		log.Warnf(b.logComponent(), "onAuthFailure is nil — auth failure not surfaced: %s", detail)
+		log.NewComponentLogger(b.logComponent()).Warnf("onAuthFailure is nil — auth failure not surfaced: %s", detail)
 	}
 }
 
@@ -96,7 +96,7 @@ func (s *Server) fanOutAuthFailure(detail string) {
 	for _, be := range backends {
 		be.fireAuthFailure(detail)
 	}
-	log.Warnf(s.logComponent(), "fanOutAuthFailure: dispatched to %d session(s)", len(backends))
+	log.NewComponentLogger(s.logComponent()).Warnf("fanOutAuthFailure: dispatched to %d session(s)", len(backends))
 }
 
 // checkHTTP401 is a legacy per-method 401 check. Kept for explicit

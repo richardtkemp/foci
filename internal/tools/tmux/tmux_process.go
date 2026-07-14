@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"foci/internal/log"
 )
 
 // killSessionWithChildren kills a tmux session and terminates any child
@@ -149,7 +148,7 @@ func terminateProcesses(pids []int) int {
 			continue
 		}
 		if err := proc.Signal(syscall.SIGKILL); err == nil {
-			log.Debugf("tmux", "SIGKILL pid %d (did not exit after SIGTERM)", pid)
+			tmuxLog.Debugf("SIGKILL pid %d (did not exit after SIGTERM)", pid)
 		}
 	}
 

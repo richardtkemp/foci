@@ -18,6 +18,12 @@ import (
 	"foci/internal/tools"
 )
 
+var (
+	tmuxLog        = log.NewComponentLogger("tmux")
+	tmux_debugLog  = log.NewComponentLogger("tmux_debug")
+	tmux_memoryLog = log.NewComponentLogger("tmux_memory")
+)
+
 var tmuxCounter uint64
 
 // tmuxSocketPath overrides the tmux socket (via -S). Empty = default.
@@ -117,7 +123,7 @@ func NewTmuxTool(cols, rows int, notifier *tools.AsyncNotifier, sessionIndex *se
 					inst.lastAccess[name] = time.Now() // conservative: full TTL window after restart
 				}
 				if len(ownedMap) > 0 {
-					log.Debugf("tmux", "restored %d owned session(s) from state", len(ownedMap))
+					tmuxLog.Debugf("restored %d owned session(s) from state", len(ownedMap))
 				}
 			}
 		}
@@ -168,7 +174,7 @@ func NewTmuxTool(cols, rows int, notifier *tools.AsyncNotifier, sessionIndex *se
 					inst.persistWatches()
 				}
 				if restored > 0 {
-					log.Debugf("tmux", "restored %d watch(es) from state", restored)
+					tmuxLog.Debugf("restored %d watch(es) from state", restored)
 				}
 			}
 		}
@@ -330,11 +336,11 @@ func (inst *tmuxInstance) persistOwned() {
 	}
 	data, err := json.Marshal(owned)
 	if err != nil {
-		log.Warnf("tmux", "marshal owned sessions: %v", err)
+		tmuxLog.Warnf("marshal owned sessions: %v", err)
 		return
 	}
 	if err := inst.sessionIndex.SetAgentMetadata(inst.agentID, "tmux_owned", string(data)); err != nil {
-		log.Warnf("tmux", "persist owned sessions: %v", err)
+		tmuxLog.Warnf("persist owned sessions: %v", err)
 	}
 }
 
@@ -369,11 +375,11 @@ func (inst *tmuxInstance) persistWatches() {
 	}
 	data, err := json.Marshal(watches)
 	if err != nil {
-		log.Warnf("tmux", "marshal watches: %v", err)
+		tmuxLog.Warnf("marshal watches: %v", err)
 		return
 	}
 	if err := inst.sessionIndex.SetAgentMetadata(inst.agentID, "tmux_watches", string(data)); err != nil {
-		log.Warnf("tmux", "persist watches: %v", err)
+		tmuxLog.Warnf("persist watches: %v", err)
 	}
 }
 

@@ -37,7 +37,7 @@ func (c *Client) streamOnce(ctx context.Context, req *provider.MessageRequest, h
 
 	wireReq, _ := json.Marshal(params)
 
-	log.Debugf("openai", "stream_call_start: model=%s", req.Model)
+	openaiLog.Debugf("stream_call_start: model=%s", req.Model)
 
 	// Bound the gap between chunks with an idle watchdog instead of a total
 	// wall-clock cap, so a long-but-progressing stream is not truncated (P2-6).

@@ -9,6 +9,7 @@
 package opencode
 
 import "time"
+import
 
 // LastActivity returns the time of the most recent SSE frame from the
 // opencode server. Implements delegator.ActivityChecker.
@@ -17,6 +18,12 @@ import "time"
 // (fresh Server, or subscriber not yet connected). All Backends sharing
 // a Server see the same value because the stamp lives on the Server,
 // not the Backend.
+"foci/internal/log"
+
+var (
+	opencodeLog = log.NewComponentLogger("opencode")
+)
+
 func (b *Backend) LastActivity() time.Time {
 	if b.server == nil {
 		return time.Time{}

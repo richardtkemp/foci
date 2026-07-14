@@ -118,12 +118,12 @@ Respond with ONLY the JSON array. No explanation, no preamble, no markdown forma
 
 // Extractor handles LLM-based rule extraction from character files.
 type Extractor struct {
-	agentID       string
-	workspaceDir  string
-	fileOrder     []string
-	fileMode      os.FileMode
-	canPostTool   bool
-	canPreAnswer  bool
+	agentID      string
+	workspaceDir string
+	fileOrder    []string
+	fileMode     os.FileMode
+	canPostTool  bool
+	canPreAnswer bool
 }
 
 // NewExtractor creates an Extractor for the given workspace.
@@ -292,7 +292,7 @@ func ParseExtractionResponse(response string) ([]Rule, error) {
 
 	// Empty response — model hit max_tokens or returned nothing.
 	if text == "" {
-		log.Warnf("nudge", "empty extraction response, returning no rules")
+		nudgeLog.Warnf("empty extraction response, returning no rules")
 		return nil, nil
 	}
 
@@ -315,13 +315,13 @@ func ParseExtractionResponse(response string) ([]Rule, error) {
 	text = strings.TrimSpace(text)
 	openIdx := strings.Index(text, "[")
 	if openIdx < 0 {
-		log.Warnf("nudge", "no JSON array found in extraction response (%.200s)", text)
+		nudgeLog.Warnf("no JSON array found in extraction response (%.200s)", text)
 		return nil, nil
 	}
 	closeIdx := strings.LastIndex(text, "]")
 	if closeIdx < 0 || closeIdx < openIdx {
 		// Opening bracket but no closing — truncated JSON.
-		log.Warnf("nudge", "truncated JSON array in extraction response, returning no rules")
+		nudgeLog.Warnf("truncated JSON array in extraction response, returning no rules")
 		return nil, nil
 	}
 	text = text[openIdx : closeIdx+1]

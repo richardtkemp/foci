@@ -37,7 +37,7 @@ func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 			}
 		}
 	})
-	log.Infof("main", "warning injection enabled")
+	mainLog.Infof("warning injection enabled")
 }
 
 // setupTmuxMemoryMonitor starts the tmux memory monitor if tmux is available.

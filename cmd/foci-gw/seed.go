@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"foci/internal/log"
 	"foci/internal/provision"
 	"foci/shared"
 )
@@ -20,7 +19,7 @@ func seedSharedDefaults(fileMode os.FileMode, liveBackends map[string]bool) {
 	sharedDir := filepath.Join(home, "shared")
 
 	if err := provision.SeedDefaults(shared.DefaultsFS, sharedDir, fileMode); err != nil {
-		log.Warnf("main", "seed shared defaults: %v", err)
+		mainLog.Warnf("seed shared defaults: %v", err)
 	}
 	seedDefaultPrompts(filepath.Join(sharedDir, "prompts"), fileMode, liveBackends)
 	seedDefaultSkills(filepath.Join(sharedDir, "skills"), fileMode)

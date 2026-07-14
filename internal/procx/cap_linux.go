@@ -3,6 +3,7 @@
 package procx
 
 import "golang.org/x/sys/unix"
+import
 
 // clearAmbientCaps empties the process ambient capability set.
 //
@@ -18,6 +19,12 @@ import "golang.org/x/sys/unix"
 // setgroups in Spawn's children (performed before execve) still works, but the
 // exec'd child — non-root, no file caps, empty ambient — has its permitted and
 // effective sets stripped at execve. The child ends up with no CAP_SETGID.
+"foci/internal/log"
+
+var (
+	execLog = log.NewComponentLogger("exec")
+)
+
 func clearAmbientCaps() error {
 	return unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)
 }

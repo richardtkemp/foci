@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 )
 
 const (
@@ -65,7 +64,7 @@ func (s *deviceStore) load() {
 	}
 	var list []*device
 	if err := json.Unmarshal(data, &list); err != nil {
-		log.Warnf("app", "device store %s: %v", s.path, err)
+		appLog.Warnf("device store %s: %v", s.path, err)
 		return
 	}
 	for _, d := range list {
@@ -75,7 +74,7 @@ func (s *deviceStore) load() {
 		s.byID[d.DeviceID] = d
 		s.byTok[d.Token] = d
 	}
-	log.Infof("app", "loaded %d paired device(s)", len(s.byID))
+	appLog.Infof("loaded %d paired device(s)", len(s.byID))
 }
 
 // saveLocked writes the store to disk atomically (temp + rename). Caller holds s.mu.
@@ -89,16 +88,16 @@ func (s *deviceStore) saveLocked() {
 	}
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
-		log.Errorf("app", "device store marshal: %v", err)
+		appLog.Errorf("device store marshal: %v", err)
 		return
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		log.Errorf("app", "device store write: %v", err)
+		appLog.Errorf("device store write: %v", err)
 		return
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
-		log.Errorf("app", "device store rename: %v", err)
+		appLog.Errorf("device store rename: %v", err)
 	}
 }
 

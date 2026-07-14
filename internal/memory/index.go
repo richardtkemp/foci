@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/sqlite"
 
 	"github.com/fsnotify/fsnotify"
@@ -141,7 +140,7 @@ func (idx *Index) Reindex() error {
 	// Index each source directory
 	for sourceName, sourceCfg := range idx.sources {
 		if _, err := os.Stat(sourceCfg.Dir); os.IsNotExist(err) {
-			log.Infof("memory", "fts5: skipping source %q: directory %s does not exist yet", sourceName, sourceCfg.Dir)
+			memoryLog.Infof("fts5: skipping source %q: directory %s does not exist yet", sourceName, sourceCfg.Dir)
 			continue
 		}
 		if err := filepath.Walk(sourceCfg.Dir, func(path string, info os.FileInfo, err error) error {
@@ -163,7 +162,7 @@ func (idx *Index) Reindex() error {
 
 			data, err := os.ReadFile(path)
 			if err != nil {
-				log.Warnf("memory", "fts5 reindex: skipping unreadable file %s: %v", path, err)
+				memoryLog.Warnf("fts5 reindex: skipping unreadable file %s: %v", path, err)
 				return nil // skip unreadable files
 			}
 			if len(data) == 0 {
@@ -205,14 +204,14 @@ func (idx *Index) IndexConversation(text, session string, _ int64) {
 		"INSERT INTO memory_fts (content, path, source) VALUES (?, ?, 'conversation')",
 		text, session,
 	); err != nil {
-		log.Errorf("memory", "index conversation: %v", err)
+		memoryLog.Errorf("index conversation: %v", err)
 		return
 	}
 	if _, err := idx.db.Exec(
 		"INSERT OR REPLACE INTO memory_meta (source, path, mtime) VALUES ('conversation', ?, ?)",
 		session, float64(time.Now().Unix()),
 	); err != nil {
-		log.Errorf("memory", "index conversation meta: %v", err)
+		memoryLog.Errorf("index conversation meta: %v", err)
 	}
 }
 
@@ -502,7 +501,7 @@ func (idx *Index) handleFileEvents() {
 			if !ok {
 				return
 			}
-			log.Warnf("memory", "file watcher error: %v", err)
+			memoryLog.Warnf("file watcher error: %v", err)
 		}
 	}
 }
@@ -521,7 +520,7 @@ func (idx *Index) scheduleReindex() {
 	// Schedule reindex after debounce delay
 	idx.reindexTimer = time.AfterFunc(idx.debounce, func() {
 		if err := idx.Reindex(); err != nil {
-			log.Errorf("memory", "auto-reindex failed: %v", err)
+			memoryLog.Errorf("auto-reindex failed: %v", err)
 		}
 	})
 }
@@ -546,9 +545,9 @@ func runSweepLoop(stop <-chan struct{}, initial, interval time.Duration, logPref
 	case <-stop:
 		return
 	}
-	log.Infof("memory", "%s: initial reindex", logPrefix)
+	memoryLog.Infof("%s: initial reindex", logPrefix)
 	if err := reindexFn(); err != nil {
-		log.Errorf("memory", "%s reindex: %v", logPrefix, err)
+		memoryLog.Errorf("%s reindex: %v", logPrefix, err)
 	}
 
 	ticker := time.NewTicker(interval)
@@ -556,9 +555,9 @@ func runSweepLoop(stop <-chan struct{}, initial, interval time.Duration, logPref
 	for {
 		select {
 		case <-ticker.C:
-			log.Infof("memory", "%s: periodic reindex", logPrefix)
+			memoryLog.Infof("%s: periodic reindex", logPrefix)
 			if err := reindexFn(); err != nil {
-				log.Errorf("memory", "%s reindex: %v", logPrefix, err)
+				memoryLog.Errorf("%s reindex: %v", logPrefix, err)
 			}
 		case <-stop:
 			return

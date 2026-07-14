@@ -31,12 +31,12 @@ func (b *Backend) handleEvent(ev rawEvent) {
 		b.handleChildEvent(ev)
 		return
 	}
-	log.Debugf(b.logComponent(), "handleEvent: %s", ev.Type)
+	log.NewComponentLogger(b.logComponent()).Debugf("handleEvent: %s", ev.Type)
 	switch ev.Type {
 	case EventMessagePartUpdated:
 		var p eventMessagePartUpdated
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode message.part.updated: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode message.part.updated: %v", err)
 			return
 		}
 		b.onMessagePartUpdated(p.Part, p.Delta)
@@ -44,7 +44,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 	case EventMessagePartDelta:
 		var p eventMessagePartDelta
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode message.part.delta: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode message.part.delta: %v", err)
 			return
 		}
 		b.onMessagePartDelta(p)
@@ -52,7 +52,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 	case EventMessageUpdated:
 		var p eventMessageUpdated
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode message.updated: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode message.updated: %v", err)
 			return
 		}
 		b.onMessageUpdated(p.Info)
@@ -63,7 +63,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 	case EventSessionIdle:
 		var p eventSessionIdle
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode session.idle: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode session.idle: %v", err)
 			return
 		}
 		b.onSessionIdle(p.SessionID)
@@ -71,7 +71,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 	case EventSessionStatus:
 		var p eventSessionStatus
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode session.status: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode session.status: %v", err)
 			return
 		}
 		b.onSessionStatus(p.SessionID, p.Status)
@@ -79,7 +79,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 	case EventSessionCompacted:
 		var p eventSessionCompacted
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode session.compacted: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode session.compacted: %v", err)
 			return
 		}
 		b.onSessionCompacted(p.SessionID)
@@ -87,7 +87,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 	case EventSessionError:
 		var p eventSessionError
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode session.error: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode session.error: %v", err)
 			return
 		}
 		b.onSessionError(p.SessionID, p.Error)
@@ -95,7 +95,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 	case EventPermissionUpdated:
 		var p eventPermissionUpdated
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode permission.updated: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode permission.updated: %v", err)
 			return
 		}
 		b.onPermissionUpdated(p.Permission)
@@ -105,7 +105,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 		// `.permission` wrapper, unlike the legacy permission.updated).
 		var req PermissionRequest
 		if err := json.Unmarshal(ev.Properties, &req); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode permission.asked: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode permission.asked: %v", err)
 			return
 		}
 		b.onPermissionAsked(req)
@@ -113,7 +113,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 	case EventPermissionReplied:
 		var p eventPermissionReplied
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
-			log.Warnf(b.logComponent(), "handlers: decode permission.replied: %v", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("handlers: decode permission.replied: %v", err)
 			return
 		}
 		b.onPermissionReplied(p.SessionID, p.PermissionID, p.Response)
@@ -122,7 +122,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 		// Already logged by Server.route; no per-Backend action.
 
 	default:
-		log.Debugf(b.logComponent(), "handlers: unhandled event %s", ev.Type)
+		log.NewComponentLogger(b.logComponent()).Debugf("handlers: unhandled event %s", ev.Type)
 	}
 }
 
@@ -203,7 +203,7 @@ func (b *Backend) onMessagePartUpdated(part Part, delta string) {
 	default:
 		// step-start, step-finish, snapshot, patch, agent, retry, file —
 		// not surfaced by foci for v1. Logged at DEBUG for observability.
-		log.Debugf(b.logComponent(), "handlers: part type %s ignored", part.Type)
+		log.NewComponentLogger(b.logComponent()).Debugf("handlers: part type %s ignored", part.Type)
 	}
 }
 
@@ -222,7 +222,7 @@ func (b *Backend) onMessagePartDelta(p eventMessagePartDelta) {
 	partType := b.partTypes[p.PartID]
 	b.turnMu.Unlock()
 	if partType == "" {
-		log.Debugf(b.logComponent(), "handlers: part.delta for untracked part %s", p.PartID)
+		log.NewComponentLogger(b.logComponent()).Debugf("handlers: part.delta for untracked part %s", p.PartID)
 		return
 	}
 	switch partType {
@@ -436,26 +436,26 @@ func (b *Backend) handleMessageError(err *MessageError) {
 	case ErrProviderAuth:
 		var data ProviderAuthErrorData
 		if json.Unmarshal(err.Data, &data) == nil {
-			log.Warnf(component, "auth failure: %s", data.Message)
+			log.NewComponentLogger(component).Warnf("auth failure: %s", data.Message)
 			if b.server != nil {
 				b.server.fanOutAuthFailure(data.Message)
 			} else {
 				b.fireAuthFailure(data.Message)
 			}
 		} else {
-			log.Warnf(component, "auth failure (unparsable data)")
+			log.NewComponentLogger(component).Warnf("auth failure (unparsable data)")
 		}
 	case ErrMessageAborted:
-		log.Debugf(component, "message aborted (expected on /reset hard)")
+		log.NewComponentLogger(component).Debugf("message aborted (expected on /reset hard)")
 	case ErrAPI:
 		var data ApiErrorData
 		if json.Unmarshal(err.Data, &data) == nil {
-			log.Warnf(component, "API error: %s (status=%d, retryable=%v)", data.Message, data.StatusCode, data.IsRetryable)
+			log.NewComponentLogger(component).Warnf("API error: %s (status=%d, retryable=%v)", data.Message, data.StatusCode, data.IsRetryable)
 		} else {
-			log.Warnf(component, "API error: %s (unparsable data)", err.Name)
+			log.NewComponentLogger(component).Warnf("API error: %s (unparsable data)", err.Name)
 		}
 	default:
-		log.Warnf(component, "message error: %s", err.Name)
+		log.NewComponentLogger(component).Warnf("message error: %s", err.Name)
 	}
 }
 
@@ -468,11 +468,11 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	// always match, but the check is cheap insurance against a routing
 	// bug.
 	if sessionID != b.sessionID {
-		log.Debugf(b.logComponent(), "onSessionIdle: ignored (session=%s, ours=%s)", sessionID, b.sessionID)
+		log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: ignored (session=%s, ours=%s)", sessionID, b.sessionID)
 		return
 	}
 
-	log.Debugf(b.logComponent(), "onSessionIdle: building turn result")
+	log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: building turn result")
 
 	// Snapshot accumulated turn state.
 	b.turnMu.Lock()
@@ -508,7 +508,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	// ccstream's two-round logic.
 	if turn != nil && turn.PreAnswerNudgeFunc != nil {
 		if followUp := turn.PreAnswerNudgeFunc(result); followUp != "" {
-			log.Debugf(b.logComponent(), "onSessionIdle: pre-answer nudge fired, re-sending")
+			log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: pre-answer nudge fired, re-sending")
 			b.beginTurn(turn) // reuse same TurnEvents
 			_ = b.sendPrompt(context.Background(), followUp, nil, b.systemPrompt)
 			return // don't complete — wait for the next session.idle
@@ -532,7 +532,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	// (e.g. the aborted turn 1 via failInFlightTurn), so this only fires for a
 	// real active turn that produced nothing. Skip during an abort drain.
 	if !wasAborting && turn != nil && result.Text == "" && result.ToolCalls == 0 {
-		log.Warnf(b.logComponent(), "onSessionIdle: turn completed with no text/tools — possible stray abort idle mis-attributed to steered turn")
+		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: turn completed with no text/tools — possible stray abort idle mis-attributed to steered turn")
 	}
 
 	// Signal WaitForTurn.
@@ -562,7 +562,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		if done {
 			b.abortDrainComplete()
 		} else {
-			log.Debugf(b.logComponent(), "onSessionIdle: abort drain idle %d/2", n)
+			log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: abort drain idle %d/2", n)
 		}
 		return
 	}
@@ -576,7 +576,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents {
 		return nil
 	}); err != nil {
-		log.Warnf(b.logComponent(), "onSessionIdle: flushSteerBuf: %v", err)
+		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: flushSteerBuf: %v", err)
 	}
 }
 
@@ -596,7 +596,7 @@ func (b *Backend) onSessionStatus(sessionID string, status SessionStatus) {
 	case StatusIdle:
 		// session.idle handles completion; this is belt-and-suspenders.
 	case StatusRetry:
-		log.Debugf(b.logComponent(), "session retrying (attempt %d): %s", status.Attempt, status.Message)
+		log.NewComponentLogger(b.logComponent()).Debugf("session retrying (attempt %d): %s", status.Attempt, status.Message)
 	}
 }
 
@@ -639,27 +639,27 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 	}
 	component := b.logComponent()
 	if sessionID != "" {
-		log.Debugf(component, "onSessionError: session=%s", sessionID)
+		log.NewComponentLogger(component).Debugf("onSessionError: session=%s", sessionID)
 	}
 	switch err.Name {
 	case ErrProviderAuth:
 		var data ProviderAuthErrorData
 		if json.Unmarshal(err.Data, &data) == nil {
-			log.Warnf(component, "session error (auth): %s: %s", data.ProviderID, data.Message)
+			log.NewComponentLogger(component).Warnf("session error (auth): %s: %s", data.ProviderID, data.Message)
 			if b.server != nil {
 				b.server.fanOutAuthFailure(data.Message)
 			} else {
 				b.fireAuthFailure(data.Message)
 			}
 		} else {
-			log.Warnf(component, "session error (auth): %s", err.Name)
+			log.NewComponentLogger(component).Warnf("session error (auth): %s", err.Name)
 		}
 	case ErrMessageAborted:
-		log.Debugf(component, "session error (aborted — expected on /reset hard)")
+		log.NewComponentLogger(component).Debugf("session error (aborted — expected on /reset hard)")
 	case ErrAPI:
 		var data ApiErrorData
 		if json.Unmarshal(err.Data, &data) == nil {
-			log.Warnf(component, "session error (API): %s (status=%d, retryable=%v)", data.Message, data.StatusCode, data.IsRetryable)
+			log.NewComponentLogger(component).Warnf("session error (API): %s (status=%d, retryable=%v)", data.Message, data.StatusCode, data.IsRetryable)
 			// Inject the error message into the turn text so failInFlightTurn
 			// delivers it to the user instead of the generic "ended unexpectedly"
 			// fallback. Only when no text accumulated — don't clobber partial output.
@@ -669,10 +669,10 @@ func (b *Backend) onSessionError(sessionID string, err *MessageError) {
 			}
 			b.turnMu.Unlock()
 		} else {
-			log.Warnf(component, "session error (API): %s (unparsable data)", err.Name)
+			log.NewComponentLogger(component).Warnf("session error (API): %s (unparsable data)", err.Name)
 		}
 	default:
-		log.Warnf(component, "session error: %s", err.Name)
+		log.NewComponentLogger(component).Warnf("session error: %s", err.Name)
 	}
 
 	// End any in-flight turn. A session error (including the synthetic one
@@ -713,7 +713,7 @@ func (b *Backend) failInFlightTurn(reason string) {
 	// MessageAbortedError is always a deliberate POST /abort (steer or manual
 	// stop) — never an unexpected session death — so it's also suppressed.
 	if !wasAborting && reason != ErrMessageAborted && turn != nil && text == "" && tools == 0 {
-		log.Warnf(b.logComponent(), "failInFlightTurn: active turn ended with no text/tools on %s — possible premature error on steered turn", reason)
+		log.NewComponentLogger(b.logComponent()).Warnf("failInFlightTurn: active turn ended with no text/tools on %s — possible premature error on steered turn", reason)
 	}
 
 	if text == "" && reason != ErrMessageAborted {
@@ -736,5 +736,5 @@ func (b *Backend) failInFlightTurn(reason string) {
 	if b.typingFunc != nil {
 		b.typingFunc(false)
 	}
-	log.Debugf(b.logComponent(), "failInFlightTurn: completed in-flight turn after %s", reason)
+	log.NewComponentLogger(b.logComponent()).Debugf("failInFlightTurn: completed in-flight turn after %s", reason)
 }

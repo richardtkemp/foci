@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"foci/internal/log"
 	skills "foci/shared/skills"
 )
 
@@ -46,18 +45,18 @@ func seedDefaultSkills(dir string, fileMode os.FileMode) {
 
 		data, err := skills.FS.ReadFile(path)
 		if err != nil {
-			log.Warnf("main", "seed skills: read embedded %s: %v", path, err)
+			mainLog.Warnf("seed skills: read embedded %s: %v", path, err)
 			return nil
 		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			log.Warnf("main", "seed skills: mkdir %s: %v", filepath.Dir(dest), err)
+			mainLog.Warnf("seed skills: mkdir %s: %v", filepath.Dir(dest), err)
 			return nil
 		}
 		if err := os.WriteFile(dest, data, fileMode); err != nil {
-			log.Warnf("main", "seed skills: write %s: %v", dest, err)
+			mainLog.Warnf("seed skills: write %s: %v", dest, err)
 			return nil
 		}
-		log.Infof("main", "seeded skill file: %s", dest)
+		mainLog.Infof("seeded skill file: %s", dest)
 		return nil
 	})
 }

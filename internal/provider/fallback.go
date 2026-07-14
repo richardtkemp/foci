@@ -5,10 +5,17 @@ import (
 	"errors"
 	"strings"
 )
+import
 
 // FallbackFunc resolves a model to its fallback.
 // Returns the fallback model (canonical developer/model_id), endpoint, format,
 // and ok=true if a fallback exists.
+"foci/internal/log"
+
+var (
+	providerLog = log.NewComponentLogger("provider")
+)
+
 type FallbackFunc func(model string) (fbModel, endpoint, format string, ok bool)
 
 // maxFallbackDepth is the maximum number of fallback hops per request.

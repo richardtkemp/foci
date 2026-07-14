@@ -11,7 +11,6 @@ import (
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/modelcaps"
 	"foci/internal/nudge"
 	"foci/internal/platform"
@@ -61,7 +60,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 		extraSystemBlocks = []provider.SystemBlock{
 			{Type: "text", Text: skillRegistry.SystemBlock(acfg.Workspace)},
 		}
-		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
+		mainLog.Infof("agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
 	maxRC := p.resolved.Summary.MaxResultChars // static-cfg:ignore: one-time startup diagnostic (warns if a skill file is oversized), not a hot path
 	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
@@ -196,7 +195,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 	build := func() {
 		var charRules []nudge.Rule
 		if rs, err := nudge.LoadRules(rulesPath); err != nil {
-			log.Warnf("nudge", "agent %s: load nudge rules: %v", acfg.ID, err)
+			nudgeLog.Warnf("agent %s: load nudge rules: %v", acfg.ID, err)
 		} else if rs != nil {
 			charRules = rs.Rules
 		}
@@ -238,13 +237,13 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 				if ag.DelegatedManager != nil {
 					// Delegated: use claude --print for one-shot extraction.
 					// No interactive session, no platform delivery, no session index.
-					log.Infof("nudge", "agent %s: delegated extraction via RunOnce", acfg.ID)
+					nudgeLog.Infof("agent %s: delegated extraction via RunOnce", acfg.ID)
 					attempt = func() error { return extractor.ExtractViaRunOnce(ctx, ag.DelegatedManager) }
 				} else {
 					// API: branch from the most recent session.
 					parentKey := defaultSessionKeyFor(ag, acfg.ID)
 					if parentKey == "" {
-						log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
+						nudgeLog.Warnf("agent %s: no default session for extraction branch", acfg.ID)
 						return
 					}
 					branchKey, err := sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
@@ -252,7 +251,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 						BranchType:  "nudge-extraction",
 					})
 					if err != nil {
-						log.Warnf("nudge", "agent %s: create branch: %v", acfg.ID, err)
+						nudgeLog.Warnf("agent %s: create branch: %v", acfg.ID, err)
 						return
 					}
 					ag.SetSessionNoCompact(branchKey, true)
@@ -269,16 +268,16 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 						break
 					}
 					if i < nudgeExtractMaxAttempts {
-						log.Infof("nudge", "agent %s: extraction attempt %d/%d failed: %v; retrying", acfg.ID, i, nudgeExtractMaxAttempts, err)
+						nudgeLog.Infof("agent %s: extraction attempt %d/%d failed: %v; retrying", acfg.ID, i, nudgeExtractMaxAttempts, err)
 					} else {
-						log.Errorf("nudge", "agent %s: extraction failed after %d attempts: %v", acfg.ID, nudgeExtractMaxAttempts, err)
+						nudgeLog.Errorf("agent %s: extraction failed after %d attempts: %v", acfg.ID, nudgeExtractMaxAttempts, err)
 					}
 				}
 				if err != nil {
 					return
 				}
 				build()
-				log.Infof("nudge", "agent %s: refreshed rules after extraction", acfg.ID)
+				nudgeLog.Infof("agent %s: refreshed rules after extraction", acfg.ID)
 			}()
 		} else {
 			build()
@@ -424,12 +423,12 @@ func logRegisteredTools(registry *tools.Registry, serverTools []provider.ToolDef
 	for i, t := range allTools {
 		toolNames[i] = t.Name
 	}
-	log.Infof("main", "agent %q: registered %d tools: [%s]", agentID, len(toolNames), strings.Join(toolNames, ", "))
+	mainLog.Infof("agent %q: registered %d tools: [%s]", agentID, len(toolNames), strings.Join(toolNames, ", "))
 	if len(serverTools) > 0 {
 		stNames := make([]string, len(serverTools))
 		for i, st := range serverTools {
 			stNames[i] = st.Name()
 		}
-		log.Infof("main", "agent %q: server tools: [%s]", agentID, strings.Join(stNames, ", "))
+		mainLog.Infof("agent %q: server tools: [%s]", agentID, strings.Join(stNames, ", "))
 	}
 }

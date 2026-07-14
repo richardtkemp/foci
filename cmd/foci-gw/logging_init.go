@@ -39,7 +39,7 @@ func initLogging(cfg *config.Config) func() {
 	} {
 		if on {
 			log.EnableExtra(pkg)
-			log.Infof("main", "extra logging enabled for %q (grep xtra:%s)", pkg, pkg)
+			mainLog.Infof("extra logging enabled for %q (grep xtra:%s)", pkg, pkg)
 		}
 	}
 
@@ -64,9 +64,9 @@ func initLogging(cfg *config.Config) func() {
 		cleanupTempFiles := func() {
 			n, err := tempdir.CleanOldFiles(tempdir.Dir(), "spawn-result-*.txt", 7*24*time.Hour)
 			if err != nil {
-				log.Warnf("rotate", "temp cleanup: %v", err)
+				rotateLog.Warnf("temp cleanup: %v", err)
 			} else if n > 0 {
-				log.Infof("rotate", "cleaned %d stale spawn-result files", n)
+				rotateLog.Infof("cleaned %d stale spawn-result files", n)
 			}
 		}
 

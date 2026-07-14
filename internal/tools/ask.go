@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"foci/internal/app/fap"
-	"foci/internal/log"
 	"foci/internal/procx"
 	"foci/internal/question"
 	"foci/internal/session"
@@ -320,7 +319,7 @@ func (a *askState) handleResponse(requestID, data string) {
 	answer, cancelled, err := question.ResolveAnswer(q, data)
 	if err != nil {
 		a.mu.Unlock()
-		log.Warnf("ask", "session=%s req=%s invalid response %q: %v", p.sessionKey, requestID, data, err)
+		askLog.Warnf("session=%s req=%s invalid response %q: %v", p.sessionKey, requestID, data, err)
 		return
 	}
 	if cancelled {
@@ -391,7 +390,7 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 		a.mu.Unlock()
 		return
 	}
-	log.Debugf("ask", "session=%s req=%s batch response: %d answers, accumulator at idx=%d/%d",
+	askLog.Debugf("session=%s req=%s batch response: %d answers, accumulator at idx=%d/%d",
 		p.sessionKey, requestID, len(answers), p.acc.Index(), p.acc.Total())
 	for ansIdx, raw := range answers {
 		q := p.acc.Current()
@@ -401,7 +400,7 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 		answer, cancelled, err := question.ResolveAnswer(q, raw)
 		if err != nil {
 			a.mu.Unlock()
-			log.Warnf("ask", "session=%s req=%s invalid batched response ans[%d]=%q against Q%d (%d options) %q: %v",
+			askLog.Warnf("session=%s req=%s invalid batched response ans[%d]=%q against Q%d (%d options) %q: %v",
 				p.sessionKey, requestID, ansIdx, raw, p.acc.Index(), len(q.Options), answerEcho(q.Question), err)
 			return
 		}
@@ -422,7 +421,7 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 		// (a later complete submit, or the 24h expiry, resolves it).
 		a.persistLocked()
 		a.mu.Unlock()
-		log.Warnf("ask", "session=%s req=%s batched response had %d of %d answers; awaiting rest",
+		askLog.Warnf("session=%s req=%s batched response had %d of %d answers; awaiting rest",
 			p.sessionKey, requestID, p.acc.Index(), p.acc.Total())
 		return
 	}
@@ -500,11 +499,11 @@ func (a *askState) persistLocked() {
 	}
 	data, err := json.Marshal(out)
 	if err != nil {
-		log.Warnf("ask", "marshal pending asks: %v", err)
+		askLog.Warnf("marshal pending asks: %v", err)
 		return
 	}
 	if err := a.store.SetAgentMetadata(a.agentID, askMetaKey, string(data)); err != nil {
-		log.Warnf("ask", "persist pending asks: %v", err)
+		askLog.Warnf("persist pending asks: %v", err)
 	}
 }
 
@@ -523,7 +522,7 @@ func (a *askState) restorePending() {
 	}
 	var saved []persistedAsk
 	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
-		log.Warnf("ask", "unmarshal pending asks: %v", err)
+		askLog.Warnf("unmarshal pending asks: %v", err)
 		return
 	}
 
@@ -564,7 +563,7 @@ func (a *askState) restorePending() {
 		a.reattach(p)
 	}
 	if len(restored) > 0 {
-		log.Debugf("ask", "restored %d pending ask(s) from state", len(restored))
+		askLog.Debugf("restored %d pending ask(s) from state", len(restored))
 	}
 }
 
@@ -832,7 +831,7 @@ func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string,
 // "report" leads with the failure so the agent can decide, still including the raw
 // answers. Either way the user's selections survive a broken grader.
 func graderErrorMsg(p *pendingAsk, rawBatch, reason string) string {
-	log.Warnf("ask", "session=%s req=%s grader failure: %s", p.sessionKey, p.requestID, reason)
+	askLog.Warnf("session=%s req=%s grader failure: %s", p.sessionKey, p.requestID, reason)
 	if p.grader.onError == graderOnErrorReport {
 		return fmt.Sprintf("[SYSTEM: your `ask` grader FAILED (%s). The user's raw answers follow — decide how to proceed.]\n\n%s", reason, rawBatch)
 	}

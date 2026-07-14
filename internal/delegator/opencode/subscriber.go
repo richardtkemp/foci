@@ -121,7 +121,7 @@ func (sub *Subscriber) Run(ctx context.Context) error {
 
 		lineBytes, err := readLine(reader, maxLine)
 		if errors.Is(err, errLineTooLong) {
-			log.Warnf(sub.component, "SSE line exceeded %d bytes — dropping oversized frame and resyncing to next event", maxLine)
+			log.NewComponentLogger(sub.component).Warnf("SSE line exceeded %d bytes — dropping oversized frame and resyncing to next event", maxLine)
 			dataLines = dataLines[:0] // partial frame is untrustworthy; restart at the next boundary
 			continue
 		}
@@ -298,7 +298,7 @@ func (s *Server) runSubscriber(ctx context.Context) {
 	for {
 		req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if rerr != nil {
-			log.Warnf(component, "subscriber: build request: %v", rerr)
+			log.NewComponentLogger(component).Warnf("subscriber: build request: %v", rerr)
 			s.OnSubscriberStopped(rerr)
 			return
 		}
@@ -315,9 +315,9 @@ func (s *Server) runSubscriber(ctx context.Context) {
 		}
 		if !loggedRetry {
 			if derr != nil {
-				log.Debugf(component, "subscriber: not ready (%v), retrying every %s", derr, subscriberConnectRetryInterval)
+				log.NewComponentLogger(component).Debugf("subscriber: not ready (%v), retrying every %s", derr, subscriberConnectRetryInterval)
 			} else {
-				log.Debugf(component, "subscriber: %s returned %d, retrying every %s", url, r.StatusCode, subscriberConnectRetryInterval)
+				log.NewComponentLogger(component).Debugf("subscriber: %s returned %d, retrying every %s", url, r.StatusCode, subscriberConnectRetryInterval)
 			}
 			loggedRetry = true
 		}
@@ -341,7 +341,7 @@ func (s *Server) runSubscriber(ctx context.Context) {
 
 	onEvent := func(ev rawEvent) {
 		s.lastActivity.Store(time.Now().UnixNano())
-		log.Debugf(component, "SSE event: %s session=%s", ev.Type, extractSessionID(ev.Properties))
+		log.NewComponentLogger(component).Debugf("SSE event: %s session=%s", ev.Type, extractSessionID(ev.Properties))
 		s.route(ev)
 	}
 	onHeartbeat := func() {
@@ -352,9 +352,9 @@ func (s *Server) runSubscriber(ctx context.Context) {
 	sub.component = component
 	err := sub.Run(ctx)
 	if err == io.EOF || errors.Is(err, context.Canceled) {
-		log.Infof(component, "subscriber: end of stream")
+		log.NewComponentLogger(component).Infof("subscriber: end of stream")
 	} else {
-		log.Warnf(component, "subscriber: stopped: %v", err)
+		log.NewComponentLogger(component).Warnf("subscriber: stopped: %v", err)
 	}
 	s.OnSubscriberStopped(err)
 }
@@ -393,9 +393,9 @@ func (s *Server) route(ev rawEvent) {
 		// first frame; log it at INFO so operators see "subscribed"
 		// in the gateway log. Everything else logs at DEBUG only.
 		if ev.Type == EventServerConnected {
-			log.Infof(s.logComponent(), "subscriber: server.connected")
+			log.NewComponentLogger(s.logComponent()).Infof("subscriber: server.connected")
 		} else {
-			log.Debugf(s.logComponent(), "global event: %s", ev.Type)
+			log.NewComponentLogger(s.logComponent()).Debugf("global event: %s", ev.Type)
 		}
 		return
 	}
@@ -416,7 +416,7 @@ func (s *Server) route(ev rawEvent) {
 		// can deliver them via OnSubagentText without polluting turn state.
 		if isPermissionEvent(ev.Type) {
 			if pbe := s.resolveParentBackend(sid); pbe != nil {
-				log.Debugf(s.logComponent(), "routing child session %s %s to parent session %s", sid, ev.Type, pbe.sessionID)
+				log.NewComponentLogger(s.logComponent()).Debugf("routing child session %s %s to parent session %s", sid, ev.Type, pbe.sessionID)
 				be = pbe
 			} else if s.http != nil && s.baseURL != "" {
 				// No childToParent link for this child — its session.created was
@@ -446,7 +446,7 @@ func (s *Server) route(ev rawEvent) {
 	default:
 		// Channel full — drop rather than block. The dispatcher goroutine
 		// is wedged; handlers.go will surface that via the missing-event
-		log.Warnf(s.logComponent(), "event channel full for session %s; dropping %s", sid, ev.Type)
+		log.NewComponentLogger(s.logComponent()).Warnf("event channel full for session %s; dropping %s", sid, ev.Type)
 	}
 }
 
@@ -570,11 +570,11 @@ func (s *Server) resolveChildPermissionViaAPI(sid string, ev rawEvent) {
 		s.sessionsMu.RUnlock()
 
 		if be != nil {
-			log.Debugf(s.logComponent(), "routing child session %s %s to parent session %s (resolved via GET /session)", sid, ev.Type, be.sessionID)
+			log.NewComponentLogger(s.logComponent()).Debugf("routing child session %s %s to parent session %s (resolved via GET /session)", sid, ev.Type, be.sessionID)
 			select {
 			case be.events <- ev:
 			default:
-				log.Warnf(s.logComponent(), "event channel full for session %s; dropping %s", be.sessionID, ev.Type)
+				log.NewComponentLogger(s.logComponent()).Warnf("event channel full for session %s; dropping %s", be.sessionID, ev.Type)
 			}
 			return
 		}
@@ -583,7 +583,7 @@ func (s *Server) resolveChildPermissionViaAPI(sid string, ev rawEvent) {
 			if !ok || pid == "" {
 				// Fetch failed, or cur is a root session (no parent) — no
 				// registered ancestor exists to answer this permission.
-				log.Debugf(s.logComponent(), "no registered ancestor for child session %s; %s dropped", sid, ev.Type)
+				log.NewComponentLogger(s.logComponent()).Debugf("no registered ancestor for child session %s; %s dropped", sid, ev.Type)
 				return
 			}
 			s.sessionsMu.Lock()
@@ -596,7 +596,7 @@ func (s *Server) resolveChildPermissionViaAPI(sid string, ev rawEvent) {
 		}
 		cur = parent
 	}
-	log.Debugf(s.logComponent(), "parent chain for child session %s exceeded depth/cycle; %s dropped", sid, ev.Type)
+	log.NewComponentLogger(s.logComponent()).Debugf("parent chain for child session %s exceeded depth/cycle; %s dropped", sid, ev.Type)
 }
 
 // fetchParentID reads a session's parentID via GET /session/{id}. Returns

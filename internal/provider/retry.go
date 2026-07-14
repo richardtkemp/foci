@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 )
 
 // retryCallbacksKey is the context key for retry notification callbacks.
@@ -149,7 +148,7 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 			// Notify on first retry only (across all retry phases)
 			notifyFirstRetry(ctx, endpoint)
 
-			log.Warnf("provider", "retry after error: attempt=%d status=%s backoff=%s", attempt, lastErr.Error(), backoff.String())
+			providerLog.Warnf("retry after error: attempt=%d status=%s backoff=%s", attempt, lastErr.Error(), backoff.String())
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -158,12 +157,12 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 			backoff *= 2
 		}
 
-		log.Debugf("provider", "attempt_start: attempt=%d elapsed_total=%s", attempt, time.Since(loopStart))
+		providerLog.Debugf("attempt_start: attempt=%d elapsed_total=%s", attempt, time.Since(loopStart))
 		attemptStart := time.Now()
 		resp, err := sendOnce(ctx, client, req, handler)
 		attemptDur := time.Since(attemptStart)
 		if err == nil {
-			log.Debugf("provider", "attempt_ok: attempt=%d duration=%s elapsed_total=%s", attempt, attemptDur, time.Since(loopStart))
+			providerLog.Debugf("attempt_ok: attempt=%d duration=%s elapsed_total=%s", attempt, attemptDur, time.Since(loopStart))
 			// Signal recovery if client supports it (Anthropic)
 			if rc, ok := client.(retryableClient); ok {
 				rc.OnRetrySuccess()
@@ -173,7 +172,7 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 			return resp, nil
 		}
 		lastErr = err
-		log.Debugf("provider", "attempt_fail: attempt=%d duration=%s error=%v elapsed_total=%s", attempt, attemptDur, err, time.Since(loopStart))
+		providerLog.Debugf("attempt_fail: attempt=%d duration=%s error=%v elapsed_total=%s", attempt, attemptDur, err, time.Since(loopStart))
 
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) {
@@ -185,7 +184,7 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 		}
 	}
 
-	log.Debugf("provider", "exhausted_retries: elapsed_total=%s last_error=%v", time.Since(loopStart), lastErr)
+	providerLog.Debugf("exhausted_retries: elapsed_total=%s last_error=%v", time.Since(loopStart), lastErr)
 	return nil, lastErr
 }
 
@@ -203,20 +202,20 @@ func retryExtended(ctx context.Context, rc retryableClient, req *MessageRequest,
 		// Notify on first retry only (across all retry phases)
 		notifyFirstRetry(ctx, endpoint)
 
-		log.Warnf("provider", "extended retry: backoff=%s elapsed=%s max=%s", overloadBackoff.String(), time.Since(overloadStart).String(), maxDuration.String())
+		providerLog.Warnf("extended retry: backoff=%s elapsed=%s max=%s", overloadBackoff.String(), time.Since(overloadStart).String(), maxDuration.String())
 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(overloadBackoff):
 		case <-recoverCh:
-			log.Infof("provider", "recovery signal received, retrying immediately")
+			providerLog.Infof("recovery signal received, retrying immediately")
 			recoverCh = rc.WaitForRecovery() // re-acquire for next iteration
 		}
 
 		resp, err := sendOnce(ctx, rc.(Client), req, handler)
 		if err == nil {
-			log.Infof("provider", "recovered from extended retry: elapsed=%s", time.Since(overloadStart).String())
+			providerLog.Infof("recovered from extended retry: elapsed=%s", time.Since(overloadStart).String())
 			rc.OnRetrySuccess()
 			// Notify success if we retried
 			notifySuccess(ctx)
@@ -232,7 +231,7 @@ func retryExtended(ctx context.Context, rc retryableClient, req *MessageRequest,
 		overloadBackoff *= 2
 	}
 
-	log.Warnf("provider", "extended retries exhausted: elapsed=%s", time.Since(overloadStart).String())
+	providerLog.Warnf("extended retries exhausted: elapsed=%s", time.Since(overloadStart).String())
 	return nil, lastErr
 }
 

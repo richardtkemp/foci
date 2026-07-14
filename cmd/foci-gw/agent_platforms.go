@@ -17,8 +17,39 @@ import (
 	"foci/internal/tools"
 )
 
-// wireAgentPlatformCallbacks wires notification callbacks from the agent to all
-// platform connections. Uses the Messaging facade for fan-out — zero platform-specific types.
+var (
+	agentLog     = log.NewComponentLogger("agent")
+	askLog       = log.NewComponentLogger("ask")
+	askgwLog     = log.NewComponentLogger("askgw")
+	bitwardenLog = log.NewComponentLogger("bitwarden")
+	branchLog    = log.NewComponentLogger("branch")
+	configLog    = log.NewComponentLogger("config")
+	httpLog      = log.
+
+		// wireAgentPlatformCallbacks wires notification callbacks from the agent to all
+		// platform connections. Uses the Messaging facade for fan-out — zero platform-specific types.
+		NewComponentLogger("http")
+	keepaliveLog = log.NewComponentLogger("keepalive")
+	mainLog      = log.NewComponentLogger("main")
+	modelcapsLog = log.NewComponentLogger("modelcaps")
+	modelinfoLog = log.NewComponentLogger("modelinfo")
+	nudgeLog     = log.NewComponentLogger("nudge")
+	remindLog    = log.NewComponentLogger("remind")
+	rotateLog    = log.NewComponentLogger("rotate")
+	securityLog  = log.NewComponentLogger("security")
+	setupLog     = log.NewComponentLogger(
+
+		// Register ALL platform connections with agent
+		"setup")
+	startupLog             = log.NewComponentLogger("startup")
+	testharness_controlLog = log.NewComponentLogger("testharness_control")
+	warningLog             = log.NewComponentLogger(
+
+		// broadcastNotify fans a notice out to every live connection for this
+		// agent (route.Broadcast — the delivery set behind PolicyBroadcast).
+		"warning")
+)
+
 func wireAgentPlatformCallbacks(
 	ag *agent.Agent,
 	acfg config.AgentConfig,
@@ -26,13 +57,11 @@ func wireAgentPlatformCallbacks(
 	connMgr platform.ConnectionManager,
 	sessionIndex *session.SessionIndex,
 ) {
-	// Register ALL platform connections with agent
+
 	for i, conn := range connMgr.AllForAgent(acfg.ID) {
 		ag.AddPlatform(fmt.Sprintf("platform-%d", i), conn)
 	}
 
-	// broadcastNotify fans a notice out to every live connection for this
-	// agent (route.Broadcast — the delivery set behind PolicyBroadcast).
 	broadcastNotify := func(text string) {
 		for _, conn := range route.Broadcast(connMgr, acfg.ID) {
 			conn.SendNotification(text)
@@ -45,7 +74,7 @@ func wireAgentPlatformCallbacks(
 	if ag.CacheBustDetect {
 		ag.CacheBustAlert.Add(func(sess string, prev, cur int) {
 			msg := fmt.Sprintf("⚠️ %s: cache bust, cache_read dropped %d → %d", sess, prev, cur)
-			log.Warnf("agent", "%s", msg)
+			agentLog.Warnf("%s", msg)
 			route.NotifySessionChat(connMgr, acfg.ID, sess, msg)
 		})
 	}
@@ -111,16 +140,16 @@ func wireAgentPlatformCallbacks(
 			msgID := rawID.(string)
 			if sn, ok := c.(platform.SessionNotifier); ok {
 				if err := sn.EditNotificationInSession(sk, msgID, msg); err == nil {
-					log.Debugf("agent", "compaction edit delivered for session=%s msgID=%s", sk, msgID)
+					agentLog.Debugf("compaction edit delivered for session=%s msgID=%s", sk, msgID)
 					return
 				}
-				log.Debugf("agent", "compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
+				agentLog.Debugf("compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
 			} else if bs, ok := c.(platform.ButtonSender); ok {
 				if err := bs.EditMessageText(msgID, msg); err == nil {
-					log.Debugf("agent", "compaction edit delivered for session=%s msgID=%s", sk, msgID)
+					agentLog.Debugf("compaction edit delivered for session=%s msgID=%s", sk, msgID)
 					return
 				}
-				log.Debugf("agent", "compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
+				agentLog.Debugf("compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
 			}
 		}
 		// Fallback: send as a new message, session-aware where supported.
@@ -145,18 +174,18 @@ func wireAgentPlatformCallbacks(
 		}
 		f, err := tempdir.Create("compaction-summary-*.md")
 		if err != nil {
-			log.Warnf("agent", "compaction debug: create temp file: %v", err)
+			agentLog.Warnf("compaction debug: create temp file: %v", err)
 			return
 		}
 		if _, err := f.WriteString(summary); err != nil {
 			_ = f.Close()
 			_ = os.Remove(f.Name())
-			log.Warnf("agent", "compaction debug: write temp file: %v", err)
+			agentLog.Warnf("compaction debug: write temp file: %v", err)
 			return
 		}
 		_ = f.Close()
 		if err := c.SendDocument(f.Name(), ""); err != nil {
-			log.Warnf("agent", "compaction debug: send document: %v", err)
+			agentLog.Warnf("compaction debug: send document: %v", err)
 		}
 		_ = os.Remove(f.Name())
 	})

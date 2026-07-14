@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/tools"
 	"foci/shared/prompts"
 )
@@ -21,7 +20,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		thresholdSeconds = 30
 	}
 
-	log.Debugf("tmux", "session=%s watch: name=%s window=%d threshold=%ds conditional=%v", tools.SessionKeyFromContext(ctx), name, window, thresholdSeconds, conditional)
+	tmuxLog.Debugf("session=%s watch: name=%s window=%d threshold=%ds conditional=%v", tools.SessionKeyFromContext(ctx), name, window, thresholdSeconds, conditional)
 
 	inst.mu.Lock()
 	inst.lastAccess[name] = time.Now()
@@ -74,7 +73,7 @@ func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (tools.ToolR
 	}
 
 	sessionKey := tools.SessionKeyFromContext(ctx)
-	log.Debugf("tmux", "unwatch: session=%s name=%s", sessionKey, name)
+	tmuxLog.Debugf("unwatch: session=%s name=%s", sessionKey, name)
 
 	inst.mu.Lock()
 	// Collect watches matching this session name and session key
@@ -145,7 +144,7 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 				fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
 			if err != nil {
 				// Session exited — clean up the watch (debug log is sufficient)
-				log.Debugf("tmux", "watch: session %s exited, cleaning up watch", ws.session)
+				tmuxLog.Debugf("watch: session %s exited, cleaning up watch", ws.session)
 				inst.mu.Lock()
 				delete(inst.watched, key)
 				inst.persistWatches()
@@ -163,14 +162,14 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 				ws.lastContent = hash
 				if ws.conditional {
 					// First activity detected — convert to normal watch
-					log.Debugf("tmux", "watch: conditional watch on %s:%d converted to normal (activity detected)", ws.session, ws.window)
+					tmuxLog.Debugf("watch: conditional watch on %s:%d converted to normal (activity detected)", ws.session, ws.window)
 					ws.conditional = false
 				}
 				ws.lastActivity = time.Now()
 			} else if !ws.conditional {
 				// Content unchanged and not conditional; check if threshold exceeded
 				if time.Since(ws.lastActivity) > ws.threshold {
-					log.Infof("tmux", "watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
+					tmuxLog.Infof("watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
 					msg := prompts.FormatInjectedMessage("TMUX WATCH",
 						time.Now(),
 						fmt.Sprintf("Session %s:%d has been inactive for %v", ws.session, ws.window, ws.threshold))
@@ -178,7 +177,7 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 
 					if ws.autopilot {
 						// Auto-unwatch: remove from watched map and exit goroutine
-						log.Infof("tmux", "autopilot: auto-unwatched %s after inactivity", ws.session)
+						tmuxLog.Infof("autopilot: auto-unwatched %s after inactivity", ws.session)
 						inst.mu.Lock()
 						delete(inst.watched, key)
 						inst.persistWatches()

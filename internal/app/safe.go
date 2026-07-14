@@ -3,7 +3,6 @@ package app
 import (
 	"runtime/debug"
 
-	"foci/internal/log"
 )
 
 // Panic isolation for the app provider.
@@ -27,7 +26,7 @@ import (
 // where names the site so the log line is actionable.
 func recoverApp(where string) {
 	if r := recover(); r != nil {
-		log.Errorf("app", "recovered panic in %s: %v\n%s", where, r, debug.Stack())
+		appLog.Errorf("recovered panic in %s: %v\n%s", where, r, debug.Stack())
 	}
 }
 

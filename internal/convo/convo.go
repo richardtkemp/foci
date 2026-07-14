@@ -15,6 +15,10 @@ import (
 	"foci/internal/timeutil"
 )
 
+var (
+	conversationLog = log.NewComponentLogger("conversation")
+)
+
 // Entry is a single message in the conversation log.
 type Entry struct {
 	Direction   string // "recv" or "sent"
@@ -157,7 +161,7 @@ func (c *agentLog) insert(entry Entry) int64 {
 		entry.Text, entry.ParseMode, entry.Session, entry.Error, contentType,
 	)
 	if err != nil {
-		log.Errorf("conversation", "insert error: %v", err)
+		conversationLog.Errorf("insert error: %v", err)
 		return 0
 	}
 	rowID, _ := res.LastInsertId()

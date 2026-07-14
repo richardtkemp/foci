@@ -8,7 +8,6 @@ import (
 
 	"foci/internal/app/fap"
 	"foci/internal/config"
-	"foci/internal/log"
 )
 
 // featureConfigEdit is the ClientHello capability a client advertises to view
@@ -41,7 +40,7 @@ func (h *Hub) handleConfigPut(client *wsClient, f fap.ConfigPut) {
 		client.sendRaw(h.buildConfigSchema(err.Error()))
 		return
 	}
-	log.Infof("app", "config set %s.%s (scope %q)", f.Section, f.Key, f.Scope)
+	appLog.Infof("config set %s.%s (scope %q)", f.Section, f.Key, f.Scope)
 	h.broadcastConfigSchema()
 }
 
@@ -54,7 +53,7 @@ func (h *Hub) handleConfigUnset(client *wsClient, f fap.ConfigUnset) {
 		client.sendRaw(h.buildConfigSchema(err.Error()))
 		return
 	}
-	log.Infof("app", "config unset %s.%s (scope %q)", f.Section, f.Key, f.Scope)
+	appLog.Infof("config unset %s.%s (scope %q)", f.Section, f.Key, f.Scope)
 	h.broadcastConfigSchema()
 }
 
@@ -68,13 +67,13 @@ func (h *Hub) handleServerRestart(client *wsClient) {
 		return
 	}
 	if h.deps.Restart == nil {
-		log.Warnf("app", "server.restart (device %q): no restart function wired", client.deviceID)
+		appLog.Warnf("server.restart (device %q): no restart function wired", client.deviceID)
 		return
 	}
 	if msg, err := h.deps.Restart(); err != nil {
-		log.Errorf("app", "server.restart (device %q): %v", client.deviceID, err)
+		appLog.Errorf("server.restart (device %q): %v", client.deviceID, err)
 	} else {
-		log.Infof("app", "server.restart (device %q): %s", client.deviceID, msg)
+		appLog.Infof("server.restart (device %q): %s", client.deviceID, msg)
 	}
 }
 
@@ -163,7 +162,7 @@ func (h *Hub) applyLive(section, key string) {
 		return
 	}
 	if _, err := h.deps.ApplyLive(section, key); err != nil {
-		log.Warnf("app", "config %s.%s written but live apply failed (takes effect on restart): %v", section, key, err)
+		appLog.Warnf("config %s.%s written but live apply failed (takes effect on restart): %v", section, key, err)
 	}
 }
 
@@ -282,7 +281,7 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 
 	fileGlobal, fileAgents, err := config.ExplicitFileValues(cfg.SourcePath)
 	if err != nil {
-		log.Warnf("app", "config schema: parse %s: %v", cfg.SourcePath, err)
+		appLog.Warnf("config schema: parse %s: %v", cfg.SourcePath, err)
 		fileGlobal, fileAgents = map[string]string{}, map[string]map[string]string{}
 		if errMsg == "" {
 			errMsg = fmt.Sprintf("config file unreadable: %v", err)

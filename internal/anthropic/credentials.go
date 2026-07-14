@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/modelcaps"
 	"foci/internal/procx"
 	"foci/internal/provider"
@@ -59,7 +58,7 @@ type AnthropicResolver struct {
 func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, store SecretsStore) (*AnthropicResolver, error) {
 	ccExpiryThreshold, err := time.ParseDuration(anthropicCfg.CCExpiryThreshold)
 	if err != nil {
-		log.Warnf("anthropic", "invalid cc_expiry_threshold, using default: %v", err)
+		anthropicLog.Warnf("invalid cc_expiry_threshold, using default: %v", err)
 		ccExpiryThreshold = defaultExpiryThreshold
 	}
 
@@ -68,12 +67,12 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 	var ccSrc *CCTokenSource
 	if src, err := NewCCTokenSource(ccCredsFile); err == nil {
 		src.SetRefreshFunc(func() {
-			log.Warnf("anthropic", "CC credentials near expiry — starting claude to refresh")
+			anthropicLog.Warnf("CC credentials near expiry — starting claude to refresh")
 			startClaudeForRefresh()
 		})
 		src.SetExpiryThreshold(ccExpiryThreshold)
 		ccSrc = src
-		log.Infof("anthropic", "CC token source configured (%s, lazy reads, expiry threshold %s)",
+		anthropicLog.Infof("CC token source configured (%s, lazy reads, expiry threshold %s)",
 			ccCredsFile, ccExpiryThreshold)
 	}
 
@@ -94,7 +93,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 	// Priority 1: API key
 	apiKey, ok := r.store.Get(apiKeyName)
 	if ok && apiKey != "" {
-		log.Infof("anthropic", "using API key from secrets (endpoint %q)", endpointName)
+		anthropicLog.Infof("using API key from secrets (endpoint %q)", endpointName)
 		holder := NewTokenHolder(apiKey)
 		r.mu.Lock()
 		r.credHolders[endpointName] = holder
@@ -108,7 +107,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 
 	// Priority 2: Claude Code credentials (lazy disk reads, no polling)
 	if r.ccSrc != nil {
-		log.Infof("anthropic", "using CC credentials from ~/.claude/.credentials.json (endpoint %q, lazy)", endpointName)
+		anthropicLog.Infof("using CC credentials from ~/.claude/.credentials.json (endpoint %q, lazy)", endpointName)
 		c := NewClient(r.ccSrc.Token, httpTimeout)
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
@@ -161,7 +160,7 @@ func (r *AnthropicResolver) GetReloadFunc(secretsPath string) func() error {
 		r.mu.Lock()
 		for name, holder := range r.credHolders {
 			holder.Set(token)
-			log.Infof("anthropic", "hot-reloaded credentials for endpoint %q", name)
+			anthropicLog.Infof("hot-reloaded credentials for endpoint %q", name)
 		}
 		r.mu.Unlock()
 
@@ -183,8 +182,8 @@ func startClaudeForRefresh() {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
-		log.Warnf("anthropic", "claude token refresh failed (CC may not be installed): %v", err)
+		anthropicLog.Warnf("claude token refresh failed (CC may not be installed): %v", err)
 	} else {
-		log.Infof("anthropic", "claude token refresh completed")
+		anthropicLog.Infof("claude token refresh completed")
 	}
 }

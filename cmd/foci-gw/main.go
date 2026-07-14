@@ -25,9 +25,9 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/modelinfo"
 	"foci/internal/memory"
 	"foci/internal/modelcaps"
+	"foci/internal/modelinfo"
 	"foci/internal/platform"
 	"foci/internal/provision"
 	"foci/internal/shellenv"
@@ -110,7 +110,7 @@ Subcommands:
 	}
 
 	modelinfo.UnpricedModelHook = func(model string) {
-		log.Warnf("modelinfo", "no pricing for model %q — using fallback rate; add it to the registry or a family match in internal/modelinfo", model)
+		modelinfoLog.Warnf("no pricing for model %q — using fallback rate; add it to the registry or a family match in internal/modelinfo", model)
 	}
 
 	cfg, err := config.Load(configPath)
@@ -126,7 +126,7 @@ Subcommands:
 			log.Fatalf("main", "load timezone %q: %v", cfg.Timezone, err)
 		}
 		timeutil.SetLocation(tz)
-		log.Infof("main", "timezone set to %s", cfg.Timezone)
+		mainLog.Infof("timezone set to %s", cfg.Timezone)
 	}
 
 	// Load the operator's shell env into this process before any backend
@@ -163,7 +163,7 @@ Subcommands:
 	// Warn about unrecognised config keys (after logging is fully initialised
 	// so the warning survives the startup log rotation).
 	if len(cfg.UndefinedKeys) > 0 {
-		log.Warnf("config", "unknown config keys in %s: %v", configPath, cfg.UndefinedKeys)
+		configLog.Warnf("unknown config keys in %s: %v", configPath, cfg.UndefinedKeys)
 	}
 
 	// ========== Seed shared defaults ==========
@@ -307,7 +307,7 @@ Subcommands:
 
 	for _, acfg := range cfg.Agents {
 		if reason, skip := skipAgents[acfg.ID]; skip {
-			log.Errorf("main", "agent %q skipped: %s", acfg.ID, reason)
+			mainLog.Errorf("agent %q skipped: %s", acfg.ID, reason)
 			continue
 		}
 
@@ -317,7 +317,7 @@ Subcommands:
 		if len(acfg.System.SystemFiles) == 0 {
 			sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared")
 			if err := provision.SeedCharacterFiles(sharedDir, acfg.Workspace, wsFileMode); err != nil {
-				log.Warnf("main", "agent %q: seed character files: %v", acfg.ID, err)
+				mainLog.Warnf("agent %q: seed character files: %v", acfg.ID, err)
 			}
 		}
 
@@ -329,34 +329,34 @@ Subcommands:
 		}
 
 		inst := setupAgent(setupParams{
-			acfg:                acfg,
-			cfg:                 cfg,
-			configPath:          configPath,
-			clientProvider:      clients,
-			sessions:            si.sessions,
-			store:               sec.store,
-			bwStore:             sec.bwStore,
-			memBackends:         agentBackends,
-			convReader:          mem.convReader,
-			reminderStore:       mem.reminderStores[acfg.ID],
-			scratchpadStore:     mem.scratchpadStores[acfg.ID],
-			todoStore:           mem.todoStores[acfg.ID],
-			taskListStore:       mem.taskListStores[acfg.ID],
-			sessionIndex:        si.sessionIndex,
-			ttsMap:              ttsMap,
-			sttMap:              sttMap,
-			braveKey:            braveKey,
-			gwSocketPath:        gwSocketPath,
-			skillLoader:         skillLoader,
-			startTime:           startTime,
-			ctx:                 ctx,
-			agentListFn:         agentListFn,
-			agentResolverFn:     agentResolverFn,
-			connMgr:             connMgr,
-			plat:                plat,
+			acfg:            acfg,
+			cfg:             cfg,
+			configPath:      configPath,
+			clientProvider:  clients,
+			sessions:        si.sessions,
+			store:           sec.store,
+			bwStore:         sec.bwStore,
+			memBackends:     agentBackends,
+			convReader:      mem.convReader,
+			reminderStore:   mem.reminderStores[acfg.ID],
+			scratchpadStore: mem.scratchpadStores[acfg.ID],
+			todoStore:       mem.todoStores[acfg.ID],
+			taskListStore:   mem.taskListStores[acfg.ID],
+			sessionIndex:    si.sessionIndex,
+			ttsMap:          ttsMap,
+			sttMap:          sttMap,
+			braveKey:        braveKey,
+			gwSocketPath:    gwSocketPath,
+			skillLoader:     skillLoader,
+			startTime:       startTime,
+			ctx:             ctx,
+			agentListFn:     agentListFn,
+			agentResolverFn: agentResolverFn,
+			connMgr:         connMgr,
+			plat:            plat,
 		})
 		if inst == nil {
-			log.Errorf("main", "agent %q: setup failed (agent skipped)", acfg.ID)
+			mainLog.Errorf("agent %q: setup failed (agent skipped)", acfg.ID)
 			continue
 		}
 		agents[acfg.ID] = inst
@@ -411,7 +411,7 @@ Subcommands:
 		// complete through a live app sink (#1217).
 		inst.ag.SetOnCacheExpiry(app.SetCacheExpiry)
 
-		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, inst.ag.Model, acfg.Workspace)
+		mainLog.Infof("agent %q ready (model=%s, workspace=%s)", acfg.ID, inst.ag.Model, acfg.Workspace)
 	}
 
 	registerLiveAppliers(gwLiveApply, agents)
@@ -500,7 +500,7 @@ Subcommands:
 	}
 	diagnosis := startup.DiagnoseRestart(si.sessionIndex, startTime, logsDir)
 	if diagnosis.Class != startup.ClassClean && diagnosis.Class != startup.ClassUnknown {
-		log.Infof("startup", "restart classified as %s: %s", diagnosis.Class, diagnosis.Summary)
+		startupLog.Infof("restart classified as %s: %s", diagnosis.Class, diagnosis.Summary)
 	}
 
 	// ========== Liveness heartbeat ==========
@@ -545,7 +545,7 @@ Subcommands:
 				}
 				go func(b string) {
 					if err := modelcaps.Refresh(context.Background(), b); err != nil {
-						log.Warnf("modelcaps", "[%s] initial catalogue fetch failed (using static registry until next refresh): %v", b, err)
+						modelcapsLog.Warnf("[%s] initial catalogue fetch failed (using static registry until next refresh): %v", b, err)
 					}
 				}(backend)
 			}
@@ -584,9 +584,9 @@ Subcommands:
 			httpServer = srv
 			httpMu.Unlock()
 
-			log.Infof("http", "listening on %s", addr)
+			httpLog.Infof("listening on %s", addr)
 			if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-				log.Errorf("http", "server error: %v — restarting in 5s", err)
+				httpLog.Errorf("server error: %v — restarting in 5s", err)
 				select {
 				case <-ctx.Done():
 					return
@@ -601,10 +601,10 @@ Subcommands:
 	// ========== Unix socket (same-user auth) ==========
 	sockSrv, err := startUnixSocket(gwSocketPath, mux)
 	if err != nil {
-		log.Errorf("http", "unix socket %s: %v — same-user auth unavailable", gwSocketPath, err)
+		httpLog.Errorf("unix socket %s: %v — same-user auth unavailable", gwSocketPath, err)
 	} else {
 		defer cleanupSocket(sockSrv, gwSocketPath)
-		log.Infof("http", "unix socket listening on %s (same-user auth, no API key required)", gwSocketPath)
+		httpLog.Infof("unix socket listening on %s (same-user auth, no API key required)", gwSocketPath)
 	}
 
 	// ========== askgw (ask-gateway for external Apps) ==========
@@ -618,7 +618,7 @@ Subcommands:
 	for _, id := range agentOrder {
 		agentNames = append(agentNames, fmt.Sprintf("%s(%s)", id, agents[id].ag.Model))
 	}
-	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
+	mainLog.Infof("started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
 	// ========== Backend readiness ==========
 	// Verify delegated (claude-code) backends are authenticated before any
@@ -632,7 +632,7 @@ Subcommands:
 
 	// ========== Wait for signal & shutdown ==========
 	sig := <-sigCh
-	log.Infof("main", "received %s, starting shutdown", sig)
+	mainLog.Infof("received %s, starting shutdown", sig)
 
 	shutdownTimeout, _ := time.ParseDuration(cfg.HTTP.GracefulShutdownTimeout)
 	if shutdownTimeout == 0 {

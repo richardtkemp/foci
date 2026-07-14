@@ -66,7 +66,7 @@ func TestLevelFiltering(t *testing.T) {
 	setLevel(WARN)
 	defer setLevel(INFO)
 
-	Debugf("test", "debug")
+	NewComponentLogger("test").Debugf("debug")
 	Infof("test", "info")
 	Warnf("test", "warn")
 	Errorf("test", "error")
@@ -89,7 +89,7 @@ func TestDebugFilteredAtInfoLevel(t *testing.T) {
 
 	setLevel(INFO)
 
-	Debugf("test", "should not appear")
+	NewComponentLogger("test").Debugf("should not appear")
 
 	if buf.Len() != 0 {
 		t.Errorf("debug message should be filtered at INFO level: %q", buf.String())

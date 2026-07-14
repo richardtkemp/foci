@@ -41,7 +41,7 @@ func backendReadyTimeout() time.Duration {
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil || d <= 0 {
-		log.Warnf("delegated", "ignoring invalid FOCI_BACKEND_READY_TIMEOUT=%q (using %s)", raw, defaultBackendReadyTimeout)
+		delegatedLog.Warnf("ignoring invalid FOCI_BACKEND_READY_TIMEOUT=%q (using %s)", raw, defaultBackendReadyTimeout)
 		return defaultBackendReadyTimeout
 	}
 	return d

@@ -20,7 +20,6 @@ import (
 	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 )
@@ -169,7 +168,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		}
 		storePath := filepath.Join(deps.Config.DataDir, storeFile)
 		if fs, err := newFrameStore(storePath, storeTTL); err != nil {
-			log.Errorf("app", "durable replay store %s: %v — falling back to in-memory replay only", storePath, err)
+			appLog.Errorf("durable replay store %s: %v — falling back to in-memory replay only", storePath, err)
 		} else {
 			frames = fs
 		}
@@ -227,7 +226,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 			}
 		}
 		if pushEnabled && fcmPath == "" {
-			log.Warnf("app", "app push enabled but no FCM credentials found (neither [platforms.app].fcm_credentials nor app.fcm_credentials secret) — offline wake pushes disabled")
+			appLog.Warnf("app push enabled but no FCM credentials found (neither [platforms.app].fcm_credentials nor app.fcm_credentials secret) — offline wake pushes disabled")
 		}
 		if !pushEnabled {
 			fcmPath = "" // disabled → newFCMPusher returns nil
@@ -253,7 +252,7 @@ func durationOr(s string, fallback time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		log.Warnf("app", "bad duration %q: %v — using %s", s, err, fallback)
+		appLog.Warnf("bad duration %q: %v — using %s", s, err, fallback)
 		return fallback
 	}
 	return d
@@ -397,7 +396,7 @@ func (h *Hub) ServePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.allowedDevices != nil && !h.allowedDevices[req.DeviceID] {
-		log.Warnf("app", "pairing rejected: device %q not in allowed_devices", req.DeviceID)
+		appLog.Warnf("pairing rejected: device %q not in allowed_devices", req.DeviceID)
 		http.Error(w, "device not allowed", http.StatusForbidden)
 		return
 	}
@@ -405,7 +404,7 @@ func (h *Hub) ServePair(w http.ResponseWriter, r *http.Request) {
 	if req.PushToken != "" {
 		h.tokens.set(req.DeviceID, req.PushToken)
 	}
-	log.Infof("app", "paired device %q (label %q)", req.DeviceID, req.Label)
+	appLog.Infof("paired device %q (label %q)", req.DeviceID, req.Label)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"deviceToken": d.Token, "label": d.Label})
 }
@@ -448,7 +447,7 @@ func (h *Hub) ServeRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.closeDeviceSockets(req.DeviceID)
-	log.Infof("app", "revoked device %q", req.DeviceID)
+	appLog.Infof("revoked device %q", req.DeviceID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -550,7 +549,7 @@ func (h *Hub) ServeReplay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	frames := h.frames.Range(convID, fromSeq, limit)
-	log.Debugf("app", "replay GET: conv=%s fromSeq=%d returned=%d more=%v", convID, fromSeq, len(frames), len(frames) == limit)
+	appLog.Debugf("replay GET: conv=%s fromSeq=%d returned=%d more=%v", convID, fromSeq, len(frames), len(frames) == limit)
 	// Same closed-ask substitution as the reconnect replayTo path (see there).
 	orphaned := h.frames.OrphanedResolvedAsks(convID)
 	out := make([]map[string]any, 0, len(frames))
@@ -611,7 +610,7 @@ func (h *Hub) evictOtherDeviceSockets(keep *wsClient, deviceID string) {
 	}
 	h.mu.RUnlock()
 	for _, c := range victims {
-		log.Infof("app", "evicting older socket for device (replaced by new connection)")
+		appLog.Infof("evicting older socket for device (replaced by new connection)")
 		c.closeWithCode(fap.CloseReplaced, "replaced by newer connection")
 	}
 }
@@ -715,7 +714,7 @@ func (h *Hub) StartAll(context.Context) {
 	if idx := h.deps.SessionIndex; idx != nil {
 		refs, err := idx.ConvRefs("app")
 		if err != nil {
-			log.Errorf("app", "startup restore: conv_id rows: %v", err)
+			appLog.Errorf("startup restore: conv_id rows: %v", err)
 		}
 		for _, r := range refs {
 			if _, ok := seen[r.ConvID]; ok {
@@ -726,7 +725,7 @@ func (h *Hub) StartAll(context.Context) {
 		}
 	}
 	if restored > 0 {
-		log.Infof("app", "restored %d binding(s) from durable store at startup", restored)
+		appLog.Infof("restored %d binding(s) from durable store at startup", restored)
 	}
 	// One-time: resolve asks stored before durable resolution tracking existed,
 	// so a freshly-paired device doesn't replay them as fresh (#981).
@@ -738,7 +737,7 @@ func (h *Hub) StartAll(context.Context) {
 		}
 		h.frames.MarkLegacyAsksSwept()
 		if len(legacy) > 0 {
-			log.Infof("app", "swept %d legacy open ask(s) into resolved on startup", len(legacy))
+			appLog.Infof("swept %d legacy open ask(s) into resolved on startup", len(legacy))
 		}
 	}
 }
@@ -965,11 +964,11 @@ func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
 	// store can no longer resolve. Anything else that doesn't parse is
 	// refused — a bad adoption would wedge the conversation.
 	if stable, isLegacy := session.LegacyKeyToStable(sessionKey); isLegacy {
-		log.Infof("app", "conversation %s: normalised legacy session key %q → %q", b.convID, sessionKey, stable)
+		appLog.Infof("conversation %s: normalised legacy session key %q → %q", b.convID, sessionKey, stable)
 		sessionKey = stable
 	}
 	if sk, err := session.ParseSessionKey(sessionKey); err != nil || sk.AgentID != b.agentID {
-		log.Warnf("app", "conversation %s: refusing to adopt session key %q (agent %s): invalid or cross-agent", b.convID, sessionKey, b.agentID)
+		appLog.Warnf("conversation %s: refusing to adopt session key %q (agent %s): invalid or cross-agent", b.convID, sessionKey, b.agentID)
 		return
 	}
 	b.mu.Lock()
@@ -1118,7 +1117,7 @@ func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 		b := h.convs[rp.ConversationID]
 		h.mu.RUnlock()
 		if b == nil {
-			log.Debugf("app", "resume: conv=%s ack=%d — no binding, skipped", rp.ConversationID, rp.Ack)
+			appLog.Debugf("resume: conv=%s ack=%d — no binding, skipped", rp.ConversationID, rp.Ack)
 			continue
 		}
 		b.attach(client)
@@ -1171,10 +1170,10 @@ func (h *Hub) defaultChatBinding(agentID string) *convBinding {
 	h.mu.RUnlock()
 	convID, err := idx.GetChatMetadata(agentID, "app", dc, "conv_id")
 	if err != nil || convID == "" {
-		log.Warnf("app", "default chat %d (agent %s): no live binding and no persisted conv_id — pin unresolvable, falling back", dc, agentID)
+		appLog.Warnf("default chat %d (agent %s): no live binding and no persisted conv_id — pin unresolvable, falling back", dc, agentID)
 		return nil
 	}
-	log.Infof("app", "default chat %d (agent %s): resurrecting conversation %s", dc, agentID, convID)
+	appLog.Infof("default chat %d (agent %s): resurrecting conversation %s", dc, agentID, convID)
 	return h.ensureBinding(nil, agentID, convID)
 }
 
@@ -1223,7 +1222,7 @@ func (h *Hub) deliverBinding(agentID string) (*convBinding, string) {
 
 	convID := fap.NewULID()
 	created := h.ensureBinding(nil, agentID, convID)
-	log.Infof("app", "server-created conversation %s for agent %s (no existing conversations)", convID, agentID)
+	appLog.Infof("server-created conversation %s for agent %s (no existing conversations)", convID, agentID)
 	h.pushRosterAll()
 	return created, "server-created"
 }
@@ -1919,7 +1918,7 @@ func stampAck(wire string, ack int64) string {
 	}
 	out, err := fap.StampAck(wire, ack)
 	if err != nil {
-		log.Errorf("app", "stampAck: %v", err)
+		appLog.Errorf("stampAck: %v", err)
 		return wire
 	}
 	return out
@@ -1937,7 +1936,7 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	wire, err := fap.Encode(frame, seq, 0, "", "")
 	if err != nil {
 		b.mu.Unlock()
-		log.Errorf("app", "encode %s (conv=%s): %v", frame.Type(), b.convID, err)
+		appLog.Errorf("encode %s (conv=%s): %v", frame.Type(), b.convID, err)
 		return
 	}
 	now := time.Now()
@@ -2197,7 +2196,7 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 	for _, wire := range pending {
 		client.enqueue(stampAck(substituteResolvedAsk(wire, orphaned), ack))
 	}
-	log.Debugf("app", "replayTo: conv=%s fromSeq=%d memFloor=%d fromStore=%d fromBuffer=%d", convID, fromSeq, memFloor, storeCount, len(pending))
+	appLog.Debugf("replayTo: conv=%s fromSeq=%d memFloor=%d fromStore=%d fromBuffer=%d", convID, fromSeq, memFloor, storeCount, len(pending))
 }
 
 // --- wsClient: one physical socket ---
@@ -2275,7 +2274,7 @@ func (c *wsClient) enqueue(wire string) {
 	case c.send <- []byte(wire):
 	case <-c.done:
 	case <-t.C:
-		log.Warnf("app", "outbound queue stalled %s, closing slow client to force resume", enqueueBlockWait)
+		appLog.Warnf("outbound queue stalled %s, closing slow client to force resume", enqueueBlockWait)
 		go c.close() // async: close locks the hub; don't reenter from the send path
 	}
 }
@@ -2350,9 +2349,9 @@ func (c *wsClient) readPump() {
 				websocket.CloseGoingAway,
 				websocket.CloseNormalClosure,
 				websocket.CloseAbnormalClosure) {
-				log.Warnf("app", "read error: %v", err)
+				appLog.Warnf("read error: %v", err)
 			} else {
-				log.Debugf("app", "client disconnected: %v", err)
+				appLog.Debugf("client disconnected: %v", err)
 			}
 			return
 		}
@@ -2395,7 +2394,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Errorf("app", "ws upgrade: %v", err)
+		appLog.Errorf("ws upgrade: %v", err)
 		return
 	}
 	client := newWsClient(ws, h)
@@ -2413,8 +2412,8 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		// the hello frame and are evicted in the ClientHello handler instead.
 		h.evictOtherDeviceSockets(client, dev.DeviceID)
 	}
-	log.Infof("app", "device connected")
+	appLog.Infof("device connected")
 	safeGo("ws-writepump", client.writePump)
 	client.readPump() // blocks until the socket closes
-	log.Infof("app", "device disconnected")
+	appLog.Infof("device disconnected")
 }

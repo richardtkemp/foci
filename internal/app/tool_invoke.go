@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"foci/internal/app/fap"
-	"foci/internal/log"
 )
 
 // ErrNoLiveDevice is returned by InvokeTool when the agent has no connected
@@ -102,7 +101,7 @@ func (h *Hub) InvokeTool(ctx context.Context, agentID, tool, action string, args
 		Action:       action,
 		Args:         args,
 	})
-	log.Debugf("app.tool", "invoked tool=%s action=%s inv=%s agent=%s", tool, action, invocationID, agentID)
+	app_toolLog.Debugf("invoked tool=%s action=%s inv=%s agent=%s", tool, action, invocationID, agentID)
 
 	// A "pending" frame is a keepalive, NOT a terminal: the device's task
 	// overran its own sync window but is still running. Keep waiting (bounded by
@@ -115,7 +114,7 @@ func (h *Hub) InvokeTool(ctx context.Context, agentID, tool, action string, args
 		case res := <-pending.result:
 			if res.Status == fap.ToolStatusPending {
 				sawPending = true
-				log.Debugf("app.tool", "tool pending inv=%s agent=%s — awaiting terminal result", invocationID, agentID)
+				app_toolLog.Debugf("tool pending inv=%s agent=%s — awaiting terminal result", invocationID, agentID)
 				continue
 			}
 			return res, nil
@@ -170,6 +169,6 @@ func (b *convBinding) snapshotClient() *wsClient {
 // frame arrives. Routes to the waiting InvokeTool caller if any.
 func (h *Hub) deliverToolResult(r fap.ToolResult) {
 	if !h.toolCalls.deliver(r) {
-		log.Debugf("app.tool", "ToolResult with no waiter: inv=%s status=%s", r.InvocationID, r.Status)
+		app_toolLog.Debugf("ToolResult with no waiter: inv=%s status=%s", r.InvocationID, r.Status)
 	}
 }

@@ -16,6 +16,10 @@ import (
 	"github.com/openai/openai-go/v3/option"
 )
 
+var (
+	openaiLog = log.NewComponentLogger("openai")
+)
+
 // Client wraps the OpenAI SDK to implement provider.Client.
 type Client struct {
 	client  *openai.Client

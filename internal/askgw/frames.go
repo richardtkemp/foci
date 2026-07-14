@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"strings"
 )
+import "foci/internal/log"
+
+var (
+	askgwLog = log.NewComponentLogger("askgw")
+)
 
 const ProtocolVersion = "askgw/1"
 
@@ -25,11 +30,11 @@ const (
 )
 
 type AskQuestion struct {
-	Key         string       `json:"key"`
-	Header      string       `json:"header,omitempty"`
-	Question    string       `json:"question"`
-	MultiSelect bool         `json:"multiSelect,omitempty"`
-	Options     []AskOption  `json:"options"`
+	Key         string      `json:"key"`
+	Header      string      `json:"header,omitempty"`
+	Question    string      `json:"question"`
+	MultiSelect bool        `json:"multiSelect,omitempty"`
+	Options     []AskOption `json:"options"`
 }
 
 type AskOption struct {
@@ -50,18 +55,18 @@ type AskFrame struct {
 }
 
 const (
-	StatusAnswered   = "answered"
-	StatusTimeout    = "timeout"
-	StatusDismissed  = "dismissed"
+	StatusAnswered    = "answered"
+	StatusTimeout     = "timeout"
+	StatusDismissed   = "dismissed"
 	StatusUnavailable = "unavailable"
 )
 
 type AnswerFrame struct {
-	Protocol   string                     `json:"protocol"`
-	Type       string                     `json:"type"`
-	ID         string                     `json:"id"`
-	Status     string                     `json:"status"`
-	Answers    map[string]json.RawMessage `json:"answers,omitempty"`
+	Protocol string                     `json:"protocol"`
+	Type     string                     `json:"type"`
+	ID       string                     `json:"id"`
+	Status   string                     `json:"status"`
+	Answers  map[string]json.RawMessage `json:"answers,omitempty"`
 }
 
 type CancelFrame struct {

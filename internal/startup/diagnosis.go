@@ -15,6 +15,10 @@ import (
 	"foci/internal/session"
 )
 
+var (
+	startupLog = log.NewComponentLogger("startup")
+)
+
 const (
 	systemStateKeyLastCleanShutdown = "last_clean_shutdown"
 	systemStateKeyLastStartup       = "last_startup"
@@ -73,12 +77,12 @@ func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir str
 
 	// Record this startup for the next restart diagnosis.
 	if err := idx.SetSystemState(systemStateKeyLastStartup, strconv.FormatInt(startTime.Unix(), 10)); err != nil {
-		log.Warnf("startup", "record startup time: %v", err)
+		startupLog.Warnf("record startup time: %v", err)
 	}
 
 	systemUptime, err := GetSystemUptime()
 	if err != nil {
-		log.Debugf("startup", "could not read system uptime: %v", err)
+		startupLog.Debugf("could not read system uptime: %v", err)
 	}
 
 	// Use the most recent of shutdown/startup/heartbeat as the reference
@@ -161,7 +165,7 @@ func RunHeartbeat(ctx context.Context, idx *session.SessionIndex, interval time.
 			return
 		case <-ticker.C:
 			if err := RecordHeartbeat(idx); err != nil {
-				log.Warnf("startup", "record heartbeat: %v", err)
+				startupLog.Warnf("record heartbeat: %v", err)
 			}
 		}
 	}
@@ -212,7 +216,7 @@ func gatherDiagnostics(logsDir string, since time.Time) []string {
 
 	f, err := os.Open(logFile)
 	if err != nil {
-		log.Debugf("startup", "could not open log file: %v", err)
+		startupLog.Debugf("could not open log file: %v", err)
 		return findings
 	}
 	defer func() { _ = f.Close() }()

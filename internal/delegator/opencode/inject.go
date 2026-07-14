@@ -163,7 +163,7 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 		return errors.New("opencode: Inject before Start (no session)")
 	}
 
-	log.Debugf(b.logComponent(), "Inject: source=%s textLen=%d turnInFlight=%v hasTurn=%v",
+	log.NewComponentLogger(b.logComponent()).Debugf("Inject: source=%s textLen=%d turnInFlight=%v hasTurn=%v",
 		inj.Source, len(inj.Text), b.IsTurnInFlight(), inj.Turn != nil)
 
 	switch inj.Source {
@@ -195,7 +195,7 @@ func (b *Backend) injectUser(ctx context.Context, inj delegator.Inject) error {
 		b.turnMu.Lock()
 		b.steerBuf = append(b.steerBuf, inj.Text)
 		b.turnMu.Unlock()
-		log.Debugf(b.logComponent(), "inject: user text queued mid-turn (%d in buffer)", len(b.steerBuf))
+		log.NewComponentLogger(b.logComponent()).Debugf("inject: user text queued mid-turn (%d in buffer)", len(b.steerBuf))
 		return nil
 	}
 	// Idle — begin a fresh turn. A failed send reverses the begin so a
@@ -245,21 +245,21 @@ func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 		b.steerBuf = append(b.steerBuf, inj.Text)
 		if b.aborting {
 			b.turnMu.Unlock()
-			log.Debugf(b.logComponent(), "inject: steer appended mid-turn (abort drain in progress, %d buffered)", len(b.steerBuf))
+			log.NewComponentLogger(b.logComponent()).Debugf("inject: steer appended mid-turn (abort drain in progress, %d buffered)", len(b.steerBuf))
 			return nil
 		}
 		b.aborting = true
 		b.abortIdlesSeen = 0
 		b.armAbortTimerLocked()
 		b.turnMu.Unlock()
-		log.Debugf(b.logComponent(), "inject: steer mid-turn → aborting active turn, drain pending")
+		log.NewComponentLogger(b.logComponent()).Debugf("inject: steer mid-turn → aborting active turn, drain pending")
 		if err := b.Interrupt(ctx); err != nil {
 			// Abort failed — clear drain state and fall back to flushing at
 			// the next natural OnSessionIdle (legacy behaviour).
 			b.turnMu.Lock()
 			b.disarmAbortLocked()
 			b.turnMu.Unlock()
-			log.Warnf(b.logComponent(), "inject: steer abort failed (%v); will flush at next idle", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("inject: steer abort failed (%v); will flush at next idle", err)
 		}
 		return nil
 	}
@@ -274,7 +274,7 @@ func (b *Backend) injectSteer(ctx context.Context, inj delegator.Inject) error {
 	}
 	// Steer-at-idle with Turn present — degrade to User-idle. Send failure
 	// reverses the begin (see injectUser).
-	log.Debugf(b.logComponent(), "inject: steer at idle — degrading to user-idle")
+	log.NewComponentLogger(b.logComponent()).Debugf("inject: steer at idle — degrading to user-idle")
 	b.beginTurn(inj.Turn)
 	if err := b.sendPrompt(ctx, inj.Text, inj.Attachments, b.systemPrompt); err != nil {
 		b.cancelTurn()
@@ -399,12 +399,12 @@ func (b *Backend) postMessage(ctx context.Context, suffix string, body []byte) e
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := b.httpClient().Do(req)
 	if err != nil {
-		log.Warnf(b.logComponent(), "POST %s: %v", suffix, err)
+		log.NewComponentLogger(b.logComponent()).Warnf("POST %s: %v", suffix, err)
 		return fmt.Errorf("POST %s: %w", suffix, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b.checkHTTP401(resp.StatusCode, suffix)
-	log.Debugf(b.logComponent(), "POST %s: %d", suffix, resp.StatusCode)
+	log.NewComponentLogger(b.logComponent()).Debugf("POST %s: %d", suffix, resp.StatusCode)
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("POST %s: HTTP %d: %s", suffix, resp.StatusCode, string(respBody))
@@ -469,7 +469,7 @@ func (b *Backend) flushSteerBuf(ctx context.Context, turnFactory func() *delegat
 
 	turn := turnFactory()
 	b.beginTurn(turn)
-	log.Infof(b.logComponent(), "flushSteerBuf: sending %d queued message(s) as follow-up turn", len(buf))
+	log.NewComponentLogger(b.logComponent()).Infof("flushSteerBuf: sending %d queued message(s) as follow-up turn", len(buf))
 	return b.sendPrompt(ctx, combined, nil, b.systemPrompt)
 }
 
@@ -518,8 +518,8 @@ func (b *Backend) abortDrainComplete() {
 	b.abortIdlesSeen = 0
 	bufLen := len(b.steerBuf)
 	b.turnMu.Unlock()
-	log.Infof(b.logComponent(), "steer: abort drain complete (flushing %d buffered message(s))", bufLen)
+	log.NewComponentLogger(b.logComponent()).Infof("steer: abort drain complete (flushing %d buffered message(s))", bufLen)
 	if err := b.flushSteerBuf(context.Background(), func() *delegator.TurnEvents { return nil }); err != nil {
-		log.Warnf(b.logComponent(), "steer: flushSteerBuf after abort drain: %v", err)
+		log.NewComponentLogger(b.logComponent()).Warnf("steer: flushSteerBuf after abort drain: %v", err)
 	}
 }

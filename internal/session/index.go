@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/sqlite"
 	"foci/internal/timeutil"
 )
@@ -288,6 +287,7 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 //   - last_activity_at   → only when bumpActivity (false for memory-formation
 //     turns, which must not defeat the reflection-skip guard); kept monotonic,
 //   - last_user_activity_at → only when bumpUser (interactive human turns).
+//
 // It replaces the former three separate writes (Upsert + touchCacheFreshness +
 // touchUserActivity). e.CreatedAt carries the turn's `now`. On CONFLICT the
 // IDENTITY columns (created_at, parent, type, agent, chat, is_root) are
@@ -856,7 +856,7 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 			isRoot,
 		)
 		if err != nil {
-			log.Errorf("session", "insert index entry %q: %v", e.SessionKey, err)
+			sessLog.Errorf("insert index entry %q: %v", e.SessionKey, err)
 		}
 		count++
 	}
@@ -940,7 +940,7 @@ func (idx *SessionIndex) PruneOrphans() int {
 		// its index row, else they strand (the accumulation this fixes). We hold
 		// idx.mu, so call the lock-free body directly.
 		idx.purgeLocked(key)
-		log.Infof("session", "pruned orphan index entry: %s", key)
+		sessLog.Infof("pruned orphan index entry: %s", key)
 	}
 	return len(orphans)
 }

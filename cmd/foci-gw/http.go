@@ -111,7 +111,7 @@ func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
 			return false
 		}
 		if g.active(dur) == g.skipWhenActive {
-			log.Debugf(in.LogTag, "POST %s: skipping %s=%s (subject %s)", in.Endpoint, g.label, g.value, g.subject)
+			log.NewComponentLogger(in.LogTag).Debugf("POST %s: skipping %s=%s (subject %s)", in.Endpoint, g.label, g.value, g.subject)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"response": g.skipResp})
 			return false
@@ -135,7 +135,7 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 		// app device tokens != http.api_key, so every app bearer would 403 here before
 		// reaching the handler (and never log). Skip the outer gate for /app/.
 		if strings.HasPrefix(r.URL.Path, "/app/") {
-			log.Debugf("http", "auth: %s %s from %s — /app/ self-authenticates downstream, skipping outer gate", r.Method, r.URL.Path, r.RemoteAddr)
+			httpLog.Debugf("auth: %s %s from %s — /app/ self-authenticates downstream, skipping outer gate", r.Method, r.URL.Path, r.RemoteAddr)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -155,18 +155,18 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 		// presence and length, enough to tell "no credential" from "wrong
 		// credential" (the distinction that made the /app/ 403 hard to diagnose).
 		if token == "" {
-			log.Debugf("http", "auth: %s %s from %s — no credential, 401", r.Method, r.URL.Path, r.RemoteAddr)
+			httpLog.Debugf("auth: %s %s from %s — no credential, 401", r.Method, r.URL.Path, r.RemoteAddr)
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
 
 		if subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) != 1 {
-			log.Debugf("http", "auth: %s %s from %s — bearer (len %d) does not match http.api_key, 403", r.Method, r.URL.Path, r.RemoteAddr, len(token))
+			httpLog.Debugf("auth: %s %s from %s — bearer (len %d) does not match http.api_key, 403", r.Method, r.URL.Path, r.RemoteAddr, len(token))
 			http.Error(w, "invalid credentials", http.StatusForbidden)
 			return
 		}
 
-		log.Debugf("http", "auth: %s %s from %s — http.api_key OK", r.Method, r.URL.Path, r.RemoteAddr)
+		httpLog.Debugf("auth: %s %s from %s — http.api_key OK", r.Method, r.URL.Path, r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -185,7 +185,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
 		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
 		endpointList += ", /voice (ws)"
-		log.Infof("http", "/voice WebSocket endpoint enabled")
+		httpLog.Infof("/voice WebSocket endpoint enabled")
 	}
 
 	// App provider WebSocket (FAP v1). Self-authenticating (Bearer device token);
@@ -202,7 +202,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		mux.HandleFunc("/app/replay", app.ReplayHandler())              // GET: durable content backfill
 		mux.HandleFunc("/app/avatar/", app.AvatarHandler())             // GET /app/avatar/<agentId>: agent avatar image
 		endpointList += ", /app/ws (ws), /app/blob, /app/pair, /app/devices, /app/push/register, /app/history, /app/replay, /app/avatar"
-		log.Infof("http", "/app/ws + /app/blob + /app/pair + /app/devices + /app/push/register + /app/history + /app/replay + /app/avatar endpoints enabled")
+		httpLog.Infof("/app/ws + /app/blob + /app/pair + /app/devices + /app/push/register + /app/history + /app/replay + /app/avatar endpoints enabled")
 	}
 
 	if d.reloadCredentials != nil {
@@ -235,7 +235,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	mux.HandleFunc("/-/pprof", handlePprofToggle(ppGate))
 	endpointList += ", /debug/pprof/* (gated), /-/pprof"
 
-	log.Infof("http", "registered endpoints: %s", endpointList)
+	httpLog.Infof("registered endpoints: %s", endpointList)
 }
 
 // runAgentBuffered attaches a BufferSink to ctx, calls HandleMessage, and
@@ -280,7 +280,7 @@ func runAgentQueued(ctx context.Context, ag *agent.Agent, sessionKey, text strin
 func writeJSONResponse(w http.ResponseWriter, text string) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"response": text}); err != nil {
-		log.Errorf("http", "encode response: %v", err)
+		httpLog.Errorf("encode response: %v", err)
 	}
 }
 
@@ -296,7 +296,7 @@ func writeJSONReceipt(w http.ResponseWriter, text string, rcpt route.Receipt) {
 		"session":      rcpt.SessionKey,
 		"resolved_via": string(rcpt.Via),
 	}); err != nil {
-		log.Errorf("http", "encode response: %v", err)
+		httpLog.Errorf("encode response: %v", err)
 	}
 }
 
@@ -322,12 +322,12 @@ func broadcastResponse(connMgr platform.ConnectionManager, agentID, sessionKey, 
 			err = conn.SendText(text)
 		}
 		if err != nil {
-			log.Errorf(logTag, "broadcast delivery via %s: %v", conn.PlatformName(), err)
+			log.NewComponentLogger(logTag).Errorf("broadcast delivery via %s: %v", conn.PlatformName(), err)
 			continue
 		}
 		delivered++
 	}
-	log.Infof(logTag, "broadcast response for session %s delivered to %d connection(s)", sessionKey, delivered)
+	log.NewComponentLogger(logTag).Infof("broadcast response for session %s delivered to %d connection(s)", sessionKey, delivered)
 }
 
 // defaultSessionKey resolves an agent's default session, tolerating "no
@@ -362,7 +362,7 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 	run := func() {
 		resp, err := runAgentBuffered(ctx, inst.ag, sessionKey, text)
 		if err != nil {
-			log.Errorf(logTag, "async error: %v", err)
+			log.NewComponentLogger(logTag).Errorf("async error: %v", err)
 			return
 		}
 		cleaned := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(resp))
@@ -375,14 +375,14 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 		}
 		conn, outcome := route.ConnFor(connMgr, inst.id, sessionKey, policyOrFallback(policy))
 		if conn == nil {
-			log.Warnf(logTag, "no connection for session %s (policy=%s), async response not delivered", sessionKey, policyOrFallback(policy))
+			log.NewComponentLogger(logTag).Warnf("no connection for session %s (policy=%s), async response not delivered", sessionKey, policyOrFallback(policy))
 			return
 		}
 		if outcome == route.DeliveredViaPrimary {
-			log.Infof(logTag, "session %s has no live connection — delivering via agent %s primary", sessionKey, inst.id)
+			log.NewComponentLogger(logTag).Infof("session %s has no live connection — delivering via agent %s primary", sessionKey, inst.id)
 		}
 		if err := conn.SendToSession(sessionKey, cleaned); err != nil {
-			log.Errorf(logTag, "async platform delivery: %v", err)
+			log.NewComponentLogger(logTag).Errorf("async platform delivery: %v", err)
 		}
 	}
 	if !inst.ag.Enqueue(agent.Envelope{

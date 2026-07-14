@@ -15,7 +15,6 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"foci/internal/app/fap"
-	"foci/internal/log"
 )
 
 const (
@@ -123,12 +122,12 @@ func newFCMPusher(ctx context.Context, path string, tokens *pushTokens, window t
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Warnf("app", "fcm credentials %s: %v — push disabled", path, err)
+		appLog.Warnf("fcm credentials %s: %v — push disabled", path, err)
 		return nil
 	}
 	creds, err := google.CredentialsFromJSON(ctx, data, fcmScope)
 	if err != nil {
-		log.Warnf("app", "fcm credentials parse: %v — push disabled", err)
+		appLog.Warnf("fcm credentials parse: %v — push disabled", err)
 		return nil
 	}
 	projectID := creds.ProjectID
@@ -140,10 +139,10 @@ func newFCMPusher(ctx context.Context, path string, tokens *pushTokens, window t
 		projectID = sa.ProjectID
 	}
 	if projectID == "" {
-		log.Warnf("app", "fcm: no project_id in credentials — push disabled")
+		appLog.Warnf("fcm: no project_id in credentials — push disabled")
 		return nil
 	}
-	log.Infof("app", "FCM push enabled (project %s)", projectID)
+	appLog.Infof("FCM push enabled (project %s)", projectID)
 	return &fcmPusher{
 		projectID: projectID,
 		ts:        creds.TokenSource,
@@ -188,7 +187,7 @@ func (p *fcmPusher) notify(payload pushPayload, exclude map[string]bool) {
 func (p *fcmPusher) send(token string, payload pushPayload) {
 	tok, err := p.ts.Token()
 	if err != nil {
-		log.Warnf("app", "fcm token: %v", err)
+		appLog.Warnf("fcm token: %v", err)
 		return
 	}
 	body, err := json.Marshal(map[string]any{
@@ -223,7 +222,7 @@ func (p *fcmPusher) send(token string, payload pushPayload) {
 			return // success or permanent outcome — done
 		}
 		if attempt >= fcmMaxAttempts {
-			log.Warnf("app", "fcm send: giving up after %d attempts", fcmMaxAttempts)
+			appLog.Warnf("fcm send: giving up after %d attempts", fcmMaxAttempts)
 			return
 		}
 		select {
@@ -248,14 +247,14 @@ func (p *fcmPusher) sendOnce(url, token string, tok *oauth2.Token, body []byte) 
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.http.Do(req)
 	if err != nil {
-		log.Warnf("app", "fcm send: %v", err)
+		appLog.Warnf("fcm send: %v", err)
 		return true
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusMultipleChoices {
 		return false
 	}
-	log.Warnf("app", "fcm send: status %d", resp.StatusCode)
+	appLog.Warnf("fcm send: status %d", resp.StatusCode)
 	// 404 (unregistered) / 410 (gone) mean the token is dead — prune it so we
 	// stop retrying; the device re-registers on its next ClientHello.
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {

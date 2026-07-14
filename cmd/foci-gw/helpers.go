@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/modelinfo"
 )
 
@@ -105,10 +104,10 @@ func buildBotConflictSkipSet(conflicts []config.BotTokenConflict) map[string]str
 	skip := make(map[string]string)
 	for _, c := range conflicts {
 		ids := strings.Join(c.AgentIDs, ", ")
-		log.Errorf("main", "==============================================================")
-		log.Errorf("main", "  DUPLICATE BOT TOKEN: %s bot %q used by agents: %s", c.Platform, c.BotName, ids)
-		log.Errorf("main", "  Only agent %q will be started. Others skipped.", c.AgentIDs[0])
-		log.Errorf("main", "==============================================================")
+		mainLog.Errorf("==============================================================")
+		mainLog.Errorf("  DUPLICATE BOT TOKEN: %s bot %q used by agents: %s", c.Platform, c.BotName, ids)
+		mainLog.Errorf("  Only agent %q will be started. Others skipped.", c.AgentIDs[0])
+		mainLog.Errorf("==============================================================")
 		for _, id := range c.AgentIDs[1:] {
 			skip[id] = fmt.Sprintf("duplicate %s bot %q (already used by agent %q)", c.Platform, c.BotName, c.AgentIDs[0])
 		}

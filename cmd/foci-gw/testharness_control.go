@@ -28,7 +28,6 @@ import (
 	"strconv"
 	"strings"
 
-	"foci/internal/log"
 )
 
 // setupTestharnessControl checks for the FOCI_TESTHARNESS_CONTROL_SOCK env
@@ -51,13 +50,13 @@ func setupTestharnessControl(ctx context.Context, agents map[string]*agentInstan
 
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
-		log.Warnf("testharness_control", "listen %s: %v (lifecycle-control tests will be unable to drive this gateway)", sockPath, err)
+		testharness_controlLog.Warnf("listen %s: %v (lifecycle-control tests will be unable to drive this gateway)", sockPath, err)
 		return
 	}
 	if err := os.Chmod(sockPath, 0o600); err != nil {
-		log.Warnf("testharness_control", "chmod %s: %v", sockPath, err)
+		testharness_controlLog.Warnf("chmod %s: %v", sockPath, err)
 	}
-	log.Infof("testharness_control", "listening on %s", sockPath)
+	testharness_controlLog.Infof("listening on %s", sockPath)
 
 	go func() {
 		<-ctx.Done()
@@ -133,7 +132,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 			return "error: agent " + agentID + " has no delegated manager"
 		}
 		inst.ag.DelegatedManager.Close()
-		log.Infof("testharness_control", "close_backend %s — closed all backends", agentID)
+		testharness_controlLog.Infof("close_backend %s — closed all backends", agentID)
 		return "ok"
 	case "set_active_work":
 		// set_active_work <agentID> <count>: pin the agent's
@@ -156,7 +155,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 			return "error: unknown agent " + agentID
 		}
 		inst.testActiveWorkOverride.Store(int64(count))
-		log.Infof("testharness_control", "set_active_work %s = %d", agentID, count)
+		testharness_controlLog.Infof("set_active_work %s = %d", agentID, count)
 		return "ok"
 	case "set_canfire":
 		// set_canfire <agentID> <0|1> <reason...>: pin the agent's
@@ -195,7 +194,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 			return "error: unknown agent " + agentID
 		}
 		inst.testCanFireOverride.Store(&testCanFireState{allowed: allowed, reason: reason})
-		log.Infof("testharness_control", "set_canfire %s = (%v, %q)", agentID, allowed, reason)
+		testharness_controlLog.Infof("set_canfire %s = (%v, %q)", agentID, allowed, reason)
 		return "ok"
 	case "stop_agent":
 		// stop_agent <agentID>: flag the agent as stopped so the
@@ -214,7 +213,7 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 			return "error: unknown agent " + agentID
 		}
 		inst.stopped.Store(true)
-		log.Infof("testharness_control", "stop_agent %s — flagged as stopped", agentID)
+		testharness_controlLog.Infof("stop_agent %s — flagged as stopped", agentID)
 		return "ok"
 	default:
 		return "error: unknown op " + op

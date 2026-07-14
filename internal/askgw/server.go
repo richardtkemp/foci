@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/peercred"
 	"foci/internal/question"
 )
@@ -108,7 +107,7 @@ func (s *Server) Start() error {
 	for uid := range s.allowedUIDs {
 		uids = append(uids, uid)
 	}
-	log.Infof("askgw", "listening on %s (allowed UIDs: %v)", s.socketPath, uids)
+	askgwLog.Infof("listening on %s (allowed UIDs: %v)", s.socketPath, uids)
 	return nil
 }
 
@@ -135,7 +134,7 @@ func (s *Server) acceptLoop() {
 			if closed {
 				return
 			}
-			log.Errorf("askgw", "accept error: %v", err)
+			askgwLog.Errorf("accept error: %v", err)
 			continue
 		}
 		go s.handleConn(conn)
@@ -151,11 +150,11 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 	uid, err := peercred.UID(uc)
 	if err != nil {
-		log.Warnf("askgw", "peercred error: %v", err)
+		askgwLog.Warnf("peercred error: %v", err)
 		return
 	}
 	if !s.allowedUIDs[uid] {
-		log.Warnf("askgw", "rejecting connection from uid %d (not in allow-list)", uid)
+		askgwLog.Warnf("rejecting connection from uid %d (not in allow-list)", uid)
 		return
 	}
 
@@ -178,7 +177,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			continue
 		}
 		if err := s.handleFrame(connID, cw, line); err != nil {
-			log.Warnf("askgw", "conn=%d: %v", connID, err)
+			askgwLog.Warnf("conn=%d: %v", connID, err)
 			if ef, ok := err.(*frameError); ok {
 				_ = cw.WriteFrame(ErrorFrame{
 					Protocol: ProtocolVersion,
@@ -202,7 +201,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				Message:  fmt.Sprintf("frame exceeds %d bytes", s.maxFrameBytes),
 			})
 		}
-		log.Debugf("askgw", "conn=%d scanner: %v", connID, err)
+		askgwLog.Debugf("conn=%d scanner: %v", connID, err)
 	}
 }
 
@@ -309,7 +308,7 @@ func (s *Server) onAnswer(connID uint64, askID, data string) {
 
 	label, cancelled, err := question.ResolveAnswer(questionFromAsk(q), data)
 	if err != nil {
-		log.Warnf("askgw", "resolve conn=%d id=%s: %v", connID, askID, err)
+		askgwLog.Warnf("resolve conn=%d id=%s: %v", connID, askID, err)
 		return
 	}
 	if cancelled {
@@ -364,7 +363,8 @@ func (s *Server) checkParentDir() error {
 	return nil
 }
 
-func (s *Server) removeStaleSocket() error {	fi, err := os.Lstat(s.socketPath)
+func (s *Server) removeStaleSocket() error {
+	fi, err := os.Lstat(s.socketPath)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -380,7 +380,7 @@ func (s *Server) removeStaleSocket() error {	fi, err := os.Lstat(s.socketPath)
 func (s *Server) setGroup(name string) error {
 	gid, err := groupGID(name)
 	if err != nil {
-		log.Warnf("askgw", "group %q not found: %v (socket keeps default group)", name, err)
+		askgwLog.Warnf("group %q not found: %v (socket keeps default group)", name, err)
 		return nil
 	}
 	return os.Chown(s.socketPath, -1, gid)

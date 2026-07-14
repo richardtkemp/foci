@@ -11,6 +11,10 @@ import (
 	"foci/internal/provider"
 )
 
+var (
+	workspaceLog = log.NewComponentLogger("workspace")
+)
+
 // DefaultFileOrder is the default order for loading workspace files.
 // Matches provision.DefaultSystemFiles so provisioned and non-provisioned
 // agents use the same directory layout.
@@ -172,7 +176,7 @@ func (b *Bootstrap) loadFromDisk() ([]provider.SystemBlock, []string) {
 		data, err := os.ReadFile(filepath.Join(b.dir, name))
 		if err != nil {
 			if !os.IsNotExist(err) {
-				log.Warnf("workspace", "read %s: %v", name, err)
+				workspaceLog.Warnf("read %s: %v", name, err)
 			}
 			continue // skip missing files
 		}

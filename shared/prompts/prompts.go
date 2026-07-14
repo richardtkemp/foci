@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/internal/log"
 )
 
 //go:embed *.md
@@ -106,7 +105,7 @@ func ResolvePrompt(path, filename, embeddedDefault string, searchDirs ...string)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Warnf("prompts", "%s: read %s: %v — using embedded default", filename, path, err)
+		promptsLog.Warnf("%s: read %s: %v — using embedded default", filename, path, err)
 		return embeddedDefault
 	}
 	return strings.TrimSpace(string(data))

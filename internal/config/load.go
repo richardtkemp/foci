@@ -302,13 +302,13 @@ func Load(path string) (*Config, error) {
 		bgInt, _ := time.ParseDuration(DerefStr(cfg.Background.Interval))
 		kaInt, _ := time.ParseDuration(DerefStr(cfg.Keepalive.Interval))
 		if bgInt > 0 && kaInt > 0 && bgInt > kaInt {
-			log.Warnf("config", "[background] interval %s > [keepalive] interval %s — keepalive resets cache timer, background work may never trigger", DerefStr(cfg.Background.Interval), DerefStr(cfg.Keepalive.Interval))
+			configLog.Warnf("[background] interval %s > [keepalive] interval %s — keepalive resets cache timer, background work may never trigger", DerefStr(cfg.Background.Interval), DerefStr(cfg.Keepalive.Interval))
 		}
 	}
 	if DerefBool(cfg.Keepalive.Enabled) {
 		kaInt, _ := time.ParseDuration(DerefStr(cfg.Keepalive.Interval))
 		if kaInt > time.Hour {
-			log.Warnf("config", "[keepalive] interval %s > 1h — Anthropic cache TTL is 1 hour, cache may expire between keepalives", DerefStr(cfg.Keepalive.Interval))
+			configLog.Warnf("[keepalive] interval %s > 1h — Anthropic cache TTL is 1 hour, cache may expire between keepalives", DerefStr(cfg.Keepalive.Interval))
 		}
 	}
 

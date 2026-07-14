@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/log"
 )
 
 // tmuxDebugLog provides comprehensive debugging for tmux operations.
@@ -27,7 +26,7 @@ func initDebugLog() error { // nolint:unparam
 		logsDir := "logs"
 		if _, err := os.Stat(logsDir); os.IsNotExist(err) {
 			if err := os.MkdirAll(logsDir, 0755); err != nil {
-				log.Warnf("tmux_debug", "failed to create logs directory: %v", err)
+				tmux_debugLog.Warnf("failed to create logs directory: %v", err)
 				return
 			}
 		}
@@ -35,7 +34,7 @@ func initDebugLog() error { // nolint:unparam
 		debugPath := filepath.Join(logsDir, "tmux.debug")
 		f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
-			log.Warnf("tmux_debug", "failed to open debug log: %v", err)
+			tmux_debugLog.Warnf("failed to open debug log: %v", err)
 			return
 		}
 
@@ -64,7 +63,7 @@ func logDebug(operation, details string) {
 	msg := fmt.Sprintf("[%s] %s: %s\n", timestamp, operation, details)
 
 	if _, err := debugLog.file.WriteString(msg); err != nil {
-		log.Warnf("tmux_debug", "failed to write debug log: %v", err)
+		tmux_debugLog.Warnf("failed to write debug log: %v", err)
 	}
 }
 

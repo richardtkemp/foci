@@ -13,6 +13,10 @@ import (
 	"google.golang.org/genai"
 )
 
+var (
+	gemini_cacheLog = log.NewComponentLogger("gemini_cache")
+)
+
 // CacheManager manages explicit Gemini cached content for a client.
 // It creates a cache from system instruction + tools (the stable prefix),
 // reuses it when the content hasn't changed, and extends the TTL before expiry.
@@ -102,7 +106,7 @@ func (m *CacheManager) EnsureCache(ctx context.Context, model string, system *ge
 	m.cacheHash = hash
 	m.expiresAt = time.Now().Add(m.ttl)
 	m.model = model
-	log.Infof("gemini_cache", "created cache %s (ttl=%s, model=%s)", m.cacheName, m.ttl, model)
+	gemini_cacheLog.Infof("created cache %s (ttl=%s, model=%s)", m.cacheName, m.ttl, model)
 	return m.cacheName
 }
 
@@ -115,11 +119,11 @@ func (m *CacheManager) extendTTL(ctx context.Context) {
 		TTL: m.ttl,
 	})
 	if err != nil {
-		log.Warnf("gemini_cache", "extend TTL: %v", err)
+		gemini_cacheLog.Warnf("extend TTL: %v", err)
 		return
 	}
 	m.expiresAt = time.Now().Add(m.ttl)
-	log.Debugf("gemini_cache", "extended cache TTL to %s", m.expiresAt.Format(time.RFC3339))
+	gemini_cacheLog.Debugf("extended cache TTL to %s", m.expiresAt.Format(time.RFC3339))
 }
 
 // deleteLocked deletes the current cache. Must be called with m.mu held.
@@ -129,9 +133,9 @@ func (m *CacheManager) deleteLocked(ctx context.Context) {
 	}
 	_, err := m.client.Caches.Delete(ctx, m.cacheName, nil)
 	if err != nil {
-		log.Warnf("gemini_cache", "delete cache %s: %v", m.cacheName, err)
+		gemini_cacheLog.Warnf("delete cache %s: %v", m.cacheName, err)
 	} else {
-		log.Infof("gemini_cache", "deleted cache %s", m.cacheName)
+		gemini_cacheLog.Infof("deleted cache %s", m.cacheName)
 	}
 	m.cacheName = ""
 	m.cacheHash = [16]byte{}
@@ -176,13 +180,13 @@ func logCacheCreationError(err error) bool {
 	switch {
 	case strings.Contains(msg, "429") || strings.Contains(msg, "RESOURCE_EXHAUSTED"):
 		if strings.Contains(msg, "TotalCachedContentStorageTokensPerModelFreeTier") && strings.Contains(msg, "limit=0") {
-			log.Warnf("gemini_cache", "caching not available on free tier (limit=0), continuing without cache")
+			gemini_cacheLog.Warnf("caching not available on free tier (limit=0), continuing without cache")
 			return true // free tier detected
 		} else {
-			log.Warnf("gemini_cache", "cache rate limited (429), continuing without cache")
+			gemini_cacheLog.Warnf("cache rate limited (429), continuing without cache")
 		}
 	default:
-		log.Warnf("gemini_cache", "create cache failed: %v", err)
+		gemini_cacheLog.Warnf("create cache failed: %v", err)
 	}
 	return false
 }
