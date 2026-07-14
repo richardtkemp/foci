@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 )
 
 // ---------------------------------------------------------------------------
@@ -218,7 +217,7 @@ func (b *Backend) OnElicitationRequest(msg *ElicitationRequest) {
 }
 
 func (b *Backend) handleElicitation(msg *ElicitationRequest) {
-	log.Debugf("ccstream/elic", "handleElicitation: req_id=%s server=%s mode=%s",
+	b.logger().Debugf("handleElicitation: req_id=%s server=%s mode=%s",
 		msg.RequestID, msg.Request.McpServerName, msg.Request.Mode)
 
 	pe := &pendingElicitation{
@@ -398,7 +397,7 @@ func (b *Backend) callPrompt(requestID, text, summary string, choices []delegato
 		b.permPromptFn(requestID, text, summary, "", choices)
 		return
 	}
-	log.Warnf("ccstream/elic", "permPromptFn nil for elicitation req_id=%s, prompt not displayed", requestID)
+	b.logger().Warnf("permPromptFn nil for elicitation req_id=%s, prompt not displayed", requestID)
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +449,7 @@ func (b *Backend) RespondToElicitation(requestID, choice string) error {
 	pe.answers[name] = value
 	pe.currentField++
 
-	log.Debugf("ccstream/elic", "field %d/%d answered for req_id=%s: %s=%v",
+	b.logger().Debugf("field %d/%d answered for req_id=%s: %s=%v",
 		pe.currentField, len(pe.fieldOrder), requestID, name, value)
 
 	if pe.currentField < len(pe.fieldOrder) {
@@ -552,14 +551,14 @@ func (b *Backend) OnElicitationComplete(msg *ElicitationCompleteMessage) {
 	b.touchActivity()
 	pe := b.findPendingElicitByCompletionID(msg.McpServerName, msg.ElicitationID)
 	if pe == nil {
-		log.Debugf("ccstream/elic", "elicitation_complete for unknown id=%s server=%s (already resolved?)",
+		b.logger().Debugf("elicitation_complete for unknown id=%s server=%s (already resolved?)",
 			msg.ElicitationID, msg.McpServerName)
 		return
 	}
-	log.Debugf("ccstream/elic", "elicitation_complete auto-resolving req_id=%s id=%s",
+	b.logger().Debugf("elicitation_complete auto-resolving req_id=%s id=%s",
 		pe.requestID, msg.ElicitationID)
 	if err := b.finishElicitation(pe, "accept"); err != nil {
-		log.Warnf("ccstream/elic", "auto-accept on elicitation_complete failed: %v", err)
+		b.logger().Warnf("auto-accept on elicitation_complete failed: %v", err)
 	}
 }
 

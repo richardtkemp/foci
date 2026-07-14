@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	"foci/internal/delegator/autoapprove"
-	"foci/internal/log"
 )
 
 // autoApproveRule is a type alias preserving backward compatibility with the
@@ -46,7 +45,7 @@ func (b *Backend) autoApprovePermission(msg *PermissionRequest) bool {
 	}
 
 	summary := msg.Request.Summary()
-	log.Infof("ccstream/perm", "auto-approved: tool=%s summary=%q req_id=%s", msg.Request.ToolName, summary, msg.RequestID)
+	b.logger().Infof("auto-approved: tool=%s summary=%q req_id=%s", msg.Request.ToolName, summary, msg.RequestID)
 
 	resp := &PermissionAllow{
 		Behavior:               "allow",
@@ -55,7 +54,7 @@ func (b *Backend) autoApprovePermission(msg *PermissionRequest) bool {
 		DecisionClassification: "user_temporary",
 	}
 	if err := b.writer.SendControlResponse(msg.RequestID, resp); err != nil {
-		log.Warnf("ccstream/perm", "auto-approve send failed: %v", err)
+		b.logger().Warnf("auto-approve send failed: %v", err)
 		return false
 	}
 

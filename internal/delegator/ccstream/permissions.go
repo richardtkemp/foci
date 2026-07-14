@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 )
 
 // pendingPermission tracks an unresolved permission request from CC.
@@ -34,7 +33,7 @@ type pendingPermission struct {
 // (AskUserQuestion gets interactive question prompts) or falls through
 // to the standard permission prompt flow.
 func (b *Backend) handleToolRequest(msg *PermissionRequest) {
-	log.Debugf("ccstream/perm", "handleToolRequest: req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
+	b.logger().Debugf("handleToolRequest: req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
 
 	// AskUserQuestion requires user interaction — never auto-approve.
 	if msg.Request.ToolName == "AskUserQuestion" {
@@ -83,10 +82,10 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	b.outstanding.Register(msg.RequestID, delegator.OutstandingPermission)
 
 	if b.permPromptFn != nil {
-		log.Debugf("ccstream/perm", "calling permPromptFn for req_id=%s", msg.RequestID)
+		b.logger().Debugf("calling permPromptFn for req_id=%s", msg.RequestID)
 		b.permPromptFn(msg.RequestID, text, summary, attachmentPath, choices)
 	} else {
-		log.Warnf("ccstream/perm", "permPromptFn nil for req_id=%s, prompt stored but not displayed", msg.RequestID)
+		b.logger().Warnf("permPromptFn nil for req_id=%s, prompt stored but not displayed", msg.RequestID)
 	}
 }
 
@@ -213,7 +212,7 @@ func (b *Backend) handleControlCancel(reqID string) {
 	if pp != nil {
 		tool = pp.toolName
 	}
-	log.Infof("ccstream/perm", "permission auto-cancelled by CC control_cancel_request: reqID=%s tool=%s", reqID, tool)
+	b.logger().Infof("permission auto-cancelled by CC control_cancel_request: reqID=%s tool=%s", reqID, tool)
 
 	b.outstanding.Cancel(reqID, "tool request cancelled by follow-up message")
 }
@@ -304,7 +303,7 @@ var toolMatchKeys = map[string]string{
 	"WebFetch":     "url",
 	"WebSearch":    "query",
 }
-//
+
 // Fields that may contain arbitrary shell/regex text (command, pattern, url,
 // query, and the JSON fallback) are rendered as fenced code blocks rather
 // than inline code. Inline code delimiters (single backticks) would be

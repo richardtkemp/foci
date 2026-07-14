@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 	"foci/internal/question"
 )
 
@@ -72,7 +71,7 @@ func questionChoices(q *userQuestion) []delegator.PromptChoice {
 func (b *Backend) handleUserQuestion(msg *PermissionRequest) {
 	input := parseAskUserQuestionInput(msg.Request.Input)
 	if input == nil {
-		log.Warnf("ccstream/question", "failed to parse AskUserQuestion input, falling back to allow: req_id=%s", msg.RequestID)
+		b.logger().Warnf("failed to parse AskUserQuestion input, falling back to allow: req_id=%s", msg.RequestID)
 		// Can't present questions — auto-allow with empty answers so CC
 		// gets an empty result rather than hanging.
 		resp := &PermissionAllow{
@@ -115,7 +114,7 @@ func (b *Backend) presentCurrentQuestion(pp *pendingPermission) {
 	if b.permPromptFn != nil {
 		b.permPromptFn(pp.requestID, text, summary, "", choices)
 	} else {
-		log.Warnf("ccstream/question", "permPromptFn nil for question req_id=%s, not displayed", pp.requestID)
+		b.logger().Warnf("permPromptFn nil for question req_id=%s, not displayed", pp.requestID)
 	}
 }
 
@@ -152,7 +151,7 @@ func (b *Backend) RespondToQuestion(requestID, choice string) error {
 	pp.answers[q.Question] = answer
 	pp.currentIndex++
 
-	log.Debugf("ccstream/question", "answer %d/%d for req_id=%s: %q",
+	b.logger().Debugf("answer %d/%d for req_id=%s: %q",
 		pp.currentIndex, len(pp.questions), requestID, answer)
 
 	// More questions to present?
@@ -190,7 +189,7 @@ func (b *Backend) CancelQuestion(requestID string) error {
 		return fmt.Errorf("ccstream: no pending question with request ID %q", requestID)
 	}
 
-	log.Debugf("ccstream/question", "cancelling question req_id=%s (had %d/%d answers)",
+	b.logger().Debugf("cancelling question req_id=%s (had %d/%d answers)",
 		requestID, len(pp.answers), len(pp.questions))
 
 	resp := &PermissionDeny{
