@@ -9,8 +9,6 @@ package agent
 import (
 	"context"
 	"fmt"
-
-	"foci/internal/log"
 )
 
 // reloadAfterMutation reloads the bootstrap (system prompt files from disk),
@@ -195,7 +193,7 @@ func (a *Agent) ResetSessionHard(ctx context.Context, sessionKey string) error {
 		// Interrupt CC if there's a backend. Best-effort — backend may not
 		// exist yet, or interrupt may fail; we proceed to Close regardless.
 		if err := a.DelegatedManager.StopSession(ctx, sessionKey); err != nil {
-			log.Debugf("reset", "hard reset interrupt for %s: %v (proceeding to close)", sessionKey, err)
+			a.taggedLog("reset").Debugf("hard reset interrupt for %s: %v (proceeding to close)", sessionKey, err)
 		}
 		a.DelegatedManager.ResetSession(sessionKey)
 	}

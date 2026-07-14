@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 
-	"foci/internal/log"
 	"foci/internal/timeutil"
 )
 
@@ -23,7 +22,7 @@ func (a *Agent) CleanupEphemeralSessions(ctx context.Context, retentionDays int)
 	cutoff := timeutil.Now().AddDate(0, 0, -retentionDays)
 	keys, err := a.SessionIndex.EphemeralSessionsOlderThan(a.AgentID, cutoff)
 	if err != nil {
-		log.Warnf("ephemeral-cleanup", "[%s] query: %v", a.AgentID, err)
+		a.taggedLog("ephemeral-cleanup").Warnf("query: %v", err)
 		return 0
 	}
 
@@ -33,14 +32,14 @@ func (a *Agent) CleanupEphemeralSessions(ctx context.Context, retentionDays int)
 		// post-compaction JSONL is a distinct UUID). Delete them all.
 		for _, id := range a.SessionIndex.AllCCResumes(key) {
 			if err := a.DelegatedManager.CleanupBackendSession(ctx, id); err != nil {
-				log.Warnf("ephemeral-cleanup", "[%s] delete %s (%s): %v", a.AgentID, key, id, err)
+				a.taggedLog("ephemeral-cleanup").Warnf("delete %s (%s): %v", key, id, err)
 				continue
 			}
 			deleted++
 		}
 	}
 	if deleted > 0 {
-		log.Infof("ephemeral-cleanup", "[%s] deleted %d ephemeral transcript(s) older than %dd", a.AgentID, deleted, retentionDays)
+		a.taggedLog("ephemeral-cleanup").Infof("deleted %d ephemeral transcript(s) older than %dd", deleted, retentionDays)
 	}
 	return deleted
 }

@@ -30,6 +30,13 @@ const systemInjectRetryInterval = 5 * time.Second
 func (t *DelegatedTransport) RateLimitGate(ts *TurnState) error    { return nil }       // CC has its own rate limiting
 func (t *DelegatedTransport) AcquireTurnLock(ts *TurnState) func() { return func() {} } // CC serializes internally
 
+// logger returns a component logger scoped to this transport's agent, producing
+// a component of the form "delegated:<agentID>" (e.g. "delegated:clutch") so
+// every delegated log line names the agent it belongs to.
+func (t *DelegatedTransport) logger() *log.ComponentLogger {
+	return log.NewComponentLogger("delegated:" + t.agent.AgentID)
+}
+
 // RegisterTurn adds a TurnDetail so shutdown diagnostics (logBusyAgents) can
 // report in-flight delegated turns by session/trigger/tool, same as the API
 // path. Per-session in-flight tracking itself is handled by markInFlight in
@@ -71,7 +78,7 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 	// claude-code backend never delivered onboarding at all (#853).
 	if frm := a.consumeFirstRunMessage(); frm != "" {
 		ts.Prompt = frm + "\n\n" + ts.Prompt
-		log.Infof("delegated", "session=%s injected first-run onboarding (%d chars)", ts.SessionKey, len(frm))
+		t.logger().Infof("session=%s injected first-run onboarding (%d chars)", ts.SessionKey, len(frm))
 	}
 
 	// Consume branch orientation. ConsumeOrientation is atomic — returns the
@@ -79,7 +86,7 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 	if a.Sessions != nil {
 		if orient := a.Sessions.ConsumeOrientation(ts.SessionKey, a.SessionIndex); orient != "" {
 			ts.Prompt = orient + "\n\n" + ts.Prompt
-			log.Infof("delegated", "session=%s injected branch orientation (%d chars)", ts.SessionKey, len(orient))
+			t.logger().Infof("session=%s injected branch orientation (%d chars)", ts.SessionKey, len(orient))
 		}
 	}
 
@@ -131,7 +138,7 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 // message can safely run as a turn — but these prompts block CC mid-turn, and
 // anything written to CC while it is asking is taken as the answer anyway.
 // Skipping capture would just deliver the same answer with worse bookkeeping.
-func answerPendingBackendPrompt(be delegator.Delegator, sessionKey string, texts []string) bool {
+func answerPendingBackendPrompt(lg *log.ComponentLogger, be delegator.Delegator, sessionKey string, texts []string) bool {
 	if len(texts) == 0 {
 		return false
 	}
@@ -141,14 +148,14 @@ func answerPendingBackendPrompt(be delegator.Delegator, sessionKey string, texts
 	}
 	if qr, ok := be.(delegator.QuestionResponder); ok {
 		if reqID := qr.HasPendingQuestion(); reqID != "" {
-			log.Debugf("delegated", "session=%s intercepting text as question answer: %q", sessionKey, text)
+			lg.Debugf("session=%s intercepting text as question answer: %q", sessionKey, text)
 			_ = qr.RespondToQuestion(reqID, text)
 			return true
 		}
 	}
 	if er, ok := be.(delegator.ElicitationResponder); ok {
 		if reqID := er.HasPendingElicitation(); reqID != "" {
-			log.Debugf("delegated", "session=%s intercepting text as elicitation answer: %q", sessionKey, text)
+			lg.Debugf("session=%s intercepting text as elicitation answer: %q", sessionKey, text)
 			_ = er.RespondToElicitation(reqID, text)
 			return true
 		}
@@ -181,12 +188,12 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// folds, never consumed as an answer, waits for backend idle.
 	foldable := isInteractiveTrigger(ts.Trigger) && SteerPreferenceFromContext(ts.Ctx) != SteerNever
 
-	log.Debugf("delegated", "RunInference: Get backend start sk=%s", ts.SessionKey)
+	t.logger().Debugf("RunInference: Get backend start sk=%s", ts.SessionKey)
 	be, err := a.DelegatedManager.Get(ts.Ctx, ts.SessionKey)
 	if err != nil {
 		return err
 	}
-	log.Debugf("delegated", "RunInference: Get backend done sk=%s", ts.SessionKey)
+	t.logger().Debugf("RunInference: Get backend done sk=%s", ts.SessionKey)
 	ts.Backend = be
 
 	// Typed-answer intercepts apply to foldable input only: a user can
@@ -195,7 +202,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// and explicitly-queued messages (SteerNever) must never be consumed as
 	// an answer — they wait below (WaitForPermission + the SourceSystem retry
 	// loop) until the prompt resolves and the turn completes.
-	if foldable && answerPendingBackendPrompt(be, ts.SessionKey, ts.Texts) {
+	if foldable && answerPendingBackendPrompt(t.logger(), be, ts.SessionKey, ts.Texts) {
 		close(ts.CompletionChan)
 		return nil
 	}
@@ -204,11 +211,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// new input. The backend cannot process messages while blocked on a
 	// permission decision. Messages queue naturally in the platform's
 	// MessageQueue channel while the worker goroutine blocks here.
-	log.Debugf("delegated", "RunInference: WaitForPermission start sk=%s", ts.SessionKey)
+	t.logger().Debugf("RunInference: WaitForPermission start sk=%s", ts.SessionKey)
 	if err := a.DelegatedManager.WaitForPermission(ts.Ctx, ts.SessionKey); err != nil {
 		return err
 	}
-	log.Debugf("delegated", "RunInference: WaitForPermission done sk=%s", ts.SessionKey)
+	t.logger().Debugf("RunInference: WaitForPermission done sk=%s", ts.SessionKey)
 
 	// Follow-up: a turn is already in-flight. Send the text to CC without
 	// creating a new turn pipeline. CC queues it after the current turn,
@@ -229,8 +236,8 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// case where messages flow through the channel normally and stack as
 	// follow-ups.
 	if foldable && be.IsTurnInFlight() {
-		log.Infof("delegated", "session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
-		log.Debugf("delegated", "RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)
+		t.logger().Infof("session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
+		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)
 		if err := be.ImmediateInject(ts.Ctx, delegator.Inject{
 			Source: delegator.SourceUser,
 			Text:   ts.Prompt,
@@ -238,7 +245,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			close(ts.CompletionChan)
 			return err
 		}
-		log.Debugf("delegated", "RunInference: Inject(SourceUser, follow-up) done sk=%s", ts.SessionKey)
+		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) done sk=%s", ts.SessionKey)
 		// Backend has received the message — signal the inbox so steer
 		// routing opens for any further follow-ups arriving on the heels
 		// of this one. See WithOnPrimaryWritten / TODO #777.
@@ -441,7 +448,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		src = delegator.SourceSystem
 	}
 
-	log.Debugf("delegated", "RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
+	t.logger().Debugf("RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
 	for waited := false; ; waited = true {
 		err = be.ImmediateInject(ts.Ctx, delegator.Inject{
 			Source:      src,
@@ -459,7 +466,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		// registers its waiter only at call time) — on timeout the loop
 		// simply re-checks via another atomic Inject.
 		if !waited {
-			log.Infof("delegated", "session=%s system turn (trigger=%q) waiting for in-flight turn to complete before dispatch", ts.SessionKey, ts.Trigger)
+			t.logger().Infof("session=%s system turn (trigger=%q) waiting for in-flight turn to complete before dispatch", ts.SessionKey, ts.Trigger)
 		}
 		wctx, cancel := context.WithTimeout(ts.Ctx, systemInjectRetryInterval)
 		werr := be.WaitForTurn(wctx)
@@ -468,7 +475,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			return ts.Ctx.Err()
 		}
 	}
-	log.Debugf("delegated", "RunInference: Inject(%s, begin-turn) done sk=%s err=%v", src, ts.SessionKey, err)
+	t.logger().Debugf("RunInference: Inject(%s, begin-turn) done sk=%s err=%v", src, ts.SessionKey, err)
 	if err == nil {
 		// Primary has reached the backend. Signal the inbox so turnActive
 		// flips true and any further follow-ups can safely steer via

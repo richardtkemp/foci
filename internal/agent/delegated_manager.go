@@ -129,6 +129,13 @@ type DelegatedManager struct {
 	createGroup singleflight.Group
 }
 
+// logger returns a component logger scoped to this manager's agent, producing
+// a component of the form "delegated:<agentID>" (e.g. "delegated:clutch") so
+// every delegated log line names the agent it belongs to.
+func (m *DelegatedManager) logger() *log.ComponentLogger {
+	return log.NewComponentLogger("delegated:" + m.AgentID)
+}
+
 // managedBackend wraps a Backend with idle tracking and resume state.
 type managedBackend struct {
 	be         delegator.Delegator
@@ -300,7 +307,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		}
 		// Backend subprocess is dead — clean up and fall through to respawn.
 		// Save the resume ID so the new subprocess can resume the CC session.
-		log.Warnf("delegated", "backend for %s is dead, respawning", sessionKey)
+		m.logger().Warnf("backend for %s is dead, respawning", sessionKey)
 		m.saveResumeID(sessionKey, mb.be.SessionID())
 		delete(m.backends, sessionKey)
 		dead = mb
@@ -371,7 +378,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 			bridge, bridgeErr = tools.NewExecBridge(reg, bridgeCtx)
 		}
 		if bridgeErr != nil {
-			log.Warnf("delegated", "exec bridge creation failed for %s (continuing without): %v", sessionKey, bridgeErr)
+			m.logger().Warnf("exec bridge creation failed for %s (continuing without): %v", sessionKey, bridgeErr)
 		} else {
 			// Merge BASH_ENV/FOCI_SOCK into a copy of StartOpts.Env. The
 			// pre-existing map carries any per-agent backend_config.env
@@ -385,7 +392,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 			merged["BASH_ENV"] = bridge.FuncsPath()
 			merged["FOCI_SOCK"] = bridge.SockPath()
 			opts.Env = merged
-			log.Infof("delegated", "exec bridge started for %s: sock=%s funcs=%s", sessionKey, bridge.SockPath(), bridge.FuncsPath())
+			m.logger().Infof("exec bridge started for %s: sock=%s funcs=%s", sessionKey, bridge.SockPath(), bridge.FuncsPath())
 		}
 	}
 
@@ -407,7 +414,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	if err := be.Start(ctx, opts); err != nil {
 		// If resume failed (e.g. stale UUID), retry without resume.
 		if resumeID != "" {
-			log.Warnf("delegated", "start with --resume %s failed for %s: %v — retrying without resume", resumeID, sessionKey, err)
+			m.logger().Warnf("start with --resume %s failed for %s: %v — retrying without resume", resumeID, sessionKey, err)
 			_ = be.Close()
 			newBe, err := m.NewBackend()
 			if err != nil {
@@ -455,12 +462,12 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	readyCtx, readyCancel := context.WithTimeout(ctx, backendReadyTimeout())
 	defer readyCancel()
 	if err := mb.be.WaitReady(readyCtx); err != nil {
-		log.Warnf("delegated", "WaitReady for %s: %v", sessionKey, err)
+		m.logger().Warnf("WaitReady for %s: %v", sessionKey, err)
 
 		// If the process is already dead, a stale --resume UUID may have
 		// caused CC to exit silently. Clear the resume ID and retry fresh.
 		if !mb.be.IsRunning() && resumeID != "" {
-			log.Warnf("delegated", "backend for %s died during init with --resume %s — retrying without resume", sessionKey, resumeID)
+			m.logger().Warnf("backend for %s died during init with --resume %s — retrying without resume", sessionKey, resumeID)
 			_ = mb.be.Close()
 			m.clearResumeID(sessionKey)
 
@@ -491,14 +498,14 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 			readyCtx2, readyCancel2 := context.WithTimeout(ctx, backendReadyTimeout())
 			defer readyCancel2()
 			if err := mb.be.WaitReady(readyCtx2); err != nil {
-				log.Warnf("delegated", "WaitReady for %s (retry): %v (proceeding anyway)", sessionKey, err)
+				m.logger().Warnf("WaitReady for %s (retry): %v (proceeding anyway)", sessionKey, err)
 			}
 		}
 	}
 
 	// Log a genuine resume only once we know neither retry path fell back.
 	if resumeID != "" && !resumeFellBack {
-		log.Infof("delegated", "resumed session %s for %s", resumeID, sessionKey)
+		m.logger().Infof("resumed session %s for %s", resumeID, sessionKey)
 	}
 
 	return mb.be, nil
@@ -556,10 +563,10 @@ func (m *DelegatedManager) SetPermissionPending(sessionKey string, pending bool)
 		mb.permMu.Lock()
 		mb.permPending = true
 		mb.permMu.Unlock()
-		log.Debugf("delegated", "permission pending for %s", sessionKey)
+		m.logger().Debugf("permission pending for %s", sessionKey)
 	} else {
 		mb.clearPermission()
-		log.Debugf("delegated", "permission cleared for %s", sessionKey)
+		m.logger().Debugf("permission cleared for %s", sessionKey)
 	}
 }
 
@@ -583,7 +590,7 @@ func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey str
 		mb.permCond = sync.NewCond(&mb.permMu)
 	}
 
-	log.Infof("delegated", "waiting for permission to clear on %s", sessionKey)
+	m.logger().Infof("waiting for permission to clear on %s", sessionKey)
 
 	// Wait with context cancellation support. sync.Cond doesn't natively
 	// support context, so we use a goroutine to broadcast on cancel.
@@ -613,7 +620,7 @@ func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey str
 	mb.permMu.Unlock()
 	close(done)
 
-	log.Infof("delegated", "permission cleared on %s, proceeding", sessionKey)
+	m.logger().Infof("permission cleared on %s, proceeding", sessionKey)
 	return nil
 }
 
@@ -661,7 +668,7 @@ func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) e
 // pathological case this method returns within ~10s.
 func (m *DelegatedManager) ResetSession(sessionKey string) {
 	if m.closeManaged(sessionKey, true) {
-		log.Infof("delegated", "reset session %s (closed, resume ID cleared)", sessionKey)
+		m.logger().Infof("reset session %s (closed, resume ID cleared)", sessionKey)
 	}
 }
 
@@ -674,7 +681,7 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 // systemPrompt — is verified (clutch docs/resume_prompt_probe.py).
 func (m *DelegatedManager) BounceSession(sessionKey string) {
 	if m.closeManaged(sessionKey, false) {
-		log.Infof("delegated", "bounced session %s (closed, resume ID kept — prompt reloads on respawn)", sessionKey)
+		m.logger().Infof("bounced session %s (closed, resume ID kept — prompt reloads on respawn)", sessionKey)
 	}
 }
 
@@ -704,11 +711,11 @@ func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool 
 	// outcomes (restart and no-restart) actually occur in practice.
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
-		log.Debugf("delegated", "compaction reload gate: session=%s restart=no reason=no-live-backend", sessionKey)
+		m.logger().Debugf("compaction reload gate: session=%s restart=no reason=no-live-backend", sessionKey)
 		return false // no live backend → nothing to reload
 	}
 	if m.StartOpts.SystemPromptFunc == nil {
-		log.Debugf("delegated", "compaction reload gate: session=%s restart=yes reason=no-prompt-fingerprint (no SystemPromptFunc)", sessionKey)
+		m.logger().Debugf("compaction reload gate: session=%s restart=yes reason=no-prompt-fingerprint (no SystemPromptFunc)", sessionKey)
 		m.BounceSession(sessionKey)
 		return true
 	}
@@ -718,10 +725,10 @@ func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool 
 	}
 	live := log.SystemHash([]string{p})
 	if live == mb.systemPromptHash {
-		log.Debugf("delegated", "compaction reload gate: session=%s restart=no reason=prompt-unchanged hash=%s", sessionKey, live)
+		m.logger().Debugf("compaction reload gate: session=%s restart=no reason=prompt-unchanged hash=%s", sessionKey, live)
 		return false
 	}
-	log.Debugf("delegated", "compaction reload gate: session=%s restart=yes reason=prompt-changed hash=%s->%s", sessionKey, mb.systemPromptHash, live)
+	m.logger().Debugf("compaction reload gate: session=%s restart=yes reason=prompt-changed hash=%s->%s", sessionKey, mb.systemPromptHash, live)
 	m.BounceSession(sessionKey)
 	return true
 }
@@ -783,7 +790,7 @@ func (m *DelegatedManager) Close() {
 	m.mu.Unlock()
 
 	if len(dead) > 0 {
-		log.Infof("delegated", "closing %d delegated backend(s): %v", len(dead), deadKeys)
+		m.logger().Infof("closing %d delegated backend(s): %v", len(dead), deadKeys)
 	}
 	for _, mb := range dead {
 		_ = mb.be.Close()
@@ -850,7 +857,7 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 				if kp := keyHolder.Load(); kp != nil {
 					keyStr = *kp
 				}
-				log.Warnf("agent/delegated", "typingFunc(typing=%v) for %s did not return within %s — abandoning (possible Telegram SetChatTyping stall or m.mu held by a slow caller)", typing, keyStr, typingFuncTimeout)
+				m.logger().Warnf("typingFunc(typing=%v) for %s did not return within %s — abandoning (possible Telegram SetChatTyping stall or m.mu held by a slow caller)", typing, keyStr, typingFuncTimeout)
 			}
 		})
 	}
@@ -916,7 +923,7 @@ func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 		return
 	}
 	if err := m.SessionIndex.SetSessionMetadata(sessionKey, resumeIDKey, sessionID); err != nil {
-		log.Warnf("delegated", "save resume ID for %s: %v", sessionKey, err)
+		m.logger().Warnf("save resume ID for %s: %v", sessionKey, err)
 	}
 	m.SessionIndex.RecordCCResume(sessionKey, sessionID)
 }
@@ -927,7 +934,7 @@ func (m *DelegatedManager) clearResumeID(sessionKey string) {
 		return
 	}
 	if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, resumeIDKey); err != nil {
-		log.Warnf("delegated", "clear resume ID for %s: %v", sessionKey, err)
+		m.logger().Warnf("clear resume ID for %s: %v", sessionKey, err)
 	}
 }
 
@@ -947,7 +954,7 @@ func (m *DelegatedManager) RemapSession(oldKey, newKey string) {
 		mb.sessionKey = newKey
 		m.backends[newKey] = mb
 		remapped = mb
-		log.Infof("delegated", "backend remapped %s → %s", oldKey, newKey)
+		m.logger().Infof("backend remapped %s → %s", oldKey, newKey)
 	}
 	m.mu.Unlock()
 
@@ -1125,7 +1132,7 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	log.Infof("delegated", "RunOnce: starting %s --print (workdir=%s, system_prompt=%d bytes)",
+	m.logger().Infof("RunOnce: starting %s --print (workdir=%s, system_prompt=%d bytes)",
 		claudeBin, m.StartOpts.WorkDir, len(systemPrompt))
 
 	if err := cmd.Run(); err != nil {
@@ -1133,7 +1140,7 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 	}
 
 	result := strings.TrimSpace(stdout.String())
-	log.Infof("delegated", "RunOnce: complete (%d bytes)", len(result))
+	m.logger().Infof("RunOnce: complete (%d bytes)", len(result))
 	return result, nil
 }
 
@@ -1211,7 +1218,7 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 		}
 		mb.clearPermission()
 		m.saveResumeID(key, mb.be.SessionID())
-		log.Infof("delegated", "closing idle session %s (idle %s, session %s)",
+		m.logger().Infof("closing idle session %s (idle %s, session %s)",
 			key, now.Sub(lastSeen).Round(time.Minute), mb.be.SessionID())
 		delete(m.backends, key)
 		dead = append(dead, corpse{key: key, mb: mb})

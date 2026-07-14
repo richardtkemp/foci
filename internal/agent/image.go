@@ -16,7 +16,7 @@ import (
 // and, if so, resizes proportionally and re-encodes as JPEG. Non-image data or
 // images under the threshold are returned unchanged. A maxPixels of 0 disables
 // downscaling.
-func maybeDownscaleImage(sessionKey string, data []byte, mediaType string, maxPixels int) ([]byte, string) {
+func maybeDownscaleImage(lg *log.ComponentLogger, sessionKey string, data []byte, mediaType string, maxPixels int) ([]byte, string) {
 	if maxPixels <= 0 {
 		return data, mediaType
 	}
@@ -64,7 +64,7 @@ func maybeDownscaleImage(sessionKey string, data []byte, mediaType string, maxPi
 		return data, mediaType
 	}
 
-	log.Infof("image", "session=%s downscaled %dx%d (%d bytes) to %dx%d (%d bytes)",
+	lg.Infof("session=%s downscaled %dx%d (%d bytes) to %dx%d (%d bytes)",
 		sessionKey, cfg.Width, cfg.Height, len(data), newW, newH, buf.Len())
 
 	return buf.Bytes(), "image/jpeg"

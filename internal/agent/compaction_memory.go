@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/shared/prompts"
@@ -21,7 +20,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 
 	canFire, reason := a.CanFireBackgroundOperation(ctx, sessionKey)
 	if !canFire {
-		log.Debugf("compaction-memory", "skipping for %s: %s", sessionKey, reason)
+		a.taggedLog("compaction-memory").Debugf("skipping for %s: %s", sessionKey, reason)
 		return
 	}
 
@@ -62,7 +61,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 		defer a.DelegatedManager.ResetSession(forkedBranch)
 	}
 
-	log.Infof("compaction-memory", "firing for %s → %s", sessionKey, targetKey)
+	a.taggedLog("compaction-memory").Infof("firing for %s → %s", sessionKey, targetKey)
 
 	var skillBefore skills.SkillSnapshot
 	if refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
@@ -73,7 +72,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 	defer cancel()
 	hookCtx = WithTrigger(hookCtx, "compaction_memory")
 	if err := a.HandleMessage(hookCtx, targetKey, []string{prompt}, nil); err != nil {
-		log.Warnf("compaction-memory", "failed for %s: %v", targetKey, err)
+		a.taggedLog("compaction-memory").Warnf("failed for %s: %v", targetKey, err)
 	}
 
 	if skillBefore != nil {

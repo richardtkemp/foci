@@ -440,6 +440,14 @@ func (a *Agent) logger() *log.ComponentLogger {
 	return defaultAgentLog
 }
 
+// taggedLog returns a component logger scoped to this agent under a sub-tag,
+// producing a component of the form "<tag>:<agentID>" (e.g. "reset:clutch").
+// Use it for log lines tied to a specific agent that carry a distinct sub-tag;
+// use logger() when the component is exactly "agent".
+func (a *Agent) taggedLog(tag string) *log.ComponentLogger {
+	return log.NewComponentLogger(tag + ":" + a.AgentID)
+}
+
 // ResolveCallSite resolves a call site to a (client, model, format) triple.
 // For ungrouped calls or nil GroupResolver, returns the session's client/model/format.
 // Otherwise resolves via GroupResolver and gets the appropriate client.
@@ -531,7 +539,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 		// something dropped the text on the way from CC's stream
 		// through to the renderer. Surface length so it's easy to
 		// correlate with the usage line.
-		log.Debugf("agent", "deferred TurnComplete: session=%s final_text_len=%d err=%v",
+		a.logger().Debugf("deferred TurnComplete: session=%s final_text_len=%d err=%v",
 			sessionKey, len(ts.FinalText), err)
 		sink.Emit(ctx, turnevent.TurnComplete{
 			FinalText: ts.FinalText,

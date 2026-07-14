@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/skills"
 	"foci/shared/prompts"
 )
@@ -36,22 +35,22 @@ func (a *Agent) PrepareSessionEndMemory(sessionKey, orientTemplate string, skipM
 	// isMemoryTrigger), so a prior reflection's own turn doesn't count as
 	// activity here. Unknown / never-reflected sessions return false → reflect.
 	if a.SessionIndex != nil && a.SessionIndex.ReflectionRedundant(sessionKey) {
-		log.Debugf("session-end-memory", "skipping for %s: no activity since last reflection", sessionKey)
+		a.taggedLog("session-end-memory").Debugf("skipping for %s: no activity since last reflection", sessionKey)
 		return "", false
 	}
 
 	if canFire, reason := a.CanFireBackgroundOperation(context.Background(), sessionKey); !canFire {
-		log.Debugf("session-end-memory", "skipping for %s: %s", sessionKey, reason)
+		a.taggedLog("session-end-memory").Debugf("skipping for %s: %s", sessionKey, reason)
 		return "", false
 	}
 
 	if !skipMetaCheck {
 		meta, err := a.Sessions.GetBranchMeta(sessionKey)
 		if err != nil {
-			log.Warnf("session-end-memory", "check branch meta for %s: %v", sessionKey, err)
+			a.taggedLog("session-end-memory").Warnf("check branch meta for %s: %v", sessionKey, err)
 		}
 		if meta != nil && meta.NoResetHook {
-			log.Debugf("session-end-memory", "skipping for %s (no_reset_hook set)", sessionKey)
+			a.taggedLog("session-end-memory").Debugf("skipping for %s (no_reset_hook set)", sessionKey)
 			return "", false
 		}
 	}
@@ -88,7 +87,7 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 		return
 	}
 
-	log.Infof("session-end-memory", "firing on %s", branchKey)
+	a.taggedLog("session-end-memory").Infof("firing on %s", branchKey)
 
 	var skillBefore skills.SkillSnapshot
 	if refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
@@ -99,7 +98,7 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 	defer cancel()
 	hookCtx = WithTrigger(hookCtx, "session_end_memory")
 	if err := a.HandleMessage(hookCtx, branchKey, []string{prompt}, nil); err != nil {
-		log.Warnf("session-end-memory", "failed for %s: %v", branchKey, err)
+		a.taggedLog("session-end-memory").Warnf("failed for %s: %v", branchKey, err)
 	}
 
 	if skillBefore != nil {
@@ -113,7 +112,7 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 	// cc_resume_id, …) so nothing leaks per reset.
 	if a.SessionIndex != nil {
 		if err := a.SessionIndex.DeleteAllSessionMetadata(branchKey); err != nil {
-			log.Warnf("session-end-memory", "cleanup metadata for %s: %v", branchKey, err)
+			a.taggedLog("session-end-memory").Warnf("cleanup metadata for %s: %v", branchKey, err)
 		}
 	}
 }
