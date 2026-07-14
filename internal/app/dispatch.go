@@ -708,7 +708,12 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	text, atts = h.transcribeVoice(conn, text, atts)
 	if transcribeOnly {
 		// Return the transcript for the user to edit; don't echo or run a turn.
-		b.send(fap.Transcript{ConversationID: convID, Text: text})
+		// Ephemeral (sendRaw, no seq/durability) to the recording device only: it's a
+		// one-shot composer drop, not conversation content. Persisting it (b.send) made it
+		// replay on every backfill and re-inject as a "stuck draft"; worse, a seq-scoped
+		// frame the client can't advance past would pin the resume mark. Best-effort is
+		// fine — the sender's socket is live (it just sent the note over it).
+		client.sendRaw(fap.Transcript{ConversationID: convID, Text: text})
 		return
 	}
 	if text == "" && len(atts) == 0 {
