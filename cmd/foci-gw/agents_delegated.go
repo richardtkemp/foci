@@ -203,7 +203,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		if !relogin.G.Start() {
 			return false
 		}
-		log.Warnf("agent/"+agentID, "CC re-login starting: %s", reason)
+		log.Warnf("agent:"+agentID, "CC re-login starting: %s", reason)
 		go relogin.Run(context.Background(), relogin.Config{
 			AgentID:   agentID,
 			WorkDir:   workDir,
@@ -255,9 +255,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				sb.SetOnRateLimited(func(notice string) {
 					if conn := connMgr.Primary(agentID); conn != nil {
 						conn.SendNotification(notice)
-						log.Debugf("agent/"+agentID, "rate limit notice delivered to default chat")
+						log.Debugf("agent:"+agentID, "rate limit notice delivered to default chat")
 					} else {
-						log.Debugf("agent/"+agentID, "rate limit notice undelivered (no primary connection): %s", notice)
+						log.Debugf("agent:"+agentID, "rate limit notice undelivered (no primary connection): %s", notice)
 					}
 				})
 				// A CC session-limit message engages the rate-limit gate so
@@ -271,7 +271,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// automated relogin for v1 (per-provider auth); just log.
 			if ob, ok := be.(*opencode.Backend); ok {
 				ob.SetOnAuthFailure(func(detail string) {
-					log.Warnf("agent/"+agentID, "opencode auth failure: %s", detail)
+					log.Warnf("agent:"+agentID, "opencode auth failure: %s", detail)
 				})
 			}
 			return be, nil
@@ -351,17 +351,17 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			resolve := connResolver(connMgr, sessionKey, agentID)
 			conn := resolve()
 			if conn == nil {
-				log.Warnf("agent/"+agentID, "permission prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)
+				log.Warnf("agent:"+agentID, "permission prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)
 				return
 			}
-			log.Debugf("agent/"+agentID, "permission prompt: sending via %s for session=%s summary=%q reqID=%s", conn.PlatformName(), sessionKey, summary, requestID)
+			log.Debugf("agent:"+agentID, "permission prompt: sending via %s for session=%s summary=%q reqID=%s", conn.PlatformName(), sessionKey, summary, requestID)
 			// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
 			// document before the keyboard so the user sees the content, then the
 			// Allow/Deny buttons. A send failure is non-fatal — fall through to
 			// the prompt so the permission gate still resolves.
 			if attachmentPath != "" {
 				if err := conn.SendDocument(attachmentPath, ""); err != nil {
-					log.Warnf("agent/"+agentID, "permission prompt: SendDocument(%q) failed for session=%s: %v", attachmentPath, sessionKey, err)
+					log.Warnf("agent:"+agentID, "permission prompt: SendDocument(%q) failed for session=%s: %v", attachmentPath, sessionKey, err)
 				}
 			}
 			var buttons []platform.ButtonChoice
@@ -383,9 +383,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// responds. The resolver (not the conn grabbed above) is stored for
 			// those later edits so they survive a reconnect.
 			_, _ = platform.SendInteractiveMessageWithID(resolve, requestID, text, buttons, func(choice platform.ButtonChoice) string {
-				log.Debugf("agent/"+agentID, "permission button pressed: sk=%s reqID=%s choice=%q", sessionKey, reqID, choice.Data)
+				log.Debugf("agent:"+agentID, "permission button pressed: sk=%s reqID=%s choice=%q", sessionKey, reqID, choice.Data)
 				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data); err != nil {
-					log.Errorf("agent/"+agentID, "SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, reqID, choice.Data, err)
+					log.Errorf("agent:"+agentID, "SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, reqID, choice.Data, err)
 				}
 				switch {
 				case choice.Data == "deny" || choice.Data == "qa:cancel":
@@ -406,7 +406,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				// unblocks instead of orphaning. The message edit to an "expired"
 				// notice is handled by CleanupExpiredInteractive.
 				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, "deny"); err != nil {
-					log.Warnf("agent/"+agentID, "expire permission deny failed: sk=%s reqID=%s err=%v", sessionKey, reqID, err)
+					log.Warnf("agent:"+agentID, "expire permission deny failed: sk=%s reqID=%s err=%v", sessionKey, reqID, err)
 				}
 			})
 			// Register a cancel listener so the orphaned inline keyboard is
@@ -421,9 +421,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 					finalText = fmt.Sprintf("❌ %s cancelled by follow-up message", summary)
 				}
 				if err := platform.CancelInteractiveMessage(reqID, finalText); err != nil {
-					log.Warnf("agent/"+agentID, "cancel interactive message: sk=%s reqID=%s err=%v", sessionKey, reqID, err)
+					log.Warnf("agent:"+agentID, "cancel interactive message: sk=%s reqID=%s err=%v", sessionKey, reqID, err)
 				} else {
-					log.Debugf("agent/"+agentID, "permission cancelled: sk=%s reqID=%s reason=%q", sessionKey, reqID, reason)
+					log.Debugf("agent:"+agentID, "permission cancelled: sk=%s reqID=%s reason=%q", sessionKey, reqID, reason)
 				}
 			})
 		},
@@ -443,11 +443,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		SystemNoticeFunc: func(sessionKey, text string) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {
-				log.Warnf("agent/"+agentID, "system notice: no connection for session=%s, dropped: %s", sessionKey, text)
+				log.Warnf("agent:"+agentID, "system notice: no connection for session=%s, dropped: %s", sessionKey, text)
 				return
 			}
 			if err := conn.SendText(text); err != nil {
-				log.Warnf("agent/"+agentID, "system notice send failed for session=%s: %v", sessionKey, err)
+				log.Warnf("agent:"+agentID, "system notice send failed for session=%s: %v", sessionKey, err)
 			}
 		},
 		// Adopt CC autonomous runs as in-flight delivering turns so the inbox
@@ -653,7 +653,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 		}
 	}
 
-	log.Infof("agent/"+acfg.ID, "exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())
+	log.Infof("agent:"+acfg.ID, "exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())
 	return registry
 }
 
