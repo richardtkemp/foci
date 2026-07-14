@@ -987,6 +987,39 @@ func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
 	}
 }
 
+// mintFacetConversation surfaces a facet branch as a new app conversation: it
+// mints a conversation bound to sessionKey, adds it to the shared open-set so the
+// tab opens on every device, and pushes the updated roster. Returns the new
+// conversation ID. Focus stays device-local — the requesting client foregrounds
+// it via the command response's OpenConversationID (a ConversationForeground
+// frame sent only to that socket).
+func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) {
+	b := h.ensureBinding(nil, agentID, fap.NewULID())
+	h.adoptSession(b, sessionKey)
+	b.mu.Lock()
+	adopted := b.sessionKey
+	b.mu.Unlock()
+	if adopted != sessionKey {
+		return "", fmt.Errorf("facet conversation %s: session key %q refused", b.convID, sessionKey)
+	}
+
+	ids := h.loadOpenChats()
+	present := false
+	for _, id := range ids {
+		if id == b.convID {
+			present = true
+			break
+		}
+	}
+	if !present {
+		ids = append(ids, b.convID)
+		h.storeOpenChats(ids)
+		h.broadcastOpenSetExcept(ids, nil)
+	}
+	h.pushRosterAll()
+	return b.convID, nil
+}
+
 // --- session-key + binding bookkeeping ---
 
 // chatIDForConv maps a (string) conversationId to a stable positive int64

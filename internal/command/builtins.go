@@ -82,11 +82,7 @@ func FacetCommand() *Command {
 		Description: "Fork session to a secondary bot",
 		Category:    "session",
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			text, err := forkFacet(ctx, req, cc)
-			if err != nil {
-				return Response{}, err
-			}
-			return Response{Text: text}, nil
+			return forkFacet(ctx, req, cc)
 		},
 	}
 }

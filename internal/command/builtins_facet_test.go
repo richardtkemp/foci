@@ -10,6 +10,8 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/session"
+	"foci/internal/tools"
 )
 
 // TestFacetCommand verifies facet calls ConfigureFacet and ConnMgr.
@@ -25,6 +27,55 @@ func TestFacetCommand(t *testing.T) {
 	_, err := cmd.Execute(context.Background(), Request{}, cc)
 	if err == nil {
 		t.Fatal("expected error without ConnMgr")
+	}
+}
+
+// TestFacetCommand_AppPath verifies an app-sourced facet forks the session and
+// surfaces it via MintFacetConversation, returning the new conversation to
+// foreground on the requesting device (no facet-bot pool involved).
+func TestFacetCommand_AppPath(t *testing.T) {
+	ag := &agent.Agent{Sessions: session.NewStore(t.TempDir())}
+	noCompact := false
+	var gotAgent, gotSession string
+	cc := CommandContext{
+		Agent:       ag,
+		Sessions:    ag.Sessions,
+		Config:      &config.Config{},
+		AgentConfig: config.AgentConfig{ID: "test", Sessions: config.AgentSessionsOverride{CompactionConfig: config.CompactionConfig{FacetNoCompact: &noCompact}}},
+		MintFacetConversation: func(agentID, sessionKey string) (string, error) {
+			gotAgent, gotSession = agentID, sessionKey
+			return "conv-xyz", nil
+		},
+	}
+	ctx := tools.WithSessionKey(context.Background(), "test/c1")
+
+	resp, err := FacetCommand().Execute(ctx, Request{Source: "app"}, cc)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if resp.OpenConversationID != "conv-xyz" {
+		t.Errorf("OpenConversationID = %q, want conv-xyz", resp.OpenConversationID)
+	}
+	if gotAgent != "test" {
+		t.Errorf("mint agentID = %q, want test", gotAgent)
+	}
+	if gotSession == "" || gotSession == "test/c1" {
+		t.Errorf("mint sessionKey = %q, want a fresh branch of test/c1", gotSession)
+	}
+}
+
+// TestFacetCommand_AppPathUnwired verifies an app facet with no minter wired
+// fails cleanly rather than falling through to the (nonexistent) bot pool.
+func TestFacetCommand_AppPathUnwired(t *testing.T) {
+	cc := CommandContext{
+		Agent:       &agent.Agent{},
+		Config:      &config.Config{},
+		AgentConfig: config.AgentConfig{ID: "test"},
+	}
+	ctx := tools.WithSessionKey(context.Background(), "test/c1")
+	_, err := FacetCommand().Execute(ctx, Request{Source: "app"}, cc)
+	if err == nil {
+		t.Fatal("want error when MintFacetConversation is nil")
 	}
 }
 

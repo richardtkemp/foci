@@ -285,7 +285,7 @@ func TestDispatchCommand_EmitsResponseParts(t *testing.T) {
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
 	b := &convBinding{convID: "c1", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}
-	h.dispatchCommand(conn, b, command.Request{Name: "ping"})
+	h.dispatchCommand(nil, conn, b, command.Request{Name: "ping"})
 
 	got := drain(t, b.snapshotClient())
 	// 3 frames: user echo "/ping" + two system response parts.
@@ -307,7 +307,7 @@ func TestDispatchCommand_UnknownCommand(t *testing.T) {
 	h := newTestHub()
 	conn := &appConn{hub: h, agentID: "ag", commands: command.NewRegistry()}
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}
-	h.dispatchCommand(conn, b, command.Request{Name: "nope"})
+	h.dispatchCommand(nil, conn, b, command.Request{Name: "nope"})
 	got := drain(t, b.snapshotClient())
 	// 2 frames: user echo "/nope" + the unknown-command system message.
 	if len(got) != 2 {
@@ -332,7 +332,7 @@ func TestDispatchCommand_EchoesUserCommandWithArgs(t *testing.T) {
 	})
 	conn := &appConn{hub: h, agentID: "ag", commands: reg}
 	b := &convBinding{convID: "c1", sessionKey: "ag/c1", clients: map[*wsClient]struct{}{fakeClientFor(h): {}}}
-	h.dispatchCommand(conn, b, command.Request{Name: "plan", Args: "paint a room"})
+	h.dispatchCommand(nil, conn, b, command.Request{Name: "plan", Args: "paint a room"})
 
 	got := drain(t, b.snapshotClient())
 	if len(got) != 2 {
