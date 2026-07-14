@@ -42,7 +42,7 @@ func TestEventLogLevelPadding(t *testing.T) {
 	buf := captureOutput(t)
 	withDebugLevel(t)
 
-	Debugf("test", "debug msg")
+	NewComponentLogger("test").Debugf("debug msg")
 	buf.Reset()
 	Infof("test", "info msg")
 	line := buf.String()
@@ -93,20 +93,6 @@ func TestDebugFilteredAtInfoLevel(t *testing.T) {
 
 	if buf.Len() != 0 {
 		t.Errorf("debug message should be filtered at INFO level: %q", buf.String())
-	}
-}
-
-func TestPackageLevelDebugf(t *testing.T) {
-	// Verifies the package-level Debugf emits output at DEBUG level.
-	resetGlobal()
-	t.Cleanup(resetGlobal)
-	buf := captureOutput(t)
-	withDebugLevel(t)
-
-	Debugf("pkg", "pkg debug")
-
-	if !strings.Contains(buf.String(), "pkg debug") {
-		t.Errorf("package debug output missing message: %s", buf.String())
 	}
 }
 
