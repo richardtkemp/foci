@@ -3,6 +3,7 @@ package agent
 import (
 	"time"
 
+	"foci/internal/platform"
 	"foci/internal/session"
 )
 
@@ -198,7 +199,44 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 // the autonomous run's text (#1068). Wired to the delegated backend's
 // onAutonomousStart/onAutonomousEnd callbacks via DelegatedManager.
 func (a *Agent) AdoptAutonomousRun(sessionKey string) func() {
-	return a.markInFlight(sessionKey, true)
+	releaseInFlight := a.markInFlight(sessionKey, true)
+
+	// #1257: stream the autonomous run to the platform when the delivering
+	// connection is a streaming driver (the app). Register its per-turn streaming
+	// sink as the router's late-stream for the run's duration, so the run's
+	// TextDelta/thinking/tool/activity events — which reach the router's fallback
+	// because no per-turn sink is registered — render as structured frames
+	// (text.delta + activity) instead of the fallback SessionSink's single
+	// whole-message SendToSession. Non-driver connections (Telegram/Discord) have
+	// no such per-turn streaming sink here and keep whole-block late delivery.
+	//
+	// Lifecycle: SetLateStream on adopt, ClearLateStream + cleanup on release. The
+	// backend fires onAutonomousStart/onAutonomousEnd on its reader goroutine —
+	// the same goroutine that drives router.Emit — so set/clear are serialized
+	// with delivery. The late-stream slot is independent of the per-turn `current`
+	// sink, so a real turn adopting the run (which clears the late-stream via the
+	// paired release, then Registers its own sink) never collides.
+	var conn platform.Connection
+	if a.ResolveLateConn != nil {
+		conn = a.ResolveLateConn(sessionKey)
+	}
+	driver, ok := conn.(Driver)
+	if !ok {
+		return releaseInFlight
+	}
+	sink, cleanup := driver.NewTurnSink(Envelope{SessionKey: sessionKey})
+	if sink == nil {
+		return releaseInFlight
+	}
+	router := a.sessionRouter(sessionKey)
+	router.SetLateStream(sink)
+	return func() {
+		router.ClearLateStream()
+		if cleanup != nil {
+			cleanup()
+		}
+		releaseInFlight()
+	}
 }
 
 // recordTurnActivity performs a turn's ENTIRE per-turn timestamp write. It first
