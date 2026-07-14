@@ -28,9 +28,9 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 -include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.remote.mk
 -include .remote.mk
 
-.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check clean setup-hooks
+.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check clean setup-hooks
 
-all: build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads
+all: build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -68,6 +68,15 @@ find-disconnected-tests:
 find-static-config-reads:
 	@mkdir -p bin
 	cd scripts/find-static-config-reads && go build -o ../../bin/find-static-config-reads .
+
+# find-unscoped-logging flags package-level log.{Debugf,Infof,Warnf,Errorf}
+# ("component", ...) calls made from a method whose receiver type already owns
+# a scoped logger()/Logger() — i.e. logging that bypasses the shared,
+# agent/session-scoped ComponentLogger and drops the id. Lives in its own
+# go.mod for the same reason as the other checkers.
+find-unscoped-logging:
+	@mkdir -p bin
+	cd scripts/find-unscoped-logging && go build -o ../../bin/find-unscoped-logging .
 
 test:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
@@ -216,11 +225,13 @@ setup-hooks:
 vet:
 	go vet ./...
 
-lint: find-disconnected-tests find-static-config-reads
+lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
 	@echo "=== find-static-config-reads (static reads of *config.ResolvedAgentConfig) ==="
 	@./bin/find-static-config-reads ./...
+	@echo "=== find-unscoped-logging (bare log.Xf in a type that owns a scoped logger) ==="
+	@./bin/find-unscoped-logging ./...
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
 	@# internal/testharness and internal/testtemp are test-only scaffolding:
 	# reachable solely from -tags=integration tests and _test.go files, which
