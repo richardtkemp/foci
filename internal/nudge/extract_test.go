@@ -160,7 +160,7 @@ func TestNeedsExtraction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewExtractor(dir, []string{"SOUL.md"}, 0640, true, true)
+	e := NewExtractor("test", dir, []string{"SOUL.md"}, 0640, true, true)
 
 	// First time: no rules file → needs extraction
 	hash1, needed := e.NeedsExtraction()
@@ -199,7 +199,7 @@ func TestNeedsExtractionNoFiles(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	e := NewExtractor(dir, []string{"NONEXISTENT.md"}, 0640, true, true)
+	e := NewExtractor("test", dir, []string{"NONEXISTENT.md"}, 0640, true, true)
 
 	_, needed := e.NeedsExtraction()
 	if needed {
@@ -220,7 +220,7 @@ func TestNeedsExtractionUnsupportedTriggers(t *testing.T) {
 	fileOrder := []string{"SOUL.md"}
 
 	// Extractor with full caps to compute the current hash.
-	full := NewExtractor(dir, fileOrder, 0640, true, true)
+	full := NewExtractor("test", dir, fileOrder, 0640, true, true)
 	hash, _ := full.NeedsExtraction()
 
 	// Store rules (matching the current hash) that include post-tool and
@@ -246,13 +246,13 @@ func TestNeedsExtractionUnsupportedTriggers(t *testing.T) {
 	// Opencode-style backend (no post-tool, no pre-answer): the stored
 	// tool_pattern/pre_answer rules are unsupported → force re-extraction
 	// even though the hash is unchanged.
-	limited := NewExtractor(dir, fileOrder, 0640, false, false)
+	limited := NewExtractor("test", dir, fileOrder, 0640, false, false)
 	if _, needed := limited.NeedsExtraction(); !needed {
 		t.Error("limited-caps backend should force re-extraction for unsupported triggers")
 	}
 
 	// A backend missing only pre-answer still self-heals a pre_answer rule.
-	noPre := NewExtractor(dir, fileOrder, 0640, true, false)
+	noPre := NewExtractor("test", dir, fileOrder, 0640, true, false)
 	if _, needed := noPre.NeedsExtraction(); !needed {
 		t.Error("post-tool-only backend should re-extract for a pre_answer rule")
 	}
@@ -269,7 +269,7 @@ func TestNeedsExtractionAllSupportedNoReextract(t *testing.T) {
 	}
 	fileOrder := []string{"SOUL.md"}
 
-	limited := NewExtractor(dir, fileOrder, 0640, false, false)
+	limited := NewExtractor("test", dir, fileOrder, 0640, false, false)
 	hash, _ := limited.NeedsExtraction()
 
 	rs := &RuleSet{
@@ -313,7 +313,7 @@ func TestExtractEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewExtractor(dir, []string{"SOUL.md"}, 0640, true, true)
+	e := NewExtractor("test", dir, []string{"SOUL.md"}, 0640, true, true)
 	handler := &mockHandler{
 		response: `[{"text": "Verify first", "source_file": "SOUL.md", "source_text": "Always verify", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
 	}
@@ -366,7 +366,7 @@ func TestExtractViaRunOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewExtractor(dir, []string{"CRAFT.md"}, 0640, true, true)
+	e := NewExtractor("test", dir, []string{"CRAFT.md"}, 0640, true, true)
 	runner := &mockRunner{
 		response: `[{"text": "Check first", "source_file": "CRAFT.md", "source_text": "Check before acting", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
 	}
@@ -411,8 +411,8 @@ func TestExtractionPromptCapabilities(t *testing.T) {
 	// Verifies the prompt only includes trigger types the backend supports.
 	t.Parallel()
 
-	full := NewExtractor("", nil, 0640, true, true).buildExtractionPrompt()
-	restricted := NewExtractor("", nil, 0640, false, false).buildExtractionPrompt()
+	full := NewExtractor("test", "", nil, 0640, true, true).buildExtractionPrompt()
+	restricted := NewExtractor("test", "", nil, 0640, false, false).buildExtractionPrompt()
 
 	// Full prompt includes all trigger types.
 	for _, trigger := range []string{"every_n_tools", "pre_answer", "after_error", "regex", "tool_pattern"} {

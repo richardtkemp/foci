@@ -225,7 +225,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 			build()
 			return
 		}
-		extractor := nudge.NewExtractor(acfg.Workspace, fileOrder, fileMode, schedOpts.CanPostTool, schedOpts.CanPreAnswer)
+		extractor := nudge.NewExtractor(acfg.ID, acfg.Workspace, fileOrder, fileMode, schedOpts.CanPostTool, schedOpts.CanPreAnswer)
 		_, needed := extractor.NeedsExtraction()
 		if needed {
 			go func() {

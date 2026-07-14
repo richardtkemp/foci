@@ -118,6 +118,7 @@ Respond with ONLY the JSON array. No explanation, no preamble, no markdown forma
 
 // Extractor handles LLM-based rule extraction from character files.
 type Extractor struct {
+	agentID       string
 	workspaceDir  string
 	fileOrder     []string
 	fileMode      os.FileMode
@@ -129,14 +130,24 @@ type Extractor struct {
 // canPostTool and canPreAnswer mirror SchedulerOpts capabilities: the
 // extraction prompt only lists trigger types the backend can evaluate,
 // so the model doesn't produce rules the scheduler will discard.
-func NewExtractor(workspaceDir string, fileOrder []string, fileMode os.FileMode, canPostTool, canPreAnswer bool) *Extractor {
+func NewExtractor(agentID, workspaceDir string, fileOrder []string, fileMode os.FileMode, canPostTool, canPreAnswer bool) *Extractor {
 	return &Extractor{
+		agentID:      agentID,
 		workspaceDir: workspaceDir,
 		fileOrder:    fileOrder,
 		fileMode:     fileMode,
 		canPostTool:  canPostTool,
 		canPreAnswer: canPreAnswer,
 	}
+}
+
+// who is the log-message prefix naming the owning agent, so extraction log
+// lines (fanned to every agent's session when they warn) are attributable.
+func (e *Extractor) who() string {
+	if e.agentID == "" {
+		return ""
+	}
+	return "agent " + e.agentID + ": "
 }
 
 // BranchHandler is the interface for running extraction via a branch session.
@@ -163,7 +174,7 @@ func (e *Extractor) NeedsExtraction() (string, bool) {
 	rulesPath := RulesPath(e.workspaceDir)
 	existing, err := LoadRules(rulesPath)
 	if err != nil {
-		log.Warnf("nudge", "loading existing rules: %v", err)
+		log.Warnf("nudge", e.who()+"loading existing rules: %v", err)
 		return hash, true
 	}
 	if existing == nil {
@@ -179,7 +190,7 @@ func (e *Extractor) NeedsExtraction() (string, bool) {
 	// only supported trigger types, so the scheduler stops skip-warning the
 	// dead rules on every load. Self-heals without a character-file edit.
 	if e.hasUnsupportedTriggers(existing.Rules) {
-		log.Infof("nudge", "existing rules use triggers unsupported by this backend — forcing re-extraction")
+		log.Infof("nudge", "%sexisting rules use triggers unsupported by this backend — forcing re-extraction", e.who())
 		return hash, true
 	}
 	return hash, false
@@ -207,11 +218,11 @@ func (e *Extractor) hasUnsupportedTriggers(rules []Rule) bool {
 func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionKey string) error {
 	hash, needed := e.NeedsExtraction()
 	if !needed {
-		log.Infof("nudge", "character files unchanged, skipping extraction")
+		log.Infof("nudge", "%scharacter files unchanged, skipping extraction", e.who())
 		return nil
 	}
 
-	log.Infof("nudge", "extracting nudge rules (hash=%s)", hash[:16])
+	log.Infof("nudge", e.who()+"extracting nudge rules (hash=%s)", hash[:16])
 
 	buf := turnevent.NewBufferSink()
 	extractCtx := turnevent.WithSink(ctx, buf)
@@ -233,7 +244,7 @@ func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionK
 		return fmt.Errorf("save nudge rules: %w", err)
 	}
 
-	log.Infof("nudge", "extracted %d nudge rules → %s", len(rules), rulesPath)
+	log.Infof("nudge", e.who()+"extracted %d nudge rules → %s", len(rules), rulesPath)
 	return nil
 }
 
@@ -242,11 +253,11 @@ func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionK
 func (e *Extractor) ExtractViaRunOnce(ctx context.Context, runner OneShotRunner) error {
 	hash, needed := e.NeedsExtraction()
 	if !needed {
-		log.Infof("nudge", "character files unchanged, skipping extraction")
+		log.Infof("nudge", "%scharacter files unchanged, skipping extraction", e.who())
 		return nil
 	}
 
-	log.Infof("nudge", "extracting nudge rules via RunOnce (hash=%s)", hash[:16])
+	log.Infof("nudge", e.who()+"extracting nudge rules via RunOnce (hash=%s)", hash[:16])
 
 	response, err := runner.RunOnce(ctx, e.buildExtractionPrompt(), "")
 	if err != nil {
@@ -267,7 +278,7 @@ func (e *Extractor) ExtractViaRunOnce(ctx context.Context, runner OneShotRunner)
 		return fmt.Errorf("save nudge rules: %w", err)
 	}
 
-	log.Infof("nudge", "extracted %d nudge rules → %s", len(rules), rulesPath)
+	log.Infof("nudge", e.who()+"extracted %d nudge rules → %s", len(rules), rulesPath)
 	return nil
 }
 
