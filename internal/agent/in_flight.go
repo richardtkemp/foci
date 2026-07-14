@@ -222,6 +222,16 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 	}
 	sink, cleanup := a.autonomousTurnSink(conn, sessionKey)
 
+	// Wrap the sink so intermediate TextBlock events are logged to the
+	// conversation DB (parity with foci-initiated turns, which wrap their
+	// per-turn sink in newLoggingSink). Autonomous runs have no incoming
+	// message, so the chat ID is resolved from the session key rather than
+	// TurnMetadata. Without this the reply streams/delivers but is never
+	// persisted to conversation.db (#1261 follow-up).
+	autoMeta := &TurnMetadata{}
+	chatID := session.ChatIDFromKey(sessionKey)
+	sink = newLoggingSink(sink, a, chatID, autoMeta, sessionKey)
+
 	router := a.sessionRouter(sessionKey)
 	router.Register(sink) // synchronous — registered before the run's first delta
 
@@ -229,7 +239,8 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 	ctx := turnevent.WithSink(WithTrigger(context.Background(), "autonomous"), sink)
 	ts := NewTurnState(ctx, sessionKey, nil, nil)
 	ts.StartedAt = time.Now()
-	ts.Meta = &TurnMetadata{}
+	ts.Meta = autoMeta
+	ts.ConvChatID = chatID // conv-DB logging (thinking + wrapped sink) needs it
 	ts.Trigger = "autonomous"
 	ts.Backend = be
 	t.LoadSessionMeta(ts)
