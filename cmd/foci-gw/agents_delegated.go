@@ -245,11 +245,26 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 					// Auto-401 has no triggering chat; "" → the agent's default chat.
 					triggerRelogin("401 auth failure: "+firstLine(detail), "")
 				})
-				// Surface CC's structured rate_limit_event as a warning only —
-				// it reflects API utilization past a threshold, not a block, so
-				// it does NOT gate periodic work (#1211/#1238).
-				sb.SetOnRateLimited(func(detail string) {
-					log.Warnf("agent/"+agentID, "rate limit warning (%s)", detail)
+				// Surface CC's structured rate_limit_event directly to the
+				// agent's default chat (i.e. to the human), formatted for a
+				// person — NOT as a log warning. Deliberately off the generic
+				// log.Warnf→WarningQueue→PROACTIVE-WARNINGS path so it reaches
+				// the user instead of being injected into the agent's own
+				// context. It reflects API utilization past a threshold, not a
+				// block, so it does NOT gate periodic work (#1211/#1238).
+				sb.SetOnRateLimited(func(notice string) {
+					if conn := connMgr.Primary(agentID); conn != nil {
+						conn.SendNotification(notice)
+						log.Debugf("agent/"+agentID, "rate limit notice delivered to default chat")
+					} else {
+						log.Debugf("agent/"+agentID, "rate limit notice undelivered (no primary connection): %s", notice)
+					}
+				})
+				// A CC session-limit message engages the rate-limit gate so
+				// background/periodic work pauses until the window resets; the
+				// gate's own hooks notify the user.
+				sb.SetOnSessionLimit(func(until time.Time) {
+					ag.EngageRateLimit(until)
 				})
 			}
 			// Inject auth-failure callback into opencode backends. No
