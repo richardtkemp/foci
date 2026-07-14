@@ -1,7 +1,6 @@
 package ccstream
 
 import (
-	"strings"
 	"time"
 
 	"foci/internal/delegator"
@@ -28,31 +27,14 @@ func (b *Backend) onSessionIdle() {
 	active := b.turnActive
 	redispatch := b.redispatchInFlight
 	result := b.stashedResult
-	streamed := b.autonomousStreamed
-	if b.autonomousActive {
-		b.lastAutonomousEnd = time.Now() // opens the post-run grace (see autonomousInjectGrace)
-	}
-	b.setAutonomousActiveLocked(false) // idle ends any autonomous turn
 	b.turnMu.Unlock()
-	b.drainEdgeCallbacks()
 
 	if !active {
-		// Autonomous run foci opened no turn for (task-notification runs after a
-		// background agent/Bash finishes, back-to-back CC continuations, slash
-		// commands, proactive ticks). Historically the stashed result was dropped
-		// here — but a task-notification run (e.g. a backgrounded sub-agent
-		// completing) produces a real user-facing reply that must still reach the
-		// chat (#1063). Deliver its final text through the session sink, whose
-		// late-delivery fallback sends a standalone message and strips silencing
-		// sentinels — so a [[NO_RESPONSE]] keepalive/proactive tick collapses to
-		// "" and stays silent. Skip when text already streamed this run (the
-		// double-send guard) or when there's no result text.
-		if !streamed && result != nil && strings.TrimSpace(result.Text) != "" {
-			if se := b.sessionEvents.Load(); se != nil && se.OnText != nil {
-				b.logger().Debugf("turn_lifecycle event=autonomous_deliver textlen=%d", len(result.Text))
-				se.OnText(result.Text)
-			}
-		}
+		// No foci turn is open for this run — a slash-command run, or a run whose
+		// autonomous adopt was declined (onAutonomousOpen unset, e.g. tests). A
+		// first-class turn — including an adopted autonomous run (#1261) — always
+		// sets turnActive before its text flows, so a real user-facing reply never
+		// lands here; there is nothing to complete or deliver.
 		return
 	}
 	if redispatch {
@@ -70,44 +52,12 @@ func (b *Backend) onSessionIdle() {
 	b.completeTurn("idle")
 }
 
-// setAutonomousActiveLocked edge-triggers the autonomous-run lifecycle
-// callbacks. It sets b.autonomousActive and, on a real edge, ENQUEUES the
-// matching callback (onAutonomousStart on false→true, onAutonomousEnd on
-// true→false) onto edgeCallbacks. The caller must invoke drainEdgeCallbacks
-// AFTER releasing turnMu — firing outside the lock is mandatory (the callbacks
-// re-enter the agent via markInFlight and must not run under b.turnMu).
-//
-// Enqueue happens under turnMu (the caller holds it), so queue order == the
-// true flip order. drainEdgeCallbacks then fires in that order, which is what
-// stops a reader-goroutine start and a turn-goroutine adopting end from firing
-// reversed (release-before-adopt would leak the adoption and wedge the gate).
-//
-// Every site that flips autonomousActive routes through here so the
-// start/end pair stays balanced regardless of which transition ends the run —
-// CC idle (onSessionIdle), subprocess exit (lifecycle.go), or a foci turn
-// adopting the run (beginTurnLocked) (#1070).
-func (b *Backend) setAutonomousActiveLocked(active bool) {
-	if b.autonomousActive == active {
-		return
-	}
-	b.autonomousActive = active
-	fn := b.onAutonomousEnd
-	if active {
-		fn = b.onAutonomousStart
-	}
-	if fn != nil {
-		b.edgeCallbacks = append(b.edgeCallbacks, fn)
-	}
-}
-
-// drainEdgeCallbacks fires queued autonomous-run edge callbacks in FIFO order.
-// fireMu serialises drainers so exactly one fires the edges in order; turnMu is
-// taken only to pop each callback and released before firing it (the callbacks
-// re-enter the agent and must not run under turnMu). A concurrent drainer blocks
-// on fireMu, then finds an empty queue. The queue is never cleared out-of-band:
-// draining preserves start/end pairing (an unpaired start always has its end
-// enqueued before drain, e.g. at finalizeExit), whereas clearing would drop an
-// adopt while its release still fired — underflowing the in-flight counter.
+// drainEdgeCallbacks fires queued reader-goroutine edge callbacks (the
+// autonomous-open enqueued at the running edge, #1261) in FIFO order. fireMu
+// serialises drainers so exactly one fires them in order; turnMu is taken only
+// to pop each callback and released before firing it (the callbacks re-enter
+// the agent — building sinks, taking agent locks — and must not run under
+// turnMu). A concurrent drainer blocks on fireMu, then finds an empty queue.
 func (b *Backend) drainEdgeCallbacks() {
 	b.fireMu.Lock()
 	defer b.fireMu.Unlock()
@@ -181,11 +131,20 @@ func (b *Backend) completeTurn(reason string) {
 	msg := b.stashedResultMsg
 	resultCh := b.turnResultCh
 	cycles := b.turnCalls
+	autonomous := b.turnAutonomous
 	b.turnEvents = nil
 	b.turnActive = false
+	b.turnAutonomous = false
 	b.stashedResult = nil
 	b.stashedResultMsg = nil
 	b.redispatchInFlight = false
+	if autonomous {
+		// Arm the post-run grace: for a short window after a CC-initiated turn
+		// completes, SourceSystem injects still defer (tryBeginTurn) so a
+		// reflection/keepalive can't slip in between this turn's idle and a
+		// possible back-to-back continuation whose running edge re-arms turnActive.
+		b.lastAutonomousEnd = time.Now()
+	}
 	b.turnMu.Unlock()
 
 	if result == nil {

@@ -7,12 +7,12 @@ import (
 	"foci/internal/delegator"
 )
 
-// TestAutonomousResultDelivered pins the #1063 fix: an autonomous run (one foci
-// opened no turn for — e.g. a task-notification run after a backgrounded
-// sub-agent completes) whose reply arrives ONLY in CC's result message (no
-// streamed assistant text) must still be delivered to the session sink on idle,
-// not silently dropped. This replays the 2026-07-07 incident where a 2.5k-char
-// report was generated but never reached the chat.
+// TestAutonomousResultDelivered pins #1261: a CC-initiated run (one foci did not
+// open — e.g. a task-notification run after a backgrounded sub-agent completes)
+// is adopted as a first-class turn via onAutonomousOpen, and its reply completes
+// through OnTurnComplete (not the old whole-message late-delivery fallback) — so
+// it gets streaming, accounting, and meta like any turn. Replays the 2026-07-07
+// incident (a report generated but never reaching the chat) under the new model.
 func TestAutonomousResultDelivered(t *testing.T) {
 	t.Parallel()
 
@@ -20,56 +20,25 @@ func TestAutonomousResultDelivered(t *testing.T) {
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 	b.typingFunc = func(bool) {}
 
-	var delivered []string
-	// Attach session-scoped delivery only — NO beginTurn, so turnActive stays
-	// false and the run is autonomous.
-	b.AttachSessionEvents(&delegator.SessionEvents{
-		OnText: func(text string) { delivered = append(delivered, text) },
+	var completed []*delegator.TurnResult
+	// The agent wires onAutonomousOpen to adopt the run as a first-class turn.
+	b.SetOnAutonomousOpen(func() {
+		b.AdoptRunningTurn(&delegator.TurnEvents{
+			OnTurnComplete: func(r *delegator.TurnResult) { completed = append(completed, r) },
+		})
 	})
 
-	stateEvent(b, "running") // running with no foci turn open → autonomous run
+	stateEvent(b, "running") // no foci turn open → adopted as a first-class turn
+	if !b.IsTurnInFlight() {
+		t.Fatal("an adopted autonomous run must be in flight (turnActive=true)")
+	}
 	// Reply arrives only via the result message (turnText empty → uses Result),
 	// exactly as a task-notification run does.
 	b.OnResult(&ResultMessage{Subtype: "success", Result: "the autonomous reply", ModelUsage: map[string]ModelUsage{}})
-	stateEvent(b, "idle") // → onSessionIdle delivers the stashed result
+	stateEvent(b, "idle") // → completeTurn → OnTurnComplete
 
-	if len(delivered) != 1 || delivered[0] != "the autonomous reply" {
-		t.Fatalf("autonomous result must be delivered once via the session sink; got %v", delivered)
-	}
-}
-
-// TestAutonomousStreamedNotRedelivered guards the other side: when an autonomous
-// run DID stream its text via OnAssistant (se.OnText already sent it through the
-// late-delivery fallback), onSessionIdle must NOT re-deliver the stashed result
-// — otherwise the reply lands twice.
-func TestAutonomousStreamedNotRedelivered(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
-	b.typingFunc = func(bool) {}
-
-	var delivered []string
-	b.AttachSessionEvents(&delegator.SessionEvents{
-		OnText: func(text string) { delivered = append(delivered, text) },
-	})
-
-	stateEvent(b, "running") // autonomous run
-	// The run streams a top-level assistant text block: se.OnText fires (path 1
-	// delivery) and the run is marked streamed.
-	b.OnAssistant(&AssistantMessage{
-		Message: BetaMessage{
-			Model:   "claude-opus-4-8",
-			Content: []ContentBlock{{Type: "text", Text: "streamed reply"}},
-			Usage:   TokenUsage{InputTokens: 10, OutputTokens: 5},
-		},
-	})
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-	stateEvent(b, "idle")
-
-	// Exactly one delivery (the stream), not a second copy from onSessionIdle.
-	if len(delivered) != 1 || delivered[0] != "streamed reply" {
-		t.Fatalf("streamed autonomous text must not be re-delivered on idle; got %v", delivered)
+	if len(completed) != 1 || completed[0].Text != "the autonomous reply" {
+		t.Fatalf("adopted autonomous turn must complete once via OnTurnComplete; got %v", completed)
 	}
 }
 

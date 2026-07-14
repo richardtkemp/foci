@@ -40,13 +40,17 @@ func TestAwaitingAutonomousRun(t *testing.T) {
 		}
 	})
 
-	t.Run("live autonomous run holds", func(t *testing.T) {
+	t.Run("live autonomous run holds via in-flight", func(t *testing.T) {
 		var buf bytes.Buffer
 		b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 		b.typingFunc = func(bool) {}
-		stateEvent(b, "running") // no foci turn open → autonomous run
-		if !b.AwaitingAutonomousRun() {
-			t.Fatal("a live autonomous run must hold the gate")
+		// A live autonomous run is now a first-class turn (turnActive) — held by
+		// the normal in-flight gate, not AwaitingAutonomousRun (which covers only
+		// pending/grace).
+		b.SetOnAutonomousOpen(func() { b.AdoptRunningTurn(&delegator.TurnEvents{}) })
+		stateEvent(b, "running") // no foci turn open → adopted as a first-class turn
+		if !b.IsTurnInFlight() {
+			t.Fatal("an adopted autonomous run must be in flight (turnActive)")
 		}
 	})
 
@@ -54,8 +58,9 @@ func TestAwaitingAutonomousRun(t *testing.T) {
 		var buf bytes.Buffer
 		b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 		b.typingFunc = func(bool) {}
+		b.SetOnAutonomousOpen(func() { b.AdoptRunningTurn(&delegator.TurnEvents{}) })
 		stateEvent(b, "running")
-		stateEvent(b, "idle") // ends the run, stamps lastAutonomousEnd → grace open
+		stateEvent(b, "idle") // completeTurn stamps lastAutonomousEnd (turnAutonomous) → grace open
 		if !b.AwaitingAutonomousRun() {
 			t.Fatal("within the post-run grace the gate must still hold")
 		}

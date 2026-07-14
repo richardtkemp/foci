@@ -56,14 +56,9 @@ func (b *Backend) SetOnRateLimited(fn func(detail string)) { b.onRateLimited = f
 // Must be set before Start.
 func (b *Backend) SetOnSessionLimit(fn func(until time.Time)) { b.onSessionLimit = fn }
 
-// SetOnAutonomousStart registers a hook fired when the backend detects CC has
-// begun an autonomous run (session_state:running with no foci turn open). The
-// agent wires this to markInFlight so the run is adopted as an in-flight
-// delivering turn (#1070). Must be set before Start.
-func (b *Backend) SetOnAutonomousStart(fn func()) { b.onAutonomousStart = fn }
-
-// SetOnAutonomousEnd registers a hook fired when an autonomous run ends (CC
-// idle, subprocess exit, or a foci turn adopting the run). Paired with
-// SetOnAutonomousStart to release the agent's in-flight adoption. Must be set
+// SetOnAutonomousOpen registers a hook fired when the backend detects CC has
+// begun a run foci did not open (session_state:running with no foci turn). The
+// agent wires this to openAutonomousTurn, which adopts the run as a first-class
+// foci turn (streams, accounts, completes like any turn) (#1261). Must be set
 // before Start.
-func (b *Backend) SetOnAutonomousEnd(fn func()) { b.onAutonomousEnd = fn }
+func (b *Backend) SetOnAutonomousOpen(fn func()) { b.onAutonomousOpen = fn }

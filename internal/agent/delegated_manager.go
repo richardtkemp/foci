@@ -99,15 +99,12 @@ type DelegatedManager struct {
 	// started in its place. Nil = notices are silently dropped (e.g. tests).
 	SystemNoticeFunc func(sessionKey, text string)
 
-	// AdoptAutonomousRun is called when a backend detects CC has begun an
-	// autonomous run (one foci opened no turn for — a background-agent
-	// completion, task-notification, or proactive tick). It must return a
-	// release closure invoked when the run ends. Wired by the Agent to
-	// markInFlight(sessionKey, delivering=true) so the run is adopted as an
-	// in-flight delivering turn and the inbox worker holds concurrent
-	// reflection/keepalive injections that would otherwise poison its shared
-	// session sink (#1070). Nil = adoption disabled (tests, non-CC backends).
-	AdoptAutonomousRun func(sessionKey string) (release func())
+	// OpenAutonomousTurn is called when a backend detects CC has begun a run foci
+	// did not open (a background-agent completion, task-notification, or
+	// continuation). Wired by the Agent to openAutonomousTurn, which adopts the
+	// run as a first-class foci turn — streaming sink, in-flight tracking,
+	// accounting, meta (#1261). Nil = adoption disabled (tests, non-CC backends).
+	OpenAutonomousTurn func(sessionKey string, be delegator.Delegator)
 
 	// IdleTimeout is how long a backend can be idle before being closed.
 	// Zero uses DefaultIdleTimeout.
@@ -156,41 +153,6 @@ type managedBackend struct {
 	permMu      sync.Mutex
 	permPending bool
 	permCond    *sync.Cond // lazy-init on first WaitForPermission
-
-	// Autonomous-run adoption (#1070). autoRelease holds the release closure
-	// returned by AdoptAutonomousRun for the currently-adopted autonomous run,
-	// or nil when none is in flight. Set on the backend's onAutonomousStart,
-	// cleared+invoked on onAutonomousEnd. The backend edge-balances start/end,
-	// and session_state events are serialized on the reader goroutine, so the
-	// pair is ordered; autoMu guards against the reader/reaper racing a stray
-	// end. A start that finds a non-nil prior release fires it defensively so an
-	// unbalanced pair can never leak the agent's in-flight adoption.
-	autoMu      sync.Mutex
-	autoRelease func()
-}
-
-// adoptAutonomous stores the release closure for a freshly-adopted autonomous
-// run, defensively releasing any prior un-released adoption.
-func (mb *managedBackend) adoptAutonomous(release func()) {
-	mb.autoMu.Lock()
-	prev := mb.autoRelease
-	mb.autoRelease = release
-	mb.autoMu.Unlock()
-	if prev != nil {
-		prev()
-	}
-}
-
-// releaseAutonomous invokes and clears the current adoption's release closure.
-// No-op when no autonomous run is adopted.
-func (mb *managedBackend) releaseAutonomous() {
-	mb.autoMu.Lock()
-	release := mb.autoRelease
-	mb.autoRelease = nil
-	mb.autoMu.Unlock()
-	if release != nil {
-		release()
-	}
 }
 
 // getManaged looks up the managed backend for a session key under the lock.
@@ -888,22 +850,16 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 		m.AttachDelivery(mb.be, sk())
 	}
 
-	// Adopt CC autonomous runs as in-flight delivering turns (#1070). The
-	// setters live on the concrete CC backend, not the Delegator interface, so
-	// reach them via a narrow type assertion (mirrors SetOnSubagentStatus).
-	// onAutonomousStart marks the run in flight and stashes the release; the
-	// paired onAutonomousEnd fires it. The backend edge-balances the pair from
-	// every run-ending site (idle, exit, adoption), so releases stay matched.
-	if m.AdoptAutonomousRun != nil {
-		if setter, ok := mb.be.(interface {
-			SetOnAutonomousStart(fn func())
-			SetOnAutonomousEnd(fn func())
-		}); ok {
-			setter.SetOnAutonomousStart(func() {
-				mb.adoptAutonomous(m.AdoptAutonomousRun(sk()))
-			})
-			setter.SetOnAutonomousEnd(func() {
-				mb.releaseAutonomous()
+	// Adopt CC-initiated runs as first-class foci turns (#1261). The setter lives
+	// on the concrete CC backend, not the Delegator interface, so reach it via a
+	// narrow type assertion (mirrors SetOnSubagentStatus). The backend fires
+	// onAutonomousOpen at the running edge; openAutonomousTurn adopts the run
+	// (streaming sink + TurnEvents + AdoptRunningTurn) and owns its completion.
+	if m.OpenAutonomousTurn != nil {
+		if setter, ok := mb.be.(interface{ SetOnAutonomousOpen(fn func()) }); ok {
+			be := mb.be
+			setter.SetOnAutonomousOpen(func() {
+				m.OpenAutonomousTurn(sk(), be)
 			})
 		}
 	}

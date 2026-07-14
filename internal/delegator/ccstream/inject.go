@@ -52,7 +52,7 @@ func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
 		return delegator.ErrTurnInFlight
 	}
 	b.turnMu.Lock()
-	if b.turnActive || b.autonomousActive {
+	if b.turnActive {
 		b.turnMu.Unlock()
 		return delegator.ErrTurnInFlight
 	}
@@ -91,18 +91,15 @@ func (b *Backend) AwaitingAutonomousRun() bool {
 	}
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
-	if b.autonomousActive {
-		return true
-	}
+	// An active autonomous run is now a first-class turn (turnActive), covered by
+	// the normal in-flight gate; here we only report the pending/imminent window
+	// (background work not yet begun as a turn, or the post-run chain grace).
 	return !b.lastAutonomousEnd.IsZero() && time.Since(b.lastAutonomousEnd) < autonomousInjectGrace
 }
 
-// beginTurnLocked initialises per-turn state. Caller must hold turnMu and must
-// call drainEdgeCallbacks AFTER releasing turnMu (the adoption end callback is
-// enqueued here when a foci turn takes over an in-flight autonomous run).
+// beginTurnLocked initialises per-turn state. Caller must hold turnMu.
 func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnActive = true
-	b.setAutonomousActiveLocked(false) // a foci turn now owns the run (adoption)
 	b.turnEvents = turn
 	b.turnText.Reset()
 	b.turnTools = 0
@@ -112,6 +109,30 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnOutputTokens = 0
 	b.turnCalls = 0
 	b.redispatchInFlight = false
+}
+
+// AdoptRunningTurn opens a first-class foci turn around a CC run that CC started
+// itself (autonomous — no foci send). Mirrors sendToPane minus the SendUser:
+// begins the turn (turnActive + turnAutonomous, fresh accumulators) so the
+// in-flight run's events, completion, accounting, meta, and nudges flow through
+// the normal turn path (#1261). Returns false without adopting if a turn is
+// already active — a foci-initiated turn raced this open and owns the run — so
+// the caller can unwind the sink/turn-events it prepared. Called by the agent's
+// openAutonomousTurn from the running-edge callback, off turnMu.
+func (b *Backend) AdoptRunningTurn(turn *delegator.TurnEvents) bool {
+	b.turnMu.Lock()
+	if b.turnActive {
+		b.turnMu.Unlock()
+		return false
+	}
+	b.beginTurnLocked(turn)
+	b.turnAutonomous = true
+	b.turnMu.Unlock()
+	b.resetTurnScratch()
+	if b.typingFunc != nil {
+		b.typingFunc(true)
+	}
+	return true
 }
 
 // resetTurnScratch clears the non-turnMu turn-start state: cached usage
