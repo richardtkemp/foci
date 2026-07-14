@@ -265,26 +265,26 @@ func TestQueue_Pending_WithWarnings(t *testing.T) {
 	}
 }
 
-func TestQueue_Pending_SuppressedOnly(t *testing.T) {
-	// Proves that Pending returns true even when all new pushes are suppressed (no queued entry), because suppressed counts create a pending summary.
-	q, _ := newTestQueue(1, 5*time.Minute)
+func TestQueue_Pending_SuppressedOnlyWithinWindow(t *testing.T) {
+	// Proves a suppressed-only bucket is NOT pending within its live window (the
+	// feedback-loop fix): its summary must not self-trigger a dispatch. It
+	// becomes pending only once the window elapses and the roll-up is due.
+	q, now := newTestQueue(1, 5*time.Minute)
 
-	// One allowed, two suppressed
-	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error") // allowed
 	q.Push("WARN", "test", "error") // suppressed
-	q.Push("WARN", "test", "error") // suppressed
-
-	// Drain the queued warning (but not summaries — Drain handles both)
-	// After drain, suppressed count resets, so Pending should be false.
-	warnings := q.Drain()
-	if len(warnings) != 2 { // 1 allowed + 1 summary
-		t.Fatalf("Drain() got %d, want 2", len(warnings))
+	if got := q.Drain(); len(got) != 2 {
+		t.Fatalf("Drain() got %d, want 2 (1 allowed + 1 summary)", len(got))
 	}
 
-	// Push more suppressed (within same window, bucket still at max)
-	q.Push("WARN", "test", "error") // suppressed
+	q.Push("WARN", "test", "error") // suppressed, bucket at max, within window
+	if q.Pending() {
+		t.Error("Pending() should be false for suppressed-only within its window")
+	}
+
+	*now = now.Add(6 * time.Minute) // window elapsed → roll-up due
 	if !q.Pending() {
-		t.Error("Pending() should be true when only suppressed warnings exist")
+		t.Error("Pending() should be true once the suppressed bucket's window elapses")
 	}
 }
 
