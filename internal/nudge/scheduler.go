@@ -100,9 +100,9 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 	}
 	canPostTool := opts.CanPostTool
 	canPreAnswer := opts.CanPreAnswer
-	who := ""
+	lg := log.NewComponentLogger("nudge")
 	if opts.AgentID != "" {
-		who = "agent " + opts.AgentID + ": "
+		lg = log.NewComponentLogger("nudge:" + opts.AgentID)
 	}
 
 	var activeRules []Rule
@@ -113,13 +113,13 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 		warn := r.Category == CategoryChar
 		if TriggerRequiresPostTool(r.Trigger.Type) && !canPostTool {
 			if warn {
-				log.Warnf("nudge", "%srule %q uses trigger %q which requires post-tool injection — not supported by this backend. Rule will be skipped.", who, truncate(r.Text, 60), r.Trigger.Type)
+				lg.Warnf("rule %q uses trigger %q which requires post-tool injection — not supported by this backend. Rule will be skipped.", truncate(r.Text, 60), r.Trigger.Type)
 			}
 			continue
 		}
 		if TriggerRequiresPreAnswer(r.Trigger.Type) && !canPreAnswer {
 			if warn {
-				log.Warnf("nudge", "%srule %q uses trigger %q which requires pre-answer injection — not supported by this backend. Rule will be skipped.", who, truncate(r.Text, 60), r.Trigger.Type)
+				lg.Warnf("rule %q uses trigger %q which requires pre-answer injection — not supported by this backend. Rule will be skipped.", truncate(r.Text, 60), r.Trigger.Type)
 			}
 			continue
 		}

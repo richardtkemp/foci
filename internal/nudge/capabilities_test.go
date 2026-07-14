@@ -69,8 +69,11 @@ func TestNewSchedulerOpts_FiltersUnsupportedRules(t *testing.T) {
 
 func TestNewSchedulerOpts_SkipWarningNamesAgent(t *testing.T) {
 	log.SetWarnHook(func(log.Level, string, string) {}) // drain any buffered warnings first
-	var msgs []string
-	log.SetWarnHook(func(_ log.Level, _ string, msg string) { msgs = append(msgs, msg) })
+	var components, msgs []string
+	log.SetWarnHook(func(_ log.Level, component, msg string) {
+		components = append(components, component)
+		msgs = append(msgs, msg)
+	})
 	defer log.SetWarnHook(nil)
 
 	rs := &RuleSet{Rules: []Rule{
@@ -83,8 +86,9 @@ func TestNewSchedulerOpts_SkipWarningNamesAgent(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 skip warning (char rule only), got %d: %v", len(msgs), msgs)
 	}
-	if !strings.HasPrefix(msgs[0], "agent clutch: ") {
-		t.Errorf("skip warning should name the agent, got %q", msgs[0])
+	// The agent id is carried in the log component ([nudge:clutch]), not the message.
+	if components[0] != "nudge:clutch" {
+		t.Errorf("skip warning should name the agent in the component, got %q", components[0])
 	}
 	if !strings.Contains(msgs[0], "user rule") {
 		t.Errorf("warning should be for the char rule, got %q", msgs[0])
