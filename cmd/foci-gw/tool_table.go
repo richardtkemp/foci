@@ -274,9 +274,11 @@ var toolTable = []toolEntry{
 	}},
 
 	{name: "send_to_session", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
-		// Loose targets resolve through the shared route ladder (Create
-		// disabled: the tool addresses existing sessions, it doesn't mint
-		// new ones).
+		// Loose targets resolve through the shared route ladder. Create is
+		// disabled for named sessions (the tool addresses existing ones), but
+		// CreateDefault is wired: a bare agent name whose only sessions are
+		// archived mints a fresh visible conversation rather than failing to
+		// deliver into a hidden one.
 		idx := d.p.sessionIndex
 		resolveKeyFn := func(target string) (string, string, error) {
 			t, err := route.ParseTarget(target)
@@ -284,7 +286,11 @@ var toolTable = []toolEntry{
 				return "", "", err
 			}
 			t.Create = false
-			res, err := (&route.Resolver{Index: idx, PreferredPlatform: d.p.cfg.DefaultPlatformFor}).Resolve(t)
+			res, err := (&route.Resolver{
+				Index:             idx,
+				PreferredPlatform: d.p.cfg.DefaultPlatformFor,
+				CreateDefault:     app.CreateDefaultConversation,
+			}).Resolve(t)
 			if err != nil {
 				return "", "", err
 			}

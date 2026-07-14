@@ -180,6 +180,22 @@ func MintFacetConversation(agentID, sessionKey string) (string, error) {
 	return h.mintFacetConversation(agentID, sessionKey)
 }
 
+// CreateDefaultConversation creates (or reuses) a non-archived app conversation
+// for the agent and returns its session key, pushing the new conversation to
+// connected devices. Injected into the route Resolver as CreateDefault by the
+// delivery paths, fired only when default resolution finds no non-archived
+// session. Errors when the app provider is not running or the agent has no app
+// connection.
+func CreateDefaultConversation(agentID string) (string, error) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return "", errors.New("app provider not running")
+	}
+	return h.createDefaultConversation(agentID)
+}
+
 // withHub returns an http.HandlerFunc that resolves the active hub (503 if
 // unconfigured) and delegates to fn. Each hub method does its own Bearer auth,
 // so no shared middleware is needed.

@@ -1344,8 +1344,15 @@ func (idx *SessionIndex) DefaultChatForAgent(agentID, platform string) int64 {
 	defer idx.mu.Unlock()
 
 	var chatID int64
+	// Exclude an archived chat: a default that was later archived must never be
+	// resolved (archived = hidden from the client, so delivery there is silently
+	// invisible). Mirrors the is_archived guard on the DefaultSessionKeyForAgentOn
+	// ladder.
 	err := idx.db.QueryRow(
-		`SELECT chat_id FROM chat_metadata WHERE agent_id = ? AND platform = ? AND key = 'is_default' AND value = 'true'`,
+		`SELECT chat_id FROM chat_metadata cm WHERE cm.agent_id = ? AND cm.platform = ? AND cm.key = 'is_default' AND cm.value = 'true'
+		   AND NOT EXISTS (SELECT 1 FROM chat_metadata arch
+		     WHERE arch.agent_id = cm.agent_id AND arch.platform = cm.platform
+		       AND arch.chat_id = cm.chat_id AND arch.key = 'is_archived' AND arch.value = 'true')`,
 		agentID, platform,
 	).Scan(&chatID)
 	if err != nil {
@@ -1464,12 +1471,19 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
+	// Every rung excludes archived chats: an archived conversation is hidden from
+	// the client, so resolving a default to it makes delivery silently invisible.
+	// Correlated on the chat_metadata alias 'cm' present in each rung's query.
+	const notArchived = `AND NOT EXISTS (SELECT 1 FROM chat_metadata arch
+		 WHERE arch.agent_id = cm.agent_id AND arch.platform = cm.platform
+		   AND arch.chat_id = cm.chat_id AND arch.key = 'is_archived' AND arch.value = 'true') `
+
 	if preferredPlatform != "" {
 		// Preferred platform's pinned default chat.
 		var chatID int64
 		err := idx.db.QueryRow(
-			`SELECT chat_id FROM chat_metadata
-			 WHERE agent_id = ? AND platform = ? AND key = 'is_default' AND value = 'true'`,
+			`SELECT cm.chat_id FROM chat_metadata cm
+			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.key = 'is_default' AND cm.value = 'true' `+notArchived,
 			agentID, preferredPlatform,
 		).Scan(&chatID)
 		if err == nil && chatID != 0 {
@@ -1497,7 +1511,7 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 			`SELECT cm.chat_id FROM (SELECT DISTINCT agent_id, platform, chat_id FROM chat_metadata WHERE key = 'registered' AND value = 'true') cm
 			 LEFT JOIN session_index si
 			   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
-			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.chat_id != 0 `+convGuard+`
+			 WHERE cm.agent_id = ? AND cm.platform = ? AND cm.chat_id != 0 `+convGuard+notArchived+`
 			 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST
 			 LIMIT 1`,
 			agentID, preferredPlatform,
@@ -1517,7 +1531,7 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 		`SELECT cm.chat_id FROM chat_metadata cm
 		 LEFT JOIN session_index si
 		   ON si.agent_id = cm.agent_id AND si.chat_id = cm.chat_id AND si.is_root = 1
-		 WHERE cm.agent_id = ? AND cm.key = 'is_default' AND cm.value = 'true'
+		 WHERE cm.agent_id = ? AND cm.key = 'is_default' AND cm.value = 'true' `+notArchived+`
 		 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST
 		 LIMIT 1`,
 		agentID,
@@ -1535,9 +1549,12 @@ func (idx *SessionIndex) DefaultSessionKeyForAgentOn(agentID, preferredPlatform 
 	// before any chat binding), breaking default resolution.
 	var key string
 	err = idx.db.QueryRow(
-		`SELECT session_key FROM session_index
-		 WHERE agent_id = ? AND is_root = 1 AND status = 'active'
-		 ORDER BY unixepoch(last_user_activity_at) DESC NULLS LAST, unixepoch(created_at) DESC
+		`SELECT session_key FROM session_index si
+		 WHERE si.agent_id = ? AND si.is_root = 1 AND si.status = 'active'
+		   AND NOT EXISTS (SELECT 1 FROM chat_metadata arch
+		     WHERE arch.agent_id = si.agent_id AND arch.chat_id = si.chat_id
+		       AND arch.key = 'is_archived' AND arch.value = 'true')
+		 ORDER BY unixepoch(si.last_user_activity_at) DESC NULLS LAST, unixepoch(si.created_at) DESC
 		 LIMIT 1`,
 		agentID,
 	).Scan(&key)

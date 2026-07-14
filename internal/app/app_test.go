@@ -656,6 +656,51 @@ func TestDeliverBinding_NoConversationsCreates(t *testing.T) {
 	}
 }
 
+func TestDeliverBinding_SkipsArchived(t *testing.T) {
+	// The most-recently-active conversation is archived (hidden from the client);
+	// deliverBinding must skip it and return the older non-archived one rather
+	// than delivering into a hidden conversation.
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+
+	live := &convBinding{convID: "clive", sessionKey: "ag/c42", agentID: "ag", chatID: 42, lastActMs: 1000}
+	arch := &convBinding{convID: "carch", sessionKey: "ag/c99", agentID: "ag", chatID: 99, lastActMs: 2000}
+	h.convs[live.convID] = live
+	h.convs[arch.convID] = arch
+	if err := idx.SetArchivedChat("ag", "app", 99, true); err != nil {
+		t.Fatal(err)
+	}
+
+	b, via := h.deliverBinding("ag")
+	if b == nil || b.convID != "clive" {
+		t.Fatalf("deliverBinding = %+v (via %q), want clive (archived c99 skipped)", b, via)
+	}
+}
+
+func TestCreateDefaultConversation_RequiresAppConn(t *testing.T) {
+	// createDefaultConversation errors when the agent has no app connection
+	// (nothing to push to), and returns a session key once it does.
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+
+	if _, err := h.createDefaultConversation("ag"); err == nil {
+		t.Fatal("expected error for agent with no app connection")
+	}
+
+	registerBareAgent(h, "ag")
+	c := fakeClient()
+	h.clients[c] = struct{}{}
+	key, err := h.createDefaultConversation("ag")
+	if err != nil {
+		t.Fatalf("createDefaultConversation: %v", err)
+	}
+	if key == "" {
+		t.Error("expected a non-empty session key for the created conversation")
+	}
+}
+
 func TestNotifyUnbound_TargetsDefaultConversationOnly(t *testing.T) {
 	// The unbound conn's notifications (broadcast warnings) go to the default
 	// conversation via the deliver ladder — NOT a fan-out to every binding.
