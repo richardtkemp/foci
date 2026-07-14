@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/procx"
 )
 
@@ -35,18 +34,17 @@ type authStatus struct {
 // returns (false, err) WITHOUT triggering login — a transient hiccup must not
 // spuriously launch an interactive login flow.
 func (b *Backend) CheckReady(ctx context.Context) (bool, error) {
-	comp := b.logComponent()
 
 	st, err := b.queryAuthStatus(ctx)
 	if err != nil {
 		return false, err
 	}
 	if st.LoggedIn {
-		log.Infof(comp, "readiness check: authenticated (method=%s)", st.AuthMethod)
+		b.logger().Infof("readiness check: authenticated (method=%s)", st.AuthMethod)
 		return true, nil
 	}
 
-	log.Warnf(comp, "readiness check: claude auth status reports NOT logged in — triggering re-login")
+	b.logger().Warnf("readiness check: claude auth status reports NOT logged in — triggering re-login")
 	b.fireAuthFailure("startup readiness check: claude auth status reports not logged in")
 	return false, nil
 }

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 	"foci/internal/procx"
 )
 
@@ -75,11 +74,6 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		args = append(args, "--allowedTools", v)
 	}
 
-	component := "ccstream"
-	if opts.Label != "" {
-		component = "ccstream:" + opts.Label
-	}
-
 	// Build foci's hook settings JSON and append it as a --settings argv
 	// so CC loads it as a flagSettings source (always enabled, merges
 	// with user hooks automatically). Skipped when the foci-cc-hook
@@ -98,7 +92,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		claudeBin = v
 	}
 
-	log.Infof(component, "launching: %s %s (workdir=%s)", claudeBin, strings.Join(args, " "), opts.WorkDir)
+	b.logger().Infof("launching: %s %s (workdir=%s)", claudeBin, strings.Join(args, " "), opts.WorkDir)
 
 	// Create command with its own cancellable context. The CC process is
 	// long-lived (surviving across turns), so it must NOT be tied to the
@@ -186,11 +180,10 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		err := cmd.Wait()
 		b.exitErr = err // store for OnError; read after exitCh is closed
 		close(b.exitCh)
-		comp := b.logComponent()
 		if err != nil {
-			log.Warnf(comp, "process exited: %s", describeExitError(err))
+			b.logger().Warnf("process exited: %s", describeExitError(err))
 		} else {
-			log.Infof(comp, "process exited cleanly (status 0)")
+			b.logger().Infof("process exited cleanly (status 0)")
 		}
 		// Drive cleanup regardless of whether the reader goroutine notices.
 		// finalizeExit is idempotent — if OnReaderStopped already ran, this
@@ -251,12 +244,11 @@ func (b *Backend) closeInner() {
 		return
 	}
 
-	component := b.logComponent()
 	pid := 0
 	if b.cmd.Process != nil {
 		pid = b.cmd.Process.Pid
 	}
-	log.Infof(component, "closing CC subprocess (pid=%d)", pid)
+	b.logger().Infof("closing CC subprocess (pid=%d)", pid)
 
 	// Try graceful shutdown: only send an interrupt if a turn is in flight.
 	// CC's interrupt handler aborts the per-turn AbortController; sent after
@@ -291,10 +283,10 @@ func (b *Backend) closeInner() {
 	// for whatever the next unforeseen stall turns out to be.
 	select {
 	case <-b.waitCh:
-		log.Infof(component, "CC subprocess (pid=%d) exited", pid)
+		b.logger().Infof("CC subprocess (pid=%d) exited", pid)
 	case <-time.After(closeGracefulWait):
 		// SIGTERM.
-		log.Warnf(component, "process (pid=%d) did not exit after %s, sending SIGTERM", pid, closeGracefulWait)
+		b.logger().Warnf("process (pid=%d) did not exit after %s, sending SIGTERM", pid, closeGracefulWait)
 		if b.cmd.Process != nil {
 			_ = b.cmd.Process.Signal(syscall.SIGTERM)
 		}
@@ -302,7 +294,7 @@ func (b *Backend) closeInner() {
 		case <-b.waitCh:
 		case <-time.After(closeSigtermWait):
 			// SIGKILL.
-			log.Warnf(component, "process (pid=%d) did not exit after SIGTERM, sending SIGKILL", pid)
+			b.logger().Warnf("process (pid=%d) did not exit after SIGTERM, sending SIGKILL", pid)
 			if b.cmd.Process != nil {
 				_ = b.cmd.Process.Kill()
 			}
@@ -316,7 +308,7 @@ func (b *Backend) closeInner() {
 				// processed for this agent. Reaching here is unexpected post-#749
 				// (zero occurrences since the 85e49f26 fix) — if it fires, it is
 				// a NEW stall worth investigating, not the known deadlock.
-				log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
+				b.logger().Warnf("waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
 			}
 		}
 	}
@@ -361,16 +353,15 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 // the actual cleanup to finalizeExit so the work runs exactly once even if the
 // waiter goroutine (cmd.Wait) reached the same conclusion first.
 func (b *Backend) OnReaderStopped(err error) {
-	component := b.logComponent()
 
 	b.mu.Lock()
 	expected := b.closing
 	b.mu.Unlock()
 
 	if expected {
-		log.Infof(component, "subprocess reader stopped (session closing)")
+		b.logger().Infof("subprocess reader stopped (session closing)")
 	} else {
-		log.Warnf(component, "subprocess reader stopped: %v", err)
+		b.logger().Warnf("subprocess reader stopped: %v", err)
 	}
 
 	b.finalizeExit(err)
@@ -394,23 +385,22 @@ func (b *Backend) OnReaderStopped(err error) {
 // Reset in Restart() before the subprocess is relaunched.
 func (b *Backend) finalizeExit(reason error) {
 	b.finalizeOnce.Do(func() {
-		component := b.logComponent()
 
 		// Instrumentation: bracket the cleanup so we can see whether it
 		// completed and where time goes when the waiter-goroutine
 		// signalling chain stalls (TODO #749). Should be sub-millisecond
 		// in the happy path; >1s indicates a callback or lock issue.
 		start := time.Now()
-		log.Debugf(component, "finalizeExit: enter reason=%v", reason)
+		b.logger().Debugf("finalizeExit: enter reason=%v", reason)
 		defer func() {
-			log.Debugf(component, "finalizeExit: exit elapsed=%s", time.Since(start))
+			b.logger().Debugf("finalizeExit: exit elapsed=%s", time.Since(start))
 		}()
 
 		b.mu.Lock()
 		expected := b.closing
 		b.running = false
 		b.mu.Unlock()
-		log.Debugf(component, "finalizeExit: post-mu elapsed=%s", time.Since(start))
+		b.logger().Debugf("finalizeExit: post-mu elapsed=%s", time.Since(start))
 
 		// If the waiter goroutine has set exitErr, prefer its detail for the
 		// user-visible message. Wait briefly in case finalizeExit was invoked
@@ -427,13 +417,13 @@ func (b *Backend) finalizeExit(reason error) {
 			case <-b.exitCh:
 				exitErr = b.exitErr
 			case <-time.After(2 * time.Second):
-				log.Debugf(component, "finalizeExit: exitCh wait timed out (waiter goroutine has not set exitErr) elapsed=%s", time.Since(start))
+				b.logger().Debugf("finalizeExit: exitCh wait timed out (waiter goroutine has not set exitErr) elapsed=%s", time.Since(start))
 			}
 		}
-		log.Debugf(component, "finalizeExit: post-exitCh-wait elapsed=%s", time.Since(start))
+		b.logger().Debugf("finalizeExit: post-exitCh-wait elapsed=%s", time.Since(start))
 
 		if !expected && exitErr != nil {
-			log.Warnf(component, "process exit detail: %s", describeExitError(exitErr))
+			b.logger().Warnf("process exit detail: %s", describeExitError(exitErr))
 		}
 
 		// Drain any in-flight turn so callers waiting on CompletionChan or
@@ -451,7 +441,7 @@ func (b *Backend) finalizeExit(reason error) {
 		b.turnMu.Unlock()
 		b.drainEdgeCallbacks()
 		b.agents.ClearAll() // subprocess gone: pending agents can never complete
-		log.Debugf(component, "finalizeExit: post-turnMu turn_nil=%v turn_otc_nil=%v elapsed=%s", turn == nil, turn == nil || turn.OnTurnComplete == nil, time.Since(start))
+		b.logger().Debugf("finalizeExit: post-turnMu turn_nil=%v turn_otc_nil=%v elapsed=%s", turn == nil, turn == nil || turn.OnTurnComplete == nil, time.Since(start))
 
 		if turn != nil && turn.OnTurnComplete != nil {
 			var msg string
@@ -463,15 +453,15 @@ func (b *Backend) finalizeExit(reason error) {
 					msg += " (" + describeExitError(exitErr) + ")"
 				}
 			}
-			log.Debugf(component, "finalizeExit: pre-OnTurnComplete elapsed=%s", time.Since(start))
+			b.logger().Debugf("finalizeExit: pre-OnTurnComplete elapsed=%s", time.Since(start))
 			turn.OnTurnComplete(&delegator.TurnResult{Text: msg})
-			log.Debugf(component, "finalizeExit: post-OnTurnComplete elapsed=%s", time.Since(start))
+			b.logger().Debugf("finalizeExit: post-OnTurnComplete elapsed=%s", time.Since(start))
 		}
 
 		if b.typingFunc != nil {
-			log.Debugf(component, "finalizeExit: pre-typingFunc(false) elapsed=%s", time.Since(start))
+			b.logger().Debugf("finalizeExit: pre-typingFunc(false) elapsed=%s", time.Since(start))
 			b.typingFunc(false)
-			log.Debugf(component, "finalizeExit: post-typingFunc(false) elapsed=%s", time.Since(start))
+			b.logger().Debugf("finalizeExit: post-typingFunc(false) elapsed=%s", time.Since(start))
 		}
 
 		// Unblock WaitForTurn.
@@ -517,7 +507,6 @@ func (b *Backend) runKeepAlive(ctx context.Context) {
 // to fill and the subprocess to block on its next stderr write — wedging
 // the whole turn before stdout ever delivered a single envelope.
 func (b *Backend) captureStderr(r io.Reader) {
-	component := b.logComponent()
 	scanner := bufio.NewScanner(r)
 	const maxLine = 1 << 20 // 1MB — matches stdout reader cap
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
@@ -528,9 +517,9 @@ func (b *Backend) captureStderr(r io.Reader) {
 		}
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") || strings.Contains(lower, "panic") {
-			log.Warnf(component, "stderr: %s", line)
+			b.logger().Warnf("stderr: %s", line)
 		} else {
-			log.Debugf(component, "stderr: %s", line)
+			b.logger().Debugf("stderr: %s", line)
 		}
 		// Secondary 401 detection: a dead token can surface on stderr rather
 		// than as an error result. The re-login gate single-flights, so firing
@@ -544,7 +533,7 @@ func (b *Backend) captureStderr(r io.Reader) {
 	// would back up. EOF is the normal exit when the subprocess closes
 	// stderr — don't warn on that.
 	if err := scanner.Err(); err != nil {
-		log.Warnf(component, "stderr capture stopped: %v", err)
+		b.logger().Warnf("stderr capture stopped: %v", err)
 	}
 }
 
