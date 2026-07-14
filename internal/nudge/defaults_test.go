@@ -10,7 +10,7 @@ func TestDefaultRulesFiltering(t *testing.T) {
 	// and that unregistered tools are excluded.
 	t.Parallel()
 
-	rules := DefaultRules([]string{"shell", "read", "spawn"}, nil, 25)
+	rules := DefaultRules([]string{"shell", "read", "spawn"}, nil)
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
@@ -18,8 +18,8 @@ func TestDefaultRulesFiltering(t *testing.T) {
 	if r.Trigger.Type != "every_n_turns" {
 		t.Errorf("expected trigger type every_n_turns, got %q", r.Trigger.Type)
 	}
-	if r.Trigger.N != 25 {
-		t.Errorf("expected N=25, got %d", r.Trigger.N)
+	if r.Category != CategoryDefault {
+		t.Errorf("expected category %q, got %q", CategoryDefault, r.Category)
 	}
 	if !strings.Contains(r.Text, "shell (run commands)") {
 		t.Error("expected shell in text")
@@ -43,7 +43,7 @@ func TestDefaultRulesStableOrder(t *testing.T) {
 	// or random map iteration order.
 	t.Parallel()
 
-	rules := DefaultRules([]string{"spawn", "shell", "read", "write"}, nil, 10)
+	rules := DefaultRules([]string{"spawn", "shell", "read", "write"}, nil)
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
@@ -66,7 +66,7 @@ func TestDefaultRulesWithSkills(t *testing.T) {
 		{Name: "bouncer", Description: "security scanner"},
 		{Name: "research", Description: "web research via Perplexity"},
 	}
-	rules := DefaultRules([]string{"shell"}, skills, 25)
+	rules := DefaultRules([]string{"shell"}, skills)
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
@@ -86,7 +86,7 @@ func TestDefaultRulesSkillsOnly(t *testing.T) {
 	// Verifies that skills-only (no tools) still generates a rule.
 	t.Parallel()
 
-	rules := DefaultRules(nil, []SkillSummary{{Name: "test", Description: "a test skill"}}, 10)
+	rules := DefaultRules(nil, []SkillSummary{{Name: "test", Description: "a test skill"}})
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
@@ -102,12 +102,12 @@ func TestDefaultRulesEmpty(t *testing.T) {
 	// Verifies that empty inputs produce no rules.
 	t.Parallel()
 
-	rules := DefaultRules(nil, nil, 25)
+	rules := DefaultRules(nil, nil)
 	if len(rules) != 0 {
 		t.Errorf("expected 0 rules, got %d", len(rules))
 	}
 
-	rules = DefaultRules([]string{}, []SkillSummary{}, 25)
+	rules = DefaultRules([]string{}, []SkillSummary{})
 	if len(rules) != 0 {
 		t.Errorf("expected 0 rules for empty slices, got %d", len(rules))
 	}
@@ -118,7 +118,7 @@ func TestDefaultRulesUnknownToolsIncluded(t *testing.T) {
 	// are still included in the output, just without a description.
 	t.Parallel()
 
-	rules := DefaultRules([]string{"shell", "custom_mcp_tool"}, nil, 25)
+	rules := DefaultRules([]string{"shell", "custom_mcp_tool"}, nil)
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
@@ -127,25 +127,12 @@ func TestDefaultRulesUnknownToolsIncluded(t *testing.T) {
 	}
 }
 
-func TestDefaultRulesFrequencyDefault(t *testing.T) {
-	// Verifies that frequency <= 0 defaults to 50.
-	t.Parallel()
-
-	rules := DefaultRules([]string{"shell"}, nil, 0)
-	if len(rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(rules))
-	}
-	if rules[0].Trigger.N != 50 {
-		t.Errorf("expected default frequency 50, got %d", rules[0].Trigger.N)
-	}
-}
-
 func TestBraindeadRuleBasic(t *testing.T) {
-	// Verifies that BraindeadRule generates a single every_n_tools rule
-	// with the default prompt when no custom prompt is provided.
+	// Verifies BraindeadRule builds a single every_n_tools "braindead" rule with
+	// the default prompt. Threshold/prompt come from live settings at fire time.
 	t.Parallel()
 
-	rules := BraindeadRule(10, "")
+	rules := BraindeadRule()
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
@@ -153,8 +140,8 @@ func TestBraindeadRuleBasic(t *testing.T) {
 	if r.Trigger.Type != "every_n_tools" {
 		t.Errorf("expected trigger type every_n_tools, got %q", r.Trigger.Type)
 	}
-	if r.Trigger.N != 10 {
-		t.Errorf("expected N=10, got %d", r.Trigger.N)
+	if r.Category != CategoryBraindead {
+		t.Errorf("expected category %q, got %q", CategoryBraindead, r.Category)
 	}
 	if !strings.Contains(r.Text, "consecutive tool calls") {
 		t.Error("expected default braindead prompt text")
@@ -167,39 +154,14 @@ func TestBraindeadRuleBasic(t *testing.T) {
 	}
 }
 
-func TestBraindeadRuleCustomPrompt(t *testing.T) {
-	// Verifies that a custom prompt overrides the default.
-	t.Parallel()
-
-	rules := BraindeadRule(5, "custom warning text")
-	if len(rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(rules))
-	}
-	if rules[0].Text != "custom warning text" {
-		t.Errorf("expected custom text, got %q", rules[0].Text)
-	}
-}
-
-func TestBraindeadRuleDisabled(t *testing.T) {
-	// Verifies that threshold <= 0 returns nil (disabled).
-	t.Parallel()
-
-	if rules := BraindeadRule(0, ""); rules != nil {
-		t.Errorf("expected nil for threshold=0, got %d rules", len(rules))
-	}
-	if rules := BraindeadRule(-1, ""); rules != nil {
-		t.Errorf("expected nil for threshold=-1, got %d rules", len(rules))
-	}
-}
-
 func TestScratchpadRuleBasic(t *testing.T) {
-	// Verifies ScratchpadRule generates an every_n_turns rule with
-	// the given frequency and a condition function attached.
+	// Verifies ScratchpadRule builds an every_n_turns "scratchpad" rule with the
+	// condition attached. Frequency comes from live settings at fire time.
 	t.Parallel()
 
 	called := false
 	condition := func() bool { called = true; return true }
-	rules := ScratchpadRule(20, condition)
+	rules := ScratchpadRule(condition)
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
@@ -207,8 +169,8 @@ func TestScratchpadRuleBasic(t *testing.T) {
 	if r.Trigger.Type != "every_n_turns" {
 		t.Errorf("expected trigger type every_n_turns, got %q", r.Trigger.Type)
 	}
-	if r.Trigger.N != 20 {
-		t.Errorf("expected N=20, got %d", r.Trigger.N)
+	if r.Category != CategoryScratchpad {
+		t.Errorf("expected category %q, got %q", CategoryScratchpad, r.Category)
 	}
 	if r.SourceFile != "builtin" {
 		t.Errorf("expected source_file builtin, got %q", r.SourceFile)
@@ -225,17 +187,11 @@ func TestScratchpadRuleBasic(t *testing.T) {
 	}
 }
 
-func TestScratchpadRuleDisabled(t *testing.T) {
-	// Verifies that frequency <= 0 or nil condition returns nil.
+func TestScratchpadRuleNilCondition(t *testing.T) {
+	// A nil condition (no scratchpad store) is the only case that skips the rule.
 	t.Parallel()
 
-	if rules := ScratchpadRule(0, func() bool { return true }); rules != nil {
-		t.Errorf("expected nil for frequency=0, got %d rules", len(rules))
-	}
-	if rules := ScratchpadRule(-1, func() bool { return true }); rules != nil {
-		t.Errorf("expected nil for frequency=-1, got %d rules", len(rules))
-	}
-	if rules := ScratchpadRule(20, nil); rules != nil {
+	if rules := ScratchpadRule(nil); rules != nil {
 		t.Errorf("expected nil for nil condition, got %d rules", len(rules))
 	}
 }
@@ -244,7 +200,7 @@ func TestDefaultRulesSourceFile(t *testing.T) {
 	// Verifies the source_file is set to "builtin".
 	t.Parallel()
 
-	rules := DefaultRules([]string{"shell"}, nil, 10)
+	rules := DefaultRules([]string{"shell"}, nil)
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}

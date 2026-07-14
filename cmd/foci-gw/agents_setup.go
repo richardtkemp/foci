@@ -118,130 +118,110 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 // when it fails (e.g. the model returns malformed JSON). See #830.
 const nudgeExtractMaxAttempts = 3
 
+// nudgeSettings maps the resolved nudge config to the Scheduler's config-free
+// live-tunable settings.
+func nudgeSettings(nc config.ResolvedNudge) nudge.Settings {
+	return nudge.Settings{
+		Cooldown:           nc.NudgeCooldown,
+		MaxPerBatch:        nc.NudgeMaxPerBatch,
+		Enable:             nc.NudgeEnable,
+		DefaultEnable:      nc.NudgeDefaultEnable,
+		DefaultFreq:        nc.NudgeDefaultFrequency,
+		ScratchpadFreq:     nc.NudgeDefaultScratchpadFrequency,
+		BraindeadThreshold: nc.NudgeDefaultBraindeadThreshold,
+		BraindeadPrompt:    nc.NudgeDefaultBraindeadPrompt,
+		PreAnswerGate:      nc.NudgePreAnswerGate,
+		PreAnswerMinTools:  nc.NudgePreAnswerMinTools,
+	}
+}
+
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
 func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
-	nudgeEnabled := nc.NudgeEnable
-	nudgeDefaultEnabled := nc.NudgeDefaultEnable
-	braindeadThreshold := nc.NudgeDefaultBraindeadThreshold
-	hasBraindead := braindeadThreshold > 0
-	if !nudgeEnabled && !nudgeDefaultEnabled && !hasBraindead {
-		return
+	// Backend capabilities for rule filtering. Turn-start triggers (every_n_turns,
+	// regex) work on all backends; mid-turn triggers (every_n_tools, after_error,
+	// tool_pattern, pre_answer) need stdin-pipe injection (ccstream), which the
+	// HTTP-based opencode backend lacks.
+	isOpencode := acfg.Backend == "opencode"
+	schedOpts := nudge.SchedulerOpts{
+		Cooldown:     nc.NudgeCooldown,
+		MaxPerBatch:  nc.NudgeMaxPerBatch,
+		CanPostTool:  !isOpencode,
+		CanPreAnswer: !isOpencode,
 	}
-
-	// Braindead warning rule (fires every N tool calls).
-	braindeadRules := nudge.BraindeadRule(braindeadThreshold, nc.NudgeDefaultBraindeadPrompt)
-
-	// Load character-derived rules.
-	var charRules []nudge.Rule
 	rulesPath := nudge.RulesPath(acfg.Workspace)
-	if nudgeEnabled {
-		rs, err := nudge.LoadRules(rulesPath)
-		if err != nil {
-			log.Warnf("main", "agent %s: load nudge rules: %v", acfg.ID, err)
-		}
-		if rs != nil {
-			charRules = rs.Rules
+
+	// Built-in rules are built unconditionally; the Scheduler gates each on live
+	// [defaults.nudge] settings (build-all + live-gate, so an enable/interval edit
+	// applies with no rebuild). Braindead first — highest effective priority.
+	braindeadRules := nudge.BraindeadRule()
+
+	var toolNames []string
+	if toolRegistry != nil {
+		for _, t := range toolRegistry.All() {
+			toolNames = append(toolNames, t.Name)
 		}
 	}
-
-	// Generate default tool/skill reminder rules.
-	var defaultRules []nudge.Rule
-	if nudgeDefaultEnabled {
-		var toolNames []string
-		if toolRegistry != nil {
-			for _, t := range toolRegistry.All() {
-				toolNames = append(toolNames, t.Name)
-			}
+	var skillSummaries []nudge.SkillSummary
+	if skillRegistry != nil {
+		for _, s := range skillRegistry.All() {
+			skillSummaries = append(skillSummaries, nudge.SkillSummary{Name: s.Name, Description: s.Description})
 		}
-		var skillSummaries []nudge.SkillSummary
-		if skillRegistry != nil {
-			for _, s := range skillRegistry.All() {
-				skillSummaries = append(skillSummaries, nudge.SkillSummary{Name: s.Name, Description: s.Description})
-			}
-		}
-		defaultRules = nudge.DefaultRules(toolNames, skillSummaries, nc.NudgeDefaultFrequency)
 	}
+	defaultRules := nudge.DefaultRules(toolNames, skillSummaries)
 
-	// Scratchpad staleness reminder: fires every N turns, but only when entries exist.
-	scratchpadFreq := nc.NudgeDefaultScratchpadFrequency
 	var scratchpadRules []nudge.Rule
-	if nudgeDefaultEnabled && ag.ScratchpadStore != nil && scratchpadFreq > 0 {
+	if ag.ScratchpadStore != nil {
 		agentID := ag.AgentID
 		store := ag.ScratchpadStore
-		scratchpadRules = nudge.ScratchpadRule(scratchpadFreq, func() bool {
+		scratchpadRules = nudge.ScratchpadRule(func() bool {
 			entries, err := store.List(agentID)
 			return err == nil && len(entries) > 0
 		})
 	}
 
-	// Braindead first (highest effective priority), then character, then defaults, then scratchpad.
-	cooldown := nc.NudgeCooldown
-	maxPerBatch := nc.NudgeMaxPerBatch
-	allRules := append(braindeadRules, append(charRules, append(defaultRules, scratchpadRules...)...)...)
-
-	// Determine backend capabilities for nudge rule filtering.
-	// Turn-start triggers (every_n_turns, regex) work on all backends;
-	// mid-turn triggers (every_n_tools, after_error, tool_pattern,
-	// pre_answer) require a backend with stdin-pipe injection (ccstream).
-	// opencode is HTTP-based and can't inject mid-turn.
-	backendType := acfg.Backend
-	isOpencode := backendType == "opencode"
-	schedOpts := nudge.SchedulerOpts{
-		Cooldown:     cooldown,
-		MaxPerBatch:  maxPerBatch,
-		CanPostTool:  !isOpencode,
-		CanPreAnswer: !isOpencode,
-	}
-
-	if len(allRules) > 0 {
-		rs := &nudge.RuleSet{Rules: allRules}
-		if isOpencode {
-			ag.Nudger = nudge.NewSchedulerOpts(rs, schedOpts)
-		} else {
-			ag.Nudger = nudge.NewScheduler(rs, cooldown, maxPerBatch)
+	// liveNudge reads the current resolved nudge config, falling back to the
+	// startup snapshot in agents without LiveConfigFn (tests).
+	liveNudge := func() config.ResolvedNudge {
+		if ag.LiveConfigFn != nil {
+			return ag.LiveConfigFn().Nudge
 		}
-		log.Infof("main", "agent %s: loaded %d nudge rules (%d braindead, %d character, %d default, %d scratchpad)", acfg.ID, len(allRules), len(braindeadRules), len(charRules), len(defaultRules), len(scratchpadRules))
+		return nc
 	}
 
-	ag.NudgePreAnswerGate = nc.NudgePreAnswerGate
-	ag.NudgePreAnswerMinTools = nc.NudgePreAnswerMinTools
-
-	if !nudgeEnabled {
-		return // no character rules → no reload/extraction logic needed
+	// build assembles the latest character rules from disk with the built-ins into
+	// a fresh Scheduler and applies the latest live settings. Called at setup and
+	// on every NudgeReloadFunc (session reset / compaction) — the sanctioned
+	// rebuild point where losing per-session counters is acceptable.
+	build := func() {
+		var charRules []nudge.Rule
+		if rs, err := nudge.LoadRules(rulesPath); err != nil {
+			log.Warnf("nudge", "agent %s: load nudge rules: %v", acfg.ID, err)
+		} else if rs != nil {
+			charRules = rs.Rules
+		}
+		for i := range charRules {
+			charRules[i].Category = nudge.CategoryChar
+		}
+		merged := append(braindeadRules, append(charRules, append(defaultRules, scratchpadRules...)...)...)
+		var sched *nudge.Scheduler
+		if isOpencode {
+			sched = nudge.NewSchedulerOpts(&nudge.RuleSet{Rules: merged}, schedOpts)
+		} else {
+			sched = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, schedOpts.Cooldown, schedOpts.MaxPerBatch)
+		}
+		sched.Configure(nudgeSettings(liveNudge()))
+		ag.Nudger = sched
 	}
+	build()
 
-	// NudgeReloadFunc: on bootstrap reload, optionally extract new rules
-	// from character files (if nudge_auto_extract), then refresh from disk.
 	fileOrder := acfg.System.SystemFiles
 	if len(fileOrder) == 0 {
 		fileOrder = workspace.DefaultFileOrder
 	}
-	autoExtract := nc.NudgeAutoExtract
-	nudgeReloadFromDisk := func() {
-		rs, err := nudge.LoadRules(rulesPath)
-		if err != nil {
-			log.Warnf("nudge", "agent %s: reload rules: %v", acfg.ID, err)
-			return
-		}
-		var reloaded []nudge.Rule
-		if rs != nil {
-			reloaded = rs.Rules
-		}
-		// braindeadRules first, mirroring the initial-construction order — the
-		// safety "braindead" rule must survive reloads, not just the first build.
-		merged := append(braindeadRules, append(reloaded, append(defaultRules, scratchpadRules...)...)...)
-		if len(merged) > 0 {
-			if isOpencode {
-				ag.Nudger = nudge.NewSchedulerOpts(&nudge.RuleSet{Rules: merged}, schedOpts)
-			} else {
-				ag.Nudger = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, cooldown, maxPerBatch)
-			}
-		}
-	}
 
 	ag.NudgeReloadFunc = func() {
-		if !autoExtract {
-			nudgeReloadFromDisk()
+		if !liveNudge().NudgeAutoExtract {
+			build()
 			return
 		}
 		extractor := nudge.NewExtractor(acfg.Workspace, fileOrder, fileMode, schedOpts.CanPostTool, schedOpts.CanPreAnswer)
@@ -296,11 +276,11 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 				if err != nil {
 					return
 				}
-				nudgeReloadFromDisk()
+				build()
 				log.Infof("nudge", "agent %s: refreshed rules after extraction", acfg.ID)
 			}()
 		} else {
-			nudgeReloadFromDisk()
+			build()
 		}
 	}
 }

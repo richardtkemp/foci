@@ -373,17 +373,17 @@ type CompactionConfig struct {
 // NudgeConfig holds nudge system settings.
 // Global: [nudge], per-agent: [[agents]].nudge.*
 type NudgeConfig struct {
-	NudgeEnable                     *bool   `toml:"nudge_enable"                      default:"true"  desc:"Turns on nudges, short reminder messages injected while the agent is working to help keep it on track"`
-	NudgeAutoExtract                *bool   `toml:"nudge_auto_extract"                default:"true"  desc:"Has an LLM automatically scan character files for behavioral rules to turn into nudges, instead of writing them by hand"`
-	NudgeCooldown                   *int    `toml:"nudge_cooldown"                                    desc:"Minimum number of tool calls that must pass before the same nudge reminder can fire again, so it does not repeat every batch. Default 5"`
-	NudgeMaxPerBatch                *int    `toml:"nudge_max_per_batch"                               desc:"Maximum number of different nudge reminders that can be injected after a single batch of tool calls. Default 1"`
-	NudgePreAnswerGate              *bool   `toml:"nudge_pre_answer_gate"                             desc:"Before ending a turn, gives the agent one chance to reconsider against pre-answer reminders once it has made a few tool calls. Off by default"`
-	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"          default:"2"   desc:"Minimum tool calls in the current turn before the pre-answer verification gate is allowed to trigger"`
-	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"              default:"true"  desc:"Turns on the built-in reminders that tell the agent which tools and skills are available"`
-	NudgeDefaultFrequency           *int    `toml:"nudge_default_frequency"             default:"50"  desc:"Number of turns between built-in tool and skill reminders"`
-	NudgeDefaultScratchpadFrequency *int    `toml:"nudge_default_scratchpad_frequency"                desc:"Number of turns between reminders to review the agent's scratchpad notes. 0 disables it. Default 20"`
-	NudgeDefaultBraindeadThreshold  *int    `toml:"nudge_default_braindead_threshold"                 desc:"Number of tool calls in a row within one turn before the agent is warned to stop and check it is still on track. 0 disables this check"`
-	NudgeDefaultBraindeadPrompt     *string `toml:"nudge_default_braindead_prompt"`
+	NudgeEnable                     *bool   `toml:"nudge_enable"                      default:"true"  hot:"turn" desc:"Turns on nudges, short reminder messages injected while the agent is working to help keep it on track"`
+	NudgeAutoExtract                *bool   `toml:"nudge_auto_extract"                default:"true"  hot:"turn" desc:"Has an LLM automatically scan character files for behavioral rules to turn into nudges, instead of writing them by hand"`
+	NudgeCooldown                   *int    `toml:"nudge_cooldown"                                    hot:"turn" desc:"Minimum number of tool calls that must pass before the same nudge reminder can fire again, so it does not repeat every batch. Default 5"`
+	NudgeMaxPerBatch                *int    `toml:"nudge_max_per_batch"                               hot:"turn" desc:"Maximum number of different nudge reminders that can be injected after a single batch of tool calls. Default 1"`
+	NudgePreAnswerGate              *bool   `toml:"nudge_pre_answer_gate"                             hot:"turn" desc:"Before ending a turn, gives the agent one chance to reconsider against pre-answer reminders once it has made a few tool calls. Off by default"`
+	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"          default:"2"   hot:"turn" desc:"Minimum tool calls in the current turn before the pre-answer verification gate is allowed to trigger"`
+	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"              default:"true"  hot:"turn" desc:"Turns on the built-in reminders that tell the agent which tools and skills are available"`
+	NudgeDefaultFrequency           *int    `toml:"nudge_default_frequency"             default:"50"  hot:"turn" desc:"Number of turns between built-in tool and skill reminders"`
+	NudgeDefaultScratchpadFrequency *int    `toml:"nudge_default_scratchpad_frequency"                hot:"turn" desc:"Number of turns between reminders to review the agent's scratchpad notes. 0 disables it. Default 20"`
+	NudgeDefaultBraindeadThreshold  *int    `toml:"nudge_default_braindead_threshold"                 hot:"turn" desc:"Number of tool calls in a row within one turn before the agent is warned to stop and check it is still on track. 0 disables this check"`
+	NudgeDefaultBraindeadPrompt     *string `toml:"nudge_default_braindead_prompt" hot:"turn" desc:"Custom text for the braindead warning. Leave unset for the built-in prompt"`
 }
 
 // SummaryConfig holds tool result summarisation settings.

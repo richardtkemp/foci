@@ -129,9 +129,7 @@ type Agent struct {
 	PromptSearchDirs                        []string                                // directories to search for prompt files (agent workspace, shared)
 	MaxToolLoops                            int                                     // max tool iterations per turn (default 25)
 	MaxOutputTokens                         int                                     // max tokens in model response (default 16384)
-	Nudger                                  *nudge.Scheduler                        // nil disables nudge reminders
-	NudgePreAnswerGate                      bool                                    // enable pre-answer verification gate
-	NudgePreAnswerMinTools                  int                                     // min tool calls before gate fires (default 2)
+	Nudger                                  *nudge.Scheduler                        // nil disables nudge reminders; pre-answer gate/min-tools live in its settings
 	NudgeReloadFunc                         func()                                  // called after bootstrap reload to refresh nudge rules; nil disables
 	FirstRunMessage                         atomic.Value                            // string; prepended as separate content block on first HandleMessage, then cleared
 	OnFirstRunConsumed                      func()                                  // fired once when FirstRunMessage is actually consumed into a delivered turn (nil disables); marks onboarding complete

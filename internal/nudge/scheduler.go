@@ -20,14 +20,31 @@ type toolEvent struct {
 	Input string
 }
 
+// Settings holds the live-tunable nudge config (a config-free mirror of the
+// relevant ResolvedNudge fields, so this package keeps no config import). All
+// rules are built once; firing is gated on these values, read live under s.mu,
+// so a [defaults.nudge] edit applies without rebuilding the scheduler or losing
+// its per-session counters. Configure swaps the whole struct atomically.
+type Settings struct {
+	Cooldown           int    // min tool calls between repeating the same rule
+	MaxPerBatch        int    // max reminders per tool batch
+	Enable             bool   // fire "char" (character-derived) rules
+	DefaultEnable      bool   // fire "default" + "scratchpad" rules
+	DefaultFreq        int    // every_n_turns for "default" rules
+	ScratchpadFreq     int    // every_n_turns for the "scratchpad" rule (0 = off)
+	BraindeadThreshold int    // every_n_tools for the "braindead" rule (0 = off)
+	BraindeadPrompt    string // text for the "braindead" rule ("" = built-in)
+	PreAnswerGate      bool   // enable the pre-answer verification gate
+	PreAnswerMinTools  int    // min tool calls before the gate fires
+}
+
 // Scheduler tracks per-turn state and evaluates nudge triggers.
 // Create one per agent; call StartTurn() at the start of each turn.
 type Scheduler struct {
-	rules       []Rule
-	cooldown    int // min tool calls between repeating same rule
-	maxPerBatch int // max reminders per tool batch
+	rules []Rule
 
 	mu                 sync.Mutex
+	settings           Settings // live-tunable config, guarded by mu (Configure swaps)
 	lastFired          map[int]int            // rule index → tool call count when last fired
 	regexResults       map[int]bool           // rule index → whether regex trigger matches current message
 	compiledRegex      map[int]*regexp.Regexp // user-message regex (Trigger.Pattern)
@@ -94,8 +111,7 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 
 	s := &Scheduler{
 		rules:              activeRules,
-		cooldown:           cooldown,
-		maxPerBatch:        maxPerBatch,
+		settings:           Settings{Cooldown: cooldown, MaxPerBatch: maxPerBatch},
 		lastFired:          make(map[int]int),
 		regexResults:       make(map[int]bool),
 		compiledRegex:      make(map[int]*regexp.Regexp),
@@ -126,6 +142,86 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 		}
 	}
 	return s
+}
+
+// Configure atomically swaps the live-tunable settings. Called at setup and by
+// the gateway's live-apply on a [defaults.nudge] edit — no rebuild, so the
+// per-session counters (turnCount, lastFired) survive the change.
+func (s *Scheduler) Configure(cfg Settings) {
+	if s == nil {
+		return
+	}
+	if cfg.Cooldown <= 0 {
+		cfg.Cooldown = 5
+	}
+	if cfg.MaxPerBatch <= 0 {
+		cfg.MaxPerBatch = 1
+	}
+	s.mu.Lock()
+	s.settings = cfg
+	s.mu.Unlock()
+}
+
+// PreAnswerGate reports whether the pre-answer verification gate is enabled.
+func (s *Scheduler) PreAnswerGate() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings.PreAnswerGate
+}
+
+// PreAnswerMinTools is the min tool calls before the pre-answer gate fires.
+func (s *Scheduler) PreAnswerMinTools() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings.PreAnswerMinTools
+}
+
+// categoryEnabled reports whether rules of the given category may fire per live
+// settings. Untagged rules (cat == "", e.g. tests) are always active — only the
+// built-in categories are config-gated. Caller must hold s.mu.
+func (s *Scheduler) categoryEnabled(cat string) bool {
+	switch cat {
+	case CategoryChar:
+		return s.settings.Enable
+	case CategoryDefault:
+		return s.settings.DefaultEnable
+	case CategoryScratchpad:
+		return s.settings.DefaultEnable && s.settings.ScratchpadFreq > 0
+	case CategoryBraindead:
+		return s.settings.BraindeadThreshold > 0
+	default:
+		return true
+	}
+}
+
+// effectiveN returns the live interval for a rule: config-driven for the
+// built-in categories, else the rule's baked Trigger.N. Caller holds s.mu.
+func (s *Scheduler) effectiveN(r Rule) int {
+	switch r.Category {
+	case CategoryDefault:
+		return s.settings.DefaultFreq
+	case CategoryScratchpad:
+		return s.settings.ScratchpadFreq
+	case CategoryBraindead:
+		return s.settings.BraindeadThreshold
+	default:
+		return r.Trigger.N
+	}
+}
+
+// effectiveText returns the live text for a rule: the configured braindead
+// prompt overrides the built-in default, else the rule's own text. Holds s.mu.
+func (s *Scheduler) effectiveText(r Rule) string {
+	if r.Category == CategoryBraindead && s.settings.BraindeadPrompt != "" {
+		return s.settings.BraindeadPrompt
+	}
+	return r.Text
 }
 
 // StartTurn clears per-turn state and evaluates regex triggers against the
@@ -164,7 +260,10 @@ func (s *Scheduler) CheckTurnInterval() []string {
 		if r.Trigger.Type != "every_n_turns" {
 			continue
 		}
-		n := r.Trigger.N
+		if !s.categoryEnabled(r.Category) {
+			continue
+		}
+		n := s.effectiveN(r)
 		if n <= 0 {
 			n = 50
 		}
@@ -172,7 +271,7 @@ func (s *Scheduler) CheckTurnInterval() []string {
 			if r.Condition != nil && !r.Condition() {
 				continue
 			}
-			result = append(result, r.Text)
+			result = append(result, s.effectiveText(r))
 		}
 	}
 	return result
@@ -200,14 +299,14 @@ func (s *Scheduler) CheckAfterTools(toolCount int, lastToolError bool) []string 
 	var result []string
 	fired := 0
 	for i, r := range s.rules {
-		if fired >= s.maxPerBatch {
+		if fired >= s.settings.MaxPerBatch {
 			break
 		}
 		if !s.shouldFire(i, r, lastToolError) {
 			continue
 		}
 		s.lastFired[i] = s.toolCount
-		result = append(result, r.Text)
+		result = append(result, s.effectiveText(r))
 		fired++
 	}
 	return result
@@ -247,10 +346,13 @@ func (s *Scheduler) CheckPreAnswer() string {
 		if r.Trigger.Type != "pre_answer" {
 			continue
 		}
+		if !s.categoryEnabled(r.Category) {
+			continue
+		}
 		if result != "" {
 			result += "\n"
 		}
-		result += r.Text
+		result += s.effectiveText(r)
 	}
 	return result
 }
@@ -270,6 +372,9 @@ func (s *Scheduler) CheckRegex() []string {
 		if r.Trigger.Type != "regex" {
 			continue
 		}
+		if !s.categoryEnabled(r.Category) {
+			continue
+		}
 		if !s.regexResults[i] {
 			continue
 		}
@@ -277,7 +382,7 @@ func (s *Scheduler) CheckRegex() []string {
 			continue
 		}
 		s.lastFired[i] = s.toolCount
-		result = append(result, r.Text)
+		result = append(result, s.effectiveText(r))
 	}
 	return result
 }
@@ -287,8 +392,10 @@ func (s *Scheduler) HasPreAnswerRules() bool {
 	if s == nil {
 		return false
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, r := range s.rules {
-		if r.Trigger.Type == "pre_answer" {
+		if r.Trigger.Type == "pre_answer" && s.categoryEnabled(r.Category) {
 			return true
 		}
 	}
@@ -297,9 +404,12 @@ func (s *Scheduler) HasPreAnswerRules() bool {
 
 // shouldFire checks if rule i should fire right now. Caller must hold s.mu.
 func (s *Scheduler) shouldFire(i int, r Rule, lastToolError bool) bool {
+	if !s.categoryEnabled(r.Category) {
+		return false
+	}
 	// Cooldown check
 	if last, ok := s.lastFired[i]; ok {
-		if s.toolCount-last < s.cooldown {
+		if s.toolCount-last < s.settings.Cooldown {
 			return false
 		}
 	}
@@ -310,7 +420,7 @@ func (s *Scheduler) shouldFire(i int, r Rule, lastToolError bool) bool {
 
 	switch r.Trigger.Type {
 	case "every_n_tools":
-		n := r.Trigger.N
+		n := s.effectiveN(r)
 		if n <= 0 {
 			n = 5
 		}

@@ -380,7 +380,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 
 		if resp.StopReason != "tool_use" {
 			// Pre-answer verification gate.
-			if !verified && a.Nudger != nil && a.NudgePreAnswerGate && i >= a.NudgePreAnswerMinTools && nudgesAllowed(ts) {
+			if !verified && a.Nudger != nil && a.Nudger.PreAnswerGate() && i >= a.Nudger.PreAnswerMinTools() && nudgesAllowed(ts) {
 				if reminder := a.Nudger.CheckPreAnswer(); reminder != "" {
 					verifyMsg := provider.Message{
 						Role:    "user",

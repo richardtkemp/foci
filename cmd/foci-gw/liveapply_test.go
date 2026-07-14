@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/nudge"
 )
 
 // TestLiveApplyCoversHotFields keeps the applier address lists and the `hot`
@@ -16,7 +17,7 @@ import (
 // "restart required".
 func TestLiveApplyCoversHotFields(t *testing.T) {
 	covered := map[string]bool{}
-	for _, addrs := range [][]string{liveApplyLoggingAddrs, liveApplyDebugAddrs, liveApplyPeriodicAddrs, liveApplyResolvedAddrs, liveApplyWarningAddrs} {
+	for _, addrs := range [][]string{liveApplyLoggingAddrs, liveApplyDebugAddrs, liveApplyPeriodicAddrs, liveApplyResolvedAddrs, liveApplyWarningAddrs, liveApplyNudgeAddrs} {
 		for _, a := range addrs {
 			if covered[a] {
 				t.Errorf("duplicate applier address %s", a)
@@ -288,5 +289,33 @@ func TestLiveApply_WarningQueuesFlipOnLive(t *testing.T) {
 	ag.ChatWarningQueue.Push("ERROR", "config", "fatal")
 	if ag.ChatWarningQueue.Len() != 1 {
 		t.Errorf("chat queue Len() = %d, want 1 (errors-only)", ag.ChatWarningQueue.Len())
+	}
+}
+
+// TestLiveApplyNudgeReconfigures proves a [defaults.nudge] edit reconfigures the
+// live scheduler in place (no rebuild) — here observed via PreAnswerGate (#1228).
+func TestLiveApplyNudgeReconfigures(t *testing.T) {
+	sched := nudge.NewScheduler(&nudge.RuleSet{Rules: nudge.BraindeadRule()}, 5, 1)
+	off, on := false, true
+	base := &config.Config{Agents: []config.AgentConfig{{ID: "a", Nudge: config.NudgeConfig{NudgePreAnswerGate: &off}}}}
+	sched.Configure(nudgeSettings(config.Resolve(base, base.Agents[0]).Nudge))
+	if sched.PreAnswerGate() {
+		t.Fatal("initial PreAnswerGate should be false")
+	}
+	inst := &agentInstance{id: "a", ag: &agent.Agent{Nudger: sched}}
+
+	la := newLiveApply("")
+	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+
+	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Nudge: config.NudgeConfig{NudgePreAnswerGate: &on}}}}
+	applier := la.appliers["nudge.nudge_pre_answer_gate"]
+	if applier == nil {
+		t.Fatal("no applier registered for nudge.nudge_pre_answer_gate")
+	}
+	if err := applier(fresh); err != nil {
+		t.Fatalf("applier: %v", err)
+	}
+	if !sched.PreAnswerGate() {
+		t.Error("after nudge apply, PreAnswerGate should be true — scheduler not reconfigured")
 	}
 }

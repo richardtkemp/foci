@@ -26,7 +26,23 @@ type Rule struct {
 	// when Condition returns true. Used by built-in rules that depend on agent
 	// state (e.g. scratchpad non-empty). Not serialized to JSON.
 	Condition func() bool `json:"-"`
+
+	// Category tags a rule for live config-gating by the Scheduler (which
+	// enable flag turns it on, which config field supplies its interval/text).
+	// Empty = untagged: always active, uses the rule's own Trigger.N/Text.
+	// Assigned when the rule is built, not persisted. See CategoryChar etc.
+	Category string `json:"-"`
 }
+
+// Rule categories drive live config-gating in the Scheduler (build all rules
+// once, fire per live [defaults.nudge] settings). Char rules come from character
+// files on disk; the rest are built-in.
+const (
+	CategoryChar       = "char"
+	CategoryDefault    = "default"
+	CategoryScratchpad = "scratchpad"
+	CategoryBraindead  = "braindead"
+)
 
 // Trigger describes when a rule should fire.
 //
