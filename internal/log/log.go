@@ -450,10 +450,6 @@ func Extra(component string, format string, args ...interface{}) {
 
 // Package-level functions for the global logger.
 
-func Debugf(component string, format string, args ...interface{}) {
-	std.event(DEBUG, component, format, args...)
-}
-
 func Infof(component string, format string, args ...interface{}) {
 	std.event(INFO, component, format, args...)
 }
