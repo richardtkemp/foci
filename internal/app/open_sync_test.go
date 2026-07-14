@@ -75,6 +75,30 @@ func TestHandleConversationOpenSet_EmptyClears(t *testing.T) {
 	}
 }
 
+// TestOpenSessionsForAgent_FromPersistedOpenSet proves keepalive's candidate
+// source reads the PERSISTED open-set (not live sockets): with NO client
+// connected it still resolves the open convs to their session keys, filters to
+// the requesting agent, and skips conv IDs with no binding.
+func TestOpenSessionsForAgent_FromPersistedOpenSet(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	registerBareAgent(h, "ag")
+	registerBareAgent(h, "other")
+
+	// Durable bindings with a nil socket — the app-disconnected state.
+	bAg := h.ensureBinding(nil, "ag", "cA")
+	h.ensureBinding(nil, "other", "cB")
+
+	// Persisted open-set: agent's chat, another agent's chat, and an unbound ghost.
+	h.storeOpenChats([]string{"cA", "cB", "cGhost"})
+
+	got := h.OpenSessionsForAgent("ag")
+	if len(got) != 1 || got[0] != bAg.sessionKey {
+		t.Fatalf("OpenSessionsForAgent(ag) = %v, want [%s]", got, bAg.sessionKey)
+	}
+}
+
 // TestPushOpenSet_ReplaysStored proves a just-connected client is replayed the
 // stored shared open-set, and that nothing is sent when none is stored.
 func TestPushOpenSet_ReplaysStored(t *testing.T) {
