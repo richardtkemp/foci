@@ -276,20 +276,29 @@ func (q *Queue) Drain() []string {
 	return result
 }
 
-// Pending returns true if there are queued warnings or suppressed warnings
-// that would produce summary lines on Drain(). Used by proactive dispatch
-// to check without draining.
+// Pending returns true if there is dispatch-worthy content: queued warnings, or
+// a suppressed-summary roll-up that has come due (its window elapsed). A bucket
+// that is merely accumulating suppressed counts within its live window is NOT
+// pending on its own — otherwise the suppressed counter would keep provoking
+// summary-only dispatches, and each such dispatch's turn regenerates the count,
+// spinning a feedback loop that the per-key dedup cannot break. Its summary
+// still rides out with the next genuine warning or when the window rolls over.
 func (q *Queue) Pending() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.warnings) > 0 {
 		return true
 	}
+	now := q.nowFunc()
 	for _, b := range q.buckets {
-		if b.quiet {
+		if b.suppressedSinceDrain == 0 {
 			continue
 		}
-		if b.suppressedSinceDrain > 0 {
+		window := q.windowDuration
+		if b.quiet {
+			window = q.quietWindow()
+		}
+		if now.Sub(b.windowStart) >= window {
 			return true
 		}
 	}

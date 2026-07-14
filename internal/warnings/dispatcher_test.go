@@ -258,6 +258,34 @@ func TestDispatcher_FlushPending(t *testing.T) {
 	}
 }
 
+func TestDispatcher_FlushPending_Floored(t *testing.T) {
+	// Proves a second FlushPending within flushMinInterval does not re-dispatch,
+	// capping the turn-end feedback path.
+	q := NewQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	d := NewDispatcher(DispatcherConfig{
+		Queue:      q,
+		DispatchFn: func(string) { mu.Lock(); calls++; mu.Unlock() },
+	})
+
+	q.Push("WARN", "test", "one")
+	d.FlushPending()
+	time.Sleep(50 * time.Millisecond)
+
+	q.Push("WARN", "test", "two")
+	d.FlushPending() // within the floor → suppressed
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("expected 1 dispatch (second within floor suppressed), got %d", got)
+	}
+}
+
 func TestDispatcher_FiresWhenNotProcessing(t *testing.T) {
 	// Proves that MaybeFire dispatches normally when IsProcessingFn returns false.
 	q := NewQueue(0, 0)

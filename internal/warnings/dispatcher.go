@@ -109,8 +109,16 @@ func (d *Dispatcher) MaybeFire() {
 	d.dispatchDrained()
 }
 
-// FlushPending dispatches any pending warnings without rate-limit checks.
-// Called after an agent turn ends to flush warnings that were deferred.
+// flushMinInterval floors how often FlushPending may dispatch. FlushPending runs
+// on every turn-end and skips the active/inactive cadence so deferred warnings
+// arrive promptly; this floor keeps a warning generated inside a warning-turn
+// from re-dispatching at turn-completion speed. Deferred warnings blocked by the
+// floor still ride the next periodic MaybeFire tick.
+const flushMinInterval = 60 * time.Second
+
+// FlushPending dispatches any pending warnings, bypassing the active/inactive
+// cadence but not the flushMinInterval floor. Called after an agent turn ends to
+// flush warnings that were deferred.
 func (d *Dispatcher) FlushPending() {
 	if d.queue == nil || d.dispatchFn == nil {
 		log.Warnf("warnings", "FlushPending: dispatcher not fully wired (queue=%v dispatchFn=%v) — pending warnings dropped", d.queue != nil, d.dispatchFn != nil)
@@ -122,8 +130,13 @@ func (d *Dispatcher) FlushPending() {
 
 	d.mu.Lock()
 	dispatching := d.dispatching
+	since := time.Since(d.lastDispatch)
 	d.mu.Unlock()
 	if dispatching {
+		return
+	}
+	if since < flushMinInterval {
+		d.log.Debugf("flush throttled: %s since last dispatch < %s floor", since.Round(time.Second), flushMinInterval)
 		return
 	}
 
