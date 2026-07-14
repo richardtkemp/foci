@@ -239,6 +239,17 @@ func (a *Agent) streaming() bool {
 	return a.Streaming
 }
 
+// reflection returns the session's live reflection config (agent+global merged),
+// re-read from the resolved snapshot so [reflection] edits apply without a
+// restart. Falls back to the startup-resolved a.Reflection in direct-constructed
+// agents (tests) where LiveConfigFn is nil.
+func (a *Agent) reflection() config.ResolvedReflection {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Reflection
+	}
+	return a.Reflection
+}
+
 func (a *Agent) maxToolLoops() int {
 	if a.LiveConfigFn != nil {
 		return a.LiveConfigFn().Loop.MaxToolLoops

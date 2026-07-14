@@ -175,6 +175,12 @@ var (
 		"behavior.turn_lock_warn_threshold", "agent.behavior.turn_lock_warn_threshold",
 		"display.show_tool_calls", "agent.display.show_tool_calls", "platforms.display.show_tool_calls",
 		"display.statusline", "agent.display.statusline", "platforms.display.statusline",
+		// #1241: reflection session-end + compaction fields, read live at the
+		// memory-formation sites via a.reflection() (the resolved snapshot).
+		"reflection.session_end_enabled", "agent.reflection.session_end_enabled",
+		"reflection.session_end_prompt", "agent.reflection.session_end_prompt",
+		"reflection.compaction_enabled", "agent.reflection.compaction_enabled",
+		"reflection.compaction_prompt", "agent.reflection.compaction_prompt",
 	}
 
 	liveApplyWarningAddrs = []string{
@@ -204,7 +210,15 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 	la.register(liveApplyPeriodicAddrs, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {
 			inst := agents[freshAcfg.ID]
-			if inst == nil || inst.kaRunner == nil || inst.periodicRederive == nil {
+			if inst == nil {
+				continue
+			}
+			// reflection.notify_on_skill_creation has two consumers: the scheduler
+			// handle (below) and the memory-formation sites, which read it live via
+			// a.reflection() off the resolved snapshot. A field maps to ONE applier,
+			// so this applier also refreshes the snapshot (#1241).
+			inst.resolved.Store(config.Resolve(fresh, freshAcfg))
+			if inst.kaRunner == nil || inst.periodicRederive == nil {
 				continue
 			}
 			inst.kaRunner.UpdateSettings(inst.periodicRederive(fresh, freshAcfg))

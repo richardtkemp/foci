@@ -72,6 +72,36 @@ func TestLiveApplyResolvedActuallySwaps(t *testing.T) {
 	}
 }
 
+// TestLiveApplyPeriodicRefreshesSnapshot proves the periodic applier also
+// refreshes the resolved snapshot. reflection.notify_on_skill_creation has two
+// consumers — the scheduler handle and the memory-formation sites, which read it
+// live via a.reflection() off the snapshot — but a field maps to ONE applier, so
+// the periodic applier must swap the snapshot too or a notify-only edit would go
+// live for the scheduler but stay stale for the memory sites (#1241).
+func TestLiveApplyPeriodicRefreshesSnapshot(t *testing.T) {
+	on, off := true, false
+	base := &config.Config{Agents: []config.AgentConfig{{ID: "a", Reflection: config.ReflectionConfig{NotifyOnSkillCreation: &on}}}}
+	inst := &agentInstance{id: "a", resolved: config.NewLiveValue(config.Resolve(base, base.Agents[0]))}
+	if !inst.LiveConfig().Reflection.NotifyOnSkillCreation {
+		t.Fatal("initial LiveConfig().Reflection.NotifyOnSkillCreation = false, want true")
+	}
+
+	la := newLiveApply("")
+	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+
+	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Reflection: config.ReflectionConfig{NotifyOnSkillCreation: &off}}}}
+	applier := la.appliers["reflection.notify_on_skill_creation"]
+	if applier == nil {
+		t.Fatal("no applier registered for reflection.notify_on_skill_creation")
+	}
+	if err := applier(fresh); err != nil {
+		t.Fatalf("applier: %v", err)
+	}
+	if inst.LiveConfig().Reflection.NotifyOnSkillCreation {
+		t.Error("after periodic apply, LiveConfig().Reflection.NotifyOnSkillCreation still true — snapshot not refreshed")
+	}
+}
+
 // TestLiveApply_MapSection proves the dynamic-key fallback end to end: an
 // Apply() call for a key that was never pre-registered (a user-defined group
 // name, here "myteam") still finds and runs the map-section applier via
