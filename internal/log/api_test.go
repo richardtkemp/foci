@@ -147,6 +147,56 @@ func TestAPIProviderInferenceSQLite(t *testing.T) {
 	}
 }
 
+func TestQuerySessionStatsContextTokensSkipsSynthetic(t *testing.T) {
+	// A synthetic turn (no-inference, zero tokens) landing on top of a real
+	// turn must not zero out ContextTokens — otherwise the /status Context
+	// line is suppressed even though the session holds a full context window.
+	resetGlobal()
+	t.Cleanup(resetGlobal)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	sess := "clutch/ctxtest"
+	base := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+
+	// Real delegated turn with a full context window...
+	API(APIEntry{
+		Timestamp: base,
+		Session:   sess,
+		Model:     "claude-opus-4-8",
+		CallType:  "delegated_turn",
+		Input:     2,
+		CacheRead: 163681,
+		CacheWrite: 615,
+	})
+	// ...then two synthetic no-inference turns on top (zero tokens).
+	API(APIEntry{
+		Timestamp: base.Add(1 * time.Minute),
+		Session:   sess,
+		Model:     "<synthetic>",
+		CallType:  "delegated_turn",
+	})
+	API(APIEntry{
+		Timestamp: base.Add(2 * time.Minute),
+		Session:   sess,
+		Model:     "<synthetic>",
+		CallType:  "delegated_turn",
+	})
+
+	stats, err := QuerySessionStats(sess)
+	if err != nil {
+		t.Fatalf("QuerySessionStats: %v", err)
+	}
+	if want := 2 + 163681 + 615; stats.ContextTokens != want {
+		t.Errorf("ContextTokens = %d, want %d (should reflect the last real turn, not the synthetic one)", stats.ContextTokens, want)
+	}
+}
+
 func TestAPIProviderExplicitOverridesInference(t *testing.T) {
 	// Verifies that an explicitly set Provider field
 	// on the APIEntry is preserved and not overwritten by inference.
