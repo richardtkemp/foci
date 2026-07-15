@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func testRegistry() *Registry {
@@ -1501,6 +1502,25 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	mu.Unlock()
 	if gotText != "positional text" {
 		t.Errorf("text = %q, want %q", gotText, "positional text")
+	}
+
+	// Case 6: large pipe (10MB) + --text → must error, and fast — the guard
+	// must not buffer the whole stream to detect non-empty stdin (#1283 fix
+	// swapped $(cat) for a 1-byte read; this pins the perf property so it
+	// doesn't regress back to full buffering).
+	start := time.Now()
+	out6, err := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; head -c 10000000 /dev/zero | foci_send_to_chat --text 'caption'",
+		bridge.FuncsPath(),
+	))
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("guard took %v on a 10MB pipe, want well under 5s (should peek 1 byte, not buffer)", elapsed)
+	}
+	if err == nil {
+		t.Fatalf("expected error for --text + large pipe, got success\noutput: %s", out6)
+	}
+	if !strings.Contains(string(out6), "will be discarded") {
+		t.Errorf("error output missing 'will be discarded'\noutput: %s", out6)
 	}
 }
 
