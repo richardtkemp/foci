@@ -350,6 +350,18 @@ func (b *Backend) triggerCompaction() error {
 	if threadID == "" {
 		return errors.New("codex: no active thread to compact")
 	}
+
+	if b.startOpts.CompactionPromptFunc != nil {
+		if prompt := b.startOpts.CompactionPromptFunc(""); prompt != "" {
+			if _, err := b.sendAndWait("config/value/write", struct {
+				Key   string `json:"key"`
+				Value string `json:"value"`
+			}{Key: "compact_prompt", Value: prompt}); err != nil {
+				b.lg.Warnf("config/value/write for compact_prompt failed: %v", err)
+			}
+		}
+	}
+
 	_, err := b.sendAndWait("thread/compact/start", compactStartParams{ThreadID: threadID})
 	return err
 }
