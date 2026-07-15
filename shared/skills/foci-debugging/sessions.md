@@ -40,6 +40,18 @@ tail -30 SESS.jsonl | jq -rc 'select(.type=="assistant" or .type=="user") | {ts:
 
 **Gotcha:** a redacted/summarised thinking block has `thinking` length 0 but a non-empty `signature` — it's still a thinking block, just with content stripped. Don't mistake an empty thinking block for "no thinking happened." Conversely, conversational preamble before a tool call is a real `text` (output) block, not thinking — foci joins all of a turn's text blocks into one delivered message with **no separator**.
 
+**Recovering an uncommitted edit's exact content** ("what did that Edit/Write change, but it was never committed and `tool_details.db` is empty/not applicable"): grep the CC transcripts for the tool call itself — every `Edit`/`Write` shows up as a `tool_use` block with the real `old_string`/`new_string` (or `content`) in `.input`, independent of git history entirely.
+
+```bash
+# Find the right transcript file(s) by mtime when you don't know the session id
+find ~/.claude/projects/<workspace-slug>/ -maxdepth 1 -name "*.jsonl" -newermt "TIME1" ! -newermt "TIME2" -printf "%T@ %p\n" | sort -n
+
+# Pull every Edit/Write on a specific file, with its old/new content
+jq -c 'select(.message.content[]?.type=="tool_use" and (.message.content[]?.input.file_path? // "" | test("TARGET_FILE"))) | .message.content[] | select(.type=="tool_use") | {name, input}' SESS.jsonl
+```
+
+Works even when the edit was made by a **branch session** — a branch commonly shares/continues the parent's underlying transcript file rather than starting a fresh one, so a branch's tool calls show up interleaved with the parent's history in the same `.jsonl`. This is the artifact of last resort for "what was in this file before someone changed it" when the change never hit git (config repos, scratch files, anything outside the tracked tree) — don't give up at an empty `tool_details.db`.
+
 ## Session state (state.db)
 
 `~/data/state.db` holds the unified session lifecycle + provenance timelines.
