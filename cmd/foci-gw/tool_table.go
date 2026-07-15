@@ -14,6 +14,7 @@ import (
 	"foci/internal/provider"
 	"foci/internal/route"
 	"foci/internal/secrets"
+	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/tools/browser"
 	"foci/internal/tools/shell"
@@ -270,7 +271,13 @@ var toolTable = []toolEntry{
 				return nil
 			}
 			return conn
-		}, d.agentTTS)
+		}, d.agentTTS, func(sessionKey string) session.SessionType {
+			entry, err := d.p.sessionIndex.Get(sessionKey)
+			if err != nil {
+				return session.SessionTypeUnknown
+			}
+			return entry.SessionType
+		})
 	}},
 
 	{name: "send_to_session", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {

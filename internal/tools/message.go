@@ -15,7 +15,7 @@ import (
 	"foci/internal/voice"
 )
 
-func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts func() voice.TTS) *Tool {
+func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType) *Tool {
 	return &Tool{
 		Name:       "send_to_chat",
 		ExecExport: true,
@@ -51,7 +51,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts fu
 			}
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return sendToChatExecute(ctx, params, getSender, tts)
+			return sendToChatExecute(ctx, params, getSender, tts, sessionTypeFn)
 		},
 	}
 }
@@ -153,7 +153,7 @@ func prepareNamedFile(filePath, name string) (string, func(), error) {
 	return linkPath, cleanup, nil
 }
 
-func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, ttsFn func() voice.TTS) (ToolResult, error) {
+func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, ttsFn func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		Text     string `json:"text"`
 		FilePath string `json:"file"`
@@ -186,7 +186,16 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 	if bot == nil {
 		return ToolResult{}, fmt.Errorf("messaging not configured")
 	}
-	target := messageTarget{bot: bot, chatID: ChatIDFromSessionKey(sessionKey)}
+	chatID := ChatIDFromSessionKey(sessionKey)
+
+	// Facet sessions deliver to their own conversation (the facet bot's
+	// session), not the parent/root chat. Non-facet branches (spawn, cron,
+	// etc.) resolve to the root chat as before.
+	if sessionTypeFn != nil && sessionTypeFn(sessionKey) == session.SessionTypeFacet {
+		chatID = 0
+	}
+
+	target := messageTarget{bot: bot, chatID: chatID}
 
 	// TTS synthesis: send_as="voice" + text + no file.
 	if p.SendAs == "voice" && p.Text != "" && p.FilePath == "" {
