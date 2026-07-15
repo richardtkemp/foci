@@ -20,6 +20,13 @@ const (
 	syntheticNoResponseText = "No response requested."
 )
 
+func prefixedModel(prefix, model string) string {
+	if model == "" {
+		return ""
+	}
+	return prefix + "/" + model
+}
+
 // isSyntheticNoResponse reports whether m is CC's synthetic no-response
 // placeholder: the sentinel model carrying nothing but that exact text. Keyed on
 // BOTH the model and the text so a genuine reply that merely quotes the phrase,
@@ -374,7 +381,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 
 	result := &delegator.TurnResult{
 		Text:      text,
-		Model:     resultModel,
+		Model:     prefixedModel("claude", resultModel),
 		ToolCalls: turnTools,
 		Usage:     turnUsage,
 	}
