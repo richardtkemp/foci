@@ -701,6 +701,28 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 		b.rateLimitWarnState[key] = rateLimitWarnState{resetsAt: resetsAt, bucket: bucket}
 	}
 	b.mu.Unlock()
+
+	// Debug instrumentation: log every rate_limit_event with the throttle
+	// decision and the reason. Remove once the 5% bucketing issue is diagnosed.
+	utilStr := "nil"
+	if info.Utilization != nil {
+		utilStr = fmt.Sprintf("%.4f", *info.Utilization)
+	}
+	switch {
+	case !fire:
+		b.logger().Debugf("rate_limit_event suppressed: key=%s util=%s bucket=%d resetsAt=%d prev{bucket=%d,resetsAt=%d}",
+			key, utilStr, bucket, resetsAt, prev.bucket, prev.resetsAt)
+	case !seen:
+		b.logger().Debugf("rate_limit_event FIRED (first-seen): key=%s util=%s bucket=%d resetsAt=%d",
+			key, utilStr, bucket, resetsAt)
+	case prev.resetsAt != resetsAt:
+		b.logger().Debugf("rate_limit_event FIRED (resetsAt changed %d->%d): key=%s util=%s bucket=%d",
+			prev.resetsAt, resetsAt, key, utilStr, bucket)
+	default:
+		b.logger().Debugf("rate_limit_event FIRED (bucket climbed %d->%d): key=%s util=%s resetsAt=%d",
+			prev.bucket, bucket, key, utilStr, resetsAt)
+	}
+
 	if !fire {
 		return
 	}
