@@ -183,6 +183,13 @@ type reasoningSummaryDeltaParams struct {
 	SummaryIndex int    `json:"summaryIndex,omitempty"`
 }
 
+// threadNameUpdatedParams carries an auto-generated thread name.
+// Emitted as thread/name/updated after Codex generates a summary title.
+type threadNameUpdatedParams struct {
+	ThreadID   string  `json:"threadId"`
+	ThreadName *string `json:"threadName"`
+}
+
 // compactStartParams is the params for thread/compact/start.
 type compactStartParams struct {
 	ThreadID string `json:"threadId"`

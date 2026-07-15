@@ -495,6 +495,24 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 				a.logConversationThinking(ts.ConvChatID, ts.Meta, ts.SessionKey, thinking)
 			}
 			bt.LogUsage(ts)
+			// Set conversation alias from backend-generated thread name
+			// (e.g. Codex auto-names threads). Overwrites a prior auto-set
+			// alias but never a user-set one (tracked via alias_auto flag).
+			if result != nil && result.ThreadName != "" && a.SessionIndex != nil && ts.ConvChatID != 0 {
+				platform := a.SessionIndex.PlatformForChat(a.AgentID, ts.ConvChatID)
+				if platform != "" {
+					existing, _ := a.SessionIndex.GetChatMetadata(a.AgentID, platform, ts.ConvChatID, "alias")
+					isAuto, _ := a.SessionIndex.GetChatMetadata(a.AgentID, platform, ts.ConvChatID, "alias_auto")
+					if existing == "" || isAuto == "1" {
+						if err := a.SessionIndex.SetChatAliasUnique(a.AgentID, platform, ts.ConvChatID, result.ThreadName); err == nil {
+							if e := a.SessionIndex.SetChatMetadata(a.AgentID, platform, ts.ConvChatID, "alias_auto", "1"); e != nil {
+								a.logger().Debugf("auto-alias: set alias_auto flag: %v", e)
+							}
+							a.logger().Infof("auto-alias: set %s chat %d → %q", platform, ts.ConvChatID, result.ThreadName)
+						}
+					}
+				}
+			}
 			close(ts.CompletionChan)
 		})
 	}

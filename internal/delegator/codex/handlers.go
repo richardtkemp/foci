@@ -26,10 +26,11 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 		model = "codex/" + model
 	}
 	result := &delegator.TurnResult{
-		Text:      b.turnText.String(),
-		ToolCalls: b.turnTools,
-		Usage:     usage,
-		Model:     model,
+		Text:       b.turnText.String(),
+		ToolCalls:  b.turnTools,
+		Usage:      usage,
+		Model:      model,
+		ThreadName: b.threadName,
 	}
 	if params.Turn.Status == "failed" && params.Turn.Error != nil {
 		b.lg.Warnf("turn failed: %s", params.Turn.Error.Message)

@@ -623,10 +623,11 @@ type TurnEvents struct {
 
 // TurnResult is the outcome of a completed turn.
 type TurnResult struct {
-	Text      string     // final response text
-	ToolCalls int        // number of tool calls executed during the turn
-	Usage     *TurnUsage // token usage (nil if unavailable)
-	Model     string     // model used (e.g. "claude-opus-4-6")
+	Text       string     // final response text
+	ToolCalls  int        // number of tool calls executed during the turn
+	Usage      *TurnUsage // token usage (nil if unavailable)
+	Model      string     // model used (e.g. "claude-opus-4-6")
+	ThreadName string     // backend-generated session title (Codex auto-names threads)
 }
 
 // InjectSource identifies the semantic origin of an injected user-role
