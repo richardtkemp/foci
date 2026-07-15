@@ -373,16 +373,22 @@ Subcommands:
 			}
 		}
 
-		// Restore per-session state and seed session meta for all connected sessions.
-		// Must happen AFTER setupAgent returns so platform connections are wired.
-		restored := map[string]bool{}
-		for _, conn := range connMgr.AllForAgent(inst.id) {
-			sk := conn.DefaultSessionKey()
-			if sk == "" || restored[sk] {
-				continue
+		// Restore per-session model/effort/thinking/etc. overrides for every
+		// session (root AND branch) that has persisted metadata. Querying
+		// session_metadata directly — rather than walking connMgr's
+		// connections — is transport-agnostic: conn.DefaultSessionKey() only
+		// identifies a session for bots with one fixed default chat
+		// (Telegram); the app transport has no connection-level default
+		// (appConn.bound is only set per-request), so that walk silently
+		// skipped restoration for every app-based agent.
+		if si.sessionIndex != nil {
+			keys, err := si.sessionIndex.AgentSessionKeysWithMetadata(inst.id)
+			if err != nil {
+				mainLog.Warnf("agent %q: list session keys with metadata: %v", acfg.ID, err)
 			}
-			inst.ag.RestoreSessionOverrides(sk)
-			restored[sk] = true
+			for _, sk := range keys {
+				inst.ag.RestoreSessionOverrides(sk)
+			}
 		}
 
 		setupPeriodic(inst, acfg, periodicParams{

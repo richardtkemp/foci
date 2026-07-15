@@ -1350,6 +1350,26 @@ func (idx *SessionIndex) AllSessionMetadata(sessionKey string) (map[string]strin
 	return result, rows.Err()
 }
 
+// AgentSessionKeysWithMetadata returns every distinct session key (root AND
+// branch) belonging to agentID that has at least one persisted
+// session_metadata row — e.g. a /model, /effort, or /thinking override.
+// Used at startup to restore overrides regardless of transport: unlike
+// Telegram's fixed default chat, app-transport connections have no
+// connection-level "default session" to enumerate (appConn.bound is only
+// set per-request), so driving restoration off connections silently skips
+// every app-based agent. Querying persisted metadata directly is
+// transport-agnostic and also covers branch-specific overrides that a
+// connection-default-only walk would miss.
+func (idx *SessionIndex) AgentSessionKeysWithMetadata(agentID string) ([]string, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	return idx.querySessionKeysLocked(
+		`SELECT DISTINCT session_key FROM session_metadata WHERE session_key = ? OR session_key LIKE ? ESCAPE '\'`,
+		agentID, escapeLike(agentID)+`/%`,
+	)
+}
+
 // System State Methods
 
 // SetSystemState stores a system state value.

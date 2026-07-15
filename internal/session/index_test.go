@@ -670,6 +670,34 @@ func TestSessionMetadata_CRUD(t *testing.T) {
 	testMetadataCRUD(t, sessionMetaOps(idx, "bot/c1"))
 }
 
+func TestAgentSessionKeysWithMetadata(t *testing.T) {
+	// Proves the query is agent-scoped (a prefix match wouldn't accidentally
+	// pull in e.g. "bot2" from "bot"), and covers both the root session key
+	// itself and a branch beneath it — the cases connMgr.AllForAgent's
+	// connection-default walk can't reach (app transport has no connection-
+	// level default; branches aren't "the" default even on Telegram).
+	idx := tempIndex(t)
+
+	idx.SetSessionMetadata("bot/c1", "model", "opus")
+	idx.SetSessionMetadata("bot/c1/b1", "model", "sonnet")
+	idx.SetSessionMetadata("bot2/c1", "model", "haiku")
+
+	got, err := idx.AgentSessionKeysWithMetadata("bot")
+	if err != nil {
+		t.Fatalf("AgentSessionKeysWithMetadata: %v", err)
+	}
+
+	want := map[string]bool{"bot/c1": true, "bot/c1/b1": true}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want keys %v", got, want)
+	}
+	for _, k := range got {
+		if !want[k] {
+			t.Errorf("unexpected key %q in result %v", k, got)
+		}
+	}
+}
+
 func TestSystemState_CRUD(t *testing.T) {
 	// Proves that global system-state metadata supports the full set/get/upsert/delete
 	// operations using the shared CRUD battery.
