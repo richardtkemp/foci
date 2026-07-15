@@ -628,6 +628,52 @@ func (idx *SessionIndex) Get(sessionKey string) (SessionIndexEntry, error) {
 	return e, nil
 }
 
+// escapeLike escapes LIKE wildcards so a session key is matched literally.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
+// IndexRow returns every column of the session_index row for sessionKey as an
+// ordered (column, value) pair list, reading the schema dynamically so new
+// columns surface without code changes. NULLs render as "null". found is false
+// (with nil error) when no row exists.
+func (idx *SessionIndex) IndexRow(sessionKey string) (columns, values []string, found bool, err error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(`SELECT * FROM session_index WHERE session_key = ?`, sessionKey)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if !rows.Next() {
+		return nil, nil, false, rows.Err()
+	}
+	raw := make([]sql.NullString, len(cols))
+	scan := make([]interface{}, len(cols))
+	for i := range raw {
+		scan[i] = &raw[i]
+	}
+	if err := rows.Scan(scan...); err != nil {
+		return nil, nil, false, err
+	}
+	vals := make([]string, len(cols))
+	for i, v := range raw {
+		if v.Valid {
+			vals[i] = v.String
+		} else {
+			vals[i] = "null"
+		}
+	}
+	return cols, vals, true, nil
+}
+
 // QueryOptions configures session index queries.
 type QueryOptions struct {
 	AgentID     string        // filter by agent ID (empty = all)
@@ -635,6 +681,11 @@ type QueryOptions struct {
 	Status      string        // filter by status (empty = all)
 	MaxAge      time.Duration // only sessions with activity within this duration (0 = no limit)
 	Limit       int           // max results (0 = unlimited)
+	// RootKey scopes the query to a session "family": the root key itself and
+	// every branch beneath it (keys equal to RootKey or prefixed by RootKey+"/").
+	// Empty = no family scoping. Callers pass a ROOT key (see SessionKey.Root);
+	// a branch key would match only its own descendants, not its siblings.
+	RootKey string
 }
 
 // Query retrieves session index entries matching the given options.
@@ -657,6 +708,10 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 	if opts.Status != "" {
 		query += ` AND status = ?`
 		args = append(args, opts.Status)
+	}
+	if opts.RootKey != "" {
+		query += ` AND (session_key = ? OR session_key LIKE ? ESCAPE '\')`
+		args = append(args, opts.RootKey, escapeLike(opts.RootKey)+`/%`)
 	}
 	if opts.MaxAge > 0 {
 		cutoff := timeutil.Format(time.Now().Add(-opts.MaxAge))

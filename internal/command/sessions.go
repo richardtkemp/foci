@@ -33,10 +33,13 @@ type SessionIndexInfo struct {
 
 // SessionIndexOpts controls filtering for the /sessions index subcommand.
 type SessionIndexOpts struct {
+	AgentID      string        // scope to one agent (empty = all agents)
+	RootKey      string        // scope to a session family: this root + its branches
 	TypeFilter   string
 	StatusFilter string
 	MaxAge       time.Duration // 0 = no limit
 	MaxCount     int           // 0 = no limit
+	statusSet    bool          // user passed an explicit status token
 }
 
 // SessionsCommand creates the /sessions command for managing per-chat sessions.
@@ -73,20 +76,20 @@ func SessionsCommand() *Command {
 			},
 			{
 				Name:        "info",
-				Description: "Show details for the current chat's session",
+				Description: "Show the current session's index row + all metadata",
 				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-					text, err := sessionsInfoCmd(cc, req.ChatID)
+					text, err := sessionsInfoCmd(cc, req.SessionKey, req.ChatID)
 					return Response{Text: text}, err
 				},
 			},
 			{
 				Name:        "index",
-				Description: "Query session index (all agents)",
+				Description: "Query session index (all agents; optional scope: me/this/<agent>/<session-key>)",
 				Visible: func(_ context.Context, cc CommandContext) bool {
 					return cc.SessionIndex != nil
 				},
 				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-					opts := parseIndexArgs(strings.Fields(req.Args))
+					opts := parseIndexArgs(strings.Fields(req.Args), cc.AgentConfig.ID, req.SessionKey, knownAgentSet(cc))
 					text, err := sessionsIndexCmd(cc, opts)
 					return Response{Text: text}, err
 				},
@@ -119,8 +122,20 @@ var knownSessionTypes = map[string]bool{
 	"unknown":         true,
 }
 
-// parseIndexArgs parses flexible filter arguments for /sessions index.
-func parseIndexArgs(args []string) SessionIndexOpts {
+// familyScopeWords select the calling session's family (root + branches).
+var familyScopeWords = map[string]bool{
+	"this": true, "here": true, "relatives": true, "related": true,
+	"children": true, "branches": true, "family": true, "tree": true, "siblings": true,
+}
+
+// selfAgentWords scope the query to the calling agent.
+var selfAgentWords = map[string]bool{"me": true, "mine": true, "self": true}
+
+// parseIndexArgs parses flexible filter arguments for /sessions index. The first
+// recognised scope token (a family word, a self word, a "/"-bearing session key,
+// or a known agent id) sets the query scope; remaining tokens set status/type/
+// age/count filters.
+func parseIndexArgs(args []string, callerAgentID, callerSessionKey string, knownAgents map[string]bool) SessionIndexOpts {
 	opts := SessionIndexOpts{
 		StatusFilter: "active",
 	}
@@ -128,7 +143,25 @@ func parseIndexArgs(args []string) SessionIndexOpts {
 	for _, arg := range args {
 		lower := strings.ToLower(arg)
 
+		if opts.AgentID == "" && opts.RootKey == "" {
+			switch {
+			case familyScopeWords[lower]:
+				opts.RootKey = rootKeyOf(callerSessionKey)
+				continue
+			case selfAgentWords[lower]:
+				opts.AgentID = callerAgentID
+				continue
+			case strings.Contains(arg, "/"):
+				opts.RootKey = rootKeyOf(arg)
+				continue
+			case knownAgents[lower]:
+				opts.AgentID = lower
+				continue
+			}
+		}
+
 		if knownSessionStatuses[lower] {
+			opts.statusSet = true
 			if lower == "all" {
 				opts.StatusFilter = ""
 			} else {
@@ -153,7 +186,33 @@ func parseIndexArgs(args []string) SessionIndexOpts {
 		}
 	}
 
+	// A family query wants the whole tree by default — all statuses, uncapped
+	// (see sessionsIndexCmd) — unless the user narrowed it explicitly.
+	if opts.RootKey != "" && !opts.statusSet {
+		opts.StatusFilter = ""
+	}
+
 	return opts
+}
+
+// rootKeyOf returns the root session key for any key; unparseable input is
+// returned unchanged (used as a literal prefix).
+func rootKeyOf(key string) string {
+	if sk, err := session.ParseSessionKey(key); err == nil {
+		return sk.Root().String()
+	}
+	return key
+}
+
+// knownAgentSet returns the lowercased set of currently-known agent ids.
+func knownAgentSet(cc CommandContext) map[string]bool {
+	set := map[string]bool{}
+	if cc.AgentListFn != nil {
+		for _, a := range cc.AgentListFn() {
+			set[strings.ToLower(a.ID)] = true
+		}
+	}
+	return set
 }
 
 func parseFriendlyDuration(s string) (time.Duration, bool) {
@@ -234,23 +293,17 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 }
 
 func sessionsDefaultCmd(cc CommandContext, chatID int64) (string, error) {
-	chatSessions, err := cc.Sessions.ListChatSessions(cc.AgentConfig.ID)
-	if err != nil {
-		return "", fmt.Errorf("list sessions: %w", err)
-	}
-	found := false
-	for _, cs := range chatSessions {
-		if cs.ChatID == chatID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Sprintf("No session found for chat ID %d.", chatID), nil
-	}
-
 	if cc.SessionIndex == nil {
 		return "", fmt.Errorf("no session index configured")
+	}
+	// A CC-delegated / app chat's transcript lives in the backend's own store, so
+	// it has no <agent>/c<chatID>/root.jsonl for the old ListChatSessions check to
+	// find — even the active current session then reported "no session found"
+	// (the bug this fixes). Accept the chat if it exists in ANY session-storage
+	// location: the index (backend sessions), a platform registration (app chats),
+	// or the file store (legacy file-backed chats).
+	if !chatSessionExists(cc, chatID) {
+		return fmt.Sprintf("No session found for chat ID %d.", chatID), nil
 	}
 	// Determine platform from the session key stored for this chat.
 	plat := ""
@@ -263,49 +316,111 @@ func sessionsDefaultCmd(cc CommandContext, chatID int64) (string, error) {
 	return fmt.Sprintf("Default session set to chat %d.", chatID), nil
 }
 
-func sessionsInfoCmd(cc CommandContext, chatID int64) (string, error) {
-	if chatID == 0 {
-		return "Not in a chat context.", nil
-	}
+// knownSessionMetadataKeys is the canonical set of session_metadata keys, with
+// how each renders when unset. There is no single source of truth for these in
+// the codebase (they are scattered string literals at the read/write sites), so
+// this list is the display contract for /sessions info.
+var knownSessionMetadataKeys = []struct {
+	key   string
+	unset string
+}{
+	{"model", "null"},
+	{"model_endpoint", "null"},
+	{"model_format", "null"},
+	{"effort", "null"},
+	{"permission_mode", "null"},
+	{"cc_resume_id", "null"},
+	{"last_activity", "null"},
+	{"no_compact", "false"},
+	{"display_show_thinking", "false"},
+	{"orientation_consumed", "false"},
+}
 
-	var isDefault bool
-	if cc.SessionIndex != nil {
-		defaultChats := cc.SessionIndex.DefaultChatIDs(cc.AgentConfig.ID)
-		isDefault = defaultChats[chatID]
+// chatSessionExists reports whether a session exists for agent+chat in any
+// storage location: the session index, a platform registration, or the file
+// store.
+func chatSessionExists(cc CommandContext, chatID int64) bool {
+	key := session.NewChatSessionKey(cc.AgentConfig.ID, chatID)
+	if _, err := cc.SessionIndex.Get(key); err == nil {
+		return true
 	}
-
-	chatSessions, err := cc.Sessions.ListChatSessions(cc.AgentConfig.ID)
-	if err != nil {
-		return "", fmt.Errorf("list sessions: %w", err)
+	if cc.SessionIndex.PlatformForChat(cc.AgentConfig.ID, chatID) != "" {
+		return true
 	}
-
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Chat ID: %d\n", chatID)
-	if isDefault {
-		sb.WriteString("Default: yes\n")
-	} else {
-		sb.WriteString("Default: no\n")
-	}
-
-	for _, cs := range chatSessions {
-		if cs.ChatID == chatID {
-			fmt.Fprintf(&sb, "Messages: %d\n", cs.MessageCount)
-			if !cs.LastActivity.IsZero() {
-				fmt.Fprintf(&sb, "Last active: %s\n", cs.LastActivity.Format(time.RFC3339))
-			}
-			// Resolve username
-			if cc.SessionIndex != nil {
-				if username, err := cc.SessionIndex.GetChatMetadataAnyPlatform(cc.AgentConfig.ID, cs.ChatID, "username"); err == nil && username != "" {
-					fmt.Fprintf(&sb, "User: @%s\n", username)
+	if cc.Sessions != nil {
+		if chatSessions, err := cc.Sessions.ListChatSessions(cc.AgentConfig.ID); err == nil {
+			for _, cs := range chatSessions {
+				if cs.ChatID == chatID {
+					return true
 				}
 			}
-			fmt.Fprintf(&sb, "Session: %s/c%d", cc.AgentConfig.ID, chatID)
-			return sb.String(), nil
 		}
 	}
+	return false
+}
 
-	fmt.Fprintf(&sb, "Session: %s/c%d (new — no messages yet)", cc.AgentConfig.ID, chatID)
-	return sb.String(), nil
+func sessionsInfoCmd(cc CommandContext, sessionKey string, chatID int64) (string, error) {
+	if cc.SessionIndex == nil {
+		return "Session index not available.", nil
+	}
+	if sessionKey == "" {
+		if chatID == 0 {
+			return "Not in a chat context.", nil
+		}
+		sessionKey = session.NewChatSessionKey(cc.AgentConfig.ID, chatID)
+	}
+
+	cols, vals, found, err := cc.SessionIndex.IndexRow(sessionKey)
+	if err != nil {
+		return "", fmt.Errorf("read session index: %w", err)
+	}
+	meta, err := cc.SessionIndex.AllSessionMetadata(sessionKey)
+	if err != nil {
+		return "", fmt.Errorf("read session metadata: %w", err)
+	}
+
+	tableCols := []display.Column{{Header: "Field"}, {Header: "Value"}}
+	var rows [][]string
+	if found {
+		for i, c := range cols {
+			rows = append(rows, []string{c, vals[i]})
+		}
+	} else {
+		rows = append(rows,
+			[]string{"session_key", sessionKey},
+			[]string{"(index)", "no row — new or backend-only session"},
+		)
+	}
+	rows = append(rows, metadataRows(meta)...)
+
+	return fmt.Sprintf("Session info — %s\n\n%s",
+		sessionKey, display.MarkdownTable(tableCols, rows)), nil
+}
+
+// metadataRows renders every known session_metadata key (unset ones as their
+// null/false default) plus any present-but-unknown keys, as Field/Value rows.
+func metadataRows(meta map[string]string) [][]string {
+	seen := make(map[string]bool, len(knownSessionMetadataKeys))
+	var rows [][]string
+	for _, mk := range knownSessionMetadataKeys {
+		seen[mk.key] = true
+		v, ok := meta[mk.key]
+		if !ok {
+			v = mk.unset
+		}
+		rows = append(rows, []string{"meta:" + mk.key, v})
+	}
+	var extra []string
+	for k := range meta {
+		if !seen[k] {
+			extra = append(extra, k)
+		}
+	}
+	sort.Strings(extra)
+	for _, k := range extra {
+		rows = append(rows, []string{"meta:" + k, meta[k]})
+	}
+	return rows
 }
 
 func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) {
@@ -314,6 +429,8 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 	}
 
 	qopts := session.QueryOptions{
+		AgentID:     opts.AgentID,
+		RootKey:     opts.RootKey,
 		SessionType: opts.TypeFilter,
 		Status:      opts.StatusFilter,
 		MaxAge:      opts.MaxAge,
@@ -352,7 +469,12 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 	totalCount := len(entries)
 	displayCount := opts.MaxCount
 	if displayCount == 0 {
-		displayCount = 10
+		// A family (relatives) query shows the whole tree; a plain index caps at 10.
+		if opts.RootKey != "" {
+			displayCount = len(entries)
+		} else {
+			displayCount = 10
+		}
 	}
 	if displayCount < len(entries) {
 		entries = entries[:displayCount]
@@ -385,6 +507,12 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 	}
 
 	filterDesc := ""
+	if opts.AgentID != "" {
+		filterDesc += " agent=" + opts.AgentID
+	}
+	if opts.RootKey != "" {
+		filterDesc += " family=" + opts.RootKey
+	}
 	if opts.TypeFilter != "" {
 		filterDesc += " type=" + opts.TypeFilter
 	}
