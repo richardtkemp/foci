@@ -97,7 +97,7 @@ func TestModelInfoEntryToModel_PartialOverride(t *testing.T) {
 	modelinfo.ResetToBuiltIn()
 
 	// Get built-in haiku values to compare against.
-	original, _ := modelinfo.Lookup("claude-haiku-4-5")
+	original, _ := modelinfo.Lookup("", "claude-haiku-4-5")
 
 	// Override only pricing.
 	newIn, newOut := 0.50, 2.50
@@ -153,7 +153,7 @@ func TestApplyModelInfo(t *testing.T) {
 	ApplyModelInfo(entries)
 
 	// First entry should be registered.
-	m, ok := modelinfo.Lookup("apply-test-1")
+	m, ok := modelinfo.Lookup("", "apply-test-1")
 	if !ok {
 		t.Fatal("apply-test-1 not found in registry")
 	}
@@ -162,7 +162,7 @@ func TestApplyModelInfo(t *testing.T) {
 	}
 
 	// Second entry should NOT be registered (missing required fields).
-	if _, ok := modelinfo.Lookup("apply-test-2"); ok {
+	if _, ok := modelinfo.Lookup("", "apply-test-2"); ok {
 		t.Error("apply-test-2 should have been skipped (missing required fields)")
 	}
 }
@@ -181,7 +181,7 @@ func TestApplyModelInfo_MultipleEntries(t *testing.T) {
 	ApplyModelInfo(entries)
 
 	for _, id := range []string{"multi-1", "multi-2"} {
-		if _, ok := modelinfo.Lookup(id); !ok {
+		if _, ok := modelinfo.Lookup("", id); !ok {
 			t.Errorf("%s not found in registry", id)
 		}
 	}

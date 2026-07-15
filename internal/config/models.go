@@ -180,7 +180,8 @@ func (e ModelInfoEntry) toModel() (modelinfo.Model, error) {
 		return modelinfo.Model{}, fmt.Errorf("missing required field: id")
 	}
 
-	existing, isOverride := modelinfo.Lookup(e.ID)
+	provider, modelID := SplitDeveloperModel(e.ID)
+	existing, isOverride := modelinfo.Lookup(provider, modelID)
 
 	if !isOverride {
 		var missing []string
@@ -241,6 +242,7 @@ func ApplyModelInfo(entries []ModelInfoEntry) {
 			configLog.Warnf("[modelinfo] id=%q %s — skipping", entry.ID, err)
 			continue
 		}
-		modelinfo.Register(entry.ID, m)
+		provider, modelID := SplitDeveloperModel(entry.ID)
+		modelinfo.Register(provider, modelID, m)
 	}
 }
