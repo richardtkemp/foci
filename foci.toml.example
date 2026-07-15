@@ -110,6 +110,28 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # model = "deepseek/deepseek-chat"
 # enable_keepalive auto-detected (DeepSeek developer → 5m cache TTL)
 
+# ─── Model registry overrides ────────────────────────────────────────
+# [[modelinfo]] adds or overrides entries in the model registry (pricing,
+# capabilities, context window). Live-updatable.
+#
+# Bare id (no provider prefix) → providerless entry, affects all lookups.
+# Provider-prefixed id → only matches lookups with that prefix.
+#
+# New models require context_window, input_per_1m, output_per_1m.
+# Overrides only need the fields you want to change.
+#
+# [[modelinfo]]
+# id = "claude-haiku-4-5"           # bare: overrides built-in for everyone
+# input_per_1m = 0.80
+# output_per_1m = 4.00
+#
+# [[modelinfo]]
+# id = "zai-coding-plan/glm-5.2"    # provider-specific: only matches prefixed lookups
+# context_window = 1000000
+# can_thinking = true
+# input_per_1m = 0.0
+# output_per_1m = 0.0
+
 # ─── Agent ────────────────────────────────────────────────────────────
 # Define one or more agents. Each gets its own sessions, memory, and bot.
 #
