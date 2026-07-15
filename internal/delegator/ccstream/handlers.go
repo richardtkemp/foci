@@ -673,9 +673,10 @@ func (b *Backend) OnKeepAlive() {
 // rate-limit hook — informational only, it does NOT gate periodic work.
 //
 // CC repeats the event, so a warning per event would flood (#1211/#1238).
-// We throttle per limit window (keyed by status|type, re-armed when resetsAt
-// changes) and only warn when utilization climbs to a new bucket: one warning
-// per 5% below 95%, then every 1% at/above 95% — see rateLimitBucket.
+// We throttle via a shared RateLimitThrottle (one per agent, so main + facet
+// sessions don't each fire independently) keyed by status|type, re-armed when
+// resetsAt changes. Only warn when utilization climbs to a new bucket: one
+// warning per 5% below 95%, then every 1% at/above 95% — see rateLimitBucket.
 func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	b.touchActivity()
 	if ev == nil {
@@ -691,39 +692,38 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	}
 	key := fmt.Sprintf("%s|%s", info.Status, info.RateLimitType)
 	bucket := rateLimitBucket(info.Utilization)
-	b.mu.Lock()
-	if b.rateLimitWarnState == nil {
-		b.rateLimitWarnState = make(map[string]rateLimitWarnState)
-	}
-	prev, seen := b.rateLimitWarnState[key]
-	fire := !seen || prev.resetsAt != resetsAt || bucket > prev.bucket
-	if fire {
-		b.rateLimitWarnState[key] = rateLimitWarnState{resetsAt: resetsAt, bucket: bucket}
-	}
-	b.mu.Unlock()
 
-	// Debug instrumentation: log every rate_limit_event with the throttle
-	// decision and the reason. Remove once the 5% bucketing issue is diagnosed.
 	utilStr := "nil"
 	if info.Utilization != nil {
 		utilStr = fmt.Sprintf("%.4f", *info.Utilization)
 	}
-	switch {
-	case !fire:
-		b.logger().Debugf("rate_limit_event suppressed: key=%s util=%s bucket=%d resetsAt=%d prev{bucket=%d,resetsAt=%d}",
-			key, utilStr, bucket, resetsAt, prev.bucket, prev.resetsAt)
-	case !seen:
-		b.logger().Debugf("rate_limit_event FIRED (first-seen): key=%s util=%s bucket=%d resetsAt=%d",
+
+	// Only fire on boundary crossings (every 5% below 95%, every 1% at/above).
+	// Intermediate values like 87% are logged but never delivered to the user.
+	// Nil utilization (e.g. a rejected event without usage data) bypasses this.
+	if info.Utilization != nil && !rateLimitOnBoundary(info.Utilization) {
+		b.logger().Debugf("rate_limit_event off-boundary (skip): key=%s util=%s bucket=%d resetsAt=%d",
 			key, utilStr, bucket, resetsAt)
-	case prev.resetsAt != resetsAt:
-		b.logger().Debugf("rate_limit_event FIRED (resetsAt changed %d->%d): key=%s util=%s bucket=%d",
-			prev.resetsAt, resetsAt, key, utilStr, bucket)
-	default:
-		b.logger().Debugf("rate_limit_event FIRED (bucket climbed %d->%d): key=%s util=%s resetsAt=%d",
-			prev.bucket, bucket, key, utilStr, resetsAt)
+		return
 	}
 
-	if !fire {
+	res := b.rlThrottle.evaluate(key, resetsAt, bucket)
+	switch {
+	case !res.fire:
+		b.logger().Debugf("rate_limit_event suppressed: key=%s util=%s bucket=%d resetsAt=%d prev{bucket=%d,resetsAt=%d}",
+			key, utilStr, bucket, resetsAt, res.prev.bucket, res.prev.resetsAt)
+	case !res.seen:
+		b.logger().Debugf("rate_limit_event FIRED (first-seen): key=%s util=%s bucket=%d resetsAt=%d",
+			key, utilStr, bucket, resetsAt)
+	case res.prev.resetsAt != resetsAt:
+		b.logger().Debugf("rate_limit_event FIRED (resetsAt changed %d->%d): key=%s util=%s bucket=%d",
+			res.prev.resetsAt, resetsAt, key, utilStr, bucket)
+	default:
+		b.logger().Debugf("rate_limit_event FIRED (bucket climbed %d->%d): key=%s util=%s resetsAt=%d",
+			res.prev.bucket, bucket, key, utilStr, resetsAt)
+	}
+
+	if !res.fire {
 		return
 	}
 	b.fireRateLimited(FormatRateLimitNotice(info))

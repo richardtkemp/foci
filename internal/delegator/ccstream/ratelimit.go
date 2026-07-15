@@ -2,9 +2,11 @@ package ccstream
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/timeutil"
@@ -63,11 +65,47 @@ func parseSessionLimitReset(text string, now time.Time) (time.Time, bool) {
 }
 
 // rateLimitWarnState is the per-window high-water mark used to throttle
-// rate-limit warnings. Keyed in the backend by "status|type"; resetsAt
-// identifies the specific limit window so a new window re-arms warnings.
+// rate-limit warnings. Keyed by "status|type"; resetsAt identifies the
+// specific limit window so a new window re-arms warnings.
 type rateLimitWarnState struct {
 	resetsAt int64 // the window's reset instant; a change means a fresh window
 	bucket   int   // highest utilization bucket already warned for this window
+}
+
+// RateLimitThrottle holds rate-limit warning throttle state. It is shared
+// across all Backends for an agent (via SetRateLimitThrottle) so that each
+// warning fires only once per utilization bucket regardless of how many
+// concurrent sessions/backends are active — rate limits are account-wide.
+type RateLimitThrottle struct {
+	mu    sync.Mutex
+	state map[string]rateLimitWarnState
+}
+
+// NewRateLimitThrottle creates a shared rate-limit warning throttle.
+func NewRateLimitThrottle() *RateLimitThrottle {
+	return &RateLimitThrottle{state: make(map[string]rateLimitWarnState)}
+}
+
+// rateLimitCheckResult holds the outcome of a throttle evaluation, for logging.
+type rateLimitCheckResult struct {
+	prev rateLimitWarnState
+	seen bool
+	fire bool
+}
+
+// evaluate atomically checks and updates the throttle for the given key. It
+// fires when: the key is unseen, the limit window changed (resetsAt), or
+// utilization climbed to a higher bucket. Returns the decision + prior state
+// for diagnostic logging.
+func (t *RateLimitThrottle) evaluate(key string, resetsAt int64, bucket int) rateLimitCheckResult {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	prev, seen := t.state[key]
+	fire := !seen || prev.resetsAt != resetsAt || bucket > prev.bucket
+	if fire {
+		t.state[key] = rateLimitWarnState{resetsAt: resetsAt, bucket: bucket}
+	}
+	return rateLimitCheckResult{prev: prev, seen: seen, fire: fire}
 }
 
 // rateLimitBucket groups a utilization fraction (0..1) into a notification
@@ -87,6 +125,25 @@ func rateLimitBucket(u *float64) int {
 		return int(pct) // 1% granularity near the limit
 	}
 	return int(pct/5) * 5 // 5% granularity below 95%
+}
+
+// rateLimitOnBoundary reports whether the utilization fraction sits exactly on
+// a notification boundary: a multiple of 5% below 95%, or any integer % at/above
+// 95%. The throttle only fires on boundary crossings, so intermediate values
+// like 87% are silently ignored. Uses math.Round to tolerate float imprecision
+// (0.85*100 can be 84.99999…).
+func rateLimitOnBoundary(u *float64) bool {
+	if u == nil {
+		return false
+	}
+	pct := math.Round(*u * 100)
+	if pct < 0 {
+		pct = 0
+	}
+	if pct >= 95 {
+		return true // every 1% step is a boundary near the limit
+	}
+	return int(pct)%5 == 0
 }
 
 // rateLimitWindowLabel maps CC's rateLimitType to a human-friendly window name.

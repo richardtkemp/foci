@@ -49,6 +49,12 @@ func (b *Backend) SetOnAuthFailure(fn func(detail string)) { b.onAuthFailure = f
 // not a block). Must be set before Start (#1211/#1238).
 func (b *Backend) SetOnRateLimited(fn func(detail string)) { b.onRateLimited = fn }
 
+// SetRateLimitThrottle sets a shared rate-limit warning throttle so multiple
+// Backends for the same agent (main + facet sessions) don't each fire their
+// own first-seen warning for the same account-wide limit. Must be set before
+// Start.
+func (b *Backend) SetRateLimitThrottle(t *RateLimitThrottle) { b.rlThrottle = t }
+
 // SetOnSessionLimit registers a hook fired when CC reports a session limit was
 // hit — a synthetic "You've hit your session limit · resets <time>" message,
 // which (unlike a direct-API 429) never reaches classifyAPIError. The argument
