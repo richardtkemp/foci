@@ -414,6 +414,17 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	}
 
 	isActive := inb.turnActive.Load()
+	// An adopted autonomous run (a CC-initiated continuation after a background
+	// subagent completes) sets the BACKEND's turnActive but not inb.turnActive,
+	// which is private to the worker's dispatch loop. Without this, a follow-up
+	// during an autonomous run fails the steer gate below, queues as a fresh turn,
+	// and its RunTurn clobbers the autonomous run's router registration (#1274).
+	// The backend flag flips at primary-written time for a normal turn — the same
+	// instant inb.turnActive does — so this adds no new pre-primary steer window
+	// (#777-safe), only the autonomous case.
+	if !isActive && a.DelegatedManager != nil {
+		isActive = a.DelegatedManager.BackendTurnInFlight(env.SessionKey)
+	}
 	// Compaction hold (#856): a /compact turn is rewriting CC's transcript.
 	// Steering or folding a message now makes CC absorb the raw text into the
 	// compaction turn (it arrives unframed — no [meta] header). Route to the

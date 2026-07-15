@@ -211,6 +211,21 @@ func (m *DelegatedManager) BackendAwaitingAutonomousRun(sessionKey string) bool 
 	return ok && aw.AwaitingAutonomousRun()
 }
 
+// BackendTurnInFlight reports whether the (already-running) backend for
+// sessionKey has a turn in flight — including an adopted autonomous run, which
+// sets the backend's turnActive but NOT the inbox's own turnActive (that flag is
+// private to the worker's dispatch loop). Non-creating: an idle session with no
+// live backend reports false. The inbox uses it so a follow-up arriving during
+// an autonomous run is recognised as mid-turn and steers rather than being
+// dispatched as a fresh, router-clobbering turn (#1274).
+func (m *DelegatedManager) BackendTurnInFlight(sessionKey string) bool {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok || !mb.be.IsRunning() {
+		return false
+	}
+	return mb.be.IsTurnInFlight()
+}
+
 // clearPermission unblocks any WaitForPermission waiters on this backend.
 func (mb *managedBackend) clearPermission() {
 	mb.permMu.Lock()

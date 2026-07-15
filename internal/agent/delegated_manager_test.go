@@ -1670,6 +1670,42 @@ func TestGet_SystemPromptFuncEmptyFallsBackToStatic(t *testing.T) {
 	}
 }
 
+func TestBackendTurnInFlight(t *testing.T) {
+	// Proves BackendTurnInFlight reports the running backend's turnActive
+	// (the signal the inbox uses to steer a follow-up into an adopted autonomous
+	// run rather than dispatch a router-clobbering fresh turn, #1274) and is
+	// non-creating: no live backend, or a stopped one, reports false.
+	mgr := &DelegatedManager{AgentID: "test-agent", backends: map[string]*managedBackend{}}
+
+	if mgr.BackendTurnInFlight("test-agent/absent") {
+		t.Error("absent session: want false")
+	}
+
+	mgr.backends["test-agent/stopped"] = &managedBackend{
+		be:         &mockBackendDM{running: false, turnInFlight: true},
+		sessionKey: "test-agent/stopped",
+	}
+	if mgr.BackendTurnInFlight("test-agent/stopped") {
+		t.Error("stopped backend: want false (non-creating / not live)")
+	}
+
+	mgr.backends["test-agent/idle"] = &managedBackend{
+		be:         &mockBackendDM{running: true, turnInFlight: false},
+		sessionKey: "test-agent/idle",
+	}
+	if mgr.BackendTurnInFlight("test-agent/idle") {
+		t.Error("running idle backend: want false")
+	}
+
+	mgr.backends["test-agent/active"] = &managedBackend{
+		be:         &mockBackendDM{running: true, turnInFlight: true},
+		sessionKey: "test-agent/active",
+	}
+	if !mgr.BackendTurnInFlight("test-agent/active") {
+		t.Error("running in-flight backend: want true")
+	}
+}
+
 func TestLoadResumeID_NilIndex(t *testing.T) {
 	// Proves that loadResumeID returns empty string when SessionIndex is nil.
 	mgr := &DelegatedManager{}

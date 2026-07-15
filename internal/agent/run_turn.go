@@ -69,15 +69,29 @@ func (a *Agent) RunTurn(
 	// `sink`; events arriving after this turn ends — e.g. ccstream
 	// post-OnResult text from a folded steer — fall through to the
 	// router's late-delivery fallback.
+	//
+	// Guard against clobbering an in-flight turn we don't own. When a turn is
+	// already in flight for sk at this point — an adopted autonomous run
+	// (in_flight.go), whose markInFlight ran before this call while THIS turn's
+	// own mark runs later inside OrchestrateFullTurn — a follow-up that reached
+	// RunTurn (steer_mode=false, so it wasn't dispatched as a steer) will merely
+	// fold into that run. Re-registering would replace the autonomous run's sink
+	// and the deferred Clear would then empty the router mid-run, routing the
+	// rest of the run (incl. its final aggregate) to the late-delivery fallback
+	// and duplicating it (#1274). Route through the router without touching the
+	// registration so the existing sink keeps delivering; dispatchSink must still
+	// be the router so OrchestrateFullTurn's own Phase-3.5 register (which fires
+	// when ctx-sink != router) is likewise skipped.
 	dispatchSink := sink
 	if router != nil {
-		a.logger().Debugf("session=%s RunTurn: router.Register (may replace an existing registration, e.g. an in-flight autonomous run) (diagnostic instrumentation, #1274)", sk)
-		router.Register(sink)
-		defer func() {
-			a.logger().Debugf("session=%s RunTurn: router.Clear (diagnostic instrumentation, #1274)", sk)
-			router.Clear()
-		}()
-		dispatchSink = router
+		if a.IsTurnInFlight(sk) {
+			a.logger().Debugf("session=%s RunTurn: folding into an in-flight turn — leaving the existing router registration intact (#1274)", sk)
+			dispatchSink = router
+		} else {
+			router.Register(sink)
+			defer router.Clear()
+			dispatchSink = router
+		}
 	}
 
 	// Per-turn metadata. Trigger names the platform; downstream consumers
