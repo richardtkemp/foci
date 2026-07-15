@@ -82,9 +82,11 @@ func (r *controlRecorder) lastAbort() (controlRequest, bool) {
 // ---------------------------------------------------------------------------
 
 func TestSendControl_SetModel(t *testing.T) {
-	// Verifies SetModelRequest translates to PATCH /config with the
-	// model in the body.
-	b, rec := newControlTestBackend(t)
+	// Verifies SetModelRequest stores the model on the Backend for
+	// inclusion in subsequent prompt bodies (per-message "model" field).
+	// PATCH /config is documented but doesn't take effect on opencode
+	// 1.17.x, so the model is applied per-prompt instead.
+	b, _ := newControlTestBackend(t)
 
 	if err := b.SendControl(context.Background(), &delegator.SetModelRequest{
 		Model: "anthropic/claude-sonnet-4",
@@ -92,16 +94,11 @@ func TestSendControl_SetModel(t *testing.T) {
 		t.Fatalf("SendControl: %v", err)
 	}
 
-	patch, ok := rec.lastConfigPatch()
-	if !ok {
-		t.Fatal("PATCH /config was not sent")
-	}
-	var body map[string]any
-	if err := json.Unmarshal(patch.Body, &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body["model"] != "anthropic/claude-sonnet-4" {
-		t.Errorf("model = %v, want anthropic/claude-sonnet-4", body["model"])
+	b.mu.Lock()
+	model := b.model
+	b.mu.Unlock()
+	if model != "anthropic/claude-sonnet-4" {
+		t.Errorf("b.model = %q, want anthropic/claude-sonnet-4", model)
 	}
 }
 

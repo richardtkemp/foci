@@ -1,13 +1,6 @@
 // control.go — delegator.ControlSender + Interrupt implementation.
 // Translates foci's backend-agnostic control intents into opencode's
 // HTTP API.
-//
-// opencode's server-wide config is modified via PATCH /config. Since one
-// Server serves all sessions for an agent, a config change affects every
-// session — but in practice only one session is active at a time, so the
-// race window is negligible. The plan's open question about per-turn model
-// overrides (passing model in the prompt body's `model` field) is a
-// future optimisation.
 
 package opencode
 
@@ -26,14 +19,17 @@ import (
 // SendControl dispatches a ControlRequest to opencode's HTTP API.
 // Implements delegator.ControlSender.
 //
-//	SetModelRequest          → PATCH /config {model: <model>}
+//	SetModelRequest          → store b.model (applied per-prompt via body "model" field)
 //	SetPermissionModeRequest → PATCH /config {permission: {…}}
 //	ApplyFlagSettingsRequest → no-op (effort has no opencode equivalent)
 //	other                    → error
 func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest) error {
 	switch r := req.(type) {
 	case *delegator.SetModelRequest:
-		return b.patchConfig(ctx, map[string]any{"model": r.Model})
+		b.mu.Lock()
+		b.model = r.Model
+		b.mu.Unlock()
+		return nil
 
 	case *delegator.SetPermissionModeRequest:
 		return b.patchConfig(ctx, map[string]any{
