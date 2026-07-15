@@ -104,9 +104,9 @@ func (b *Backend) onAgentMessageDelta(params *agentMessageDeltaParams) {
 // in TurnResult.Usage when the turn completes.
 func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 	u := &delegator.TurnUsage{
-		InputTokens:          params.TokenUsage.Total.InputTokens,
-		OutputTokens:         params.TokenUsage.Total.OutputTokens,
-		CacheReadInputTokens: params.TokenUsage.Total.CachedInputTokens,
+		InputTokens:          params.TokenUsage.Last.InputTokens,
+		OutputTokens:         params.TokenUsage.Last.OutputTokens,
+		CacheReadInputTokens: params.TokenUsage.Last.CachedInputTokens,
 	}
 	b.turnMu.Lock()
 	b.stashedUsage = u

@@ -143,13 +143,13 @@ type tokenUsageParams struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId,omitempty"`
 	TokenUsage struct {
-		Total struct {
-			InputTokens         int `json:"inputTokens"`
-			OutputTokens        int `json:"outputTokens"`
-			CachedInputTokens   int `json:"cachedInputTokens"`
+		Last struct {
+			InputTokens           int `json:"inputTokens"`
+			OutputTokens          int `json:"outputTokens"`
+			CachedInputTokens     int `json:"cachedInputTokens"`
 			ReasoningOutputTokens int `json:"reasoningOutputTokens"`
-			TotalTokens         int `json:"totalTokens"`
-		} `json:"total"`
+			TotalTokens           int `json:"totalTokens"`
+		} `json:"last"`
 		ModelContextWindow int `json:"modelContextWindow,omitempty"`
 	} `json:"tokenUsage"`
 }
