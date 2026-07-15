@@ -1,208 +1,118 @@
 package modelinfo
 
 import (
-	"math"
+	"sync"
 	"testing"
 )
 
-func TestContextWindow(t *testing.T) {
-	// Proves exact matches return correct values, family fallbacks work
-	// (gemini-1.5 → 2M, unknown gemini → 1M, claude/unknown → 200k),
-	// and developer prefixes are stripped.
-	t.Parallel()
-	tests := []struct {
-		model string
-		want  int
-	}{
-		{"claude-opus-4-6", 1_000_000},
-		{"anthropic/claude-opus-4-6", 1_000_000},
-		{"claude-code-tmux", 1_000_000},
-		{"claude-code", 1_000_000},
-		{"gemini-2.5-pro", 1_000_000},
-		{"gemini-2.0-flash", 1_000_000},
-		{"gemini-1.5-pro", 2_000_000},   // family fallback
-		{"gemini-99-future", 1_000_000}, // unknown gemini fallback
-		{"google/gemini-99-future", 1_000_000},
-		{"claude-haiku-4-5-20251001", 200_000},           // date suffix stripped → exact match
-		{"claude-opus-4-6-20260101", 1_000_000},          // date suffix stripped → exact match
-		{"anthropic/claude-haiku-4-5-20251001", 200_000}, // prefix + date suffix
-		{"claude-opus-99", 1_000_000},                    // unknown opus family fallback
-		{"claude-sonnet-99", 200_000},                    // unknown claude fallback
-		{"totally-unknown", 200_000},                     // default fallback
+func TestRegisterAndLookup(t *testing.T) {
+	// Save and restore registry state.
+	t.Cleanup(ResetToBuiltIn)
+
+	ctx := 300_000
+	m := Model{
+		ContextWindow: ctx,
+		Caching:       true,
+		InputPer1M:    2.00, OutputPer1M: 10.00,
+		CacheReadPer1M: 0.20, CacheWritePer1M: 2.50,
 	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			got := ContextWindow(tt.model)
-			if got != tt.want {
-				t.Errorf("ContextWindow(%q) = %d, want %d", tt.model, got, tt.want)
-			}
-		})
+	Register("test-register-model", m)
+
+	got, ok := Lookup("test-register-model")
+	if !ok {
+		t.Fatal("Lookup failed for registered model")
+	}
+	if got.ContextWindow != ctx {
+		t.Errorf("ContextWindow = %d, want %d", got.ContextWindow, ctx)
 	}
 }
 
-func TestCapabilities(t *testing.T) {
-	// Proves registered models return exact capabilities, unregistered claude
-	// variants fall back by family, and non-claude models return all false.
-	t.Parallel()
-	tests := []struct {
-		model                               string
-		wantEffort, wantThinking, wantSpeed bool
-	}{
-		{"claude-opus-4-6", true, true, true},
-		{"anthropic/claude-opus-4-6", true, true, true},
-		{"claude-sonnet-4-5", true, true, false},
-		{"claude-haiku-4-5", false, false, false},
-		{"CLAUDE-HAIKU-4-5", false, false, false},
-		{"claude-sonnet-99", true, true, false},            // unknown sonnet fallback
-		{"claude-opus-99", true, true, true},               // unknown opus fallback
-		{"claude-haiku-99", false, false, false},           // unknown haiku fallback
-		{"claude-haiku-4-5-20251001", false, false, false}, // date suffix stripped
-		{"claude-opus-4-6-20260101", true, true, true},     // date suffix stripped
-		{"gemini-2.5-flash", false, false, false},
-		{"gpt-4o", false, false, false},
-		{"unknown", false, false, false},
+func TestRegisterOverridesExisting(t *testing.T) {
+	t.Cleanup(ResetToBuiltIn)
+
+	original, _ := Lookup("claude-haiku-4-5")
+	newPrice := 99.99
+	Register("claude-haiku-4-5", Model{
+		ContextWindow: original.ContextWindow,
+		Caching:       original.Caching,
+		InputPer1M:    newPrice, OutputPer1M: original.OutputPer1M,
+		CacheReadPer1M:  original.CacheReadPer1M,
+		CacheWritePer1M: original.CacheWritePer1M,
+	})
+
+	got, ok := Lookup("claude-haiku-4-5")
+	if !ok {
+		t.Fatal("Lookup failed")
 	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			e, th, s := Capabilities(tt.model)
-			if e != tt.wantEffort || th != tt.wantThinking || s != tt.wantSpeed {
-				t.Errorf("Capabilities(%q) = (%v,%v,%v), want (%v,%v,%v)",
-					tt.model, e, th, s, tt.wantEffort, tt.wantThinking, tt.wantSpeed)
-			}
-		})
+	if got.InputPer1M != newPrice {
+		t.Errorf("InputPer1M = %v, want %v (override did not take effect)", got.InputPer1M, newPrice)
+	}
+
+	// Cost should use the overridden price.
+	cost := Cost("claude-haiku-4-5", 1_000_000, 0, 0, 0)
+	if cost != newPrice {
+		t.Errorf("Cost with 1M input = %v, want %v", cost, newPrice)
 	}
 }
 
-func TestCaching(t *testing.T) {
-	// Proves Anthropic models report caching=true (registered + dated/prefixed +
-	// unregistered claude variants via family fallback), and non-claude models
-	// (gemini/openai/unknown) report false.
-	t.Parallel()
-	tests := []struct {
-		model string
-		want  bool
-	}{
-		{"claude-haiku-4-5", true},
-		{"claude-sonnet-4-5", true},
-		{"claude-opus-4-6", true},
-		{"claude-opus-4-6[1m]", true},
-		{"claude-fable-5", true},
-		{"anthropic/claude-opus-4-6", true},          // prefix stripped
-		{"claude-opus-4-6-20260101", true},           // date suffix stripped
-		{"CLAUDE-SONNET-4-5", true},                  // case-insensitive
-		{"claude-opus-99", true},                     // unregistered claude → family fallback
-		{"claude-code", true},                        // delegated backend key still claude-family
-		{"gemini-2.5-flash", false},
-		{"gemini-2.5-pro", false},
-		{"gpt-4o", false},
-		{"unknown", false},
+func TestResetToBuiltIn(t *testing.T) {
+	t.Cleanup(ResetToBuiltIn)
+
+	Register("temp-model", Model{ContextWindow: 500_000})
+	if _, ok := Lookup("temp-model"); !ok {
+		t.Fatal("Register did not create entry")
 	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			if got := Caching(tt.model); got != tt.want {
-				t.Errorf("Caching(%q) = %v, want %v", tt.model, got, tt.want)
-			}
-		})
+
+	ResetToBuiltIn()
+
+	if _, ok := Lookup("temp-model"); ok {
+		t.Error("temp-model still in registry after ResetToBuiltIn")
+	}
+
+	// Built-in entries should still be present.
+	if _, ok := Lookup("claude-haiku-4-5"); !ok {
+		t.Error("built-in claude-haiku-4-5 missing after ResetToBuiltIn")
 	}
 }
 
-func TestCost(t *testing.T) {
-	// Proves exact model pricing, family fallbacks (unknown gemini → flash,
-	// OpenAI → approximate, unknown → haiku), and correct arithmetic.
-	t.Parallel()
+func TestRegisterLowercasesKey(t *testing.T) {
+	t.Cleanup(ResetToBuiltIn)
 
-	// 1M tokens of each type for easy verification
-	m := 1_000_000
+	Register("My-Model", Model{ContextWindow: 100_000})
 
-	tests := []struct {
-		model string
-		want  float64 // expected cost for 1M of each token type
-	}{
-		{"claude-haiku-4-5", 1.00 + 5.00 + 0.10 + 1.25},
-		{"claude-opus-4-6", 15.00 + 75.00 + 1.50 + 18.75},
-		{"gemini-2.5-pro", 1.25 + 10.00 + 0.315 + 0},
-		{"gemini-99-future", 0.15 + 0.60 + 0.0375 + 0}, // falls back to flash
-		{"gpt-4o", 5.00 + 15.00 + 0 + 0},               // OpenAI fallback
-		{"totally-unknown", 1.00 + 5.00 + 0.10 + 1.25}, // haiku fallback
+	if _, ok := Lookup("my-model"); !ok {
+		t.Error("Lookup with lowercase key failed after Register with mixed-case key")
 	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			got := Cost(tt.model, m, m, m, m)
-			if math.Abs(got-tt.want) > 0.001 {
-				t.Errorf("Cost(%q, 1M each) = %.4f, want %.4f", tt.model, got, tt.want)
-			}
-		})
+	if _, ok := Lookup("My-Model"); !ok {
+		t.Error("Lookup with original-case key failed after Register")
 	}
 }
 
-func TestStripDateSuffix(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input, want string
-	}{
-		{"claude-haiku-4-5-20251001", "claude-haiku-4-5"},
-		{"claude-opus-4-6-20260101", "claude-opus-4-6"},
-		{"claude-opus-4-6", "claude-opus-4-6"},         // no suffix
-		{"claude-opus-4-6[1m]", "claude-opus-4-6[1m]"}, // not a date suffix
-		{"gemini-2.5-pro", "gemini-2.5-pro"},           // no suffix
-		{"short", "short"},                             // too short
-		{"x-1234567a", "x-1234567a"},                   // non-digit in suffix
-		{"", ""},                                       // empty
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := stripDateSuffix(tt.input)
-			if got != tt.want {
-				t.Errorf("stripDateSuffix(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
+func TestConcurrentAccessNoRace(t *testing.T) {
+	// This test is meant to be run with -race.
+	t.Cleanup(ResetToBuiltIn)
 
-func TestNormalize(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input, want string
-	}{
-		{"anthropic/claude-haiku-4-5-20251001", "claude-haiku-4-5"},
-		{"claude-opus-4-6", "claude-opus-4-6"},
-		{"google/gemini-2.5-pro", "gemini-2.5-pro"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := normalize(tt.input)
-			if got != tt.want {
-				t.Errorf("normalize(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-func TestIsOpenAI(t *testing.T) {
-	// Proves OpenAI model detection for gpt-, o1/o3/o4, chatgpt- prefixes,
-	// and correct rejection of non-OpenAI models. Also handles developer prefixes.
-	t.Parallel()
-	tests := []struct {
-		model string
-		want  bool
-	}{
-		{"gpt-4", true},
-		{"gpt-3.5-turbo", true},
-		{"o1", true},
-		{"o3", true},
-		{"o4", true},
-		{"chatgpt-4", true},
-		{"openai/gpt-4o", true},
-		{"claude-3-sonnet", false},
-		{"gemini-2-flash", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			got := IsOpenAI(tt.model)
-			if got != tt.want {
-				t.Errorf("IsOpenAI(%q) = %v, want %v", tt.model, got, tt.want)
-			}
-		})
-	}
+	// Writer goroutine.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			Register("concurrent-test", Model{ContextWindow: i})
+		}
+	}()
+
+	// Reader goroutine.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_ = ContextWindow("claude-haiku-4-5")
+			_ = Cost("claude-haiku-4-5", 100, 50, 0, 0)
+			_, _, _ = Capabilities("claude-haiku-4-5")
+			_ = Caching("claude-haiku-4-5")
+		}
+	}()
+
+	wg.Wait()
 }

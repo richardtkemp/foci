@@ -8,6 +8,7 @@ Each phase is extracted into its own file. `main()` is a ~400-line orchestrator.
 
 ```
 config.Load(path)                                        ← validates values; logs to stderr + buffer
+                                                         ← merges [[modelinfo]] entries into modelinfo.registry
 
 → initLogging(cfg)                                       ← logging_init.go
   → log.Init, log.InitAPIDB, log.InitConversation, log rotation

@@ -462,6 +462,50 @@ enable_keepalive = true
 
 **Model defaults hierarchy:** Per-model settings (thinking, effort, speed) act as defaults for any session using that model. Session-level overrides via `/thinking`, `/effort`, `/speed` take precedence. Clearing a session override (e.g. `/effort none`) reverts to the model default.
 
+### `[[modelinfo]]`
+
+Model registry overrides — pricing, capabilities, and context window for models not in the built-in registry, or partial overrides of existing ones. Each `[[modelinfo]]` block defines one model entry. The `id` is a bare model ID (e.g. `claude-haiku-4-5`, `gemini-2.5-pro`) matching what the registry uses internally.
+
+**For new models** (id not in the built-in registry), `context_window`, `input_per_1m`, and `output_per_1m` are required. Capability flags default to `false` and cache pricing to `0.0` when omitted.
+
+**For overrides** (id matches a built-in registry entry), only the fields you specify are changed — the rest keep their built-in values. All fields are optional except `id`.
+
+```toml
+# Full definition of a new model
+[[modelinfo]]
+id = "my-custom-model"
+context_window = 200000
+can_effort = false
+can_thinking = false
+can_speed = false
+can_caching = false
+input_per_1m = 1.00
+output_per_1m = 5.00
+cache_read_per_1m = 0.10
+cache_write_per_1m = 1.25
+
+# Partial override — just change pricing on an existing model
+[[modelinfo]]
+id = "claude-haiku-4-5"
+input_per_1m = 0.80
+output_per_1m = 4.00
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `id` | string | *(required)* | Bare model ID (e.g. `claude-haiku-4-5`). Overrides existing entry if present, creates new one if not |
+| `context_window` | int | *(required for new)* | Context window size in tokens |
+| `can_effort` | bool | `false` | Whether the model supports `output_config.effort` |
+| `can_thinking` | bool | `false` | Whether the model supports thinking/reasoning |
+| `can_speed` | bool | `false` | Whether the model supports fast mode (`speed: "fast"`) |
+| `can_caching` | bool | `false` | Whether the model supports explicit TTL-bounded prompt caching |
+| `input_per_1m` | float | *(required for new)* | Cost per 1M input tokens in USD |
+| `output_per_1m` | float | *(required for new)* | Cost per 1M output tokens in USD |
+| `cache_read_per_1m` | float | `0.0` | Cost per 1M cache-read tokens in USD |
+| `cache_write_per_1m` | float | `0.0` | Cost per 1M cache-write tokens in USD |
+
+Live-updatable: changes take effect immediately without restart.
+
 ### `[groups]`
 
 Model group assignments, call site overrides, and fallbacks. Group names are arbitrary string keys; values are `developer/model_id` strings or `[models.*]` alias names.

@@ -226,6 +226,23 @@ type ModelConfig struct {
 	CacheStrategy   string        `toml:"cache_strategy"`   // cache marker strategy: "auto" or "explicit" (Anthropic only, default "auto")
 }
 
+// ModelInfoEntry holds user-supplied model registry attributes from
+// [[modelinfo]] array-of-tables sections. Pointer fields distinguish "not set"
+// (nil → keep existing for overrides, or default for new models) from explicit
+// zero/false.
+type ModelInfoEntry struct {
+	ID              string   `toml:"id"                 desc:"Bare model ID matching the modelinfo registry (e.g. 'claude-haiku-4-5'). Overrides existing entry if present, creates new one if not"`
+	ContextWindow   *int     `toml:"context_window"     desc:"Context window size in tokens. Required for new models; optional for overrides"`
+	CanEffort       *bool    `toml:"can_effort"         desc:"Whether the model supports output_config.effort. Defaults to false for new models"`
+	CanThinking     *bool    `toml:"can_thinking"       desc:"Whether the model supports thinking/reasoning. Defaults to false for new models"`
+	CanSpeed        *bool    `toml:"can_speed"          desc:"Whether the model supports fast mode (speed: 'fast'). Defaults to false for new models"`
+	CanCaching      *bool    `toml:"can_caching"        desc:"Whether the model supports explicit TTL-bounded prompt caching. Defaults to false for new models"`
+	InputPer1M      *float64 `toml:"input_per_1m"       desc:"Cost per 1M input tokens in USD. Required for new models; optional for overrides"`
+	OutputPer1M     *float64 `toml:"output_per_1m"      desc:"Cost per 1M output tokens in USD. Required for new models; optional for overrides"`
+	CacheReadPer1M  *float64 `toml:"cache_read_per_1m"  desc:"Cost per 1M cache-read tokens in USD. Defaults to 0.0"`
+	CacheWritePer1M *float64 `toml:"cache_write_per_1m" desc:"Cost per 1M cache-write tokens in USD. Defaults to 0.0"`
+}
+
 // CCBackendConfig holds defaults shared by all Claude Code-based delegator
 // backends (cctmux, ccstream). Per-agent [agents.backend_config] values
 // still apply; scalar values there override, and DefaultAllowedTools is
@@ -1122,6 +1139,7 @@ type Config struct {
 	System             SystemConfig              `toml:"system"`     // global system defaults
 	Groups             GroupsConfig              `toml:"groups"`     // model group assignments and fallbacks
 	Models             map[string]ModelConfig    `toml:"models"`     // named model definitions with per-model settings
+	ModelInfo          []ModelInfoEntry          `toml:"modelinfo"`  // user-supplied model registry overrides (pricing, capabilities, context window)
 	Endpoints          map[string]EndpointConfig `toml:"endpoints"`  // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
 	Agents             []AgentConfig             `toml:"agents"`     // multi-agent: array of agents
 	Anthropic          AnthropicConfig           `toml:"anthropic"`

@@ -316,6 +316,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
+	// Merge [[modelinfo]] entries into the modelinfo registry.
+	ApplyModelInfo(cfg.ModelInfo)
+
 	return &cfg, nil
 }
 

@@ -469,6 +469,7 @@ type ObjectFieldSpec struct {
 	Section     string
 	Description string
 	Fields      []ObjectSubField
+	Live        bool // if true, NeedsRestart=false in the schema (has a live applier)
 }
 
 // objectFieldSpecs is the registry of []struct config sections settable via the
@@ -488,6 +489,18 @@ var objectFieldSpecs = []ObjectFieldSpec{
 		{Key: "name", Type: FieldString, Description: "Unique identifier (e.g. canonical, code, docs)"},
 		{Key: "dir", Type: FieldString, Description: "Directory path to index"},
 		{Key: "weight", Type: FieldFloat, Description: "Weight multiplier 0.0-1.0 (1.0 = highest priority)"},
+	}},
+	{Section: "modelinfo", Description: "Model registry overrides — pricing, capabilities, and context window for models not in the built-in registry, or partial overrides of existing ones", Live: true, Fields: []ObjectSubField{
+		{Key: "id", Type: FieldString, Description: "Bare model ID (e.g. 'claude-haiku-4-5'). Overrides existing entry if present, creates new one if not"},
+		{Key: "context_window", Type: FieldInt, Description: "Context window in tokens (required for new models)"},
+		{Key: "can_effort", Type: FieldBool, Description: "Supports output_config.effort"},
+		{Key: "can_thinking", Type: FieldBool, Description: "Supports thinking/reasoning"},
+		{Key: "can_speed", Type: FieldBool, Description: "Supports fast mode"},
+		{Key: "can_caching", Type: FieldBool, Description: "Supports explicit prompt caching"},
+		{Key: "input_per_1m", Type: FieldFloat, Description: "Cost per 1M input tokens in USD (required for new models)"},
+		{Key: "output_per_1m", Type: FieldFloat, Description: "Cost per 1M output tokens in USD (required for new models)"},
+		{Key: "cache_read_per_1m", Type: FieldFloat, Description: "Cost per 1M cache-read tokens in USD"},
+		{Key: "cache_write_per_1m", Type: FieldFloat, Description: "Cost per 1M cache-write tokens in USD"},
 	}},
 }
 
