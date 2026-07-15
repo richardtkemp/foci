@@ -254,14 +254,14 @@ type CCBackendConfig struct {
 	// Merged with per-agent backend_config.allowed_tools before launch.
 	// Factory default grants /tmp file writes so agents don't prompt for
 	// scratch-file access. Set to an empty list in TOML to disable.
-	DefaultAllowedTools []string `toml:"default_allowed_tools"`
+	DefaultAllowedTools []string `toml:"default_allowed_tools" desc:"Claude Code permission rules (e.g. Write(/tmp/**)) pre-approved for all CC-backed agents. Merged with per-agent backend_config.allowed_tools"`
 
 	// ClaudeBinary overrides the path/name of the `claude` executable
 	// foci spawns for CC-backed agents. Default "" → falls back to "claude"
 	// (resolved via $PATH). Used by integration tests to point at a stub
 	// binary (bin/cc-stub) that mimics the CC stream-json protocol.
 	// Per-agent backend_config.claude_binary takes precedence if set.
-	ClaudeBinary string `toml:"claude_binary"`
+	ClaudeBinary string `toml:"claude_binary" desc:"Path or name of the claude executable (default: claude via $PATH)"`
 
 	// BackgroundTaskMaxAge bounds how long a spawned background task (an
 	// Agent-tool subagent or a run_in_background Bash) stays tracked without a
@@ -353,17 +353,17 @@ type GroupsConfig struct {
 }
 
 type AgentConfig struct {
-	ID              string `toml:"id"`
-	Name            string `toml:"name"`             // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji           string `toml:"emoji"`            // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	DefaultPlatform string `toml:"default_platform"` // per-agent override of the global default_platform
-	Workspace       string `toml:"workspace"`
+	ID              string `toml:"id" desc:"Unique agent identifier (e.g. clutch, scout)"`
+	Name            string `toml:"name"             desc:"Human-readable name shown in the app and voice endpoint"`
+	Emoji           string `toml:"emoji"            desc:"Emoji for this agent (e.g. 🥔)"`
+	DefaultPlatform string `toml:"default_platform" desc:"Platform preferred for this agent (e.g. telegram); empty = most-recently-active"`
+	Workspace       string `toml:"workspace"       desc:"Working directory for this agent's files and character docs"`
 	// Avatar is an image file for the agent, served to the native app. An
 	// absolute path, or a path relative to the foci home dir, is used as-is
 	// (resolved via ResolvePath). When empty, it is auto-detected at load from
 	// $workspace/avatar.{png,jpg,jpeg,webp,gif} then $workspace/.data/avatar.{ext}.
 	// After Load() this holds "" (no avatar) or an absolute path to an existing file.
-	Avatar string `toml:"avatar"`
+	Avatar string `toml:"avatar" desc:"Image file for the agent (absolute or relative to foci home); empty = auto-detect from workspace/avatar.*"`
 
 	Memory    MemoryConfig     `toml:"memory"`    // per-agent memory overrides (sources combined with global [memory])
 	Platforms []PlatformConfig `toml:"platforms"` // per-agent platform configurations
@@ -394,7 +394,7 @@ type AgentConfig struct {
 	// Backend selection: empty or "api" = traditional agent loop.
 	// A coding agent name (e.g. "claude-code-tmux", "codex", "opencode") delegates
 	// entire turns to an external agent subprocess.
-	Backend       string         `toml:"backend"`
+	Backend       string         `toml:"backend"       desc:"Backend type: empty or api = traditional agent loop; claude-code, opencode, etc. delegates turns to an external agent"`
 	BackendConfig BackendConfig `toml:"backend_config"` // backend-specific settings
 
 	// Per-agent skills and message transforms (empty = use global)
@@ -406,8 +406,8 @@ type AgentConfig struct {
 // AgentSessionsOverride groups the config from [sessions] that can be overridden per-agent.
 type AgentSessionsOverride struct {
 	CompactionConfig
-	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`
-	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"`
+	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"    desc:"Overrides the global sessions value for this agent"`
+	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt" desc:"Overrides the global sessions value for this agent"`
 	MaxSystemPromptFile             *int    `toml:"max_system_prompt_chars_file"  desc:"Logs a server-side warning if any single system prompt file, eg a character file, exceeds this many characters. Overrides the global sessions value for this agent"`
 	MaxSystemPromptTotal            *int    `toml:"max_system_prompt_chars_total" desc:"Logs a server-side warning if this agent's combined system prompt exceeds this many characters total. Overrides the global sessions value for this agent"`
 	EphemeralRetentionDays          *int    `toml:"ephemeral_retention_days"      hot:"event" desc:"Auto-deletes old transcripts from short-lived internal sessions, eg reflection, keepalive, background tasks, after this many days. Normal chat history is untouched. 0 = never delete" min:"0"`
@@ -597,7 +597,7 @@ type DisplayConfig struct {
 type AccessConfig struct {
 	AllowedUsersOnly *bool    `toml:"allowed_users_only" default:"true" desc:"When enabled (default), only user IDs in allowed_users may message this agent - an empty list blocks everyone. When disabled, an empty list allows anyone; a non-empty list still filters"`
 	AllowedUsers     []string `toml:"allowed_users"  desc:"Platform-specific user IDs allowed to interact with this agent. Empty means no allow-list restriction"`   // platform-specific user IDs allowed to interact
-	RequireMention   *bool    `toml:"require_mention"` // require @mention in group chats
+	RequireMention   *bool    `toml:"require_mention" desc:"Require @mention in group chats to trigger this agent"`
 }
 
 // NotifyConfig holds notification/warning settings that can be configured at
@@ -664,7 +664,7 @@ func (n NotifyConfig) CompactionDebugEnabled() bool {
 // PlatformConfig is the unified platform configuration used for both global
 // [[platforms]] entries and per-agent [[agents.platforms]] overrides.
 type PlatformConfig struct {
-	ID string `toml:"id"`
+	ID string `toml:"id" desc:"Platform type: telegram, discord, or app"`
 
 	// Config groups (cascade via Merge)
 	Notify  NotifyConfig  `toml:"notify"`
@@ -673,8 +673,8 @@ type PlatformConfig struct {
 	Access  AccessConfig  `toml:"access"`
 
 	// Shared platform fields
-	Bot             string   `toml:"bot"`
-	BotSecret       string   `toml:"bot_secret"`
+	Bot             string   `toml:"bot" desc:"Bot name for this platform (resolved to telegram.<bot> or discord.<bot> secret)"`
+	BotSecret       string   `toml:"bot_secret" desc:"Override the secret key used to look up the bot token (default: telegram.<bot> or discord.<bot>)"`
 	FacetBots       []string `toml:"facet_bots"  desc:"Bot names used as short-lived facet side-sessions branched off the main chat"`
 	FacetSessionTTL string   `toml:"facet_session_ttl"  desc:"How long a /facet session, a temporary secondary bot split off from this chat, can sit idle before its slot is reclaimed for reuse (default 60m)" type:"duration"`
 
@@ -736,13 +736,13 @@ type TelegramSpecific struct {
 	// "https://api.telegram.org"). Used by integration tests to point bots
 	// at a local httptest stub. Empty = library default. The trailing
 	// slash, if present, is trimmed by gotgbot.
-	APIBase string `toml:"api_base"`
+	APIBase string `toml:"api_base" desc:"Override the Telegram Bot API base URL (default https://api.telegram.org; for integration tests)"`
 }
 
 // DiscordSpecific holds Discord-only config fields.
 type DiscordSpecific struct {
-	AutoThread *bool  `toml:"auto_thread"` // default true
-	GuildID    string `toml:"guild_id"`
+	AutoThread *bool  `toml:"auto_thread" desc:"Automatically create a Discord thread for each conversation (default true)"`
+	GuildID    string `toml:"guild_id"    desc:"Discord guild (server) ID to restrict this bot to"`
 }
 
 // AppSpecific holds app-provider-only config (the native-app WebSocket platform,
@@ -839,7 +839,7 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 }
 
 type SessionsConfig struct {
-	Dir string `toml:"dir"`
+	Dir string `toml:"dir" desc:"Directory for session transcript storage (default: data/sessions)"`
 
 	CompactionConfig          // compaction settings (global defaults, overridable per-agent)
 	CompactionMaxTokens   int `toml:"compaction_max_tokens"         default:"4096"  desc:"Max tokens the model can generate for the summary when compaction trims old conversation history to fit the context window" min:"0"` // max output tokens for summary
@@ -847,11 +847,11 @@ type SessionsConfig struct {
 	MaxSystemPromptFile   int `toml:"max_system_prompt_chars_file"  default:"20000" desc:"Warn at startup if any single system prompt file (character, skill, etc) exceeds this many characters; does not block anything"`     // per-file char threshold for warnings
 	MaxSystemPromptTotal  int `toml:"max_system_prompt_chars_total" default:"80000" desc:"Warn at startup if the combined size of all system prompt files exceeds this many characters; does not block anything"`              // total system prompt char threshold
 
-	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`    // path to prompt file for user-attached facet branches
-	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"` // path to prompt file for headless branches (cron, spawn, keepalive)
+	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"    desc:"Path to prompt file for user-attached facet branch orientation"`
+	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt" desc:"Path to prompt file for headless branch orientation (cron, spawn, keepalive)"`
 
-	ArchiveAfter string `toml:"archive_after" default:"24h"`  // gzip idle sessions after this duration (default "24h")
-	FileMode     string `toml:"file_mode"     default:"0600"` // octal file permissions for session files (default "0600")
+	ArchiveAfter string `toml:"archive_after" default:"24h"  desc:"How long a session sits idle before its transcript is gzip-archived (default 24h)" type:"duration"`
+	FileMode     string `toml:"file_mode"     default:"0600" desc:"Octal file permissions for session files (default 0600)"`
 
 	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"30" hot:"event" desc:"Days to keep ephemeral branch and fork session transcripts before automatic daily cleanup deletes them; 0 disables cleanup" min:"0"` // daily GC of stale ephemeral session files
 }
@@ -886,20 +886,20 @@ type MemoryConfig struct {
 type HTTPConfig struct {
 	Port                    int    `toml:"port" default:"18791" desc:"TCP port the foci HTTP server listens on" min:"1" max:"65535"`
 	Bind                    string `toml:"bind" default:"127.0.0.1" desc:"Network address the HTTP server binds to; 127.0.0.1 only accepts local connections, 0.0.0.0 accepts connections from other machines"`
-	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout" default:"30s"` // time to wait for in-flight requests on shutdown (default "30s")
-	WSEnabled               bool   `toml:"ws_enabled"`                              // enable /voice WebSocket endpoint (default false)
-	SocketPath              string `toml:"socket_path"`                             // Unix socket path for same-user auth (default: auto-resolved to data dir)
+	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout" default:"30s" desc:"How long to wait for in-flight HTTP requests before forcing shutdown (default 30s)" type:"duration"`
+	WSEnabled               bool   `toml:"ws_enabled" desc:"Enable the /voice WebSocket endpoint for real-time speech (default false)"`
+	SocketPath              string `toml:"socket_path" desc:"Unix socket path for same-user authentication (default: auto-resolved to data dir)"`
 }
 
 type LoggingConfig struct {
 	Level           string `toml:"level"      default:"INFO" hot:"immediate" desc:"Minimum severity written to the log file: DEBUG is most verbose, ERROR is least; each level also includes all levels above it" choices:"DEBUG,INFO,WARN,ERROR"`
-	EventFile       string `toml:"event_file" default:"logs/foci.log"`
-	APIFile         string `toml:"api_file"   default:"logs/api.jsonl"`
-	APIDB           string `toml:"api_db" default:"api.db"` // SQLite API call log path (relative to data_dir)
+	EventFile       string `toml:"event_file" default:"logs/foci.log" desc:"Path to the main foci event log file"`
+	APIFile         string `toml:"api_file"   default:"logs/api.jsonl" desc:"Path to the API call log (JSONL format)"`
+	APIDB           string `toml:"api_db" default:"api.db" desc:"SQLite database for durable API call history across restarts (relative to data_dir)"`
 	ConversationLog *bool  `toml:"conversation_log" default:"true" desc:"Log each agent's conversation turns to disk; turn this off to avoid persisting conversation content"`
 
 	FullPayload bool   `toml:"full_payload"                         desc:"Write the complete raw request and response sent to the model API to logs/api-payload.jsonl, useful for debugging"` // write full API payloads to api-payload.jsonl
-	PayloadFile string `toml:"payload_file"             default:"logs/api-payload.jsonl"`                                                                                                     // path for full API payload log
+	PayloadFile string `toml:"payload_file"             default:"logs/api-payload.jsonl" desc:"Path for the full API payload log when full_payload is enabled"`
 
 	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"  hot:"event" desc:"Time window used to group and rate-limit repeated warnings so identical ones are not injected into the agent repeatedly" type:"duration"` // time window for warning dedup (default "5m")
 	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"  desc:"Minimum time between unprompted warning notifications sent while you have been recently active" type:"duration"`                          // min interval between proactive warning turns when user is active (default "5m")
@@ -910,7 +910,7 @@ type LoggingConfig struct {
 	RotationPeriod      string `toml:"rotation_period"        default:"24h"   desc:"How often the log rotation check runs, archiving old log content" type:"duration"`                                                            // how often to rotate (default "24h")
 	RetentionPeriod     string `toml:"retention_period"       default:"48h"   desc:"How long log lines stay in the live log file before being archived; older lines are moved into gzip files under archive_dir" type:"duration"` // keep lines newer than this (default "48h")
 	RotationMaxLineSize string `toml:"rotation_max_line_size" default:"64MB"  desc:"Largest single log line the rotator can read; a longer line is skipped instead of crashing the rotation process"`                             // max line size for scanner buffer (default "64MB")
-	ArchiveDir          string `toml:"archive_dir"`                                                                                                                                                                               // gzip archive directory (default: log_dir/archive/)
+	ArchiveDir          string `toml:"archive_dir" desc:"Directory for gzip-archived log files (default: log_dir/archive/)"`
 	LogFileMode         string `toml:"log_file_mode"          default:"0600"  desc:"Unix file permissions (octal, e.g. 0600) applied to log files"`                                                                               // octal file permissions for log files (default "0600")
 }
 
@@ -941,11 +941,11 @@ type STTConfig struct {
 }
 
 type BitwardenConfig struct {
-	Enabled         bool   `toml:"enabled"`
-	RefreshInterval string `toml:"refresh_interval" default:"15m"`                         // how often to refresh item metadata (default "15m")
-	SecretTTL       string `toml:"secret_ttl"       default:"30m"`                         // how long unlocked values stay cached (default "30m")
-	SessionFile     string `toml:"session_file"     default:"/home/bitwarden/.bw_session"` // path to BW session file read by bitwarden user (default "/home/bitwarden/.bw_session")
-	CleanupInterval string `toml:"cleanup_interval" default:"1m"`                          // how often to purge expired values (default "1m")
+	Enabled         bool   `toml:"enabled" desc:"Enable Bitwarden secret resolution for {{secret:NAME}} templates"`
+	RefreshInterval string `toml:"refresh_interval" default:"15m" desc:"How often to refresh item metadata from the Bitwarden vault (default 15m)" type:"duration"`
+	SecretTTL       string `toml:"secret_ttl"       default:"30m" desc:"How long unlocked secret values stay cached before re-fetching (default 30m)" type:"duration"`
+	SessionFile     string `toml:"session_file"     default:"/home/bitwarden/.bw_session" desc:"Path to the Bitwarden session file used by the bitwarden user"`
+	CleanupInterval string `toml:"cleanup_interval" default:"1m"  desc:"How often to purge expired cached secret values (default 1m)" type:"duration"`
 }
 
 // PermissionsConfig controls foci-level auto-approval of delegated backend
@@ -988,7 +988,7 @@ type EnvironmentConfig struct {
 }
 
 type SkillsConfig struct {
-	Dir string `toml:"dir"` // shared skills directory (default: $home/shared/skills/)
+	Dir string `toml:"dir" desc:"Directory containing shared skills (default: $home/shared/skills/)"`
 }
 
 type ResourcesConfig struct {
@@ -1018,21 +1018,21 @@ type ToolsConfig struct {
 	SummaryConfig // global summary/tool-result defaults (resolved via Merge with per-agent)
 	ToolConfig    // global tool behavioral defaults (resolved via Merge with per-agent)
 
-	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results"`                                                                                // where to write large tool results (default /tmp/foci/tool-results)
+	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results" desc:"Where to write large tool result files (default /tmp/foci/tool-results)"`
 	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"Number of columns for the tmux terminal window created for running shell commands"`    // tmux window columns on start (default 300)
 	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"Number of rows for the tmux terminal window created for running shell commands"`       // tmux window rows on start (default 30)
 	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"Default number of seconds a shell command may run before it is timed out"`             // default timeout for exec commands in seconds (default 30)
-	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s"`                                                                                                    // timeout for tmux control commands (default "5s")
-	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576"`                                                                                               // max bytes to read from web fetch (default 1048576 = 1MB)
+	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s" desc:"Timeout for tmux control commands (default 5s)" type:"duration"`
+	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576" desc:"Maximum bytes to read from a web fetch result (default 1 MiB)"`
 	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"    default:"450"       desc:"Maximum characters of a tool call's parameters shown in the Telegram preview message"` // max chars for tool call param preview in Telegram (default 450)
-	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval" default:"5m"`                                                                                                    // how often to check tmux RSS (default "5m", "0" disables)
-	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"           default:"10%"`                                                                                                   // warn threshold as % of RAM or absolute (default "10%")
-	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%"`                                                                                                   // critical threshold (default "20%")
-	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%"`                                                                                                   // kill threshold (default "30%")
-	WebSearchMaxUses        int      `toml:"web_search_max_uses"`                                                                                                                        // max searches per API call (0 = unlimited)
+	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval" default:"5m" desc:"How often to check tmux RSS for memory limits (default 5m, 0 disables)" type:"duration"`
+	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"           default:"10%" desc:"RSS threshold to warn about tmux memory use (percentage of RAM or absolute like 2gb; default 10%)"`
+	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%" desc:"RSS threshold for critical tmux memory warning (default 20%)"`
+	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%" desc:"RSS threshold to kill the tmux process (default 30%)"`
+	WebSearchMaxUses        int      `toml:"web_search_max_uses" desc:"Maximum web searches per API call (0 = unlimited)"`
 	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"  desc:"If set, web search results are restricted to these domains (mutually exclusive with the blocked list)"`                                                                                                                 // domain whitelist (mutually exclusive with blocked)
 	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"  desc:"Domains excluded from web search results (mutually exclusive with the allowed list)"`                                                                                                                 // domain blacklist
-	WebFetchMaxUses         int      `toml:"web_fetch_max_uses"`                                                                                                                         // max fetches per API call (0 = unlimited)
+	WebFetchMaxUses         int      `toml:"web_fetch_max_uses" desc:"Maximum web fetches per API call (0 = unlimited)"`
 	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"  desc:"If set, web fetch is restricted to these domains (mutually exclusive with the blocked list)"`                                                                                                                  // domain whitelist
 	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"  desc:"Domains excluded from web fetch (mutually exclusive with the allowed list)"`                                                                                                                  // domain blacklist
 }
@@ -1198,7 +1198,7 @@ type DebugConfig struct {
 }
 
 type Config struct {
-	DataDir            string                    `toml:"data_dir"`   // directory for databases, sessions, state (default: $HOME/data)
+	DataDir            string                    `toml:"data_dir" desc:"Directory for databases, sessions, and state files (default: $HOME/data)"`
 	Notify             NotifyConfig              `toml:"notify"`     // global notification defaults
 	Display            DisplayConfig             `toml:"display"`    // global display defaults
 	Nudge              NudgeConfig               `toml:"nudge"`      // global nudge defaults
@@ -1238,13 +1238,13 @@ type Config struct {
 	Commands           []CommandConfig           `toml:"commands"`
 	MessageTransforms  []MessageTransform        `toml:"message_transforms"`                             // regex find/replace rules applied to inbound messages
 	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`                                  // path prefixes that write/edit tools refuse (with rebuke message)
-	FileMode           string                    `toml:"file_mode"            default:"0640"`            // octal file permissions for workspace/content files (default "0640")
-	WelcomeFile        string                    `toml:"welcome_file"         default:"data/WELCOME.md"` // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
-	Timezone           string                    `toml:"timezone"`                                       // IANA timezone for timestamps (e.g. "Europe/Athens", "UTC", "Local"); empty = machine local
-	MasterAgent        string                    `toml:"master_agent"`                                   // agent that receives system injections not addressed to a specific agent (restart notices, update changelogs); empty = legacy behavior (restart → every agent, changelog → first agent)
-	DefaultPlatform    string                    `toml:"default_platform"`                               // platform preferred when resolving an agent's default session and delivery fallbacks (e.g. "telegram"); per-agent default_platform overrides; empty = most-recently-active platform
-	SkipSecurityChecks bool                      `toml:"skip_security_checks"`                           // if true, skip startup security checks for secrets.toml
-	ShellEnvFile       *string                   `toml:"shell_env_file"`                                 // rc/env file sourced at startup so tool shells inherit the operator's common env; nil = ladder (~/.bashrc → ~/.zshenv → ~/.profile, first present); "" = load nothing; explicit path = that file. backend_config.env overrides on collision.
+	FileMode           string                    `toml:"file_mode"            default:"0640"            desc:"Octal file permissions for workspace and content files (default 0640)"`
+	WelcomeFile        string                    `toml:"welcome_file"         default:"data/WELCOME.md" desc:"Path to welcome/changelog file injected on agent startup"`
+	Timezone           string                    `toml:"timezone"                                       desc:"IANA timezone for timestamps (e.g. Europe/London, UTC); empty = machine local"`
+	MasterAgent        string                    `toml:"master_agent"                                   desc:"Agent that receives system injections not addressed to a specific agent (restart notices, changelogs); empty = legacy behavior"`
+	DefaultPlatform    string                    `toml:"default_platform"                               desc:"Platform preferred when resolving default sessions and delivery fallbacks (e.g. telegram); empty = most-recently-active"`
+	SkipSecurityChecks bool                      `toml:"skip_security_checks"                           desc:"Skip startup security checks for secrets.toml file permissions"`
+	ShellEnvFile       *string                   `toml:"shell_env_file"                                 desc:"Shell rc/env file sourced at startup so tool shells inherit the operator's env; nil = auto-detect (~/.bashrc etc); empty = load nothing"`
 	DefinedKeys        map[string]bool           `toml:"-"`                                              // keys explicitly set in TOML file (populated by Load)
 	SourcePath         string                    `toml:"-"`                                              // absolute-ish path the config was loaded from (populated by Load; used by config editing)
 	UndefinedKeys      []string                  `toml:"-"`                                              // unrecognised TOML keys (populated by Load, logged by caller)
