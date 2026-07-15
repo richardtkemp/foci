@@ -14,10 +14,7 @@ import (
 func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest) error {
 	switch r := req.(type) {
 	case *delegator.SetModelRequest:
-		return b.writer.SendControl(newRequestID(), &SetModelRequest{
-			Subtype: "set_model",
-			Model:   r.Model,
-		})
+		return b.sendSetModel(ctx, r.Model)
 	case *delegator.SetPermissionModeRequest:
 		b.mu.Lock()
 		b.permMode = r.Mode
@@ -56,6 +53,56 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 // ControlSender interface. Convenience method retained for direct callers.
 func (b *Backend) SetModel(ctx context.Context, model string) error {
 	return b.SendControl(ctx, &delegator.SetModelRequest{Model: model})
+}
+
+// sendSetModel sends a set_model control request and waits for CC's
+// control_response, unlike set_permission_mode/apply_flag_settings which are
+// intentionally fire-and-forget. CC validates the model id synchronously
+// (e.g. rejects an unrecognized id) and reports success/failure in the
+// response — without waiting for it, that signal was silently dropped
+// (reqID discarded, OnControlResponse finds no waiter) and /model always
+// reported "switched" even for a bogus model name. See controlResponseInbound
+// for the verified wire shape.
+func (b *Backend) sendSetModel(ctx context.Context, model string) error {
+	reqID := newRequestID()
+
+	ch := make(chan json.RawMessage, 1)
+	b.pendingControlMu.Lock()
+	if b.pendingControls == nil {
+		b.pendingControls = make(map[string]chan json.RawMessage)
+	}
+	b.pendingControls[reqID] = ch
+	b.pendingControlMu.Unlock()
+
+	if err := b.writer.SendControl(reqID, &SetModelRequest{
+		Subtype: "set_model",
+		Model:   model,
+	}); err != nil {
+		b.pendingControlMu.Lock()
+		delete(b.pendingControls, reqID)
+		b.pendingControlMu.Unlock()
+		return fmt.Errorf("send set_model: %w", err)
+	}
+
+	select {
+	case raw := <-ch:
+		var env controlResponseInbound
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return fmt.Errorf("unmarshal set_model control_response: %w", err)
+		}
+		if env.Response.Subtype != "success" {
+			if env.Response.Error != "" {
+				return fmt.Errorf("%s", env.Response.Error)
+			}
+			return fmt.Errorf("set_model returned subtype %q", env.Response.Subtype)
+		}
+		return nil
+	case <-ctx.Done():
+		b.pendingControlMu.Lock()
+		delete(b.pendingControls, reqID)
+		b.pendingControlMu.Unlock()
+		return ctx.Err()
+	}
 }
 
 // Capabilities advertises ccstream's full mid-turn nudge support.

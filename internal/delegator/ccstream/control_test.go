@@ -3,70 +3,107 @@ package ccstream
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 )
 
 // TestSendControl_SetModel verifies that SendControl translates a
-// delegator.SetModelRequest into the correct ccstream wire format.
+// delegator.SetModelRequest into the correct ccstream wire format, and that
+// it now waits for CC's control_response (unlike set_permission_mode /
+// apply_flag_settings, which stay fire-and-forget) so a rejected model is
+// reported back to the caller instead of being optimistically dropped.
 func TestSendControl_SetModel(t *testing.T) {
 	t.Parallel()
 
 	pr, pw := io.Pipe()
+	go func() { _, _ = io.Copy(io.Discard, pr) }() // drain so writer.SendControl doesn't block
+
 	b := &Backend{
-		writer:       NewWriter(pw),
-		pendingPerms: make(map[string]*pendingPermission),
-		outstanding:  delegator.NewOutstandingRegistry(),
+		writer:          NewWriter(pw),
+		pendingControls: make(map[string]chan json.RawMessage),
 	}
 
-	done := make(chan struct{})
-	var line []byte
+	type result struct{ err error }
+	resCh := make(chan result, 1)
 	go func() {
-		defer close(done)
-		buf := make([]byte, 4096)
-		n, _ := pr.Read(buf)
-		line = buf[:n]
+		resCh <- result{b.SendControl(context.Background(), &delegator.SetModelRequest{Model: "opus"})}
 	}()
 
-	err := b.SendControl(context.Background(), &delegator.SetModelRequest{Model: "opus"})
-	if err != nil {
-		t.Fatalf("SendControl: %v", err)
+	reqID := waitForPendingControl(t, b)
+
+	// Simulate CC accepting the model switch.
+	resp := fmt.Sprintf(`{"type":"control_response","response":{"subtype":"success","request_id":"%s"}}`, reqID)
+	b.OnControlResponse(json.RawMessage(resp))
+
+	r := <-resCh
+	if r.err != nil {
+		t.Fatalf("SendControl: %v", r.err)
 	}
 
 	pw.Close()
-	<-done
+}
 
-	// Parse the wire message.
-	var env struct {
-		Type      string          `json:"type"`
-		RequestID string          `json:"request_id"`
-		Request   json.RawMessage `json:"request"`
-	}
-	if err := json.Unmarshal(line, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
-	if env.Type != "control_request" {
-		t.Errorf("type = %q, want %q", env.Type, "control_request")
-	}
-	if env.RequestID == "" {
-		t.Error("request_id is empty")
+// TestSendControl_SetModel_Rejected verifies that when CC rejects a set_model
+// request (e.g. an unrecognized model id), SendControl surfaces CC's own
+// error text instead of reporting success. Wire shape verified live against
+// CC 2026-07-15 — see controlResponseInbound doc comment.
+func TestSendControl_SetModel_Rejected(t *testing.T) {
+	t.Parallel()
+
+	pr, pw := io.Pipe()
+	go func() { _, _ = io.Copy(io.Discard, pr) }()
+
+	b := &Backend{
+		writer:          NewWriter(pw),
+		pendingControls: make(map[string]chan json.RawMessage),
 	}
 
-	var req struct {
-		Subtype string `json:"subtype"`
-		Model   string `json:"model"`
+	type result struct{ err error }
+	resCh := make(chan result, 1)
+	go func() {
+		resCh <- result{b.SendControl(context.Background(), &delegator.SetModelRequest{Model: "this-model-does-not-exist-xyz"})}
+	}()
+
+	reqID := waitForPendingControl(t, b)
+
+	resp := fmt.Sprintf(`{"type":"control_response","response":{"subtype":"error","request_id":"%s","error":%q}}`,
+		reqID, `Model "this-model-does-not-exist-xyz" is not a recognized model id. Run /model to see available models.`)
+	b.OnControlResponse(json.RawMessage(resp))
+
+	r := <-resCh
+	if r.err == nil {
+		t.Fatal("SendControl: got nil error, want the rejected-model error surfaced")
 	}
-	if err := json.Unmarshal(env.Request, &req); err != nil {
-		t.Fatalf("unmarshal request: %v", err)
+	if !strings.Contains(r.err.Error(), "not a recognized model id") {
+		t.Errorf("SendControl error = %q, want it to contain CC's rejection message", r.err.Error())
 	}
-	if req.Subtype != "set_model" {
-		t.Errorf("subtype = %q, want %q", req.Subtype, "set_model")
+
+	pw.Close()
+}
+
+// waitForPendingControl polls until exactly one pendingControls entry is
+// registered (the in-flight set_model request) and returns its request_id.
+func waitForPendingControl(t *testing.T, b *Backend) string {
+	t.Helper()
+	var reqID string
+	for i := 0; i < 100; i++ {
+		time.Sleep(time.Millisecond)
+		b.pendingControlMu.Lock()
+		for k := range b.pendingControls {
+			reqID = k
+		}
+		b.pendingControlMu.Unlock()
+		if reqID != "" {
+			return reqID
+		}
 	}
-	if req.Model != "opus" {
-		t.Errorf("model = %q, want %q", req.Model, "opus")
-	}
+	t.Fatal("set_model didn't register a pending control request")
+	return ""
 }
 
 // TestSendControl_SetPermissionMode verifies that SendControl translates a

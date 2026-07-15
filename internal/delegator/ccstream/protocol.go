@@ -154,12 +154,21 @@ type ControlResponsePayload struct {
 
 // controlResponseInbound is the envelope for control_response messages
 // received FROM CC (responses to our get_context_usage, initialize, etc.).
+//
+// Verified live (2026-07-15, CC via ccstream harness): on subtype=="error" CC
+// puts a human-readable message directly on `error` (a sibling of subtype/
+// request_id) — e.g. set_model with an unrecognized model id responds with
+// {"subtype":"error","request_id":"...","error":"Model \"x\" is not a
+// recognized model id. Run /model to see available models."}. There is no
+// nested `response` payload in that case (unlike the success shape used by
+// get_context_usage, which nests its payload under `response`).
 type controlResponseInbound struct {
 	Type     string `json:"type"` // "control_response"
 	Response struct {
 		Subtype   string          `json:"subtype"` // "success" or "error"
 		RequestID string          `json:"request_id"`
-		Response  json.RawMessage `json:"response"` // subtype-specific payload
+		Error     string          `json:"error,omitempty"` // human-readable message when subtype=="error"
+		Response  json.RawMessage `json:"response"`        // subtype-specific payload (success only)
 	} `json:"response"`
 }
 

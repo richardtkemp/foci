@@ -445,8 +445,14 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 		}
 	}
 
-	// Tell the backend, if one exists and supports control requests.
-	handled, err := a.SendBackendControl(ctx, sessionKey, &delegator.SetModelRequest{Model: rawModel})
+	// Tell the backend, if one exists and supports control requests. set_model
+	// (unlike set_permission_mode/apply_flag_settings) now waits for the
+	// backend's confirmation so a rejected model (e.g. unrecognized id) is
+	// reported to the caller instead of optimistically claiming success —
+	// bound the wait so a wedged backend can't hang the /model command.
+	controlCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	handled, err := a.SendBackendControl(controlCtx, sessionKey, &delegator.SetModelRequest{Model: rawModel})
 	if err != nil {
 		a.logger().Warnf("session=%s backend set_model failed: %v", sessionKey, err)
 		return fmt.Errorf("backend model switch failed: %w", err)
