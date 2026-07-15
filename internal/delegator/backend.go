@@ -417,6 +417,22 @@ type Capabilities struct {
 	Streaming bool
 }
 
+// CapabilitiesForBackend returns the static capabilities for a delegated
+// backend type, keyed by the config [agents].backend name. This is the
+// single source of truth — each backend's Capabilities() method delegates
+// here — so startup checks can query capabilities before any backend
+// instance exists.
+func CapabilitiesForBackend(backendType string) Capabilities {
+	switch backendType {
+	case "claude-code", "claude-code-tmux":
+		return Capabilities{PostToolNudge: true, PreAnswerNudge: true, Streaming: true}
+	case "opencode":
+		return Capabilities{PostToolNudge: false, PreAnswerNudge: false, Streaming: true}
+	default:
+		return Capabilities{}
+	}
+}
+
 // BackendBrancher is optionally implemented by backends that can fork their
 // underlying conversation session into a new, independent backend session —
 // i.e. the backend "can branch". A foci branch key backed by such a fork
