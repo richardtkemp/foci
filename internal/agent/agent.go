@@ -101,7 +101,6 @@ type Agent struct {
 	ExtraSystemBlocks             []provider.SystemBlock                  // additional system blocks (e.g. skills list), injected before cache marker
 	CacheStrategy                 string                                  // "auto" (top-level) or "explicit" (manual breakpoints) — from primary model config
 	CacheBustDetect               bool                                    // detect cache busts (cache_read drop >50%)
-	CacheBustIdleThreshold        time.Duration                           // suppress cache bust alert if session idle > this (default 10m)
 	CacheBustAlert                HookList[CacheBustFunc]                 // callbacks for cache bust alerts
 	DuplicateMessages             bool                                    // send user text twice per API call (improves instruction following)
 	BatchPartialAssistantMessages bool                                    // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
@@ -268,11 +267,8 @@ func (a *Agent) cacheBustDetect() bool {
 	return a.CacheBustDetect
 }
 
-func (a *Agent) cacheBustIdleThreshold() time.Duration {
-	if a.LiveConfigFn != nil {
-		return time.Duration(a.LiveConfigFn().Debug.CacheBustIdleMinutes) * time.Minute
-	}
-	return a.CacheBustIdleThreshold
+func (a *Agent) cacheBustIdleThreshold(sessionKey string) time.Duration {
+	return time.Duration(float64(a.cacheTTLFor(sessionKey)) * 0.95)
 }
 
 func (a *Agent) canRunBackground() string {

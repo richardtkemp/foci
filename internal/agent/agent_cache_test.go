@@ -259,14 +259,14 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 
 	var alerts []string
 	ag := &Agent{
-		Client:                 client,
-		Sessions:               store,
-		Tools:                  registry,
-		Bootstrap:              bootstrap,
-		SessionIndex:           idx,
-		Model:                  "claude-haiku-4-5",
-		CacheBustDetect:        true,
-		CacheBustIdleThreshold: 1 * time.Millisecond, // very short threshold for test
+		Client:           client,
+		Sessions:         store,
+		Tools:            registry,
+		Bootstrap:        bootstrap,
+		SessionIndex:     idx,
+		Model:            "claude-haiku-4-5",
+		CacheBustDetect:  true,
+		ModelDefaultsFn:  func(string) config.ModelDefaults { return config.ModelDefaults{CacheTTL: "1ms"} }, // very short TTL → 95% ≈ 0.95ms idle threshold
 		CacheBustAlert: HookList[CacheBustFunc]{func(session string, prevRead, curRead int) {
 			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
 		}},
