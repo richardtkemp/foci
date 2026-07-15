@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -215,6 +216,89 @@ func TestBackend_Start_ReadyFires(t *testing.T) {
 	}
 	_ = b.Close()
 
+}
+
+func TestBackend_Start_AppliesLaunchModel(t *testing.T) {
+	// Verifies Start sends PATCH /config {"model": opts.Model} when a
+	// model is configured — the opencode equivalent of ccstream's
+	// --model launch flag.
+	var (
+		mu          sync.Mutex
+		configPATCH []byte
+	)
+	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session" && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"sess-model"}`))
+			return
+		}
+		if r.URL.Path == "/config" && r.Method == http.MethodPatch {
+			body, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			configPATCH = body
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID: "test-agent",
+		Model:   "anthropic/claude-sonnet-4-20250514",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(configPATCH) == 0 {
+		t.Fatal("PATCH /config was not sent")
+	}
+	if !strings.Contains(string(configPATCH), `"model":"anthropic/claude-sonnet-4-20250514"`) {
+		t.Errorf("PATCH /config body = %q, want model field", string(configPATCH))
+	}
+	_ = b.Close()
+}
+
+func TestBackend_Start_NoModelPatchWhenEmpty(t *testing.T) {
+	// Verifies Start does NOT send PATCH /config when opts.Model is
+	// empty — lets opencode's own config stand.
+	var (
+		mu           sync.Mutex
+		configPatched bool
+	)
+	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session" && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"sess-no-model"}`))
+			return
+		}
+		if r.URL.Path == "/config" && r.Method == http.MethodPatch {
+			mu.Lock()
+			configPatched = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID: "test-agent",
+		// Model intentionally empty
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if configPatched {
+		t.Error("PATCH /config should not be sent when Model is empty")
+	}
+	_ = b.Close()
 }
 
 func TestBackend_Start_SessionCreateFailure(t *testing.T) {
