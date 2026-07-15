@@ -261,7 +261,7 @@ type CCBackendConfig struct {
 	// (resolved via $PATH). Used by integration tests to point at a stub
 	// binary (bin/cc-stub) that mimics the CC stream-json protocol.
 	// Per-agent backend_config.claude_binary takes precedence if set.
-	ClaudeBinary string `toml:"claude_binary" desc:"Path or name of the claude executable (default: claude via $PATH)"`
+	Binary string `toml:"binary" desc:"Path or name of the backend executable (default: claude via $PATH)"`
 
 	// BackgroundTaskMaxAge bounds how long a spawned background task (an
 	// Agent-tool subagent or a run_in_background Bash) stays tracked without a
@@ -282,12 +282,11 @@ type BackendConfig struct {
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
 	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Write(/tmp/**)). Merged with global [cc_backend] defaults"`
 	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
-	ClaudeBinary      *string           `toml:"claude_binary"      desc:"Path to the claude executable (default: claude via $PATH). Deprecated: use binary"`
+	ClaudeBinary      *string           `toml:"claude_binary"      desc:"Deprecated: use binary"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
 	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`
 	SocketPath        *string           `toml:"socket_path"        desc:"Unix socket path for cctmux backend communication"`
 	Env               map[string]string `toml:"env"                desc:"Environment variables passed to the backend subprocess"`
-	OpencodeBinary    *string           `toml:"opencode_binary"    desc:"Path to the opencode executable (default: opencode via $PATH)"`
 	Hostname          *string           `toml:"hostname"           desc:"Bind address for the opencode serve subprocess (default 127.0.0.1)"`
 	ServerAuth        *string           `toml:"server_auth"        desc:"HTTP basic auth password for the opencode server (empty = no auth)"`
 	LogLevel          *string           `toml:"log_level"          desc:"opencode serve --log-level (empty = INFO)"`
@@ -324,9 +323,6 @@ func (bc BackendConfig) ToMap() map[string]any {
 	}
 	if len(bc.Env) > 0 {
 		m["env"] = bc.Env
-	}
-	if bc.OpencodeBinary != nil {
-		m["opencode_binary"] = *bc.OpencodeBinary
 	}
 	if bc.Hostname != nil {
 		m["hostname"] = *bc.Hostname

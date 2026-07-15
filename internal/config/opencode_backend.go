@@ -10,7 +10,7 @@ type OpencodeBackendConfig struct {
 	// OpencodeBinary overrides the path to the `opencode` executable.
 	// Default "" → "opencode" resolved via $PATH. Integration tests
 	// can point this at a stub binary.
-	OpencodeBinary string `toml:"opencode_binary" desc:"Path to the opencode executable (default: opencode via $PATH)"`
+	Binary string `toml:"binary" desc:"Path to the backend executable (default: opencode via $PATH)"`
 
 	// Hostname is the bind address for the opencode serve subprocess.
 	// Default "127.0.0.1" (loopback only — the server is never exposed

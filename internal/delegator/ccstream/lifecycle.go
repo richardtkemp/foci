@@ -94,7 +94,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// config knob (folded into b.cfg by cmd/foci-gw/agents_delegated.go
 	// from global [cc_backend].claude_binary, with per-agent override).
 	claudeBin := "claude"
-	if v, ok := b.cfg["claude_binary"].(string); ok && v != "" {
+	if v, ok := b.cfg["binary"].(string); ok && v != "" {
 		claudeBin = v
 	}
 

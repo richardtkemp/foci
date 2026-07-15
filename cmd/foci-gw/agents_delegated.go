@@ -79,14 +79,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	//
 	// Folded keys (per-agent values always win):
 	//   allowed_tools — merged (per-agent rules appended to global)
-	//   claude_binary — global default; per-agent override wins
+	//   binary — global default; per-agent override wins
 	if backendName == "claude-code" || backendName == "claude-code-tmux" {
 		merged := p.cfg.CCBackend.MergedAllowedTools(bc.AllowedTools)
 		if merged != "" {
 			bc.AllowedTools = strings.Split(merged, ",")
 		}
-		if bc.ClaudeBinary == nil && p.cfg.CCBackend.ClaudeBinary != "" {
-			bc.ClaudeBinary = &p.cfg.CCBackend.ClaudeBinary
+		if bc.Binary == nil && p.cfg.CCBackend.Binary != "" {
+			bc.Binary = &p.cfg.CCBackend.Binary
 		}
 	}
 
@@ -94,8 +94,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// into the per-agent backend_config so the Backend reads them via
 	// the same keys as ccstream does. Per-agent values always win.
 	if backendName == "opencode" {
-		if bc.OpencodeBinary == nil {
-			bc.OpencodeBinary = &p.cfg.OpencodeBackend.OpencodeBinary
+		if bc.Binary == nil {
+			bc.Binary = &p.cfg.OpencodeBackend.Binary
 		}
 		if bc.Hostname == nil {
 			bc.Hostname = &p.cfg.OpencodeBackend.Hostname
@@ -183,7 +183,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// has no meaning for the API transport. The /login command is gated by
 	// RequiresBackend; this field stays nil for cctmux so that command
 	// reports "unavailable" rather than mis-driving the wrong backend.
-	claudeBin := config.DerefStr(bc.ClaudeBinary)
+	claudeBin := config.DerefStr(bc.Binary)
 	workDir := p.acfg.Workspace
 	triggerRelogin := func(reason, sessionKey string) bool {
 		if !relogin.G.Start() {
@@ -344,7 +344,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// consumes, but RunOnce doesn't see backendConfig — fold it
 			// onto StartOpts so DelegatedManager.RunOnce honours it.
 			ClaudeBinary: func() string {
-				v := config.DerefStr(bc.ClaudeBinary)
+				v := config.DerefStr(bc.Binary)
 				return v
 			}(),
 			// Per-agent backend_config.env propagates to the backend
