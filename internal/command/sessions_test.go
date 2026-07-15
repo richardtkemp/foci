@@ -46,6 +46,18 @@ func addChatSession(t *testing.T, store *session.Store, agentID string, chatID i
 	return key
 }
 
+// indexChatRoot registers an active chat root in the session index so
+// index-based subcommands (list, info, default) see it.
+func indexChatRoot(t *testing.T, ss *session.SessionIndex, agentID string, chatID int64) {
+	t.Helper()
+	ss.Upsert(session.SessionIndexEntry{
+		SessionKey:  session.NewChatSessionKey(agentID, chatID),
+		CreatedAt:   time.Now().UTC(),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+}
+
 // setUsername stores a username in the session index for a given agent+chat.
 func setUsername(t *testing.T, ss *session.SessionIndex, agentID string, chatID int64, username string) {
 	t.Helper()
@@ -100,6 +112,8 @@ func TestSessionsListWithSessions(t *testing.T) {
 	cc, store, ss := sessionsTestCC(t, "test-agent")
 	addChatSession(t, store, "test-agent", 123456789, 42)
 	addChatSession(t, store, "test-agent", 987654321, 10)
+	indexChatRoot(t, ss, "test-agent", 123456789)
+	indexChatRoot(t, ss, "test-agent", 987654321)
 	setUsername(t, ss, "test-agent", 123456789, "alice")
 	setUsername(t, ss, "test-agent", 987654321, "bob")
 	setDefaultChat(t, ss, "test-agent", 123456789)
@@ -514,6 +528,8 @@ func TestSessionsListCurrentMarker(t *testing.T) {
 	cc, store, ss := sessionsTestCC(t, "test-agent")
 	addChatSession(t, store, "test-agent", 111, 5)
 	addChatSession(t, store, "test-agent", 222, 3)
+	indexChatRoot(t, ss, "test-agent", 111)
+	indexChatRoot(t, ss, "test-agent", 222)
 	setDefaultChat(t, ss, "test-agent", 222) // 222 is default
 
 	cmd := SessionsCommand()
@@ -530,6 +546,23 @@ func TestSessionsListCurrentMarker(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, "◉ = current") {
 		t.Errorf("expected legend for ◉, got %q", result.Text)
+	}
+}
+
+// TestSessionsListIndexOnly verifies list shows a CC-backend / app chat that
+// exists only in the index (no <agent>/c<chatID>/root.jsonl on disk) — the case
+// the old filesystem scan missed. Message count is "—" (transcript is CC's).
+func TestSessionsListIndexOnly(t *testing.T) {
+	cc, _, ss := sessionsTestCC(t, "test-agent")
+	indexChatRoot(t, ss, "test-agent", 4117293257876803825)
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "4117293257876803825") {
+		t.Errorf("expected index-only chat listed, got %q", result.Text)
 	}
 }
 
