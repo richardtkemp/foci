@@ -102,6 +102,28 @@ var registry = map[string]map[string]Model{
 		Caching:       true,
 	}},
 
+	// OpenAI-compatible model exposed by the configured runtime.
+	// Keep the existing OpenAI fallback approximation explicit so usage
+	// accounting does not emit an unpriced-model warning.
+	"gpt-5.6-luna": {"": {
+		InputPer1M: 5.00, OutputPer1M: 15.00,
+	}},
+	"gpt-5.6-terra": {"": {
+		InputPer1M: 5.00, OutputPer1M: 15.00,
+	}},
+	"gpt-5.6-sol": {"": {
+		InputPer1M: 5.00, OutputPer1M: 15.00,
+	}},
+	"gpt-5.5": {"": {
+		InputPer1M: 5.00, OutputPer1M: 15.00,
+	}},
+	"gpt-5.4-mini": {"": {
+		InputPer1M: 5.00, OutputPer1M: 15.00,
+	}},
+	"gpt-5.4mini": {"": {
+		InputPer1M: 5.00, OutputPer1M: 15.00,
+	}},
+
 	// Gemini
 	"gemini-2.5-pro": {"": {
 		ContextWindow: 1_000_000,
