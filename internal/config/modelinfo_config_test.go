@@ -247,40 +247,83 @@ func TestModelInfoEntryToModel_ProviderPrefixedNewModel(t *testing.T) {
 	}
 }
 
-func TestApplyModelInfo_ProviderPrefixedOverrideOfBuiltin(t *testing.T) {
+// Provider-prefixed overrides only affect provider-specific lookups.
+// They must NOT change the built-in providerless entry — otherwise a
+// provider-specific price (e.g. openrouter at $99) silently becomes the
+// default for every provider and bare lookup.
+func TestApplyModelInfo_ProviderOverrideDoesNotLeak(t *testing.T) {
 	modelinfo.ResetToBuiltIn()
 
-	// Override a built-in model using a provider-prefixed ID.
-	// The built-in entry is providerless (""); the override should be
-	// registered under "" so bare runtime lookups (Cost("claude-haiku-4-5"))
-	// see the override, not the built-in.
-	newIn := 0.80
-	newOut := 4.00
+	original, _ := modelinfo.Lookup("", "gemini-2.5-flash")
+
+	newIn := 99.0
 	entries := []ModelInfoEntry{
-		{ID: "anthropic/claude-haiku-4-5", InputPer1M: &newIn, OutputPer1M: &newOut},
+		{ID: "openrouter/gemini-2.5-flash", InputPer1M: &newIn},
 	}
 
 	ApplyModelInfo(entries)
 
-	// Bare lookup (no provider prefix) should see the override.
+	// Provider-specific lookup sees the override.
+	m, ok := modelinfo.Lookup("openrouter", "gemini-2.5-flash")
+	if !ok {
+		t.Fatal("openrouter-specific entry not found")
+	}
+	if m.InputPer1M != newIn {
+		t.Errorf("openrouter InputPer1M = %v, want %v", m.InputPer1M, newIn)
+	}
+
+	// Bare lookup still sees the original built-in — NOT the override.
+	m, ok = modelinfo.Lookup("", "gemini-2.5-flash")
+	if !ok {
+		t.Fatal("built-in gemini-2.5-flash missing after provider override")
+	}
+	if m.InputPer1M != original.InputPer1M {
+		t.Errorf("bare InputPer1M = %v, want %v (provider override must not leak to providerless)", m.InputPer1M, original.InputPer1M)
+	}
+
+	// Cost with bare model string uses original built-in pricing.
+	cost := modelinfo.Cost("gemini-2.5-flash", 1_000_000, 0, 0, 0)
+	if cost == newIn {
+		t.Errorf("bare Cost = %v, should NOT be %v (provider override leaked)", cost, newIn)
+	}
+
+	// A different provider's lookup also sees the original built-in.
+	m, ok = modelinfo.Lookup("google", "gemini-2.5-flash")
+	if !ok || m.InputPer1M == newIn {
+		t.Errorf("google provider should see built-in price, not openrouter override")
+	}
+}
+
+// The correct way to override a built-in model for ALL lookups is a bare ID.
+func TestApplyModelInfo_BareOverrideAffectsAllLookups(t *testing.T) {
+	modelinfo.ResetToBuiltIn()
+
+	newIn := 0.80
+	newOut := 4.00
+	entries := []ModelInfoEntry{
+		{ID: "claude-haiku-4-5", InputPer1M: &newIn, OutputPer1M: &newOut},
+	}
+
+	ApplyModelInfo(entries)
+
+	// Bare lookup sees the override.
 	m, ok := modelinfo.Lookup("", "claude-haiku-4-5")
 	if !ok {
 		t.Fatal("providerless entry not found after override")
 	}
 	if m.InputPer1M != newIn {
-		t.Errorf("InputPer1M = %v, want %v (override should be visible to bare lookups)", m.InputPer1M, newIn)
+		t.Errorf("InputPer1M = %v, want %v", m.InputPer1M, newIn)
 	}
 
-	// Cost with bare model string should use overridden pricing.
+	// Cost with bare model string uses overridden pricing.
 	cost := modelinfo.Cost("claude-haiku-4-5", 1_000_000, 0, 0, 0)
 	if cost != newIn {
-		t.Errorf("Cost = %v, want %v (bare lookup should use overridden price)", cost, newIn)
+		t.Errorf("Cost = %v, want %v", cost, newIn)
 	}
 
-	// Cost with provider-prefixed string should also see the override
-	// (it falls back to providerless which now has the override).
+	// Cost with any provider prefix also sees the override (via fallback to "").
 	costPrefixed := modelinfo.Cost("anthropic/claude-haiku-4-5", 1_000_000, 0, 0, 0)
 	if costPrefixed != newIn {
-		t.Errorf("Cost with prefix = %v, want %v", costPrefixed, newIn)
+		t.Errorf("Cost with prefix = %v, want %v (fallback to overridden providerless)", costPrefixed, newIn)
 	}
 }
