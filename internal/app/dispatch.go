@@ -315,6 +315,11 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 			client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: code, Message: msg, Retryable: true})
 			return
 		}
+		// Clear alias_auto: user-set names must not be overwritten by
+		// future backend-generated thread names.
+		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, "alias_auto", ""); err != nil {
+			appLog.Debugf("rename %s: clear alias_auto: %v", f.ConversationID, err)
+		}
 	}
 	h.pushRoster(client)
 }

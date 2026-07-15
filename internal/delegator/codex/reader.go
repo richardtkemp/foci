@@ -185,17 +185,28 @@ func (b *Backend) handleNotification(line []byte, method string) {
 				}
 				b.lg.Infof("codex runtime warning: %s", p.Message)
 				b.fireWarning(p.Message)
-			case "model/rerouted":
-				var p struct {
-					ToModel string `json:"toModel"`
-				}
-				if err := json.Unmarshal(params, &p); err != nil {
-					return
-				}
+		case "model/rerouted":
+			var p struct {
+				ToModel string `json:"toModel"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				return
+			}
+			b.mu.Lock()
+			b.model = p.ToModel
+			b.mu.Unlock()
+			b.lg.Infof("model rerouted to %s", p.ToModel)
+		case "thread/name/updated":
+			var p threadNameUpdatedParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return
+			}
+			if p.ThreadName != nil && *p.ThreadName != "" {
 				b.mu.Lock()
-				b.model = p.ToModel
+				b.threadName = *p.ThreadName
 				b.mu.Unlock()
-				b.lg.Infof("model rerouted to %s", p.ToModel)
+				b.lg.Infof("thread name: %s", *p.ThreadName)
+			}
 			default:
 				b.lg.Debugf("unhandled notification: %s", method)
 			}
