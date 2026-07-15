@@ -229,53 +229,42 @@ func parseFriendlyDuration(s string) (time.Duration, bool) {
 }
 
 func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
-	chatSessions, err := cc.Sessions.ListChatSessions(cc.AgentConfig.ID)
-	if err != nil {
-		return "", fmt.Errorf("list sessions: %w", err)
+	if cc.SessionIndex == nil {
+		return "Session index not available.", nil
 	}
-	if len(chatSessions) == 0 {
+	// Source chats from the session INDEX, not a filesystem scan: CC-delegated /
+	// app chats keep their transcript in the backend's own store and have no
+	// <agent>/c<chatID>/root.jsonl, so ListChatSessions never saw them (the same
+	// blindness that hid them from /sessions default). Chat roots are the c-type
+	// root sessions.
+	entries, err := cc.SessionIndex.Query(session.QueryOptions{
+		AgentID: cc.AgentConfig.ID,
+		Status:  "active",
+	})
+	if err != nil {
+		return "", fmt.Errorf("query sessions: %w", err)
+	}
+
+	type chatRow struct {
+		chatID int64
+		entry  session.SessionIndexEntry
+	}
+	var chats []chatRow
+	for _, e := range entries {
+		sk, err := session.ParseSessionKey(e.SessionKey)
+		if err != nil || !sk.IsRoot() || sk.Type != 'c' {
+			continue
+		}
+		chats = append(chats, chatRow{sk.ChatID(), e})
+	}
+	if len(chats) == 0 {
 		return "No chat sessions yet.", nil
 	}
+	sort.Slice(chats, func(i, j int) bool {
+		return chats[i].entry.LastActivityAt.After(chats[j].entry.LastActivityAt)
+	})
 
-	var defaultChats map[int64]bool
-	if cc.SessionIndex != nil {
-		defaultChats = cc.SessionIndex.DefaultChatIDs(cc.AgentConfig.ID)
-	}
-
-	type row struct {
-		chatID, username, msgs, active, flags string
-	}
-	rows := make([]row, len(chatSessions))
-	for i, cs := range chatSessions {
-		r := row{
-			chatID: strconv.FormatInt(cs.ChatID, 10),
-			msgs:   strconv.Itoa(cs.MessageCount),
-		}
-		// Resolve username from session index
-		if cc.SessionIndex != nil {
-			if username, err := cc.SessionIndex.GetChatMetadataAnyPlatform(cc.AgentConfig.ID, cs.ChatID, "username"); err == nil && username != "" {
-				r.username = "@" + username
-			} else {
-				r.username = "—"
-			}
-		} else {
-			r.username = "—"
-		}
-		if cs.LastActivity.IsZero() {
-			r.active = "—"
-		} else {
-			r.active = cs.LastActivity.Local().Format("15:04")
-		}
-		var flags []string
-		if cs.ChatID == currentChatID {
-			flags = append(flags, "◉")
-		}
-		if defaultChats[cs.ChatID] {
-			flags = append(flags, "★")
-		}
-		r.flags = strings.Join(flags, " ")
-		rows[i] = r
-	}
+	defaultChats := cc.SessionIndex.DefaultChatIDs(cc.AgentConfig.ID)
 
 	cols := []display.Column{
 		{Header: "Chat ID"},
@@ -284,12 +273,41 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 		{Header: "Active"},
 		{Header: ""},
 	}
-	tableRows := make([][]string, len(rows))
-	for i, r := range rows {
-		tableRows[i] = []string{r.chatID, r.username, r.msgs, r.active, r.flags}
+	tableRows := make([][]string, len(chats))
+	for i, c := range chats {
+		username := "—"
+		if u, err := cc.SessionIndex.GetChatMetadataAnyPlatform(cc.AgentConfig.ID, c.chatID, "username"); err == nil && u != "" {
+			username = "@" + u
+		}
+		// Message count comes from the file store, which only backs legacy
+		// file-backed chats — "—" for backend chats whose transcript CC owns.
+		msgs := "—"
+		if cc.Sessions != nil {
+			if mc, _ := cc.Sessions.MessageCount(c.entry.SessionKey); mc > 0 {
+				msgs = strconv.Itoa(mc)
+			}
+		}
+		active := "—"
+		if !c.entry.LastActivityAt.IsZero() {
+			active = display.RelativeTime(c.entry.LastActivityAt)
+		}
+		var flags []string
+		if c.chatID == currentChatID {
+			flags = append(flags, "◉")
+		}
+		if defaultChats[c.chatID] {
+			flags = append(flags, "★")
+		}
+		tableRows[i] = []string{
+			strconv.FormatInt(c.chatID, 10),
+			username,
+			msgs,
+			active,
+			strings.Join(flags, " "),
+		}
 	}
 	return fmt.Sprintf("Sessions — %s (%d)\n\n%s\n◉ = current  ★ = default (keepalive, cron)",
-		cc.AgentConfig.ID, len(chatSessions), display.MarkdownTable(cols, tableRows)), nil
+		cc.AgentConfig.ID, len(chats), display.MarkdownTable(cols, tableRows)), nil
 }
 
 func sessionsDefaultCmd(cc CommandContext, chatID int64) (string, error) {
