@@ -1247,6 +1247,22 @@ func generateGenericShellFunc(t *Tool) string {
 		// normalise it to empty so the reader below fills it from the pipe rather
 		// than sending a literal "-" (#1007).
 		fmt.Fprintf(&b, "  if [ \"$%s\" = \"-\" ]; then %s=\"\"; fi\n", t.StdinParam, t.StdinParam)
+		// Guard: StdinParam set + stdin piped = footgun. The reader below
+		// skips non-empty values, so piped content would be silently
+		// discarded. Error instead. Skipped when --file - already consumed
+		// stdin (then --text is a legitimate caption for the attached file).
+		stdinFlag := strings.ReplaceAll(t.StdinParam, "_", "-")
+		suggestion := fmt.Sprintf(
+			"To send piped content as the message body, omit --%s or use --%s -",
+			stdinFlag, stdinFlag)
+		if hasStdinFile {
+			suggestion += ". To attach piped content as a file, use --file -"
+		}
+		fmt.Fprintf(&b,
+			"  if [ -n \"$%s\" ] && [ ! -t 0 ]%s; then\n"+
+				"    echo \"error: --%s is set but stdin has piped content that will be discarded. %s.\" >&2\n"+
+				"    return 1\n  fi\n",
+			t.StdinParam, extraGuard, stdinFlag, suggestion)
 		fmt.Fprintf(&b, "  if [ -z \"$%s\" ] && [ ! -t 0 ]%s; then\n    %s=\"$(cat)\"\n  fi\n", t.StdinParam, extraGuard, t.StdinParam)
 	}
 
