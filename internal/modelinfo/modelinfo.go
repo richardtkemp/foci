@@ -163,24 +163,6 @@ func Lookup(provider, modelID string) (Model, bool) {
 	return registryLookup(provider, modelID)
 }
 
-// LookupExact returns the model for the exact provider without providerless
-// fallback. Useful for distinguishing direct hits from fallback hits — e.g.
-// when a provider-prefixed config entry overrides a built-in providerless
-// model, Lookup finds it via fallback but LookupExact reports false for the
-// provider-specific slot.
-func LookupExact(provider, modelID string) (Model, bool) {
-	provider = strings.ToLower(provider)
-	modelID = strings.ToLower(stripDateSuffix(modelID))
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	providers := registry[modelID]
-	if providers == nil {
-		return Model{}, false
-	}
-	m, ok := providers[provider]
-	return m, ok
-}
-
 // registryLookup tries a provider-specific entry first, then falls back to the
 // providerless ("") entry. Caller must hold registryMu.
 func registryLookup(provider, bare string) (Model, bool) {

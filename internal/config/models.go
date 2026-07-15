@@ -235,6 +235,12 @@ func (e ModelInfoEntry) toModel() (modelinfo.Model, error) {
 
 // ApplyModelInfo merges [[modelinfo]] config entries into the modelinfo
 // registry. Called from Load() at startup and from the live-apply applier.
+//
+// Provider semantics: a provider-prefixed id (e.g. "openrouter/gemini-2.5-flash")
+// creates a provider-specific entry that only matches lookups carrying that
+// provider prefix. It does NOT affect bare lookups or other providers. To
+// override a built-in model for all lookups, use a bare id (e.g.
+// "claude-haiku-4-5") — that writes to the providerless ("") entry.
 func ApplyModelInfo(entries []ModelInfoEntry) {
 	for _, entry := range entries {
 		m, err := entry.toModel()
@@ -243,21 +249,6 @@ func ApplyModelInfo(entries []ModelInfoEntry) {
 			continue
 		}
 		provider, modelID := SplitDeveloperModel(entry.ID)
-
-		// When a provider-prefixed ID overrides a built-in (providerless)
-		// model, register under "" so bare runtime lookups see the override.
-		// The tell: no provider-specific entry exists (LookupExact misses)
-		// but a providerless one does (the built-in). Without this, the
-		// override would be stored under the provider and invisible to
-		// runtime calls that pass the bare model ID without a prefix.
-		if provider != "" {
-			if _, hasExact := modelinfo.LookupExact(provider, modelID); !hasExact {
-				if _, hasProviderless := modelinfo.LookupExact("", modelID); hasProviderless {
-					provider = ""
-				}
-			}
-		}
-
 		modelinfo.Register(provider, modelID, m)
 	}
 }
