@@ -22,6 +22,9 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	b.mu.Lock()
 	model := b.model
 	b.mu.Unlock()
+	if model != "" {
+		model = "codex/" + model
+	}
 
 	result := &delegator.TurnResult{
 		Text:      b.turnText.String(),
