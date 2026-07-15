@@ -464,14 +464,19 @@ enable_keepalive = true
 
 ### `[[modelinfo]]`
 
-Model registry overrides — pricing, capabilities, and context window for models not in the built-in registry, or partial overrides of existing ones. Each `[[modelinfo]]` block defines one model entry. The `id` is a bare model ID (e.g. `claude-haiku-4-5`, `gemini-2.5-pro`) matching what the registry uses internally.
+Model registry overrides — pricing, capabilities, and context window for models not in the built-in registry, or partial overrides of existing ones. Each `[[modelinfo]]` block defines one model entry.
+
+The `id` can be a bare model ID (e.g. `claude-haiku-4-5`) or a provider-prefixed ID (e.g. `zai-coding-plan/glm-5.2`). Provider semantics:
+
+- **Bare id** — writes to the providerless (`""`) entry. Affects ALL lookups for that model, regardless of provider. This is how you override a built-in model's pricing for everyone.
+- **Provider-prefixed id** — writes to a provider-specific entry. Only affects lookups that carry that provider prefix (e.g. `Cost("openrouter/gemini-2.5-flash")` — but NOT `Cost("gemini-2.5-flash")`). Use this when the same model has different pricing from different providers.
 
 **For new models** (id not in the built-in registry), `context_window`, `input_per_1m`, and `output_per_1m` are required. Capability flags default to `false` and cache pricing to `0.0` when omitted.
 
 **For overrides** (id matches a built-in registry entry), only the fields you specify are changed — the rest keep their built-in values. All fields are optional except `id`.
 
 ```toml
-# Full definition of a new model
+# Full definition of a new model (bare id)
 [[modelinfo]]
 id = "my-custom-model"
 context_window = 200000
@@ -484,16 +489,24 @@ output_per_1m = 5.00
 cache_read_per_1m = 0.10
 cache_write_per_1m = 1.25
 
-# Partial override — just change pricing on an existing model
+# Partial override of a built-in model (bare id → affects all lookups)
 [[modelinfo]]
 id = "claude-haiku-4-5"
 input_per_1m = 0.80
 output_per_1m = 4.00
+
+# Provider-specific entry (only matches lookups with the provider prefix)
+[[modelinfo]]
+id = "zai-coding-plan/glm-5.2"
+context_window = 1000000
+can_thinking = true
+input_per_1m = 0.0
+output_per_1m = 0.0
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `id` | string | *(required)* | Bare model ID (e.g. `claude-haiku-4-5`). Overrides existing entry if present, creates new one if not |
+| `id` | string | *(required)* | Model ID, optionally provider-prefixed (e.g. `claude-haiku-4-5` or `openrouter/gemini-2.5-flash`). Bare id overrides/crates the providerless entry (all lookups); prefixed id creates a provider-specific entry (prefixed lookups only) |
 | `context_window` | int | *(required for new)* | Context window size in tokens |
 | `can_effort` | bool | `false` | Whether the model supports `output_config.effort` |
 | `can_thinking` | bool | `false` | Whether the model supports thinking/reasoning |
