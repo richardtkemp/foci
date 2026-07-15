@@ -385,19 +385,30 @@ func (b *Backend) sendSummarize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return b.postMessage(ctx, "/summarize", body)
+	// /summarize is synchronous: opencode runs the full summarisation LLM
+	// call server-side before returning. This can take 30-60s+ on large
+	// sessions — far longer than the shared client's 30s cap. Use a
+	// deadline-less client and rely on the context (delegatedCompactTimeout,
+	// 5 min) to bound the call.
+	return b.postMessageWithClient(ctx, "/summarize", body, &http.Client{})
 }
 
 // postMessage is the underlying HTTP primitive. URL is the suffix
 // after /session/:id (e.g. "/prompt_async", "/command", "/message").
 func (b *Backend) postMessage(ctx context.Context, suffix string, body []byte) error {
+	return b.postMessageWithClient(ctx, suffix, body, b.httpClient())
+}
+
+// postMessageWithClient is the core HTTP POST; postMessage passes the shared
+// client, callers needing a different timeout pass their own.
+func (b *Backend) postMessageWithClient(ctx context.Context, suffix string, body []byte, client *http.Client) error {
 	url := fmt.Sprintf("%s/session/%s%s", b.server.baseURL, b.sessionID, suffix)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpClient().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		log.NewComponentLogger(b.logComponent()).Warnf("POST %s: %v", suffix, err)
 		return fmt.Errorf("POST %s: %w", suffix, err)
