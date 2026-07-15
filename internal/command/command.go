@@ -55,6 +55,7 @@ const (
 // Command is a slash command that executes outside the agent pipeline.
 type Command struct {
 	Name        string
+	Aliases     []string // accepted in dispatch, not shown in keyboard
 	Description string
 	Category    string
 	Requires    Requires // transport requirement — checked before Execute
@@ -110,6 +111,9 @@ func (r *Registry) Register(cmd *Command) {
 		cmd.buildSubcommandDispatch()
 	}
 	r.commands[cmd.Name] = cmd
+	for _, alias := range cmd.Aliases {
+		r.commands[alias] = cmd
+	}
 }
 
 // buildSubcommandDispatch wires Execute and KeyboardOptions from Subcommands.
