@@ -1344,6 +1344,145 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	}
 }
 
+// TestExecBridgeStdinTextGuard proves that piping into a shell function while
+// also passing --text is caught as an error (the piped content would be
+// silently discarded since --text takes precedence). Also verifies that
+// --file - consuming stdin exempts the case (then --text is a legitimate
+// caption for the attached file).
+func TestExecBridgeStdinTextGuard(t *testing.T) {
+	t.Parallel()
+
+	if _, err := osexec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := osexec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	binDir := t.TempDir()
+	binPath := binDir + "/foci-call"
+	build := osexec.Command("go", "build", "-o", binPath, "foci/cmd/foci-call")
+	build.Dir = findModuleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build foci-call: %v\n%s", err, out)
+	}
+
+	var capturedText string
+	var capturedFile string
+	var mu sync.Mutex
+
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "send_to_chat",
+		ExecExport: true,
+		Positional: []string{"text"},
+		StdinParam: "text",
+		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file":{"type":"string","format":"filepath"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var p struct {
+				Text string `json:"text"`
+				File string `json:"file"`
+			}
+			json.Unmarshal(params, &p)
+			mu.Lock()
+			capturedText = p.Text
+			capturedFile = p.File
+			mu.Unlock()
+			return TextResult("sent"), nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	runBash := func(script string) ([]byte, error) {
+		cmd := osexec.Command("bash", "-c", script)
+		cmd.Env = append(os.Environ(),
+			"FOCI_SOCK="+bridge.SockPath(),
+			"PATH="+binDir+":"+os.Getenv("PATH"),
+		)
+		return cmd.CombinedOutput()
+	}
+
+	// Case 1: pipe + --text → must error.
+	out, err := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; echo 'piped body' | foci_send_to_chat --text 'caption'",
+		bridge.FuncsPath(),
+	))
+	if err == nil {
+		t.Fatalf("expected error for --text + pipe, got success\noutput: %s", out)
+	}
+	if !strings.Contains(string(out), "will be discarded") {
+		t.Errorf("error output missing 'will be discarded'\noutput: %s", out)
+	}
+	if !strings.Contains(string(out), "--file -") {
+		t.Errorf("error output should suggest --file -\noutput: %s", out)
+	}
+
+	// Case 2: pipe + --file - + --text caption → must succeed (caption for
+	// the attached file from stdin).
+	mu.Lock()
+	capturedText = ""
+	capturedFile = ""
+	mu.Unlock()
+	out2, err := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; echo 'file body' | foci_send_to_chat --text 'caption' --file -",
+		bridge.FuncsPath(),
+	))
+	if err != nil {
+		t.Fatalf("--file - + --text should succeed, got error: %v\noutput: %s", err, out2)
+	}
+	mu.Lock()
+	gotText, gotFile := capturedText, capturedFile
+	mu.Unlock()
+	if gotText != "caption" {
+		t.Errorf("text = %q, want %q", gotText, "caption")
+	}
+	if gotFile == "" {
+		t.Error("file path should be set (temp file from stdin)")
+	}
+
+	// Case 3: pipe + --text - → must succeed (explicit stdin read).
+	mu.Lock()
+	capturedText = ""
+	mu.Unlock()
+	out3, err := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; echo 'stdin body' | foci_send_to_chat --text -",
+		bridge.FuncsPath(),
+	))
+	if err != nil {
+		t.Fatalf("--text - should succeed, got error: %v\noutput: %s", err, out3)
+	}
+	mu.Lock()
+	gotText = capturedText
+	mu.Unlock()
+	// echo adds a trailing newline; the captured text should contain "stdin body"
+	if !strings.Contains(gotText, "stdin body") {
+		t.Errorf("text = %q, should contain 'stdin body'", gotText)
+	}
+
+	// Case 4: pipe + no --text → must succeed (stdin auto-populates text).
+	mu.Lock()
+	capturedText = ""
+	mu.Unlock()
+	out4, err := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; echo 'auto body' | foci_send_to_chat",
+		bridge.FuncsPath(),
+	))
+	if err != nil {
+		t.Fatalf("pipe without --text should succeed, got error: %v\noutput: %s", err, out4)
+	}
+	mu.Lock()
+	gotText = capturedText
+	mu.Unlock()
+	if !strings.Contains(gotText, "auto body") {
+		t.Errorf("text = %q, should contain 'auto body'", gotText)
+	}
+}
+
 // TestTodoShellFunc_AppendAliasesResolve runs the generated foci_todo through
 // real bash and asserts every ergonomic append spelling — --note, --append-text,
 // --add, the bare --append boolean, the `update` action alias, and a numeric
