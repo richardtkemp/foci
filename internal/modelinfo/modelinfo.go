@@ -137,18 +137,27 @@ func init() {
 
 // Register adds or overrides a registry entry. Called at startup from
 // config-loaded [[modelinfo]] sections, and at runtime from live-apply.
+// The key is normalized (prefix stripped, lowercased) to match the form used
+// by all registry lookups, so users can write the ID with or without a
+// provider prefix (e.g. "zai-coding-plan/glm-5.2" → "glm-5.2").
 func Register(key string, m Model) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	registry[strings.ToLower(key)] = m
+	registry[normalizeKey(key)] = m
 }
 
 // Lookup returns the model attributes for key and whether it exists.
 func Lookup(key string) (Model, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	m, ok := registry[strings.ToLower(key)]
+	m, ok := registry[normalizeKey(key)]
 	return m, ok
+}
+
+// normalizeKey lowercases and normalizes (strips prefix + date suffix) a
+// registry key, matching the lookup path used by all exported accessors.
+func normalizeKey(key string) string {
+	return strings.ToLower(normalize(key))
 }
 
 // ResetToBuiltIn restores the registry to its hardcoded defaults, discarding
