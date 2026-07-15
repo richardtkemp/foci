@@ -162,7 +162,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// foci bug: 232dc546 turned this into a hard Start failure and broke
 	// every opencode agent whose config model isn't a real opencode id.
 	if opts.Model != "" {
-		binaryPath, _ := b.cfg["opencode_binary"].(string)
+		binaryPath, _ := b.cfg["binary"].(string)
 		resolved, err := b.resolveModelFn(ctx, binaryPath, opts.WorkDir, opts.Model)
 		if err != nil {
 			log.NewComponentLogger(b.logComponent()).Warnf("Start: model %q not resolved by opencode (%v) — using opencode's own default", opts.Model, err)
@@ -391,7 +391,7 @@ func (b *Backend) resumeSession(ctx context.Context, id string) (bool, error) {
 // override the defaults.
 func (b *Backend) serverConfigFromOpts(opts delegator.StartOptions) serverConfig {
 	cfg := defaultServerConfig(opts.WorkDir)
-	if v, ok := b.cfg["opencode_binary"].(string); ok && v != "" {
+	if v, ok := b.cfg["binary"].(string); ok && v != "" {
 		cfg.binaryPath = v
 	}
 	if v, ok := b.cfg["hostname"].(string); ok && v != "" {

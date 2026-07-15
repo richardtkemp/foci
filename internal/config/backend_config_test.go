@@ -22,7 +22,7 @@ claude_binary = "/usr/local/bin/claude"
 idle_timeout = "2h"
 skip_permissions = true
 socket_path = "/tmp/agent.sock"
-opencode_binary = "/opt/opencode/bin/opencode"
+binary = "/opt/opencode/bin/opencode"
 hostname = "0.0.0.0"
 server_auth = "s3cret"
 log_level = "DEBUG"
@@ -46,7 +46,7 @@ CCSTUB_EXIT_CODE = "1"
 	checkStr(t, bc.ClaudeBinary, "/usr/local/bin/claude", "claude_binary")
 	checkStr(t, bc.IdleTimeout, "2h", "idle_timeout")
 	checkStr(t, bc.SocketPath, "/tmp/agent.sock", "socket_path")
-	checkStr(t, bc.OpencodeBinary, "/opt/opencode/bin/opencode", "opencode_binary")
+	checkStr(t, bc.Binary, "/opt/opencode/bin/opencode", "binary")
 	checkStr(t, bc.Hostname, "0.0.0.0", "hostname")
 	checkStr(t, bc.ServerAuth, "s3cret", "server_auth")
 	checkStr(t, bc.LogLevel, "DEBUG", "log_level")
@@ -169,7 +169,7 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 		SkipPermissions:   b(true),
 		SocketPath:        str("/tmp/sock"),
 		Env:               map[string]string{"FOO": "bar"},
-		OpencodeBinary:    str("/opt/oc"),
+		Binary:    str("/opt/oc"),
 		Hostname:          str("127.0.0.1"),
 		ServerAuth:        str("pw"),
 		LogLevel:          str("DEBUG"),
@@ -181,7 +181,7 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 	// String fields.
 	for key, want := range map[string]string{
 		"model": "opus", "claude_binary": "/usr/bin/claude", "idle_timeout": "2h",
-		"socket_path": "/tmp/sock", "opencode_binary": "/opt/oc", "hostname": "127.0.0.1",
+		"socket_path": "/tmp/sock", "binary": "/opt/oc", "hostname": "127.0.0.1",
 		"server_auth": "pw", "log_level": "DEBUG", "default_permission": "ask",
 	} {
 		got, ok := m[key]
@@ -226,7 +226,7 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 	wantKeys := map[string]bool{
 		"model": true, "allowed_tools": true, "claude_binary": true,
 		"idle_timeout": true, "skip_permissions": true, "socket_path": true,
-		"env": true, "opencode_binary": true, "hostname": true,
+		"env": true, "binary": true, "hostname": true,
 		"server_auth": true, "log_level": true, "port": true, "default_permission": true,
 	}
 	if len(m) != len(wantKeys) {
