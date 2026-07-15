@@ -218,6 +218,82 @@ func TestInject_User_Idle_WithAttachments(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Model field format in prompt body
+// ---------------------------------------------------------------------------
+
+func TestPromptBody_ModelField_IsObject(t *testing.T) {
+	// opencode's /prompt_async expects model as {providerID, modelID},
+	// not a bare string. Verifies buildPromptBodyWithAgent splits the
+	// "providerID/modelID" format into the required object.
+	rec := &recordingHandler{}
+	b := newReadyBackend(t, rec)
+	b.mu.Lock()
+	b.model = "zai-coding-plan/glm-5.2"
+	b.mu.Unlock()
+
+	turn := &delegator.TurnEvents{}
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceUser,
+		Text:   "hello",
+		Turn:   turn,
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	req, ok := rec.lastPath("/session/sess-inject/prompt_async")
+	if !ok {
+		t.Fatal("no /prompt_async request recorded")
+	}
+	var body struct {
+		Model *struct {
+			ProviderID string `json:"providerID"`
+			ModelID    string `json:"modelID"`
+		} `json:"model"`
+	}
+	if err := json.Unmarshal(req.Body, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Model == nil {
+		t.Fatal("model field is nil/absent, want {providerID, modelID}")
+	}
+	if body.Model.ProviderID != "zai-coding-plan" {
+		t.Errorf("model.providerID = %q, want zai-coding-plan", body.Model.ProviderID)
+	}
+	if body.Model.ModelID != "glm-5.2" {
+		t.Errorf("model.modelID = %q, want glm-5.2", body.Model.ModelID)
+	}
+}
+
+func TestPromptBody_NoModel_OmitsField(t *testing.T) {
+	// When b.model is empty, the model field must be omitted entirely
+	// so opencode's own config stands.
+	rec := &recordingHandler{}
+	b := newReadyBackend(t, rec)
+	// b.model is "" by default (Start with no model resolution)
+
+	turn := &delegator.TurnEvents{}
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceUser,
+		Text:   "hello",
+		Turn:   turn,
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	req, ok := rec.lastPath("/session/sess-inject/prompt_async")
+	if !ok {
+		t.Fatal("no /prompt_async request recorded")
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(req.Body, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if _, exists := body["model"]; exists {
+		t.Error("model field present in body, want omitted")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // SourceUser mid-turn — queued in steerBuf
 // ---------------------------------------------------------------------------
 
