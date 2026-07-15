@@ -151,15 +151,26 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// opencode's per-message "model" field is the actual runtime model
 	// override (PATCH /config is documented but doesn't take effect on
 	// 1.17.x). Empty = let opencode's own config stand.
+	//
+	// opts.Model is often foci's generic cross-backend default (e.g.
+	// "sonnet") rather than something meant for opencode specifically — CC
+	// accepts that bare name, opencode never did. Unlike the interactive
+	// /model path (SendControl), where an unresolved model is a genuine user
+	// request that should fail loudly, a launch-time default that doesn't
+	// resolve is not a reason to fail Start: fall back to opencode's own
+	// config (opencode.json), matching the pre-validation behavior. See
+	// foci bug: 232dc546 turned this into a hard Start failure and broke
+	// every opencode agent whose config model isn't a real opencode id.
 	if opts.Model != "" {
 		binaryPath, _ := b.cfg["opencode_binary"].(string)
 		resolved, err := b.resolveModelFn(ctx, binaryPath, opts.WorkDir, opts.Model)
 		if err != nil {
-			return fmt.Errorf("opencode: %w", err)
+			log.NewComponentLogger(b.logComponent()).Warnf("Start: model %q not resolved by opencode (%v) — using opencode's own default", opts.Model, err)
+		} else {
+			b.mu.Lock()
+			b.model = resolved
+			b.mu.Unlock()
 		}
-		b.mu.Lock()
-		b.model = resolved
-		b.mu.Unlock()
 	}
 
 	// Resolve and store the system prompt (rebuilt from disk here so a resume/

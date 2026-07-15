@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -275,6 +276,43 @@ func TestBackend_Start_EmptyModel(t *testing.T) {
 	b.mu.Unlock()
 	if model != "" {
 		t.Errorf("b.model = %q, want empty", model)
+	}
+	_ = b.Close()
+}
+
+func TestBackend_Start_UnresolvedModel_FallsBackInsteadOfFailing(t *testing.T) {
+	// Regression: opts.Model is often foci's generic cross-backend default
+	// (e.g. "sonnet") which doesn't name any real opencode model. Start must
+	// not fail in that case — it should fall back to opencode's own config,
+	// exactly as it did before model validation was added. A hard failure
+	// here breaks every opencode agent whose config model isn't a real
+	// opencode id (observed live: scout's daily-prep cron dropped its
+	// message entirely because Start errored on "sonnet").
+	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session" && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"sess-unresolved-model"}`))
+			return
+		}
+		http.NotFound(w, r)
+	})
+	b.resolveModelFn = func(_ context.Context, _, _, model string) (string, error) {
+		return "", fmt.Errorf("model %q not found in opencode models", model)
+	}
+
+	err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID: "test-agent",
+		Model:   "sonnet",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v, want nil (should fall back, not fail)", err)
+	}
+
+	b.mu.Lock()
+	model := b.model
+	b.mu.Unlock()
+	if model != "" {
+		t.Errorf("b.model = %q, want empty (opencode's own default should stand)", model)
 	}
 	_ = b.Close()
 }
