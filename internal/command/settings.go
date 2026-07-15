@@ -40,9 +40,10 @@ func ModelCommand() *Command {
 			if endpoint != "" && format != "" && cc.ClientProvider != nil {
 				provClient = cc.ClientProvider.ResolveEndpointClient(endpoint, format)
 			}
-			// Use the orchestrator that updates metadata AND notifies the backend.
+			// Use the orchestrator that notifies the backend and, once
+			// confirmed, updates metadata. On failure neither happened.
 			if err := cc.Agent.SetModel(ctx, sk, model, endpoint, format, provClient, req.Args); err != nil {
-				return Response{Text: fmt.Sprintf("Model metadata updated to %s but backend switch failed: %v", model, err)}, nil
+				return Response{Text: fmt.Sprintf("Model switch failed: %v", err)}, nil
 			}
 			display := model
 			if endpoint != "" && resolved != nil && endpoint != resolved.Developer {

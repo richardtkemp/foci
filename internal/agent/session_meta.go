@@ -423,12 +423,31 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 	}
 }
 
-// SetModel is the high-level orchestrator for /model. It updates foci's
-// session metadata AND tells the delegated backend (if any) to switch models.
-// rawModel is the user's input (e.g. "opus", "sonnet") — passed verbatim to
-// the backend since CC accepts bare model names.
+// SetModel is the high-level orchestrator for /model. It tells the delegated
+// backend (if any) to switch models FIRST, and only records foci's own
+// session metadata once that's confirmed — rawModel is the user's input
+// (e.g. "opus", "sonnet") — passed verbatim to the backend since CC accepts
+// bare model names.
 func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint, format string, client provider.Client, rawModel string) error {
-	// Always update foci's own tracking.
+	// Tell the backend, if one exists and supports control requests, BEFORE
+	// touching foci's own metadata. set_model (unlike set_permission_mode/
+	// apply_flag_settings) now waits for the backend's confirmation, so a
+	// rejected model (e.g. unrecognized id) must not leave foci's session
+	// metadata claiming a model the backend never actually switched to.
+	// Bound the wait so a wedged backend can't hang the /model command.
+	controlCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	handled, err := a.SendBackendControl(controlCtx, sessionKey, &delegator.SetModelRequest{Model: rawModel})
+	if err != nil {
+		a.logger().Warnf("session=%s backend set_model failed: %v", sessionKey, err)
+		return fmt.Errorf("backend model switch failed: %w", err)
+	}
+	if handled {
+		a.logger().Infof("session=%s model switched via backend to %q", sessionKey, rawModel)
+	}
+
+	// The backend confirmed the switch (or there was none to confirm with,
+	// e.g. plain API-mode agents) — safe to record foci's own tracking now.
 	a.SetSessionModel(sessionKey, model, endpoint, format, client)
 
 	// Only arm modelUserSet if a delegated turn is currently in flight.
@@ -443,22 +462,6 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 			sm.modelUserSet = true
 			a.metaMu.Unlock()
 		}
-	}
-
-	// Tell the backend, if one exists and supports control requests. set_model
-	// (unlike set_permission_mode/apply_flag_settings) now waits for the
-	// backend's confirmation so a rejected model (e.g. unrecognized id) is
-	// reported to the caller instead of optimistically claiming success —
-	// bound the wait so a wedged backend can't hang the /model command.
-	controlCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	handled, err := a.SendBackendControl(controlCtx, sessionKey, &delegator.SetModelRequest{Model: rawModel})
-	if err != nil {
-		a.logger().Warnf("session=%s backend set_model failed: %v", sessionKey, err)
-		return fmt.Errorf("backend model switch failed: %w", err)
-	}
-	if handled {
-		a.logger().Infof("session=%s model switched via backend to %q", sessionKey, rawModel)
 	}
 
 	// Query context usage to get the real context window size and resolved
