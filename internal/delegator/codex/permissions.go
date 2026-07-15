@@ -41,7 +41,7 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 		)
 	} else {
 		b.lg.Warnf("no permission prompt handler, auto-denying command: %s", params.Command)
-		b.respondApproval(rpcID, "deny")
+		b.respondApproval(rpcID, "decline")
 	}
 }
 
@@ -78,7 +78,7 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 		)
 	} else {
 		b.lg.Warnf("no permission prompt handler, auto-denying file change")
-		b.respondApproval(rpcID, "deny")
+		b.respondApproval(rpcID, "decline")
 	}
 }
 
@@ -86,7 +86,7 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 // request from the built-in request_permissions tool.
 func (b *Backend) onPermissionApproval(_ []byte, rpcID int64) {
 	b.lg.Debugf("permission approval request (id=%d), auto-denying", rpcID)
-	b.respondApproval(rpcID, "deny")
+	b.respondApproval(rpcID, "decline")
 }
 
 // respondApproval sends the approval decision back to the app-server.
@@ -124,9 +124,9 @@ func (b *Backend) RespondToPermission(requestID string, allow bool, message stri
 	if !found {
 		return errNoPendingApproval
 	}
-	decision := "allow"
+	decision := "accept"
 	if !allow {
-		decision = "deny"
+		decision = "decline"
 	}
 	b.respondApproval(rpcID, decision)
 	return nil
