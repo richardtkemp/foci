@@ -1260,8 +1260,13 @@ func generateGenericShellFunc(t *Tool) string {
 		}
 		fmt.Fprintf(&b,
 			"  if [ -n \"$%s\" ] && [ ! -t 0 ]%s; then\n"+
-				"    echo \"error: --%s is set but stdin has piped content that will be discarded. %s.\" >&2\n"+
-				"    return 1\n  fi\n",
+				"    local __foci_peek=\"\"\n"+
+				"    __foci_peek=\"$(cat)\"\n"+
+				"    if [ -n \"$__foci_peek\" ]; then\n"+
+				"      echo \"error: --%s is set but stdin has piped content that will be discarded. %s.\" >&2\n"+
+				"      return 1\n"+
+				"    fi\n"+
+				"  fi\n",
 			t.StdinParam, extraGuard, stdinFlag, suggestion)
 		fmt.Fprintf(&b, "  if [ -z \"$%s\" ] && [ ! -t 0 ]%s; then\n    %s=\"$(cat)\"\n  fi\n", t.StdinParam, extraGuard, t.StdinParam)
 	}
