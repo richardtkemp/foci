@@ -1544,8 +1544,8 @@ func TestOnResult_BasicTurnCompletion(t *testing.T) {
 	if completedResult.ToolCalls != 3 {
 		t.Errorf("result.ToolCalls = %d, want 3", completedResult.ToolCalls)
 	}
-	if completedResult.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("result.Model = %q, want %q", completedResult.Model, "claude-sonnet-4-20250514")
+	if completedResult.Model != "claude/claude-sonnet-4-20250514" {
+		t.Errorf("result.Model = %q, want %q", completedResult.Model, "claude/claude-sonnet-4-20250514")
 	}
 	// Per-call usage from lastUsage should be preferred.
 	if completedResult.Usage == nil {
@@ -1846,8 +1846,8 @@ func TestOnResult_SubagentDoesNotOverrideModel(t *testing.T) {
 	if completedResult == nil {
 		t.Fatal("OnTurnComplete was not called")
 	}
-	if completedResult.Model != "claude-opus-4-20250514" {
-		t.Errorf("result.Model = %q, want %q", completedResult.Model, "claude-opus-4-20250514")
+	if completedResult.Model != "claude/claude-opus-4-20250514" {
+		t.Errorf("result.Model = %q, want %q", completedResult.Model, "claude/claude-opus-4-20250514")
 	}
 	// Context window should match the primary model.
 	b.mu.Lock()

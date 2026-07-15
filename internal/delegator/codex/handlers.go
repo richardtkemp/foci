@@ -25,7 +25,6 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	if model != "" {
 		model = "codex/" + model
 	}
-
 	result := &delegator.TurnResult{
 		Text:      b.turnText.String(),
 		ToolCalls: b.turnTools,
