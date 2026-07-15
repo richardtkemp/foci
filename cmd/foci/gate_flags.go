@@ -2,6 +2,59 @@ package main
 
 import "strings"
 
+// flagSpec maps a value-flag (with optional aliases and env vars) to its
+// destination field and JSON wire key. Shared by the if-gate and wait-gate flag
+// sets so parsing, env-defaulting, and body-building are written once.
+type flagSpec struct {
+	name    string
+	aliases []string
+	env     string
+	envAlt  string
+	body    string
+	dst     *string
+}
+
+// tryParseFlagArg consumes one value-flag at args[i] ("--flag value" or
+// "--flag=value"). A bare "--flag" with no value is left for trailing-args
+// handling (consumed=false).
+func tryParseFlagArg(specs []flagSpec, args []string, i int) (consumed bool, next int) {
+	for _, s := range specs {
+		for _, name := range append([]string{s.name}, s.aliases...) {
+			if args[i] == name {
+				if i+1 < len(args) {
+					*s.dst = args[i+1]
+					return true, i + 1
+				}
+				return false, i
+			}
+			if strings.HasPrefix(args[i], name+"=") {
+				*s.dst = args[i][len(name)+1:]
+				return true, i
+			}
+		}
+	}
+	return false, i
+}
+
+// applyFlagEnvDefaults fills any unset flag from its env var(s): flag > env > alt env.
+func applyFlagEnvDefaults(specs []flagSpec) {
+	for _, s := range specs {
+		*s.dst = envDefault(*s.dst, s.env)
+		if s.envAlt != "" {
+			*s.dst = envDefault(*s.dst, s.envAlt)
+		}
+	}
+}
+
+// addFlagsToBody writes each non-empty flag value into the JSON body under its wire key.
+func addFlagsToBody(specs []flagSpec, body map[string]interface{}) {
+	for _, s := range specs {
+		if *s.dst != "" {
+			body[s.body] = *s.dst
+		}
+	}
+}
+
 // gateFlags holds the four activity-gate CLI flag values shared by
 // `foci send`, `foci branch`, and `foci command`. The gate itself is
 // evaluated server-side (checkActivityGate in cmd/foci-gw); these structs
@@ -26,22 +79,8 @@ type gateFlags struct {
 // --if-active / --if-inactive spellings (and FOCI_IF_ACTIVE / FOCI_IF_INACTIVE)
 // are kept as hidden aliases so existing crontabs keep working; the JSON wire
 // key stays if_active/if_inactive (internal contract, invisible to users).
-func (g *gateFlags) specs() []struct {
-	name    string
-	aliases []string
-	env     string
-	envAlt  string
-	body    string
-	dst     *string
-} {
-	return []struct {
-		name    string
-		aliases []string
-		env     string
-		envAlt  string
-		body    string
-		dst     *string
-	}{
+func (g *gateFlags) specs() []flagSpec {
+	return []flagSpec{
 		{"--if-warm", []string{"--if-active"}, "FOCI_IF_WARM", "FOCI_IF_ACTIVE", "if_active", &g.ifWarm},
 		{"--if-cold", []string{"--if-inactive"}, "FOCI_IF_COLD", "FOCI_IF_INACTIVE", "if_inactive", &g.ifCold},
 		{"--if-user-active", nil, "FOCI_IF_USER_ACTIVE", "", "if_user_active", &g.ifUserActive},
@@ -49,53 +88,10 @@ func (g *gateFlags) specs() []struct {
 	}
 }
 
-// tryParseGateArg attempts to consume one activity-gate flag at args[i], in
-// either "--flag value" or "--flag=value" form. Returns consumed=true and the
-// index to continue from (next) when it matched; consumed=false (and the arg
-// is left for the caller to handle) otherwise.
-//
-// A bare "--flag" with no following value is deliberately NOT consumed — it
-// falls through to the caller's trailing-args handling, matching the existing
-// behaviour exercised by TestParseSendFlags ("--if-active without value at
-// end" lands in rest).
 func (g *gateFlags) tryParseGateArg(args []string, i int) (consumed bool, next int) {
-	for _, s := range g.specs() {
-		for _, name := range append([]string{s.name}, s.aliases...) {
-			if args[i] == name {
-				if i+1 < len(args) {
-					*s.dst = args[i+1]
-					return true, i + 1
-				}
-				return false, i // no value → leave for trailing-args handling
-			}
-			if strings.HasPrefix(args[i], name+"=") {
-				*s.dst = args[i][len(name)+1:]
-				return true, i
-			}
-		}
-	}
-	return false, i
+	return tryParseFlagArg(g.specs(), args, i)
 }
 
-// applyEnvDefaults fills any unset gate flag from its env var, precedence
-// flag > canonical env > alias env > empty (mirroring -a/-s/-m for the primary
-// env, with the legacy FOCI_IF_ACTIVE/INACTIVE honoured last).
-func (g *gateFlags) applyEnvDefaults() {
-	for _, s := range g.specs() {
-		*s.dst = envDefault(*s.dst, s.env)
-		if s.envAlt != "" {
-			*s.dst = envDefault(*s.dst, s.envAlt)
-		}
-	}
-}
+func (g *gateFlags) applyEnvDefaults() { applyFlagEnvDefaults(g.specs()) }
 
-// addToBody writes each non-empty gate value into the JSON request body under
-// its wire key (if_active, if_inactive, …). The server reads these keys on the
-// /send, /command, /branch, and /webhook endpoints.
-func (g *gateFlags) addToBody(body map[string]interface{}) {
-	for _, s := range g.specs() {
-		if *s.dst != "" {
-			body[s.body] = *s.dst
-		}
-	}
-}
+func (g *gateFlags) addToBody(body map[string]interface{}) { addFlagsToBody(g.specs(), body) }

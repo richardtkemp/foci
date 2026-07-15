@@ -80,9 +80,19 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 		return inst, ok
 	}
 
-	// Scoped to the RESOLVED target session (not the agent-wide max): the gate
-	// asks "did a human touch THIS session recently", matching what the caller
-	// is about to send to.
+	isUserActive, isSessionActive := buildActivityCheckers(d)
+	gate := func(w http.ResponseWriter, in activityGateInputs) bool {
+		return checkActivityGate(w, in, isUserActive, isSessionActive)
+	}
+
+	return resolveAgent, gate
+}
+
+// buildActivityCheckers returns the user- and session-activity probes used by
+// both the one-shot if-gate and the wait evaluator. Both are scoped to the
+// RESOLVED target session (not the agent-wide max): "did a human/turn touch
+// THIS session recently", matching what the caller is about to send to.
+func buildActivityCheckers(d httpHandlerDeps) (userActivityChecker, sessionActivityChecker) {
 	isUserActive := func(sessionKey string, within time.Duration) bool {
 		if d.sessionIndex == nil {
 			return true
@@ -96,7 +106,6 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 		}
 		return time.Since(last) <= within
 	}
-
 	isSessionActive := func(sessionBase string, within time.Duration) bool {
 		if d.sessionIndex == nil || sessionBase == "" {
 			return false
@@ -107,12 +116,7 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 		}
 		return time.Since(touched) <= within
 	}
-
-	gate := func(w http.ResponseWriter, in activityGateInputs) bool {
-		return checkActivityGate(w, in, isUserActive, isSessionActive)
-	}
-
-	return resolveAgent, gate
+	return isUserActive, isSessionActive
 }
 
 // resolveTargetSession resolves an endpoint's (agent, session-selector) pair
@@ -182,6 +186,12 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			IfUserInactive string `json:"if_user_inactive"`
 			IfActive       string `json:"if_active"`
 			IfInactive     string `json:"if_inactive"`
+			WaitWarm       string `json:"wait_warm"`
+			WaitCold       string `json:"wait_cold"`
+			WaitUserActive string `json:"wait_user_active"`
+			WaitUserInact  string `json:"wait_user_inactive"`
+			WaitTimeout    string `json:"wait_timeout"`
+			WaitNone       bool   `json:"wait_none"`
 			Async          bool   `json:"async"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
@@ -223,6 +233,42 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			Endpoint:       "/send",
 		}) {
 			return
+		}
+
+		// Wait/defer gate. Unless the caller opts out (wait_none) or the caller
+		// gave no gate flag at all — in which case /send defaults to wait_cold=1m
+		// to avoid interleaving with an active session — a wait condition that
+		// does not hold now enqueues the send for later delivery by the sweep
+		// (persisted, restart-surviving) instead of blocking or dropping.
+		wc := waitConds{
+			warm: req.WaitWarm, cold: req.WaitCold,
+			userActive: req.WaitUserActive, userInactive: req.WaitUserInact,
+			timeout: req.WaitTimeout, none: req.WaitNone,
+		}
+		noIfGate := req.IfActive == "" && req.IfInactive == "" && req.IfUserActive == "" && req.IfUserInactive == ""
+		if !wc.none && !wc.any() && noIfGate {
+			wc.cold = "1m"
+		}
+		if !wc.none && wc.any() {
+			isUserActive, isSessionActive := buildActivityCheckers(d)
+			satisfied, err := waitSatisfied(wc, activityGateInputs{
+				AgentID:     inst.id,
+				SessionBase: sessionBase,
+				InFlight:    inst.ag.IsTurnInFlight(sessionBase),
+			}, isUserActive, isSessionActive)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if !satisfied {
+				if d.deferStore != nil {
+					enqueueDeferredSend(w, d, inst.id, sessionKey, req.Text, string(res.Policy), req.Model, wc, rcpt)
+					return
+				}
+				// Store unavailable: degrade to immediate send rather than failing
+				// — a missing queue must not break every defaulted /send.
+				deferLog.Warnf("wait unmet but defer store unavailable — sending now (agent=%s session=%s)", inst.id, sessionKey)
+			}
 		}
 
 		if req.Model != "" {
