@@ -312,6 +312,9 @@ func TodoCommand() *Command {
 			if cc.TodoStore == nil {
 				return Response{Text: "Todo store not configured."}, nil
 			}
+			if strings.TrimSpace(req.Args) == "" {
+				return Response{Text: todoUsage()}, nil
+			}
 			args := parseTodoArgs(req.Args)
 			agentID := cc.AgentConfig.ID
 			format := resolveTodoFormat(cc)
@@ -345,7 +348,7 @@ func TodoCommand() *Command {
 		},
 		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
 			return []KeyboardOption{
-				{Label: "list", Data: ""},
+				{Label: "list", Data: "list"},
 				{Label: "new", Data: "new "},
 				{Label: "stats", Data: "stats"},
 				{Label: "all", Data: "all"},
@@ -353,6 +356,26 @@ func TodoCommand() *Command {
 			}
 		},
 	}
+}
+
+// todoUsage returns the help text listing all available /todo verbs.
+func todoUsage() string {
+	return "Usage: /todo <verb> [args]\n" +
+		"\n" +
+		"  new <text> [p:PRIO] [t:TAG]  Create a new item (aliases: add, create)\n" +
+		"  done <ids>                   Mark done (aliases: complete, finish, close)\n" +
+		"  start <ids>                  Mark started (alias: begin)\n" +
+		"  drop <ids>                   Drop (aliases: cancel, abandon)\n" +
+		"  reopen <ids>                 Reopen\n" +
+		"  edit <id> [fields] [text]    Edit (aliases: update, modify)\n" +
+		"  show <id>                    Full detail (aliases: info, detail)\n" +
+		"  get [filters] [search]       Filter + search\n" +
+		"  search <query>               Full-text search (alias: find)\n" +
+		"  rm <ids>                     Delete (aliases: remove, delete, del)\n" +
+		"  stats [filters]              Counts (alias: summary)\n" +
+		"  list [filters]               List items (aliases: all, active, open, done, …)\n" +
+		"\n" +
+		"Filters: all, open, active, done, started, dropped, t:TAG, p:PRIO, created, updated, priority, reverse, <N> (limit)"
 }
 
 // resolveTodoFormat returns the effective todo list format: "table" or "lines".

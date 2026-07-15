@@ -28,7 +28,7 @@ API cost summary for a time period.
 Context window breakdown — total vs limit, compaction threshold, tokens until compaction, system prompt breakdown by section (environment, workspace files, skills), tool token count, conversation breakdown (user/assistant/tool results), last API call token breakdown.
 
 ### `/todo [subcommand] [args]`
-Manage todo items. Bare `/todo` lists active items sorted by priority (limit 15).
+Manage todo items. Bare `/todo` shows usage (available verbs). Use `/todo list` or `/todo active` to list items.
 
 **Subcommands:**
 
@@ -44,7 +44,7 @@ Manage todo items. Bare `/todo` lists active items sorted by priority (limit 15)
 - `/todo rm <id> [id...]` — hard-delete
 - `/todo stats [filters]` — counts by status and tag
 
-**List filters** (apply to bare `/todo`, `/todo stats`, and the filter side of `/todo get`):
+**List filters** (apply to `/todo list`, `/todo stats`, and the filter side of `/todo get`):
 
 | Filter | Effect |
 |---|---|
