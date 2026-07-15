@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/log"
 )
 
@@ -90,6 +91,7 @@ type Backend struct {
 	// Approvals
 	permMu        sync.Mutex
 	pendingPerms  map[int64]*pendingApproval
+	autoApproveRules []autoapprove.Rule
 
 	// Compaction
 	compactMu       sync.Mutex

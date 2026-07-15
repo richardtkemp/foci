@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/procx"
 )
 
@@ -29,6 +30,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if opts.Label == "" {
 		b.label = opts.AgentID
 	}
+	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
 
 	b.pendingRPC = make(map[int64]chan json.RawMessage)
 	b.pendingPerms = make(map[int64]*pendingApproval)
