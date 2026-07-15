@@ -168,26 +168,37 @@ func (b *Backend) handleNotification(line []byte, method string) {
 			return
 		}
 		b.onReasoningSummaryDelta(&p)
-	default:
-		switch method {
-		case "configWarning":
-			var p configWarningParams
-			if err := json.Unmarshal(params, &p); err != nil {
-				b.lg.Warnf("dropping malformed configWarning: %v", err)
-				return
-			}
-			b.onConfigWarning(&p)
-		case "warning":
-			var p runtimeWarningParams
-			if err := json.Unmarshal(params, &p); err != nil {
-				b.lg.Warnf("dropping malformed warning: %v", err)
-				return
-			}
-			b.lg.Infof("codex runtime warning: %s", p.Message)
-			b.fireWarning(p.Message)
 		default:
-			b.lg.Debugf("unhandled notification: %s", method)
-		}
+			switch method {
+			case "configWarning":
+				var p configWarningParams
+				if err := json.Unmarshal(params, &p); err != nil {
+					b.lg.Warnf("dropping malformed configWarning: %v", err)
+					return
+				}
+				b.onConfigWarning(&p)
+			case "warning":
+				var p runtimeWarningParams
+				if err := json.Unmarshal(params, &p); err != nil {
+					b.lg.Warnf("dropping malformed warning: %v", err)
+					return
+				}
+				b.lg.Infof("codex runtime warning: %s", p.Message)
+				b.fireWarning(p.Message)
+			case "model/rerouted":
+				var p struct {
+					ToModel string `json:"toModel"`
+				}
+				if err := json.Unmarshal(params, &p); err != nil {
+					return
+				}
+				b.mu.Lock()
+				b.model = p.ToModel
+				b.mu.Unlock()
+				b.lg.Infof("model rerouted to %s", p.ToModel)
+			default:
+				b.lg.Debugf("unhandled notification: %s", method)
+			}
 	}
 }
 

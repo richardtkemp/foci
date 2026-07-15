@@ -274,6 +274,7 @@ func (b *Backend) startThread() (string, error) {
 	}
 	b.mu.Lock()
 	b.threadID = tr.Thread.ID
+	b.model = tr.Model
 	b.mu.Unlock()
 
 	b.readyOnce.Do(func() { close(b.readyCh) })

@@ -19,10 +19,15 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	usage := b.stashedUsage
 	b.turnMu.Unlock()
 
+	b.mu.Lock()
+	model := b.model
+	b.mu.Unlock()
+
 	result := &delegator.TurnResult{
 		Text:      b.turnText.String(),
 		ToolCalls: b.turnTools,
 		Usage:     usage,
+		Model:     model,
 	}
 	if params.Turn.Status == "failed" && params.Turn.Error != nil {
 		b.lg.Warnf("turn failed: %s", params.Turn.Error.Message)
