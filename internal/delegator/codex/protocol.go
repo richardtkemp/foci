@@ -57,10 +57,11 @@ type clientInfo struct {
 // --- Thread ---
 
 type threadStartParams struct {
-	Model             string `json:"model,omitempty"`
-	Cwd               string `json:"cwd,omitempty"`
-	Sandbox           string `json:"sandbox,omitempty"`
-	BaseInstructions  string `json:"baseInstructions,omitempty"`
+	Model             string         `json:"model,omitempty"`
+	Cwd               string         `json:"cwd,omitempty"`
+	Sandbox           string         `json:"sandbox,omitempty"`
+	BaseInstructions  string         `json:"baseInstructions,omitempty"`
+	Config            map[string]any `json:"config,omitempty"`
 }
 
 type threadResumeParams struct {
