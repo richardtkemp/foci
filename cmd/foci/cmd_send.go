@@ -11,6 +11,7 @@ type sendFlags struct {
 	session     string
 	model       string // model override (group name, alias, or developer/model_id)
 	gateFlags          // ifWarm / ifCold / ifUserActive / ifUserInactive (TODO #753)
+	waitFlags          // wait-until gates + --no-gate (send only)
 	messageText string // explicit --message-text / -mt
 	messageFile string // explicit --message-file / -mf
 	async       bool   // fire-and-forget mode
@@ -64,6 +65,9 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
 			i = ni
 			consumed = true
+		} else if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+			i = ni
+			consumed = true
 		} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
 			if i+1 < len(args) {
 				flags.messageText = args[i+1]
@@ -104,6 +108,7 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	flags.session = envDefault(flags.session, "FOCI_SESSION")
 	flags.model = envDefault(flags.model, "FOCI_MODEL")
 	flags.gateFlags.applyEnvDefaults()
+	flags.waitFlags.applyEnvDefaults()
 	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
 	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
 	flags.async = envBool(flags.async, "FOCI_ASYNC")
@@ -143,14 +148,22 @@ By default, send is asynchronous (fire-and-forget): the CLI returns immediately
 and the agent's response is delivered to the chat. Use --sync/--wait to block
 until the response is available.
 
-Activity gates (TODO #753):
-  --if-warm / --if-cold consult SESSION cache-warmth — whether THIS session ran a
-    turn (any trigger) within the duration. A turn currently in flight always
-    counts as warm. Use these for keepalives that should yield to running work.
-    (Aliases: --if-active / --if-inactive.)
-  --if-user-active / --if-user-inactive consult USER-attention activity — whether
-    the user themselves messaged this agent within the duration. Use these for
-    nudges that should only fire when the user is engaged (or away).
+Activity gates come in two dispositions on the same conditions (warm/cold/
+user-active/user-inactive):
+  --if-*   SKIP the send if the condition is not met (evaluated once, now).
+  --wait-* DEFER the send until the condition holds, then deliver. Deferred
+           sends are persisted (they survive a gateway restart) and are always
+           async. If the condition never holds, --wait-timeout / --deadline
+           (default 2h) delivers anyway.
+  --if-warm / --if-cold (aliases --if-active / --if-inactive) and their --wait-*
+    counterparts consult SESSION cache-warmth — whether THIS session ran a turn
+    (any trigger) within the duration; a turn in flight always counts as warm.
+  --if-user-* / --wait-user-* consult USER-attention activity — whether the user
+    themselves messaged this agent within the duration.
+
+DEFAULT: a send with NO if/wait flag defaults to --wait-cold 1m, so it waits for
+the session to be idle 1m before delivering (avoids interleaving with active
+work). Use --no-gate to send immediately with no gating.
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
@@ -161,6 +174,12 @@ Flags:
   --if-cold <dur>           Skip if this session has run a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
   --if-user-active <dur>    Skip if user has not touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
   --if-user-inactive <dur>  Skip if user has touched this agent within duration (env: FOCI_IF_USER_INACTIVE)
+  --wait-warm <dur>         Defer until this session is warm (env: FOCI_WAIT_WARM; alias --wait-active)
+  --wait-cold <dur>         Defer until this session is cold (env: FOCI_WAIT_COLD; alias --wait-inactive)
+  --wait-user-active <dur>  Defer until the user has touched this agent within duration (env: FOCI_WAIT_USER_ACTIVE)
+  --wait-user-inactive <dur> Defer until the user has NOT touched this agent within duration (env: FOCI_WAIT_USER_INACTIVE)
+  --wait-timeout <dur>      Max wait before sending anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
+  --no-gate                 Send immediately: no wait default, no gating (env: FOCI_NO_GATE)
   --sync, --wait            Wait for the response (env: FOCI_SYNC)
   --async, --no-wait        Fire-and-forget (default) (env: FOCI_ASYNC)
   -mt, --message-text       Message text (env: FOCI_MESSAGE_TEXT)
@@ -200,6 +219,7 @@ func cmdSend(base string, args []string) error {
 		body["policy"] = "broadcast"
 	}
 	flags.gateFlags.addToBody(body)
+	flags.waitFlags.addToBody(body)
 	if flags.model != "" {
 		body["model"] = flags.model
 	}

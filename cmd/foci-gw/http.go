@@ -15,6 +15,7 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/app"
 	"foci/internal/config"
+	"foci/internal/defersend"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/route"
@@ -35,6 +36,7 @@ type httpHandlerDeps struct {
 	connMgr           platform.ConnectionManager
 	reloadCredentials func() error
 	pprofGate         *atomic.Bool // live-toggle gate for /debug/pprof/*
+	deferStore        *defersend.Store
 }
 
 // checkActivityGate evaluates the four activity gate conditions and returns
@@ -63,25 +65,9 @@ type httpHandlerDeps struct {
 func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
 	isUserActive userActivityChecker, isSessionActive sessionActivityChecker) bool {
 
-	// userActiveWithin: did the user touch this agent within the duration,
-	// OR is a turn currently in flight? In-flight counts as user attention
-	// because the agent is currently engaged — sending another message
-	// would queue behind, which is what --if-user-inactive wants to avoid.
-	userActiveWithin := func(within time.Duration) bool {
-		if in.InFlight {
-			return true
-		}
-		return isUserActive(in.SessionBase, within)
-	}
-
-	// sessionActiveWithin: did this session execute a turn within the
-	// duration, OR is one in flight now?
-	sessionActiveWithin := func(within time.Duration) bool {
-		if in.InFlight {
-			return true
-		}
-		return isSessionActive(in.SessionBase, within)
-	}
+	// The in-flight short-circuit (a running turn counts as active) is applied
+	// inside activityProbes, shared with the wait evaluator.
+	userActiveWithin, sessionActiveWithin := activityProbes(in, isUserActive, isSessionActive)
 
 	// The four if_(user_)?(in)?active gates share one shape: parse the duration,
 	// 400 on a bad value, else skip (with a canned JSON reply) when the activity
@@ -357,8 +343,12 @@ func defaultSessionKey(d httpHandlerDeps, agentID string) string {
 // SessionSink.Emit respectively), so asyncDispatch is the one path where a
 // silencing sentinel reaches the user without an upstream gate unless we apply
 // one here.
-func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
-	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) {
+// deliverBufferedQueued queues a buffered turn on the session's inbox and, when
+// it completes, forwards the (silence-gated) response to the resolved platform
+// connection per policy. Returns false if the inbox is full. Shared by the
+// async /send path and the deferred-send sweep; the caller owns any HTTP reply.
+func deliverBufferedQueued(inst *agentInstance, connMgr platform.ConnectionManager,
+	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy) bool {
 	run := func() {
 		resp, err := runAgentBuffered(ctx, inst.ag, sessionKey, text)
 		if err != nil {
@@ -385,10 +375,15 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 			log.NewComponentLogger(logTag).Errorf("async platform delivery: %v", err)
 		}
 	}
-	if !inst.ag.Enqueue(agent.Envelope{
+	return inst.ag.Enqueue(agent.Envelope{
 		SessionKey: sessionKey,
 		Inject:     &agent.InjectMeta{Trigger: agent.TriggerFromContext(ctx), Run: run},
-	}) {
+	})
+}
+
+func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
+	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) {
+	if !deliverBufferedQueued(inst, connMgr, ctx, sessionKey, text, logTag, silent, policy) {
 		http.Error(w, "session inbox full", http.StatusServiceUnavailable)
 		return
 	}

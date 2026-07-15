@@ -24,6 +24,7 @@ import (
 	"foci/internal/app" // registers the app (FAP WebSocket) messaging provider via init; also SetCacheExpiry
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/defersend"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/modelcaps"
@@ -552,9 +553,17 @@ Subcommands:
 		}
 	}
 
-	mux := http.NewServeMux()
-	pprofGate.Store(config.DerefBool(cfg.Debug.EnablePprof))
-	registerHTTPHandlers(mux, httpHandlerDeps{
+	// Deferred-send queue (wait-until sends) + its background sweep. Persisted so
+	// pending sends survive a restart/deploy.
+	deferStore, err := defersend.NewStore(cfg.DataPath("deferred-sends.db"))
+	if err != nil {
+		mainLog.Errorf("deferred-send store: %v (wait-until sends disabled)", err)
+		deferStore = nil
+	} else {
+		defer func() { _ = deferStore.Close() }()
+	}
+
+	deps := httpHandlerDeps{
 		agents:            agents,
 		agentOrder:        agentOrder,
 		sessionIndex:      si.sessionIndex,
@@ -566,7 +575,18 @@ Subcommands:
 		connMgr:           connMgr,
 		reloadCredentials: reloadCreds,
 		pprofGate:         &pprofGate,
-	})
+		deferStore:        deferStore,
+	}
+
+	if deferStore != nil {
+		isUserActive, isSessionActive := buildActivityCheckers(deps)
+		sweeper := &deferSweeper{store: deferStore, deps: deps, isUserActive: isUserActive, isSessionActive: isSessionActive}
+		go sweeper.run(ctx)
+	}
+
+	mux := http.NewServeMux()
+	pprofGate.Store(config.DerefBool(cfg.Debug.EnablePprof))
+	registerHTTPHandlers(mux, deps)
 
 	addr := fmt.Sprintf("%s:%d", cfg.HTTP.Bind, cfg.HTTP.Port)
 	var httpServer *http.Server

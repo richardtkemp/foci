@@ -203,6 +203,33 @@ func TestParseSendFlagsAsyncSync(t *testing.T) {
 	}
 }
 
+func TestParseSendFlagsWait(t *testing.T) {
+	flags, rest := parseSendFlags([]string{
+		"--wait-cold", "5m", "--wait-active", "30s", "--deadline", "3h", "--no-gate", "hi",
+	})
+	if flags.waitCold != "5m" {
+		t.Errorf("waitCold = %q, want 5m", flags.waitCold)
+	}
+	if flags.waitWarm != "30s" { // --wait-active is the alias for --wait-warm
+		t.Errorf("waitWarm = %q, want 30s", flags.waitWarm)
+	}
+	if flags.waitTimeout != "3h" { // --deadline is the alias for --wait-timeout
+		t.Errorf("waitTimeout = %q, want 3h", flags.waitTimeout)
+	}
+	if !flags.noGate {
+		t.Error("noGate = false, want true")
+	}
+	if len(rest) != 1 || rest[0] != "hi" {
+		t.Errorf("rest = %v, want [hi]", rest)
+	}
+
+	body := map[string]interface{}{}
+	flags.waitFlags.addToBody(body)
+	if body["wait_cold"] != "5m" || body["wait_warm"] != "30s" || body["wait_timeout"] != "3h" || body["wait_none"] != true {
+		t.Errorf("addToBody wire keys wrong: %+v", body)
+	}
+}
+
 // TestParseSendFlagsMessageFlags tests -mt, -mf, --message-text, and --message-file flag parsing.
 func TestParseSendFlagsMessageFlags(t *testing.T) {
 	tests := []struct {
