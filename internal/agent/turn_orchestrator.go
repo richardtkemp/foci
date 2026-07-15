@@ -116,8 +116,12 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// post-turn's completion wait so a later autonomous run falls through to
 	// late-delivery.
 	if router := a.sessionRouter(ts.SessionKey); turnevent.SinkFromContext(ctx) != turnevent.Sink(router) {
+		a.logger().Debugf("session=%s runOrchestratedTurn: router.Register (system turn) (diagnostic instrumentation, #1274)", ts.SessionKey)
 		router.Register(turnevent.SinkFromContext(ctx))
-		defer router.Clear()
+		defer func() {
+			a.logger().Debugf("session=%s runOrchestratedTurn: router.Clear (system turn) (diagnostic instrumentation, #1274)", ts.SessionKey)
+			router.Clear()
+		}()
 	}
 
 	// Phase 4: Post-turn (sync for API, async for delegated)

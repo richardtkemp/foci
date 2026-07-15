@@ -71,8 +71,12 @@ func (a *Agent) RunTurn(
 	// router's late-delivery fallback.
 	dispatchSink := sink
 	if router != nil {
+		a.logger().Debugf("session=%s RunTurn: router.Register (may replace an existing registration, e.g. an in-flight autonomous run) (diagnostic instrumentation, #1274)", sk)
 		router.Register(sink)
-		defer router.Clear()
+		defer func() {
+			a.logger().Debugf("session=%s RunTurn: router.Clear (diagnostic instrumentation, #1274)", sk)
+			router.Clear()
+		}()
 		dispatchSink = router
 	}
 

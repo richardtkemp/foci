@@ -221,6 +221,7 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 		conn = a.ResolveLateConn(sessionKey)
 	}
 	sink, cleanup := a.autonomousTurnSink(conn, sessionKey)
+	a.logger().Debugf("session=%s OpenAutonomousTurn: conn_nil=%v sink_type=%T (diagnostic instrumentation, #1274)", sessionKey, conn == nil, sink)
 
 	// Wrap the sink so intermediate TextBlock events are logged to the
 	// conversation DB (parity with foci-initiated turns, which wrap their
@@ -234,6 +235,7 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 
 	router := a.sessionRouter(sessionKey)
 	router.Register(sink) // synchronous — registered before the run's first delta
+	a.logger().Debugf("session=%s OpenAutonomousTurn: router.Register (diagnostic instrumentation, #1274)", sessionKey)
 
 	t := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ctx := turnevent.WithSink(WithTrigger(context.Background(), "autonomous"), sink)
@@ -249,12 +251,14 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 
 	if !adopter.AdoptRunningTurn(turnEvents) {
 		// A foci-initiated turn raced this open and now owns the run — unwind.
+		a.logger().Debugf("session=%s OpenAutonomousTurn: AdoptRunningTurn declined (turnActive already true) — clearing router.Register from above, abandoning adoption (diagnostic instrumentation, #1274)", sessionKey)
 		router.Clear()
 		if cleanup != nil {
 			cleanup()
 		}
 		return
 	}
+	a.logger().Debugf("session=%s OpenAutonomousTurn: AdoptRunningTurn accepted — sink stays registered until turn completion (diagnostic instrumentation, #1274)", sessionKey)
 
 	sink.Emit(ctx, turnevent.TurnStart{})
 	markDone := a.markInFlight(sessionKey, sink.DeliversToPlatform())
@@ -275,6 +279,7 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 		if cleanup != nil {
 			cleanup()
 		}
+		a.logger().Debugf("session=%s OpenAutonomousTurn: completion — router.Clear (diagnostic instrumentation, #1274)", sessionKey)
 		router.Clear()
 		markDone()
 	}()
