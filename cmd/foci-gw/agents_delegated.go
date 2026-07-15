@@ -215,6 +215,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		ag.ReloginTrigger = triggerRelogin
 	}
 
+	// Shared across all Backends for this agent so main + facet sessions
+	// don't each fire their own first-seen warning for the same account-wide
+	// rate limit.
+	rlThrottle := ccstream.NewRateLimitThrottle()
+
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
@@ -224,6 +229,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				return nil, err
 			}
 			if sb, ok := be.(*ccstream.Backend); ok {
+				sb.SetRateLimitThrottle(rlThrottle)
 				// On a 401, run the automated re-login (#843) via the shared
 				// trigger built above (same path as the manual /login command).
 				sb.SetOnAuthFailure(func(detail string) {

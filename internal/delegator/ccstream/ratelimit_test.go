@@ -7,7 +7,7 @@ import (
 
 func TestOnRateLimit(t *testing.T) {
 	var fires []string
-	b := &Backend{}
+	b := &Backend{rlThrottle: NewRateLimitThrottle()}
 	b.onRateLimited = func(detail string) { fires = append(fires, detail) }
 
 	resets := 1752349800.0
@@ -25,30 +25,37 @@ func TestOnRateLimit(t *testing.T) {
 		t.Fatalf("allowed/nil fired %d warnings, want 0", len(fires))
 	}
 
-	// First warning fires; repeats within the same 5% bucket are throttled.
+	// Off-boundary values (not a multiple of 5%) are silently skipped.
 	b.OnRateLimit(warn(0.81))
 	b.OnRateLimit(warn(0.82))
-	b.OnRateLimit(warn(0.84)) // still bucket 80
+	b.OnRateLimit(warn(0.84))
+	if len(fires) != 0 {
+		t.Fatalf("off-boundary fired %d, want 0", len(fires))
+	}
+
+	// Exactly on a 5% boundary (80%) fires.
+	b.OnRateLimit(warn(0.80))
 	if len(fires) != 1 {
-		t.Fatalf("bucket-80 fired %d, want 1", len(fires))
+		t.Fatalf("boundary 80 fired %d, want 1", len(fires))
 	}
 
-	// Climbing to the next 5% bucket fires again.
-	b.OnRateLimit(warn(0.86)) // bucket 85
+	// Repeat at the same boundary is suppressed.
+	b.OnRateLimit(warn(0.80))
+	if len(fires) != 1 {
+		t.Fatalf("repeat 80 fired %d, want 1", len(fires))
+	}
+
+	// Next boundary (85%) fires again; intermediate values are skipped.
+	b.OnRateLimit(warn(0.85))
+	b.OnRateLimit(warn(0.87)) // off-boundary, skip
 	if len(fires) != 2 {
-		t.Fatalf("bucket-85 fired %d, want 2", len(fires))
+		t.Fatalf("boundary 85 fired %d, want 2", len(fires))
 	}
 
-	// Below 95%, sub-5% climbs within a bucket stay quiet.
-	b.OnRateLimit(warn(0.87))
-	if len(fires) != 2 {
-		t.Fatalf("intra-bucket climb fired %d, want 2", len(fires))
-	}
-
-	// At/above 95% every 1% step is permitted.
+	// At/above 95% every 1% step is a boundary and fires.
 	b.OnRateLimit(warn(0.95))
 	b.OnRateLimit(warn(0.96))
-	b.OnRateLimit(warn(0.96)) // same 1% bucket → throttled
+	b.OnRateLimit(warn(0.96)) // same → throttled
 	b.OnRateLimit(warn(0.97))
 	if len(fires) != 5 {
 		t.Fatalf("near-limit steps fired %d, want 5", len(fires))
@@ -60,7 +67,7 @@ func TestOnRateLimit(t *testing.T) {
 		t.Fatalf("transition fired %d, want 6", len(fires))
 	}
 
-	// A new window (changed resetsAt) re-arms warnings even at a lower bucket.
+	// A new window (changed resetsAt) re-arms warnings.
 	newResets := resets + 18000
 	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{
 		Status: "allowed_warning", RateLimitType: "five_hour", ResetsAt: &newResets, Utilization: ptrTo(0.50),

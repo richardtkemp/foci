@@ -37,6 +37,7 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 		pendingPerms:   make(map[string]*pendingPermission),
 		pendingElicits: make(map[string]*pendingElicitation),
 		outstanding:    delegator.NewOutstandingRegistry(),
+		rlThrottle:     NewRateLimitThrottle(), // per-Backend default; replaced by shared via SetRateLimitThrottle
 	}
 	b.cfg = cfg
 	return b, nil
@@ -156,10 +157,10 @@ type Backend struct {
 	pendingElicits map[string]*pendingElicitation
 
 	// Context tracking (from result/assistant messages)
-	contextWindow        int         // from modelUsage.contextWindow
-	lastModel            string      // from assistant message
-	lastUsage            *TokenUsage // per-call usage from last assistant message
-	rateLimitWarnState   map[string]rateLimitWarnState // OnRateLimit throttle, keyed by status|type (see OnRateLimit)
+	contextWindow int         // from modelUsage.contextWindow
+	lastModel     string      // from assistant message
+	lastUsage     *TokenUsage // per-call usage from last assistant message
+	rlThrottle    *RateLimitThrottle // OnRateLimit throttle; shared per-agent via SetRateLimitThrottle
 
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
