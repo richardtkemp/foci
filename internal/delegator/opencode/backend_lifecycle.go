@@ -147,13 +147,20 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		}
 	}
 
-	// Store the configured model for inclusion in every prompt body.
+	// Resolve and store the model for inclusion in every prompt body.
 	// opencode's per-message "model" field is the actual runtime model
 	// override (PATCH /config is documented but doesn't take effect on
 	// 1.17.x). Empty = let opencode's own config stand.
-	b.mu.Lock()
-	b.model = opts.Model
-	b.mu.Unlock()
+	if opts.Model != "" {
+		binaryPath, _ := b.cfg["opencode_binary"].(string)
+		resolved, err := b.resolveModelFn(ctx, binaryPath, opts.WorkDir, opts.Model)
+		if err != nil {
+			return fmt.Errorf("opencode: %w", err)
+		}
+		b.mu.Lock()
+		b.model = resolved
+		b.mu.Unlock()
+	}
 
 	// Resolve and store the system prompt (rebuilt from disk here so a resume/
 	// compaction-bounce picks up character-file edits). It reaches the model

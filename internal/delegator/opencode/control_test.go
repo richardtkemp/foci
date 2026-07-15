@@ -82,14 +82,17 @@ func (r *controlRecorder) lastAbort() (controlRequest, bool) {
 // ---------------------------------------------------------------------------
 
 func TestSendControl_SetModel(t *testing.T) {
-	// Verifies SetModelRequest stores the model on the Backend for
-	// inclusion in subsequent prompt bodies (per-message "model" field).
-	// PATCH /config is documented but doesn't take effect on opencode
-	// 1.17.x, so the model is applied per-prompt instead.
+	// Verifies SetModelRequest validates and stores the model on the
+	// Backend for inclusion in subsequent prompt bodies (per-message
+	// "model" field). PATCH /config is documented but doesn't take
+	// effect on opencode 1.17.x.
 	b, _ := newControlTestBackend(t)
+	b.resolveModelFn = func(_ context.Context, _, _, model string) (string, error) {
+		return "zai-coding-plan/" + model, nil
+	}
 
 	if err := b.SendControl(context.Background(), &delegator.SetModelRequest{
-		Model: "anthropic/claude-sonnet-4",
+		Model: "glm-5.2",
 	}); err != nil {
 		t.Fatalf("SendControl: %v", err)
 	}
@@ -97,8 +100,8 @@ func TestSendControl_SetModel(t *testing.T) {
 	b.mu.Lock()
 	model := b.model
 	b.mu.Unlock()
-	if model != "anthropic/claude-sonnet-4" {
-		t.Errorf("b.model = %q, want anthropic/claude-sonnet-4", model)
+	if model != "zai-coding-plan/glm-5.2" {
+		t.Errorf("b.model = %q, want zai-coding-plan/glm-5.2", model)
 	}
 }
 

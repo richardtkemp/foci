@@ -26,8 +26,13 @@ import (
 func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest) error {
 	switch r := req.(type) {
 	case *delegator.SetModelRequest:
+		binaryPath, _ := b.cfg["opencode_binary"].(string)
+		resolved, err := b.resolveModelFn(ctx, binaryPath, b.workDir, r.Model)
+		if err != nil {
+			return fmt.Errorf("opencode: %w", err)
+		}
 		b.mu.Lock()
-		b.model = r.Model
+		b.model = resolved
 		b.mu.Unlock()
 		return nil
 

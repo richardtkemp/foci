@@ -142,11 +142,12 @@ func init() {
 // Returns a Backend with initialised channels/maps.
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{
-		cfg:           cfg,
-		readyCh:       make(chan struct{}),
-		pendingPerms:  make(map[string]*pendingPermission),
-		outstanding:   delegator.NewOutstandingRegistry(),
-		compactDoneCh: make(chan struct{}, 1),
+		cfg:            cfg,
+		readyCh:        make(chan struct{}),
+		pendingPerms:   make(map[string]*pendingPermission),
+		outstanding:    delegator.NewOutstandingRegistry(),
+		compactDoneCh:  make(chan struct{}, 1),
+		resolveModelFn: resolveModel,
 	}
 	return b, nil
 }
@@ -161,6 +162,7 @@ type Backend struct {
 	startOpts      delegator.StartOptions // saved at Start for restart/inspection
 	systemPrompt   string                 // resolved system prompt, supplied via POST body "system" field
 	model          string                 // configured model, supplied via POST body "model" field ("" = opencode config default)
+	resolveModelFn func(ctx context.Context, binaryPath, workDir, model string) (string, error) // defaults to resolveModel; overridable in tests
 	readyCh        chan struct{}          // closed when POST /session returns
 	pendingPerms   map[string]*pendingPermission
 	permMu         sync.Mutex
