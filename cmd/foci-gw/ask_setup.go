@@ -24,6 +24,9 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"
 			}
+			if summary != "" {
+				return "✅ " + summary
+			}
 			return "✅ " + choice.Label
 		}, func() {
 			// Expiry: resolve the question as cancelled so the asking session
