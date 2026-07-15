@@ -106,12 +106,14 @@ func (b *Backend) respondApproval(rpcID int64, decision string) {
 }
 
 // RespondToPermission resolves a pending approval by item ID.
-func (b *Backend) RespondToPermission(itemID string, choice string) error {
+// Implements the permResponder interface (same signature as ccstream):
+// RespondToPermission(requestID string, allow bool, message string) error.
+func (b *Backend) RespondToPermission(requestID string, allow bool, message string) error {
 	b.permMu.Lock()
 	var rpcID int64
 	found := false
 	for id, perm := range b.pendingPerms {
-		if perm.itemID == itemID {
+		if perm.itemID == requestID {
 			rpcID = id
 			found = true
 			break
@@ -122,7 +124,11 @@ func (b *Backend) RespondToPermission(itemID string, choice string) error {
 	if !found {
 		return errNoPendingApproval
 	}
-	b.respondApproval(rpcID, choice)
+	decision := "allow"
+	if !allow {
+		decision = "deny"
+	}
+	b.respondApproval(rpcID, decision)
 	return nil
 }
 

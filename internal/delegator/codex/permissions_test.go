@@ -214,7 +214,7 @@ func TestRespondToPermission_ResolvesByItemID(t *testing.T) {
 	b.pendingPerms[200] = &pendingApproval{rpcID: 200, itemID: "item_x", command: "git push"}
 	b.permMu.Unlock()
 
-	if err := b.RespondToPermission("item_x", "deny"); err != nil {
+	if err := b.RespondToPermission("item_x", false, "User denied permission"); err != nil {
 		t.Fatalf("RespondToPermission: %v", err)
 	}
 
@@ -230,7 +230,7 @@ func TestRespondToPermission_UnknownItemID(t *testing.T) {
 	var buf bytes.Buffer
 	b := newPermTestBackend(&buf)
 
-	err := b.RespondToPermission("ghost", "allow")
+	err := b.RespondToPermission("ghost", false, "")
 	if err == nil || !strings.Contains(err.Error(), "no pending approval") {
 		t.Fatalf("expected no-pending error, got %v", err)
 	}
