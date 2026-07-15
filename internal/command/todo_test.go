@@ -390,13 +390,34 @@ func assertTodoArgs(t *testing.T, want, got todoArgs) {
 
 // --- Integration Tests ---
 
+// TestTodoBareShowsUsage verifies that bare /todo (no args) returns usage text,
+// not a list of items.
+func TestTodoBareShowsUsage(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "buy milk", "high", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "Usage: /todo") {
+		t.Errorf("bare /todo should show usage, got: %s", resp.Text)
+	}
+	if contains(resp.Text, "buy milk") {
+		t.Errorf("bare /todo should not list items, got: %s", resp.Text)
+	}
+}
+
 // TestTodoListEmpty verifies that listing with no items returns an appropriate message.
 func TestTodoListEmpty(t *testing.T) {
 	store := newTestTodoStore(t)
 	cc := newTestCC(store)
 	cmd := TodoCommand()
 
-	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	resp, err := cmd.Execute(context.Background(), Request{Args: "active"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +435,7 @@ func TestTodoListWithItems(t *testing.T) {
 	store.Add(testAgent, "buy milk", "high", "")
 	store.Add(testAgent, "buy bread", "low", "")
 
-	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	resp, err := cmd.Execute(context.Background(), Request{Args: "active"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +458,7 @@ func TestTodoListTableFormat(t *testing.T) {
 
 	store.Add(testAgent, "buy milk", "high", "")
 
-	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	resp, err := cmd.Execute(context.Background(), Request{Args: "active"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +475,7 @@ func TestTodoListDefaultFormat(t *testing.T) {
 
 	store.Add(testAgent, "buy milk", "high", "")
 
-	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	resp, err := cmd.Execute(context.Background(), Request{Args: "active"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +495,7 @@ func TestTodoListGlobalFormat(t *testing.T) {
 
 	store.Add(testAgent, "buy milk", "high", "")
 
-	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	resp, err := cmd.Execute(context.Background(), Request{Args: "active"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
