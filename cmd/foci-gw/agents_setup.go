@@ -227,6 +227,15 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		extractor := nudge.NewExtractor(acfg.ID, acfg.Workspace, fileOrder, fileMode, schedOpts.CanPostTool, schedOpts.CanPreAnswer)
 		_, needed := extractor.NeedsExtraction()
 		if needed {
+			// Don't extract while rate-limited — the LLM call would fail
+			// or worsen the limit. Retry on the next NudgeReloadFunc trigger
+			// (next compaction/reset/activity).
+			parentKey := defaultSessionKeyFor(ag, acfg.ID)
+			if limited, reason := ag.SessionRateLimited(parentKey); limited {
+				nudgeLog.Infof("agent %s: skipping nudge extraction — %s", acfg.ID, reason)
+				build()
+				return
+			}
 			go func() {
 				ctx := context.Background()
 
