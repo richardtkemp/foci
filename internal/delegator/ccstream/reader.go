@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -52,17 +53,22 @@ func NewReader(r io.Reader, handler Handler) *Reader {
 	}
 }
 
-// maxTokenSize is the maximum line size the scanner will accept.
-// Tool results can be large, so we use 1MB instead of bufio's default 64KB.
-const maxTokenSize = 1 << 20 // 1MB
+// readerBufSize is the bufio.Reader's initial buffer. Lines larger than this
+// grow the read via ReadBytes rather than failing — so there is no fixed line
+// cap (unlike the old bufio.Scanner, which died with "token too long" on any
+// line over 1MB, e.g. a tool_result inlining a base64 image, #1278).
+const readerBufSize = 64 * 1024
 
 // Run is the blocking read loop. It reads lines from the underlying reader,
 // unmarshals each as NDJSON, and dispatches to the appropriate handler method.
 // It returns when the reader reaches EOF, the context is cancelled, or a
-// scanner error occurs.
+// read error occurs.
+//
+// Uses bufio.Reader.ReadBytes (not bufio.Scanner) so an arbitrarily long NDJSON
+// line is read intact instead of tearing down the backend — CC does emit >1MB
+// stdout lines (a Read tool_result carries the file's base64 image data, #1278).
 func (rd *Reader) Run(ctx context.Context) {
-	scanner := bufio.NewScanner(rd.r)
-	scanner.Buffer(make([]byte, 0, maxTokenSize), maxTokenSize)
+	reader := bufio.NewReaderSize(rd.r, readerBufSize)
 
 	for {
 		// Check context before blocking on the next line. A cancelled
@@ -77,22 +83,19 @@ func (rd *Reader) Run(ctx context.Context) {
 		default:
 		}
 
-		if !scanner.Scan() {
-			// Always notify the handler when the reader exits.
-			// scanner.Err() is nil on clean EOF (process exited),
-			// non-nil on read errors (broken pipe, etc.).
-			// Both cases mean the subprocess is gone — in-flight turns
-			// must be completed and the backend marked as dead.
-			err := scanner.Err()
-			if err == nil {
-				err = io.EOF
-			}
+		line, err := reader.ReadBytes('\n')
+		// ReadBytes returns any data read before an error (e.g. a final line
+		// without a trailing newline at EOF), so dispatch it before handling err.
+		if trimmed := bytes.TrimRight(line, "\r\n"); len(trimmed) > 0 {
+			rd.dispatch(trimmed)
+		}
+		if err != nil {
+			// Clean EOF (process exited) or a read error (broken pipe, etc.) —
+			// both mean the subprocess is gone; in-flight turns must be completed
+			// and the backend marked as dead.
 			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: reader stopped: %w", err))
 			return
 		}
-
-		line := scanner.Bytes()
-		rd.dispatch(line)
 	}
 }
 
@@ -199,12 +202,12 @@ func (rd *Reader) dispatch(line []byte) {
 
 	// Intentionally ignored — protocol informational types.
 	case "user":
-		// Replay messages, only emitted with --replay-user-messages —
-		// which is the echo-of-our-input feature, not a surfacing of
-		// CC's internal tool_result generation. Tool results from CC's
-		// own tool execution never reach stdout; the ccstream path has
-		// no way to fire OnToolEnd (the cctmux session-file watcher
-		// fires it from parsed JSONL instead).
+		// User-role turns echoed on stdout: input replays AND CC's own
+		// tool_results (a Read of an image inlines its base64 here, which is
+		// what makes these lines occasionally exceed 1MB — see Run/#1278).
+		// foci fires OnToolEnd from the foci-cc-hook, not from these, so the
+		// tool display is unaffected; nothing here needs the payload. Skipped
+		// wholesale.
 	case "keep_alive":
 		// Heartbeat — touch activity so the idle/timeout tracker knows the
 		// stream is alive. NOTE: CC never sends keep_alive in --pipe mode

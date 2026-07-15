@@ -183,6 +183,30 @@ func TestReaderMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestReaderOversizedLine(t *testing.T) {
+	t.Parallel()
+
+	// A single line larger than the old 1MB scanner cap (a Read tool_result
+	// inlining a base64 image reaches this size, #1278) must be read intact
+	// instead of killing the reader with "token too long". The line is a
+	// user-role turn (intentionally ignored by dispatch); the assertion is that
+	// the reader survives it and still dispatches the following valid line.
+	big := strings.Repeat("A", 2<<20) // 2MB, over the old cap
+	input := `{"type":"user","message":{"role":"user","content":"` + big + `"}}` + "\n" +
+		`{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":1,"num_turns":1,"result":"ok","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}` + "\n"
+
+	h := &mockHandler{}
+	r := NewReader(strings.NewReader(input), h)
+	r.Run(context.Background())
+
+	if len(h.errors) != 1 || !strings.Contains(h.errors[0].Error(), "EOF") {
+		t.Fatalf("errors = %v, want exactly one EOF (oversized line must not stop the reader)", h.errors)
+	}
+	if len(h.results) != 1 {
+		t.Fatalf("got %d results, want 1 (reader should continue past a >1MB line)", len(h.results))
+	}
+}
+
 func TestReaderEOF(t *testing.T) {
 	t.Parallel()
 
