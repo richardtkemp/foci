@@ -186,7 +186,6 @@ type ResolvedDebug struct {
 	LogAPIKeySuffix      bool
 	MessagesInLog        bool
 	CacheBustDetect      bool
-	CacheBustIdleMinutes int
 }
 
 func resolveDebug(m DebugConfig) ResolvedDebug {
@@ -194,7 +193,6 @@ func resolveDebug(m DebugConfig) ResolvedDebug {
 		LogAPIKeySuffix:      DerefBool(m.LogAPIKeySuffix),
 		MessagesInLog:        DerefBool(m.MessagesInLog),
 		CacheBustDetect:      DerefBool(m.CacheBustDetect),
-		CacheBustIdleMinutes: DerefInt(m.CacheBustIdleMinutes),
 	}
 }
 

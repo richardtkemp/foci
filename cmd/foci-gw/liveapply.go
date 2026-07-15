@@ -145,7 +145,6 @@ var (
 		"agent_loop.max_tool_loops", "agent.loop.max_tool_loops",
 		"agent_loop.streaming", "agent.loop.streaming",
 		"debug.cache_bust_detect", "agent.debug.cache_bust_detect",
-		"debug.cache_bust_idle_minutes", "agent.debug.cache_bust_idle_minutes",
 		"background.can_run_background", "agent.background.can_run_background",
 		"tools.max_result_chars", "agent.tools.max_result_chars",
 		"tools.max_summary_input_chars", "agent.tools.max_summary_input_chars",

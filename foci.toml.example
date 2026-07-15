@@ -249,7 +249,6 @@ system_files = [
 # [agents.debug]
 # messages_in_log = false                 # log user message content (privacy)
 # cache_bust_detect = false               # alert on cache_read drop
-# cache_bust_idle_minutes = 10            # suppress cache bust alert if idle > N minutes
 
 # Per-agent environment overrides (from [environment]):
 # [agents.environment]
@@ -429,7 +428,6 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # log_api_key_suffix = false               # log last 4 chars of API keys on provider calls
 # messages_in_log = false                  # log user message content (privacy)
 # cache_bust_detect = false                # alert on cache_read drop >50% vs previous request
-# cache_bust_idle_minutes = 10             # suppress cache bust alert if idle > N minutes
 
 # ─── HTTP ─────────────────────────────────────────────────────────────
 [http]

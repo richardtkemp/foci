@@ -195,7 +195,6 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Memory.ReindexDebounce = Ptr("2s")
 	cfg.Debug.MessagesInLog = Ptr[bool](true)
 	cfg.Debug.CacheBustDetect = Ptr[bool](true)
-	cfg.Debug.CacheBustIdleMinutes = Ptr[int](10)
 	cfg.Debug.ExtraCcstreamLogging = Ptr[bool](true)
 	cfg.Debug.ExtraTelegramLogging = Ptr[bool](true)
 	cfg.Debug.ExtraInboxLogging = Ptr[bool](true)

@@ -17,7 +17,7 @@ func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *pro
 	// Works for any provider that reports CacheReadInputTokens (Anthropic, OpenAI).
 	// The prevCacheRead > 0 guard ensures we only fire when there was prior cache data.
 	if a.cacheBustDetect() && len(a.CacheBustAlert) > 0 && sm.prevCacheRead > 0 {
-		idleThresh := a.cacheBustIdleThreshold()
+		idleThresh := a.cacheBustIdleThreshold(sessionKey)
 		if idleThresh == 0 {
 			idleThresh = 10 * time.Minute
 		}
