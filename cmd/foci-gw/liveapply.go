@@ -109,6 +109,7 @@ var (
 		"debug.extra_ccstream_logging",
 		"debug.extra_inbox_logging",
 		"debug.extra_telegram_logging",
+		"debug.log_api_key_suffix",
 	}
 
 	liveApplyPeriodicAddrs = []string{
@@ -225,6 +226,7 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 		log.SetExtra("ccstream", config.DerefBool(fresh.Debug.ExtraCcstreamLogging))
 		log.SetExtra("inbox", config.DerefBool(fresh.Debug.ExtraInboxLogging))
 		log.SetExtra("telegram", config.DerefBool(fresh.Debug.ExtraTelegramLogging))
+		log.DebugLogKeySuffix = config.DerefBool(fresh.Debug.LogAPIKeySuffix)
 		return nil
 	})
 
