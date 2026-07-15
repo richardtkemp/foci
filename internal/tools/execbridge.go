@@ -1256,7 +1256,7 @@ func generateGenericShellFunc(t *Tool) string {
 			"To send piped content as the message body, omit --%s or use --%s -",
 			stdinFlag, stdinFlag)
 		if hasStdinFile {
-			suggestion += ". To attach piped content as a file, use --file -"
+			suggestion += ". To attach a file, use --file \\$path"
 		}
 		fmt.Fprintf(&b,
 			"  if [ -n \"$%s\" ] && [ ! -t 0 ]%s; then\n"+

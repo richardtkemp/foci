@@ -1418,8 +1418,8 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	if !strings.Contains(string(out), "will be discarded") {
 		t.Errorf("error output missing 'will be discarded'\noutput: %s", out)
 	}
-	if !strings.Contains(string(out), "--file -") {
-		t.Errorf("error output should suggest --file -\noutput: %s", out)
+	if !strings.Contains(string(out), "--file $path") {
+		t.Errorf("error output should suggest --file $path\noutput: %s", out)
 	}
 
 	// Case 2: pipe + --file - + --text caption → must succeed (caption for
