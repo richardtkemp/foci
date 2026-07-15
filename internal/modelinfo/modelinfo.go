@@ -43,6 +43,7 @@ func noteUnpriced(bare string) {
 
 // Model holds the static attributes of a model.
 type Model struct {
+	Provider        string  // provider qualifier (e.g. "zai-coding-plan"); empty = providerless/built-in
 	ContextWindow   int     // tokens
 	Effort          bool    // supports output_config.effort
 	Thinking        bool    // supports thinking (adaptive/enabled)
@@ -54,110 +55,128 @@ type Model struct {
 	CacheWritePer1M float64 // cost per 1M cache-write tokens
 }
 
-// registry maps bare model IDs to their attributes. Guarded by registryMu:
-// reads from the exported accessors (ContextWindow, Cost, etc.) take RLock;
-// Register and ResetToBuiltIn (live-apply) take Lock. familyPricing is called
-// only from Cost which already holds RLock, so it assumes the caller holds it.
-var registry = map[string]Model{
+// registry maps bare model IDs to provider→Model maps. The "" provider key is
+// the providerless/default entry (all built-in entries). Guarded by registryMu.
+var registry = map[string]map[string]Model{
 	// Anthropic
-	"claude-haiku-4-5": {
+	"claude-haiku-4-5": {"": {
 		ContextWindow: 200_000,
 		Caching:       true,
 		InputPer1M:    1.00, OutputPer1M: 5.00,
 		CacheReadPer1M: 0.10, CacheWritePer1M: 1.25,
-	},
-	"claude-sonnet-4-5": {
+	}},
+	"claude-sonnet-4-5": {"": {
 		ContextWindow: 200_000,
 		Effort:        true, Thinking: true, Caching: true,
 		InputPer1M: 3.00, OutputPer1M: 15.00,
 		CacheReadPer1M: 0.30, CacheWritePer1M: 3.75,
-	},
-	"claude-opus-4-6": {
+	}},
+	"claude-opus-4-6": {"": {
 		ContextWindow: 1_000_000, // 1M with Claude Max subscription
 		Effort:        true, Thinking: true, Speed: true, Caching: true,
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
-	},
-	"claude-opus-4-6[1m]": { // CC reports model with [1m] suffix for Max subscription
+	}},
+	"claude-opus-4-6[1m]": {"": { // CC reports model with [1m] suffix for Max subscription
 		ContextWindow: 1_000_000,
 		Effort:        true, Thinking: true, Speed: true, Caching: true,
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
-	},
-	"claude-fable-5": { // Mythos-class, GA 2026-06-09; tier above Opus
+	}},
+	"claude-fable-5": {"": { // Mythos-class, GA 2026-06-09; tier above Opus
 		ContextWindow: 1_000_000, // full 1M at standard pricing
 		Effort:        true, Thinking: true, Caching: true,
 		InputPer1M: 10.00, OutputPer1M: 50.00,
 		CacheReadPer1M: 1.00, CacheWritePer1M: 12.50,
-	},
+	}},
 
 	// Claude Code backends — default to largest available context window so
 	// we don't trigger spurious compaction before learning the true model.
 	// FinalModel feedback in UpdateSessionMeta corrects this downward if needed.
-	"claude-code-tmux": {
+	"claude-code-tmux": {"": {
 		ContextWindow: 1_000_000,
 		Caching:       true,
-	},
-	"claude-code": {
+	}},
+	"claude-code": {"": {
 		ContextWindow: 1_000_000,
 		Caching:       true,
-	},
+	}},
 
 	// Gemini
-	"gemini-2.5-pro": {
+	"gemini-2.5-pro": {"": {
 		ContextWindow: 1_000_000,
 		InputPer1M:    1.25, OutputPer1M: 10.00,
 		CacheReadPer1M: 0.315,
-	},
-	"gemini-2.5-flash": {
+	}},
+	"gemini-2.5-flash": {"": {
 		ContextWindow: 1_000_000,
 		InputPer1M:    0.15, OutputPer1M: 0.60,
 		CacheReadPer1M: 0.0375,
-	},
-	"gemini-2.0-flash": {
+	}},
+	"gemini-2.0-flash": {"": {
 		ContextWindow: 1_000_000,
 		InputPer1M:    0.10, OutputPer1M: 0.40,
 		CacheReadPer1M: 0.025,
-	},
+	}},
 }
 
 // registryMu guards registry. RLock for reads (accessors), Lock for writes
 // (Register, ResetToBuiltIn via live-apply).
 var registryMu sync.RWMutex
 
-// builtIn is a snapshot of the hardcoded registry taken at init, so live-apply
-// can ResetToBuiltIn and re-apply config overrides from scratch.
-var builtIn = map[string]Model{}
+// builtIn is a deep snapshot of the hardcoded registry taken at init, so
+// live-apply can ResetToBuiltIn and re-apply config overrides from scratch.
+var builtIn = map[string]map[string]Model{}
 
 func init() {
 	for k, v := range registry {
-		builtIn[k] = v
+		builtIn[k] = map[string]Model{}
+		for pk, pv := range v {
+			builtIn[k][pk] = pv
+		}
 	}
 }
 
 // Register adds or overrides a registry entry. Called at startup from
 // config-loaded [[modelinfo]] sections, and at runtime from live-apply.
-// The key is normalized (prefix stripped, lowercased) to match the form used
-// by all registry lookups, so users can write the ID with or without a
-// provider prefix (e.g. "zai-coding-plan/glm-5.2" → "glm-5.2").
-func Register(key string, m Model) {
+// provider may be "" for a providerless (default) entry.
+func Register(provider, modelID string, m Model) {
+	provider = strings.ToLower(provider)
+	modelID = strings.ToLower(stripDateSuffix(modelID))
+	m.Provider = provider
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	registry[normalizeKey(key)] = m
+	if registry[modelID] == nil {
+		registry[modelID] = map[string]Model{}
+	}
+	registry[modelID][provider] = m
 }
 
-// Lookup returns the model attributes for key and whether it exists.
-func Lookup(key string) (Model, bool) {
+// Lookup returns the model attributes for the given provider and model ID and
+// whether it exists. Tries a provider-specific entry first, then falls back to
+// the providerless ("") entry.
+func Lookup(provider, modelID string) (Model, bool) {
+	provider = strings.ToLower(provider)
+	modelID = strings.ToLower(stripDateSuffix(modelID))
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	m, ok := registry[normalizeKey(key)]
-	return m, ok
+	return registryLookup(provider, modelID)
 }
 
-// normalizeKey lowercases and normalizes (strips prefix + date suffix) a
-// registry key, matching the lookup path used by all exported accessors.
-func normalizeKey(key string) string {
-	return strings.ToLower(normalize(key))
+// registryLookup tries a provider-specific entry first, then falls back to the
+// providerless ("") entry. Caller must hold registryMu.
+func registryLookup(provider, bare string) (Model, bool) {
+	providers := registry[bare]
+	if providers == nil {
+		return Model{}, false
+	}
+	if provider != "" {
+		if m, ok := providers[provider]; ok {
+			return m, true
+		}
+	}
+	m, ok := providers[""]
+	return m, ok
 }
 
 // ResetToBuiltIn restores the registry to its hardcoded defaults, discarding
@@ -165,9 +184,13 @@ func normalizeKey(key string) string {
 func ResetToBuiltIn() {
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	registry = make(map[string]Model, len(builtIn))
+	registry = make(map[string]map[string]Model, len(builtIn))
 	for k, v := range builtIn {
-		registry[k] = v
+		inner := make(map[string]Model, len(v))
+		for pk, pv := range v {
+			inner[pk] = pv
+		}
+		registry[k] = inner
 	}
 }
 
@@ -204,6 +227,15 @@ func normalize(model string) string {
 	return stripDateSuffix(stripPrefix(model))
 }
 
+// normalizeParts splits a model string into provider and bare model ID,
+// both lowercased, with date suffix stripped from the bare ID.
+func normalizeParts(model string) (provider, bare string) {
+	if i := strings.IndexByte(model, '/'); i > 0 {
+		return strings.ToLower(model[:i]), strings.ToLower(stripDateSuffix(model[i+1:]))
+	}
+	return "", strings.ToLower(stripDateSuffix(model))
+}
+
 // Normalize strips provider prefixes and date suffixes from a model string,
 // yielding the bare registry key (e.g. "anthropic/claude-opus-4-8-20260528" →
 // "claude-opus-4-8"). Exported so other packages (e.g. modelcaps) key their
@@ -216,9 +248,9 @@ func Normalize(model string) string {
 // Falls back to family defaults: gemini-1.5-* → 2M, gemini-* → 1M,
 // everything else (including claude) → 200k.
 func ContextWindow(model string) int {
-	bare := normalize(model)
+	provider, bare := normalizeParts(model)
 	registryMu.RLock()
-	m, ok := registry[bare]
+	m, ok := registryLookup(provider, bare)
 	registryMu.RUnlock()
 	if ok {
 		return m.ContextWindow
@@ -240,9 +272,9 @@ func ContextWindow(model string) int {
 // Falls back to family defaults: claude-sonnet → effort+thinking,
 // claude-opus → effort+thinking+speed, everything else → none.
 func Capabilities(model string) (effort, thinking, speed bool) {
-	bare := strings.ToLower(normalize(model))
+	provider, bare := normalizeParts(model)
 	registryMu.RLock()
-	m, ok := registry[bare]
+	m, ok := registryLookup(provider, bare)
 	registryMu.RUnlock()
 	if ok {
 		return m.Effort, m.Thinking, m.Speed
@@ -271,9 +303,9 @@ func Capabilities(model string) (effort, thinking, speed bool) {
 // Delegated/claude-code agents have no resolved model and are handled at the
 // call site (they keep keepalive — their backend has its own prompt cache).
 func Caching(model string) bool {
-	bare := strings.ToLower(normalize(model))
+	provider, bare := normalizeParts(model)
 	registryMu.RLock()
-	m, ok := registry[bare]
+	m, ok := registryLookup(provider, bare)
 	registryMu.RUnlock()
 	if ok {
 		return m.Caching
@@ -292,10 +324,10 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 	if IsSynthetic(model) {
 		return 0
 	}
-	bare := normalize(model)
+	provider, bare := normalizeParts(model)
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	m, ok := registry[bare]
+	m, ok := registryLookup(provider, bare)
 	if !ok {
 		m, ok = familyPricing(bare) // caller-holds-lock: Cost holds RLock
 	}
@@ -306,7 +338,7 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 		case IsOpenAI(bare):
 			m = Model{InputPer1M: 5.00, OutputPer1M: 15.00}
 		default:
-			m = registry["claude-haiku-4-5"]
+			m, _ = registryLookup("", "claude-haiku-4-5")
 		}
 	}
 
@@ -320,19 +352,19 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 // familyPricing maps a bare model name to a canonical per-family price entry by
 // family keyword, so pricing tracks the family ("opus costs this much") rather
 // than an exact version string. The canonical entries are the registry's
-// current members of each family.
+// providerless members of each family. Caller must hold registryMu.
 func familyPricing(bare string) (Model, bool) {
 	switch {
 	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
-		return registry["claude-fable-5"], true
+		return registryLookup("", "claude-fable-5")
 	case strings.Contains(bare, "opus"):
-		return registry["claude-opus-4-6"], true
+		return registryLookup("", "claude-opus-4-6")
 	case strings.Contains(bare, "sonnet"):
-		return registry["claude-sonnet-4-5"], true
+		return registryLookup("", "claude-sonnet-4-5")
 	case strings.Contains(bare, "haiku"):
-		return registry["claude-haiku-4-5"], true
+		return registryLookup("", "claude-haiku-4-5")
 	case strings.Contains(bare, "gemini"):
-		return registry["gemini-2.5-flash"], true
+		return registryLookup("", "gemini-2.5-flash")
 	}
 	return Model{}, false
 }
