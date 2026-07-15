@@ -176,10 +176,15 @@ id = "myagent"
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
 # skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
 # backend = "api"                         # "api" (default) or a coding agent: "claude-code", "codex", "opencode"
-# [agents.backend_config]                 # backend-specific settings (see docs/CONFIG.md)
+# [agents.backend_config]                 # backend-specific settings (typed struct — see docs/CONFIG.md)
 # model = "sonnet"                        #   CC model name (omit for default)
 # skip_permissions = true                 #   skip all permission prompts
-# allowed_tools = "Bash,Read,Edit,Write"  #   pre-approve specific tools
+# allowed_tools = ["Bash(git:*)", "Read"] #   pre-approve specific tools (TOML array)
+# claude_binary = ""                      #   override path to claude executable
+# idle_timeout = "3h"                     #   session idle shutdown (default 3h)
+# socket_path = ""                        #   tmux socket override (cctmux only)
+# [agents.backend_config.env]             #   environment variables for the backend subprocess
+# CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 
 # Per-agent overrides (from [defaults.*]):
 [agents.system]
