@@ -297,10 +297,11 @@ some_key = "value"
 		t.Fatal("expected unknown keys, got none")
 	}
 
-	// backend_config.* descendants are free-form and must NOT be flagged.
+	// backend_config is a typed struct — the env sub-table and all scalar
+	// fields are fully decoded, so none should appear as unknown keys.
 	for _, k := range keys {
 		if strings.Contains(k, "backend_config") {
-			t.Errorf("backend_config descendant %q should be skipped, not flagged", k)
+			t.Errorf("backend_config descendant %q should not appear as unknown — struct fully decodes", k)
 		}
 	}
 
