@@ -1131,7 +1131,7 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
 | `backend` | string | `""` | Backend selection. Empty or `"api"` = traditional agent loop (Foci calls API, executes tools). A coding agent name (`"claude-code-tmux"`, `"codex"`, `"opencode"`) delegates entire turns to an external agent subprocess. |
-| `backend_config` | table | `{}` | Backend-specific settings. Interpreted by the backend implementation. See [Coding Agent Backends](#coding-agent-backends). |
+| `backend_config` | table | `{}` | Backend-specific settings (typed struct — see [Coding Agent Backends](#coding-agent-backends)). |
 
 ### Per-agent platform configuration (`[[agents.platforms]]`)
 
@@ -1265,7 +1265,13 @@ workspace = "/home/coder/projects/myapp"
 # model = "sonnet"            # CC model name (optional — omit for CC default)
 # skip_permissions = true     # --dangerously-skip-permissions (no approval prompts)
 # allowed_tools = ["Bash(git:*)", "Read"]  # --allowedTools: per-agent CC permission rules
+# claude_binary = ""          # Override path to claude executable (default: $PATH)
+# idle_timeout = "3h"         # Session idle shutdown duration (default 3h)
 # socket_path = ""            # tmux socket override (empty = default, cctmux only)
+
+# Environment variables passed to the backend subprocess:
+# [agents.backend_config.env]
+# CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 ```
 
 Per-agent `allowed_tools` accepts either a comma-separated string (`"Bash(git:*), Read"`) or a TOML array (`["Bash(git:*)", "Read"]`). It is merged with the global `[cc_backend] default_allowed_tools` list (see below) before launch — you don't need to repeat the defaults here.
