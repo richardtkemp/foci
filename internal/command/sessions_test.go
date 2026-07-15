@@ -212,28 +212,58 @@ func TestSessionsDefaultNoArg(t *testing.T) {
 // including its numeric chat ID, whether it is the default ("Default: yes"),
 // total message count, and the associated @username from the state store.
 func TestSessionsInfo(t *testing.T) {
-	// Verifies that /sessions info shows chat ID, default status, message count, and username.
-	cc, store, ss := sessionsTestCC(t, "test-agent")
-	addChatSession(t, store, "test-agent", 123456789, 42)
-	setUsername(t, ss, "test-agent", 123456789, "alice")
-	setDefaultChat(t, ss, "test-agent", 123456789)
+	// Verifies that /sessions info shows the session_index row joined with all
+	// session_metadata, including unset metadata keys rendered as null/false.
+	cc, _, ss := sessionsTestCC(t, "test-agent")
+	key := session.NewChatSessionKey("test-agent", 123456789)
+	ss.Upsert(session.SessionIndexEntry{
+		SessionKey:  key,
+		CreatedAt:   time.Now().UTC(),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+	if err := ss.SetSessionMetadata(key, "model", "claude-opus-4-8"); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := SessionsCommand()
 	result, err := cmd.Execute(context.Background(), Request{Args: "info", ChatID: 123456789}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, "Chat ID: 123456789") {
-		t.Errorf("expected chat ID, got %q", result.Text)
+	// Index row columns present.
+	for _, want := range []string{key, "session_type", "chat", "status", "active"} {
+		if !strings.Contains(result.Text, want) {
+			t.Errorf("expected index field %q, got %q", want, result.Text)
+		}
 	}
-	if !strings.Contains(result.Text, "Default: yes") {
-		t.Errorf("expected default yes, got %q", result.Text)
+	// A set metadata key shows its value.
+	if !strings.Contains(result.Text, "meta:model") || !strings.Contains(result.Text, "claude-opus-4-8") {
+		t.Errorf("expected set metadata, got %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "Messages: 42") {
-		t.Errorf("expected message count, got %q", result.Text)
+	// An unset boolean key renders as false; an unset string key as null.
+	if !strings.Contains(result.Text, "meta:no_compact") {
+		t.Errorf("expected unset no_compact row, got %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "@alice") {
-		t.Errorf("expected username, got %q", result.Text)
+	if !strings.Contains(result.Text, "meta:effort") {
+		t.Errorf("expected unset effort row, got %q", result.Text)
+	}
+}
+
+// TestSessionsInfoBackendOnly verifies info handles a chat with no index row
+// (the CC-backend / brand-new case) by still listing all metadata keys.
+func TestSessionsInfoBackendOnly(t *testing.T) {
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "info", ChatID: 42}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "no row") {
+		t.Errorf("expected backend-only note, got %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "meta:model") {
+		t.Errorf("expected metadata keys listed, got %q", result.Text)
 	}
 }
 
@@ -254,22 +284,29 @@ func TestSessionsInfoNoChatID(t *testing.T) {
 	}
 }
 
-// TestSessionsInfoNonDefault verifies that "info" shows "Default: no" when the
-// current chat is not the one stored as the agent's default, by setting the
-// default to a different chat ID than the one being queried.
-func TestSessionsInfoNonDefault(t *testing.T) {
-	// Verifies that /sessions info shows "Default: no" when the current chat is not the default.
-	cc, store, ss := sessionsTestCC(t, "test-agent")
-	addChatSession(t, store, "test-agent", 123456789, 5)
-	setDefaultChat(t, ss, "test-agent", 999)
+// TestSessionsInfoBySessionKey verifies "info" resolves the request's
+// SessionKey directly (e.g. a facet/branch) rather than deriving it from ChatID.
+func TestSessionsInfoBySessionKey(t *testing.T) {
+	cc, _, ss := sessionsTestCC(t, "test-agent")
+	key := "test-agent/c123/b1700000000"
+	ss.Upsert(session.SessionIndexEntry{
+		SessionKey:       key,
+		CreatedAt:        time.Now().UTC(),
+		ParentSessionKey: "test-agent/c123",
+		SessionType:      session.SessionTypeFacet,
+		Status:           session.SessionStatusActive,
+	})
 
 	cmd := SessionsCommand()
-	result, err := cmd.Execute(context.Background(), Request{Args: "info", ChatID: 123456789}, cc)
+	result, err := cmd.Execute(context.Background(), Request{Args: "info", SessionKey: key, ChatID: 123}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, "Default: no") {
-		t.Errorf("expected default no, got %q", result.Text)
+	if !strings.Contains(result.Text, key) {
+		t.Errorf("expected info for %q, got %q", key, result.Text)
+	}
+	if !strings.Contains(result.Text, "facet") {
+		t.Errorf("expected facet type, got %q", result.Text)
 	}
 }
 
@@ -748,13 +785,13 @@ func TestSessionsIndexRelativeTime(t *testing.T) {
 // MaxAge like "2d") without interference between them.
 func TestParseIndexArgsCount(t *testing.T) {
 	// Verifies that parseIndexArgs recognizes a plain number as MaxCount.
-	opts := parseIndexArgs([]string{"5"})
+	opts := parseIndexArgs([]string{"5"}, "test-agent", "test-agent/c1", nil)
 	if opts.MaxCount != 5 {
 		t.Errorf("expected MaxCount=5, got %d", opts.MaxCount)
 	}
 
 	// Combined with other filters
-	opts = parseIndexArgs([]string{"chat", "all", "3", "2d"})
+	opts = parseIndexArgs([]string{"chat", "all", "3", "2d"}, "test-agent", "test-agent/c1", nil)
 	if opts.MaxCount != 3 {
 		t.Errorf("expected MaxCount=3, got %d", opts.MaxCount)
 	}
@@ -786,5 +823,105 @@ func TestSessionsListError(t *testing.T) {
 	_, err := cmd.Execute(context.Background(), Request{Args: "default 111"}, cc)
 	if err == nil {
 		t.Fatal("expected error when SessionIndex is nil for set default")
+	}
+}
+
+// TestSessionsDefaultIndexOnly reproduces the reported bug: a CC-backend / app
+// chat exists only in the session index (no <agent>/c<chatID>/root.jsonl on
+// disk), and the old ListChatSessions-based check reported "No session found"
+// even from the active session. The index-based check must accept it.
+func TestSessionsDefaultIndexOnly(t *testing.T) {
+	cc, _, ss := sessionsTestCC(t, "test-agent")
+	ss.Upsert(session.SessionIndexEntry{
+		SessionKey:  session.NewChatSessionKey("test-agent", 4117293257876803825),
+		CreatedAt:   time.Now().UTC(),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "default 4117293257876803825"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.Text, "No session found") {
+		t.Errorf("index-only chat should be found, got %q", result.Text)
+	}
+	if ss.DefaultChatForAgent("test-agent", "") != 4117293257876803825 {
+		t.Errorf("default not set, got %d", ss.DefaultChatForAgent("test-agent", ""))
+	}
+}
+
+// TestSessionsDefaultRegisteredOnly verifies an app chat known only via a
+// platform registration (chat_metadata) is accepted.
+func TestSessionsDefaultRegisteredOnly(t *testing.T) {
+	cc, _, ss := sessionsTestCC(t, "test-agent")
+	if err := ss.SetChatMetadata("test-agent", "app", 777, "registered", "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "default 777"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.Text, "No session found") {
+		t.Errorf("registered chat should be found, got %q", result.Text)
+	}
+}
+
+func TestParseIndexArgsScope(t *testing.T) {
+	agents := map[string]bool{"scout": true}
+	tests := []struct {
+		name        string
+		args        []string
+		wantAgent   string
+		wantRoot    string
+		wantStatus  string
+	}{
+		{"family word", []string{"this"}, "", "clutch/c123", ""},
+		{"self word", []string{"me"}, "clutch", "", "active"},
+		{"known agent", []string{"scout"}, "scout", "", "active"},
+		{"session key", []string{"arnix/c999/b1700000000"}, "", "arnix/c999", ""},
+		{"none", []string{"active"}, "", "", "active"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := parseIndexArgs(tc.args, "clutch", "clutch/c123/b1700000000", agents)
+			if opts.AgentID != tc.wantAgent {
+				t.Errorf("AgentID: want %q got %q", tc.wantAgent, opts.AgentID)
+			}
+			if opts.RootKey != tc.wantRoot {
+				t.Errorf("RootKey: want %q got %q", tc.wantRoot, opts.RootKey)
+			}
+			if opts.StatusFilter != tc.wantStatus {
+				t.Errorf("StatusFilter: want %q got %q", tc.wantStatus, opts.StatusFilter)
+			}
+		})
+	}
+}
+
+// TestSessionsIndexFamily verifies a family-scoped query returns the root and
+// its branches (all statuses) but excludes unrelated sessions.
+func TestSessionsIndexFamily(t *testing.T) {
+	cc, _, _ := sessionsTestCC(t, "clutch")
+	idx := newTestSessionIndex(t)
+	cc.SessionIndex = idx
+	now := time.Now().UTC()
+
+	idx.Upsert(session.SessionIndexEntry{SessionKey: "clutch/c123", CreatedAt: now, SessionType: session.SessionTypeChat, Status: session.SessionStatusActive})
+	idx.Upsert(session.SessionIndexEntry{SessionKey: "clutch/c123/b1700000001", CreatedAt: now, ParentSessionKey: "clutch/c123", SessionType: session.SessionTypeReflection, Status: session.SessionStatusCompacted})
+	idx.Upsert(session.SessionIndexEntry{SessionKey: "clutch/c999", CreatedAt: now, SessionType: session.SessionTypeChat, Status: session.SessionStatusActive})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index clutch/c123"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "clutch/c123/b1700000001") {
+		t.Errorf("expected branch in family view, got %q", result.Text)
+	}
+	if strings.Contains(result.Text, "clutch/c999") {
+		t.Errorf("unrelated session should be excluded, got %q", result.Text)
 	}
 }
