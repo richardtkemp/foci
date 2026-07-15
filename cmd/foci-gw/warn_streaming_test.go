@@ -22,7 +22,8 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 			name: "agent platform stream_output on, streaming off — warns",
 			cfg: &config.Config{
 				Agents: []config.AgentConfig{{
-					ID: "bot1",
+					ID:   "bot1",
+					Loop: config.AgentLoopConfig{Streaming: &falseVal},
 					Platforms: []config.PlatformConfig{{
 						ID:      "telegram",
 						Display: config.DisplayConfig{StreamOutput: &trueVal},
@@ -99,6 +100,34 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 				}},
 			},
 			wantWarning: true,
+		},
+		{
+			name: "streaming defaults to true — no warning when unset",
+			cfg: &config.Config{
+				Agents: []config.AgentConfig{{
+					ID: "bot1",
+					Platforms: []config.PlatformConfig{{
+						ID:      "telegram",
+						Display: config.DisplayConfig{StreamOutput: &trueVal},
+					}},
+				}},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "delegated backend — no warning even with streaming off",
+			cfg: &config.Config{
+				Agents: []config.AgentConfig{{
+					ID:      "bot1",
+					Backend: "claude-code",
+					Loop:    config.AgentLoopConfig{Streaming: &falseVal},
+					Platforms: []config.PlatformConfig{{
+						ID:      "telegram",
+						Display: config.DisplayConfig{StreamOutput: &trueVal},
+					}},
+				}},
+			},
+			wantWarning: false,
 		},
 	}
 

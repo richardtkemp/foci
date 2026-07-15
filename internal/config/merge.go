@@ -36,6 +36,14 @@ func DerefBool(p *bool) bool {
 	return *p
 }
 
+// DerefBoolDefault returns the bool a *bool points to, or def if nil.
+func DerefBoolDefault(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
 // DerefInt64 returns the int64 a *int64 points to, or 0 if nil.
 func DerefInt64(p *int64) int64 {
 	if p == nil {

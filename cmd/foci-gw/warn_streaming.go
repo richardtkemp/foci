@@ -19,6 +19,14 @@ func warnStreamOutputWithoutStreaming(cfg *config.Config) {
 func checkStreamOutputWithoutStreaming(cfg *config.Config) []string {
 	var warnings []string
 	for _, acfg := range cfg.Agents {
+		// Delegated backends (ccstream, opencode) stream unconditionally —
+		// their Capabilities().Streaming is always true, regardless of the
+		// [agent_loop].streaming config flag (which only gates the API path's
+		// StreamHandler). Skip the check entirely for delegated agents.
+		if acfg.IsDelegated() {
+			continue
+		}
+
 		streaming := config.Resolve(cfg, acfg).Loop.Streaming
 		if streaming {
 			continue // provider streaming is on — no conflict
