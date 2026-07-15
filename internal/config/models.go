@@ -169,3 +169,78 @@ func ModelCapabilities(model string) ModelCaps {
 	effort, thinking, speed := modelinfo.Capabilities(model)
 	return ModelCaps{Effort: effort, Thinking: thinking, Speed: speed}
 }
+
+// toModel converts a ModelInfoEntry to a modelinfo.Model, applying the two-mode
+// validation: overrides of existing entries merge over built-in values (only
+// specified fields change); new entries require context_window, input_per_1m,
+// and output_per_1m, with capability flags defaulting to false and cache
+// pricing to 0.0.
+func (e ModelInfoEntry) toModel() (modelinfo.Model, error) {
+	if e.ID == "" {
+		return modelinfo.Model{}, fmt.Errorf("missing required field: id")
+	}
+
+	existing, isOverride := modelinfo.Lookup(e.ID)
+
+	if !isOverride {
+		var missing []string
+		if e.ContextWindow == nil {
+			missing = append(missing, "context_window")
+		}
+		if e.InputPer1M == nil {
+			missing = append(missing, "input_per_1m")
+		}
+		if e.OutputPer1M == nil {
+			missing = append(missing, "output_per_1m")
+		}
+		if len(missing) > 0 {
+			return modelinfo.Model{}, fmt.Errorf("missing required fields for new model %q: %s", e.ID, strings.Join(missing, ", "))
+		}
+	}
+
+	// Start from existing entry (override) or zero value (new model).
+	m := existing
+
+	if e.ContextWindow != nil {
+		m.ContextWindow = *e.ContextWindow
+	}
+	if e.CanEffort != nil {
+		m.Effort = *e.CanEffort
+	}
+	if e.CanThinking != nil {
+		m.Thinking = *e.CanThinking
+	}
+	if e.CanSpeed != nil {
+		m.Speed = *e.CanSpeed
+	}
+	if e.CanCaching != nil {
+		m.Caching = *e.CanCaching
+	}
+	if e.InputPer1M != nil {
+		m.InputPer1M = *e.InputPer1M
+	}
+	if e.OutputPer1M != nil {
+		m.OutputPer1M = *e.OutputPer1M
+	}
+	if e.CacheReadPer1M != nil {
+		m.CacheReadPer1M = *e.CacheReadPer1M
+	}
+	if e.CacheWritePer1M != nil {
+		m.CacheWritePer1M = *e.CacheWritePer1M
+	}
+
+	return m, nil
+}
+
+// ApplyModelInfo merges [[modelinfo]] config entries into the modelinfo
+// registry. Called from Load() at startup and from the live-apply applier.
+func ApplyModelInfo(entries []ModelInfoEntry) {
+	for _, entry := range entries {
+		m, err := entry.toModel()
+		if err != nil {
+			configLog.Warnf("[modelinfo] id=%q %s — skipping", entry.ID, err)
+			continue
+		}
+		modelinfo.Register(entry.ID, m)
+	}
+}

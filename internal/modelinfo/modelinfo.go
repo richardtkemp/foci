@@ -54,7 +54,10 @@ type Model struct {
 	CacheWritePer1M float64 // cost per 1M cache-write tokens
 }
 
-// registry maps bare model IDs to their attributes.
+// registry maps bare model IDs to their attributes. Guarded by registryMu:
+// reads from the exported accessors (ContextWindow, Cost, etc.) take RLock;
+// Register and ResetToBuiltIn (live-apply) take Lock. familyPricing is called
+// only from Cost which already holds RLock, so it assumes the caller holds it.
 var registry = map[string]Model{
 	// Anthropic
 	"claude-haiku-4-5": {
@@ -118,6 +121,47 @@ var registry = map[string]Model{
 	},
 }
 
+// registryMu guards registry. RLock for reads (accessors), Lock for writes
+// (Register, ResetToBuiltIn via live-apply).
+var registryMu sync.RWMutex
+
+// builtIn is a snapshot of the hardcoded registry taken at init, so live-apply
+// can ResetToBuiltIn and re-apply config overrides from scratch.
+var builtIn = map[string]Model{}
+
+func init() {
+	for k, v := range registry {
+		builtIn[k] = v
+	}
+}
+
+// Register adds or overrides a registry entry. Called at startup from
+// config-loaded [[modelinfo]] sections, and at runtime from live-apply.
+func Register(key string, m Model) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	registry[strings.ToLower(key)] = m
+}
+
+// Lookup returns the model attributes for key and whether it exists.
+func Lookup(key string) (Model, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	m, ok := registry[strings.ToLower(key)]
+	return m, ok
+}
+
+// ResetToBuiltIn restores the registry to its hardcoded defaults, discarding
+// all config overrides. Called by live-apply before re-applying.
+func ResetToBuiltIn() {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	registry = make(map[string]Model, len(builtIn))
+	for k, v := range builtIn {
+		registry[k] = v
+	}
+}
+
 // stripPrefix removes a "developer/" prefix from a model string.
 func stripPrefix(model string) string {
 	if i := strings.IndexByte(model, '/'); i > 0 {
@@ -164,7 +208,10 @@ func Normalize(model string) string {
 // everything else (including claude) → 200k.
 func ContextWindow(model string) int {
 	bare := normalize(model)
-	if m, ok := registry[bare]; ok {
+	registryMu.RLock()
+	m, ok := registry[bare]
+	registryMu.RUnlock()
+	if ok {
 		return m.ContextWindow
 	}
 	// Family fallbacks
@@ -185,7 +232,10 @@ func ContextWindow(model string) int {
 // claude-opus → effort+thinking+speed, everything else → none.
 func Capabilities(model string) (effort, thinking, speed bool) {
 	bare := strings.ToLower(normalize(model))
-	if m, ok := registry[bare]; ok {
+	registryMu.RLock()
+	m, ok := registry[bare]
+	registryMu.RUnlock()
+	if ok {
 		return m.Effort, m.Thinking, m.Speed
 	}
 	// Family fallbacks for unregistered claude variants
@@ -213,7 +263,10 @@ func Capabilities(model string) (effort, thinking, speed bool) {
 // call site (they keep keepalive — their backend has its own prompt cache).
 func Caching(model string) bool {
 	bare := strings.ToLower(normalize(model))
-	if m, ok := registry[bare]; ok {
+	registryMu.RLock()
+	m, ok := registry[bare]
+	registryMu.RUnlock()
+	if ok {
 		return m.Caching
 	}
 	return strings.Contains(bare, "claude")
@@ -231,11 +284,14 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 		return 0
 	}
 	bare := normalize(model)
+	registryMu.RLock()
+	defer registryMu.RUnlock()
 	m, ok := registry[bare]
 	if !ok {
-		m, ok = familyPricing(bare)
+		m, ok = familyPricing(bare) // caller-holds-lock: Cost holds RLock
 	}
 	if !ok {
+		// noteUnpriced uses its own mutex (unpricedMu), not registryMu.
 		noteUnpriced(bare)
 		switch {
 		case IsOpenAI(bare):

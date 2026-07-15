@@ -255,11 +255,12 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 		})
 	}
 
-	// Object-list sections (message_transforms, blocked_paths, memory.sources) are
-	// []struct array-of-tables, also outside the scalar registry. Emit one
-	// descriptor each with type "object[]", carrying the entry sub-field shapes in
-	// Fields; the section's current entries are a JSON array at Values[section].
-	// Restart-required (no live applier) so NeedsRestart is set.
+	// Object-list sections (message_transforms, blocked_paths, memory.sources,
+	// modelinfo) are []struct array-of-tables, also outside the scalar registry.
+	// Emit one descriptor each with type "object[]", carrying the entry sub-field
+	// shapes in Fields; the section's current entries are a JSON array at
+	// Values[section]. NeedsRestart is false when the section has a live applier
+	// (of.Live), true otherwise.
 	for _, of := range config.ObjectFields() {
 		sub := make([]fap.ConfigFieldDesc, 0, len(of.Fields))
 		for _, sf := range of.Fields {
@@ -274,7 +275,7 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 			Key:          "",
 			ValueType:    "object[]",
 			Description:  of.Description,
-			NeedsRestart: true,
+			NeedsRestart: !of.Live,
 			Fields:       sub,
 		})
 	}

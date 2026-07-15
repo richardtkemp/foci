@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 )
 
 // liveApply routes a successful config-file edit to the running process, for
@@ -94,6 +95,11 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 // TestLiveApplyCoversHotFields enforces it.
 var (
 	liveApplyLoggingAddrs = []string{"logging.level"}
+
+	// modelinfo is an object[] section (not scalar hot-tagged fields), so it
+	// has no per-field registry rows. The section-level address dispatches
+	// through the standard Apply path.
+	liveApplyModelInfoAddrs = []string{"modelinfo"}
 
 	// Global rows only: the agent./platforms. debug override rows are dead
 	// (nothing reads them — tracker #1199), so their struct tags carry the
@@ -305,6 +311,15 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 				inst.ag.GroupResolver.Update(resolved.Groups, fresh.Models, fresh.HasAPIAgent())
 			}
 		}
+		return nil
+	})
+
+	// [[modelinfo]] is the first live object[] section. Reset to built-in
+	// defaults, then re-apply all config entries — handles adds, modifies,
+	// and removes cleanly.
+	la.register(liveApplyModelInfoAddrs, func(fresh *config.Config) error {
+		modelinfo.ResetToBuiltIn()
+		config.ApplyModelInfo(fresh.ModelInfo)
 		return nil
 	})
 }
