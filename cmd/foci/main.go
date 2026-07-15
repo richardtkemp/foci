@@ -239,11 +239,11 @@ func main() {
 		} else {
 			err = cmdCommand(base, append(args, "/ping"))
 		}
-	case "pair-key", "pairkey":
+	case "pair-key", "pairkey", "pair":
 		if wantsHelp(args) {
 			pairKeyUsage()
 		} else {
-			err = cmdCommand(base, append([]string{"/pairkey"}, args...))
+			err = cmdCommand(base, append([]string{"/pair"}, args...))
 		}
 	case "auth":
 		// Already handled above main dispatch, but list here for completeness.
@@ -280,7 +280,7 @@ Commands:
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
   ping                 Shorthand for 'command /ping'
-  pair-key [host]      Mint a single-use Android pairing key (-a for agent)
+  pair [host]          Mint a single-use Android pairing key (-a for agent)
   debug session <key>  Tail a session file with formatted output
   version              Print version information
 

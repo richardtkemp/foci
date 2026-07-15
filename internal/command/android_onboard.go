@@ -82,7 +82,8 @@ func AndroidCommand() *Command {
 // host, to emit a full `foci://pair?...` string.
 func PairKeyCommand() *Command {
 	return &Command{
-		Name:        "pairkey",
+		Name:        "pair",
+		Aliases:     []string{"pairkey", "pair-key"},
 		Description: "Mint a single-use Android pairing key (headless onboarding)",
 		Category:    "session",
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
