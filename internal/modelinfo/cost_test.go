@@ -43,6 +43,15 @@ func TestCalculateCost(t *testing.T) {
 	}
 }
 
+func TestCalculateCostCodexModels(t *testing.T) {
+	for _, model := range []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini", "gpt-5.4mini"} {
+		cost := Cost(model, 1_000_000, 1_000_000, 0, 0)
+		if cost != 20.0 {
+			t.Errorf("1M input + 1M output %s = %f, want 20.0", model, cost)
+		}
+	}
+}
+
 func TestCalculateCostOpus(t *testing.T) {
 	// Verifies Opus input pricing is $15/M tokens.
 	cost := Cost("claude-opus-4-6", 1_000_000, 0, 0, 0)
@@ -100,12 +109,12 @@ func TestCalculateCostByFamily(t *testing.T) {
 		model string
 		want  float64 // 1M input cost
 	}{
-		{"claude-opus-4-8", 15.0},            // newer opus, not in registry → opus family
-		{"anthropic/claude-opus-4-9", 15.0},  // provider prefix + future version
-		{"claude-sonnet-4-6", 3.0},           // newer sonnet → sonnet family
-		{"claude-fable-6", 10.0},             // newer fable → fable family
-		{"claude-haiku-9-9", 1.0},            // newer haiku → haiku family
-		{"gemini-3.0-pro", 0.15},             // unknown gemini → flash family
+		{"claude-opus-4-8", 15.0},           // newer opus, not in registry → opus family
+		{"anthropic/claude-opus-4-9", 15.0}, // provider prefix + future version
+		{"claude-sonnet-4-6", 3.0},          // newer sonnet → sonnet family
+		{"claude-fable-6", 10.0},            // newer fable → fable family
+		{"claude-haiku-9-9", 1.0},           // newer haiku → haiku family
+		{"gemini-3.0-pro", 0.15},            // unknown gemini → flash family
 	}
 	for _, c := range cases {
 		if got := Cost(c.model, 1_000_000, 0, 0, 0); got != c.want {
