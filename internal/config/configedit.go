@@ -144,6 +144,31 @@ func ExplicitFileValues(path string) (global map[string]string, agents map[strin
 	return global, agents, nil
 }
 
+// MapObjectEntries extracts named entries from the flattened file values for
+// a map[string]Struct section (e.g. [models.powerful]). Returns entryName →
+// subKey → value. Each entry is a direct child of the section prefix; deeper
+// nesting (e.g. models.powerful.model) becomes a sub-key.
+func MapObjectEntries(section string, flat map[string]string) map[string]map[string]string {
+	prefix := section + "."
+	out := map[string]map[string]string{}
+	for k, v := range flat {
+		rest, ok := strings.CutPrefix(k, prefix)
+		if !ok {
+			continue
+		}
+		parts := strings.SplitN(rest, ".", 2)
+		if len(parts) != 2 {
+			continue // section-level scalar, not an entry sub-key
+		}
+		entry, subKey := parts[0], parts[1]
+		if out[entry] == nil {
+			out[entry] = map[string]string{}
+		}
+		out[entry][subKey] = v
+	}
+	return out
+}
+
 // flattenScalars walks nested TOML tables, writing "prefix.key" → rendered
 // value for every scalar leaf. Arrays/inline-table leaves are skipped — the
 // field registry only covers scalars, so they can never be edited here.

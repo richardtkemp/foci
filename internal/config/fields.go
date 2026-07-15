@@ -524,6 +524,49 @@ func ObjectFieldSpecFor(section string) (ObjectFieldSpec, bool) {
 	return ObjectFieldSpec{}, false
 }
 
+// MapObjectFieldSpec describes a map[string]Struct config section — named
+// entries (like MapFieldSpec) where each entry has typed sub-fields (like
+// ObjectFieldSpec). Section is the TOML table prefix (e.g. "models" for
+// [models.powerful]); each entry is a sub-table with the Fields shape.
+// Used for [models.*] and [endpoints.*].
+type MapObjectFieldSpec struct {
+	Section     string
+	Description string
+	Fields      []ObjectSubField
+}
+
+// mapObjectFieldSpecs is the registry of map[string]Struct config sections
+// surfaced in the app config schema as named entries with typed sub-fields.
+var mapObjectFieldSpecs = []MapObjectFieldSpec{
+	{Section: "models", Description: "Named model definitions with per-model settings", Fields: []ObjectSubField{
+		{Key: "model", Type: FieldString, Description: "Developer/model ID (e.g. anthropic/claude-sonnet-4-20250514)"},
+		{Key: "endpoint", Type: FieldString, Description: "Explicit endpoint override (empty = auto-select from developer)"},
+		{Key: "thinking", Type: FieldString, Description: "Thinking mode: adaptive, off"},
+		{Key: "effort", Type: FieldString, Description: "Effort level: low, medium, high"},
+		{Key: "speed", Type: FieldString, Description: "Speed hint: fast or empty"},
+		{Key: "context", Type: FieldString, Description: "Context window size (e.g. 262000 or 262k)"},
+		{Key: "enable_keepalive", Type: FieldBool, Description: "Enable cache keepalive for this model"},
+		{Key: "cache_ttl", Type: FieldDuration, Description: "Cache TTL (Go duration, empty = auto-detect)"},
+		{Key: "cache_strategy", Type: FieldString, Description: "Cache marker strategy: auto or explicit"},
+	}},
+	{Section: "endpoints", Description: "Named API endpoint definitions", Fields: []ObjectSubField{
+		{Key: "format", Type: FieldString, Description: "Wire format: anthropic, openai, or gemini"},
+		{Key: "url", Type: FieldString, Description: "Base URL (empty = SDK default)"},
+		{Key: "anthropic_url", Type: FieldString, Description: "Anthropic-format URL override"},
+		{Key: "openai_url", Type: FieldString, Description: "OpenAI-format URL override"},
+		{Key: "gemini_url", Type: FieldString, Description: "Gemini-format URL override"},
+		{Key: "api_key", Type: FieldString, Description: "Secret name for API key (e.g. openrouter.api_key)"},
+		{Key: "http_timeout", Type: FieldDuration, Description: "HTTP timeout for this endpoint (default 120s)"},
+	}},
+}
+
+// MapObjectFields returns the registered map[string]Struct sections (a copy).
+func MapObjectFields() []MapObjectFieldSpec {
+	out := make([]MapObjectFieldSpec, len(mapObjectFieldSpecs))
+	copy(out, mapObjectFieldSpecs)
+	return out
+}
+
 // bareTOMLKeyRe matches a valid unquoted TOML bare key: letters, digits,
 // underscore, dash. Anything else (a literal ".", "/", ":", space, ...)
 // requires quoting to write as a flat key — SetInFile never quotes, so

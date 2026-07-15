@@ -59,6 +59,61 @@ func TestConfigGet_EmitsMapSections(t *testing.T) {
 	}
 }
 
+// TestConfigGet_EmitsMapObjectSections proves map[string]Struct sections
+// (models, endpoints) are advertised as "mapObject"-typed descriptors with
+// sub-field shapes, and their current entries are carried as a JSON
+// object-of-objects at Values[section].
+func TestConfigGet_EmitsMapObjectSections(t *testing.T) {
+	toml := `[models.powerful]
+model = "anthropic/claude-sonnet-4-20250514"
+context = "200000"
+
+[models.cheap]
+model = "openrouter/qwen/qwen3.5-397b"
+`
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	os.WriteFile(path, []byte(toml), 0o600)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{Config: &config.Config{SourcePath: path, FileMode: "0600"}}
+	c := fakeClient()
+	c.features = map[string]struct{}{featureConfigEdit: {}}
+	h.clients[c] = struct{}{}
+
+	h.handleConfigGet(c)
+	schema := lastConfigSchema(t, c)
+	if schema == nil {
+		t.Fatal("no config.schema frame")
+	}
+
+	// Descriptor exists with type "mapObject" and sub-field shapes.
+	fields, _ := schema["fields"].([]any)
+	foundModels := false
+	for _, fe := range fields {
+		f, _ := fe.(map[string]any)
+		if f["section"] == "models" && f["type"] == "mapObject" {
+			foundModels = true
+			subs, _ := f["fields"].([]any)
+			if len(subs) == 0 {
+				t.Error("models mapObject descriptor has no sub-fields")
+			}
+		}
+	}
+	if !foundModels {
+		t.Error(`no {section:"models", type:"mapObject"} descriptor emitted`)
+	}
+
+	// Values carry the entries as a JSON object-of-objects.
+	global := scopeByID(t, schema, "")
+	gv, _ := global["values"].(map[string]any)
+	raw, _ := gv["models"].(string)
+	if !strings.Contains(raw, "powerful") || !strings.Contains(raw, "claude-sonnet-4") {
+		t.Errorf("models value = %q, want JSON with powerful/claude-sonnet-4", raw)
+	}
+	if !strings.Contains(raw, "cheap") || !strings.Contains(raw, "qwen") {
+		t.Errorf("models value = %q, want JSON with cheap/qwen", raw)
+	}
+}
+
 // newConfigEditHub builds a hub whose deps.Config points at a real temp
 // foci.toml, the way main wires the loaded config into providers.
 func newConfigEditHub(t *testing.T) (*Hub, string) {

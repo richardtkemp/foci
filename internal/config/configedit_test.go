@@ -166,3 +166,36 @@ func TestAgentKeyInSubTable(t *testing.T) {
 		t.Error("second agent lost")
 	}
 }
+
+func TestMapObjectEntries(t *testing.T) {
+	flat := map[string]string{
+		"models.powerful.model":   "anthropic/claude-sonnet-4-20250514",
+		"models.powerful.context": "200000",
+		"models.cheap.model":      "openrouter/qwen",
+		"endpoints.openrouter.format": "openai",
+		"logging.level":           "INFO",
+	}
+	got := MapObjectEntries("models", flat)
+	if len(got) != 2 {
+		t.Fatalf("MapObjectEntries(models) = %d entries, want 2", len(got))
+	}
+	if got["powerful"]["model"] != "anthropic/claude-sonnet-4-20250514" {
+		t.Errorf("powerful.model = %q", got["powerful"]["model"])
+	}
+	if got["powerful"]["context"] != "200000" {
+		t.Errorf("powerful.context = %q", got["powerful"]["context"])
+	}
+	if got["cheap"]["model"] != "openrouter/qwen" {
+		t.Errorf("cheap.model = %q", got["cheap"]["model"])
+	}
+
+	gotEP := MapObjectEntries("endpoints", flat)
+	if len(gotEP) != 1 || gotEP["openrouter"]["format"] != "openai" {
+		t.Errorf("endpoints = %v, want openrouter.format=openai", gotEP)
+	}
+
+	// Section with no entries returns empty.
+	if got := MapObjectEntries("nonexistent", flat); len(got) != 0 {
+		t.Errorf("nonexistent = %v, want empty", got)
+	}
+}

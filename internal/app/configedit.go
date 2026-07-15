@@ -280,6 +280,28 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 		})
 	}
 
+	// Map-object sections (models, endpoints) are map[string]Struct — named
+	// entries with typed sub-fields. Emit one descriptor each with type
+	// "mapObject", carrying the entry sub-field shapes in Fields.
+	for _, mo := range config.MapObjectFields() {
+		sub := make([]fap.ConfigFieldDesc, 0, len(mo.Fields))
+		for _, sf := range mo.Fields {
+			sub = append(sub, fap.ConfigFieldDesc{
+				Key:         sf.Key,
+				ValueType:   sf.Type.TypeName(),
+				Description: sf.Description,
+			})
+		}
+		descs = append(descs, fap.ConfigFieldDesc{
+			Section:      mo.Section,
+			Key:          "",
+			ValueType:    "mapObject",
+			Description:  mo.Description,
+			NeedsRestart: true,
+			Fields:       sub,
+		})
+	}
+
 	fileGlobal, fileAgents, err := config.ExplicitFileValues(cfg.SourcePath)
 	if err != nil {
 		appLog.Warnf("config schema: parse %s: %v", cfg.SourcePath, err)
@@ -343,6 +365,18 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 		gScope.Values[of.Section] = string(b)
 		if len(entries) > 0 {
 			gScope.Explicit = append(gScope.Explicit, of.Section)
+		}
+	}
+	// Map-object sections: current [section.*] entries as a JSON object-of-objects.
+	for _, mo := range config.MapObjectFields() {
+		entries := config.MapObjectEntries(mo.Section, fileGlobal)
+		b, err := json.Marshal(entries)
+		if err != nil {
+			continue
+		}
+		gScope.Values[mo.Section] = string(b)
+		if len(entries) > 0 {
+			gScope.Explicit = append(gScope.Explicit, mo.Section)
 		}
 	}
 	sort.Strings(gScope.Explicit)
