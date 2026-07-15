@@ -161,7 +161,7 @@ type tokenUsageParams struct {
 // Emitted as serverRequest/resolved.
 type serverRequestResolvedParams struct {
 	ThreadID  string `json:"threadId"`
-	RequestID string `json:"requestId"`
+	RequestID any    `json:"requestId"`
 }
 
 // reasoningDeltaParams carries a streaming reasoning text delta.
@@ -226,7 +226,7 @@ type fileChangeApprovalParams struct {
 // --- Approval response (client → server) ---
 
 type approvalResponse struct {
-	Decision string `json:"decision"` // "allow", "deny", "alwaysAllow"
+	Decision string `json:"decision"` // "accept", "decline", "acceptForSession", "cancel"
 }
 
 // --- Item type discrimination ---

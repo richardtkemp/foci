@@ -90,7 +90,7 @@ func TestOnCommandApproval_AutoDenyWhenNoPermPromptFn(t *testing.T) {
 	b.onCommandApproval([]byte(`{"itemId":"item_auto","threadId":"th","turnId":"tn","command":"rm -rf /"}`), 99)
 
 	id, decision := parseApprovalResponse(t, buf.String())
-	if id != 99 || decision != "deny" {
+	if id != 99 || decision != "decline" {
 		t.Errorf("response = %d/%q, want 99/deny", id, decision)
 	}
 }
@@ -140,7 +140,7 @@ func TestOnFileChangeApproval_AutoDenyWhenNoPermPromptFn(t *testing.T) {
 	b.onFileChangeApproval([]byte(`{"itemId":"item_fc_auto","threadId":"th","turnId":"tn"}`), 77)
 
 	id, decision := parseApprovalResponse(t, buf.String())
-	if id != 77 || decision != "deny" {
+	if id != 77 || decision != "decline" {
 		t.Errorf("response = %d/%q, want 77/deny", id, decision)
 	}
 }
@@ -154,7 +154,7 @@ func TestOnPermissionApproval_AlwaysDenies(t *testing.T) {
 	b.onPermissionApproval([]byte(`{}`), 321)
 
 	id, decision := parseApprovalResponse(t, buf.String())
-	if id != 321 || decision != "deny" {
+	if id != 321 || decision != "decline" {
 		t.Errorf("response = %d/%q, want 321/deny", id, decision)
 	}
 }
@@ -168,10 +168,10 @@ func TestRespondApproval_SendsResponseAndCleansUp(t *testing.T) {
 	b.pendingPerms[100] = &pendingApproval{rpcID: 100, itemID: "item_a", command: "ls"}
 	b.permMu.Unlock()
 
-	b.respondApproval(100, "allow")
+	b.respondApproval(100, "accept")
 
 	id, decision := parseApprovalResponse(t, buf.String())
-	if id != 100 || decision != "allow" {
+	if id != 100 || decision != "accept" {
 		t.Errorf("response = %d/%q, want 100/allow", id, decision)
 	}
 	b.permMu.Lock()
@@ -194,12 +194,12 @@ func TestRespondApproval_FiresOnPromptsCleared(t *testing.T) {
 	b.pendingPerms[2] = &pendingApproval{rpcID: 2, itemID: "b"}
 	b.permMu.Unlock()
 
-	b.respondApproval(1, "deny")
+	b.respondApproval(1, "decline")
 	if cleared != 0 {
 		t.Errorf("cleared = %d after first resolve, want 0", cleared)
 	}
 
-	b.respondApproval(2, "deny")
+	b.respondApproval(2, "decline")
 	if cleared != 1 {
 		t.Errorf("cleared = %d after last resolve, want 1", cleared)
 	}
@@ -219,7 +219,7 @@ func TestRespondToPermission_ResolvesByItemID(t *testing.T) {
 	}
 
 	id, decision := parseApprovalResponse(t, buf.String())
-	if id != 200 || decision != "deny" {
+	if id != 200 || decision != "decline" {
 		t.Errorf("response = %d/%q, want 200/deny", id, decision)
 	}
 }
