@@ -280,6 +280,7 @@ Commands:
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
   ping                 Shorthand for 'command /ping'
+  pair-key [host]      Mint a single-use Android pairing key (-a for agent)
   debug session <key>  Tail a session file with formatted output
   version              Print version information
 
