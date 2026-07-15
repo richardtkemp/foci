@@ -54,7 +54,8 @@ type Backend struct {
 	mu         sync.Mutex
 	running    bool
 	closing    bool
-	threadID   string // Codex thread ID; from thread/start response
+	threadID   string
+	model      string
 	readyCh    chan struct{}
 	readyOnce  sync.Once
 	startOpts  delegator.StartOptions

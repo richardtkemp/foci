@@ -70,6 +70,7 @@ type threadResult struct {
 	Thread struct {
 		ID string `json:"id"`
 	} `json:"thread"`
+	Model string `json:"model,omitempty"`
 }
 
 // --- Turn ---
