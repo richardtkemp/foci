@@ -246,3 +246,41 @@ func TestModelInfoEntryToModel_ProviderPrefixedNewModel(t *testing.T) {
 		t.Errorf("InputPer1M = %v, want %v", m.InputPer1M, in)
 	}
 }
+
+func TestApplyModelInfo_ProviderPrefixedOverrideOfBuiltin(t *testing.T) {
+	modelinfo.ResetToBuiltIn()
+
+	// Override a built-in model using a provider-prefixed ID.
+	// The built-in entry is providerless (""); the override should be
+	// registered under "" so bare runtime lookups (Cost("claude-haiku-4-5"))
+	// see the override, not the built-in.
+	newIn := 0.80
+	newOut := 4.00
+	entries := []ModelInfoEntry{
+		{ID: "anthropic/claude-haiku-4-5", InputPer1M: &newIn, OutputPer1M: &newOut},
+	}
+
+	ApplyModelInfo(entries)
+
+	// Bare lookup (no provider prefix) should see the override.
+	m, ok := modelinfo.Lookup("", "claude-haiku-4-5")
+	if !ok {
+		t.Fatal("providerless entry not found after override")
+	}
+	if m.InputPer1M != newIn {
+		t.Errorf("InputPer1M = %v, want %v (override should be visible to bare lookups)", m.InputPer1M, newIn)
+	}
+
+	// Cost with bare model string should use overridden pricing.
+	cost := modelinfo.Cost("claude-haiku-4-5", 1_000_000, 0, 0, 0)
+	if cost != newIn {
+		t.Errorf("Cost = %v, want %v (bare lookup should use overridden price)", cost, newIn)
+	}
+
+	// Cost with provider-prefixed string should also see the override
+	// (it falls back to providerless which now has the override).
+	costPrefixed := modelinfo.Cost("anthropic/claude-haiku-4-5", 1_000_000, 0, 0, 0)
+	if costPrefixed != newIn {
+		t.Errorf("Cost with prefix = %v, want %v", costPrefixed, newIn)
+	}
+}
