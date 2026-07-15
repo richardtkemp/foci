@@ -428,6 +428,8 @@ func CapabilitiesForBackend(backendType string) Capabilities {
 		return Capabilities{PostToolNudge: true, PreAnswerNudge: true, Streaming: true}
 	case "opencode":
 		return Capabilities{PostToolNudge: false, PreAnswerNudge: false, Streaming: true}
+	case "codex":
+		return Capabilities{PostToolNudge: false, PreAnswerNudge: false, Streaming: true}
 	default:
 		return Capabilities{}
 	}
