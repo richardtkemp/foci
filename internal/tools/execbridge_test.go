@@ -1481,6 +1481,27 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	if !strings.Contains(gotText, "auto body") {
 		t.Errorf("text = %q, should contain 'auto body'", gotText)
 	}
+
+	// Case 5: empty pipe (non-TTY stdin with no data) + positional text → must
+	// succeed. This simulates the bash-tool subprocess where stdin is always a
+	// pipe, even when nothing is piped. The old [ ! -t 0 ] heuristic false-positived
+	// the footgun guard on every call (#1283).
+	mu.Lock()
+	capturedText = ""
+	mu.Unlock()
+	out5, err := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_send_to_chat 'positional text' < /dev/null",
+		bridge.FuncsPath(),
+	))
+	if err != nil {
+		t.Fatalf("positional text with empty stdin should succeed, got error: %v\noutput: %s", err, out5)
+	}
+	mu.Lock()
+	gotText = capturedText
+	mu.Unlock()
+	if gotText != "positional text" {
+		t.Errorf("text = %q, want %q", gotText, "positional text")
+	}
 }
 
 // TestTodoShellFunc_AppendAliasesResolve runs the generated foci_todo through
