@@ -225,7 +225,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
 		NewBackend: func() (delegator.Delegator, error) {
-			be, err := delegator.New(backendName, bc.ToMap())
+			cfgMap := bc.ToMap()
+			cfgMap["foci_version"] = version
+			be, err := delegator.New(backendName, cfgMap)
 			if err != nil {
 				return nil, err
 			}
