@@ -410,6 +410,11 @@ type Capabilities struct {
 	// PreAnswerNudge indicates the backend can inject a message before
 	// the model returns its final answer. Required for pre_answer trigger.
 	PreAnswerNudge bool
+
+	// Streaming indicates the backend delivers incremental token deltas
+	// (text/thinking) during a turn, enabling live stream_output on
+	// platforms that support it.
+	Streaming bool
 }
 
 // BackendBrancher is optionally implemented by backends that can fork their

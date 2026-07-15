@@ -20,7 +20,7 @@ func resolveLoop(m AgentLoopConfig) ResolvedLoop {
 		DuplicateMessages:             DerefBool(m.DuplicateMessages),
 		BatchPartialAssistantMessages: DerefBool(m.BatchPartialAssistantMessages),
 		BatchPartialJoiner:            DerefStr(m.BatchPartialJoiner),
-		Streaming:                     DerefBool(m.Streaming),
+		Streaming:                     DerefBoolDefault(m.Streaming, true),
 	}
 }
 
