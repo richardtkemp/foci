@@ -230,10 +230,13 @@ func TestBackend_Start_StoresModel(t *testing.T) {
 		}
 		http.NotFound(w, r)
 	})
+	b.resolveModelFn = func(_ context.Context, _, _, model string) (string, error) {
+		return "zai-coding-plan/" + model, nil
+	}
 
 	err := b.Start(context.Background(), delegator.StartOptions{
 		AgentID: "test-agent",
-		Model:   "anthropic/claude-sonnet-4-20250514",
+		Model:   "glm-5.2",
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -242,8 +245,8 @@ func TestBackend_Start_StoresModel(t *testing.T) {
 	b.mu.Lock()
 	model := b.model
 	b.mu.Unlock()
-	if model != "anthropic/claude-sonnet-4-20250514" {
-		t.Errorf("b.model = %q, want anthropic/claude-sonnet-4-20250514", model)
+	if model != "zai-coding-plan/glm-5.2" {
+		t.Errorf("b.model = %q, want zai-coding-plan/glm-5.2", model)
 	}
 	_ = b.Close()
 }
