@@ -36,7 +36,7 @@ func TestSendToChat_FilenameOverridesBasename(t *testing.T) {
 	t.Parallel()
 	src := makeSourceFile(t, "internal-temp-name.md")
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file":     src,
@@ -62,7 +62,7 @@ func TestSendToChat_FilenameStripsPathComponents(t *testing.T) {
 	t.Parallel()
 	src := makeSourceFile(t, "src.txt")
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file":     src,
@@ -91,7 +91,7 @@ func TestSendToChat_FilenameSymlinkResolvesToSource(t *testing.T) {
 		t.Fatalf("rewrite source: %v", err)
 	}
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file":     src,
@@ -115,7 +115,7 @@ func TestSendToChat_FilenameWithoutFileFails(t *testing.T) {
 	// silently sending text-only.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":     "hello",
@@ -137,7 +137,7 @@ func TestSendToChat_FilenameEmptyAfterStripIsRejected(t *testing.T) {
 	t.Parallel()
 	src := makeSourceFile(t, "src.txt")
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file":     src,
@@ -159,7 +159,7 @@ func TestSendToChat_NoFilenameUsesSourceBasename(t *testing.T) {
 	t.Parallel()
 	src := makeSourceFile(t, "preserved-name.md")
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file": src,
@@ -182,7 +182,7 @@ func TestSendToChat_FilenameWithCaption(t *testing.T) {
 	t.Parallel()
 	src := makeSourceFile(t, "internal.md")
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":     "see attached",

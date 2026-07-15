@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"foci/internal/platform"
+	"foci/internal/session"
 )
 
 func TestSendMessageToUserChatRouting(t *testing.T) {
 	// Verifies that when the session key contains a chat ID, text is dispatched via SendTextToChat to that specific chat rather than the default sender.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c99887766")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -47,7 +48,7 @@ func TestSendMessageToUserChatRoutingDocument(t *testing.T) {
 	// Verifies that when the session key contains a chat ID, documents are dispatched via SendDocumentToChat rather than the default sender.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -74,7 +75,7 @@ func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
 	// Verifies that when the session key contains a chat ID, voice notes are dispatched via SendVoiceToChat rather than the default sender.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -102,7 +103,7 @@ func TestSendMessageToUserFallbackNoChat(t *testing.T) {
 	// Verifies that when the session key has no chat ID (e.g. an independent spawn), the default SendText is used rather than the chat-targeted method.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	// Independent session — no chat ID
 	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345")
@@ -128,7 +129,7 @@ func TestSendMessageToUserFallbackNoContext(t *testing.T) {
 	// Verifies that when there is no session key in context at all, the default SendText is used.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -185,7 +186,7 @@ func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
 			return facetMock
 		}
 		return primaryMock
-	}, nil)
+	}, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "clutch/c99887766")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -208,7 +209,7 @@ func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 	// Verifies that messages arriving from a session different from the bot's own session are prepended with a session header so the user knows the source.
 	t.Parallel()
 	mock := &mockSender{sessionKey: "fotini/c99887766"}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -233,7 +234,7 @@ func TestSendMessageToUserSameSessionNoHeader(t *testing.T) {
 	// Verifies that messages from the bot's own session are sent without a header, since no attribution is needed.
 	t.Parallel()
 	mock := &mockSender{sessionKey: "fotini/c99887766"}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c99887766")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -257,7 +258,7 @@ func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) 
 	// Verifies that when the bot has no session key (not yet attached), no header is prepended even for messages from other sessions.
 	t.Parallel()
 	mock := &mockSender{sessionKey: ""}
-	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -288,7 +289,7 @@ func TestSendMessageToUserFacetRouting(t *testing.T) {
 			return facetMock
 		}
 		return primaryMock
-	}, nil)
+	}, nil, nil)
 
 	// Facet session — should use facet sender
 	ctx := WithSessionKey(context.Background(), "clutch/if-123")
@@ -308,5 +309,68 @@ func TestSendMessageToUserFacetRouting(t *testing.T) {
 	}
 	if len(primaryMock.textCalls) != 0 {
 		t.Errorf("primary should not be called for facet session")
+	}
+}
+
+func TestSendMessageToUserFacetBranchRoutesToSelf(t *testing.T) {
+	// A facet branch from a chat session (e.g. clutch/c123/b456) carries
+	// the parent's chat ID in its key. sessionTypeFn=facet must override
+	// the extracted chatID to 0 so the message lands in the facet's own
+	// conversation, not the parent/root chat.
+	t.Parallel()
+	mock := &mockSender{sessionKey: "clutch/c123/b456"}
+	tool := NewSendToChatTool(
+		func(string) platform.Sender { return mock },
+		nil,
+		func(string) session.SessionType { return session.SessionTypeFacet },
+	)
+
+	ctx := WithSessionKey(context.Background(), "clutch/c123/b456")
+	params, _ := json.Marshal(map[string]interface{}{
+		"text": "facet branch text",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// chatID=0 → default SendText, not SendTextToChat(parentChatID).
+	if len(mock.textCalls) != 1 || mock.textCalls[0] != "facet branch text" {
+		t.Errorf("expected default textCall, got textCalls=%v chatTextCalls=%v", mock.textCalls, mock.chatTextCalls)
+	}
+	if len(mock.chatTextCalls) != 0 {
+		t.Errorf("should not use SendTextToChat for facet branch, got %d calls", len(mock.chatTextCalls))
+	}
+}
+
+func TestSendMessageToUserNonFacetBranchRoutesToRoot(t *testing.T) {
+	// A non-facet branch (spawn, cron, etc.) from a chat session must keep
+	// the extracted parent chat ID — messages go to the root chat, not the
+	// branch's own session.
+	t.Parallel()
+	mock := &mockSender{sessionKey: "clutch/c123"}
+	tool := NewSendToChatTool(
+		func(string) platform.Sender { return mock },
+		nil,
+		func(string) session.SessionType { return session.SessionTypeSpawn },
+	)
+
+	ctx := WithSessionKey(context.Background(), "clutch/c123/b456")
+	params, _ := json.Marshal(map[string]interface{}{
+		"text": "spawn result",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Non-facet branch → uses SendTextToChat with the parent's chat ID.
+	if len(mock.chatTextCalls) != 1 || mock.chatTextCalls[0].chatID != 123 {
+		t.Errorf("expected chatTextCall to chat 123, got %v", mock.chatTextCalls)
+	}
+	if len(mock.textCalls) != 0 {
+		t.Errorf("should not use default SendText for non-facet branch, got %d calls", len(mock.textCalls))
 	}
 }

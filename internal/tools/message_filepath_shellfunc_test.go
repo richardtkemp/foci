@@ -23,7 +23,7 @@ func TestSendToChat_ShellFuncResolvesRelativeFilePath(t *testing.T) {
 	// future refactor can't silently drop the resolution while keeping the
 	// flag arm intact.
 	t.Parallel()
-	tool := NewSendToChatTool(nil, nil)
+	tool := NewSendToChatTool(nil, nil, nil)
 	body := generateShellFunc(tool)
 
 	// Look for the resolution snippet on the file param.
@@ -85,7 +85,7 @@ func TestSendToChat_ShellFuncFileDashReadsStdin(t *testing.T) {
 	// rather than treating "-" as a literal path (TODO #814). Guard the
 	// structural emit so a refactor can't silently drop it.
 	t.Parallel()
-	tool := NewSendToChatTool(nil, nil)
+	tool := NewSendToChatTool(nil, nil, nil)
 	body := generateShellFunc(tool)
 
 	for _, want := range []string{
@@ -156,7 +156,7 @@ func TestSendToChat_ShellFuncFilenameFlagNotResolved(t *testing.T) {
 	// filepath (would produce an absolute label like "/cwd/report.md"
 	// displayed to the user).
 	t.Parallel()
-	tool := NewSendToChatTool(nil, nil)
+	tool := NewSendToChatTool(nil, nil, nil)
 	body := generateShellFunc(tool)
 
 	// Filename should appear as a flag arm but NOT in a filepath resolver.
