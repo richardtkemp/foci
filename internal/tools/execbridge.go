@@ -1259,10 +1259,12 @@ func generateGenericShellFunc(t *Tool) string {
 			suggestion += ". To attach a file, use --file \\$path"
 		}
 		fmt.Fprintf(&b,
+			// head -c 1 | wc -c (not `read -N 1`) because bash's read can't store
+			// NUL bytes in a variable — on all-NUL piped input it silently misses
+			// the guard while still consuming the whole stream. head/wc operate on
+			// raw bytes, so NUL-safe and short-circuits on the first byte either way.
 			"  if [ -n \"$%s\" ] && [ ! -t 0 ]%s; then\n"+
-				"    local __foci_peek=\"\"\n"+
-				"    __foci_peek=\"$(cat)\"\n"+
-				"    if [ -n \"$__foci_peek\" ]; then\n"+
+				"    if [ \"$(head -c 1 | wc -c)\" -gt 0 ]; then\n"+
 				"      echo \"error: --%s is set but stdin has piped content that will be discarded. %s.\" >&2\n"+
 				"      return 1\n"+
 				"    fi\n"+
