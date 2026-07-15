@@ -158,17 +158,13 @@ model = "stub"
 			)
 		}
 		// Per-agent backend_config.env only emitted when the spec
-		// supplies env vars. Use INLINE-TABLE form ("env = {K=V, ...}")
-		// rather than a [agents.backend_config.env] sub-section: foci's
-		// BurntSushi/toml decoder reports sub-table keys under a
-		// map[string]any field as "unknown" (logged at WARN), even
-		// though the values are decoded correctly. The inline form
-		// goes through a single decode of the map[string]any value
-		// and avoids the warning.
+		// supplies env vars. Inline-table form ("env = {K=V, ...}")
+		// keeps the config compact; sub-section form would also work
+		// now that backend_config is a typed struct with
+		// Env map[string]string (the old map[string]any undecoded-key
+		// warning no longer applies).
 		//
-		// Keys are sorted so test snapshots stay stable. Values always
-		// emit as quoted strings (foci's backendConfigEnv coerces to
-		// whatever Go type the test needs at consumption time).
+		// Keys are sorted so test snapshots stay stable.
 		if len(a.ExtraEnv) > 0 {
 			keys := make([]string, 0, len(a.ExtraEnv))
 			for k := range a.ExtraEnv {
