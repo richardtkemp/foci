@@ -160,6 +160,7 @@ type Backend struct {
 	server         *Server                // shared with sibling Backends on this agent
 	startOpts      delegator.StartOptions // saved at Start for restart/inspection
 	systemPrompt   string                 // resolved system prompt, supplied via POST body "system" field
+	model          string                 // configured model, supplied via POST body "model" field ("" = opencode config default)
 	readyCh        chan struct{}          // closed when POST /session returns
 	pendingPerms   map[string]*pendingPermission
 	permMu         sync.Mutex

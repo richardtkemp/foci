@@ -147,18 +147,13 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		}
 	}
 
-	// Apply the launch model. opencode's model is server-wide config
-	// (PATCH /config), not per-session — so this affects all sessions
-	// on the shared server. In practice one server serves one agent,
-	// so the model is the same. Mirrors ccstream's --model launch flag:
-	// re-establishes the configured model on every Start so a bounce
-	// (compaction, idle respawn) doesn't drift. Skipped when no model
-	// is configured — let opencode's own config stand.
-	if opts.Model != "" {
-		if err := b.patchConfig(ctx, map[string]any{"model": opts.Model}); err != nil {
-			log.NewComponentLogger(b.logComponent()).Warnf("model PATCH failed: %v — using opencode default", err)
-		}
-	}
+	// Store the configured model for inclusion in every prompt body.
+	// opencode's per-message "model" field is the actual runtime model
+	// override (PATCH /config is documented but doesn't take effect on
+	// 1.17.x). Empty = let opencode's own config stand.
+	b.mu.Lock()
+	b.model = opts.Model
+	b.mu.Unlock()
 
 	// Resolve and store the system prompt (rebuilt from disk here so a resume/
 	// compaction-bounce picks up character-file edits). It reaches the model

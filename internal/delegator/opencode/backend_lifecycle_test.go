@@ -3,7 +3,6 @@ package opencode
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -218,26 +217,15 @@ func TestBackend_Start_ReadyFires(t *testing.T) {
 
 }
 
-func TestBackend_Start_AppliesLaunchModel(t *testing.T) {
-	// Verifies Start sends PATCH /config {"model": opts.Model} when a
-	// model is configured — the opencode equivalent of ccstream's
-	// --model launch flag.
-	var (
-		mu          sync.Mutex
-		configPATCH []byte
-	)
+func TestBackend_Start_StoresModel(t *testing.T) {
+	// Verifies Start stores opts.Model on the Backend for inclusion in
+	// prompt bodies. opencode uses the per-message "model" field, not
+	// PATCH /config (which is documented but doesn't take effect on
+	// 1.17.x).
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" && r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"sess-model"}`))
-			return
-		}
-		if r.URL.Path == "/config" && r.Method == http.MethodPatch {
-			body, _ := io.ReadAll(r.Body)
-			mu.Lock()
-			configPATCH = body
-			mu.Unlock()
-			w.WriteHeader(http.StatusOK)
 			return
 		}
 		http.NotFound(w, r)
@@ -251,35 +239,22 @@ func TestBackend_Start_AppliesLaunchModel(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if len(configPATCH) == 0 {
-		t.Fatal("PATCH /config was not sent")
-	}
-	if !strings.Contains(string(configPATCH), `"model":"anthropic/claude-sonnet-4-20250514"`) {
-		t.Errorf("PATCH /config body = %q, want model field", string(configPATCH))
+	b.mu.Lock()
+	model := b.model
+	b.mu.Unlock()
+	if model != "anthropic/claude-sonnet-4-20250514" {
+		t.Errorf("b.model = %q, want anthropic/claude-sonnet-4-20250514", model)
 	}
 	_ = b.Close()
 }
 
-func TestBackend_Start_NoModelPatchWhenEmpty(t *testing.T) {
-	// Verifies Start does NOT send PATCH /config when opts.Model is
-	// empty — lets opencode's own config stand.
-	var (
-		mu           sync.Mutex
-		configPatched bool
-	)
+func TestBackend_Start_EmptyModel(t *testing.T) {
+	// Verifies Start stores empty model when none is configured —
+	// prompts omit the "model" field, letting opencode's config stand.
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" && r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"sess-no-model"}`))
-			return
-		}
-		if r.URL.Path == "/config" && r.Method == http.MethodPatch {
-			mu.Lock()
-			configPatched = true
-			mu.Unlock()
-			w.WriteHeader(http.StatusOK)
 			return
 		}
 		http.NotFound(w, r)
@@ -287,16 +262,16 @@ func TestBackend_Start_NoModelPatchWhenEmpty(t *testing.T) {
 
 	err := b.Start(context.Background(), delegator.StartOptions{
 		AgentID: "test-agent",
-		// Model intentionally empty
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if configPatched {
-		t.Error("PATCH /config should not be sent when Model is empty")
+	b.mu.Lock()
+	model := b.model
+	b.mu.Unlock()
+	if model != "" {
+		t.Errorf("b.model = %q, want empty", model)
 	}
 	_ = b.Close()
 }

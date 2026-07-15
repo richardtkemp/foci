@@ -335,7 +335,7 @@ func splitSlashCommand(text string) (name, rest string) {
 // treats them as first-class multimodal content — same as if the user
 // had pasted an image into the TUI.
 func (b *Backend) sendPrompt(ctx context.Context, text string, attachments []delegator.Attachment, systemPrompt string) error {
-	body := buildPromptBody(text, attachments, false, systemPrompt)
+	body := buildPromptBody(text, attachments, false, b.model, systemPrompt)
 	return b.postMessage(ctx, "/prompt_async", body)
 }
 
@@ -425,8 +425,8 @@ func (b *Backend) postMessage(ctx context.Context, suffix string, body []byte) e
 // a named "foci" agent — that agent isn't registered, and opencode fails the
 // whole request with an opaque UnknownError (jammed all opencode agents
 // 2026-07-08). Plan mode's agent:"plan" goes through buildPromptBodyWithAgent.
-func buildPromptBody(text string, attachments []delegator.Attachment, noReply bool, systemPrompt string) []byte {
-	return buildPromptBodyWithAgent(text, attachments, noReply, "", systemPrompt)
+func buildPromptBody(text string, attachments []delegator.Attachment, noReply bool, model, systemPrompt string) []byte {
+	return buildPromptBodyWithAgent(text, attachments, noReply, "", model, systemPrompt)
 }
 
 // ---------------------------------------------------------------------------
