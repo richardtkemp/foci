@@ -159,7 +159,7 @@ type Backend struct {
 	contextWindow        int         // from modelUsage.contextWindow
 	lastModel            string      // from assistant message
 	lastUsage            *TokenUsage // per-call usage from last assistant message
-	lastRateLimitWarnKey string      // OnRateLimit dedup key (status|type|resetsAt)
+	rateLimitWarnState   map[string]rateLimitWarnState // OnRateLimit throttle, keyed by status|type (see OnRateLimit)
 
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule

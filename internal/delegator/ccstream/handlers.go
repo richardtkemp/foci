@@ -671,8 +671,11 @@ func (b *Backend) OnKeepAlive() {
 // transitions (allowed → allowed_warning → rejected) with the API's
 // utilization. Past the "allowed" threshold we surface a WARNING via the
 // rate-limit hook — informational only, it does NOT gate periodic work.
-// De-duplicated per (status,type,resetsAt): CC repeats the event, so a warning
-// per event would flood. See #1211/#1238.
+//
+// CC repeats the event, so a warning per event would flood (#1211/#1238).
+// We throttle per limit window (keyed by status|type, re-armed when resetsAt
+// changes) and only warn when utilization climbs to a new bucket: one warning
+// per 5% below 95%, then every 1% at/above 95% — see rateLimitBucket.
 func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	b.touchActivity()
 	if ev == nil {
@@ -686,12 +689,19 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	if info.ResetsAt != nil {
 		resetsAt = int64(*info.ResetsAt)
 	}
-	key := fmt.Sprintf("%s|%s|%d", info.Status, info.RateLimitType, resetsAt)
+	key := fmt.Sprintf("%s|%s", info.Status, info.RateLimitType)
+	bucket := rateLimitBucket(info.Utilization)
 	b.mu.Lock()
-	dup := b.lastRateLimitWarnKey == key
-	b.lastRateLimitWarnKey = key
+	if b.rateLimitWarnState == nil {
+		b.rateLimitWarnState = make(map[string]rateLimitWarnState)
+	}
+	prev, seen := b.rateLimitWarnState[key]
+	fire := !seen || prev.resetsAt != resetsAt || bucket > prev.bucket
+	if fire {
+		b.rateLimitWarnState[key] = rateLimitWarnState{resetsAt: resetsAt, bucket: bucket}
+	}
 	b.mu.Unlock()
-	if dup {
+	if !fire {
 		return
 	}
 	b.fireRateLimited(FormatRateLimitNotice(info))

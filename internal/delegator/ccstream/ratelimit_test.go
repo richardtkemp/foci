@@ -10,11 +10,11 @@ func TestOnRateLimit(t *testing.T) {
 	b := &Backend{}
 	b.onRateLimited = func(detail string) { fires = append(fires, detail) }
 
-	util := 0.99
 	resets := 1752349800.0
-	warn := func() *RateLimitEvent {
+	warn := func(util float64) *RateLimitEvent {
+		u := util
 		return &RateLimitEvent{RateLimitInfo: RateLimitInfo{
-			Status: "allowed_warning", RateLimitType: "five_hour", ResetsAt: &resets, Utilization: &util,
+			Status: "allowed_warning", RateLimitType: "five_hour", ResetsAt: &resets, Utilization: &u,
 		}}
 	}
 
@@ -25,19 +25,52 @@ func TestOnRateLimit(t *testing.T) {
 		t.Fatalf("allowed/nil fired %d warnings, want 0", len(fires))
 	}
 
-	// First warning fires; a repeat of the same (status,type,resetsAt) is deduped.
-	b.OnRateLimit(warn())
-	b.OnRateLimit(warn())
+	// First warning fires; repeats within the same 5% bucket are throttled.
+	b.OnRateLimit(warn(0.81))
+	b.OnRateLimit(warn(0.82))
+	b.OnRateLimit(warn(0.84)) // still bucket 80
 	if len(fires) != 1 {
-		t.Fatalf("warning+dedup fired %d, want 1", len(fires))
+		t.Fatalf("bucket-80 fired %d, want 1", len(fires))
 	}
 
-	// A status transition is a new key → fires again.
-	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{Status: "rejected", RateLimitType: "five_hour", ResetsAt: &resets}})
+	// Climbing to the next 5% bucket fires again.
+	b.OnRateLimit(warn(0.86)) // bucket 85
 	if len(fires) != 2 {
-		t.Fatalf("transition fired %d, want 2", len(fires))
+		t.Fatalf("bucket-85 fired %d, want 2", len(fires))
+	}
+
+	// Below 95%, sub-5% climbs within a bucket stay quiet.
+	b.OnRateLimit(warn(0.87))
+	if len(fires) != 2 {
+		t.Fatalf("intra-bucket climb fired %d, want 2", len(fires))
+	}
+
+	// At/above 95% every 1% step is permitted.
+	b.OnRateLimit(warn(0.95))
+	b.OnRateLimit(warn(0.96))
+	b.OnRateLimit(warn(0.96)) // same 1% bucket → throttled
+	b.OnRateLimit(warn(0.97))
+	if len(fires) != 5 {
+		t.Fatalf("near-limit steps fired %d, want 5", len(fires))
+	}
+
+	// A status transition is a distinct series → fires.
+	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{Status: "rejected", RateLimitType: "five_hour", ResetsAt: &resets}})
+	if len(fires) != 6 {
+		t.Fatalf("transition fired %d, want 6", len(fires))
+	}
+
+	// A new window (changed resetsAt) re-arms warnings even at a lower bucket.
+	newResets := resets + 18000
+	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{
+		Status: "allowed_warning", RateLimitType: "five_hour", ResetsAt: &newResets, Utilization: ptrTo(0.50),
+	}})
+	if len(fires) != 7 {
+		t.Fatalf("new window fired %d, want 7", len(fires))
 	}
 }
+
+func ptrTo(f float64) *float64 { return &f }
 
 func TestFireRateLimited(t *testing.T) {
 	b := &Backend{}
