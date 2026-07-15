@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"foci/internal/delegator"
 )
@@ -81,7 +82,16 @@ func buildPromptBodyWithAgent(text string, attachments []delegator.Attachment, n
 		body["agent"] = agent
 	}
 	if model != "" {
-		body["model"] = model
+		// opencode's /prompt_async expects model as an object
+		// {providerID, modelID}, not a bare string. The model ID
+		// from resolveModel is in "providerID/modelID" format.
+		if idx := strings.IndexByte(model, '/'); idx >= 0 {
+			body["model"] = map[string]string{
+				"providerID": model[:idx],
+				"modelID":    model[idx+1:],
+			}
+		}
+		// No provider prefix → omit model field; opencode's config stands
 	}
 	if systemPrompt != "" {
 		body["system"] = systemPrompt
