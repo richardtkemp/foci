@@ -124,7 +124,7 @@ func TestConfigureDelegated_WiresEnvBlockIntoBothPromptPaths(t *testing.T) {
 	p, shared := wiringFixture(t)
 	ag := &agent.Agent{}
 
-	if _, ok := configureDelegated(ag, p, shared, "claude-code", map[string]any{}); !ok {
+	if _, ok := configureDelegated(ag, p, shared, "claude-code", config.BackendConfig{}); !ok {
 		t.Fatal("configureDelegated returned ok=false")
 	}
 	if ag.DelegatedManager == nil {
@@ -171,7 +171,7 @@ func TestConfigureDelegated_BothPromptPathsAgree(t *testing.T) {
 	p, shared := wiringFixture(t)
 	ag := &agent.Agent{}
 
-	if _, ok := configureDelegated(ag, p, shared, "claude-code", map[string]any{}); !ok {
+	if _, ok := configureDelegated(ag, p, shared, "claude-code", config.BackendConfig{}); !ok {
 		t.Fatal("configureDelegated returned ok=false")
 	}
 	so := ag.DelegatedManager.StartOpts

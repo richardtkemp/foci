@@ -273,6 +273,75 @@ type CCBackendConfig struct {
 	BackgroundTaskMaxAge string `toml:"background_task_max_age" desc:"Max time a background task can run before being dropped from tracking if no completion signal arrives, freeing up any reminders waiting on it. Empty = 30m" type:"duration"`
 }
 
+// BackendConfig holds per-agent settings for delegated backends
+// (claude-code, opencode, etc.). All fields are optional — nil means
+// "use the backend's default". Used in [agents.backend_config].
+// Pointer types are required for the config cascade (Merge[T] uses
+// reflect.Value.IsNil to distinguish "not set" from zero).
+type BackendConfig struct {
+	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
+	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Write(/tmp/**)). Merged with global [cc_backend] defaults"`
+	ClaudeBinary      *string           `toml:"claude_binary"      desc:"Path to the claude executable (default: claude via $PATH)"`
+	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
+	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`
+	SocketPath        *string           `toml:"socket_path"        desc:"Unix socket path for cctmux backend communication"`
+	Env               map[string]string `toml:"env"                desc:"Environment variables passed to the backend subprocess"`
+	OpencodeBinary    *string           `toml:"opencode_binary"    desc:"Path to the opencode executable (default: opencode via $PATH)"`
+	Hostname          *string           `toml:"hostname"           desc:"Bind address for the opencode serve subprocess (default 127.0.0.1)"`
+	ServerAuth        *string           `toml:"server_auth"        desc:"HTTP basic auth password for the opencode server (empty = no auth)"`
+	LogLevel          *string           `toml:"log_level"          desc:"opencode serve --log-level (empty = INFO)"`
+	Port              *int              `toml:"port"               desc:"TCP port for the opencode serve subprocess (0 = auto-pick)"`
+	DefaultPermission *string           `toml:"default_permission" desc:"opencode permission mode: ask, allow, or deny (default ask)"`
+}
+
+// ToMap converts the struct to the map[string]any shape the delegator
+// interface expects (Constructor still takes map[string]any to avoid a
+// circular import between config and delegator). Nil pointers are omitted.
+// AllowedTools is comma-joined because the CC backends read it as a string.
+func (bc BackendConfig) ToMap() map[string]any {
+	m := map[string]any{}
+	if bc.Model != nil {
+		m["model"] = *bc.Model
+	}
+	if len(bc.AllowedTools) > 0 {
+		m["allowed_tools"] = strings.Join(bc.AllowedTools, ",")
+	}
+	if bc.ClaudeBinary != nil {
+		m["claude_binary"] = *bc.ClaudeBinary
+	}
+	if bc.IdleTimeout != nil {
+		m["idle_timeout"] = *bc.IdleTimeout
+	}
+	if bc.SkipPermissions != nil {
+		m["skip_permissions"] = *bc.SkipPermissions
+	}
+	if bc.SocketPath != nil {
+		m["socket_path"] = *bc.SocketPath
+	}
+	if len(bc.Env) > 0 {
+		m["env"] = bc.Env
+	}
+	if bc.OpencodeBinary != nil {
+		m["opencode_binary"] = *bc.OpencodeBinary
+	}
+	if bc.Hostname != nil {
+		m["hostname"] = *bc.Hostname
+	}
+	if bc.ServerAuth != nil {
+		m["server_auth"] = *bc.ServerAuth
+	}
+	if bc.LogLevel != nil {
+		m["log_level"] = *bc.LogLevel
+	}
+	if bc.Port != nil {
+		m["port"] = *bc.Port
+	}
+	if bc.DefaultPermission != nil {
+		m["default_permission"] = *bc.DefaultPermission
+	}
+	return m
+}
+
 // GroupsConfig assigns named models to groups and call sites.
 // Groups is populated from top-level string keys in [groups] by load.go
 // (not decoded by TOML directly since the section mixes string keys with sub-tables).
@@ -326,7 +395,7 @@ type AgentConfig struct {
 	// A coding agent name (e.g. "claude-code-tmux", "codex", "opencode") delegates
 	// entire turns to an external agent subprocess.
 	Backend       string         `toml:"backend"`
-	BackendConfig map[string]any `toml:"backend_config"` // backend-specific settings
+	BackendConfig BackendConfig `toml:"backend_config"` // backend-specific settings
 
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDir         string             `toml:"skills_dir"`         // per-agent skills directory (default: $workspace/skills/)

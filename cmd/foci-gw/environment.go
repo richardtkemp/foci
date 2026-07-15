@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"foci/internal/config"
-	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
 	"foci/internal/log"
 	"foci/internal/procx"
@@ -374,8 +373,8 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	// opencode has its own permission model.
 	// skip_permissions bypasses all prompts, so a Command Approval section would
 	// just be confusing noise — omit it entirely (everything is permitted).
-	if acfg.Backend == "claude-code" && !delegator.SkipPermissions(acfg.BackendConfig) {
-		writeCommandApproval(&b, bakedPerms, cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig["allowed_tools"]))
+	if acfg.Backend == "claude-code" && !config.DerefBool(acfg.BackendConfig.SkipPermissions) {
+		writeCommandApproval(&b, bakedPerms, cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig.AllowedTools))
 	}
 
 	writeVisibility(&b, rc)

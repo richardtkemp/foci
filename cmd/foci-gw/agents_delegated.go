@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"foci/internal/agent"
 	"foci/internal/app"
+	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
 	"foci/internal/delegator/opencode"
@@ -40,7 +40,7 @@ func backendDefaultModel(backendName string) string {
 // with all callbacks, model override, permissions, and exec registry. The
 // agent's shared fields (compaction, warnings, etc.) are already set by
 // setupAgent before this is called.
-func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, backendName string, backendConfig map[string]any) (finalizeParams, bool) {
+func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, backendName string, backendConfig config.BackendConfig) (finalizeParams, bool) {
 	// Make prompt search dirs available for orientation template resolution
 	// (webhooks, keepalive, memory formation). Delegated agents don't need
 	// groupResolver since their model comes from backendConfig.
@@ -61,17 +61,18 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 
 	// Model for the backend — from backend_config, not from the group resolver.
 	// Ladder: config value, then the backend's own default model.
-	model := ""
-	if v, ok := backendConfig["model"].(string); ok {
-		model = v
-	}
+	model := config.DerefStr(backendConfig.Model)
 	if model == "" {
 		model = backendDefaultModel(backendName)
 	}
 
+	// Work on a copy so global-default folding below doesn't mutate the
+	// shared AgentConfig.BackendConfig (struct is a value type — assignment copies).
+	bc := backendConfig
+
 	// For Claude Code-family backends, fold global [cc_backend] settings
-	// into the per-agent backend_config map so both cctmux and ccstream
-	// pick them up from the same cfg key. Non-CC backends (codex,
+	// into the per-agent backend_config so both cctmux and ccstream
+	// pick them up from the same keys. Non-CC backends (codex,
 	// opencode, ...) are skipped so the keys don't leak into their
 	// config surface.
 	//
@@ -79,49 +80,33 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	//   allowed_tools — merged (per-agent rules appended to global)
 	//   claude_binary — global default; per-agent override wins
 	if backendName == "claude-code" || backendName == "claude-code-tmux" {
-		merged := p.cfg.CCBackend.MergedAllowedTools(backendConfig["allowed_tools"])
-		_, claudeBinSet := backendConfig["claude_binary"]
-		injectClaudeBin := !claudeBinSet && p.cfg.CCBackend.ClaudeBinary != ""
-		if merged != "" || injectClaudeBin {
-			// Copy so we don't mutate the shared AgentConfig.BackendConfig.
-			copied := make(map[string]any, len(backendConfig)+2)
-			for k, v := range backendConfig {
-				copied[k] = v
-			}
-			backendConfig = copied
-			if merged != "" {
-				backendConfig["allowed_tools"] = merged
-			}
-			if injectClaudeBin {
-				backendConfig["claude_binary"] = p.cfg.CCBackend.ClaudeBinary
-			}
+		merged := p.cfg.CCBackend.MergedAllowedTools(bc.AllowedTools)
+		if merged != "" {
+			bc.AllowedTools = strings.Split(merged, ",")
+		}
+		if bc.ClaudeBinary == nil && p.cfg.CCBackend.ClaudeBinary != "" {
+			bc.ClaudeBinary = &p.cfg.CCBackend.ClaudeBinary
 		}
 	}
 
 	// For opencode-backed agents, fold global [opencode_backend] settings
-	// into the per-agent backend_config map so the Backend reads them via
-	// the same cfg key as ccstream does. Per-agent values always win.
+	// into the per-agent backend_config so the Backend reads them via
+	// the same keys as ccstream does. Per-agent values always win.
 	if backendName == "opencode" {
-		copied := false
-		ensure := func(key string, val any) {
-			if _, set := backendConfig[key]; !set && val != "" && val != 0 {
-				if !copied {
-					dup := make(map[string]any, len(backendConfig)+4)
-					for k, v := range backendConfig {
-						dup[k] = v
-					}
-					backendConfig = dup
-					copied = true
-				}
-				backendConfig[key] = val
-			}
+		if bc.OpencodeBinary == nil {
+			bc.OpencodeBinary = &p.cfg.OpencodeBackend.OpencodeBinary
 		}
-		ensure("opencode_binary", p.cfg.OpencodeBackend.OpencodeBinary)
-		ensure("hostname", p.cfg.OpencodeBackend.Hostname)
-		ensure("server_auth", p.cfg.OpencodeBackend.ServerAuth)
-		ensure("log_level", p.cfg.OpencodeBackend.LogLevel)
-		if p.cfg.OpencodeBackend.Port != 0 {
-			ensure("port", p.cfg.OpencodeBackend.Port)
+		if bc.Hostname == nil {
+			bc.Hostname = &p.cfg.OpencodeBackend.Hostname
+		}
+		if bc.ServerAuth == nil {
+			bc.ServerAuth = &p.cfg.OpencodeBackend.ServerAuth
+		}
+		if bc.LogLevel == nil {
+			bc.LogLevel = &p.cfg.OpencodeBackend.LogLevel
+		}
+		if bc.Port == nil {
+			bc.Port = &p.cfg.OpencodeBackend.Port
 		}
 	}
 
@@ -182,8 +167,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 	// Parse idle timeout from config (default 3h; see agent.DefaultIdleTimeout).
 	var idleTimeout time.Duration
-	if v, ok := backendConfig["idle_timeout"].(string); ok && v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
+	if bc.IdleTimeout != nil && *bc.IdleTimeout != "" {
+		if d, err := time.ParseDuration(*bc.IdleTimeout); err == nil {
 			idleTimeout = d
 		}
 	}
@@ -197,7 +182,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// has no meaning for the API transport. The /login command is gated by
 	// RequiresBackend; this field stays nil for cctmux so that command
 	// reports "unavailable" rather than mis-driving the wrong backend.
-	claudeBin, _ := backendConfig["claude_binary"].(string)
+	claudeBin := config.DerefStr(bc.ClaudeBinary)
 	workDir := p.acfg.Workspace
 	triggerRelogin := func(reason, sessionKey string) bool {
 		if !relogin.G.Start() {
@@ -234,7 +219,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
 		NewBackend: func() (delegator.Delegator, error) {
-			be, err := delegator.New(backendName, backendConfig)
+			be, err := delegator.New(backendName, bc.ToMap())
 			if err != nil {
 				return nil, err
 			}
@@ -337,7 +322,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// consumes, but RunOnce doesn't see backendConfig — fold it
 			// onto StartOpts so DelegatedManager.RunOnce honours it.
 			ClaudeBinary: func() string {
-				v, _ := backendConfig["claude_binary"].(string)
+				v := config.DerefStr(bc.ClaudeBinary)
 				return v
 			}(),
 			// Per-agent backend_config.env propagates to the backend
@@ -345,7 +330,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// env vars per agent (e.g. one agent gets CCSTUB_HANG, others
 			// don't). DelegatedManager.Get merges these with the exec
 			// bridge's BASH_ENV/FOCI_SOCK so both layers survive.
-			Env: backendConfigEnv(backendConfig),
+			Env: bc.Env,
 		},
 		PermissionPromptFunc: func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			resolve := connResolver(connMgr, sessionKey, agentID)
@@ -657,47 +642,4 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	return registry
 }
 
-// backendConfigEnv reads the optional backend_config.env sub-table and
-// returns it as the env-var map shape StartOptions expects. Each value
-// is coerced to a string — TOML's tolerance of unquoted ints/bools
-// means a value like `CCSTUB_EXIT_CODE = 1` round-trips through any/int
-// rather than any/string, and we'd silently drop the entry otherwise.
-//
-// Returns nil when no env block is present (callers can pass nil into
-// StartOptions.Env safely — the bridge merge in DelegatedManager.Get
-// allocates as needed).
-func backendConfigEnv(cfg map[string]any) map[string]string {
-	raw, ok := cfg["env"]
-	if !ok {
-		return nil
-	}
-	m, ok := raw.(map[string]any)
-	if !ok {
-		return nil
-	}
-	if len(m) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		switch x := v.(type) {
-		case string:
-			out[k] = x
-		case bool:
-			if x {
-				out[k] = "true"
-			} else {
-				out[k] = "false"
-			}
-		case int:
-			out[k] = strconv.Itoa(x)
-		case int64:
-			out[k] = strconv.FormatInt(x, 10)
-		case float64:
-			out[k] = strconv.FormatFloat(x, 'f', -1, 64)
-		default:
-			out[k] = fmt.Sprintf("%v", x)
-		}
-	}
-	return out
-}
+
