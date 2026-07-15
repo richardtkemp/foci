@@ -243,6 +243,21 @@ func ApplyModelInfo(entries []ModelInfoEntry) {
 			continue
 		}
 		provider, modelID := SplitDeveloperModel(entry.ID)
+
+		// When a provider-prefixed ID overrides a built-in (providerless)
+		// model, register under "" so bare runtime lookups see the override.
+		// The tell: no provider-specific entry exists (LookupExact misses)
+		// but a providerless one does (the built-in). Without this, the
+		// override would be stored under the provider and invisible to
+		// runtime calls that pass the bare model ID without a prefix.
+		if provider != "" {
+			if _, hasExact := modelinfo.LookupExact(provider, modelID); !hasExact {
+				if _, hasProviderless := modelinfo.LookupExact("", modelID); hasProviderless {
+					provider = ""
+				}
+			}
+		}
+
 		modelinfo.Register(provider, modelID, m)
 	}
 }
