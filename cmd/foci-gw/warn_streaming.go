@@ -2,11 +2,12 @@ package main
 
 import (
 	"foci/internal/config"
+	"foci/internal/delegator"
 )
 
 // warnStreamOutputWithoutStreaming warns at startup if any agent has
 // stream_output enabled on a platform but the agent's intelligence provider
-// does not have streaming enabled. In that case stream_output silently
+// does not support streaming. In that case stream_output silently
 // does nothing, which is confusing.
 func warnStreamOutputWithoutStreaming(cfg *config.Config) {
 	for _, msg := range checkStreamOutputWithoutStreaming(cfg) {
@@ -15,21 +16,21 @@ func warnStreamOutputWithoutStreaming(cfg *config.Config) {
 }
 
 // checkStreamOutputWithoutStreaming returns warning messages for agents that
-// have stream_output enabled but streaming disabled.
+// have stream_output enabled but streaming is not supported.
 func checkStreamOutputWithoutStreaming(cfg *config.Config) []string {
 	var warnings []string
 	for _, acfg := range cfg.Agents {
-		// Delegated backends (ccstream, opencode) stream unconditionally —
-		// their Capabilities().Streaming is always true, regardless of the
-		// [agent_loop].streaming config flag (which only gates the API path's
-		// StreamHandler). Skip the check entirely for delegated agents.
+		// For delegated backends, streaming capability is a property of the
+		// backend type (queried via CapabilitiesForBackend), not the
+		// [agent_loop].streaming config flag which only gates the API path.
+		var streaming bool
 		if acfg.IsDelegated() {
-			continue
+			streaming = delegator.CapabilitiesForBackend(acfg.Backend).Streaming
+		} else {
+			streaming = config.Resolve(cfg, acfg).Loop.Streaming
 		}
-
-		streaming := config.Resolve(cfg, acfg).Loop.Streaming
 		if streaming {
-			continue // provider streaming is on — no conflict
+			continue
 		}
 
 		// Resolve effective stream_output for each platform.
@@ -39,7 +40,7 @@ func checkStreamOutputWithoutStreaming(cfg *config.Config) []string {
 		}
 
 		if streamOutput {
-			warnings = append(warnings, "agent \""+acfg.ID+"\": stream_output is enabled for Telegram but streaming is disabled for the intelligence provider — streaming output will not work")
+			warnings = append(warnings, "agent \""+acfg.ID+"\": stream_output is enabled for Telegram but streaming is not supported by the intelligence provider — streaming output will not work")
 		}
 	}
 	return warnings
