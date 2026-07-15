@@ -11,6 +11,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
+	"foci/internal/delegator/codex"
 	"foci/internal/delegator/opencode"
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -263,6 +264,21 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			if ob, ok := be.(*opencode.Backend); ok {
 				ob.SetOnAuthFailure(func(detail string) {
 					log.NewComponentLogger("agent:"+agentID).Warnf("opencode auth failure: %s", detail)
+				})
+			}
+			// Deliver Codex config/runtime warnings to the user's chat as
+			// system notifications — same pattern as ccstream's rate-limit
+			// notices. Deliberately off the generic log→WarningQueue path
+			// so they reach the human instead of being injected into the
+			// agent's own context.
+			if cb, ok := be.(*codex.Backend); ok {
+				cb.SetOnWarning(func(notice string) {
+					if conn := connMgr.Primary(agentID); conn != nil {
+						conn.SendNotification(notice)
+						log.NewComponentLogger("agent:" + agentID).Debugf("codex warning delivered to default chat")
+					} else {
+						log.NewComponentLogger("agent:"+agentID).Debugf("codex warning undelivered (no primary connection): %s", notice)
+					}
 				})
 			}
 			return be, nil
