@@ -4,14 +4,32 @@ import (
 	"encoding/json"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 )
 
-// onCommandApproval handles item/commandExecution/requestApproval — a
-// server-initiated JSON-RPC request asking the client to approve a command.
+// tryAutoApprove checks a command against compiled auto-approve rules.
+// If matched, sends "accept" directly and returns true (no user prompt).
+func (b *Backend) tryAutoApprove(rpcID int64, itemID, command string) bool {
+	if len(b.autoApproveRules) == 0 {
+		return false
+	}
+	input, _ := json.Marshal(map[string]string{"command": command})
+	if !autoapprove.Match(b.autoApproveRules, "Bash", input) {
+		return false
+	}
+	b.lg.Infof("auto-approved: command=%q item=%s", command, itemID)
+	b.respondApproval(rpcID, "accept")
+	return true
+}
+
 func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 	var params commandApprovalParams
 	if err := json.Unmarshal(line, &params); err != nil {
 		b.lg.Warnf("dropping malformed command approval: %v", err)
+		return
+	}
+
+	if b.tryAutoApprove(rpcID, params.ItemID, params.Command) {
 		return
 	}
 
