@@ -51,7 +51,7 @@ func TestDispatch_TokenUsageStashedAndDeliveredOnTurnComplete(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
 
-	b.dispatch([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"th_1","turnId":"tu_1","tokenUsage":{"total":{"inputTokens":100,"outputTokens":50,"cachedInputTokens":20,"reasoningOutputTokens":5,"totalTokens":175},"modelContextWindow":128000}}}`))
+	b.dispatch([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"th_1","turnId":"tu_1","tokenUsage":{"last":{"inputTokens":100,"outputTokens":50,"cachedInputTokens":20,"reasoningOutputTokens":5,"totalTokens":175},"modelContextWindow":128000}}}`))
 
 	b.turnMu.Lock()
 	stashed := b.stashedUsage

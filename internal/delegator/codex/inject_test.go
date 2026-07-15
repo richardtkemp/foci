@@ -132,9 +132,9 @@ func TestCompleteTurn_FiresOnTurnCompleteWithAccumulatedTextAndUsage(t *testing.
 	b.onAgentMessageDelta(&agentMessageDeltaParams{Delta: "world."})
 
 	tup := &tokenUsageParams{}
-	tup.TokenUsage.Total.InputTokens = 10
-	tup.TokenUsage.Total.OutputTokens = 4
-	tup.TokenUsage.Total.CachedInputTokens = 2
+	tup.TokenUsage.Last.InputTokens = 10
+	tup.TokenUsage.Last.OutputTokens = 4
+	tup.TokenUsage.Last.CachedInputTokens = 2
 	b.onTokenUsage(tup)
 
 	// Build the result from the accumulated scratch exactly as onTurnCompleted
