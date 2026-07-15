@@ -20,7 +20,8 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 	}
 
 	skip := base
-	skip.BackendConfig = map[string]any{"skip_permissions": true}
+	skipPerm := true
+	skip.BackendConfig = config.BackendConfig{SkipPermissions: &skipPerm}
 	skipRC := config.Resolve(cfg, skip)
 	skipped := buildEnvironmentDelegated(skip, "/tmp/foci.toml", cfg, skipRC, skipRC.Permissions, 0, nil, nil, nil, "")
 	if strings.Contains(skipped, "## Command Approval") {
