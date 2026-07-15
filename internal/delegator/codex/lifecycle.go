@@ -254,7 +254,8 @@ func (b *Backend) initialize() error {
 // startThread creates a new thread and stores the thread ID.
 func (b *Backend) startThread() (string, error) {
 	params := threadStartParams{
-		Cwd: b.workDir,
+		Cwd:     b.workDir,
+		Sandbox: b.sandboxMode(),
 	}
 	if m := b.modelFromOpts(); m != "" {
 		params.Model = m

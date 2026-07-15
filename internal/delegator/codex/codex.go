@@ -170,7 +170,7 @@ func (b *Backend) sandboxMode() string {
 }
 
 func (b *Backend) codexBinary() string {
-	if v, ok := b.cfg["codex_binary"].(string); ok && v != "" {
+	if v, ok := b.cfg["binary"].(string); ok && v != "" {
 		return v
 	}
 	return "codex"

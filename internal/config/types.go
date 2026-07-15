@@ -281,7 +281,8 @@ type CCBackendConfig struct {
 type BackendConfig struct {
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
 	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Write(/tmp/**)). Merged with global [cc_backend] defaults"`
-	ClaudeBinary      *string           `toml:"claude_binary"      desc:"Path to the claude executable (default: claude via $PATH)"`
+	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
+	ClaudeBinary      *string           `toml:"claude_binary"      desc:"Path to the claude executable (default: claude via $PATH). Deprecated: use binary"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
 	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`
 	SocketPath        *string           `toml:"socket_path"        desc:"Unix socket path for cctmux backend communication"`
@@ -305,6 +306,9 @@ func (bc BackendConfig) ToMap() map[string]any {
 	}
 	if len(bc.AllowedTools) > 0 {
 		m["allowed_tools"] = strings.Join(bc.AllowedTools, ",")
+	}
+	if bc.Binary != nil {
+		m["binary"] = *bc.Binary
 	}
 	if bc.ClaudeBinary != nil {
 		m["claude_binary"] = *bc.ClaudeBinary
