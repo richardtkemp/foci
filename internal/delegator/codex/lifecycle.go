@@ -236,11 +236,15 @@ func (b *Backend) sendAndWait(method string, params interface{}) (json.RawMessag
 
 // initialize performs the JSON-RPC initialize handshake.
 func (b *Backend) initialize() error {
+	v := "dev"
+	if fv, ok := b.cfg["foci_version"].(string); ok && fv != "" {
+		v = fv
+	}
 	params := initializeParams{
 		ClientInfo: clientInfo{
 			Name:    "foci",
 			Title:   "Foci",
-			Version: "0.1",
+			Version: v,
 		},
 	}
 	_, err := b.sendAndWait("initialize", params)
