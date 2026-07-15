@@ -186,3 +186,63 @@ func TestApplyModelInfo_MultipleEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyModelInfo_ProviderPrefixedID(t *testing.T) {
+	modelinfo.ResetToBuiltIn()
+
+	ctx := 1_000_000
+	in, out := 0.0, 0.0
+	entries := []ModelInfoEntry{
+		{ID: "zai-coding-plan/glm-5.2", ContextWindow: &ctx, InputPer1M: &in, OutputPer1M: &out},
+	}
+
+	ApplyModelInfo(entries)
+
+	// Should be registered under provider "zai-coding-plan", model "glm-5.2".
+	m, ok := modelinfo.Lookup("zai-coding-plan", "glm-5.2")
+	if !ok {
+		t.Fatal("provider-specific entry not found after ApplyModelInfo")
+	}
+	if m.Provider != "zai-coding-plan" {
+		t.Errorf("Provider = %q, want %q", m.Provider, "zai-coding-plan")
+	}
+	if m.ContextWindow != ctx {
+		t.Errorf("ContextWindow = %d, want %d", m.ContextWindow, ctx)
+	}
+
+	// Should NOT be registered as a providerless entry.
+	if _, ok := modelinfo.Lookup("", "glm-5.2"); ok {
+		t.Error("providerless entry should not exist for provider-prefixed ID")
+	}
+
+	// Cost via the provider-prefixed model string should hit.
+	cost := modelinfo.Cost("zai-coding-plan/glm-5.2", 1_000_000, 500_000, 0, 0)
+	if cost != 0 {
+		t.Errorf("Cost = %v, want 0 (all prices zero)", cost)
+	}
+}
+
+func TestModelInfoEntryToModel_ProviderPrefixedNewModel(t *testing.T) {
+	modelinfo.ResetToBuiltIn()
+
+	ctx := 500_000
+	in, out := 1.5, 7.5
+	entry := ModelInfoEntry{
+		ID:            "openrouter/glm-5.2",
+		ContextWindow: &ctx,
+		InputPer1M:    &in,
+		OutputPer1M:   &out,
+	}
+
+	m, err := entry.toModel()
+	if err != nil {
+		t.Fatalf("toModel with provider-prefixed ID: %v", err)
+	}
+
+	if m.ContextWindow != ctx {
+		t.Errorf("ContextWindow = %d, want %d", m.ContextWindow, ctx)
+	}
+	if m.InputPer1M != in {
+		t.Errorf("InputPer1M = %v, want %v", m.InputPer1M, in)
+	}
+}

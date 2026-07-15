@@ -177,3 +177,111 @@ func TestConcurrentAccessNoRace(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestAccessorsWithProviderPrefix(t *testing.T) {
+	t.Cleanup(ResetToBuiltIn)
+
+	Register("my-provider", "acc-test", Model{
+		ContextWindow: 333_000,
+		Effort:         true,
+		Thinking:       true,
+		Caching:        true,
+		InputPer1M:     3.00,
+		OutputPer1M:    9.00,
+	})
+
+	// ContextWindow with provider prefix.
+	if got := ContextWindow("my-provider/acc-test"); got != 333_000 {
+		t.Errorf("ContextWindow(\"my-provider/acc-test\") = %d, want 333000", got)
+	}
+
+	// Capabilities with provider prefix.
+	effort, thinking, speed := Capabilities("my-provider/acc-test")
+	if !effort || !thinking || speed {
+		t.Errorf("Capabilities(\"my-provider/acc-test\") = (%v, %v, %v), want (true, true, false)", effort, thinking, speed)
+	}
+
+	// Caching with provider prefix.
+	if got := Caching("my-provider/acc-test"); !got {
+		t.Errorf("Caching(\"my-provider/acc-test\") = false, want true")
+	}
+
+	// Without provider prefix, should NOT hit the provider-specific entry.
+	// ContextWindow falls through to family/default (200k default for unknown).
+	if got := ContextWindow("acc-test"); got == 333_000 {
+		t.Error("ContextWindow without provider should not hit provider-specific entry")
+	}
+}
+
+func TestDateSuffixWithProvider(t *testing.T) {
+	t.Cleanup(ResetToBuiltIn)
+
+	Register("prov", "dated-model", Model{
+		ContextWindow: 128_000,
+		InputPer1M:    1.00,
+	})
+
+	// Lookup with date suffix on the bare part should still match.
+	m, ok := Lookup("prov", "dated-model-20260715")
+	if !ok {
+		t.Fatal("Lookup with date suffix should match after stripDateSuffix")
+	}
+	if m.ContextWindow != 128_000 {
+		t.Errorf("ContextWindow = %d, want 128000", m.ContextWindow)
+	}
+
+	// Cost with date suffix in the full model string.
+	cost := Cost("prov/dated-model-20260715", 1_000_000, 0, 0, 0)
+	if cost != 1.00 {
+		t.Errorf("Cost = %v, want 1.0", cost)
+	}
+
+	// ContextWindow with date suffix.
+	if got := ContextWindow("prov/dated-model-20260715"); got != 128_000 {
+		t.Errorf("ContextWindow with date suffix = %d, want 128000", got)
+	}
+}
+
+func TestTwoProvidersSameModel(t *testing.T) {
+	t.Cleanup(ResetToBuiltIn)
+
+	Register("provider-a", "shared-model", Model{
+		ContextWindow: 200_000,
+		InputPer1M:    1.00,
+		OutputPer1M:   5.00,
+	})
+	Register("provider-b", "shared-model", Model{
+		ContextWindow: 400_000,
+		InputPer1M:    2.00,
+		OutputPer1M:   10.00,
+	})
+
+	// Each provider gets its own entry.
+	mA, ok := Lookup("provider-a", "shared-model")
+	if !ok || mA.InputPer1M != 1.00 || mA.ContextWindow != 200_000 {
+		t.Errorf("provider-a entry = %+v, want InputPer1M=1.0 ContextWindow=200000", mA)
+	}
+
+	mB, ok := Lookup("provider-b", "shared-model")
+	if !ok || mB.InputPer1M != 2.00 || mB.ContextWindow != 400_000 {
+		t.Errorf("provider-b entry = %+v, want InputPer1M=2.0 ContextWindow=400000", mB)
+	}
+
+	// Cost routes to the right provider.
+	costA := Cost("provider-a/shared-model", 1_000_000, 0, 0, 0)
+	costB := Cost("provider-b/shared-model", 1_000_000, 0, 0, 0)
+	if costA != 1.00 {
+		t.Errorf("Cost provider-a = %v, want 1.0", costA)
+	}
+	if costB != 2.00 {
+		t.Errorf("Cost provider-b = %v, want 2.0", costB)
+	}
+
+	// ContextWindow also routes correctly.
+	if got := ContextWindow("provider-a/shared-model"); got != 200_000 {
+		t.Errorf("ContextWindow provider-a = %d, want 200000", got)
+	}
+	if got := ContextWindow("provider-b/shared-model"); got != 400_000 {
+		t.Errorf("ContextWindow provider-b = %d, want 400000", got)
+	}
+}
