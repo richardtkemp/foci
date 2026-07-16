@@ -115,7 +115,7 @@ func (il *InjectionLevel) UnmarshalTOML(v any) error {
 	case "off", "false":
 		*il = InjectionOff
 		return nil
-	case "errors", "medium":
+	case "errors", "errors only", "medium":
 		*il = InjectionErrors
 		return nil
 	case "all", "true", "full":
