@@ -33,7 +33,10 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 
 	case *delegator.ApplyFlagSettingsRequest:
 		if effort, ok := r.Settings["effortLevel"].(string); ok {
-			b.lg.Debugf("effort override %s noted (codex applies via model config, not per-turn)", effort)
+			b.mu.Lock()
+			b.pendingEffort = effort
+			b.mu.Unlock()
+			b.lg.Infof("effort override queued: %s (applies next turn)", effort)
 		}
 		return nil
 
@@ -62,11 +65,15 @@ func codexApprovalPolicy(mode string) string {
 func (b *Backend) applyPendingControls(params *turnStartParams) {
 	b.mu.Lock()
 	model := b.pendingModel
+	effort := b.pendingEffort
 	approval := b.pendingApproval
 	b.mu.Unlock()
 
 	if model != "" {
 		params.Model = model
+	}
+	if effort != "" && effort != "off" {
+		params.Effort = effort
 	}
 	if approval != "" {
 		params.ApprovalPolicy = approval

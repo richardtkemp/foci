@@ -120,6 +120,23 @@ func TestSendControl_SetPermissionMode_UnknownMode(t *testing.T) {
 	}
 }
 
+// TestSendControl_Effort verifies a live /effort update is retained and sent
+// through the app-server's turn/start effort field on the next turn.
+func TestSendControl_Effort(t *testing.T) {
+	t.Parallel()
+	b := newControlTestBackend(t)
+	if err := b.SendControl(context.Background(), &delegator.ApplyFlagSettingsRequest{
+		Settings: map[string]any{"effortLevel": "ultra"},
+	}); err != nil {
+		t.Fatalf("SendControl: %v", err)
+	}
+	params := &turnStartParams{}
+	b.applyPendingControls(params)
+	if params.Effort != "ultra" {
+		t.Errorf("Effort = %q, want ultra", params.Effort)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // SendControl — unknown request type
 // ---------------------------------------------------------------------------

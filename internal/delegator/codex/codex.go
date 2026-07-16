@@ -22,6 +22,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
 	"foci/internal/log"
+	"foci/internal/modelcaps"
 )
 
 func init() {
@@ -46,25 +47,25 @@ type Backend struct {
 	lg *log.ComponentLogger
 
 	// Process
-	cmd     *exec.Cmd
-	writer  *Writer
-	cancel  context.CancelFunc
-	done    chan struct{}
+	cmd    *exec.Cmd
+	writer *Writer
+	cancel context.CancelFunc
+	done   chan struct{}
 
 	// State
-	mu         sync.Mutex
-	running    bool
-	closing    bool
-	threadID   string
-	model      string
-	readyCh    chan struct{}
-	readyOnce  sync.Once
-	startOpts  delegator.StartOptions
+	mu        sync.Mutex
+	running   bool
+	closing   bool
+	threadID  string
+	model     string
+	readyCh   chan struct{}
+	readyOnce sync.Once
+	startOpts delegator.StartOptions
 
 	// JSON-RPC request/response correlation
-	rpcMu       sync.Mutex
-	rpcSeq      int64
-	pendingRPC  map[int64]chan json.RawMessage
+	rpcMu      sync.Mutex
+	rpcSeq     int64
+	pendingRPC map[int64]chan json.RawMessage
 
 	// Session-scoped delivery callbacks
 	sessionEvents atomic.Pointer[delegator.SessionEvents]
@@ -87,6 +88,7 @@ type Backend struct {
 	typingFunc       func(typing bool)
 	onPromptsCleared func()
 	onWarning        func(detail string) // fired for configWarning / runtime warnings → delivered to chat
+	onModelCaps      func(entries map[string]modelcaps.Caps)
 
 	// Approvals
 	permMu           sync.Mutex
@@ -102,11 +104,12 @@ type Backend struct {
 	subagents *subagentTracker
 
 	// Compaction
-	compactMu       sync.Mutex
-	compactDoneCh   chan struct{}
+	compactMu     sync.Mutex
+	compactDoneCh chan struct{}
 
 	// Pending control overrides (set by ControlSender, applied on next turn/start)
-	pendingModel   string
+	pendingModel    string
+	pendingEffort   string
 	pendingApproval string
 	contextWindow   int
 
@@ -204,4 +207,3 @@ func (b *Backend) WaitForTurn(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-

@@ -99,12 +99,12 @@ type sessionSettingDef struct {
 	// (thinking is subsumed by effort there and CC exposes no thinking control),
 	// while api agents keep it.
 	BackendGate func(backendType string) bool
-	EmptyShow    string                            // display when effective value is "" (e.g. "not set")
-	DefaultShow  string                            // display when getter returns "" or matches this value (e.g. "off", "standard")
-	InvalidName  string                            // noun for error messages (e.g. "effort level", "thinking mode")
-	Get          func(CommandContext, string) string
-	Set          func(CommandContext, string, string)
-	Choices      []settingChoice
+	EmptyShow   string // display when effective value is "" (e.g. "not set")
+	DefaultShow string // display when getter returns "" or matches this value (e.g. "off", "standard")
+	InvalidName string // noun for error messages (e.g. "effort level", "thinking mode")
+	Get         func(CommandContext, string) string
+	Set         func(CommandContext, string, string)
+	Choices     []settingChoice
 	// DynamicChoices, when set and returning a non-empty slice, supplies the
 	// choice set for this call instead of the static Choices — e.g. /effort
 	// builds its levels from the live model catalogue (modelcaps) so the
@@ -207,7 +207,7 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 				return true
 			}
 			model := cc.Agent.SessionModel(tools.SessionKeyFromContext(ctx))
-			if def.Capability(config.ModelCapabilities(model)) {
+			if def.Capability(cc.Agent.ModelCapabilities(model)) {
 				return true
 			}
 			// Also visible if model config explicitly configures this setting.
@@ -227,7 +227,7 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 		// Gate: reject if current model doesn't support this setting.
 		if def.GateExecute && def.Capability != nil {
 			m := cc.Agent.SessionModel(sk)
-			if !def.Capability(config.ModelCapabilities(m)) {
+			if !def.Capability(cc.Agent.ModelCapabilities(m)) {
 				return Response{Text: fmt.Sprintf(def.GateMsg, m)}, nil
 			}
 		}
@@ -342,9 +342,9 @@ func ThinkingCommand() *Command {
 		// ~4.5/4.6) and effort subsumes it. api agents keep /thinking.
 		BackendGate: func(bt string) bool { return bt != modelcaps.BackendCCStream },
 		DefaultShow: "off",
-		InvalidName:  "thinking mode",
-		Get:          func(cc CommandContext, sk string) string { return cc.Agent.SessionThinking(sk) },
-		Set:          func(cc CommandContext, sk, v string) { cc.Agent.SetSessionThinking(sk, v) },
+		InvalidName: "thinking mode",
+		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionThinking(sk) },
+		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionThinking(sk, v) },
 		Choices: []settingChoice{
 			{Label: "off", Aliases: []string{"0", "none"}, SetValue: "off", Response: "Thinking: off"},
 			{Label: "adaptive", Aliases: []string{"1"}, SetValue: "adaptive", Response: "Thinking: adaptive"},

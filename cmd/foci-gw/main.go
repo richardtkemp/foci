@@ -532,25 +532,25 @@ Subcommands:
 		}
 	}
 
-	// Wire the live model-capabilities catalogue (context window, effort levels,
-	// thinking modes) from /v1/models into the process-wide modelcaps cache. The
-	// static modelinfo registry remains the fallback when CC creds are absent or
-	// the API is unreachable. Seed once in the background — never block startup.
+	// Restore every live model catalogue before its first source refresh. API and
+	// Claude Code pull /v1/models below; Codex publishes model/list after each
+	// app-server initialize handshake. All three persist through the same cache.
+	if si.sessionIndex != nil {
+		for _, backend := range []string{modelcaps.BackendCCStream, modelcaps.BackendAPI, modelcaps.BackendCodex} {
+			modelcaps.SetPersister(backend, modelCapsPersister{idx: si.sessionIndex})
+			modelcaps.Restore(backend)
+		}
+	}
+
+	// Wire the Anthropic live catalogues into their backend-scoped records. The
+	// static modelinfo registry remains the fallback when credentials are absent
+	// or the API is unreachable. Seed in the background — never block startup.
 	if anthropicResolver != nil {
 		if fetcher := anthropicResolver.ModelCapsFetcher(15 * time.Second); fetcher != nil {
-			// Both Anthropic-backed backends (ccstream, api) pull the same
-			// catalogue but keep separate per-backend records (a future codex
-			// backend would register its own fetcher under its own key).
+			// Both Anthropic-backed backends pull the same catalogue but keep
+			// separate records from each other and from Codex.
 			for _, backend := range []string{modelcaps.BackendCCStream, modelcaps.BackendAPI} {
 				modelcaps.SetFetcher(backend, fetcher)
-				// Persist across restarts via state.db, and restore the last
-				// catalogue synchronously now so lookups have real caps during
-				// the ~1s before the background fetch lands (#840). Restore
-				// before the go-Refresh so a fast network result isn't clobbered.
-				if si.sessionIndex != nil {
-					modelcaps.SetPersister(backend, modelCapsPersister{idx: si.sessionIndex})
-					modelcaps.Restore(backend)
-				}
 				go func(b string) {
 					if err := modelcaps.Refresh(context.Background(), b); err != nil {
 						modelcapsLog.Warnf("[%s] initial catalogue fetch failed (using static registry until next refresh): %v", b, err)

@@ -148,6 +148,7 @@ type Agent struct {
 	LiveConfigFn                  func() *config.ResolvedAgentConfig      // when set, per-turn getters read the LIVE resolved config so edits apply without restart; nil in direct-constructed agents (tests) → static fields above
 	ServerTools                   []provider.ToolDef                      // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DelegatedManager              *DelegatedManager                       // nil = traditional agent loop; non-nil = lazy per-session delegated transport management
+	Backend                       string                                  // configured transport backend name; empty/api = traditional API loop
 	ReloginTrigger                func(reason, sessionKey string) bool    // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
 	Reflection                    config.ResolvedReflection               // resolved reflection config (agent+global merged)
 	SkillDirs                     []string                                // skill directories (shared + per-agent) for reflection creation/update detection

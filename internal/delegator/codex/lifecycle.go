@@ -92,6 +92,19 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		return fmt.Errorf("codex: initialize failed: %w", err)
 	}
 
+	// model/list is available only after initialize. Catalogue discovery is
+	// best-effort: a failure must not prevent the user's coding session from
+	// starting, while a success populates foci's backend-scoped live registry.
+	if err := b.refreshModelCaps(); err != nil {
+		b.lg.Warnf("model/list failed (using persisted/static model details): %v", err)
+	}
+
+	b.mu.Lock()
+	if opts.Effort != "" && opts.Effort != "off" {
+		b.pendingEffort = opts.Effort
+	}
+	b.mu.Unlock()
+
 	// Start or resume thread.
 	if opts.ResumeSessionID != "" {
 		if err := b.resumeThread(opts.ResumeSessionID); err != nil {

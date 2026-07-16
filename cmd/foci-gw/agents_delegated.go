@@ -14,6 +14,7 @@ import (
 	"foci/internal/delegator/codex"
 	"foci/internal/delegator/opencode"
 	"foci/internal/log"
+	"foci/internal/modelcaps"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/ratelimit"
@@ -43,6 +44,7 @@ func backendDefaultModel(backendName string) string {
 // agent's shared fields (compaction, warnings, etc.) are already set by
 // setupAgent before this is called.
 func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, backendName string, backendConfig config.BackendConfig) (finalizeParams, bool) {
+	ag.Backend = backendName
 	// Make prompt search dirs available for orientation template resolution
 	// (webhooks, keepalive, memory formation). Delegated agents don't need
 	// groupResolver since their model comes from backendConfig.
@@ -280,6 +282,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// so they reach the human instead of being injected into the
 			// agent's own context.
 			if cb, ok := be.(*codex.Backend); ok {
+				cb.SetOnModelCaps(func(entries map[string]modelcaps.Caps) {
+					modelcaps.Publish(modelcaps.BackendCodex, entries)
+				})
 				cb.SetOnWarning(func(notice string) {
 					if conn := connMgr.Primary(agentID); conn != nil {
 						conn.SendNotification(notice)

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
@@ -331,16 +332,11 @@ func (a *Agent) emitCacheExpiry(sessionKey string) {
 	a.onCacheExpiry(sessionKey, a.CacheExpiryMs(sessionKey, time.Now()))
 }
 
-// BackendType returns the modelcaps backend-type key for this agent — the live
-// delegated backend (ccstream) when a DelegatedManager is wired, otherwise the
-// traditional API loop. Used to read the per-backend capability record so each
-// agent sees only its own backend's caps (a future codex backend would key
-// differently).
+// BackendType returns the modelcaps key for this agent's configured transport.
+// Capability catalogues are backend-scoped: Codex model/list must not leak into
+// API or Claude Code agents that happen to use the same model id.
 func (a *Agent) BackendType() string {
-	if a.DelegatedManager != nil {
-		return modelcaps.BackendCCStream
-	}
-	return modelcaps.BackendAPI
+	return modelcaps.BackendKey(a.Backend)
 }
 
 // ModelCaps returns the live capabilities for a model on this agent's backend,
@@ -348,6 +344,18 @@ func (a *Agent) BackendType() string {
 // back to the static modelinfo registry.
 func (a *Agent) ModelCaps(model string) (modelcaps.Caps, bool) {
 	return modelcaps.LookupFor(a.BackendType(), model)
+}
+
+// ModelCapabilities merges static modelinfo capabilities with this backend's
+// live catalogue. Live non-empty capability lists are authoritative evidence
+// that a setting is supported; static data remains the cold-cache fallback.
+func (a *Agent) ModelCapabilities(model string) config.ModelCaps {
+	caps := config.ModelCapabilities(model)
+	if live, ok := a.ModelCaps(model); ok {
+		caps.Effort = caps.Effort || len(live.Effort) > 0
+		caps.Thinking = caps.Thinking || len(live.Thinking) > 0
+	}
+	return caps
 }
 
 // BackendModels returns the model ids this agent's backend catalogue advertises,
@@ -816,7 +824,6 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 func (a *Agent) ResetCacheBaseline(sessionKey string) {
 	a.getSessionMeta(sessionKey).prevCacheRead = 0
 }
-
 
 // formatCost formats a dollar cost, trimming unnecessary trailing zeros.
 // $0.0000 → "$0", $1.2300 → "$1.23", $0.0016 → "$0.0016".

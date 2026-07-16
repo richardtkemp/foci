@@ -3,7 +3,7 @@
 //
 // Design (see ~/clutch/docs/effort-per-backend-caps.md):
 //   - Capabilities are a property of the BACKEND TYPE, not the model alone. Each
-//     backend ("ccstream", "api", a future "codex") owns its own record, keyed
+//     backend ("ccstream", "api", "codex") owns its own record, keyed
 //     by backend type. Records are NOT shared across backend types, even though
 //     the two Anthropic-backed ones both fill from the /v1/models catalogue: a
 //     non-Anthropic backend (e.g. openai codex) has a different effort concept
@@ -39,23 +39,27 @@ import (
 
 const logComponent = "modelcaps"
 
-// Backend-type keys. ccstream and api are the live Anthropic-backed backends;
-// future non-Anthropic backends (e.g. codex) register their own key.
+// Backend-type keys. ccstream and api are live Anthropic-backed backends;
+// codex is populated from the app-server's model/list catalogue.
 const (
 	BackendCCStream = "ccstream"
 	BackendAPI      = "api"
+	BackendCodex    = "codex"
 )
 
-// BackendKey maps an agent's config backend string ("", "api", "ccstream",
-// "cctmux") to its modelcaps backend-type key. Empty or "api" is the
-// traditional API loop; the Claude Code delegated backends share the ccstream
-// key (they expose the same Anthropic catalogue).
+// BackendKey maps an agent's configured backend name to its modelcaps key.
+// Empty or "api" is the traditional API loop; both Claude Code transports
+// share ccstream; Codex owns a separate app-server catalogue.
 func BackendKey(configBackend string) string {
 	switch configBackend {
-	case "ccstream", "cctmux":
+	case "claude-code", "claude-code-tmux", "ccstream", "cctmux":
 		return BackendCCStream
-	default:
+	case "codex":
+		return BackendCodex
+	case "", "api":
 		return BackendAPI
+	default:
+		return configBackend
 	}
 }
 
@@ -268,6 +272,15 @@ func Refresh(ctx context.Context, backend string) error {
 	return s.doFetch(ctx, fetcher)
 }
 
+// Publish replaces a backend's catalogue with entries obtained by a live
+// backend instance. It is the push counterpart to SetFetcher/Refresh for
+// protocols such as Codex app-server, whose model/list call is available only
+// after that instance completes its initialize handshake.
+func Publish(backend string, entries map[string]Caps) {
+	s := getStore(backend)
+	s.storeEntries(entries, time.Now())
+}
+
 // doFetch performs the fetch and swaps in the result. Clears the single-flight
 // guard on every exit. On error the previous entries are retained (serve-stale).
 func (s *store) doFetch(ctx context.Context, fetcher Fetcher) error {
@@ -280,20 +293,25 @@ func (s *store) doFetch(ctx context.Context, fetcher Fetcher) error {
 		log.NewComponentLogger(logComponent).Warnf("[%s] catalogue refresh failed (keeping %d cached entries): %v", s.backend, n, err)
 		return err
 	}
+	s.mu.Unlock()
+	s.storeEntries(entries, time.Now())
+	return nil
+}
+
+// storeEntries swaps and persists a successful catalogue snapshot.
+func (s *store) storeEntries(entries map[string]Caps, fetchedAt time.Time) {
+	s.mu.Lock()
 	s.entries = entries
-	s.lastFetch = time.Now()
-	fetchedAt := s.lastFetch
+	s.lastFetch = fetchedAt
 	persister := s.persister
 	s.mu.Unlock()
 	log.NewComponentLogger(logComponent).Infof("[%s] catalogue refreshed: %d models", s.backend, len(entries))
 
-	// Persist outside the store lock — DB I/O must not block lookups. Safe to
-	// pass entries by reference: doFetch is single-flighted and the next fetch
-	// builds a fresh map rather than mutating this one.
+	// Persist outside the store lock — DB I/O must not block lookups. Sources
+	// hand ownership of a completed snapshot to the store and never mutate it.
 	if persister != nil {
 		if err := persister.Save(s.backend, entries, fetchedAt); err != nil {
 			log.NewComponentLogger(logComponent).Warnf("[%s] persist to db failed: %v", s.backend, err)
 		}
 	}
-	return nil
 }

@@ -3,6 +3,7 @@ package modelcaps
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -262,5 +263,44 @@ func TestBackgroundRefreshSingleFlight(t *testing.T) {
 	}
 	if _, ok := LookupFor(tb, "claude-opus-4-8"); !ok {
 		t.Error("background refresh result did not land")
+	}
+}
+
+// TestPublishStoresPushedCatalogue proves app-server backends can atomically
+// populate the same cache used by fetched catalogues without installing a
+// long-lived fetcher tied to one session process.
+func TestPublishStoresPushedCatalogue(t *testing.T) {
+	reset()
+	fp := &fakePersister{}
+	SetPersister(BackendCodex, fp)
+	Publish(BackendCodex, map[string]Caps{
+		"gpt-pushed": {Effort: []string{"low", "high"}},
+	})
+	got, ok := LookupFor(BackendCodex, "codex/gpt-pushed")
+	if !ok || !reflect.DeepEqual(got.Effort, []string{"low", "high"}) {
+		t.Fatalf("published caps = %+v, ok=%v", got, ok)
+	}
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
+	if fp.saveCalls != 1 || fp.savedAt.IsZero() {
+		t.Errorf("published catalogue persistence calls=%d fetchedAt=%v", fp.saveCalls, fp.savedAt)
+	}
+}
+
+// TestBackendKeySeparatesConfiguredBackends proves Codex and OpenCode do not
+// accidentally consume the API or Claude Code capability catalogue.
+func TestBackendKeySeparatesConfiguredBackends(t *testing.T) {
+	tests := map[string]string{
+		"":                 BackendAPI,
+		"api":              BackendAPI,
+		"claude-code":      BackendCCStream,
+		"claude-code-tmux": BackendCCStream,
+		"codex":            BackendCodex,
+		"opencode":         "opencode",
+	}
+	for configured, want := range tests {
+		if got := BackendKey(configured); got != want {
+			t.Errorf("BackendKey(%q) = %q, want %q", configured, got, want)
+		}
 	}
 }
