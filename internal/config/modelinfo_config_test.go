@@ -210,9 +210,12 @@ func TestApplyModelInfo_ProviderPrefixedID(t *testing.T) {
 		t.Errorf("ContextWindow = %d, want %d", m.ContextWindow, ctx)
 	}
 
-	// Should NOT be registered as a providerless entry.
-	if _, ok := modelinfo.Lookup("", "glm-5.2"); ok {
-		t.Error("providerless entry should not exist for provider-prefixed ID")
+	// A providerless lookup now falls back to the sole registered provider
+	// entry (registryLookup's sole-provider fallback), so it hits too.
+	if pm, ok := modelinfo.Lookup("", "glm-5.2"); !ok {
+		t.Error("providerless lookup should hit via sole-provider fallback")
+	} else if pm.Provider != "zai-coding-plan" {
+		t.Errorf("Provider = %q, want %q", pm.Provider, "zai-coding-plan")
 	}
 
 	// Cost via the provider-prefixed model string should hit.

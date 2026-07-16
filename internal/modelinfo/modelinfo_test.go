@@ -46,9 +46,12 @@ func TestRegisterWithProvider(t *testing.T) {
 		t.Errorf("Provider = %q, want %q", m.Provider, "zai-coding-plan")
 	}
 
-	// Providerless lookup misses (no providerless entry for glm-5.2).
-	if _, ok := Lookup("", "glm-5.2"); ok {
-		t.Error("Lookup without provider should miss when only provider-specific entry exists")
+	// Providerless lookup now hits via the sole-provider fallback: glm-5.2
+	// has exactly one provider entry, so a providerless lookup matches it.
+	if pm, ok := Lookup("", "glm-5.2"); !ok {
+		t.Error("Lookup without provider should hit via sole-provider fallback")
+	} else if pm.Provider != "zai-coding-plan" {
+		t.Errorf("Provider = %q, want %q", pm.Provider, "zai-coding-plan")
 	}
 
 	// Cost with provider prefix hits the provider-specific entry.
@@ -57,9 +60,11 @@ func TestRegisterWithProvider(t *testing.T) {
 		t.Errorf("Cost = %v, want 0 (all prices zero)", cost)
 	}
 
-	// Cost without provider prefix misses → family/default fallback.
-	// (Not a registry hit, so should use fallback pricing.)
-	_ = Cost("glm-5.2", 100, 50, 0, 0) // should not panic
+	// Cost without provider prefix also hits now (sole-provider fallback),
+	// so it uses the registered zero pricing rather than family/default fallback.
+	if cost := Cost("glm-5.2", 100, 50, 0, 0); cost != 0 {
+		t.Errorf("Cost = %v, want 0 (sole-provider entry has zero pricing)", cost)
+	}
 }
 
 func TestProviderFallbackToProviderless(t *testing.T) {
@@ -206,10 +211,10 @@ func TestAccessorsWithProviderPrefix(t *testing.T) {
 		t.Errorf("Caching(\"my-provider/acc-test\") = false, want true")
 	}
 
-	// Without provider prefix, should NOT hit the provider-specific entry.
-	// ContextWindow falls through to family/default (200k default for unknown).
-	if got := ContextWindow("acc-test"); got == 333_000 {
-		t.Error("ContextWindow without provider should not hit provider-specific entry")
+	// Without provider prefix, now hits via the sole-provider fallback since
+	// acc-test has exactly one registered provider entry.
+	if got := ContextWindow("acc-test"); got != 333_000 {
+		t.Errorf("ContextWindow(\"acc-test\") = %d, want 333000 (sole-provider fallback)", got)
 	}
 }
 
