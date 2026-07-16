@@ -596,6 +596,9 @@ func (b *Backend) onSessionStatus(sessionID string, status SessionStatus) {
 	case StatusIdle:
 		// session.idle handles completion; this is belt-and-suspenders.
 	case StatusRetry:
+		if b.handleRateLimitRetry(status) {
+			return
+		}
 		log.NewComponentLogger(b.logComponent()).Debugf("session retrying (attempt %d): %s", status.Attempt, status.Message)
 	}
 }
@@ -710,18 +713,19 @@ func (b *Backend) failInFlightTurn(reason string) {
 	// an abort drain is notable — for a steered turn it could indicate a
 	// stray abort event mis-attributed. The turn-1 abort itself (aborting=true)
 	// legitimately completes with partial/no output, so is suppressed here.
-	// MessageAbortedError is always a deliberate POST /abort (steer or manual
-	// stop) — never an unexpected session death — so it's also suppressed.
-	if !wasAborting && reason != ErrMessageAborted && turn != nil && text == "" && tools == 0 {
+	// MessageAbortedError and the locally-detected rate-limit completion are
+	// deliberate POST /abort paths, never unexpected session deaths, so their
+	// empty results are also suppressed.
+	expectedEmpty := reason == ErrMessageAborted || reason == rateLimitTurnEnd
+	if !wasAborting && !expectedEmpty && turn != nil && text == "" && tools == 0 {
 		log.NewComponentLogger(b.logComponent()).Warnf("failInFlightTurn: active turn ended with no text/tools on %s — possible premature error on steered turn", reason)
 	}
 
-	if text == "" && reason != ErrMessageAborted {
-		// ErrMessageAborted comes from a deliberate POST /abort — either a
-		// mid-turn steer (injectSteer abort-drain) or /reset hard — not an
-		// unexpected session end, so the scary "ended unexpectedly" message is
-		// misleading. Deliver whatever partial text accumulated (possibly
-		// empty) and complete silently; a steer's follow-up turn follows.
+	if text == "" && !expectedEmpty {
+		// Deliberate aborts (steer, /reset hard, or rate-limit cancellation) are
+		// not unexpected session ends, so the scary fallback is misleading.
+		// Deliver whatever partial text accumulated (possibly empty) and
+		// complete silently; a steer's follow-up turn follows.
 		text = "⚠️ opencode session ended unexpectedly (" + reason + ")"
 	}
 	if turn != nil && turn.OnTurnComplete != nil {

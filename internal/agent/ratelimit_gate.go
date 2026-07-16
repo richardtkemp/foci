@@ -210,18 +210,19 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 }
 
 // EngageRateLimit closes the default-endpoint gate until `until` and fires the
-// RateLimit notification hooks. The delegated backend calls this when CC reports
-// a session limit was hit; that signal arrives as a stream message, never a
+// RateLimit notification hooks. Delegated backends call this when their coding
+// agent reports a session/usage limit through its event stream rather than a
 // direct-API 429, so classifyAPIError never runs and the gate would otherwise
 // stay open. Only the background/periodic paths (SessionRateLimited) honour the
-// gate — user-triggered delegated turns run through CC's own limiting.
+// gate — user-triggered delegated turns run through the coding agent's own
+// limiting.
 func (a *Agent) EngageRateLimit(until time.Time) {
 	if until.IsZero() || !until.After(time.Now()) {
 		return
 	}
 	gate := a.getOrCreateRateLimitGate(a.Endpoint)
 	gate.Close(until)
-	a.logger().Infof("rate limit gate (%s) closed until %s (session limit hit)", a.Endpoint, until.Format(time.Kitchen))
+	a.logger().Infof("rate limit gate (%s) closed until %s (delegated usage limit hit)", a.Endpoint, until.Format(time.Kitchen))
 	for _, fn := range a.RateLimitFunc {
 		fn(until)
 	}
