@@ -14,18 +14,18 @@ func costCC(apiLogPath string) CommandContext {
 	return CommandContext{APILogPath: apiLogPath}
 }
 
-// TestCostCommandUsage verifies usage message shows all available subcommands.
+// TestCostCommandUsage verifies that unknown args produce the usage text.
 func TestCostCommandUsage(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
 		{Timestamp: now, Session: "s", CostUSD: 0.01},
 	})
 	cmd := CostCommand()
-	result, err := cmd.Execute(context.Background(), Request{}, costCC(path))
+	result, err := cmd.Execute(context.Background(), Request{Args: "banana"}, costCC(path))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	for _, want := range []string{"/cost session", "/cost today", "/cost 24h", "/cost week", "/cost <days>"} {
+	for _, want := range []string{"Usage:", "duration", "scope", "breakdown"} {
 		if !strings.Contains(result.Text, want) {
 			t.Errorf("missing %q in usage:\n%s", want, result.Text)
 		}
@@ -93,32 +93,6 @@ func TestCostCommandTodaySorting(t *testing.T) {
 	}
 }
 
-// TestCostCommandSession verifies the session subcommand filters to the current session only.
-func TestCostCommandSession(t *testing.T) {
-	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/i0/0/abc", CostUSD: 0.010, Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 300},
-		{Timestamp: now, Session: "main/i0/0/abc", CostUSD: 0.020, Input: 800, Output: 300, CacheRead: 1500, CacheWrite: 0},
-		{Timestamp: now, Session: "other/session", CostUSD: 0.500, Input: 5000, Output: 2000, CacheRead: 10000, CacheWrite: 5000},
-	})
-
-	cmd := CostCommand()
-	result, err := cmd.Execute(context.Background(), Request{Args: "session", SessionKey: "main/i0/0/abc"}, costCC(path))
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	if !strings.Contains(result.Text, "$0.0300") {
-		t.Errorf("expected total $0.0300 for this session, got:\n%s", result.Text)
-	}
-	if strings.Contains(result.Text, "0.500") || strings.Contains(result.Text, "other/session") {
-		t.Errorf("should not contain other session's cost:\n%s", result.Text)
-	}
-	if !strings.Contains(result.Text, "2 calls") {
-		t.Errorf("expected 2 calls for this session:\n%s", result.Text)
-	}
-}
-
 // TestCostCommandSessionNoData verifies graceful handling when no calls exist for the session.
 func TestCostCommandSessionNoData(t *testing.T) {
 	now := time.Now().UTC()
@@ -178,11 +152,11 @@ func TestCostCommandDays(t *testing.T) {
 
 	cmd := CostCommand()
 	result, _ := cmd.Execute(context.Background(), Request{Args: "3"}, costCC(path))
-	if !strings.Contains(result.Text, "Last 3 days") {
-		t.Errorf("missing 'Last 3 days' in:\n%s", result.Text)
+	if !strings.Contains(result.Text, "3 days") {
+		t.Errorf("missing '3 days' label in:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, "$0.0750") {
-		t.Errorf("expected $0.0750 in:\n%s", result.Text)
+	if !strings.Contains(result.Text, "$0.08") {
+		t.Errorf("expected $0.08 (0.050+0.025) in:\n%s", result.Text)
 	}
 }
 
@@ -205,8 +179,8 @@ func TestCostCommand24h(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result.Text, "last 24h") {
-		t.Errorf("missing 'last 24h' header in:\n%s", result.Text)
+	if !strings.Contains(result.Text, "24h") {
+		t.Errorf("missing '24h' header in:\n%s", result.Text)
 	}
 	if !strings.Contains(result.Text, "$0.14") {
 		t.Errorf("expected total $0.14 in:\n%s", result.Text)
@@ -239,8 +213,8 @@ func TestCostCommandWeek(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result.Text, "7-day summary") {
-		t.Errorf("missing '7-day summary' header in:\n%s", result.Text)
+	if !strings.Contains(result.Text, "7 days") {
+		t.Errorf("missing '7 days' header in:\n%s", result.Text)
 	}
 	if !strings.Contains(result.Text, "$1.00") {
 		t.Errorf("expected total $1.00 in:\n%s", result.Text)
@@ -257,13 +231,70 @@ func TestCostCommandWeek(t *testing.T) {
 	if !strings.Contains(result.Text, todayStr) {
 		t.Errorf("missing today's date %s in:\n%s", todayStr, result.Text)
 	}
-	if !strings.Contains(result.Text, "$0.00") {
-		t.Errorf("expected $0.00 for empty days in:\n%s", result.Text)
-	}
 	fiveDaysAgo := startOfToday.AddDate(0, 0, -5).Format("2006-01-02")
 	todayIdx := strings.Index(result.Text, todayStr)
 	fiveIdx := strings.Index(result.Text, fiveDaysAgo)
 	if todayIdx > fiveIdx {
 		t.Errorf("expected newest-first order, today before %s:\n%s", fiveDaysAgo, result.Text)
+	}
+}
+
+// TestCostCommandGoDuration verifies a Go duration string like "4h" works.
+func TestCostCommandGoDuration(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []log.APIEntry{
+		{Timestamp: now.Add(-5 * time.Hour), Session: "old", CostUSD: 0.100},
+		{Timestamp: now.Add(-1 * time.Hour), Session: "recent", CostUSD: 0.050},
+	})
+
+	cmd := CostCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "4h"}, costCC(path))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "$0.05") {
+		t.Errorf("expected only recent entry in 4h window:\n%s", result.Text)
+	}
+	if strings.Contains(result.Text, "0.100") {
+		t.Errorf("old entry should be excluded from 4h window:\n%s", result.Text)
+	}
+}
+
+// TestCostCommandAllTime verifies /cost with no args shows all entries.
+func TestCostCommandAllTime(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []log.APIEntry{
+		{Timestamp: now.AddDate(0, 0, -30), Session: "old", CostUSD: 0.100},
+		{Timestamp: now, Session: "recent", CostUSD: 0.050},
+	})
+
+	cmd := CostCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: ""}, costCC(path))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "$0.15") {
+		t.Errorf("expected total $0.15 (all time) in:\n%s", result.Text)
+	}
+}
+
+// TestCostCommandTodayWithScope verifies combining duration + scope.
+func TestCostCommandTodayWithScope(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []log.APIEntry{
+		{Timestamp: now, Session: "main/i0/0/abc", CostUSD: 0.050},
+		{Timestamp: now, Session: "other/session", CostUSD: 0.025},
+	})
+
+	cmd := CostCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "today session", SessionKey: "main/i0/0/abc"}, costCC(path))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "$0.0500") {
+		t.Errorf("expected only this session's cost in:\n%s", result.Text)
+	}
+	if strings.Contains(result.Text, "other/session") {
+		t.Errorf("other session should be filtered out:\n%s", result.Text)
 	}
 }

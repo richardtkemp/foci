@@ -13,51 +13,117 @@ import (
 	"foci/internal/timeutil"
 )
 
-// costUsage returns the help text for /cost subcommands.
+// costUsage returns the help text for /cost.
 func costUsage() string {
-	return "/cost session — this session's cost so far\n" +
-		"/cost today — today's costs by session\n" +
-		"/cost 24h — last 24 hours with category breakdown\n" +
-		"/cost week — 7-day summary with daily breakdown\n" +
-		"/cost <days> — total for last N days\n" +
-		"add `breakdown` to any of the above (e.g. /cost week breakdown) — period total split by session type"
+	return "Usage: /cost [duration] [scope…] [breakdown]\n" +
+		"\n" +
+		"Durations (0-1, default: all time):\n" +
+		"  today            since midnight\n" +
+		"  24h              last 24 hours\n" +
+		"  week             last 7 days (calendar-aligned)\n" +
+		"  4h / 30m         Go duration notation\n" +
+		"  3                last N days\n" +
+		"\n" +
+		"Scopes (any number; multiple intersect):\n" +
+		"  session / self   this session and all descendants\n" +
+		"  strict-self      only this session (no descendants)\n" +
+		"  descendants      only descendant sessions\n" +
+		"  agent            all sessions owned by this agent\n" +
+		"  facet reflection chat independent spawn keepalive background-task\n" +
+		"\n" +
+		"breakdown          split by session type instead of default view"
 }
 
-// breakdownRequested reports whether the trailing args ask for the by-type
-// breakdown view (a modifier available on every /cost subcommand).
-func breakdownRequested(args string) bool {
-	for _, f := range strings.Fields(args) {
-		if strings.EqualFold(f, "breakdown") {
-			return true
+// costRender dispatches to the appropriate renderer based on the parsed
+// args. Entries are already filtered by time and scope. The rendering
+// priority is:
+//  1. breakdown → type breakdown table
+//  2. session-family scope → category detail view
+//  3. duration = today → per-session table
+//  4. duration = week → daily table
+//  5. default → summary with category breakdown
+func costRender(entries []log.APIEntry, args costArgs, scopeLabel, sessionKey string, idx *session.SessionIndex) string {
+	header := costHeader(args, scopeLabel)
+
+	// 1. Breakdown — group by session type
+	if args.breakdown && idx != nil {
+		breakdownHeader := header
+		if hasSessionScope(args.scopes) {
+			if _, start := sessionFamily(idx, sessionKey); !start.IsZero() {
+				if line := startLine(start); line != "" {
+					breakdownHeader += "\n" + line
+				}
+			}
 		}
+		return renderTypeBreakdown(entries, buildSessionTypeMap(idx), breakdownHeader)
 	}
-	return false
+
+	// 2. Session-family scope → category detail
+	if hasSessionScope(args.scopes) {
+		return costCategoryView(entries, header, sessionKey, idx, args.scopes)
+	}
+
+	// 3. Today → per-session table
+	if args.durKind == durToday {
+		return costPerSessionView(entries, header)
+	}
+
+	// 4. Week → daily table
+	if args.durKind == durWindow && args.durLabel == "7 days" {
+		return costDailyView(entries, header)
+	}
+
+	// 5. Default → summary with category breakdown
+	return costSummaryView(entries, header)
 }
 
-// costSession shows the total cost for the current session only.
-func costSession(entries []log.APIEntry, sessionKey string, idx *session.SessionIndex, breakdown bool) string {
-	if breakdown && idx != nil {
-		return costSessionBreakdown(entries, sessionKey, idx)
+// costHeader builds the header label from the duration and scope.
+func costHeader(args costArgs, scopeLabel string) string {
+	var parts []string
+	switch args.durKind {
+	case durToday:
+		parts = append(parts, "Today")
+	case durWindow:
+		parts = append(parts, "Last "+args.durLabel)
 	}
-	filtered := filterEntries(entries, func(e log.APIEntry) bool {
-		return e.Session == sessionKey
-	})
-	total, count := sumCosts(filtered)
+	if scopeLabel != "" {
+		parts = append(parts, scopeLabel)
+	}
+	if len(parts) == 0 {
+		return "All time"
+	}
+	return strings.Join(parts, " · ")
+}
+
+// --- Renderers (all accept pre-filtered entries) ---
+
+// costCategoryView shows total + category breakdown (cache reads/writes/
+// input/output/total). Used when scope narrows to the session family.
+func costCategoryView(entries []log.APIEntry, header, sessionKey string, idx *session.SessionIndex, scopes []string) string {
+	total, count := sumCosts(entries)
 
 	var b strings.Builder
 	if count == 0 {
-		b.WriteString("💰 This session: no API calls logged yet.")
+		fmt.Fprintf(&b, "💰 %s: no API calls logged.", header)
 	} else {
-		fmt.Fprintf(&b, "💰 This session: $%.4f (%s calls)", total, display.FormatCommas(count))
+		fmt.Fprintf(&b, "💰 %s: $%.4f (%s calls)", header, total, display.FormatCommas(count))
 	}
-	if line := sessionStartLine(idx, sessionKey); line != "" {
-		b.WriteByte('\n')
-		b.WriteString(line)
+
+	// Show family start time if a session scope is active.
+	if hasSessionScope(scopes) && idx != nil {
+		if _, start := sessionFamily(idx, sessionKey); !start.IsZero() {
+			if line := startLine(start); line != "" {
+				b.WriteByte('\n')
+				b.WriteString(line)
+			}
+		}
 	}
+
 	if count == 0 {
 		return b.String()
 	}
-	cr, cw, inp, out := categoryCosts(filtered)
+
+	cr, cw, inp, out := categoryCosts(entries)
 	cols := []display.Column{
 		{Header: "Category"},
 		{Header: "Cost", Align: display.AlignRight},
@@ -73,113 +139,124 @@ func costSession(entries []log.APIEntry, sessionKey string, idx *session.Session
 	return b.String()
 }
 
-// costSessionBreakdown sums the cost across the whole session family — the
-// current session's root ancestor plus every branch/child descendant (spawns,
-// reflections, keepalives, facets…) — grouped by session type. Session keys
-// never fork on compaction, so "previous versions" collapse into the same key
-// set; the family is resolved via the parent_session_key tree, not a string
-// prefix, so cross-chat independent spawns are captured correctly.
-func costSessionBreakdown(entries []log.APIEntry, sessionKey string, idx *session.SessionIndex) string {
-	family, start := sessionFamily(idx, sessionKey)
-	filtered := filterEntries(entries, func(e log.APIEntry) bool {
-		_, ok := family[e.Session]
-		return ok
-	})
-	header := "This session (family)"
-	if line := startLine(start); line != "" {
-		header += "\n" + line
-	}
-	return renderTypeBreakdown(filtered, buildSessionTypeMap(idx), header)
-}
-
-// costToday shows today's total with per-session breakdown.
-func costToday(entries []log.APIEntry, idx *session.SessionIndex, breakdown bool) string {
-	today := timeutil.Now().Format("2006-01-02")
-	pred := func(e log.APIEntry) bool {
-		return e.Timestamp.Local().Format("2006-01-02") == today
-	}
-	if breakdown && idx != nil {
-		return renderTypeBreakdown(filterEntries(entries, pred), buildSessionTypeMap(idx), "Today")
-	}
-	filtered := filterEntries(entries, pred)
-	total, count := sumCosts(filtered)
+// costPerSessionView shows a per-session breakdown table sorted by cost.
+func costPerSessionView(entries []log.APIEntry, header string) string {
+	total, count := sumCosts(entries)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "💰 Today: $%.2f eq. (%s calls)\n", total, display.FormatCommas(count))
+	fmt.Fprintf(&b, "💰 %s: $%.2f eq. (%s calls)", header, total, display.FormatCommas(count))
 
 	costs := make(map[string]float64)
 	counts := make(map[string]int)
-	for _, e := range filtered {
+	for _, e := range entries {
 		costs[e.Session] += e.CostUSD
 		counts[e.Session]++
 	}
 
-	if len(costs) > 0 {
-		type sessionCost struct {
-			name  string
-			cost  float64
-			calls int
-		}
-		sorted := make([]sessionCost, 0, len(costs))
-		for s, c := range costs {
-			sorted = append(sorted, sessionCost{s, c, counts[s]})
-		}
-		sort.Slice(sorted, func(i, j int) bool {
-			return sorted[i].cost > sorted[j].cost
-		})
-
-		shown := sorted
-		extra := 0
-		if len(sorted) > 10 {
-			shown = sorted[:10]
-			extra = len(sorted) - 10
-		}
-
-		cols := []display.Column{
-			{Header: "Session"},
-			{Header: "Cost", Align: display.AlignRight},
-			{Header: "Calls", Align: display.AlignRight},
-		}
-		costVals := make([]float64, 0, len(shown)+1)
-		for _, sc := range shown {
-			costVals = append(costVals, sc.cost)
-		}
-		costVals = append(costVals, total)
-		costCells := moneyCol(costVals, 2)
-		tableRows := make([][]string, 0, len(shown)+2)
-		for i, sc := range shown {
-			tableRows = append(tableRows, []string{
-				sc.name,
-				costCells[i],
-				display.FormatCommas(sc.calls),
-			})
-		}
-		if extra > 0 {
-			tableRows = append(tableRows, []string{fmt.Sprintf("  +%d more", extra), "", ""})
-		}
-		tableRows = append(tableRows, []string{"Total", costCells[len(shown)], display.FormatCommas(count)})
-		b.WriteByte('\n')
-		b.WriteString(display.MarkdownTable(cols, tableRows))
+	if len(costs) == 0 {
+		return b.String()
 	}
+
+	type sessionCost struct {
+		name  string
+		cost  float64
+		calls int
+	}
+	sorted := make([]sessionCost, 0, len(costs))
+	for s, c := range costs {
+		sorted = append(sorted, sessionCost{s, c, counts[s]})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].cost > sorted[j].cost
+	})
+
+	shown := sorted
+	extra := 0
+	if len(sorted) > 10 {
+		shown = sorted[:10]
+		extra = len(sorted) - 10
+	}
+
+	cols := []display.Column{
+		{Header: "Session"},
+		{Header: "Cost", Align: display.AlignRight},
+		{Header: "Calls", Align: display.AlignRight},
+	}
+	costVals := make([]float64, 0, len(shown)+1)
+	for _, sc := range shown {
+		costVals = append(costVals, sc.cost)
+	}
+	costVals = append(costVals, total)
+	costCells := moneyCol(costVals, 2)
+	tableRows := make([][]string, 0, len(shown)+2)
+	for i, sc := range shown {
+		tableRows = append(tableRows, []string{
+			sc.name,
+			costCells[i],
+			display.FormatCommas(sc.calls),
+		})
+	}
+	if extra > 0 {
+		tableRows = append(tableRows, []string{fmt.Sprintf("  +%d more", extra), "", ""})
+	}
+	tableRows = append(tableRows, []string{"Total", costCells[len(shown)], display.FormatCommas(count)})
+	b.WriteByte('\n')
+	b.WriteString(display.MarkdownTable(cols, tableRows))
 	return b.String()
 }
 
-// cost24h shows the last 24 hours with category breakdown.
-func cost24h(entries []log.APIEntry, idx *session.SessionIndex, breakdown bool) string {
-	cutoff := time.Now().Add(-24 * time.Hour)
-	pred := func(e log.APIEntry) bool {
-		return e.Timestamp.After(cutoff)
+// costDailyView shows a daily cost breakdown for the last 7 days.
+func costDailyView(entries []log.APIEntry, header string) string {
+	now := timeutil.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	dayCosts := make(map[string]float64)
+	var total float64
+	for _, e := range entries {
+		day := e.Timestamp.Local().Format("2006-01-02")
+		dayCosts[day] += e.CostUSD
+		total += e.CostUSD
 	}
-	if breakdown && idx != nil {
-		return renderTypeBreakdown(filterEntries(entries, pred), buildSessionTypeMap(idx), "Last 24h")
-	}
-	filtered := filterEntries(entries, pred)
-	total, _ := sumCosts(filtered)
-	cr, cw, inp, out := categoryCosts(filtered)
+	mean := total / 7.0
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "API cost (last 24h): $%.2f eq.\n", total)
+	fmt.Fprintf(&b, "💰 %s: $%.2f eq. (mean $%.2f/day)", header, total, mean)
 
+	cols := []display.Column{
+		{Header: "Date"},
+		{Header: "Cost", Align: display.AlignRight},
+	}
+	costVals := make([]float64, 0, 9)
+	for i := 0; i < 7; i++ {
+		day := startOfToday.AddDate(0, 0, -i).Format("2006-01-02")
+		costVals = append(costVals, dayCosts[day])
+	}
+	costVals = append(costVals, total, mean)
+	costCells := moneyCol(costVals, 2)
+	tableRows := make([][]string, 0, 9)
+	for i := 0; i < 7; i++ {
+		day := startOfToday.AddDate(0, 0, -i).Format("2006-01-02")
+		tableRows = append(tableRows, []string{day, costCells[i]})
+	}
+	tableRows = append(tableRows, []string{"Total", costCells[7]})
+	tableRows = append(tableRows, []string{"Mean/day", costCells[8]})
+	b.WriteByte('\n')
+	b.WriteString(display.MarkdownTable(cols, tableRows))
+	return b.String()
+}
+
+// costSummaryView shows a total + category breakdown table for the
+// filtered entries. Used when no special view applies.
+func costSummaryView(entries []log.APIEntry, header string) string {
+	total, count := sumCosts(entries)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "💰 %s: $%.2f eq. (%s calls)", header, total, display.FormatCommas(count))
+	if count == 0 {
+		return b.String()
+	}
+
+	cr, cw, inp, out := categoryCosts(entries)
 	cols := []display.Column{
 		{Header: "Category"},
 		{Header: "Cost", Align: display.AlignRight},
@@ -195,81 +272,10 @@ func cost24h(entries []log.APIEntry, idx *session.SessionIndex, breakdown bool) 
 	return b.String()
 }
 
-// costWeek shows a 7-day summary with daily breakdown.
-func costWeek(entries []log.APIEntry, idx *session.SessionIndex, breakdown bool) string {
-	now := timeutil.Now()
-	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	cutoff := startOfToday.AddDate(0, 0, -6)
-	pred := func(e log.APIEntry) bool {
-		return !e.Timestamp.Before(cutoff)
-	}
-	if breakdown && idx != nil {
-		return renderTypeBreakdown(filterEntries(entries, pred), buildSessionTypeMap(idx), "Last 7 days")
-	}
-	filtered := filterEntries(entries, pred)
-
-	dayCosts := make(map[string]float64)
-	var total float64
-	for _, e := range filtered {
-		day := e.Timestamp.Local().Format("2006-01-02")
-		dayCosts[day] += e.CostUSD
-		total += e.CostUSD
-	}
-	mean := total / 7.0
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "API cost (7-day summary): $%.2f eq. (mean $%.2f/day)\n", total, mean)
-
-	cols := []display.Column{
-		{Header: "Date"},
-		{Header: "Cost", Align: display.AlignRight},
-	}
-	days := make([]string, 7)
-	costVals := make([]float64, 0, 9)
-	for i := 0; i < 7; i++ {
-		day := startOfToday.AddDate(0, 0, -i).Format("2006-01-02")
-		days[i] = day
-		costVals = append(costVals, dayCosts[day])
-	}
-	costVals = append(costVals, total, mean)
-	costCells := moneyCol(costVals, 2)
-	tableRows := make([][]string, 0, 9)
-	for i := 0; i < 7; i++ {
-		tableRows = append(tableRows, []string{days[i], costCells[i]})
-	}
-	tableRows = append(tableRows, []string{"Total", costCells[7]})
-	tableRows = append(tableRows, []string{"Mean/day", costCells[8]})
-	b.WriteByte('\n')
-	b.WriteString(display.MarkdownTable(cols, tableRows))
-	return b.String()
-}
-
-// costDays shows the total cost for the last N days. The scope arg carries the
-// day count and may be followed by the `breakdown` modifier.
-func costDays(entries []log.APIEntry, args string, idx *session.SessionIndex) string {
-	fields := strings.Fields(args)
-	if len(fields) == 0 {
-		return "Usage: /cost [today|24h|week|<days>] [breakdown]"
-	}
-	days, err := strconv.Atoi(fields[0])
-	if err != nil {
-		return "Usage: /cost [today|24h|week|<days>] [breakdown]"
-	}
-	cutoff := time.Now().AddDate(0, 0, -days)
-	pred := func(e log.APIEntry) bool {
-		return e.Timestamp.After(cutoff)
-	}
-	if breakdownRequested(args) && idx != nil {
-		return renderTypeBreakdown(filterEntries(entries, pred), buildSessionTypeMap(idx), fmt.Sprintf("Last %d days", days))
-	}
-	filtered := filterEntries(entries, pred)
-	total, count := sumCosts(filtered)
-	return fmt.Sprintf("Last %d days: $%.4f (%d API calls)", days, total, count)
-}
+// --- Shared helpers ---
 
 // renderTypeBreakdown groups the given entries by session type and renders a
-// period total split by type. A period total only — no read/write category
-// split and no sub-period rows. Keys absent from the index show as "(untyped)".
+// period total split by type. Keys absent from the index show as "(untyped)".
 func renderTypeBreakdown(filtered []log.APIEntry, typeMap map[string]string, header string) string {
 	type agg struct {
 		cost     float64
@@ -373,6 +379,9 @@ func buildSessionTypeMap(idx *session.SessionIndex) map[string]string {
 func sessionFamily(idx *session.SessionIndex, key string) (map[string]struct{}, time.Time) {
 	family := map[string]struct{}{key: {}}
 	var start time.Time
+	if idx == nil {
+		return family, start
+	}
 	entries, err := idx.Query(session.QueryOptions{})
 	if err != nil {
 		return family, start
@@ -420,19 +429,6 @@ func sessionFamily(idx *session.SessionIndex, key string) (map[string]struct{}, 
 	return family, start
 }
 
-// sessionStartLine returns a "Started …" line for a single session key, or ""
-// if the index is unavailable or the session has no recorded start.
-func sessionStartLine(idx *session.SessionIndex, key string) string {
-	if idx == nil {
-		return ""
-	}
-	e, err := idx.Get(key)
-	if err != nil {
-		return ""
-	}
-	return startLine(e.CreatedAt)
-}
-
 // startLine formats a start timestamp as "Started <local> (<relative>)".
 func startLine(t time.Time) string {
 	if t.IsZero() {
@@ -442,9 +438,7 @@ func startLine(t time.Time) string {
 }
 
 // moneyCol renders a column of dollar amounts as equal-width, backtick-wrapped
-// cells so the decimals line up under right-alignment (accounting style). The
-// pad spaces sit inside the inline-code span, which the app renders monospace
-// and preserves verbatim.
+// cells so the decimals line up under right-alignment (accounting style).
 func moneyCol(vals []float64, decimals int) []string {
 	nums := make([]string, len(vals))
 	width := 0
