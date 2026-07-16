@@ -88,6 +88,13 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 		if item.Kind == "started" && se != nil && se.OnSubagentStart != nil {
 			se.OnSubagentStart(item.ID, item.AgentPath)
 		}
+	// collabAgentToolCall — the tool-call view of a subagent spawn.
+	// Carries the prompt (what was asked). Fire OnSubagentStart with the
+	// prompt as the label so the client shows what the subagent is doing.
+	case "collabAgentToolCall":
+		if se != nil && se.OnSubagentStart != nil {
+			se.OnSubagentStart(item.ID, item.Prompt)
+		}
 	}
 }
 
@@ -185,6 +192,20 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 	case "subAgentActivity":
 		if item.Kind == "interrupted" && se != nil && se.OnSubagentEnd != nil {
 			se.OnSubagentEnd(item.ID)
+		}
+
+	case "collabAgentToolCall":
+		// Extract agent response messages and deliver as subagent text,
+		// then close the run. Same pipeline as CC's Agent tool.
+		if se != nil {
+			for _, state := range item.AgentsStates {
+				if state.Message != "" && se.OnSubagentText != nil {
+					se.OnSubagentText(item.ID, state.Message)
+				}
+			}
+			if se.OnSubagentEnd != nil {
+				se.OnSubagentEnd(item.ID)
+			}
 		}
 	}
 }
