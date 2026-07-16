@@ -95,6 +95,7 @@ func TestInjectionLevel_UnmarshalTOML(t *testing.T) {
 		{"true alias", "true", InjectionAll, false},
 		{"full alias", "full", InjectionAll, false},
 		{"medium alias", "medium", InjectionErrors, false},
+		{"errors only alias", "errors only", InjectionErrors, false},
 
 		// Case insensitive
 		{"ALL", "ALL", InjectionAll, false},
