@@ -23,6 +23,9 @@ func LoginCommand() *Command {
 		Description: "Manually trigger Claude Code re-login (ccstream only)",
 		Category:    "operations",
 		Requires:    RequiresBackend,
+		Visible: func(_ context.Context, _ Request, cc CommandContext) bool {
+			return cc.Agent != nil && cc.Agent.ReloginTrigger != nil
+		},
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			if cc.Agent == nil || cc.Agent.ReloginTrigger == nil {
 				return Response{Text: "Re-login is only available on the ccstream backend."}, nil
