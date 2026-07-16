@@ -4,6 +4,9 @@
 package modelinfo
 
 import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 )
@@ -43,7 +46,7 @@ func noteUnpriced(bare string) {
 
 // Model holds the static attributes of a model.
 type Model struct {
-	Provider        string  // provider qualifier (e.g. "zai-coding-plan"); empty = providerless/built-in
+	Provider        string  // provider qualifier (e.g. "openrouter", "zai-coding-plan")
 	ContextWindow   int     // tokens
 	Effort          bool    // supports output_config.effort
 	Thinking        bool    // supports thinking (adaptive/enabled)
@@ -56,136 +59,77 @@ type Model struct {
 }
 
 // registry maps bare model IDs to provider→Model maps. The "" provider key is
-// the providerless/default entry (all built-in entries). Guarded by registryMu.
-var registry = map[string]map[string]Model{
-	// Anthropic
-	"claude-haiku-4-5": {"": {
-		ContextWindow: 200_000,
-		Caching:       true,
-		InputPer1M:    1.00, OutputPer1M: 5.00,
-		CacheReadPer1M: 0.10, CacheWritePer1M: 1.25,
-	}},
-	"claude-sonnet-4-5": {"": {
-		ContextWindow: 200_000,
-		Effort:        true, Thinking: true, Caching: true,
-		InputPer1M: 3.00, OutputPer1M: 15.00,
-		CacheReadPer1M: 0.30, CacheWritePer1M: 3.75,
-	}},
-	"claude-opus-4-6": {"": {
-		ContextWindow: 1_000_000, // 1M with Claude Max subscription
-		Effort:        true, Thinking: true, Speed: true, Caching: true,
-		InputPer1M: 15.00, OutputPer1M: 75.00,
-		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
-	}},
-	"claude-opus-4-6[1m]": {"": { // CC reports model with [1m] suffix for Max subscription
-		ContextWindow: 1_000_000,
-		Effort:        true, Thinking: true, Speed: true, Caching: true,
-		InputPer1M: 15.00, OutputPer1M: 75.00,
-		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
-	}},
-	"claude-fable-5": {"": { // Mythos-class, GA 2026-06-09; tier above Opus
-		ContextWindow: 1_000_000, // full 1M at standard pricing
-		Effort:        true, Thinking: true, Caching: true,
-		InputPer1M: 10.00, OutputPer1M: 50.00,
-		CacheReadPer1M: 1.00, CacheWritePer1M: 12.50,
-	}},
+// the providerless/default entry; all built-in entries use "openrouter" (the
+// sole-provider fallback means any lookup matches regardless of provider).
+// Populated from models.jsonl at init. Guarded by registryMu.
+var registry = map[string]map[string]Model{}
 
-	// Claude Code backends — default to largest available context window so
-	// we don't trigger spurious compaction before learning the true model.
-	// FinalModel feedback in UpdateSessionMeta corrects this downward if needed.
-	"claude-code-tmux": {"": {
-		ContextWindow: 1_000_000,
-		Caching:       true,
-	}},
-	"claude-code": {"": {
-		ContextWindow: 1_000_000,
-		Caching:       true,
-	}},
+// builtInData is the raw embedded model pricing data, parsed at init.
+//
+//go:embed models.jsonl
+var builtInData []byte
 
-	// OpenAI-compatible model exposed by the configured runtime.
-	// Keep the existing OpenAI fallback approximation explicit so usage
-	// accounting does not emit an unpriced-model warning.
-	"gpt-5.6-luna": {"": {
-		InputPer1M: 5.00, OutputPer1M: 15.00,
-	}},
-	"gpt-5.6-terra": {"": {
-		InputPer1M: 5.00, OutputPer1M: 15.00,
-	}},
-	"gpt-5.6-sol": {"": {
-		InputPer1M: 5.00, OutputPer1M: 15.00,
-	}},
-	"gpt-5.5": {"": {
-		InputPer1M: 5.00, OutputPer1M: 15.00,
-	}},
-	"gpt-5.4-mini": {"": {
-		InputPer1M: 5.00, OutputPer1M: 15.00,
-	}},
-	"gpt-5.4mini": {"": {
-		InputPer1M: 5.00, OutputPer1M: 15.00,
-	}},
-
-	// Gemini
-	"gemini-2.5-pro": {"": {
-		ContextWindow: 1_000_000,
-		InputPer1M:    1.25, OutputPer1M: 10.00,
-		CacheReadPer1M: 0.315,
-	}},
-	"gemini-2.5-flash": {"": {
-		ContextWindow: 1_000_000,
-		InputPer1M:    0.15, OutputPer1M: 0.60,
-		CacheReadPer1M: 0.0375,
-	}},
-	"gemini-2.0-flash": {"": {
-		ContextWindow: 1_000_000,
-		InputPer1M:    0.10, OutputPer1M: 0.40,
-		CacheReadPer1M: 0.025,
-	}},
-
-	// Third-party models (OpenRouter-routed). :nitro is OpenRouter's
-	// throughput-routing shortcut — same base price, faster provider.
-	"gpt-5-mini": {"": {
-		ContextWindow: 400_000,
-		InputPer1M:    0.25, OutputPer1M: 2.00,
-	}},
-	"qwen3.5-397b-a17b": {"": {
-		ContextWindow: 262_144,
-		InputPer1M:    0.45, OutputPer1M: 3.00,
-	}},
-	"qwen3.5-397b-a17b:nitro": {"": {
-		ContextWindow: 262_144,
-		InputPer1M:    0.45, OutputPer1M: 3.00,
-	}},
-"minimax-m2.7": {"": {
-		ContextWindow: 204_800,
-		InputPer1M:    0.30, OutputPer1M: 1.20,
-	}},
-	"kimi-k2.5": {"": {
-		ContextWindow: 262_144,
-		InputPer1M:    0.57, OutputPer1M: 2.85,
-	}},
-	"glm-5-turbo": {"": {
-		ContextWindow: 202_752,
-		InputPer1M:    1.20, OutputPer1M: 4.00,
-	}},
-	"step-3.5-flash": {"": {
-		ContextWindow: 262_144,
-		InputPer1M:    0.10, OutputPer1M: 0.30,
-	}},
-	"step-3.5-flash:nitro": {"": {
-		ContextWindow: 262_144,
-		InputPer1M:    0.10, OutputPer1M: 0.30,
-	}},
+// jsonlEntry is the JSON representation of a model entry in models.jsonl.
+// It maps directly to the Model struct; the Comment field is informational
+// only and not stored in the registry.
+type jsonlEntry struct {
+	ID              string  `json:"id"`
+	Provider        string  `json:"provider"`
+	ContextWindow   int     `json:"context_window,omitempty"`
+	Effort          bool    `json:"effort,omitempty"`
+	Thinking        bool    `json:"thinking,omitempty"`
+	Speed           bool    `json:"speed,omitempty"`
+	Caching         bool    `json:"caching,omitempty"`
+	InputPer1M      float64 `json:"input_per_1m,omitempty"`
+	OutputPer1M     float64 `json:"output_per_1m,omitempty"`
+	CacheReadPer1M  float64 `json:"cache_read_per_1m,omitempty"`
+	CacheWritePer1M float64 `json:"cache_write_per_1m,omitempty"`
+	Comment         string  `json:"comment,omitempty"`
 }
 
 // registryMu guards registry. RLock for reads (accessors), Lock for writes
 // (Register, ResetToBuiltIn via live-apply).
 var registryMu sync.RWMutex
 
-// builtIn is a deep snapshot of the hardcoded registry taken at init, so
-// live-apply can ResetToBuiltIn and re-apply config overrides from scratch.
+// builtIn is a deep snapshot of the registry taken at init from models.jsonl,
+// so live-apply can ResetToBuiltIn and re-apply config overrides from scratch.
 var builtIn = map[string]map[string]Model{}
 
 func init() {
+	// Parse embedded JSONL into registry.
+	for _, line := range strings.Split(string(builtInData), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var e jsonlEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			panic(fmt.Sprintf("modelinfo: parse models.jsonl line %q: %v", line, err))
+		}
+		if e.ID == "" {
+			panic(fmt.Sprintf("modelinfo: models.jsonl entry missing id: %q", line))
+		}
+		provider := strings.ToLower(e.Provider)
+		id := strings.ToLower(e.ID)
+		m := Model{
+			Provider:        provider,
+			ContextWindow:   e.ContextWindow,
+			Effort:          e.Effort,
+			Thinking:        e.Thinking,
+			Speed:           e.Speed,
+			Caching:         e.Caching,
+			InputPer1M:      e.InputPer1M,
+			OutputPer1M:     e.OutputPer1M,
+			CacheReadPer1M:  e.CacheReadPer1M,
+			CacheWritePer1M: e.CacheWritePer1M,
+		}
+		if registry[id] == nil {
+			registry[id] = map[string]Model{}
+		}
+		registry[id][provider] = m
+	}
+
+	// Snapshot for ResetToBuiltIn.
 	for k, v := range registry {
 		builtIn[k] = map[string]Model{}
 		for pk, pv := range v {
@@ -249,8 +193,8 @@ func registryLookup(provider, bare string) (Model, bool) {
 	return Model{}, false
 }
 
-// ResetToBuiltIn restores the registry to its hardcoded defaults, discarding
-// all config overrides. Called by live-apply before re-applying.
+// ResetToBuiltIn restores the registry to its built-in defaults (from
+// models.jsonl), discarding all config overrides. Called by live-apply.
 func ResetToBuiltIn() {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -426,7 +370,7 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 // familyPricing maps a bare model name to a canonical per-family price entry by
 // family keyword, so pricing tracks the family ("opus costs this much") rather
 // than an exact version string. The canonical entries are the registry's
-// providerless members of each family. Caller must hold registryMu.
+// built-in members of each family. Caller must hold registryMu.
 func familyPricing(bare string) (Model, bool) {
 	switch {
 	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
