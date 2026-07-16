@@ -8,7 +8,6 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/modelcaps"
-	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/secrets"
 )
@@ -53,27 +52,13 @@ type AnthropicResolver struct {
 }
 
 // NewResolver creates and initializes an AnthropicResolver.
-// Initializes the shared CCTokenSource and sets up the refresh callback
-// for proactive token renewal.
 func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, store SecretsStore) (*AnthropicResolver, error) {
-	ccExpiryThreshold, err := time.ParseDuration(anthropicCfg.CCExpiryThreshold)
-	if err != nil {
-		anthropicLog.Warnf("invalid cc_expiry_threshold, using default: %v", err)
-		ccExpiryThreshold = defaultExpiryThreshold
-	}
-
 	const ccCredsFile = "~/.claude/.credentials.json"
 
 	var ccSrc *CCTokenSource
 	if src, err := NewCCTokenSource(ccCredsFile); err == nil {
-		src.SetRefreshFunc(func() {
-			anthropicLog.Warnf("CC credentials near expiry — starting claude to refresh")
-			startClaudeForRefresh()
-		})
-		src.SetExpiryThreshold(ccExpiryThreshold)
 		ccSrc = src
-		anthropicLog.Infof("CC token source configured (%s, lazy reads, expiry threshold %s)",
-			ccCredsFile, ccExpiryThreshold)
+		anthropicLog.Infof("CC token source configured (%s, lazy reads)", ccCredsFile)
 	}
 
 	return &AnthropicResolver{
@@ -165,25 +150,5 @@ func (r *AnthropicResolver) GetReloadFunc(secretsPath string) func() error {
 		r.mu.Unlock()
 
 		return nil
-	}
-}
-
-// startClaudeForRefresh sends a trivial query via Claude Code to force a token refresh.
-// claude auth status doesn't refresh tokens — only a real API call does.
-// Fire-and-forget — logs errors but never blocks.
-func startClaudeForRefresh() {
-	cmd := procx.Spawn(context.Background(), "claude",
-		"--model", "haiku",
-		"--system-prompt", "",
-		"--print",
-		"--effort", "low",
-		"1+1",
-	)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		anthropicLog.Warnf("claude token refresh failed (CC may not be installed): %v", err)
-	} else {
-		anthropicLog.Infof("claude token refresh completed")
 	}
 }

@@ -573,7 +573,6 @@ type ToolConfig struct {
 }
 
 type AnthropicConfig struct {
-	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"  desc:"How far ahead of expiry the server refreshes cached Claude Code login credentials (~/.claude/.credentials.json), an alternate way to authenticate to Anthropic (default 5m)" type:"duration"`
 }
 
 // DisplayConfig holds display-related settings that can be set at any level

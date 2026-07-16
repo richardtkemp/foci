@@ -97,21 +97,17 @@ func newTestResolver(t *testing.T, store SecretsStore, ccToken string) *Anthropi
 		}
 		writeCCCreds(t, filepath.Join(home, ".claude", ".credentials.json"), ccToken, "ref", time.Now().Add(time.Hour))
 	}
-	r, err := NewResolver(context.Background(), &config.AnthropicConfig{
-		CCExpiryThreshold: "2m",
-	}, store)
+	r, err := NewResolver(context.Background(), &config.AnthropicConfig{}, store)
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)
 	}
 	return r
 }
 
-func TestNewResolverInvalidDurationsUseDefaults(t *testing.T) {
-	// Proves NewResolver falls back to the documented defaults (5m expiry threshold) when the configured durations don't parse, instead of failing startup.
+func TestNewResolverWithoutCCCredentials(t *testing.T) {
+	// Proves NewResolver succeeds with no CC credentials file (ccSrc is nil).
 	t.Setenv("HOME", t.TempDir())
-	r, err := NewResolver(context.Background(), &config.AnthropicConfig{
-		CCExpiryThreshold: "also-bad",
-	}, fakeSecretsStore{})
+	r, err := NewResolver(context.Background(), &config.AnthropicConfig{}, fakeSecretsStore{})
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)
 	}
