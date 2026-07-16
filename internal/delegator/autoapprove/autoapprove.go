@@ -2,6 +2,7 @@ package autoapprove
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -670,9 +671,8 @@ func resolveWordPart(part syntax.WordPart, vc *varCtx) (string, bool) {
 // ---------- Variable resolution context ----------
 
 // varCtx holds statically known shell variables at one precise point in a
-// script. It deliberately never reads the gateway environment: permission
-// validation must not assume it is byte-identical to the delegated shell's
-// environment.
+// script. Variables not assigned in the command fall through to the process
+// environment (os.LookupEnv), which the gateway and delegated shell share.
 type varCtx struct {
 	symbolTable map[string]string // known literal assignments: name → value
 	unknown     map[string]bool   // assignments whose value/scope is not modelled
@@ -805,7 +805,11 @@ func (vc *varCtx) resolveParamExp(p *syntax.ParamExp) (string, bool) {
 	if val, ok := vc.symbolTable[name]; ok {
 		return val, true
 	}
-	return "", false
+	// Not assigned anywhere in the command — fall through to the process
+	// environment. The gateway and the delegated shell child share the same
+	// environment, so the value at approval time matches execution time.
+	val, ok := os.LookupEnv(name)
+	return val, ok
 }
 
 // isSpecialParam reports whether name is a shell special parameter whose

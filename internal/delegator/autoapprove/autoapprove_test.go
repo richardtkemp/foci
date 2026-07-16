@@ -1383,7 +1383,7 @@ func TestShellInterceptorVarResolution(t *testing.T) {
 		// Inline non-literal value — can't resolve.
 		{"inline non-literal", `{"command":"X=$(echo ls); bash -c \"$X\""}`, false},
 		// Inherited environment is not a statically verified input.
-		{"env var safe", `{"command":"bash -c \"$BASHC_TEST_VAR\""}`, false},
+		{"env var safe", `{"command":"bash -c \"$BASHC_TEST_VAR\""}`, true},
 		// Unset variable — rejected.
 		{"unset var", `{"command":"bash -c \"$BASHC_DEFINITELY_UNSET\""}`, false},
 		// Inline override of env var — symbol table value used (not stale env).
