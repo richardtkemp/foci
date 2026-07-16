@@ -684,6 +684,9 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"sed -ni 's/foo/bar/' file.txt"}`},
 		{"Bash", `{"command":"sed --in-place 's/foo/bar/' file.txt"}`},
 		{"Bash", `{"command":"sed -i.bak 's/foo/bar/' file.txt"}`},
+		// sed -f loads an uninspected script, including from stdin.
+		{"Bash", `{"command":"sed -f /tmp/evil.sed /etc/hosts"}`},
+		{"Bash", `{"command":"echo 'e rm file' | sed -f /dev/stdin /etc/hosts"}`},
 
 		// sed w command writes to file without -i.
 		{"Bash", `{"command":"sed 'w /tmp/stolen.txt' /etc/shadow"}`},
@@ -704,6 +707,14 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 
 		// sort -o writes output to file.
 		{"Bash", `{"command":"sort -o /tmp/overwritten.txt /etc/passwd"}`},
+		// sort's compression helper runs an external program.
+		{"Bash", `{"command":"sort --compress-program=/tmp/evil /etc/passwd"}`},
+
+		// ripgrep's preprocessor runs an external program for each input file.
+		{"Bash", `{"command":"rg --pre=/tmp/evil pattern ."}`},
+
+		// go vet executes the selected alternate analyzer.
+		{"Bash", `{"command":"go vet -vettool=/tmp/evil ./..."}`},
 
 		// yq -i writes in-place (same class as sed -i).
 		{"Bash", `{"command":"yq -i '.key = \"value\"' config.yaml"}`},
@@ -1231,8 +1242,8 @@ func TestASTBraceExpansion(t *testing.T) {
 	}
 }
 
-// TestSortUnsafeFlags verifies that sort -o and --output are detected as
-// unsafe flags.
+// TestSortUnsafeFlags verifies that sort output and external-compressor flags
+// are rejected while ordinary sorting remains auto-approved.
 func TestSortUnsafeFlags(t *testing.T) {
 	rules := parseAutoApproveRules(CommonReadonlyRules)
 	tests := []struct {
@@ -1246,6 +1257,8 @@ func TestSortUnsafeFlags(t *testing.T) {
 		// Unsafe: -o writes output to file.
 		{`{"command":"sort -o /tmp/sorted.txt /etc/passwd"}`, false},
 		{`{"command":"sort --output=/tmp/sorted.txt /etc/passwd"}`, false},
+		// Unsafe: invokes the named external compressor for temporary files.
+		{`{"command":"sort --compress-program=/tmp/evil /etc/passwd"}`, false},
 	}
 	for _, tt := range tests {
 		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))

@@ -877,8 +877,8 @@ type unsafeCmdFlags struct {
 // Only commands listed here are checked — all other commands pass through.
 var unsafeFlags = map[string]unsafeCmdFlags{
 	"sed": {
-		shortFlags: "i",
-		longFlags:  []string{"--in-place"},
+		shortFlags: "if",
+		longFlags:  []string{"--in-place", "--file"},
 		argCheck:   sedArgUnsafe,
 	},
 	"find": {
@@ -886,7 +886,13 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 	},
 	"sort": {
 		shortFlags: "o",
-		longFlags:  []string{"--output"},
+		longFlags:  []string{"--output", "--compress-program"},
+	},
+	"rg": {
+		longFlags: []string{"--pre"},
+	},
+	"go": {
+		wordFlags: []string{"-vettool"},
 	},
 	"yq": {
 		shortFlags: "i",
@@ -953,7 +959,7 @@ func containsUnsafeFlags(segment string) bool {
 				// Word flag: single-dash multi-letter flags matched exactly,
 				// e.g. find's -exec, -delete.
 				for _, wf := range spec.wordFlags {
-					if tok == wf {
+					if tok == wf || strings.HasPrefix(tok, wf+"=") {
 						return true
 					}
 				}
