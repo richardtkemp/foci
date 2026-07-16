@@ -580,6 +580,14 @@ func (h *Harness) spawnGateway() error {
 	// procx.Spawn is the production secrets-dropping wrapper and must not wrap
 	// the test process.
 	cmd := exec.CommandContext(ctx, h.gwBin, "-config", h.configPath) //nolint:forbidigo // integration harness launches the gw under test
+	// Put foci-gw (and anything it forks, e.g. cc-stub) in its own process
+	// group rather than inheriting the `go test` binary's. When `make
+	// integration`'s -timeout force-kills an in-flight test, t.Cleanup never
+	// runs and this subtree is orphaned (reparented to init) instead of
+	// exiting — Setpgid means a future watchdog can reach the whole tree
+	// with one syscall.Kill(-pgid, ...) instead of hoping every descendant
+	// gets individually signalled.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Drop any inherited FOCI_TMPDIR (the `make integration` runner sets it to
 	// the shared run-level TESTDIR); we replace it with this test's private
 	// execTmpDir below so the gateway's temp files — crucially the exec-bridge
