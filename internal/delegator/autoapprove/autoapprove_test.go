@@ -712,6 +712,14 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		// sqlite3 without -readonly can write.
 		{"Bash", `{"command":"sqlite3 /tmp/db.sqlite 'INSERT INTO t VALUES(1)'"}`},
 		{"Bash", `{"command":"sqlite3 /tmp/db.sqlite 'DELETE FROM t'"}`},
+		// SQLite dot-commands bypass database readonly mode and can execute
+		// shell commands or write outside the database.
+		{"Bash", `{"command":"sqlite3 -readonly /tmp/db.sqlite '.system rm file'"}`},
+		{"Bash", `{"command":"sqlite3 -readonly /tmp/db.sqlite '.shell rm file'"}`},
+		{"Bash", `{"command":"sqlite3 -readonly /tmp/db.sqlite '.load /tmp/evil.so'"}`},
+		// Without an explicit SQL argument, SQLite reads stdin, which can carry
+		// a dot-command through a pipe or heredoc.
+		{"Bash", `{"command":"echo '.system rm file' | sqlite3 -readonly /tmp/db.sqlite"}`},
 
 		// for loop with unsafe body.
 		{"Bash", `{"command":"for f in /tmp/*.txt; do rm \"$f\"; done"}`},
@@ -1092,6 +1100,10 @@ func TestSedArgUnsafe(t *testing.T) {
 		{"'1e rm file'", true},
 		{"'1e'", true},
 		{"'/pattern/e'", true},
+		// Later commands in a semicolon/newline-delimited program must not
+		// hide an e command behind a harmless first command.
+		{"'p;e rm file'", true},
+		{"'p\ne rm file'", true},
 		// Dangerous: uppercase variants.
 		{"'W /tmp/file'", true},
 		{"'E'", true},
