@@ -26,11 +26,12 @@ const (
 // orthogonal: the time predicate filters by timestamp, scope predicates
 // filter by session key. Multiple scopes intersect (entry must match ALL).
 type costArgs struct {
-	durKind   costDurKind
-	durDur    time.Duration // actual window for durWindow
-	durLabel  string        // display label ("today", "24h", "7 days", "4h")
-	scopes    []string      // normalised scope keywords
-	breakdown bool
+	durKind     costDurKind
+	durDur      time.Duration // actual window for durWindow
+	durCalendar bool          // day-count window (week, N days): align cutoff to start-of-day
+	durLabel    string        // display label ("today", "24h", "7 days", "4h")
+	scopes      []string      // normalised scope keywords
+	breakdown   bool
 }
 
 // scopeAliases maps user-facing scope synonyms to their canonical form.
@@ -70,12 +71,13 @@ func parseCostArgs(args string) (costArgs, error) {
 			result.breakdown = true
 			continue
 		}
-		if dk, dur, label, ok := tryParseCostDuration(lower); ok {
+		if dk, dur, label, calendar, ok := tryParseCostDuration(lower); ok {
 			if result.durKind != durNone {
 				return costArgs{}, fmt.Errorf("multiple durations in /cost args")
 			}
 			result.durKind = dk
 			result.durDur = dur
+			result.durCalendar = calendar
 			result.durLabel = label
 			continue
 		}
@@ -94,23 +96,27 @@ func parseCostArgs(args string) (costArgs, error) {
 
 // tryParseCostDuration attempts to classify a token as a duration.
 // Recognised forms: "today", "24h", "week", Go duration strings ("4h",
-// "30m"), and bare integers (days).
-func tryParseCostDuration(s string) (kind costDurKind, dur time.Duration, label string, ok bool) {
+// "30m"), and bare integers (days). Day-count forms (week, bare integers)
+// are calendar-aligned: the window starts at start-of-day, matching the old
+// costWeek behaviour. Plain durations ("24h", "4h") are rolling windows
+// measured back from now — "24h" genuinely means the last 24 hours, not
+// "since midnight" (that's what "today" is for).
+func tryParseCostDuration(s string) (kind costDurKind, dur time.Duration, label string, calendar, ok bool) {
 	switch s {
 	case "today":
-		return durToday, 0, "today", true
+		return durToday, 0, "today", false, true
 	case "24h":
-		return durWindow, 24 * time.Hour, "24h", true
+		return durWindow, 24 * time.Hour, "24h", false, true
 	case "week":
-		return durWindow, 7 * 24 * time.Hour, "7 days", true
+		return durWindow, 7 * 24 * time.Hour, "7 days", true, true
 	}
 	if d, err := time.ParseDuration(s); err == nil {
-		return durWindow, d, s, true
+		return durWindow, d, s, false, true
 	}
 	if n, err := strconv.Atoi(s); err == nil && n > 0 {
-		return durWindow, time.Duration(n) * 24 * time.Hour, fmt.Sprintf("%d days", n), true
+		return durWindow, time.Duration(n) * 24 * time.Hour, fmt.Sprintf("%d days", n), true, true
 	}
-	return durNone, 0, "", false
+	return durNone, 0, "", false, false
 }
 
 // --- Time predicate ---
@@ -125,10 +131,13 @@ func (a costArgs) timePredicate() func(time.Time) bool {
 			return t.Local().Format("2006-01-02") == today
 		}
 	case durWindow:
-		cutoff := time.Now().Add(-a.durDur)
-		// For multi-day windows, use start-of-day cutoff like the old
-		// costWeek (days aligned to calendar boundaries).
-		if a.durDur >= 24*time.Hour {
+		cutoff := timeutil.Now().Add(-a.durDur)
+		// Day-count windows (week, N days) use a start-of-day cutoff like the
+		// old costWeek (days aligned to calendar boundaries). Rolling durations
+		// ("24h", "36h") must NOT be day-aligned: that silently redefined
+		// "24h" as "since local midnight" — a 15-minute window at 00:15
+		// (caught by TestCostCommand24h the first time CI ran after midnight).
+		if a.durCalendar {
 			now := timeutil.Now()
 			startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 			days := int(a.durDur / (24 * time.Hour))
