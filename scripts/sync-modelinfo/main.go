@@ -7,10 +7,12 @@
 //
 // Flags:
 //
-//	--add-popular N   Add the N newest models not already in the registry (default: 20).
-//	--repo PATH       Path to the foci repo root (default: auto-detect via git).
-//	--dry-run         Report discrepancies without creating a worktree.
-//	--verbose         Print per-model details during the sync.
+//	--add-popular N      Add the N newest models not already in the registry (default: 20).
+//	--add-anthropic N    Also add the N newest Anthropic models not already present (default: 10).
+//	--add-openai N       Also add the N newest OpenAI models not already present (default: 10).
+//	--repo PATH          Path to the foci repo root (default: auto-detect via git).
+//	--dry-run            Report discrepancies without creating a worktree.
+//	--verbose            Print per-model details during the sync.
 //
 // What it does:
 //
@@ -19,8 +21,9 @@
 //  3. For each existing entry: checks availability, compares prices, updates if changed.
 //  4. Adds the N newest API models not already present (newest by 'created' timestamp,
 //     since the API does not expose usage/popularity metrics).
-//  5. Writes the updated JSONL to a git worktree and commits.
-//  6. Prints a summary: "X new models, Y price changes, see <worktree-path>"
+//  5. Also ensures the latest N Anthropic and N OpenAI releases are present.
+//  6. Writes the updated JSONL to a git worktree and commits.
+//  7. Prints a summary: "X new models, Y price changes, see <worktree-path>"
 //
 // :nitro variants in the JSONL are verified against their base model (the API
 // does not list :nitro as separate entries).
@@ -79,6 +82,8 @@ type orResponse struct {
 
 func main() {
 	addPopular := flag.Int("add-popular", 20, "number of newest models to add if missing")
+	addAnthropic := flag.Int("add-anthropic", 10, "number of newest Anthropic models to also ensure present")
+	addOpenAI := flag.Int("add-openai", 10, "number of newest OpenAI models to also ensure present")
 	repoFlag := flag.String("repo", "", "path to the foci repo root (default: auto-detect)")
 	dryRun := flag.Bool("dry-run", false, "report without creating a worktree")
 	verbose := flag.Bool("verbose", false, "print per-model details")
@@ -202,32 +207,48 @@ func main() {
 	}
 
 	var newEntries []jsonlEntry
-	for _, m := range apiModels {
-		if len(newEntries) >= *addPopular {
-			break
-		}
-		bare := stripProvider(m.ID)
-		if bare == "" || existing[bare] {
-			continue
-		}
-		// Skip free models (price = "0") to avoid cluttering the registry.
-		in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)
-		out, _ := strconv.ParseFloat(m.Pricing.Completion, 64)
-		if in == 0 && out == 0 {
-			continue
-		}
-		newEntries = append(newEntries, jsonlEntry{
-			ID:            bare,
-			Provider:      "openrouter",
-			ContextWindow: m.ContextLength,
-			InputPer1M:    in * 1e6,
-			OutputPer1M:   out * 1e6,
-		})
-		existing[bare] = true
-		if *verbose {
-			fmt.Fprintf(os.Stderr, "  + %s: added ($%.4f/$%.4f per 1M)\n", bare, in*1e6, out*1e6)
+
+	// Helper to collect the top N newest models matching a provider prefix
+	// (or all if provider is "").
+	collectNew := func(provider string, limit int) {
+		count := 0
+		for _, m := range apiModels {
+			if count >= limit {
+				break
+			}
+			if provider != "" && !strings.HasPrefix(m.ID, provider+"/") {
+				continue
+			}
+			bare := stripProvider(m.ID)
+			if bare == "" || existing[bare] {
+				continue
+			}
+			// Skip free models (price = "0") to avoid cluttering the registry.
+			in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)
+			out, _ := strconv.ParseFloat(m.Pricing.Completion, 64)
+			if in == 0 && out == 0 {
+				continue
+			}
+			newEntries = append(newEntries, jsonlEntry{
+				ID:            bare,
+				Provider:      "openrouter",
+				ContextWindow: m.ContextLength,
+				InputPer1M:    in * 1e6,
+				OutputPer1M:   out * 1e6,
+			})
+			existing[bare] = true
+			count++
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "  + %s: added ($%.4f/$%.4f per 1M)\n", bare, in*1e6, out*1e6)
+			}
 		}
 	}
+
+	// General: newest models across all providers.
+	collectNew("", *addPopular)
+	// Provider-scoped: ensure latest Anthropic and OpenAI releases are present.
+	collectNew("anthropic", *addAnthropic)
+	collectNew("openai", *addOpenAI)
 
 	entries = append(entries, newEntries...)
 
