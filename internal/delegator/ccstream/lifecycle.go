@@ -89,14 +89,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		args = append(args, "--settings", hookSettings)
 	}
 
-	// Resolve the binary to spawn. Production runs use "claude" (resolved
-	// via $PATH); integration tests inject a stub via the claude_binary
-	// config knob (folded into b.cfg by cmd/foci-gw/agents_delegated.go
-	// from global [cc_backend].claude_binary, with per-agent override).
-	claudeBin := "claude"
-	if v, ok := b.cfg["binary"].(string); ok && v != "" {
-		claudeBin = v
-	}
+	// Production runs use "claude" (resolved via $PATH); integration tests
+	// inject a stub via the binary config knob (folded into b.cfg by
+	// cmd/foci-gw/agents_delegated.go from global [cc_backend].binary, with
+	// per-agent override).
+	claudeBin := b.resolveBinary()
 
 	b.logger().Infof("launching: %s %s (workdir=%s)", claudeBin, strings.Join(args, " "), opts.WorkDir)
 

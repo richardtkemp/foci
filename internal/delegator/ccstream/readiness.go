@@ -50,14 +50,11 @@ func (b *Backend) CheckReady(ctx context.Context) (bool, error) {
 }
 
 // queryAuthStatus runs `claude auth status` and parses its JSON output. It uses
-// the same binary resolution as Start (cfg["binary"], default "claude") and
-// inherits the gateway process environment — foci-gw runs as the agent's
-// user, so HOME points at the ~/.claude that holds the shared OAuth credential.
+// the same binary resolution as Start (resolveBinary) and inherits the
+// gateway process environment — foci-gw runs as the agent's user, so HOME
+// points at the ~/.claude that holds the shared OAuth credential.
 func (b *Backend) queryAuthStatus(ctx context.Context) (authStatus, error) {
-	claudeBin := "claude"
-	if v, ok := b.cfg["binary"].(string); ok && v != "" {
-		claudeBin = v
-	}
+	claudeBin := b.resolveBinary()
 
 	cctx, cancel := context.WithTimeout(ctx, authStatusTimeout)
 	defer cancel()

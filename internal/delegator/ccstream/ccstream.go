@@ -44,6 +44,20 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	return b, nil
 }
 
+// resolveBinary returns the executable to spawn: the "binary" config knob
+// if set (integration tests point this at cc-stub; real deployments can
+// override it too), else "claude" resolved via $PATH. Start and
+// CheckReady/queryAuthStatus both call this rather than each reading
+// cfg["binary"] independently — a prior split (readiness.go left on a
+// deprecated cfg key after lifecycle.go migrated off it) silently made
+// the L2 test harness's stub override invisible to the auth-status probe.
+func (b *Backend) resolveBinary() string {
+	if v, ok := b.cfg["binary"].(string); ok && v != "" {
+		return v
+	}
+	return "claude"
+}
+
 // Backend implements delegator.Delegator using Claude Code's stream-json
 // NDJSON protocol. CC runs as a subprocess with structured stdin/stdout
 // communication — no tmux, no pane scraping, no JSONL file watching.
