@@ -155,8 +155,12 @@ func parseListArgs(a *todoArgs, tokens []string) {
 			a.reverse = true
 
 		default:
-			// Bare number → limit
-			if n, err := strconv.Atoi(tok); err == nil && n > 0 {
+			// nN → limit (e.g. n5, n10); bare number → limit
+			if len(tok) > 1 && (tok[0] == 'n' || tok[0] == 'N') {
+				if n, err := strconv.Atoi(tok[1:]); err == nil && n > 0 {
+					a.limit = n
+				}
+			} else if n, err := strconv.Atoi(tok); err == nil && n > 0 {
 				a.limit = n
 			}
 		}
