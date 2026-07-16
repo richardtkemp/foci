@@ -384,8 +384,8 @@ func TestNewSessionSettingCommandKeyboardHeaderModelDefault(t *testing.T) {
 func TestEffortDynamicChoicesFromCatalogue(t *testing.T) {
 	// Seed the process-wide catalogue with an opus that supports all five levels.
 	// Other models (e.g. sonnet) are deliberately absent → Lookup misses → static.
-	// A bare Agent has no DelegatedManager → BackendType() == BackendAPI, so
-	// seed the api backend's record.
+	// A bare Agent has an empty configured backend → BackendType() == BackendAPI,
+	// so seed the api backend's record.
 	modelcaps.SetFetcher(modelcaps.BackendAPI, func(_ context.Context) (map[string]modelcaps.Caps, error) {
 		return map[string]modelcaps.Caps{
 			"claude-opus-4-8": {Effort: []string{"low", "medium", "high", "xhigh", "max"}},
@@ -495,7 +495,7 @@ func TestBackendGate(t *testing.T) {
 	sk := "test-session"
 	skCtx := tools.WithSessionKey(context.Background(), sk)
 
-	// API backend (bare Agent, no DelegatedManager) → permitted.
+	// API backend (empty configured backend) → permitted.
 	apiCC := modelCC(&agent.Agent{})
 	if !cmd.Visible(skCtx, Request{}, apiCC) {
 		t.Error("should be visible on api backend")
@@ -504,8 +504,8 @@ func TestBackendGate(t *testing.T) {
 		t.Errorf("api Execute: got %q, want %q", resp.Text, "Set: a")
 	}
 
-	// ccstream backend (non-nil DelegatedManager) → hidden and rejected.
-	ccCC := modelCC(&agent.Agent{DelegatedManager: &agent.DelegatedManager{}})
+	// ccstream backend (configured Claude Code transport) → hidden and rejected.
+	ccCC := modelCC(&agent.Agent{Backend: "claude-code"})
 	if cmd.Visible(skCtx, Request{}, ccCC) {
 		t.Error("should be hidden on ccstream backend")
 	}

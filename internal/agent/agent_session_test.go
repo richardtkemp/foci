@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/session"
 )
@@ -175,6 +176,25 @@ func TestSessionContextLimit(t *testing.T) {
 	}
 }
 
+// TestModelCapabilitiesUsesConfiguredBackend proves Codex live effort support
+// augments static modelinfo without leaking into an API agent using the same
+// otherwise-unregistered model id.
+func TestModelCapabilitiesUsesConfiguredBackend(t *testing.T) {
+	modelcaps.Publish(modelcaps.BackendCodex, map[string]modelcaps.Caps{
+		"codex-live-only": {Effort: []string{"low", "ultra"}},
+	})
+	codexAgent := &Agent{Backend: "codex"}
+	if got := codexAgent.BackendType(); got != modelcaps.BackendCodex {
+		t.Fatalf("BackendType = %q, want codex", got)
+	}
+	if !codexAgent.ModelCapabilities("codex/codex-live-only").Effort {
+		t.Error("Codex live effort support was not merged")
+	}
+	if (&Agent{}).ModelCapabilities("codex/codex-live-only").Effort {
+		t.Error("Codex live effort support leaked into API backend")
+	}
+}
+
 func TestRestoreSessionOverrides(t *testing.T) {
 	// Proves that session overrides (effort, thinking, speed, model, format, no_compact) survive an agent restart by persisting to and reloading from the session index.
 	dir := t.TempDir()
@@ -247,7 +267,6 @@ func TestRestoreSessionOverrides_NilSessionIndex(t *testing.T) {
 		t.Errorf("effort with nil SessionIndex = %q, want %q", got, "")
 	}
 }
-
 
 func TestHydrateLastMessageTimeFromCacheTouch(t *testing.T) {
 	// Proves the restart baseline for lastMessageTime now comes from the DB

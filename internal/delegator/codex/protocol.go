@@ -57,11 +57,11 @@ type clientInfo struct {
 // --- Thread ---
 
 type threadStartParams struct {
-	Model             string         `json:"model,omitempty"`
-	Cwd               string         `json:"cwd,omitempty"`
-	Sandbox           string         `json:"sandbox,omitempty"`
-	BaseInstructions  string         `json:"baseInstructions,omitempty"`
-	Config            map[string]any `json:"config,omitempty"`
+	Model            string         `json:"model,omitempty"`
+	Cwd              string         `json:"cwd,omitempty"`
+	Sandbox          string         `json:"sandbox,omitempty"`
+	BaseInstructions string         `json:"baseInstructions,omitempty"`
+	Config           map[string]any `json:"config,omitempty"`
 }
 
 type threadResumeParams struct {
@@ -75,6 +75,28 @@ type threadResult struct {
 	Model string `json:"model,omitempty"`
 }
 
+// --- Models ---
+
+type modelListParams struct {
+	Cursor        string `json:"cursor,omitempty"`
+	IncludeHidden bool   `json:"includeHidden"`
+}
+
+type modelListResponse struct {
+	Data       []codexModel `json:"data"`
+	NextCursor *string      `json:"nextCursor"`
+}
+
+type codexModel struct {
+	ID                        string                  `json:"id"`
+	Model                     string                  `json:"model"`
+	SupportedReasoningEfforts []reasoningEffortOption `json:"supportedReasoningEfforts"`
+}
+
+type reasoningEffortOption struct {
+	ReasoningEffort string `json:"reasoningEffort"`
+}
+
 // --- Turn ---
 
 type turnStartParams struct {
@@ -82,6 +104,7 @@ type turnStartParams struct {
 	Input          []turnInput    `json:"input"`
 	Cwd            string         `json:"cwd,omitempty"`
 	Model          string         `json:"model,omitempty"`
+	Effort         string         `json:"effort,omitempty"`
 	ApprovalPolicy string         `json:"approvalPolicy,omitempty"`
 	SandboxPolicy  *sandboxPolicy `json:"sandboxPolicy,omitempty"`
 }
@@ -143,8 +166,8 @@ type agentMessageDeltaParams struct {
 // tokenUsageParams carries token usage updates for the active thread.
 // Emitted as thread/tokenUsage/updated.
 type tokenUsageParams struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId,omitempty"`
+	ThreadID   string `json:"threadId"`
+	TurnID     string `json:"turnId,omitempty"`
 	TokenUsage struct {
 		Last struct {
 			InputTokens           int `json:"inputTokens"`
@@ -214,12 +237,12 @@ type runtimeWarningParams struct {
 
 // commandApprovalParams is the payload of item/commandExecution/requestApproval.
 type commandApprovalParams struct {
-	ItemID            string `json:"itemId"`
-	ThreadID          string `json:"threadId"`
-	TurnID            string `json:"turnId"`
-	Reason            string `json:"reason,omitempty"`
-	Command           string `json:"command,omitempty"`
-	Cwd               string `json:"cwd,omitempty"`
+	ItemID   string `json:"itemId"`
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+	Reason   string `json:"reason,omitempty"`
+	Command  string `json:"command,omitempty"`
+	Cwd      string `json:"cwd,omitempty"`
 }
 
 // fileChangeApprovalParams is the payload of item/fileChange/requestApproval.

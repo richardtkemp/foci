@@ -75,12 +75,13 @@ config.Load(path)                                        ← validates values; l
   → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
   → modelcaps wiring (#840)                               ← main.go, once after the agent loop
+    → for backend in {ccstream, api, codex}:
+      → modelcaps.SetPersister + Restore                  ← seed state.db snapshot synchronously
     → anthropicResolver.ModelCapsFetcher(15s)             ← /v1/models fetcher (nil if CC OAuth creds absent)
-    → for backend in {ccstream, api, opencode}:
+    → for backend in {ccstream, api}:
       → modelcaps.SetFetcher(backend, fetcher)
-      → modelcaps.SetPersister(backend, modelCapsPersister{sessionIndex})  ← state.db model_caps table (modelcaps_persist.go)
-      → modelcaps.Restore(backend)                        ← seed cache from DB synchronously (bridges the ~1s fetch gap)
       → go modelcaps.Refresh(ctx, backend)                ← background; on error, serve-stale / static modelinfo fallback
+    → each Codex app-server Start → model/list → modelcaps.Publish(codex)
   → setupKeepalive(inst, acfg, params)                    ← keepalive_setup.go (per-agent)
   → plat.SetupSharedFacet(...)                         ← shared facet bots (via messaging facade)
   → setupWarningHooks(agents, cfg)                         ← post_agent_setup.go
@@ -190,6 +191,7 @@ main
  ├── delegator     (no deps — Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
   │   ├── delegator/cctmux     → delegator, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
   │   ├── delegator/ccstream   → delegator, log, ratelimit (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/codex      → delegator, log, modelcaps, modelinfo (Codex app-server JSON-RPC; registers "codex" via init())
   │   └── delegator/opencode   → delegator, log, ratelimit (HTTP/SSE OpenCode; registers "opencode" via init())
  ├── agent         → delegator, compaction, config, display, log, memory, nudge, platform, provider, ratelimit, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
@@ -1041,11 +1043,12 @@ Agents can switch endpoints at runtime via `/model endpoint:name` (e.g. `/model 
 
 ### Live Model Capabilities (`modelcaps`, #840)
 
-`internal/modelcaps` is a leaf cache of `Caps{ContextWindow, MaxOutput, Effort, Thinking}` advertised by the backend's `/v1/models` (the capabilities the SDK's typed `Model` drops). It is the live layer between the per-model config override and the static `modelinfo` registry: context-window and effort lookups prefer it, falling back to the static registry on a cold/empty cache so behaviour is never worse than before.
+`internal/modelcaps` is a leaf cache of `Caps{ContextWindow, MaxOutput, Effort, Thinking}` advertised by backend catalogues (Anthropic `/v1/models`, Codex app-server `model/list`). It is the live layer between the per-model config override and the static `modelinfo` registry: context-window and effort lookups prefer it, falling back to the static registry on a cold/empty cache so behaviour is never worse than before.
 
-- **Per-backend registry.** Capabilities are a property of the backend *type*, not the model alone, so the cache is a registry of per-backend stores keyed by backend type (`BackendCCStream`, `BackendAPI`, future `codex`). `BackendKey(configBackend)` maps the config backend string (`""`/`"api"`/`"ccstream"`) to a key. Public API: `LookupFor(backend, model) (Caps, ok)`, `ModelsFor(backend) []string` (sorted ids, cold→nil), `SetFetcher(backend, fn)`, `Refresh(ctx, backend)`. Background single-flight refresh; serve-stale on fetch error; TTL grows 6h→48h.
+- **Per-backend registry.** Capabilities are a property of the backend *type*, not the model alone, so the cache keeps separate stores for `BackendCCStream`, `BackendAPI`, `BackendCodex`, and any other delegated backend name. `BackendKey(configBackend)` maps configured transport names to those keys. Public API: `LookupFor`, `ModelsFor`, `SetFetcher`/`Refresh` for pull catalogues, and `Publish` for catalogues discovered by a live backend instance. Background pull refresh is single-flight and serve-stale.
 - **Fetcher seam.** `anthropic.FetchModelCaps` (raw `GET /v1/models`) is injected via `SetFetcher` so the package stays a DB/anthropic-free leaf. `AnthropicResolver.ModelCapsFetcher` supplies it from CC OAuth creds; nil creds → no fetcher → static fallback.
-- **DB persistence (`e301379b`).** `SetPersister` + `Restore` bridge the cold-start gap. `session` gains a `model_caps` table (`backend, model, context_window, max_output, effort_json, thinking_json, fetched_at`) with `SaveModelCaps`/`LoadModelCaps` on `SessionIndex`; saves are transactional (delete+insert) so a reader never sees a half-written catalogue. `cmd/foci-gw/modelcaps_persist.go`'s `modelCapsPersister` adapts `SessionIndex`↔`Caps` (the one place that knows both types). `doFetch` persists after each swap (DB write outside the store lock so it never blocks a lookup); `Restore` declines to clobber a cache a fetch already populated (startup race guard). Restart always re-fetches; the DB restore only covers the in-flight gap.
+- **Codex publisher.** After each app-server initialize handshake, the Codex backend pages through visible `model/list` results. It preserves each model's ordered `supportedReasoningEfforts`, enriches omitted structural fields from exact `modelinfo` entries, then publishes the complete snapshot under `BackendCodex`. `/model` therefore lists the real Codex catalogue and `/effort` accepts the exact advertised levels; Codex writes the selected effort into the next `turn/start` request.
+- **DB persistence (`e301379b`).** `SetPersister` + `Restore` bridge the cold-start gap for API, Claude Code, and Codex. `session` stores the shared primitive shape in `model_caps`; saves are transactional (delete+insert) so a reader never sees a half-written catalogue. `cmd/foci-gw/modelcaps_persist.go` adapts `SessionIndex`↔`Caps`. Both fetched and published snapshots persist outside the store lock; `Restore` declines to clobber a cache a live result already populated.
 - **Agent routing.** `Agent.BackendType()`, `Agent.ModelCaps(model)`, and `Agent.BackendModels()` route caps reads through the agent's own backend; consumers (session context limit, command context-limit resolver, `/effort` choices, `/model` keyboard) read via the agent. Compaction takes an injected `ModelCapsFn` bound to the agent's backend.
 
 **Effort plumbing.** `/effort`'s level set is resolved per call: `newSessionSettingCommand`'s optional `DynamicChoices` hook reads `modelcaps.LookupFor`, building levels in catalogue order (e.g. opus-4-8: low/medium/high/xhigh/max) with matching numeric aliases; a catalogue miss falls back to the static low/medium/high. Two delivery paths make effort both instant and durable:
