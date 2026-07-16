@@ -33,3 +33,24 @@ func (a *Agent) SendBackendControl(ctx context.Context, sessionKey string, req d
 
 	return true, nil
 }
+
+// ResolveBackendModel asks a catalogue-backed delegated backend to canonicalize
+// a model alias. It returns handled=false when the agent has no such resolver.
+func (a *Agent) ResolveBackendModel(ctx context.Context, sessionKey, model string) (resolution delegator.ModelResolution, handled bool, err error) {
+	if a.DelegatedManager == nil {
+		return delegator.ModelResolution{}, false, nil
+	}
+	be, err := a.DelegatedManager.Get(ctx, sessionKey)
+	if err != nil {
+		return delegator.ModelResolution{}, false, fmt.Errorf("get backend for model resolution: %w", err)
+	}
+	resolver, ok := be.(delegator.ModelResolver)
+	if !ok {
+		return delegator.ModelResolution{}, false, nil
+	}
+	resolution, err = resolver.ResolveModel(ctx, model)
+	if err != nil {
+		return delegator.ModelResolution{}, true, err
+	}
+	return resolution, true, nil
+}

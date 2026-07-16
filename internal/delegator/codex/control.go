@@ -14,10 +14,14 @@ import (
 func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest) error {
 	switch r := req.(type) {
 	case *delegator.SetModelRequest:
+		resolution, err := b.ResolveModel(ctx, r.Model)
+		if err != nil {
+			return err
+		}
 		b.mu.Lock()
-		b.pendingModel = r.Model
+		b.pendingModel = resolution.BackendModel
 		b.mu.Unlock()
-		b.lg.Infof("model override queued: %s (applies next turn)", r.Model)
+		b.lg.Infof("model override queued: %s (applies next turn)", resolution.BackendModel)
 		return nil
 
 	case *delegator.SetPermissionModeRequest:

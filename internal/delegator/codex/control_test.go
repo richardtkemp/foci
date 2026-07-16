@@ -16,7 +16,10 @@ import (
 // no transport is needed to exercise these paths.
 func newControlTestBackend(t *testing.T) *Backend {
 	t.Helper()
-	return &Backend{lg: log.NewComponentLogger("codex")}
+	return &Backend{
+		lg:              log.NewComponentLogger("codex"),
+		catalogueModels: []string{"gpt-5.2"},
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -53,14 +53,16 @@ type Backend struct {
 	done   chan struct{}
 
 	// State
-	mu        sync.Mutex
-	running   bool
-	closing   bool
-	threadID  string
-	model     string
-	readyCh   chan struct{}
-	readyOnce sync.Once
-	startOpts delegator.StartOptions
+	mu              sync.Mutex
+	running         bool
+	closing         bool
+	threadID        string
+	model           string
+	launchModel     string
+	catalogueModels []string
+	readyCh         chan struct{}
+	readyOnce       sync.Once
+	startOpts       delegator.StartOptions
 
 	// JSON-RPC request/response correlation
 	rpcMu      sync.Mutex

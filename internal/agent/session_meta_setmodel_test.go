@@ -14,11 +14,13 @@ import (
 type mockSetModelBackend struct {
 	delegator.Delegator // embed: unused methods panic if called
 
-	err error // returned by SendControl for SetModelRequest
+	err      error // returned by SendControl for SetModelRequest
+	gotModel string
 }
 
 func (m *mockSetModelBackend) SendControl(ctx context.Context, req delegator.ControlRequest) error {
-	if _, ok := req.(*delegator.SetModelRequest); ok {
+	if set, ok := req.(*delegator.SetModelRequest); ok {
+		m.gotModel = set.Model
 		return m.err
 	}
 	return nil
@@ -26,6 +28,16 @@ func (m *mockSetModelBackend) SendControl(ctx context.Context, req delegator.Con
 
 func (m *mockSetModelBackend) IsRunning() bool      { return true }
 func (m *mockSetModelBackend) IsTurnInFlight() bool { return false }
+
+type mockResolvingModelBackend struct {
+	*mockSetModelBackend
+	resolution delegator.ModelResolution
+	resolveErr error
+}
+
+func (m *mockResolvingModelBackend) ResolveModel(context.Context, string) (delegator.ModelResolution, error) {
+	return m.resolution, m.resolveErr
+}
 
 func setupAgentWithSetModelBackend(be delegator.Delegator) (*Agent, string) {
 	const sk = "test/setmodel"
@@ -67,5 +79,29 @@ func TestSetModel_ConfirmedByBackend_MetadataUpdated(t *testing.T) {
 
 	if got := ag.SessionModel(sk); got != "claude-opus-4-8" {
 		t.Errorf("SessionModel after confirmed switch = %q, want %q", got, "claude-opus-4-8")
+	}
+}
+
+// TestSetModel_ResolvedByBackendPersistsCanonicalModel proves a catalogue alias
+// is converted before control delivery and foci records the backend's canonical
+// developer-qualified id rather than the user's shorthand.
+func TestSetModel_ResolvedByBackendPersistsCanonicalModel(t *testing.T) {
+	base := &mockSetModelBackend{}
+	be := &mockResolvingModelBackend{
+		mockSetModelBackend: base,
+		resolution: delegator.ModelResolution{
+			BackendModel: "gpt-5.6-luna",
+			Model:        "codex/gpt-5.6-luna",
+		},
+	}
+	ag, sk := setupAgentWithSetModelBackend(be)
+	if err := ag.SetModel(context.Background(), sk, "luna", "", "", nil, "luna"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if base.gotModel != "gpt-5.6-luna" {
+		t.Errorf("backend request model = %q", base.gotModel)
+	}
+	if got := ag.SessionModel(sk); got != "codex/gpt-5.6-luna" {
+		t.Errorf("persisted model = %q", got)
 	}
 }

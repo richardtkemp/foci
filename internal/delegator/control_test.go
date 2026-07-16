@@ -1,6 +1,9 @@
 package delegator
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestSetModelRequestImplementsControlRequest verifies compile-time interface
 // satisfaction for the marker interface.
@@ -14,6 +17,18 @@ func TestSetModelRequestFields(t *testing.T) {
 	if req.Model != "opus" {
 		t.Errorf("Model = %q, want %q", req.Model, "opus")
 	}
+}
+
+type testModelResolver struct{}
+
+func (testModelResolver) ResolveModel(context.Context, string) (ModelResolution, error) {
+	return ModelResolution{}, nil
+}
+
+// TestModelResolverInterface proves catalogue-backed delegators can expose
+// canonical model resolution without changing the ControlSender contract.
+func TestModelResolverInterface(t *testing.T) {
+	var _ ModelResolver = testModelResolver{}
 }
 
 // TestSetPermissionModeRequestImplementsControlRequest verifies compile-time

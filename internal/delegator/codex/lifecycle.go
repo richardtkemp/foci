@@ -98,6 +98,10 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if err := b.refreshModelCaps(); err != nil {
 		b.lg.Warnf("model/list failed (using persisted/static model details): %v", err)
 	}
+	if err := b.prepareConfiguredModel(ctx, opts.ResumeSessionID != ""); err != nil {
+		cancel()
+		return fmt.Errorf("codex: resolve configured model: %w", err)
+	}
 
 	b.mu.Lock()
 	if opts.Effort != "" && opts.Effort != "off" {
@@ -299,6 +303,9 @@ func (b *Backend) startThread() (string, error) {
 	b.mu.Lock()
 	b.threadID = tr.Thread.ID
 	b.model = tr.Model
+	if b.model == "" {
+		b.model = params.Model
+	}
 	b.mu.Unlock()
 
 	b.readyOnce.Do(func() { close(b.readyCh) })
@@ -326,8 +333,9 @@ func (b *Backend) resumeThread(threadID string) error {
 	return nil
 }
 
-// modelFromOpts returns the model from StartOptions or config.
-func (b *Backend) modelFromOpts() string {
+// requestedModelFromOpts returns the unresolved model requested by this
+// session's StartOptions or backend configuration.
+func (b *Backend) requestedModelFromOpts() string {
 	if b.startOpts.Model != "" {
 		return b.startOpts.Model
 	}
@@ -335,6 +343,40 @@ func (b *Backend) modelFromOpts() string {
 		return v
 	}
 	return ""
+}
+
+// modelFromOpts returns the catalogue-resolved launch model when Start has
+// prepared one, falling back to the raw option only for direct unit callers.
+func (b *Backend) modelFromOpts() string {
+	b.mu.Lock()
+	resolved := b.launchModel
+	b.mu.Unlock()
+	if resolved != "" {
+		return resolved
+	}
+	return b.requestedModelFromOpts()
+}
+
+// prepareConfiguredModel resolves backend_config.model (or a per-session
+// ModelFunc override) after model/list has populated the catalogue. Resumed
+// threads receive it on their next turn/start because thread/resume has no
+// model field; fresh threads receive it directly in thread/start.
+func (b *Backend) prepareConfiguredModel(ctx context.Context, resumed bool) error {
+	requested := b.requestedModelFromOpts()
+	if requested == "" {
+		return nil
+	}
+	resolution, err := b.ResolveModel(ctx, requested)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.launchModel = resolution.BackendModel
+	if resumed {
+		b.pendingModel = resolution.BackendModel
+	}
+	b.mu.Unlock()
+	return nil
 }
 
 // --- CompactionWaiter ---

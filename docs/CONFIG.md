@@ -1285,6 +1285,24 @@ workspace = "/home/coder/projects/myapp"
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 ```
 
+For `backend = "codex"`, `model` may be either an exact app-server catalogue
+ID or a case-insensitive substring alias:
+
+```toml
+[[agents]]
+id = "coder"
+backend = "codex"
+backend_config.model = "luna"
+```
+
+After the Codex app-server initializes, Foci resolves the value against
+`model/list`. Exact IDs always win; otherwise matching IDs are ranked by their
+numeric version components, so the newest/highest matching model is selected
+(for example, `luna` prefers `gpt-5.7-luna` over `gpt-5.6-luna`). The canonical
+ID is sent in `thread/start`. `/model` uses the same resolver for per-session
+overrides and persists the canonical `codex/<id>` value; resumed sessions apply
+that override in their next `turn/start`.
+
 Per-agent `allowed_tools` accepts either a comma-separated string (`"Bash(git:*), Read"`) or a TOML array (`["Bash(git:*)", "Read"]`). It is merged with the global `[cc_backend] default_allowed_tools` list (see below) before launch — you don't need to repeat the defaults here.
 
 ### Global CC backend defaults — `[cc_backend]`
@@ -1325,6 +1343,7 @@ The factory default grants CC agents free read/write access to `/tmp` so they ca
 | `"api"` (default) | Traditional agent loop — Foci calls LLM API, executes tools, manages sessions. |
 | `"claude-code"` | Claude Code via stream-json protocol (ccstream). Structured NDJSON stdin/stdout; no tmux. |
 | `"claude-code-tmux"` | Claude Code running interactively in a tmux pane (cctmux). Input via paste-buffer, output via session JSONL file watcher. |
+| `"codex"` | OpenAI Codex via the app-server JSON-RPC protocol. Model catalogue, aliases, effort levels, and per-session model overrides are resolved through `model/list`. |
 | `"opencode"` | OpenCode via HTTP/SSE server protocol. One `opencode serve` subprocess per agent, shared across sessions. |
 
 ### Global OpenCode backend defaults — `[opencode_backend]`

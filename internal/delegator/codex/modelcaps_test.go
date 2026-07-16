@@ -33,18 +33,21 @@ func TestListModelCapsPaginatesAndEnriches(t *testing.T) {
 		return json.RawMessage(`{"data":[{"id":"fallback-id","model":"","supportedReasoningEfforts":[{"reasoningEffort":"medium"}]}],"nextCursor":null}`), nil
 	})
 
-	got, err := b.listModelCaps()
+	got, err := b.listModelCatalogue()
 	if err != nil {
-		t.Fatalf("listModelCaps: %v", err)
+		t.Fatalf("listModelCatalogue: %v", err)
 	}
 	if !reflect.DeepEqual(cursors, []string{"", "page-2"}) {
 		t.Errorf("cursors = %v, want [\"\" page-2]", cursors)
 	}
-	if caps := got[registered]; caps.ContextWindow != 1000000 || !reflect.DeepEqual(caps.Effort, []string{"low", "xhigh"}) {
+	if caps := got.Caps[registered]; caps.ContextWindow != 1000000 || !reflect.DeepEqual(caps.Effort, []string{"low", "xhigh"}) {
 		t.Errorf("registered caps = %+v", caps)
 	}
-	if caps := got["fallback-id"]; !reflect.DeepEqual(caps.Effort, []string{"medium"}) {
+	if caps := got.Caps["fallback-id"]; !reflect.DeepEqual(caps.Effort, []string{"medium"}) {
 		t.Errorf("fallback-id caps = %+v", caps)
+	}
+	if !reflect.DeepEqual(got.Models, []string{registered, "fallback-id"}) {
+		t.Errorf("models = %v", got.Models)
 	}
 }
 
@@ -54,8 +57,8 @@ func TestListModelCapsRejectsRepeatedCursor(t *testing.T) {
 	b := setupMockBackend(t, func(string, json.RawMessage, int64) (json.RawMessage, error) {
 		return json.RawMessage(`{"data":[],"nextCursor":"same"}`), nil
 	})
-	if _, err := b.listModelCaps(); err == nil {
-		t.Fatal("listModelCaps succeeded with a repeated cursor")
+	if _, err := b.listModelCatalogue(); err == nil {
+		t.Fatal("listModelCatalogue succeeded with a repeated cursor")
 	}
 }
 
@@ -77,5 +80,11 @@ func TestRefreshModelCapsDeliversSnapshot(t *testing.T) {
 	}
 	if !called {
 		t.Error("model catalogue callback was not called")
+	}
+	b.mu.Lock()
+	models := append([]string(nil), b.catalogueModels...)
+	b.mu.Unlock()
+	if !reflect.DeepEqual(models, []string{"gpt-live"}) {
+		t.Errorf("stored catalogue models = %v", models)
 	}
 }

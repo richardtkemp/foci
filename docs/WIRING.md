@@ -516,6 +516,11 @@ This divorces "where does this text go?" (session lifetime — always somewhere)
 2. **`ControlSender` interface** (`delegator/backend.go`) — optional interface backends implement: `SendControl(ctx, ControlRequest) error`. The ccstream backend type-switches on intent types and translates to wire format.
 3. **Agent routing** (`agent/delegated_control.go`) — `SendBackendControl(ctx, sk, req) (handled, err)`. Gets the backend via `DelegatedManager.Get`, type-asserts to `ControlSender`, calls `SendControl`. Returns `(false, nil)` if no backend or backend doesn't support it.
 
+Catalogue-backed backends may additionally implement `delegator.ModelResolver`.
+`Agent.SetModel` calls it before `SetModelRequest`, sends the backend-native ID,
+and persists the resolver's developer-qualified canonical ID. Codex uses this
+for exact or substring aliases; Claude Code keeps receiving raw aliases.
+
 Adding a new control: define intent type in `delegator/control.go`, add case in ccstream's `SendControl`, add Agent method, register command with appropriate `Requires`.
 
 **Differences from tmux backend:**
@@ -1047,7 +1052,7 @@ Agents can switch endpoints at runtime via `/model endpoint:name` (e.g. `/model 
 
 - **Per-backend registry.** Capabilities are a property of the backend *type*, not the model alone, so the cache keeps separate stores for `BackendCCStream`, `BackendAPI`, `BackendCodex`, and any other delegated backend name. `BackendKey(configBackend)` maps configured transport names to those keys. Public API: `LookupFor`, `ModelsFor`, `SetFetcher`/`Refresh` for pull catalogues, and `Publish` for catalogues discovered by a live backend instance. Background pull refresh is single-flight and serve-stale.
 - **Fetcher seam.** `anthropic.FetchModelCaps` (raw `GET /v1/models`) is injected via `SetFetcher` so the package stays a DB/anthropic-free leaf. `AnthropicResolver.ModelCapsFetcher` supplies it from CC OAuth creds; nil creds → no fetcher → static fallback.
-- **Codex publisher.** After each app-server initialize handshake, the Codex backend pages through visible `model/list` results. It preserves each model's ordered `supportedReasoningEfforts`, enriches omitted structural fields from exact `modelinfo` entries, then publishes the complete snapshot under `BackendCodex`. `/model` therefore lists the real Codex catalogue and `/effort` accepts the exact advertised levels; Codex writes the selected effort into the next `turn/start` request.
+- **Codex publisher and resolver.** After each app-server initialize handshake, the Codex backend pages through visible `model/list` results. It preserves catalogue order and each model's ordered `supportedReasoningEfforts`, enriches omitted structural fields from exact `modelinfo` entries, then publishes the complete snapshot under `BackendCodex`. `backend_config.model` and `/model` accept exact IDs or case-insensitive substring aliases; exact wins, otherwise numeric version components rank matches newest-first with catalogue order as the tie-break. Fresh sessions send the resolved ID in `thread/start`; resumed sessions and runtime overrides send it in the next `turn/start`. Foci persists `codex/<id>`, while the wire receives the bare ID. `/effort` accepts the exact advertised levels.
 - **DB persistence (`e301379b`).** `SetPersister` + `Restore` bridge the cold-start gap for API, Claude Code, and Codex. `session` stores the shared primitive shape in `model_caps`; saves are transactional (delete+insert) so a reader never sees a half-written catalogue. `cmd/foci-gw/modelcaps_persist.go` adapts `SessionIndex`↔`Caps`. Both fetched and published snapshots persist outside the store lock; `Restore` declines to clobber a cache a live result already populated.
 - **Agent routing.** `Agent.BackendType()`, `Agent.ModelCaps(model)`, and `Agent.BackendModels()` route caps reads through the agent's own backend; consumers (session context limit, command context-limit resolver, `/effort` choices, `/model` keyboard) read via the agent. Compaction takes an injected `ModelCapsFn` bound to the agent's backend.
 

@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -104,6 +105,32 @@ func TestStartThread_PassesSandbox(t *testing.T) {
 	}
 	if gotSandbox != wantSandbox {
 		t.Errorf("sandbox = %q, want %q", gotSandbox, wantSandbox)
+	}
+}
+
+// TestStartThread_SendsResolvedConfiguredModel proves backend_config.model may
+// be a catalogue substring alias while thread/start receives the canonical
+// Codex model id.
+func TestStartThread_SendsResolvedConfiguredModel(t *testing.T) {
+	var gotModel string
+	b := newStartableBackend(t, func(method string, params json.RawMessage, _ int64) (json.RawMessage, error) {
+		var p threadStartParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			t.Fatalf("unmarshal thread/start params: %v", err)
+		}
+		gotModel = p.Model
+		return json.RawMessage(`{"thread":{"id":"th_resolved"}}`), nil
+	})
+	b.startOpts = delegator.StartOptions{Model: "luna"}
+	b.catalogueModels = []string{"gpt-5.7-luna", "gpt-5.6-luna"}
+	if err := b.prepareConfiguredModel(context.Background(), false); err != nil {
+		t.Fatalf("prepareConfiguredModel: %v", err)
+	}
+	if _, err := b.startThread(); err != nil {
+		t.Fatalf("startThread: %v", err)
+	}
+	if gotModel != "gpt-5.7-luna" {
+		t.Errorf("thread/start model = %q, want gpt-5.7-luna", gotModel)
 	}
 }
 
