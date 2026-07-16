@@ -38,6 +38,7 @@ func askToggleCommand(name, desc, okMsg string, toggle func(*CommandContext, str
 		Name:        name,
 		Description: desc,
 		Category:    "session",
+		ExcludeApp:  true,
 		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
 			return askPending(cc, req.SessionKey)
 		},
@@ -81,6 +82,7 @@ func CompleteCommand() *Command {
 		Name:        "complete",
 		Description: "Finish the active question early — send only what you've answered, drop the rest",
 		Category:    "session",
+		ExcludeApp:  true,
 		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
 			return askPending(cc, req.SessionKey)
 		},

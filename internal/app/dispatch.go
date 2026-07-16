@@ -552,6 +552,11 @@ func (h *Hub) dispatchCommand(client *wsClient, conn *appConn, b *convBinding, r
 	if resp.OpenConversationID != "" && client != nil {
 		client.sendRaw(fap.ConversationForeground{ConversationID: resp.OpenConversationID})
 	}
+	// Commands that change the model (e.g. /model, /effort) can flip the
+	// visibility of capability-gated commands — re-evaluate and push.
+	if req.Name == "model" || req.Name == "effort" || req.Name == "thinking" || req.Name == "speed" || req.Name == "mode" {
+		h.pushCommands(b)
+	}
 }
 
 // commandParts returns the message parts of a command response (multi-part when

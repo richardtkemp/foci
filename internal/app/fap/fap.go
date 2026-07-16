@@ -50,6 +50,7 @@ const (
 	TypeSubagentEnd             = "subagent.end"
 	TypeExternalPrompt          = "external.prompt"
 	TypeMeta                    = "meta"
+	TypeCommands                = "commands"
 	TypeError                   = "error"
 	TypePong                    = "pong"
 	TypeTranscript              = "transcript"
@@ -569,6 +570,18 @@ type Meta struct {
 }
 
 func (Meta) Type() string { return TypeMeta }
+
+// Commands is a per-conversation command palette: the subset of the agent's
+// slash commands that are visible given the session's current state (model
+// capabilities, backend type). The app uses this list to populate its "/"
+// autocomplete. Pushed after the initial roster and whenever the model
+// changes (re-evaluating capability-gated commands like /effort, /thinking).
+type Commands struct {
+	ConversationID string         `json:"conversationId"`
+	Commands       []CommandInfo  `json:"commands"`
+}
+
+func (Commands) Type() string { return TypeCommands }
 
 // ErrorFrame reports a server-side error.
 type ErrorFrame struct {

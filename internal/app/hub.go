@@ -22,6 +22,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/tools"
 )
 
 // WebSocket tuning. pingPeriod < pongWait so a silent socket is detected
@@ -872,7 +873,7 @@ func commandInfos(conn *appConn) []fap.CommandInfo {
 	}
 	var out []fap.CommandInfo
 	for _, c := range conn.commands.All() {
-		if c.Hidden {
+		if c.Hidden || c.ExcludeApp {
 			continue
 		}
 		out = append(out, fap.CommandInfo{
@@ -882,6 +883,42 @@ func commandInfos(conn *appConn) []fap.CommandInfo {
 		})
 	}
 	return out
+}
+
+// pushCommands sends a per-conversation command palette that reflects the
+// session's current state (model capabilities, backend type). Commands whose
+// Visible func evaluates false are excluded.
+func (h *Hub) pushCommands(b *convBinding) {
+	conn := h.PrimaryBot(b.agentID)
+	if conn == nil || conn.commands == nil {
+		return
+	}
+	ctx := h.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = tools.WithSessionKey(ctx, b.sessionKey)
+	req := command.Request{SessionKey: b.sessionKey, Source: "app"}
+	visibleCmds := conn.commands.VisibleList(ctx, req, conn.cmdCtx)
+	var cmds []fap.CommandInfo
+	for _, c := range visibleCmds {
+		cmds = append(cmds, fap.CommandInfo{Name: c.Name, Description: c.Description, Category: c.Category})
+	}
+	b.send(fap.Commands{ConversationID: b.convID, Commands: cmds})
+}
+
+// pushCommandsAll sends per-conversation command palettes for every live
+// conversation (e.g. after roster push).
+func (h *Hub) pushCommandsAll() {
+	h.mu.RLock()
+	bindings := make([]*convBinding, 0, len(h.convs))
+	for _, b := range h.convs {
+		bindings = append(bindings, b)
+	}
+	h.mu.RUnlock()
+	for _, b := range bindings {
+		h.pushCommands(b)
+	}
 }
 
 // agentAvatarPath returns the resolved absolute path to an agent's avatar image
@@ -1250,6 +1287,7 @@ func (h *Hub) createDefaultConversation(agentID string) (string, error) {
 // archive), through which the client reconciles server-authoritative state.
 func (h *Hub) pushRoster(client *wsClient) {
 	client.sendRaw(fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()})
+	h.pushCommandsAll()
 }
 
 // pushRosterAll re-advertises the roster to every live socket, so connected

@@ -60,6 +60,11 @@ type Command struct {
 	Category    string
 	Requires    Requires // transport requirement — checked before Execute
 	Hidden      bool
+	// ExcludeApp hides the command from the app client's command palette.
+	// Used for commands whose functionality is surfaced natively in the app
+	// UI (e.g. /pause, /resume, /complete are Telegram/Discord alternatives
+	// to the app's own ask buttons).
+	ExcludeApp bool
 	// Immediate marks commands that must run in the polling goroutine rather
 	// than being deferred to the worker goroutine. Set this on any command
 	// that cancels or interrupts an active agent turn (e.g. /stop), since the
@@ -284,6 +289,35 @@ func (r *Registry) All() []*Command {
 		return cmds[i].Name < cmds[j].Name
 	})
 	return cmds
+}
+
+// VisibleList returns the app-facing command palette filtered for a specific
+// session: non-hidden, non-ExcludeApp commands whose Visible func (if set)
+// evaluates true against the session's context. Each result carries name,
+// description and category — the same fields as CommandInfo.
+func (r *Registry) VisibleList(ctx context.Context, req Request, cc CommandContext) []CommandInfo {
+	var out []CommandInfo
+	for _, c := range r.All() {
+		if c.Hidden || c.ExcludeApp {
+			continue
+		}
+		if c.Visible != nil && !c.Visible(ctx, req, cc) {
+			continue
+		}
+		out = append(out, CommandInfo{
+			Name:        c.Name,
+			Description: c.Description,
+			Category:    c.Category,
+		})
+	}
+	return out
+}
+
+// CommandInfo is the app-facing representation of a slash command.
+type CommandInfo struct {
+	Name        string
+	Description string
+	Category    string
 }
 
 // LookupKeyboard checks if a bare command (no args) has inline keyboard options.
