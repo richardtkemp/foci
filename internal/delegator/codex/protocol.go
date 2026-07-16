@@ -260,8 +260,6 @@ type itemEnvelope struct {
 	// collabAgentToolCall fields
 	Prompt       string                 `json:"prompt,omitempty"`
 	AgentsStates map[string]collabState `json:"agentsStates,omitempty"`
-	// agentMessage fields
-	Phase string `json:"phase,omitempty"` // "commentary" or "final_answer"
 }
 
 // fileChangeEntry is one file change in a fileChange item's changes array.

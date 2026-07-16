@@ -122,15 +122,9 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 	se := b.sessionEvents.Load()
 	switch item.Type {
 	case "agentMessage":
-		// Only final_answer text (or unphased text for backward compat)
-		// accumulates into the turn result. Commentary (model narration
-		// about what it's about to do) is delivered for live display but
-		// excluded from the final text so it doesn't pollute the response.
-		if item.Phase != "commentary" {
-			b.turnMu.Lock()
-			b.turnText.WriteString(item.Text)
-			b.turnMu.Unlock()
-		}
+		b.turnMu.Lock()
+		b.turnText.WriteString(item.Text)
+		b.turnMu.Unlock()
 		if se != nil && se.OnText != nil {
 			se.OnText(item.Text)
 		}
