@@ -464,4 +464,13 @@ func TestExtractionPromptCapabilities(t *testing.T) {
 	if !strings.Contains(restricted, "regex") {
 		t.Errorf("restricted prompt must include regex trigger")
 	}
+
+	// The input_pattern false-positive guidance rides with tool_pattern:
+	// present when post-tool triggers are offered, absent otherwise.
+	if !strings.Contains(full, "false-positive shapes") {
+		t.Errorf("full prompt missing input_pattern false-positive guidance")
+	}
+	if strings.Contains(restricted, "false-positive shapes") {
+		t.Errorf("restricted prompt should not carry tool_pattern guidance")
+	}
 }
