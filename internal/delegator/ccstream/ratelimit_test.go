@@ -3,6 +3,8 @@ package ccstream
 import (
 	"testing"
 	"time"
+
+	"foci/internal/ratelimit"
 )
 
 func TestOnRateLimit(t *testing.T) {
@@ -123,8 +125,8 @@ func TestParseSessionLimitReset(t *testing.T) {
 		t.Fatalf("expected parse to succeed")
 	}
 	want := time.Date(2026, 7, 14, 23, 30, 0, 0, loc)
-	if !got.Equal(want) {
-		t.Errorf("reset = %s, want %s", got, want)
+	if !got.ResetAt.Equal(want) {
+		t.Errorf("reset = %s, want %s", got.ResetAt, want)
 	}
 
 	// A clock time already past today rolls to tomorrow.
@@ -133,8 +135,8 @@ func TestParseSessionLimitReset(t *testing.T) {
 		t.Fatalf("expected parse to succeed")
 	}
 	want2 := time.Date(2026, 7, 15, 6, 30, 0, 0, loc)
-	if !got2.Equal(want2) {
-		t.Errorf("rolled reset = %s, want %s", got2, want2)
+	if !got2.ResetAt.Equal(want2) {
+		t.Errorf("rolled reset = %s, want %s", got2.ResetAt, want2)
 	}
 
 	if _, ok := parseSessionLimitReset("no reset clause here", now); ok {
@@ -147,8 +149,8 @@ func TestOnAssistant_SessionLimitFiresHookAndDrops(t *testing.T) {
 	b.lastModel = "claude-opus-4-20250514"
 	var texts []string
 	applyHandler(b, &testHandler{OnText: func(s string) { texts = append(texts, s) }})
-	var fired time.Time
-	b.onSessionLimit = func(until time.Time) { fired = until }
+	var fired ratelimit.Signal
+	b.onSessionLimit = func(signal ratelimit.Signal) { fired = signal }
 
 	b.OnAssistant(&AssistantMessage{
 		Message: BetaMessage{
@@ -157,7 +159,7 @@ func TestOnAssistant_SessionLimitFiresHookAndDrops(t *testing.T) {
 		},
 	})
 
-	if fired.IsZero() {
+	if fired.ResetAt.IsZero() {
 		t.Fatalf("onSessionLimit did not fire")
 	}
 	if len(texts) != 0 {
@@ -171,12 +173,14 @@ func TestOnAssistant_SessionLimitFiresHookAndDrops(t *testing.T) {
 	}
 }
 
-func TestOnAssistant_SessionLimitUnparsedFallsThrough(t *testing.T) {
+func TestOnAssistant_SessionLimitWithoutResetUsesNeutralSignal(t *testing.T) {
+	// Proves a definite session limit without a parseable reset is still
+	// intercepted so the shared policy can apply its usage fallback.
 	b := &Backend{}
 	var texts []string
 	applyHandler(b, &testHandler{OnText: func(s string) { texts = append(texts, s) }})
-	fired := false
-	b.onSessionLimit = func(time.Time) { fired = true }
+	var fired ratelimit.Signal
+	b.onSessionLimit = func(signal ratelimit.Signal) { fired = signal }
 
 	b.OnAssistant(&AssistantMessage{
 		Message: BetaMessage{
@@ -185,11 +189,11 @@ func TestOnAssistant_SessionLimitUnparsedFallsThrough(t *testing.T) {
 		},
 	})
 
-	if fired {
-		t.Errorf("onSessionLimit fired despite unparseable reset")
+	if fired.Kind != ratelimit.KindUsage || !fired.ResetAt.IsZero() {
+		t.Errorf("signal = %+v, want usage limit without reset hint", fired)
 	}
-	if len(texts) != 1 {
-		t.Errorf("OnText called %d times, want 1 (unparseable message not dropped)", len(texts))
+	if len(texts) != 0 {
+		t.Errorf("OnText called %d times, want 0 (limit signal dropped)", len(texts))
 	}
 }
 

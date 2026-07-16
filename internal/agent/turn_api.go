@@ -23,16 +23,14 @@ import (
 // Extracted from agent.go:286-301.
 func (t *APITransport) RateLimitGate(ts *TurnState) error {
 	a := t.agent
-	sm := a.getSessionMeta(ts.SessionKey)
-	a.metaMu.Lock()
-	endpoint := sm.modelEndpoint
-	if endpoint == "" {
-		endpoint = a.Endpoint
-	}
-	a.metaMu.Unlock()
-
+	endpoint := a.resolveEndpoint(ts.SessionKey)
 	gate := a.getOrCreateRateLimitGate(endpoint)
 	if limited, until := gate.IsLimited(); limited {
+		if isUserTrigger(ts.Trigger) {
+			a.logger().Infof("rate limit gate (%s): allowing user probe for session=%s trigger=%s (currently resets %s)",
+				endpoint, ts.SessionKey, ts.Trigger, until.Format(time.Kitchen))
+			return nil
+		}
 		gate.Enqueue(ts.SessionKey, ts.Texts[0], ts.Trigger)
 		a.logger().Infof("rate limit gate (%s): queued message for session=%s trigger=%s (resets %s)",
 			endpoint, ts.SessionKey, ts.Trigger, until.Format(time.Kitchen))
@@ -337,6 +335,11 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			a.metaMu.Unlock()
 			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, endpoint, duration)
 		}
+
+		// Any successful response proves this endpoint is accepting requests
+		// again. Release a prior gate immediately; queued system work remains
+		// queued for the normal drain tick.
+		a.releaseRateLimit(a.resolveEndpoint(ts.SessionKey))
 
 		// Primary HTTP roundtrip succeeded — analog of the delegated
 		// transport's stdin write completing. Signal the inbox so

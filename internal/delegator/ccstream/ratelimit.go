@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 )
 
@@ -22,9 +23,9 @@ func (b *Backend) fireRateLimited(detail string) {
 
 // fireSessionLimit invokes the session-limit hook if one is registered.
 // Safe to call whether or not a hook is set.
-func (b *Backend) fireSessionLimit(until time.Time) {
+func (b *Backend) fireSessionLimit(signal ratelimit.Signal) {
 	if b.onSessionLimit != nil {
-		b.onSessionLimit(until)
+		b.onSessionLimit(signal)
 	}
 }
 
@@ -34,12 +35,13 @@ var sessionLimitResetRe = regexp.MustCompile(`(?i)resets\s+(\d{1,2})(?::(\d{2}))
 
 // parseSessionLimitReset extracts the reset instant from a CC session-limit
 // message like "You've hit your session limit · resets 11:30pm (Europe/London)".
-// It returns the next future occurrence of that wall-clock time in the named
-// zone, and false if the clause is absent or the zone is unknown.
-func parseSessionLimitReset(text string, now time.Time) (time.Time, bool) {
+// It returns a neutral signal containing the next future occurrence of that
+// wall-clock time in the named zone, and false if the clause is absent or the
+// zone is unknown.
+func parseSessionLimitReset(text string, now time.Time) (ratelimit.Signal, bool) {
 	m := sessionLimitResetRe.FindStringSubmatch(text)
 	if m == nil {
-		return time.Time{}, false
+		return ratelimit.Signal{}, false
 	}
 	hour, _ := strconv.Atoi(m[1])
 	minute := 0
@@ -54,14 +56,14 @@ func parseSessionLimitReset(text string, now time.Time) (time.Time, bool) {
 	}
 	loc, err := time.LoadLocation(strings.TrimSpace(m[4]))
 	if err != nil {
-		return time.Time{}, false
+		return ratelimit.Signal{}, false
 	}
 	n := now.In(loc)
 	reset := time.Date(n.Year(), n.Month(), n.Day(), hour, minute, 0, 0, loc)
 	if !reset.After(now) {
 		reset = reset.Add(24 * time.Hour)
 	}
-	return reset, true
+	return ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: reset, Detail: text}, true
 }
 
 // rateLimitWarnState is the per-window high-water mark used to throttle

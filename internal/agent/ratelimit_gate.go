@@ -10,15 +10,17 @@ import (
 	"time"
 
 	"foci/internal/procx"
+	"foci/internal/ratelimit"
 )
 
-// RateLimitGate blocks all session injection when the API is rate-limited.
-// When closed, messages are queued for replay when the limit expires.
+// RateLimitGate suppresses non-user API work while an endpoint is rate-limited.
+// Closed gates queue system work for replay; user turns may pass as recovery
+// probes and release the gate early when they succeed.
 type RateLimitGate struct {
-	mu             sync.Mutex
-	until          time.Time    // zero = not rate-limited
-	queue          []QueuedItem // pending work to replay on open
-	noHeaderStreak int          // consecutive closes without a retry-after header
+	mu                sync.Mutex
+	until             time.Time    // zero = not rate-limited
+	queue             []QueuedItem // pending work to replay on open
+	missingHintStreak int          // consecutive request limits without a trustworthy reset hint
 }
 
 // QueuedItem is a pending message queued while rate-limited.
@@ -66,30 +68,27 @@ func (g *RateLimitGate) Enqueue(sessionKey, message, trigger string) {
 	})
 }
 
-// ComputeResetTime determines the best reset time for the rate limit gate.
-// Uses retry-after header if available (and resets the backoff streak).
-// Without a header, applies exponential backoff: 60s, 120s, 240s, ... capped
-// at 1h. Each consecutive no-header 429 doubles the wait; a successful header
-// or gate drain resets the streak.
-func (g *RateLimitGate) ComputeResetTime(retryAfterSec int) time.Time {
+// CloseFor resolves a neutral rate-limit signal through the shared policy,
+// closes the gate, and returns its absolute deadline.
+func (g *RateLimitGate) CloseFor(signal ratelimit.Signal) time.Time {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	resolved := ratelimit.Resolve(time.Now(), signal, g.missingHintStreak)
+	g.until = resolved.Until
+	g.missingHintStreak = resolved.MissingHintStreak
+	return resolved.Until
+}
 
-	if retryAfterSec > 0 {
-		g.noHeaderStreak = 0
-		return time.Now().Add(time.Duration(retryAfterSec) * time.Second)
-	}
-
-	backoff := 60 * time.Second
-	for i := 0; i < g.noHeaderStreak; i++ {
-		backoff *= 2
-		if backoff >= time.Hour {
-			backoff = time.Hour
-			break
-		}
-	}
-	g.noHeaderStreak++
-	return time.Now().Add(backoff)
+// Open releases a closed gate immediately after a successful probe. Pending
+// queued work is preserved for the next DrainQueue call. It returns whether
+// the gate had a deadline to release.
+func (g *RateLimitGate) Open() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	wasClosed := !g.until.IsZero()
+	g.until = time.Time{}
+	g.missingHintStreak = 0
+	return wasClosed
 }
 
 // DrainQueue returns and clears the queue if the gate is now open.
@@ -106,7 +105,7 @@ func (g *RateLimitGate) DrainQueue() []QueuedItem {
 	items := g.queue
 	g.queue = nil
 	g.until = time.Time{}
-	g.noHeaderStreak = 0
+	g.missingHintStreak = 0
 	return items
 }
 
@@ -209,22 +208,35 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 	return false, ""
 }
 
-// EngageRateLimit closes the default-endpoint gate until `until` and fires the
-// RateLimit notification hooks. Delegated backends call this when their coding
-// agent reports a session/usage limit through its event stream rather than a
-// direct-API 429, so classifyAPIError never runs and the gate would otherwise
-// stay open. Only the background/periodic paths (SessionRateLimited) honour the
-// gate — user-triggered delegated turns run through the coding agent's own
-// limiting.
-func (a *Agent) EngageRateLimit(until time.Time) {
-	if until.IsZero() || !until.After(time.Now()) {
-		return
+// engageRateLimit is the single gate-closing path for API and delegated
+// backends. The source supplies a neutral signal; the endpoint gate applies
+// shared reset/fallback policy. notify controls whether proactive hooks fire —
+// user API turns already receive the returned RateLimitedError directly.
+func (a *Agent) engageRateLimit(endpoint string, signal ratelimit.Signal, notify bool) time.Time {
+	gate := a.getOrCreateRateLimitGate(endpoint)
+	until := gate.CloseFor(signal)
+	a.logger().Infof("rate limit gate (%s) closed until %s (kind=%s)", endpoint, until.Format(time.Kitchen), signal.Kind)
+	if notify {
+		for _, fn := range a.RateLimitFunc {
+			fn(until)
+		}
 	}
-	gate := a.getOrCreateRateLimitGate(a.Endpoint)
-	gate.Close(until)
-	a.logger().Infof("rate limit gate (%s) closed until %s (delegated usage limit hit)", a.Endpoint, until.Format(time.Kitchen))
-	for _, fn := range a.RateLimitFunc {
-		fn(until)
+	return until
+}
+
+// EngageRateLimit engages the default-endpoint gate for a delegated backend
+// signal and fires the standard notification hooks. User-triggered delegated
+// turns still run through their coding agent and may probe the limit.
+func (a *Agent) EngageRateLimit(signal ratelimit.Signal) {
+	a.engageRateLimit(a.Endpoint, signal, true)
+}
+
+// releaseRateLimit opens an endpoint gate after a successful API response.
+// Queued system work remains queued until the normal drain tick replays it.
+func (a *Agent) releaseRateLimit(endpoint string) {
+	gate := a.getOrCreateRateLimitGate(endpoint)
+	if gate.Open() {
+		a.logger().Infof("rate limit gate (%s) released early after successful probe", endpoint)
 	}
 }
 

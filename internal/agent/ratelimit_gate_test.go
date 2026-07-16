@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/ratelimit"
 )
 
 func TestRateLimitGate_NotLimitedByDefault(t *testing.T) {
@@ -49,7 +51,7 @@ func TestEngageRateLimit(t *testing.T) {
 		RateLimitFunc: HookList[func(time.Time)]{func(resetTime time.Time) { got = resetTime }},
 	}
 	until := time.Now().Add(2 * time.Hour)
-	ag.EngageRateLimit(until)
+	ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: until})
 
 	if limited, u := ag.getOrCreateRateLimitGate("test-endpoint").IsLimited(); !limited || !u.Equal(until) {
 		t.Errorf("gate limited=%v until=%v, want true %v", limited, u, until)
@@ -59,18 +61,40 @@ func TestEngageRateLimit(t *testing.T) {
 	}
 }
 
-func TestEngageRateLimit_ZeroTimeNoOp(t *testing.T) {
-	called := false
+func TestEngageRateLimit_UsageFallback(t *testing.T) {
+	// Proves a delegated usage signal without a trustworthy reset uses the
+	// shared fallback and still fires the standard notification hook.
+	var got time.Time
 	ag := &Agent{
 		Endpoint:      "e",
-		RateLimitFunc: HookList[func(time.Time)]{func(time.Time) { called = true }},
+		RateLimitFunc: HookList[func(time.Time)]{func(until time.Time) { got = until }},
 	}
-	ag.EngageRateLimit(time.Time{})
-	if limited, _ := ag.getOrCreateRateLimitGate("e").IsLimited(); limited {
-		t.Error("zero time should not engage the gate")
+	before := time.Now().Add(59 * time.Minute)
+	ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage})
+	after := time.Now().Add(61 * time.Minute)
+	if limited, until := ag.getOrCreateRateLimitGate("e").IsLimited(); !limited || until.Before(before) || until.After(after) {
+		t.Errorf("fallback gate limited=%v until=%v, want approximately one hour", limited, until)
 	}
-	if called {
-		t.Error("RateLimitFunc should not fire for a zero reset time")
+	if got.Before(before) || got.After(after) {
+		t.Errorf("RateLimitFunc got %v, want approximately one hour", got)
+	}
+}
+
+func TestRateLimitGate_OpenPreservesQueue(t *testing.T) {
+	// Proves a successful user probe releases the deadline immediately while
+	// preserving already-queued system work for the normal replay drain.
+	var g RateLimitGate
+	g.Close(time.Now().Add(time.Hour))
+	g.Enqueue("session", "keepalive", "keepalive")
+	if !g.Open() {
+		t.Fatal("Open reported an already-open gate")
+	}
+	if limited, _ := g.IsLimited(); limited {
+		t.Error("gate remains limited after Open")
+	}
+	items := g.DrainQueue()
+	if len(items) != 1 || items[0].Trigger != "keepalive" {
+		t.Errorf("drained items = %+v, want preserved keepalive", items)
 	}
 }
 

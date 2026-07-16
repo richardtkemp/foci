@@ -16,6 +16,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/ratelimit"
 	"foci/internal/relogin"
 	"foci/internal/route"
 	"foci/internal/secrets"
@@ -257,8 +258,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				// A CC session-limit message engages the rate-limit gate so
 				// background/periodic work pauses until the window resets; the
 				// gate's own hooks notify the user.
-				sb.SetOnSessionLimit(func(until time.Time) {
-					ag.EngageRateLimit(until)
+				sb.SetOnSessionLimit(func(signal ratelimit.Signal) {
+					ag.EngageRateLimit(signal)
 				})
 			}
 			// Inject account-state callbacks into opencode backends. Auth has
@@ -269,8 +270,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				ob.SetOnAuthFailure(func(detail string) {
 					log.NewComponentLogger("agent:"+agentID).Warnf("opencode auth failure: %s", detail)
 				})
-				ob.SetOnRateLimited(func(until time.Time) {
-					ag.EngageRateLimit(until)
+				ob.SetOnRateLimited(func(signal ratelimit.Signal) {
+					ag.EngageRateLimit(signal)
 				})
 			}
 			// Deliver Codex config/runtime warnings to the user's chat as

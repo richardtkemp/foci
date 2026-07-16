@@ -1,9 +1,8 @@
 package ccstream
 
 import (
-	"time"
-
 	"foci/internal/delegator"
+	"foci/internal/ratelimit"
 )
 
 // SetPermissionPromptFunc sets the function used to send permission prompts.
@@ -57,10 +56,10 @@ func (b *Backend) SetRateLimitThrottle(t *RateLimitThrottle) { b.rlThrottle = t 
 
 // SetOnSessionLimit registers a hook fired when CC reports a session limit was
 // hit — a synthetic "You've hit your session limit · resets <time>" message,
-// which (unlike a direct-API 429) never reaches classifyAPIError. The argument
-// is the parsed reset instant; the agent uses it to engage the rate-limit gate.
+// which (unlike a direct-API 429) never reaches classifyAPIError. The neutral
+// signal lets the agent's shared policy engage the rate-limit gate.
 // Must be set before Start.
-func (b *Backend) SetOnSessionLimit(fn func(until time.Time)) { b.onSessionLimit = fn }
+func (b *Backend) SetOnSessionLimit(fn func(signal ratelimit.Signal)) { b.onSessionLimit = fn }
 
 // SetOnAutonomousOpen registers a hook fired when the backend detects CC has
 // begun a run foci did not open (session_state:running with no foci turn). The

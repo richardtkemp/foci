@@ -8,22 +8,21 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/ratelimit"
 )
 
 // TestParseRateLimitRetry proves an explicit reset offset is honoured while
 // unrelated OpenCode retries are ignored.
 func TestParseRateLimitRetry(t *testing.T) {
-	loc := time.FixedZone("test", 2*60*60)
-	now := time.Date(2026, 7, 16, 11, 0, 0, 0, loc)
-	got, ok := parseRateLimitRetry("Usage limit reached for 5 hour. Your limit will reset at 2026-07-16 19:13:59+08:00", now)
+	got, ok := parseRateLimitRetry("Usage limit reached for 5 hour. Your limit will reset at 2026-07-16 19:13:59+08:00")
 	if !ok {
 		t.Fatal("usage-limit retry was not recognised")
 	}
 	want := time.Date(2026, 7, 16, 19, 13, 59, 0, time.FixedZone("reset", 8*60*60))
-	if !got.Equal(want) {
-		t.Errorf("reset = %v, want %v", got, want)
+	if got.Kind != ratelimit.KindUsage || !got.ResetAt.Equal(want) {
+		t.Errorf("signal = %+v, want usage reset %v", got, want)
 	}
-	if _, ok := parseRateLimitRetry("temporary upstream unavailable", now); ok {
+	if _, ok := parseRateLimitRetry("temporary upstream unavailable"); ok {
 		t.Error("transient retry was misclassified as a rate limit")
 	}
 }
@@ -31,13 +30,12 @@ func TestParseRateLimitRetry(t *testing.T) {
 // TestParseRateLimitRetryFallback proves the observed timezone-less Z.AI reset
 // is not misrepresented as local time and instead uses the fallback window.
 func TestParseRateLimitRetryFallback(t *testing.T) {
-	now := time.Date(2026, 7, 16, 11, 0, 0, 0, time.UTC)
-	got, ok := parseRateLimitRetry("Usage limit reached. Your limit will reset at 2026-07-16 19:13:59", now)
+	got, ok := parseRateLimitRetry("Usage limit reached. Your limit will reset at 2026-07-16 19:13:59")
 	if !ok {
 		t.Fatal("rate-limit retry was not recognised")
 	}
-	if want := now.Add(time.Hour); !got.Equal(want) {
-		t.Errorf("fallback reset = %v, want %v", got, want)
+	if got.Kind != ratelimit.KindUsage || !got.ResetAt.IsZero() {
+		t.Errorf("ambiguous signal = %+v, want usage with no reset hint", got)
 	}
 }
 
@@ -46,10 +44,10 @@ func TestParseRateLimitRetryFallback(t *testing.T) {
 func TestOnSessionStatus_RateLimitAbortsAndCompletes(t *testing.T) {
 	b, rec := newControlTestBackend(t)
 	var callbackCount atomic.Int32
-	var reset time.Time
-	b.SetOnRateLimited(func(until time.Time) {
+	var signal ratelimit.Signal
+	b.SetOnRateLimited(func(got ratelimit.Signal) {
 		callbackCount.Add(1)
-		reset = until
+		signal = got
 	})
 	var completed *delegator.TurnResult
 	b.beginTurn(&delegator.TurnEvents{OnTurnComplete: func(result *delegator.TurnResult) {
@@ -65,8 +63,8 @@ func TestOnSessionStatus_RateLimitAbortsAndCompletes(t *testing.T) {
 	if got := callbackCount.Load(); got != 1 {
 		t.Fatalf("rate-limit callback count = %d, want 1", got)
 	}
-	if reset.Sub(wantReset) < -time.Second || reset.Sub(wantReset) > time.Second {
-		t.Errorf("callback reset = %v, want approximately %v", reset, wantReset)
+	if signal.ResetAt.Sub(wantReset) < -time.Second || signal.ResetAt.Sub(wantReset) > time.Second {
+		t.Errorf("callback reset = %v, want approximately %v", signal.ResetAt, wantReset)
 	}
 	if _, ok := rec.lastAbort(); !ok {
 		t.Fatal("rate-limit retry did not POST /abort")
@@ -94,7 +92,7 @@ func TestOnSessionStatus_RateLimitAbortsAndCompletes(t *testing.T) {
 func TestOnSessionStatus_TransientRetryKeepsWaiting(t *testing.T) {
 	b, rec := newControlTestBackend(t)
 	var callbackFired atomic.Bool
-	b.SetOnRateLimited(func(time.Time) { callbackFired.Store(true) })
+	b.SetOnRateLimited(func(ratelimit.Signal) { callbackFired.Store(true) })
 	b.beginTurn(&delegator.TurnEvents{})
 
 	b.onSessionStatus(b.sessionID, SessionStatus{Type: StatusRetry, Attempt: 1, Message: "temporary upstream unavailable"})
