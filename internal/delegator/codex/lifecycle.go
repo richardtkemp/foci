@@ -42,7 +42,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		return fmt.Errorf("codex: binary %q not found: %w", bin, err)
 	}
 
-	args := []string{"app-server"}
+	args := appServerArgs()
 	cmdCtx, cancel := context.WithCancel(context.Background())
 	cmd := procx.Spawn(cmdCtx, bin, args...)
 	cmd.Dir = b.workDir
@@ -107,6 +107,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	}
 
 	return nil
+}
+
+// appServerArgs keeps Codex from starting its nested bwrap sandbox: foci already
+// runs inside an outer sandbox that deliberately removes setuid/capability assumptions.
+func appServerArgs() []string {
+	return []string{"app-server", "-c", "sandbox_policy.mode=danger-full-access"}
 }
 
 // WaitReady blocks until the backend is ready (handshake complete).
