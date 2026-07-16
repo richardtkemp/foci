@@ -323,7 +323,6 @@ func (cfg *Config) Validate() error {
 		{"logging", "warning_proactive_activity_threshold", cfg.Logging.WarningProactiveActivityThreshold},
 		{"logging", "rotation_period", cfg.Logging.RotationPeriod},
 		{"logging", "retention_period", cfg.Logging.RetentionPeriod},
-		{"anthropic", "cc_expiry_threshold", cfg.Anthropic.CCExpiryThreshold},
 		{"tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout},
 		{"resources", "memory_guard_interval", cfg.Resources.MemoryGuardInterval},
 		{"http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout},

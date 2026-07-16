@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -123,151 +122,19 @@ func TestCCTokenSource_HandlesCorruptFileMidRun(t *testing.T) {
 }
 
 func TestCCTokenSource_ExpiredTokenReturnsError(t *testing.T) {
-	// Proves that Token() returns an error when the token is already expired, and triggers a refresh callback.
+	// Proves that Token() returns an error when the token is already expired.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	writeCCCreds(t, path, "tok-expired", "ref-1", time.Now().Add(-time.Hour))
-
-	var refreshed atomic.Int32
 
 	src, err := NewCCTokenSource(path)
 	if err != nil {
 		t.Fatalf("NewCCTokenSource: %v", err)
 	}
-	src.SetRefreshFunc(func() { refreshed.Add(1) })
 
 	_, err = src.Token()
 	if err == nil {
 		t.Fatal("expected error for expired token")
-	}
-
-	// Give the goroutine time to fire.
-	time.Sleep(50 * time.Millisecond)
-
-	if refreshed.Load() != 1 {
-		t.Errorf("expected refresh to fire once, fired %d times", refreshed.Load())
-	}
-}
-
-func TestCCTokenSource_ExpiredRefreshFiresOnce(t *testing.T) {
-	// Proves that repeated Token() calls on an expired token only trigger one refresh (not one per call).
-	dir := t.TempDir()
-	path := filepath.Join(dir, "credentials.json")
-	writeCCCreds(t, path, "tok-expired", "ref-1", time.Now().Add(-time.Hour))
-
-	var refreshed atomic.Int32
-
-	src, err := NewCCTokenSource(path)
-	if err != nil {
-		t.Fatalf("NewCCTokenSource: %v", err)
-	}
-	src.SetRefreshFunc(func() { refreshed.Add(1) })
-
-	// Multiple calls — should only trigger one refresh.
-	src.Token()
-	src.Token()
-	src.Token()
-
-	time.Sleep(50 * time.Millisecond)
-
-	if refreshed.Load() != 1 {
-		t.Errorf("expected 1 refresh, got %d", refreshed.Load())
-	}
-}
-
-func TestCCTokenSource_FreshTokenResetsRefreshFlag(t *testing.T) {
-	// Proves that after a refresh fires and the file is updated with a valid token, the refresh flag resets so a subsequent expiry triggers another refresh.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "credentials.json")
-	writeCCCreds(t, path, "tok-expired", "ref-1", time.Now().Add(-time.Hour))
-
-	var refreshed atomic.Int32
-
-	src, err := NewCCTokenSource(path)
-	if err != nil {
-		t.Fatalf("NewCCTokenSource: %v", err)
-	}
-	src.SetRefreshFunc(func() { refreshed.Add(1) })
-
-	// Trigger first refresh.
-	src.Token()
-	time.Sleep(50 * time.Millisecond)
-	if refreshed.Load() != 1 {
-		t.Fatalf("expected 1 refresh, got %d", refreshed.Load())
-	}
-
-	// Write a fresh token — should reset the flag.
-	writeCCCreds(t, path, "tok-fresh", "ref-2", time.Now().Add(time.Hour))
-	tok, err := src.Token()
-	if err != nil {
-		t.Fatalf("Token after refresh: %v", err)
-	}
-	if tok != "tok-fresh" {
-		t.Errorf("expected tok-fresh, got %q", tok)
-	}
-
-	// Expire it again — should trigger another refresh.
-	writeCCCreds(t, path, "tok-expired-again", "ref-3", time.Now().Add(-time.Hour))
-	src.Token()
-	time.Sleep(50 * time.Millisecond)
-
-	if refreshed.Load() != 2 {
-		t.Errorf("expected 2 refreshes (reset after fresh), got %d", refreshed.Load())
-	}
-}
-
-func TestCCTokenSource_CheckRefreshTriggersProactively(t *testing.T) {
-	// Proves that CheckRefresh triggers a proactive refresh when the token is within the expiry threshold, without waiting for actual expiry.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "credentials.json")
-	// Token expires in 2 minutes — within the 5-minute default threshold.
-	writeCCCreds(t, path, "tok-soon", "ref-1", time.Now().Add(2*time.Minute))
-
-	var refreshed atomic.Int32
-
-	src, err := NewCCTokenSource(path)
-	if err != nil {
-		t.Fatalf("NewCCTokenSource: %v", err)
-	}
-	src.SetRefreshFunc(func() { refreshed.Add(1) })
-
-	// Token should still be valid (not expired yet).
-	tok, err := src.Token()
-	if err != nil {
-		t.Fatalf("Token: %v", err)
-	}
-	if tok != "tok-soon" {
-		t.Errorf("expected tok-soon, got %q", tok)
-	}
-
-	// CheckRefresh should detect near-expiry and trigger refresh.
-	src.CheckRefresh()
-	time.Sleep(50 * time.Millisecond)
-
-	if refreshed.Load() != 1 {
-		t.Errorf("expected proactive refresh, got %d fires", refreshed.Load())
-	}
-}
-
-func TestCCTokenSource_CheckRefreshNoOpWhenFarFromExpiry(t *testing.T) {
-	// Proves that CheckRefresh does NOT trigger a refresh when the token has plenty of time left.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "credentials.json")
-	writeCCCreds(t, path, "tok-far", "ref-1", time.Now().Add(time.Hour))
-
-	var refreshed atomic.Int32
-
-	src, err := NewCCTokenSource(path)
-	if err != nil {
-		t.Fatalf("NewCCTokenSource: %v", err)
-	}
-	src.SetRefreshFunc(func() { refreshed.Add(1) })
-
-	src.CheckRefresh()
-	time.Sleep(50 * time.Millisecond)
-
-	if refreshed.Load() != 0 {
-		t.Errorf("expected no refresh for far-off expiry, got %d fires", refreshed.Load())
 	}
 }
 
@@ -296,34 +163,6 @@ func TestCCTokenSource_FociFormat(t *testing.T) {
 	}
 }
 
-func TestCCTokenSource_SetExpiryThreshold(t *testing.T) {
-	// Proves SetExpiryThreshold controls the proactive-refresh window: a token expiring in 2 minutes triggers no refresh under a 1-minute threshold, then triggers one after widening to 10 minutes.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "credentials.json")
-	writeCCCreds(t, path, "tok", "ref", time.Now().Add(2*time.Minute))
-
-	var refreshed atomic.Int32
-	src, err := NewCCTokenSource(path)
-	if err != nil {
-		t.Fatalf("NewCCTokenSource: %v", err)
-	}
-	src.SetRefreshFunc(func() { refreshed.Add(1) })
-
-	src.SetExpiryThreshold(time.Minute)
-	src.CheckRefresh()
-	time.Sleep(50 * time.Millisecond)
-	if refreshed.Load() != 0 {
-		t.Fatalf("refresh fired with 1m threshold and 2m left, got %d", refreshed.Load())
-	}
-
-	src.SetExpiryThreshold(10 * time.Minute)
-	src.CheckRefresh()
-	time.Sleep(50 * time.Millisecond)
-	if refreshed.Load() != 1 {
-		t.Errorf("expected refresh with 10m threshold and 2m left, got %d", refreshed.Load())
-	}
-}
-
 func TestCCTokenSource_ReadErrorWithNoCachedToken(t *testing.T) {
 	// Proves Token() errors with "no CC token available" when the file is unreadable and no token was ever cached.
 	src := &CCTokenSource{path: "/nonexistent/creds.json"}
@@ -334,18 +173,16 @@ func TestCCTokenSource_ReadErrorWithNoCachedToken(t *testing.T) {
 }
 
 func TestCCTokenSource_ReadErrorWithExpiredCachedToken(t *testing.T) {
-	// Proves that when the file disappears and the cached token has expired, Token() refuses to serve the stale token, errors, and triggers a refresh.
+	// Proves that when the file disappears and the cached token has expired, Token() refuses to serve the stale token and errors.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	// Valid at startup but expires almost immediately.
 	writeCCCreds(t, path, "tok-short", "ref", time.Now().Add(10*time.Millisecond))
 
-	var refreshed atomic.Int32
 	src, err := NewCCTokenSource(path)
 	if err != nil {
 		t.Fatalf("NewCCTokenSource: %v", err)
 	}
-	src.SetRefreshFunc(func() { refreshed.Add(1) })
 
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -358,22 +195,5 @@ func TestCCTokenSource_ReadErrorWithExpiredCachedToken(t *testing.T) {
 	_, err = src.Token()
 	if err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("err = %v, want expired-token error", err)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if refreshed.Load() != 1 {
-		t.Errorf("expected refresh trigger, got %d", refreshed.Load())
-	}
-}
-
-func TestCCTokenSource_CheckRefreshNoOpWithZeroExpiry(t *testing.T) {
-	// Proves CheckRefresh is a no-op when no expiry is known (zero time), instead of treating it as imminently expiring.
-	var refreshed atomic.Int32
-	src := &CCTokenSource{expiryThreshold: defaultExpiryThreshold}
-	src.SetRefreshFunc(func() { refreshed.Add(1) })
-
-	src.CheckRefresh()
-	time.Sleep(50 * time.Millisecond)
-	if refreshed.Load() != 0 {
-		t.Errorf("refresh fired despite zero expiry, got %d", refreshed.Load())
 	}
 }
