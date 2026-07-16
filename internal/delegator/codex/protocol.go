@@ -246,17 +246,26 @@ type itemEnvelope struct {
 	// commandExecution fields
 	Command string `json:"command,omitempty"`
 	// fileChange fields
-	Changes json.RawMessage `json:"changes,omitempty"`
+	Changes []fileChangeEntry `json:"changes,omitempty"`
 	// mcpToolCall / dynamicToolCall fields
-	Tool      string `json:"tool,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
-	Server    string `json:"server,omitempty"`
+	Tool      string          `json:"tool,omitempty"`
+	Namespace string          `json:"namespace,omitempty"`
+	Server    string          `json:"server,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// webSearch fields
+	Query string `json:"query,omitempty"`
 	// subAgentActivity fields
 	Kind      string `json:"kind,omitempty"`
 	AgentPath string `json:"agentPath,omitempty"`
 	// collabAgentToolCall fields
-	Prompt       string                  `json:"prompt,omitempty"`
-	AgentsStates map[string]collabState  `json:"agentsStates,omitempty"`
+	Prompt       string                 `json:"prompt,omitempty"`
+	AgentsStates map[string]collabState `json:"agentsStates,omitempty"`
+}
+
+// fileChangeEntry is one file change in a fileChange item's changes array.
+type fileChangeEntry struct {
+	Path string `json:"path,omitempty"`
+	Kind string `json:"kind,omitempty"` // "create", "modify", "delete"
 }
 
 // collabState is one entry in a collabAgentToolCall's agentsStates map.
