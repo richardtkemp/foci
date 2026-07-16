@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +40,15 @@ func newStartableBackend(t *testing.T, handler func(method string, params json.R
 	b := setupMockBackend(t, handler)
 	b.readyCh = make(chan struct{})
 	return b
+}
+
+// TestAppServerArgs_DisablesNestedSandbox ensures the app-server inherits the
+// outer foci sandbox instead of attempting a nested bwrap sandbox.
+func TestAppServerArgs_DisablesNestedSandbox(t *testing.T) {
+	want := []string{"app-server", "-c", "sandbox_policy.mode=danger-full-access"}
+	if got := appServerArgs(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("appServerArgs() = %v, want %v", got, want)
+	}
 }
 
 // --- startThread ---
