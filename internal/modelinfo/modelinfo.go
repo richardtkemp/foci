@@ -186,7 +186,10 @@ func Lookup(provider, modelID string) (Model, bool) {
 }
 
 // registryLookup tries a provider-specific entry first, then falls back to the
-// providerless ("") entry. Caller must hold registryMu.
+// providerless ("") entry, then to a sole remaining provider entry. Provider
+// only distinguishes the preferred entry when the model already matches — a
+// model registered under a single provider matches regardless of which
+// provider the lookup carries (or none). Caller must hold registryMu.
 func registryLookup(provider, bare string) (Model, bool) {
 	providers := registry[bare]
 	if providers == nil {
@@ -197,8 +200,18 @@ func registryLookup(provider, bare string) (Model, bool) {
 			return m, true
 		}
 	}
-	m, ok := providers[""]
-	return m, ok
+	if m, ok := providers[""]; ok {
+		return m, true
+	}
+	// No exact provider or providerless match. If only one provider entry
+	// exists, use it — the model matches, the provider is just not the one
+	// the lookup asked for.
+	if len(providers) == 1 {
+		for _, m := range providers {
+			return m, true
+		}
+	}
+	return Model{}, false
 }
 
 // ResetToBuiltIn restores the registry to its hardcoded defaults, discarding

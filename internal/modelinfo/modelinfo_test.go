@@ -305,3 +305,35 @@ func TestStripPrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestSoleProviderFallback proves that a model registered under a single
+// provider matches lookups regardless of which provider the query carries
+// (or none). Provider only distinguishes the preferred entry when the model
+// already matches.
+func TestSoleProviderFallback(t *testing.T) {
+	t.Cleanup(ResetToBuiltIn)
+
+	Register("zai-coding-plan", "glm-5.2", Model{
+		ContextWindow: 1_000_000,
+		InputPer1M:    0.0,
+		OutputPer1M:   0.0,
+	})
+
+	// No provider → sole entry matches.
+	m, ok := Lookup("", "glm-5.2")
+	if !ok || m.ContextWindow != 1_000_000 {
+		t.Errorf("Lookup(\"\", \"glm-5.2\") = %+v ok=%v, want ContextWindow=1000000", m, ok)
+	}
+
+	// Different provider → sole entry matches.
+	m, ok = Lookup("openrouter", "glm-5.2")
+	if !ok || m.ContextWindow != 1_000_000 {
+		t.Errorf("Lookup(\"openrouter\", \"glm-5.2\") = %+v ok=%v, want ContextWindow=1000000", m, ok)
+	}
+
+	// Cost also resolves via the bare model name.
+	c := Cost("glm-5.2", 1_000_000, 0, 0, 0)
+	if c != 0.0 {
+		t.Errorf("Cost(\"glm-5.2\") = %v, want 0.0", c)
+	}
+}
