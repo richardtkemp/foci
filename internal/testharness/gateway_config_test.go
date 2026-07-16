@@ -7,11 +7,22 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
+
+	"foci/internal/config"
 )
 
 // decodedTestConfig mirrors the subset of the generated foci.toml the
 // config-writer tests assert on. Pointer fields distinguish "key absent"
 // from zero values for the Omit* variants.
+//
+// CCBackend and Agents[].BackendConfig decode into the REAL config structs
+// (not a local mirror) on purpose: a prior mismatch between the key this
+// harness wrote (claude_binary) and the key ccstream actually read (binary)
+// went undetected because this test's own hand-rolled struct just mirrored
+// whichever key the harness happened to write, so it could never catch the
+// two drifting apart. Decoding through config.CCBackendConfig/BackendConfig
+// means a future field rename in internal/config/types.go breaks this test
+// at compile time or decode time instead of silently.
 type decodedTestConfig struct {
 	DataDir            string `toml:"data_dir"`
 	SkipSecurityChecks bool   `toml:"skip_security_checks"`
@@ -28,9 +39,7 @@ type decodedTestConfig struct {
 		PayloadFile string `toml:"payload_file"`
 		ArchiveDir  string `toml:"archive_dir"`
 	} `toml:"logging"`
-	CCBackend struct {
-		Binary string `toml:"binary"`
-	} `toml:"cc_backend"`
+	CCBackend config.CCBackendConfig `toml:"cc_backend"`
 	Platforms []struct {
 		ID       string `toml:"id"`
 		Telegram struct {
@@ -39,15 +48,11 @@ type decodedTestConfig struct {
 		} `toml:"telegram"`
 	} `toml:"platforms"`
 	Agents []struct {
-		ID            string  `toml:"id"`
-		Workspace     *string `toml:"workspace"`
-		Backend       string  `toml:"backend"`
-		BackendConfig struct {
-			Model  string            `toml:"model"`
-			Env    map[string]string `toml:"env"`
-			Binary string            `toml:"binary"`
-		} `toml:"backend_config"`
-		Permissions *struct {
+		ID            string               `toml:"id"`
+		Workspace     *string              `toml:"workspace"`
+		Backend       string               `toml:"backend"`
+		BackendConfig config.BackendConfig `toml:"backend_config"`
+		Permissions   *struct {
 			AutoApprove    []string `toml:"auto_approve"`
 			CommonReadonly *bool    `toml:"auto_approve_common_readonly"`
 			CommonSafe     *bool    `toml:"auto_approve_common_safe_write"`
@@ -139,8 +144,8 @@ func TestWriteTestConfig_Basic(t *testing.T) {
 		t.Fatalf("agents = %d entries, want 1", len(cfg.Agents))
 	}
 	a := cfg.Agents[0]
-	if a.ID != "alpha" || a.Backend != "claude-code" || a.BackendConfig.Model != "stub" {
-		t.Errorf("agent = id=%q backend=%q model=%q, want alpha/claude-code/stub", a.ID, a.Backend, a.BackendConfig.Model)
+	if a.ID != "alpha" || a.Backend != "claude-code" || a.BackendConfig.Model == nil || *a.BackendConfig.Model != "stub" {
+		t.Errorf("agent = id=%q backend=%q model=%v, want alpha/claude-code/stub", a.ID, a.Backend, a.BackendConfig.Model)
 	}
 	if a.Workspace == nil || *a.Workspace != "/ws/alpha" {
 		t.Errorf("workspace = %v, want /ws/alpha", a.Workspace)
@@ -211,8 +216,8 @@ func TestWriteTestConfig_AgentOptions(t *testing.T) {
 	if !strings.Contains(raw, `env = {ALPHA = "1", ZED = "26"}`) {
 		t.Errorf("env not emitted as sorted inline table; config:\n%s", raw)
 	}
-	if a.BackendConfig.Binary != "/agent/own-cc" {
-		t.Errorf("per-agent binary = %q, want /agent/own-cc", a.BackendConfig.Binary)
+	if a.BackendConfig.Binary == nil || *a.BackendConfig.Binary != "/agent/own-cc" {
+		t.Errorf("per-agent binary = %v, want /agent/own-cc", a.BackendConfig.Binary)
 	}
 	if a.Permissions == nil {
 		t.Fatalf("missing [agents.permissions] block")

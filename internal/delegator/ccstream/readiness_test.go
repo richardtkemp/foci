@@ -25,7 +25,7 @@ func TestCheckReady_Authenticated(t *testing.T) {
 	stub := writeStubClaude(t, `{"loggedIn": true, "authMethod": "claude.ai"}`, 0)
 	fired := false
 	b := &Backend{
-		cfg:           map[string]any{"claude_binary": stub},
+		cfg:           map[string]any{"binary": stub},
 		onAuthFailure: func(string) { fired = true },
 	}
 
@@ -49,7 +49,7 @@ func TestCheckReady_NotAuthenticated_TriggersRelogin(t *testing.T) {
 	var detail string
 	fired := false
 	b := &Backend{
-		cfg:           map[string]any{"claude_binary": stub},
+		cfg:           map[string]any{"binary": stub},
 		onAuthFailure: func(d string) { fired = true; detail = d },
 	}
 
@@ -73,7 +73,7 @@ func TestCheckReady_ProbeError_NoTrigger(t *testing.T) {
 	stub := writeStubClaude(t, `not json at all`, 0)
 	fired := false
 	b := &Backend{
-		cfg:           map[string]any{"claude_binary": stub},
+		cfg:           map[string]any{"binary": stub},
 		onAuthFailure: func(string) { fired = true },
 	}
 
@@ -94,7 +94,7 @@ func TestCheckReady_BinaryFails_NoTrigger(t *testing.T) {
 	stub := writeStubClaude(t, ``, 3)
 	fired := false
 	b := &Backend{
-		cfg:           map[string]any{"claude_binary": stub},
+		cfg:           map[string]any{"binary": stub},
 		onAuthFailure: func(string) { fired = true },
 	}
 
