@@ -96,6 +96,7 @@ type Backend struct {
 	permMu           sync.Mutex
 	pendingPerms     map[int64]*pendingApproval
 	autoApproveRules []autoapprove.Rule
+	autoApproveEnv   map[string]string // exact environment inherited by Codex
 
 	// Items stashed by ID from item/started, for correlating approval
 	// requests with item details (e.g. file paths for fileChange items).

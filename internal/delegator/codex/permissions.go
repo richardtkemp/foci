@@ -15,7 +15,7 @@ func (b *Backend) tryAutoApprove(rpcID int64, itemID, command string) bool {
 		return false
 	}
 	input, _ := json.Marshal(map[string]string{"command": command})
-	if !autoapprove.Match(b.autoApproveRules, "Bash", input) {
+	if !autoapprove.MatchWithEnv(b.autoApproveRules, "Bash", input, b.autoApproveEnv) {
 		return false
 	}
 	b.lg.Infof("auto-approved: command=%q item=%s", command, itemID)

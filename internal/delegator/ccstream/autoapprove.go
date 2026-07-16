@@ -28,11 +28,6 @@ func parseAutoApproveRules(rules []string) []autoApproveRule {
 	return autoapprove.Compile(rules)
 }
 
-// matchAutoApprove wraps the shared Match for ccstream-internal use.
-func matchAutoApprove(rules []autoApproveRule, toolName string, input json.RawMessage) bool {
-	return autoapprove.Match(rules, toolName, input)
-}
-
 // autoApprovePermission checks the request against compiled rules and, if
 // matched, sends an allow response directly. Returns true if auto-approved.
 func (b *Backend) autoApprovePermission(msg *PermissionRequest) bool {
@@ -40,7 +35,7 @@ func (b *Backend) autoApprovePermission(msg *PermissionRequest) bool {
 		return false
 	}
 
-	if !matchAutoApprove(b.autoApproveRules, msg.Request.ToolName, msg.Request.Input) {
+	if !autoapprove.MatchWithEnv(b.autoApproveRules, msg.Request.ToolName, msg.Request.Input, b.autoApproveEnv) {
 		return false
 	}
 

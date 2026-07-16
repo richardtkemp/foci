@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/log"
 	"foci/internal/procx"
 )
@@ -92,6 +93,7 @@ func (s *Server) Start(ctx context.Context) error {
 	cmd := procx.Spawn(cmdCtx, binary, args...)
 	cmd.Dir = s.workDir
 	cmd.Env = s.buildCmdEnv()
+	s.effectiveEnv = autoapprove.EnvironmentFromList(cmd.Env)
 
 	// Stdin/stdout aren't used (HTTP transport); just inherit /dev/null.
 	// Stderr we capture for diagnostics + secondary auth-failure detection.
