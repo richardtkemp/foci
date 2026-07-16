@@ -231,10 +231,13 @@ var wrapperCommands = map[string]bool{
 // Structural safety checks (AST-level):
 //   - Output redirects (>, >>, >|, &>, &>>) are rejected
 //   - Process substitution <() is rejected
-//   - Command substitution $() and backticks are rejected
+//   - Command substitution $() and backticks are recursively validated
 //   - Brace expansion {a,b} is rejected
 //   - Function declarations and coprocesses are rejected
 //   - Command wrappers (env, nice, timeout, etc.) with arguments are rejected
+//   - Shell interceptors (bash -c, sh -c, etc.) are unwrapped: the inner
+//     script is extracted, statically resolved (literal strings only), and
+//     validated recursively against the same rules
 //
 // Command-level checks (reusing existing infrastructure):
 //   - Each simple command must match at least one Bash auto-approve rule
@@ -246,14 +249,41 @@ func matchBashAutoApprove(rules []Rule, input json.RawMessage) bool {
 		return false
 	}
 
-	// Parse command as bash.
-	p := syntax.NewParser(syntax.KeepComments(false), syntax.Variant(syntax.LangBash))
-	f, err := p.Parse(strings.NewReader(command), "")
-	if err != nil {
+	stmts, ok := parseShellScript(command)
+	if !ok {
 		return false // unparseable → fail safe (prompt user)
 	}
 
-	return validateParsedCommand(rules, f.Stmts, 0)
+	return validateParsedCommand(rules, stmts, 0)
+}
+
+// parseShellScript parses a command string as bash and returns the top-level
+// statements. Returns nil, false if the command is unparseable.
+func parseShellScript(command string) ([]*syntax.Stmt, bool) {
+	p := syntax.NewParser(syntax.KeepComments(false), syntax.Variant(syntax.LangBash))
+	f, err := p.Parse(strings.NewReader(command), "")
+	if err != nil {
+		return nil, false
+	}
+	return f.Stmts, true
+}
+
+// shellInterceptors are shell interpreters that execute a script passed via -c.
+// When such a command is encountered, the -c argument is extracted, statically
+// resolved (literal strings only — no variable references or substitutions),
+// and validated recursively against the same rules. This allows safe commands
+// wrapped in e.g. "bash -c 'ls'" to be auto-approved, while dangerous inner
+// commands (bash -c 'rm file') are still rejected.
+//
+// Non-literal -c arguments (variables, command substitutions, etc.) cannot be
+// resolved statically and cause the command to be rejected (prompts user).
+var shellInterceptors = map[string]bool{
+	"bash": true,
+	"sh":   true,
+	"dash": true,
+	"zsh":  true,
+	"ksh":  true,
+	"ash":  true,
 }
 
 // maxCmdSubstDepth limits recursive validation of nested command substitutions.
@@ -303,6 +333,27 @@ func validateParsedCommand(rules []Rule, stmts []*syntax.Stmt, depth int) bool {
 					if a.Name != nil && isDangerousVarName(a.Name.Value) {
 						safe = false
 					}
+				}
+				// Shell interceptors (bash -c, sh -c, etc.): extract the
+				// inner script, statically resolve it, and validate
+				// recursively. The interceptor CallExpr itself is not added
+				// to commands — its inner commands are validated instead.
+				if scriptWord, ok := extractShellScript(n); ok {
+					script, resolved := resolveStaticWord(scriptWord)
+					switch {
+					case !resolved:
+						safe = false // non-literal constructs in -c arg
+					case script == "":
+						hasContent = true // empty script — harmless
+					default:
+						innerStmts, parsed := parseShellScript(script)
+						if !parsed || !validateParsedCommand(rules, innerStmts, depth+1) {
+							safe = false
+						} else {
+							hasContent = true
+						}
+					}
+					return false // handled; don't descend into children
 				}
 				commands = append(commands, n)
 				hasContent = true
@@ -493,6 +544,81 @@ func commandBaseName(ce *syntax.CallExpr) string {
 		return ""
 	}
 	return filepath.Base(lit.Value)
+}
+
+// ---------- Shell interceptor unwrapping ----------
+
+// extractShellScript checks whether ce is a shell interceptor (bash, sh, etc.)
+// invoked with -c and a following script argument. Returns the script word and
+// true if so. The script word is Args[i+1] where Args[i] is the literal "-c".
+func extractShellScript(ce *syntax.CallExpr) (*syntax.Word, bool) {
+	name := commandBaseName(ce)
+	if !shellInterceptors[name] {
+		return nil, false
+	}
+	for i := 1; i < len(ce.Args); i++ {
+		if isLitEqual(ce.Args[i], "-c") {
+			if i+1 < len(ce.Args) {
+				return ce.Args[i+1], true
+			}
+			return nil, false // -c with no script following
+		}
+	}
+	return nil, false
+}
+
+// isLitEqual reports whether w is a single literal word equal to val.
+func isLitEqual(w *syntax.Word, val string) bool {
+	if len(w.Parts) != 1 {
+		return false
+	}
+	lit, ok := w.Parts[0].(*syntax.Lit)
+	return ok && lit.Value == val
+}
+
+// resolveStaticWord attempts to statically resolve a shell Word to its literal
+// string value. Only literal content can be resolved: unquoted literals,
+// single-quoted strings, and double-quoted strings containing only literals.
+//
+// Variable references ($VAR), command substitutions $(), arithmetic $(()),
+// process substitution <(), and any other dynamic construct return ("", false).
+// The caller must reject (fail closed) in that case.
+func resolveStaticWord(w *syntax.Word) (string, bool) {
+	var sb strings.Builder
+	for _, part := range w.Parts {
+		s, ok := resolveWordPart(part)
+		if !ok {
+			return "", false
+		}
+		sb.WriteString(s)
+	}
+	return sb.String(), true
+}
+
+// resolveWordPart resolves a single word part to its literal string value.
+func resolveWordPart(part syntax.WordPart) (string, bool) {
+	switch p := part.(type) {
+	case *syntax.Lit:
+		return p.Value, true
+	case *syntax.SglQuoted:
+		return p.Value, true
+	case *syntax.DblQuoted:
+		if len(p.Parts) == 0 {
+			return "", true // empty double-quoted string
+		}
+		var sb strings.Builder
+		for _, inner := range p.Parts {
+			s, ok := resolveWordPart(inner)
+			if !ok {
+				return "", false
+			}
+			sb.WriteString(s)
+		}
+		return sb.String(), true
+	default:
+		// ParamExp, CmdSubst, ProcSubst, ArithmExp, ExtGlob, etc.
+		return "", false
+	}
 }
 
 // ---------- Command segment validation ----------

