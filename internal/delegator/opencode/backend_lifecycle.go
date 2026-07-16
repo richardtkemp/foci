@@ -80,6 +80,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		}
 		b.server = srv
 	}
+	b.autoApproveEnv = b.server.effectiveEnv
+	if b.autoApproveEnv == nil {
+		// Test-injected servers have no subprocess environment snapshot.
+		b.autoApproveEnv = autoapprove.EnvironmentFromList(b.server.buildCmdEnv())
+	}
 
 	// Acquire a session ID: resume the saved session if one was provided
 	// and still exists on the server, otherwise create a new one. Resume

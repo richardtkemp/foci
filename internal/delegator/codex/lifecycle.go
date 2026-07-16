@@ -36,6 +36,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.pendingPerms = make(map[int64]*pendingApproval)
 	b.itemCache = make(map[string]itemEnvelope)
 	b.subagents = newSubagentTracker()
+	b.autoApproveEnv = autoapprove.EnvironmentFromList(b.buildEnv())
 
 	bin := b.codexBinary()
 	if _, err := exec.LookPath(bin); err != nil {
