@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/modelinfo"
 	"foci/internal/procx"
 )
 
@@ -46,7 +47,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		"--verbose",
 	}
 	if opts.Model != "" {
-		args = append(args, "--model", opts.Model)
+		// Strip any "provider/" prefix — CC's --model expects a bare
+		// model name (e.g. "claude-sonnet-5"), not the provider-qualified
+		// form (e.g. "claude/claude-sonnet-5") that foci's model resolver
+		// produces. Without this, CC doesn't recognise the model and
+		// exits non-zero.
+		args = append(args, "--model", modelinfo.StripPrefix(opts.Model))
 	}
 	// Cold-launch effort injection (#840). apply_flag_settings (the /effort
 	// runtime path) is session-local and resets to the model default on a

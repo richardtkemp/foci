@@ -119,6 +119,41 @@ func TestStart_BuildsClaudeCommand(t *testing.T) {
 	}
 }
 
+// TestStart_StripsModelProviderPrefix proves the "developer/" prefix is
+// stripped from the model before passing it to Claude's --model flag.
+// foci's model resolver produces "claude/claude-sonnet-5" but CC expects
+// the bare "claude-sonnet-5".
+func TestStart_StripsModelProviderPrefix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	wd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(wd, "character"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeTmux{respond: startRespond("99")}
+	b := &Backend{cfg: map[string]any{}, tmuxExec: f.exec}
+
+	opts := delegator.StartOptions{
+		AgentID: "main",
+		Label:   "lbl",
+		WorkDir: wd,
+		Model:   "claude/claude-sonnet-5",
+	}
+	if err := b.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	shellCmd := f.callsFor("new-session")[0]
+	// The command is passed as the last arg to tmux new-session (sh -l -c "...").
+	cmdStr := shellCmd[len(shellCmd)-1]
+	if !strings.Contains(cmdStr, "claude-sonnet-5") {
+		t.Errorf("shell command should contain stripped model name, cmd: %s", cmdStr)
+	}
+	if strings.Contains(cmdStr, "claude/claude-sonnet-5") {
+		t.Errorf("shell command should NOT contain provider-qualified model, cmd: %s", cmdStr)
+	}
+}
+
 // TestStart_LabelFallsBackToAgentID proves the tmux window is named after the
 // agent ID when no label is supplied, and that optional flags are omitted
 // when their options are empty.

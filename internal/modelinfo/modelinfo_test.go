@@ -285,3 +285,23 @@ func TestTwoProvidersSameModel(t *testing.T) {
 		t.Errorf("ContextWindow provider-b = %d, want 400000", got)
 	}
 }
+
+func TestStripPrefix(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"claude/claude-sonnet-5", "claude-sonnet-5"},
+		{"anthropic/claude-opus-4-6", "claude-opus-4-6"},
+		{"google/gemini-2.5-flash", "gemini-2.5-flash"},
+		{"claude-sonnet-5", "claude-sonnet-5"},   // no prefix → unchanged
+		{"sonnet", "sonnet"},                         // bare alias → unchanged
+		{"", ""},                                     // empty → unchanged
+		{"/weird", "/weird"},                         // leading slash (i>0 guard) → unchanged
+	}
+	for _, tt := range tests {
+		if got := StripPrefix(tt.input); got != tt.want {
+			t.Errorf("StripPrefix(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}

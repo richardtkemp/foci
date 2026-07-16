@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 )
 
 // logger returns an agent-scoped logger so this backend's lines name their
@@ -42,7 +43,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		args = append(args, "--system-prompt-file", promptFile)
 	}
 	if opts.Model != "" {
-		args = append(args, "--model", opts.Model)
+		// Strip any "provider/" prefix — CC's --model expects a bare
+		// model name (e.g. "claude-sonnet-5"), not the provider-qualified
+		// form (e.g. "claude/claude-sonnet-5") that foci's model resolver
+		// produces. Without this, CC doesn't recognise the model and
+		// exits non-zero.
+		args = append(args, "--model", modelinfo.StripPrefix(opts.Model))
 	}
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
