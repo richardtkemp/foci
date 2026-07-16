@@ -11,12 +11,11 @@ import (
 // ForkSession forks a Codex thread into a new thread ID by copying stored
 // history. Implements delegator.BackendBrancher.
 //
-// This is a pure filesystem/app-server operation and does NOT require a
-// started backend — callers may invoke it on a freshly-constructed
-// instance. The app-server connection is used if available; otherwise this
-// creates a temporary connection for the fork request.
+// The fork is an app-server RPC and therefore requires this backend to be
+// running. DelegatedManager owns starting/resuming the parent before calling
+// this method, so the connection remains available for the parent session.
 func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (delegator.ForkResult, error) {
-	if b.writer == nil {
+	if !b.IsRunning() {
 		return delegator.ForkResult{}, fmt.Errorf("codex: backend not started (fork requires an active app-server connection)")
 	}
 
@@ -31,6 +30,7 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	}
 
 	result, err := b.sendAndWait("thread/fork", params)
+
 	if err != nil {
 		return delegator.ForkResult{}, fmt.Errorf("codex: thread/fork failed: %w", err)
 	}
@@ -42,6 +42,10 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 
 	return delegator.ForkResult{SessionID: tr.Thread.ID}, nil
 }
+
+// ForkRequiresRunningBackend tells DelegatedManager to start/resume this
+// backend before issuing a fork request.
+func (b *Backend) ForkRequiresRunningBackend() bool { return true }
 
 // CleanupSession deletes a Codex thread by ID. Implements
 // delegator.BackendBrancher.

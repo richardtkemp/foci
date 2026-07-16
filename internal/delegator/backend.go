@@ -457,6 +457,14 @@ type BackendBrancher interface {
 	CleanupSession(ctx context.Context, req CleanupRequest) error
 }
 
+// RunningBackendForker is an optional capability for backends whose fork
+// operation is an RPC to a live server rather than a local transcript
+// operation. The delegated manager starts or resumes the parent session before
+// invoking BackendBrancher.ForkSession when this capability is present.
+type RunningBackendForker interface {
+	ForkRequiresRunningBackend() bool
+}
+
 // CleanupRequest identifies a backend session to delete.
 type CleanupRequest struct {
 	// SessionID is the backend session id to delete (for CC, its UUID).
