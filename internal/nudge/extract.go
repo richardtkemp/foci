@@ -62,6 +62,21 @@ For each rule you extract, output a JSON object:
   about a specific kind of work (reading without engaging, editing character
   files, running destructive bash). Common tool names: Read, Write, Edit,
   Bash, Grep, Glob, Task, WebFetch, WebSearch, TodoWrite.
+
+  For input_pattern, think about false-positive shapes before committing to a
+  pattern — it matches the raw tool_input JSON of every matching tool call:
+  - Distinguish reads from writes: "cat .*\\.md" also matches an append
+    ("cat >> notes.md <<EOF"), which is a write with no context cost — the
+    opposite of what a dump-and-scan rule targets. Prefer e.g.
+    "cat\\s+[^>|]*\\.md" when the rule is about reading.
+  - A word can appear in an argument, a path, or heredoc CONTENT, not just as
+    the command — anchor with word boundaries and command position when the
+    rule is about running something.
+  - Test mentally against routine calls: would this fire on the innocent
+    version of the command? If most matches would be innocent, tighten the
+    pattern or pick a different trigger.
+  Nudges that repeatedly fire on innocent calls train themselves to be
+  ignored, which defeats every other rule too.
 `)
 	}
 
