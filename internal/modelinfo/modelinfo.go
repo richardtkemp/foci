@@ -140,6 +140,45 @@ var registry = map[string]map[string]Model{
 		InputPer1M:    0.10, OutputPer1M: 0.40,
 		CacheReadPer1M: 0.025,
 	}},
+
+	// Third-party models (OpenRouter-routed). :nitro is OpenRouter's
+	// throughput-routing shortcut — same base price, faster provider.
+	"gpt-5-mini": {"": {
+		ContextWindow: 400_000,
+		InputPer1M:    0.25, OutputPer1M: 2.00,
+	}},
+	"qwen3.5-397b-a17b": {"": {
+		ContextWindow: 262_144,
+		InputPer1M:    0.45, OutputPer1M: 3.00,
+	}},
+	"qwen3.5-397b-a17b:nitro": {"": {
+		ContextWindow: 262_144,
+		InputPer1M:    0.45, OutputPer1M: 3.00,
+	}},
+	"hunter-alpha": {"": { // OpenRouter free model (1T params, 1M context)
+		ContextWindow: 1_000_000,
+		InputPer1M:    0.00, OutputPer1M: 0.00,
+	}},
+	"minimax-m2.7": {"": {
+		ContextWindow: 204_800,
+		InputPer1M:    0.30, OutputPer1M: 1.20,
+	}},
+	"kimi-k2.5": {"": {
+		ContextWindow: 262_144,
+		InputPer1M:    0.57, OutputPer1M: 2.85,
+	}},
+	"glm-5-turbo": {"": {
+		ContextWindow: 202_752,
+		InputPer1M:    1.20, OutputPer1M: 4.00,
+	}},
+	"step-3.5-flash": {"": {
+		ContextWindow: 262_144,
+		InputPer1M:    0.10, OutputPer1M: 0.30,
+	}},
+	"step-3.5-flash:nitro": {"": {
+		ContextWindow: 262_144,
+		InputPer1M:    0.10, OutputPer1M: 0.30,
+	}},
 }
 
 // registryMu guards registry. RLock for reads (accessors), Lock for writes
