@@ -2,7 +2,6 @@ package codex
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"sync"
@@ -22,7 +21,7 @@ func newTestBackend(t *testing.T) *Backend {
 	b := &Backend{
 		cfg:          map[string]any{},
 		lg:           log.NewComponentLogger("codex"),
-		pendingRPC:   make(map[int64]chan json.RawMessage),
+		pendingRPC:   make(map[int64]chan rpcReply),
 		pendingPerms: make(map[int64]*pendingApproval),
 	}
 	b.writer = NewWriter(nopWriteCloser{&bytes.Buffer{}})

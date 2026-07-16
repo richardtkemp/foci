@@ -18,7 +18,7 @@ func newInjectTestBackend(failWrites bool) (*Backend, *captureCloser) {
 		lg:         log.NewComponentLogger("codex"),
 		threadID:   "thread-test",
 		workDir:    "/tmp",
-		pendingRPC: make(map[int64]chan json.RawMessage),
+		pendingRPC: make(map[int64]chan rpcReply),
 	}
 	b.writer = NewWriter(c)
 	return b, c

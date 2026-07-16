@@ -75,7 +75,11 @@ func (b *Backend) handleResponse(line []byte) {
 	b.rpcMu.Unlock()
 
 	if ok {
-		ch <- resp.Result
+		if resp.Error != nil {
+			ch <- rpcReply{err: fmt.Errorf("codex rpc error %d: %s", resp.Error.Code, resp.Error.Message)}
+		} else {
+			ch <- rpcReply{result: resp.Result}
+		}
 	}
 }
 
@@ -168,23 +172,23 @@ func (b *Backend) handleNotification(line []byte, method string) {
 			return
 		}
 		b.onReasoningSummaryDelta(&p)
-		default:
-			switch method {
-			case "configWarning":
-				var p configWarningParams
-				if err := json.Unmarshal(params, &p); err != nil {
-					b.lg.Warnf("dropping malformed configWarning: %v", err)
-					return
-				}
-				b.onConfigWarning(&p)
-			case "warning":
-				var p runtimeWarningParams
-				if err := json.Unmarshal(params, &p); err != nil {
-					b.lg.Warnf("dropping malformed warning: %v", err)
-					return
-				}
-				b.lg.Infof("codex runtime warning: %s", p.Message)
-				b.fireWarning(p.Message)
+	default:
+		switch method {
+		case "configWarning":
+			var p configWarningParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				b.lg.Warnf("dropping malformed configWarning: %v", err)
+				return
+			}
+			b.onConfigWarning(&p)
+		case "warning":
+			var p runtimeWarningParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				b.lg.Warnf("dropping malformed warning: %v", err)
+				return
+			}
+			b.lg.Infof("codex runtime warning: %s", p.Message)
+			b.fireWarning(p.Message)
 		case "model/rerouted":
 			var p struct {
 				ToModel string `json:"toModel"`
@@ -207,9 +211,9 @@ func (b *Backend) handleNotification(line []byte, method string) {
 				b.mu.Unlock()
 				b.lg.Infof("thread name: %s", *p.ThreadName)
 			}
-			default:
-				b.lg.Debugf("unhandled notification: %s", method)
-			}
+		default:
+			b.lg.Debugf("unhandled notification: %s", method)
+		}
 	}
 }
 
@@ -231,7 +235,7 @@ func (b *Backend) onReaderStopped(err error) {
 
 	b.rpcMu.Lock()
 	for id, ch := range b.pendingRPC {
-		ch <- nil
+		ch <- rpcReply{} // nil result → sendAndWait reports "process exited"
 		delete(b.pendingRPC, id)
 	}
 	b.rpcMu.Unlock()

@@ -256,13 +256,14 @@ func TestDispatch_ResponseDeliveredToPendingRPC(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
 
-	ch := make(chan json.RawMessage, 1)
+	ch := make(chan rpcReply, 1)
 	b.pendingRPC[7] = ch
 
 	b.dispatch([]byte(`{"id":7,"result":{"thread":{"id":"th_x"}}}`))
 
 	select {
-	case res := <-ch:
+	case reply := <-ch:
+		res := reply.result
 		var tr threadResult
 		if err := json.Unmarshal(res, &tr); err != nil {
 			t.Fatalf("unmarshal result: %v", err)
@@ -279,6 +280,31 @@ func TestDispatch_ResponseDeliveredToPendingRPC(t *testing.T) {
 	b.rpcMu.Unlock()
 	if present {
 		t.Error("pendingRPC[7] should be removed after delivery")
+	}
+}
+
+func TestDispatch_ErrorResponseSurfacesAsError(t *testing.T) {
+	// A JSON-RPC error response must reach the caller as a real error, not be
+	// dropped so sendAndWait reports the misleading "process exited" (the error
+	// field was previously never read).
+	t.Parallel()
+	b := newTestBackend(t)
+
+	ch := make(chan rpcReply, 1)
+	b.pendingRPC[9] = ch
+
+	b.dispatch([]byte(`{"id":9,"error":{"code":-32000,"message":"bad model"}}`))
+
+	select {
+	case reply := <-ch:
+		if reply.err == nil {
+			t.Fatalf("expected an error, got result %s", reply.result)
+		}
+		if !strings.Contains(reply.err.Error(), "bad model") || !strings.Contains(reply.err.Error(), "-32000") {
+			t.Errorf("error should carry code+message, got %v", reply.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("error response was not delivered")
 	}
 }
 

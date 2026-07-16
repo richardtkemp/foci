@@ -10,14 +10,14 @@ import (
 // output via OnSubagentText. Multiple subagents can run simultaneously;
 // each is tracked by its agentThreadId and polled independently.
 type subagentTracker struct {
-	mu      sync.Mutex
-	active  map[string]*subagentPoll // agentThreadId → poll state
+	mu     sync.Mutex
+	active map[string]*subagentPoll // agentThreadId → poll state
 }
 
 type subagentPoll struct {
-	groupKey   string        // the item ID used as the OnSubagentStart groupKey
-	seenItems  int           // items already delivered (avoids re-delivery)
-	done       chan struct{} // closed to stop the polling goroutine
+	groupKey  string        // the item ID used as the OnSubagentStart groupKey
+	seenItems int           // items already delivered (avoids re-delivery)
+	done      chan struct{} // closed to stop the polling goroutine
 }
 
 func newSubagentTracker() *subagentTracker {
@@ -89,8 +89,8 @@ func (st *subagentTracker) pollLoop(b *Backend, agentThreadID string, poll *suba
 // new agentMessage items, and delivers them via OnSubagentText.
 func (b *Backend) readSubagentThread(agentThreadID string, poll *subagentPoll) {
 	result, err := b.sendAndWait("thread/read", map[string]interface{}{
-		"threadId":      agentThreadID,
-		"includeTurns":  true,
+		"threadId":     agentThreadID,
+		"includeTurns": true,
 	})
 	if err != nil {
 		return

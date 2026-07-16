@@ -32,7 +32,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	}
 	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
 
-	b.pendingRPC = make(map[int64]chan json.RawMessage)
+	b.pendingRPC = make(map[int64]chan rpcReply)
 	b.pendingPerms = make(map[int64]*pendingApproval)
 	b.itemCache = make(map[string]itemEnvelope)
 	b.subagents = newSubagentTracker()
@@ -113,12 +113,14 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// Start or resume thread.
 	if opts.ResumeSessionID != "" {
 		if err := b.resumeThread(opts.ResumeSessionID); err != nil {
+			cancel() // else the app-server process + reader goroutine leak (parity with initialize/model failures above)
 			return fmt.Errorf("codex: resume thread %s: %w", opts.ResumeSessionID, err)
 		}
 		b.lg.Infof("resumed thread %s", opts.ResumeSessionID)
 	} else {
 		tid, err := b.startThread()
 		if err != nil {
+			cancel()
 			return fmt.Errorf("codex: start thread: %w", err)
 		}
 		b.lg.Infof("started thread %s", tid)
@@ -235,7 +237,7 @@ func (b *Backend) nextID() int64 {
 // sendAndWait sends a JSON-RPC request and waits for its response.
 func (b *Backend) sendAndWait(method string, params interface{}) (json.RawMessage, error) {
 	id := b.nextID()
-	ch := make(chan json.RawMessage, 1)
+	ch := make(chan rpcReply, 1)
 
 	b.rpcMu.Lock()
 	b.pendingRPC[id] = ch
@@ -249,11 +251,14 @@ func (b *Backend) sendAndWait(method string, params interface{}) (json.RawMessag
 	}
 
 	select {
-	case result := <-ch:
-		if result == nil {
+	case reply := <-ch:
+		if reply.err != nil {
+			return nil, reply.err
+		}
+		if reply.result == nil {
 			return nil, errors.New("codex: request cancelled (process exited)")
 		}
-		return result, nil
+		return reply.result, nil
 	case <-time.After(30 * time.Second):
 		b.rpcMu.Lock()
 		delete(b.pendingRPC, id)
