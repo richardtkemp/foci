@@ -216,8 +216,12 @@ func ResetToBuiltIn() {
 	}
 }
 
-// stripPrefix removes a "developer/" prefix from a model string.
-func stripPrefix(model string) string {
+// StripPrefix removes a "developer/" prefix from a model string.
+// Exported so CC backends (ccstream, cctmux) can strip the provider
+// prefix before passing the model to Claude's --model flag, which
+// expects a bare model name (e.g. "claude-sonnet-5"), not a
+// provider-qualified one (e.g. "claude/claude-sonnet-5").
+func StripPrefix(model string) string {
 	if i := strings.IndexByte(model, '/'); i > 0 {
 		return model[i+1:]
 	}
@@ -246,7 +250,7 @@ func stripDateSuffix(model string) string {
 
 // normalize strips provider prefixes and date suffixes from a model string.
 func normalize(model string) string {
-	return stripDateSuffix(stripPrefix(model))
+	return stripDateSuffix(StripPrefix(model))
 }
 
 // normalizeParts splits a model string into provider and bare model ID,
@@ -400,7 +404,7 @@ type ModelMeta struct {
 
 // IsOpenAI returns true if the model name looks like an OpenAI model.
 func IsOpenAI(model string) bool {
-	bare := stripPrefix(model)
+	bare := StripPrefix(model)
 	for _, p := range []string{"gpt-", "o1", "o3", "o4", "chatgpt-"} {
 		if strings.HasPrefix(bare, p) {
 			return true
