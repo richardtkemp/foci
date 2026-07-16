@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // ResolvedAgentConfig holds all config sections pre-merged and dereferenced
 // via the agent→global cascade. Computed once per agent at startup via
 // Resolve(). All fields have defaults baked in — consumers read directly
@@ -34,6 +36,13 @@ type ResolvedAgentConfig struct {
 
 	// Webhooks is the merged System.Webhooks map (global base + agent overlay).
 	Webhooks map[string]string
+
+	// AutoSessionNaming is true when the backend generates thread names
+	// automatically (e.g. Codex). When true, the agent is NOT given a
+	// naming tool or reflection instructions — the backend delivers names
+	// via TurnResult.ThreadName. Computed from the backend type at
+	// resolution time.
+	AutoSessionNaming bool
 
 	// Per-platform 4-layer resolved display and notify.
 	platformDisplay map[string]ResolvedDisplay
@@ -148,7 +157,14 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		TelegramLongPollTimeout: tlpt,
 		Permissions:             resolvePermissions(acfg.Permissions, cfg.Permissions),
 		Webhooks:                MergeMaps(cfg.System.Webhooks, acfg.System.Webhooks),
+		AutoSessionNaming:       isAutoNamingBackend(acfg.Backend),
 		platformDisplay:         platformDisplay,
 		platformNotify:          platformNotify,
 	}
+}
+
+// isAutoNamingBackend returns true for backends that generate thread names
+// automatically (surfaced via TurnResult.ThreadName).
+func isAutoNamingBackend(backend string) bool {
+	return strings.HasPrefix(backend, "codex")
 }
