@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"strings"
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
@@ -43,7 +44,7 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 
 	summary := "Run: " + params.Command
 	if params.Reason != "" {
-		summary = params.Reason
+		summary = strings.TrimPrefix(params.Reason, "May I ")
 	}
 
 	if b.permPromptFn != nil {
@@ -87,7 +88,7 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 		summary = "File change"
 	}
 	if params.Reason != "" {
-		summary = params.Reason
+		summary = strings.TrimPrefix(params.Reason, "May I ")
 	}
 
 	prompt := "Approve file change"
