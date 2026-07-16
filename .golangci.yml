@@ -131,3 +131,10 @@ issues:
     - path: internal/tools/http\.go
       linters:
         - forbidigo
+
+    # forbidigo exemption: standalone developer tools in scripts/ are not
+    # daemon code — they don't carry the foci-secrets supplementary group,
+    # so exec.Command is safe here.
+    - path: scripts/
+      linters:
+        - forbidigo

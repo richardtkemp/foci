@@ -1,0 +1,24 @@
+{"id":"claude-haiku-4-5","provider":"openrouter","context_window":200000,"caching":true,"input_per_1m":1.0,"output_per_1m":5.0,"cache_read_per_1m":0.1,"cache_write_per_1m":1.25}
+{"id":"claude-sonnet-4-5","provider":"openrouter","context_window":200000,"effort":true,"thinking":true,"caching":true,"input_per_1m":3.0,"output_per_1m":15.0,"cache_read_per_1m":0.3,"cache_write_per_1m":3.75}
+{"id":"claude-opus-4-6","provider":"openrouter","context_window":1000000,"effort":true,"thinking":true,"speed":true,"caching":true,"input_per_1m":15.0,"output_per_1m":75.0,"cache_read_per_1m":1.5,"cache_write_per_1m":18.75,"comment":"1M context with Claude Max subscription"}
+{"id":"claude-opus-4-6[1m]","provider":"openrouter","context_window":1000000,"effort":true,"thinking":true,"speed":true,"caching":true,"input_per_1m":15.0,"output_per_1m":75.0,"cache_read_per_1m":1.5,"cache_write_per_1m":18.75,"comment":"CC reports model with [1m] suffix for Max subscription"}
+{"id":"claude-fable-5","provider":"openrouter","context_window":1000000,"effort":true,"thinking":true,"caching":true,"input_per_1m":10.0,"output_per_1m":50.0,"cache_read_per_1m":1.0,"cache_write_per_1m":12.5,"comment":"Mythos-class, GA 2026-06-09; tier above Opus"}
+{"id":"claude-code-tmux","provider":"openrouter","context_window":1000000,"caching":true}
+{"id":"claude-code","provider":"openrouter","context_window":1000000,"caching":true}
+{"id":"gpt-5.6-luna","provider":"openrouter","input_per_1m":5.0,"output_per_1m":15.0}
+{"id":"gpt-5.6-terra","provider":"openrouter","input_per_1m":5.0,"output_per_1m":15.0}
+{"id":"gpt-5.6-sol","provider":"openrouter","input_per_1m":5.0,"output_per_1m":15.0}
+{"id":"gpt-5.5","provider":"openrouter","input_per_1m":5.0,"output_per_1m":15.0}
+{"id":"gpt-5.4-mini","provider":"openrouter","input_per_1m":5.0,"output_per_1m":15.0}
+{"id":"gpt-5.4mini","provider":"openrouter","input_per_1m":5.0,"output_per_1m":15.0}
+{"id":"gemini-2.5-pro","provider":"openrouter","context_window":1000000,"input_per_1m":1.25,"output_per_1m":10.0,"cache_read_per_1m":0.315}
+{"id":"gemini-2.5-flash","provider":"openrouter","context_window":1000000,"input_per_1m":0.15,"output_per_1m":0.6,"cache_read_per_1m":0.0375}
+{"id":"gemini-2.0-flash","provider":"openrouter","context_window":1000000,"input_per_1m":0.1,"output_per_1m":0.4,"cache_read_per_1m":0.025}
+{"id":"gpt-5-mini","provider":"openrouter","context_window":400000,"input_per_1m":0.25,"output_per_1m":2.0}
+{"id":"qwen3.5-397b-a17b","provider":"openrouter","context_window":262144,"input_per_1m":0.45,"output_per_1m":3.0}
+{"id":"qwen3.5-397b-a17b:nitro","provider":"openrouter","context_window":262144,"input_per_1m":0.45,"output_per_1m":3.0}
+{"id":"minimax-m2.7","provider":"openrouter","context_window":204800,"input_per_1m":0.3,"output_per_1m":1.2}
+{"id":"kimi-k2.5","provider":"openrouter","context_window":262144,"input_per_1m":0.57,"output_per_1m":2.85}
+{"id":"glm-5-turbo","provider":"openrouter","context_window":202752,"input_per_1m":1.2,"output_per_1m":4.0}
+{"id":"step-3.5-flash","provider":"openrouter","context_window":262144,"input_per_1m":0.1,"output_per_1m":0.3}
+{"id":"step-3.5-flash:nitro","provider":"openrouter","context_window":262144,"input_per_1m":0.1,"output_per_1m":0.3}
