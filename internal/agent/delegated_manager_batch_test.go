@@ -2,8 +2,6 @@ package agent
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -63,40 +61,24 @@ func TestRunOnce_DispatchesToBatchRunner(t *testing.T) {
 	}
 }
 
-func TestRunOnce_LegacyFallbackWithoutBatchRunner(t *testing.T) {
-	// A backend without BatchRunner (cctmux) falls back to the historical
-	// direct `claude --print`, honouring StartOpts.ClaudeBinary.
+func TestRunOnce_ErrorsWithoutBatchRunner(t *testing.T) {
+	// A backend without BatchRunner (cctmux) gets a clear error — NOT the old
+	// silent claude --print fallback, which ran one-shots on a different
+	// vendor's CLI than the agent's backend.
 	t.Parallel()
-
-	dir := t.TempDir()
-	stub := filepath.Join(dir, "claude")
-	script := "#!/bin/sh\necho \"ARGS:$*\" > " + filepath.Join(dir, "capture.txt") + "\nprintf 'legacy result'\n"
-	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
 
 	m := &DelegatedManager{
 		AgentID: "test",
 		StartOpts: delegator.StartOptions{
-			WorkDir:      dir,
+			WorkDir:      t.TempDir(),
 			AgentID:      "test",
-			ClaudeBinary: stub,
+			ClaudeBinary: "/nonexistent/claude", // must never be invoked
 		},
 		NewBackend: func() (delegator.Delegator, error) { return &mockBackendDM{}, nil },
 	}
 
-	got, err := m.RunOnce(context.Background(), "p", "s")
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if got != "legacy result" {
-		t.Errorf("result = %q", got)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "capture.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "--system-prompt s") {
-		t.Errorf("legacy path lost system prompt: %s", data)
+	_, err := m.RunOnce(context.Background(), "p", "s")
+	if err == nil || !strings.Contains(err.Error(), "does not implement delegator.BatchRunner") {
+		t.Errorf("expected BatchRunner hint error, got %v", err)
 	}
 }

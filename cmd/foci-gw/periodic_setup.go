@@ -14,6 +14,7 @@ import (
 	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/warnings"
+	"foci/internal/workspace"
 	"foci/shared/prompts"
 )
 
@@ -253,6 +254,13 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		WarningDispatcher:     warningDispatcher,
 		ChatWarningDispatcher: chatWarningDispatcher,
 		IsDelegatedAgent:      inst.ag.DelegatedManager != nil,
+		CharacterSystemPromptFunc: func() string {
+			fileOrder := acfg.System.SystemFiles
+			if len(fileOrder) == 0 {
+				fileOrder = workspace.DefaultFileOrder
+			}
+			return workspace.CharacterSystemPrompt(acfg.Workspace, fileOrder)
+		},
 		SkillDirs:             inst.skillsDirs,
 		NotifySkillChange: func(sessionKey, text string) {
 			route.NotifySessionChat(p.connMgr, agentID, sessionKey, text)

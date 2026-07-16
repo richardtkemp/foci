@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -12,7 +11,6 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/log"
-	"foci/internal/procx"
 	"foci/internal/session"
 	"foci/internal/tools"
 
@@ -1098,58 +1096,30 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 		AgentID:      m.StartOpts.AgentID,
 	}
 
-	// Dispatch to the agent's own backend when it supports batch runs
-	// (same unstarted-instance probe as BackendCanBranch), so the one-shot
-	// runs on the same auth/billing/model family as the agent itself.
-	if m.NewBackend != nil {
-		if be, err := m.NewBackend(); err == nil {
-			if br, ok := be.(delegator.BatchRunner); ok {
-				m.logger().Infof("RunOnce: batch via %T (workdir=%s, system_prompt=%d bytes)",
-					be, req.WorkDir, len(systemPrompt))
-				result, err := br.RunBatch(ctx, req)
-				if err != nil {
-					return "", err
-				}
-				m.logger().Infof("RunOnce: complete (%d bytes)", len(result))
-				return result, nil
-			}
-		}
+	// Dispatch to the agent's own backend (same unstarted-instance probe as
+	// BackendCanBranch), so the one-shot runs on the same auth/billing/model
+	// family as the agent itself. There is deliberately NO claude --print
+	// fallback: a backend without a BatchRunner would silently run one-shots
+	// on a different vendor's CLI (the pre-#1312 behaviour).
+	if m.NewBackend == nil {
+		return "", fmt.Errorf("RunOnce: no backend factory configured")
+	}
+	be, err := m.NewBackend()
+	if err != nil {
+		return "", fmt.Errorf("RunOnce: construct backend: %w", err)
+	}
+	br, ok := be.(delegator.BatchRunner)
+	if !ok {
+		m.logger().Errorf("RunOnce: backend %T does not implement delegator.BatchRunner — one-shot runs (nudge extraction, memory consolidation, onboarding) are unavailable; implement RunBatch on this backend to enable them", be)
+		return "", fmt.Errorf("backend %T does not implement delegator.BatchRunner", be)
 	}
 
-	// Legacy fallback for backends without a BatchRunner (cctmux): the
-	// historical direct `claude --print` shape. Honours the same
-	// claude_binary override that ccstream uses, so integration tests
-	// pointing foci at bin/cc-stub also intercept RunOnce invocations
-	// (nudge extraction, memory consolidation, first-run onboarding).
-	args := []string{
-		"--print",
-		"--dangerously-skip-permissions",
-		"--no-session-persistence",
-		"--model", "sonnet",
+	m.logger().Infof("RunOnce: batch via %T (workdir=%s, system_prompt=%d bytes)",
+		be, req.WorkDir, len(systemPrompt))
+	result, err := br.RunBatch(ctx, req)
+	if err != nil {
+		return "", err
 	}
-	if systemPrompt != "" {
-		args = append(args, "--system-prompt", systemPrompt)
-	}
-	claudeBin := "claude"
-	if m.StartOpts.ClaudeBinary != "" {
-		claudeBin = m.StartOpts.ClaudeBinary
-	}
-	cmd := procx.Spawn(ctx, claudeBin, args...)
-	cmd.Dir = m.StartOpts.WorkDir
-	cmd.Stdin = strings.NewReader(prompt)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	m.logger().Infof("RunOnce: legacy fallback %s --print (workdir=%s, system_prompt=%d bytes)",
-		claudeBin, m.StartOpts.WorkDir, len(systemPrompt))
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude --print failed: %w (stderr: %s)", err, stderr.String())
-	}
-
-	result := strings.TrimSpace(stdout.String())
 	m.logger().Infof("RunOnce: complete (%d bytes)", len(result))
 	return result, nil
 }

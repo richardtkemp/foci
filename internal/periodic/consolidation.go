@@ -93,8 +93,14 @@ func (r *Runner) maybeConsolidation() {
 			}
 		}()
 		if r.isDelegatedAgent {
-			// Backend: one-shot via claude --print with full character as system prompt.
-			resp, err := r.agent.RunOnce(context.Background(), promptText, "")
+			// Backend: one-shot batch run on the agent's own backend, with the
+			// character files as the system prompt — the same corpus a branch
+			// session inherits on the API path (#1310).
+			sys := ""
+			if r.characterSystemPromptFunc != nil {
+				sys = r.characterSystemPromptFunc()
+			}
+			resp, err := r.agent.RunOnce(context.Background(), promptText, sys)
 			if err != nil {
 				r.log.Warnf("consolidation RunOnce failed: %v", err)
 				return
