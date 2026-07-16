@@ -503,6 +503,39 @@ type ForkResult struct {
 	SessionID string
 }
 
+// BatchRunner is optionally implemented by backends that can execute a
+// one-shot, non-interactive prompt outside any persistent session — the
+// backend-agnostic replacement for shelling `claude --print` directly.
+// Consumers: nudge extraction, memory consolidation, first-run onboarding
+// (via DelegatedManager.RunOnce).
+//
+// Like BackendBrancher, RunBatch MUST NOT require a started/running backend:
+// callers invoke it on a freshly-constructed (unstarted) instance, which
+// carries only its config (binary override etc.). Implementations run
+// ephemerally — no session persistence, no platform delivery, no session
+// index entry — and return the model's final text.
+type BatchRunner interface {
+	RunBatch(ctx context.Context, req BatchRequest) (string, error)
+}
+
+// BatchRequest describes a one-shot batch run.
+type BatchRequest struct {
+	// Prompt is the user-turn text (delivered via stdin where possible —
+	// it can be large).
+	Prompt string
+	// SystemPrompt, when non-empty, REPLACES the backend CLI's default
+	// system prompt / base instructions. Empty = backend default.
+	SystemPrompt string
+	// Model, when non-empty, overrides the model. Empty = the backend's
+	// cheap batch default (CC: sonnet; codex: its configured default).
+	Model string
+	// WorkDir is the working directory for the run (usually the agent
+	// workspace).
+	WorkDir string
+	// AgentID identifies the agent, for log attribution.
+	AgentID string
+}
+
 // SkipPermissions reports whether the backend config disables the permission
 // prompt flow entirely (CC's --dangerously-skip-permissions). The single
 // accessor for every reader — backend launch args (ccstream/cctmux) and the
