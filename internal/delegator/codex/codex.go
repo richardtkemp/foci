@@ -98,6 +98,9 @@ type Backend struct {
 	itemMu    sync.Mutex
 	itemCache map[string]itemEnvelope
 
+	// Subagent thread polling
+	subagents *subagentTracker
+
 	// Compaction
 	compactMu       sync.Mutex
 	compactDoneCh   chan struct{}

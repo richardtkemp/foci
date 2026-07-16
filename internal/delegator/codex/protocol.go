@@ -255,8 +255,9 @@ type itemEnvelope struct {
 	// webSearch fields
 	Query string `json:"query,omitempty"`
 	// subAgentActivity fields
-	Kind      string `json:"kind,omitempty"`
-	AgentPath string `json:"agentPath,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	AgentPath     string `json:"agentPath,omitempty"`
+	AgentThreadID string `json:"agentThreadId,omitempty"`
 	// collabAgentToolCall fields
 	Prompt       string                 `json:"prompt,omitempty"`
 	AgentsStates map[string]collabState `json:"agentsStates,omitempty"`

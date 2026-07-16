@@ -14,6 +14,9 @@ func (b *Backend) onTurnStarted() {
 		b.itemCache = make(map[string]itemEnvelope)
 	}
 	b.itemMu.Unlock()
+	if b.subagents != nil {
+		b.subagents.stopAll()
+	}
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
@@ -95,11 +98,15 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 		if se != nil && se.OnToolStart != nil {
 			se.OnToolStart(item.ID, "compact", "")
 		}
-	// Subagent — feed OnSubagentStart for the activity indicator's
-	// "subagents" kind.
+	// Subagent — start polling the subagent's thread for text output.
 	case "subAgentActivity":
-		if item.Kind == "started" && se != nil && se.OnSubagentStart != nil {
-			se.OnSubagentStart(item.ID, item.AgentPath)
+		if item.Kind == "started" {
+			if se != nil && se.OnSubagentStart != nil {
+				se.OnSubagentStart(item.ID, item.AgentPath)
+			}
+			if b.subagents != nil && item.AgentThreadID != "" {
+				b.subagents.start(b, item.AgentThreadID, item.ID)
+			}
 		}
 	// collabAgentToolCall — the tool-call view of a subagent spawn.
 	// Carries the prompt (what was asked). Fire OnSubagentStart with the
@@ -203,8 +210,14 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 
 	case "subAgentActivity":
-		if item.Kind == "interrupted" && se != nil && se.OnSubagentEnd != nil {
-			se.OnSubagentEnd(item.ID)
+		if item.Kind == "interrupted" || item.Kind == "interacted" {
+			// Stop polling and deliver any final text.
+			if b.subagents != nil && item.AgentThreadID != "" {
+				b.subagents.stop(b, item.AgentThreadID)
+			}
+			if item.Kind == "interrupted" && se != nil && se.OnSubagentEnd != nil {
+				se.OnSubagentEnd(item.ID)
+			}
 		}
 
 	case "collabAgentToolCall":
