@@ -537,8 +537,11 @@ func (b *Backend) captureStderr(r io.Reader) {
 	// Surface scanner-level errors (e.g. ErrTooLong on a >1MB line). Without
 	// this the goroutine exited silently and the subprocess's stderr pipe
 	// would back up. EOF is the normal exit when the subprocess closes
-	// stderr — don't warn on that.
-	if err := scanner.Err(); err != nil {
+	// stderr — don't warn on that. A closed-pipe race during teardown (the
+	// process waiter's cmd.Wait reaps the child and closes stderr while this
+	// read is in flight) is likewise expected and benign — finalizeExit is
+	// idempotent for exactly this case — so it's not worth a warning either.
+	if err := scanner.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
 		b.logger().Warnf("stderr capture stopped: %v", err)
 	}
 }
