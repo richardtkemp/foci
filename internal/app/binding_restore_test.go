@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -266,5 +267,105 @@ func TestAgentRoster_MarksArchivedConversation(t *testing.T) {
 	}
 	if total != 2 || archived != 1 {
 		t.Fatalf("roster convs total=%d archived=%d, want 2/1", total, archived)
+	}
+}
+
+// TestAgentRoster_CacheExpiryIsLiveNotCached proves the roster's CacheExpiryMs
+// is recomputed from the agent (agentCore.CacheExpiryMs) at roster-build time,
+// not read off the binding's cached cacheExpiryMs field. That field is a
+// push-dedup cache set by setCacheExpiry on a live touch — it is NOT
+// rehydrated when ensureBinding rebuilds a binding after a restart (see
+// ensureBinding's comment), so before this fix a session idle since before the
+// last restart reported a stale/zero CacheExpiryMs (the client reads 0 as
+// "warm") until its next touch, even though the session's real cache had long
+// expired. This models exactly that: a binding with cacheExpiryMs still at its
+// post-restart zero value, backed by an agent whose SessionIndex-derived
+// CacheExpiry is real and non-expired.
+func TestAgentRoster_CacheExpiryIsLiveNotCached(t *testing.T) {
+	h := newTestHub()
+	registerFakeAgent(h, "ag") // fakeAgent.CacheExpiryMs reports time.Now()+5m
+	h.convs["c1"] = &convBinding{convID: "c1", agentID: "ag", sessionKey: "ag/c1", cacheExpiryMs: 0}
+
+	roster := h.agentRoster()
+	if len(roster) != 1 || len(roster[0].Conversations) != 1 {
+		t.Fatalf("roster = %+v, want 1 agent with 1 conversation", roster)
+	}
+	got := roster[0].Conversations[0].CacheExpiryMs
+	if got <= time.Now().UnixMilli() {
+		t.Fatalf("CacheExpiryMs = %d, want a live future expiry from the agent (not the cached zero field)", got)
+	}
+}
+
+// TestConvBindingFieldCensus is a "did you forget to rehydrate this" tripwire.
+// Go struct literals don't enforce complete field initialization, so a new
+// convBinding field silently defaults to its zero value unless someone
+// remembers to wire it into ensureBinding's restart-rehydration path — exactly
+// how the cacheExpiryMs restart bug slipped through (an idle session kept
+// reporting a stale "warm" cache indicator for hours after a gateway
+// restart). This enumerates every field via reflection and requires each to be
+// classified into exactly one bucket below; an unclassified (or
+// double-classified) field fails the test, forcing the "does this need
+// restart rehydration?" question to be answered explicitly instead of
+// defaulting to "no" by silent omission.
+func TestConvBindingFieldCensus(t *testing.T) {
+	// constructorSupplied: given a correct value directly in ensureBinding's
+	// struct literal (or an equivalent make()/lookup right there) every time a
+	// binding is built — nothing to rehydrate because construction always
+	// supplies it fresh.
+	constructorSupplied := map[string]bool{
+		"convID": true, "sessionKey": true, "agentID": true, "chatID": true,
+		"replayDepth": true, "replayTTL": true, "store": true,
+		"notifyOffline": true, "seq": true, "seen": true,
+	}
+	// durableBacked: correctness depends on a value from persistent storage
+	// (frameStore / SessionIndex) that predates this process — MUST be
+	// explicitly rehydrated in ensureBinding when a binding is rebuilt after a
+	// restart, or a restored binding reports a wrong/stale value.
+	durableBacked := map[string]bool{
+		"lastPreview": true, "lastActMs": true, "features": true,
+	}
+	// restartSafe: legitimately empty/zero immediately after a fresh process —
+	// either genuinely-transient runtime state (no live sockets, no turn in
+	// flight yet) or, for cacheExpiryMs specifically, a push-dedup cache whose
+	// zero value is harmless because the one place its truth matters
+	// (agentRoster's snapshot) recomputes live from the agent instead of
+	// reading this field (see the cache-expiry comment in agentRoster).
+	restartSafe := map[string]bool{
+		"mu": true, "clients": true, "clientStates": true, "buffer": true,
+		"seenOrder": true, "turnKind": true, "turnDetail": true,
+		"subagentDetail": true, "waitingDetail": true, "activityKind": true,
+		"activityDetail": true, "cacheExpiryMs": true,
+	}
+
+	rt := reflect.TypeOf(convBinding{})
+	all := make(map[string]bool, rt.NumField())
+	for i := 0; i < rt.NumField(); i++ {
+		name := rt.Field(i).Name
+		all[name] = true
+		classified := 0
+		for _, bucket := range []map[string]bool{constructorSupplied, durableBacked, restartSafe} {
+			if bucket[name] {
+				classified++
+			}
+		}
+		switch {
+		case classified == 0:
+			t.Errorf("convBinding field %q is not classified in TestConvBindingFieldCensus — decide whether it needs restart rehydration in ensureBinding (add to durableBacked) or is safely zero/fresh at construction (add to restartSafe or constructorSupplied), then update this test", name)
+		case classified > 1:
+			t.Errorf("convBinding field %q is classified in more than one bucket", name)
+		}
+	}
+	// Stale bucket entries (a renamed/removed field) would silently stop
+	// testing anything — catch those too.
+	for label, bucket := range map[string]map[string]bool{
+		"constructorSupplied": constructorSupplied,
+		"durableBacked":       durableBacked,
+		"restartSafe":         restartSafe,
+	} {
+		for name := range bucket {
+			if !all[name] {
+				t.Errorf("%s lists %q, which is not a convBinding field anymore", label, name)
+			}
+		}
 	}
 }

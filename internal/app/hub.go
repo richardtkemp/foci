@@ -836,6 +836,18 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	for _, b := range h.convs {
 		ci := b.info()
 		ci.Title = h.aliasFor(b)
+		// b.cacheExpiryMs is a push-dedup cache (set by setCacheExpiry on a live
+		// touch) — it does NOT get rehydrated when ensureBinding rebuilds a
+		// binding after a restart, so a session untouched since the last restart
+		// would report the same stale value here until its next touch. Recompute
+		// live from the agent's durable last_cache_touch instead of trusting the
+		// in-memory snapshot: CacheExpiryMs is a cheap indexed SQLite read, and
+		// this is the only path that feeds hello/roster snapshots (what a
+		// reconnecting client actually sees), so there is nothing to seed at
+		// startup for THIS field.
+		if conn := h.agents[b.agentID]; conn != nil && conn.agentRef != nil {
+			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(b.sessionKey, time.Now())
+		}
 		if dc := defaultChat(b.agentID); dc != 0 && dc == b.chatID {
 			ci.IsDefault = true
 		}
