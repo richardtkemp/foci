@@ -89,9 +89,14 @@ type Backend struct {
 	onWarning        func(detail string) // fired for configWarning / runtime warnings → delivered to chat
 
 	// Approvals
-	permMu        sync.Mutex
-	pendingPerms  map[int64]*pendingApproval
+	permMu           sync.Mutex
+	pendingPerms     map[int64]*pendingApproval
 	autoApproveRules []autoapprove.Rule
+
+	// Items stashed by ID from item/started, for correlating approval
+	// requests with item details (e.g. file paths for fileChange items).
+	itemMu    sync.Mutex
+	itemCache map[string]itemEnvelope
 
 	// Compaction
 	compactMu       sync.Mutex

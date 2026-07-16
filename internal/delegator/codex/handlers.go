@@ -9,6 +9,11 @@ import (
 
 // onTurnStarted signals the typing indicator.
 func (b *Backend) onTurnStarted() {
+	b.itemMu.Lock()
+	if b.itemCache != nil {
+		b.itemCache = make(map[string]itemEnvelope)
+	}
+	b.itemMu.Unlock()
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
@@ -46,6 +51,13 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 		b.lg.Warnf("dropping malformed item in item/started: %v", err)
 		return
 	}
+
+	// Stash by ID for approval-request correlation.
+	b.itemMu.Lock()
+	if b.itemCache != nil {
+		b.itemCache[item.ID] = item
+	}
+	b.itemMu.Unlock()
 
 	se := b.sessionEvents.Load()
 	switch item.Type {
