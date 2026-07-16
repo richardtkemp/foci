@@ -185,7 +185,7 @@ func (b *Backend) checkAutoApprove(pp pendingPermission) bool {
 			input, _ = json.Marshal(map[string]string{"pattern": pattern})
 		}
 
-		if !autoapprove.Match(b.autoApproveRules, toolName, input) {
+		if !autoapprove.MatchWithEnv(b.autoApproveRules, toolName, input, b.autoApproveEnv) {
 			return false
 		}
 	}

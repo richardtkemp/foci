@@ -246,7 +246,8 @@ type Backend struct {
 	// these rules before surfacing to the user. Matched permissions are
 	// auto-approved via sendPermissionReply without prompting.
 	autoApproveRules []autoapprove.Rule
-	workDir          string // workspace directory for path-canonicalization
+	autoApproveEnv   map[string]string // exact environment inherited by OpenCode
+	workDir          string            // workspace directory for path-canonicalization
 
 	// authFailureFired gates onAuthFailure so a flaky 401 loop doesn't
 	// spam repeated notifications. CAS'd to true on first fire; resets

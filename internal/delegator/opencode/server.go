@@ -80,6 +80,10 @@ type Server struct {
 	// StartOptions.Env. Only the first session's env takes effect —
 	// the subprocess is shared (v1 limitation).
 	extraEnv map[string]string
+	// effectiveEnv is the launch-time environment inherited by the shared
+	// OpenCode process. It is retained so later session backends do not rebuild
+	// approval state from a potentially changed gateway environment.
+	effectiveEnv map[string]string
 }
 
 // isAlive reports whether the Server's subprocess is believed to be running.
@@ -97,13 +101,13 @@ func (s *Server) isAlive() bool {
 // acquireServer calls Start after registering the first Backend.
 func newServer(agentID string, cfg serverConfig) *Server {
 	s := &Server{
-		agentID:        agentID,
-		workDir:        cfg.workDir,
-		binaryPath:     cfg.binaryPath,
-		hostname:       cfg.hostname,
-		port:           cfg.port,
-		serverPassword: cfg.serverPassword,
-		logLevel:       cfg.logLevel,
+		agentID:           agentID,
+		workDir:           cfg.workDir,
+		binaryPath:        cfg.binaryPath,
+		hostname:          cfg.hostname,
+		port:              cfg.port,
+		serverPassword:    cfg.serverPassword,
+		logLevel:          cfg.logLevel,
 		sessions:          make(map[string]*Backend),
 		childToParent:     make(map[string]string),
 		childToCallID:     make(map[string]string),
