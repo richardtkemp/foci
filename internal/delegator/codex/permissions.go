@@ -78,15 +78,27 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 	}
 	b.permMu.Unlock()
 
-	summary := "File change"
+	// Try to extract file paths from the stashed item (item/started
+	// fires before the approval request).
+	detail := b.lookupItemDetail(params.ItemID)
+
+	summary := detail
+	if summary == "" {
+		summary = "File change"
+	}
 	if params.Reason != "" {
 		summary = params.Reason
+	}
+
+	prompt := "Approve file change"
+	if detail != "" {
+		prompt = "Write: " + detail
 	}
 
 	if b.permPromptFn != nil {
 		b.permPromptFn(
 			params.ItemID,
-			"Approve file change",
+			prompt,
 			summary,
 			"",
 			[]delegator.PromptChoice{
@@ -100,8 +112,26 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 	}
 }
 
-// onPermissionApproval handles item/permissions/requestApproval — a
-// request from the built-in request_permissions tool.
+// lookupItemDetail returns a human-readable detail string for a stashed item
+// (file paths for fileChange, empty for other types). Uses the item cache
+// populated by item/started notifications, which fire before approval requests.
+func (b *Backend) lookupItemDetail(itemID string) string {
+	b.itemMu.Lock()
+	item, ok := b.itemCache[itemID]
+	b.itemMu.Unlock()
+	if !ok {
+		return ""
+	}
+	switch item.Type {
+	case "fileChange":
+		return summarizePaths(item.Changes)
+	case "webSearch":
+		return item.Query
+	default:
+		return ""
+	}
+}
+
 func (b *Backend) onPermissionApproval(_ []byte, rpcID int64) {
 	b.lg.Debugf("permission approval request (id=%d), auto-denying", rpcID)
 	b.respondApproval(rpcID, "decline")
