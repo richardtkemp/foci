@@ -23,6 +23,10 @@ func (e *Extractor) buildExtractionPrompt() string {
 statements that look like rules — things you should or shouldn't do, patterns to watch
 for, failure modes to avoid.
 
+Extract ONLY from the character files (CRAFT.md, SOUL.md, COHERENCE.md, MEMORY.md,
+USER.md and similar). Do NOT extract rules from tool descriptions, harness/CLI
+instructions, or any other system-prompt content that is not a character file.
+
 For each rule, consider: is this something that would come up during a normal
 assistant turn (responding to messages, using tools, investigating questions)?
 Skip rules that only apply in special contexts (e.g. memory file maintenance,
@@ -260,7 +264,12 @@ func (e *Extractor) ExtractViaRunOnce(ctx context.Context, runner OneShotRunner)
 
 	e.logger().Infof("extracting nudge rules via RunOnce (hash=%s)", hash[:16])
 
-	response, err := runner.RunOnce(ctx, e.buildExtractionPrompt(), "")
+	// Replace the CLI's default system prompt with the agent's character files
+	// (the same replacement ccstream's initialize performs for live sessions).
+	// Without this the one-shot run sees only the harness's own system prompt
+	// and — told "your character files are loaded in the system prompt" —
+	// extracts rules from THAT (the 2026-07-16 wrong-corpus rule sets, #1307).
+	response, err := runner.RunOnce(ctx, e.buildExtractionPrompt(), e.characterSystemPrompt())
 	if err != nil {
 		return fmt.Errorf("nudge extraction (RunOnce): %w", err)
 	}
@@ -331,6 +340,22 @@ func ParseExtractionResponse(response string) ([]Rule, error) {
 		return nil, fmt.Errorf("unmarshal rules: %w (response: %.200s)", err, text)
 	}
 	return rules, nil
+}
+
+// characterSystemPrompt composes the system prompt for one-shot extraction:
+// the agent's character files verbatim, each under a filename header so the
+// model can attribute source_file correctly. Mirrors what a live session's
+// composed system prompt gives the branch-session extraction path.
+func (e *Extractor) characterSystemPrompt() string {
+	var b strings.Builder
+	for _, name := range e.fileOrder {
+		data, err := os.ReadFile(filepath.Join(e.workspaceDir, name))
+		if err != nil || len(data) == 0 {
+			continue // skip missing/empty files, same as readCharacterFiles
+		}
+		fmt.Fprintf(&b, "===== %s =====\n\n%s\n\n", name, string(data))
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // readCharacterFiles reads the workspace character files in order.
