@@ -118,7 +118,7 @@ powerful = "stub"
 model = "anthropic/claude-haiku-4-5-20251001"
 
 [cc_backend]
-claude_binary = %q
+binary = %q
 
 [[platforms]]
 id = "telegram"
@@ -181,11 +181,16 @@ model = "stub"
 			sb.WriteString("}\n")
 		}
 
-		// Per-agent claude_binary override beats [cc_backend].claude_binary.
-		// Only emitted when the spec sets it — empty falls through to the
-		// global (which writeTestConfig points at the auto-built cc-stub).
+		// Per-agent binary override beats [cc_backend].binary. Only emitted
+		// when the spec sets it — empty falls through to the global (which
+		// writeTestConfig points at the auto-built cc-stub). Emits the
+		// current 'binary' key, not the deprecated 'claude_binary' alias —
+		// ccstream's Start()/CheckReady() only read cfg["binary"] (#1fa13fde
+		// migrated the readers but missed this writer, which silently made
+		// every L2 test fall back to a real `claude` on $PATH instead of
+		// cc-stub).
 		if a.ClaudeBinary != "" {
-			fmt.Fprintf(&sb, "claude_binary = %q\n", a.ClaudeBinary)
+			fmt.Fprintf(&sb, "binary = %q\n", a.ClaudeBinary)
 		}
 
 		// Suppress the startup nudge-rule extraction RunOnce (a delegated

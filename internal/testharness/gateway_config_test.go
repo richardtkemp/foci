@@ -29,7 +29,7 @@ type decodedTestConfig struct {
 		ArchiveDir  string `toml:"archive_dir"`
 	} `toml:"logging"`
 	CCBackend struct {
-		ClaudeBinary string `toml:"claude_binary"`
+		Binary string `toml:"binary"`
 	} `toml:"cc_backend"`
 	Platforms []struct {
 		ID       string `toml:"id"`
@@ -43,9 +43,9 @@ type decodedTestConfig struct {
 		Workspace     *string `toml:"workspace"`
 		Backend       string  `toml:"backend"`
 		BackendConfig struct {
-			Model        string            `toml:"model"`
-			Env          map[string]string `toml:"env"`
-			ClaudeBinary string            `toml:"claude_binary"`
+			Model  string            `toml:"model"`
+			Env    map[string]string `toml:"env"`
+			Binary string            `toml:"binary"`
 		} `toml:"backend_config"`
 		Permissions *struct {
 			AutoApprove    []string `toml:"auto_approve"`
@@ -128,8 +128,8 @@ func TestWriteTestConfig_Basic(t *testing.T) {
 			t.Errorf("logging.%s = %q, want under LogsDir", name, got)
 		}
 	}
-	if cfg.CCBackend.ClaudeBinary != "/bin/cc-stub" {
-		t.Errorf("cc_backend.claude_binary = %q, want /bin/cc-stub", cfg.CCBackend.ClaudeBinary)
+	if cfg.CCBackend.Binary != "/bin/cc-stub" {
+		t.Errorf("cc_backend.binary = %q, want /bin/cc-stub", cfg.CCBackend.Binary)
 	}
 	if len(cfg.Platforms) != 1 || cfg.Platforms[0].Telegram.APIBase != "http://127.0.0.1:1" {
 		t.Errorf("platforms = %+v, want one telegram entry with stub api_base", cfg.Platforms)
@@ -211,8 +211,8 @@ func TestWriteTestConfig_AgentOptions(t *testing.T) {
 	if !strings.Contains(raw, `env = {ALPHA = "1", ZED = "26"}`) {
 		t.Errorf("env not emitted as sorted inline table; config:\n%s", raw)
 	}
-	if a.BackendConfig.ClaudeBinary != "/agent/own-cc" {
-		t.Errorf("per-agent claude_binary = %q, want /agent/own-cc", a.BackendConfig.ClaudeBinary)
+	if a.BackendConfig.Binary != "/agent/own-cc" {
+		t.Errorf("per-agent binary = %q, want /agent/own-cc", a.BackendConfig.Binary)
 	}
 	if a.Permissions == nil {
 		t.Fatalf("missing [agents.permissions] block")
