@@ -254,6 +254,15 @@ type itemEnvelope struct {
 	// subAgentActivity fields
 	Kind      string `json:"kind,omitempty"`
 	AgentPath string `json:"agentPath,omitempty"`
+	// collabAgentToolCall fields
+	Prompt       string                  `json:"prompt,omitempty"`
+	AgentsStates map[string]collabState  `json:"agentsStates,omitempty"`
+}
+
+// collabState is one entry in a collabAgentToolCall's agentsStates map.
+type collabState struct {
+	Status  string `json:"status,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // userHomeDir wraps os.UserHomeDir for testability.
