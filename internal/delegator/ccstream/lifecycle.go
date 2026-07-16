@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/modelinfo"
 	"foci/internal/procx"
 )
@@ -118,6 +119,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	for k, v := range opts.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
+	b.autoApproveEnv = autoapprove.EnvironmentFromList(cmd.Env)
 
 	// Get pipes.
 	stdinPipe, err := cmd.StdinPipe()

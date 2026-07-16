@@ -10,6 +10,10 @@ import (
 	"foci/internal/secrets"
 )
 
+func matchAutoApprove(rules []Rule, toolName string, input json.RawMessage) bool {
+	return matchAutoApproveWithEnv(rules, toolName, input, EnvironmentFromList(os.Environ()))
+}
+
 // TestPathTypedToolsMatchToolMatchKeys proves pathTypedTools stays in sync with
 // toolMatchKeys: every path-typed tool must use the "file_path" match key, and
 // every "file_path" tool must be listed as path-typed. Guards against a future
@@ -1396,6 +1400,21 @@ func TestShellInterceptorVarResolution(t *testing.T) {
 				t.Errorf("matchAutoApprove(Bash, %s) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestShellInterceptorUsesProvidedEnvironment proves approval resolves shell
+// variables against the backend environment rather than the gateway process
+// environment, including the dangerous override case.
+func TestShellInterceptorUsesProvidedEnvironment(t *testing.T) {
+	rules := parseAutoApproveRules([]string{"Bash:ls"})
+	input := json.RawMessage(`{"command":"bash -c \"$BASHC_TEST_VAR\""}`)
+
+	if !MatchWithEnv(rules, "Bash", input, map[string]string{"BASHC_TEST_VAR": "ls"}) {
+		t.Fatal("safe backend environment should be auto-approved")
+	}
+	if MatchWithEnv(rules, "Bash", input, map[string]string{"BASHC_TEST_VAR": "rm -rf /"}) {
+		t.Fatal("dangerous backend environment must not be auto-approved")
 	}
 }
 

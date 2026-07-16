@@ -2,7 +2,6 @@ package autoapprove
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -98,10 +97,12 @@ var CommonReadonlyRules = []string{
 // Compile parses rule strings into compiled Rules.
 func Compile(rules []string) []Rule { return parseAutoApproveRules(rules) }
 
-// Match checks whether a permission request matches any auto-approve rule.
-// Exported wrapper around the internal matcher for cross-backend use.
-func Match(rules []Rule, toolName string, input json.RawMessage) bool {
-	return matchAutoApprove(rules, toolName, input)
+// MatchWithEnv evaluates an auto-approval request using the exact environment
+// inherited by the delegated backend. This is required for shell-interceptor
+// variable expansion: the gateway process environment may differ from the
+// backend's environment after per-agent overrides and BASH_ENV are applied.
+func MatchWithEnv(rules []Rule, toolName string, input json.RawMessage, env map[string]string) bool {
+	return matchAutoApproveWithEnv(rules, toolName, input, env)
 }
 
 func FociShellRulesFor(execNames []string) []string {
@@ -159,17 +160,25 @@ func parseAutoApproveRules(rules []string) []Rule {
 	return parsed
 }
 
-// matchAutoApprove checks whether a permission request matches any auto-approve
-// rule. Returns true if the request should be auto-approved.
-//
-// For Bash commands, the command is parsed into an AST and every structural
-// element and simple command is validated. This prevents bypasses via shell
-// features like redirects, process substitution, and command wrappers.
-func matchAutoApprove(rules []Rule, toolName string, input json.RawMessage) bool {
+func matchAutoApproveWithEnv(rules []Rule, toolName string, input json.RawMessage, env map[string]string) bool {
 	if toolName == "Bash" {
-		return matchBashAutoApprove(rules, input)
+		return matchBashAutoApprove(rules, input, env)
 	}
 	return matchToolAutoApprove(rules, toolName, input)
+}
+
+// EnvironmentFromList converts an exec.Cmd-style environment into the
+// effective key/value snapshot used by shell expansion. Later entries for a
+// key override earlier entries, matching the environment passed to a child.
+func EnvironmentFromList(entries []string) map[string]string {
+	env := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			env[key] = value
+		}
+	}
+	return env
 }
 
 // pathTypedTools are tools whose match key is a filesystem path. Their candidate
@@ -261,7 +270,7 @@ var varSettingCommands = map[string]bool{
 //   - Commands with known unsafe flags (sed -i, find -exec, sort -o, etc.) are rejected
 //   - sed script arguments are scanned for dangerous commands (w, e)
 //   - Commands that set variables opaquely (eval, source, read, etc.) are rejected
-func matchBashAutoApprove(rules []Rule, input json.RawMessage) bool {
+func matchBashAutoApprove(rules []Rule, input json.RawMessage, env map[string]string) bool {
 	command := extractMatchString("Bash", input)
 	if command == "" {
 		return false
@@ -272,7 +281,7 @@ func matchBashAutoApprove(rules []Rule, input json.RawMessage) bool {
 		return false // unparseable → fail safe (prompt user)
 	}
 
-	return validateParsedCommand(rules, stmts, 0, newVarCtx())
+	return validateParsedCommand(rules, stmts, 0, newVarCtx(env))
 }
 
 // parseShellScript parses a command string as bash and returns the top-level
@@ -676,14 +685,15 @@ func resolveWordPart(part syntax.WordPart, vc *varCtx) (string, bool) {
 type varCtx struct {
 	symbolTable map[string]string // known literal assignments: name → value
 	unknown     map[string]bool   // assignments whose value/scope is not modelled
+	environment map[string]string // exact environment inherited by the shell
 }
 
-func newVarCtx() *varCtx {
-	return &varCtx{symbolTable: make(map[string]string), unknown: make(map[string]bool)}
+func newVarCtx(environment map[string]string) *varCtx {
+	return &varCtx{symbolTable: make(map[string]string), unknown: make(map[string]bool), environment: environment}
 }
 
 func (vc *varCtx) clone() *varCtx {
-	copy := newVarCtx()
+	copy := newVarCtx(vc.environment)
 	for name, value := range vc.symbolTable {
 		copy.symbolTable[name] = value
 	}
@@ -805,10 +815,9 @@ func (vc *varCtx) resolveParamExp(p *syntax.ParamExp) (string, bool) {
 	if val, ok := vc.symbolTable[name]; ok {
 		return val, true
 	}
-	// Not assigned anywhere in the command — fall through to the process
-	// environment. The gateway and the delegated shell child share the same
-	// environment, so the value at approval time matches execution time.
-	val, ok := os.LookupEnv(name)
+	// Not assigned anywhere in the command — fall through to the exact
+	// environment snapshot supplied by the backend.
+	val, ok := vc.environment[name]
 	return val, ok
 }
 

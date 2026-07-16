@@ -179,6 +179,7 @@ type Backend struct {
 
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
+	autoApproveEnv   map[string]string // exact environment inherited by Claude
 
 	// Hook install state. Set by prepareHooks at Start so
 	// handleHookResponse can filter events belonging to this backend from
