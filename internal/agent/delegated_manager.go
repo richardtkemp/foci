@@ -1009,6 +1009,20 @@ func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey stri
 	if !ok {
 		return "", nil // backend can't branch
 	}
+	if requiresRunning, ok := be.(delegator.RunningBackendForker); ok && requiresRunning.ForkRequiresRunningBackend() {
+		// Some backends (Codex) implement fork as an app-server RPC. Resolve the
+		// parent through the normal manager path so it is started/resumed with
+		// all configured callbacks and environment, and remains managed after
+		// the fork completes.
+		be, err = m.Get(ctx, parentKey)
+		if err != nil {
+			return "", fmt.Errorf("fork parent %s (%s): start backend: %w", parentKey, parentID, err)
+		}
+		br, ok = be.(delegator.BackendBrancher)
+		if !ok {
+			return "", fmt.Errorf("fork parent %s (%s): started backend cannot fork", parentKey, parentID)
+		}
+	}
 	res, err := br.ForkSession(ctx, delegator.ForkRequest{
 		ParentSessionID: parentID,
 		WorkDir:         m.StartOpts.WorkDir,

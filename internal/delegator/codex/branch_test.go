@@ -27,6 +27,7 @@ func setupMockBackend(t *testing.T, handler func(method string, params json.RawM
 	b := &Backend{}
 	b.lg = log.NewComponentLogger("test")
 	b.pendingRPC = make(map[int64]chan json.RawMessage)
+	b.running = true
 
 	pr, pw := io.Pipe()
 	b.writer = NewWriter(pw)
@@ -116,8 +117,8 @@ func TestForkSession_Success(t *testing.T) {
 	}
 }
 
-// TestForkSession_NotStarted verifies ForkSession errors before any I/O when
-// the backend has no active app-server connection (writer is nil).
+// TestForkSession_NotStarted verifies ForkSession rejects a backend without
+// an active app-server connection before attempting any RPC.
 func TestForkSession_NotStarted(t *testing.T) {
 	b := &Backend{lg: log.NewComponentLogger("test")}
 	_, err := b.ForkSession(context.Background(), delegator.ForkRequest{
