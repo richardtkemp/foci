@@ -33,12 +33,12 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"http_request", "web_search", "web_fetch", "memory_search",
 		"scratchpad", "todo", "task_list", "bitwarden_search",
 		"bitwarden_unlock", "mcp", "send_to_chat", "send_to_session",
-		"ask", "spawn", "remind", "app_android",
+		"ask", "spawn", "remind", "app_android", "set_session_alias",
 	}
 	wantExec := []string{
 		"summary", "http_request", "web_search", "web_fetch",
 		"memory_search", "todo", "send_to_chat", "send_to_session",
-		"ask", "spawn", "remind", "app_android",
+		"ask", "spawn", "remind", "app_android", "set_session_alias",
 	}
 
 	if !equalStrings(api, wantAPI) {
@@ -96,6 +96,7 @@ func TestToolTable_APISet(t *testing.T) {
 		"web_search": true, "web_fetch": true, "memory_search": true,
 		"scratchpad": true, "todo": true, "send_to_chat": true,
 		"send_to_session": true, "ask": true, "spawn": true, "remind": true,
+		"set_session_alias": true,
 	}
 	// task_list and bitwarden need their stores; taskListStore/bwStore are left
 	// nil here, so those rows are intentionally absent from `want`.
@@ -149,7 +150,7 @@ func TestToolTable_ExecSet(t *testing.T) {
 		"summary": true, "http_request": true, "web_search": true,
 		"web_fetch": true, "memory_search": true, "todo": true,
 		"send_to_chat": true, "send_to_session": true, "ask": true,
-		"remind": true,
+		"remind": true, "set_session_alias": true,
 	}
 	assertRegistrySet(t, registry, want)
 }
