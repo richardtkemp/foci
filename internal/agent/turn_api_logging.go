@@ -10,6 +10,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/ratelimit"
 )
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.
@@ -138,16 +139,13 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		return fmt.Errorf("send message: %w", err)
 	}
 	if apiErr.IsRateLimit() {
-		gate := a.getOrCreateRateLimitGate(endpoint)
-		resetTime := gate.ComputeResetTime(apiErr.RetryAfterSeconds())
-		gate.Close(resetTime)
-
-		a.logger().Infof("session=%s rate limit gate (%s) closed until %s", sessionKey, endpoint, resetTime.Format(time.Kitchen))
-		if !isUserTrigger(TriggerFromContext(ctx)) {
-			for _, fn := range a.RateLimitFunc {
-				fn(resetTime)
-			}
+		signal := ratelimit.Signal{
+			Kind:       ratelimit.KindRequest,
+			RetryAfter: time.Duration(apiErr.RetryAfterSeconds()) * time.Second,
+			Detail:     apiErr.Body,
 		}
+		resetTime := a.engageRateLimit(endpoint, signal, !isUserTrigger(TriggerFromContext(ctx)))
+		a.logger().Infof("session=%s API rate limit recorded for %s", sessionKey, endpoint)
 		return &RateLimitedError{Until: resetTime}
 	}
 	if apiErr.IsOverloaded() {

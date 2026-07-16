@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/ratelimit"
 )
 
 func init() {
@@ -97,8 +98,8 @@ type Backend struct {
 	sessionEvents atomic.Pointer[delegator.SessionEvents]
 
 	// Turn state
-	turnMu         sync.Mutex
-	turnActive     bool
+	turnMu     sync.Mutex
+	turnActive bool
 	// turnAutonomous marks a turn foci did NOT open with a send: CC started the
 	// run itself (a background-agent completion, task-notification, or back-to-
 	// back continuation) and foci adopted it as a first-class turn (#1261). Set
@@ -115,12 +116,12 @@ type Backend struct {
 	// lastGraceLogEnd dedups the Phase 4 grace-instrumentation log to one line
 	// per grace window (guarded by turnMu) rather than one per inject retry.
 	lastGraceLogEnd time.Time
-	turnEvents        *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
-	turnResultCh   chan *ResultMessage   // buffered(1), receives result
-	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
-	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
-	turnText       strings.Builder       // accumulates text across assistant messages
-	turnTools      int                   // tool_use count this turn
+	turnEvents      *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
+	turnResultCh    chan *ResultMessage   // buffered(1), receives result
+	compactDoneCh   chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
+	compactStartCh  chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
+	turnText        strings.Builder       // accumulates text across assistant messages
+	turnTools       int                   // tool_use count this turn
 	// Idle-keyed turn completion (#813 successor). The turn boundary is CC's
 	// own `session_state_changed` running/idle SDK stream (enabled via
 	// CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1 at launch): running/idle bracket
@@ -157,9 +158,9 @@ type Backend struct {
 	pendingElicits map[string]*pendingElicitation
 
 	// Context tracking (from result/assistant messages)
-	contextWindow int         // from modelUsage.contextWindow
-	lastModel     string      // from assistant message
-	lastUsage     *TokenUsage // per-call usage from last assistant message
+	contextWindow int                // from modelUsage.contextWindow
+	lastModel     string             // from assistant message
+	lastUsage     *TokenUsage        // per-call usage from last assistant message
 	rlThrottle    *RateLimitThrottle // OnRateLimit throttle; shared per-agent via SetRateLimitThrottle
 
 	// Auto-approve rules (compiled from config, immutable after Start)
@@ -193,11 +194,11 @@ type Backend struct {
 	permPromptFn      delegator.PermissionPromptFunc
 	onSessionReady    func(sessionID string)
 	typingFunc        func(typing bool)
-	onCompactionStart func()              // fired when status="compacting"
-	onCompactionDone  func(preTokens int) // fired on compact_boundary
-	onAuthFailure     func(detail string) // fired when CC reports a 401 auth failure (#843)
-	onRateLimited     func(detail string) // fired with a rate_limit_event warning notice (#1211/#1238)
-	onSessionLimit    func(until time.Time) // fired when CC reports a session limit was hit (synthetic message), with the parsed reset time
+	onCompactionStart func()                        // fired when status="compacting"
+	onCompactionDone  func(preTokens int)           // fired on compact_boundary
+	onAuthFailure     func(detail string)           // fired when CC reports a 401 auth failure (#843)
+	onRateLimited     func(detail string)           // fired with a rate_limit_event warning notice (#1211/#1238)
+	onSessionLimit    func(signal ratelimit.Signal) // fired when CC reports a session limit synthetic message
 	// onAutonomousOpen is fired when the backend detects CC has begun a run foci
 	// did not open (session_state=running while !turnActive). The agent wires it
 	// to openAutonomousTurn, which adopts the in-flight run as a first-class foci

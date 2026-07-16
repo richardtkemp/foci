@@ -15,12 +15,19 @@ import (
 	"foci/internal/workspace"
 )
 
-func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
-	// When the gate is closed, HandleMessage should queue the message
-	// and return RateLimitedError without touching the session.
+func TestHandleMessageRateLimitGateAllowsSuccessfulUserProbe(t *testing.T) {
+	// Proves a closed API gate allows a human retry through and a successful
+	// response releases the gate immediately.
+	RegisterPlatformTrigger("telegram-rate-probe-e2e")
+	t.Cleanup(func() { platformTriggers.Delete("telegram-rate-probe-e2e") })
+	var calls atomic.Int32
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
-		t.Fatal("API should not be called when gate is closed")
-		return nil
+		calls.Add(1)
+		return &provider.MessageResponse{
+			Role:       "assistant",
+			Content:    provider.TextContent("recovered"),
+			StopReason: "end_turn",
+		}
 	})
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
@@ -40,18 +47,15 @@ func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 	gate := ag.getOrCreateRateLimitGate("anthropic")
 	gate.Close(until)
 
-	ctx := WithTrigger(context.Background(), "telegram")
-	_, err := ag.hmTest(ctx, "test/igate", "Hello")
-	if err == nil {
-		t.Fatal("expected RateLimitedError")
+	ctx := WithTrigger(context.Background(), "telegram-rate-probe-e2e")
+	if _, err := ag.hmTest(ctx, "test/igate", "Hello"); err != nil {
+		t.Fatalf("user probe: %v", err)
 	}
-
-	var rlErr *RateLimitedError
-	if !errors.As(err, &rlErr) {
-		t.Fatalf("expected *RateLimitedError, got %T: %v", err, err)
+	if calls.Load() != 1 {
+		t.Errorf("API calls = %d, want 1", calls.Load())
 	}
-	if !rlErr.Until.Equal(until) {
-		t.Errorf("until = %v, want %v", rlErr.Until, until)
+	if limited, _ := gate.IsLimited(); limited {
+		t.Error("successful user probe left gate closed")
 	}
 }
 
@@ -73,8 +77,9 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 		Endpoint:  "anthropic",
 	}
 
-	// First call hits the API, gets 429, closes gate
-	_, err := ag.hmTest(context.Background(), "test/igate429", "Hello")
+	// First system call hits the API, gets 429, and closes the gate.
+	ctx := WithTrigger(context.Background(), "keepalive")
+	_, err := ag.hmTest(ctx, "test/igate429", "Hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -91,7 +96,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 	}
 
 	// Second call should be blocked by the gate (no API hit)
-	_, err = ag.hmTest(context.Background(), "test/igate429", "World")
+	_, err = ag.hmTest(ctx, "test/igate429", "World")
 	if err == nil {
 		t.Fatal("expected RateLimitedError on second call")
 	}

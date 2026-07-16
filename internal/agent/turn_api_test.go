@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -975,6 +976,46 @@ func TestRateLimitGate_NotLimited(t *testing.T) {
 	}
 }
 
+func TestRateLimitGate_LimitedUserTurnMayProbe(t *testing.T) {
+	// Proves a human-triggered API turn bypasses a closed gate so the user can
+	// test whether the endpoint recovered before its estimated deadline.
+	RegisterPlatformTrigger("telegram-rate-probe")
+	t.Cleanup(func() { platformTriggers.Delete("telegram-rate-probe") })
+	a := &Agent{Endpoint: "api.anthropic.com"}
+	a.getOrCreateRateLimitGate(a.Endpoint).Close(time.Now().Add(time.Hour))
+	tr := &APITransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"retry"}, nil)
+	ts.Trigger = "telegram-rate-probe"
+
+	if err := tr.RateLimitGate(ts); err != nil {
+		t.Fatalf("user probe was blocked: %v", err)
+	}
+	if items := a.getOrCreateRateLimitGate(a.Endpoint).DrainQueue(); items != nil {
+		t.Errorf("user probe was queued: %+v", items)
+	}
+}
+
+func TestRateLimitGate_LimitedSystemTurnQueues(t *testing.T) {
+	// Proves non-user API work remains suppressed and queued while the same
+	// endpoint gate is closed.
+	a := &Agent{Endpoint: "api.anthropic.com"}
+	gate := a.getOrCreateRateLimitGate(a.Endpoint)
+	gate.Close(time.Now().Add(time.Hour))
+	tr := &APITransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"keepalive"}, nil)
+	ts.Trigger = "keepalive"
+
+	var limited *RateLimitedError
+	if err := tr.RateLimitGate(ts); !errors.As(err, &limited) {
+		t.Fatalf("system turn error = %v, want RateLimitedError", err)
+	}
+	gate.Close(time.Now().Add(-time.Second))
+	items := gate.DrainQueue()
+	if len(items) != 1 || items[0].Trigger != "keepalive" {
+		t.Errorf("queued items = %+v, want keepalive", items)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RunInference tests — aspects testable without a real API
 // ---------------------------------------------------------------------------
@@ -1167,6 +1208,36 @@ func TestRunInference_SimpleEndToEnd(t *testing.T) {
 	}
 	if !found {
 		t.Error("assistant message not found in Messages")
+	}
+}
+
+func TestRunInference_SuccessReleasesRateLimitGate(t *testing.T) {
+	// Proves a successful API user probe reopens the endpoint immediately and
+	// leaves queued system work available for the normal replay drain.
+	client := &mockClient{sendFn: func(context.Context, *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return &provider.MessageResponse{
+			Role:       "assistant",
+			Content:    provider.TextContent("recovered"),
+			StopReason: "end_turn",
+		}, nil
+	}}
+	a := newInferenceAgent(t, client)
+	a.Endpoint = "api.example.test"
+	gate := a.getOrCreateRateLimitGate(a.Endpoint)
+	gate.Close(time.Now().Add(time.Hour))
+	gate.Enqueue("bot/c200", "keepalive", "keepalive")
+	ts := newInferenceTS(t, a, client)
+	tr := &APITransport{sharedTurnOps{agent: a}}
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if limited, _ := gate.IsLimited(); limited {
+		t.Error("successful probe did not release the gate")
+	}
+	items := gate.DrainQueue()
+	if len(items) != 1 || items[0].Trigger != "keepalive" {
+		t.Errorf("queued work = %+v, want preserved keepalive", items)
 	}
 }
 

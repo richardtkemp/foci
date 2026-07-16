@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"foci/internal/delegator"
+	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 )
 
@@ -97,15 +98,16 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		return
 	}
 
-	// A synthetic session-limit message is a signal, not a reply. Intercept it
-	// only when its reset time parses; otherwise let it flow through unchanged
-	// rather than swallow a message we can't act on.
+	// A synthetic session-limit message is a signal, not a reply. The reset hint
+	// is optional; shared policy supplies the usage fallback when it is absent.
 	if isTopLevel {
 		if s := syntheticSessionLimitText(msg.Message); s != "" {
-			if until, ok := parseSessionLimitReset(s, timeutil.Now()); ok {
-				b.fireSessionLimit(until)
-				return
+			signal := ratelimit.Signal{Kind: ratelimit.KindUsage, Detail: s}
+			if parsed, ok := parseSessionLimitReset(s, timeutil.Now()); ok {
+				signal = parsed
 			}
+			b.fireSessionLimit(signal)
+			return
 		}
 	}
 

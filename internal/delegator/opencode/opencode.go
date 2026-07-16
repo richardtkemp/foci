@@ -16,6 +16,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
+	"foci/internal/ratelimit"
 )
 
 // serverPool is the package-level registry of live Servers, keyed by
@@ -238,7 +239,7 @@ type Backend struct {
 	onCompactionStart func()
 	onCompactionDone  func(preTokens int)
 	onAuthFailure     func(detail string)
-	onRateLimited     func(until time.Time)
+	onRateLimited     func(signal ratelimit.Signal)
 
 	// Auto-approve rules — compiled from StartOptions.AutoApproveRules.
 	// When non-empty, incoming permission.asked events are checked against
@@ -344,9 +345,9 @@ func (b *Backend) SetOnAuthFailure(fn func(detail string)) {
 }
 
 // SetOnRateLimited stores the callback fired when OpenCode reports a rejected
-// usage/rate limit through session.status. The callback receives the parsed
-// reset instant so the agent can engage its shared rate-limit gate.
-func (b *Backend) SetOnRateLimited(fn func(until time.Time)) {
+// usage/rate limit through session.status. The callback receives a neutral
+// signal so the agent's shared policy can resolve and engage the gate.
+func (b *Backend) SetOnRateLimited(fn func(signal ratelimit.Signal)) {
 	b.onRateLimited = fn
 }
 
