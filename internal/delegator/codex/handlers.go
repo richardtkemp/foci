@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"strings"
 
 	"foci/internal/delegator"
 )
@@ -55,12 +56,12 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 		}
 	case "fileChange":
 		if se != nil && se.OnToolStart != nil {
-			se.OnToolStart(item.ID, "edit", "")
+			se.OnToolStart(item.ID, "edit", summarizePaths(item.Changes))
 		}
 	case "mcpToolCall":
 		if se != nil && se.OnToolStart != nil {
 			name := "mcp:" + item.Server + "." + item.Tool
-			se.OnToolStart(item.ID, name, "")
+			se.OnToolStart(item.ID, name, truncateArgs(item.Arguments))
 		}
 	case "dynamicToolCall":
 		if se != nil && se.OnToolStart != nil {
@@ -68,11 +69,11 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 			if item.Namespace != "" {
 				name = item.Namespace + "." + item.Tool
 			}
-			se.OnToolStart(item.ID, name, "")
+			se.OnToolStart(item.ID, name, truncateArgs(item.Arguments))
 		}
 	case "webSearch":
 		if se != nil && se.OnToolStart != nil {
-			se.OnToolStart(item.ID, "web_search", "")
+			se.OnToolStart(item.ID, "web_search", item.Query)
 		}
 	case "imageGeneration":
 		if se != nil && se.OnToolStart != nil {
@@ -216,6 +217,31 @@ func itemSuccess(item itemEnvelope) bool {
 		return item.Status == "completed" || item.Status == "success"
 	}
 	return true
+}
+
+// summarizePaths extracts a comma-separated list of file paths from a
+// fileChange item's changes array for the activity indicator.
+func summarizePaths(changes []fileChangeEntry) string {
+	if len(changes) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(changes))
+	for _, c := range changes {
+		parts = append(parts, c.Path)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// truncateArgs returns a truncated copy of raw JSON arguments for display.
+func truncateArgs(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	s := strings.TrimSpace(string(raw))
+	if len(s) > 200 {
+		return s[:200] + "…"
+	}
+	return s
 }
 
 // onAgentMessageDelta delivers a streaming text delta.
