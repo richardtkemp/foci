@@ -48,9 +48,45 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 
 	se := b.sessionEvents.Load()
 	switch item.Type {
+	// Tools — feed OnToolStart so the activity indicator shows what's running.
 	case "commandExecution":
 		if se != nil && se.OnToolStart != nil {
-			se.OnToolStart(item.ID, "bash", "")
+			se.OnToolStart(item.ID, "bash", item.Command)
+		}
+	case "fileChange":
+		if se != nil && se.OnToolStart != nil {
+			se.OnToolStart(item.ID, "edit", "")
+		}
+	case "mcpToolCall":
+		if se != nil && se.OnToolStart != nil {
+			name := "mcp:" + item.Server + "." + item.Tool
+			se.OnToolStart(item.ID, name, "")
+		}
+	case "dynamicToolCall":
+		if se != nil && se.OnToolStart != nil {
+			name := item.Tool
+			if item.Namespace != "" {
+				name = item.Namespace + "." + item.Tool
+			}
+			se.OnToolStart(item.ID, name, "")
+		}
+	case "webSearch":
+		if se != nil && se.OnToolStart != nil {
+			se.OnToolStart(item.ID, "web_search", "")
+		}
+	case "imageGeneration":
+		if se != nil && se.OnToolStart != nil {
+			se.OnToolStart(item.ID, "image_gen", "")
+		}
+	case "contextCompaction":
+		if se != nil && se.OnToolStart != nil {
+			se.OnToolStart(item.ID, "compact", "")
+		}
+	// Subagent — feed OnSubagentStart for the activity indicator's
+	// "subagents" kind.
+	case "subAgentActivity":
+		if item.Kind == "started" && se != nil && se.OnSubagentStart != nil {
+			se.OnSubagentStart(item.ID, item.AgentPath)
 		}
 	}
 }
@@ -82,19 +118,83 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 			se.OnToolEnd(item.ID, "bash", "", isError)
 		}
 
+	case "fileChange":
+		b.turnMu.Lock()
+		b.turnTools++
+		b.turnMu.Unlock()
+		if se != nil && se.OnToolEnd != nil {
+			se.OnToolEnd(item.ID, "edit", "", item.Status == "failed")
+		}
+
+	case "mcpToolCall":
+		b.turnMu.Lock()
+		b.turnTools++
+		b.turnMu.Unlock()
+		if se != nil && se.OnToolEnd != nil {
+			name := "mcp:" + item.Server + "." + item.Tool
+			se.OnToolEnd(item.ID, name, "", item.Status == "failed")
+		}
+
+	case "dynamicToolCall":
+		b.turnMu.Lock()
+		b.turnTools++
+		b.turnMu.Unlock()
+		if se != nil && se.OnToolEnd != nil {
+			name := item.Tool
+			if item.Namespace != "" {
+				name = item.Namespace + "." + item.Tool
+			}
+			se.OnToolEnd(item.ID, name, "", !itemSuccess(item))
+		}
+
+	case "webSearch":
+		b.turnMu.Lock()
+		b.turnTools++
+		b.turnMu.Unlock()
+		if se != nil && se.OnToolEnd != nil {
+			se.OnToolEnd(item.ID, "web_search", "", false)
+		}
+
+	case "imageGeneration":
+		b.turnMu.Lock()
+		b.turnTools++
+		b.turnMu.Unlock()
+		if se != nil && se.OnToolEnd != nil {
+			se.OnToolEnd(item.ID, "image_gen", "", item.Status == "failed")
+		}
+
 	case "reasoning":
 		if se != nil && se.OnThinkingDelta != nil {
 			se.OnThinkingDelta(item.Text)
 		}
 
 	case "contextCompaction":
+		b.turnMu.Lock()
+		b.turnTools++
+		b.turnMu.Unlock()
 		b.compactMu.Lock()
 		if b.compactDoneCh != nil {
 			close(b.compactDoneCh)
 			b.compactDoneCh = nil
 		}
 		b.compactMu.Unlock()
+		if se != nil && se.OnToolEnd != nil {
+			se.OnToolEnd(item.ID, "compact", "", false)
+		}
+
+	case "subAgentActivity":
+		if item.Kind == "interrupted" && se != nil && se.OnSubagentEnd != nil {
+			se.OnSubagentEnd(item.ID)
+		}
 	}
+}
+
+// itemSuccess returns true if a dynamic tool call succeeded.
+func itemSuccess(item itemEnvelope) bool {
+	if item.Status != "" {
+		return item.Status == "completed" || item.Status == "success"
+	}
+	return true
 }
 
 // onAgentMessageDelta delivers a streaming text delta.
