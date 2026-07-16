@@ -931,6 +931,9 @@ func containsUnsafeFlags(segment string) bool {
 	}
 
 	cmdBase := filepath.Base(tokens[0])
+	if cmdBase == "sqlite3" && sqliteCommandUnsafe(tokens) {
+		return true
+	}
 	spec, ok := unsafeFlags[cmdBase]
 	if !ok {
 		return false
@@ -981,6 +984,42 @@ func containsUnsafeFlags(segment string) bool {
 	return false
 }
 
+// sqliteCommandUnsafe rejects SQLite CLI forms that can execute shell commands
+// or read commands from standard input. The readonly database flag does not
+// constrain dot-commands such as .system, .shell, .load, or .output.
+//
+// Auto-approved SQLite calls must include both a database argument and an
+// explicit SQL argument. Any dot-command or additional CLI option is prompted
+// instead of being interpreted as safe SQL.
+func sqliteCommandUnsafe(tokens []string) bool {
+	// The built-in rules require "sqlite3 -readonly". Require a database and
+	// SQL argument as well, so stdin cannot supply a dot-command.
+	if len(tokens) < 4 || tokens[1] != "-readonly" {
+		return true
+	}
+	for _, token := range tokens[2:] {
+		arg := strings.TrimSpace(stripOuterQuotes(token))
+		if strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, ".") {
+			return true
+		}
+		// The CLI recognises dot-commands at the beginning of an input line;
+		// reject one embedded after an SQL statement as well.
+		for _, line := range strings.Split(arg, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), ".") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stripOuterQuotes(s string) string {
+	if len(s) >= 2 && ((s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"')) {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 // ---------- sed script argument analysis ----------
 
 // sedArgUnsafe checks if a sed script argument contains potentially dangerous
@@ -990,13 +1029,44 @@ func containsUnsafeFlags(segment string) bool {
 //   - A substitute command with 'e' flag: s/pattern/replacement/e
 //   - A substitute command with 'w' flag: s/pattern/replacement/w file
 func sedArgUnsafe(arg string) bool {
-	// Strip outer quotes if present.
-	if len(arg) >= 2 {
-		if (arg[0] == '\'' && arg[len(arg)-1] == '\'') ||
-			(arg[0] == '"' && arg[len(arg)-1] == '"') {
-			arg = arg[1 : len(arg)-1]
+	arg = stripOuterQuotes(arg)
+	for _, command := range splitSedCommands(arg) {
+		if sedCommandUnsafe(command) {
+			return true
 		}
 	}
+	return false
+}
+
+// splitSedCommands separates commands joined by an unescaped semicolon or
+// newline. Each resulting command is inspected independently so a later `e`
+// command cannot hide behind an earlier harmless one.
+func splitSedCommands(program string) []string {
+	commands := make([]string, 0, 1)
+	start := 0
+	escaped := false
+	for i := 0; i < len(program); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if program[i] == '\\' {
+			escaped = true
+			continue
+		}
+		if program[i] == ';' || program[i] == '\n' {
+			commands = append(commands, program[start:i])
+			start = i + 1
+		}
+	}
+	commands = append(commands, program[start:])
+	return commands
+}
+
+// sedCommandUnsafe checks one simple sed command for write or execution
+// behaviour. Callers split compound programs first.
+func sedCommandUnsafe(arg string) bool {
+	arg = strings.TrimSpace(arg)
 	if arg == "" {
 		return false
 	}
