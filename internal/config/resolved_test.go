@@ -175,7 +175,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 			{ID: "telegram", Display: DisplayConfig{TableWrapLines: Ptr(7), TableStyle: Ptr("markdown")}, Telegram: &TelegramSpecific{LongPollTimeout: "45s"}},
 		},
 	}
-	acfg := AgentConfig{} // all nil — global values should fill in
+	acfg := AgentConfig{Backend: "codex"} // Backend set so AutoSessionNaming is non-zero
 
 	rc := Resolve(cfg, acfg)
 

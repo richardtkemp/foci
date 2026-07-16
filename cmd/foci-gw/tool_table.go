@@ -389,4 +389,13 @@ var toolTable = []toolEntry{
 				return inv, ok
 			})
 		}},
+
+	// set_session_alias: lets the agent name its own conversation. Only
+	// registered for backends that DON'T auto-name (CC, opencode, API).
+	// Codex generates names server-side via TurnResult.ThreadName.
+	{name: "set_session_alias", paths: pathBoth,
+		enabled: func(d *toolDeps) bool { return !d.p.resolvedLive.Load().AutoSessionNaming },
+		build: func(d *toolDeps) *tools.Tool {
+			return tools.NewSetSessionAliasTool(d.p.sessionIndex)
+		}},
 }
