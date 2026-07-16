@@ -247,6 +247,13 @@ type itemEnvelope struct {
 	Command string `json:"command,omitempty"`
 	// fileChange fields
 	Changes json.RawMessage `json:"changes,omitempty"`
+	// mcpToolCall / dynamicToolCall fields
+	Tool      string `json:"tool,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Server    string `json:"server,omitempty"`
+	// subAgentActivity fields
+	Kind      string `json:"kind,omitempty"`
+	AgentPath string `json:"agentPath,omitempty"`
 }
 
 // userHomeDir wraps os.UserHomeDir for testability.
