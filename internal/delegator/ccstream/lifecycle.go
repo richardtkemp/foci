@@ -185,11 +185,26 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		err := cmd.Wait()
 		b.exitErr = err // store for OnError; read after exitCh is closed
 		close(b.exitCh)
-		if err != nil {
-			b.logger().Warnf("process exited: %s", describeExitError(err))
-		} else {
+
+		b.mu.Lock()
+		closing := b.closing
+		b.mu.Unlock()
+
+		switch {
+		case err == nil:
 			b.logger().Infof("process exited cleanly (status 0)")
+		case exitIsExpected(err, closing):
+			// closeInner() sets b.closing before it interrupts/closes stdin to
+			// shut CC down. An interrupt sent after a clean turn end has
+			// nothing to abort, but CC keys its exit code on the last result
+			// message's is_error flag — the abort can still flip a success
+			// result to error_during_execution, so exit 0 becomes exit 1 even
+			// though nothing went wrong. Not a crash: log it quietly.
+			b.logger().Infof("process exited during close: %s", describeExitError(err))
+		default:
+			b.logger().Warnf("process exited: %s", describeExitError(err))
 		}
+
 		// Drive cleanup regardless of whether the reader goroutine notices.
 		// finalizeExit is idempotent — if OnReaderStopped already ran, this
 		// is a no-op.
@@ -543,6 +558,15 @@ func (b *Backend) captureStderr(r io.Reader) {
 	if err := scanner.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
 		b.logger().Warnf("stderr capture stopped: %v", err)
 	}
+}
+
+// exitIsExpected reports whether a nonzero subprocess exit is an expected
+// side effect of our own Close()/interrupt path (closing=true) rather than
+// an unexpected crash. See the waiter goroutine in Start for why an
+// interrupt sent after a clean turn end can still flip CC's exit code from
+// 0 to 1.
+func exitIsExpected(err error, closing bool) bool {
+	return err != nil && closing
 }
 
 // describeExitError returns a human-readable description of a process exit

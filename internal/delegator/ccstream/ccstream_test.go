@@ -3646,3 +3646,34 @@ func TestDescribeExitError_Signal(t *testing.T) {
 		t.Errorf("describeExitError = %q, want it to contain 'signal'", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// exitIsExpected — a nonzero exit during our own Close() is a documented
+// side effect (interrupt-after-clean-turn flips CC's exit code from 0 to 1),
+// not a crash, so the waiter goroutine should log it quietly.
+// ---------------------------------------------------------------------------
+
+func TestExitIsExpected_NonzeroDuringClose(t *testing.T) {
+	t.Parallel()
+	if !exitIsExpected(errors.New("exit status 1"), true) {
+		t.Error("exitIsExpected(nonzero, closing=true) = false, want true")
+	}
+}
+
+func TestExitIsExpected_NonzeroNotClosing(t *testing.T) {
+	// A nonzero exit with no deliberate Close() in progress is a real,
+	// unexpected crash — must stay expected=false so it still warns.
+	t.Parallel()
+	if exitIsExpected(errors.New("exit status 1"), false) {
+		t.Error("exitIsExpected(nonzero, closing=false) = true, want false")
+	}
+}
+
+func TestExitIsExpected_NilError(t *testing.T) {
+	// A clean exit is never "expected-but-warned" — it's just clean,
+	// regardless of the closing flag.
+	t.Parallel()
+	if exitIsExpected(nil, true) {
+		t.Error("exitIsExpected(nil, closing=true) = true, want false")
+	}
+}
