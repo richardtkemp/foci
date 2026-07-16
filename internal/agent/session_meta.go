@@ -433,9 +433,9 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 
 // SetModel is the high-level orchestrator for /model. It tells the delegated
 // backend (if any) to switch models FIRST, and only records foci's own
-// session metadata once that's confirmed — rawModel is the user's input
-// (e.g. "opus", "sonnet") — passed verbatim to the backend since CC accepts
-// bare model names.
+// session metadata once that's confirmed. Catalogue-backed backends may first
+// resolve rawModel (the user's input, e.g. "opus" or "luna") to a backend id
+// and a canonical developer-qualified id for foci's own tracking.
 func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint, format string, client provider.Client, rawModel string) error {
 	// Tell the backend, if one exists and supports control requests, BEFORE
 	// touching foci's own metadata. set_model (unlike set_permission_mode/
@@ -445,18 +445,27 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 	// Bound the wait so a wedged backend can't hang the /model command.
 	controlCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	handled, err := a.SendBackendControl(controlCtx, sessionKey, &delegator.SetModelRequest{Model: rawModel})
+	backendModel := rawModel
+	trackedModel := model
+	if resolved, ok, err := a.ResolveBackendModel(controlCtx, sessionKey, rawModel); err != nil {
+		a.logger().Warnf("session=%s backend model resolution failed: %v", sessionKey, err)
+		return fmt.Errorf("backend model resolution failed: %w", err)
+	} else if ok {
+		backendModel = resolved.BackendModel
+		trackedModel = resolved.Model
+	}
+	handled, err := a.SendBackendControl(controlCtx, sessionKey, &delegator.SetModelRequest{Model: backendModel})
 	if err != nil {
 		a.logger().Warnf("session=%s backend set_model failed: %v", sessionKey, err)
 		return fmt.Errorf("backend model switch failed: %w", err)
 	}
 	if handled {
-		a.logger().Infof("session=%s model switched via backend to %q", sessionKey, rawModel)
+		a.logger().Infof("session=%s model switched via backend to %q", sessionKey, backendModel)
 	}
 
 	// The backend confirmed the switch (or there was none to confirm with,
 	// e.g. plain API-mode agents) — safe to record foci's own tracking now.
-	a.SetSessionModel(sessionKey, model, endpoint, format, client)
+	a.SetSessionModel(sessionKey, trackedModel, endpoint, format, client)
 
 	// Only arm modelUserSet if a delegated turn is currently in flight.
 	// The flag guards against that in-flight turn's stale FinalModel clobbering

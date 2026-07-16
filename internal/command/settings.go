@@ -46,6 +46,9 @@ func ModelCommand() *Command {
 				return Response{Text: fmt.Sprintf("Model switch failed: %v", err)}, nil
 			}
 			display := model
+			if cc.Agent.DelegatedManager != nil {
+				display = cc.Agent.SessionModel(sk)
+			}
 			if endpoint != "" && resolved != nil && endpoint != resolved.Developer {
 				display = endpoint + ":" + model
 			}

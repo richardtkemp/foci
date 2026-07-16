@@ -8,12 +8,17 @@ import (
 	"foci/internal/modelinfo"
 )
 
+type modelCatalogue struct {
+	Caps   map[string]modelcaps.Caps
+	Models []string
+}
+
 // listModelCaps reads every page of Codex's model/list catalogue and converts
 // it to foci's backend-neutral live capability shape. Codex supplies model ids
 // and ordered reasoning-effort levels; structural details it omits are filled
 // only from exact entries in foci's static model registry.
-func (b *Backend) listModelCaps() (map[string]modelcaps.Caps, error) {
-	entries := make(map[string]modelcaps.Caps)
+func (b *Backend) listModelCatalogue() (modelCatalogue, error) {
+	catalogue := modelCatalogue{Caps: make(map[string]modelcaps.Caps)}
 	cursor := ""
 	seenCursors := make(map[string]bool)
 
@@ -23,12 +28,12 @@ func (b *Backend) listModelCaps() (map[string]modelcaps.Caps, error) {
 			IncludeHidden: false,
 		})
 		if err != nil {
-			return nil, err
+			return modelCatalogue{}, err
 		}
 
 		var page modelListResponse
 		if err := json.Unmarshal(result, &page); err != nil {
-			return nil, fmt.Errorf("codex: parse model/list response: %w", err)
+			return modelCatalogue{}, fmt.Errorf("codex: parse model/list response: %w", err)
 		}
 		for _, m := range page.Data {
 			modelID := m.Model
@@ -38,6 +43,7 @@ func (b *Backend) listModelCaps() (map[string]modelcaps.Caps, error) {
 			if modelID == "" {
 				continue
 			}
+			catalogue.Models = append(catalogue.Models, modelID)
 			caps := modelcaps.Caps{}
 			if static, ok := modelinfo.Lookup("codex", modelID); ok {
 				caps.ContextWindow = static.ContextWindow
@@ -47,14 +53,14 @@ func (b *Backend) listModelCaps() (map[string]modelcaps.Caps, error) {
 					caps.Effort = append(caps.Effort, option.ReasoningEffort)
 				}
 			}
-			entries[modelinfo.Normalize(modelID)] = caps
+			catalogue.Caps[modelinfo.Normalize(modelID)] = caps
 		}
 
 		if page.NextCursor == nil || *page.NextCursor == "" {
-			return entries, nil
+			return catalogue, nil
 		}
 		if seenCursors[*page.NextCursor] {
-			return nil, fmt.Errorf("codex: model/list repeated cursor %q", *page.NextCursor)
+			return modelCatalogue{}, fmt.Errorf("codex: model/list repeated cursor %q", *page.NextCursor)
 		}
 		seenCursors[*page.NextCursor] = true
 		cursor = *page.NextCursor
@@ -63,12 +69,15 @@ func (b *Backend) listModelCaps() (map[string]modelcaps.Caps, error) {
 
 // refreshModelCaps fetches and delivers one complete catalogue snapshot.
 func (b *Backend) refreshModelCaps() error {
-	entries, err := b.listModelCaps()
+	catalogue, err := b.listModelCatalogue()
 	if err != nil {
 		return err
 	}
+	b.mu.Lock()
+	b.catalogueModels = append([]string(nil), catalogue.Models...)
+	b.mu.Unlock()
 	if b.onModelCaps != nil {
-		b.onModelCaps(entries)
+		b.onModelCaps(catalogue.Caps)
 	}
 	return nil
 }

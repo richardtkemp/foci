@@ -78,6 +78,11 @@ func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
 		})
 		return fmt.Errorf("codex: turn/start: process exited")
 	}
+	if params.Model != "" {
+		b.mu.Lock()
+		b.model = params.Model
+		b.mu.Unlock()
+	}
 
 	var tr turnStartedParams
 	if err := json.Unmarshal(result, &tr); err == nil && tr.Turn.Status == "failed" {

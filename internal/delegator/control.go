@@ -1,5 +1,7 @@
 package delegator
 
+import "context"
+
 // ControlRequest is a marker interface for backend-agnostic control intents.
 // The Agent layer constructs these; each backend translates them to its own
 // wire format in SendControl. The unexported method prevents arbitrary types
@@ -16,6 +18,21 @@ type SetModelRequest struct {
 }
 
 func (*SetModelRequest) controlRequest() {}
+
+// ModelResolution is a backend's canonical interpretation of a user-facing
+// model name or alias. BackendModel is sent over the backend protocol; Model
+// is the developer-qualified id foci persists and displays.
+type ModelResolution struct {
+	BackendModel string
+	Model        string
+}
+
+// ModelResolver is optionally implemented by catalogue-backed delegators that
+// can resolve aliases before a SetModelRequest is sent. Other backends keep
+// receiving the raw model string as before.
+type ModelResolver interface {
+	ResolveModel(ctx context.Context, model string) (ModelResolution, error)
+}
 
 // ApplyFlagSettingsRequest asks the backend to merge settings into its runtime
 // flag-settings layer mid-session. For ccstream this maps to CC's

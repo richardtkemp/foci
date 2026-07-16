@@ -90,6 +90,29 @@ func TestBeginTurn_SendFailureCompletesTurn(t *testing.T) {
 	}
 }
 
+// TestBeginTurn_CommitsPendingModel proves a successful turn/start makes the
+// resolved per-session override the backend's reported model, preventing the
+// next TurnResult from reverting foci metadata to the previous model.
+func TestBeginTurn_CommitsPendingModel(t *testing.T) {
+	b := setupMockBackend(t, func(method string, params json.RawMessage, _ int64) (json.RawMessage, error) {
+		if method != "turn/start" {
+			t.Fatalf("method = %q, want turn/start", method)
+		}
+		return json.RawMessage(`{"turn":{"id":"turn-model","status":"inProgress"}}`), nil
+	})
+	b.threadID = "thread-model"
+	b.pendingModel = "gpt-5.6-luna"
+	if err := b.beginTurn("hello", &delegator.TurnEvents{}); err != nil {
+		t.Fatalf("beginTurn: %v", err)
+	}
+	b.mu.Lock()
+	got := b.model
+	b.mu.Unlock()
+	if got != "gpt-5.6-luna" {
+		t.Errorf("backend model = %q", got)
+	}
+}
+
 // TestIsTurnInFlight_Lifecycle pins the flag callers gate injects on: false on
 // a fresh backend, true once beginTurn opens a turn, false again once
 // completeTurn releases it.
