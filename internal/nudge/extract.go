@@ -11,6 +11,7 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/workspace"
 )
 
 // buildExtractionPrompt constructs the extraction prompt, including only
@@ -362,15 +363,7 @@ func ParseExtractionResponse(response string) ([]Rule, error) {
 // model can attribute source_file correctly. Mirrors what a live session's
 // composed system prompt gives the branch-session extraction path.
 func (e *Extractor) characterSystemPrompt() string {
-	var b strings.Builder
-	for _, name := range e.fileOrder {
-		data, err := os.ReadFile(filepath.Join(e.workspaceDir, name))
-		if err != nil || len(data) == 0 {
-			continue // skip missing/empty files, same as readCharacterFiles
-		}
-		fmt.Fprintf(&b, "===== %s =====\n\n%s\n\n", name, string(data))
-	}
-	return strings.TrimSpace(b.String())
+	return workspace.CharacterSystemPrompt(e.workspaceDir, e.fileOrder)
 }
 
 // readCharacterFiles reads the workspace character files in order.

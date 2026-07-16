@@ -126,6 +126,7 @@ type Runner struct {
 	chatWarningDispatcher *warnings.Dispatcher
 
 	isDelegatedAgent bool // reflection needs quiet period in delegated mode; consolidation uses RunOnce
+	characterSystemPromptFunc func() string
 
 	// skillDirs are the skill directories to scan for creation/update detection
 	// during reflection. nil = feature disabled.
@@ -262,6 +263,12 @@ type RunnerConfig struct {
 	// via Agent.RunOnce rather than Agent.Branch.
 	IsDelegatedAgent bool
 
+	// CharacterSystemPromptFunc composes the agent's character files for the
+	// system prompt of delegated one-shot runs (consolidation via RunOnce) —
+	// the same corpus a branch session inherits on the API path. nil = no
+	// character context (the pre-#1310 behaviour).
+	CharacterSystemPromptFunc func() string
+
 	// SkillDirs are the skill directories to scan for creation/update detection
 	// during the reflection pass. When non-empty and NotifyOnSkillCreation is
 	// true in the reflection config, the runner snapshots skill files before
@@ -298,6 +305,7 @@ func New(cfg RunnerConfig) *Runner {
 		warningDispatcher:     cfg.WarningDispatcher,
 		chatWarningDispatcher: cfg.ChatWarningDispatcher,
 		isDelegatedAgent:      cfg.IsDelegatedAgent,
+		characterSystemPromptFunc: cfg.CharacterSystemPromptFunc,
 		skillDirs:             cfg.SkillDirs,
 		notifySkillChange:     cfg.NotifySkillChange,
 		lastInteraction:       now,

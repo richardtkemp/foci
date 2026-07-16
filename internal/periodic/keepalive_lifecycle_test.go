@@ -598,6 +598,7 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 	var branchCalls int
 	var runOnceCalls int
 	var gotPrompt string
+	var gotSystemPrompt string
 	now := time.Now()
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -607,9 +608,10 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 			ConsolidationTime:    "1h",
 			ConsolidationPrompt:  "memory-consolidation.md",
 		},
-		isDelegatedAgent:  true,
-		lastInteraction:   now.Add(-30 * time.Minute),
-		lastConsolidation: now.Add(-2 * time.Hour),
+		isDelegatedAgent:          true,
+		characterSystemPromptFunc: func() string { return "===== CRAFT.md =====\n\ncharacter corpus" },
+		lastInteraction:           now.Add(-30 * time.Minute),
+		lastConsolidation:         now.Add(-2 * time.Hour),
 		agent: &fakeBackgroundAgent{
 			sessionKeyFn: func() string { return "test/c1/1" },
 			branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
@@ -619,6 +621,7 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 			runOnceFn: func(_ context.Context, prompt, systemPrompt string) (string, error) {
 				runOnceCalls++
 				gotPrompt = prompt
+				gotSystemPrompt = systemPrompt
 				return "done", nil
 			},
 		},
@@ -636,6 +639,11 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 	}
 	if gotPrompt == "" {
 		t.Error("expected non-empty prompt")
+	}
+	// The delegated one-shot must carry the character corpus as its system
+	// prompt — parity with the API path's branch session (#1310).
+	if gotSystemPrompt != "===== CRAFT.md =====\n\ncharacter corpus" {
+		t.Errorf("system prompt = %q, want the character corpus", gotSystemPrompt)
 	}
 }
 
