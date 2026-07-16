@@ -225,6 +225,21 @@ var wrapperCommands = map[string]bool{
 	"watch":   true,
 }
 
+// varSettingCommands are commands that can set shell variables opaquely —
+// their effects are invisible to AST analysis. They are always rejected
+// (even if a rule matches) because they could set a variable that later
+// appears in a bash -c argument, creating an uninspectable code path.
+var varSettingCommands = map[string]bool{
+	"eval":      true, // executes a string as shell code
+	"source":    true, // executes a script file
+	".":         true, // POSIX alias for source
+	"mapfile":   true, // reads lines into an array variable
+	"readarray": true, // alias for mapfile
+	"read":      true, // reads input into a variable
+	"unset":     true, // removes a previously tracked variable
+	"getopts":   true, // writes option state to named variables
+}
+
 // matchBashAutoApprove parses a Bash command into an AST and validates every
 // command and structural element against the auto-approve rules.
 //
@@ -236,13 +251,15 @@ var wrapperCommands = map[string]bool{
 //   - Function declarations and coprocesses are rejected
 //   - Command wrappers (env, nice, timeout, etc.) with arguments are rejected
 //   - Shell interceptors (bash -c, sh -c, etc.) are unwrapped: the inner
-//     script is extracted, statically resolved (literal strings only), and
-//     validated recursively against the same rules
+//     script is extracted, statically resolved (literals, inline variable
+//     assignments, and environment variables), and validated recursively
+//     against the same rules
 //
 // Command-level checks (reusing existing infrastructure):
 //   - Each simple command must match at least one Bash auto-approve rule
 //   - Commands with known unsafe flags (sed -i, find -exec, sort -o, etc.) are rejected
 //   - sed script arguments are scanned for dangerous commands (w, e)
+//   - Commands that set variables opaquely (eval, source, read, etc.) are rejected
 func matchBashAutoApprove(rules []Rule, input json.RawMessage) bool {
 	command := extractMatchString("Bash", input)
 	if command == "" {
@@ -254,7 +271,7 @@ func matchBashAutoApprove(rules []Rule, input json.RawMessage) bool {
 		return false // unparseable → fail safe (prompt user)
 	}
 
-	return validateParsedCommand(rules, stmts, 0)
+	return validateParsedCommand(rules, stmts, 0, newVarCtx())
 }
 
 // parseShellScript parses a command string as bash and returns the top-level
@@ -291,8 +308,27 @@ const maxCmdSubstDepth = 3
 
 // validateParsedCommand walks a list of statements checking structural safety
 // and validating each simple command against rules. depth tracks CmdSubst
-// nesting to prevent infinite recursion.
-func validateParsedCommand(rules []Rule, stmts []*syntax.Stmt, depth int) bool {
+// nesting to prevent infinite recursion. vc provides variable resolution
+// context for shell interceptor (-c) argument resolution.
+func validateParsedCommand(rules []Rule, stmts []*syntax.Stmt, depth int, vc *varCtx) bool {
+	for _, stmt := range stmts {
+		// A compound statement can change variables in ways that are not
+		// statically modelled (notably loop iterator variables). Do not use
+		// the surrounding symbol table for variables it mutates.
+		stmtVC := vc.clone()
+		markComplexAssignments(stmt, stmtVC)
+		if !validateParsedStmt(rules, stmt, depth, stmtVC) {
+			return false
+		}
+		updateVarCtx(stmt, vc)
+	}
+	return true
+}
+
+// validateParsedStmt validates one statement using the variable context that
+// applies at that point in the script. Callers advance the context only after
+// a complete top-level statement has been validated.
+func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) bool {
 	// Walk the AST checking structural safety and collecting simple commands.
 	//
 	// Note: the parser treats brace expansion ({a,b}, {1..10}) as literal
@@ -304,80 +340,86 @@ func validateParsedCommand(rules []Rule, stmts []*syntax.Stmt, depth int) bool {
 	hasContent := false
 	safe := true
 
-	for _, stmt := range stmts {
-		syntax.Walk(stmt, func(node syntax.Node) bool {
-			if !safe {
+	syntax.Walk(stmt, func(node syntax.Node) bool {
+		if !safe {
+			return false
+		}
+		switch n := node.(type) {
+		case *syntax.Redirect:
+			if isOutputRedirect(n.Op) && !isDevNullRedirect(n) {
+				safe = false
+			}
+		case *syntax.ProcSubst:
+			safe = false
+		case *syntax.CmdSubst:
+			// Collect for recursive validation instead of rejecting.
+			cmdSubsts = append(cmdSubsts, n)
+			return false // don't descend — we'll validate separately
+		case *syntax.Lit:
+			if litContainsBraceExpansion(n.Value) {
+				safe = false
+			}
+		case *syntax.CallExpr:
+			// Inline command-prefix assignments (LD_PRELOAD=x cmd) and bare
+			// assignments (LD_PRELOAD=x) are CallExpr.Assigns — not a
+			// DeclClause — so they bypass declHasDangerousVar. Scan them
+			// here (P1-7).
+			for _, a := range n.Assigns {
+				if a.Name != nil && isDangerousVarName(a.Name.Value) {
+					safe = false
+				}
+			}
+			// Shell interceptors (bash -c, sh -c, etc.): extract the
+			// inner script, statically resolve it, and validate
+			// recursively. The interceptor CallExpr itself is not added
+			// to commands — its inner commands are validated instead.
+			if scriptWord, ok := extractShellScript(n); ok {
+				script, resolved := resolveStaticWord(scriptWord, vc)
+				switch {
+				case !resolved:
+					safe = false // non-static constructs in -c arg
+				case script == "":
+					hasContent = true // empty script — harmless
+				default:
+					innerStmts, parsed := parseShellScript(script)
+					if !parsed || !validateParsedCommand(rules, innerStmts, depth+1, vc.clone()) {
+						safe = false
+					} else {
+						hasContent = true
+					}
+				}
+				return false // handled; don't descend into children
+			}
+			// Reject commands that set variables opaquely (eval, source,
+			// read, etc.) — their effects are invisible to the symbol
+			// table and could create uninspectable code paths.
+			name := commandBaseName(n)
+			if varSettingCommands[name] {
+				safe = false
 				return false
 			}
-			switch n := node.(type) {
-			case *syntax.Redirect:
-				if isOutputRedirect(n.Op) && !isDevNullRedirect(n) {
-					safe = false
-				}
-			case *syntax.ProcSubst:
+			commands = append(commands, n)
+			hasContent = true
+		case *syntax.TestClause:
+			hasContent = true // [[ ]] — safe, no side effects
+		case *syntax.DeclClause:
+			if declHasDangerousVar(n) {
 				safe = false
-			case *syntax.CmdSubst:
-				// Collect for recursive validation instead of rejecting.
-				cmdSubsts = append(cmdSubsts, n)
-				return false // don't descend — we'll validate separately
-			case *syntax.Lit:
-				if litContainsBraceExpansion(n.Value) {
-					safe = false
-				}
-			case *syntax.CallExpr:
-				// Inline command-prefix assignments (LD_PRELOAD=x cmd) and bare
-				// assignments (LD_PRELOAD=x) are CallExpr.Assigns — not a
-				// DeclClause — so they bypass declHasDangerousVar. Scan them
-				// here (P1-7).
-				for _, a := range n.Assigns {
-					if a.Name != nil && isDangerousVarName(a.Name.Value) {
-						safe = false
-					}
-				}
-				// Shell interceptors (bash -c, sh -c, etc.): extract the
-				// inner script, statically resolve it, and validate
-				// recursively. The interceptor CallExpr itself is not added
-				// to commands — its inner commands are validated instead.
-				if scriptWord, ok := extractShellScript(n); ok {
-					script, resolved := resolveStaticWord(scriptWord)
-					switch {
-					case !resolved:
-						safe = false // non-literal constructs in -c arg
-					case script == "":
-						hasContent = true // empty script — harmless
-					default:
-						innerStmts, parsed := parseShellScript(script)
-						if !parsed || !validateParsedCommand(rules, innerStmts, depth+1) {
-							safe = false
-						} else {
-							hasContent = true
-						}
-					}
-					return false // handled; don't descend into children
-				}
-				commands = append(commands, n)
-				hasContent = true
-			case *syntax.TestClause:
-				hasContent = true // [[ ]] — safe, no side effects
-			case *syntax.DeclClause:
-				if declHasDangerousVar(n) {
-					safe = false
-				}
-				hasContent = true
-			case *syntax.ArithmCmd:
-				hasContent = true // (( )) — safe
-			case *syntax.LetClause:
-				hasContent = true // let — safe
-			case *syntax.FuncDecl:
-				safe = false // function declarations not allowed
-			case *syntax.CoprocClause:
-				safe = false // coprocesses not allowed
-			default:
-				_ = n // other node types — recurse normally
 			}
-			return safe
-		})
-	}
+			hasContent = true
+		case *syntax.ArithmCmd:
+			hasContent = true // (( )) — safe
+		case *syntax.LetClause:
+			hasContent = true // let — safe
+		case *syntax.FuncDecl:
+			safe = false // function declarations not allowed
+		case *syntax.CoprocClause:
+			safe = false // coprocesses not allowed
+		default:
+			_ = n // other node types — recurse normally
+		}
+		return safe
+	})
 
 	if !safe || !hasContent {
 		return false
@@ -388,7 +430,7 @@ func validateParsedCommand(rules []Rule, stmts []*syntax.Stmt, depth int) bool {
 		return false // too deeply nested — fail safe
 	}
 	for _, cs := range cmdSubsts {
-		if !validateParsedCommand(rules, cs.Stmts, depth+1) {
+		if !validateParsedCommand(rules, cs.Stmts, depth+1, vc.clone()) {
 			return false
 		}
 	}
@@ -549,20 +591,16 @@ func commandBaseName(ce *syntax.CallExpr) string {
 // ---------- Shell interceptor unwrapping ----------
 
 // extractShellScript checks whether ce is a shell interceptor (bash, sh, etc.)
-// invoked with -c and a following script argument. Returns the script word and
-// true if so. The script word is Args[i+1] where Args[i] is the literal "-c".
+// invoked in the strict form "shell -c SCRIPT [ARG...]". Returns the script
+// word and true if so. Options before -c are rejected: flags such as bash -i
+// and --rcfile can execute startup files before the inspected script runs.
 func extractShellScript(ce *syntax.CallExpr) (*syntax.Word, bool) {
 	name := commandBaseName(ce)
 	if !shellInterceptors[name] {
 		return nil, false
 	}
-	for i := 1; i < len(ce.Args); i++ {
-		if isLitEqual(ce.Args[i], "-c") {
-			if i+1 < len(ce.Args) {
-				return ce.Args[i+1], true
-			}
-			return nil, false // -c with no script following
-		}
+	if len(ce.Args) >= 3 && isLitEqual(ce.Args[1], "-c") {
+		return ce.Args[2], true
 	}
 	return nil, false
 }
@@ -576,17 +614,20 @@ func isLitEqual(w *syntax.Word, val string) bool {
 	return ok && lit.Value == val
 }
 
-// resolveStaticWord attempts to statically resolve a shell Word to its literal
-// string value. Only literal content can be resolved: unquoted literals,
-// single-quoted strings, and double-quoted strings containing only literals.
+// resolveStaticWord attempts to statically resolve a shell Word to its string
+// value. Literal parts (unquoted, single-quoted, double-quoted literals) are
+// always resolvable. Variable references ($VAR) are resolved via the varCtx
+// when vc is non-nil — from prior inline assignments in the current shell
+// scope. When vc is nil, only literals resolve.
 //
-// Variable references ($VAR), command substitutions $(), arithmetic $(()),
-// process substitution <(), and any other dynamic construct return ("", false).
-// The caller must reject (fail closed) in that case.
-func resolveStaticWord(w *syntax.Word) (string, bool) {
+// Anything that cannot be statically resolved — command substitutions $(),
+// arithmetic $(()), process substitution <(), special parameters ($?, $@),
+// complex expansions (${VAR:-default}) — returns ("", false). The caller must
+// reject (fail closed) in that case.
+func resolveStaticWord(w *syntax.Word, vc *varCtx) (string, bool) {
 	var sb strings.Builder
 	for _, part := range w.Parts {
-		s, ok := resolveWordPart(part)
+		s, ok := resolveWordPart(part, vc)
 		if !ok {
 			return "", false
 		}
@@ -595,8 +636,8 @@ func resolveStaticWord(w *syntax.Word) (string, bool) {
 	return sb.String(), true
 }
 
-// resolveWordPart resolves a single word part to its literal string value.
-func resolveWordPart(part syntax.WordPart) (string, bool) {
+// resolveWordPart resolves a single word part to its string value.
+func resolveWordPart(part syntax.WordPart, vc *varCtx) (string, bool) {
 	switch p := part.(type) {
 	case *syntax.Lit:
 		return p.Value, true
@@ -608,17 +649,177 @@ func resolveWordPart(part syntax.WordPart) (string, bool) {
 		}
 		var sb strings.Builder
 		for _, inner := range p.Parts {
-			s, ok := resolveWordPart(inner)
+			s, ok := resolveWordPart(inner, vc)
 			if !ok {
 				return "", false
 			}
 			sb.WriteString(s)
 		}
 		return sb.String(), true
+	case *syntax.ParamExp:
+		if vc == nil {
+			return "", false // no resolution context during pre-scan
+		}
+		return vc.resolveParamExp(p)
 	default:
-		// ParamExp, CmdSubst, ProcSubst, ArithmExp, ExtGlob, etc.
+		// CmdSubst, ProcSubst, ArithmExp, ExtGlob, etc.
 		return "", false
 	}
+}
+
+// ---------- Variable resolution context ----------
+
+// varCtx holds statically known shell variables at one precise point in a
+// script. It deliberately never reads the gateway environment: permission
+// validation must not assume it is byte-identical to the delegated shell's
+// environment.
+type varCtx struct {
+	symbolTable map[string]string // known literal assignments: name → value
+	unknown     map[string]bool   // assignments whose value/scope is not modelled
+}
+
+func newVarCtx() *varCtx {
+	return &varCtx{symbolTable: make(map[string]string), unknown: make(map[string]bool)}
+}
+
+func (vc *varCtx) clone() *varCtx {
+	copy := newVarCtx()
+	for name, value := range vc.symbolTable {
+		copy.symbolTable[name] = value
+	}
+	for name := range vc.unknown {
+		copy.unknown[name] = true
+	}
+	return copy
+}
+
+// markComplexAssignments marks variables that may be mutated inside a
+// compound statement. The walker does not represent a for iterator as a
+// CallExpr assignment, so it is explicitly included here.
+func markComplexAssignments(stmt *syntax.Stmt, vc *varCtx) {
+	switch stmt.Cmd.(type) {
+	case *syntax.CallExpr, *syntax.DeclClause:
+		return // direct statements are handled by updateVarCtx after validation
+	}
+	syntax.Walk(stmt, func(node syntax.Node) bool {
+		switch n := node.(type) {
+		case *syntax.CallExpr:
+			for _, a := range n.Assigns {
+				if a.Name != nil {
+					vc.unknown[a.Name.Value] = true
+				}
+			}
+		case *syntax.DeclClause:
+			for _, arg := range n.Args {
+				if arg.Name != nil {
+					vc.unknown[arg.Name.Value] = true
+				}
+			}
+		case *syntax.ForClause:
+			if loop, ok := n.Loop.(*syntax.WordIter); ok && loop.Name != nil {
+				vc.unknown[loop.Name.Value] = true
+			}
+		}
+		return true
+	})
+}
+
+// updateVarCtx advances the symbol table after a direct top-level assignment.
+// Command-prefix assignments (X=value command) do not persist in the parent
+// shell and are intentionally not recorded.
+func updateVarCtx(stmt *syntax.Stmt, vc *varCtx) {
+	switch cmd := stmt.Cmd.(type) {
+	case *syntax.CallExpr:
+		if len(cmd.Args) != 0 {
+			return
+		}
+		for _, a := range cmd.Assigns {
+			updateAssign(a, vc)
+		}
+	case *syntax.DeclClause:
+		for _, arg := range cmd.Args {
+			if arg.Name == nil {
+				continue
+			}
+			name := arg.Name.Value
+			if arg.Value == nil {
+				vc.unknown[name] = true
+				delete(vc.symbolTable, name)
+				continue
+			}
+			if value, ok := resolveStaticWord(arg.Value, vc); ok {
+				vc.symbolTable[name] = value
+				delete(vc.unknown, name)
+			} else {
+				vc.unknown[name] = true
+				delete(vc.symbolTable, name)
+			}
+		}
+	}
+}
+
+func updateAssign(assign *syntax.Assign, vc *varCtx) {
+	if assign.Name == nil {
+		return
+	}
+	name := assign.Name.Value
+	if assign.Value == nil || assign.Index != nil {
+		vc.unknown[name] = true
+		delete(vc.symbolTable, name)
+		return
+	}
+	if value, ok := resolveStaticWord(assign.Value, vc); ok {
+		vc.symbolTable[name] = value
+		delete(vc.unknown, name)
+	} else {
+		vc.unknown[name] = true
+		delete(vc.symbolTable, name)
+	}
+}
+
+// resolveParamExp resolves a simple variable reference ($VAR) using the
+// pre-scanned context. Returns ("", false) for anything that cannot be
+// statically determined.
+func (vc *varCtx) resolveParamExp(p *syntax.ParamExp) (string, bool) {
+	if p.Param == nil {
+		return "", false
+	}
+	name := p.Param.Value
+	// Reject special and positional parameters — their values are
+	// runtime-determined, not in the environment.
+	if isSpecialParam(name) {
+		return "", false
+	}
+	// Only simple variable reference ($name or ${name}) — no index, slice,
+	// replacement, expansion, indirect, length, or other complex forms.
+	if p.Excl || p.Length || p.Width || p.IsSet ||
+		p.NestedParam != nil || p.Index != nil ||
+		len(p.Modifiers) > 0 || p.Slice != nil ||
+		p.Repl != nil || p.Names != 0 || p.Exp != nil {
+		return "", false
+	}
+	if vc.unknown[name] {
+		return "", false
+	}
+	// A literal assignment that has already executed in this shell scope.
+	if val, ok := vc.symbolTable[name]; ok {
+		return val, true
+	}
+	return "", false
+}
+
+// isSpecialParam reports whether name is a shell special parameter whose
+// value is determined at runtime, not from the environment.
+func isSpecialParam(name string) bool {
+	switch name {
+	case "?", "$", "!", "#", "@", "*", "-":
+		return true
+	}
+	// Positional parameters $0–$9.
+	if len(name) == 1 && name[0] >= '0' && name[0] <= '9' {
+		return true
+	}
+	return false
 }
 
 // ---------- Command segment validation ----------
@@ -700,6 +901,11 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 		shortFlags: "c",
 		longFlags:  []string{"--config-env"},
 		argCheck:   gitArgUnsafe,
+	},
+	// printf -v writes formatted output to a shell variable, enabling
+	// opaque variable assignment that bypasses symbol-table tracking.
+	"printf": {
+		shortFlags: "v",
 	},
 }
 

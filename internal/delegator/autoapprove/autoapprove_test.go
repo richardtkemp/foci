@@ -330,6 +330,9 @@ func TestMatchAutoApprove(t *testing.T) {
 		{"Bash", `{"command":"bash -c 'rm -rf /'"}`, false},
 		{"Bash", `{"command":"bash -c 'ls; rm -rf /'"}`, false}, // chained unsafe inside
 		{"Bash", `{"command":"bash -c \"$VAR\""}`, false},       // non-literal — rejected
+		// Interpreter startup options are not inspected as script content.
+		{"Bash", `{"command":"bash -i -c 'ls'"}`, false},
+		{"Bash", `{"command":"bash --rcfile /tmp/evil -i -c 'ls'"}`, false},
 		{"Write", `{"file_path":"/etc/shadow"}`, false},
 		{"Unknown", `{}`, false},
 	}
@@ -503,6 +506,9 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"sh -c 'cat /etc/hosts'"}`},
 		{"Bash", `{"command":"bash -c 'echo hello | cat'"}`},
 		{"Bash", `{"command":"bash -c 'for i in 1 2 3; do ls; done'"}`},
+		// Shell interceptors with inline variable resolution — symbol table.
+		{"Bash", `{"command":"X=ls; bash -c \"$X\""}`},
+		{"Bash", `{"command":"CMD='cat /etc/hosts'; bash -c \"$CMD\""}`},
 	}
 	for _, tt := range safe {
 		if !matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
@@ -1257,5 +1263,149 @@ func TestFindFprintUnsafeFlags(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("find fprint: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
 		}
+	}
+}
+
+// TestVarSettingCommandsRejected verifies that commands which set shell
+// variables opaquely (eval, source, ., read, mapfile, readarray) are always
+// rejected — even when a matching rule exists. These commands can create
+// uninspectable code paths by setting variables later used in bash -c args.
+func TestVarSettingCommandsRejected(t *testing.T) {
+	// Rules that would match these commands if the structural check didn't fire.
+	rules := parseAutoApproveRules([]string{
+		"Bash:eval",
+		"Bash:source",
+		"Bash:.",
+		"Bash:read",
+		"Bash:mapfile",
+		"Bash:readarray",
+		"Bash:echo",
+	})
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{`{"command":"eval 'echo hi'"}`, false},
+		{`{"command":"source /tmp/x.sh"}`, false},
+		{`{"command":". /tmp/x.sh"}`, false},
+		{`{"command":"read -r line"}`, false},
+		{`{"command":"mapfile -t arr < /tmp/x"}`, false},
+		{`{"command":"readarray arr < /tmp/x"}`, false},
+		// Without the var-setting command, the rest is safe.
+		{`{"command":"echo hi"}`, true},
+	}
+	for _, tt := range tests {
+		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+		if got != tt.want {
+			t.Errorf("varSettingCommand: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestPrintfVarFlagRejected verifies that printf -v (which writes to a shell
+// variable) is rejected, while plain printf without -v is allowed.
+func TestPrintfVarFlagRejected(t *testing.T) {
+	rules := parseAutoApproveRules([]string{"Bash:printf"})
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// printf without -v — safe.
+		{`{"command":"printf 'hello'"}`, true},
+		{`{"command":"printf '%s' arg"}`, true},
+		// printf -v sets a variable — rejected.
+		{`{"command":"printf -v X 'hello'"}`, false},
+		{`{"command":"printf -v X '%s' arg"}`, false},
+	}
+	for _, tt := range tests {
+		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+		if got != tt.want {
+			t.Errorf("printf -v: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestShellInterceptorVarResolution exercises ordered inline variable
+// resolution for shell interceptor (-c) arguments and rejects inherited env.
+func TestShellInterceptorVarResolution(t *testing.T) {
+	// Set a known env var for testing env-based resolution.
+	t.Setenv("BASHC_TEST_VAR", "ls")
+
+	rules := parseAutoApproveRules([]string{
+		"Bash:ls",
+		"Bash:echo",
+		"Bash:cat",
+	})
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		// Inline symbol table — safe value.
+		{"inline safe", `{"command":"X=ls; bash -c \"$X\""}`, true},
+		{"inline safe with args", `{"command":"X='ls -la'; bash -c \"$X\""}`, true},
+		// Chained inline assignments — resolved sequentially.
+		{"chained assignment", `{"command":"A=ls; B=$A; bash -c \"$B\""}`, true},
+		{"chained with prefix", `{"command":"A=ls; B=\"prefix $A\"; bash -c \"$B\""}`, false}, // prefix_\\ ls won't match
+		// Inline symbol table — unsafe value (resolved, then rule-matched).
+		{"inline unsafe", `{"command":"X='rm file'; bash -c \"$X\""}`, false},
+		{"inline chained unsafe", `{"command":"X='ls; rm file'; bash -c \"$X\""}`, false},
+		// Multiple assignments are resolved in execution order.
+		{"multiple assignments", `{"command":"X=ls; X=cat; bash -c \"$X\""}`, true},
+		// Conditional assignment — rejected (complex context).
+		{"conditional override", `{"command":"X=ls; true || X=rm; bash -c \"$X\""}`, false},
+		{"if body assignment", `{"command":"if true; then X=ls; fi; bash -c \"$X\""}`, false},
+		// Inline non-literal value — can't resolve.
+		{"inline non-literal", `{"command":"X=$(echo ls); bash -c \"$X\""}`, false},
+		// Inherited environment is not a statically verified input.
+		{"env var safe", `{"command":"bash -c \"$BASHC_TEST_VAR\""}`, false},
+		// Unset variable — rejected.
+		{"unset var", `{"command":"bash -c \"$BASHC_DEFINITELY_UNSET\""}`, false},
+		// Inline override of env var — symbol table value used (not stale env).
+		{"inline overrides env unsafe", `{"command":"BASHC_TEST_VAR='rm file'; bash -c \"$BASHC_TEST_VAR\""}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+			if got != tt.want {
+				t.Errorf("matchAutoApprove(Bash, %s) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestShellInterceptorBypassGuard tests bypass scenarios that the ordered
+// symbol table and compound-statement tracking must reject.
+func TestShellInterceptorBypassGuard(t *testing.T) {
+	// Seed the env with a "safe" value that an attacker might override inline.
+	t.Setenv("SAFE_CMD", "ls")
+
+	rules := parseAutoApproveRules([]string{"Bash:ls"})
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		// Export with dangerous literal — symbol table resolves to the
+		// actual inline value, which fails rule matching.
+		{"export dangerous", `{"command":"export X='rm file'; bash -c \"$X\""}`, false},
+		// Export with safe literal — resolved and approved.
+		{"export safe", `{"command":"export X='ls'; bash -c \"$X\""}`, true},
+		// Conditional assignment makes the value ambiguous — rejected
+		// even though the unconditional value is safe.
+		{"conditional makes ambiguous", `{"command":"SAFE_CMD=ls; false || SAFE_CMD='rm file'; bash -c \"$SAFE_CMD\""}`, false},
+		// Inline override of env var — symbol table has the inline value.
+		{"inline override env", `{"command":"SAFE_CMD='rm file'; bash -c \"$SAFE_CMD\""}`, false},
+		// A loop iterator is a shell assignment but not a CallExpr.Assign.
+		// It must not fall through to the inherited, safe-looking environment.
+		{"loop iterator override", `{"command":"for SAFE_CMD in 'rm file'; do bash -c \"$SAFE_CMD\"; done"}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+			if got != tt.want {
+				t.Errorf("bypass guard: matchAutoApprove(Bash, %s) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
