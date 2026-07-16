@@ -261,11 +261,16 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 					ag.EngageRateLimit(until)
 				})
 			}
-			// Inject auth-failure callback into opencode backends. No
-			// automated relogin for v1 (per-provider auth); just log.
+			// Inject account-state callbacks into opencode backends. Auth has
+			// no automated relogin for v1 (it is per-provider), while usage
+			// limits engage the same agent gate and notification hooks as the
+			// API and Claude Code paths.
 			if ob, ok := be.(*opencode.Backend); ok {
 				ob.SetOnAuthFailure(func(detail string) {
 					log.NewComponentLogger("agent:"+agentID).Warnf("opencode auth failure: %s", detail)
+				})
+				ob.SetOnRateLimited(func(until time.Time) {
+					ag.EngageRateLimit(until)
 				})
 			}
 			// Deliver Codex config/runtime warnings to the user's chat as
@@ -665,5 +670,3 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	log.NewComponentLogger("agent:"+acfg.ID).Infof("exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())
 	return registry
 }
-
-

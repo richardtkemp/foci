@@ -157,13 +157,13 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 // share a Server.
 type Backend struct {
 	cfg            map[string]any
-	agentID        string                 // acquired Server is keyed by this
-	server         *Server                // shared with sibling Backends on this agent
-	startOpts      delegator.StartOptions // saved at Start for restart/inspection
-	systemPrompt   string                 // resolved system prompt, supplied via POST body "system" field
-	model          string                 // configured model, supplied via POST body "model" field ("" = opencode config default)
+	agentID        string                                                                       // acquired Server is keyed by this
+	server         *Server                                                                      // shared with sibling Backends on this agent
+	startOpts      delegator.StartOptions                                                       // saved at Start for restart/inspection
+	systemPrompt   string                                                                       // resolved system prompt, supplied via POST body "system" field
+	model          string                                                                       // configured model, supplied via POST body "model" field ("" = opencode config default)
 	resolveModelFn func(ctx context.Context, binaryPath, workDir, model string) (string, error) // defaults to resolveModel; overridable in tests
-	readyCh        chan struct{}          // closed when POST /session returns
+	readyCh        chan struct{}                                                                // closed when POST /session returns
 	pendingPerms   map[string]*pendingPermission
 	permMu         sync.Mutex
 	outstanding    *delegator.OutstandingRegistry
@@ -203,10 +203,10 @@ type Backend struct {
 	lastModel     string
 	lastProvider  string // paired with lastModel; required by /summarize compaction
 	lastUsage     *TokenUsage
-	ctxLimitCache int             // cached context window from /config/providers (GetContextWindow)
-	ctxLimitModel string          // model the cached limit belongs to; re-query on model change
-	seenToolCalls map[string]bool // reset in beginTurn; dedupes OnToolStart
-	seenTextParts map[string]bool // reset in beginTurn; dedupes OnText
+	ctxLimitCache int               // cached context window from /config/providers (GetContextWindow)
+	ctxLimitModel string            // model the cached limit belongs to; re-query on model change
+	seenToolCalls map[string]bool   // reset in beginTurn; dedupes OnToolStart
+	seenTextParts map[string]bool   // reset in beginTurn; dedupes OnText
 	partTypes     map[string]string // reset in beginTurn; partID→Type for message.part.delta routing
 
 	// Steer buffer (plan §6 divergence). opencode has no mid-turn
@@ -224,9 +224,9 @@ type Backend struct {
 	// aborting gates the drain; abortIdlesSeen counts burst idles;
 	// abortTimer is the backstop; abortDrainTimeout is the backstop delay
 	// (default 500ms, overridable for tests). Guarded by turnMu.
-	aborting         bool
-	abortIdlesSeen   int
-	abortTimer       *time.Timer
+	aborting          bool
+	abortIdlesSeen    int
+	abortTimer        *time.Timer
 	abortDrainTimeout time.Duration
 
 	// Callbacks — set before Start, read-only after. Each is referenced
@@ -238,6 +238,7 @@ type Backend struct {
 	onCompactionStart func()
 	onCompactionDone  func(preTokens int)
 	onAuthFailure     func(detail string)
+	onRateLimited     func(until time.Time)
 
 	// Auto-approve rules — compiled from StartOptions.AutoApproveRules.
 	// When non-empty, incoming permission.asked events are checked against
@@ -340,6 +341,13 @@ func (b *Backend) SetOnSubagentStatus(fn func(detail string)) {
 // SSE events. authfail.go provides the Server-level fanout + relogin gate.
 func (b *Backend) SetOnAuthFailure(fn func(detail string)) {
 	b.onAuthFailure = fn
+}
+
+// SetOnRateLimited stores the callback fired when OpenCode reports a rejected
+// usage/rate limit through session.status. The callback receives the parsed
+// reset instant so the agent can engage its shared rate-limit gate.
+func (b *Backend) SetOnRateLimited(fn func(until time.Time)) {
+	b.onRateLimited = fn
 }
 
 // Turn-lifecycle methods (AttachSessionEvents, beginTurn, cancelTurn,
