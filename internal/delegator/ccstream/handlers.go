@@ -25,6 +25,16 @@ func prefixedModel(prefix, model string) string {
 	if model == "" {
 		return ""
 	}
+	// Never prefix the synthetic sentinel: a provider-prefixed "<synthetic>" is
+	// meaningless, and — critically — it defeats every downstream exact-match
+	// guard (turn_delegated.go's session-model poison filter, SessionModel's
+	// fallback, modelinfo.IsSynthetic's zero-cost skip). A prefixed sentinel
+	// recorded as the session model relaunches CC with `--model <synthetic>`,
+	// which errors into another synthetic result — the self-perpetuating brick
+	// the 2026-07-13 keepalive incident documents. Keep the sentinel bare.
+	if model == syntheticModel {
+		return model
+	}
 	return prefix + "/" + model
 }
 
