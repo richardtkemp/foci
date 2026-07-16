@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/timeutil"
 )
 
 func costTestIndex(t *testing.T) *session.SessionIndex {
@@ -143,6 +144,45 @@ func TestParseCostArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// --- Time predicate tests ---
+
+// TestTimePredicate_RollingVsCalendar pins the two durWindow flavours:
+// plain durations ("24h") are ROLLING windows measured back from now, while
+// day-count forms ("3", "week") are calendar-aligned to start-of-day.
+// Regression: the alignment branch used to trigger on any window >= 24h,
+// silently redefining "24h" as "since local midnight" — at 00:15 that is a
+// 15-minute window, so TestCostCommand24h failed the first time CI ran after
+// midnight (2026-07-17) and would under-count for any pre-noon /cost 24h.
+func TestTimePredicate_RollingVsCalendar(t *testing.T) {
+	now := timeutil.Now()
+
+	args, err := parseCostArgs("24h")
+	if err != nil {
+		t.Fatalf("parseCostArgs(24h): %v", err)
+	}
+	pred := args.timePredicate()
+	if !pred(now.Add(-23 * time.Hour)) {
+		t.Error("24h rolling window must include an entry 23h ago, wherever midnight falls")
+	}
+	if pred(now.Add(-25 * time.Hour)) {
+		t.Error("24h rolling window must exclude an entry 25h ago")
+	}
+
+	args3, err := parseCostArgs("3")
+	if err != nil {
+		t.Fatalf("parseCostArgs(3): %v", err)
+	}
+	pred3 := args3.timePredicate()
+	startOfWindow := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).
+		AddDate(0, 0, -2) // "3" = today + the two previous calendar days
+	if !pred3(startOfWindow.Add(time.Hour)) {
+		t.Error("3-day calendar window must include 1h after its start-of-day boundary")
+	}
+	if pred3(startOfWindow.Add(-time.Hour)) {
+		t.Error("3-day calendar window must exclude 1h before its start-of-day boundary")
 	}
 }
 
