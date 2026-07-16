@@ -12,7 +12,6 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
 	"os/exec"
 	"strings"
 	"sync"
@@ -67,7 +66,7 @@ type Backend struct {
 	// JSON-RPC request/response correlation
 	rpcMu      sync.Mutex
 	rpcSeq     int64
-	pendingRPC map[int64]chan json.RawMessage
+	pendingRPC map[int64]chan rpcReply
 
 	// Session-scoped delivery callbacks
 	sessionEvents atomic.Pointer[delegator.SessionEvents]

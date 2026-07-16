@@ -26,7 +26,7 @@ func setupMockBackend(t *testing.T, handler func(method string, params json.RawM
 	t.Helper()
 	b := &Backend{}
 	b.lg = log.NewComponentLogger("test")
-	b.pendingRPC = make(map[int64]chan json.RawMessage)
+	b.pendingRPC = make(map[int64]chan rpcReply)
 	b.running = true
 
 	pr, pw := io.Pipe()
@@ -71,7 +71,7 @@ func setupMockBackend(t *testing.T, handler func(method string, params json.RawM
 				t.Errorf("mock app-server: no pending channel for id %d", id)
 				continue
 			}
-			ch <- result
+			ch <- rpcReply{result: result}
 		}
 	}()
 

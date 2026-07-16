@@ -33,6 +33,15 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+// rpcReply is what sendAndWait receives on a pending-RPC channel: the result
+// payload on success, or a non-nil err carrying the server's JSON-RPC error
+// (previously discarded, so every server-side error masqueraded as "process
+// exited").
+type rpcReply struct {
+	result json.RawMessage
+	err    error
+}
+
 // --- Wire envelope (for parsing incoming lines) ---
 
 // wireEnvelope is used to discriminate incoming messages: requests have
