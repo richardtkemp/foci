@@ -1091,6 +1091,36 @@ func (m *DelegatedManager) idleReaper(ctx context.Context) {
 //
 // systemPrompt is passed via --system-prompt; empty uses CC's default.
 func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+	req := delegator.BatchRequest{
+		Prompt:       prompt,
+		SystemPrompt: systemPrompt,
+		WorkDir:      m.StartOpts.WorkDir,
+		AgentID:      m.StartOpts.AgentID,
+	}
+
+	// Dispatch to the agent's own backend when it supports batch runs
+	// (same unstarted-instance probe as BackendCanBranch), so the one-shot
+	// runs on the same auth/billing/model family as the agent itself.
+	if m.NewBackend != nil {
+		if be, err := m.NewBackend(); err == nil {
+			if br, ok := be.(delegator.BatchRunner); ok {
+				m.logger().Infof("RunOnce: batch via %T (workdir=%s, system_prompt=%d bytes)",
+					be, req.WorkDir, len(systemPrompt))
+				result, err := br.RunBatch(ctx, req)
+				if err != nil {
+					return "", err
+				}
+				m.logger().Infof("RunOnce: complete (%d bytes)", len(result))
+				return result, nil
+			}
+		}
+	}
+
+	// Legacy fallback for backends without a BatchRunner (cctmux): the
+	// historical direct `claude --print` shape. Honours the same
+	// claude_binary override that ccstream uses, so integration tests
+	// pointing foci at bin/cc-stub also intercept RunOnce invocations
+	// (nudge extraction, memory consolidation, first-run onboarding).
 	args := []string{
 		"--print",
 		"--dangerously-skip-permissions",
@@ -1100,11 +1130,6 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 	if systemPrompt != "" {
 		args = append(args, "--system-prompt", systemPrompt)
 	}
-
-	// Honour the same claude_binary override that ccstream uses, so
-	// integration tests pointing foci at bin/cc-stub also intercept
-	// RunOnce invocations (nudge extraction, memory consolidation,
-	// first-run onboarding). Empty = "claude" on $PATH.
 	claudeBin := "claude"
 	if m.StartOpts.ClaudeBinary != "" {
 		claudeBin = m.StartOpts.ClaudeBinary
@@ -1117,7 +1142,7 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	m.logger().Infof("RunOnce: starting %s --print (workdir=%s, system_prompt=%d bytes)",
+	m.logger().Infof("RunOnce: legacy fallback %s --print (workdir=%s, system_prompt=%d bytes)",
 		claudeBin, m.StartOpts.WorkDir, len(systemPrompt))
 
 	if err := cmd.Run(); err != nil {
