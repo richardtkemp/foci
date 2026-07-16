@@ -188,7 +188,9 @@ func LastCommand() *Command {
 	}
 }
 
-// CostCommand returns a /cost command showing aggregated costs.
+// CostCommand returns a /cost command showing aggregated costs. Arguments
+// are a flexible mix of duration, scope, and breakdown — parsed by
+// parseCostArgs into orthogonal filters.
 func CostCommand() *Command {
 	readEntries := func(cc CommandContext) ([]log.APIEntry, error) {
 		// Prefer the durable SQLite db: api.jsonl is reset on every service
@@ -206,70 +208,44 @@ func CostCommand() *Command {
 		return entries, nil
 	}
 
-	cmd := &Command{
+	return &Command{
 		Name:        "cost",
 		Description: "API cost summary",
 		Category:    "observability",
-		Subcommands: []Subcommand{
-			{
-				Name:        "session",
-				Description: "This session's cost so far (add `breakdown` for by-type)",
-				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-					entries, err := readEntries(cc)
-					if err != nil {
-						return Response{Text: err.Error()}, nil
-					}
-					return Response{Text: costSession(entries, req.SessionKey, cc.SessionIndex, breakdownRequested(req.Args))}, nil
-				},
-			},
-			{
-				Name:        "today",
-				Description: "Today's costs by session (add `breakdown` for by-type)",
-				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-					entries, err := readEntries(cc)
-					if err != nil {
-						return Response{Text: err.Error()}, nil
-					}
-					return Response{Text: costToday(entries, cc.SessionIndex, breakdownRequested(req.Args))}, nil
-				},
-			},
-			{
-				Name:        "24h",
-				Description: "Last 24 hours with category breakdown (add `breakdown` for by-type)",
-				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-					entries, err := readEntries(cc)
-					if err != nil {
-						return Response{Text: err.Error()}, nil
-					}
-					return Response{Text: cost24h(entries, cc.SessionIndex, breakdownRequested(req.Args))}, nil
-				},
-			},
-			{
-				Name:        "week",
-				Description: "7-day summary with daily breakdown (add `breakdown` for by-type)",
-				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-					entries, err := readEntries(cc)
-					if err != nil {
-						return Response{Text: err.Error()}, nil
-					}
-					return Response{Text: costWeek(entries, cc.SessionIndex, breakdownRequested(req.Args))}, nil
-				},
-			},
-		},
-		// /cost <days> [breakdown] — numeric arg handled by DefaultExecute.
-		DefaultExecute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			args, err := parseCostArgs(req.Args)
+			if err != nil {
+				return Response{Text: costUsage()}, nil
+			}
 			entries, err := readEntries(cc)
 			if err != nil {
 				return Response{Text: err.Error()}, nil
 			}
-			if strings.TrimSpace(req.Args) == "" {
-				return Response{Text: costUsage()}, nil
+
+			// Apply time filter.
+			timePred := args.timePredicate()
+			entries = filterEntries(entries, func(e log.APIEntry) bool {
+				return timePred(e.Timestamp)
+			})
+
+			// Apply scope filter (intersection of all scopes).
+			scopePred, scopeLabel := scopePredicate(args.scopes, req.SessionKey, cc.SessionIndex)
+			entries = filterEntries(entries, func(e log.APIEntry) bool {
+				return scopePred(e.Session)
+			})
+
+			return Response{Text: costRender(entries, args, scopeLabel, req.SessionKey, cc.SessionIndex)}, nil
+		},
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "session", Data: "session"},
+				{Label: "today", Data: "today"},
+				{Label: "24h", Data: "24h"},
+				{Label: "week", Data: "week"},
+				{Label: "breakdown", Data: "breakdown"},
 			}
-			return Response{Text: costDays(entries, req.Args, cc.SessionIndex)}, nil
 		},
 	}
-	cmd.buildSubcommandDispatch()
-	return cmd
 }
 
 type SystemSection struct {
