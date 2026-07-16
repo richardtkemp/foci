@@ -380,9 +380,14 @@ func TestExtractViaRunOnce(t *testing.T) {
 	if runner.gotPrompt != expectedPrompt {
 		t.Errorf("expected extraction prompt, got %q", runner.gotPrompt[:50])
 	}
-	// Verify empty system prompt for extraction.
-	if runner.gotSysPrompt != "" {
-		t.Errorf("expected empty system prompt, got %q", runner.gotSysPrompt)
+	// Verify the character files ARE the system prompt — the CLI's default
+	// system prompt must be replaced, or the model extracts rules from the
+	// harness's own instructions instead of the character files (#1307).
+	if !strings.Contains(runner.gotSysPrompt, "===== CRAFT.md =====") {
+		t.Errorf("system prompt missing CRAFT.md header: %q", runner.gotSysPrompt)
+	}
+	if !strings.Contains(runner.gotSysPrompt, "Check before acting") {
+		t.Errorf("system prompt missing character file content: %q", runner.gotSysPrompt)
 	}
 
 	// Verify rules were saved.
@@ -404,6 +409,35 @@ func TestExtractViaRunOnce(t *testing.T) {
 	}
 	if runner2.gotPrompt != "" {
 		t.Error("expected RunOnce not to be called on unchanged files")
+	}
+}
+
+func TestCharacterSystemPrompt(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CRAFT.md"), []byte("craft rules"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("memory rules"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// SOUL.md is deliberately absent — missing files are skipped, and file
+	// order is preserved for the ones that exist.
+	e := NewExtractor("test", dir, []string{"CRAFT.md", "SOUL.md", "MEMORY.md"}, 0640, true, true)
+	got := e.characterSystemPrompt()
+
+	craftIdx := strings.Index(got, "===== CRAFT.md =====\n\ncraft rules")
+	memIdx := strings.Index(got, "===== MEMORY.md =====\n\nmemory rules")
+	if craftIdx < 0 || memIdx < 0 {
+		t.Fatalf("missing file sections in system prompt: %q", got)
+	}
+	if craftIdx > memIdx {
+		t.Errorf("file order not preserved: %q", got)
+	}
+	if strings.Contains(got, "SOUL.md") {
+		t.Errorf("absent file should be skipped: %q", got)
 	}
 }
 
