@@ -84,6 +84,17 @@ func TestHelpCommand(t *testing.T) {
 	if strings.Contains(result.Text, "/hidden") {
 		t.Errorf("hidden command should not appear in help:\n%s", result.Text)
 	}
+	// Rendered as a markdown pipe table with Command/Description columns.
+	if !strings.Contains(result.Text, "| Command | Description |") {
+		t.Errorf("missing table header in help output:\n%s", result.Text)
+	}
+	if !strings.Contains(result.Text, "| --- | --- |") {
+		t.Errorf("missing table separator in help output:\n%s", result.Text)
+	}
+	// Category header rows carry emoji + bold label, empty description cell.
+	if !strings.Contains(result.Text, "| **📊 Observability** |  |") {
+		t.Errorf("missing observability section row in help output:\n%s", result.Text)
+	}
 }
 
 // TestToolsCommand verifies tools list renders with all registered tools.
