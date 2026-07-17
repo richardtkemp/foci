@@ -225,7 +225,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.AndroidCommand())
 	cmds.Register(command.PairKeyCommand())
 	cmds.Register(command.RepeatCommand())
-	cmds.Register(command.PassCommand())
+	cmds.Register(command.PassCommand(p.acfg.Backend))
 	cmds.Register(command.TodoCommand())
 
 	// /plan — put the coding-agent backend into plan mode. Registered iff the

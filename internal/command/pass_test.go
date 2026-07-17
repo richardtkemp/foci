@@ -15,7 +15,7 @@ import (
 // TestPassCommandMetadata verifies PassCommand returns a command with the
 // correct name, description, and category.
 func TestPassCommandMetadata(t *testing.T) {
-	cmd := PassCommand()
+	cmd := PassCommand("claude-code")
 	if cmd.Name != "pass" {
 		t.Errorf("Name = %q, want %q", cmd.Name, "pass")
 	}
@@ -27,10 +27,33 @@ func TestPassCommandMetadata(t *testing.T) {
 	}
 }
 
+// TestPassCommandDescriptionVariesByBackend verifies the /pass description
+// names the actual configured backend rather than being hardwired to
+// "Claude Code" — it must track backendType per agent (codex, opencode, an
+// unrecognised future backend, and the empty/API-mode case all render
+// distinct, non-empty text).
+func TestPassCommandDescriptionVariesByBackend(t *testing.T) {
+	tests := []struct {
+		backendType string
+		wantSubstr  string
+	}{
+		{"claude-code", "Claude Code"},
+		{"codex", "Codex CLI"},
+		{"opencode", "OpenCode"},
+		{"", "the delegated backend"},
+	}
+	for _, tt := range tests {
+		cmd := PassCommand(tt.backendType)
+		if !strings.Contains(cmd.Description, tt.wantSubstr) {
+			t.Errorf("PassCommand(%q).Description = %q, want substring %q", tt.backendType, cmd.Description, tt.wantSubstr)
+		}
+	}
+}
+
 // TestPassExecuteNoDelegatedManager verifies that /pass returns an error when
 // the agent has no delegated manager (i.e. it's an API-mode agent).
 func TestPassExecuteNoDelegatedManager(t *testing.T) {
-	cmd := PassCommand()
+	cmd := PassCommand("claude-code")
 	cc := CommandContext{
 		Agent: &agent.Agent{},
 	}
@@ -45,7 +68,7 @@ func TestPassExecuteNoDelegatedManager(t *testing.T) {
 
 // TestPassExecuteNoArgs verifies that /pass with empty args returns a usage error.
 func TestPassExecuteNoArgs(t *testing.T) {
-	cmd := PassCommand()
+	cmd := PassCommand("claude-code")
 	cc := CommandContext{
 		Agent: &agent.Agent{
 			DelegatedManager: &agent.DelegatedManager{},
@@ -63,7 +86,7 @@ func TestPassExecuteNoArgs(t *testing.T) {
 // TestPassExecuteNoSession verifies that /pass returns an error when neither
 // the context nor the request contains a session key.
 func TestPassExecuteNoSession(t *testing.T) {
-	cmd := PassCommand()
+	cmd := PassCommand("claude-code")
 	cc := CommandContext{
 		Agent: &agent.Agent{
 			DelegatedManager: &agent.DelegatedManager{},
@@ -81,7 +104,7 @@ func TestPassExecuteNoSession(t *testing.T) {
 // TestPassExecuteGetBackendError verifies that /pass surfaces errors from
 // DelegatedManager.Get when the backend cannot be resolved.
 func TestPassExecuteGetBackendError(t *testing.T) {
-	cmd := PassCommand()
+	cmd := PassCommand("claude-code")
 
 	dm := &agent.DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {
@@ -109,7 +132,7 @@ func TestPassExecuteGetBackendError(t *testing.T) {
 // command via SendCommand and captures output from a CommandOutputCapturer
 // backend, returning the extracted text.
 func TestPassExecuteSuccessWithCapture(t *testing.T) {
-	cmd := PassCommand()
+	cmd := PassCommand("claude-code")
 
 	mb := &mockPassBackend{
 		captureOutput: "❯ /model\n  ⎿  claude-opus-4-6\n─────────────────────────\n❯",
@@ -147,7 +170,7 @@ func TestPassExecuteSuccessWithCapture(t *testing.T) {
 // TestPassExecuteSuccessNoCapturer verifies that when the backend does not
 // implement CommandOutputCapturer, /pass returns the "sent" confirmation.
 func TestPassExecuteSuccessNoCapturer(t *testing.T) {
-	cmd := PassCommand()
+	cmd := PassCommand("claude-code")
 
 	mb := &mockPassBackendNoCapturer{}
 	dm := &agent.DelegatedManager{
@@ -172,15 +195,15 @@ func TestPassExecuteSuccessNoCapturer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(resp.Text, "Sent to CC") {
-		t.Errorf("response = %q, want 'Sent to CC' confirmation", resp.Text)
+	if !strings.Contains(resp.Text, "Sent to Claude Code") {
+		t.Errorf("response = %q, want 'Sent to Claude Code' confirmation", resp.Text)
 	}
 }
 
 // TestPassExecuteSessionKeyFromRequest verifies that the session key is read
 // from the Request when not present in the context.
 func TestPassExecuteSessionKeyFromRequest(t *testing.T) {
-	cmd := PassCommand()
+	cmd := PassCommand("claude-code")
 
 	mb := &mockPassBackendNoCapturer{}
 	dm := &agent.DelegatedManager{
@@ -206,8 +229,8 @@ func TestPassExecuteSessionKeyFromRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(resp.Text, "Sent to CC") {
-		t.Errorf("response = %q, want 'Sent to CC' confirmation", resp.Text)
+	if !strings.Contains(resp.Text, "Sent to Claude Code") {
+		t.Errorf("response = %q, want 'Sent to Claude Code' confirmation", resp.Text)
 	}
 }
 

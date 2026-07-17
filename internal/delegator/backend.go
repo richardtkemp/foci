@@ -435,6 +435,29 @@ func CapabilitiesForBackend(backendType string) Capabilities {
 	}
 }
 
+// HumanReadableBackendName returns the display name for a delegated backend
+// type (the config `[agents].backend` value), e.g. "claude-code-tmux" ->
+// "Claude Code". Used anywhere a command's help text or user-facing message
+// needs to name the backend without hardcoding a specific one — the set of
+// delegated backends isn't fixed (see codex, opencode). Unrecognised/future
+// backend types fall back to the raw string so they still render something
+// sensible; an empty backendType (API-mode agents have no delegated backend)
+// falls back to a generic label.
+func HumanReadableBackendName(backendType string) string {
+	switch backendType {
+	case "claude-code", "claude-code-tmux":
+		return "Claude Code"
+	case "codex":
+		return "Codex CLI"
+	case "opencode":
+		return "OpenCode"
+	case "":
+		return "the delegated backend"
+	default:
+		return backendType
+	}
+}
+
 // BackendBrancher is optionally implemented by backends that can fork their
 // underlying conversation session into a new, independent backend session —
 // i.e. the backend "can branch". A foci branch key backed by such a fork
