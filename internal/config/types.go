@@ -249,12 +249,12 @@ type ModelInfoEntry struct {
 // merged with any per-agent allowed_tools rather than replaced.
 type CCBackendConfig struct {
 	// DefaultAllowedTools is a list of Claude Code permission rules (same
-	// syntax as settings.json permissions.allow — e.g. "Write(/tmp/**)",
+	// syntax as settings.json permissions.allow — e.g. "Edit(/tmp/**)",
 	// "Bash(git:*)") that every CC-backed agent receives via --allowedTools.
 	// Merged with per-agent backend_config.allowed_tools before launch.
 	// Factory default grants /tmp file writes so agents don't prompt for
 	// scratch-file access. Set to an empty list in TOML to disable.
-	DefaultAllowedTools []string `toml:"default_allowed_tools" desc:"Claude Code permission rules (e.g. Write(/tmp/**)) pre-approved for all CC-backed agents. Merged with per-agent backend_config.allowed_tools"`
+	DefaultAllowedTools []string `toml:"default_allowed_tools" desc:"Claude Code permission rules (e.g. Edit(/tmp/**)) pre-approved for all CC-backed agents. Merged with per-agent backend_config.allowed_tools"`
 
 	// ClaudeBinary overrides the path/name of the `claude` executable
 	// foci spawns for CC-backed agents. Default "" → falls back to "claude"
@@ -280,7 +280,7 @@ type CCBackendConfig struct {
 // reflect.Value.IsNil to distinguish "not set" from zero).
 type BackendConfig struct {
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
-	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Write(/tmp/**)). Merged with global [cc_backend] defaults"`
+	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Edit(/tmp/**)). Merged with global [cc_backend] defaults"`
 	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
 	ClaudeBinary      *string           `toml:"claude_binary"      desc:"Deprecated: use binary"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`

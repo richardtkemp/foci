@@ -147,7 +147,6 @@ Global CC defaults — applied to every CC agent, merged with per-agent `allowed
 [cc_backend]
 default_allowed_tools = [
     "Read(/tmp/**)",
-    "Write(/tmp/**)",
     "Edit(/tmp/**)",
     "MultiEdit(/tmp/**)",
 ]

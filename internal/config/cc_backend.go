@@ -9,7 +9,6 @@ import "strings"
 // [cc_backend] default_allowed_tools in foci.toml.
 var DefaultCCAllowedTools = []string{
 	"Read(/tmp/**)",
-	"Write(/tmp/**)",
 	"Edit(/tmp/**)",
 	"MultiEdit(/tmp/**)",
 }
