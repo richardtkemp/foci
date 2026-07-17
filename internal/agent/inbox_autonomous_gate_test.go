@@ -172,3 +172,54 @@ func TestInbox_PlatformTurn_NotBlockedByBackendAwaiting(t *testing.T) {
 	}
 	<-done
 }
+
+// TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption reproduces the
+// production combination behind clutch todo #1350 (2026-07-17): a background
+// subagent's completion signal never arrives, so (a) the backend keeps
+// reporting AwaitingAutonomousRun()==true (SubagentTracker.Pending()>0, only
+// clearing via the 30-minute prune backstop) AND (b) OpenAutonomousTurn had
+// already adopted the CC run CC kept executing as a first-class, NON-delivering
+// foci turn (markInFlight(sk, false) — no live app/platform connection was
+// bound at adoption time), per in_flight.go's
+// `markInFlight(sessionKey, sink.DeliversToPlatform())`.
+//
+// TestInbox_PlatformTurn_NotBlockedByBackendAwaiting above already proves (a)
+// alone does not block a platform turn. This test additionally holds condition
+// (b) — the real second half of what production actually had in flight — to
+// check whether the OTHER gate (inbox.go's sink-delivery / #767 gate:
+// `IsTurnInFlight && !IsInFlightDelivering`) reintroduces exactly the block
+// spec §4 says platform turns must never see. In the live incident the user's
+// own follow-up ("stop your agent, rebase to main, merge to main…") sat
+// undispatched for ~28 minutes — bounded by the tracker's defaultAgentMaxAge
+// prune, not by anything session-specific — which is the behaviour this test
+// pins as wrong.
+func TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	sk := "test/s"
+
+	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
+	be.setAwaiting(true) // (a): SubagentTracker.Pending() > 0, orphaned completion signal
+	mgr := newMockDelegatedManager(t, be)
+	a.DelegatedManager = mgr
+
+	releaseAdoption := a.markInFlight(sk, false) // (b): OpenAutonomousTurn's own adoption, no live sink
+	defer releaseAdoption()
+
+	hook := make(chan struct{}, 1)
+	done := make(chan struct{}, 1)
+	d := &recordingDriver{hookCh: hook, doneCh: done}
+	a.SetTurnObserver(d.recordBatch)
+
+	a.Enqueue(Envelope{SessionKey: sk, Text: "stop your agent, rebase to main, merge to main", Driver: d})
+
+	select {
+	case <-hook:
+		// expected — a genuine user message must not wait on the user's own
+		// background subagent, however that subagent's state is tracked.
+	case <-time.After(time.Second):
+		t.Fatal("platform turn was blocked by an orphaned autonomous adoption (backend awaiting + non-delivering in-flight turn) — spec §4 says a user's own follow-up must never wait on their background subagent; this is the clutch #1350 wedge (up to 30 minutes in production, bounded only by SubagentTracker's prune backstop)")
+	}
+	<-done
+}
