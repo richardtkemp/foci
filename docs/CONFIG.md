@@ -1316,10 +1316,10 @@ Applies to every agent whose `backend` is `claude-code` or `claude-code-tmux`:
 # same rule syntax as settings.json permissions.allow.
 #
 # Factory default (applied when the key is not set in TOML):
-#   ["Read(/tmp/**)", "Write(/tmp/**)", "Edit(/tmp/**)", "MultiEdit(/tmp/**)"]
+#   ["Read(/tmp/**)", "Edit(/tmp/**)", "MultiEdit(/tmp/**)"]
 #
 # Set to an empty list to disable, or override with your own rules:
-# default_allowed_tools = ["Write(/tmp/**)", "Bash(git:*)"]
+# default_allowed_tools = ["Edit(/tmp/**)", "Bash(git:*)"]
 
 # background_task_max_age — how long a spawned background task (an Agent-tool
 # subagent or a run_in_background Bash) stays tracked without a completion
