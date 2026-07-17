@@ -1492,6 +1492,80 @@ func TestOnResult_KeepsTrackedAgentsAcrossTurn(t *testing.T) {
 	}
 }
 
+// TestOnResult_InterruptClearsPendingSubagents is the clutch #1350 fix,
+// pinned directly against the mechanism Dick asked to be treated as ending
+// subagents: "[Request interrupted by user]" — CC's own transcript marker
+// for a /stop landing mid-run, confirmed live 2026-07-17 at the exact second
+// of the interrupt (subagent tool_use toolu_01U6St3LoFWfBSnGTYoVnTf8, spawned
+// 66s earlier as a background task, never referenced again in CC's transcript
+// after the interrupt).
+//
+// Before this fix: a /stop that lands while a background subagent is still
+// running orphans that subagent's SubagentTracker entry — CC's subprocess
+// survives the interrupt (only the current ask aborts), so finalizeExit's
+// existing ClearAll() ("subprocess gone: pending agents can never complete")
+// never runs, and nothing else clears the entry until the 30-minute
+// defaultAgentMaxAge prune. For the whole 30 minutes, AwaitingAutonomousRun()
+// stays true, which (via inbox.go's #767 sink-delivery gate and the spec §4
+// pending-work gate) can hold the session's turn dispatcher — including a
+// genuine user's own next message — hostage to a subagent that will never
+// report back. This is what happened in production: a /stop mid-subagent-
+// spawn wedged the session for ~29 minutes.
+//
+// This test asserts the fix directly at the unit closest to the bug: any
+// non-"success" result (which is what CC emits for an interrupted ask, e.g.
+// subtype "error_during_execution") must clear ALL pending subagents
+// immediately — not eventually — regardless of whether a foci turn was open.
+func TestOnResult_InterruptClearsPendingSubagents(t *testing.T) {
+	t.Parallel()
+
+	var statusMessages []string
+	b := &Backend{}
+	b.SetOnSubagentStatus(func(text string) { statusMessages = append(statusMessages, text) })
+	b.agents.Add("subagent-tool-use-id", "background task, e.g. spawned just before /stop")
+	statusMessages = nil // clear the Add notification
+
+	if !b.AwaitingAutonomousRun() {
+		t.Fatal("sanity: AwaitingAutonomousRun() should be true with a subagent pending, before OnResult runs")
+	}
+	// AwaitingAutonomousRun only reports the grace-window/pending case when
+	// agents.Pending()>0 OR the post-run grace timer is running; a bare Add
+	// with no active turn already trips it via agents.Pending()>0 — assert
+	// that directly too, since it's the more legible signal for this test.
+	if b.agents.Pending() != 1 {
+		t.Fatalf("sanity: Pending() = %d, want 1 before OnResult", b.agents.Pending())
+	}
+
+	applyHandler(b, &testHandler{})
+
+	// Simulate CC's response to a /stop landing mid-run: a non-success result.
+	// CC's own transcript records this moment as literal text
+	// "[Request interrupted by user]"; the wire-level result carries it as
+	// Subtype "error_during_execution" (protocol.go).
+	b.OnResult(&ResultMessage{Subtype: "error_during_execution", IsError: true})
+
+	if b.agents.Pending() != 0 {
+		t.Fatalf("Pending() = %d, want 0 — an interrupted ask must not leave an orphaned subagent blocking the session for up to 30 minutes (clutch #1350)", b.agents.Pending())
+	}
+	if b.AwaitingAutonomousRun() {
+		t.Fatal("AwaitingAutonomousRun() = true after an interrupted result cleared the tracker — the pending-work gate (spec §4) would still hold a fresh user message")
+	}
+	// ClearAll only fires OnStatus when there was something to clear (Add
+	// already fired once, cleared above) — this pins that the clear itself
+	// is observable, not silently no-op'd (e.g. if the gate's condition were
+	// accidentally false and Pending() happened to already be 0 for some
+	// other reason).
+	found := false
+	for _, s := range statusMessages {
+		if s == "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("OnStatus was not notified of the clear (want an empty-detail call somewhere in %v)", statusMessages)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OnResult
 // ---------------------------------------------------------------------------
