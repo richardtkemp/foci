@@ -420,6 +420,24 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	b.logger().Debugf("turn_lifecycle event=result_stash cycle=%d turn_active=%v subtype=%s textlen=%d out_total=%d",
 		cycle, turnActive, msg.Subtype, len(text), result.Usage.OutputTokens)
 
+	// A non-success result (error_during_execution — includes a user /stop
+	// interrupt, per Backend.Interrupt/SendInterrupt; error_max_turns;
+	// error_max_budget_usd; error_max_structured_output_retries) means this
+	// ask cycle was cut short. Any subagent this cycle spawned in the
+	// background is now orphaned exactly like the finalizeExit case just
+	// below (subprocess gone: pending agents can never complete) — except
+	// here the PROCESS survives, only the current ask aborted, so
+	// finalizeExit's ClearAll() never runs. Without this, an interrupted
+	// background subagent's tracker entry sits pending for the full
+	// defaultAgentMaxAge (30m), blocking the session via the sink-delivery
+	// gate (#767) and the pending-work gate (spec §4) the whole time — clutch
+	// #1350, 2026-07-17: a /stop mid-subagent-spawn wedged the session for
+	// ~29 minutes waiting on a task_notification that never arrived because
+	// the subagent it was tracking had already been killed by the interrupt.
+	if msg.Subtype != "" && msg.Subtype != "success" {
+		b.agents.ClearAll()
+	}
+
 	if !turnActive {
 		// Autonomous turn (no foci turn open — e.g. a background-agent or Bash
 		// completion triggers a task-notification run). Its text already
