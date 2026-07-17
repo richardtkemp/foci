@@ -90,3 +90,45 @@ grep 'session reset key=' ~/logs/foci.log | tail -10
 grep 'branch created.*cron' ~/logs/foci.log | tail -10
 grep '<SESSION_KEY>' ~/logs/foci.log | head -20
 ```
+
+## "Session stuck after /stop" — verify the interrupt actually reached CC, and whether it orphaned a subagent
+
+`Agent.CancelSession`/`inb.turnCancel` is NOT the only thing `/stop` does in delegated mode —
+`command.StopCommand` calls `DelegatedManager.StopSession` → `Backend.Interrupt` →
+`writer.SendInterrupt()` FIRST, straight to CC's stream, independent of foci's own turn-cancel
+bookkeeping. Checking only `CancelSession`'s log line (`CancelSession sk=... firing turn cancel`)
+can wrongly conclude "/stop did nothing" when it actually reached CC via this separate path — check
+both.
+
+**Decisive proof an interrupt landed:** CC's OWN transcript (`~/.claude/projects/<workspace-slug>/<resume-id>.jsonl`
+— find the resume-id via `foci debug at <session-key> <RFC3339-or-duration>`) records a synthetic
+`{"type":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}` message at the
+exact moment. This transcript does NOT carry raw stream-json protocol events (`task_notification`,
+`session_state_changed`, etc.) — only conversational turns (user/assistant/tool_use/tool_result) — so
+it can't show a subagent's raw completion signal, but it's the fastest way to prove an interrupt
+actually reached CC (vs. `/stop` just having been a no-op that returned "Stopped." reflexively).
+
+**Check whether it orphaned a background subagent:** grep the same transcript for the subagent's
+`tool_use_id` (from the earlier `tool_use` block where `name=="Agent"`). If a background/async
+subagent's `tool_result` came back near-instantly ("Async agent launched successfully" — the tool
+call resolves at LAUNCH for a background task, not at completion) and that `tool_use_id` never
+appears again anywhere later in the transcript, the interrupt orphaned it — its real completion
+(`task_notification: completed`) never arrived. `internal/delegator/ccstream/handlers.go`'s
+`task_notification` handler only clears `SubagentTracker` on `Status=="completed"` — any other
+terminal status is silently dropped, **no log line at all** — so foci.log alone can't distinguish
+"orphaned" from "still genuinely running." The tracker's defensive `defaultAgentMaxAge` prune (30 min,
+`internal/delegator/agent_tracker.go`) is the only backstop, and it blocks the WHOLE session's turn
+dispatch for its entire duration (`agents.Pending()>0` gates the pending-work gate, spec §4) — grep
+`subagent tracker: pruned` in foci.log for a definitive "this is what was stuck" line, timestamped
+exactly `defaultAgentMaxAge` after the orphaning event.
+
+Fixed 2026-07-17 (clutch #1350) for the common case: `OnResult` now calls `agents.ClearAll()` on any
+non-`"success"` result subtype, mirroring the pre-existing `finalizeExit` precedent ("subprocess gone:
+pending agents can never complete") for the case where only the current ASK aborts (interrupt) while
+the subprocess survives. Does NOT fix a separate gap: `inbox.go`'s sink-delivery gate ("#767") can
+still block a genuine platform/user turn whenever ANY in-flight turn is marked non-delivering
+(`markInFlight(sk, false)`) — independent of the subagent tracker, and NOT scoped to system injects
+the way the spec §4 gate is. Reproduced with `TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption`
+(`internal/agent/inbox_autonomous_gate_test.go`) — still red as of the above fix; needs a design call
+on whether autonomous-adopted non-delivering turns should be exempt from #767, or force-released when
+the tracker prunes.
