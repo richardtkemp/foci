@@ -513,6 +513,35 @@ func TestAll(t *testing.T) {
 	}
 }
 
+// TestAll_DedupesAliases pins the fix that All() must return an aliased
+// command exactly once, not once per registered key. Register maps a
+// command's Name AND every Alias to the same *Command pointer
+// (commands["pair"], commands["pairkey"], commands["pair-key"] all point at
+// PairKeyCommand()) — a naive range over that map yielded it 3 times (proven
+// live before this fix), which /help and the app command palette both render
+// through All(), so a 2-alias command showed its description 3 times running
+// end to end. count == 1 here is the whole regression this test exists for.
+func TestAll_DedupesAliases(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{Name: "pair", Aliases: []string{"pairkey", "pair-key"}})
+	r.Register(&Command{Name: "solo"})
+
+	all := r.All()
+	if len(all) != 2 {
+		t.Fatalf("got %d commands, want 2 (pair + solo, deduped across pair's 3 keys)", len(all))
+	}
+
+	var pairCount int
+	for _, c := range all {
+		if c.Name == "pair" {
+			pairCount++
+		}
+	}
+	if pairCount != 1 {
+		t.Errorf("pair appears %d times in All(), want 1", pairCount)
+	}
+}
+
 // TestDispatchRequiresBackend verifies that a command with RequiresBackend is
 // rejected when no delegated backend is available.
 func TestDispatchRequiresBackend(t *testing.T) {

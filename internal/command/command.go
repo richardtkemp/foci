@@ -279,10 +279,21 @@ func commandNameAndArgsFromText(text string) (string, string) {
 	return strings.ToLower(name), strings.TrimSpace(args)
 }
 
-// All returns all commands sorted by name.
+// All returns every distinct registered command, sorted by name. r.commands
+// maps EVERY dispatch key (a command's Name and each of its Aliases) to the
+// same *Command pointer, so a naive range over the map yields that pointer
+// once per key — a command with two aliases would otherwise appear three
+// times in /help and the app command palette (both of which enumerate via
+// All()). Deduplicated by pointer identity so an aliased command surfaces
+// exactly once, under its canonical Name.
 func (r *Registry) All() []*Command {
+	seen := make(map[*Command]bool, len(r.commands))
 	cmds := make([]*Command, 0, len(r.commands))
 	for _, c := range r.commands {
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
 		cmds = append(cmds, c)
 	}
 	sort.Slice(cmds, func(i, j int) bool {

@@ -189,6 +189,58 @@ type contextUsageCategoryRaw struct {
 	Tokens int    `json:"tokens"`
 }
 
+// usagePayload is the inner response from a get_usage control request — the
+// data behind /usage. CC returns substantially more than this (internal
+// limit-kind codenames for unreleased features, credit/spend details) — we
+// parse only the fields /mana surfaces; unknown fields are silently dropped
+// by encoding/json. See usage_oneshot.go's QueryUsage / UsageInfo (the public,
+// package-level result type this maps into).
+type usagePayload struct {
+	SubscriptionType    string             `json:"subscription_type"`
+	RateLimitsAvailable bool               `json:"rate_limits_available"`
+	RateLimits          usageRateLimits    `json:"rate_limits"`
+	Session             usageSession       `json:"session"`
+	Behaviors           usageBehaviors     `json:"behaviors"`
+}
+
+type usageRateLimits struct {
+	FiveHour usageWindowRaw `json:"five_hour"`
+	SevenDay usageWindowRaw `json:"seven_day"`
+}
+
+// usageWindowRaw is one rate-limit window (five_hour == "session", seven_day
+// == "week" in /usage's own text rendering). Utilization is CC's own 0-100
+// integer percent scale for this endpoint — NOT the 0-1 fraction the passive
+// rate_limit_event stream uses (verified against a live get_usage response:
+// utilization:94 == "94% used").
+type usageWindowRaw struct {
+	Utilization int    `json:"utilization"`
+	ResetsAt    string `json:"resets_at"` // RFC3339
+}
+
+type usageSession struct {
+	TotalCostUSD float64 `json:"total_cost_usd"`
+}
+
+type usageBehaviors struct {
+	Day  usageBehaviorWindow `json:"day"`
+	Week usageBehaviorWindow `json:"week"`
+}
+
+// usageBehaviorWindow is one window ("day" or "week") of /usage's "what's
+// contributing to your limits usage" breakdown.
+type usageBehaviorWindow struct {
+	RequestCount int                 `json:"request_count"`
+	SessionCount int                 `json:"session_count"`
+	Behaviors    []usageBehaviorItem `json:"behaviors"`
+}
+
+type usageBehaviorItem struct {
+	Key   string `json:"key"`
+	Pct   int    `json:"pct"`
+	Count int    `json:"count"`
+}
+
 // ControlCancelRequest cancels a pending CC-originated control request.
 type ControlCancelRequest struct {
 	Type      string `json:"type"` // always "control_cancel_request"
@@ -214,6 +266,15 @@ type InitializeRequest struct {
 // GetContextUsageRequest asks CC for current context window usage.
 type GetContextUsageRequest struct {
 	Subtype string `json:"subtype"` // always "get_context_usage"
+}
+
+// GetUsageRequest asks CC for the account's plan/rate-limit usage (the data
+// behind /usage). Zero API cost — CC fetches it from its own account-usage
+// backend, not the model. See usage_oneshot.go: unlike GetContextUsageRequest
+// (sent to a session's live backend), this is only ever sent over a throwaway
+// one-shot CC process.
+type GetUsageRequest struct {
+	Subtype string `json:"subtype"` // always "get_usage"
 }
 
 // InterruptRequest asks CC to interrupt the current turn.
