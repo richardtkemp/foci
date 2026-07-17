@@ -384,10 +384,38 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 		// ErrTurnInFlight, waits for completion, and retries.
 		return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn, true)
 
-	case delegator.SourceCompact, delegator.SourcePass:
-		// Slash commands. Fire-and-forget. The caller is responsible for
-		// any synchronisation (e.g. compaction.go arms CompactionWaiter
-		// before calling Inject).
+	case delegator.SourceCompact:
+		// The /compact slash command. Fire-and-forget in the sense that no
+		// OnTurnComplete delivers a reply to the user — but the run it starts
+		// must still claim turnActive before CC transitions to "running", or
+		// that transition looks identical to a spontaneous CC-initiated run
+		// and the running-edge autonomous-adoption path (onAutonomousOpen)
+		// adopts it as a first-class turn (#1266). That adoption
+		// unconditionally Registers its own sink on the session router,
+		// clobbering the registration the CALLER's still-in-flight turn owns
+		// (compaction runs synchronously inside that turn's post-turn hook,
+		// see agent.RunCompaction) — so when the caller's own deferred
+		// TurnComplete eventually fires (after compaction finishes), the
+		// router has already been cleared by the adopted run and the event
+		// falls through to the late-delivery fallback, re-sending the
+		// already-delivered pre-compaction reply as a duplicate message.
+		// beginTurn(nil) claims turnActive with no TurnEvents — no
+		// bookkeeping or delivery is needed for compaction's own output —
+		// and the existing nil-turn path in completeTurn/onSessionIdle
+		// clears it normally once CC's compaction idle fires. Skipped when
+		// already in flight: that path exists for CC's own queue to
+		// serialise the slash command behind the active turn, and
+		// beginTurn(nil) would wrongly reset ITS bookkeeping.
+		if inFlight {
+			b.logger().Warnf("Inject(%s): called with turn in flight — slash command will queue behind active turn", inj.Source)
+			return b.sendUserMessage(inj.Text)
+		}
+		b.beginTurn(nil)
+		return b.sendUserMessage(inj.Text)
+
+	case delegator.SourcePass:
+		// Other slash commands (/context, /model, etc). Fire-and-forget:
+		// response (if any) flows through the agent's normal stream events.
 		if inFlight {
 			b.logger().Warnf("Inject(%s): called with turn in flight — slash command will queue behind active turn", inj.Source)
 		}
