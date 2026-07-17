@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"bytes"
+	"context"
 	"sync"
 	"testing"
 
@@ -87,5 +88,50 @@ func TestAutonomousOpen_NotFiredForFociTurn(t *testing.T) {
 
 	if opens != 0 {
 		t.Fatalf("foci turn must not fire onAutonomousOpen; opens=%d", opens)
+	}
+}
+
+// TestAutonomousOpen_NotFiredForCompactInject pins #1266: the fire-and-forget
+// /compact slash command (SourceCompact) must be recognised as foci-initiated,
+// exactly like a real foci turn — its "running" transition must NOT fire
+// onAutonomousOpen. Before the fix, ImmediateInject(SourceCompact) wrote
+// straight to CC via sendUserMessage without ever setting turnActive, so the
+// running edge looked identical to a spontaneous CC-initiated run and got
+// adopted — which clobbers the session router mid-compaction and causes the
+// already-delivered pre-compaction reply to be re-sent as a duplicate message
+// once the (much later) deferred TurnComplete falls through to the
+// late-delivery fallback. See internal/agent/agent.go HandleMessage's
+// deferred TurnComplete + internal/agent/in_flight.go OpenAutonomousTurn.
+func TestAutonomousOpen_NotFiredForCompactInject(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	b.typingFunc = func(bool) {}
+
+	var opens int
+	b.SetOnAutonomousOpen(func() { opens++ })
+
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceCompact,
+		Text:   "/compact summarise",
+	}); err != nil {
+		t.Fatalf("ImmediateInject(SourceCompact): %v", err)
+	}
+
+	// CC opens a run to process the /compact — foci sent it, so this must NOT
+	// be treated as an autonomous (CC-initiated) run.
+	stateEvent(b, "running")
+	if opens != 0 {
+		t.Fatalf("compact inject must not fire onAutonomousOpen; opens=%d", opens)
+	}
+
+	// Compaction completes — must not panic or wedge with a nil turnEvents.
+	stateEvent(b, "idle")
+	if opens != 0 {
+		t.Fatalf("after idle: opens=%d, want 0", opens)
+	}
+	if b.IsTurnInFlight() {
+		t.Fatalf("turn must be cleared after compact's idle, still active")
 	}
 }
