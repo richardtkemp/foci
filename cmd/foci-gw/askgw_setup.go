@@ -53,7 +53,7 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		for i, c := range choices {
 			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
 		}
-		_, err := platform.SendInteractiveMessageWithID(resolve, msgID, text, buttons, func(choice platform.ButtonChoice) string {
+		_, err := platform.SendInteractiveMessageWithID(resolve, msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"

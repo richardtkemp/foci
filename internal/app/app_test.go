@@ -841,7 +841,7 @@ func TestInteractive_ButtonRoundTrip(t *testing.T) {
 	resolve := func() platform.Connection { return conn }
 
 	var chosen string
-	_, err := platform.SendInteractiveMessageWithID(resolve, "req-rt", "Allow Bash?",
+	_, err := platform.SendInteractiveMessageWithID(resolve, "req-rt", "", "Allow Bash?",
 		[]platform.ButtonChoice{{Label: "Allow", Data: "allow"}, {Label: "Deny", Data: "deny"}},
 		func(choice platform.ButtonChoice) string { chosen = choice.Data; return "✅ Approved" }, nil)
 	if err != nil {
@@ -1057,7 +1057,7 @@ func TestInteractive_NextQuestionSuppressesEdit(t *testing.T) {
 	h, c, b, conn := boundConn(t)
 	resolve := func() platform.Connection { return conn }
 
-	_, err := platform.SendInteractiveMessageWithID(resolve, "req-mq", "Q1?",
+	_, err := platform.SendInteractiveMessageWithID(resolve, "req-mq", "", "Q1?",
 		[]platform.ButtonChoice{{Label: "A", Data: "qa:0"}, {Label: "B", Data: "qa:1"}},
 		func(choice platform.ButtonChoice) string {
 			// Simulate presenting the next question: any frame advances seq.

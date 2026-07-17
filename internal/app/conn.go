@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/agent"
@@ -44,6 +45,13 @@ type agentCore interface {
 	TransformMessage(text string) string
 }
 
+// interactiveHeaderState holds pending headers for interactive prompts,
+// protected by a mutex. Pointer-based on appConn so shallow clones share it.
+type interactiveHeaderState struct {
+	mu      sync.Mutex
+	pending map[string]string
+}
+
 type appConn struct {
 	hub      *Hub
 	agentID  string
@@ -51,6 +59,12 @@ type appConn struct {
 	commands *command.Registry
 	cmdCtx   command.CommandContext
 	stt      voice.STT // inbound voice transcription; nil = unsupported
+
+	// Pending interactive headers, set by SetInteractiveHeader and consumed
+	// by SendTextWithButtons. Keyed by prompt ID. Pointer-based so the
+	// shallow clone in BotForSession shares the same map (the clone is
+	// the same connection, just session-bound).
+	headerState *interactiveHeaderState
 
 	// Platform lifecycle callbacks, wired by the gateway via
 	// SetLifecycleCallback (mirror of telegram.Bot's hooks). OnUserMessage
@@ -377,6 +391,18 @@ func (c *appConn) emitMedia(b *convBinding, meta *blobMeta, caption string) {
 
 // --- platform.ButtonSender (slice 2: interactive prompts) ---
 
+// SetInteractiveHeader stores a header to be included in the next Interactive
+// frame sent for this prompt ID. Implements platform.InteractiveHeaderSetter.
+// Called by SendInteractiveMessageWithID before SendTextWithButtons.
+func (c *appConn) SetInteractiveHeader(promptID, header string) {
+	if c.headerState == nil {
+		return
+	}
+	c.headerState.mu.Lock()
+	c.headerState.pending[promptID] = header
+	c.headerState.mu.Unlock()
+}
+
 // SendTextWithButtons emits an `interactive` frame for the in-flight turn's
 // conversation. foci pre-encodes each button's Data as "<promptID>:<index>"
 // (platform.SendInteractiveMessageWithID), so we carry it verbatim and the app
@@ -393,11 +419,20 @@ func (c *appConn) SendTextWithButtons(text string, buttons []platform.ButtonChoi
 	// Drop toggle buttons here; the app shows only the terminal choices.
 	buttons = dropToggleButtons(buttons)
 	promptID := promptIDFromButtons(buttons)
+	// Consume any pending header set by SetInteractiveHeader.
+	var header string
+	if c.headerState != nil {
+		c.headerState.mu.Lock()
+		header = c.headerState.pending[promptID]
+		delete(c.headerState.pending, promptID)
+		c.headerState.mu.Unlock()
+	}
 	c.hub.registerPrompt(promptID, b)
 	b.send(fap.Interactive{
 		ConversationID: b.convID,
 		PromptID:       promptID,
 		Text:           text,
+		Header:         header,
 		Choices:        toChoices(buttons),
 		ExpiresAt:      time.Now().Add(defaultPromptTTL).Format(time.RFC3339),
 	})

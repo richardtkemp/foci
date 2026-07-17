@@ -417,7 +417,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// message later if CC cancels the request before the user
 			// responds. The resolver (not the conn grabbed above) is stored for
 			// those later edits so they survive a reconnect.
-			_, _ = platform.SendInteractiveMessageWithID(resolve, requestID, text, buttons, func(choice platform.ButtonChoice) string {
+			_, _ = platform.SendInteractiveMessageWithID(resolve, requestID, summary, text, buttons, func(choice platform.ButtonChoice) string {
 				log.NewComponentLogger("agent:"+agentID).Debugf("permission button pressed: sk=%s reqID=%s choice=%q", sessionKey, reqID, choice.Data)
 				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data); err != nil {
 					log.NewComponentLogger("agent:"+agentID).Errorf("SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, reqID, choice.Data, err)

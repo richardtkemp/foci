@@ -624,7 +624,7 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 	if !ok || ag == nil {
 		return nil
 	}
-	conn := &appConn{hub: h, agentID: params.AgentID, agentRef: ag}
+	conn := &appConn{hub: h, agentID: params.AgentID, agentRef: ag, headerState: &interactiveHeaderState{pending: make(map[string]string)}}
 	if reg, ok := params.Commands.(*command.Registry); ok {
 		conn.commands = reg
 	}

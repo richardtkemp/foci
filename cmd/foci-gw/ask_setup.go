@@ -19,7 +19,7 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 		for i, c := range choices {
 			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
 		}
-		platformMsgID, err := platform.SendInteractiveMessageWithID(connResolver(connMgr, sessionKey, agentID), msgID, text, buttons, func(choice platform.ButtonChoice) string {
+		platformMsgID, err := platform.SendInteractiveMessageWithID(connResolver(connMgr, sessionKey, agentID), msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"
