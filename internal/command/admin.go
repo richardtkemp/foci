@@ -211,27 +211,29 @@ func HelpCommand(registry *Registry) *Command {
 				}
 			}
 
-			var sb strings.Builder
+			cols := []display.Column{
+				{Header: "Command"},
+				{Header: "Description"},
+			}
+			var rows [][]string
 			for _, cat := range categoryOrder {
 				cmds := groups[cat]
 				if len(cmds) == 0 {
 					continue
 				}
 				meta := categoryMeta[cat]
-				fmt.Fprintf(&sb, "%s %s\n", meta.emoji, meta.label)
+				rows = append(rows, []string{fmt.Sprintf("**%s %s**", meta.emoji, meta.label), ""})
 				for _, cmd := range cmds {
-					fmt.Fprintf(&sb, "  /%s — %s\n", cmd.Name, cmd.Description)
+					rows = append(rows, []string{"/" + cmd.Name, cmd.Description})
 				}
-				sb.WriteByte('\n')
 			}
 			if len(other) > 0 {
-				sb.WriteString("📦 Other\n")
+				rows = append(rows, []string{"**📦 Other**", ""})
 				for _, cmd := range other {
-					fmt.Fprintf(&sb, "  /%s — %s\n", cmd.Name, cmd.Description)
+					rows = append(rows, []string{"/" + cmd.Name, cmd.Description})
 				}
-				sb.WriteByte('\n')
 			}
-			return Response{Text: strings.TrimRight(sb.String(), "\n")}, nil
+			return Response{Text: display.MarkdownTable(cols, rows)}, nil
 		},
 	}
 }
