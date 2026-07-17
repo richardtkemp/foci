@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/agent/turnevent"
 	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/delegator"
@@ -22,6 +23,7 @@ import (
 	"foci/internal/route"
 	"foci/internal/secrets"
 	"foci/internal/tools"
+	"foci/internal/turn"
 	"foci/internal/voice"
 	"foci/shared/prompts"
 )
@@ -160,6 +162,19 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	ag.ResolveLateConn = func(sessionKey string) platform.Connection {
 		conn, _ := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
 		return conn
+	}
+	// Durable last-resort fallback for an adopted autonomous turn when
+	// ResolveLateConn's normal (ownership-respecting) cascade comes up with
+	// nothing at all: reach past chat-ownership routing straight to the
+	// session's app registration, if it has one. Every send through it persists
+	// durably before checking who's live (clutch #1350 follow-up) — see
+	// app.DurableConnFor and Agent.DurableTurnSink's doc comments.
+	ag.DurableTurnSink = func(sessionKey string) turnevent.Sink {
+		conn := app.DurableConnFor(sessionKey)
+		if conn == nil {
+			return nil
+		}
+		return turn.NewSessionSink(conn, sessionKey, "autonomous")
 	}
 	// Resolve a session's messaging platform (telegram/app/discord) for the
 	// per-session ## Platform block from the durable chat claim, so the prompt

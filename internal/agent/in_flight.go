@@ -282,8 +282,11 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 
 // autonomousTurnSink builds the per-turn delivery sink for an adopted autonomous
 // turn: the app's streaming appSink (text.delta + activity) when the connection
-// is a streaming Driver, a whole-message SessionSink for Telegram/Discord, or a
-// NopSink when no connection is bound (the turn still runs and accounts).
+// is a streaming Driver, a whole-message SessionSink for Telegram/Discord when a
+// connection resolved some other way, or — when ResolveLateConn found nothing at
+// all — DurableTurnSink's last-resort fallback (clutch #1350 follow-up), which
+// still persists the turn's output against the session's platform binding even
+// with no connection currently up, instead of the total-discard NopSink.
 func (a *Agent) autonomousTurnSink(conn platform.Connection, sessionKey string) (turnevent.Sink, func()) {
 	if driver, ok := conn.(Driver); ok {
 		if sink, cleanup := driver.NewTurnSink(Envelope{SessionKey: sessionKey}); sink != nil {
@@ -292,6 +295,11 @@ func (a *Agent) autonomousTurnSink(conn platform.Connection, sessionKey string) 
 	}
 	if conn != nil {
 		return turn.NewSessionSink(conn, sessionKey, "autonomous"), nil
+	}
+	if a.DurableTurnSink != nil {
+		if sink := a.DurableTurnSink(sessionKey); sink != nil {
+			return sink, nil
+		}
 	}
 	return turnevent.NopSink{}, nil
 }

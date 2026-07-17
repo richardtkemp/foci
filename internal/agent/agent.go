@@ -234,6 +234,26 @@ type Agent struct {
 	// again with no router rebuild). Wired from cmd/foci-gw via route.ConnFor;
 	// nil (tests / no connection manager) → the fallback discards-and-warns.
 	ResolveLateConn func(sk string) platform.Connection
+	// DurableTurnSink resolves a sink that persists a turn's events durably
+	// against the session's platform binding (e.g. the app's conv_id via
+	// chat_metadata) WITHOUT requiring a live connection right now — mirrors
+	// internal/app/hub.go's convBinding.send, which appends every frame to its
+	// durable buffer/store unconditionally, before it even looks at which
+	// clients are currently connected, so a client that reconnects later
+	// replays what it missed. autonomousTurnSink consults this as the
+	// fallback BEFORE NopSink when ResolveLateConn's normal, ownership-
+	// respecting cascade (route.ConnFor) resolves nothing at all — for the
+	// app platform this is narrower than "no live socket" (a live socket
+	// isn't required for the app's own delivery path either — see
+	// app.DurableConnFor's doc comment for why); it fires on genuine
+	// resolution failures such as the session's agent having no app
+	// registration, not routine reconnects (clutch #1350 follow-up:
+	// previously any such adoption discarded the turn's entire output with
+	// zero durable record, unlike every other delivery path in the app).
+	// Returns nil if the session has no platform binding to persist against
+	// at all (e.g. a pure-API session with no chat identity). Nil (tests /
+	// not wired) → autonomousTurnSink falls all the way to NopSink, as today.
+	DurableTurnSink func(sk string) turnevent.Sink
 }
 
 func (a *Agent) streaming() bool {
