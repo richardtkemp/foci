@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/session"
 )
 
@@ -391,4 +392,73 @@ func TestRecordTurnActivity_BranchOwnKeyOnly(t *testing.T) {
 func TestRecordTurnActivity_NoSessionIndex(t *testing.T) {
 	a := &Agent{AgentID: "test-agent"}
 	a.recordTurnActivity(recordTurnActivityTS(testBaseA, "user")) // must not panic
+}
+
+// fakeDurableSink is a minimal turnevent.Sink that records every event it
+// receives, standing in for "a sink that persists durably" without pulling
+// in the real app/hub.go conv-binding machinery. Its presence in a test is
+// the observable proxy for "this got stored somewhere a reconnecting client
+// could replay it from" — the real implementation would be backed by
+// app_frames.db via the session's chat_metadata conv_id binding, but what
+// this test cares about is that autonomousTurnSink REACHES for a durable
+// fallback at all when no live connection exists, not the storage engine
+// behind it.
+type fakeDurableSink struct {
+	events []turnevent.Event
+}
+
+func (f *fakeDurableSink) Emit(_ context.Context, ev turnevent.Event) { f.events = append(f.events, ev) }
+func (f *fakeDurableSink) DeliversToPlatform() bool                   { return false }
+
+// TestAutonomousTurnSink_NoConnection_FallsBackToDurableSink is the clutch
+// #1350 follow-up (2026-07-17): a running-edge autonomous adoption landing
+// when ResolveLateConn's normal cascade (route.ConnFor) resolves no
+// connection at all must not simply discard everything the adopted turn
+// produces. (For the app platform specifically this gap is narrower than "no
+// live socket" — the app's own delivery already tolerates a dead socket fine,
+// since it binds to a durable per-conversation object, not a live one; see
+// app.DurableConnFor's doc comment. It's genuine resolution failures — e.g.
+// the session's agent has no app registration at all — that reach here.)
+// internal/app/hub.go's convBinding.send already establishes the right
+// pattern elsewhere in the app: persist every frame to a durable store
+// UNCONDITIONALLY, before even checking which clients are currently
+// connected — so persistence and live-push are separate concerns, and a
+// client that connects later replays what it missed. autonomousTurnSink had
+// no equivalent: it only built ANY sink when conn != nil, and fell straight
+// to the total-discard turnevent.NopSink otherwise — "nothing resolved"
+// degraded to "gone", not "durable but not pushed live".
+//
+// This test specifies the fix: when ResolveLateConn finds no connection but
+// the Agent has a DurableTurnSink resolver wired (i.e. this session DOES have
+// a platform/chat binding to persist against), autonomousTurnSink must use
+// THAT sink rather than falling to NopSink.
+func TestAutonomousTurnSink_NoConnection_FallsBackToDurableSink(t *testing.T) {
+	durable := &fakeDurableSink{}
+	a := &Agent{
+		DurableTurnSink: func(sk string) turnevent.Sink {
+			if sk != testBaseA {
+				t.Fatalf("DurableTurnSink called with sk=%q, want %q", sk, testBaseA)
+			}
+			return durable
+		},
+	}
+
+	sink, cleanup := a.autonomousTurnSink(nil, testBaseA)
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	if _, isNop := sink.(turnevent.NopSink); isNop {
+		t.Fatal("autonomousTurnSink(nil conn) fell to NopSink despite DurableTurnSink being wired — " +
+			"the adopted turn's output will be discarded with no durable record instead of persisted " +
+			"for replay when a client reconnects (clutch #1350 follow-up)")
+	}
+
+	want := turnevent.TextBlock{Text: "the subagent's answer, durably persisted"}
+	sink.Emit(context.Background(), want)
+
+	if len(durable.events) != 1 || durable.events[0] != want {
+		t.Fatalf("durable sink recorded %v, want exactly [%v] — autonomousTurnSink must route Emit "+
+			"through the durable fallback, not just resolve it and then discard anyway", durable.events, want)
+	}
 }

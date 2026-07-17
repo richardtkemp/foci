@@ -5,6 +5,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"foci/internal/agent/turnevent"
+	"foci/internal/turn"
 )
 
 // TestWaitInjectGate_HoldsUntilClear covers the Phase 3 extracted gate helper
@@ -177,22 +180,27 @@ func TestInbox_PlatformTurn_NotBlockedByBackendAwaiting(t *testing.T) {
 // production combination behind clutch todo #1350 (2026-07-17): a background
 // subagent's completion signal never arrives, so (a) the backend keeps
 // reporting AwaitingAutonomousRun()==true (SubagentTracker.Pending()>0, only
-// clearing via the 30-minute prune backstop) AND (b) OpenAutonomousTurn had
-// already adopted the CC run CC kept executing as a first-class, NON-delivering
-// foci turn (markInFlight(sk, false) — no live app/platform connection was
-// bound at adoption time), per in_flight.go's
-// `markInFlight(sessionKey, sink.DeliversToPlatform())`.
+// clearing via the 30-minute prune backstop) AND (b) OpenAutonomousTurn has
+// adopted the CC run as a first-class foci turn.
+//
+// Condition (b)'s delivering status is derived from the REAL
+// autonomousTurnSink resolution rather than a hand-picked bool: with
+// ResolveLateConn unwired (nothing resolves) and DurableTurnSink wired to a
+// sink shaped like production's turn.NewSessionSink (DeliversToPlatform() ==
+// true unconditionally — see that method's doc comment), autonomousTurnSink
+// takes the exact fallback branch the #1350 follow-up fix added, and
+// markInFlight sees `true`. Before that fix landed, this same setup produced
+// `false` and reproduced the block (up to 30 minutes in production, bounded
+// only by SubagentTracker's prune backstop) — asserting against a
+// hand-picked `false` today would just be pinning a state the real adoption
+// path can no longer reach for any agent with a platform registered.
 //
 // TestInbox_PlatformTurn_NotBlockedByBackendAwaiting above already proves (a)
-// alone does not block a platform turn. This test additionally holds condition
-// (b) — the real second half of what production actually had in flight — to
-// check whether the OTHER gate (inbox.go's sink-delivery / #767 gate:
-// `IsTurnInFlight && !IsInFlightDelivering`) reintroduces exactly the block
-// spec §4 says platform turns must never see. In the live incident the user's
-// own follow-up ("stop your agent, rebase to main, merge to main…") sat
-// undispatched for ~28 minutes — bounded by the tracker's defaultAgentMaxAge
-// prune, not by anything session-specific — which is the behaviour this test
-// pins as wrong.
+// alone does not block a platform turn. This test drives autonomousTurnSink
+// for condition (b) to check the OTHER gate (inbox.go's sink-delivery / #767
+// gate: `IsTurnInFlight && !IsInFlightDelivering`) against the actual
+// delivering status the fixed code produces, per spec §4: a user's own
+// follow-up must never wait on their own background subagent.
 func TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
@@ -204,7 +212,15 @@ func TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption(t *testing.T)
 	mgr := newMockDelegatedManager(t, be)
 	a.DelegatedManager = mgr
 
-	releaseAdoption := a.markInFlight(sk, false) // (b): OpenAutonomousTurn's own adoption, no live sink
+	// (b): real autonomousTurnSink resolution. ResolveLateConn is left unset
+	// (nothing resolves), so this exercises the DurableTurnSink fallback
+	// branch — the same one production's OpenAutonomousTurn goes through.
+	a.DurableTurnSink = func(string) turnevent.Sink { return turn.NewSessionSink(nil, sk, "autonomous") }
+	sink, cleanup := a.autonomousTurnSink(nil, sk)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	releaseAdoption := a.markInFlight(sk, sink.DeliversToPlatform())
 	defer releaseAdoption()
 
 	hook := make(chan struct{}, 1)
@@ -219,7 +235,60 @@ func TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption(t *testing.T)
 		// expected — a genuine user message must not wait on the user's own
 		// background subagent, however that subagent's state is tracked.
 	case <-time.After(time.Second):
-		t.Fatal("platform turn was blocked by an orphaned autonomous adoption (backend awaiting + non-delivering in-flight turn) — spec §4 says a user's own follow-up must never wait on their background subagent; this is the clutch #1350 wedge (up to 30 minutes in production, bounded only by SubagentTracker's prune backstop)")
+		t.Fatal("platform turn was blocked by an orphaned autonomous adoption (backend awaiting + adopted turn in flight) — spec §4 says a user's own follow-up must never wait on their background subagent; this is the clutch #1350 wedge (up to 30 minutes in production, bounded only by SubagentTracker's prune backstop)")
 	}
 	<-done
+}
+
+// TestInbox_Inject_HeldWhileOrphanedAutonomousAdoption is the mirror of
+// TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption above: same
+// combined state (backend awaiting an autonomous run AND an adopted
+// non-delivering turn in flight), but a SYSTEM inject (reflection/keepalive)
+// instead of a platform message.
+//
+// Unlike the platform case, this one is SUPPOSED to hold — that's the
+// correct, intentional behaviour TestInbox_Inject_HeldWhileAutonomousDelivering
+// and TestInbox_Inject_HeldWhileBackendAwaitingPendingWork already pin
+// individually. This test asserts it still holds when BOTH conditions are
+// true at once (the exact state the platform-turn test above finds broken),
+// to make the asymmetry explicit: the bug in #1350 is specifically that
+// platform turns get caught by a gate that exists for, and should only ever
+// hold, system-sourced work — running a reflection/keepalive in this state
+// would rebind the shared session sink to the inject's own NopSink and
+// silently drop the adopted run's output (#1068/#1070). So this side of the
+// gate must NOT change when #767 is fixed for platform turns; only the
+// platform-turn side should move.
+func TestInbox_Inject_HeldWhileOrphanedAutonomousAdoption(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	sk := "test/s"
+
+	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
+	be.setAwaiting(true) // (a): SubagentTracker.Pending() > 0, orphaned completion signal
+	mgr := newMockDelegatedManager(t, be)
+	a.DelegatedManager = mgr
+
+	releaseAdoption := a.markInFlight(sk, false) // (b): OpenAutonomousTurn's own adoption, no live sink
+
+	var ran atomic.Int32
+	a.Enqueue(Envelope{SessionKey: sk, Inject: &InjectMeta{
+		Trigger: "reflection",
+		Run:     func() { ran.Add(1) },
+	}})
+
+	if waitFor(300*time.Millisecond, func() bool { return ran.Load() == 1 }) {
+		releaseAdoption()
+		t.Fatal("reflection inject ran during an orphaned autonomous adoption (backend awaiting + non-delivering in-flight turn) — it will rebind the shared session sink to NopSink and drop the adopted run's text (#1068/#1070)")
+	}
+
+	// Clear both conditions — mirrors what the #1350 OnResult fix does for
+	// (a) immediately on an interrupted/errored result, and what the adopted
+	// turn's own CompletionChan close does for (b).
+	be.setAwaiting(false)
+	releaseAdoption()
+
+	if !waitFor(time.Second, func() bool { return ran.Load() == 1 }) {
+		t.Fatalf("reflection inject did not run after both conditions cleared; ran=%d", ran.Load())
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/app/fap"
+	"foci/internal/platform"
 )
 
 // activeHub is the hub of the configured app provider, set at Init. The HTTP
@@ -143,6 +144,31 @@ func SetWaiting(callerSessionKey, targetAgent string) {
 	if b := h.bindingForSession(callerSessionKey); b != nil {
 		b.setWaitingDetail(targetAgent)
 	}
+}
+
+// DurableConnFor returns a connection handle for sessionKey's app registration,
+// deliberately bypassing the normal chat-ownership routing (route.ConnFor /
+// aggregatingConnMgr's "claimed platform" rule): it's the last-resort durable
+// fallback for a session whose usual connection resolution came up empty, not
+// the primary delivery path. Every send through the returned connection routes
+// through convBinding.send, which persists the frame durably before it even
+// checks who's currently connected — so output survives even with nobody live,
+// and a client that connects later can replay it. Returns nil (a true nil
+// interface, not a typed-nil pointer — see the h.PrimaryBot nil check below) when
+// the app provider isn't running or the agent has no app registration at all,
+// so callers can cleanly fall through to their own last resort.
+func DurableConnFor(sessionKey string) platform.Connection {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return nil
+	}
+	c := h.BotForSession(sessionKey)
+	if c == nil {
+		return nil
+	}
+	return c
 }
 
 // ResolvedActivity returns the resolved unified activity (kind + detail) for the
