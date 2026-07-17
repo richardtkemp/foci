@@ -200,6 +200,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.LastCommand())
 	cmds.Register(command.CostCommand())
 	cmds.Register(command.ContextCommand())
+	cmds.Register(command.ManaCommand())
 	cmds.Register(command.ResetCommand())
 	cmds.Register(command.ModelCommand())
 	cmds.Register(command.EffortCommand())
