@@ -11,9 +11,9 @@ import (
 )
 
 // PassCommand creates a /pass command that forwards raw text directly to the
-// delegated backend (Claude Code). This bypasses foci's command dispatch,
-// allowing users to run CC slash commands that would otherwise be intercepted
-// by foci (e.g., /context, /model, /compact).
+// configured delegated backend. This bypasses foci's command dispatch,
+// allowing users to run backend-native slash commands that would otherwise
+// be intercepted by foci (e.g., /context, /model, /compact).
 //
 // For tmux-based backends, /pass captures the pane output after the command
 // stabilises and returns it. For stream backends, local command output arrives
@@ -26,14 +26,19 @@ import (
 //
 //	/pass /model opus
 //	/pass /help
-func PassCommand() *Command {
+//
+// backendType is the configured [agents].backend value (e.g. "claude-code",
+// "codex"), used only to name the backend in user-facing text — it does not
+// change dispatch behaviour, which still goes through DelegatedManager.
+func PassCommand(backendType string) *Command {
+	backendName := delegator.HumanReadableBackendName(backendType)
 	return &Command{
 		Name:        "pass",
-		Description: "Forward a command directly to Claude Code",
+		Description: fmt.Sprintf("Forward a command directly to %s", backendName),
 		Category:    "operations",
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			if cc.Agent.DelegatedManager == nil {
-				return Response{}, fmt.Errorf("/pass is only available for delegated backends (Claude Code)")
+				return Response{}, fmt.Errorf("/pass is only available for agents with a delegated backend (%s)", backendName)
 			}
 
 			if req.Args == "" {
@@ -73,7 +78,7 @@ func PassCommand() *Command {
 				}
 			}
 
-			return Response{Text: fmt.Sprintf("↗ Sent to CC: `%s`", req.Args)}, nil
+			return Response{Text: fmt.Sprintf("↗ Sent to %s: `%s`", backendName, req.Args)}, nil
 		},
 	}
 }

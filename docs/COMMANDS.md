@@ -161,7 +161,7 @@ Trigger manual context compaction.
 - Any other non-empty unmatched args (e.g. `/compact foo`) run compaction directly via the default handler
 
 ### `/pass <command>`
-Forward a raw command directly to the delegated backend (Claude Code), bypassing foci's command dispatch. Useful for running CC slash commands that foci would otherwise intercept (e.g. `/pass /context`, `/pass /model opus`, `/pass /help`). Only available for agents with a delegated backend — returns an error for API-mode agents. For tmux backends, waits for output stabilisation and returns the captured pane content. For stream backends, returns immediately (CC's response arrives asynchronously via the stdout reader).
+Forward a raw command directly to the configured delegated backend (shown by name, e.g. "Claude Code" or "Codex CLI"), bypassing foci's command dispatch. Useful for running backend-native slash commands that foci would otherwise intercept (e.g. `/pass /context`, `/pass /model opus`, `/pass /help`). Only available for agents with a delegated backend — returns an error for API-mode agents. For tmux backends, waits for output stabilisation and returns the captured pane content. For stream backends, returns immediately (the backend's response arrives asynchronously via the stdout reader).
 
 ### `/login`
 Manually trigger Claude Code re-authentication. Drives a `claude /login` TUI in tmux, relays the login URL back to the chat that ran `/login`, then treats your next message as the login code — message processing is paused throughout. Normally this flow fires automatically on a 401 auth failure; this command exposes the same trigger on demand. ccstream backend only (reports unavailable on cctmux/API); returns "already in progress" if a re-login is already running.
