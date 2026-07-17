@@ -84,10 +84,20 @@ var (
 // onExpire (may be nil) is invoked if the prompt auto-expires unanswered (see
 // CleanupExpiredInteractive) — callers use it to resolve the upstream waiter,
 // e.g. send a denial to CC, so an unanswered prompt doesn't orphan the turn.
-func SendInteractiveMessageWithID(resolve ConnResolver, id string, text string, buttons []ButtonChoice, cb ButtonCallback, onExpire func()) (string, error) {
+//
+// header is an optional title shown on connections that support it (app). It
+// is ignored by Telegram/Discord. Pass "" when not applicable.
+func SendInteractiveMessageWithID(resolve ConnResolver, id, header, text string, buttons []ButtonChoice, cb ButtonCallback, onExpire func()) (string, error) {
 	conn := resolve()
 	if conn == nil {
 		return "", fmt.Errorf("no connection to present interactive message %q", id)
+	}
+	// Set the header before sending (app-only; Telegram/Discord don't
+	// implement InteractiveHeaderSetter and ignore it).
+	if header != "" {
+		if hs, ok := conn.(InteractiveHeaderSetter); ok {
+			hs.SetInteractiveHeader(id, header)
+		}
 	}
 	bs, ok := conn.(ButtonSender)
 	if !ok {

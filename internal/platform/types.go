@@ -337,6 +337,14 @@ type ButtonSender interface {
 	EditMessageWithButtons(msgID string, text string, buttons []ButtonChoice, callbackPrefix string) error
 }
 
+// InteractiveHeaderSetter is optionally implemented by connections that
+// support a header/title on interactive prompts (currently app-only).
+// The header is set BEFORE the SendTextWithButtons call and consumed
+// during frame creation. Telegram/Discord ignore it.
+type InteractiveHeaderSetter interface {
+	SetInteractiveHeader(promptID, header string)
+}
+
 // SessionNotifier is optionally implemented by Connection types that can deliver
 // a notification to a SPECIFIC session's chat rather than the connection's default
 // chat. It exists for multi-user transports (Telegram primary bot serving several

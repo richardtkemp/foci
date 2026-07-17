@@ -22,7 +22,7 @@ func TestSendInteractiveMessageWithButtonSender(t *testing.T) {
 	}
 
 	var cbCalled bool
-	_, err := SendInteractiveMessageWithID(staticResolver(bs), "test-id", "Choose:", buttons, func(choice ButtonChoice) string {
+	_, err := SendInteractiveMessageWithID(staticResolver(bs), "test-id", "", "Choose:", buttons, func(choice ButtonChoice) string {
 		cbCalled = true
 		return "You chose: " + choice.Label
 	}, nil)
@@ -83,7 +83,7 @@ func TestSendInteractiveMessageFallback(t *testing.T) {
 		{Label: "Cherry"},
 	}
 
-	_, err := SendInteractiveMessageWithID(staticResolver(mc), "test-id", "Pick a fruit:", buttons, nil, nil)
+	_, err := SendInteractiveMessageWithID(staticResolver(mc), "test-id", "", "Pick a fruit:", buttons, nil, nil)
 	if err != nil {
 		t.Fatalf("SendInteractiveMessage: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestSendInteractiveMessageButtonSenderError(t *testing.T) {
 	bs := &mockButtonSender{err: fmt.Errorf("send failed")}
 	buttons := []ButtonChoice{{Label: "A", Data: "a"}}
 
-	_, err := SendInteractiveMessageWithID(staticResolver(bs), "test-id", "text", buttons, func(ButtonChoice) string { return "" }, nil)
+	_, err := SendInteractiveMessageWithID(staticResolver(bs), "test-id", "", "text", buttons, func(ButtonChoice) string { return "" }, nil)
 	if err == nil {
 		t.Fatal("expected error from SendInteractiveMessage")
 	}
@@ -138,7 +138,7 @@ func TestHandleInteractiveCallbackOneShot(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "99"}
 	buttons := []ButtonChoice{{Label: "OK", Data: "ok"}}
-	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "test-id", "text", buttons, func(ButtonChoice) string { return "done" }, nil)
+	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "test-id", "", "text", buttons, func(ButtonChoice) string { return "done" }, nil)
 
 	data := bs.buttons[0].Data
 	_, _, ok := HandleInteractiveCallback(data)
@@ -169,7 +169,7 @@ func TestHandleInteractiveCallbackToggle(t *testing.T) {
 	}
 
 	var resolved bool
-	_, err := SendInteractiveMessageWithID(staticResolver(bs), "req-t", "Permit?", buttons, func(ButtonChoice) string {
+	_, err := SendInteractiveMessageWithID(staticResolver(bs), "req-t", "", "Permit?", buttons, func(ButtonChoice) string {
 		resolved = true
 		return "✅ done"
 	}, nil)
@@ -246,7 +246,7 @@ func TestHandleInteractiveCallbackOutOfBoundsIndex(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "1"}
 	buttons := []ButtonChoice{{Label: "Only", Data: "only"}}
-	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "test-id", "text", buttons, func(ButtonChoice) string { return "" }, nil)
+	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "test-id", "", "text", buttons, func(ButtonChoice) string { return "" }, nil)
 
 	promptID := strings.SplitN(bs.buttons[0].Data, ":", 2)[0]
 
@@ -264,7 +264,7 @@ func TestHandleInteractiveCallbackNilCallback(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "1"}
 	buttons := []ButtonChoice{{Label: "Go", Data: "go"}}
-	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "test-id", "text", buttons, nil, nil)
+	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "test-id", "", "text", buttons, nil, nil)
 
 	data := bs.buttons[0].Data
 	editText, _, ok := HandleInteractiveCallback(data)
@@ -368,7 +368,7 @@ func TestConcurrentSendAndHandle(t *testing.T) {
 			bs := &mockButtonSender{msgID: strconv.Itoa(n)}
 			buttons := []ButtonChoice{{Label: fmt.Sprintf("btn-%d", n), Data: fmt.Sprintf("d-%d", n)}}
 			id := fmt.Sprintf("conc-%d", n)
-			_, err := SendInteractiveMessageWithID(staticResolver(bs), id, "msg", buttons, func(choice ButtonChoice) string {
+			_, err := SendInteractiveMessageWithID(staticResolver(bs), id, "", "msg", buttons, func(choice ButtonChoice) string {
 				return "ok-" + choice.Data
 			}, nil)
 			if err != nil {
@@ -436,7 +436,7 @@ func TestSendInteractiveMessageWithIDUsesGivenID(t *testing.T) {
 	bs := &mockButtonSender{msgID: "42"}
 	buttons := []ButtonChoice{{Label: "Allow", Data: "allow"}}
 
-	_, err := SendInteractiveMessageWithID(staticResolver(bs), "req-abc-123", "Permit?", buttons, func(ButtonChoice) string { return "" }, nil)
+	_, err := SendInteractiveMessageWithID(staticResolver(bs), "req-abc-123", "", "Permit?", buttons, func(ButtonChoice) string { return "" }, nil)
 	if err != nil {
 		t.Fatalf("SendInteractiveMessageWithID: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestCancelInteractiveMessageEditsAndRemoves(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "777"}
 	buttons := []ButtonChoice{{Label: "Allow", Data: "allow"}}
-	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "req-X", "Permit?", buttons, func(ButtonChoice) string { return "" }, nil)
+	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "req-X", "", "Permit?", buttons, func(ButtonChoice) string { return "" }, nil)
 
 	if err := CancelInteractiveMessage("req-X", "❌ cancelled"); err != nil {
 		t.Fatalf("CancelInteractiveMessage: %v", err)
@@ -491,7 +491,7 @@ func TestCancelInteractiveMessageRaceWithCallback(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "55"}
 	buttons := []ButtonChoice{{Label: "OK", Data: "ok"}}
-	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "req-race", "Pick?", buttons, func(ButtonChoice) string { return "done" }, nil)
+	_, _ = SendInteractiveMessageWithID(staticResolver(bs), "req-race", "", "Pick?", buttons, func(ButtonChoice) string { return "done" }, nil)
 
 	// User clicks first — HandleInteractiveCallback removes the entry.
 	if _, _, ok := HandleInteractiveCallback("req-race:0"); !ok {

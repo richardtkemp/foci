@@ -434,6 +434,11 @@ type Interactive struct {
 	Text           string   `json:"text"`
 	Choices        []Choice `json:"choices,omitempty"`
 	ExpiresAt      string   `json:"expiresAt,omitempty"`
+	// Header is an optional title shown above the prompt text in the
+	// ask dialog and banner. For batched asks, use Question.header per
+	// question instead. For single/permission prompts, this carries the
+	// short description (e.g. "Write to file").
+	Header string `json:"header,omitempty"`
 	// Questions, when non-empty, makes this a BATCHED prompt: the app renders all
 	// questions as one form and replies with one InteractiveResponse carrying an
 	// answer per question in Answers (positional). Only sent to clients that
