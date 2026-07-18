@@ -22,9 +22,18 @@ echo "Running pre-commit lint (staged Go changes detected)..."
 make lint
 echo "✅ pre-commit lint passed"
 
-# Nudge only, never blocks: docs/WIRING.md is the architecture map (writing-code skill —
-# "when you rewire anything, update it in the same change"). Staged Go changes with no
-# WIRING.md touch is the cheap signal to double check, not proof anything's actually stale.
+# Nudge only (never blocks) — but the CHECK it prompts is mandatory, not optional.
+# docs/WIRING.md is the connection map: "How the pieces connect. Read this before
+# touching the code." ANY wiring change — a new/renamed/removed callback, flow,
+# package, or timer, OR a new call site added to a list the doc enumerates — requires
+# opening WIRING.md to verify whether an update or addition is needed. Staged Go
+# changes with no WIRING.md touch is the signal to do that check; leaving it untouched
+# is correct ONLY after you've opened it and confirmed nothing it documents changed.
 if [ -f docs/WIRING.md ] && ! git diff --cached --name-only | grep -qx 'docs/WIRING.md'; then
-	echo "⚠️  docs/WIRING.md wasn't touched by this commit — if this rewired anything (new callback/flow/package/timer), update it and amend this commit."
+	echo "⚠️  docs/WIRING.md ('How the pieces connect') wasn't touched by this commit."
+	echo "    Do NOT ignore this: ANY wiring change — new/renamed/removed callback, flow,"
+	echo "    package, timer, or a call site added to a list the doc enumerates — requires"
+	echo "    CHECKING WIRING.md to verify whether an update or addition is required."
+	echo "    Skip the update only after opening it and confirming nothing it maps changed;"
+	echo "    if it does, update WIRING.md and amend this commit."
 fi
