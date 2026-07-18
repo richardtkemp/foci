@@ -31,6 +31,7 @@ import (
 	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/platform"
+	"foci/internal/preload"
 	"foci/internal/provision"
 	"foci/internal/shellenv"
 	"foci/internal/skills"
@@ -134,6 +135,11 @@ Subcommands:
 	// Load the operator's shell env into this process before any backend
 	// spawns, so tool shells inherit it via os.Environ().
 	shellenv.Apply(cfg.ShellEnvFile)
+
+	// Inject the nosgid LD_PRELOAD shim (same inheritance mechanism) so shell
+	// tools and delegated backends get POSIX "drop the setgid bit" chmod
+	// behaviour instead of the EPERM the RestrictSUIDSGID=yes hardening raises.
+	preload.Apply()
 
 	// ========== Workspace directories ==========
 	// Ensure each agent's workspace directories exist before any init

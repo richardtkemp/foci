@@ -30,7 +30,7 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 
 .PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check clean setup-hooks
 
-all: build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging
+all: build cli foci-call foci-cc-hook nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -50,6 +50,20 @@ foci-call:
 foci-cc-hook:
 	@mkdir -p bin
 	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-cc-hook ./cmd/foci-cc-hook
+
+# nosgid.so — LD_PRELOAD shim that strips setuid/setgid bits from chmod-family
+# calls (see deploy/nosgid/nosgid.c). Injected into every shell tool and backend
+# via internal/preload so agent-run builds don't hit EPERM under the
+# RestrictSUIDSGID=yes hardening. Skipped (with a warning) when no C compiler is
+# present — internal/preload.Apply() no-ops cleanly if the .so is absent.
+NOSGID_CC ?= $(or $(CC),cc)
+nosgid:
+	@mkdir -p bin
+	@if command -v $(NOSGID_CC) >/dev/null 2>&1; then \
+	    $(NOSGID_CC) -shared -fPIC -O2 -Wall -o bin/nosgid.so deploy/nosgid/nosgid.c -ldl && echo "  built bin/nosgid.so"; \
+	else \
+	    echo "  WARNING: no C compiler ($(NOSGID_CC)); skipping nosgid.so — setgid chmod fixup will be inactive"; \
+	fi
 
 # find-disconnected-tests is the test-side counterpart to deadcode: it
 # reports Test* functions whose bodies do not (transitively, via test
@@ -316,7 +330,7 @@ WIZARD_ARGS += --api-key $(FOCI_API_KEY)
 endif
 endif
 
-.PHONY: deploy-build install-bin install-unit install-polkit provision install-shared install-docs wizard check-config stage-changelog reload restart enable setup update
+.PHONY: deploy-build install-bin install-lib install-unit install-polkit provision install-shared install-docs wizard check-config stage-changelog reload restart enable setup update
 
 # go build must not run as root under `sudo make`; drop to the service user
 # (mirrors what update.sh did). Real /usr/bin/sudo here — root's PATH has no
@@ -326,6 +340,18 @@ deploy-build:
 
 install-bin:
 	@for b in $(DEPLOY_BINS); do echo "  install $$b"; install -m 755 bin/$$b $(INSTALL_DIR)/$$b; done
+
+# Install the nosgid LD_PRELOAD shim into the service user's hidden .lib dir.
+# World-readable so foci-gw can preload it; owned by the service user for tidiness.
+# No-op (with a note) when the shim wasn't built (no C compiler at build time).
+install-lib:
+	@if [ -f bin/nosgid.so ]; then \
+	    install -d -o $(FOCI_USER) -g $(FOCI_USER) -m 755 $(FOCI_HOME)/.lib; \
+	    install -o $(FOCI_USER) -g $(FOCI_USER) -m 755 bin/nosgid.so $(FOCI_HOME)/.lib/nosgid.so; \
+	    echo "  install nosgid.so -> $(FOCI_HOME)/.lib/nosgid.so"; \
+	else \
+	    echo "  skip nosgid.so (not built)"; \
+	fi
 
 install-unit:
 	getent group $(SECRETS_GROUP) >/dev/null 2>&1 || groupadd $(SECRETS_GROUP)
@@ -438,6 +464,7 @@ setup:
 	$(MAKE) provision
 	$(MAKE) install-shared
 	$(MAKE) install-bin
+	$(MAKE) install-lib
 	$(MAKE) install-unit
 	$(MAKE) install-polkit
 	$(MAKE) wizard
@@ -450,6 +477,7 @@ update:
 	$(MAKE) deploy-build
 	$(MAKE) check-config
 	$(MAKE) install-bin
+	$(MAKE) install-lib
 	$(MAKE) install-docs
 	$(MAKE) install-unit
 	$(MAKE) stage-changelog
