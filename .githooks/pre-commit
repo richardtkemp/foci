@@ -21,3 +21,10 @@ fi
 echo "Running pre-commit lint (staged Go changes detected)..."
 make lint
 echo "✅ pre-commit lint passed"
+
+# Nudge only, never blocks: docs/WIRING.md is the architecture map (writing-code skill —
+# "when you rewire anything, update it in the same change"). Staged Go changes with no
+# WIRING.md touch is the cheap signal to double check, not proof anything's actually stale.
+if [ -f docs/WIRING.md ] && ! git diff --cached --name-only | grep -qx 'docs/WIRING.md'; then
+	echo "⚠️  docs/WIRING.md wasn't touched by this commit — if this rewired anything (new callback/flow/package/timer), update it and amend this commit."
+fi
