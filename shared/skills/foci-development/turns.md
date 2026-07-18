@@ -23,7 +23,7 @@ Asynchronous: the tool posts the question(s) and returns immediately — the age
 
 The app answers asks via **interactive-form frames**, not typed text — so typed-text ask-capture must be gated OFF for the app platform. **Both** capture paths gate on `platformName != platformApp` (`platformApp = "app"`):
 
-- `internal/agent/run_turn.go:127` (post-turn capture)
-- `internal/agent/inbox.go:430` (inbound capture)
+- `internal/agent/run_turn.go:150` (post-turn capture)
+- `internal/agent/inbox.go:482` (inbound capture)
 
 Telegram/Discord capture typed answers; the app does not. A nil/unknown platform never matches `platformApp`, so the default (capture) is preserved when the source can't be resolved.

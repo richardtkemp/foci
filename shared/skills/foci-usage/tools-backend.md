@@ -18,10 +18,12 @@ foci_todo list --status open
 
 How this works: foci generates a shell-functions file and points `BASH_ENV` at it, so Bash sources it on startup and every `foci_*` function is defined. Each function packages its arguments as JSON and sends them over a Unix socket (`FOCI_SOCK`) to foci, which runs the real tool and returns the result. A startup parity check guarantees every flag in a tool's `--help` actually has a working handler — so the help text is authoritative.
 
-**The foci tools available to you as shell functions are exactly these ten:**
+**The foci tools always available to you as shell functions:**
 `foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_todo`, `foci_remind`, `foci_memory_search`, `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`.
 
-There is **no `foci_spawn` or `foci_tmux`** on this backend — those are API-loop-only. For sub-calls use CC's native `Agent` tool; for persistent terminals use `Bash` with `tmux` (see the `coding-agent` skill). foci's file/shell/browser tools are likewise absent — use CC's `Read`/`Write`/`Edit`/`Bash`/browser instead.
+**`foci_spawn` is also available, conditionally:** the tool table exposes `spawn` to delegated agents whose backend can fork a session (`Agent.DelegatedManager.BackendCanBranch()` — true for `claude-code`/ccstream, `codex`, and `opencode`; **false for `claude-code-tmux`/cctmux**, which has no fork/branch support). If your backend is streaming CC (the common case), you have it — same four modes (`raw`/`character`/`clone`/`explore`) as the API-loop path; `clone` routes through `Agent.ForkSession`. On cctmux, `spawn` isn't registered at all, so prefer CC's native `Agent` tool for sub-calls there.
+
+There is **no `foci_tmux`** on this backend — that stays API-loop-only. For persistent terminals use `Bash` with `tmux` (see the `coding-agent` skill). foci's file/shell/browser tools are likewise absent — use CC's `Read`/`Write`/`Edit`/`Bash`/browser instead.
 
 Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any tool this session.**
 
@@ -40,6 +42,10 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 ### `foci_send_to_session` — message another session
 - Positional `session_key`: full session key (`scout/c5970082313`, `scout/iresearch`), agent-qualified session name or chat alias (`scout/research`), or bare agent name (`scout` → its default session).
 - `--message` (or stdin). `--reply-to caller|session` (default **caller** — the reply comes back to *you*, not the target's user chat; use `session` to surface it to their chat).
+
+### `foci_spawn` — sub-calls to a model (backend must support forking; see above)
+- Four context modes: `raw` (no system context, cheapest isolated call), `character` (full system + character files — a copy of you), `clone` (async branch of the current session via `Agent.ForkSession`; result arrives later as a message — the default), `explore` (sync, read-only, cheap model, restricted toolset for investigation).
+- Selects a model group with `--powerful|--fast|--cheap`. Same semantics as the API-loop `spawn` tool (see tools-api.md) — the shell-function form just wraps the same JSON schema.
 
 ### `foci_todo` — persistent todo list
 - Subcommand-style: `add|list|list-all|search|get|complete|drop|edit|remove` (`create` is an alias for `add`).
