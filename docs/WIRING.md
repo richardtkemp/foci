@@ -15,6 +15,11 @@ config.Load(path)                                        ← validates values; l
                                                             file into this process before any backend spawn, so
                                                             tool shells (non-interactive, non-login — only
                                                             $BASH_ENV is sourced) inherit PATH/GOPATH etc.
+→ preload.Apply()                                        ← internal/preload; sets LD_PRELOAD to ~/.lib/nosgid.so
+                                                            (same inherit-via-os.Environ() mechanism) so shell
+                                                            tools + backends silently drop setgid chmod bits
+                                                            instead of hitting EPERM under RestrictSUIDSGID=yes.
+                                                            No-op if the shim isn't installed.
 
 → initLogging(cfg)                                       ← logging_init.go
   → log.Init, log.InitAPIDB, log.InitConversation, log rotation
