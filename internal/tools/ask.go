@@ -148,12 +148,38 @@ type askState struct {
 	store        *session.SessionIndex // nil = no persistence
 	agentID      string
 	onResolve    func(sessionKey string) // fired when a session's pending ask clears; nil = disabled
+	cacheWarm    func(sessionKey string) bool // reports whether a session's prompt cache is live; nil = always warm (never suppress)
 }
 
 // WithOnResolve sets a callback fired (async) when a session's pending ask
 // resolves, so the caller can redeliver injections deferred while it was pending.
 func WithOnResolve(fn func(sessionKey string)) AskOption {
 	return func(s *askState) { s.onResolve = fn }
+}
+
+// WithCacheWarm wires a predicate reporting whether a session's prompt cache is
+// currently live. It gates the trivial "ask cancelled" system injection: when the
+// cache is cold, delivering that one-line notice would spin up a turn that rebuilds
+// the entire cached prefix at full input-token cost — a large spend for a message
+// the agent (whose asking turn already ended) does not need. Nil = never suppress
+// (every cancel is injected), preserving the pre-gate behaviour. (#1302)
+func WithCacheWarm(fn func(sessionKey string) bool) AskOption {
+	return func(s *askState) { s.cacheWarm = fn }
+}
+
+// deliverCancel injects the "ask cancelled" system notice into the session —
+// unless the session's prompt cache is cold, in which case it is suppressed:
+// delivering it would run a turn that rebuilds the whole cached prefix, and the
+// asking turn has already ended, so the agent needs nothing from it. (#1302)
+func (a *askState) deliverCancel(sessionKey, requestID string, answered, total int) {
+	if a.cacheWarm != nil && !a.cacheWarm(sessionKey) {
+		askLog.Infof("session=%s req=%s ask cancelled (%d/%d answered) but prompt cache is cold — suppressing trivial cancel injection (would rebuild the prompt cache)",
+			sessionKey, requestID, answered, total)
+		return
+	}
+	a.deliverMsg(sessionKey, fmt.Sprintf(
+		"[SYSTEM: the user CANCELLED your `ask` request after %d of %d answers. Do not retry unless they ask.]",
+		answered, total))
 }
 
 // AskOption customises the ask tool at construction — used to wire optional,
@@ -323,12 +349,11 @@ func (a *askState) handleResponse(requestID, data string) {
 		return
 	}
 	if cancelled {
+		answered, total, sk, reqID := p.acc.Index(), p.acc.Total(), p.sessionKey, p.requestID
 		a.removeLocked(p)
 		a.persistLocked()
 		a.mu.Unlock()
-		a.deliverMsg(p.sessionKey, fmt.Sprintf(
-			"[SYSTEM: the user CANCELLED your `ask` request after %d of %d answers. Do not retry unless they ask.]",
-			p.acc.Index(), p.acc.Total()))
+		a.deliverCancel(sk, reqID, answered, total)
 		return
 	}
 	answeredIdx := p.acc.Index()
@@ -405,12 +430,11 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 			return
 		}
 		if cancelled {
+			answered, total, sk, reqID := p.acc.Index(), p.acc.Total(), p.sessionKey, p.requestID
 			a.removeLocked(p)
 			a.persistLocked()
 			a.mu.Unlock()
-			a.deliverMsg(p.sessionKey, fmt.Sprintf(
-				"[SYSTEM: the user CANCELLED your `ask` request after %d of %d answers. Do not retry unless they ask.]",
-				p.acc.Index(), p.acc.Total()))
+			a.deliverCancel(sk, reqID, answered, total)
 			return
 		}
 		p.acc.Record(answer)
