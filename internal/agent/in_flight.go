@@ -33,6 +33,20 @@ func (a *Agent) IsTurnInFlight(key string) bool {
 	return a.inFlight[key] > 0
 }
 
+// LastTurnEnd returns the wall-clock moment the most recent turn under key
+// finished (the last time inFlight dropped to 0), or the zero time if none is
+// recorded (e.g. since process start — no turn has completed under this key
+// yet). It is the in-memory turn-END counterpart to last_cache_touch, which is
+// stamped at turn ENTRY: measuring "dead time" from the entry stamp makes a
+// turn older than the window read cold the instant it ends, so the activity
+// gate consults this to require CONTINUOUS silence instead. Zero on restart,
+// where last_cache_touch is the durable fallback signal.
+func (a *Agent) LastTurnEnd(key string) time.Time {
+	a.inFlightMu.Lock()
+	defer a.inFlightMu.Unlock()
+	return a.lastTurnEndAt[key] // zero value if absent — callers treat zero as "unknown"
+}
+
 // IsAnyTurnInFlight reports whether any session under this agent currently has
 // a turn executing. This is the one place that genuinely needs an agent-wide
 // aggregate rather than a per-session check: graceful shutdown drains all
@@ -182,6 +196,15 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 		a.inFlight[base]--
 		if a.inFlight[base] <= 0 {
 			delete(a.inFlight, base)
+			// Record the turn-END moment (the counterpart to recordTurnActivity's
+			// turn-ENTRY last_cache_touch write) so the activity gate can measure
+			// CONTINUOUS dead time. Without this, a turn that started >window ago
+			// reads "cold" the instant inFlight drops — releasing a deferred send
+			// into the brief gap between back-to-back turns (#753 follow-up).
+			if a.lastTurnEndAt == nil {
+				a.lastTurnEndAt = make(map[string]time.Time)
+			}
+			a.lastTurnEndAt[base] = time.Now()
 		}
 		if delivering {
 			a.inFlightDelivering[base]--
@@ -359,4 +382,3 @@ func (a *Agent) TouchRootCacheForBranch(branchKey string) {
 		}
 	}
 }
-

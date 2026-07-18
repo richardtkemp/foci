@@ -41,14 +41,28 @@ func (wc waitConds) any() bool {
 }
 
 // activityProbes builds the two "within duration?" closures shared by the
-// one-shot if-gate and the wait evaluator, applying the in-flight
-// short-circuit: a turn executing on the target counts as active for both.
+// one-shot if-gate and the wait evaluator. Both apply the in-flight
+// short-circuit: a turn executing on the target counts as active. The SESSION
+// probe additionally counts a turn that ENDED within the window as active
+// (in.LastTurnEnd), so "cold" means CONTINUOUS dead time — the whole window
+// with no turn running AND none recently finished. Without this a turn older
+// than the window reads cold the instant inFlight drops, releasing a deferred
+// send into the sub-window gap between back-to-back turns. The USER probe is
+// deliberately NOT widened by LastTurnEnd: a turn ending is session activity,
+// not necessarily a human interaction (it may be cron/agent/memory), so
+// --if-user-*/--wait-user-* keep reading only genuine user touches.
 func activityProbes(in activityGateInputs, isUserActive userActivityChecker, isSessionActive sessionActivityChecker) (userActiveWithin, sessionActiveWithin func(time.Duration) bool) {
 	userActiveWithin = func(within time.Duration) bool {
 		return in.InFlight || isUserActive(in.SessionBase, within)
 	}
 	sessionActiveWithin = func(within time.Duration) bool {
-		return in.InFlight || isSessionActive(in.SessionBase, within)
+		if in.InFlight {
+			return true
+		}
+		if !in.LastTurnEnd.IsZero() && time.Since(in.LastTurnEnd) <= within {
+			return true
+		}
+		return isSessionActive(in.SessionBase, within)
 	}
 	return userActiveWithin, sessionActiveWithin
 }
@@ -179,6 +193,7 @@ func (s *deferSweeper) sweep() {
 			AgentID:     r.AgentID,
 			SessionBase: r.SessionKey,
 			InFlight:    inst.ag.IsTurnInFlight(r.SessionKey),
+			LastTurnEnd: inst.ag.LastTurnEnd(r.SessionKey),
 		}
 		wc := waitConds{warm: r.WaitWarm, cold: r.WaitCold, userActive: r.WaitUserActive, userInactive: r.WaitUserInactive}
 		ok, err = waitSatisfied(wc, in, s.isUserActive, s.isSessionActive)

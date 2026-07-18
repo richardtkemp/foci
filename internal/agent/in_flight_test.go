@@ -193,6 +193,55 @@ func TestInFlight_RaceSafe(t *testing.T) {
 	}
 }
 
+// TestInFlight_LastTurnEndRecordedOnZero verifies the decrement closure stamps
+// LastTurnEnd when a base's in-flight count returns to 0 — the in-memory
+// turn-END signal the activity gate uses to measure continuous dead time. It
+// must stay zero while a turn is still running and be stamped (within ±1s of
+// now) once the last turn releases.
+func TestInFlight_LastTurnEndRecordedOnZero(t *testing.T) {
+	a := &Agent{}
+
+	if got := a.LastTurnEnd(testBaseA); !got.IsZero() {
+		t.Fatalf("LastTurnEnd on fresh Agent: got %v, want zero", got)
+	}
+
+	done := a.markInFlight(testBaseA, true)
+	if got := a.LastTurnEnd(testBaseA); !got.IsZero() {
+		t.Fatalf("LastTurnEnd while a turn is in flight: got %v, want zero", got)
+	}
+
+	before := time.Now().Add(-time.Second)
+	done()
+	after := time.Now().Add(time.Second)
+
+	got := a.LastTurnEnd(testBaseA)
+	if got.IsZero() {
+		t.Fatal("LastTurnEnd not stamped after the turn ended")
+	}
+	if got.Before(before) || got.After(after) {
+		t.Fatalf("LastTurnEnd %v outside window [%v, %v]", got, before, after)
+	}
+}
+
+// TestInFlight_LastTurnEndOnlyOnFullZero verifies that with nested turns on the
+// same base, LastTurnEnd is stamped only when the LAST one releases (count → 0),
+// not on an inner release that leaves the base still in flight — otherwise a
+// back-to-back inner turn boundary would falsely reset the dead-time clock.
+func TestInFlight_LastTurnEndOnlyOnFullZero(t *testing.T) {
+	a := &Agent{}
+	d1 := a.markInFlight(testBaseA, true)
+	d2 := a.markInFlight(testBaseA, false)
+
+	d1() // count 2→1, base still in flight → must NOT stamp
+	if got := a.LastTurnEnd(testBaseA); !got.IsZero() {
+		t.Fatalf("LastTurnEnd stamped on inner release while still in flight: got %v", got)
+	}
+	d2() // count 1→0 → stamp now
+	if a.LastTurnEnd(testBaseA).IsZero() {
+		t.Fatal("LastTurnEnd not stamped after the final release")
+	}
+}
+
 // TestInFlight_DeliveringSeparate verifies the delivering counter tracks
 // only delivering marks, with the total counter incremented either way.
 func TestInFlight_DeliveringSeparate(t *testing.T) {
