@@ -60,7 +60,7 @@ At low utilization, the $/mana% ratio appears inflated. This suggests Anthropic'
 
 ### Mana data sources
 
-- **Mana readings:** Embedded in `[meta]` headers in session JSONL files. Cached for 5 minutes by foci (fetched from Anthropic's OAuth usage API).
+- **Mana readings:** `/mana` (alias `/usage`) spawns an independent, throwaway `claude` subprocess and asks it for the account's plan/rate-limit usage via CC's `get_usage` control request (`ccstream.QueryUsage`, `internal/delegator/ccstream/usage_oneshot.go`) — session (5h) and weekly (7d) percentages, cost, and top contributing behaviors, live from Anthropic's account-usage backend (observed 15-20s round trip; not cached). It never touches or waits behind a live session. There is no mana/quota field in foci's own `[meta]` header — that header only carries `time`/`gap`/`model`/`via` by default (see the `foci-usage` skill's prompts.md).
 - **API costs:** Logged per-call in `~/data/api.db` with `cost_usd`, token counts, session ID, timestamps.
 
 ## Common Mana Drains

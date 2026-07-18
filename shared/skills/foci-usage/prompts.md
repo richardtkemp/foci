@@ -28,20 +28,22 @@ So: tweak wording → copy into `<workspace>/prompts/`; disable a turn → set i
 
 The **character files** that make up your identity are separate from these turn templates — they load from your `character/` dir and are reloaded on compaction and restart, so editing them takes effect on the next rebuild.
 
-## The `[meta]` header
+## The `[meta]` / `[state]` / `[ask]` header (the statusline)
 
-Every inbound message carries a `[meta]` line:
+Every inbound message carries a header built from a configurable **statusline template** (`internal/agent/statusline.go`, #831). The default template is `[meta] time={time} gap={gap} model={model} via={via}` / `[state] {state}` / `[ask] {ask}`; a line whose only placeholders all render empty is dropped entirely, so on a fresh session with nothing to report only `[meta]` appears.
 
 - `time` — RFC3339 receipt timestamp (the user's send time).
 - `gap` — time since the previous message (`none` on first).
 - `model` — the model for this turn (developer prefix stripped).
 - `via` — delivery channel: `telegram`, `android`, `voice`, `api`, or `cron` for system-initiated turns (keepalive, reflection, scheduled wake), `async` for async tool results, `tmux` for watch notifications.
-- `mana` — remaining quota % + 🟢/🔴 indicator (omitted if no data).
+- `[state]` — a dashboard line (todos open/high, tasks, scratchpad entries), self-omits when every store is empty.
+- `[ask]` — appears only while a `foci_ask` is paused (`/pause`): names the paused request id as a reminder that plain-text replies are routing to you as normal turns rather than answering it (`/resume` to restore).
 
-## `[state]` and `[reminders]`
+**`prev_cost` / `prev_tokens` are deliberately NOT in the default** — a running cost/token figure on every turn was found to nudge the agent toward rationing its own budget. They still exist as `{cost}`/`{tokens}` fields (plus bare `{cost_raw}`/`{tokens_in}`/`{tokens_out}`/`{cache_read}`/`{cache_write}`) for anyone who opts in via a custom `statusline` config (`docs/CONFIG.md`). There is no `mana`/quota field in the statusline — check remaining quota via the `/mana` command (see the `mana` skill) instead.
 
-- `[state]` — a dashboard line (todos open/high, tasks, scratchpad entries) injected as context.
-- `[reminders]` — due reminders, surfaced once then auto-dismissed; only on root sessions, not branches.
+## `[reminders]`
+
+Due reminders, surfaced once then auto-dismissed; only on root sessions, not branches. Separate from the statusline above — injected as its own block (`internal/agent/system_blocks.go`).
 
 ## System injections
 

@@ -15,7 +15,7 @@ Foci keeps state in SQLite, split into two scopes. As an agent you rarely query 
 |----------|----------|----------|
 | `api.db` | `api_calls` | Every model API call: timestamp, cost (list-price equivalent), cache read/write tokens. The basis for "where did the mana go". |
 | `state.db` | `session_index`, `agent_metadata`, `chat_metadata`, `session_metadata`, `system_state` | Unified runtime state: session lifecycle, per-agent/chat/session metadata. |
-| `sessions/` | (JSONL files, not a DB) | Per-session conversation history: `~/data/sessions/<AGENT_ID>/c<CHAT_ID>/<VERSION_TS>/root.jsonl`. |
+| `sessions/` | (JSONL files, not a DB) | Per-session conversation history: `~/data/sessions/<AGENT_ID>/<TYPE_ID>/root.jsonl` (`<TYPE_ID>` is `c<CHAT_ID>` or `i<name>`) — session keys are stable identities with no version-timestamp segment; compaction/reset archive the file in place (`root.<STAMP>.jsonl`) rather than minting a new path. |
 
 ## Per-agent (`<workspace>/.data/`)
 
