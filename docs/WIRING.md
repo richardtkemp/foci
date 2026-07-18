@@ -4,7 +4,7 @@ How the pieces connect. Read this before touching the code.
 
 ## Startup Flow (`main.go`)
 
-Each phase is extracted into its own file. `main()` is a ~400-line orchestrator.
+Each phase is extracted into its own file. `main()` has grown to ~670 lines (still one function, but each phase below is a one/two-line call into its own file).
 
 ```
 config.Load(path)                                        ← validates values; logs to stderr + buffer
@@ -43,6 +43,12 @@ config.Load(path)                                        ← validates values; l
 → initMemorySystem(cfg)                                  ← memory_init.go
   → memory: ReminderStore + Scratchpad + TodoStore + TaskListStore   ← always created; all per-agent (e.g. reminders-main.db)
   → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent
+
+→ warnMissingSecrets(cfg, sec.store) / warnStreamOutputWithoutStreaming(cfg)   ← warn_secrets.go / warn_streaming.go; startup config-sanity WARNs, non-fatal
+
+→ initVoice(cfg, sec.store)                              ← voice_init.go; builds the STT/TTS provider maps shared by voice WS + send_to_chat TTS
+
+→ gwLiveApply = newLiveApply(configPath)                 ← liveapply.go; hot-config-reload registry (created early, appliers registered later via registerLiveAppliers after agent setup — see below)
 
    Shared resources (created once in main.go):
    → platform.InitMessaging(cfg, deps)                      ← initialises all registered providers (telegram, discord via blank imports)
@@ -88,19 +94,22 @@ config.Load(path)                                        ← validates values; l
       → modelcaps.SetFetcher(backend, fetcher)
       → go modelcaps.Refresh(ctx, backend)                ← background; on error, serve-stale / static modelinfo fallback
     → each Codex app-server Start → model/list → modelcaps.Publish(codex)
-  → setupKeepalive(inst, acfg, params)                    ← keepalive_setup.go (per-agent)
+  → setupPeriodic(inst, acfg, periodicParams{...})        ← periodic_setup.go (per-agent; renamed from setupKeepalive/keepalive_setup.go — the runner now covers keepalive+background+reflection+consolidation+reset, see Reflection & Consolidation Timers)
   → plat.SetupSharedFacet(...)                         ← shared facet bots (via messaging facade)
   → setupWarningHooks(agents, cfg)                         ← post_agent_setup.go
   → setupTmuxMemoryMonitor(...)                            ← post_agent_setup.go
   → setupMemoryGuard(...)                                  ← post_agent_setup.go
+  → registerLiveAppliers(gwLiveApply, agents)              ← liveapply.go; wires each agent's hot-reloadable config fields (`hot:"turn"` etc.) into the registry created earlier
 
   → signal.Notify(SIGINT, SIGTERM)
   → plat.RestoreFacetSessions(...)                     ← restore bot→session mappings from state store
   → plat.StartAll(ctx)                                     ← starts all provider connections
   → startup notifications (inline in main.go)              ← uses connMgr.AllForAgent() for fan-out
+  → deferStore = defersend.NewStore(deferred-sends.db)     ← wait_defer.go; SQLite-backed queue for `foci send --wait-*` sends whose activity gate isn't yet satisfied, swept by a background goroutine (10s tick, 2h default send-anyway timeout) — see internal/defersend below
   → http.Server{...}                                       ← http.go (registerHTTPHandlers)
   → startUnixSocket(...)                                   ← unix_socket.go (same-user auth, no API key)
   → setupAskgw(cfg, agents, connMgr)                       ← askgw_setup.go (opt-in [askgw] enabled=true; NDJSON Unix socket for external Apps to ask humans questions via foci's interactive button surface)
+  → setupTestharnessControl(ctx, agents)                   ← testharness_control.go; test-only control surface for the L2 integration harness (internal/testharness), no-op in production
   → checkDelegatedReadiness(...)                           ← notifications.go (probe each delegated backend; fire relogin if not ready — gate active before first-run injection)
   → handleRestartAndFirstRun(...)                          ← notifications.go (restart + welcome via HandleMessage)
   → block on signal → runShutdown(...)                     ← shutdown.go
@@ -177,6 +186,7 @@ main
  ├── procx         (no internal deps — process-spawn helper: strips foci-secrets/foci-askgw supplementary groups from child processes, own process group; used by every subprocess spawn site)
  ├── peercred      (stdlib syscall only — SO_PEERCRED extraction for Unix-socket auth; see HTTP Gateway)
  ├── question      (no internal deps — backend-agnostic AskUserQuestion core: parsing, formatting, choice buttons, answer resolution/merge; shared by ccstream and tools so the two surfaces can't drift)
+ ├── defersend     → sqlite, timeutil (leaf — SQLite-backed queue for `foci send --wait-*` deferred sends; a pending send that isn't yet warm/cold/user-active/-inactive is persisted and delivered by a background sweep, surviving a restart. Wired in `cmd/foci-gw/wait_defer.go`.)
  ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
  ├── tools         → agent/turnevent, app/fap, config, convo, display, log, memory, modelinfo, peercred, platform, procx, provider, question, secrets, secrets/bitwarden, session, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
@@ -330,13 +340,14 @@ Phase 4 — Post-turn:
 
 **Shared prompt composition** (`turn_common.go`): `composeTurnText` assembles metadata prefix, reminders, state dashboard, attachment paths, and user texts into a `turnTextParts` struct. The API transport converts these to content blocks; the delegated transport joins them into a flat string via `JoinPrompt()`.
 
-### RunOnce Mode (`DelegatedManager.RunOnce`)
+### RunOnce Mode (`DelegatedManager.RunOnce` → `delegator.BatchRunner`, #1312)
 
-Non-interactive backend execution for headless tasks. `RunOnce(ctx, prompt, systemPrompt)` spawns `claude --print --dangerously-skip-permissions --no-session-persistence --model sonnet`, captures stdout synchronously, and returns the response text. No tmux pane, no watcher, no session index — a one-shot subprocess call.
+Non-interactive backend execution for headless tasks. `RunOnce(ctx, prompt, systemPrompt)` no longer shells `claude --print` directly — it constructs a fresh (unstarted) instance of the agent's own configured backend via `m.NewBackend()` and type-asserts it to the optional `delegator.BatchRunner` interface (`RunBatch(ctx, BatchRequest) (string, error)`), so a one-shot always runs on the same vendor/auth/model family as the agent itself. There is deliberately **no cross-vendor fallback**: a backend that doesn't implement `BatchRunner` returns an error (logged at ERROR) rather than silently running the one-shot on a different CLI. `ccstream`, `codex`, and `opencode` each implement `RunBatch` in their own `batch.go` (ccstream still ends up spawning `claude --print --dangerously-skip-permissions --no-session-persistence`, but that detail now lives behind the interface, not in `DelegatedManager`). No tmux pane, no watcher, no session index in any implementation — genuinely one-shot.
 
 Used by:
 - **Nudge extraction** — `ExtractViaRunOnce` sends conversation context to the model and parses structured nudge rules from the response.
-- **Consolidation** — The periodic `Runner` is wired with a `RunOnceFunc` for memory consolidation tasks that don't need an interactive session.
+- **Consolidation** — The periodic `Runner` is wired with a `RunOnceFunc` for memory consolidation tasks that don't need an interactive session; consolidation one-shots also now receive the agent's character system prompt (previously ran with none).
+- **First-run onboarding** — also routes through `RunOnce` (per the interface doc comment on `BatchRunner`).
 
 ### Session Lifecycle Operations (`agent/lifecycle.go`)
 
@@ -1854,9 +1865,9 @@ Entry points:
 
 ## Reflection & Consolidation Timers
 
-Reflection and consolidation run in the keepalive timer loop (30s ticks):
+Reflection and consolidation run on the shared `periodic.Runner` tick (30s default, see the package doc comment on `internal/periodic/runner.go`). `keepalive.go` split (2026-07-16) along its timer families — one file per mechanism, all methods on the same `*Runner`: `internal/periodic/background.go` (`maybeBackgroundWork`), `cleanup.go` (`maybeReset` + idle/stale cleanup), `consolidation.go` (`maybeConsolidation`), `reflection.go` (`maybeReflection`); `keepalive.go` itself now holds only the keepalive-proper mechanism. `runner.go` owns the shared tick loop and `RunnerConfig`.
 
-**Interval reflection** (`maybeReflection`):
+**Interval reflection** (`maybeReflection`, `internal/periodic/reflection.go`):
 1. Check `interval_enabled` (nil = true)
 2. Check wall-clock interval elapsed and user not idle (`sinceLastInteraction` must be ≤ interval; `lastInteraction` is fed by the platform `OnUserMessage` lifecycle callback — wired on telegram, discord, and app providers. A transport that doesn't fire it leaves `lastInteraction` frozen at boot, so this gate skips forever for that agent.)
 3. Query `session_index` for active chat sessions with `last_activity_at > last_reflection` (per-session tracking)
@@ -1866,7 +1877,7 @@ Reflection and consolidation run in the keepalive timer loop (30s ticks):
 
 Reflection runs before consolidation so the latest memory content is available. Consolidation is blocked while reflection is running.
 
-**Consolidation** (`maybeConsolidation`) — config now under `[maintenance]` (`r.maintCfg`):
+**Consolidation** (`maybeConsolidation`, `internal/periodic/consolidation.go`) — config now under `[maintenance]` (`r.maintCfg`):
 1. Check `consolidation_enabled` (nil = true)
 2. Compute next-fire via `parseSchedule(consolidation_time).nextFire(...)` — `consolidation_time` is `"HH:MM"` daily (process tz) or a Go duration; persisted last-run in state store
 3. Check recent user activity (within 1h)
@@ -1875,7 +1886,7 @@ Reflection runs before consolidation so the latest memory content is available. 
 6. Fire branch on default session: `branchFn("consolidation", parentKey, promptText, true)`
 7. On completion: persist timestamp to state store
 
-**Scheduled reset** (`maybeReset`) — `[maintenance].reset_time` (default off):
+**Scheduled reset** (`maybeReset`, `internal/periodic/cleanup.go`) — `[maintenance].reset_time` (default off):
 1. Skip if `resetFn` nil or `reset_time` empty
 2. Compute next-fire via `parseSchedule(reset_time).nextFire(...)` (same dual format as consolidation; `lastReset` anchored to boot, persisted as `reset_last`)
 3. Skip if reflection/consolidation/reset already running
