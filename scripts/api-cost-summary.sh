@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Sum API costs per day from all api log files (current + archived).
 # Usage: scripts/api-cost-summary.sh [log_dir]
-#   log_dir defaults to /home/foci/logs
+#   log_dir defaults to $HOME/logs
 
 set -uo pipefail
 
-LOG_DIR="${1:-/home/foci/logs}"
+LOG_DIR="${1:-${HOME}/logs}"
 ARCHIVE_DIR="$LOG_DIR/archive"
 
 # Stream all api log entries (archived gzipped + current) into jq
