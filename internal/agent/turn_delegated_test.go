@@ -1920,7 +1920,7 @@ func TestDelegatedTransport_RunCompaction_AboveThreshold(t *testing.T) {
 	}
 	a.CompactionMemoryFunc.Add(func(_ string) { memoryFired = true })
 	a.CompactionStartFunc.Add(func(_, _ string) { startFired = true })
-	a.CompactionNotifyFunc.Add(func(_, _ string) { notifyFired = true })
+	a.CompactionNotifyFunc.Add(func(_, _, _ string) { notifyFired = true })
 
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -2114,7 +2114,7 @@ func TestDelegatedTransport_RunCompaction_SendCommandError(t *testing.T) {
 		Compactor:        comp,
 		DelegatedManager: newMockDelegatedManager(t, be),
 	}
-	a.CompactionNotifyFunc.Add(func(_, _ string) { notifyCalled = true })
+	a.CompactionNotifyFunc.Add(func(_, _, _ string) { notifyCalled = true })
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
@@ -2150,7 +2150,7 @@ func TestDelegatedTransport_RunCompaction_WaitForTurnError(t *testing.T) {
 		Compactor:        comp,
 		DelegatedManager: newMockDelegatedManager(t, be),
 	}
-	a.CompactionNotifyFunc.Add(func(_, _ string) { notifyCalled = true })
+	a.CompactionNotifyFunc.Add(func(_, _, _ string) { notifyCalled = true })
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)

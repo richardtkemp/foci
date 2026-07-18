@@ -128,7 +128,7 @@ func wireAgentPlatformCallbacks(
 			compactionMsgIDs.Store(sk, msgID)
 		}
 	})
-	ag.CompactionNotifyFunc.Add(func(sk, msg string) {
+	ag.CompactionNotifyFunc.Add(func(sk, msg, summary string) {
 		c := connMgr.ForSessionOrPrimary(sk, acfg.ID)
 		if c == nil || !resolvedLive.Load().PlatformNotify(c.PlatformName()).CompactionNotify {
 			return
@@ -138,6 +138,19 @@ func wireAgentPlatformCallbacks(
 		// chat would hit the wrong chat and Telegram would reject the msgID.
 		if rawID, ok := compactionMsgIDs.LoadAndDelete(sk); ok {
 			msgID := rawID.(string)
+			// A summary is available and the connection supports attaching it
+			// (currently app-only) — attach it to the existing message so the
+			// client can render a tappable "view summary" chit. Falls through
+			// to the plain edit below on failure (unknown/consumed msgID, etc).
+			if summary != "" {
+				if da, ok := c.(platform.DetailAttacher); ok {
+					if err := da.AttachDetail(msgID, msg, summary); err == nil {
+						agentLog.Debugf("compaction detail attached for session=%s msgID=%s", sk, msgID)
+						return
+					}
+					agentLog.Debugf("compaction detail attach failed for session=%s msgID=%s, falling back to plain edit", sk, msgID)
+				}
+			}
 			if sn, ok := c.(platform.SessionNotifier); ok {
 				if err := sn.EditNotificationInSession(sk, msgID, msg); err == nil {
 					agentLog.Debugf("compaction edit delivered for session=%s msgID=%s", sk, msgID)

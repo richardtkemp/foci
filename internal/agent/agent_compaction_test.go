@@ -207,7 +207,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			startNotifs = append(startNotifs, msg)
 		})
 		var endNotifs []string
-		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
+		env.ag.CompactionNotifyFunc.Add(func(session string, msg string, summary string) {
 			endNotifs = append(endNotifs, msg)
 		})
 
@@ -239,7 +239,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		var notified []string
 		warnQ := warnings.NewQueue(0, 0)
 		env.ag.WarningQueue = warnQ
-		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
+		env.ag.CompactionNotifyFunc.Add(func(session string, msg string, summary string) {
 			notified = append(notified, msg)
 		})
 
@@ -334,7 +334,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		env := newCompactionTestEnv(t, &turnCount, 5)
 
 		var notified []string
-		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
+		env.ag.CompactionNotifyFunc.Add(func(session string, msg string, summary string) {
 			notified = append(notified, msg)
 		})
 

@@ -90,11 +90,11 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 			}
 		}
 		for _, fn := range a.CompactionNotifyFunc {
-			fn(sessionKey, "✅ Dry-run complete — summary sent.")
+			fn(sessionKey, "✅ Dry-run complete — summary sent.", summary)
 		}
 	} else {
 		for _, fn := range a.CompactionNotifyFunc {
-			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
+			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount), summary)
 		}
 		if summary != "" {
 			for _, fn := range a.CompactionDebugFunc {
@@ -166,8 +166,12 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		return fmt.Errorf("wait for compaction: %w", waitErr)
 	}
 
+	// Delegated compaction never computes a summary today (the backend does
+	// its own /compact internally and doesn't hand one back). Known gap — a
+	// follow-up would need to fetch/generate a summary from the delegated
+	// backend; not addressed here.
 	for _, fn := range a.CompactionNotifyFunc {
-		fn(sessionKey, "✅ Context compacted (delegated).")
+		fn(sessionKey, "✅ Context compacted (delegated).", "")
 	}
 
 	if a.NudgeReloadFunc != nil {
