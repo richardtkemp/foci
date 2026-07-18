@@ -25,6 +25,8 @@ How this works: foci generates a shell-functions file and points `BASH_ENV` at i
 
 There is **no `foci_tmux`** on this backend — that stays API-loop-only. For persistent terminals use `Bash` with `tmux` (see the `coding-agent` skill). foci's file/shell/browser tools are likewise absent — use CC's `Read`/`Write`/`Edit`/`Bash`/browser instead.
 
+**Two more conditional tools**, present when their backing config is on: `foci_set_session_alias` (backends that don't auto-name sessions — see below) and `foci_app_android` (only when the `app` platform is configured).
+
 Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any tool this session.**
 
 ### `foci_ask` — ask the user selectable questions
@@ -79,6 +81,19 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 
 ### `foci_summary` — extract from a file via a cheap model
 - `foci_summary "what does this define?" --file path` (or pipe: `… | foci_summary "categorise these"`). For targeted extraction, **not** dumping a whole file. Great for piping noisy data through a cheap model before it hits your context.
+
+### `foci_set_session_alias` — name this conversation
+- `--alias TEXT` (required). Sets a short descriptive name for the current chat session, shown in the chat list. Call once after the first exchange to name what the conversation is about; keep it under 5 words.
+- **Chat sessions only** — errors on a branch/independent session key.
+- **Won't clobber a manual rename:** if the chat already has an alias that wasn't set by this tool, it replies "Skipped" instead of overwriting it.
+- **Only registered when your backend doesn't auto-name sessions.** Codex generates thread names itself (`TurnResult.ThreadName`) and never gets this tool; streaming CC (ccstream), cctmux, opencode, and API-loop agents all lack auto-naming and get it.
+
+### `foci_app_android` — run a task on the user's connected Android device (via Tasker)
+- Only registered when the `app` platform is configured for this agent — presence of the tool doesn't guarantee a device is actually connected right now (see below).
+- `--action list` returns the device's allowlisted tasks as JSON. `--action perform --task NAME [--par1 V] [--par2 V]` runs a named task (`par1`/`par2` map to Tasker's `%par1`/`%par2`; stringly-typed — JSON-stringify structured args into `par1`).
+- **The on-device allowlist is empty by default** — the user has to opt tasks in via the app's Advanced settings before `perform` can reach them.
+- No device connected → a plain error string in the result (not a tool failure), so react to it rather than treating the call as having crashed.
+- A task can reply `"pending"` if it's still running on-device past the sync window; the server keeps waiting up to ~60s for the real result, so most slow tasks still resolve synchronously. Only a task that *also* blows that budget comes back pending-with-no-result — that result is dropped, there's no later async delivery.
 
 ## 3. Deferred tools & ToolSearch
 

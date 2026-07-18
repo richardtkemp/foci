@@ -72,3 +72,15 @@ These behave the same as for backend agents — the only difference is you call 
 
 ### `summary` — extract from a file via a cheap model
 - A question plus a `file` (or piped input). For targeted extraction, not whole-file dumping.
+
+### `set_session_alias` — name this conversation
+- `alias` (required, short text). Sets a descriptive name for the current chat session, shown in the chat list. Call once after the first exchange to name what the conversation is about; keep it under 5 words.
+- **Chat sessions only** — errors on a branch/independent session key.
+- **Won't clobber a manual rename:** if the chat already has an alias not set by this tool, it replies "Skipped" instead of overwriting it.
+- Registered whenever your backend doesn't auto-generate session names — which includes the API loop, so you always have it (only Codex auto-names and loses this tool).
+
+### `app_android` — run a task on the user's connected Android device (via Tasker)
+- Only offered when the `app` platform is configured for this agent; offered ≠ connected — a call with no device attached returns a plain error string, not a tool failure.
+- `action: "list"` returns the device's allowlisted tasks as JSON. `action: "perform"` with `task` (name) and optional `par1`/`par2` (stringly-typed — JSON-stringify structured args into `par1`) runs a named task.
+- **The on-device allowlist is empty by default** — the user opts tasks in via the app's Advanced settings before `perform` can reach them.
+- A task can come back `"pending"` if it's still running past the sync window; the server keeps waiting up to ~60s for the real result, so most slow tasks still resolve synchronously — only one that also blows that budget returns pending-with-no-result, and that result is dropped (no later async delivery).
