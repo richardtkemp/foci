@@ -29,7 +29,15 @@ echo "✅ pre-commit lint passed"
 # opening WIRING.md to verify whether an update or addition is needed. Staged Go
 # changes with no WIRING.md touch is the signal to do that check; leaving it untouched
 # is correct ONLY after you've opened it and confirmed nothing it documents changed.
-if [ -f docs/WIRING.md ] && ! git diff --cached --name-only | grep -qx 'docs/WIRING.md'; then
+#
+# Fires UNLESS every staged file is a test or a doc — a denylist, not an allowlist of
+# code extensions (which would miss shell scripts and other languages that also rewire
+# things). Excludes Go test files (*_test.go) and Markdown docs (*.md); anything else —
+# Go, shell, other code, config — counts as a possible wiring change and fires. Errs
+# toward over-nudging, since a missed wiring change is the costly case. Deletions count
+# too (removing a callback/package is a wiring change).
+staged_code=$(git diff --cached --name-only | grep -Ev '(_test\.go|\.md)$')
+if [ -f docs/WIRING.md ] && [ -n "$staged_code" ] && ! git diff --cached --name-only | grep -qx 'docs/WIRING.md'; then
 	echo "⚠️  docs/WIRING.md ('How the pieces connect') wasn't touched by this commit."
 	echo "    Do NOT ignore this: ANY wiring change — new/renamed/removed callback, flow,"
 	echo "    package, timer, or a call site added to a list the doc enumerates — requires"
