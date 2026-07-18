@@ -249,6 +249,36 @@ func TestAsk_Cancel(t *testing.T) {
 	}
 }
 
+// TestAsk_CancelSuppressedWhenCacheCold proves the #1302 gate: the trivial cancel
+// notice is injected when the prompt cache is warm, but suppressed when it's cold —
+// so a stale/expired cancel doesn't spin up a full-prefix-rebuilding turn for a
+// message the agent's already-ended asking turn doesn't need.
+func TestAsk_CancelSuppressedWhenCacheCold(t *testing.T) {
+	t.Parallel()
+
+	// Cold cache → cancel suppressed.
+	p := &fakePresenter{}
+	d := &fakeDeliver{}
+	tool, _ := NewAskTool(p.present, nil, d.deliver, nil, nil, "test",
+		WithCacheWarm(func(string) bool { return false }))
+	execAsk(t, tool, `{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}`)
+	p.answer(question.CancelData)
+	if _, ok := d.last(); ok {
+		t.Fatal("cold cache: the trivial cancel notice must be suppressed, not delivered")
+	}
+
+	// Warm cache → cancel delivered, matching the default (unwired) behaviour.
+	pw := &fakePresenter{}
+	dw := &fakeDeliver{}
+	toolW, _ := NewAskTool(pw.present, nil, dw.deliver, nil, nil, "test",
+		WithCacheWarm(func(string) bool { return true }))
+	execAsk(t, toolW, `{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}`)
+	pw.answer(question.CancelData)
+	if msg, ok := dw.last(); !ok || !strings.Contains(strings.ToUpper(msg), "CANCEL") {
+		t.Fatalf("warm cache: the cancel notice should be delivered; got ok=%v msg=%q", ok, msg)
+	}
+}
+
 func TestAsk_TypedAnswerViaRouter(t *testing.T) {
 	t.Parallel()
 	tool, router, _, d := newAskFixture()

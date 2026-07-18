@@ -323,6 +323,19 @@ var toolTable = []toolEntry{
 				if ag := d.agLazy(); ag != nil {
 					ag.DrainDeferredInjects(sk)
 				}
+			}),
+			// Gate the trivial "ask cancelled" injection away from cold-cache
+			// turns: only deliver it when the session's prompt cache is still
+			// live (expiry in the future), so a stale/expired cancel doesn't
+			// rebuild the whole cached prefix for a notice the agent's
+			// already-ended asking turn doesn't need. (#1302)
+			tools.WithCacheWarm(func(sk string) bool {
+				ag := d.agLazy()
+				if ag == nil {
+					return true // can't resolve the agent → don't suppress
+				}
+				now := time.Now()
+				return ag.CacheExpiry(sk, now).After(now)
 			}))
 		d.out.askRouter = router
 		return t
