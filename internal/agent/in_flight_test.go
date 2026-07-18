@@ -443,6 +443,138 @@ func TestRecordTurnActivity_NoSessionIndex(t *testing.T) {
 	a.recordTurnActivity(recordTurnActivityTS(testBaseA, "user")) // must not panic
 }
 
+// TestTouchTurnActivity_WritesCacheNotUser verifies the per-round heartbeat
+// write advances last_cache_touch but never last_user_activity_at — a round is
+// session progress, not a fresh human interaction.
+func TestTouchTurnActivity_WritesCacheNotUser(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+
+	a.touchTurnActivity(testBaseA, "user")
+
+	if _, ok := idx.LastCacheTouch(testBaseA); !ok {
+		t.Error("touchTurnActivity did not write last_cache_touch")
+	}
+	if _, ok := idx.LastUserActivity(testBaseA); ok {
+		t.Error("touchTurnActivity wrongly bumped last_user_activity_at (bumpUser must be false)")
+	}
+}
+
+// TestTouchTurnActivity_MemoryTriggerExcludesActivity verifies a memory round
+// still warms the cache but does NOT advance last_activity_at (else the
+// reflection-skip guard would self-trigger). Seeds an OLD last_activity_at via
+// the UPDATE path — the path the heartbeat always hits in practice, since the
+// turn-entry write created the row.
+func TestTouchTurnActivity_MemoryTriggerExcludesActivity(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+
+	old := time.Now().Add(-time.Hour)
+	idx.RecordTurnActivity(session.SessionIndexEntry{
+		SessionKey: testBaseA, CreatedAt: old,
+		SessionType: session.ClassifySessionKey(testBaseA), Status: session.SessionStatusActive,
+	}, true, false) // seed last_activity_at = old
+	e0, err := idx.Get(testBaseA)
+	if err != nil {
+		t.Fatalf("Get after seed: %v", err)
+	}
+
+	a.touchTurnActivity(testBaseA, "reflection")
+
+	e1, err := idx.Get(testBaseA)
+	if err != nil {
+		t.Fatalf("Get after touch: %v", err)
+	}
+	if !e1.LastActivityAt.Equal(e0.LastActivityAt) {
+		t.Errorf("memory-trigger round advanced last_activity_at %v → %v; must be excluded", e0.LastActivityAt, e1.LastActivityAt)
+	}
+	if lc, ok := idx.LastCacheTouch(testBaseA); !ok || !lc.After(old) {
+		t.Errorf("memory-trigger round should still warm last_cache_touch (got ok=%v, %v)", ok, lc)
+	}
+}
+
+// newHeartbeatTestSink builds a loggingSink over a fresh index for the
+// heartbeat tests, returning the concrete type so lastTouch can be steered.
+func newHeartbeatTestSink(t *testing.T, inFlight bool) (*loggingSink, *session.SessionIndex) {
+	t.Helper()
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+	if inFlight {
+		a.SetTurnInFlightForTest(testBaseA, true)
+	}
+	s := newLoggingSink(turnevent.NopSink{}, a, 0, &TurnMetadata{}, testBaseA).(*loggingSink)
+	return s, idx
+}
+
+// TestLoggingSink_HeartbeatTouchesWhenInFlight verifies a per-round event on an
+// in-flight turn, once past the debounce, persists an activity touch.
+func TestLoggingSink_HeartbeatTouchesWhenInFlight(t *testing.T) {
+	s, idx := newHeartbeatTestSink(t, true)
+	s.lastTouch = time.Now().Add(-time.Minute) // past the debounce window
+	ctx := WithTrigger(context.Background(), "user")
+
+	s.Emit(ctx, turnevent.ToolResult{Name: "Bash"})
+
+	if _, ok := idx.LastCacheTouch(testBaseA); !ok {
+		t.Error("heartbeat did not persist a touch for an in-flight round past the debounce")
+	}
+}
+
+// TestLoggingSink_HeartbeatDebounced verifies the constructor-seeded lastTouch
+// suppresses a write for a round arriving within the interval (right after the
+// turn-entry stamp).
+func TestLoggingSink_HeartbeatDebounced(t *testing.T) {
+	s, idx := newHeartbeatTestSink(t, true) // lastTouch seeded to ~now by constructor
+	ctx := WithTrigger(context.Background(), "user")
+
+	s.Emit(ctx, turnevent.Activity{})
+
+	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Error("heartbeat wrote within the debounce interval")
+	}
+}
+
+// TestLoggingSink_HeartbeatSkipsWhenNotInFlight verifies a loggingSink reused
+// for POST-turn late delivery (no in-flight turn) does not mark phantom
+// activity even when the debounce would otherwise allow it.
+func TestLoggingSink_HeartbeatSkipsWhenNotInFlight(t *testing.T) {
+	s, idx := newHeartbeatTestSink(t, false) // not in flight
+	s.lastTouch = time.Now().Add(-time.Minute)
+	ctx := WithTrigger(context.Background(), "user")
+
+	s.Emit(ctx, turnevent.ToolResult{Name: "Bash"})
+
+	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Error("heartbeat wrote despite no in-flight turn (late-delivery must no-op)")
+	}
+}
+
+// TestLoggingSink_HeartbeatIgnoresNonRoundEvents verifies fine-grained events
+// (streaming deltas) do not trigger the heartbeat — only completed rounds do.
+func TestLoggingSink_HeartbeatIgnoresNonRoundEvents(t *testing.T) {
+	s, idx := newHeartbeatTestSink(t, true)
+	s.lastTouch = time.Now().Add(-time.Minute)
+	ctx := WithTrigger(context.Background(), "user")
+
+	s.Emit(ctx, turnevent.TextDelta{Delta: "streaming fragment"})
+
+	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Error("a TextDelta wrongly triggered the heartbeat (only completed rounds should)")
+	}
+}
+
 // fakeDurableSink is a minimal turnevent.Sink that records every event it
 // receives, standing in for "a sink that persists durably" without pulling
 // in the real app/hub.go conv-binding machinery. Its presence in a test is
