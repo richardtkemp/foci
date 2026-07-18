@@ -366,6 +366,42 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 	a.emitCacheExpiry(ts.SessionKey) // last_cache_touch just advanced → refresh client
 }
 
+// touchTurnActivity is the per-ROUND heartbeat counterpart to
+// recordTurnActivity's single turn-ENTRY write. recordTurnActivity stamps the
+// timestamps once, before inference; a turn that then runs for minutes leaves
+// last_cache_touch / last_activity_at frozen at entry, so the session reads
+// "cold" the moment inFlight drops between back-to-back turns. Calling this on
+// each mid-turn round (a completed message, a tool result, the Activity
+// heartbeat) advances the persistent signals to track the turn's PROGRESS, so
+// every consumer — the activity gate's durable path, cache-bust idle
+// detection, the client's warmth avatar — sees the truth without waiting for
+// the turn to end.
+//
+// It advances last_cache_touch (always) and last_activity_at (unless a
+// memory-formation trigger), but NOT last_user_activity_at: a round is session
+// progress, not a fresh human interaction. Unlike recordTurnActivity it does
+// NOT recapture prevRequestTime — cache-bust idle detection is a turn-entry
+// concern, and each round bumping last_cache_touch is exactly the request time
+// the NEXT turn's entry should read. Own key only, mirroring recordTurnActivity.
+// Safe when SessionIndex is nil or the key is empty.
+func (a *Agent) touchTurnActivity(sessionKey, trigger string) {
+	if a.SessionIndex == nil || sessionKey == "" {
+		return
+	}
+	filePath := ""
+	if a.DelegatedManager != nil {
+		filePath = a.DelegatedManager.SessionFilePath(sessionKey)
+	}
+	a.SessionIndex.RecordTurnActivity(session.SessionIndexEntry{
+		SessionKey:  sessionKey,
+		FilePath:    filePath,
+		CreatedAt:   time.Now(),
+		SessionType: session.ClassifySessionKey(sessionKey),
+		Status:      session.SessionStatusActive,
+	}, !isMemoryTrigger(trigger), false) // bumpUser=false: a mid-turn round is not new user activity
+	a.emitCacheExpiry(sessionKey) // last_cache_touch just advanced → refresh client warmth
+}
+
 // TouchRootCacheForBranch records that creating a branch warmed its root's
 // shared cached prefix — a ONE-TIME touch at the moment of branching, called
 // from the branch-creation sites (createMemoryBranch, buildBranchFunc, the facet
