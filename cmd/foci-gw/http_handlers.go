@@ -51,9 +51,16 @@ type sessionActivityChecker func(sessionBase string, within time.Duration) bool
 // duration values from the request body or query string ("" = condition not
 // applied).
 type activityGateInputs struct {
-	AgentID        string
-	SessionBase    string
-	InFlight       bool
+	AgentID     string
+	SessionBase string
+	InFlight    bool
+	// LastTurnEnd is the wall-clock moment the most recent turn on SessionBase
+	// finished (Agent.LastTurnEnd) — zero if none since process start. Together
+	// with InFlight it measures CONTINUOUS dead time: a session whose last turn
+	// ended within the wait window still counts as active, so a deferred send is
+	// not released into the gap between back-to-back turns. Zero value is
+	// ignored (falls back to the durable last_cache_touch signal).
+	LastTurnEnd    time.Time
 	IfUserActive   string
 	IfUserInactive string
 	IfActive       string
@@ -225,6 +232,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			AgentID:        inst.id,
 			SessionBase:    sessionBase,
 			InFlight:       inst.ag.IsTurnInFlight(sessionBase),
+			LastTurnEnd:    inst.ag.LastTurnEnd(sessionBase),
 			IfUserActive:   req.IfUserActive,
 			IfUserInactive: req.IfUserInactive,
 			IfActive:       req.IfActive,
@@ -255,6 +263,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 				AgentID:     inst.id,
 				SessionBase: sessionBase,
 				InFlight:    inst.ag.IsTurnInFlight(sessionBase),
+				LastTurnEnd: inst.ag.LastTurnEnd(sessionBase),
 			}, isUserActive, isSessionActive)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -381,6 +390,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			AgentID:        inst.id,
 			SessionBase:    sessionBase,
 			InFlight:       inst.ag.IsTurnInFlight(sessionBase),
+			LastTurnEnd:    inst.ag.LastTurnEnd(sessionBase),
 			IfUserActive:   req.IfUserActive,
 			IfUserInactive: req.IfUserInactive,
 			IfActive:       req.IfActive,
@@ -469,6 +479,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			AgentID:        inst.id,
 			SessionBase:    parentBase,
 			InFlight:       inst.ag.IsTurnInFlight(parentBase),
+			LastTurnEnd:    inst.ag.LastTurnEnd(parentBase),
 			IfUserActive:   req.IfUserActive,
 			IfUserInactive: req.IfUserInactive,
 			IfActive:       req.IfActive,
@@ -716,6 +727,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			AgentID:        inst.id,
 			SessionBase:    webhookSessionBase,
 			InFlight:       inst.ag.IsTurnInFlight(webhookSessionBase),
+			LastTurnEnd:    inst.ag.LastTurnEnd(webhookSessionBase),
 			IfUserActive:   q.Get("if_user_active"),
 			IfUserInactive: q.Get("if_user_inactive"),
 			IfActive:       q.Get("if_active"),

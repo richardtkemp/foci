@@ -162,10 +162,11 @@ type Agent struct {
 
 	rateLimitGates     map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
 	rateLimitGatesMu   sync.RWMutex              // protects rateLimitGates map access
-	inFlightMu         sync.Mutex                // protects inFlight + inFlightDelivering + inFlightChanged map access
+	inFlightMu         sync.Mutex                // protects inFlight + inFlightDelivering + inFlightChanged + lastTurnEndAt map access
 	inFlight           map[string]int32          // per-session count of in-flight OrchestrateFullTurn calls — see IsTurnInFlight
 	inFlightDelivering map[string]int32          // per-session-base count of in-flight turns whose sink reports DeliversToPlatform=true — see IsInFlightDelivering
 	inFlightChanged    map[string]chan struct{}  // per-session-base close-and-replace channel; closes on each state change so waiters wake — see InFlightWaitCh
+	lastTurnEndAt      map[string]time.Time      // per-session-base wall-clock moment the last turn ended (inFlight→0) — see LastTurnEnd; in-memory turn-END counterpart to last_cache_touch's turn-ENTRY stamp
 	turnDetailsMu      sync.Mutex
 	turnDetails        map[uint64]*TurnDetail // keyed by unique turn ID
 	turnIDCounter      uint64                 // atomic: monotonic turn ID

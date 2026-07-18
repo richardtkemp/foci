@@ -59,6 +59,48 @@ func TestWaitSatisfied_InFlightCountsActive(t *testing.T) {
 	}
 }
 
+func TestWaitSatisfied_RecentTurnEndCountsActive(t *testing.T) {
+	never := func(_ string, _ time.Duration) bool { return false }
+	// A turn that ENDED within the window keeps the session "active" even though
+	// nothing is in flight now and the durable checker says cold — so --wait-cold
+	// is NOT satisfied in the sub-window gap between back-to-back turns. This is
+	// the send-8 mid-turn-release fix: without LastTurnEnd, a turn that started
+	// >window ago reads cold the instant inFlight drops.
+	in := activityGateInputs{LastTurnEnd: time.Now().Add(-10 * time.Second)}
+	ok, err := waitSatisfied(waitConds{cold: "1m"}, in, never, never)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("wait-cold should be unsatisfied within the window after a turn ended")
+	}
+
+	// Once the dead time exceeds the window, cold holds (continuous silence).
+	in.LastTurnEnd = time.Now().Add(-2 * time.Minute)
+	ok, err = waitSatisfied(waitConds{cold: "1m"}, in, never, never)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("wait-cold should be satisfied once dead time exceeds the window")
+	}
+}
+
+func TestWaitSatisfied_TurnEndDoesNotAffectUserGate(t *testing.T) {
+	never := func(_ string, _ time.Duration) bool { return false }
+	// A recent turn end is SESSION activity, not USER activity (it may be a
+	// cron/agent/memory turn). --wait-user-inactive must still hold despite a
+	// turn having just ended — LastTurnEnd feeds only the session probe.
+	in := activityGateInputs{LastTurnEnd: time.Now().Add(-1 * time.Second)}
+	ok, err := waitSatisfied(waitConds{userInactive: "1m"}, in, never, never)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("wait-user-inactive should hold: a turn ending is not user activity")
+	}
+}
+
 func TestWaitSatisfied_BadDuration(t *testing.T) {
 	if _, err := waitSatisfied(waitConds{cold: "nope"}, activityGateInputs{}, nil, nil); err == nil {
 		t.Fatal("expected error for malformed duration")
