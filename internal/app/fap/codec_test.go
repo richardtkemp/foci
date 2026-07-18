@@ -388,6 +388,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		TextEnd{ConversationID: "c", TurnID: "t", MessageID: "m", FinalText: &final},
 		ServerMessage{ConversationID: "c", MessageID: "m", Role: "agent", Text: "hi"},
 		Notification{ConversationID: "c", Text: "n", Level: "info"},
+		Notification{ConversationID: "c", MessageID: "m", Text: "n", Level: "info", DetailBlobID: "b"},
 		Activity{ConversationID: "c", Kind: "tool", Detail: "Bash"},
 		Media{ConversationID: "c", MessageID: "m", BlobID: "b", MIME: "image/png"},
 		Interactive{ConversationID: "c", PromptID: "p", Text: "ok?", Choices: []Choice{{Label: "Y", Data: "p:0"}}, ExpiresAt: "2026-01-01T00:00:00Z"},

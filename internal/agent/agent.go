@@ -123,7 +123,7 @@ type Agent struct {
 	TaskListNotifyFunc            HookList[func(string, string)]          // callbacks for task list changes (session key, message)
 	CompactionMemoryFunc          HookList[func(string)]                  // fires before compaction to save memories (session key)
 	CompactionStartFunc           HookList[func(string, string)]          // callbacks for compaction start (session key, message) — sent immediately, not buffered
-	CompactionNotifyFunc          HookList[func(string, string)]          // callbacks for compaction notifications (session key, message)
+	CompactionNotifyFunc          HookList[func(string, string, string)]  // callbacks for compaction notifications (session key, message, summary — summary is "" when compaction produced no summary, e.g. delegated-backend compactions)
 	CompactionDebugFunc           HookList[func(string, string)]          // callbacks for compaction debug (session key, summary text)
 	OnActivity                    HookList[func(string)]                  // callbacks when a session has activity (session key)
 	Redact                        func(string) string                     // redact secrets from tool output; nil disables

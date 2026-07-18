@@ -298,9 +298,10 @@ func TestCompactSession_HappyPath(t *testing.T) {
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
 
-	var notifyMsgs []string
-	ag.CompactionNotifyFunc.Add(func(sk, msg string) {
+	var notifyMsgs, notifySummaries []string
+	ag.CompactionNotifyFunc.Add(func(sk, msg, summary string) {
 		notifyMsgs = append(notifyMsgs, msg)
+		notifySummaries = append(notifySummaries, summary)
 	})
 
 	result, err := ag.CompactSession(context.Background(), sessionKey, false)
@@ -324,6 +325,9 @@ func TestCompactSession_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(notifyMsgs[0], "6 messages") {
 		t.Errorf("notification = %q, want to mention '6 messages'", notifyMsgs[0])
+	}
+	if len(notifySummaries) != 1 || notifySummaries[0] == "" {
+		t.Errorf("expected CompactionNotifyFunc to receive a non-empty summary, got %q", notifySummaries)
 	}
 }
 
@@ -406,6 +410,11 @@ func TestCompactSession_DryRun(t *testing.T) {
 		debugMsgs = append(debugMsgs, summary)
 	})
 
+	var notifySummaries []string
+	ag.CompactionNotifyFunc.Add(func(sk, msg, summary string) {
+		notifySummaries = append(notifySummaries, summary)
+	})
+
 	if _, err := ag.CompactSession(context.Background(), sessionKey, true); err != nil {
 		t.Fatalf("CompactSession dry-run: %v", err)
 	}
@@ -415,6 +424,10 @@ func TestCompactSession_DryRun(t *testing.T) {
 	// Summary should have been passed to the debug hook.
 	if len(debugMsgs) == 0 {
 		t.Error("expected CompactionDebugFunc to receive summary on dry-run")
+	}
+	// And to the notify hook's 3rd arg too.
+	if len(notifySummaries) != 1 || notifySummaries[0] == "" {
+		t.Errorf("expected CompactionNotifyFunc to receive a non-empty summary on dry-run, got %q", notifySummaries)
 	}
 	// Original session should be untouched.
 	mc, _ := store.MessageCount(sessionKey)
@@ -545,9 +558,12 @@ func TestCompactSession_Delegated(t *testing.T) {
 		// need it — leaving nil here proves that.
 	}
 
-	var startMsgs, notifyMsgs []string
+	var startMsgs, notifyMsgs, notifySummaries []string
 	ag.CompactionStartFunc.Add(func(_, msg string) { startMsgs = append(startMsgs, msg) })
-	ag.CompactionNotifyFunc.Add(func(_, msg string) { notifyMsgs = append(notifyMsgs, msg) })
+	ag.CompactionNotifyFunc.Add(func(_, msg, summary string) {
+		notifyMsgs = append(notifyMsgs, msg)
+		notifySummaries = append(notifySummaries, summary)
+	})
 
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
@@ -568,6 +584,11 @@ func TestCompactSession_Delegated(t *testing.T) {
 	}
 	if len(notifyMsgs) != 1 {
 		t.Errorf("expected 1 notify message, got %d", len(notifyMsgs))
+	}
+	// Delegated compaction never computes a summary today — the notify
+	// hook's 3rd arg should be empty (see runDelegatedCompact).
+	if len(notifySummaries) != 1 || notifySummaries[0] != "" {
+		t.Errorf("expected empty summary for delegated compaction, got %q", notifySummaries)
 	}
 	if !nudgeReloaded {
 		t.Error("NudgeReloadFunc should fire after delegated compaction")

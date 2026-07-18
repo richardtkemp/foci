@@ -375,6 +375,11 @@ type Notification struct {
 	MessageID string `json:"messageId,omitempty"`
 	Text      string `json:"text"`
 	Level     string `json:"level,omitempty"`
+	// DetailBlobID, when set, references a blob (GET /app/blob/<id>) holding a
+	// larger supplementary payload for this notification (e.g. a compaction
+	// summary) — the client renders the notification as a tappable chit that
+	// fetches and shows the blob on tap.
+	DetailBlobID string `json:"detailBlobId,omitempty"`
 }
 
 func (Notification) Type() string { return TypeNotification }

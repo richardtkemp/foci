@@ -359,6 +359,20 @@ type SessionNotifier interface {
 	EditNotificationInSession(sessionKey, msgID, text string) error
 }
 
+// DetailAttacher is optionally implemented by connections that can attach a
+// large supplementary payload (e.g. a compaction summary) to an
+// already-sent message, addressable by its platform message ID. Only the
+// app connector implements this — chat platforms have no "tap to expand"
+// affordance.
+type DetailAttacher interface {
+	// AttachDetail re-sends message msgID with the given text plus a
+	// reference to detail (e.g. blob-backed), so the client can render a
+	// tappable "view details" affordance. detail may be large (markdown).
+	// A no-op (nil error) if msgID is unknown/already consumed, mirroring
+	// ButtonSender.EditMessageText's idempotency.
+	AttachDetail(msgID, text, detail string) error
+}
+
 // BatchQuestion is one question within a batched interactive prompt. Text is the
 // RAW question (the app renders its own layout); Header is an optional bold title;
 // Choices are the option buttons (empty ⇒ typed-answer-only) with NO Cancel — the

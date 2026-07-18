@@ -497,6 +497,30 @@ func (c *appConn) EditMessageText(msgID, text string) error {
 	return nil
 }
 
+// AttachDetail implements platform.DetailAttacher. Registers `detail` as a
+// blob (same store used for media/documents — fetched via GET
+// /app/blob/<id>) and re-sends the notification with the same msgID plus
+// the blob reference, so the client can upsert the row into a tappable
+// chit. Mirrors EditMessageText's idempotency: an unknown/already-consumed
+// msgID is a silent no-op.
+func (c *appConn) AttachDetail(msgID, text, detail string) error {
+	b := c.hub.bindingForNotification(msgID)
+	if b == nil {
+		return nil
+	}
+	meta, err := c.hub.blobs.putBytes([]byte(detail), fap.MediaDocument, "compaction-summary.md", "text/markdown")
+	if err != nil {
+		return err
+	}
+	c.hub.deleteNotification(msgID)
+	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
+	if clean == "" {
+		return nil
+	}
+	b.send(fap.Notification{ConversationID: b.convID, MessageID: msgID, Text: clean, Level: "info", DetailBlobID: meta.id})
+	return nil
+}
+
 // EditMessageWithButtons replaces a prompt's text and buttons (non-terminal).
 // foci core never calls this today — multi-question asks re-present via a fresh
 // SendInteractiveMessageWithID (same promptID, last-writer-wins) rather than an
