@@ -10,6 +10,12 @@ Each phase is extracted into its own file. `main()` is a ~400-line orchestrator.
 config.Load(path)                                        ← validates values; logs to stderr + buffer
                                                          ← merges [[modelinfo]] entries into modelinfo.registry
 
+→ timeutil.SetLocation(tz)                               ← [timezone], before anything logs/init's
+→ shellenv.Apply(cfg.ShellEnvFile)                       ← internal/shellenv; loads the operator's shell rc/env
+                                                            file into this process before any backend spawn, so
+                                                            tool shells (non-interactive, non-login — only
+                                                            $BASH_ENV is sourced) inherit PATH/GOPATH etc.
+
 → initLogging(cfg)                                       ← logging_init.go
   → log.Init, log.InitAPIDB, log.InitConversation, log rotation
   → returns cleanup func
@@ -150,26 +156,29 @@ DiagnoseRestart(sessionIndex, startTime, logsDir)
 main
  ├── config        → display, modelinfo
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
- ├── log           → sqlite, modelinfo (the latter two only for API-call usage logging; conversation storage was extracted to convo)
+ ├── log           → sqlite, modelinfo, timeutil (the first two only for API-call usage logging; conversation storage was extracted to convo)
  ├── convo         → log, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
  ├── display       (no deps — table rendering with Unicode display-width handling)
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
  ├── provider      (no deps — provider-neutral types and Client interface)
- ├── platform      → config, log, secrets, session, state, voice, warnings
+ ├── platform      → config, log, secrets, session, voice, warnings
  │                  (messaging types, interfaces, provider registry, Messaging facade,
  │                   MessageQueue thin filter+throttle helper + GroupThrottle for group chat batching)
  ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
- ├── session       → provider, log, sqlite
+ ├── session       → provider, log, messages, sqlite, timeutil
  ├── memory        → sqlite, fsnotify, blevesearch/bleve/v2 (FTS5 + bleve backends)
- ├── voice         → config, log, session, tempdir, gorilla/websocket
+ ├── voice         → config, log, procx, session, tempdir, gorilla/websocket
  ├── skills        → log (leaf package)
- ├── startup       → log, state (leaf package for crash detection)
+ ├── startup       → log, session (leaf package for crash detection)
  ├── resources     → log (goroutine monitor, memory guard)
- ├── mcp           → provider, log, tools, BurntSushi/toml, go-sdk/mcp
- ├── tools         → anthropic, config, display, log, memory, modelinfo, platform, provider, secrets, secrets/bitwarden, session, state, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
+ ├── procx         (no internal deps — process-spawn helper: strips foci-secrets/foci-askgw supplementary groups from child processes, own process group; used by every subprocess spawn site)
+ ├── peercred      (stdlib syscall only — SO_PEERCRED extraction for Unix-socket auth; see HTTP Gateway)
+ ├── question      (no internal deps — backend-agnostic AskUserQuestion core: parsing, formatting, choice buttons, answer resolution/merge; shared by ccstream and tools so the two surfaces can't drift)
+ ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
+ ├── tools         → agent/turnevent, app/fap, config, convo, display, log, memory, modelinfo, peercred, platform, procx, provider, question, secrets, secrets/bitwarden, session, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
  │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden (the exec/shell tool; execbridge generator stays at root)
  │     ├── tools/tmux     → tools, log, display, session, procx (tmux session tool — 8 files)
@@ -177,33 +186,39 @@ main
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
  ├── workspace     → log, provider
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
- ├── prompts       (top-level package, not internal) → log (embedded .md files + ResolveOrientationTemplate helpers)
+ ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → log (embedded .md files + ResolveOrientationTemplate helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
  ├── ratelimit     (no deps — neutral limit signals + shared reset/fallback policy)
  ├── modelcaps     → modelinfo, log (leaf — per-backend live capability cache; Fetcher + Persister seams injected at startup so it imports no anthropic/session/DB)
- ├── compaction    → log, memory, modelinfo, provider, session, tools
+ ├── compaction    → config, log, memory, messages, modelcaps, modelinfo, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
- ├── command       → agent, compaction, config, display, log, memory, platform, provider, provision, session, skills, state, tempdir, tools, workspace
+ ├── command       → agent, config, delegator, delegator/ccstream, display, log, memory, modelcaps, modelinfo, platform, procx, provider, provision, question, session, tempdir, timeutil, tools, workspace
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
+ ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
  ├── delegator     (no deps — Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
-  │   ├── delegator/cctmux     → delegator, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
-  │   ├── delegator/ccstream   → delegator, log, ratelimit (stream-json Claude Code; registers "claude-code" via init())
-  │   ├── delegator/codex      → delegator, log, modelcaps, modelinfo (Codex app-server JSON-RPC; registers "codex" via init())
-  │   └── delegator/opencode   → delegator, log, ratelimit (HTTP/SSE OpenCode; registers "opencode" via init())
- ├── agent         → delegator, compaction, config, display, log, memory, nudge, platform, provider, ratelimit, session, state, tools, warnings, workspace
- ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
- ├── dispatch      → command, session (shared command dispatch logic; platform wrappers delegate here)
- ├── turn          → display, log, toolformat, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
- ├── telegram      → agent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, sqlite, state, tooldetail, toolformat, turn, voice
+  │   ├── delegator/autoapprove → (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
+  │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
+  │   ├── delegator/ccstream   → delegator, delegator/autoapprove, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/codex      → delegator, delegator/autoapprove, log, modelcaps, modelinfo, procx, tempdir (Codex app-server JSON-RPC; registers "codex" via init())
+  │   └── delegator/opencode   → delegator, delegator/autoapprove, log, procx, ratelimit, tempdir (HTTP/SSE OpenCode; registers "opencode" via init())
+ ├── agent         → agent/turnevent, compaction, config, convo, delegator, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, provider, ratelimit, relogin, session, skills, timeutil, tools, turn, warnings, workspace
+ ├── periodic      → config, log, memory, provider, session, skills, timeutil, warnings (NO agent)
+ ├── dispatch      → command, platform, session, tools (shared command dispatch logic; platform wrappers delegate here)
+ ├── turn          → agent/turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
+ ├── telegram      → agent, agent/turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- └── discord       → agent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, sqlite, state, tooldetail, toolformat, turn, voice
-                    (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
+ ├── discord       → agent, agent/turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
+ │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
+ ├── app           → agent, agent/turnevent, app/fap, command, config, dispatch, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ └── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (config, log, secrets, session, voice, warnings).
+
+**`internal/state` no longer exists.** The former `state` package (`system_state` crash-detection row, `state.json`/state.db key-value store, `agent/ID/default_chat`, `facet:<bot>` bot→session mapping, ask/wizard persistence) was folded into `internal/session`'s `SessionIndex` (SQLite-backed) before this doc's tracked baseline — every dependency line that used to read "state" above has been corrected to "session" (or dropped where session wasn't otherwise a dependency). If you see "state" cited anywhere else in this doc or in `shared/skills/`, it's stale.
 
 **`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
 
@@ -211,9 +226,9 @@ No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `sk
 
 **`chatmeta` package:** Shared per-chat metadata logic extracted from `telegram` and `discord`. Session keys are deterministic (`session.NewChatSessionKey`), so the `Resolver` derives them and registers platform ownership (a `registered` chat_metadata row backing `SessionIndex.PlatformForChat`) on first contact; it also handles `DefaultChatID`, `DefaultSessionKey`, and `RecordUsername`. Platform-specific methods (`SessionKey`, `SetSessionKey`, `ChatID`, `SetChatID`, `Username`) remain on each Bot. Imports: `platform`, `session`, `log`. All methods are nil-receiver safe.
 
-**`route` package:** The single addressing authority. Defines the canonical `Target` grammar (`agent[/rest][?create=&policy=]`) parsed identically by every entry point (HTTP handlers, CLI, `send_to_session`, webhooks), the `Resolver` with ONE resolution ladder (exact key → existing named session → chat alias → create-named; empty rest → agent default via `SessionIndex.DefaultSessionKeyForAgent`), `Receipt` (`{target, session, resolved_via}` returned to senders in HTTP responses and tool results), `ConnFor` — the ONE outbound delivery cascade (session's own connection → policy-dependent fallback to the owning platform's primary, with `PolicyRootFallback` suppressing branch sessions so facet replies never leak into the parent's chat) — and `Broadcast`, the delivery set behind `PolicyBroadcast` (`foci send --broadcast`, and the rate-limit/max-tokens warnings): one connection per platform — each platform's primary — delivering to that platform's default destination (telegram/discord: the default chat; app: the default conversation via `Hub.deliverBinding`, else the newest conversation, auto-created if none exist). Cache-bust warnings are deliberately NOT broadcast: they concern one session's cache prefix and route to that session's chat via `SessionNotifier`. Imports: `platform`, `session`.
+**`route` package:** The single addressing authority. Defines the canonical `Target` grammar (`agent[/rest][?create=&policy=]`) parsed identically by every entry point (HTTP handlers, CLI, `send_to_session`, webhooks), the `Resolver` with ONE resolution ladder (exact key → existing named session → chat alias → create-named; empty rest → agent default via `SessionIndex.DefaultSessionKeyForAgent`), `Receipt` (`{target, session, resolved_via}` returned to senders in HTTP responses and tool results), `ConnFor` — the ONE outbound delivery cascade (session's own connection → policy-dependent fallback to the owning platform's primary) — and `Broadcast`, the delivery set behind `PolicyBroadcast` (`foci send --broadcast`, and the rate-limit/max-tokens warnings): one connection per platform — each platform's primary — delivering to that platform's default destination (telegram/discord: the default chat; app: the default conversation via `Hub.deliverBinding`, else the newest conversation, auto-created if none exist). Only three policies exist: `PolicyFallback` (default — session's own connection, else the agent's primary), `PolicyStrict` (session's own connection or nothing — `DeliveryNone`), and `PolicyBroadcast`. **`PolicyRootFallback` and the `DeliverySuppressed` outcome were removed (2026-07-09, `3a26a5bd`)** — branch/facet sessions with no live connection of their own now fall back to the primary like any other session, same as root sessions; the leak-prevention guard was judged not worth the complexity (see commit message for the full rationale). `route.NotifySessionChat` (`notify.go`) is a small helper for session-targeted notifications: resolves the session-or-primary connection and prefers `SessionNotifier.SendNotificationToSession` over a bare `SendNotification`. Cache-bust warnings are deliberately NOT broadcast: they concern one session's cache prefix and route to that session's chat via `SessionNotifier`. Imports: `platform`, `session`.
 
-Most packages depend on `provider` for types; only `main.go` and `tools` import `anthropic` directly (for Anthropic-specific features). `periodic` no longer imports `agent` or `session` — warning dispatch is handled by the `warnings` package, wired together in `main.go`.
+Most packages depend on `provider` for types; only `main.go` (`cmd/foci-gw/credentials.go`) imports `anthropic` directly in production code (for Anthropic-specific features — `tools` only references it from test-only helpers now). `periodic` still imports `session` directly (it holds a `*session.SessionIndex` to pick keepalive/reflection/background candidates) but never imports `agent` — warning dispatch is handled by the `warnings` package, wired together in `main.go`.
 
 **`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
 
@@ -221,11 +236,11 @@ Most packages depend on `provider` for types; only `main.go` and `tools` import 
 
 Slash commands (`/ping`, `/model`, etc.) are dispatched through a three-layer architecture:
 
-1. **Platform wrapper** (`telegram/dispatch.go`, `discord/dispatch.go`): Thin wrappers that extract `text`, `chatID`, and `userID` from platform-native message types (`gotgbot.Message`, `discordgo.Message`) and delegate to the shared dispatcher.
+1. **Platform wrapper** (`internal/telegram/bot.go`, `internal/discord/connection.go`): Thin wrappers that extract `text`, `chatID`, and `userID` from platform-native message types (`gotgbot.Message`, `discordgo.Message`) and delegate to the shared dispatcher.
 
 2. **Shared dispatch** (`dispatch/dispatcher.go`): Platform-agnostic routing logic. Detects dot-commands (`.model`) vs slash-commands (`/model`), resolves session keys, and builds a `command.Request`. Returns a `dispatch.Result` with `Handled`, `Response`, `SessionKey`, `UserID`.
 
-3. **Command layer** (`command/registry.go`): Receives `Request` and `CommandContext` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`. When `DocPath` is set, it points to a temp file that the platform layer sends to the originating chat via `SendDocumentToChat(msg's chat ID, path)` and then removes. This keeps the send scoped to the exact chat that invoked the command, avoiding reliance on global "last channel" state. The HTTP `/command` endpoint handles `DocPath` by sending via `ForSessionOrPrimary(sessionKey, agentID)`.
+3. **Command layer** (`command/command.go`, `type Registry`): Receives `Request` and `CommandContext` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`. When `DocPath` is set, it points to a temp file that the platform layer sends to the originating chat via `SendDocumentToChat(msg's chat ID, path)` and then removes. This keeps the send scoped to the exact chat that invoked the command, avoiding reliance on global "last channel" state. The HTTP `/command` endpoint handles `DocPath` by sending via `ForSessionOrPrimary(sessionKey, agentID)`.
 
 **Dispatch flow:**
 ```
@@ -349,7 +364,7 @@ When `steer_mode` is enabled and a turn is active, user messages are buffered as
 
 System-initiated input — HTTP `/send` (`foci send`, cron keepalives), `/wake` fall-through, webhooks, scheduled wakes, restart changelogs, proactive warnings, error notifications, inter-session notifies (`session_notify`), and the periodic reflection/keepalive/memory passes — must never fold into (steer) an in-flight turn. It always waits gracefully for turn completion and then runs as a fresh, fully-tracked turn. Enforced at two layers:
 
-1. **The session inbox is the queue.** Every system entry point routes through `Agent.Enqueue` with an `Envelope.Inject` (`InjectMeta{Trigger, Run}`), so the per-session worker serialises it with platform turns, defers it behind a pending `foci_ask`, and holds it through compaction. Sync callers (HTTP `/send --sync`, delegated reflection/keepalive passes that must complete before their scheduler continues) use `Agent.EnqueueInjectWait`, which blocks until the worker has run the closure. Gateway plumbing: `runAgentQueued` / `asyncDispatch` (`cmd/foci-gw/http.go`), `deliverInjectedTurn` / `newSessionNotifyFn` / `newAsyncNotifier` (`agents_notify.go`), `handleDelegatedBranch` (`agent_sessions.go`). `EnqueueInjectWait` must NOT be called from the session's own worker (deadlock) — nested same-session system turns invoked from a turn's post-phase (pre-compaction memory, session-end memory) call `HandleMessage` directly.
+1. **The session inbox is the queue.** Every system entry point routes through `Agent.Enqueue` with an `Envelope.Inject` (`InjectMeta{Trigger, Run}`), so the per-session worker serialises it with platform turns, defers it behind a pending `foci_ask`, and holds it through compaction. Sync callers (HTTP `/send --sync`, delegated reflection/keepalive passes that must complete before their scheduler continues) use `Agent.EnqueueInjectWait`, which blocks until the worker has run the closure. Gateway plumbing: `runAgentQueued` / `asyncDispatch` (`cmd/foci-gw/http.go`), `deliverToSessionChat` / `newSessionNotifyFn` / `newAsyncNotifier` (`agents_notify.go`), `handleDelegatedBranch` (`agent_sessions.go`). `EnqueueInjectWait` must NOT be called from the session's own worker (deadlock) — nested same-session system turns invoked from a turn's post-phase (pre-compaction memory, session-end memory) call `HandleMessage` directly.
 2. **`ImmediateInject(SourceSystem)` at the backend.** `RunInference` classifies the turn via `isInteractiveTrigger` (`internal/agent/context.go`): only registered platform triggers (telegram/discord/app) and `voice` count as interactive. Interactive turns keep the fold path (`ImmediateInject(SourceUser)` follow-up / `SourceSteer`); everything else dispatches as `ImmediateInject(SourceSystem)`, whose backend implementations (all three) atomically begin a turn iff idle — the idle check and turn begin happen under one lock, so racing begins can't clobber each other's `TurnEvents` — and return `delegator.ErrTurnInFlight` otherwise. On rejection `RunInference` waits (`WaitForTurn`, `systemInjectRetryInterval` timeout backstop) and retries. This second layer covers turns the inbox worker can't see: backend-only runs (opencode shadow turns) and the nested post-phase memory turns above.
 
 **Autonomous runs and the pending-work gate (#1068/#1070, spec §4).** A CC *autonomous run* — CC self-resuming with no foci turn open, triggered by a backgrounded subagent or `run_in_background` Bash completing — delivers its text to the chat even though foci opened no turn for it. Delivery works because `SessionEvents` binds once (at backend acquisition) to a per-session **router** (`Agent.sessionRouter`), not to a per-turn ctx sink; a system turn can therefore never rebind the session to its silent `NopSink` (the #1068 poison). Outside any turn the router falls through to a late-delivery sink resolved at emit time (`resolvingLateSink` → `route.ConnFor`), so autonomous text reaches the chat; `autonomousStreamed` dedups the streamed-vs-result copies.
@@ -390,7 +405,7 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 
 **Elicitation handling (`ccstream/elicitation.go`):** MCP servers can raise an `elicitation` control_request subtype when a tool call needs structured user input mid-turn. The reader dispatches these alongside `can_use_tool` and `OnElicitationRequest` builds a `pendingElicitation` (separate map from `pendingPerms` — elicitations aren't keyed to tool_use_ids). Two modes are supported: **form** walks the `requested_schema` one property at a time, presenting each field through the same `permPromptFn` platform callback used for permissions. Free-text fields accept typed answers via the same text intercept path as AskUserQuestion (`HasPendingElicitation` from `RunInference`); enum properties render as buttons; booleans render as Yes/No; once every field is satisfied, the accumulated answers are marshalled into a `content` object and sent back as a `control_response` with `action: "accept"`. **url** mode surfaces the URL with Done/Decline/Cancel buttons — Done sends `accept` with no content, while an out-of-band `system/elicitation_complete` notification from CC auto-resolves the matching (`mcp_server_name`, `elicitation_id`) entry without the user clicking Done. Unsupported or missing schemas fall back to a Decline/Cancel-only prompt (foci never synthesises field values it didn't collect). Decline and Cancel at any point short-circuit the walk and send the corresponding action with no content. The drain hook fires only when both `pendingPerms` and `pendingElicits` are empty (enforced by the unified `OutstandingRegistry` — see below) so the platform's "has pending prompt" indicator doesn't flap mid-walk. The `delegator.ElicitationResponder` optional interface exposes `RespondToElicitation` / `HasPendingElicitation` to the agent layer, mirroring `QuestionResponder`.
 
-**Outstanding-prompt registry (`ccstream/outstanding.go`):** All user-input prompts (permissions, AskUserQuestion sequences, MCP elicitations) share one `OutstandingRegistry` per Backend. Each `pendingPerms`/`pendingElicits` insertion is paired with a `Register(requestID, kind)` call; resolutions call `Resolve(requestID)`; CC's `control_cancel_request` calls `Cancel(requestID, reason)`. The registry provides three things on top of the kind-specific stores: (1) a multi-listener cancel fanout — the platform layer registers a per-prompt cancel callback via `Backend.RegisterPromptCancelListener` at the same time it sends the interactive UI, and the registry fires those callbacks (in registration order) when CC cancels the prompt before the user responds; (2) a registry-wide `onEmpty` drain hook (`Backend.SetOnPromptsCleared`) that fires only when ALL outstanding prompts have been removed — fixing a pre-Phase-2 asymmetry where `removePendingPerm` could trigger the drain while elicitations were still outstanding; (3) idempotent semantics — cancelling/resolving an unknown requestID is a silent no-op rather than a side-effecting fall-through. `DelegatedManager.RegisterPromptCancelListener(sessionKey, requestID, fn)` exposes the per-prompt registration to the agent layer; in `cmd/foci-gw/agents_delegated.go`, the platform closure that calls `SendInteractiveMessageWithID` registers a cancel listener that invokes `platform.CancelInteractiveMessage` to disable the orphaned inline keyboard.
+**Outstanding-prompt registry (`internal/delegator/outstanding.go`, package `delegator` — a shared root type, not ccstream-specific):** All user-input prompts (permissions, AskUserQuestion sequences, MCP elicitations) share one `OutstandingRegistry` per Backend. Each `pendingPerms`/`pendingElicits` insertion is paired with a `Register(requestID, kind)` call; resolutions call `Resolve(requestID)`; CC's `control_cancel_request` calls `Cancel(requestID, reason)`. The registry provides three things on top of the kind-specific stores: (1) a multi-listener cancel fanout — the platform layer registers a per-prompt cancel callback via `Backend.RegisterPromptCancelListener` at the same time it sends the interactive UI, and the registry fires those callbacks (in registration order) when CC cancels the prompt before the user responds; (2) a registry-wide `onEmpty` drain hook (`Backend.SetOnPromptsCleared`) that fires only when ALL outstanding prompts have been removed — fixing a pre-Phase-2 asymmetry where `removePendingPerm` could trigger the drain while elicitations were still outstanding; (3) idempotent semantics — cancelling/resolving an unknown requestID is a silent no-op rather than a side-effecting fall-through. `DelegatedManager.RegisterPromptCancelListener(sessionKey, requestID, fn)` exposes the per-prompt registration to the agent layer; in `cmd/foci-gw/agents_delegated.go`, the platform closure that calls `SendInteractiveMessageWithID` registers a cancel listener that invokes `platform.CancelInteractiveMessage` to disable the orphaned inline keyboard.
 
 ### Backend Session Lifecycle
 
@@ -699,17 +714,22 @@ The opencode backend drives OpenCode as a coding agent via its HTTP server API. 
 
 **Message transforms** (`[[message_transforms]]` in config) run regex find/replace on inbound user messages. Transforms fire before command dispatch — if a message is already a recognized command, transforms are skipped. If transforms produce a command (e.g. `s` → `/status`), it is dispatched as one. Rules run in sequence; each rule's output becomes the next rule's input.
 
-Each user message then gets a metadata line prepended (NOT in system prompt — that would bust cache):
+Each user message then gets a header prepended (NOT in system prompt — that would bust cache), rendered by the configurable **statusline template** (`internal/agent/statusline.go`, #831 — see also the State Dashboard note under Task List and the pause/resume note under Ask). The default template (`DefaultStatuslineTemplate`) produces:
 
 ```
-[meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 via=telegram prev_cost=$0.0430 prev_tokens=in:2400/out:312/cR:18000/cW:200
+[meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 via=telegram
+[state] tasks: 2/5 → first active, todos: 3 open
+[ask] ⏸ ask q1 paused — user replies routing to you as normal turns, not answering it (/resume to restore)
 ```
+
+`[state]` and `[ask]` are conditional lines that self-omit (statusline rule 3) when every placeholder they contain renders empty, so on a fresh session with no tasks/todos/scratchpad and no paused ask, only `[meta]` appears.
 
 - `time` — the time the user's message was received at the platform boundary, not the time the turn was composed. Stamped in `toPlatformMessage` as `QueuedMessage.ReceivedAt` (Telegram: `msg.Date`; Discord: `msg.Timestamp`) and threaded through `agent.WithReceivedAt(ctx, …)` → `TurnState.ReceivedAt` → `composeTurnText` so queued or steered messages show the user's send time rather than the drain/inject time. Falls back to wall clock for system-initiated turns with no platform receipt.
 - `gap` — human-readable time since previous message ("3h12m", "2d4h", "38s", "none"). Computed from `time` minus `sessionMeta.lastMessageTime`, which is updated to `TurnState.UserMessageTime()` so gaps also measure user-send-to-user-send rather than inject-to-inject.
 - `model` — current model name (e.g., "claude-haiku-4-5", "claude-opus-4-6")
 - `via` — transport that delivered the message. Derived from the context trigger via `triggerToPlatform()` in `context.go`. Values: `telegram` (Telegram/voice), `discord` (Discord), `android` (Android app), `api` (HTTP /send), `cron` (system-initiated: keepalive, wake, scheduled, etc.)
-- `prev_cost` / `prev_tokens` — cost and token breakdown of the previous turn (omitted on first message)
+
+**`{cost}` / `{tokens}` (prev turn's cost and token breakdown) exist as statuslineFields but are deliberately NOT in the default template** — surfacing a running cost/token figure on every turn was found to nudge the agent toward rationing its own budget, an undesired behaviour (removed 2026-07). An agent can still opt in via a custom `statusline` config (`docs/CONFIG.md`); the bare `{cost_raw}`/`{tokens_in}`/`{tokens_out}`/`{cache_read}`/`{cache_write}` fields are also available for custom templates.
 
 Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The metadata goes past the cache breakpoint, so it doesn't affect prompt caching.
 
@@ -750,7 +770,7 @@ type Sink interface {
 
 | Package | Sinks | Role |
 |---|---|---|
-| `internal/agent/turnevent` | `BufferSink`, `RecordingSink`, `NopSink`, `TeeSink`, `SinkFunc` | Leaf package: event types, Sink interface, context helpers, and pure-utility sinks. No platform or turn deps. |
+| `internal/agent/turnevent` | `BufferSink`, `NopSink` | Leaf package: event types, Sink interface, context helpers, and pure-utility sinks. No platform or turn deps. |
 | `internal/turn/sink.go` | `StreamingSink`, `SessionSink` | Shared platform sinks. `StreamingSink` wraps a `TurnRenderer`, `SinkTracker`, and `platform.Connection` — used by Telegram and Discord workers. `SessionSink` delivers via `conn.SendToSession` — used by injected-turn and cross-session notify flows. |
 
 ### How interactive platforms wire it
@@ -799,9 +819,9 @@ What used to be at `StreamingSink.Emit` on `TurnComplete` (a single sink-level `
 ### How headless callers wire it
 
 - **HTTP `/send`, `/wake`, voice, webhook** (`cmd/foci-gw/http_handlers.go`, `http.go`): build a `turnevent.NewBufferSink()`, attach via `WithSink`, call `HandleMessage`, return `buf.FinalText()` as the JSON response.
-- **Injected turns** (`cmd/foci-gw/agents_notify.go → deliverInjectedTurn`): build `turn.NewSessionSink(conn, sessionKey, trigger)`, attach, call `HandleMessage`. SessionSink owns its own delivered flag so intermediate text and final text don't double-deliver.
+- **Injected turns** (`cmd/foci-gw/agents_notify.go → deliverToSessionChat`): build `turn.NewSessionSink(conn, sessionKey, trigger)`, attach, call `HandleMessage`. SessionSink owns its own delivered flag so intermediate text and final text don't double-deliver.
 - **Cross-session notify** (`agents_notify.go → newSessionNotifyFn`): same as injected turns — `SessionSink` routing through `conn.SendToSession`.
-- **Async notify with response routing** (`agents_notify.go → newAsyncNotifier`): `BufferSink` captures the target session's final text, then the response is routed back to the caller's session via `deliverInjectedTurn`.
+- **Async notify with response routing** (`agents_notify.go → newAsyncNotifier`): `BufferSink` captures the target session's final text, then the response is routed back to the caller's session via `deliverToSessionChat`.
 - **Internal hooks** (compaction memory, session-end memory, lifecycle, ratelimit replay): call `HandleMessage` without attaching any sink — the `NopSink` fallback absorbs events silently.
 - **Spawn tool** (`internal/tools/spawn.go`): `BufferSink` captures the branch session's response so the tool can return it as a `ToolResult` to the parent agent.
 - **Nudge extraction** (`internal/nudge/extract.go`): `BufferSink` captures the rule-extraction response for JSON parsing.
@@ -1259,12 +1279,12 @@ If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), th
 
 ## Slash Commands (`command/`)
 
-Messages starting with `/` are intercepted at the Telegram router level before reaching the agent. They execute immediately — never queued behind an in-flight agent turn.
+Messages starting with `/` are intercepted at the platform router level (Telegram, Discord — via the shared `dispatch` package, see Command Dispatch Architecture above) before reaching the agent. They execute immediately — never queued behind an in-flight agent turn.
 
-**Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
+**Dispatch flow:** Platform message → auth check → if `/`: `dispatch.Dispatcher.DispatchText()` → `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/reset`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`, `/pass`, `/login`
+1. **Built-in** (code-defined across `command/*.go`, one constructor per command; `builtins.go` is only a subset — `ping`, `repeat`, `facet`, `tmux`, `agents`): registered in `registerAgentCommands()` (`cmd/foci-gw/commands.go`), that function is the ground truth for the exact current set. As of this audit: `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/context`, `/mana` (alias `/usage`), `/reset`, `/model`, `/effort`, `/thinking`, `/speed`, `/mode`, `/display`, `/overrides`, `/tools`, `/config`, `/prompts`, `/log`, `/errors`, `/version`, `/help`, `/compact`, `/restart`, `/secrets`, `/bitwarden`, `/sessions`, `/agents`, `/android`, `/pair` (aliases `/pair-key`, `/pairkey`), `/repeat`, `/pass`, `/todo`, `/misc`, `/stop` (+ configurable aliases like `/wait`), `/login`, `/done`, `/facet`, `/branch` (see Wake/Branch section) — plus conditionally-registered ones: `/plan` (iff the backend contributed a plan delivery), `/tmux` (iff the tmux tool is wired), `/pause`/`/resume`/`/complete` (iff `AskRouter` is set). `/uptime` and `/voice` (as a mode-toggle command) no longer exist — voice config moved to `[[tts]]`/`[[stt]]` arrays with no mode command (`7bca02b4`); `/session` is now plural `/sessions` with `list`/`default`/`info`/`index` subcommands.
    - `/login` (`RequiresBackend`, ccstream only) — manually trigger the automated CC re-login flow (see [Automated CC re-login on 401](#backend-session-lifecycle)); URL returns to the chat that ran it
    - `/pass` — forward a command directly to the delegated backend (e.g. `/pass /context`, `/pass /model opus`). Bypasses foci's command dispatch so CC slash commands that would otherwise be intercepted by foci can be sent through. For tmux backends, captures and returns pane output after stabilisation. For stream backends, output arrives normally via the stdout reader. Only available for delegated agents — returns an error for API-mode agents.
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
@@ -1379,26 +1399,19 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 
 **Reset guard:** `/reset` refuses when `agent.IsProcessing()` is true — prevents clearing an active conversation mid-turn.
 
-## Streaming Output (`telegram/stream_writer.go`)
+## Streaming Output (`internal/turn/stream.go` + per-platform `StreamSink`)
 
-When `stream_output = true` and `streaming = true`, model output is shown in Telegram in real-time as tokens arrive, rather than waiting for the full response.
+When `stream_output = true` and `streaming = true`, model output is shown in the chat in real-time as tokens arrive, rather than waiting for the full response. The pump/accumulator is shared across platforms (`turn.StreamBuffer`); only the rendering/message-identity side (`StreamSink.Update`/`Close`) is platform-specific — Telegram's is `telegramStreamSink` (`internal/telegram/turn_renderer.go`), Discord's the analogous type in `internal/discord/turn_renderer.go`.
 
-**Lifecycle:**
-1. `Bot.NewTurnSink` creates a `streamWriter` with the bot's `tableOpts` (no goroutines started yet) when `Agent.RunTurn` requests the per-turn sink
-2. On the first `TextDeltaObserver` delta, the stream writer sends an initial HTML-formatted message and starts a ticker goroutine — gated by `platform.IsSilencingPrefix` (see below)
-3. Each tick, if new text has accumulated, the buffer is processed through `closePartialMarkdown` → `ConvertToTelegramHTML` and the message is edited with HTML formatting
-4. When `HandleMessage` returns, `Finish()` stops the ticker and returns the message ID
-5. The final HTML-formatted response is edited into the stream message (or sent as a new message if too long/has thinking)
+**Lifecycle (`turn.StreamBuffer`, `stream.go`):**
+1. Created via `turn.NewStreamBuffer(sink, interval, live)` when the per-turn `StreamingSink` is built (see "How interactive platforms wire it" above); `live` comes from the resolved `stream_output` display setting.
+2. `OnDelta` appends every text delta to an internal buffer. While `!live`, deltas accumulate but the sink is never driven (uniform interface regardless of streaming mode).
+3. **Silencing-prefix gate:** the pump does not start until the accumulated buffer diverges from every entry in `platform.IsSilencingPrefix`'s sentinel set (`[[NO_RESPONSE]]`, `"No response requested."`) — this is the only mechanism that can prevent a streamed message from being created at all (downstream `IsSilent`/`StripSilencingSuffix` gates can stop *further* delivery but can't un-send an already-streamed message). On release: one immediate `sink.Update(snapshot)` fires synchronously, then a ticker goroutine (`pump()`, interval from `stream_interval` / `stream_output` config, `[display]`/`[[platforms]]`/`[[agents.platforms]]`, `hot:"turn"` reloadable) pushes the latest snapshot on every tick where the buffer is dirty.
+4. `Finish()` (called when the turn's stream buffer is torn down) stops the pump, waits for the goroutine to exit, then calls `sink.Close()` and returns `(sink, surfaced)` — `surfaced` records whether the sink ever actually rendered anything, feeding the renderer's delivered-flag logic (see `StreamingSink` above).
 
-**Key design decisions:**
-- **HTML formatting during streaming:** Each stream update runs through `closePartialMarkdown` (strips unmatched `**`, `` ` ``, `` ``` ``, `~~`, `__`, `*`, `_`) then `ConvertToTelegramHTML` with `ParseMode: "HTML"`. If the HTML edit fails (malformed output), the stream writer falls back to plain text for that tick.
-- **Partial markdown handling:** `closePartialMarkdown` detects unmatched delimiters by parity counting and strips the trailing unmatched instance. For code fences, everything from the unmatched fence onward is removed. This is lightweight (string counting, no regex) and runs on every tick.
-- **Truncation at 3900 chars:** Buffer is truncated with `"..."` to stay within Telegram's 4096-char limit (with headroom for HTML tag expansion). Truncation is rune-safe to avoid splitting multi-byte UTF-8 characters. The final response uses the normal chunking path if it exceeds 4096.
-- **Lazy start:** No goroutine or message until the first delta. If the agent returns no text (e.g. pure tool calls), the stream writer does nothing.
-- **Silencing-prefix gate:** Before the first delta triggers `sendInitial`, the accumulated buffer is checked against `platform.IsSilencingPrefix`. While the buffer is empty/whitespace or could still resolve to a silencing sentinel (`[[NO_RESPONSE]]`, `"No response requested."`), no Telegram message is created. Once the buffer diverges from every sentinel, the gate releases, `sendInitial` fires with the held content, and normal streaming resumes — subsequent deltas are not re-checked. If the stream ends while still in the prefix-ambiguous window (whole turn is `[[NO_RESPONSE]]`), no message is ever created. This is the only way to prevent a streamed message from briefly appearing on screen before being silenced; `IsSilent` at downstream chokepoints (see below) prevents *new* delivery but cannot un-send a message that was incrementally streamed.
-- **Stream message as edit target:** When a stream message exists, the final response is edited into it (taking priority over tool call preview messages). If the response can't be edited in-place (too long, has thinking blocks), the stream message is edited to a truncated preview with "(full response below)" and the full response is sent as a new message.
+**Telegram's `StreamSink` (`telegramStreamSink.Update`, `turn_renderer.go`):** formats the *full* accumulated text on every call — `ConvertToTelegramHTML(closePartialMarkdown(fullText), opts)` — then chops it into ≤4096-char chunks (`splitMessage`) and **rolls over to additional messages** as the reply grows past one message's worth, rather than truncating. Per chunk: an unchanged chunk is skipped (avoids "message is not modified" API churn), an existing chunk is edited in place, and a new chunk beyond the live sequence is sent as a new message. `closePartialMarkdown` detects unmatched delimiters (`**`, `` ` ``, `` ``` ``, `~~`, `__`, `*`, `_`) by parity counting and strips the trailing unmatched instance (code fences: everything from the unmatched fence onward is removed) — lightweight, no regex, runs on every tick.
 
-**Config:** `stream_output` (bool) and `stream_update_interval` (string, default `"250ms"`) in `[display]` or `[[platforms]]`, or `stream_output` and `stream_interval` in `[[agents.platforms]]`.
+**Config:** `stream_output` (bool, `hot:"turn"` — reloadable without restart) and `stream_interval` (duration string, e.g. `"250ms"`) in `[display]`/`[[platforms]]` or per-agent `[[agents.platforms]]`. Discord's default interval is longer (1200ms vs Telegram's 250ms) due to stricter platform rate limits — see Discord Bot below.
 
 ## Discord Bot (`discord/`)
 
@@ -1790,7 +1803,7 @@ Endpoints for external integration. All endpoints accept an optional `agent` par
 - `POST /send` — message to agent's default session (activity-gated). Returns 412 if no default session.
 - `GET /status` — dispatches `/status` for the specified agent
 - `POST /command` — dispatches slash command (bypasses agent context; activity-gated — accepts `if_active`/`if_inactive`/`if_user_active`/`if_user_inactive` in the JSON body, with the same in-flight short-circuit as `/send`, so an unattended `/reset` skips a session that is active or mid-turn)
-- `POST /wake` — branch from default session (activity-gated, supports `no_compact`/`no_reset_hook`). Returns 412 if no default session.
+- `POST /branch` — branch from default session (activity-gated, supports `no_compact`/`no_reset_hook`). Returns 412 if no default session. (Renamed from `/wake` 2026-07-10, `3b32fd3b` — "it is the branch mechanism"; the CLI subcommand is `foci branch`.)
 - `POST /webhook/{agent}/{hookid}` — trigger agent turn from external events. `{hookid}` must be declared in the agent's `webhooks` config map (global `[system]` merged with per-agent `[[agents]].system`). The mapped prompt path is resolved via `prompts.ResolvePrompt()` (agent workspace/prompts → shared workspace/prompts). Reads request body as payload (max 1 MB), combines prompt + payload under a `## Webhook Payload` heading, and sends to the agent's default session. Async (202) by default; `?sync=true` for synchronous response. Supports four activity gate query params — `?if_active` / `?if_inactive` (session-level, with in-flight short-circuit) and `?if_user_active` / `?if_user_inactive` (user-attention only); see [SPEC.md](SPEC.md) Activity gating. Returns 404 if hookid not in config or prompt file not found, 412 if no default session.
 - `GET /voice` — WebSocket upgrade for real-time voice conversation. Enabled when `[http] ws_enabled = true`.
 - `POST /-/reload-credentials` — hot-reload API credentials from `secrets.toml`. Called by `foci auth` after saving a new token. Only registered when using static token auth (setup-token or API key), not OAuth fallback.
@@ -1811,9 +1824,9 @@ Separate binary (`go build ./cmd/foci`) that wraps the HTTP gateway endpoints fo
 
 **`foci first-run`** — first-run setup wizard. Generic steps (auth, agent ID, model, character files) live in `cmd/foci/setup.go`. Platform-specific steps (e.g. bot token, user ID) are delegated to providers via the `platform.SetupWizard` interface. Each provider returns a `WizardResult` containing a TOML config fragment and secrets map. The generic wizard appends these to the generated `foci.toml` and stores secrets via `secrets.Store`. `cmd/foci/setup.go` has zero direct telegram imports — it blank-imports `internal/telegram` for provider registration and discovers wizards via `platform.SetupProviders()`. Non-interactive mode collects provider flags dynamically from `SetupFlags()`. The `consoleUI` struct implements `platform.SetupUI` for interactive prompts.
 
-## Wake
+## Wake / Branch
 
-- **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's default chat session, injects the text, runs the agent on the branch. Supports `no_compact` and `no_reset_hook` flags. `--oneshot` CLI flag sets both. Returns 412 if no default session.
+- **HTTP Branch** (`POST /branch`, CLI `foci branch`; endpoint renamed from `/wake` 2026-07-10): Creates a branch session from the agent's default chat session, injects the text, runs the agent on the branch. Supports `--no-compact` and `--no-reset-hook` flags (`--if-warm`/`--if-cold`, aliased `--if-active`/`--if-inactive`, gate on session cache-warmth). `--oneshot` CLI flag sets both no-compact and no-reset-hook. Returns 412 if no default session. (The internal response text is still literally "wake ok" — cosmetic, not user-facing.)
 - **Scheduled Wakes** (`remind` tool with `wake=true`): Agent-initiated timer that fires message injection into the default session at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing. Skips if no default session.
 
 ## Session-End Reflection
