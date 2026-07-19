@@ -707,6 +707,12 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	// Background — not ts.Ctx which may be cancelled (post-turn runs after
 	// processAgentMessage returns and the turn context is done).
 	if err := a.runDelegatedCompact(context.Background(), ts.Backend, ts.SessionKey); err != nil {
+		if errors.Is(err, delegator.ErrCompactionNoBoundary) {
+			// Backend declined (too few messages) — a benign no-op, not a
+			// failure. Nothing changed, so skip the post-compact cache reset.
+			a.logger().Debugf("session=%s auto-compaction declined by backend (no boundary)", ts.SessionKey)
+			return
+		}
 		a.logger().Warnf("session=%s delegated compaction failed: %v", ts.SessionKey, err)
 		return
 	}

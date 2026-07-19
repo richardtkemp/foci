@@ -518,9 +518,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			b.onCompactionDone(cb.CompactMetadata.PreTokens)
 		}
 		// Signal any armed compaction waiter (one-shot; clear after firing).
+		// Clear the abort channel too so the following idle's abort check
+		// (signalCompactionAbort) sees the wait already satisfied and no-ops.
 		b.turnMu.Lock()
 		ch := b.compactDoneCh
 		b.compactDoneCh = nil
+		b.compactAbortCh = nil
 		b.turnMu.Unlock()
 		if ch != nil {
 			select {
@@ -558,6 +561,15 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.drainEdgeCallbacks()
 		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v autonomous_open=%v", ss.State, turnActive, autonomousOpen)
 		if ss.State == "idle" {
+			// If a compaction wait is still armed at idle, no compact_boundary
+			// arrived — the backend declined to compact (e.g. "Not enough
+			// messages to compact"). Unblock WaitForCompaction now so the
+			// caller doesn't stall out the full timeout with the session's
+			// inbox held (#1267). A real compaction fires compact_boundary
+			// before idle, which already cleared the wait, so this no-ops there.
+			b.turnMu.Lock()
+			b.signalCompactionAbort()
+			b.turnMu.Unlock()
 			b.onSessionIdle()
 		}
 
