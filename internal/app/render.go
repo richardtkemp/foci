@@ -89,16 +89,16 @@ func (p *appBackend) Logger() *log.ComponentLogger { return p.logger }
 // blockquoted intermediate messages the OnReply fallback produces. SubagentTextRaw
 // is true: the app renders traces in an expandable view and shows the agent name
 // from the start frame, so it wants text raw (not the renderer's inline header).
-func (p *appBackend) DeliverSubagentStart(groupKey, label string) {
-	p.b.send(fap.SubagentStart{ConversationID: p.b.convID, GroupKey: groupKey, Label: label})
+func (p *appBackend) DeliverSubagentStart(groupKey, label string, runIndex int, prompt string) {
+	p.b.send(fap.SubagentStart{ConversationID: p.b.convID, GroupKey: groupKey, Label: label, RunIndex: runIndex, Prompt: prompt})
 }
 
 func (p *appBackend) DeliverSubagentText(groupKey, text string) {
 	p.b.send(fap.SubagentText{ConversationID: p.b.convID, GroupKey: groupKey, Text: text})
 }
 
-func (p *appBackend) DeliverSubagentEnd(groupKey string) {
-	p.b.send(fap.SubagentEnd{ConversationID: p.b.convID, GroupKey: groupKey})
+func (p *appBackend) DeliverSubagentEnd(groupKey string, runIndex int) {
+	p.b.send(fap.SubagentEnd{ConversationID: p.b.convID, GroupKey: groupKey, RunIndex: runIndex})
 }
 
 func (p *appBackend) SubagentTextRaw() bool { return true }

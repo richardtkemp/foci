@@ -203,6 +203,45 @@ func ExtractAgentDescription(raw json.RawMessage) string {
 	return ""
 }
 
+// ExtractAgentPrompt parses the "prompt" field from an Agent tool_use input
+// JSON payload — the main agent's instruction to the subagent for its first run
+// (#1355). Shown at the top of the subagent's run view.
+func ExtractAgentPrompt(raw json.RawMessage) string {
+	var input struct {
+		Prompt string `json:"prompt"`
+	}
+	if json.Unmarshal(raw, &input) == nil {
+		return input.Prompt
+	}
+	return ""
+}
+
+// ExtractSendMessage parses a SendMessage tool_use input into (to, message): the
+// target subagent's id (== its task_id) and the message body. Used to attribute a
+// reactivation prompt to the subagent being resumed (#1355). CC's SendMessage
+// carries both `to`/`recipient` (id) and `message`/`content` (body); prefer the
+// canonical `to`/`message`, falling back to the aliases.
+func ExtractSendMessage(raw json.RawMessage) (to, message string) {
+	var input struct {
+		To        string `json:"to"`
+		Recipient string `json:"recipient"`
+		Message   string `json:"message"`
+		Content   string `json:"content"`
+	}
+	if json.Unmarshal(raw, &input) != nil {
+		return "", ""
+	}
+	to = input.To
+	if to == "" {
+		to = input.Recipient
+	}
+	message = input.Message
+	if message == "" {
+		message = input.Content
+	}
+	return to, message
+}
+
 // ExtractBashBackground reports whether a Bash tool_use input requests
 // backgrounding (CC's native `run_in_background` parameter). A backgrounded
 // Bash outlives its turn and, on completion, drives a task_notification /

@@ -16,8 +16,8 @@ type testHandler struct {
 	OnThinkingDelta func(delta string)
 	OnToolStart     func(id, name, input string)
 	OnToolEnd       func(id, name, output string, isError bool)
-	OnSubagentStart func(groupKey, label string)
-	OnSubagentEnd   func(groupKey string)
+	OnSubagentStart func(groupKey, label, prompt string, runIndex int)
+	OnSubagentEnd   func(groupKey string, runIndex int)
 	OnTurnComplete  func(result *delegator.TurnResult)
 
 	PostToolNudgeFunc  func(toolName, toolInput string, isError bool) []string

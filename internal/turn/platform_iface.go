@@ -49,16 +49,19 @@ type Platform interface {
 // renderer's OnReply fallback.
 type SubagentDeliverer interface {
 	// DeliverSubagentStart signals a subagent run (groupKey) began; label is the
-	// agent's description. Lets a platform open a collapsed entry the run's text
-	// attaches to.
-	DeliverSubagentStart(groupKey, label string)
+	// agent's description. runIndex is 1 for the initial spawn, 2+ for a
+	// SendMessage reactivation of the same subagent; prompt is the main agent's
+	// instruction for this run (#1355). Lets a platform open a collapsed entry the
+	// run's text attaches to.
+	DeliverSubagentStart(groupKey, label string, runIndex int, prompt string)
 	// DeliverSubagentText delivers one subagent progress block for groupKey. The
 	// renderer applies blockquote unless SubagentTextRaw reports true, so the
 	// platform receives text already in its preferred presentation.
 	DeliverSubagentText(groupKey, text string)
-	// DeliverSubagentEnd signals the subagent run (groupKey) completed, letting
-	// the platform finalize its UI (e.g. flip a collapsed entry to "completed").
-	DeliverSubagentEnd(groupKey string)
+	// DeliverSubagentEnd signals the subagent run (groupKey, runIndex) completed,
+	// letting the platform finalize that run's UI (e.g. flip a collapsed entry to
+	// "completed").
+	DeliverSubagentEnd(groupKey string, runIndex int)
 	// SubagentTextRaw reports whether this platform wants subagent text raw (the
 	// app, which renders traces in an expandable view) rather than blockquoted
 	// (telegram, whose inline messages read as blockquotes).
@@ -72,9 +75,9 @@ type SubagentDeliverer interface {
 // the per-subagent chit rather than flattening into a plain chat message.
 // Connections that don't implement it fall back to SendToSession as before.
 type SessionSubagentDeliverer interface {
-	DeliverSubagentStartToSession(sessionKey, groupKey, label string)
+	DeliverSubagentStartToSession(sessionKey, groupKey, label string, runIndex int, prompt string)
 	DeliverSubagentTextToSession(sessionKey, groupKey, text string)
-	DeliverSubagentEndToSession(sessionKey, groupKey string)
+	DeliverSubagentEndToSession(sessionKey, groupKey string, runIndex int)
 }
 
 // StreamSink is the live streaming handle returned by OpenStream. It is

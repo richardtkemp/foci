@@ -105,7 +105,7 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 		}
 
 	case turnevent.SubagentStart:
-		s.renderer.OnSubagentStart(e.GroupKey, e.Label)
+		s.renderer.OnSubagentStart(e.GroupKey, e.Label, e.RunIndex, e.Prompt)
 
 	case turnevent.SubagentText:
 		// Subagent progress is ancillary — route it to the renderer (which
@@ -114,7 +114,7 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.renderer.OnSubagentReply(e.GroupKey, e.Text)
 
 	case turnevent.SubagentEnd:
-		s.renderer.OnSubagentEnd(e.GroupKey)
+		s.renderer.OnSubagentEnd(e.GroupKey, e.RunIndex)
 
 	case turnevent.ThinkingDelta:
 		s.renderer.OnThinkingDelta(e.Delta)
@@ -240,11 +240,11 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 		}
 	case turnevent.SubagentStart:
 		if sd, ok := s.conn.(SessionSubagentDeliverer); ok {
-			sd.DeliverSubagentStartToSession(s.sessionKey, e.GroupKey, e.Label)
+			sd.DeliverSubagentStartToSession(s.sessionKey, e.GroupKey, e.Label, e.RunIndex, e.Prompt)
 		}
 	case turnevent.SubagentEnd:
 		if sd, ok := s.conn.(SessionSubagentDeliverer); ok {
-			sd.DeliverSubagentEndToSession(s.sessionKey, e.GroupKey)
+			sd.DeliverSubagentEndToSession(s.sessionKey, e.GroupKey, e.RunIndex)
 		}
 	case turnevent.SubagentText:
 		// Do not set delivered — subagent progress must not suppress the final reply.
