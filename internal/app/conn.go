@@ -183,9 +183,9 @@ func (c *appConn) SendInjectedMessage(sessionKey, text string) error {
 	return nil
 }
 
-func (c *appConn) DeliverSubagentStartToSession(sessionKey, groupKey, label string) {
+func (c *appConn) DeliverSubagentStartToSession(sessionKey, groupKey, label string, runIndex int, prompt string) {
 	if b, _ := c.sendBinding(sessionKey); b != nil {
-		b.send(fap.SubagentStart{ConversationID: b.convID, GroupKey: groupKey, Label: label})
+		b.send(fap.SubagentStart{ConversationID: b.convID, GroupKey: groupKey, Label: label, RunIndex: runIndex, Prompt: prompt})
 	}
 }
 
@@ -195,9 +195,9 @@ func (c *appConn) DeliverSubagentTextToSession(sessionKey, groupKey, text string
 	}
 }
 
-func (c *appConn) DeliverSubagentEndToSession(sessionKey, groupKey string) {
+func (c *appConn) DeliverSubagentEndToSession(sessionKey, groupKey string, runIndex int) {
 	if b, _ := c.sendBinding(sessionKey); b != nil {
-		b.send(fap.SubagentEnd{ConversationID: b.convID, GroupKey: groupKey})
+		b.send(fap.SubagentEnd{ConversationID: b.convID, GroupKey: groupKey, RunIndex: runIndex})
 	}
 }
 

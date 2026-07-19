@@ -270,7 +270,7 @@ func TestHandleHookResponse_AgentToolNoLongerFiresSubagentEnd(t *testing.T) {
 	var ended []string
 	handler := &testHandler{
 		OnToolEnd:     func(id, name, output string, isError bool) {},
-		OnSubagentEnd: func(groupKey string) { ended = append(ended, groupKey) },
+		OnSubagentEnd: func(groupKey string, runIndex int) { ended = append(ended, groupKey) },
 	}
 	applyHandler(b, handler)
 
@@ -297,7 +297,7 @@ func TestOnSystem_TaskNotificationCompleted_FiresSubagentEnd(t *testing.T) {
 	b := &Backend{}
 	var ended []string
 	applyHandler(b, &testHandler{
-		OnSubagentEnd: func(groupKey string) { ended = append(ended, groupKey) },
+		OnSubagentEnd: func(groupKey string, runIndex int) { ended = append(ended, groupKey) },
 	})
 
 	raw, _ := json.Marshal(TaskEvent{
@@ -320,7 +320,7 @@ func TestHandleHookResponse_AgentPreToolUseFiresSubagentStart(t *testing.T) {
 	toolEnds := 0
 	applyHandler(b, &testHandler{
 		OnToolEnd:       func(id, name, output string, isError bool) { toolEnds++ },
-		OnSubagentStart: func(groupKey, label string) { started = append(started, start{groupKey, label}) },
+		OnSubagentStart: func(groupKey, label, prompt string, runIndex int) { started = append(started, start{groupKey, label}) },
 	})
 
 	fire := func(toolName, toolUseID, toolInput string) {

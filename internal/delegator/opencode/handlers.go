@@ -334,7 +334,7 @@ func (b *Backend) handleToolPart(part Part) {
 			desc := delegator.ExtractAgentDescription(json.RawMessage(inputJSON))
 			b.agents.Add(part.CallID, desc)
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
-				se.OnSubagentStart(part.CallID, desc)
+				se.OnSubagentStart(part.CallID, desc, "", 1)
 			}
 		}
 
@@ -345,7 +345,7 @@ func (b *Backend) handleToolPart(part Part) {
 		if part.Tool == taskTool {
 			b.agents.Remove(part.CallID)
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
-				se.OnSubagentEnd(part.CallID)
+				se.OnSubagentEnd(part.CallID, 1)
 			}
 		}
 
@@ -356,7 +356,7 @@ func (b *Backend) handleToolPart(part Part) {
 		if part.Tool == taskTool {
 			b.agents.Remove(part.CallID)
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
-				se.OnSubagentEnd(part.CallID)
+				se.OnSubagentEnd(part.CallID, 1)
 			}
 		}
 	}

@@ -66,13 +66,21 @@ type TextBlock struct {
 	Phase Phase
 }
 
-// SubagentStart marks a subagent run beginning (its Agent tool_use spawned), from
-// the PreToolUse hook. GroupKey is the parent tool_use id shared by the run's text
-// events; Label is the agent's description. Start and end are both hook-sourced so
-// a broken hook produces neither (no orphaned "never finishes" run).
+// SubagentStart marks a subagent run beginning. GroupKey is the parent tool_use id
+// shared by the run's text events (STABLE across a SendMessage reactivation — all
+// runs of one subagent share it); Label is the agent's description.
+//
+// A subagent can run MULTIPLE times: the initial Agent spawn is RunIndex 1 (sourced
+// from the PreToolUse hook); a SendMessage reactivation of the same subagent emits a
+// fresh SubagentStart with RunIndex 2, 3, … (sourced from the ccstream task_id
+// tracker — #1355). Prompt is the main agent's instruction to the subagent for THIS
+// run (the Agent tool's prompt for run 1, the SendMessage message for reactivations),
+// so a client can show what was asked at the top of the run / at run dividers.
 type SubagentStart struct {
 	GroupKey string
 	Label    string
+	RunIndex int    // 1 for the initial spawn, 2+ for SendMessage reactivations
+	Prompt   string // the main agent's instruction to the subagent for this run
 }
 
 // SubagentText carries a complete text block produced by a subagent (a Task/
@@ -86,11 +94,13 @@ type SubagentText struct {
 	Text     string
 }
 
-// SubagentEnd marks a subagent run complete (its Agent tool_use resolved), so a
-// platform can finalize the run's UI — e.g. the app flipping "started" to
-// "completed". GroupKey matches the run's SubagentStart/Text events.
+// SubagentEnd marks a subagent RUN complete (one task_notification:completed), so a
+// platform can finalize that run's UI — e.g. the app flipping "started" to
+// "completed". GroupKey matches the run's SubagentStart/Text events; RunIndex
+// identifies WHICH run ended (a reactivated subagent ends once per run — #1355).
 type SubagentEnd struct {
 	GroupKey string
+	RunIndex int
 }
 
 // ThinkingDelta carries a streaming fragment of extended-thinking output.

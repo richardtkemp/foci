@@ -1002,14 +1002,14 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 			OnText: func(text string) {
 				router.Emit(context.Background(), turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
 			},
-			OnSubagentStart: func(groupKey, label string) {
-				router.Emit(context.Background(), turnevent.SubagentStart{GroupKey: groupKey, Label: label})
+			OnSubagentStart: func(groupKey, label, prompt string, runIndex int) {
+				router.Emit(context.Background(), turnevent.SubagentStart{GroupKey: groupKey, Label: label, RunIndex: runIndex, Prompt: prompt})
 			},
 			OnSubagentText: func(groupKey, text string) {
 				router.Emit(context.Background(), turnevent.SubagentText{GroupKey: groupKey, Text: text})
 			},
-			OnSubagentEnd: func(groupKey string) {
-				router.Emit(context.Background(), turnevent.SubagentEnd{GroupKey: groupKey})
+			OnSubagentEnd: func(groupKey string, runIndex int) {
+				router.Emit(context.Background(), turnevent.SubagentEnd{GroupKey: groupKey, RunIndex: runIndex})
 			},
 			OnTextDelta: func(delta string) {
 				router.Emit(context.Background(), turnevent.TextDelta{Delta: delta})

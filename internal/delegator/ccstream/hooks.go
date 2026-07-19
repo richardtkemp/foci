@@ -349,7 +349,10 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// so a missing/broken hook yields neither (no zombie "never finishes" run).
 	if env.HookEvent == eventPreToolUse {
 		if se != nil && se.OnSubagentStart != nil && parsed.ToolName == "Agent" {
-			se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(json.RawMessage(parsed.ToolInput)))
+			// The initial Agent spawn is always run 1; carry its prompt so the app
+			// can show what was asked at the top of the run view (#1355).
+			input := json.RawMessage(parsed.ToolInput)
+			se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(input), delegator.ExtractAgentPrompt(input), 1)
 			// Foreground transcript tailing is armed earlier, at the Agent
 			// tool_use detection in OnAssistant (race-free vs task_started).
 		}

@@ -24,8 +24,8 @@ func TestHandleToolPart_TaskTool_FiresSubagentLifecycle(t *testing.T) {
 		}
 	}
 	b.AttachSessionEvents(&delegator.SessionEvents{
-		OnSubagentStart: func(groupKey, label string) { starts = append(starts, groupKey+":"+label) },
-		OnSubagentEnd:   func(groupKey string) { ends = append(ends, groupKey) },
+		OnSubagentStart: func(groupKey, label, prompt string, runIndex int) { starts = append(starts, groupKey+":"+label) },
+		OnSubagentEnd:   func(groupKey string, runIndex int) { ends = append(ends, groupKey) },
 	})
 
 	// Simulate task tool start
@@ -82,8 +82,8 @@ func TestHandleToolPart_TaskToolError_FiresSubagentEnd(t *testing.T) {
 		outstanding: delegator.NewOutstandingRegistry(),
 	}
 	b.AttachSessionEvents(&delegator.SessionEvents{
-		OnSubagentStart: func(groupKey, label string) {},
-		OnSubagentEnd:   func(groupKey string) { ends = append(ends, groupKey) },
+		OnSubagentStart: func(groupKey, label, prompt string, runIndex int) {},
+		OnSubagentEnd:   func(groupKey string, runIndex int) { ends = append(ends, groupKey) },
 	})
 
 	// Start
@@ -123,8 +123,8 @@ func TestHandleToolPart_NonTaskTool_DoesNotFireSubagentEvents(t *testing.T) {
 		outstanding: delegator.NewOutstandingRegistry(),
 	}
 	b.AttachSessionEvents(&delegator.SessionEvents{
-		OnSubagentStart: func(groupKey, label string) { starts = append(starts, groupKey) },
-		OnSubagentEnd:   func(groupKey string) { ends = append(ends, groupKey) },
+		OnSubagentStart: func(groupKey, label, prompt string, runIndex int) { starts = append(starts, groupKey) },
+		OnSubagentEnd:   func(groupKey string, runIndex int) { ends = append(ends, groupKey) },
 	})
 
 	// Regular bash tool — should NOT fire subagent events

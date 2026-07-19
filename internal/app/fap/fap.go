@@ -488,6 +488,13 @@ type SubagentStart struct {
 	ConversationID string `json:"conversationId"`
 	GroupKey       string `json:"groupKey"`
 	Label          string `json:"label,omitempty"`
+	// RunIndex is 1 for the initial Agent spawn, 2+ for a SendMessage reactivation
+	// of the SAME subagent (GroupKey is stable across runs). Prompt is the main
+	// agent's instruction for THIS run (Agent prompt for run 1, SendMessage message
+	// for reactivations). Both additive-optional (#1355) — older clients that only
+	// read GroupKey/Label see the reactivation as another start and degrade cleanly.
+	RunIndex int    `json:"runIndex,omitempty"`
+	Prompt   string `json:"prompt,omitempty"`
 }
 
 func (SubagentStart) Type() string { return TypeSubagentStart }
@@ -509,6 +516,9 @@ func (SubagentText) Type() string { return TypeSubagentText }
 type SubagentEnd struct {
 	ConversationID string `json:"conversationId"`
 	GroupKey       string `json:"groupKey"`
+	// RunIndex identifies which run ended (a reactivated subagent ends once per
+	// run). Additive-optional (#1355).
+	RunIndex int `json:"runIndex,omitempty"`
 }
 
 func (SubagentEnd) Type() string { return TypeSubagentEnd }

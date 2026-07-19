@@ -1219,9 +1219,9 @@ func TestAppBackend_SubagentFrames(t *testing.T) {
 	b := h.ensureBinding(c, "ag", "conv-1")
 	be := newAppBackend(b)
 
-	be.DeliverSubagentStart("toolu_1", "Explore")
+	be.DeliverSubagentStart("toolu_1", "Explore", 1, "")
 	be.DeliverSubagentText("toolu_1", "found it")
-	be.DeliverSubagentEnd("toolu_1")
+	be.DeliverSubagentEnd("toolu_1", 1)
 	ds := drainEnv(t, c)
 
 	if len(ds) != 3 || ds[0].t != fap.TypeSubagentStart ||

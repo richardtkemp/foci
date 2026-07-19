@@ -242,6 +242,11 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			if block.Name == "Agent" {
 				desc := delegator.ExtractAgentDescription(block.Input)
 				b.agents.Add(block.ID, desc)
+				// Stash the label by the Agent tool_use_id (= the stable groupKey)
+				// so the first task_started can bind the reactivation run state
+				// (#1355). Run 1's SubagentStart is still hook-driven; this only
+				// primes the label for any later SendMessage reactivation.
+				b.setAgentLabel(block.ID, desc)
 				// A FOREGROUND subagent's assistant text never reaches the parent
 				// stdout stream, so arm a transcript tail for it (started once
 				// task_started supplies the agent_id). Arm HERE — the earliest,
@@ -268,6 +273,15 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				// tracker is a safe no-op.
 				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
 					b.agents.OnStatus("")
+				}
+			} else if block.Name == "SendMessage" {
+				// A SendMessage resumes a background subagent (#1355). Attribute its
+				// message to that subagent (keyed by task_id == the SendMessage `to`)
+				// so the reactivation's SubagentStart can carry the prompt. The
+				// resumed run's task_started (which bumps runIndex and emits the start)
+				// follows this block in the stream, so the pending prompt is set first.
+				if to, msg := delegator.ExtractSendMessage(block.Input); to != "" {
+					b.stashResumePrompt(to, msg)
 				}
 			}
 
@@ -591,6 +605,21 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 					b.subagentTails().maybeStart(task.ToolUseID, path)
 				}
 			}
+			// Bind or advance the reactivation run state (#1355). The FIRST
+			// task_started binds the run (run 1's SubagentStart is hook-driven, so
+			// no emit here). A SUBSEQUENT task_started for the same task_id is a
+			// SendMessage resume: re-Add to the tracker so the activity chip
+			// re-opens, and emit a fresh SubagentStart for the new run so the app
+			// draws a new chit. groupKey stays the ORIGINAL Agent tool_use_id (the
+			// subagent's text keeps it as parent_tool_use_id across resumes), so all
+			// runs collapse into one continuous view.
+			if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
+				b.agents.Add(run.groupKey, run.label)
+				b.logger().Infof("subagent_reactivate task_id=%s group=%s run=%d", task.TaskID, run.groupKey, run.runIndex)
+				if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
+					se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
+				}
+			}
 		case "task_notification":
 			if task.Status == "completed" {
 				// Remove one pending subagent. If the tracker had nothing
@@ -600,14 +629,21 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
 					b.agents.OnStatus("")
 				}
-				// The subagent's true end, for foreground AND background alike (a
-				// background Agent tool_use resolves at launch, so its PostToolUse
-				// end is premature; this fires at actual completion). tool_use_id is
-				// the chit's group key. Logged alongside the old signal to compare.
-				if task.ToolUseID != "" {
-					b.logger().Infof("subagent_end signal=task_notification tuid=%s", task.ToolUseID)
+				// The subagent RUN's true end, for foreground AND background alike (a
+				// background Agent tool_use resolves at launch, so its PostToolUse end
+				// is premature; this fires at actual completion). Map task_id -> the
+				// stable groupKey + runIndex (#1355): a resumed run's task_notification
+				// carries the SendMessage tool_use_id, NOT the group key, so ending on
+				// task.ToolUseID would close a group the app never opened. Fall back to
+				// the raw tool_use_id (runIndex 0) only when task_started was missed.
+				groupKey, runIndex := task.ToolUseID, 0
+				if run := b.runForTask(task.TaskID); run != nil {
+					groupKey, runIndex = run.groupKey, run.runIndex
+				}
+				if groupKey != "" {
+					b.logger().Infof("subagent_end signal=task_notification group=%s run=%d", groupKey, runIndex)
 					if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
-						se.OnSubagentEnd(task.ToolUseID)
+						se.OnSubagentEnd(groupKey, runIndex)
 					}
 				}
 			}

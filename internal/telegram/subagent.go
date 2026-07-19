@@ -91,8 +91,8 @@ func (b *telegramBackend) DeliverSubagentText(groupKey, text string) {
 // rolling Hide button sits on the newest one, so there's no separate collapsed
 // entry to open or close. SubagentTextRaw is false — Telegram wants the renderer's
 // blockquoted-with-header presentation.
-func (b *telegramBackend) DeliverSubagentStart(string, string) {}
-func (b *telegramBackend) DeliverSubagentEnd(string)           {}
+func (b *telegramBackend) DeliverSubagentStart(string, string, int, string) {}
+func (b *telegramBackend) DeliverSubagentEnd(string, int)                   {}
 func (b *telegramBackend) SubagentTextRaw() bool               { return false }
 
 // stripSubagentButton removes the inline keyboard from a prior subagent message

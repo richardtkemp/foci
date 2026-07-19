@@ -102,7 +102,9 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 	case "subAgentActivity":
 		if item.Kind == "started" {
 			if se != nil && se.OnSubagentStart != nil {
-				se.OnSubagentStart(item.ID, item.AgentPath)
+				// codex has no SendMessage-style reactivation: every subagent is a
+				// single run (#1355 fields default to run 1, no prompt).
+				se.OnSubagentStart(item.ID, item.AgentPath, "", 1)
 			}
 			if b.subagents != nil && item.AgentThreadID != "" {
 				b.subagents.start(b, item.AgentThreadID, item.ID)
@@ -113,7 +115,7 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 	// prompt as the label so the client shows what the subagent is doing.
 	case "collabAgentToolCall":
 		if se != nil && se.OnSubagentStart != nil {
-			se.OnSubagentStart(item.ID, item.Prompt)
+			se.OnSubagentStart(item.ID, item.Prompt, "", 1)
 		}
 	}
 }
@@ -216,7 +218,7 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 				b.subagents.stop(b, item.AgentThreadID)
 			}
 			if item.Kind == "interrupted" && se != nil && se.OnSubagentEnd != nil {
-				se.OnSubagentEnd(item.ID)
+				se.OnSubagentEnd(item.ID, 1)
 			}
 		}
 
@@ -230,7 +232,7 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 				}
 			}
 			if se.OnSubagentEnd != nil {
-				se.OnSubagentEnd(item.ID)
+				se.OnSubagentEnd(item.ID, 1)
 			}
 		}
 	}

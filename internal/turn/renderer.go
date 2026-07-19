@@ -161,7 +161,7 @@ func (r *TurnRenderer) subagentHeader(groupKey string) string {
 // OnSubagentStart signals a subagent run began. It caches the agent name for the
 // text header (all platforms) and opens a collapsed entry on platforms that
 // support one (the app).
-func (r *TurnRenderer) OnSubagentStart(groupKey, label string) {
+func (r *TurnRenderer) OnSubagentStart(groupKey, label string, runIndex int, prompt string) {
 	if groupKey == "" {
 		return
 	}
@@ -172,17 +172,17 @@ func (r *TurnRenderer) OnSubagentStart(groupKey, label string) {
 		r.subagentLabels[groupKey] = label
 	}
 	if sd, ok := r.platform.(SubagentDeliverer); ok {
-		sd.DeliverSubagentStart(groupKey, label)
+		sd.DeliverSubagentStart(groupKey, label, runIndex, prompt)
 	}
 }
 
-// OnSubagentEnd signals a subagent run completed. Only platforms with per-subagent
+// OnSubagentEnd signals a subagent RUN completed. Only platforms with per-subagent
 // UI act on it; others (whose subagent text arrived as ordinary replies) have
-// nothing to finalize.
-func (r *TurnRenderer) OnSubagentEnd(groupKey string) {
-	delete(r.subagentLabels, groupKey)
+// nothing to finalize. The label is NOT dropped here — a reactivated subagent
+// (#1355) reuses it across runs, so it must survive a per-run end.
+func (r *TurnRenderer) OnSubagentEnd(groupKey string, runIndex int) {
 	if sd, ok := r.platform.(SubagentDeliverer); ok && groupKey != "" {
-		sd.DeliverSubagentEnd(groupKey)
+		sd.DeliverSubagentEnd(groupKey, runIndex)
 	}
 }
 
