@@ -2052,7 +2052,14 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	// device is attached to this conversation live (the pusher excludes connected
 	// devices, so an attached desktop no longer suppresses an offline phone's
 	// wake). Offline devices reconnect and replay the buffered frame.
-	if notify != nil && visible {
+	//
+	// Skip the wake push for the user's OWN messages: an FCM push here would only
+	// buzz the user's other devices about something they just typed themselves. The
+	// echo still syncs over any live WS and on the next reconnect. Skipping at the
+	// source (rather than the client suppressing the notification) also avoids
+	// bumping the coalesce window, so a fast agent reply right after the user's
+	// message still gets its own wake push instead of being coalesced away.
+	if notify != nil && visible && !isOwnMessage(frame) {
 		notify(pushPayload{
 			ConvID:     b.convID,
 			Preview:    preview,
