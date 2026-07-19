@@ -17,14 +17,42 @@ import (
 // Package-level so tests can shrink it.
 var batchPollInterval = time.Second
 
+// acquireServerFn is a package-level seam so tests can exercise RunBatch's
+// "no pooled server → acquire" branch without spawning a real opencode
+// subprocess (stub it to pool a fake Server instead). Defaults to
+// acquireServer itself — the exact function Backend.Start uses, so a batch-
+// triggered spawn is indistinguishable from an interactive one: same pool,
+// same key, same config-building path. Like batchPollInterval, package-level
+// rather than a Backend field because RunBatch runs on a freshly-constructed,
+// unstarted Backend (see BatchRunner's doc in delegator/backend.go) that has
+// no per-instance test hooks.
+var acquireServerFn = acquireServer
+
 // RunBatch implements delegator.BatchRunner for opencode: an ephemeral
-// session on the agent's already-running pooled server (found via
-// req.AgentID, same as ForkSession) — create session → prompt_async →
-// poll for the completed assistant message → delete session. It does NOT
-// spawn a server: opencode conversations live in the server's store, and
-// batch consumers (nudge extraction, consolidation) fire from a live agent,
-// whose server is pooled. No pooled server → error; the caller's legacy
-// fallback (or a later retry trigger) handles it.
+// session on the agent's shared per-agent server — reused if already pooled,
+// or spawned if not (via acquireServerFn, the same pool/key Backend.Start
+// uses) — create session → prompt_async → poll for the completed assistant
+// message → delete session. There is exactly ONE server per agent shared
+// between interactive sessions and batch runs; RunBatch never stands up a
+// separate batch-only instance.
+//
+// The acquired server is deliberately left pooled — RunBatch does not call
+// releaseServer. Batch consumers (nudge extraction, consolidation) can fire
+// with no live interactive session (the bug this fixes: background
+// consolidation used to hard-fail with "no running server" for an agent
+// whose interactive session had already closed). Per Dick (2026-07-19),
+// opencode RunOnce should start a PERSISTENT server rather than spin one up
+// and tear it down per batch run. Leaving it pooled needs no special
+// teardown: a later interactive Backend.Start finds it already alive and
+// just increments its refcount (acquireServer's existing reuse path), and it
+// is cleaned up like any other pooled server by CloseAllServers at foci
+// shutdown (#948) — no orphaned subprocess, no new lifecycle machinery.
+//
+// env is passed as nil: BatchRequest carries no exec-bridge env (a batch run
+// has no interactive session to route FOCI_SOCK/BASH_ENV for), matching the
+// documented "only the first session's env takes effect" v1 limitation on
+// acquireServer — the same limitation that already applies when the first
+// *interactive* session pins the shared subprocess's env.
 //
 // Semantics notes, verified against a live 1.17.15 server (2026-07-16):
 //   - The prompt request's `system` field is APPENDED alongside opencode's
@@ -40,9 +68,17 @@ var batchPollInterval = time.Second
 //   - Model empty → the server's configured default; non-empty must be
 //     "providerID/modelID" (opencode's model addressing).
 func (b *Backend) RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error) {
-	srv := pooledServer(req.AgentID)
-	if srv == nil {
-		return "", fmt.Errorf("opencode batch: no running server for agent %q", req.AgentID)
+	// cfg is built from b.cfg — the same per-agent backend_config an
+	// interactive Backend for this agent receives (both come from the same
+	// NewBackend factory; see cmd/foci-gw/agents_delegated.go), so a
+	// batch-triggered spawn gets the real binary/hostname/port overrides,
+	// not a divergent batch-only configuration. Only WorkDir is read from
+	// the passed StartOptions; req.WorkDir is RunOnce's m.StartOpts.WorkDir —
+	// the same agent workspace an interactive Start would use.
+	cfg := b.serverConfigFromOpts(delegator.StartOptions{WorkDir: req.WorkDir})
+	srv, err := acquireServerFn(req.AgentID, cfg, nil)
+	if err != nil {
+		return "", fmt.Errorf("opencode batch: acquire server: %w", err)
 	}
 	hc := serverHTTP(srv)
 
