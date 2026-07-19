@@ -1276,7 +1276,7 @@ workspace = "/home/coder/projects/myapp"
 # model = "sonnet"            # CC model name (optional — omit for CC default)
 # skip_permissions = true     # --dangerously-skip-permissions (no approval prompts)
 # allowed_tools = ["Bash(git:*)", "Read"]  # --allowedTools: per-agent CC permission rules
-# claude_binary = ""          # Override path to claude executable (default: $PATH)
+# binary = ""                 # Override path to backend executable (default: $PATH)
 # idle_timeout = "3h"         # Session idle shutdown duration (default 3h)
 # socket_path = ""            # tmux socket override (empty = default, cctmux only)
 
@@ -1352,9 +1352,9 @@ Applies to every agent whose `backend` is `opencode`:
 
 ```toml
 [opencode_backend]
-# opencode_binary — path to the opencode executable. Default "" → "opencode"
-# resolved via $PATH. Per-agent backend_config.opencode_binary overrides.
-# opencode_binary = "/usr/local/bin/opencode"
+# binary — path to the opencode executable. Default "" → "opencode"
+# resolved via $PATH. Per-agent backend_config.binary overrides.
+# binary = "/usr/local/bin/opencode"
 
 # hostname — bind address for the opencode serve subprocess.
 # Default "127.0.0.1" (loopback only — never exposed to the network).

@@ -18,7 +18,6 @@ import (
 func TestBackendConfig_Decode_Full(t *testing.T) {
 	tomlData := `
 model = "opus"
-claude_binary = "/usr/local/bin/claude"
 idle_timeout = "2h"
 skip_permissions = true
 socket_path = "/tmp/agent.sock"
@@ -43,7 +42,6 @@ CCSTUB_EXIT_CODE = "1"
 
 	// Pointer fields: verify non-nil and correct value.
 	checkStr(t, bc.Model, "opus", "model")
-	checkStr(t, bc.ClaudeBinary, "/usr/local/bin/claude", "claude_binary")
 	checkStr(t, bc.IdleTimeout, "2h", "idle_timeout")
 	checkStr(t, bc.SocketPath, "/tmp/agent.sock", "socket_path")
 	checkStr(t, bc.Binary, "/opt/opencode/bin/opencode", "binary")
@@ -102,9 +100,6 @@ KEY = "val"
 	}
 
 	// Everything else must be nil/empty, not zero-value.
-	if bc.ClaudeBinary != nil {
-		t.Errorf("claude_binary = %v, want nil", bc.ClaudeBinary)
-	}
 	if bc.SkipPermissions != nil {
 		t.Errorf("skip_permissions = %v, want nil", bc.SkipPermissions)
 	}
@@ -164,12 +159,11 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 	bc := BackendConfig{
 		Model:             str("opus"),
 		AllowedTools:      []string{"Write(/tmp/**)", "Bash(git:*)"},
-		ClaudeBinary:      str("/usr/bin/claude"),
 		IdleTimeout:       str("2h"),
 		SkipPermissions:   b(true),
 		SocketPath:        str("/tmp/sock"),
 		Env:               map[string]string{"FOO": "bar"},
-		Binary:    str("/opt/oc"),
+		Binary:            str("/opt/oc"),
 		Hostname:          str("127.0.0.1"),
 		ServerAuth:        str("pw"),
 		LogLevel:          str("DEBUG"),
@@ -180,7 +174,7 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 
 	// String fields.
 	for key, want := range map[string]string{
-		"model": "opus", "claude_binary": "/usr/bin/claude", "idle_timeout": "2h",
+		"model": "opus", "idle_timeout": "2h",
 		"socket_path": "/tmp/sock", "binary": "/opt/oc", "hostname": "127.0.0.1",
 		"server_auth": "pw", "log_level": "DEBUG", "default_permission": "ask",
 	} {
@@ -224,7 +218,7 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 
 	// Verify the map has exactly the expected key set.
 	wantKeys := map[string]bool{
-		"model": true, "allowed_tools": true, "claude_binary": true,
+		"model": true, "allowed_tools": true,
 		"idle_timeout": true, "skip_permissions": true, "socket_path": true,
 		"env": true, "binary": true, "hostname": true,
 		"server_auth": true, "log_level": true, "port": true, "default_permission": true,
@@ -336,5 +330,3 @@ func diffKeys(got map[string]any, want map[string]bool) []string {
 	}
 	return extra
 }
-
-
