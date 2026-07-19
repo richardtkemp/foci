@@ -32,13 +32,13 @@ func TestRegisterAndLookup(t *testing.T) {
 func TestRegisterWithProvider(t *testing.T) {
 	t.Cleanup(ResetToBuiltIn)
 
-	Register("zai-coding-plan", "glm-5.2", Model{
+	Register("zai-coding-plan", "syn-solo-model", Model{
 		ContextWindow: 1_000_000,
 		InputPer1M:    0.0, OutputPer1M: 0.0,
 	})
 
 	// Provider-specific lookup hits.
-	m, ok := Lookup("zai-coding-plan", "glm-5.2")
+	m, ok := Lookup("zai-coding-plan", "syn-solo-model")
 	if !ok {
 		t.Fatal("Lookup with provider failed")
 	}
@@ -46,23 +46,23 @@ func TestRegisterWithProvider(t *testing.T) {
 		t.Errorf("Provider = %q, want %q", m.Provider, "zai-coding-plan")
 	}
 
-	// Providerless lookup now hits via the sole-provider fallback: glm-5.2
+	// Providerless lookup now hits via the sole-provider fallback: syn-solo-model
 	// has exactly one provider entry, so a providerless lookup matches it.
-	if pm, ok := Lookup("", "glm-5.2"); !ok {
+	if pm, ok := Lookup("", "syn-solo-model"); !ok {
 		t.Error("Lookup without provider should hit via sole-provider fallback")
 	} else if pm.Provider != "zai-coding-plan" {
 		t.Errorf("Provider = %q, want %q", pm.Provider, "zai-coding-plan")
 	}
 
 	// Cost with provider prefix hits the provider-specific entry.
-	cost := Cost("zai-coding-plan/glm-5.2", 1_000_000, 500_000, 0, 0)
+	cost := Cost("zai-coding-plan/syn-solo-model", 1_000_000, 500_000, 0, 0)
 	if cost != 0 {
 		t.Errorf("Cost = %v, want 0 (all prices zero)", cost)
 	}
 
 	// Cost without provider prefix also hits now (sole-provider fallback),
 	// so it uses the registered zero pricing rather than family/default fallback.
-	if cost := Cost("glm-5.2", 100, 50, 0, 0); cost != 0 {
+	if cost := Cost("syn-solo-model", 100, 50, 0, 0); cost != 0 {
 		t.Errorf("Cost = %v, want 0 (sole-provider entry has zero pricing)", cost)
 	}
 }
@@ -318,28 +318,28 @@ func TestStripPrefix(t *testing.T) {
 func TestSoleProviderFallback(t *testing.T) {
 	t.Cleanup(ResetToBuiltIn)
 
-	Register("zai-coding-plan", "glm-5.2", Model{
+	Register("zai-coding-plan", "syn-solo-model", Model{
 		ContextWindow: 1_000_000,
 		InputPer1M:    0.0,
 		OutputPer1M:   0.0,
 	})
 
 	// No provider → sole entry matches.
-	m, ok := Lookup("", "glm-5.2")
+	m, ok := Lookup("", "syn-solo-model")
 	if !ok || m.ContextWindow != 1_000_000 {
-		t.Errorf("Lookup(\"\", \"glm-5.2\") = %+v ok=%v, want ContextWindow=1000000", m, ok)
+		t.Errorf("Lookup(\"\", \"syn-solo-model\") = %+v ok=%v, want ContextWindow=1000000", m, ok)
 	}
 
 	// Different provider → sole entry matches.
-	m, ok = Lookup("openrouter", "glm-5.2")
+	m, ok = Lookup("openrouter", "syn-solo-model")
 	if !ok || m.ContextWindow != 1_000_000 {
-		t.Errorf("Lookup(\"openrouter\", \"glm-5.2\") = %+v ok=%v, want ContextWindow=1000000", m, ok)
+		t.Errorf("Lookup(\"openrouter\", \"syn-solo-model\") = %+v ok=%v, want ContextWindow=1000000", m, ok)
 	}
 
 	// Cost also resolves via the bare model name.
-	c := Cost("glm-5.2", 1_000_000, 0, 0, 0)
+	c := Cost("syn-solo-model", 1_000_000, 0, 0, 0)
 	if c != 0.0 {
-		t.Errorf("Cost(\"glm-5.2\") = %v, want 0.0", c)
+		t.Errorf("Cost(\"syn-solo-model\") = %v, want 0.0", c)
 	}
 }
 

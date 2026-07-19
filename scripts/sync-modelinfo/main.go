@@ -60,6 +60,17 @@ type jsonlEntry struct {
 	OutputPer1M     float64 `json:"output_per_1m,omitempty"`
 	CacheReadPer1M  float64 `json:"cache_read_per_1m,omitempty"`
 	CacheWritePer1M float64 `json:"cache_write_per_1m,omitempty"`
+	// Extended pricing + quality — STORED but not yet used in cost calc (TODO
+	// #1407). Token-based prices are per-1M (like the base rates above); the
+	// per-unit ones (web_search per call, image/audio) are kept raw as the API
+	// gives them, since their unit varies by model.
+	CacheWrite1hPer1M      float64     `json:"cache_write_1h_per_1m,omitempty"`
+	InternalReasoningPer1M float64     `json:"internal_reasoning_per_1m,omitempty"`
+	WebSearchPerCall       float64     `json:"web_search_per_call,omitempty"`
+	ImagePrice             float64     `json:"image_price,omitempty"`
+	AudioPrice             float64     `json:"audio_price,omitempty"`
+	PriceTiers             []PriceTier `json:"price_tiers,omitempty"`
+	IntelligenceIndex      float64     `json:"intelligence_index,omitempty"`
 	// Fetched is the UTC date (YYYY-MM-DD) on which this entry's pricing was
 	// last confirmed valid against the OpenRouter API. Refreshed for every
 	// entry the sync still finds in the API; entries that have gone
@@ -68,18 +79,46 @@ type jsonlEntry struct {
 	Comment string `json:"comment,omitempty"`
 }
 
+// PriceTier is a usage-dependent price schedule (OpenRouter's pricing.overrides,
+// e.g. Claude's ~2x rate above 200k prompt tokens). All prices per-1M tokens.
+type PriceTier struct {
+	MinPromptTokens   int     `json:"min_prompt_tokens"`
+	InputPer1M        float64 `json:"input_per_1m,omitempty"`
+	OutputPer1M       float64 `json:"output_per_1m,omitempty"`
+	CacheReadPer1M    float64 `json:"cache_read_per_1m,omitempty"`
+	CacheWritePer1M   float64 `json:"cache_write_per_1m,omitempty"`
+	CacheWrite1hPer1M float64 `json:"cache_write_1h_per_1m,omitempty"`
+}
+
 // orModel is the subset of the OpenRouter API model we care about.
 type orModel struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	ContextLength int    `json:"context_length"`
-	Created       int64  `json:"created"`
-	Pricing       struct {
-		Prompt          string `json:"prompt"`
-		Completion      string `json:"completion"`
-		InputCacheRead  string `json:"input_cache_read"`
-		InputCacheWrite string `json:"input_cache_write"`
-	} `json:"pricing"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	ContextLength int       `json:"context_length"`
+	Created       int64     `json:"created"`
+	Pricing       orPricing `json:"pricing"`
+	Benchmarks    struct {
+		ArtificialAnalysis struct {
+			IntelligenceIndex float64 `json:"intelligence_index"`
+		} `json:"artificial_analysis"`
+	} `json:"benchmarks"`
+}
+
+// orPricing is one price schedule from the API — reused for the base rates and
+// for each tiered override (which additionally carries min_prompt_tokens). All
+// values are strings in per-token / per-unit USD.
+type orPricing struct {
+	MinPromptTokens   int         `json:"min_prompt_tokens,omitempty"`
+	Prompt            string      `json:"prompt"`
+	Completion        string      `json:"completion"`
+	InputCacheRead    string      `json:"input_cache_read"`
+	InputCacheWrite   string      `json:"input_cache_write"`
+	InputCacheWrite1h string      `json:"input_cache_write_1h"`
+	WebSearch         string      `json:"web_search"`
+	Image             string      `json:"image"`
+	Audio             string      `json:"audio"`
+	InternalReasoning string      `json:"internal_reasoning"`
+	Overrides         []orPricing `json:"overrides,omitempty"`
 }
 
 // orResponse is the top-level API response envelope.
@@ -88,9 +127,6 @@ type orResponse struct {
 }
 
 func main() {
-	addPopular := flag.Int("add-popular", 20, "number of newest models to add if missing")
-	addAnthropic := flag.Int("add-anthropic", 10, "number of newest Anthropic models to also ensure present")
-	addOpenAI := flag.Int("add-openai", 10, "number of newest OpenAI models to also ensure present")
 	repoFlag := flag.String("repo", "", "path to the foci repo root (default: auto-detect)")
 	baseFlag := flag.String("base", "main", "branch/commit to fork the review worktree from (use the feature branch while models.jsonl is unmerged)")
 	dryRun := flag.Bool("dry-run", false, "report without creating a worktree")
@@ -219,14 +255,7 @@ func main() {
 		if abs(af.out-cur.OutputPer1M) > 0.005 {
 			priceChanges = append(priceChanges, priceChange{id: cur.ID, field: "output_per_1m", old: cur.OutputPer1M, new: af.out})
 		}
-		nr.InputPer1M = af.in
-		nr.OutputPer1M = af.out
-		nr.CacheReadPer1M = af.cacheRead
-		nr.CacheWritePer1M = af.cacheWrite
-		nr.Caching = af.caching
-		if af.ctx > 0 {
-			nr.ContextWindow = af.ctx
-		}
+		applyAPIFields(&nr, af)
 		nr.Fetched = fetchDate
 		appended = append(appended, nr)
 		if *verbose {
@@ -234,12 +263,12 @@ func main() {
 		}
 	}
 
-	// --- Add popular (newest) models ---
-
-	// Sort API models by created timestamp descending (newest first).
-	sort.Slice(apiModels, func(i, j int) bool {
-		return apiModels[i].Created > apiModels[j].Created
-	})
+	// --- Add every model missing from the registry ---
+	//
+	// No ranking or top-N window: add anything present in the API but not yet
+	// tracked, skipping free (price 0/0) and sentinel/negative-priced entries.
+	// This converges — the first run seeds the whole catalogue, and later runs
+	// add only genuinely-new models (plus the update rows appended above).
 
 	// Track which bare IDs we already have (including :nitro base IDs).
 	existing := make(map[string]bool, len(entries))
@@ -249,58 +278,28 @@ func main() {
 	}
 
 	var newEntries []jsonlEntry
-
-	// Helper to collect the top N newest models matching a provider prefix
-	// (or all if provider is "").
-	collectNew := func(provider string, limit int) {
-		count := 0
-		for _, m := range apiModels {
-			if count >= limit {
-				break
+	for _, m := range apiModels {
+		bare := stripProvider(m.ID)
+		if bare == "" || existing[bare] {
+			continue
+		}
+		af, ok := apiFields(m)
+		if !ok {
+			if af.negative && *verbose {
+				fmt.Fprintf(os.Stderr, "  ⤫ %s: skipped (negative price $%.4f/$%.4f)\n", bare, af.in, af.out)
 			}
-			if provider != "" && !strings.HasPrefix(m.ID, provider+"/") {
-				continue
-			}
-			bare := stripProvider(m.ID)
-			if bare == "" || existing[bare] {
-				continue
-			}
-			// apiFields enforces the free/negative guard (skips price==0/0 to
-			// avoid clutter and sentinel/negative pricing that would corrupt
-			// cost math) and derives the cache caps.
-			af, ok := apiFields(m)
-			if !ok {
-				if af.negative && *verbose {
-					fmt.Fprintf(os.Stderr, "  ⤫ %s: skipped (negative price $%.4f/$%.4f)\n", bare, af.in, af.out)
-				}
-				continue
-			}
-			// New model: effort/thinking/speed left false — those are curated
-			// by hand (not derivable from the API; see the note above).
-			newEntries = append(newEntries, jsonlEntry{
-				ID:              bare,
-				Provider:        "openrouter",
-				ContextWindow:   af.ctx,
-				Caching:         af.caching,
-				InputPer1M:      af.in,
-				OutputPer1M:     af.out,
-				CacheReadPer1M:  af.cacheRead,
-				CacheWritePer1M: af.cacheWrite,
-				Fetched:         fetchDate,
-			})
-			existing[bare] = true
-			count++
-			if *verbose {
-				fmt.Fprintf(os.Stderr, "  + %s: added ($%.4f/$%.4f per 1M)\n", bare, af.in, af.out)
-			}
+			continue
+		}
+		// New model: effort/thinking/speed left false — curated by hand (not
+		// derivable from the API; see the note in the verify section).
+		ne := jsonlEntry{ID: bare, Provider: "openrouter", Fetched: fetchDate}
+		applyAPIFields(&ne, af)
+		newEntries = append(newEntries, ne)
+		existing[bare] = true
+		if *verbose {
+			fmt.Fprintf(os.Stderr, "  + %s: added ($%.4f/$%.4f per 1M)\n", bare, af.in, af.out)
 		}
 	}
-
-	// General: newest models across all providers.
-	collectNew("", *addPopular)
-	// Provider-scoped: ensure latest Anthropic and OpenAI releases are present.
-	collectNew("anthropic", *addAnthropic)
-	collectNew("openai", *addOpenAI)
 
 	// Append-only: keep every historic row, add the new snapshots. Existing
 	// rows in `entries` were never mutated.
@@ -410,6 +409,22 @@ func writeJSONL(path string, entries []jsonlEntry) error {
 		e.OutputPer1M = round6(e.OutputPer1M)
 		e.CacheReadPer1M = round6(e.CacheReadPer1M)
 		e.CacheWritePer1M = round6(e.CacheWritePer1M)
+		e.CacheWrite1hPer1M = round6(e.CacheWrite1hPer1M)
+		e.InternalReasoningPer1M = round6(e.InternalReasoningPer1M)
+		// web_search/image/audio are raw per-unit values (often < 1e-6) — do
+		// NOT round them to 6dp or they'd vanish to zero.
+		if len(e.PriceTiers) > 0 {
+			tiers := make([]PriceTier, len(e.PriceTiers))
+			copy(tiers, e.PriceTiers)
+			for i := range tiers {
+				tiers[i].InputPer1M = round6(tiers[i].InputPer1M)
+				tiers[i].OutputPer1M = round6(tiers[i].OutputPer1M)
+				tiers[i].CacheReadPer1M = round6(tiers[i].CacheReadPer1M)
+				tiers[i].CacheWritePer1M = round6(tiers[i].CacheWritePer1M)
+				tiers[i].CacheWrite1hPer1M = round6(tiers[i].CacheWrite1hPer1M)
+			}
+			e.PriceTiers = tiers
+		}
 		data, err := json.Marshal(e)
 		if err != nil {
 			return err
@@ -521,6 +536,12 @@ func abs(f float64) float64 {
 type apiDerived struct {
 	in, out               float64
 	cacheRead, cacheWrite float64
+	cacheWrite1h          float64
+	internalReasoning     float64
+	webSearch             float64 // raw $/call
+	image, audio          float64 // raw per-unit
+	tiers                 []PriceTier
+	intelligence          float64
 	caching               bool
 	ctx                   int
 	negative              bool // true if pricing was negative (for reporting)
@@ -531,15 +552,30 @@ type apiDerived struct {
 // or any negative (sentinel like the auto-router's -1, which would corrupt cost
 // math). caching + cache prices come straight from pricing.input_cache_*.
 func apiFields(m orModel) (apiDerived, bool) {
-	in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)
-	out, _ := strconv.ParseFloat(m.Pricing.Completion, 64)
-	cr, _ := strconv.ParseFloat(m.Pricing.InputCacheRead, 64)
-	cw, _ := strconv.ParseFloat(m.Pricing.InputCacheWrite, 64)
+	pf := func(s string) float64 { v, _ := strconv.ParseFloat(s, 64); return v }
+	in, out := pf(m.Pricing.Prompt), pf(m.Pricing.Completion)
+	cr, cw := pf(m.Pricing.InputCacheRead), pf(m.Pricing.InputCacheWrite)
 	f := apiDerived{
 		in: in * 1e6, out: out * 1e6,
 		cacheRead: cr * 1e6, cacheWrite: cw * 1e6,
-		caching: cr > 0 || cw > 0,
-		ctx:     m.ContextLength,
+		cacheWrite1h:      pf(m.Pricing.InputCacheWrite1h) * 1e6,
+		internalReasoning: pf(m.Pricing.InternalReasoning) * 1e6,
+		webSearch:         pf(m.Pricing.WebSearch), // raw $/call
+		image:             pf(m.Pricing.Image),     // raw per-unit
+		audio:             pf(m.Pricing.Audio),     // raw per-unit
+		caching:           cr > 0 || cw > 0,
+		ctx:               m.ContextLength,
+		intelligence:      m.Benchmarks.ArtificialAnalysis.IntelligenceIndex,
+	}
+	for _, o := range m.Pricing.Overrides {
+		f.tiers = append(f.tiers, PriceTier{
+			MinPromptTokens:   o.MinPromptTokens,
+			InputPer1M:        pf(o.Prompt) * 1e6,
+			OutputPer1M:       pf(o.Completion) * 1e6,
+			CacheReadPer1M:    pf(o.InputCacheRead) * 1e6,
+			CacheWritePer1M:   pf(o.InputCacheWrite) * 1e6,
+			CacheWrite1hPer1M: pf(o.InputCacheWrite1h) * 1e6,
+		})
 	}
 	if in < 0 || out < 0 || cr < 0 || cw < 0 {
 		f.negative = true
@@ -559,8 +595,54 @@ func fieldsDiffer(cur jsonlEntry, f apiDerived) bool {
 		abs(f.out-cur.OutputPer1M) > 0.005 ||
 		abs(f.cacheRead-cur.CacheReadPer1M) > 0.005 ||
 		abs(f.cacheWrite-cur.CacheWritePer1M) > 0.005 ||
+		abs(f.cacheWrite1h-cur.CacheWrite1hPer1M) > 0.005 ||
+		abs(f.internalReasoning-cur.InternalReasoningPer1M) > 0.005 ||
+		abs(f.webSearch-cur.WebSearchPerCall) > 1e-9 ||
+		abs(f.image-cur.ImagePrice) > 1e-9 ||
+		abs(f.audio-cur.AudioPrice) > 1e-9 ||
+		abs(f.intelligence-cur.IntelligenceIndex) > 0.05 ||
 		f.caching != cur.Caching ||
-		(f.ctx > 0 && f.ctx != cur.ContextWindow)
+		(f.ctx > 0 && f.ctx != cur.ContextWindow) ||
+		!tiersEqual(f.tiers, cur.PriceTiers)
+}
+
+// tiersEqual compares tier schedules with the same per-1M epsilon as prices.
+func tiersEqual(a, b []PriceTier) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].MinPromptTokens != b[i].MinPromptTokens ||
+			abs(a[i].InputPer1M-b[i].InputPer1M) > 0.005 ||
+			abs(a[i].OutputPer1M-b[i].OutputPer1M) > 0.005 ||
+			abs(a[i].CacheReadPer1M-b[i].CacheReadPer1M) > 0.005 ||
+			abs(a[i].CacheWritePer1M-b[i].CacheWritePer1M) > 0.005 ||
+			abs(a[i].CacheWrite1hPer1M-b[i].CacheWrite1hPer1M) > 0.005 {
+			return false
+		}
+	}
+	return true
+}
+
+// applyAPIFields sets every API-authoritative field on an entry from a fresh
+// fetch (used both when appending an update row and when adding a new model).
+// Curated fields (effort/thinking/speed/comment/provider) are left untouched.
+func applyAPIFields(e *jsonlEntry, f apiDerived) {
+	e.InputPer1M = f.in
+	e.OutputPer1M = f.out
+	e.CacheReadPer1M = f.cacheRead
+	e.CacheWritePer1M = f.cacheWrite
+	e.CacheWrite1hPer1M = f.cacheWrite1h
+	e.InternalReasoningPer1M = f.internalReasoning
+	e.WebSearchPerCall = f.webSearch
+	e.ImagePrice = f.image
+	e.AudioPrice = f.audio
+	e.PriceTiers = f.tiers
+	e.IntelligenceIndex = f.intelligence
+	e.Caching = f.caching
+	if f.ctx > 0 {
+		e.ContextWindow = f.ctx
+	}
 }
 
 func fail(format string, args ...any) {

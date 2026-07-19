@@ -193,13 +193,13 @@ func TestApplyModelInfo_ProviderPrefixedID(t *testing.T) {
 	ctx := 1_000_000
 	in, out := 0.0, 0.0
 	entries := []ModelInfoEntry{
-		{ID: "zai-coding-plan/glm-5.2", ContextWindow: &ctx, InputPer1M: &in, OutputPer1M: &out},
+		{ID: "zai-coding-plan/syn-solo-model", ContextWindow: &ctx, InputPer1M: &in, OutputPer1M: &out},
 	}
 
 	ApplyModelInfo(entries)
 
-	// Should be registered under provider "zai-coding-plan", model "glm-5.2".
-	m, ok := modelinfo.Lookup("zai-coding-plan", "glm-5.2")
+	// Should be registered under provider "zai-coding-plan", model "syn-solo-model".
+	m, ok := modelinfo.Lookup("zai-coding-plan", "syn-solo-model")
 	if !ok {
 		t.Fatal("provider-specific entry not found after ApplyModelInfo")
 	}
@@ -212,14 +212,14 @@ func TestApplyModelInfo_ProviderPrefixedID(t *testing.T) {
 
 	// A providerless lookup now falls back to the sole registered provider
 	// entry (registryLookup's sole-provider fallback), so it hits too.
-	if pm, ok := modelinfo.Lookup("", "glm-5.2"); !ok {
+	if pm, ok := modelinfo.Lookup("", "syn-solo-model"); !ok {
 		t.Error("providerless lookup should hit via sole-provider fallback")
 	} else if pm.Provider != "zai-coding-plan" {
 		t.Errorf("Provider = %q, want %q", pm.Provider, "zai-coding-plan")
 	}
 
 	// Cost via the provider-prefixed model string should hit.
-	cost := modelinfo.Cost("zai-coding-plan/glm-5.2", 1_000_000, 500_000, 0, 0)
+	cost := modelinfo.Cost("zai-coding-plan/syn-solo-model", 1_000_000, 500_000, 0, 0)
 	if cost != 0 {
 		t.Errorf("Cost = %v, want 0 (all prices zero)", cost)
 	}
@@ -231,7 +231,7 @@ func TestModelInfoEntryToModel_ProviderPrefixedNewModel(t *testing.T) {
 	ctx := 500_000
 	in, out := 1.5, 7.5
 	entry := ModelInfoEntry{
-		ID:            "openrouter/glm-5.2",
+		ID:            "openrouter/syn-solo-model",
 		ContextWindow: &ctx,
 		InputPer1M:    &in,
 		OutputPer1M:   &out,
