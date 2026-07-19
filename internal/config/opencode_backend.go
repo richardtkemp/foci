@@ -7,7 +7,7 @@ package config
 // Mirrors CCBackendConfig in structure but with opencode-specific
 // fields. See OPENCODE_DELEGATOR_PLAN.md §14.1.
 type OpencodeBackendConfig struct {
-	// OpencodeBinary overrides the path to the `opencode` executable.
+	// Binary overrides the path to the `opencode` executable.
 	// Default "" → "opencode" resolved via $PATH. Integration tests
 	// can point this at a stub binary.
 	Binary string `toml:"binary" desc:"Path to the backend executable (default: opencode via $PATH)"`

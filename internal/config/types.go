@@ -256,11 +256,11 @@ type CCBackendConfig struct {
 	// scratch-file access. Set to an empty list in TOML to disable.
 	DefaultAllowedTools []string `toml:"default_allowed_tools" desc:"Claude Code permission rules (e.g. Edit(/tmp/**)) pre-approved for all CC-backed agents. Merged with per-agent backend_config.allowed_tools"`
 
-	// ClaudeBinary overrides the path/name of the `claude` executable
-	// foci spawns for CC-backed agents. Default "" → falls back to "claude"
-	// (resolved via $PATH). Used by integration tests to point at a stub
-	// binary (bin/cc-stub) that mimics the CC stream-json protocol.
-	// Per-agent backend_config.claude_binary takes precedence if set.
+	// Binary overrides the path/name of the `claude` executable foci spawns
+	// for CC-backed agents. Default "" → falls back to "claude" (resolved via
+	// $PATH). Used by integration tests to point at a stub binary (bin/cc-stub)
+	// that mimics the CC stream-json protocol. Per-agent
+	// backend_config.binary takes precedence if set.
 	Binary string `toml:"binary" desc:"Path or name of the backend executable (default: claude via $PATH)"`
 
 	// BackgroundTaskMaxAge bounds how long a spawned background task (an
@@ -282,7 +282,6 @@ type BackendConfig struct {
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
 	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Edit(/tmp/**)). Merged with global [cc_backend] defaults"`
 	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
-	ClaudeBinary      *string           `toml:"claude_binary"      desc:"Deprecated: use binary"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
 	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`
 	SocketPath        *string           `toml:"socket_path"        desc:"Unix socket path for cctmux backend communication"`
@@ -308,9 +307,6 @@ func (bc BackendConfig) ToMap() map[string]any {
 	}
 	if bc.Binary != nil {
 		m["binary"] = *bc.Binary
-	}
-	if bc.ClaudeBinary != nil {
-		m["claude_binary"] = *bc.ClaudeBinary
 	}
 	if bc.IdleTimeout != nil {
 		m["idle_timeout"] = *bc.IdleTimeout
@@ -394,7 +390,7 @@ type AgentConfig struct {
 	// Backend selection: empty or "api" = traditional agent loop.
 	// A coding agent name (e.g. "claude-code-tmux", "codex", "opencode") delegates
 	// entire turns to an external agent subprocess.
-	Backend       string         `toml:"backend"       desc:"Backend type: empty or api = traditional agent loop; claude-code, opencode, etc. delegates turns to an external agent"`
+	Backend       string        `toml:"backend"       desc:"Backend type: empty or api = traditional agent loop; claude-code, opencode, etc. delegates turns to an external agent"`
 	BackendConfig BackendConfig `toml:"backend_config"` // backend-specific settings
 
 	// Per-agent skills and message transforms (empty = use global)
@@ -579,23 +575,23 @@ type AnthropicConfig struct {
 // of the configuration cascade. All fields are pointer types so Merge can
 // distinguish "not set" from "set to zero value".
 type DisplayConfig struct {
-	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         hot:"turn" desc:"How tool-call activity appears in chat: off hides it, preview shows it then replaces it with the final reply, full keeps it visible as a separate message" choices:"off,preview,full"`                             // tool call display: off, preview, full
-	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"How the model's reasoning is shown: off hides it, compact adds a Show thinking toggle button, true prepends it to every reply" choices:"off,compact,true"`                                                         // thinking display: off, compact, true
-	StreamOutput          *bool            `toml:"stream_output"           hot:"turn" desc:"Edit the chat message in place as the reply is generated, instead of sending it only once it's complete"`                                                                                                // stream model output in real-time
-	StreamInterval        *string          `toml:"stream_interval"         desc:"How often the in-progress reply is updated on screen while streaming; lower values look smoother but send more edits to the chat platform" type:"duration"`                                                        // duration between message edits during streaming
-	DisplayWidth          *int             `toml:"display_width"           desc:"Character width used for divider lines and to wrap tables and thinking blocks in chat messages"`                                                                                                                   // display width for dividers
-	TableWrapLines        *int             `toml:"table_wrap_lines"        hot:"turn" desc:"Maximum number of lines a single table cell wraps to before its content is truncated (default 5). Applies to text-rendering platforms (Telegram, Discord)"`                                            // default 5
+	ShowToolCalls         *ToolCallDisplay `toml:"show_tool_calls"         hot:"turn" desc:"How tool-call activity appears in chat: off hides it, preview shows it then replaces it with the final reply, full keeps it visible as a separate message" choices:"off,preview,full"`              // tool call display: off, preview, full
+	ShowThinking          *ShowThinking    `toml:"show_thinking"           desc:"How the model's reasoning is shown: off hides it, compact adds a Show thinking toggle button, true prepends it to every reply" choices:"off,compact,true"`                                                     // thinking display: off, compact, true
+	StreamOutput          *bool            `toml:"stream_output"           hot:"turn" desc:"Edit the chat message in place as the reply is generated, instead of sending it only once it's complete"`                                                                                           // stream model output in real-time
+	StreamInterval        *string          `toml:"stream_interval"         desc:"How often the in-progress reply is updated on screen while streaming; lower values look smoother but send more edits to the chat platform" type:"duration"`                                                    // duration between message edits during streaming
+	DisplayWidth          *int             `toml:"display_width"           desc:"Character width used for divider lines and to wrap tables and thinking blocks in chat messages"`                                                                                                               // display width for dividers
+	TableWrapLines        *int             `toml:"table_wrap_lines"        hot:"turn" desc:"Maximum number of lines a single table cell wraps to before its content is truncated (default 5). Applies to text-rendering platforms (Telegram, Discord)"`                                         // default 5
 	TableStyle            *string          `toml:"table_style"             hot:"turn" desc:"How tables are rendered in chat: pretty uses box-drawing characters, markdown uses plain markdown table syntax. Applies to text-rendering platforms (Telegram, Discord)" choices:"pretty,markdown"` // default "pretty"
-	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"Local directory where files received from users, such as photos or documents, are saved; leave empty to not save them"`                                                                                            // save received files to this directory
-	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"Text prepended to system-injected messages, such as warnings, so you can tell them apart from normal replies; empty adds no header"`                                                                               // header prepended to injected messages
-	Statusline            *string          `toml:"statusline"              hot:"turn" desc:"Template for the small header shown above each reply, such as model name and timing; leave empty to use the built-in default format"`                                                                              // per-message header template (#831)
+	ReceivedFilesDir      *string          `toml:"received_files_dir"      desc:"Local directory where files received from users, such as photos or documents, are saved; leave empty to not save them"`                                                                                        // save received files to this directory
+	InjectedMessageHeader *string          `toml:"injected_message_header" desc:"Text prepended to system-injected messages, such as warnings, so you can tell them apart from normal replies; empty adds no header"`                                                                           // header prepended to injected messages
+	Statusline            *string          `toml:"statusline"              hot:"turn" desc:"Template for the small header shown above each reply, such as model name and timing; leave empty to use the built-in default format"`                                                               // per-message header template (#831)
 }
 
 // AccessConfig holds access control settings that can be set at any level
 // of the configuration cascade.
 type AccessConfig struct {
 	AllowedUsersOnly *bool    `toml:"allowed_users_only" default:"true" desc:"When enabled (default), only user IDs in allowed_users may message this agent - an empty list blocks everyone. When disabled, an empty list allows anyone; a non-empty list still filters"`
-	AllowedUsers     []string `toml:"allowed_users"  desc:"Platform-specific user IDs allowed to interact with this agent. Empty means no allow-list restriction"`   // platform-specific user IDs allowed to interact
+	AllowedUsers     []string `toml:"allowed_users"  desc:"Platform-specific user IDs allowed to interact with this agent. Empty means no allow-list restriction"` // platform-specific user IDs allowed to interact
 	RequireMention   *bool    `toml:"require_mention" desc:"Require @mention in group chats to trigger this agent"`
 }
 
@@ -603,13 +599,13 @@ type AccessConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type NotifyConfig struct {
-	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   hot:"event" desc:"Whether internal warnings are fed directly into the agent's own conversation, as if said by the system, so it can see and react: all, errors only, or off"` // inject warnings/errors into agent session
-	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    hot:"event" desc:"Whether internal warnings are sent to you as chat notification messages: all, errors only, or off"`                                                         // send warnings/errors as chat notifications
-	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"Send a chat notification each time this agent starts up"`                                                                                                   // send startup notification
-	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" hot:"event" desc:"Send a chat notification whenever the conversation history is compacted (summarized to free up context space)"`                                             // send notification on compaction
-	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" hot:"event" desc:"Send a chat notification whenever the agent's todo list changes"`                                                                                           // send notification on task list changes
-	CompactionDebug     *bool           `toml:"compaction_debug"                        hot:"event" desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                     // send compaction summary as file attachment
-	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    hot:"event" scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`               // max identical warnings per window before suppression (default 3)
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   hot:"event" desc:"Whether internal warnings are fed directly into the agent's own conversation, as if said by the system, so it can see and react: all, errors only, or off"`        // inject warnings/errors into agent session
+	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    hot:"event" desc:"Whether internal warnings are sent to you as chat notification messages: all, errors only, or off"`                                                                // send warnings/errors as chat notifications
+	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"Send a chat notification each time this agent starts up"`                                                                                                                      // send startup notification
+	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" hot:"event" desc:"Send a chat notification whenever the conversation history is compacted (summarized to free up context space)"`                                                    // send notification on compaction
+	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" hot:"event" desc:"Send a chat notification whenever the agent's todo list changes"`                                                                                                  // send notification on task list changes
+	CompactionDebug     *bool           `toml:"compaction_debug"                        hot:"event" desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                            // send compaction summary as file attachment
+	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    hot:"event" scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"` // max identical warnings per window before suppression (default 3)
 }
 
 // InjectAgentWarningsLevel returns the resolved injection level (default: off).
@@ -867,7 +863,7 @@ type MemorySource struct {
 // Sources are combined additively (not merged) — see load.go.
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
-	SearchBackend      *string        `toml:"search_backend"      default:"bleve" hot:"immediate" desc:"Which engine powers memory search: fts5 also searches conversation history, bleve only searches memory files but adds relevance ranking"`                   // search backend: "fts5" or "bleve"
+	SearchBackend      *string        `toml:"search_backend"      default:"bleve" hot:"immediate" desc:"Which engine powers memory search: fts5 also searches conversation history, bleve only searches memory files but adds relevance ranking"`   // search backend: "fts5" or "bleve"
 	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"How long to wait after a memory file changes before reindexing it, so rapid edits do not trigger repeated reindexing; 0s reindexes immediately" type:"duration"`            // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"Relevance multiplier for conversation-history hits in memory search, relative to memory-file hits; 0 excludes them, 1 weighs them equally" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"Maximum number of results the memory search tool returns for a single query"`                                                                               // max search results to return (default 20)
@@ -901,16 +897,16 @@ type LoggingConfig struct {
 	PayloadFile string `toml:"payload_file"             default:"logs/api-payload.jsonl" desc:"Path for the full API payload log when full_payload is enabled"`
 
 	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"  hot:"event" desc:"Time window used to group and rate-limit repeated warnings so identical ones are not injected into the agent repeatedly" type:"duration"` // time window for warning dedup (default "5m")
-	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"  desc:"Minimum time between unprompted warning notifications sent while you have been recently active" type:"duration"`                          // min interval between proactive warning turns when user is active (default "5m")
-	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"  default:"1h"  desc:"Minimum time between unprompted warning notifications sent while you have not been recently active" type:"duration"`                      // min interval when user is inactive (default "1h")
-	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold" default:"10m" desc:"How recently you must have sent a message to count as active for the proactive warning intervals above" type:"duration"`                  // user is "active" if last message within this window (default "10m")
+	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"  desc:"Minimum time between unprompted warning notifications sent while you have been recently active" type:"duration"`                                      // min interval between proactive warning turns when user is active (default "5m")
+	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"  default:"1h"  desc:"Minimum time between unprompted warning notifications sent while you have not been recently active" type:"duration"`                                  // min interval when user is inactive (default "1h")
+	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold" default:"10m" desc:"How recently you must have sent a message to count as active for the proactive warning intervals above" type:"duration"`                              // user is "active" if last message within this window (default "10m")
 
 	LogRotation         *bool  `toml:"log_rotation"            default:"true" desc:"Automatically rotate and gzip-archive log files instead of letting them grow forever"`                                                        // enable built-in log rotation (default true)
 	RotationPeriod      string `toml:"rotation_period"        default:"24h"   desc:"How often the log rotation check runs, archiving old log content" type:"duration"`                                                            // how often to rotate (default "24h")
 	RetentionPeriod     string `toml:"retention_period"       default:"48h"   desc:"How long log lines stay in the live log file before being archived; older lines are moved into gzip files under archive_dir" type:"duration"` // keep lines newer than this (default "48h")
 	RotationMaxLineSize string `toml:"rotation_max_line_size" default:"64MB"  desc:"Largest single log line the rotator can read; a longer line is skipped instead of crashing the rotation process"`                             // max line size for scanner buffer (default "64MB")
 	ArchiveDir          string `toml:"archive_dir" desc:"Directory for gzip-archived log files (default: log_dir/archive/)"`
-	LogFileMode         string `toml:"log_file_mode"          default:"0600"  desc:"Unix file permissions (octal, e.g. 0600) applied to log files"`                                                                               // octal file permissions for log files (default "0600")
+	LogFileMode         string `toml:"log_file_mode"          default:"0600"  desc:"Unix file permissions (octal, e.g. 0600) applied to log files"` // octal file permissions for log files (default "0600")
 }
 
 // TTSConfig describes a text-to-speech provider entry.
@@ -952,7 +948,7 @@ type BitwardenConfig struct {
 // [[agents]].permissions are combined (union) — both sets apply.
 // All fields are pointer/slice types for Merge-based resolution.
 type PermissionsConfig struct {
-	AutoApprove                []string `toml:"auto_approve"  desc:"Tool-call patterns auto-approved without prompting, e.g. \"Bash:git *\". Composable with && || ; per entry"`                                                                                                                                                                                          // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
+	AutoApprove                []string `toml:"auto_approve"  desc:"Tool-call patterns auto-approved without prompting, e.g. \"Bash:git *\". Composable with && || ; per entry"`                                                                       // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
 	AutoApproveCommonReadonly  *bool    `toml:"auto_approve_common_readonly"  default:"true"  desc:"Automatically approve a built-in list of safe, read-only tools and shell commands (ls, cat, git status, etc) without prompting"`                   // enable built-in read-only tool/command allowlist
 	AutoApproveCommonSafeWrite *bool    `toml:"auto_approve_common_safe_write" default:"false" desc:"Automatically approve a built-in list of commonly-safe but side-effecting commands like curl, wget, mkdir and touch; not restricted to any path"` // enable built-in safe-write allowlist (default false — not path-scoped)
 	// PromptTTL is how long an unanswered interactive prompt (permission
@@ -1018,9 +1014,9 @@ type ToolsConfig struct {
 	ToolConfig    // global tool behavioral defaults (resolved via Merge with per-agent)
 
 	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results" desc:"Where to write large tool result files (default /tmp/foci/tool-results)"`
-	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"Number of columns for the tmux terminal window created for running shell commands"`    // tmux window columns on start (default 300)
-	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"Number of rows for the tmux terminal window created for running shell commands"`       // tmux window rows on start (default 30)
-	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"Default number of seconds a shell command may run before it is timed out"`             // default timeout for exec commands in seconds (default 30)
+	TmuxCols                int      `toml:"tmux_cols"                  default:"300"       desc:"Number of columns for the tmux terminal window created for running shell commands"` // tmux window columns on start (default 300)
+	TmuxRows                int      `toml:"tmux_rows"                  default:"30"        desc:"Number of rows for the tmux terminal window created for running shell commands"`    // tmux window rows on start (default 30)
+	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"        desc:"Default number of seconds a shell command may run before it is timed out"`          // default timeout for exec commands in seconds (default 30)
 	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s" desc:"Timeout for tmux control commands (default 5s)" type:"duration"`
 	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576" desc:"Maximum bytes to read from a web fetch result (default 1 MiB)"`
 	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"    default:"450"       desc:"Maximum characters of a tool call's parameters shown in the Telegram preview message"` // max chars for tool call param preview in Telegram (default 450)
@@ -1029,11 +1025,11 @@ type ToolsConfig struct {
 	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%" desc:"RSS threshold for critical tmux memory warning (default 20%)"`
 	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%" desc:"RSS threshold to kill the tmux process (default 30%)"`
 	WebSearchMaxUses        int      `toml:"web_search_max_uses" desc:"Maximum web searches per API call (0 = unlimited)"`
-	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"  desc:"If set, web search results are restricted to these domains (mutually exclusive with the blocked list)"`                                                                                                                 // domain whitelist (mutually exclusive with blocked)
-	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"  desc:"Domains excluded from web search results (mutually exclusive with the allowed list)"`                                                                                                                 // domain blacklist
+	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"  desc:"If set, web search results are restricted to these domains (mutually exclusive with the blocked list)"` // domain whitelist (mutually exclusive with blocked)
+	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"  desc:"Domains excluded from web search results (mutually exclusive with the allowed list)"`                   // domain blacklist
 	WebFetchMaxUses         int      `toml:"web_fetch_max_uses" desc:"Maximum web fetches per API call (0 = unlimited)"`
-	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"  desc:"If set, web fetch is restricted to these domains (mutually exclusive with the blocked list)"`                                                                                                                  // domain whitelist
-	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"  desc:"Domains excluded from web fetch (mutually exclusive with the allowed list)"`                                                                                                                  // domain blacklist
+	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"  desc:"If set, web fetch is restricted to these domains (mutually exclusive with the blocked list)"` // domain whitelist
+	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"  desc:"Domains excluded from web fetch (mutually exclusive with the allowed list)"`                  // domain blacklist
 }
 
 type MessageTransform struct {
@@ -1176,9 +1172,9 @@ type BackgroundConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type DebugConfig struct {
-	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      hot:"immediate" scope:"global" desc:"Log the last 4 characters of the API key on every model provider request, useful for confirming which key was used"`                                   // log last 4 chars of API keys on each provider call (default false)
-	MessagesInLog        *bool `toml:"messages_in_log"         hot:"immediate" scope:"global,agent" desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"`                       // log user message content to event log (default false for privacy)
-	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" hot:"turn" scope:"global,agent" desc:"Alert in chat when the provider's prompt-cache hit count drops between requests, which can signal the cache was unexpectedly evicted"` // alert when cache_read drops >50% vs previous request
+	LogAPIKeySuffix *bool `toml:"log_api_key_suffix"      hot:"immediate" scope:"global" desc:"Log the last 4 characters of the API key on every model provider request, useful for confirming which key was used"`                                    // log last 4 chars of API keys on each provider call (default false)
+	MessagesInLog   *bool `toml:"messages_in_log"         hot:"immediate" scope:"global,agent" desc:"Include the full text of user messages in the event log. Off by default to avoid writing personal conversation content to logs"`                  // log user message content to event log (default false for privacy)
+	CacheBustDetect *bool `toml:"cache_bust_detect"       default:"false" hot:"turn" scope:"global,agent" desc:"Alert in chat when the provider's prompt-cache hit count drops between requests, which can signal the cache was unexpectedly evicted"` // alert when cache_read drops >50% vs previous request
 
 	// EnablePprof exposes the net/http/pprof endpoints under /debug/pprof/*.
 	// Off by default: they allow CPU/heap profiling and goroutine dumps, so they
@@ -1234,8 +1230,8 @@ type Config struct {
 	OpencodeBackend    OpencodeBackendConfig     `toml:"opencode_backend"` // shared defaults for opencode delegator backend
 	Askgw              AskgwConfig               `toml:"askgw"`            // ask-gateway: local socket for external Apps to ask humans questions
 	Commands           []CommandConfig           `toml:"commands"`
-	MessageTransforms  []MessageTransform        `toml:"message_transforms"`                             // regex find/replace rules applied to inbound messages
-	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`                                  // path prefixes that write/edit tools refuse (with rebuke message)
+	MessageTransforms  []MessageTransform        `toml:"message_transforms"` // regex find/replace rules applied to inbound messages
+	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`      // path prefixes that write/edit tools refuse (with rebuke message)
 	FileMode           string                    `toml:"file_mode"            default:"0640"            desc:"Octal file permissions for workspace and content files (default 0640)"`
 	WelcomeFile        string                    `toml:"welcome_file"         default:"data/WELCOME.md" desc:"Path to welcome/changelog file injected on agent startup"`
 	Timezone           string                    `toml:"timezone"                                       desc:"IANA timezone for timestamps (e.g. Europe/London, UTC); empty = machine local"`
@@ -1243,9 +1239,9 @@ type Config struct {
 	DefaultPlatform    string                    `toml:"default_platform"                               desc:"Platform preferred when resolving default sessions and delivery fallbacks (e.g. telegram); empty = most-recently-active"`
 	SkipSecurityChecks bool                      `toml:"skip_security_checks"                           desc:"Skip startup security checks for secrets.toml file permissions"`
 	ShellEnvFile       *string                   `toml:"shell_env_file"                                 desc:"Shell rc/env file sourced at startup so tool shells inherit the operator's env; nil = auto-detect (~/.bashrc etc); empty = load nothing"`
-	DefinedKeys        map[string]bool           `toml:"-"`                                              // keys explicitly set in TOML file (populated by Load)
-	SourcePath         string                    `toml:"-"`                                              // absolute-ish path the config was loaded from (populated by Load; used by config editing)
-	UndefinedKeys      []string                  `toml:"-"`                                              // unrecognised TOML keys (populated by Load, logged by caller)
+	DefinedKeys        map[string]bool           `toml:"-"` // keys explicitly set in TOML file (populated by Load)
+	SourcePath         string                    `toml:"-"` // absolute-ish path the config was loaded from (populated by Load; used by config editing)
+	UndefinedKeys      []string                  `toml:"-"` // unrecognised TOML keys (populated by Load, logged by caller)
 }
 
 // DefaultPlatformFor resolves the preferred platform for an agent: the
