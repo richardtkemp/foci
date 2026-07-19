@@ -44,7 +44,15 @@ func TestEstimateTokens(t *testing.T) {
 func TestContextLimit(t *testing.T) {
 	// Verifies Compactor.ContextLimit falls back to modelinfo registry
 	// defaults when no ModelMetaFn is set: Claude haiku/sonnet (200k),
-	// Claude opus (1M), Gemini 2.x (1M), Gemini 1.5 (2M), unknown (200k).
+	// Claude opus (1M), Gemini 2.x family fallback (1M), Gemini 1.5 (2M),
+	// unknown (200k).
+	//
+	// NB: uses only STABLE values — Claude entries (OpenRouter lists them under
+	// dotted names so the dashed registry keys never sync-churn) and the family
+	// fallbacks for UNREGISTERED gemini names. Registered gemini-2.5-pro/flash
+	// are intentionally not asserted here: their context is synced from
+	// OpenRouter (currently 1048576, not the round 1M) and would re-break this
+	// test on every context change — exactly the churn we don't pin.
 	c := NewCompactor(nil, 0.8)
 	tests := []struct {
 		model string
@@ -53,13 +61,10 @@ func TestContextLimit(t *testing.T) {
 		{"claude-haiku-4-5", 200_000},
 		{"claude-sonnet-4-5", 200_000},
 		{"claude-opus-4-6", 1_000_000},
-		{"gemini-2.5-pro", 1_000_000},
-		{"gemini-2.5-flash", 1_000_000},
-		{"gemini-2.0-flash", 1_000_000},
 		{"gemini-1.5-pro", 2_000_000},
 		{"gemini-1.5-flash", 2_000_000},
-		{"gemini-2.0-pro", 1_000_000},
-		{"gemini-other", 1_000_000},
+		{"gemini-2.0-pro", 1_000_000}, // unregistered → gemini family fallback
+		{"gemini-other", 1_000_000},   // unregistered → gemini family fallback
 		{"unknown-model", 200_000},
 		{"gpt-4", 200_000},
 		{"", 200_000},
