@@ -490,6 +490,46 @@ func TestAsk_CompleteRunsGraderOnPartial(t *testing.T) {
 	}
 }
 
+// TestAsk_GraderRetriesOnETXTBSY proves the grader exec recovers from a
+// transient "text file busy" (golang/go#22315). It forces the condition
+// deterministically: an open write fd to the grader script makes exec fail with
+// ETXTBSY, and the fd is released inside the retry budget so a later attempt
+// lands once the file is free. Without the retry loop the first exec fails and
+// the fallback ("could not run") is delivered instead of the grader's output.
+func TestAsk_GraderRetriesOnETXTBSY(t *testing.T) {
+	t.Parallel()
+	tool, router, p, d := newAskFixture()
+	grader := writeGrader(t, "#!/bin/sh\necho graded-ok\n")
+
+	// Hold a write fd open BEFORE triggering the grader so the exec sees the
+	// file as text-busy, then release it well within the retry window.
+	wf, err := os.OpenFile(grader, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open grader for write: %v", err)
+	}
+	go func() {
+		time.Sleep(4 * time.Millisecond) // < graderETXTBSYRetries*graderETXTBSYBackoff
+		_ = wf.Close()
+	}()
+
+	// Two questions, answer one, then CompleteSession — this drives the grader
+	// on the partial set (a single fully-answered question auto-delivers with
+	// no session left to complete).
+	raw := `{"questions":[
+		{"question":"Q1?","options":[{"label":"A1"}]},
+		{"question":"Q2?","options":[{"label":"A2"}]}
+	],"grader":"` + grader + `"}`
+	execAsk(t, tool, raw)
+	p.answer("qa:0")
+	if _, _, ok := router.CompleteSession(askSession); !ok {
+		t.Fatal("CompleteSession failed")
+	}
+	msg := waitDeliver(t, d)
+	if !strings.Contains(msg, "graded-ok") {
+		t.Errorf("grader should have retried past ETXTBSY and succeeded, got: %q", msg)
+	}
+}
+
 func TestAsk_NoSessionErrors(t *testing.T) {
 	t.Parallel()
 	tool, _, _, _ := newAskFixture()
