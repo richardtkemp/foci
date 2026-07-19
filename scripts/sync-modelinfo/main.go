@@ -326,7 +326,7 @@ func main() {
 
 	// --- Write to worktree ---
 
-	wtPath, err := createWorktree(repo, *baseFlag)
+	wtPath, branch, err := createWorktree(repo, *baseFlag)
 	if err != nil {
 		// If worktree creation fails, we still report what would change.
 		fmt.Fprintln(os.Stderr, "error creating worktree:", err)
@@ -338,13 +338,22 @@ func main() {
 	wtJSONL := filepath.Join(wtPath, "internal", "modelinfo", "models.jsonl")
 	if err := writeJSONL(wtJSONL, entries); err != nil {
 		fmt.Fprintln(os.Stderr, "error writing JSONL:", err)
+		removeWorktree(repo, wtPath, branch)
 		fmt.Println(summary)
 		return
 	}
 
-	if err := gitCommit(wtPath, fmt.Sprintf("modelinfo: sync with OpenRouter API (%s)", timestamp())); err != nil {
+	committed, err := gitCommit(wtPath, fmt.Sprintf("modelinfo: sync with OpenRouter API (%s)", timestamp()))
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error committing:", err)
+		removeWorktree(repo, wtPath, branch)
 		fmt.Println(summary)
+		return
+	}
+	if !committed {
+		// Nothing changed — don't leave an empty review worktree/branch behind.
+		removeWorktree(repo, wtPath, branch)
+		fmt.Printf("%s\nno changes — nothing to commit\n", summary)
 		return
 	}
 
@@ -443,11 +452,11 @@ func stripProvider(id string) string {
 	return id
 }
 
-func createWorktree(repo, base string) (string, error) {
-	branch := "sync-modelinfo-" + timestamp()
+func createWorktree(repo, base string) (wtPath, branch string, err error) {
+	branch = "sync-modelinfo-" + timestamp()
 	// Worktree as a sibling of the repo, following foci convention.
 	wtName := filepath.Base(repo) + "-wt-sync-modelinfo"
-	wtPath := filepath.Join(filepath.Dir(repo), wtName)
+	wtPath = filepath.Join(filepath.Dir(repo), wtName)
 
 	// Remove if stale from a previous run (best-effort).
 	_ = os.RemoveAll(wtPath)
@@ -455,21 +464,35 @@ func createWorktree(repo, base string) (string, error) {
 	cmd := exec.Command("git", "-c", "core.sharedRepository=false",
 		"-C", repo, "worktree", "add", "-b", branch, wtPath, base)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+		return "", "", fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
-	return wtPath, nil
+	return wtPath, branch, nil
 }
 
-func gitCommit(wt, msg string) error {
+// removeWorktree tears down a worktree and its branch — used when a run turns
+// out to be a no-op, so an empty review branch isn't left littering the repo.
+func removeWorktree(repo, wtPath, branch string) {
+	_ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", wtPath).Run()
+	_ = exec.Command("git", "-C", repo, "branch", "-D", branch).Run()
+}
+
+// gitCommit stages and commits the worktree. It returns committed=false (with
+// no error) when there is nothing to commit, so the caller can tear down the
+// empty worktree instead of leaving it behind.
+func gitCommit(wt, msg string) (committed bool, err error) {
 	cmd := exec.Command("git", "-C", wt, "add", "-A")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+	if out, e := cmd.CombinedOutput(); e != nil {
+		return false, fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), e)
+	}
+	// Nothing staged → nothing changed; not an error.
+	if exec.Command("git", "-C", wt, "diff", "--cached", "--quiet").Run() == nil {
+		return false, nil
 	}
 	cmd = exec.Command("git", "-C", wt, "commit", "-m", msg)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+	if out, e := cmd.CombinedOutput(); e != nil {
+		return false, fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), e)
 	}
-	return nil
+	return true, nil
 }
 
 func gitOutput(dir string, args ...string) (string, error) {
