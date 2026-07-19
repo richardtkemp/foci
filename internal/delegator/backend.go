@@ -204,11 +204,20 @@ type ControlSender interface {
 	SendControl(ctx context.Context, req ControlRequest) error
 }
 
+// ErrCompactionNoBoundary is returned by WaitForCompaction when the /compact
+// run completed (session went idle) without emitting a compact_boundary — i.e.
+// the backend refused to compact (e.g. "Not enough messages to compact" on a
+// short session). It is a benign no-op, NOT a failure: callers should stop
+// waiting immediately (rather than blocking out the timeout) and skip the
+// "compacted" notification. See ccstream idle handling + #1267.
+var ErrCompactionNoBoundary = errors.New("delegator: compaction produced no boundary (backend declined to compact)")
+
 // CompactionWaiter is optionally implemented by backends that can signal
 // when CC-initiated compaction has completed. ArmCompactionWait must be
 // called before the /compact command is sent so that the compact_boundary
 // stream event is never missed. WaitForCompaction then blocks until that
-// event arrives (or ctx expires).
+// event arrives, the run goes idle without a boundary (returns
+// ErrCompactionNoBoundary), or ctx expires.
 type CompactionWaiter interface {
 	ArmCompactionWait()
 	WaitForCompaction(ctx context.Context) error

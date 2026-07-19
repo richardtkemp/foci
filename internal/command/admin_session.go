@@ -2,9 +2,11 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"foci/internal/agent"
+	"foci/internal/delegator"
 	"foci/internal/tools"
 )
 
@@ -150,6 +152,11 @@ func CompactCommand() *Command {
 	compactExec := func(ctx context.Context, _ Request, cc CommandContext, dryRun bool) (Response, error) {
 		sk := tools.SessionKeyFromContext(ctx)
 		result, err := cc.Agent.CompactSession(ctx, sk, dryRun)
+		if errors.Is(err, delegator.ErrCompactionNoBoundary) {
+			// Backend declined to compact (e.g. too few messages). Not an
+			// error to surface — report the no-op plainly (#1267).
+			return Response{Text: "Nothing to compact — session too short."}, nil
+		}
 		if err != nil {
 			return Response{}, err
 		}

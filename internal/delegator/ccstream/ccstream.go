@@ -133,6 +133,7 @@ type Backend struct {
 	turnEvents      *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
 	turnResultCh    chan *ResultMessage   // buffered(1), receives result
 	compactDoneCh   chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
+	compactAbortCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on idle-without-boundary (CC refused /compact)
 	compactStartCh  chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText        strings.Builder       // accumulates text across assistant messages
 	turnTools       int                   // tool_use count this turn

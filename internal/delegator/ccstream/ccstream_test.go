@@ -2482,6 +2482,70 @@ func TestArmCompactionWait_OneShot(t *testing.T) {
 	}
 }
 
+func TestWaitForCompaction_IdleWithoutBoundary(t *testing.T) {
+	// #1267: when the /compact run goes idle without a compact_boundary (the
+	// backend declined, e.g. "Not enough messages to compact"), WaitForCompaction
+	// must unblock promptly with ErrCompactionNoBoundary rather than stalling out
+	// the timeout — otherwise the session's inbox stays held for the full 5 min.
+	t.Parallel()
+
+	b := &Backend{}
+	b.ArmCompactionWait()
+
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { done <- b.WaitForCompaction(ctx) }()
+
+	// Give the goroutine time to block.
+	time.Sleep(10 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("WaitForCompaction returned before idle")
+	default:
+	}
+
+	// Fire session_state_changed:idle with NO preceding compact_boundary.
+	raw, _ := json.Marshal(SessionStateMessage{Subtype: "session_state_changed", State: "idle"})
+	b.OnSystem("session_state_changed", raw)
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, delegator.ErrCompactionNoBoundary) {
+			t.Fatalf("WaitForCompaction err = %v, want ErrCompactionNoBoundary", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitForCompaction did not return after idle-without-boundary")
+	}
+}
+
+func TestWaitForCompaction_BoundaryThenIdleSucceeds(t *testing.T) {
+	// A real compaction fires compact_boundary BEFORE idle. The boundary clears
+	// the wait (returns nil); the subsequent idle's abort check must NOT then
+	// mis-signal — the wait is already satisfied.
+	t.Parallel()
+
+	b := &Backend{}
+	b.ArmCompactionWait()
+
+	braw, _ := json.Marshal(CompactBoundaryMessage{CompactMetadata: CompactMetadata{PreTokens: 100000}})
+	b.OnSystem("compact_boundary", braw)
+
+	// Boundary already fired: WaitForCompaction returns nil (success).
+	if err := b.WaitForCompaction(context.Background()); err != nil {
+		t.Fatalf("WaitForCompaction after boundary: %v", err)
+	}
+
+	// A trailing idle must be a no-op (channels already cleared).
+	iraw, _ := json.Marshal(SessionStateMessage{Subtype: "session_state_changed", State: "idle"})
+	b.OnSystem("session_state_changed", iraw) // must not panic
+
+	// Still returns nil (unarmed), never the abort sentinel.
+	if err := b.WaitForCompaction(context.Background()); err != nil {
+		t.Fatalf("WaitForCompaction (post-idle, unarmed): %v", err)
+	}
+}
+
 func TestOnSystem_TaskStarted(t *testing.T) {
 	// task_started is a no-op — agent tracking happens in OnAssistant via
 	// tool_use detection. Verify no status is emitted.

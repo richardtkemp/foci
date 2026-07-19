@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -161,6 +162,15 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		waitErr = cw.WaitForCompaction(cctx)
 	} else {
 		waitErr = be.WaitForTurn(cctx)
+	}
+	if errors.Is(waitErr, delegator.ErrCompactionNoBoundary) {
+		// The backend declined to compact (e.g. too few messages). Benign
+		// no-op: the /compact run already finished, so return promptly (the
+		// deferred clearCompacting unblocks the held inbox — #1267) and skip
+		// the "compacted" notification and the session bounce, since nothing
+		// changed. Callers distinguish this via errors.Is.
+		a.logger().Debugf("session=%s delegated compaction declined by backend (no boundary)", sessionKey)
+		return delegator.ErrCompactionNoBoundary
 	}
 	if waitErr != nil {
 		return fmt.Errorf("wait for compaction: %w", waitErr)
