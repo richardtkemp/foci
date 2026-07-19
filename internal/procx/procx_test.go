@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // TestCredentialSetupError proves the fail-closed decision: a process that
@@ -124,6 +128,65 @@ func TestSpawnSetsidStillWorks(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "hello") {
 		t.Errorf("unexpected output: %s", out)
+	}
+}
+
+// writeExecutable writes a trivial runnable script and returns its path.
+func writeExecutable(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "prog.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+	return path
+}
+
+// TestRunWithETXTBSYRetry_Recovers proves the retry loop recovers from a
+// transient "text file busy" (golang/go#22315). It forces the condition
+// deterministically: an open O_WRONLY fd to the target makes exec fail with
+// ETXTBSY, and the fd is released inside the retry budget so a later attempt
+// lands once the file is free.
+func TestRunWithETXTBSYRetry_Recovers(t *testing.T) {
+	t.Parallel()
+	prog := writeExecutable(t)
+
+	wf, err := os.OpenFile(prog, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open for write: %v", err)
+	}
+	go func() {
+		time.Sleep(4 * time.Millisecond) // < ETXTBSYRetries*ETXTBSYBackoff (10ms)
+		_ = wf.Close()
+	}()
+
+	ctx := context.Background()
+	if err := runWithETXTBSYRetry(ctx, ETXTBSYRetries, ETXTBSYBackoff, func() *exec.Cmd {
+		return Spawn(ctx, prog)
+	}); err != nil {
+		t.Fatalf("expected retry to recover past ETXTBSY, got: %v", err)
+	}
+}
+
+// TestRunWithETXTBSYRetry_NoRetryFails is the control: with the write fd held
+// open for the whole call and retries=0, the single exec attempt must surface
+// the real ETXTBSY. This proves the recovery above comes from the retry, not
+// from luck — and that the helper propagates a genuine ETXTBSY.
+func TestRunWithETXTBSYRetry_NoRetryFails(t *testing.T) {
+	t.Parallel()
+	prog := writeExecutable(t)
+
+	wf, err := os.OpenFile(prog, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open for write: %v", err)
+	}
+	defer func() { _ = wf.Close() }()
+
+	ctx := context.Background()
+	err = runWithETXTBSYRetry(ctx, 0, ETXTBSYBackoff, func() *exec.Cmd {
+		return Spawn(ctx, prog)
+	})
+	if !errors.Is(err, syscall.ETXTBSY) {
+		t.Fatalf("with retries=0 and fd held open, want ETXTBSY, got: %v", err)
 	}
 }
 

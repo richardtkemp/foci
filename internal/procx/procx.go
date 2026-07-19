@@ -39,6 +39,7 @@ package procx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -46,7 +47,7 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
-
+	"time"
 )
 
 // SecurityGroupName is the OS group whose presence in a process's
@@ -246,4 +247,50 @@ func SpawnSetsid(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:forbidigo // sole permitted use; see package doc
 	cmd.SysProcAttr = childAttrSetsid()
 	return cmd
+}
+
+// ETXTBSY fork/exec retry budget (golang/go#22315). Under concurrent
+// fork/exec, one goroutine's fork can duplicate another goroutine's
+// just-opened write fd (e.g. an os.WriteFile to an executable) into its
+// child; that child holds the fd across the fork→execve gap (O_CLOEXEC only
+// closes on the child's OWN exec), so an exec of that executable racing the
+// window fails with ETXTBSY ("text file busy"). The condition is transient —
+// the racing child closes the fd on its own exec — so a few short-backoff
+// retries clear it. Kept here so every spawn site gets the same policy.
+const (
+	ETXTBSYRetries = 5 // extra exec attempts after the first when it hits ETXTBSY
+	ETXTBSYBackoff = 2 * time.Millisecond
+)
+
+// RunWithETXTBSYRetry runs a command, retrying on syscall.ETXTBSY up to
+// ETXTBSYRetries extra attempts with ETXTBSYBackoff between them, while
+// respecting ctx cancellation. build must return a FRESH *exec.Cmd on every
+// call: an *exec.Cmd cannot be re-Run, and stdin readers / stdout+stderr
+// buffers are single-use, so each attempt needs its own. Any non-ETXTBSY
+// error (or success) returns immediately; ctx cancellation stops the retry
+// loop and returns the last error.
+//
+// Only safe to retry when the command has no observable side effects until it
+// actually execs (true for the grader and the batch `claude --print` spawn:
+// nothing happens until the child starts).
+func RunWithETXTBSYRetry(ctx context.Context, build func() *exec.Cmd) error {
+	return runWithETXTBSYRetry(ctx, ETXTBSYRetries, ETXTBSYBackoff, build)
+}
+
+// runWithETXTBSYRetry is the parameterised core; the exported wrapper pins the
+// package budget while tests can drive retries=0 to prove the retry (not luck)
+// is what recovers.
+func runWithETXTBSYRetry(ctx context.Context, retries int, backoff time.Duration, build func() *exec.Cmd) error {
+	var err error
+	for attempt := 0; ; attempt++ {
+		err = build().Run()
+		if !errors.Is(err, syscall.ETXTBSY) || attempt >= retries || ctx.Err() != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(backoff):
+		}
+	}
 }

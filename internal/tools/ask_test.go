@@ -508,7 +508,7 @@ func TestAsk_GraderRetriesOnETXTBSY(t *testing.T) {
 		t.Fatalf("open grader for write: %v", err)
 	}
 	go func() {
-		time.Sleep(4 * time.Millisecond) // < graderETXTBSYRetries*graderETXTBSYBackoff
+		time.Sleep(4 * time.Millisecond) // < procx.ETXTBSYRetries*procx.ETXTBSYBackoff
 		_ = wf.Close()
 	}()
 

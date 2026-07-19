@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"foci/internal/app/fap"
@@ -23,8 +22,6 @@ import (
 const (
 	defaultGraderTimeout  = 15 * time.Second
 	maxGraderOutput       = 256 * 1024 // cap grader stdout delivered to the agent
-	graderETXTBSYRetries  = 5          // extra spawn attempts when exec hits ETXTBSY (golang/go#22315)
-	graderETXTBSYBackoff  = 2 * time.Millisecond
 	graderOnErrorFallback = "fallback" // deliver raw answers + note on failure (default)
 	graderOnErrorReport   = "report"   // deliver a failure report (+ raw answers) instead
 )
@@ -833,31 +830,19 @@ func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string,
 	// no injection surface), letting the grader learn context like the source file.
 	spawnArgs := append([]string{p.requestID}, p.grader.args...)
 	var stdout, stderr bytes.Buffer
-	// Retry on ETXTBSY: under concurrent fork/exec (parallel tests, or a grader
-	// script written shortly before invocation) another goroutine's fork can
-	// duplicate a still-open write fd to the grader file into its child, keeping
-	// the file "text busy" for a exec that races it (golang/go#22315). The
-	// condition is transient — the racing child closes the fd on its own exec —
-	// so a few short-backoff retries clear it. Safe to retry: the grader has no
-	// side effects until it actually starts, and each attempt rebuilds the Cmd
-	// with a fresh stdin reader.
-	var runErr error
-	for attempt := 0; ; attempt++ {
+	// procx.RunWithETXTBSYRetry retries a transient "text file busy" from
+	// concurrent fork/exec (golang/go#22315); the build closure rebuilds the
+	// Cmd with a fresh stdin reader and reset buffers each attempt. Safe to
+	// retry: the grader has no side effects until it actually starts.
+	runErr := procx.RunWithETXTBSYRetry(ctx, func() *exec.Cmd {
 		stdout.Reset()
 		stderr.Reset()
 		cmd := procx.Spawn(ctx, p.grader.path, spawnArgs...)
 		cmd.Stdin = bytes.NewReader(payload)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		runErr = cmd.Run()
-		if !errors.Is(runErr, syscall.ETXTBSY) || attempt >= graderETXTBSYRetries || ctx.Err() != nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(graderETXTBSYBackoff):
-		}
-	}
+		return cmd
+	})
 
 	if ctx.Err() == context.DeadlineExceeded {
 		return graderErrorMsg(p, rawBatch, fmt.Sprintf("grader timed out after %s", timeout))
