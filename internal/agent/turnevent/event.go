@@ -92,6 +92,7 @@ type SubagentStart struct {
 type SubagentText struct {
 	GroupKey string
 	Text     string
+	RunIndex int // which run of the subagent produced this block (#1355); 1 = initial spawn
 }
 
 // SubagentEnd marks a subagent RUN complete (one task_notification:completed), so a

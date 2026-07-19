@@ -654,7 +654,7 @@ type StartOptions struct {
 type SessionEvents struct {
 	OnText          func(text string)                           // complete text block from the agent
 	OnSubagentStart func(groupKey, label, prompt string, runIndex int) // a subagent RUN began; runIndex 1 = initial Agent spawn, 2+ = SendMessage reactivation; prompt = the main agent's instruction for this run (#1355)
-	OnSubagentText  func(groupKey, text string)                        // raw text block from a subagent (Task tool); groupKey = parent tool_use id (STABLE across reactivations)
+	OnSubagentText  func(groupKey, text string, runIndex int)          // raw text block from a subagent (Task tool); groupKey = parent tool_use id (STABLE across reactivations); runIndex = which run it belongs to (#1355)
 	OnSubagentEnd   func(groupKey string, runIndex int)                // a subagent RUN (groupKey, runIndex) completed (one task_notification:completed)
 	OnTextDelta     func(delta string)                          // streaming text delta (content_block_delta)
 	OnThinkingDelta func(delta string)                          // streaming thinking delta (content_block_delta)

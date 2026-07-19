@@ -45,7 +45,7 @@ func subagentToken(chatID int64, parentToolUseID string) string {
 // strip ordering guarantees a button is always visible (no zero-button window).
 // The per-group mutex serialises fast bursts so the button can't land on a stale
 // message.
-func (b *telegramBackend) DeliverSubagentText(groupKey, text string) {
+func (b *telegramBackend) DeliverSubagentText(groupKey, text string, _ int) {
 	b.bot.reapSubagentGroups()
 	token := subagentToken(b.chatID, groupKey)
 	gAny, _ := b.bot.subagentStore.LoadOrStore(token, &subagentGroup{chatID: b.chatID})

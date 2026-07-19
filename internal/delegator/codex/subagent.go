@@ -126,7 +126,7 @@ func (b *Backend) readSubagentThread(agentThreadID string, poll *subagentPoll) {
 			if i >= poll.seenItems {
 				se := b.sessionEvents.Load()
 				if se != nil && se.OnSubagentText != nil {
-					se.OnSubagentText(poll.groupKey, items[i].Text)
+					se.OnSubagentText(poll.groupKey, items[i].Text, 1) // codex has no reactivation → run 1
 				}
 			}
 		}

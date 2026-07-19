@@ -109,7 +109,7 @@ type mockSubagentBackend struct {
 }
 
 func (m *mockSubagentBackend) DeliverSubagentStart(string, string, int, string) {}
-func (m *mockSubagentBackend) DeliverSubagentText(_, text string)   { m.texts = append(m.texts, text) }
+func (m *mockSubagentBackend) DeliverSubagentText(_, text string, _ int) { m.texts = append(m.texts, text) }
 func (m *mockSubagentBackend) DeliverSubagentEnd(string, int)            {}
 func (m *mockSubagentBackend) SubagentTextRaw() bool                { return m.raw }
 
@@ -120,7 +120,7 @@ func TestRenderer_SubagentHeader(t *testing.T) {
 	nonRaw := &mockSubagentBackend{mockBackend: newMockBackend()}
 	r := NewTurnRenderer(nonRaw, &mockTracker{}, TurnDisplay{}, newTestSB)
 	r.OnSubagentStart("g1", "Explore", 1, "")
-	r.OnSubagentReply("g1", "found it")
+	r.OnSubagentReply("g1", "found it", 1)
 	if len(nonRaw.texts) != 1 || nonRaw.texts[0] != "**Explore**\n> found it" {
 		t.Fatalf("non-raw text = %q, want [\"**Explore**\\n> found it\"]", nonRaw.texts)
 	}
@@ -128,7 +128,7 @@ func TestRenderer_SubagentHeader(t *testing.T) {
 	raw := &mockSubagentBackend{mockBackend: newMockBackend(), raw: true}
 	r2 := NewTurnRenderer(raw, &mockTracker{}, TurnDisplay{}, newTestSB)
 	r2.OnSubagentStart("g2", "Plan", 1, "")
-	r2.OnSubagentReply("g2", "done")
+	r2.OnSubagentReply("g2", "done", 1)
 	if len(raw.texts) != 1 || raw.texts[0] != "done" {
 		t.Fatalf("raw text = %q, want [done]", raw.texts)
 	}

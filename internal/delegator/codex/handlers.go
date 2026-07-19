@@ -228,7 +228,7 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		if se != nil {
 			for _, state := range item.AgentsStates {
 				if state.Message != "" && se.OnSubagentText != nil {
-					se.OnSubagentText(item.ID, state.Message)
+					se.OnSubagentText(item.ID, state.Message, 1) // codex has no reactivation → run 1
 				}
 			}
 			if se.OnSubagentEnd != nil {

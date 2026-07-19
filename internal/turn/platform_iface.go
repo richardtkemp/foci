@@ -56,8 +56,9 @@ type SubagentDeliverer interface {
 	DeliverSubagentStart(groupKey, label string, runIndex int, prompt string)
 	// DeliverSubagentText delivers one subagent progress block for groupKey. The
 	// renderer applies blockquote unless SubagentTextRaw reports true, so the
-	// platform receives text already in its preferred presentation.
-	DeliverSubagentText(groupKey, text string)
+	// platform receives text already in its preferred presentation. runIndex is
+	// the run the block belongs to (#1355), for platforms that split runs.
+	DeliverSubagentText(groupKey, text string, runIndex int)
 	// DeliverSubagentEnd signals the subagent run (groupKey, runIndex) completed,
 	// letting the platform finalize that run's UI (e.g. flip a collapsed entry to
 	// "completed").
@@ -76,7 +77,7 @@ type SubagentDeliverer interface {
 // Connections that don't implement it fall back to SendToSession as before.
 type SessionSubagentDeliverer interface {
 	DeliverSubagentStartToSession(sessionKey, groupKey, label string, runIndex int, prompt string)
-	DeliverSubagentTextToSession(sessionKey, groupKey, text string)
+	DeliverSubagentTextToSession(sessionKey, groupKey, text string, runIndex int)
 	DeliverSubagentEndToSession(sessionKey, groupKey string, runIndex int)
 }
 

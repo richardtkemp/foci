@@ -362,7 +362,7 @@ type fakeSubagentConn struct {
 }
 
 func (f *fakeSubagentConn) DeliverSubagentStartToSession(_, _, _ string, _ int, _ string) {}
-func (f *fakeSubagentConn) DeliverSubagentTextToSession(_, groupKey, text string) {
+func (f *fakeSubagentConn) DeliverSubagentTextToSession(_, groupKey, text string, _ int) {
 	f.subText = append(f.subText, groupKey+":"+text)
 }
 func (f *fakeSubagentConn) DeliverSubagentEndToSession(_, groupKey string, _ int) {

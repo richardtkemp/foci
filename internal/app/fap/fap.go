@@ -506,6 +506,7 @@ type SubagentText struct {
 	ConversationID string `json:"conversationId"`
 	GroupKey       string `json:"groupKey"`
 	Text           string `json:"text"`
+	RunIndex       int    `json:"runIndex,omitempty"` // which run produced this block (#1355); omitted (→client default 1) for run 1
 }
 
 func (SubagentText) Type() string { return TypeSubagentText }

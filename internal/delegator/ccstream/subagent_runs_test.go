@@ -60,6 +60,10 @@ func TestSubagentReactivation(t *testing.T) {
 	if len(starts) != 0 {
 		t.Fatalf("first task_started emitted a start: %+v", starts)
 	}
+	// Subagent text emitted now (run 1) maps to run index 1 via the stable group key.
+	if got := b.runIndexForGroup(groupKey); got != 1 {
+		t.Errorf("runIndexForGroup after run 1 start = %d, want 1", got)
+	}
 	sys(b, "task_notification", TaskEvent{TaskID: taskID, ToolUseID: groupKey, Status: "completed"})
 	if b.agents.Pending() != 0 {
 		t.Fatalf("run 1 end did not clear tracker: Pending()=%d, want 0", b.agents.Pending())
@@ -83,6 +87,16 @@ func TestSubagentReactivation(t *testing.T) {
 	}
 	if b.agents.Pending() != 1 {
 		t.Errorf("tracker not re-Added on reactivation: Pending()=%d, want 1", b.agents.Pending())
+	}
+	// Run 2's text now maps to run index 2 — the whole point of populating
+	// SubagentText.RunIndex so the client's detail view groups it under run 2.
+	if got := b.runIndexForGroup(groupKey); got != 2 {
+		t.Errorf("runIndexForGroup after reactivation = %d, want 2", got)
+	}
+	// An untracked group (start missed) reads as run 1, matching the client's
+	// runIndex.coerceAtLeast(1) default.
+	if got := b.runIndexForGroup("no_such_group"); got != 1 {
+		t.Errorf("runIndexForGroup(untracked) = %d, want 1", got)
 	}
 
 	// Run 2 ends: task_notification carries the RESUME tool_use id, but the end must
