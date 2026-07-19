@@ -36,7 +36,7 @@ echo "✅ pre-commit lint passed"
 # Go, shell, other code, config — counts as a possible wiring change and fires. Errs
 # toward over-nudging, since a missed wiring change is the costly case. Deletions count
 # too (removing a callback/package is a wiring change).
-staged_code=$(git diff --cached --name-only | grep -Ev '(_test\.go|\.md)$')
+staged_code=$(git diff --cached --name-only | grep -Ev '(_test\.go|\.md)$' || true)
 if [ -f docs/WIRING.md ] && [ -n "$staged_code" ] && ! git diff --cached --name-only | grep -qx 'docs/WIRING.md'; then
 	echo "⚠️  docs/WIRING.md ('How the pieces connect') wasn't touched by this commit."
 	echo "    Do NOT ignore this: ANY wiring change — new/renamed/removed callback, flow,"
