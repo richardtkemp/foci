@@ -387,12 +387,15 @@ func Caching(model string) bool {
 // inherits its family's rates without needing a per-version registry entry.
 // Final fallbacks: OpenAI → $5/$15 approximation, everything else → haiku.
 func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
+	provider, bare := normalizeParts(model)
 	// CC's synthetic sentinel is a zero-cost no-op / session-limit turn: there is
 	// nothing to price, and pricing it would spuriously trip the unpriced warning.
-	if IsSynthetic(model) {
+	// Check the BARE key (not just the exact string) so a provider-prefixed
+	// sentinel — e.g. "openrouter/<synthetic>" from a non-ccstream caller — is
+	// caught by the same guard rather than slipping through to noteUnpriced.
+	if IsSynthetic(model) || IsSynthetic(bare) {
 		return 0
 	}
-	provider, bare := normalizeParts(model)
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	m, ok := registryLookup(provider, bare)
