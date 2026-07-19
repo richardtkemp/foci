@@ -342,3 +342,34 @@ func TestSoleProviderFallback(t *testing.T) {
 		t.Errorf("Cost(\"glm-5.2\") = %v, want 0.0", c)
 	}
 }
+
+// models.jsonl is append-only history; the live registry must key to the row
+// with the latest `fetched`, regardless of file order, with an empty `fetched`
+// (baseline) treated as oldest.
+func TestBuildRegistryLatestFetchedWins(t *testing.T) {
+	// Rows deliberately out of chronological order in the file, plus a baseline
+	// row with no `fetched`. Newest date (3.0) must win.
+	data := []byte(`{"id":"hist-model","provider":"openrouter","input_per_1m":1.0}
+{"id":"hist-model","provider":"openrouter","input_per_1m":3.0,"fetched":"2026-03-01"}
+{"id":"hist-model","provider":"openrouter","input_per_1m":2.0,"fetched":"2026-01-01"}`)
+	reg, err := buildRegistry(data)
+	if err != nil {
+		t.Fatalf("buildRegistry: %v", err)
+	}
+	if got := reg["hist-model"]["openrouter"].InputPer1M; got != 3.0 {
+		t.Errorf("latest InputPer1M = %v, want 3.0 (max fetched wins regardless of file order)", got)
+	}
+}
+
+// On equal `fetched`, the later file line wins (append order).
+func TestBuildRegistryTieBreaksByFileOrder(t *testing.T) {
+	data := []byte(`{"id":"tie","provider":"","input_per_1m":1.0,"fetched":"2026-05-01"}
+{"id":"tie","provider":"","input_per_1m":9.0,"fetched":"2026-05-01"}`)
+	reg, err := buildRegistry(data)
+	if err != nil {
+		t.Fatalf("buildRegistry: %v", err)
+	}
+	if got := reg["tie"][""].InputPer1M; got != 9.0 {
+		t.Errorf("tie InputPer1M = %v, want 9.0 (later line wins on equal fetched)", got)
+	}
+}
