@@ -84,10 +84,31 @@ type jsonlEntry struct {
 	OutputPer1M     float64 `json:"output_per_1m,omitempty"`
 	CacheReadPer1M  float64 `json:"cache_read_per_1m,omitempty"`
 	CacheWritePer1M float64 `json:"cache_write_per_1m,omitempty"`
+	// Extended pricing + quality captured by sync-modelinfo. Parsed but NOT yet
+	// used at runtime (see TODO #1407 — cost calc still uses only the flat base
+	// rates above). Kept here so the parser documents the full schema.
+	CacheWrite1hPer1M      float64           `json:"cache_write_1h_per_1m,omitempty"`
+	InternalReasoningPer1M float64           `json:"internal_reasoning_per_1m,omitempty"`
+	WebSearchPerCall       float64           `json:"web_search_per_call,omitempty"`
+	ImagePrice             float64           `json:"image_price,omitempty"`
+	AudioPrice             float64           `json:"audio_price,omitempty"`
+	PriceTiers             []jsonlPriceTier  `json:"price_tiers,omitempty"`
+	IntelligenceIndex      float64           `json:"intelligence_index,omitempty"`
 	// Fetched (UTC date the pricing was last confirmed against OpenRouter) and
 	// Comment are informational provenance only — not stored in the registry.
 	Fetched string `json:"fetched,omitempty"`
 	Comment string `json:"comment,omitempty"`
+}
+
+// jsonlPriceTier mirrors a usage-dependent price schedule in models.jsonl
+// (OpenRouter overrides). Parsed for schema-completeness; not yet used.
+type jsonlPriceTier struct {
+	MinPromptTokens   int     `json:"min_prompt_tokens"`
+	InputPer1M        float64 `json:"input_per_1m,omitempty"`
+	OutputPer1M       float64 `json:"output_per_1m,omitempty"`
+	CacheReadPer1M    float64 `json:"cache_read_per_1m,omitempty"`
+	CacheWritePer1M   float64 `json:"cache_write_per_1m,omitempty"`
+	CacheWrite1hPer1M float64 `json:"cache_write_1h_per_1m,omitempty"`
 }
 
 // registryMu guards registry. RLock for reads (accessors), Lock for writes

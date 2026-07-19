@@ -66,7 +66,6 @@ func TestContextLimit(t *testing.T) {
 		{"gemini-2.0-pro", 1_000_000}, // unregistered → gemini family fallback
 		{"gemini-other", 1_000_000},   // unregistered → gemini family fallback
 		{"unknown-model", 200_000},
-		{"gpt-4", 200_000},
 		{"", 200_000},
 	}
 	for _, tt := range tests {

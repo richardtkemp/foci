@@ -52,14 +52,16 @@ func TestSyntheticModelIsFreeAndNotUnpriced(t *testing.T) {
 // applies in code (not from the registry) to OpenAI-looking models with no
 // registry entry. It is a code constant, not sync-churned map data.
 func TestCalculateCostOpenAIFallback(t *testing.T) {
-	// 1M input tokens on unknown OpenAI model = $5.00
-	cost := Cost("gpt-5-turbo", 1_000_000, 0, 0, 0)
+	// 1M input tokens on unknown OpenAI model = $5.00. Synthetic names (not in
+	// the OpenRouter catalogue, so absent from the built-in registry) that still
+	// look like OpenAI models (gpt-/o4- prefix → IsOpenAI) to hit the fallback.
+	cost := Cost("gpt-synthetic-999", 1_000_000, 0, 0, 0)
 	if cost != 5.0 {
 		t.Errorf("1M input unknown openai = %f, want 5.0", cost)
 	}
 
 	// 1M output tokens on unknown OpenAI model = $15.00
-	cost = Cost("o4-mini", 0, 1_000_000, 0, 0)
+	cost = Cost("o4-synthetic-999", 0, 1_000_000, 0, 0)
 	if cost != 15.0 {
 		t.Errorf("1M output unknown openai = %f, want 15.0", cost)
 	}
