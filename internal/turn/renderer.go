@@ -130,7 +130,7 @@ func (r *TurnRenderer) OnReply(text string) {
 // UI such as Telegram's rolling "Hide this" button. Otherwise it falls back to
 // ordinary intermediate delivery via OnReply (the historical behaviour, where
 // subagent text arrived through OnText).
-func (r *TurnRenderer) OnSubagentReply(groupKey, text string) {
+func (r *TurnRenderer) OnSubagentReply(groupKey, text string, runIndex int) {
 	// Presentation is applied HERE, once — the delegator emits raw. The app opts
 	// out (SubagentTextRaw) to render traces expandably with the name on its chip;
 	// every other surface gets the agent-name header + blockquoted body:
@@ -138,12 +138,12 @@ func (r *TurnRenderer) OnSubagentReply(groupKey, text string) {
 	//   > found the bug in foo.go
 	sd, ok := r.platform.(SubagentDeliverer)
 	if ok && groupKey != "" && sd.SubagentTextRaw() {
-		sd.DeliverSubagentText(groupKey, text)
+		sd.DeliverSubagentText(groupKey, text, runIndex)
 		return
 	}
 	body := r.subagentHeader(groupKey) + blockquote(text)
 	if ok && groupKey != "" {
-		sd.DeliverSubagentText(groupKey, body)
+		sd.DeliverSubagentText(groupKey, body, runIndex)
 		return
 	}
 	r.OnReply(body)

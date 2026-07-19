@@ -111,7 +111,7 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// Subagent progress is ancillary — route it to the renderer (which
 		// hands it to the platform's per-subagent control if supported) but do
 		// NOT set s.delivered, so it never suppresses the real final reply.
-		s.renderer.OnSubagentReply(e.GroupKey, e.Text)
+		s.renderer.OnSubagentReply(e.GroupKey, e.Text, e.RunIndex)
 
 	case turnevent.SubagentEnd:
 		s.renderer.OnSubagentEnd(e.GroupKey, e.RunIndex)
@@ -252,7 +252,7 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 			return
 		}
 		if sd, ok := s.conn.(SessionSubagentDeliverer); ok && e.GroupKey != "" {
-			sd.DeliverSubagentTextToSession(s.sessionKey, e.GroupKey, e.Text)
+			sd.DeliverSubagentTextToSession(s.sessionKey, e.GroupKey, e.Text, e.RunIndex)
 			return
 		}
 		text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.Text))

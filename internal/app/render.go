@@ -93,8 +93,8 @@ func (p *appBackend) DeliverSubagentStart(groupKey, label string, runIndex int, 
 	p.b.send(fap.SubagentStart{ConversationID: p.b.convID, GroupKey: groupKey, Label: label, RunIndex: runIndex, Prompt: prompt})
 }
 
-func (p *appBackend) DeliverSubagentText(groupKey, text string) {
-	p.b.send(fap.SubagentText{ConversationID: p.b.convID, GroupKey: groupKey, Text: text})
+func (p *appBackend) DeliverSubagentText(groupKey, text string, runIndex int) {
+	p.b.send(fap.SubagentText{ConversationID: p.b.convID, GroupKey: groupKey, Text: text, RunIndex: runIndex})
 }
 
 func (p *appBackend) DeliverSubagentEnd(groupKey string, runIndex int) {

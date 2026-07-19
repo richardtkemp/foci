@@ -184,7 +184,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				case se.OnSubagentText != nil:
 					// Raw text; the label rides SubagentStart, and blockquote is a
 					// per-platform choice applied in the renderer, not here.
-					se.OnSubagentText(groupKey, block.Text)
+					se.OnSubagentText(groupKey, block.Text, b.runIndexForGroup(groupKey))
 				case se.OnText != nil:
 					se.OnText(block.Text)
 				}

@@ -92,3 +92,24 @@ func (b *Backend) runForTask(taskID string) *subagentRun {
 	defer b.subagentRunsMu.Unlock()
 	return b.subagentRuns[taskID]
 }
+
+// runIndexForGroup returns the current run index for a subagent identified by its
+// stable groupKey (the original Agent tool_use id) — the run a text block emitted
+// now belongs to. Subagent text keeps the ORIGINAL parent tool_use id across
+// reactivations (verified via live probe), so it maps to the run whose groupKey
+// matches. Returns 1 when untracked (start missed / pre-reactivation), matching
+// the client's runIndex.coerceAtLeast(1) default. There is one run entry per
+// groupKey (a task_id is reused across reactivations, its runIndex bumped).
+func (b *Backend) runIndexForGroup(groupKey string) int {
+	if groupKey == "" {
+		return 1
+	}
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	for _, run := range b.subagentRuns {
+		if run.groupKey == groupKey {
+			return run.runIndex
+		}
+	}
+	return 1
+}

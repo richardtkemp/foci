@@ -150,7 +150,7 @@ func (b *Backend) handleChildEvent(ev rawEvent) {
 			return // streaming delta or incomplete — skip for now
 		}
 		if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
-			se.OnSubagentText(ev.childCallID, p.Part.Text)
+			se.OnSubagentText(ev.childCallID, p.Part.Text, 1) // opencode has no reactivation → run 1
 		}
 		// Keep typing indicator alive during subagent work.
 		if b.typingFunc != nil {

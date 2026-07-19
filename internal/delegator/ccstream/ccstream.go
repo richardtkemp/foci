@@ -308,7 +308,7 @@ func (b *Backend) subagentTails() *subagentTailManager {
 	if b.subagentTailMgr == nil {
 		b.subagentTailMgr = newSubagentTailManager(func(groupKey, text string) {
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
-				se.OnSubagentText(groupKey, text)
+				se.OnSubagentText(groupKey, text, b.runIndexForGroup(groupKey))
 			}
 		}, b.logger())
 	}

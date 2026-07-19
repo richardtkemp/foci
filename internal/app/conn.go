@@ -189,9 +189,9 @@ func (c *appConn) DeliverSubagentStartToSession(sessionKey, groupKey, label stri
 	}
 }
 
-func (c *appConn) DeliverSubagentTextToSession(sessionKey, groupKey, text string) {
+func (c *appConn) DeliverSubagentTextToSession(sessionKey, groupKey, text string, runIndex int) {
 	if b, _ := c.sendBinding(sessionKey); b != nil {
-		b.send(fap.SubagentText{ConversationID: b.convID, GroupKey: groupKey, Text: text})
+		b.send(fap.SubagentText{ConversationID: b.convID, GroupKey: groupKey, Text: text, RunIndex: runIndex})
 	}
 }
 

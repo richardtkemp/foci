@@ -1220,7 +1220,7 @@ func TestAppBackend_SubagentFrames(t *testing.T) {
 	be := newAppBackend(b)
 
 	be.DeliverSubagentStart("toolu_1", "Explore", 1, "")
-	be.DeliverSubagentText("toolu_1", "found it")
+	be.DeliverSubagentText("toolu_1", "found it", 1)
 	be.DeliverSubagentEnd("toolu_1", 1)
 	ds := drainEnv(t, c)
 
