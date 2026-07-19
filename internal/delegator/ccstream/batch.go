@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"foci/internal/delegator"
@@ -34,15 +35,22 @@ func (b *Backend) RunBatch(ctx context.Context, req delegator.BatchRequest) (str
 		args = append(args, "--system-prompt", req.SystemPrompt)
 	}
 
-	cmd := procx.Spawn(ctx, b.resolveBinary(), args...)
-	cmd.Dir = req.WorkDir
-	cmd.Stdin = strings.NewReader(req.Prompt)
-
+	// RunWithETXTBSYRetry rebuilds the Cmd (fresh stdin reader, reset buffers)
+	// each attempt to survive a transient "text file busy" from concurrent
+	// fork/exec (golang/go#22315). Safe to retry: `claude --print` has no
+	// observable side effects until the child actually execs.
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	err := procx.RunWithETXTBSYRetry(ctx, func() *exec.Cmd {
+		stdout.Reset()
+		stderr.Reset()
+		cmd := procx.Spawn(ctx, b.resolveBinary(), args...)
+		cmd.Dir = req.WorkDir
+		cmd.Stdin = strings.NewReader(req.Prompt)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		return cmd
+	})
+	if err != nil {
 		if s := strings.TrimSpace(stderr.String()); s != "" {
 			return "", fmt.Errorf("claude --print failed: %w (stderr: %s)", err, s)
 		}
