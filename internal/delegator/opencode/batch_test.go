@@ -126,12 +126,25 @@ func TestRunBatch_DefaultsAndErrors(t *testing.T) {
 		t.Errorf("defaults must omit model/system: %s", body)
 	}
 
-	// No pooled server → clear error, no fallback here.
-	if _, err := (&Backend{}).RunBatch(context.Background(), delegator.BatchRequest{
+	// No pooled server → RunBatch now spawns one (see
+	// TestRunBatch_SpawnsAndPersistsWhenNoServerPooled) rather than erroring.
+	// A spawn failure still surfaces as a clear wrapped error — stub
+	// acquireServerFn to fail deterministically instead of depending on
+	// whether a real "opencode" binary happens to be on the test host's
+	// $PATH. Restored immediately (not via t.Cleanup) so it doesn't leak
+	// into the "bad model format" case below, which needs the real
+	// pooled-reuse path against batch-agent-2.
+	orig := acquireServerFn
+	acquireServerFn = func(string, serverConfig, map[string]string) (*Server, error) {
+		return nil, fmt.Errorf("boom")
+	}
+	_, err := (&Backend{}).RunBatch(context.Background(), delegator.BatchRequest{
 		Prompt:  "p",
 		AgentID: "no-such-agent",
-	}); err == nil || !strings.Contains(err.Error(), "no running server") {
-		t.Errorf("expected no-server error, got %v", err)
+	})
+	acquireServerFn = orig
+	if err == nil || !strings.Contains(err.Error(), "acquire server") {
+		t.Errorf("expected acquire-server error, got %v", err)
 	}
 
 	// Bad model format → rejected before any prompt.
@@ -141,5 +154,105 @@ func TestRunBatch_DefaultsAndErrors(t *testing.T) {
 		AgentID: "batch-agent-2",
 	}); err == nil || !strings.Contains(err.Error(), "providerID/modelID") {
 		t.Errorf("expected model format error, got %v", err)
+	}
+}
+
+// TestRunBatch_SpawnsAndPersistsWhenNoServerPooled is the core regression
+// test for the "consolidation RunOnce failed: no running server" bug: when
+// an opencode agent has no live interactive session (so nothing is pooled),
+// RunBatch must spawn a server rather than erroring, must build that
+// server's config from the SAME per-agent b.cfg an interactive Backend for
+// this agent would use (not a divergent batch-only config), and must leave
+// the server pooled afterward (persistent — not torn down per batch run).
+//
+// It stubs acquireServerFn instead of letting a real "opencode serve"
+// subprocess spawn — the test only needs to prove RunBatch reaches the
+// spawn branch with the right arguments and doesn't release afterward, not
+// exercise the real subprocess launch path (that's server_test.go's job).
+func TestRunBatch_SpawnsAndPersistsWhenNoServerPooled(t *testing.T) {
+	old := batchPollInterval
+	batchPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() { batchPollInterval = old })
+
+	const agentID = "batch-spawn-agent"
+	resetTestPool(t)
+
+	ts, _ := batchServer(t)
+
+	var (
+		gotAgentID string
+		gotCfg     serverConfig
+		calls      int
+	)
+	orig := acquireServerFn
+	acquireServerFn = func(agentID string, cfg serverConfig, env map[string]string) (*Server, error) {
+		calls++
+		gotAgentID = agentID
+		gotCfg = cfg
+		if env != nil {
+			t.Errorf("acquireServerFn env = %v, want nil (batch has no exec-bridge env)", env)
+		}
+		// Pool a fake live Server backed by the test HTTP server, mirroring
+		// what the real acquireServer would do on a successful spawn.
+		srv := &Server{agentID: agentID, baseURL: ts.URL, http: ts.Client(), running: true}
+		serverPoolMu.Lock()
+		serverPool[agentID] = srv
+		serverPoolMu.Unlock()
+		return srv, nil
+	}
+	t.Cleanup(func() { acquireServerFn = orig })
+
+	b := &Backend{cfg: map[string]any{"binary": "custom-opencode", "hostname": "10.0.0.9"}}
+	got, err := b.RunBatch(context.Background(), delegator.BatchRequest{
+		Prompt:  "extract",
+		AgentID: agentID,
+		WorkDir: "/tmp/agent-workdir-for-batch",
+	})
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if got != "the extracted rules" {
+		t.Errorf("result = %q", got)
+	}
+	if calls != 1 {
+		t.Fatalf("acquireServerFn called %d times, want 1 (no pooled server, one spawn)", calls)
+	}
+	if gotAgentID != agentID {
+		t.Errorf("acquireServerFn agentID = %q, want %q", gotAgentID, agentID)
+	}
+	// Config correctness (design question 2): workDir comes from
+	// req.WorkDir (RunOnce's m.StartOpts.WorkDir — the agent workspace),
+	// binary/hostname come from b.cfg — the same per-agent backend_config
+	// an interactive Start would resolve via serverConfigFromOpts. A
+	// mismatch here means the batch-spawned server would NOT be the same
+	// server an interactive session would attach to.
+	if gotCfg.workDir != "/tmp/agent-workdir-for-batch" {
+		t.Errorf("cfg.workDir = %q, want /tmp/agent-workdir-for-batch", gotCfg.workDir)
+	}
+	if gotCfg.binaryPath != "custom-opencode" {
+		t.Errorf("cfg.binaryPath = %q, want custom-opencode (sourced from b.cfg)", gotCfg.binaryPath)
+	}
+	if gotCfg.hostname != "10.0.0.9" {
+		t.Errorf("cfg.hostname = %q, want 10.0.0.9 (sourced from b.cfg)", gotCfg.hostname)
+	}
+
+	// Persistence: the spawned server must still be pooled after RunBatch
+	// returns (RunBatch must not releaseServer) — the whole point of the
+	// fix is that a batch-triggered spawn survives for later interactive
+	// turns / future batches, not get torn down the instant this run ends.
+	if cur, ok := lookupTestPool(agentID); !ok || cur == nil {
+		t.Error("server not pooled after RunBatch returned — must persist, not be torn down per-run")
+	}
+
+	// A second RunBatch call for the same agent must reuse the pooled
+	// server (via acquireServerFn's own reuse path in production; here the
+	// stub just re-pools the same instance), not report a second spawn
+	// through some parallel mechanism.
+	if _, err := b.RunBatch(context.Background(), delegator.BatchRequest{
+		Prompt:  "extract again",
+		AgentID: agentID,
+		WorkDir: "/tmp/agent-workdir-for-batch",
+	}); err != nil {
+		t.Fatalf("second RunBatch: %v", err)
 	}
 }
