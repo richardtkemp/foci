@@ -84,7 +84,10 @@ type jsonlEntry struct {
 	OutputPer1M     float64 `json:"output_per_1m,omitempty"`
 	CacheReadPer1M  float64 `json:"cache_read_per_1m,omitempty"`
 	CacheWritePer1M float64 `json:"cache_write_per_1m,omitempty"`
-	Comment         string  `json:"comment,omitempty"`
+	// Fetched (UTC date the pricing was last confirmed against OpenRouter) and
+	// Comment are informational provenance only — not stored in the registry.
+	Fetched string `json:"fetched,omitempty"`
+	Comment string `json:"comment,omitempty"`
 }
 
 // registryMu guards registry. RLock for reads (accessors), Lock for writes
@@ -96,22 +99,58 @@ var registryMu sync.RWMutex
 var builtIn = map[string]map[string]Model{}
 
 func init() {
-	// Parse embedded JSONL into registry.
-	for _, line := range strings.Split(string(builtInData), "\n") {
+	reg, err := buildRegistry(builtInData)
+	if err != nil {
+		panic(err.Error())
+	}
+	registry = reg
+
+	// Snapshot for ResetToBuiltIn.
+	for k, v := range registry {
+		builtIn[k] = map[string]Model{}
+		for pk, pv := range v {
+			builtIn[k][pk] = pv
+		}
+	}
+}
+
+// buildRegistry parses the append-only models.jsonl into a registry keyed by
+// bare model ID → provider → Model. models.jsonl is a HISTORY: a model may have
+// several rows over time, each stamped with the `fetched` date it was observed.
+// Only the LATEST row per (id, provider) populates the live registry — max
+// `fetched`, with later file position breaking ties (append order), and an
+// empty `fetched` (pre-history baseline rows) treated as oldest. Older rows are
+// historical reference only and never enter a lookup. Factored out of init for
+// testability.
+func buildRegistry(data []byte) (map[string]map[string]Model, error) {
+	registry := map[string]map[string]Model{}
+	// fetchedAt[id][provider] = the `fetched` of the row currently stored, so we
+	// only overwrite with a same-or-newer one.
+	fetchedAt := map[string]map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		var e jsonlEntry
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			panic(fmt.Sprintf("modelinfo: parse models.jsonl line %q: %v", line, err))
+			return nil, fmt.Errorf("modelinfo: parse models.jsonl line %q: %v", line, err)
 		}
 		if e.ID == "" {
-			panic(fmt.Sprintf("modelinfo: models.jsonl entry missing id: %q", line))
+			return nil, fmt.Errorf("modelinfo: models.jsonl entry missing id: %q", line)
 		}
 		provider := strings.ToLower(e.Provider)
 		id := strings.ToLower(e.ID)
-		m := Model{
+		if registry[id] == nil {
+			registry[id] = map[string]Model{}
+			fetchedAt[id] = map[string]string{}
+		}
+		// `fetched` is a YYYY-MM-DD date, so lexical compare is chronological;
+		// "" (baseline) precedes any real date. >= lets a later line win ties.
+		if _, has := registry[id][provider]; has && e.Fetched < fetchedAt[id][provider] {
+			continue // an older historical row — keep the newer one already stored
+		}
+		registry[id][provider] = Model{
 			Provider:        provider,
 			ContextWindow:   e.ContextWindow,
 			Effort:          e.Effort,
@@ -123,19 +162,9 @@ func init() {
 			CacheReadPer1M:  e.CacheReadPer1M,
 			CacheWritePer1M: e.CacheWritePer1M,
 		}
-		if registry[id] == nil {
-			registry[id] = map[string]Model{}
-		}
-		registry[id][provider] = m
+		fetchedAt[id][provider] = e.Fetched
 	}
-
-	// Snapshot for ResetToBuiltIn.
-	for k, v := range registry {
-		builtIn[k] = map[string]Model{}
-		for pk, pv := range v {
-			builtIn[k][pk] = pv
-		}
-	}
+	return registry, nil
 }
 
 // Register adds or overrides a registry entry. Called at startup from

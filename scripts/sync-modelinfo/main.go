@@ -59,7 +59,12 @@ type jsonlEntry struct {
 	OutputPer1M     float64 `json:"output_per_1m,omitempty"`
 	CacheReadPer1M  float64 `json:"cache_read_per_1m,omitempty"`
 	CacheWritePer1M float64 `json:"cache_write_per_1m,omitempty"`
-	Comment         string  `json:"comment,omitempty"`
+	// Fetched is the UTC date (YYYY-MM-DD) on which this entry's pricing was
+	// last confirmed valid against the OpenRouter API. Refreshed for every
+	// entry the sync still finds in the API; entries that have gone
+	// unavailable keep their older stamp, so a stale date flags stale data.
+	Fetched string `json:"fetched,omitempty"`
+	Comment string `json:"comment,omitempty"`
 }
 
 // orModel is the subset of the OpenRouter API model we care about.
@@ -69,9 +74,10 @@ type orModel struct {
 	ContextLength int    `json:"context_length"`
 	Created       int64  `json:"created"`
 	Pricing       struct {
-		Prompt         string `json:"prompt"`
-		Completion     string `json:"completion"`
-		InputCacheRead string `json:"input_cache_read"`
+		Prompt          string `json:"prompt"`
+		Completion      string `json:"completion"`
+		InputCacheRead  string `json:"input_cache_read"`
+		InputCacheWrite string `json:"input_cache_write"`
 	} `json:"pricing"`
 }
 
@@ -85,6 +91,7 @@ func main() {
 	addAnthropic := flag.Int("add-anthropic", 10, "number of newest Anthropic models to also ensure present")
 	addOpenAI := flag.Int("add-openai", 10, "number of newest OpenAI models to also ensure present")
 	repoFlag := flag.String("repo", "", "path to the foci repo root (default: auto-detect)")
+	baseFlag := flag.String("base", "main", "branch/commit to fork the review worktree from (use the feature branch while models.jsonl is unmerged)")
 	dryRun := flag.Bool("dry-run", false, "report without creating a worktree")
 	verbose := flag.Bool("verbose", false, "print per-model details")
 	flag.Parse()
@@ -122,6 +129,9 @@ func main() {
 	if *verbose {
 		fmt.Fprintf(os.Stderr, "fetched %d models from API\n", len(apiModels))
 	}
+	// The moment this data is known-valid: stamped onto every entry the fetch
+	// still confirms (below), so a stale `fetched` date flags stale pricing.
+	fetchDate := time.Now().UTC().Format("2006-01-02")
 
 	// Build lookup: bareID → orModel (bareID = part after first '/').
 	apiByBare := make(map[string]orModel, len(apiModels))
@@ -132,63 +142,94 @@ func main() {
 		}
 	}
 
-	// --- Verify existing entries ---
+	// --- Verify existing entries (append-only history) ---
+	//
+	// models.jsonl is an APPEND-ONLY ledger: a model may have several rows over
+	// time, each stamped with the `fetched` date on which that snapshot was
+	// observed. Existing rows are NEVER modified or deleted. When the API shows
+	// a change, we append ONE new row; when nothing changed, we append nothing
+	// (no timestamp-only churn). At runtime the modelinfo package keys the
+	// registry to the LATEST row per (id, provider); older rows are historical
+	// reference only. This keeps a full price/caps history in git while live
+	// lookups always see the newest value.
+	//
+	// WHAT WE SYNC FROM THE API (authoritative, may change over time):
+	//   input/output price, context window, and the CACHE caps —
+	//   caching + cache_read/cache_write price (pricing.input_cache_read/write).
+	//
+	// WHAT WE DELIBERATELY DO NOT SYNC (curated; carried forward unchanged):
+	//   effort, thinking, speed. OpenRouter's `supported_parameters` reports a
+	//   generic "reasoning" for nearly every modern model — opus, sonnet,
+	//   haiku, gemini all identical — so it cannot reproduce foci's per-model
+	//   effort/thinking distinctions (those describe which control knobs foci
+	//   exposes, not whether the model reasons). And "speed" (Claude fast mode)
+	//   has no API signal at all. Auto-deriving these would wrongly flip
+	//   haiku/gemini thinking→true and downgrade opus effort/speed. So a new
+	//   appended row clones effort/thinking/speed (and comment) from the prior
+	//   latest row and only overwrites the API-authoritative fields. Do not
+	//   "helpfully" wire these to supported_parameters — it corrupts the caps.
 
 	var priceChanges []priceChange
 	var unavailable []string
 
+	// Latest row per (id, provider): max `fetched`, file order breaks ties.
+	latest := map[string]int{}
 	for i := range entries {
-		e := &entries[i]
-		bare := e.ID
+		k := entries[i].ID + "\x00" + entries[i].Provider
+		if j, ok := latest[k]; !ok || entries[i].Fetched >= entries[j].Fetched {
+			latest[k] = i
+		}
+	}
+
+	var appended []jsonlEntry
+	// Iterate in file order, acting once per group at its latest row, so output
+	// is deterministic.
+	for i := range entries {
+		cur := entries[i]
+		if latest[cur.ID+"\x00"+cur.Provider] != i {
+			continue
+		}
 
 		// :nitro variants — verify against the base model.
-		lookupID := strings.TrimSuffix(bare, ":nitro")
-
+		lookupID := strings.TrimSuffix(cur.ID, ":nitro")
 		api, ok := apiByBare[lookupID]
 		if !ok {
-			unavailable = append(unavailable, bare)
+			unavailable = append(unavailable, cur.ID)
 			if *verbose {
-				fmt.Fprintf(os.Stderr, "  ⚠ %s: not found in API\n", bare)
+				fmt.Fprintf(os.Stderr, "  ⚠ %s: not found in API\n", cur.ID)
 			}
 			continue
 		}
 
-		apiIn, _ := strconv.ParseFloat(api.Pricing.Prompt, 64)
-		apiOut, _ := strconv.ParseFloat(api.Pricing.Completion, 64)
-		apiIn *= 1e6
-		apiOut *= 1e6
-
-		changed := false
-		if apiIn > 0 && abs(apiIn-e.InputPer1M) > 0.005 {
-			priceChanges = append(priceChanges, priceChange{
-				id: bare, field: "input_per_1m",
-				old: e.InputPer1M, new: apiIn,
-			})
-			e.InputPer1M = apiIn
-			changed = true
+		af, ok := apiFields(api)
+		if !ok {
+			continue // free/negative/garbage pricing — never append
 		}
-		if apiOut > 0 && abs(apiOut-e.OutputPer1M) > 0.005 {
-			priceChanges = append(priceChanges, priceChange{
-				id: bare, field: "output_per_1m",
-				old: e.OutputPer1M, new: apiOut,
-			})
-			e.OutputPer1M = apiOut
-			changed = true
+		if !fieldsDiffer(cur, af) {
+			continue // no API-field change → no new row (no timestamp-only churn)
 		}
 
-		// Update context window if we have it and it differs.
-		if api.ContextLength > 0 && api.ContextLength != e.ContextWindow {
-			if e.ContextWindow > 0 {
-				if *verbose {
-					fmt.Fprintf(os.Stderr, "  ℹ %s: context %d → %d\n", bare, e.ContextWindow, api.ContextLength)
-				}
-			}
-			e.ContextWindow = api.ContextLength
-			changed = true
+		// Append a NEW row: clone the prior latest (preserving curated
+		// effort/thinking/speed/comment) and overwrite only the API fields.
+		nr := cur
+		if abs(af.in-cur.InputPer1M) > 0.005 {
+			priceChanges = append(priceChanges, priceChange{id: cur.ID, field: "input_per_1m", old: cur.InputPer1M, new: af.in})
 		}
-
-		if changed && *verbose {
-			fmt.Fprintf(os.Stderr, "  ✏ %s: updated\n", bare)
+		if abs(af.out-cur.OutputPer1M) > 0.005 {
+			priceChanges = append(priceChanges, priceChange{id: cur.ID, field: "output_per_1m", old: cur.OutputPer1M, new: af.out})
+		}
+		nr.InputPer1M = af.in
+		nr.OutputPer1M = af.out
+		nr.CacheReadPer1M = af.cacheRead
+		nr.CacheWritePer1M = af.cacheWrite
+		nr.Caching = af.caching
+		if af.ctx > 0 {
+			nr.ContextWindow = af.ctx
+		}
+		nr.Fetched = fetchDate
+		appended = append(appended, nr)
+		if *verbose {
+			fmt.Fprintf(os.Stderr, "  ✏ %s: appended new row (fetched %s)\n", cur.ID, fetchDate)
 		}
 	}
 
@@ -223,23 +264,33 @@ func main() {
 			if bare == "" || existing[bare] {
 				continue
 			}
-			// Skip free models (price = "0") to avoid cluttering the registry.
-			in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)
-			out, _ := strconv.ParseFloat(m.Pricing.Completion, 64)
-			if in == 0 && out == 0 {
+			// apiFields enforces the free/negative guard (skips price==0/0 to
+			// avoid clutter and sentinel/negative pricing that would corrupt
+			// cost math) and derives the cache caps.
+			af, ok := apiFields(m)
+			if !ok {
+				if af.negative && *verbose {
+					fmt.Fprintf(os.Stderr, "  ⤫ %s: skipped (negative price $%.4f/$%.4f)\n", bare, af.in, af.out)
+				}
 				continue
 			}
+			// New model: effort/thinking/speed left false — those are curated
+			// by hand (not derivable from the API; see the note above).
 			newEntries = append(newEntries, jsonlEntry{
-				ID:            bare,
-				Provider:      "openrouter",
-				ContextWindow: m.ContextLength,
-				InputPer1M:    in * 1e6,
-				OutputPer1M:   out * 1e6,
+				ID:              bare,
+				Provider:        "openrouter",
+				ContextWindow:   af.ctx,
+				Caching:         af.caching,
+				InputPer1M:      af.in,
+				OutputPer1M:     af.out,
+				CacheReadPer1M:  af.cacheRead,
+				CacheWritePer1M: af.cacheWrite,
+				Fetched:         fetchDate,
 			})
 			existing[bare] = true
 			count++
 			if *verbose {
-				fmt.Fprintf(os.Stderr, "  + %s: added ($%.4f/$%.4f per 1M)\n", bare, in*1e6, out*1e6)
+				fmt.Fprintf(os.Stderr, "  + %s: added ($%.4f/$%.4f per 1M)\n", bare, af.in, af.out)
 			}
 		}
 	}
@@ -250,12 +301,15 @@ func main() {
 	collectNew("anthropic", *addAnthropic)
 	collectNew("openai", *addOpenAI)
 
+	// Append-only: keep every historic row, add the new snapshots. Existing
+	// rows in `entries` were never mutated.
+	entries = append(entries, appended...)
 	entries = append(entries, newEntries...)
 
 	// --- Summary ---
 
-	summary := fmt.Sprintf("%d new models, %d price changes, %d unavailable",
-		len(newEntries), len(priceChanges), len(unavailable))
+	summary := fmt.Sprintf("%d new models, %d changed (rows appended), %d unavailable",
+		len(newEntries), len(appended), len(unavailable))
 
 	if len(unavailable) > 0 {
 		summary += "\n  unavailable: " + strings.Join(unavailable, ", ")
@@ -271,7 +325,7 @@ func main() {
 
 	// --- Write to worktree ---
 
-	wtPath, err := createWorktree(repo)
+	wtPath, err := createWorktree(repo, *baseFlag)
 	if err != nil {
 		// If worktree creation fails, we still report what would change.
 		fmt.Fprintln(os.Stderr, "error creating worktree:", err)
@@ -326,9 +380,14 @@ func readJSONL(path string) ([]jsonlEntry, error) {
 }
 
 func writeJSONL(path string, entries []jsonlEntry) error {
-	// Sort entries alphabetically by ID for stable diffs.
+	// Group each model's history together and order it chronologically:
+	// by ID, then by `fetched` (empty baseline rows first, then oldest→newest).
+	// Stable diffs, and the latest row for a model is always its last line.
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].ID < entries[j].ID
+		if entries[i].ID != entries[j].ID {
+			return entries[i].ID < entries[j].ID
+		}
+		return entries[i].Fetched < entries[j].Fetched
 	})
 
 	var buf strings.Builder
@@ -371,7 +430,7 @@ func stripProvider(id string) string {
 	return id
 }
 
-func createWorktree(repo string) (string, error) {
+func createWorktree(repo, base string) (string, error) {
 	branch := "sync-modelinfo-" + timestamp()
 	// Worktree as a sibling of the repo, following foci convention.
 	wtName := filepath.Base(repo) + "-wt-sync-modelinfo"
@@ -381,7 +440,7 @@ func createWorktree(repo string) (string, error) {
 	_ = os.RemoveAll(wtPath)
 
 	cmd := exec.Command("git", "-c", "core.sharedRepository=false",
-		"-C", repo, "worktree", "add", "-b", branch, wtPath, "main")
+		"-C", repo, "worktree", "add", "-b", branch, wtPath, base)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -418,6 +477,54 @@ func abs(f float64) float64 {
 		return -f
 	}
 	return f
+}
+
+// apiDerived holds the fields the sync treats the OpenRouter API as
+// authoritative for (per 1M tokens; ctx in tokens). effort/thinking/speed are
+// deliberately absent — see the note in the verify section.
+type apiDerived struct {
+	in, out               float64
+	cacheRead, cacheWrite float64
+	caching               bool
+	ctx                   int
+	negative              bool // true if pricing was negative (for reporting)
+}
+
+// apiFields extracts the API-authoritative fields for a model, scaling prices
+// to per-1M tokens. ok is false for unusable pricing: both-zero (free/clutter)
+// or any negative (sentinel like the auto-router's -1, which would corrupt cost
+// math). caching + cache prices come straight from pricing.input_cache_*.
+func apiFields(m orModel) (apiDerived, bool) {
+	in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)
+	out, _ := strconv.ParseFloat(m.Pricing.Completion, 64)
+	cr, _ := strconv.ParseFloat(m.Pricing.InputCacheRead, 64)
+	cw, _ := strconv.ParseFloat(m.Pricing.InputCacheWrite, 64)
+	f := apiDerived{
+		in: in * 1e6, out: out * 1e6,
+		cacheRead: cr * 1e6, cacheWrite: cw * 1e6,
+		caching: cr > 0 || cw > 0,
+		ctx:     m.ContextLength,
+	}
+	if in < 0 || out < 0 || cr < 0 || cw < 0 {
+		f.negative = true
+		return f, false
+	}
+	if in == 0 && out == 0 {
+		return f, false
+	}
+	return f, true
+}
+
+// fieldsDiffer reports whether the API-authoritative fields differ from the
+// current row (prices compared with a small epsilon; caching/context exact).
+// A true result is what triggers appending a new history row.
+func fieldsDiffer(cur jsonlEntry, f apiDerived) bool {
+	return abs(f.in-cur.InputPer1M) > 0.005 ||
+		abs(f.out-cur.OutputPer1M) > 0.005 ||
+		abs(f.cacheRead-cur.CacheReadPer1M) > 0.005 ||
+		abs(f.cacheWrite-cur.CacheWritePer1M) > 0.005 ||
+		f.caching != cur.Caching ||
+		(f.ctx > 0 && f.ctx != cur.ContextWindow)
 }
 
 func fail(format string, args ...any) {
