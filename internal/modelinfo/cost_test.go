@@ -48,6 +48,31 @@ func TestSyntheticModelIsFreeAndNotUnpriced(t *testing.T) {
 	}
 }
 
+// A PROVIDER-PREFIXED synthetic sentinel (e.g. "openrouter/<synthetic>" from a
+// non-ccstream caller) must also price at $0 and not trip the unpriced warning.
+// The exact-string IsSynthetic guard alone misses it — normalizeParts strips the
+// prefix to a bare "<synthetic>", which Cost now catches via IsSynthetic(bare).
+// Regression for #1331 (bare "<synthetic>" warn from a prefixed callsite).
+func TestPrefixedSyntheticIsFreeAndNotUnpriced(t *testing.T) {
+	var got []string
+	UnpricedModelHook = func(m string) { got = append(got, m) }
+	t.Cleanup(func() {
+		UnpricedModelHook = nil
+		unpricedMu.Lock()
+		unpricedSeen = map[string]bool{}
+		unpricedMu.Unlock()
+	})
+
+	for _, model := range []string{"openrouter/<synthetic>", "claude/<synthetic>", "anthropic/<synthetic>"} {
+		if cost := Cost(model, 1_000_000, 1_000_000, 1_000_000, 1_000_000); cost != 0 {
+			t.Errorf("prefixed synthetic %q cost = %f, want 0", model, cost)
+		}
+	}
+	if len(got) != 0 {
+		t.Errorf("prefixed synthetic tripped unpriced warning: %v", got)
+	}
+}
+
 // TestCalculateCostOpenAIFallback pins the $5/$15 approximation that Cost()
 // applies in code (not from the registry) to OpenAI-looking models with no
 // registry entry. It is a code constant, not sync-churned map data.
