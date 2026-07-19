@@ -250,50 +250,45 @@ func TestModelInfoEntryToModel_ProviderPrefixedNewModel(t *testing.T) {
 	}
 }
 
-// Provider-prefixed overrides only affect provider-specific lookups.
-// They must NOT change the built-in providerless entry — otherwise a
-// provider-specific price (e.g. openrouter at $99) silently becomes the
-// default for every provider and bare lookup.
-func TestApplyModelInfo_ProviderOverrideDoesNotLeak(t *testing.T) {
+// A provider-scoped override of a model whose ONLY entry is that same provider
+// propagates to bare and other-provider lookups — that provider is the sole
+// price we hold, so correcting it must apply everywhere the model is priced
+// (via the ladder's non-matching rung). This is not a leak: there is no
+// independent providerless default to protect.
+//
+// Uses fully canned data (a synthetic model + a sentinel $99 the test owns) so
+// it exercises the ladder without depending on — or breaking when sync churns —
+// the real built-in map.
+func TestApplyModelInfo_SoleProviderOverridePropagates(t *testing.T) {
 	modelinfo.ResetToBuiltIn()
+	t.Cleanup(modelinfo.ResetToBuiltIn)
 
-	original, _ := modelinfo.Lookup("", "gemini-2.5-flash")
+	// Canned stand-in for a JSONL built-in: a single openrouter-tagged entry.
+	modelinfo.Register("openrouter", "canned-sole", modelinfo.Model{
+		ContextWindow: 100_000, InputPer1M: 1.00, OutputPer1M: 2.00,
+	})
 
-	newIn := 99.0
-	entries := []ModelInfoEntry{
-		{ID: "openrouter/gemini-2.5-flash", InputPer1M: &newIn},
+	// Config override for the SAME provider.
+	override := 99.0
+	ApplyModelInfo([]ModelInfoEntry{
+		{ID: "openrouter/canned-sole", InputPer1M: &override},
+	})
+
+	// Matching provider (rung 1) sees the override.
+	if m, ok := modelinfo.Lookup("openrouter", "canned-sole"); !ok || m.InputPer1M != override {
+		t.Errorf("openrouter InputPer1M = %v ok=%v, want %v", m.InputPer1M, ok, override)
 	}
-
-	ApplyModelInfo(entries)
-
-	// Provider-specific lookup sees the override.
-	m, ok := modelinfo.Lookup("openrouter", "gemini-2.5-flash")
-	if !ok {
-		t.Fatal("openrouter-specific entry not found")
+	// Bare (rung 3, non-matching) surfaces the sole entry — now overridden.
+	if m, ok := modelinfo.Lookup("", "canned-sole"); !ok || m.InputPer1M != override {
+		t.Errorf("bare InputPer1M = %v ok=%v, want %v (sole-provider override propagates)", m.InputPer1M, ok, override)
 	}
-	if m.InputPer1M != newIn {
-		t.Errorf("openrouter InputPer1M = %v, want %v", m.InputPer1M, newIn)
+	// Other provider (rung 3, non-matching) likewise.
+	if m, ok := modelinfo.Lookup("google", "canned-sole"); !ok || m.InputPer1M != override {
+		t.Errorf("google InputPer1M = %v ok=%v, want %v (sole-provider override propagates)", m.InputPer1M, ok, override)
 	}
-
-	// Bare lookup still sees the original built-in — NOT the override.
-	m, ok = modelinfo.Lookup("", "gemini-2.5-flash")
-	if !ok {
-		t.Fatal("built-in gemini-2.5-flash missing after provider override")
-	}
-	if m.InputPer1M != original.InputPer1M {
-		t.Errorf("bare InputPer1M = %v, want %v (provider override must not leak to providerless)", m.InputPer1M, original.InputPer1M)
-	}
-
-	// Cost with bare model string uses original built-in pricing.
-	cost := modelinfo.Cost("gemini-2.5-flash", 1_000_000, 0, 0, 0)
-	if cost == newIn {
-		t.Errorf("bare Cost = %v, should NOT be %v (provider override leaked)", cost, newIn)
-	}
-
-	// A different provider's lookup also sees the original built-in.
-	m, ok = modelinfo.Lookup("google", "gemini-2.5-flash")
-	if !ok || m.InputPer1M == newIn {
-		t.Errorf("google provider should see built-in price, not openrouter override")
+	// Cost via the bare model string reflects the override too.
+	if cost := modelinfo.Cost("canned-sole", 1_000_000, 0, 0, 0); cost != override {
+		t.Errorf("bare Cost = %v, want %v", cost, override)
 	}
 }
 
