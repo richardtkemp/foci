@@ -1568,6 +1568,24 @@ func TestOfflineSend_FiresPushForVisibleFramesOnly(t *testing.T) {
 	}
 }
 
+func TestOfflineSend_SkipsPushForOwnMessages(t *testing.T) {
+	var got []string
+	b := &convBinding{
+		convID:        "conv-1",
+		seen:          make(map[string]struct{}),
+		notifyOffline: func(p pushPayload) { got = append(got, p.Preview) },
+	} // client nil → offline
+	// The user's OWN echoed message (role "user") must NOT fire a wake push — it would
+	// only buzz the user's other devices about something they just typed.
+	b.send(fap.ServerMessage{ConversationID: "conv-1", MessageID: "m1", Role: "user", Text: "my own message"})
+	// An agent reply right after still pushes (and, because the own message never called
+	// notify, the pusher's coalesce window was never bumped, so this isn't dropped).
+	b.send(fap.ServerMessage{ConversationID: "conv-1", MessageID: "m2", Role: "agent", Text: "agent reply"})
+	if len(got) != 1 || got[0] != "agent reply" {
+		t.Fatalf("offline previews = %v, want [agent reply] (own message suppressed)", got)
+	}
+}
+
 func TestSend_FiresNotifyEvenWhenAttached(t *testing.T) {
 	c := fakeClient()
 	var got []string
