@@ -34,6 +34,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -392,6 +393,14 @@ func writeJSONL(path string, entries []jsonlEntry) error {
 
 	var buf strings.Builder
 	for _, e := range entries {
+		// Round prices to 6 dp on write. Prices are derived as apiString*1e6,
+		// which introduces float noise (e.g. 0.1 → 0.09999999999999999); 6 dp
+		// is far finer than any real per-1M price granularity and marshals
+		// cleanly. `e` is a copy (range value), so this doesn't mutate callers.
+		e.InputPer1M = round6(e.InputPer1M)
+		e.OutputPer1M = round6(e.OutputPer1M)
+		e.CacheReadPer1M = round6(e.CacheReadPer1M)
+		e.CacheWritePer1M = round6(e.CacheWritePer1M)
 		data, err := json.Marshal(e)
 		if err != nil {
 			return err
@@ -401,6 +410,10 @@ func writeJSONL(path string, entries []jsonlEntry) error {
 	}
 	return os.WriteFile(path, []byte(buf.String()), 0644)
 }
+
+// round6 rounds to 6 decimal places, clearing the float noise from the
+// apiString*1e6 price scaling.
+func round6(f float64) float64 { return math.Round(f*1e6) / 1e6 }
 
 func fetchAPI() ([]orModel, error) {
 	resp, err := http.Get(openrouterAPI)
