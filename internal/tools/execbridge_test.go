@@ -1069,6 +1069,58 @@ func TestTodoActionAliasEndToEnd(t *testing.T) {
 	}
 }
 
+// TestTodoShowAliasesToGet reproduces TODO #1427: the foci_todo shell tool
+// rejected the 'show' subcommand ("unknown action: show") even though the
+// user-facing /todo command accepts 'show' (aliases: info, detail) — and
+// for a bare id, /todo's 'show' and 'get' subcommands render the exact same
+// full-detail output. 'show' must resolve exactly like 'get' on both
+// surfaces:
+//   - the Go dispatch layer (resolveTodoAction, consulted by direct/CC tool
+//     calls), and
+//   - the generated bash layer (the alias-normalization case emitted near
+//     the top of foci_todo, which is what `foci_todo show <id>` runs
+//     through).
+func TestTodoShowAliasesToGet(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveTodoAction("show"); got != "get" {
+		t.Errorf("resolveTodoAction(\"show\") = %q, want \"get\"", got)
+	}
+
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		Positional: []string{"action"},
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+	})
+	body := generateShellFunc(r.All()[0])
+	if !strings.Contains(body, "show) action='get'") {
+		t.Error("generated bash missing alias normalization for \"show\" -> \"get\"")
+	}
+
+	// End-to-end: dispatching action "show" through the real tool callback
+	// must return the same result as "get" for the same item.
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent-show")
+	id, err := store.Add("agent-show", "show-alias-test item", "medium", "")
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	getResult, err := executeTodoTool(tool, map[string]interface{}{"action": "get", "id": id})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	showResult, err := executeTodoTool(tool, map[string]interface{}{"action": "show", "id": id})
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	if showResult != getResult {
+		t.Errorf("show result = %q, want same as get result %q", showResult, getResult)
+	}
+}
+
 func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 	// Verify the generated foci_todo shell function includes --sort parameter handling
 	t.Parallel()
