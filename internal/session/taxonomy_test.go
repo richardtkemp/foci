@@ -61,3 +61,25 @@ func TestIsUserFacingAndReflectable(t *testing.T) {
 		}
 	}
 }
+
+func TestIsOneshot(t *testing.T) {
+	// Reflection/keepalive/background-task/spawn are oneshot (a single
+	// headless turn that terminates — see #1430); chat/facet/independent
+	// never are (persistent, interactive). 'unknown' (legacy) is
+	// deliberately NOT oneshot either — see IsOneshot's doc comment.
+	oneshot := map[SessionType]bool{
+		SessionTypeReflection:     true,
+		SessionTypeKeepalive:      true,
+		SessionTypeBackgroundTask: true,
+		SessionTypeSpawn:          true,
+	}
+	for _, ty := range []SessionType{
+		SessionTypeChat, SessionTypeFacet, SessionTypeIndependent,
+		SessionTypeSpawn, SessionTypeReflection, SessionTypeKeepalive,
+		SessionTypeBackgroundTask, SessionTypeUnknown,
+	} {
+		if ty.IsOneshot() != oneshot[ty] {
+			t.Errorf("%s.IsOneshot()=%v want %v", ty, ty.IsOneshot(), oneshot[ty])
+		}
+	}
+}

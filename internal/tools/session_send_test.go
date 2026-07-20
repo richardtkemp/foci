@@ -56,7 +56,7 @@ func TestSendToSession(t *testing.T) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, nil, nil, nil)
+	tool := NewSendToSessionTool(store, notifier, nil, nil, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i111")
 	params, _ := json.Marshal(map[string]string{
@@ -99,7 +99,7 @@ func TestSendToSessionOnWait(t *testing.T) {
 	waits := make(chan wait, 2)
 	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil, func(caller, target string) {
 		waits <- wait{caller, target}
-	})
+	}, nil)
 
 	// reply_to=caller (default) → onWait fires with target agent "scout".
 	ctx := WithSessionKey(context.Background(), "clutch/c111")
@@ -143,7 +143,7 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 		sessionDelivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil, nil)
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "alpha/c111")
 	params, _ := json.Marshal(map[string]string{
@@ -182,7 +182,7 @@ func TestSendToSessionInvalidReplyTo(t *testing.T) {
 	// Verifies that an invalid reply_to value is rejected.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -204,7 +204,7 @@ func TestSendToSessionEmptyParams(t *testing.T) {
 	// Verifies that empty session_key and message are rejected.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil, nil, nil)
 
 	// Empty session_key
 	params, _ := json.Marshal(map[string]string{
@@ -237,7 +237,7 @@ func TestSendToSessionNilNotifier(t *testing.T) {
 	// Verifies graceful behavior when notifier is nil.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -277,7 +277,7 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 		sessionDelivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil, nil)
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil, nil, nil)
 
 	// Dick's session sends to Eleni's session with reply_to=session
 	dickSession := "fotini/c5970082313"
@@ -346,7 +346,7 @@ func TestSendToSessionBareNameResolution(t *testing.T) {
 		return "", "", fmt.Errorf("no such target %q", target)
 	}
 
-	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn, nil)
+	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -384,7 +384,7 @@ func TestSendToSessionFullKeySkipsResolution(t *testing.T) {
 		return "", "", nil
 	}
 
-	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn, nil)
+	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -409,7 +409,7 @@ func TestSendToSessionBareNameUnresolved(t *testing.T) {
 	store := &mockSessionAppender{}
 	resolveKeyFn := func(target string) (string, string, error) { return "", "", fmt.Errorf("unresolvable") }
 
-	tool := NewSendToSessionTool(store, nil, nil, resolveKeyFn, nil)
+	tool := NewSendToSessionTool(store, nil, nil, resolveKeyFn, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "test/i0")
 	params, _ := json.Marshal(map[string]string{
@@ -423,5 +423,76 @@ func TestSendToSessionBareNameUnresolved(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "could not resolve") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSendToSessionOneshotCallerNoRelay(t *testing.T) {
+	// Bug #1430: a oneshot session (reflection, keepalive, background-task,
+	// spawn — see SessionType.IsOneshot) that calls send_to_session with
+	// reply_to=caller (the default) must NOT get the target's reply wired
+	// back to it. Those sessions run a single headless turn and typically
+	// terminate before an async reply could arrive; routing the reply back
+	// anyway spins up a fresh, unusable turn whose output has nowhere sane to
+	// go and can leak into the wrong chat — this is exactly how a reflection
+	// branch's stale reply leaked into Dick's main chat (see the #1429
+	// investigation). The relay must instead downgrade to fire-and-forget by
+	// passing replyToSession="" to InjectToAgent — same effective delivery as
+	// reply_to="session", just still tagged/logged as a caller-relay attempt.
+	//
+	// 'unknown' (legacy/unclassifiable) is deliberately NOT oneshot — an
+	// unknown-type caller keeps the pre-existing relay behaviour, since it's
+	// not confidently a dead-end oneshot session.
+	t.Parallel()
+	store := &mockSessionAppender{}
+
+	// Records the replyToSession InjectToAgent was actually called with.
+	relays := make(chan string, 1)
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+		relays <- replyTo
+	})
+
+	sessionTypes := map[string]session.SessionType{
+		"clutch/c1/b1": session.SessionTypeReflection, // oneshot caller
+		"clutch/c2":    session.SessionTypeChat,       // persistent, user-facing caller
+		"clutch/c3":    session.SessionTypeUnknown,    // legacy/unclassifiable — NOT oneshot
+	}
+	callerSessionTypeFn := func(sk string) session.SessionType { return sessionTypes[sk] }
+
+	tool := NewSendToSessionTool(store, notifier, nil, nil, nil, callerSessionTypeFn)
+
+	// Oneshot (reflection) caller: reply_to=caller must downgrade — the
+	// notifier must receive replyToSession="" (no relay wired back).
+	ctx := WithSessionKey(context.Background(), "clutch/c1/b1")
+	params, _ := json.Marshal(map[string]string{"session_key": "scout/c0", "message": "status update"})
+	if _, err := tool.Execute(ctx, params); err != nil {
+		t.Fatalf("Execute (oneshot caller): %v", err)
+	}
+	if got := <-relays; got != "" {
+		t.Errorf("oneshot (reflection) caller: InjectToAgent replyToSession = %q, want %q (no relay back)", got, "")
+	}
+
+	// Persistent (chat) caller: reply_to=caller must still wire the relay
+	// back — InjectToAgent's replyToSession must be the caller's own session
+	// key.
+	ctx2 := WithSessionKey(context.Background(), "clutch/c2")
+	params2, _ := json.Marshal(map[string]string{"session_key": "scout/c0", "message": "status update"})
+	if _, err := tool.Execute(ctx2, params2); err != nil {
+		t.Fatalf("Execute (persistent caller): %v", err)
+	}
+	if got := <-relays; got != "clutch/c2" {
+		t.Errorf("persistent (chat) caller: InjectToAgent replyToSession = %q, want %q (relay wired)", got, "clutch/c2")
+	}
+
+	// Unknown-type caller: reply_to=caller must STILL wire the relay back —
+	// 'unknown' is deliberately excluded from IsOneshot, documenting that a
+	// legacy/unclassifiable caller keeps today's behaviour rather than being
+	// silently downgraded.
+	ctx3 := WithSessionKey(context.Background(), "clutch/c3")
+	params3, _ := json.Marshal(map[string]string{"session_key": "scout/c0", "message": "status update"})
+	if _, err := tool.Execute(ctx3, params3); err != nil {
+		t.Fatalf("Execute (unknown caller): %v", err)
+	}
+	if got := <-relays; got != "clutch/c3" {
+		t.Errorf("unknown-type caller: InjectToAgent replyToSession = %q, want %q (relay still wired)", got, "clutch/c3")
 	}
 }
