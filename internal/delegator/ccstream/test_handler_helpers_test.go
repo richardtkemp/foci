@@ -11,14 +11,15 @@ import "foci/internal/delegator"
 // Tests that legitimately want to exercise the split (delivery without
 // bookkeeping, or vice versa) call AttachSessionEvents and beginTurn directly.
 type testHandler struct {
-	OnText          func(text string)
-	OnTextDelta     func(delta string)
-	OnThinkingDelta func(delta string)
-	OnToolStart     func(id, name, input string)
-	OnToolEnd       func(id, name, output string, isError bool)
-	OnSubagentStart func(groupKey, label, prompt string, runIndex int)
-	OnSubagentEnd   func(groupKey string, runIndex int)
-	OnTurnComplete  func(result *delegator.TurnResult)
+	OnText           func(text string)
+	OnTextDelta      func(delta string)
+	OnThinkingDelta  func(delta string)
+	OnToolStart      func(id, name, input string)
+	OnToolEnd        func(id, name, output string, isError bool)
+	OnSubagentStart  func(groupKey, label, prompt string, runIndex int)
+	OnSubagentEnd    func(groupKey string, runIndex int)
+	OnSubagentPrompt func(groupKey, prompt string, runIndex int)
+	OnTurnComplete   func(result *delegator.TurnResult)
 
 	PostToolNudgeFunc  func(toolName, toolInput string, isError bool) []string
 	PreAnswerNudgeFunc func(result *delegator.TurnResult) string
@@ -31,13 +32,14 @@ func (h *testHandler) session() *delegator.SessionEvents {
 		return nil
 	}
 	return &delegator.SessionEvents{
-		OnText:          h.OnText,
-		OnTextDelta:     h.OnTextDelta,
-		OnThinkingDelta: h.OnThinkingDelta,
-		OnToolStart:     h.OnToolStart,
-		OnToolEnd:       h.OnToolEnd,
-		OnSubagentStart: h.OnSubagentStart,
-		OnSubagentEnd:   h.OnSubagentEnd,
+		OnText:           h.OnText,
+		OnTextDelta:      h.OnTextDelta,
+		OnThinkingDelta:  h.OnThinkingDelta,
+		OnToolStart:      h.OnToolStart,
+		OnToolEnd:        h.OnToolEnd,
+		OnSubagentStart:  h.OnSubagentStart,
+		OnSubagentEnd:    h.OnSubagentEnd,
+		OnSubagentPrompt: h.OnSubagentPrompt,
 	}
 }
 
@@ -59,13 +61,14 @@ func applyHandler(b *Backend, h *testHandler) {
 		return
 	}
 	b.AttachSessionEvents(&delegator.SessionEvents{
-		OnText:          h.OnText,
-		OnTextDelta:     h.OnTextDelta,
-		OnThinkingDelta: h.OnThinkingDelta,
-		OnToolStart:     h.OnToolStart,
-		OnToolEnd:       h.OnToolEnd,
-		OnSubagentStart: h.OnSubagentStart,
-		OnSubagentEnd:   h.OnSubagentEnd,
+		OnText:           h.OnText,
+		OnTextDelta:      h.OnTextDelta,
+		OnThinkingDelta:  h.OnThinkingDelta,
+		OnToolStart:      h.OnToolStart,
+		OnToolEnd:        h.OnToolEnd,
+		OnSubagentStart:  h.OnSubagentStart,
+		OnSubagentEnd:    h.OnSubagentEnd,
+		OnSubagentPrompt: h.OnSubagentPrompt,
 	})
 	b.beginTurn(&delegator.TurnEvents{
 		OnTurnComplete:     h.OnTurnComplete,

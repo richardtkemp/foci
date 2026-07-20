@@ -186,6 +186,17 @@ func (r *TurnRenderer) OnSubagentEnd(groupKey string, runIndex int) {
 	}
 }
 
+// OnSubagentPrompt signals a SendMessage follow-up sent to an ALREADY-RUNNING
+// subagent (#1419) — it attaches to the already-open run (groupKey, runIndex),
+// not a new one. Only platforms with per-subagent UI act on it, matching
+// OnSubagentStart's treatment of the run's prompt (an app-only concept; other
+// platforms don't surface prompts at all).
+func (r *TurnRenderer) OnSubagentPrompt(groupKey, prompt string, runIndex int) {
+	if sd, ok := r.platform.(SubagentDeliverer); ok && groupKey != "" {
+		sd.DeliverSubagentPrompt(groupKey, prompt, runIndex)
+	}
+}
+
 // blockquote prefixes every line with "> " for markdown blockquote rendering —
 // the presentation the delegator used to apply to all subagent text, now moved
 // here so only the platforms that want it (this fallback, telegram) get it.

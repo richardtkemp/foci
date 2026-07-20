@@ -368,6 +368,7 @@ func (f *fakeSubagentConn) DeliverSubagentTextToSession(_, groupKey, text string
 func (f *fakeSubagentConn) DeliverSubagentEndToSession(_, groupKey string, _ int) {
 	f.subEnded = append(f.subEnded, groupKey)
 }
+func (f *fakeSubagentConn) DeliverSubagentPromptToSession(_, _, _ string, _ int) {}
 
 func TestSessionSinkSubagentTextRoutesToDeliverer(t *testing.T) {
 	conn := &fakeSubagentConn{}
