@@ -20,6 +20,9 @@ func seedDefaultPrompts(dir string, fileMode os.FileMode, liveBackends map[strin
 		"branch-orientation-headless.md": prompts.BranchOrientationHeadless,
 		"branch-orientation-facet.md":    prompts.BranchOrientationFacet,
 		"weekly-character-review.md":     prompts.WeeklyCharacterReview,
+		"nudge-preamble.md":              prompts.NudgePreamble,
+		"nudge-reply-instruction.md":     prompts.NudgeReplyInstruction,
+		"nudge-user-boundary.md":         prompts.NudgeUserBoundary,
 	}
 
 	// Seed a backend-<name>.md only for backends actually in use, and only

@@ -77,6 +77,20 @@ func FirstRun() string { return read("first-run.md") }
 // WeeklyCharacterReview returns the default weekly character review prompt.
 func WeeklyCharacterReview() string { return read("weekly-character-review.md") }
 
+// NudgePreamble returns the default background-nudge preamble that frames an
+// injected nudge as a private note to the agent rather than user input.
+func NudgePreamble() string { return read("nudge-preamble.md") }
+
+// NudgeReplyInstruction returns the default silence-vs-reply instruction
+// appended to standalone nudges. The [[NO_RESPONSE]] sentinel is embedded as a
+// literal here (this package cannot import internal/agent); it must stay in
+// sync with agent.NoResponseSentinel.
+func NudgeReplyInstruction() string { return read("nudge-reply-instruction.md") }
+
+// NudgeUserBoundary returns the default delimiter that closes the background
+// nudge region before a real user message bundled into the same turn.
+func NudgeUserBoundary() string { return read("nudge-user-boundary.md") }
+
 // ResolvePrompt implements prompt resolution with directory search:
 //
 //   - path absent/unset ("" or "default"): searches searchDirs for filename,

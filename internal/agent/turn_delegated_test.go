@@ -310,10 +310,10 @@ func TestDelegatedTransport_InjectNudges_WithNudger(t *testing.T) {
 	}
 	// A single closing delimiter must separate the nudge region from the
 	// user's prompt — exactly once, even with multiple nudges fired.
-	if got := strings.Count(ts.Prompt, nudgeUserBoundary); got != 1 {
+	if got := strings.Count(ts.Prompt, a.nudgeUserBoundary()); got != 1 {
 		t.Errorf("expected exactly 1 end-marker between nudges and prompt, got %d; prompt: %q", got, ts.Prompt)
 	}
-	if !strings.Contains(ts.Prompt, nudgeUserBoundary+"\n\noriginal prompt") {
+	if !strings.Contains(ts.Prompt, a.nudgeUserBoundary()+"\n\noriginal prompt") {
 		t.Errorf("end-marker should sit directly before the original prompt, got: %q", ts.Prompt)
 	}
 	// The original prompt should still be at the end.
@@ -978,7 +978,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 		if strings.Contains(r, "tool-batch-reminder") {
 			found = true
 		}
-		if !strings.HasPrefix(r, nudgePreamble) {
+		if !strings.HasPrefix(r, a.nudgePreamble()) {
 			t.Errorf("reminder missing nudge header: %q", r)
 		}
 	}

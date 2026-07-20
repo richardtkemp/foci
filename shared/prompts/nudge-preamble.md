@@ -1,0 +1,1 @@
+[Background nudge — a private note to yourself, not from the user. Apply it only if it genuinely fits what you're already doing; if it doesn't, ignore it and don't bend your reply to accommodate it. Don't refer to the nudge directly in what you send.]

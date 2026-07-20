@@ -112,16 +112,16 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 
 	var nudges []string
 	for _, r := range a.Nudger.CheckTurnInterval() {
-		nudges = append(nudges, wrapBundledNudge(r))
+		nudges = append(nudges, a.wrapBundledNudge(r))
 	}
 	for _, r := range a.Nudger.CheckRegex() {
-		nudges = append(nudges, wrapBundledNudge(r))
+		nudges = append(nudges, a.wrapBundledNudge(r))
 	}
 	if len(nudges) > 0 {
 		// Close the nudge region with a single delimiter so the agent can
 		// distinguish where the background nudge ends and the user's text
 		// begins. Emitted once after the last nudge, not per-nudge.
-		ts.Prompt = strings.Join(nudges, "\n") + "\n" + nudgeUserBoundary + "\n\n" + ts.Prompt
+		ts.Prompt = strings.Join(nudges, "\n") + "\n" + a.nudgeUserBoundary() + "\n\n" + ts.Prompt
 	}
 }
 
@@ -406,7 +406,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			}
 			out := make([]string, 0, len(reminders))
 			for _, r := range reminders {
-				out = append(out, wrapStandaloneNudge(r))
+				out = append(out, a.wrapStandaloneNudge(r))
 			}
 			a.logger().Debugf("nudge: injected %d reminder(s) after tool %q (count=%d, err=%v) for session %s",
 				len(out), toolName, toolCount, isError, ts.SessionKey)
@@ -446,7 +446,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			}
 			a.logger().Infof("nudge: pre-answer gate fired for session %s (tool_count=%d)",
 				ts.SessionKey, toolCount)
-			return wrapStandaloneNudge(reminder)
+			return a.wrapStandaloneNudge(reminder)
 		}
 	}
 

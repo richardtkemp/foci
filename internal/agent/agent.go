@@ -22,6 +22,7 @@ import (
 	"foci/internal/tools"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
+	"foci/shared/prompts"
 )
 
 var (
@@ -35,40 +36,56 @@ var (
 // user never sees it (and the platform treats it as an empty response).
 const NoResponseSentinel = "[[NO_RESPONSE]]"
 
-// nudgePreamble prefixes automatic nudge messages so the agent understands
-// their origin and treats them as background guidance, not user input.
-const nudgePreamble = "[Background nudge — a private note to yourself, not from the user. Apply it only if it genuinely fits what you're already doing; if it doesn't, ignore it and don't bend your reply to accommodate it. Don't refer to the nudge directly in what you send.]\n"
+// The nudge framing text — preamble, reply instruction, and user boundary —
+// wraps every injected nudge. Each is a per-agent-overridable prompt resolved
+// through the standard prompts.ResolvePrompt path (agent workspace/prompts →
+// shared/prompts → embedded default), the SAME mechanism as the
+// compaction-summary prompt. Embedded defaults live in shared/prompts/nudge-*.md
+// and are seeded as editable copies (seedDefaultPrompts); drop a file of the
+// same name in an agent's prompts dir to override it for that agent. The
+// resolved values are stored trimmed — the wrappers below reintroduce the exact
+// separators, so an override file need not preserve leading/trailing whitespace.
 
-// nudgeReplyInstruction is appended to every nudge so the agent has explicit guidance
-// on when to stay silent vs reply. If the nudge calls for an action or the
-// agent has other pending work, it should respond; otherwise it emits
-// NoResponseSentinel so the platform delivers nothing.
-const nudgeReplyInstruction = "\n\nReply only if the nudge warrants it — if it calls for action or you have other pending work, send that reply; otherwise respond with `" + NoResponseSentinel + "` and nothing else."
+// nudgePreamble resolves the background-nudge preamble that frames an injected
+// nudge as a private note to the agent rather than user input.
+func (a *Agent) nudgePreamble() string {
+	return prompts.ResolvePrompt("", "nudge-preamble.md", prompts.NudgePreamble(), a.PromptSearchDirs...)
+}
 
-// nudgeUserBoundary closes the nudge region when one or more nudges are
-// bundled with a real user message in the same turn. It lets the agent
-// see exactly where the background nudge ends and the user's text begins.
-// Emitted once, after the last nudge, at the bundling join point — never
-// per-nudge, and never on the standalone mid-loop paths (after-tools,
+// nudgeReplyInstruction resolves the silence-vs-reply guidance appended to
+// standalone nudges. If the nudge calls for action or the agent has other
+// pending work it should respond; otherwise it emits NoResponseSentinel so the
+// platform delivers nothing.
+func (a *Agent) nudgeReplyInstruction() string {
+	return prompts.ResolvePrompt("", "nudge-reply-instruction.md", prompts.NudgeReplyInstruction(), a.PromptSearchDirs...)
+}
+
+// nudgeUserBoundary resolves the delimiter that closes the nudge region when
+// one or more nudges are bundled with a real user message in the same turn. It
+// lets the agent see exactly where the background nudge ends and the user's
+// text begins. Emitted once, after the last nudge, at the bundling join point —
+// never per-nudge, and never on the standalone mid-loop paths (after-tools,
 // pre-answer) where there is no following user text.
-const nudgeUserBoundary = "[End of background nudge — the user's message follows below.]"
+func (a *Agent) nudgeUserBoundary() string {
+	return prompts.ResolvePrompt("", "nudge-user-boundary.md", prompts.NudgeUserBoundary(), a.PromptSearchDirs...)
+}
 
-// wrapStandaloneNudge composes a full nudge message: header + reminder body + footer.
-// Used by the standalone mid-loop delivery paths (after-tools, pre-answer)
-// where the nudge is its own injected user message and the NO_RESPONSE
-// footer is the correct silence-vs-reply guidance.
-func wrapStandaloneNudge(reminder string) string {
-	return nudgePreamble + reminder + nudgeReplyInstruction
+// wrapStandaloneNudge composes a full nudge message: preamble + reminder body +
+// reply instruction. Used by the standalone mid-loop delivery paths
+// (after-tools, pre-answer) where the nudge is its own injected user message and
+// the NO_RESPONSE guidance is the correct silence-vs-reply steer.
+func (a *Agent) wrapStandaloneNudge(reminder string) string {
+	return a.nudgePreamble() + "\n" + reminder + "\n\n" + a.nudgeReplyInstruction()
 }
 
 // wrapBundledNudge wraps a nudge that is prepended to a real user message
 // in the same turn (the start-of-turn interval/regex injection path). It
-// omits nudgeReplyInstruction because a reply to the user is always required on that
-// path — the [[NO_RESPONSE]] guidance would contradict the user's message.
+// omits the reply instruction because a reply to the user is always required on
+// that path — the [[NO_RESPONSE]] guidance would contradict the user's message.
 // The closing nudgeUserBoundary is emitted separately at the join point so a
 // single delimiter appears after all bundled nudges, not one per nudge.
-func wrapBundledNudge(reminder string) string {
-	return nudgePreamble + reminder
+func (a *Agent) wrapBundledNudge(reminder string) string {
+	return a.nudgePreamble() + "\n" + reminder
 }
 
 // CacheBustFunc is called when a cache bust is detected (cache_read drops
