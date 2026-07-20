@@ -36,17 +36,17 @@ var acquireServerFn = acquireServer
 // between interactive sessions and batch runs; RunBatch never stands up a
 // separate batch-only instance.
 //
-// The acquired server is deliberately left pooled — RunBatch does not call
-// releaseServer. Batch consumers (nudge extraction, consolidation) can fire
-// with no live interactive session (the bug this fixes: background
-// consolidation used to hard-fail with "no running server" for an agent
-// whose interactive session had already closed). Per Dick (2026-07-19),
-// opencode RunOnce should start a PERSISTENT server rather than spin one up
-// and tear it down per batch run. Leaving it pooled needs no special
-// teardown: a later interactive Backend.Start finds it already alive and
-// just increments its refcount (acquireServer's existing reuse path), and it
-// is cleaned up like any other pooled server by CloseAllServers at foci
-// shutdown (#948) — no orphaned subprocess, no new lifecycle machinery.
+// RunBatch is a refcounted holder like any interactive session: it acquires
+// (spawning the shared server if nothing is pooled — the bug this fixes:
+// background nudge/consolidation on an agent with no live session used to
+// hard-fail with "no running server") and releaseServers on return. So the
+// server survives exactly as long as something needs it — if an interactive
+// session is also attached, the batch's release just decrements and the
+// server stays; if the batch was the only holder, it is reaped when the run
+// completes. "Persistent" means it SHARES the per-agent pool (reuse, not a
+// batch-private throwaway), NOT that a batch pins it open forever: overloading
+// refcount as a persistence-pin leaked the count upward on every batch run and
+// stopped the server ever idling out (corrected per Dick, 2026-07-20).
 //
 // env is passed as nil: BatchRequest carries no exec-bridge env (a batch run
 // has no interactive session to route FOCI_SOCK/BASH_ENV for), matching the
@@ -80,6 +80,11 @@ func (b *Backend) RunBatch(ctx context.Context, req delegator.BatchRequest) (str
 	if err != nil {
 		return "", fmt.Errorf("opencode batch: acquire server: %w", err)
 	}
+	// Release when the run completes — a batch is a holder like any session. If
+	// an interactive session is also attached this just decrements and the
+	// server stays; if the batch was the sole holder the server is reaped (no
+	// refcount leak, no server pinned open forever).
+	defer releaseServer(req.AgentID, srv)
 	hc := serverHTTP(srv)
 
 	sid, err := createBatchSession(ctx, hc, srv.baseURL)
