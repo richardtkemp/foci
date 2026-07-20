@@ -3,9 +3,12 @@ package app
 import (
 	"context"
 
+	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
+	"foci/internal/platform"
 	"foci/internal/turn"
+	"foci/internal/voice"
 )
 
 // appSink is the app provider's per-turn turnevent.Sink. It is a thin wrapper
@@ -37,6 +40,19 @@ type appSink struct {
 	// cacheExpiryFn returns the prompt-cache expiry (unix ms) as of now, pushed on
 	// turn completion. nil = no agent context, so the frame is skipped.
 	cacheExpiryFn func() int64
+
+	// tts is the agent's resolved voice.TTS provider (#1439), reused from the
+	// same voice.TTS/ResolveTTS/VoiceConfig machinery telegram's outbound
+	// voice-note path uses. nil = no TTS configured, so voice-mode bundling is
+	// skipped and the turn degrades to a text-only reply — no error.
+	tts voice.TTS
+
+	// attachVoice uploads synthesized reply audio and emits it as a
+	// VoiceMode-tagged fap.Media frame on this turn's binding. Set by
+	// appConn.NewTurnSink (which alone holds the hub's blob store); nil-safe
+	// (checked before use) so a sink built directly in a test without it still
+	// behaves like "no TTS".
+	attachVoice func(audio []byte) error
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -104,9 +120,18 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.TurnComplete:
+		// Voice-mode bundling (#1439): synthesize BEFORE forwarding so the reply
+		// waits on synthesis — text and its voice-mode attachment land together,
+		// not text now / audio as a separate follow-up once TTS finishes.
+		audio := s.synthesizeVoiceMode(ctx, e)
 		// Forward first so the final text is delivered (TextEnd / ServerMessage),
 		// then close out the turn-scoped activity (→ idle) and emit the meta frame.
 		s.inner.Emit(ctx, ev)
+		if len(audio) > 0 && s.attachVoice != nil {
+			if err := s.attachVoice(audio); err != nil {
+				appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", s.b.convID, err)
+			}
+		}
 		s.b.setTurnActivity(fap.ActivityKindIdle, "")
 		s.emitMeta(e)
 		if s.cacheExpiryFn != nil {
@@ -116,6 +141,33 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	default:
 		s.inner.Emit(ctx, ev)
 	}
+}
+
+// synthesizeVoiceMode returns synthesized reply audio for a voice-triggered
+// app turn (#1439), or nil when bundling doesn't apply: no TTS configured
+// (graceful text-only degradation), the turn errored, the turn's trigger isn't
+// "voice" (gated so a normal typed app turn never gets an unsolicited voice
+// note), or the reply has no real content to speak (cleaned the same way the
+// renderer cleans delivered text — an empty/fully-silent, e.g. [[NO_RESPONSE]],
+// reply is never synthesized). A synthesis error is logged and swallowed —
+// same graceful degrade as no-TTS-configured, never fails the turn.
+func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnComplete) []byte {
+	if s.tts == nil || e.Err != nil {
+		return nil
+	}
+	if agent.TriggerFromContext(ctx) != "voice" {
+		return nil
+	}
+	text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.FinalText))
+	if text == "" {
+		return nil
+	}
+	audio, err := s.tts.Synthesize(ctx, text)
+	if err != nil {
+		appLog.Warnf("voice-mode: TTS synthesis (conv=%s): %v", s.b.convID, err)
+		return nil
+	}
+	return audio
 }
 
 // emitMeta sends the user-facing status chips (model, cost, tokens) the app

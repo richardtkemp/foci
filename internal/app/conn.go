@@ -59,6 +59,7 @@ type appConn struct {
 	commands *command.Registry
 	cmdCtx   command.CommandContext
 	stt      voice.STT // inbound voice transcription; nil = unsupported
+	tts      voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
 
 	// Pending interactive headers, set by SetInteractiveHeader and consumed
 	// by SendTextWithButtons. Keyed by prompt ID. Pointer-based so the
@@ -395,6 +396,28 @@ func (c *appConn) emitMedia(b *convBinding, meta *blobMeta, caption string) {
 	})
 }
 
+// sendVoiceModeAttachment uploads synthesized reply audio (#1439) and emits it
+// as a fap.Media frame tagged VoiceMode=true on the turn's own binding b — the
+// same binding the reply text was just delivered to, so no sessionKey lookup
+// (unlike sendMediaBytes, which is the tool-invoked send_to_chat voice-note
+// path and resolves its own binding).
+func (c *appConn) sendVoiceModeAttachment(b *convBinding, audio []byte) error {
+	meta, err := c.hub.blobs.putBytes(audio, fap.MediaVoice, "voice-mode.mp3", "audio/mpeg")
+	if err != nil {
+		return err
+	}
+	b.send(fap.Media{
+		ConversationID: b.convID,
+		MessageID:      fap.NewULID(),
+		BlobID:         meta.id,
+		MIME:           meta.mime,
+		Name:           meta.name,
+		Size:           meta.size,
+		VoiceMode:      true,
+	})
+	return nil
+}
+
 // --- platform.ButtonSender (slice 2: interactive prompts) ---
 
 // SetInteractiveHeader stores a header to be included in the next Interactive
@@ -611,6 +634,13 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 		sink.statusFn = func() string { return c.agentRef.MetaStatus(sk) }
 		sink.cacheExpiryFn = func() int64 { return c.agentRef.CacheExpiryMs(sk, time.Now()) }
 	}
+	// Voice-mode bundling (#1439): reuse the agent's already-resolved TTS
+	// provider (same voice.TTS/ResolveTTS machinery telegram's send_to_chat
+	// voice notes use) to synthesize this turn's reply when it originated from
+	// spoken input (trigger=="voice"). nil c.tts (no TTS configured) leaves
+	// sink.tts nil, so appSink degrades to text-only — no error.
+	sink.tts = c.tts
+	sink.attachVoice = func(audio []byte) error { return c.sendVoiceModeAttachment(b, audio) }
 	return sink, sink.cleanup
 }
 

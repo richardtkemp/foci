@@ -632,6 +632,7 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 		conn.cmdCtx = cc
 	}
 	conn.stt = params.STT
+	conn.tts = params.TTS
 
 	h.mu.Lock()
 	if _, exists := h.agents[params.AgentID]; !exists {
