@@ -9,7 +9,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -91,12 +94,17 @@ func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest
 	return nil
 }
 
-// forkTranscript copies src to dst line by line, replacing every occurrence of
-// oldID with newID. Because session UUIDs are globally unique strings and the
-// per-message uuid/parentUuid fields hold DIFFERENT values, a plain per-line
-// replace rewrites only the "sessionId" fields — the same technique verified
-// manually (cp + sed) before this was written. dst is created O_EXCL so a UUID
-// collision (astronomically unlikely) fails loudly instead of clobbering.
+// forkTranscript copies src to dst line by line, rewriting each envelope's
+// top-level "sessionId" field from oldID to newID. #1432: the rewrite is scoped
+// to the exact `"sessionId":"<id>"` byte pattern — NOT a blanket replace of
+// oldID anywhere in the line — because oldID can also appear embedded inside
+// historical tool-result TEXT (notably an async subagent's `output_file` path,
+// which is generated under the *launching* session's own directory). A blanket
+// replace rewrote that embedded path to point at the fork's own (wrong, never
+// populated) directory instead of preserving the real one — verified live by
+// diffing the same task's output_file path across 5 sibling forks of one root
+// session, each showing its own (corrupted) directory. dst is created O_EXCL so
+// a UUID collision (astronomically unlikely) fails loudly instead of clobbering.
 //
 // The fork is safe to take WITHOUT quiescing the parent's writer. CC transcripts
 // are append-only (earlier bytes never change; new events only extend the file)
@@ -107,6 +115,10 @@ func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest
 // the fork is simply taken as of the last good record, and any in-flight tail is
 // not part of it (it lands in the parent, never the branch). This is what lets a
 // fork run while the parent has pending background work in flight.
+//
+// #1431: while copying, forkTranscript also tracks background (isAsync) subagent
+// launches that never resolve within the copied prefix — see
+// appendSyntheticTaskEnds for why and what's appended.
 func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -119,10 +131,14 @@ func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) erro
 		return fmt.Errorf("ccstream fork: create branch transcript %s: %w", dst, err)
 	}
 
-	oldB, newB := []byte(oldID), []byte(newID)
+	// Scoped to the envelope field itself (#1432) — see the function doc above.
+	oldB := []byte(`"sessionId":"` + oldID + `"`)
+	newB := []byte(`"sessionId":"` + newID + `"`)
 	r := bufio.NewReader(in)
 	w := bufio.NewWriter(out)
 	cutBeforeEOF := false
+	openTasks := map[string]string{} // agentId -> description; still-open async launches (#1431)
+	var lastUUID string              // uuid of the last real (non-synthetic) copied line
 	for {
 		// ReadBytes (not bufio.Scanner) so multi-hundred-KB tool-result
 		// lines aren't truncated by the 64KB scanner token cap.
@@ -145,6 +161,7 @@ func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) erro
 			cutBeforeEOF = true
 			break
 		}
+		observeForSyntheticEnds(line, openTasks, &lastUUID)
 		if _, werr := w.Write(bytes.ReplaceAll(line, oldB, newB)); werr != nil {
 			return finishFork(out, w, dst, fmt.Errorf("ccstream fork: write: %w", werr))
 		}
@@ -154,6 +171,9 @@ func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) erro
 		if readErr != nil {
 			return finishFork(out, w, dst, fmt.Errorf("ccstream fork: read parent: %w", readErr))
 		}
+	}
+	if err := appendSyntheticTaskEnds(w, newID, lastUUID, openTasks); err != nil {
+		return finishFork(out, w, dst, err)
 	}
 	if err := w.Flush(); err != nil {
 		return finishFork(out, w, dst, fmt.Errorf("ccstream fork: flush: %w", err))
@@ -166,6 +186,137 @@ func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) erro
 		// Normal when forking a live session mid-write; logged so a genuinely
 		// corrupt interior record (which would also cut the fork short) is visible.
 		lg.Debugf("fork: parent %s had an in-flight/partial tail record; branch taken as of the last complete record", src)
+	}
+	return nil
+}
+
+// transcriptEnvelope is the minimal subset of a CC transcript line's fields
+// forkTranscript inspects to track open/closed background subagent tasks (#1431).
+// Everything else in a line is opaque to the fork and copied byte-for-byte —
+// this is read-only enrichment, never mutation.
+type transcriptEnvelope struct {
+	UUID          string `json:"uuid"`
+	ToolUseResult *struct {
+		IsAsync     bool   `json:"isAsync"`
+		Status      string `json:"status"`
+		AgentID     string `json:"agentId"`
+		Description string `json:"description"`
+	} `json:"toolUseResult"`
+	Message *struct {
+		Content json.RawMessage `json:"content"`
+	} `json:"message"`
+}
+
+// taskNotificationIDPattern extracts task-ids out of a task-notification's
+// content string (`<task-notification>\n<task-id>ID</task-id>...`), the same
+// tag CC itself uses both for a real completion and for its own stale
+// stopped/failed synthesis (#1429) — matched directly against a live transcript.
+var taskNotificationIDPattern = regexp.MustCompile(`<task-id>([^<]+)</task-id>`)
+
+// observeForSyntheticEnds inspects one already-validated transcript line and
+// updates the fork's running state: (a) a background subagent launch
+// (toolUseResult.status=="async_launched", carrying an agentId) is recorded into
+// openTasks; (b) any task-notification content resolving a task-id removes it
+// from openTasks — it already has a resolution in the copied history, no
+// synthetic close is needed; (c) the line's own uuid (if any) becomes the new
+// lastUUID, so a synthetic close can chain off the true last message in the
+// copied prefix. Best-effort: an unmarshal failure is silently ignored (the line
+// already passed json.Valid — this enrichment is never fork-fatal).
+func observeForSyntheticEnds(line []byte, openTasks map[string]string, lastUUID *string) {
+	var env transcriptEnvelope
+	if err := json.Unmarshal(line, &env); err != nil {
+		return
+	}
+	if env.UUID != "" {
+		*lastUUID = env.UUID
+	}
+	if r := env.ToolUseResult; r != nil && r.IsAsync && r.Status == "async_launched" && r.AgentID != "" {
+		openTasks[r.AgentID] = r.Description
+	}
+	if env.Message != nil {
+		var content string
+		if json.Unmarshal(env.Message.Content, &content) == nil {
+			for _, m := range taskNotificationIDPattern.FindAllStringSubmatch(content, -1) {
+				delete(openTasks, m[1])
+			}
+		}
+	}
+}
+
+// appendSyntheticTaskEnds writes one synthetic, already-resolved
+// <task-notification> line per entry remaining in openTasks after the copy —
+// background subagent launches that never resolved within the copied prefix.
+//
+// Why: the real completion (if any) of such a task lands only in the PARENT
+// session's future — a fork never receives it. Left alone, Claude Code's own
+// resume-time reconciliation finds a launch in history with no resolution and
+// concludes the task was stopped/failed by "the previous process" (verified
+// live, #1429 — CC injected exactly this at the top of a forked session's first
+// resume, timestamped ~1s after the fork's own `--resume`). Synthesizing an
+// explicit closure here, before CC ever resumes the transcript, means CC finds
+// the task already resolved and has nothing to reconcile.
+//
+// The synthesized record deliberately does NOT claim the real work succeeded or
+// fabricate a <result> for it (the true outcome is unknown to the fork) — its
+// <summary> says plainly that this is a fork-boundary artifact, the task belongs
+// to the original session, and the branch must not re-dispatch it or trust any
+// implied result. Whether this is sufficient to suppress CC's OWN synthesis is
+// externally verified against live CC (see notes-1431.md's probe), not just
+// asserted here — CC's detector is closed-source, so this is empirical, not
+// something a unit test alone can confirm.
+//
+// Chained sequentially off lastUUID (the last real copied line's uuid, or the
+// previous synthetic close's uuid for the second and later entries) — one
+// linear thread, not siblings fanned off the same parent, matching how every
+// other message in a CC transcript links to its predecessor.
+func appendSyntheticTaskEnds(w *bufio.Writer, sessionID, lastUUID string, openTasks map[string]string) error {
+	if len(openTasks) == 0 {
+		return nil
+	}
+	// Deterministic order (map iteration isn't) for reproducible output/tests.
+	ids := make([]string, 0, len(openTasks))
+	for id := range openTasks {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, id := range ids {
+		newUUID := uuid.NewString()
+		summary := fmt.Sprintf("[fork boundary] Background agent %q (task-id %s) was still open when this session was forked from its parent; it is NOT owned by this branch — the original session may still be running it, or it may already be done there. This is a synthetic closure inserted at fork time so no stale stopped/failed notification is raised for it here. Do not re-dispatch it from this branch; if you need its real status, check its worktree/output directly.",
+			openTasks[id], id)
+		content := "<task-notification>\n" +
+			"<task-id>" + id + "</task-id>\n" +
+			"<status>completed</status>\n" +
+			"<summary>" + summary + "</summary>\n" +
+			"</task-notification>"
+
+		var parentUUID any
+		if lastUUID != "" {
+			parentUUID = lastUUID
+		}
+		rec := map[string]any{
+			"parentUuid":  parentUUID,
+			"isSidechain": false,
+			"promptId":    uuid.NewString(),
+			"type":        "user",
+			"message": map[string]any{
+				"role":    "user",
+				"content": content,
+			},
+			"uuid":      newUUID,
+			"timestamp": now,
+			"sessionId": sessionID,
+			"origin":    map[string]any{"kind": "task-notification"},
+		}
+		b, err := json.Marshal(rec)
+		if err != nil {
+			return fmt.Errorf("ccstream fork: marshal synthetic task end for %s: %w", id, err)
+		}
+		if _, err := w.Write(append(b, '\n')); err != nil {
+			return fmt.Errorf("ccstream fork: write synthetic task end: %w", err)
+		}
+		lastUUID = newUUID
 	}
 	return nil
 }
