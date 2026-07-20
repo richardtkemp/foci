@@ -308,6 +308,12 @@ var toolTable = []toolEntry{
 			// caller's app conversation as a "waiting on <agent>" indicator
 			// (cleared when the caller's reply turn begins). No-op off the app.
 			app.SetWaiting(callerSessionKey, targetAgent)
+		}, func(sessionKey string) session.SessionType {
+			entry, err := d.p.sessionIndex.Get(sessionKey)
+			if err != nil {
+				return session.SessionTypeUnknown
+			}
+			return entry.SessionType
 		})
 	}},
 

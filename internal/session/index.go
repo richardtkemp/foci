@@ -63,6 +63,17 @@ func (t SessionType) IsUserFacing() bool {
 	return t == SessionTypeChat || t == SessionTypeFacet || t == SessionTypeIndependent
 }
 
+// IsOneshot reports whether this session type runs a single headless turn and
+// then terminates (reflection/consolidation via RunOnce, keepalive, background-
+// task, spawn) — as opposed to a persistent interactive session (chat/facet/
+// independent). A oneshot cannot meaningfully RECEIVE an async reply: the relay
+// would spin up a fresh, unusable turn whose output has nowhere sane to go
+// (#1429/#1430). 'unknown' (legacy) is deliberately NOT oneshot.
+func (t SessionType) IsOneshot() bool {
+	return t == SessionTypeReflection || t == SessionTypeKeepalive ||
+		t == SessionTypeBackgroundTask || t == SessionTypeSpawn
+}
+
 // reflectableTypesSQL renders reflectableTypes as a SQL-quoted, comma-separated
 // list for IN clauses, sorted for stable output. Built from the trusted
 // reflectableTypes constant (never user input), so string interpolation into
