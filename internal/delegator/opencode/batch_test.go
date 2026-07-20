@@ -157,19 +157,18 @@ func TestRunBatch_DefaultsAndErrors(t *testing.T) {
 	}
 }
 
-// TestRunBatch_SpawnsAndPersistsWhenNoServerPooled is the core regression
-// test for the "consolidation RunOnce failed: no running server" bug: when
-// an opencode agent has no live interactive session (so nothing is pooled),
-// RunBatch must spawn a server rather than erroring, must build that
-// server's config from the SAME per-agent b.cfg an interactive Backend for
-// this agent would use (not a divergent batch-only config), and must leave
-// the server pooled afterward (persistent — not torn down per batch run).
+// TestRunBatch_SpawnsThenReleasesWhenSoleHolder is the core regression test for
+// the batch server lifecycle: with no live interactive session (nothing
+// pooled), RunBatch spawns the shared server, builds its config from the SAME
+// per-agent b.cfg an interactive Backend would use (not a divergent batch-only
+// config), runs the one-shot, and RELEASES on completion. Because the batch was
+// the sole holder, that release drops refCount to 0 and the server is reaped —
+// it is NOT pinned open forever (the refcount-leak bug, corrected 2026-07-20).
 //
-// It stubs acquireServerFn instead of letting a real "opencode serve"
-// subprocess spawn — the test only needs to prove RunBatch reaches the
-// spawn branch with the right arguments and doesn't release afterward, not
-// exercise the real subprocess launch path (that's server_test.go's job).
-func TestRunBatch_SpawnsAndPersistsWhenNoServerPooled(t *testing.T) {
+// Stubs acquireServerFn (no real "opencode serve") but mimics a real spawn by
+// pooling the fake Server with refCount=1, so the defer's real releaseServer
+// decrements a truthful count.
+func TestRunBatch_SpawnsThenReleasesWhenSoleHolder(t *testing.T) {
 	old := batchPollInterval
 	batchPollInterval = 5 * time.Millisecond
 	t.Cleanup(func() { batchPollInterval = old })
@@ -192,9 +191,9 @@ func TestRunBatch_SpawnsAndPersistsWhenNoServerPooled(t *testing.T) {
 		if env != nil {
 			t.Errorf("acquireServerFn env = %v, want nil (batch has no exec-bridge env)", env)
 		}
-		// Pool a fake live Server backed by the test HTTP server, mirroring
-		// what the real acquireServer would do on a successful spawn.
-		srv := &Server{agentID: agentID, baseURL: ts.URL, http: ts.Client(), running: true}
+		// Mimic a real acquireServer spawn: pool a live Server with refCount=1
+		// so the defer's real releaseServer sees a truthful refcount.
+		srv := &Server{agentID: agentID, baseURL: ts.URL, http: ts.Client(), running: true, refCount: 1}
 		serverPoolMu.Lock()
 		serverPool[agentID] = srv
 		serverPoolMu.Unlock()
@@ -220,12 +219,10 @@ func TestRunBatch_SpawnsAndPersistsWhenNoServerPooled(t *testing.T) {
 	if gotAgentID != agentID {
 		t.Errorf("acquireServerFn agentID = %q, want %q", gotAgentID, agentID)
 	}
-	// Config correctness (design question 2): workDir comes from
-	// req.WorkDir (RunOnce's m.StartOpts.WorkDir — the agent workspace),
-	// binary/hostname come from b.cfg — the same per-agent backend_config
-	// an interactive Start would resolve via serverConfigFromOpts. A
-	// mismatch here means the batch-spawned server would NOT be the same
-	// server an interactive session would attach to.
+	// Config correctness: workDir comes from req.WorkDir (the agent workspace),
+	// binary/hostname from b.cfg — the same per-agent backend_config an
+	// interactive Start would resolve, so the batch-spawned server IS the server
+	// an interactive session would attach to.
 	if gotCfg.workDir != "/tmp/agent-workdir-for-batch" {
 		t.Errorf("cfg.workDir = %q, want /tmp/agent-workdir-for-batch", gotCfg.workDir)
 	}
@@ -236,23 +233,52 @@ func TestRunBatch_SpawnsAndPersistsWhenNoServerPooled(t *testing.T) {
 		t.Errorf("cfg.hostname = %q, want 10.0.0.9 (sourced from b.cfg)", gotCfg.hostname)
 	}
 
-	// Persistence: the spawned server must still be pooled after RunBatch
-	// returns (RunBatch must not releaseServer) — the whole point of the
-	// fix is that a batch-triggered spawn survives for later interactive
-	// turns / future batches, not get torn down the instant this run ends.
-	if cur, ok := lookupTestPool(agentID); !ok || cur == nil {
-		t.Error("server not pooled after RunBatch returned — must persist, not be torn down per-run")
+	// Sole-holder release: refCount hit 0, so the server must be evicted from
+	// the pool — NOT left pinned open. This is the whole point of the fix.
+	if _, ok := lookupTestPool(agentID); ok {
+		t.Error("server still pooled after RunBatch — a sole-holder batch must release and reap it, not pin it open")
+	}
+}
+
+// TestRunBatch_KeepsServerWhenOtherHolderRemains is the counterpart: if an
+// interactive session is also attached (refCount 2), the batch's release just
+// decrements to 1 and the shared server stays pooled for that session. Proves
+// the release is refcount-correct, not an unconditional teardown.
+func TestRunBatch_KeepsServerWhenOtherHolderRemains(t *testing.T) {
+	old := batchPollInterval
+	batchPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() { batchPollInterval = old })
+
+	const agentID = "batch-coexist-agent"
+	resetTestPool(t)
+
+	ts, _ := batchServer(t)
+
+	// An interactive holder already owns the pooled server (refCount=1).
+	live := &Server{agentID: agentID, baseURL: ts.URL, http: ts.Client(), running: true, refCount: 1}
+	serverPoolMu.Lock()
+	serverPool[agentID] = live
+	serverPoolMu.Unlock()
+
+	orig := acquireServerFn
+	acquireServerFn = func(agentID string, cfg serverConfig, env map[string]string) (*Server, error) {
+		live.refCount++ // reuse path: bump the existing holder, like real acquireServer
+		return live, nil
+	}
+	t.Cleanup(func() { acquireServerFn = orig })
+
+	b := &Backend{cfg: map[string]any{}}
+	if _, err := b.RunBatch(context.Background(), delegator.BatchRequest{
+		Prompt: "extract", AgentID: agentID, WorkDir: "/tmp/wd",
+	}); err != nil {
+		t.Fatalf("RunBatch: %v", err)
 	}
 
-	// A second RunBatch call for the same agent must reuse the pooled
-	// server (via acquireServerFn's own reuse path in production; here the
-	// stub just re-pools the same instance), not report a second spawn
-	// through some parallel mechanism.
-	if _, err := b.RunBatch(context.Background(), delegator.BatchRequest{
-		Prompt:  "extract again",
-		AgentID: agentID,
-		WorkDir: "/tmp/agent-workdir-for-batch",
-	}); err != nil {
-		t.Fatalf("second RunBatch: %v", err)
+	cur, ok := lookupTestPool(agentID)
+	if !ok || cur != live {
+		t.Fatal("server evicted though an interactive holder still needed it")
+	}
+	if live.refCount != 1 {
+		t.Errorf("refCount = %d, want 1 (batch released its +1; interactive holder remains)", live.refCount)
 	}
 }
