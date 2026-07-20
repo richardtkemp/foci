@@ -49,6 +49,17 @@ func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Se
 	}
 	serverPoolMu.Unlock()
 
+	// Materialise the workspace plugins opencode loads at subprocess startup —
+	// per-session FOCI_SOCK/BASH_ENV routing (shell.env hook) and blank-system
+	// (suppresses opencode's default prompt). This is the single spawn
+	// chokepoint, so ensuring here means EVERY spawner (interactive Start,
+	// batch RunBatch, any future caller) gets a fully-wired server by
+	// construction — a caller can't forget it (batch did, which stranded
+	// interactive sessions on a plugin-less batch-spawned server). Both are
+	// idempotent and no-op on an empty workDir.
+	EnsureSessionEnvPlugin(cfg.workDir)
+	EnsureBlankSystemPlugin(cfg.workDir)
+
 	s := newServer(agentID, cfg)
 	s.extraEnv = env
 	if err := s.Start(context.Background()); err != nil {

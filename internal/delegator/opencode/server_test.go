@@ -533,6 +533,35 @@ func TestServer_Pool_AcquireEvictsDeadAndRespawns(t *testing.T) {
 	}
 }
 
+func TestServer_Pool_AcquireWritesPluginsBeforeSpawn(t *testing.T) {
+	// Invariant: acquireServer materialises the foci workspace plugins
+	// (session-env routing + blank-system) BEFORE it spawns the subprocess, at
+	// the single spawn chokepoint — so EVERY spawner (interactive Start, batch
+	// RunBatch, any future caller) gets a fully-wired server by construction.
+	// Regression for the batch-spawn gap: a batch that spawns the shared server
+	// first must not strand later interactive sessions on a plugin-less server
+	// (no per-session FOCI_SOCK/BASH_ENV override → misrouted session tools).
+	// Uses the opc-stub with an immediate exit so Start fails fast; the plugin
+	// files must exist regardless of the spawn outcome (they're written first).
+	resetTestPool(t)
+
+	workDir := t.TempDir()
+	cfg := serverConfig{
+		workDir:    workDir,
+		binaryPath: stubBinary(t),
+		hostname:   "127.0.0.1",
+		port:       0,
+	}
+	_, _ = acquireServer("agent-plugin-invariant", cfg, map[string]string{"OPC_STUB_EXIT_CODE": "1"})
+
+	for _, fn := range []string{sessionEnvPluginFn, blankSystemPluginFn} {
+		p := filepath.Join(workDir, ".opencode", "plugin", fn)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("plugin %q not written before spawn: %v (acquireServer must ensure plugins on every spawn path)", fn, err)
+		}
+	}
+}
+
 func TestServer_Pool_AcquireReusesLiveServer(t *testing.T) {
 	// Sanity counterpart: a LIVE pooled Server is reused (refcount bumped),
 	// never respawned. Pins the happy path so the eviction fix doesn't
