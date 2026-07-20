@@ -51,7 +51,7 @@ config.Load(path)                                        ← validates values; l
 
 → warnMissingSecrets(cfg, sec.store) / warnStreamOutputWithoutStreaming(cfg)   ← warn_secrets.go / warn_streaming.go; startup config-sanity WARNs, non-fatal
 
-→ initVoice(cfg, sec.store)                              ← voice_init.go; builds the STT/TTS provider maps shared by voice WS + send_to_chat TTS
+→ initVoice(cfg, sec.store)                              ← voice_init.go; builds the STT/TTS provider maps shared by voice WS + send_to_chat TTS + app voice-mode replies (#1439: a trigger=voice app turn's reply is TTS'd into a fap.Media{VoiceMode:true} attachment, bundled with the text)
 
 → gwLiveApply = newLiveApply(configPath)                 ← liveapply.go; hot-config-reload registry (created early, appliers registered later via registerLiveAppliers after agent setup — see below)
 
