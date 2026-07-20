@@ -200,13 +200,21 @@ type Backend struct {
 	// the initial Agent spawn, then any number of SendMessage resumes. The STABLE
 	// identity across resumes is the task_id (the tool_use_id CHANGES per run); the
 	// group key the app collapses all runs under is the ORIGINAL Agent tool_use_id.
-	// subagentRuns maps task_id -> run state; agentLabels stashes the Agent block's
-	// description keyed by its tool_use_id (= groupKey) so the first task_started can
-	// bind the label. Touched only from the single stdout-stream goroutine
-	// (handlers), but guarded for safety. See handlers.go.
-	subagentRunsMu sync.Mutex
-	subagentRuns   map[string]*subagentRun // task_id -> run
-	agentLabels    map[string]string       // Agent tool_use_id (groupKey) -> label
+	// subagentRuns maps task_id -> run state; agentLabels/agentPrompts stash the
+	// Agent block's description/prompt keyed by its tool_use_id (= groupKey) so
+	// the first task_started can bind the label and, when the PreToolUse hook
+	// never fires, supply the fallback SubagentStart's content (#1425).
+	// subagentStarted is the run-1 start dedup guard: a groupKey is marked the
+	// first time EITHER the PreToolUse hook or the task_started fallback emits
+	// its SubagentStart, so whichever fires first wins and the other no-ops —
+	// exactly one start per groupKey regardless of arrival order (#1423/#1425).
+	// Touched only from the single stdout-stream goroutine (handlers), but
+	// guarded for safety. See handlers.go.
+	subagentRunsMu  sync.Mutex
+	subagentRuns    map[string]*subagentRun // task_id -> run
+	agentLabels     map[string]string       // Agent tool_use_id (groupKey) -> label
+	agentPrompts    map[string]string       // Agent tool_use_id (groupKey) -> prompt
+	subagentStarted map[string]bool         // Agent tool_use_id (groupKey) -> SubagentStart already emitted
 
 	// subagentTails tails foreground subagent transcript files and forwards
 	// their assistant text as subagent progress (foreground subagent text is

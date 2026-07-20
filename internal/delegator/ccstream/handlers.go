@@ -242,11 +242,15 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			if block.Name == "Agent" {
 				desc := delegator.ExtractAgentDescription(block.Input)
 				b.agents.Add(block.ID, desc)
-				// Stash the label by the Agent tool_use_id (= the stable groupKey)
-				// so the first task_started can bind the reactivation run state
-				// (#1355). Run 1's SubagentStart is still hook-driven; this only
-				// primes the label for any later SendMessage reactivation.
+				// Stash the label + prompt by the Agent tool_use_id (= the stable
+				// groupKey) so the first task_started can bind the reactivation run
+				// state (#1355) and, when the PreToolUse hook never fires, supply
+				// the task_started fallback SubagentStart's content (#1425) — the
+				// hook path normally reads label/prompt straight off its own
+				// payload, but the fallback has only the native task_started event
+				// (no prompt field), so it needs this stash instead.
 				b.setAgentLabel(block.ID, desc)
+				b.setAgentPrompt(block.ID, delegator.ExtractAgentPrompt(block.Input))
 				// A FOREGROUND subagent's assistant text never reaches the parent
 				// stdout stream, so arm a transcript tail for it (started once
 				// task_started supplies the agent_id). Arm HERE — the earliest,
@@ -617,16 +621,26 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				}
 			}
 			// Bind or advance the reactivation run state (#1355). The FIRST
-			// task_started binds the run (run 1's SubagentStart is hook-driven, so
-			// no emit here). A SUBSEQUENT task_started for the same task_id is a
+			// task_started binds the run — run 1's SubagentStart is NORMALLY
+			// hook-driven (fires earlier, at the Agent tool_use itself), but the
+			// PreToolUse hook drops for ~7% of background subagents (#1423), so
+			// this also emits a FALLBACK start, guarded by markSubagentStarted so
+			// exactly one goes out regardless of which signal wins the race
+			// (#1425). A SUBSEQUENT task_started for the same task_id is a
 			// SendMessage resume: re-Add to the tracker so the activity chip
 			// re-opens, and emit a fresh SubagentStart for the new run so the app
-			// draws a new chit. groupKey stays the ORIGINAL Agent tool_use_id (the
+			// draws a new chit — unconditional, since no hook exists for
+			// SendMessage. groupKey stays the ORIGINAL Agent tool_use_id (the
 			// subagent's text keeps it as parent_tool_use_id across resumes), so all
 			// runs collapse into one continuous view.
 			if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
 				b.agents.Add(run.groupKey, run.label)
 				b.logger().Infof("subagent_reactivate task_id=%s group=%s run=%d", task.TaskID, run.groupKey, run.runIndex)
+				if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
+					se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
+				}
+			} else if run != nil && !b.markSubagentStarted(run.groupKey) {
+				b.logger().Infof("subagent_start signal=task_started_fallback group=%s run=%d (PreToolUse hook missing/late)", run.groupKey, run.runIndex)
 				if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
 					se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
 				}
