@@ -67,13 +67,41 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// materialised inside acquireServer, right before it spawns the subprocess
 	// — the single spawn chokepoint, so batch and interactive spawns are wired
 	// identically. See acquireServer in opencode.go.
+	acquiredHere := false
 	if b.server == nil {
 		srv, err := acquireServer(opts.AgentID, b.serverConfigFromOpts(opts), opts.Env)
 		if err != nil {
 			return fmt.Errorf("opencode: acquire server: %w", err)
 		}
 		b.server = srv
+		acquiredHere = true
 	}
+
+	// success guards the deferred release below: if THIS call acquired the
+	// Server (acquiredHere), its refcount hold must be given back on any
+	// Start failure after this point, or the Server leaks forever — it can
+	// never reach refcount 0, so the subprocess is never stopped. Bug
+	// history: every error return between here and `b.running = true`
+	// below (resume probe failure, resume-not-found, createSession
+	// failure) used to leak the hold, because Backend.Close() — the
+	// caller's normal cleanup on a failed Start (delegated_manager.go) —
+	// is a no-op when b.running is still false, which it always is on
+	// these paths. success is flipped true immediately before Start's
+	// final `return nil`; only then does the defer become a no-op.
+	//
+	// Gated on acquiredHere, not "b.server != nil": a test-injected
+	// b.server (the b.server == nil check above skipped) was never
+	// counted in the pool by this call, so releasing it here would be a
+	// spurious decrement against a Server this Backend never acquired.
+	success := false
+	if acquiredHere {
+		defer func() {
+			if !success {
+				releaseServer(b.agentID, b.server)
+			}
+		}()
+	}
+
 	b.autoApproveEnv = b.server.effectiveEnv
 	if b.autoApproveEnv == nil {
 		// Test-injected servers have no subprocess environment snapshot.
@@ -203,6 +231,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		b.onSessionReady(sessionID)
 	}
 	close(b.readyCh)
+	success = true
 	return nil
 }
 

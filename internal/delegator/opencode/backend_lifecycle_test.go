@@ -746,6 +746,61 @@ func TestBackend_Close_LastReleaseShutsDownServer(t *testing.T) {
 	}
 }
 
+func TestBackend_Start_ReleasesServerOnSessionCreateFailure(t *testing.T) {
+	// Regression test for the refcount leak: acquireServer succeeds (so the
+	// Server's refcount is bumped for this Start call), but session creation
+	// (POST /session) then fails, so Start returns an error BEFORE
+	// b.running is ever set true. DelegatedManager's normal cleanup on a
+	// failed Start is be.Close() — but Close() no-ops when b.running is
+	// false, so before the fix the acquired hold was never released: the
+	// Server stayed pooled (refcount stuck above 0) forever, leaking the
+	// subprocess. With the fix, Start's own defer releases the hold it
+	// acquired regardless of the caller's cleanup.
+	resetTestPool(t)
+	const agentID = "agent-start-leak"
+
+	// A server that answers everything with 500 so createSession fails.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	t.Cleanup(ts.Close)
+
+	// Pool a live-looking Server (no real subprocess — running=true is
+	// enough for acquireServer's alive-reuse fast path) pointed at the
+	// failing httptest server. refCount starts at 0 so that after
+	// acquireServer's reuse-path increment (simulating THIS Start call
+	// being the sole acquirer), refCount==1 — exactly the fresh-spawn
+	// case Start hits in production when nobody else already holds the
+	// agent's server.
+	srv := insertLiveServerForTest(agentID)
+	srv.baseURL = ts.URL
+	srv.http = ts.Client()
+	serverPoolMu.Lock()
+	srv.refCount = 0
+	serverPoolMu.Unlock()
+
+	b := &Backend{
+		agentID:     agentID,
+		readyCh:     make(chan struct{}),
+		outstanding: delegator.NewOutstandingRegistry(),
+	}
+
+	err := b.Start(context.Background(), delegator.StartOptions{AgentID: agentID, WorkDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("Start: expected error from failing createSession, got nil")
+	}
+
+	// The leak: before the fix, acquireServer's increment (0 -> 1) was
+	// never undone, so the Server stayed pooled with refCount==1 forever
+	// (nothing else will ever decrement it — Close() no-ops because
+	// b.running is false). With the fix, Start's own deferred release
+	// gives the hold back, dropping refCount to 0 and evicting the entry.
+	if _, ok := lookupTestPool(agentID); ok {
+		t.Errorf("server still pooled after failed Start — refcount leaked (agentID=%s)", agentID)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // WaitReady
 // ---------------------------------------------------------------------------
