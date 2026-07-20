@@ -201,7 +201,7 @@ main
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
  ├── workspace     → log, provider
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
- ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → log (embedded .md files + ResolveOrientationTemplate helpers)
+ ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → log (embedded .md files incl. nudge framing + ResolveOrientationTemplate helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
  ├── ratelimit     (no deps — neutral limit signals + shared reset/fallback policy)
  ├── modelcaps     → modelinfo, log (leaf — per-backend live capability cache; Fetcher + Persister seams injected at startup so it imports no anthropic/session/DB)
@@ -1986,6 +1986,10 @@ Rules are extracted once from character files via an LLM call, then cached in `{
 - **every_n_turns / regex** — prepended to the prompt string in `InjectNudges` before the agent layer's `ImmediateInject(SourceUser)` call, same as API content blocks but flattened to text.
 - **every_n_tools / after_error** — wired through `delegator.TurnEvents.PostToolNudgeFunc`. ccstream's `handleHookResponse` invokes this callback after each `OnToolEnd` dispatch (once per PostToolUse hook event), and sends any returned reminders to CC as plain `[user] <text>` user messages via `writer.SendUser` at default queue priority. CC's mid-turn drain (`claude-code/src/query.ts:1570-1589`) folds the message into the current `ask()` as an attachment to the next tool-result batch, so the model addresses the nudge in the same turn and its response reaches the user through the always-live `SessionEvents.OnText` path. There is no separate ask/result cycle for the nudge.
 - **pre_answer** — wired through `delegator.TurnEvents.PreAnswerNudgeFunc`. On `OnResult`, ccstream gives the bookkeeping callback a chance to return a verification follow-up. When non-empty, ccstream re-runs `beginTurn` with the same `TurnEvents`, sends the follow-up via `writer.SendUser`, and skips `OnTurnComplete` until the second round's `OnResult`. `turn_delegated.go` tracks `preAnswerFired` in a closure local so the gate fires at most once per user turn, stashes round-1 usage/text so the final `OnTurnComplete` can fold usage into `ts.FinalUsage`, and restores the original answer when round 2 echoes `NoResponseSentinel`. Unlike the API path, the round-1 answer has already streamed to the user as intermediate text via `SessionEvents.OnText` — round 2's text becomes the authoritative final reply.
+
+### Framing text (per-agent overridable)
+
+Every injected nudge is wrapped in three pieces of framing, all methods on `*Agent` in `agent.go`: `wrapStandaloneNudge` (mid-loop after-tools / pre-answer paths) = `nudgePreamble()` + reminder + `nudgeReplyInstruction()`; `wrapBundledNudge` (start-of-turn interval/regex path) = `nudgePreamble()` + reminder, with `nudgeUserBoundary()` appended once at the join point to separate the nudge region from the user's text. The preamble/reply-instruction/user-boundary are each resolved per-agent via `prompts.ResolvePrompt("", "nudge-*.md", embeddedDefault, a.PromptSearchDirs...)` — the SAME override mechanism as the compaction-summary prompt (agent `workspace/prompts` → `shared/prompts` → embedded default from `shared/prompts/nudge-{preamble,reply-instruction,user-boundary}.md`). There is no config path field; the override is purely a same-named file in the agent's prompts dir. Resolved values are stored trimmed and the wrappers reintroduce the exact `\n` / `\n\n` separators. Seeded as editable copies by `seedDefaultPrompts`.
 
 ### Trigger Gate (`nudgesAllowed`, #815)
 

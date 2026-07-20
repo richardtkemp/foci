@@ -191,16 +191,16 @@ func (t *APITransport) InjectNudges(ts *TurnState) {
 
 	var nudgeBlocks []provider.ContentBlock
 	for _, r := range a.Nudger.CheckTurnInterval() {
-		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: wrapBundledNudge(r)})
+		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: a.wrapBundledNudge(r)})
 	}
 	for _, r := range a.Nudger.CheckRegex() {
-		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: wrapBundledNudge(r)})
+		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: a.wrapBundledNudge(r)})
 	}
 	if len(nudgeBlocks) > 0 {
 		// Close the nudge region with a single delimiter so the agent can
 		// distinguish where the background nudge ends and the user's text
 		// begins. Emitted once after the last nudge, not per-nudge.
-		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeUserBoundary})
+		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: a.nudgeUserBoundary()})
 		ts.UserMsg.Content = append(nudgeBlocks, ts.UserMsg.Content...)
 		// Update the already-appended message in both slices.
 		ts.Messages[len(ts.Messages)-1] = ts.UserMsg
@@ -387,7 +387,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 				if reminder := a.Nudger.CheckPreAnswer(); reminder != "" {
 					verifyMsg := provider.Message{
 						Role:    "user",
-						Content: provider.TextContent(wrapStandaloneNudge(reminder)),
+						Content: provider.TextContent(a.wrapStandaloneNudge(reminder)),
 					}
 					ts.Messages = append(ts.Messages, verifyMsg)
 					ts.NewMessages = append(ts.NewMessages, verifyMsg)
@@ -480,7 +480,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		if a.Nudger != nil && nudgesAllowed(ts) {
 			if reminders := a.Nudger.CheckAfterTools(toolCallCount, lastToolError); len(reminders) > 0 {
 				for _, r := range reminders {
-					toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: wrapStandaloneNudge(r)})
+					toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: a.wrapStandaloneNudge(r)})
 				}
 				a.logger().Debugf("nudge: injected %d reminder(s) at loop %d for session %s", len(reminders), i, ts.SessionKey)
 			}

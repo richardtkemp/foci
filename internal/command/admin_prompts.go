@@ -159,6 +159,9 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		"background.md":                  prompts.Background(),
 		"reflection.md":                  prompts.Reflection(),
 		"memory-consolidation.md":        prompts.MemoryConsolidation(),
+		"nudge-preamble.md":              prompts.NudgePreamble(),
+		"nudge-reply-instruction.md":     prompts.NudgeReplyInstruction(),
+		"nudge-user-boundary.md":         prompts.NudgeUserBoundary(),
 	}
 
 	type promptDef struct {
@@ -174,6 +177,11 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		{"reflection", derefStr(acfg.Reflection.IntervalPrompt), "reflection.md", prompts.Reflection()},
 		{"memory_consolidation", derefStr(acfg.Maintenance.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation()},
 		{"reflection_session_end", derefStr(acfg.Reflection.SessionEndPrompt), "reflection.md", prompts.Reflection()},
+		// Nudge framing text — overridable only by dropping a file in the agent's
+		// prompts dir (no config path field), so configPath is always "".
+		{"nudge_preamble", "", "nudge-preamble.md", prompts.NudgePreamble()},
+		{"nudge_reply_instruction", "", "nudge-reply-instruction.md", prompts.NudgeReplyInstruction()},
+		{"nudge_user_boundary", "", "nudge-user-boundary.md", prompts.NudgeUserBoundary()},
 	}
 	resolvedTexts := make(map[string]string, len(fileDefs)+2)
 	defaultTexts := make(map[string]string, len(fileDefs)+2)

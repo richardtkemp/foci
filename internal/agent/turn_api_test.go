@@ -611,7 +611,7 @@ func TestInjectNudges_TurnIntervalFires(t *testing.T) {
 	}
 	// A single closing delimiter must separate the nudge region from the
 	// user's text, so the agent can see where one ends and the other begins.
-	if ts.UserMsg.Content[1].Text != nudgeUserBoundary {
+	if ts.UserMsg.Content[1].Text != a.nudgeUserBoundary() {
 		t.Errorf("second content block should be the nudge end-marker; got %q", ts.UserMsg.Content[1].Text)
 	}
 	if ts.UserMsg.Content[2].Text != "hello" {
@@ -659,7 +659,7 @@ func TestInjectNudges_RegexFires(t *testing.T) {
 	if strings.Contains(nudgeBlock, NoResponseSentinel) {
 		t.Errorf("bundled nudge must not carry the NO_RESPONSE footer; got %q", nudgeBlock)
 	}
-	if ts.UserMsg.Content[1].Text != nudgeUserBoundary {
+	if ts.UserMsg.Content[1].Text != a.nudgeUserBoundary() {
 		t.Errorf("second content block should be the nudge end-marker; got %q", ts.UserMsg.Content[1].Text)
 	}
 	if ts.UserMsg.Content[2].Text != "please refactor this" {
@@ -674,10 +674,11 @@ func TestInjectNudges_RegexFires(t *testing.T) {
 // Guards against the bundled-footer fix leaking onto the standalone paths.
 func TestNudgeWrapperContracts(t *testing.T) {
 	reminder := "be concise."
-	standalone := wrapStandaloneNudge(reminder)
-	bundled := wrapBundledNudge(reminder)
+	a := &Agent{}
+	standalone := a.wrapStandaloneNudge(reminder)
+	bundled := a.wrapBundledNudge(reminder)
 
-	if !strings.Contains(standalone, nudgePreamble) {
+	if !strings.Contains(standalone, a.nudgePreamble()) {
 		t.Errorf("wrapStandaloneNudge must include nudgePreamble; got %q", standalone)
 	}
 	if !strings.Contains(standalone, reminder) {
@@ -687,7 +688,7 @@ func TestNudgeWrapperContracts(t *testing.T) {
 		t.Errorf("wrapStandaloneNudge (standalone) must keep the NO_RESPONSE footer; got %q", standalone)
 	}
 
-	if !strings.Contains(bundled, nudgePreamble) {
+	if !strings.Contains(bundled, a.nudgePreamble()) {
 		t.Errorf("wrapBundledNudge must include nudgePreamble; got %q", bundled)
 	}
 	if !strings.Contains(bundled, reminder) {
