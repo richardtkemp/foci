@@ -110,6 +110,100 @@ func TestSubagentReactivation(t *testing.T) {
 	}
 }
 
+// TestSubagentPromptWhileRunning pins the #1419 fix: a SendMessage sent to a
+// subagent that is STILL RUNNING (task_started seen, no task_notification yet)
+// must surface immediately via OnSubagentPrompt at the run's CURRENT index — CC
+// never refires task_started for this case (verified live), so #1355's
+// stash-for-the-next-task_started mechanism never fires and the follow-up would
+// otherwise be silently dropped. It must also NOT open a new run (no
+// OnSubagentStart, no runIndex bump) — CC delivers exactly ONE
+// task_notification:completed for the whole continuous execution, so a second
+// "run" would never get its own end and its chit would spin forever.
+//
+// It also pins the boundary with #1355: once the run truly ends, a LATER
+// SendMessage reverts to the stash-for-reactivation path (OnSubagentPrompt does
+// NOT fire again; OnSubagentStart fires instead, on the resumed task_started).
+func TestSubagentPromptWhileRunning(t *testing.T) {
+	mkTool := func(id, name, input string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
+		}}
+	}
+	sys := func(b *Backend, subtype string, ev TaskEvent) {
+		ev.Subtype = subtype
+		raw, _ := json.Marshal(ev)
+		b.OnSystem(subtype, raw)
+	}
+
+	b := &Backend{}
+	type prompt struct {
+		group, text string
+		run         int
+	}
+	type start struct {
+		group, label, prompt string
+		run                  int
+	}
+	type end struct {
+		group string
+		run   int
+	}
+	var prompts []prompt
+	var starts []start
+	var ends []end
+	applyHandler(b, &testHandler{
+		OnSubagentStart:  func(g, l, p string, r int) { starts = append(starts, start{g, l, p, r}) },
+		OnSubagentEnd:    func(g string, r int) { ends = append(ends, end{g, r}) },
+		OnSubagentPrompt: func(g, p string, r int) { prompts = append(prompts, prompt{g, p, r}) },
+	})
+
+	const (
+		groupKey = "toolu_agent" // original Agent tool_use id == stable group key
+		taskID   = "task_abc"    // stable across resumes
+		msg1ID   = "toolu_send1" // the still-running SendMessage's tool_use id
+		msg2ID   = "toolu_send2" // the after-end SendMessage's tool_use id (real #1355 resume)
+	)
+
+	// Launch + bind run 1 — still running (no task_notification yet).
+	b.OnAssistant(mkTool(groupKey, "Agent", `{"description":"Explore","prompt":"do part one","run_in_background":true}`))
+	sys(b, "task_started", TaskEvent{TaskID: taskID, ToolUseID: groupKey})
+
+	// A SendMessage arrives WHILE the subagent is still running.
+	b.OnAssistant(mkTool(msg1ID, "SendMessage", `{"to":"task_abc","message":"do part two, still running"}`))
+
+	// Must surface immediately, on run 1 — no new run opened.
+	if len(prompts) != 1 || prompts[0] != (prompt{groupKey, "do part two, still running", 1}) {
+		t.Fatalf("prompts after still-running SendMessage = %+v, want exactly [{toolu_agent \"do part two, still running\" 1}]", prompts)
+	}
+	if len(starts) != 0 {
+		t.Fatalf("still-running SendMessage must not open a new run: starts = %+v", starts)
+	}
+	if got := b.runIndexForGroup(groupKey); got != 1 {
+		t.Errorf("runIndexForGroup after still-running SendMessage = %d, want 1 (unchanged)", got)
+	}
+
+	// The run's TRUE end (one notification covers both part one and the
+	// still-running follow-up) — must close run 1, not some phantom run 2.
+	sys(b, "task_notification", TaskEvent{TaskID: taskID, ToolUseID: groupKey, Status: "completed"})
+	if len(ends) != 1 || ends[0] != (end{groupKey, 1}) {
+		t.Fatalf("end after still-running prompt = %+v, want [{toolu_agent 1}]", ends)
+	}
+	if b.agents.Pending() != 0 {
+		t.Errorf("run end did not clear tracker: Pending()=%d, want 0", b.agents.Pending())
+	}
+
+	// A SECOND SendMessage, now that the run has ENDED, is the #1355 case: it
+	// must NOT surface via OnSubagentPrompt — it stashes for the reactivation.
+	b.OnAssistant(mkTool(msg2ID, "SendMessage", `{"to":"task_abc","message":"do part three, after end"}`))
+	if len(prompts) != 1 {
+		t.Fatalf("after-end SendMessage must not add an OnSubagentPrompt: prompts = %+v", prompts)
+	}
+	sys(b, "task_started", TaskEvent{TaskID: taskID, ToolUseID: msg2ID})
+	if len(starts) != 1 || starts[0] != (start{groupKey, "Explore", "do part three, after end", 2}) {
+		t.Fatalf("after-end SendMessage reactivation start = %+v, want [{toolu_agent Explore \"do part three, after end\" 2}]", starts)
+	}
+}
+
 // TestSubagentEndUntrackedFallsBackToToolUseID keeps the pre-#1355 behaviour for a
 // task_notification whose task_started was never seen (untracked): end on the raw
 // tool_use id at run index 0, so a missed start still finalizes a group.

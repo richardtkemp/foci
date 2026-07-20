@@ -201,6 +201,12 @@ func (c *appConn) DeliverSubagentEndToSession(sessionKey, groupKey string, runIn
 	}
 }
 
+func (c *appConn) DeliverSubagentPromptToSession(sessionKey, groupKey, prompt string, runIndex int) {
+	if b, _ := c.sendBinding(sessionKey); b != nil {
+		b.send(fap.SubagentPrompt{ConversationID: b.convID, GroupKey: groupKey, Prompt: prompt, RunIndex: runIndex})
+	}
+}
+
 // sendBinding resolves the target binding for an unsolicited send. When
 // sessionKey has no binding — an agent-initiated/independent session the app
 // never opened — it falls back to the agent's default app chat so the message

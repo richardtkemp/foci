@@ -275,13 +275,24 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 					b.agents.OnStatus("")
 				}
 			} else if block.Name == "SendMessage" {
-				// A SendMessage resumes a background subagent (#1355). Attribute its
-				// message to that subagent (keyed by task_id == the SendMessage `to`)
-				// so the reactivation's SubagentStart can carry the prompt. The
-				// resumed run's task_started (which bumps runIndex and emits the start)
-				// follows this block in the stream, so the pending prompt is set first.
+				// A SendMessage can target a subagent (keyed by task_id == the
+				// SendMessage `to`) in either of two states (#1419):
+				//  - STILL RUNNING (task_started seen, not yet completed): CC never
+				//    refires task_started for this case (verified live) — there is no
+				//    later event to hang the prompt on, so surface it immediately as a
+				//    mid-run OnSubagentPrompt at the run's CURRENT index. No new chit.
+				//  - ALREADY ENDED (#1355): stash the message; the reactivation's
+				//    task_started (which bumps runIndex and emits a fresh SubagentStart)
+				//    follows this block in the stream and consumes the stash.
 				if to, msg := delegator.ExtractSendMessage(block.Input); to != "" {
-					b.stashResumePrompt(to, msg)
+					if run, active := b.activeRunForTask(to); active {
+						b.logger().Infof("subagent_prompt signal=send_message group=%s run=%d", run.groupKey, run.runIndex)
+						if se := b.sessionEvents.Load(); se != nil && se.OnSubagentPrompt != nil {
+							se.OnSubagentPrompt(run.groupKey, msg, run.runIndex)
+						}
+					} else {
+						b.stashResumePrompt(to, msg)
+					}
 				}
 			}
 
@@ -636,8 +647,11 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				// carries the SendMessage tool_use_id, NOT the group key, so ending on
 				// task.ToolUseID would close a group the app never opened. Fall back to
 				// the raw tool_use_id (runIndex 0) only when task_started was missed.
+				// endRunForTask also flips the run inactive (#1419): a SendMessage
+				// arriving AFTER this point (before any reactivation) must stash for
+				// the eventual resume, not try to surface immediately.
 				groupKey, runIndex := task.ToolUseID, 0
-				if run := b.runForTask(task.TaskID); run != nil {
+				if run := b.endRunForTask(task.TaskID); run != nil {
 					groupKey, runIndex = run.groupKey, run.runIndex
 				}
 				if groupKey != "" {

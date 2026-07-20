@@ -101,6 +101,13 @@ func (p *appBackend) DeliverSubagentEnd(groupKey string, runIndex int) {
 	p.b.send(fap.SubagentEnd{ConversationID: p.b.convID, GroupKey: groupKey, RunIndex: runIndex})
 }
 
+// DeliverSubagentPrompt delivers a SendMessage follow-up sent to an
+// ALREADY-RUNNING subagent (#1419) — a fap.SubagentPrompt attaches it to the
+// already-open run (groupKey, runIndex) client-side, without opening a new one.
+func (p *appBackend) DeliverSubagentPrompt(groupKey, prompt string, runIndex int) {
+	p.b.send(fap.SubagentPrompt{ConversationID: p.b.convID, GroupKey: groupKey, Prompt: prompt, RunIndex: runIndex})
+}
+
 func (p *appBackend) SubagentTextRaw() bool { return true }
 
 // appStreamSink is the live streaming surface for one reply segment. It owns one

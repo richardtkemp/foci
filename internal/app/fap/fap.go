@@ -48,6 +48,7 @@ const (
 	TypeSubagentStart           = "subagent.start"
 	TypeSubagentText            = "subagent.text"
 	TypeSubagentEnd             = "subagent.end"
+	TypeSubagentPrompt          = "subagent.prompt"
 	TypeExternalPrompt          = "external.prompt"
 	TypeMeta                    = "meta"
 	TypeCommands                = "commands"
@@ -524,6 +525,20 @@ type SubagentEnd struct {
 
 func (SubagentEnd) Type() string { return TypeSubagentEnd }
 
+// SubagentPrompt carries a SendMessage follow-up sent to a subagent that is
+// STILL RUNNING (#1419) — no new run begins (CC never refires task_started for
+// this case), so this attaches to the ALREADY-OPEN run identified by GroupKey +
+// RunIndex (same values as its SubagentStart/Text), rather than opening a new
+// chit the way a reactivation's SubagentStart does.
+type SubagentPrompt struct {
+	ConversationID string `json:"conversationId"`
+	GroupKey       string `json:"groupKey"`
+	Prompt         string `json:"prompt"`
+	RunIndex       int    `json:"runIndex,omitempty"`
+}
+
+func (SubagentPrompt) Type() string { return TypeSubagentPrompt }
+
 // WizardStep presents the current step of an active command wizard (wire §12).
 // Only sent to clients that advertised the "wizard" feature in their
 // ClientHello. WizardID is stable across the wizard's life; StepID is minted
@@ -598,8 +613,8 @@ func (Meta) Type() string { return TypeMeta }
 // autocomplete. Pushed after the initial roster and whenever the model
 // changes (re-evaluating capability-gated commands like /effort, /thinking).
 type Commands struct {
-	ConversationID string         `json:"conversationId"`
-	Commands       []CommandInfo  `json:"commands"`
+	ConversationID string        `json:"conversationId"`
+	Commands       []CommandInfo `json:"commands"`
 }
 
 func (Commands) Type() string { return TypeCommands }

@@ -104,6 +104,19 @@ type SubagentEnd struct {
 	RunIndex int
 }
 
+// SubagentPrompt carries a SendMessage follow-up sent to a subagent that is
+// STILL RUNNING (#1419) — distinct from SubagentStart.Prompt (the instruction
+// for a NEW run) because no new run begins here: CC never refires task_started
+// for a message sent to an already-active subagent, so there is no start event to
+// carry it. GroupKey + RunIndex identify the ALREADY-OPEN run this attaches to
+// (same values as its SubagentStart/Text), so a client renders it as another
+// "asked" block within that run rather than opening a new chit.
+type SubagentPrompt struct {
+	GroupKey string
+	Prompt   string
+	RunIndex int
+}
+
 // ThinkingDelta carries a streaming fragment of extended-thinking output.
 type ThinkingDelta struct {
 	Delta string
@@ -158,20 +171,21 @@ type TurnComplete struct {
 	Err       error
 }
 
-func (TurnStart) turnEvent()     {}
-func (TextDelta) turnEvent()     {}
-func (TextBlock) turnEvent()     {}
-func (SubagentStart) turnEvent() {}
-func (SubagentText) turnEvent()  {}
-func (SubagentEnd) turnEvent()   {}
-func (ThinkingDelta) turnEvent() {}
-func (ThinkingBlock) turnEvent() {}
-func (ToolCall) turnEvent()      {}
-func (ToolResult) turnEvent()    {}
-func (RetryNotice) turnEvent()   {}
-func (RetrySuccess) turnEvent()  {}
-func (Activity) turnEvent()      {}
-func (TurnComplete) turnEvent()  {}
+func (TurnStart) turnEvent()      {}
+func (TextDelta) turnEvent()      {}
+func (TextBlock) turnEvent()      {}
+func (SubagentStart) turnEvent()  {}
+func (SubagentText) turnEvent()   {}
+func (SubagentEnd) turnEvent()    {}
+func (SubagentPrompt) turnEvent() {}
+func (ThinkingDelta) turnEvent()  {}
+func (ThinkingBlock) turnEvent()  {}
+func (ToolCall) turnEvent()       {}
+func (ToolResult) turnEvent()     {}
+func (RetryNotice) turnEvent()    {}
+func (RetrySuccess) turnEvent()   {}
+func (Activity) turnEvent()       {}
+func (TurnComplete) turnEvent()   {}
 
 // Sink receives events during a turn. One sink per turn; sinks are constructed
 // fresh in each caller and attached to the turn context via WithSink.

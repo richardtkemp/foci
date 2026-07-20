@@ -93,7 +93,8 @@ func (b *telegramBackend) DeliverSubagentText(groupKey, text string, _ int) {
 // blockquoted-with-header presentation.
 func (b *telegramBackend) DeliverSubagentStart(string, string, int, string) {}
 func (b *telegramBackend) DeliverSubagentEnd(string, int)                   {}
-func (b *telegramBackend) SubagentTextRaw() bool               { return false }
+func (b *telegramBackend) DeliverSubagentPrompt(string, string, int)        {}
+func (b *telegramBackend) SubagentTextRaw() bool                            { return false }
 
 // stripSubagentButton removes the inline keyboard from a prior subagent message
 // so only the newest message carries the rolling Hide button.

@@ -652,14 +652,15 @@ type StartOptions struct {
 // consumers can correlate OnToolEnd with the originating OnToolStart
 // without having to match by name or rely on ordering.
 type SessionEvents struct {
-	OnText          func(text string)                           // complete text block from the agent
-	OnSubagentStart func(groupKey, label, prompt string, runIndex int) // a subagent RUN began; runIndex 1 = initial Agent spawn, 2+ = SendMessage reactivation; prompt = the main agent's instruction for this run (#1355)
-	OnSubagentText  func(groupKey, text string, runIndex int)          // raw text block from a subagent (Task tool); groupKey = parent tool_use id (STABLE across reactivations); runIndex = which run it belongs to (#1355)
-	OnSubagentEnd   func(groupKey string, runIndex int)                // a subagent RUN (groupKey, runIndex) completed (one task_notification:completed)
-	OnTextDelta     func(delta string)                          // streaming text delta (content_block_delta)
-	OnThinkingDelta func(delta string)                          // streaming thinking delta (content_block_delta)
-	OnToolStart     func(id, name, input string)                // tool execution began
-	OnToolEnd       func(id, name, output string, isError bool) // tool execution finished
+	OnText           func(text string)                                  // complete text block from the agent
+	OnSubagentStart  func(groupKey, label, prompt string, runIndex int) // a subagent RUN began; runIndex 1 = initial Agent spawn, 2+ = SendMessage reactivation; prompt = the main agent's instruction for this run (#1355)
+	OnSubagentText   func(groupKey, text string, runIndex int)          // raw text block from a subagent (Task tool); groupKey = parent tool_use id (STABLE across reactivations); runIndex = which run it belongs to (#1355)
+	OnSubagentEnd    func(groupKey string, runIndex int)                // a subagent RUN (groupKey, runIndex) completed (one task_notification:completed)
+	OnSubagentPrompt func(groupKey, prompt string, runIndex int)        // a SendMessage follow-up sent to an ALREADY-RUNNING subagent (#1419); no new run/chit — attaches to the CURRENT run
+	OnTextDelta      func(delta string)                                 // streaming text delta (content_block_delta)
+	OnThinkingDelta  func(delta string)                                 // streaming thinking delta (content_block_delta)
+	OnToolStart      func(id, name, input string)                       // tool execution began
+	OnToolEnd        func(id, name, output string, isError bool)        // tool execution finished
 }
 
 // TurnEvents are the per-turn bookkeeping callbacks. Set when a turn begins

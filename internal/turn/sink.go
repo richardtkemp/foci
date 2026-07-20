@@ -116,6 +116,10 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 	case turnevent.SubagentEnd:
 		s.renderer.OnSubagentEnd(e.GroupKey, e.RunIndex)
 
+	case turnevent.SubagentPrompt:
+		// Ancillary, like SubagentText — do NOT set s.delivered.
+		s.renderer.OnSubagentPrompt(e.GroupKey, e.Prompt, e.RunIndex)
+
 	case turnevent.ThinkingDelta:
 		s.renderer.OnThinkingDelta(e.Delta)
 
@@ -245,6 +249,12 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 	case turnevent.SubagentEnd:
 		if sd, ok := s.conn.(SessionSubagentDeliverer); ok {
 			sd.DeliverSubagentEndToSession(s.sessionKey, e.GroupKey, e.RunIndex)
+		}
+	case turnevent.SubagentPrompt:
+		// App-only, like the run's initial prompt (SubagentStart) — no
+		// plain-text fallback for connections without per-run UI (#1419).
+		if sd, ok := s.conn.(SessionSubagentDeliverer); ok {
+			sd.DeliverSubagentPromptToSession(s.sessionKey, e.GroupKey, e.Prompt, e.RunIndex)
 		}
 	case turnevent.SubagentText:
 		// Do not set delivered — subagent progress must not suppress the final reply.

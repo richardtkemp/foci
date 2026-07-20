@@ -63,6 +63,11 @@ type SubagentDeliverer interface {
 	// letting the platform finalize that run's UI (e.g. flip a collapsed entry to
 	// "completed").
 	DeliverSubagentEnd(groupKey string, runIndex int)
+	// DeliverSubagentPrompt delivers a SendMessage follow-up sent to a subagent
+	// that is STILL RUNNING (#1419) — attaches to the ALREADY-OPEN run (groupKey,
+	// runIndex), not a new one. Platforms without a per-run "asked" concept can
+	// no-op this (e.g. render it via DeliverSubagentText instead).
+	DeliverSubagentPrompt(groupKey, prompt string, runIndex int)
 	// SubagentTextRaw reports whether this platform wants subagent text raw (the
 	// app, which renders traces in an expandable view) rather than blockquoted
 	// (telegram, whose inline messages read as blockquotes).
@@ -79,6 +84,7 @@ type SessionSubagentDeliverer interface {
 	DeliverSubagentStartToSession(sessionKey, groupKey, label string, runIndex int, prompt string)
 	DeliverSubagentTextToSession(sessionKey, groupKey, text string, runIndex int)
 	DeliverSubagentEndToSession(sessionKey, groupKey string, runIndex int)
+	DeliverSubagentPromptToSession(sessionKey, groupKey, prompt string, runIndex int)
 }
 
 // StreamSink is the live streaming handle returned by OpenStream. It is

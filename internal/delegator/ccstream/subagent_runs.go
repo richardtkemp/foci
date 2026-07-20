@@ -15,6 +15,17 @@ package ccstream
 // every run's text under stays the ORIGINAL Agent `tool_use_id` — which is also what
 // the subagent's text keeps as its `parent_tool_use_id` across resumes, so all runs
 // share one continuous view.
+//
+// #1419 adds a second SendMessage case #1355 didn't cover: messaging a subagent
+// that is STILL RUNNING (task_started seen, no task_notification:completed yet).
+// Live probing (verify-cc-stream-hooks skill, 2026-07-20) showed CC never refires
+// task_started for this case — the message is folded into the live run with no
+// stream signal at all — so the #1355 stash-for-the-next-task_started mechanism
+// never fires and the follow-up is silently dropped. The `active` flag distinguishes
+// the two cases: SendMessage to an ACTIVE run surfaces immediately via
+// OnSubagentPrompt at the run's CURRENT index (no new chit, no new run); SendMessage
+// to an inactive (ended) run keeps stashing for the eventual reactivation's
+// task_started, as before.
 
 // subagentRun is the per-subagent (per task_id) reactivation state.
 type subagentRun struct {
@@ -22,6 +33,7 @@ type subagentRun struct {
 	label         string // agent description, reused for every run's chit
 	runIndex      int    // 1 for the initial spawn, bumped on each reactivation
 	pendingPrompt string // next reactivation's prompt (from a SendMessage block), consumed at the resumed task_started
+	active        bool   // true from task_started until this run's task_notification:completed (#1419)
 }
 
 // setAgentLabel stashes an Agent block's description by its tool_use_id (= groupKey)
@@ -71,26 +83,53 @@ func (b *Backend) onTaskStarted(taskID, toolUseID string) (run *subagentRun, rea
 	}
 	if existing := b.subagentRuns[taskID]; existing != nil {
 		existing.runIndex++
+		existing.active = true
 		prompt = existing.pendingPrompt
 		existing.pendingPrompt = ""
 		return existing, true, prompt
 	}
 	// First sighting: the tool_use_id on this first task_started IS the Agent
 	// tool_use_id (the stable groupKey). Bind and reuse the stashed label.
-	nr := &subagentRun{groupKey: toolUseID, label: b.agentLabels[toolUseID], runIndex: 1}
+	nr := &subagentRun{groupKey: toolUseID, label: b.agentLabels[toolUseID], runIndex: 1, active: true}
 	b.subagentRuns[taskID] = nr
 	return nr, false, ""
 }
 
-// runForTask returns the run state for a task_id (for a task_notification's end),
-// or nil if untracked (task_started was missed).
-func (b *Backend) runForTask(taskID string) *subagentRun {
+// endRunForTask looks up the run state for a task_id at its task_notification:
+// completed and marks it inactive, so a LATER SendMessage to the same task_id
+// (before any reactivation) correctly stashes for the eventual resume (#1355)
+// instead of trying to surface immediately as if the run were still live (#1419).
+// Returns nil if untracked (task_started was missed).
+func (b *Backend) endRunForTask(taskID string) *subagentRun {
 	if taskID == "" {
 		return nil
 	}
 	b.subagentRunsMu.Lock()
 	defer b.subagentRunsMu.Unlock()
-	return b.subagentRuns[taskID]
+	run := b.subagentRuns[taskID]
+	if run != nil {
+		run.active = false
+	}
+	return run
+}
+
+// activeRunForTask returns the run state for a task_id and whether it is
+// currently ACTIVE (task_started seen, matching task_notification:completed not
+// yet seen) — the signal a SendMessage block uses to decide whether its message
+// can be surfaced immediately (still running, #1419) or must be stashed for the
+// eventual reactivation (already ended, #1355). Returns (nil, false) if
+// untracked (the SendMessage target isn't a subagent we've seen task_started for).
+func (b *Backend) activeRunForTask(taskID string) (run *subagentRun, active bool) {
+	if taskID == "" {
+		return nil, false
+	}
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	run = b.subagentRuns[taskID]
+	if run == nil {
+		return nil, false
+	}
+	return run, run.active
 }
 
 // runIndexForGroup returns the current run index for a subagent identified by its
