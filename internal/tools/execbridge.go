@@ -503,6 +503,13 @@ func generateHelpText(t *Tool) string {
 var todoActionAliases = map[string]string{
 	"create": "add",
 	"update": "edit",
+	// #1427: the user-facing /todo command accepts "show" (aliases: info,
+	// detail) and, for a bare id, renders identical full-detail output to
+	// its "get" subcommand — but the foci_todo shell tool only recognized
+	// "get", so `foci_todo show <id>` rejected with "unknown action: show"
+	// while `foci_todo get <id>` worked. Alias it here so both surfaces
+	// agree.
+	"show": "get",
 }
 
 // resolveTodoAction returns the canonical action for an input action,
@@ -556,7 +563,7 @@ var todoActions = []struct {
 	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --status --priority --sort --reverse --limit"},
 	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --priority --sort --reverse --limit"},
 	{"search", "search <query> [--sort F] [--reverse] [--limit N]", "--sort --reverse --limit"},
-	{"get", "get <id>", ""},
+	{"get", "get <id>   (alias: show)", ""},
 	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"edit", "edit <id> [--text TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T]   (alias: update; or --id N / --ids 1,2,3)", "--id --ids --text --append --append-text --add --note --notes --priority --tag"},
