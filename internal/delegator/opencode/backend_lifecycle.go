@@ -63,16 +63,10 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.workDir = opts.WorkDir
 	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
 
-	// Ensure the foci plugins exist BEFORE acquiring the server. opencode
-	// loads plugins at subprocess startup; if we write them after
-	// acquireServer starts the subprocess, they won't be loaded until the
-	// next server restart. Both are idempotent so they're cheap on every Start.
-	//   - session-env: per-session FOCI_SOCK/BASH_ENV routing (shell.env hook)
-	//   - blank-system: suppresses opencode's default system prompt so only
-	//     foci's prompt (POST "system" field) reaches the model
-	EnsureSessionEnvPlugin(opts.WorkDir)
-	EnsureBlankSystemPlugin(opts.WorkDir)
-
+	// The foci workspace plugins (session-env routing, blank-system) are
+	// materialised inside acquireServer, right before it spawns the subprocess
+	// — the single spawn chokepoint, so batch and interactive spawns are wired
+	// identically. See acquireServer in opencode.go.
 	if b.server == nil {
 		srv, err := acquireServer(opts.AgentID, b.serverConfigFromOpts(opts), opts.Env)
 		if err != nil {
