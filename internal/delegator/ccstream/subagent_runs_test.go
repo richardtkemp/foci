@@ -2,8 +2,132 @@ package ccstream
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+// writeSubagentMeta writes a CC subagent meta.json (the task_id -> original Agent
+// tool_use id + description bridge CC persists on disk) at the exact path
+// b.loadSubagentMeta reads from, so a test can exercise post-restart rehydration
+// (#1433) hermetically. HOME must already be pointed at a temp dir by the caller.
+func writeSubagentMeta(t *testing.T, home, workDir, sessionID, taskID, toolUseID, description string) {
+	t.Helper()
+	dir := filepath.Join(home, ccProjectsDir, projectSlug(workDir), sessionID, "subagents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir subagents dir: %v", err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"agentType": "general-purpose", "description": description,
+		"toolUseId": toolUseID, "spawnDepth": 1,
+	})
+	if err := os.WriteFile(filepath.Join(dir, "agent-"+taskID+".meta.json"), body, 0o644); err != nil {
+		t.Fatalf("write meta.json: %v", err)
+	}
+}
+
+// TestSubagentPostRestartFollowUpRehydratesIdentity is the RED->GREEN regression
+// for #1433. The live bug: foci's subagent run maps are IN-MEMORY only and do not
+// survive a foci restart; CC's `--resume` keeps the SAME session uuid but does NOT
+// re-stream the historical Agent tool_use block (both verified live via the
+// verify-cc-stream-hooks restart probe, 2026-07-20), so agentLabels is empty after
+// a restart. A SendMessage FOLLOW-UP to a pre-restart subagent then arrives as a
+// task_started whose tool_use id is the SendMessage id (task_id stable). Before the
+// fix, onTaskStarted misclassifies this as a fresh first-sighting: groupKey = the
+// SendMessage id, label = agentLabels[SendMessage id] = "" -> the #1425 fallback
+// emits a BLANK SubagentStart under the wrong group key (the blank chit users saw).
+//
+// The fix recovers the subagent's real identity from CC's persisted
+// agent-<task_id>.meta.json ({toolUseId == original Agent id == stable groupKey,
+// description == label}), so the follow-up is treated as a REACTIVATION under the
+// ORIGINAL group key — which is also what the resumed subagent's text keeps as its
+// parent_tool_use_id post-restart (verified live), so it collapses into the
+// original chit instead of opening a blank new one.
+func TestSubagentPostRestartFollowUpRehydratesIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	const (
+		workDir      = "/work/dir"
+		sessionID    = "11111111-2222-3333-4444-555555555555"
+		taskID       = "a_restart_task"           // stable subagent identity
+		origGroupKey = "toolu_orig_agent"          // the pre-restart Agent tool_use id (in meta.json)
+		sendMsgID    = "toolu_send_after_restart"  // the follow-up SendMessage's tool_use id
+		label        = "Explore the codebase"      // meta.json description
+		followUp     = "now also check the config" // the SendMessage body
+	)
+	// CC's on-disk bridge, written during the PRE-restart session.
+	writeSubagentMeta(t, home, workDir, sessionID, taskID, origGroupKey, label)
+
+	// A FRESH backend, exactly as after a foci restart: empty maps, no memory of
+	// the Agent spawn. sessionID/workDir are what --resume reconnects with.
+	b := &Backend{workDir: workDir, sessionID: sessionID}
+	type start struct {
+		group, label, prompt string
+		run                  int
+	}
+	type end struct {
+		group string
+		run   int
+	}
+	var starts []start
+	var ends []end
+	applyHandler(b, &testHandler{
+		OnSubagentStart: func(g, l, p string, r int) { starts = append(starts, start{g, l, p, r}) },
+		OnSubagentEnd:   func(g string, r int) { ends = append(ends, end{g, r}) },
+	})
+
+	// Post-restart follow-up: SendMessage to the pre-restart subagent (by task_id),
+	// then the resumed task_started carrying the SendMessage's tool_use id.
+	mkTool := func(id, name, input string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
+		}}
+	}
+	sys := func(subtype string, ev TaskEvent) {
+		ev.Subtype = subtype
+		raw, _ := json.Marshal(ev)
+		b.OnSystem(subtype, raw)
+	}
+
+	b.OnAssistant(mkTool(sendMsgID, "SendMessage",
+		`{"to":"`+taskID+`","message":"`+followUp+`"}`))
+	sys("task_started", TaskEvent{TaskID: taskID, ToolUseID: sendMsgID})
+
+	// Exactly one start, under the ORIGINAL group key, with the real label + the
+	// follow-up prompt — NEVER a blank chit under the SendMessage id.
+	if len(starts) != 1 {
+		t.Fatalf("post-restart follow-up starts = %+v, want exactly 1", starts)
+	}
+	got := starts[0]
+	if got.group == sendMsgID {
+		t.Fatalf("start emitted under the SendMessage id %q (blank-chit bug) — want the original group key %q", sendMsgID, origGroupKey)
+	}
+	if got.group != origGroupKey {
+		t.Fatalf("start group = %q, want original group key %q", got.group, origGroupKey)
+	}
+	if got.label != label {
+		t.Fatalf("start label = %q, want %q (blank label is the #1433 bug)", got.label, label)
+	}
+	if got.prompt != followUp {
+		t.Fatalf("start prompt = %q, want the follow-up message %q", got.prompt, followUp)
+	}
+
+	// The resumed subagent's text keeps the ORIGINAL Agent parent_tool_use_id
+	// post-restart (verified live) — it must map to the rehydrated run, not read as
+	// the untracked default.
+	if idx := b.runIndexForGroup(origGroupKey); idx != got.run {
+		t.Errorf("runIndexForGroup(%q) = %d, want %d (the reactivated run index)", origGroupKey, idx, got.run)
+	}
+
+	// The run's end (task_notification carries the SendMessage tool_use id) must map
+	// back to the original group key via the stable task_id — not close a phantom
+	// group under the SendMessage id.
+	sys("task_notification", TaskEvent{TaskID: taskID, ToolUseID: sendMsgID, Status: "completed"})
+	if len(ends) != 1 || ends[0].group != origGroupKey {
+		t.Fatalf("post-restart run end = %+v, want group %q", ends, origGroupKey)
+	}
+}
 
 // TestSubagentReactivation drives the full #1355 lifecycle through the real stream
 // entry points and pins the fix: a SendMessage-resumed subagent re-opens the
