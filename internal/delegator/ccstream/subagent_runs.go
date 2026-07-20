@@ -95,17 +95,53 @@ func (b *Backend) markSubagentStarted(groupKey string) (alreadyStarted bool) {
 
 // stashResumePrompt records the message a SendMessage block sent to a subagent
 // (keyed by its task_id == the SendMessage `to`), to be surfaced as the prompt on
-// the reactivation's SubagentStart. No-op if we've never seen that task_id (the
-// SendMessage targeted something we aren't tracking).
+// the reactivation's SubagentStart. When the task_id isn't tracked in memory it
+// tries to rehydrate the run from CC's on-disk meta.json first — the #1433
+// post-restart case, where a SendMessage follow-up targets a subagent this backend
+// never saw spawn. Still a no-op if rehydration also fails (the SendMessage
+// targeted something that isn't a subagent we can identify).
 func (b *Backend) stashResumePrompt(taskID, prompt string) {
 	if taskID == "" {
 		return
 	}
 	b.subagentRunsMu.Lock()
 	defer b.subagentRunsMu.Unlock()
-	if run := b.subagentRuns[taskID]; run != nil {
+	run := b.subagentRuns[taskID]
+	if run == nil {
+		run = b.rehydrateRunLocked(taskID)
+	}
+	if run != nil {
 		run.pendingPrompt = prompt
 	}
+}
+
+// rehydrateRunLocked reconstructs a subagentRun for taskID from CC's persisted
+// agent-<taskID>.meta.json when this backend has no in-memory record of it — the
+// #1433 post-restart recovery. foci's run maps are in-memory only and CC's
+// `--resume` does not re-stream the historical Agent tool_use block, so after a
+// restart the ONLY source of a pre-restart subagent's original group key (the Agent
+// tool_use id) + label is the on-disk meta sidecar (verified live 2026-07-20). The
+// rebuilt run is inserted inactive at runIndex 1; the caller (a task_started or a
+// SendMessage stash) advances it. Also back-fills agentLabels so any later lookup
+// under the recovered group key is consistent. Returns nil when the sidecar is
+// absent/unreadable (not a subagent we can identify — the caller must NOT open a
+// blank chit). Caller must hold subagentRunsMu.
+func (b *Backend) rehydrateRunLocked(taskID string) *subagentRun {
+	groupKey, label, ok := b.loadSubagentMeta(taskID)
+	if !ok {
+		return nil
+	}
+	if b.subagentRuns == nil {
+		b.subagentRuns = map[string]*subagentRun{}
+	}
+	run := &subagentRun{groupKey: groupKey, label: label, runIndex: 1, active: false}
+	b.subagentRuns[taskID] = run
+	if b.agentLabels == nil {
+		b.agentLabels = map[string]string{}
+	}
+	b.agentLabels[groupKey] = label
+	b.logger().Infof("subagent_rehydrate task_id=%s group=%s label=%q (from on-disk meta.json, post-restart)", taskID, groupKey, label)
+	return run
 }
 
 // onTaskStarted binds or advances a subagent's run state at a task_started event.
@@ -120,6 +156,15 @@ func (b *Backend) stashResumePrompt(taskID, prompt string) {
 // the caller re-Adds to the tracker and emits a fresh SubagentStart for the new run
 // (no hook exists for SendMessage, so this path is unconditional, unguarded by
 // markSubagentStarted).
+//
+// #1433: a task_started whose task_id is untracked in memory is only a genuine fresh
+// Agent spawn when its tool_use_id was stashed live off an Agent tool_use block this
+// session (agentLabels has it). Otherwise it is a SendMessage/resume id whose Agent
+// spawn this backend never saw — the post-restart follow-up case — and binding
+// groupKey = that resume id yields a BLANK chit (label empty). Such a task_started is
+// instead rehydrated from CC's on-disk meta.json into a REACTIVATION under the
+// original group key; if it can't be identified at all, NO start is emitted (a blank
+// start is worse than none).
 func (b *Backend) onTaskStarted(taskID, toolUseID string) (run *subagentRun, reactivated bool, prompt string) {
 	if taskID == "" {
 		return nil, false, ""
@@ -129,19 +174,35 @@ func (b *Backend) onTaskStarted(taskID, toolUseID string) (run *subagentRun, rea
 	if b.subagentRuns == nil {
 		b.subagentRuns = map[string]*subagentRun{}
 	}
-	if existing := b.subagentRuns[taskID]; existing != nil {
-		existing.runIndex++
-		existing.active = true
-		prompt = existing.pendingPrompt
-		existing.pendingPrompt = ""
-		return existing, true, prompt
+	existing := b.subagentRuns[taskID]
+	if existing == nil {
+		if _, known := b.agentLabels[toolUseID]; known {
+			// Genuine fresh Agent spawn: the Agent tool_use block streamed live this
+			// session (OnAssistant stashed its label + prompt under toolUseID, which
+			// IS the Agent tool_use id == the stable groupKey). Bind run 1 and return
+			// it as a first-sighting so the caller emits the #1425 fallback start
+			// (guarded by markSubagentStarted) with the stashed content.
+			nr := &subagentRun{groupKey: toolUseID, label: b.agentLabels[toolUseID], runIndex: 1, active: true}
+			b.subagentRuns[taskID] = nr
+			return nr, false, b.agentPrompts[toolUseID]
+		}
+		// Not a fresh spawn (toolUseID is a SendMessage/resume id with no live stash):
+		// the #1433 post-restart follow-up. Recover the subagent's real identity from
+		// disk so it reactivates under the ORIGINAL group key instead of opening a
+		// blank chit. Nil => unidentifiable => caller emits nothing.
+		existing = b.rehydrateRunLocked(taskID)
+		if existing == nil {
+			return nil, false, ""
+		}
 	}
-	// First sighting: the tool_use_id on this first task_started IS the Agent
-	// tool_use_id (the stable groupKey). Bind and reuse the stashed label +
-	// launch prompt (the fallback-start content, #1425).
-	nr := &subagentRun{groupKey: toolUseID, label: b.agentLabels[toolUseID], runIndex: 1, active: true}
-	b.subagentRuns[taskID] = nr
-	return nr, false, b.agentPrompts[toolUseID]
+	// Reactivation: an in-session resume of a tracked run, or a just-rehydrated
+	// post-restart run. Bump the run index, mark active, hand back the pending
+	// resume prompt.
+	existing.runIndex++
+	existing.active = true
+	prompt = existing.pendingPrompt
+	existing.pendingPrompt = ""
+	return existing, true, prompt
 }
 
 // endRunForTask looks up the run state for a task_id at its task_notification:

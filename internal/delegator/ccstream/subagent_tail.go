@@ -17,6 +17,19 @@ import (
 //   ~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
 // Returns "" if the session id isn't known yet or the home dir can't be found.
 func (b *Backend) subagentTranscriptPath(agentID string) string {
+	return b.subagentFilePath(agentID, ".jsonl")
+}
+
+// subagentFilePath returns the path of a per-subagent file CC writes under
+//
+//	~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id><suffix>
+//
+// for a given suffix (".jsonl" for the transcript, ".meta.json" for the metadata
+// sidecar). Returns "" if the session id isn't known yet or the home dir can't be
+// found. The parent session uuid is STABLE across a `claude --resume` (verified
+// live 2026-07-20), so this same path resolves the pre-restart subagent files
+// after a foci restart — the basis for identity rehydration (#1433).
+func (b *Backend) subagentFilePath(agentID, suffix string) string {
 	if agentID == "" {
 		return ""
 	}
@@ -31,7 +44,39 @@ func (b *Backend) subagentTranscriptPath(agentID string) string {
 		return ""
 	}
 	return filepath.Join(home, ccProjectsDir, projectSlug(b.workDir), sessionID,
-		"subagents", "agent-"+agentID+".jsonl")
+		"subagents", "agent-"+agentID+suffix)
+}
+
+// subagentMeta is the subset of CC's agent-<task_id>.meta.json sidecar foci reads:
+// the bridge from a subagent's stable task_id (the filename) to the ORIGINAL Agent
+// tool_use id (== the run's group key) and its description (== the chit label). CC
+// writes this next to the subagent transcript when the Agent tool spawns the
+// subagent, and it persists across a restart.
+type subagentMeta struct {
+	Description string `json:"description"`
+	ToolUseID   string `json:"toolUseId"`
+}
+
+// loadSubagentMeta reads the task_id -> {groupKey, label} bridge from CC's on-disk
+// agent-<taskID>.meta.json so subagent identity survives a foci restart (#1433):
+// after a restart the Agent tool_use block is never re-streamed, so this file is
+// the only source of a resumed subagent's original group key + label. Returns
+// ok=false when the sidecar is absent/unreadable or carries no tool_use id (so the
+// caller can fall through to "not a subagent we can identify").
+func (b *Backend) loadSubagentMeta(taskID string) (groupKey, label string, ok bool) {
+	path := b.subagentFilePath(taskID, ".meta.json")
+	if path == "" {
+		return "", "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", false
+	}
+	var m subagentMeta
+	if json.Unmarshal(data, &m) != nil || m.ToolUseID == "" {
+		return "", "", false
+	}
+	return m.ToolUseID, m.Description, true
 }
 
 // Foreground subagents (Task/Agent tool run synchronously) do NOT stream their
