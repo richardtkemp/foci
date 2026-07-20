@@ -68,12 +68,15 @@ func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Se
 	serverPoolMu.Lock()
 	// Defensive: if a concurrent acquire for the same agent raced ahead
 	// and inserted a Server while we were starting this one, prefer the
-	// existing one and close ours. DelegatedManager serialises per-agent
-	// so this is unreachable in production; the check is cheap insurance.
+	// existing one and close ours. DelegatedManager's createGroup only
+	// serialises per sessionKey (not per agentID), and RunOnce/RunBatch
+	// bypass that serialization entirely — so two sessions on the same
+	// agent (or a batch run racing an interactive Start) CAN both reach
+	// here concurrently in production; this is not just cheap insurance.
 	if existing, ok := serverPool[agentID]; ok {
+		existing.refCount++ // must happen under serverPoolMu like every other refCount mutation
 		serverPoolMu.Unlock()
 		go func() { _ = s.Close() }() // bounded shutdown, doesn't block the caller
-		existing.refCount++
 		return existing, nil
 	}
 	serverPool[agentID] = s
