@@ -82,6 +82,7 @@ func (b *Bot) toPlatformMessage(msg *gotgbot.Message, qm queuedMessage) platform
 		IsMention:   isMention,
 		Original:    msg,
 		ReceivedAt:  time.Unix(int64(msg.Date), 0),
+		Voice:       qm.voice,
 	}
 }
 
@@ -166,6 +167,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	}
 
 	// Handle voice notes: download, transcribe, tag with [voice]
+	isVoice := false
 	if msg.Voice != nil && b.transcriber != nil {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
 			b.logger().Errorf("download voice: %s", b.sanitizeError(err))
@@ -181,6 +183,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 			}
 			b.logger().Infof("voice transcription from %s: %s", formatUserInfo(msg.From), truncate(transcript, 100))
 			text = "[voice] " + transcript
+			isVoice = true
 		}
 	} else if msg.Voice != nil && b.transcriber == nil {
 		b.sendReply(msg, "Voice notes require an STT provider. Set groq.api_key in secrets.toml or configure [voice] stt_endpoint.")
@@ -259,7 +262,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 		b.logger().Debugf("message from %s", formatUserInfo(msg.From))
 	}
 
-	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments}, true
+	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments, voice: isVoice}, true
 }
 
 // tryIntercept handles local consumption of a message: wizard intercept,

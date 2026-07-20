@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -114,5 +116,64 @@ func TestReceiveMessage_VoiceWithoutTranscriber(t *testing.T) {
 	}
 	if !strings.Contains(mock.lastSendInjected, "Voice notes require") {
 		t.Errorf("reply text = %q, want it to mention 'Voice notes require'", mock.lastSendInjected)
+	}
+}
+
+// fakeVoiceSTT transcribes every request to a fixed string, for tests that
+// need a successful (non-empty) transcript rather than the inert fakeSTT{}.
+type fakeVoiceSTT struct{ text string }
+
+func (f fakeVoiceSTT) Transcribe(_ context.Context, _ []byte, _ string) (string, error) {
+	return f.text, nil
+}
+
+// A voice note that is actually transcribed must mark the queued message
+// (and downstream platform.QueuedMessage) Voice=true, so the turn's trigger
+// reads "voice" instead of the transport's default "telegram" (#1436).
+func TestBuildReceivedMessage_TranscribedVoiceTaggedVoice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("audio-bytes"))
+	}))
+	defer srv.Close()
+
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.apiBase = srv.URL
+	b.botToken = "tok"
+	mock := b.client.(*mockClient)
+	mock.files = map[string]string{"voice_id": "voice/note.ogg"}
+	b.transcriber = fakeVoiceSTT{text: "hello from voice"}
+
+	msg := makeMsgWithVoice(111, "owner")
+	qm, ok := b.buildReceivedMessage(context.Background(), msg)
+	if !ok {
+		t.Fatal("transcribed voice message should not be dropped")
+	}
+	if !qm.voice {
+		t.Error("qm.voice = false, want true (a voice note was transcribed)")
+	}
+	if !strings.Contains(qm.text, "hello from voice") {
+		t.Errorf("qm.text = %q, want the transcript", qm.text)
+	}
+
+	pm := b.toPlatformMessage(msg, qm)
+	if !pm.Voice {
+		t.Error("platform.QueuedMessage.Voice = false, want true — propagated from qm.voice")
+	}
+}
+
+// A typed (non-voice) message must not be tagged Voice — the normal case
+// stays via=telegram.
+func TestBuildReceivedMessage_TypedTextNotTaggedVoice(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	msg := makeMsg(111, "owner", "hello")
+	qm, ok := b.buildReceivedMessage(context.Background(), msg)
+	if !ok {
+		t.Fatal("message dropped")
+	}
+	if qm.voice {
+		t.Error("qm.voice = true for a typed message, want false")
+	}
+	if b.toPlatformMessage(msg, qm).Voice {
+		t.Error("platform.QueuedMessage.Voice = true for a typed message, want false")
 	}
 }

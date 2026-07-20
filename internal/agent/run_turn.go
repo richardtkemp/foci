@@ -95,13 +95,18 @@ func (a *Agent) RunTurn(
 	}
 
 	// Per-turn metadata. Trigger names the platform; downstream consumers
-	// (logging, conversation DB) discriminate by it.
+	// (logging, conversation DB) discriminate by it. platformName also gates
+	// the app ask-capture carve-out below, so it must stay the real transport
+	// — the trigger used for [meta] via=, however, is overridden to "voice"
+	// when any envelope in the batch was produced by transcribing a voice
+	// attachment (#1436), regardless of which platform it arrived over.
 	platformName := ""
 	if conn := driver.Connection(); conn != nil {
 		platformName = conn.PlatformName()
 	}
-	if platformName != "" {
-		ctx = WithTrigger(ctx, platformName)
+	trigger := batchTrigger(platformName, batch)
+	if trigger != "" {
+		ctx = WithTrigger(ctx, trigger)
 	}
 	ctx = WithTurnMetadata(ctx, &TurnMetadata{
 		UserID:   first.UserID,
@@ -161,4 +166,19 @@ func (a *Agent) RunTurn(
 	}
 
 	return turn.RunTurn(ctx, a, dispatchSink, steerer, sk, texts, allAttachments)
+}
+
+// batchTrigger derives the turn's trigger label from the batch. Normally this
+// is just the originating platform (platformName), but a turn is tagged
+// "voice" instead whenever any envelope in the batch carries transcribed
+// voice content (Envelope.Voice) — regardless of which transport delivered
+// it. A batch mixing a voice-transcribed envelope with typed ones still
+// counts as voice (#1436).
+func batchTrigger(platformName string, batch []Envelope) string {
+	for _, env := range batch {
+		if env.Voice {
+			return "voice"
+		}
+	}
+	return platformName
 }
