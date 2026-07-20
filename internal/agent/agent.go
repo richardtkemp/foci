@@ -35,40 +35,40 @@ var (
 // user never sees it (and the platform treats it as an empty response).
 const NoResponseSentinel = "[[NO_RESPONSE]]"
 
-// nudgeHeader prefixes automatic nudge messages so the agent understands
+// nudgePreamble prefixes automatic nudge messages so the agent understands
 // their origin and treats them as background guidance, not user input.
-const nudgeHeader = "[Background nudge — a private note to yourself, not from the user. Apply it only if it genuinely fits what you're already doing; if it doesn't, ignore it and don't bend your reply to accommodate it. Don't refer to the nudge directly in what you send.]\n"
+const nudgePreamble = "[Background nudge — a private note to yourself, not from the user. Apply it only if it genuinely fits what you're already doing; if it doesn't, ignore it and don't bend your reply to accommodate it. Don't refer to the nudge directly in what you send.]\n"
 
-// nudgeFooter is appended to every nudge so the agent has explicit guidance
+// nudgeReplyInstruction is appended to every nudge so the agent has explicit guidance
 // on when to stay silent vs reply. If the nudge calls for an action or the
 // agent has other pending work, it should respond; otherwise it emits
 // NoResponseSentinel so the platform delivers nothing.
-const nudgeFooter = "\n\nReply only if the nudge warrants it — if it calls for action or you have other pending work, send that reply; otherwise respond with `" + NoResponseSentinel + "` and nothing else."
+const nudgeReplyInstruction = "\n\nReply only if the nudge warrants it — if it calls for action or you have other pending work, send that reply; otherwise respond with `" + NoResponseSentinel + "` and nothing else."
 
-// nudgeEndMarker closes the nudge region when one or more nudges are
+// nudgeUserBoundary closes the nudge region when one or more nudges are
 // bundled with a real user message in the same turn. It lets the agent
 // see exactly where the background nudge ends and the user's text begins.
 // Emitted once, after the last nudge, at the bundling join point — never
 // per-nudge, and never on the standalone mid-loop paths (after-tools,
 // pre-answer) where there is no following user text.
-const nudgeEndMarker = "[End of background nudge — the user's message follows below.]"
+const nudgeUserBoundary = "[End of background nudge — the user's message follows below.]"
 
-// wrapNudge composes a full nudge message: header + reminder body + footer.
+// wrapStandaloneNudge composes a full nudge message: header + reminder body + footer.
 // Used by the standalone mid-loop delivery paths (after-tools, pre-answer)
 // where the nudge is its own injected user message and the NO_RESPONSE
 // footer is the correct silence-vs-reply guidance.
-func wrapNudge(reminder string) string {
-	return nudgeHeader + reminder + nudgeFooter
+func wrapStandaloneNudge(reminder string) string {
+	return nudgePreamble + reminder + nudgeReplyInstruction
 }
 
 // wrapBundledNudge wraps a nudge that is prepended to a real user message
 // in the same turn (the start-of-turn interval/regex injection path). It
-// omits nudgeFooter because a reply to the user is always required on that
+// omits nudgeReplyInstruction because a reply to the user is always required on that
 // path — the [[NO_RESPONSE]] guidance would contradict the user's message.
-// The closing nudgeEndMarker is emitted separately at the join point so a
+// The closing nudgeUserBoundary is emitted separately at the join point so a
 // single delimiter appears after all bundled nudges, not one per nudge.
 func wrapBundledNudge(reminder string) string {
-	return nudgeHeader + reminder
+	return nudgePreamble + reminder
 }
 
 // CacheBustFunc is called when a cache bust is detected (cache_read drops

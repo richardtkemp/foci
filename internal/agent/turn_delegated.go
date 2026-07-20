@@ -121,7 +121,7 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 		// Close the nudge region with a single delimiter so the agent can
 		// distinguish where the background nudge ends and the user's text
 		// begins. Emitted once after the last nudge, not per-nudge.
-		ts.Prompt = strings.Join(nudges, "\n") + "\n" + nudgeEndMarker + "\n\n" + ts.Prompt
+		ts.Prompt = strings.Join(nudges, "\n") + "\n" + nudgeUserBoundary + "\n\n" + ts.Prompt
 	}
 }
 
@@ -406,7 +406,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			}
 			out := make([]string, 0, len(reminders))
 			for _, r := range reminders {
-				out = append(out, wrapNudge(r))
+				out = append(out, wrapStandaloneNudge(r))
 			}
 			a.logger().Debugf("nudge: injected %d reminder(s) after tool %q (count=%d, err=%v) for session %s",
 				len(out), toolName, toolCount, isError, ts.SessionKey)
@@ -446,7 +446,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			}
 			a.logger().Infof("nudge: pre-answer gate fired for session %s (tool_count=%d)",
 				ts.SessionKey, toolCount)
-			return wrapNudge(reminder)
+			return wrapStandaloneNudge(reminder)
 		}
 	}
 
