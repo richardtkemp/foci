@@ -445,7 +445,6 @@ type AgentToolsOverride struct {
 // CompactionConfig holds compaction settings. Embed in SessionsConfig (global) and AgentConfig (per-agent).
 type CompactionConfig struct {
 	CompactionThreshold        *float64 `toml:"compaction_threshold"  hot:"immediate" desc:"Fraction of the context window (0 to 1) that must fill before old messages are summarized. Leave unset for a curve that waits longer on larger windows" min:"0" max:"1"`
-	CompactionSummaryPrompt    *string  `toml:"compaction_summary_prompt"             hot:"immediate" desc:"Path to a file containing the prompt used to ask the model to summarize old messages during compaction"`
 	CompactionHandoffMsg       *string  `toml:"compaction_handoff_msg"                hot:"immediate" desc:"Path to a file containing the message shown to the model right after compaction to help it pick back up"`
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"          hot:"immediate" desc:"Number of most recent messages kept word-for-word instead of being summarized when compaction runs. 0 = summarize everything. Default 25" min:"0"`
 	FacetNoCompact             *bool    `toml:"facet_no_compact"                      desc:"Facets are short-lived side sessions branched off the main chat. When true, they are never compacted since they do not last long (default true)"`

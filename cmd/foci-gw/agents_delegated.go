@@ -354,7 +354,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// Resolved fresh per Start (mirrors SystemPromptFunc); "" leaves
 			// opencode's default compaction prompt untouched.
 			CompactionPromptFunc: func(string) string {
-				return prompts.ResolvePrompt(ag.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), ag.PromptSearchDirs...)
+				return prompts.ResolvePrompt("", "compaction-summary.md", prompts.CompactionSummary(), ag.PromptSearchDirs...)
 			},
 			AgentID:          agentID,
 			ExecRegistry:     registry,

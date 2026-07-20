@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -2181,11 +2182,18 @@ func TestDelegatedTransport_RunCompaction_EmptySummaryPrompt(t *testing.T) {
 
 	store := session.NewStore(t.TempDir())
 	comp := compaction.NewCompactor(store, 0.8)
+	// An empty compaction-summary.md override in the agent's prompts dir makes
+	// compactionSummaryPrompt() resolve to "" (file read + TrimSpace), the
+	// file-only successor to the old compaction_summary_prompt = "none" disable.
+	emptyPromptDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(emptyPromptDir, "compaction-summary.md"), []byte(""), 0o644); err != nil {
+		t.Fatalf("write empty prompt override: %v", err)
+	}
 	a := &Agent{
-		Model:                       "test-model",
-		Compactor:                   comp,
-		DelegatedManager:            newMockDelegatedManager(t, be),
-		CompactionSummaryPromptPath: "none", // resolves to empty string
+		Model:            "test-model",
+		Compactor:        comp,
+		DelegatedManager: newMockDelegatedManager(t, be),
+		PromptSearchDirs: []string{emptyPromptDir},
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)

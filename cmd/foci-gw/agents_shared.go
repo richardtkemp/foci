@@ -106,14 +106,15 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 // turn-lock warning threshold. Call this after newAgent() and before the
 // transport-specific configuration (configureAPI / configureDelegated).
 func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Compactor) {
-	// CompactionSummaryPromptPath/CompactionHandoffMsg/ReloadOnCompact/
-	// TurnLockWarnThreshold have no live getter yet — genuinely
-	// restart-required, a candidate for a future pass.
+	// CompactionHandoffMsg/ReloadOnCompact/TurnLockWarnThreshold have no live
+	// getter yet — genuinely restart-required, a candidate for a future pass.
+	// (CompactionSummaryPrompt is no longer a config field: it resolves per-turn
+	// from the agent's prompts dir via prompts.ResolvePrompt — see
+	// agent.compactionSummaryPrompt.)
 	cpc := p.resolved.Compaction // static-cfg:ignore: see comment above
 	bc := p.resolved.Behavior    // static-cfg:ignore: see comment above
 
 	ag.Compactor = compactor
-	ag.CompactionSummaryPromptPath = cpc.CompactionSummaryPrompt
 	ag.CompactionHandoffMsg = cpc.CompactionHandoffMsg
 	ag.ReloadOnCompact = cpc.ReloadOnCompact
 	ag.TurnLockWarnThreshold = parseDurationDefault(bc.TurnLockWarnThreshold, 0)

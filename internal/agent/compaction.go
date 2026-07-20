@@ -70,7 +70,7 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 		}
 	}
 
-	summaryPrompt := prompts.ResolvePrompt(a.compactionSummaryPrompt(), "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
+	summaryPrompt := a.compactionSummaryPrompt()
 	handoffMsg := a.compactionHandoffMsg()
 	if handoffMsg == "" {
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
@@ -117,7 +117,7 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 // passes context.Background because the turn context is already cancelled;
 // manual compaction passes the user command context so /stop can interrupt.
 func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator, sessionKey string) error {
-	summaryPrompt := prompts.ResolvePrompt(a.compactionSummaryPrompt(), "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
+	summaryPrompt := a.compactionSummaryPrompt()
 	if summaryPrompt == "" {
 		return fmt.Errorf("compaction summary prompt is empty")
 	}
