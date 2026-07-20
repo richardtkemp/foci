@@ -13,15 +13,37 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/voice"
 
 	"golang.org/x/oauth2"
 )
+
+// mockVoiceTTS is a stub voice.TTS for testing the app's voice-mode bundling
+// (#1439) — the FinalText it's asked to synthesize is recorded so a test can
+// assert what text actually got spoken (e.g. the [[NO_RESPONSE]] sentinel
+// must never reach it).
+type mockVoiceTTS struct {
+	data []byte
+	err  error
+	got  []string // texts passed to Synthesize, in call order
+}
+
+var _ voice.TTS = (*mockVoiceTTS)(nil)
+
+func (m *mockVoiceTTS) Synthesize(_ context.Context, text string) ([]byte, error) {
+	m.got = append(m.got, text)
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.data, nil
+}
 
 // fakeClient is a wsClient whose send channel we drain in tests.
 func fakeClient() *wsClient {
@@ -480,6 +502,137 @@ func TestAppSink_SilentFinalSuppressed(t *testing.T) {
 	}
 }
 
+// #1439: a via=voice app turn's reply must carry a synthesized voice-mode
+// audio attachment, BUNDLED with the text — synthesis happens before the
+// text is delivered (not a text-then-audio-follow-up), and the resulting
+// fap.Media frame is tagged VoiceMode so the client (P3, #1440) knows to
+// auto-play it.
+func TestAppSink_VoiceTriggerBundlesTTSAttachment(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	tts := &mockVoiceTTS{data: []byte("fake-mp3-bytes")}
+	s.tts = tts
+	var attached [][]byte
+	s.attachVoice = func(audio []byte) error {
+		attached = append(attached, audio)
+		return nil
+	}
+
+	ctx := agent.WithTrigger(context.Background(), "voice")
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "Hello there"})
+
+	if len(attached) != 1 || string(attached[0]) != "fake-mp3-bytes" {
+		t.Fatalf("attachVoice calls = %v, want one call with the synthesized audio", attached)
+	}
+	if len(tts.got) != 1 || tts.got[0] != "Hello there" {
+		t.Fatalf("TTS synthesized %v, want exactly [\"Hello there\"]", tts.got)
+	}
+	got := drain(t, c)
+	if len(got) != 1 || got[0].t != fap.TypeMessage {
+		t.Fatalf("frames = %v, want exactly one message frame (attach happens via attachVoice, not a sink-emitted frame)", types(got))
+	}
+}
+
+// A normal typed app turn (trigger != "voice") must never get an unsolicited
+// voice-mode attachment, even when TTS is configured.
+func TestAppSink_TypedTriggerNoVoiceAttachment(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	tts := &mockVoiceTTS{data: []byte("fake-mp3-bytes")}
+	s.tts = tts
+	attachCalled := false
+	s.attachVoice = func(audio []byte) error {
+		attachCalled = true
+		return nil
+	}
+
+	s.Emit(context.Background(), turnevent.TurnComplete{FinalText: "Hello there"})
+
+	if attachCalled {
+		t.Fatal("attachVoice must not fire for a non-voice-triggered turn")
+	}
+	if len(tts.got) != 0 {
+		t.Fatalf("TTS must not be invoked for a non-voice-triggered turn, got %v", tts.got)
+	}
+}
+
+// Graceful degradation (#1439): no TTS configured -> text only, no error, no
+// attach attempt.
+func TestAppSink_VoiceTriggerNoTTSConfiguredIsGraceful(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	// s.tts left nil — no TTS provider configured.
+	attachCalled := false
+	s.attachVoice = func(audio []byte) error {
+		attachCalled = true
+		return nil
+	}
+
+	ctx := agent.WithTrigger(context.Background(), "voice")
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "Hello there"})
+
+	if attachCalled {
+		t.Fatal("attachVoice must not fire when no TTS is configured")
+	}
+	got := drain(t, c)
+	if len(got) != 1 || got[0].t != fap.TypeMessage || got[0].d["text"] != "Hello there" {
+		t.Fatalf("frames = %v, want the text delivered normally despite no TTS", types(got))
+	}
+}
+
+// A fully-silent reply ([[NO_RESPONSE]]) has no content to speak, even on a
+// voice-triggered turn — TTS must not be invoked on the raw sentinel.
+func TestAppSink_VoiceTriggerSilentReplyNotSynthesized(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	tts := &mockVoiceTTS{data: []byte("fake-mp3-bytes")}
+	s.tts = tts
+	attachCalled := false
+	s.attachVoice = func(audio []byte) error {
+		attachCalled = true
+		return nil
+	}
+
+	ctx := agent.WithTrigger(context.Background(), "voice")
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "[[NO_RESPONSE]]"})
+
+	if len(tts.got) != 0 {
+		t.Fatalf("TTS must not be invoked for a silent reply, got %v", tts.got)
+	}
+	if attachCalled {
+		t.Fatal("attachVoice must not fire for a silent reply")
+	}
+}
+
+// A TTS synthesis error degrades gracefully to text-only delivery — it must
+// not fail the turn or block the text reply.
+func TestAppSink_VoiceTriggerSynthesisErrorIsGraceful(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	s.tts = &mockVoiceTTS{err: errors.New("synth boom")}
+	attachCalled := false
+	s.attachVoice = func(audio []byte) error {
+		attachCalled = true
+		return nil
+	}
+
+	ctx := agent.WithTrigger(context.Background(), "voice")
+	s.Emit(ctx, turnevent.TurnComplete{FinalText: "Hello there"})
+
+	if attachCalled {
+		t.Fatal("attachVoice must not fire when synthesis errors")
+	}
+	got := drain(t, c)
+	if len(got) != 1 || got[0].t != fap.TypeMessage || got[0].d["text"] != "Hello there" {
+		t.Fatalf("frames = %v, want the text still delivered despite the TTS error", types(got))
+	}
+}
+
 func newTestHub() *Hub {
 	return &Hub{
 		deps:          platform.ProviderDeps{},
@@ -497,6 +650,59 @@ func newTestHub() *Hub {
 		notifs:        make(map[string]*convBinding),
 		wizards:       make(map[string]*wizardSession),
 		wizardByScope: make(map[string]string),
+	}
+}
+
+// #1439 end-to-end: wires a real Hub (real blobStore) + an appConn carrying a
+// TTS provider (as hub.setupAgent's `conn.tts = params.TTS` does in
+// production) through conn.NewTurnSink, then drives one voice-triggered turn
+// and asserts the client receives the reply text followed by a
+// VoiceMode-tagged fap.Media frame whose blob holds the synthesized audio
+// bytes. Constructs appConn directly (mirroring TestSendToSession_
+// EmitsMessageFrame) rather than via hub.setupAgent, which requires a real
+// *agent.Agent Handler unrelated to what this test targets.
+func TestAppConn_NewTurnSink_VoiceModeAttachmentEndToEnd(t *testing.T) {
+	h := newTestHub()
+	const agentID = "arnix"
+
+	b := h.ensureBinding(nil, agentID, "conv-1")
+	client := fakeClient()
+	b.attach(client)
+
+	conn := &appConn{hub: h, agentID: agentID, tts: &mockVoiceTTS{data: []byte("synth-bytes")}}
+	sink, cleanup := conn.NewTurnSink(agent.Envelope{SessionKey: b.sessionKey})
+	if sink == nil {
+		t.Fatal("NewTurnSink returned a nil sink for a live binding")
+	}
+	defer cleanup()
+
+	ctx := agent.WithTrigger(context.Background(), "voice")
+	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "spoken reply"})
+
+	got := drain(t, client)
+	if len(got) != 2 {
+		t.Fatalf("frames = %v, want [message, media]", types(got))
+	}
+	if got[0].t != fap.TypeMessage || got[0].d["text"] != "spoken reply" {
+		t.Fatalf("first frame = %v, want the text message", got[0])
+	}
+	if got[1].t != fap.TypeMedia {
+		t.Fatalf("second frame type = %q, want media (bundled right after text)", got[1].t)
+	}
+	if voiceMode, _ := got[1].d["voiceMode"].(bool); !voiceMode {
+		t.Errorf("media frame voiceMode = %v, want true", got[1].d["voiceMode"])
+	}
+	blobID, _ := got[1].d["blobId"].(string)
+	meta, ok := h.blobs.get(blobID)
+	if !ok {
+		t.Fatalf("blob %q not found in store", blobID)
+	}
+	data, err := os.ReadFile(meta.path)
+	if err != nil {
+		t.Fatalf("read blob file: %v", err)
+	}
+	if string(data) != "synth-bytes" {
+		t.Errorf("blob contents = %q, want synth-bytes", data)
 	}
 }
 
