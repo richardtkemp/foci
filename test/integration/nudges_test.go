@@ -25,12 +25,12 @@ import (
 // drift.
 const nudgeHeaderMarker = "[Background nudge"
 
-// nudgeEndMarker mirrors internal/agent.nudgeEndMarker. It closes the nudge
+// nudgeUserBoundary mirrors internal/agent.nudgeUserBoundary. It closes the nudge
 // region when nudges are bundled with a real user message in the same turn
 // (the start-of-turn regex/turn-interval path), so the agent can see where
 // the background nudge ends and the user's text begins. Kept in sync with
 // the source constant by the FooterVsEndMarker regression test below.
-const nudgeEndMarker = "[End of background nudge"
+const nudgeUserBoundary = "[End of background nudge"
 
 // noResponseSentinelMarker mirrors agent.NoResponseSentinel. The footer
 // embeds this token so we can use it as a structural assertion that the
@@ -221,7 +221,7 @@ func TestL2_Nudges_TurnIntervalNudgeFiresOnSchedule(t *testing.T) {
 //
 //	cc-stub Bash tool_use → cc-stub system/hook_response →
 //	ccstream.handleHookResponse → turn.PostToolNudgeFunc →
-//	a.Nudger.CheckAfterTools → wrapNudge(...) → b.writer.SendUser →
+//	a.Nudger.CheckAfterTools → wrapStandaloneNudge(...) → b.writer.SendUser →
 //	cc-stub reads new user envelope → recordUserMessage.
 func TestL2_Nudges_AfterToolsNudgeFollowsToolBatch(t *testing.T) {
 	testharness.ParallelWait(t)
@@ -306,7 +306,7 @@ func TestL2_Nudges_PreAnswerGateInjectsBeforeFinalReply(t *testing.T) {
 	// The pre-answer follow-up is SendUser'd to cc-stub after the first
 	// result — cc-stub records it as a fresh user_message entry whose
 	// text_prefix carries the wrapped reminder body. We assert that
-	// reminder body shows up; the wrapping header is part of wrapNudge,
+	// reminder body shows up; the wrapping header is part of wrapStandaloneNudge,
 	// not the asserted contract here.
 	if _, ok := waitForUserMessageContaining(t, h, "alpha", 30*time.Second, reminderBody); !ok {
 		t.Fatalf("pre-answer gate reminder never landed; recorder:\n%s\nstderr:\n%s",
@@ -319,7 +319,7 @@ func TestL2_Nudges_PreAnswerGateInjectsBeforeFinalReply(t *testing.T) {
 // diverge on how they close the nudge region:
 //
 //   - Bundled paths (regex, turn-interval) prepend the nudge to the user's
-//     own message in the same turn. They carry nudgeEndMarker — a visible
+//     own message in the same turn. They carry nudgeUserBoundary — a visible
 //     delimiter between the background nudge and the user's text — and DROP
 //     the NoResponseSentinel footer, because a reply to the user is always
 //     required on that path (the footer's "respond with [[NO_RESPONSE]]"
@@ -333,7 +333,7 @@ func TestL2_Nudges_PreAnswerGateInjectsBeforeFinalReply(t *testing.T) {
 //
 // Note: pre_answer is not covered here — it requires the
 // nudge_pre_answer_gate config knob plus a TurnResult-shape harness path
-// that's a separate gap. It shares wrapNudge() with after-tools, so it's
+// that's a separate gap. It shares wrapStandaloneNudge() with after-tools, so it's
 // covered transitively.
 func TestL2_Nudges_FooterVsEndMarker_ByDeliveryPath(t *testing.T) {
 	testharness.ParallelWait(t)
@@ -401,7 +401,7 @@ func TestL2_Nudges_FooterVsEndMarker_ByDeliveryPath(t *testing.T) {
 			// fire together on the single start-of-turn user message.)
 			if strings.Contains(e.TextPrefix, regexBody) &&
 				strings.Contains(e.TextPrefix, turnIntervalBody) &&
-				strings.Contains(e.TextPrefix, nudgeEndMarker) {
+				strings.Contains(e.TextPrefix, nudgeUserBoundary) {
 				bundledMarked = true
 			}
 			// Regression: the footer must NOT leak onto the bundled path.
@@ -414,7 +414,7 @@ func TestL2_Nudges_FooterVsEndMarker_ByDeliveryPath(t *testing.T) {
 	}
 	if !bundledMarked {
 		t.Errorf("bundled bodies (%q, %q) never appeared together in a user_message carrying the end-marker (%s); recorder:\n%s",
-			regexBody, turnIntervalBody, nudgeEndMarker, recorderTail(t, h.RecorderPath()))
+			regexBody, turnIntervalBody, nudgeUserBoundary, recorderTail(t, h.RecorderPath()))
 	}
 	if bundledFooterLeaked {
 		t.Errorf("NoResponseSentinel footer leaked onto a bundled (start-of-turn) nudge path — the footer must be dropped when a user message follows; recorder:\n%s",
@@ -837,7 +837,7 @@ func TestL2_Nudges_MalformedRulesFileToleratedAtStartup(t *testing.T) {
 // for empty rule sets: a syntactically valid nudge-rules.json with an
 // empty rules array means the scheduler has nothing to fire. Sends a
 // message that WOULD match a regex if any rule existed, then asserts
-// the resulting user_message text_prefix contains no nudgeHeader
+// the resulting user_message text_prefix contains no nudgePreamble
 // marker — i.e. nothing was injected.
 func TestL2_Nudges_EmptyRulesArrayProducesNoNudge(t *testing.T) {
 	testharness.ParallelWait(t)
@@ -866,7 +866,7 @@ func TestL2_Nudges_EmptyRulesArrayProducesNoNudge(t *testing.T) {
 // graceful-degradation contract for malformed regex triggers: a rule
 // with an uncompilable pattern (e.g. "[") must not crash the agent
 // loop; the rule simply never fires. Asserts a normal user_message
-// entry appears and contains no nudgeHeader marker.
+// entry appears and contains no nudgePreamble marker.
 func TestL2_Nudges_InvalidRegexPatternIgnored(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 7800
@@ -955,7 +955,7 @@ func TestL2_Nudges_CharacterDirRulesPathPreferred(t *testing.T) {
 // nudge_enable=false short-circuits the system entirely: with a regex
 // rule pre-seeded AND nudge_enable=false in the agent's config block,
 // a matching message produces a user_message entry whose text_prefix
-// contains the user text but no nudgeHeader marker — the scheduler was
+// contains the user text but no nudgePreamble marker — the scheduler was
 // never built, no injection happened.
 func TestL2_Nudges_DisabledByConfigSuppressesAllInjection(t *testing.T) {
 	testharness.ParallelWait(t)
