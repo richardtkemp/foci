@@ -60,6 +60,10 @@ type queuedMessage struct {
 	userID      string
 	text        string
 	attachments []attachment
+	// voice is true when text was produced by transcribing an inbound voice
+	// note (rather than typed) — propagated to Envelope.Voice so the turn's
+	// trigger reads "voice" instead of "telegram" (#1436).
+	voice bool
 }
 
 // Bot wraps the Telegram bot API with agent integration.

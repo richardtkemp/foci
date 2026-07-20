@@ -76,6 +76,15 @@ type Envelope struct {
 	IsGroupChat bool
 	ReceivedAt  time.Time
 
+	// Voice marks Text as having been produced by transcribing a voice
+	// attachment (speech-to-text) rather than typed by the sender. RunTurn
+	// tags the whole turn's trigger "voice" when any envelope in the batch
+	// sets this — so [meta] via= reflects how the content was actually
+	// produced, not the transport (app/telegram/…) it arrived over (#1436).
+	// A message that mixes transcribed voice with typed text still counts as
+	// voice.
+	Voice bool
+
 	// Steer is the sender's per-message steer/queue choice; SteerDefault
 	// when the platform offers none. See SteerPreference.
 	Steer SteerPreference

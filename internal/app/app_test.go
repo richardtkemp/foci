@@ -1903,21 +1903,27 @@ func TestTranscribeVoice_MergesAndDropsVoiceAttachment(t *testing.T) {
 		{Type: "voice", Data: []byte("audio"), MimeType: "audio/ogg"},
 		{Type: "document", Data: []byte("doc"), MimeType: "text/plain"},
 	}
-	text, kept := h.transcribeVoice(conn, "", atts)
+	text, kept, transcribed := h.transcribeVoice(conn, "", atts)
 	if text != "hello world" {
 		t.Errorf("text = %q, want transcript", text)
 	}
 	if len(kept) != 1 || kept[0].Type != "document" {
 		t.Errorf("voice attachment should be dropped, kept = %v", kept)
 	}
+	if !transcribed {
+		t.Error("transcribed = false, want true (a voice attachment was transcribed)")
+	}
 }
 
 func TestTranscribeVoice_AppendsToTypedText(t *testing.T) {
 	h := newTestHub()
 	conn := &appConn{hub: h, stt: fakeSTT{text: "spoken"}}
-	text, _ := h.transcribeVoice(conn, "typed", []platform.Attachment{{Type: "voice", Data: []byte("a"), MimeType: "audio/ogg"}})
+	text, _, transcribed := h.transcribeVoice(conn, "typed", []platform.Attachment{{Type: "voice", Data: []byte("a"), MimeType: "audio/ogg"}})
 	if text != "typed\nspoken" {
 		t.Errorf("text = %q, want typed+spoken", text)
+	}
+	if !transcribed {
+		t.Error("transcribed = false, want true (mixed typed+voice still counts as transcribed)")
 	}
 }
 
@@ -1925,9 +1931,12 @@ func TestTranscribeVoice_NoSTTUnchanged(t *testing.T) {
 	h := newTestHub()
 	conn := &appConn{hub: h} // no transcriber
 	atts := []platform.Attachment{{Type: "voice", Data: []byte("a"), MimeType: "audio/ogg"}}
-	text, kept := h.transcribeVoice(conn, "x", atts)
+	text, kept, transcribed := h.transcribeVoice(conn, "x", atts)
 	if text != "x" || len(kept) != 1 {
 		t.Errorf("without STT must pass through: %q %v", text, kept)
+	}
+	if transcribed {
+		t.Error("transcribed = true, want false (no STT provider, nothing was transcribed)")
 	}
 }
 
@@ -1935,9 +1944,12 @@ func TestTranscribeVoice_ErrorKeepsAttachment(t *testing.T) {
 	h := newTestHub()
 	conn := &appConn{hub: h, stt: fakeSTT{err: errors.New("boom")}}
 	atts := []platform.Attachment{{Type: "voice", Data: []byte("a"), MimeType: "audio/ogg"}}
-	text, kept := h.transcribeVoice(conn, "", atts)
+	text, kept, transcribed := h.transcribeVoice(conn, "", atts)
 	if text != "" || len(kept) != 1 {
 		t.Errorf("transcription error must keep the audio: %q %v", text, kept)
+	}
+	if transcribed {
+		t.Error("transcribed = true, want false (transcription errored, nothing was transcribed)")
 	}
 }
 

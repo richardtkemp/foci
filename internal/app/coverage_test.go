@@ -66,6 +66,54 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 	if fa.env.Driver == nil {
 		t.Error("env.Driver nil — agent can't stream back")
 	}
+	if fa.env.Voice {
+		t.Error("env.Voice = true for a normal typed message, want false")
+	}
+}
+
+// A voice attachment that STT actually transcribes must tag the enqueued
+// envelope Voice=true, so RunTurn tags the turn's trigger "voice" instead of
+// the app's default platform trigger — the [meta] via= header then reads
+// "voice" instead of "app" (#1436).
+func TestRouteUserTurn_VoiceTranscribedEnvelopeTaggedVoice(t *testing.T) {
+	h := newTestHub()
+	fa := registerFakeAgent(h, "ag")
+	h.agents["ag"].stt = fakeSTT{text: "hello world"}
+	c := fakeClientFor(h)
+	c.deviceID = "dev-1"
+
+	voiceAtt := []platform.Attachment{{Type: fap.MediaVoice, Data: []byte("audio"), MimeType: "audio/mp4"}}
+	h.routeUserTurn(c, "conv-1", "ag", "", voiceAtt, "env-1", 1, agent.SteerDefault, false)
+
+	if fa.env == nil {
+		t.Fatal("no envelope enqueued")
+	}
+	if !fa.env.Voice {
+		t.Error("env.Voice = false, want true (text came from a transcribed voice attachment)")
+	}
+	if fa.env.Text != "hello world" {
+		t.Errorf("env.Text = %q, want the transcript", fa.env.Text)
+	}
+}
+
+// A failed transcription falls back to keeping the raw audio attachment — the
+// turn's content did NOT come from a transcript, so it must not be tagged voice.
+func TestRouteUserTurn_FailedTranscriptionNotTaggedVoice(t *testing.T) {
+	h := newTestHub()
+	fa := registerFakeAgent(h, "ag")
+	h.agents["ag"].stt = fakeSTT{err: errors.New("boom")}
+	c := fakeClientFor(h)
+	c.deviceID = "dev-1"
+
+	voiceAtt := []platform.Attachment{{Type: fap.MediaVoice, Data: []byte("audio"), MimeType: "audio/mp4"}}
+	h.routeUserTurn(c, "conv-1", "ag", "", voiceAtt, "env-1", 1, agent.SteerDefault, false)
+
+	if fa.env == nil {
+		t.Fatal("no envelope enqueued")
+	}
+	if fa.env.Voice {
+		t.Error("env.Voice = true, want false (transcription failed, audio attachment kept as-is)")
+	}
 }
 
 // TranscribeOnly returns the voice transcript to the app (as a Transcript frame)

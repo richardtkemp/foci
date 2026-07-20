@@ -714,7 +714,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		// drops the replayed copy after a reconnect.
 		b.acceptInbound(client, inID, inSeq)
 	}
-	text, atts = h.transcribeVoice(conn, text, atts)
+	text, atts, voiceTranscribed := h.transcribeVoice(conn, text, atts)
 	if transcribeOnly {
 		// Return the transcript for the user to edit; don't echo or run a turn.
 		// Ephemeral (sendRaw, no seq/durability) to the recording device only: it's a
@@ -754,6 +754,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		Original:    convID,
 		Driver:      conn,
 		Steer:       steer,
+		Voice:       voiceTranscribed,
 	})
 }
 
@@ -776,9 +777,15 @@ func steerPreference(s string) agent.SteerPreference {
 // into the turn text. Non-voice attachments pass through. With no transcriber,
 // or on a transcription error, the voice attachment is kept as-is (the agent can
 // still see the audio bytes). Mirrors telegram's inbound voice-note handling.
-func (h *Hub) transcribeVoice(conn *appConn, text string, atts []platform.Attachment) (string, []platform.Attachment) {
+//
+// The third return value reports whether a voice attachment was actually
+// transcribed (produced non-empty text) — the caller tags the resulting
+// Envelope.Voice with it so the turn's trigger reads "voice" rather than the
+// transport's default (#1436). False when there was nothing to transcribe, no
+// transcriber, or the transcription failed/errored.
+func (h *Hub) transcribeVoice(conn *appConn, text string, atts []platform.Attachment) (string, []platform.Attachment, bool) {
 	if conn.stt == nil || len(atts) == 0 {
-		return text, atts
+		return text, atts, false
 	}
 	ctx := h.deps.Ctx
 	if ctx == nil {
@@ -809,7 +816,7 @@ func (h *Hub) transcribeVoice(conn *appConn, text string, atts []platform.Attach
 			text += "\n" + joined
 		}
 	}
-	return text, kept
+	return text, kept, len(transcripts) > 0
 }
 
 // voiceFilename derives a filename (the STT backend may use its extension for

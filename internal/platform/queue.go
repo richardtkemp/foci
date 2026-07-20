@@ -22,6 +22,11 @@ type QueuedMessage struct {
 	// so that meta header timestamps reflect when the user actually sent the
 	// message, not when it was later drained into a turn.
 	ReceivedAt time.Time
+	// Voice is true when Text was produced by transcribing an inbound voice
+	// note (speech-to-text) rather than typed. Propagated to Envelope.Voice
+	// so the turn's trigger reads "voice" instead of the platform's default
+	// (#1436).
+	Voice bool
 }
 
 // MessageQueue manages inbound message buffering and group-chat
