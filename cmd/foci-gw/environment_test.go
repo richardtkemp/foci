@@ -29,6 +29,32 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 	}
 }
 
+// TestWriteEnvironmentCore_ViaVoiceExplainsTTSReply guards #1438: the via=voice
+// entry must tell the agent the message was spoken (STT) and its reply will be
+// read aloud (TTS), so it replies concisely in spoken sentences. This lives in
+// the foci-generated environment block (not a character file) so it reaches
+// every agent regardless of character-file content.
+func TestWriteEnvironmentCore_ViaVoiceExplainsTTSReply(t *testing.T) {
+	base := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "claude-code"}
+	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
+	rc := config.Resolve(cfg, base)
+
+	var b strings.Builder
+	writeEnvironmentCore(&b, base, "/tmp/foci.toml", cfg, rc, nil, 0)
+	out := b.String()
+
+	for _, want := range []string{
+		"`voice` (speech-to-text",
+		"read aloud by TTS",
+		"reply concisely",
+		"spoken sentences",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("via=voice explanation missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
 func TestWriteAPIConfig(t *testing.T) {
 	acfg := config.AgentConfig{BlockedPaths: []config.BlockedPath{{Path: "/etc"}}}
 	cfg := &config.Config{}
