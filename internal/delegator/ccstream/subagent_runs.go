@@ -50,6 +50,49 @@ func (b *Backend) setAgentLabel(groupKey, label string) {
 	b.agentLabels[groupKey] = label
 }
 
+// setAgentPrompt stashes an Agent block's prompt by its tool_use_id (= groupKey),
+// mirroring setAgentLabel. The PreToolUse hook path reads the prompt straight off
+// its own hook payload (hooks.go), but the task_started fallback (#1425) has no
+// such payload — TaskEvent carries no prompt field — so it reads this stash
+// instead, giving a hook-missed run 1 the same SubagentStart content a working
+// hook would have produced.
+func (b *Backend) setAgentPrompt(groupKey, prompt string) {
+	if groupKey == "" {
+		return
+	}
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	if b.agentPrompts == nil {
+		b.agentPrompts = map[string]string{}
+	}
+	b.agentPrompts[groupKey] = prompt
+}
+
+// markSubagentStarted check-and-sets groupKey as having had its run-1
+// SubagentStart emitted. Two independent sources race to emit that start —
+// the PreToolUse hook (hooks.go) and the task_started fallback (#1425, below)
+// — and this is the single dedup point both call through: whichever arrives
+// first claims the groupKey and returns false (caller should emit); the
+// other finds it already claimed and returns true (caller must skip —
+// emitting would double the chit). Safe for concurrent use; nil/empty
+// groupKey is a no-op that always reports "already started" so a caller
+// with no group key never emits.
+func (b *Backend) markSubagentStarted(groupKey string) (alreadyStarted bool) {
+	if groupKey == "" {
+		return true
+	}
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	if b.subagentStarted == nil {
+		b.subagentStarted = map[string]bool{}
+	}
+	if b.subagentStarted[groupKey] {
+		return true
+	}
+	b.subagentStarted[groupKey] = true
+	return false
+}
+
 // stashResumePrompt records the message a SendMessage block sent to a subagent
 // (keyed by its task_id == the SendMessage `to`), to be surfaced as the prompt on
 // the reactivation's SubagentStart. No-op if we've never seen that task_id (the
@@ -67,11 +110,16 @@ func (b *Backend) stashResumePrompt(taskID, prompt string) {
 
 // onTaskStarted binds or advances a subagent's run state at a task_started event.
 // The FIRST task_started for a task_id binds the run (groupKey = the Agent
-// tool_use_id it carries) at runIndex 1 and returns reactivated=false — run 1's
-// SubagentStart is emitted by the PreToolUse hook, so the caller emits nothing.
+// tool_use_id it carries) at runIndex 1 and returns reactivated=false, with the
+// run's stashed launch prompt — run 1's SubagentStart is NORMALLY emitted by the
+// PreToolUse hook (fires earlier, around the tool_use itself), but the caller
+// uses the returned run + prompt to emit a FALLBACK start (#1425, guarded by
+// markSubagentStarted) when the hook drops (#1423, ~7% of background subagents).
 // A SUBSEQUENT task_started (same task_id, new tool_use_id) is a SendMessage resume:
 // it bumps runIndex and returns reactivated=true with the pending resume prompt, so
-// the caller re-Adds to the tracker and emits a fresh SubagentStart for the new run.
+// the caller re-Adds to the tracker and emits a fresh SubagentStart for the new run
+// (no hook exists for SendMessage, so this path is unconditional, unguarded by
+// markSubagentStarted).
 func (b *Backend) onTaskStarted(taskID, toolUseID string) (run *subagentRun, reactivated bool, prompt string) {
 	if taskID == "" {
 		return nil, false, ""
@@ -89,10 +137,11 @@ func (b *Backend) onTaskStarted(taskID, toolUseID string) (run *subagentRun, rea
 		return existing, true, prompt
 	}
 	// First sighting: the tool_use_id on this first task_started IS the Agent
-	// tool_use_id (the stable groupKey). Bind and reuse the stashed label.
+	// tool_use_id (the stable groupKey). Bind and reuse the stashed label +
+	// launch prompt (the fallback-start content, #1425).
 	nr := &subagentRun{groupKey: toolUseID, label: b.agentLabels[toolUseID], runIndex: 1, active: true}
 	b.subagentRuns[taskID] = nr
-	return nr, false, ""
+	return nr, false, b.agentPrompts[toolUseID]
 }
 
 // endRunForTask looks up the run state for a task_id at its task_notification:

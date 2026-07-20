@@ -344,17 +344,29 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 
 	se := b.sessionEvents.Load()
 
-	// PreToolUse (installed only for the Agent tool) is the precise subagent START
-	// — its tool_use id is the run's group key. Both start and end are hook-sourced,
-	// so a missing/broken hook yields neither (no zombie "never finishes" run).
+	// PreToolUse (installed only for the Agent tool) is the PRIMARY subagent START
+	// signal — its tool_use id is the run's group key. This was originally
+	// designed symmetrically with END (commit 96ef6df0: "a missing/broken hook
+	// yields NEITHER"), but END was later moved off PostToolUse onto the native
+	// task_notification stream event (a background Agent tool_use's PostToolUse
+	// fires at launch, not completion — see verify-cc-stream-hooks/SKILL.md), and
+	// text was always native too. That left START as the ONLY hook-only signal,
+	// so a dropped/racing hook (~7% of background subagents under concurrent/
+	// bursty dispatch, #1423) now uniquely orphans text+end with no start. #1425
+	// restores the safety net with a fallback start at the first task_started
+	// (handlers.go) — markSubagentStarted dedups so exactly one start goes out
+	// regardless of which signal (hook or fallback) wins the race.
 	if env.HookEvent == eventPreToolUse {
 		if se != nil && se.OnSubagentStart != nil && parsed.ToolName == "Agent" {
-			// The initial Agent spawn is always run 1; carry its prompt so the app
-			// can show what was asked at the top of the run view (#1355).
-			input := json.RawMessage(parsed.ToolInput)
-			se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(input), delegator.ExtractAgentPrompt(input), 1)
-			// Foreground transcript tailing is armed earlier, at the Agent
-			// tool_use detection in OnAssistant (race-free vs task_started).
+			if !b.markSubagentStarted(parsed.ToolUseID) {
+				// The initial Agent spawn is always run 1; carry its prompt so the app
+				// can show what was asked at the top of the run view (#1355).
+				input := json.RawMessage(parsed.ToolInput)
+				b.logger().Infof("subagent_start signal=agent_pre_tool_use group=%s", parsed.ToolUseID)
+				se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(input), delegator.ExtractAgentPrompt(input), 1)
+				// Foreground transcript tailing is armed earlier, at the Agent
+				// tool_use detection in OnAssistant (race-free vs task_started).
+			}
 		}
 		return
 	}
