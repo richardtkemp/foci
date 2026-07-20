@@ -168,24 +168,17 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 		system = append([]provider.SystemBlock{envBlock}, system...)
 	}
 
-	var result []provider.SystemBlock
-
-	if a.CacheStrategy == "auto" {
-		// Auto caching: extra blocks appended after bootstrap blocks.
-		if len(a.ExtraSystemBlocks) > 0 {
-			system = append(system, a.ExtraSystemBlocks...)
-		}
-		result = system
-	} else if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
-		// Explicit caching: insert extra blocks before the last bootstrap
-		// block so the translate layer's system breakpoint covers them.
-		combined := make([]provider.SystemBlock, 0, len(system)+len(a.ExtraSystemBlocks))
-		combined = append(combined, system[:len(system)-1]...)
-		combined = append(combined, a.ExtraSystemBlocks...)
-		combined = append(combined, system[len(system)-1])
-		result = combined
-	} else {
-		result = system
+	// Extra blocks (skills) always go last, regardless of CacheStrategy.
+	// Skills can be re-seeded/updated at any time (#1421) — the translate
+	// layer's applyCacheMarkers marks whatever block ends up literally last
+	// as the cache breakpoint for BOTH "auto" and "explicit" strategies, so
+	// anything trailing the skills block would have its cache validity tied
+	// to skill content that changes independently of it. Keeping skills last
+	// confines a skill update to the very end of the cached prefix instead of
+	// invalidating trailing bootstrap content (e.g. the secrets block) too.
+	result := system
+	if len(a.ExtraSystemBlocks) > 0 {
+		result = append(append([]provider.SystemBlock{}, system...), a.ExtraSystemBlocks...)
 	}
 
 	sm.systemBlocks = result
