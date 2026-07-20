@@ -22,9 +22,11 @@ Foci drives several **system-generated turns** from prompt template files — on
 The shipped defaults are seeded into `~/shared/prompts/` on first start (seed-if-missing — your edits there are never overwritten by a later start). **Two ways to customise a prompt for your purposes:**
 
 1. **Copy it into your workspace prompts dir.** Drop a file with the matching filename into `<workspace>/prompts/`. When a turn resolves its prompt, foci searches `<workspace>/prompts/` first, then `~/shared/prompts/`, then falls back to the embedded default — so a same-named file in your workspace wins. This keeps the customisation per-agent and in your own tree.
-2. **Point config at an explicit path.** Each turn type has a config key (e.g. the keepalive `prompt`, reflection `interval_prompt` / `session_end_prompt` / `compaction_prompt`, `consolidation_prompt`, `compaction_summary_prompt`). Set it to a file path to use that file. Special values: unset or `"default"` → the search-then-embedded behaviour above; `"none"` → that turn is **disabled** entirely.
+2. **Point config at an explicit path.** *Most* turn types have a config key (e.g. the keepalive `prompt`, reflection `interval_prompt` / `session_end_prompt` / `compaction_prompt`, `consolidation_prompt`). Set it to a file path to use that file. Special values: unset or `"default"` → the search-then-embedded behaviour above; `"none"` → that turn is **disabled** entirely.
 
-So: tweak wording → copy into `<workspace>/prompts/`; disable a turn → set its config key to `"none"`; point at a shared file elsewhere → set the key to its path.
+`compaction-summary.md` (and the nudge framing prompts) are **file-only** — they have no config key, so they're customised by method 1 only. Disable the compaction summary prompt by dropping an *empty* `compaction-summary.md` in `<workspace>/prompts/` (the file-only equivalent of `"none"`).
+
+So: tweak wording → copy into `<workspace>/prompts/`; disable a turn → set its config key to `"none"` (or, for the file-only prompts, drop an empty override file); point at a shared file elsewhere → set the key to its path.
 
 The **character files** that make up your identity are separate from these turn templates — they load from your `character/` dir and are reloaded on compaction and restart, so editing them takes effect on the next rebuild.
 

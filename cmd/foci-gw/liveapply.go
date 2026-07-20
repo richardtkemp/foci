@@ -179,7 +179,6 @@ var (
 		"tools.summary_context_turns", "agent.tools.summary_context_turns",
 		"tools.summary_context_chars", "agent.tools.summary_context_chars",
 		"tools.max_image_pixels", "agent.tools.max_image_pixels",
-		"sessions.compaction_summary_prompt", "agent.sessions.compaction_summary_prompt",
 		"sessions.compaction_handoff_msg", "agent.sessions.compaction_handoff_msg",
 		"sessions.reload_on_compact", "agent.sessions.reload_on_compact",
 		"behavior.turn_lock_warn_threshold", "agent.behavior.turn_lock_warn_threshold",

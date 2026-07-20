@@ -112,8 +112,8 @@ id = "test"
 }
 
 func TestPromptFilePathsConfig(t *testing.T) {
-	// Proves that an explicit compaction_summary_prompt path in [sessions] is
-	// preserved exactly as configured after loading.
+	// Proves that an explicit prompt-file path in [sessions] is preserved
+	// exactly as configured after loading.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -124,7 +124,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "test"
 
 [sessions]
-compaction_summary_prompt = "/home/foci/shared/prompts/compaction-summary.md"
+branch_orientation_facet_prompt = "/home/foci/shared/prompts/branch-orientation-facet.md"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -132,13 +132,13 @@ compaction_summary_prompt = "/home/foci/shared/prompts/compaction-summary.md"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if DerefStr(cfg.Sessions.CompactionSummaryPrompt) != "/home/foci/shared/prompts/compaction-summary.md" {
-		t.Errorf("CompactionSummaryPrompt = %v", cfg.Sessions.CompactionSummaryPrompt)
+	if DerefStr(cfg.Sessions.BranchOrientationFacetPrompt) != "/home/foci/shared/prompts/branch-orientation-facet.md" {
+		t.Errorf("BranchOrientationFacetPrompt = %v", cfg.Sessions.BranchOrientationFacetPrompt)
 	}
 }
 
 func TestPromptFilePathsDefaultEmpty(t *testing.T) {
-	// Proves that compaction_summary_prompt defaults to empty string when not
+	// Proves that a prompt-file path field defaults to empty string when not
 	// configured, rather than some non-empty fallback.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
@@ -155,8 +155,8 @@ id = "test"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if DerefStr(cfg.Sessions.CompactionSummaryPrompt) != "" {
-		t.Errorf("CompactionSummaryPrompt should default to empty, got %v", cfg.Sessions.CompactionSummaryPrompt)
+	if DerefStr(cfg.Sessions.BranchOrientationFacetPrompt) != "" {
+		t.Errorf("BranchOrientationFacetPrompt should default to empty, got %v", cfg.Sessions.BranchOrientationFacetPrompt)
 	}
 }
 

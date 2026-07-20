@@ -294,7 +294,7 @@ func TestValidateValueChoices(t *testing.T) {
 
 func TestValidateValueNoConstraint(t *testing.T) {
 	// Proves fields without constraints accept any value.
-	f, ok := LookupField("sessions.compaction_summary_prompt")
+	f, ok := LookupField("sessions.compaction_handoff_msg")
 	if !ok {
 		t.Fatal("field not found")
 	}
@@ -317,7 +317,7 @@ func TestConstraintHint(t *testing.T) {
 		{"http.port", "1\u201365535"},
 		{"sessions.compaction_max_tokens", ">= 0"},
 		{"logging.level", "DEBUG, INFO, WARN, ERROR"},
-		{"sessions.compaction_summary_prompt", ""},
+		{"sessions.compaction_handoff_msg", ""},
 	}
 	for _, tt := range tests {
 		f, ok := LookupField(tt.field)

@@ -116,9 +116,10 @@ func buildPromptsData(cc CommandContext) PromptsData {
 	cfg := cc.Config
 
 	allPrompts := []PromptInfo{
+		// compaction-summary is file-only now (no config path field): override
+		// by dropping compaction-summary.md in the agent's prompts dir.
 		resolvePromptInfo("compaction_summary",
-			resolveString(derefStr(acfg.Sessions.CompactionSummaryPrompt), derefStr(cfg.Sessions.CompactionSummaryPrompt)),
-			"compaction-summary.md", prompts.CompactionSummary(), dirs),
+			"", "compaction-summary.md", prompts.CompactionSummary(), dirs),
 		resolvePromptInfo("branch_orient_facet",
 			resolveString(derefStr(acfg.Sessions.BranchOrientationFacetPrompt), derefStr(cfg.Sessions.BranchOrientationFacetPrompt)),
 			"branch-orientation-facet.md", prompts.BranchOrientationFacet(), dirs),
@@ -169,7 +170,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		embeddedDefault             string
 	}
 	fileDefs := []promptDef{
-		{"compaction_summary", resolveString(derefStr(acfg.Sessions.CompactionSummaryPrompt), derefStr(cfg.Sessions.CompactionSummaryPrompt)), "compaction-summary.md", prompts.CompactionSummary()},
+		{"compaction_summary", "", "compaction-summary.md", prompts.CompactionSummary()},
 		{"branch_orient_facet", resolveString(derefStr(acfg.Sessions.BranchOrientationFacetPrompt), derefStr(cfg.Sessions.BranchOrientationFacetPrompt)), "branch-orientation-facet.md", prompts.BranchOrientationFacet()},
 		{"branch_orient_headless", resolveString(derefStr(acfg.Sessions.BranchOrientationHeadlessPrompt), derefStr(cfg.Sessions.BranchOrientationHeadlessPrompt)), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
 		{"keepalive", derefStr(acfg.Keepalive.Prompt), "keepalive.md", prompts.Keepalive()},

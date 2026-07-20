@@ -173,9 +173,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	}
 	add("sessions", "compaction_max_tokens", cfg.Sessions.CompactionMaxTokens)
 	add("sessions", "compaction_min_messages", cfg.Sessions.CompactionMinMessages)
-	if cfg.Sessions.CompactionSummaryPrompt != nil {
-		add("sessions", "compaction_summary_prompt", *cfg.Sessions.CompactionSummaryPrompt)
-	}
 	if cfg.Sessions.CompactionHandoffMsg != nil {
 		add("sessions", "compaction_handoff_msg", *cfg.Sessions.CompactionHandoffMsg)
 	}

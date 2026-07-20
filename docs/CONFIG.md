@@ -244,7 +244,9 @@ Session storage. Compaction and prompt fields that can be overridden per-agent a
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `branch_orientation_facet_prompt`, `branch_orientation_headless_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without a restart.
+All prompt-path fields (`branch_orientation_facet_prompt`, `branch_orientation_headless_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without a restart.
+
+The compaction-summary prompt has no config key: override it per-agent by dropping a `compaction-summary.md` in the agent's `prompts/` dir (searched: agent `workspace/prompts` → `shared/prompts` → embedded default), the same file-only mechanism as the nudge framing prompts. An empty `compaction-summary.md` resolves to empty and disables the delegated `/compact` summary prompt.
 
 When no config override is set, embedded defaults from `shared/prompts/` are used:
 - `shared/prompts/branch-orientation-headless.md` — headless branches (cron, spawn, keepalive)
@@ -953,7 +955,6 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `compaction_threshold` | float | unset → curve | Trigger compaction when context usage exceeds this fixed fraction (0.0–1.0). **Unset (default)** uses a non-linear curve that spends a smaller fraction of larger windows — ~80% of a 200k window, ~48% of 1M, ~38% of 2M (anchored at 0.8 up to a 200k pivot, then `0.8·(W/200k)^-0.32`). Setting a value pins that flat fraction for all window sizes. |
-| `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read live at compaction time (edits take effect immediately). `""` uses embedded default. |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `shared/prompts/branch-orientation-facet.md`. |

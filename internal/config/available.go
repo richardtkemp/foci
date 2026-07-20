@@ -83,9 +83,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 
 	// Sessions fields
-	if cfg.Sessions.CompactionSummaryPrompt == nil {
-		opts = append(opts, availableOption{"sessions", "compaction_summary_prompt", "\"\"", "path to summary prompt file"})
-	}
 	if cfg.Sessions.CompactionHandoffMsg == nil {
 		opts = append(opts, availableOption{"sessions", "compaction_handoff_msg", "\"\"", "handoff message after compaction"})
 	}

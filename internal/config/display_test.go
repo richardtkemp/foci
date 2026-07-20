@@ -181,8 +181,6 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	showCompact := ShowThinkingCompact
 	agent.Display.ShowThinking = &showCompact
 	// Set optional global fields
-	summaryPrompt := "/tmp/summary.md"
-	cfg.Sessions.CompactionSummaryPrompt = &summaryPrompt
 	handoff := "handoff"
 	cfg.Sessions.CompactionHandoffMsg = &handoff
 	cfg.Notify.CompactionNotify = &boolTrue

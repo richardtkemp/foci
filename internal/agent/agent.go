@@ -146,7 +146,6 @@ type Agent struct {
 	Redact                        func(string) string                     // redact secrets from tool output; nil disables
 	SessionIndex                  *session.SessionIndex                   // nil disables state persistence
 	MessageTransforms             []CompiledTransform                     // compiled regex rules for inbound message transformation
-	CompactionSummaryPromptPath   string                                  // file path; read at compaction time via prompts.ResolvePrompt
 	CompactionHandoffMsg          string                                  // inline handoff message; empty resolves from search dirs or embedded default
 	PromptSearchDirs              []string                                // directories to search for prompt files (agent workspace, shared)
 	MaxToolLoops                  int                                     // max tool iterations per turn (default 25)
@@ -415,11 +414,13 @@ func (a *Agent) showToolCalls() string {
 	return a.ShowToolCalls
 }
 
+// compactionSummaryPrompt resolves the compaction summary prompt per-agent via
+// the standard file-override path (agent workspace/prompts → shared/prompts →
+// embedded default), the SAME mechanism as the nudge framing prompts. Override
+// by dropping a compaction-summary.md in the agent's prompts dir; an empty
+// override file resolves to "" and disables the delegated /compact prompt.
 func (a *Agent) compactionSummaryPrompt() string {
-	if a.LiveConfigFn != nil {
-		return a.LiveConfigFn().Compaction.CompactionSummaryPrompt
-	}
-	return a.CompactionSummaryPromptPath
+	return prompts.ResolvePrompt("", "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
 }
 
 func (a *Agent) compactionHandoffMsg() string {
