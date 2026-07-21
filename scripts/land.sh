@@ -2,16 +2,13 @@
 # land.sh — the sanctioned path to main (merge-lock landing, #1448 pieces 1+2).
 #
 # Run FROM the feature-branch worktree you want to land (via `make land`).
-# Serialises every landing on this host through a per-repo MERGE lock
-# (/tmp/foci-merge.lock), distinct from the /tmp/heavy COMPUTE lock that
-# `make test`/`make integration`/`make deploy-build` take: merge arbitrates
-# repo state, heavy arbitrates CPU. This process holds the merge lock for the
-# whole landing and, in its test step, `make test` transiently ALSO takes
-# /tmp/heavy — so a lander briefly holds BOTH.
-#
-# LOCK-ORDER INVARIANT (deadlock-safety): always merge-lock -> heavy, NEVER the
-# reverse. Nothing that holds /tmp/heavy may attempt a landing. Safe today:
-# only test/integration/deploy-build take heavy and none of them land.
+# Serialises every landing through a dedicated MERGE lock (/tmp/foci-merge.lock),
+# separate from the /tmp/heavy COMPUTE lock. The merge lock spans the WHOLE
+# landing including `make test`, so a second lander blocks and then tests once
+# against the final main (blocks, never redoes) — the price being that a lander
+# briefly holds merge + heavy together. Order is invariant BY CONSTRUCTION: land
+# is the only taker of the merge lock and always takes it before heavy, so no
+# cycle is possible — just don't add a heavy-holding step that also lands.
 #
 # RED-TEST PROTOCOL (#1448 piece 5): if `make test` goes red here, it ran on
 # YOUR branch rebased onto the LATEST origin/main — so a peer's shared-semantics
