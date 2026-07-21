@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"foci/internal/ratelimit"
 )
 
 // SSRF and transport limits shared by web_fetch and http_request. Centralised
@@ -112,9 +114,21 @@ func newSafeClient(timeout time.Duration, maxRedirects int) *http.Client {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
+	// Rate-limit aware: a 429/503 with a short Retry-After is retried transparently
+	// (bounded — the client Timeout cancels the request context, so a wait can never
+	// outlast the call's own deadline); a limit beyond the inline budget is passed
+	// through unchanged so the agent still sees the real status and body. Wraps the
+	// SSRF-safe transport, preserving per-dial IP validation on every retry.
+	rlTransport := &ratelimit.Transport{
+		Base:          transport,
+		Kind:          ratelimit.KindRequest,
+		Mode:          ratelimit.ModePassthrough,
+		MaxInlineWait: 10 * time.Second,
+		MaxRetries:    2,
+	}
 	return &http.Client{
 		Timeout:   timeout,
-		Transport: transport,
+		Transport: rlTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects {
 				return fmt.Errorf("stopped after %d redirects", maxRedirects)

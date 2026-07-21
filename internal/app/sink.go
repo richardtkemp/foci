@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
 	"foci/internal/platform"
+	"foci/internal/ratelimit"
 	"foci/internal/turn"
 	"foci/internal/voice"
 )
@@ -161,6 +163,20 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	}
 }
 
+// logTTSError logs a voice-mode TTS synthesis failure. A rate limit (e.g. Groq's
+// per-day token cap) is an expected transient: the turn already delivered its text
+// and only the spoken clip is missing, so log it at info — keeping it OFF the
+// WARN-triggered warning-injection queue (no noisy client-facing notice, no raw
+// body / billing URL). Every other failure stays a WARN.
+func (s *appSink) logTTSError(err error) {
+	var rl *ratelimit.Error
+	if errors.As(err, &rl) {
+		appLog.Infof("voice-mode: TTS %v — delivered text-only (conv=%s)", rl, s.b.convID)
+		return
+	}
+	appLog.Warnf("voice-mode: TTS synthesis (conv=%s): %v", s.b.convID, err)
+}
+
 // synthesizeVoiceMode returns synthesized reply audio for a voice-triggered
 // app turn (#1439), or nil when bundling doesn't apply: no TTS configured
 // (graceful text-only degradation), the turn errored, the turn's trigger isn't
@@ -193,7 +209,7 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 	}
 	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
 	if err != nil {
-		appLog.Warnf("voice-mode: TTS synthesis (conv=%s): %v", s.b.convID, err)
+		s.logTTSError(err)
 		return nil
 	}
 	return audio
@@ -220,7 +236,7 @@ func (s *appSink) synthesizeVoiceModeBlock(ctx context.Context, rawText string) 
 	s.voiceBlockDelivered = true
 	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
 	if err != nil {
-		appLog.Warnf("voice-mode: TTS synthesis (conv=%s): %v", s.b.convID, err)
+		s.logTTSError(err)
 		return
 	}
 	if len(audio) > 0 && s.attachVoice != nil {

@@ -16,6 +16,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/procx"
+	"foci/internal/ratelimit"
 	"foci/internal/tempdir"
 )
 
@@ -32,7 +33,14 @@ func (o HTTPOpts) client() *http.Client {
 	if t <= 0 {
 		t = defaultHTTPTimeout
 	}
-	return &http.Client{Timeout: t}
+	// Rate-limit aware: a 429 (e.g. Groq's per-day token cap) surfaces as a typed
+	// *ratelimit.Error instead of a raw body dump. Degrade mode — never block a
+	// per-message TTS/STT call waiting out a multi-minute window; the caller falls
+	// back to text-only and logs quietly.
+	return &http.Client{
+		Timeout:   t,
+		Transport: &ratelimit.Transport{Kind: ratelimit.KindRequest, Mode: ratelimit.ModeDegrade},
+	}
 }
 
 func (o HTTPOpts) maxResponse() int64 {
