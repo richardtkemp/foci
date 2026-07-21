@@ -13,9 +13,9 @@ func TestNormalizeForSpeech(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "ticket reference hash",
+			name:  "ticket reference hash reads digit-by-digit (#1447: 4-digit run)",
 			input: "Filed as #1443.",
-			want:  "Filed as 1443.",
+			want:  "Filed as 1 4 4 3.",
 		},
 		{
 			name:  "em dash becomes a spoken pause",
@@ -50,7 +50,7 @@ func TestNormalizeForSpeech(t *testing.T) {
 		{
 			name:  "representative symbol-heavy string (repro of #1444's garbled tail)",
 			input: "Filed as #1443 — see foci-client/voice-mode, **done**.",
-			want:  "Filed as 1443, see foci-client voice-mode, done.",
+			want:  "Filed as 1 4 4 3, see foci-client voice-mode, done.",
 		},
 		{
 			name:  "plain text unchanged",
@@ -66,6 +66,36 @@ func TestNormalizeForSpeech(t *testing.T) {
 			name:  "empty input",
 			input: "",
 			want:  "",
+		},
+		{
+			name:  "three-plus digit number reads digit-by-digit (#1447)",
+			input: "The code is 1005.",
+			want:  "The code is 1 0 0 5.",
+		},
+		{
+			name:  "two-digit number stays a cardinal",
+			input: "I have 42 apples.",
+			want:  "I have 42 apples.",
+		},
+		{
+			name:  "single digit unaffected",
+			input: "Room 7 is free.",
+			want:  "Room 7 is free.",
+		},
+		{
+			name:  "decimal splits each digit run independently",
+			input: "Pi is about 3.141 today.",
+			want:  "Pi is about 3.1 4 1 today.",
+		},
+		{
+			name:  "version-like token: every run stays under threshold",
+			input: "Bumped to version 1.2.3.",
+			want:  "Bumped to version 1.2.3.",
+		},
+		{
+			name:  "large number split fully",
+			input: "It cost 123456 pounds.",
+			want:  "It cost 1 2 3 4 5 6 pounds.",
 		},
 	}
 	for _, tt := range tests {

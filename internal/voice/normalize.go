@@ -27,19 +27,38 @@ var (
 	// into a plain word break — reading "slash" aloud for every occurrence is
 	// more distracting than just treating it as a separator.
 	slashRE = regexp.MustCompile(`\s*/\s*`)
+	// digitRunRE matches a run of three or more consecutive digits. A cardinal
+	// reading ("one thousand five") is ambiguous/awkward for anything that
+	// isn't a genuine quantity — ticket refs, codes, years-as-IDs, etc. — so
+	// runs at or above this length are voiced digit-by-digit instead (#1447:
+	// 1005 -> "1 0 0 5"). Each run in the text (e.g. within a decimal or
+	// version-like token such as "3.141" or "1.2.3") is split independently;
+	// this doesn't parse the surrounding token's semantics, it just applies
+	// the length rule to every maximal digit run. Two-digit-or-shorter runs
+	// (e.g. "42") are left as ordinary cardinals.
+	digitRunRE = regexp.MustCompile(`\d{3,}`)
 	// multiSpaceRE collapses whitespace left behind by the substitutions above.
 	multiSpaceRE = regexp.MustCompile(`[ \t]{2,}`)
 )
+
+// splitDigits spaces out each digit in a matched run so a TTS model voices
+// them individually rather than as one large cardinal.
+func splitDigits(digits string) string {
+	return strings.Join(strings.Split(digits, ""), " ")
+}
 
 // NormalizeForSpeech converts markdown/symbol-laden assistant text into
 // something a TTS model speaks cleanly (#1444). It targets the specific
 // classes of symbol observed to mangle synthesis — not a full markdown
 // parser: markdown links collapse to their label, heading/emphasis/code
 // markers ('#', '*', '_', backtick) are dropped, em/en dashes become a
-// spoken comma pause, and slashes become a plain word break. Call this AFTER
-// any sentinel stripping (platform.StripSilencingSuffix /
-// StripSpuriousPrefix) and right before TTS.Synthesize — it is a speech
-// rendering transform, not a delivery/silence gate.
+// spoken comma pause, slashes become a plain word break, and any run of
+// three-or-more digits (a ticket ref, code, or other non-quantity number) is
+// split into space-separated digits so a TTS model voices them individually
+// instead of as one long cardinal. Call this AFTER any sentinel stripping
+// (platform.StripSilencingSuffix / StripSpuriousPrefix) and right before
+// TTS.Synthesize — it is a speech rendering transform, not a delivery/silence
+// gate.
 func NormalizeForSpeech(text string) string {
 	if text == "" {
 		return text
@@ -48,6 +67,10 @@ func NormalizeForSpeech(text string) string {
 	out = dashRE.ReplaceAllString(out, ", ")
 	out = slashRE.ReplaceAllString(out, " ")
 	out = mdSymbolRE.ReplaceAllString(out, "")
+	// Run after mdSymbolRE so a ticket ref's leading '#' is already gone
+	// (e.g. "#1443" -> "1443" -> "1 4 4 3"), and before multiSpaceRE so the
+	// single spaces this inserts aren't disturbed by later cleanup.
+	out = digitRunRE.ReplaceAllStringFunc(out, splitDigits)
 	out = multiSpaceRE.ReplaceAllString(out, " ")
 	return strings.TrimSpace(out)
 }
