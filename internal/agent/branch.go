@@ -74,17 +74,51 @@ func (a *Agent) BranchStrategyFor(branchType string) BranchStrategy {
 	// the parent running — replacing the old compromises (in-place polluted the
 	// main thread; independent started empty). Callers must quiesce the parent
 	// while the fork clones the transcript (see ForkBackendBranch).
-	if a.DelegatedManager.BackendCanBranch() {
+	//
+	// An operator override can force ONE of the four periodic operations
+	// (background/keepalive/reflection/consolidation) to skip the fork and take
+	// the same fallback path a non-branch-capable backend already uses below —
+	// e.g. [keepalive] force_in_session=true keeps keepalive in-place even on a
+	// backend that can otherwise branch. Checked before BackendCanBranch so the
+	// override always wins for that operation; every other branchType
+	// (compaction-memory, session-end-memory, the /branch endpoint, spawn, …) is
+	// unaffected. Unset (the default) preserves prior behaviour exactly.
+	if !a.forceInSessionOverride(branchType) && a.DelegatedManager.BackendCanBranch() {
 		return BranchForkBackend
 	}
 
-	// Backend can't fork — legacy per-type behaviour.
+	// Backend can't fork (or an override forced this operation into the same
+	// path) — legacy per-type behaviour.
 	switch branchType {
 	case "reflection", "keepalive", "compaction-memory":
 		return BranchInPlace
 	default:
 		// background / consolidation / maintenance: isolated one-off sessions.
 		return BranchIndependent
+	}
+}
+
+// forceInSessionOverride reports whether an operator override forces
+// branchType — one of the four periodic operations "keepalive", "background",
+// "reflection", or "consolidation" — to skip a real backend fork and run
+// through the same fallback path a non-branch-capable backend already uses.
+// Read live from each operation's own config section (`force_in_session` /
+// `consolidation_force_in_session`), so an edit applies without a restart —
+// see keepalive()/backgroundConfig()/reflection()/maintenance(). Any other
+// branchType (compaction-memory, session-end-memory, spawn, the /branch
+// endpoint, …) is not covered by this override and always returns false.
+func (a *Agent) forceInSessionOverride(branchType string) bool {
+	switch branchType {
+	case "keepalive":
+		return a.keepalive().ForceInSession
+	case "background":
+		return a.backgroundConfig().ForceInSession
+	case "reflection":
+		return a.reflection().ForceInSession
+	case "consolidation":
+		return a.maintenance().ConsolidationForceInSession
+	default:
+		return false
 	}
 }
 

@@ -1116,6 +1116,7 @@ type KeepaliveConfig struct {
 	Prompt           *string `toml:"prompt"                   hot:"event" desc:"Path to a custom keepalive prompt file. Leave unset for the built-in default, or set to none to disable it"`    // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 	WarmOpenAppChats *bool   `toml:"warm_open_app_chats"      desc:"When true, keepalive warms every chat currently open in the app instead of just the main session, so their caches stay warm too"`
 	MaxUserIdle      *string `toml:"max_user_idle" default:"96h" hot:"event" desc:"Only keep a session's cache warm if a human interacted with it within this window. Sessions idle longer than this are left to expire. Set to 0 to disable the gate" type:"duration"`
+	ForceInSession   *bool   `toml:"force_in_session"          hot:"event" desc:"Force keepalive to run in the existing session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for keepalive only"`
 }
 
 // ReflectionConfig controls the periodic reflection pass, which captures both
@@ -1132,6 +1133,7 @@ type ReflectionConfig struct {
 	CompactionPrompt      *string `toml:"compaction_prompt"                     hot:"event" desc:"Path to a custom prompt for pre-compaction reflection. Leave unset for the built-in default, or set to none to disable this trigger"`              // prompt override (nil = embedded, "none" = disabled)
 	BackendQuietPeriod    *string `toml:"backend_quiet_period"        default:"5m"   hot:"event" desc:"For delegated backends like Claude Code, how long the user must be idle before reflection is injected into the live session" type:"duration"` // min idle before firing in backend mode
 	NotifyOnSkillCreation *bool   `toml:"notify_on_skill_creation"     default:"true" hot:"event" desc:"When a reflection pass edits a skill AND commits it within that same run, send the commit message + diff as a file attachment"`              // notify user on git-attributed skill creation/update during reflection (#1404)
+	ForceInSession        *bool   `toml:"force_in_session"            hot:"event" desc:"Force the periodic (interval-triggered) reflection pass to run in the existing session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for interval reflection only — session-end and pre-compaction reflection are unaffected"`
 }
 
 // SchedulerConfig controls the periodic scheduler that drives all four timers
@@ -1150,12 +1152,13 @@ type SchedulerConfig struct {
 // (fixed interval since the last run). All fields are pointer types for
 // Merge-based resolution (per-agent → global).
 type MaintenanceConfig struct {
-	ConsolidationEnabled *bool   `toml:"consolidation_enabled" default:"true" hot:"event" desc:"Periodically curate the recent daily memory files into the long-term MEMORY.md file"`                                                                  // curate MEMORY.md periodically
-	ConsolidationTime    *string `toml:"consolidation_time"    default:"20h"  hot:"event" desc:"When to run MEMORY.md consolidation: either a daily clock time like 20:00, or a duration like 20h since the last run"`                                 // "HH:MM" daily or duration
-	ConsolidationPrompt  *string `toml:"consolidation_prompt"                 hot:"event" desc:"Path to a custom consolidation prompt file. Leave unset for the built-in default, or set to none to disable consolidation"`                            // prompt override (nil = embedded, "none" = disabled)
-	ConsolidationMaxIdle *string `toml:"consolidation_max_idle" default:"1h" hot:"event" desc:"Skip consolidation if the user has not interacted within this window, since there is nothing new to curate" type:"duration"`                            // skip if idle longer than this
-	ResetTime            *string `toml:"reset_time"            default:""     hot:"event" desc:"When to reset the daily session: a clock time like 04:00, a duration like 24h since the last reset, or empty to never auto-reset"`                     // "HH:MM" daily, duration, or "" = never
-	ResetIdleGuard       *string `toml:"reset_idle_guard"      default:"55m"  hot:"event" desc:"Skip a scheduled session reset if the user interacted within this window, so an active conversation is not wiped out from under them" type:"duration"` // skip reset if recently active
+	ConsolidationEnabled        *bool   `toml:"consolidation_enabled" default:"true" hot:"event" desc:"Periodically curate the recent daily memory files into the long-term MEMORY.md file"`                                                                  // curate MEMORY.md periodically
+	ConsolidationTime           *string `toml:"consolidation_time"    default:"20h"  hot:"event" desc:"When to run MEMORY.md consolidation: either a daily clock time like 20:00, or a duration like 20h since the last run"`                                 // "HH:MM" daily or duration
+	ConsolidationPrompt         *string `toml:"consolidation_prompt"                 hot:"event" desc:"Path to a custom consolidation prompt file. Leave unset for the built-in default, or set to none to disable consolidation"`                            // prompt override (nil = embedded, "none" = disabled)
+	ConsolidationMaxIdle        *string `toml:"consolidation_max_idle" default:"1h" hot:"event" desc:"Skip consolidation if the user has not interacted within this window, since there is nothing new to curate" type:"duration"`                            // skip if idle longer than this
+	ResetTime                   *string `toml:"reset_time"            default:""     hot:"event" desc:"When to reset the daily session: a clock time like 04:00, a duration like 24h since the last reset, or empty to never auto-reset"`                     // "HH:MM" daily, duration, or "" = never
+	ResetIdleGuard              *string `toml:"reset_idle_guard"      default:"55m"  hot:"event" desc:"Skip a scheduled session reset if the user interacted within this window, so an active conversation is not wiped out from under them" type:"duration"` // skip reset if recently active
+	ConsolidationForceInSession *bool   `toml:"consolidation_force_in_session" hot:"event" desc:"Force memory consolidation to run in the existing/independent session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for consolidation only"`
 }
 
 // BackgroundConfig controls the background work timer.
@@ -1165,6 +1168,7 @@ type BackgroundConfig struct {
 	Interval         *string `toml:"interval" default:"15m"   hot:"event" desc:"How long since the last user interaction before the background work timer fires" type:"duration"`                                        // time since last interaction before firing
 	Prompt           *string `toml:"prompt"                   hot:"event" desc:"Path to a custom background work prompt file. Leave unset for the built-in default, or set to none to disable background work"`          // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 	CanRunBackground *string `toml:"can_run_background"       hot:"event" desc:"Script run to gate background work, reflection and consolidation. Exit code 0 allows it, non-zero skips it. Empty means always allowed"` // path to a script/executable run before each background op; exit 0 permits the work, any non-zero exit skips it. Empty = always allowed.
+	ForceInSession   *bool   `toml:"force_in_session"         hot:"event" desc:"Force background work to run in an independent session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for background work only"`
 }
 
 // DebugConfig holds developer/debugging knobs that can be configured at

@@ -103,6 +103,38 @@ func TestLiveApplyPeriodicRefreshesSnapshot(t *testing.T) {
 	}
 }
 
+// TestLiveApplyForceInSessionOverridesGoLive proves the #1450 per-operation
+// force_in_session overrides are wired through the SAME resolved-snapshot
+// applier as other reflection/keepalive/background/maintenance fields:
+// agent.BranchStrategyFor reads them via keepalive()/reflection()/
+// backgroundConfig()/maintenance() off LiveConfig(), so an edit applies
+// without a restart.
+func TestLiveApplyForceInSessionOverridesGoLive(t *testing.T) {
+	off := false
+	base := &config.Config{Agents: []config.AgentConfig{{ID: "a", Keepalive: config.KeepaliveConfig{ForceInSession: &off}}}}
+	inst := &agentInstance{id: "a", resolved: config.NewLiveValue(config.Resolve(base, base.Agents[0]))}
+	if inst.LiveConfig().Keepalive.ForceInSession {
+		t.Fatal("initial LiveConfig().Keepalive.ForceInSession = true, want false")
+	}
+
+	la := newLiveApply("")
+	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+
+	on := true
+	fresh := &config.Config{Agents: []config.AgentConfig{{ID: "a", Keepalive: config.KeepaliveConfig{ForceInSession: &on}}}}
+	applier := la.appliers["keepalive.force_in_session"]
+	if applier == nil {
+		t.Fatal("no applier registered for keepalive.force_in_session")
+	}
+	if err := applier(fresh); err != nil {
+		t.Fatalf("applier: %v", err)
+	}
+
+	if !inst.LiveConfig().Keepalive.ForceInSession {
+		t.Error("after apply, LiveConfig().Keepalive.ForceInSession = false, want true — hot apply did not take effect")
+	}
+}
+
 // TestLiveApply_MapSection proves the dynamic-key fallback end to end: an
 // Apply() call for a key that was never pre-registered (a user-defined group
 // name, here "myteam") still finds and runs the map-section applier via

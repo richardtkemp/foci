@@ -190,6 +190,15 @@ var (
 		"reflection.session_end_prompt", "agent.reflection.session_end_prompt",
 		"reflection.compaction_enabled", "agent.reflection.compaction_enabled",
 		"reflection.compaction_prompt", "agent.reflection.compaction_prompt",
+		// #1450: per-operation force-in-session overrides for the four
+		// periodic ops, read live by agent.BranchStrategyFor via
+		// keepalive()/backgroundConfig()/reflection()/maintenance() (the
+		// resolved snapshot) — not consumed by the periodic.Runner, so these
+		// live in liveApplyResolvedAddrs rather than liveApplyPeriodicAddrs.
+		"keepalive.force_in_session", "agent.keepalive.force_in_session",
+		"background.force_in_session", "agent.background.force_in_session",
+		"reflection.force_in_session", "agent.reflection.force_in_session",
+		"maintenance.consolidation_force_in_session", "agent.maintenance.consolidation_force_in_session",
 	}
 
 	liveApplyWarningAddrs = []string{

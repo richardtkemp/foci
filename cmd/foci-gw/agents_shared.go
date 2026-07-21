@@ -49,7 +49,7 @@ type sharedAgentSetup struct {
 // resolveSharedSetup performs the common preamble for all agent types:
 // config resolution, prompt search dirs, and group resolver creation.
 func resolveSharedSetup(p setupParams) *sharedAgentSetup {
-	p.resolved = config.Resolve(p.cfg, p.acfg)     // static-cfg:ignore: the definition site — this IS the initial snapshot resolvedLive wraps
+	p.resolved = config.Resolve(p.cfg, p.acfg)       // static-cfg:ignore: the definition site — this IS the initial snapshot resolvedLive wraps
 	p.resolvedLive = config.NewLiveValue(p.resolved) // static-cfg:ignore: the definition site — see comment above
 
 	promptSearchDirs := []string{
@@ -91,13 +91,19 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		SessionIndex:      s.p.sessionIndex,
 		MessageTransforms: agent.CompileTransforms(resolveMessageTransforms(acfg, s.p.cfg)),
 		PromptSearchDirs:  s.promptSearchDirs,
-		// Reflection/ShowToolCalls/Statusline have no live getter yet (unlike
-		// e.g. Streaming) — genuinely restart-required, a candidate for a
-		// future pass.
-		Reflection:      s.p.resolved.Reflection,               // static-cfg:ignore: see comment above
+		// ShowToolCalls/Statusline have no live getter yet (unlike e.g.
+		// Streaming) — genuinely restart-required, a candidate for a future
+		// pass. Reflection/Keepalive/Background/Maintenance DO have live
+		// getters (reflection()/keepalive()/backgroundConfig()/maintenance())
+		// that prefer LiveConfigFn when set; these static fields are only the
+		// nil-LiveConfigFn fallback for direct-constructed agents (tests).
+		Reflection:      s.p.resolved.Reflection,  // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
+		Keepalive:       s.p.resolved.Keepalive,   // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
+		Background:      s.p.resolved.Background,  // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
+		Maintenance:     s.p.resolved.Maintenance, // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
 		DefaultPlatform: s.p.cfg.DefaultPlatformFor(s.p.acfg.ID),
-		ShowToolCalls:   resolveShowToolCalls(s.p.resolved),     // static-cfg:ignore: see comment above
-		Statusline:      s.p.resolved.Display.Statusline,        // static-cfg:ignore: see comment above
+		ShowToolCalls:   resolveShowToolCalls(s.p.resolved), // static-cfg:ignore: see comment above
+		Statusline:      s.p.resolved.Display.Statusline,    // static-cfg:ignore: see comment above
 	}
 }
 
@@ -139,16 +145,16 @@ type finalizeParams struct {
 	bootstrap           *workspace.Bootstrap
 	registry            *tools.Registry // nil for delegated agents
 	skillRegistry       *skills.Registry
-	serverTools         []provider.ToolDef       // nil for delegated agents
-	client              provider.Client          // nil for delegated agents
-	clientProvider      provider.ClientProvider  // nil for delegated agents
-	fallbackFn          provider.FallbackFunc    // nil for delegated agents
-	compactionThreshold float64                  // 0 for delegated agents
-	tmuxTool            *tools.Tool              // nil for delegated agents
-	tmuxClearAll        func()                   // nil for delegated agents
-	tmuxWatchCount      func() int               // nil for delegated agents
-	ttsRepls            map[string]string        // nil for delegated agents
-	mcpManager          *mcpkg.Manager           // nil for delegated agents
+	serverTools         []provider.ToolDef      // nil for delegated agents
+	client              provider.Client         // nil for delegated agents
+	clientProvider      provider.ClientProvider // nil for delegated agents
+	fallbackFn          provider.FallbackFunc   // nil for delegated agents
+	compactionThreshold float64                 // 0 for delegated agents
+	tmuxTool            *tools.Tool             // nil for delegated agents
+	tmuxClearAll        func()                  // nil for delegated agents
+	tmuxWatchCount      func() int              // nil for delegated agents
+	ttsRepls            map[string]string       // nil for delegated agents
+	mcpManager          *mcpkg.Manager          // nil for delegated agents
 	skillsDirs          []string
 }
 

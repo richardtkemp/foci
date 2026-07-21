@@ -1034,6 +1034,7 @@ Cache keepalive timer. Fires a lightweight branch session to keep the prompt cac
 | `enabled` | bool | `false` | Enable keepalive timer. |
 | `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be less than `[cache] ttl` (default 1h). |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
+| `force_in_session` | bool | `false` | Force keepalive to run in the existing session instead of a real backend fork, even on a backend that can branch (e.g. Claude Code). Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for keepalive only. Live-appliable. |
 
 ### Background (`[background]` / `[[agents.background]]`)
 
@@ -1045,6 +1046,7 @@ Background work timer. Fires when the user is idle, there are open background-ta
 | `interval` | string | `"15m"` | Time since last interaction before firing. |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
 | `can_run_background` | string | `""` | Path to an executable run before each background operation. Exit 0 allows the tick; any non-zero exit skips it; empty/unset always allows. A command that fails to execute (missing/not executable) is treated as allowed and logged as a warning, so a broken script can't wedge all background work. Runs via `procx.Spawn` (foci-secrets group stripped) with a 10s timeout, receiving `FOCI_SESSION_KEY`, `FOCI_AGENT_ID`, and `FOCI_ENDPOINT` in the environment. The real-429 `RateLimitGate` still gates background work independently. |
+| `force_in_session` | bool | `false` | Force background work to run in an independent session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for background work only. Live-appliable. |
 
 **Validation warnings:**
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
@@ -1074,6 +1076,7 @@ The periodic reflection pass captures both factual memory (into daily memory fil
 | `compaction_enabled` | bool | `true` | Run reflection before compaction summarises context. |
 | `compaction_prompt` | string | `""` | Prompt override. `""` = embedded `reflection.md`, `"none"` = disabled, `/path` = custom file. |
 | `backend_quiet_period` | string | `"5m"` | Minimum idle time before reflection fires in backend/delegated mode. Prevents reflection from triggering while the backend agent is still actively working. |
+| `force_in_session` | bool | `false` | Force the periodic (interval-triggered) reflection pass to run in the existing session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for interval reflection only — session-end and pre-compaction reflection are unaffected. Live-appliable. |
 
 All prompt fields use 3-state resolution: `""` or `"default"` → embedded default from `shared/prompts/`, `"none"` → disabled, file path → read file with embedded fallback on error.
 
@@ -1098,6 +1101,7 @@ Scheduled housekeeping that runs at a wall-clock time of day **or** on a fixed i
 | `consolidation_max_idle` | string | `"1h"` | Skip consolidation if the user has been idle longer than this (no point curating a stale session). Empty/`0` = no idle limit. |
 | `reset_time` | string | `""` | Daily session reset: `"HH:MM"`, a duration, or `""` to disable. Fires a soft `/reset` (memory formation + key rotation). |
 | `reset_idle_guard` | string | `"55m"` | Skip the scheduled reset if the user interacted within this window, so a live conversation isn't wiped. Empty/`0` = always fire. |
+| `consolidation_force_in_session` | bool | `false` | Force memory consolidation to run in the existing/independent session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for consolidation only. Live-appliable. |
 
 **Consolidation** reviews daily memory files and curates MEMORY.md. The last-run timestamp is persisted in state, so it survives restarts. Skips if the user has been idle longer than `consolidation_max_idle` (default 1h — no point curating a stale session).
 
