@@ -304,6 +304,24 @@ func TestMultilineMessageCollapsed(t *testing.T) {
 	}
 }
 
+func TestTrailingNewlineTrimmed(t *testing.T) {
+	// A message whose source text ends in a newline (e.g. an HTTP error body)
+	// must not leave a dangling literal "\n" at the end of the entry — that
+	// artifact gets swept into client-facing warning injections and their
+	// auto-linked URLs. Inner newlines are still escaped (single-line entries).
+	buf := captureOutput(t)
+
+	Warnf("mana", "tts API error 429: %s", "{\"error\":\"nope\"}\n")
+
+	line := strings.TrimRight(buf.String(), "\n") // strip the framing newline setOutput adds
+	if strings.HasSuffix(line, `\n`) {
+		t.Errorf("entry should not end in a literal \\n: %q", line)
+	}
+	if !strings.HasSuffix(line, `{"error":"nope"}`) {
+		t.Errorf("expected entry to end at the trimmed body, got: %q", line)
+	}
+}
+
 func TestFatalf(t *testing.T) {
 	// Verifies that Fatalf logs a message and exits with code 1.
 	// Uses the subprocess test pattern since Fatalf calls os.Exit.
