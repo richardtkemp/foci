@@ -13,6 +13,16 @@
 # reverse. Nothing that holds /tmp/heavy may attempt a landing. Safe today:
 # only test/integration/deploy-build take heavy and none of them land.
 #
+# RED-TEST PROTOCOL (#1448 piece 5): if `make test` goes red here, it ran on
+# YOUR branch rebased onto the LATEST origin/main — so a peer's shared-semantics
+# change (a renamed constant, a reworded error, a changed lookup) can turn a
+# cross-package test red even though your diff never touched it. Before assuming
+# your change caused it, test the base: `git stash; git checkout origin/main;
+# make test`. Reproducible-on-your-branch is NOT caused-by-your-branch; the
+# control is the same suite on the clean base. (Seen 3x in one day: a digit-
+# format change and a ratelimit-transport change each reddened an unrelated
+# package's over-specific assertion.)
+#
 # Cheap repo-state work (fetch, rebase, conflict/dirty detection) runs BEFORE
 # the compute step, so merge-lock hold time is ~= the unit suite + heavy
 # queueing, not a full rebuild. Pushes HEAD:main to origin (atomic remote ff);
