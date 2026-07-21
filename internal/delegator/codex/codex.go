@@ -74,6 +74,7 @@ type Backend struct {
 	// Turn state
 	turnMu       sync.Mutex
 	turnActive   bool
+	turnID       string // current turn's id, required as turn/steer's expectedTurnId precondition
 	turnEvents   *delegator.TurnEvents
 	turnResultCh chan *delegator.TurnResult
 	turnText     strings.Builder
@@ -152,6 +153,18 @@ func (b *Backend) SessionID() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.threadID
+}
+
+// ConsumeThreadName clears the cached auto-generated thread name once the
+// caller has durably applied it (e.g. set as a chat alias). Without this,
+// b.threadName — set once by the thread/name/updated notification and
+// otherwise never cleared — resurfaces in every subsequent TurnResult,
+// making the caller re-run its whole alias read+write path every turn for
+// the rest of the session. Implements delegator.ThreadNameConsumer.
+func (b *Backend) ConsumeThreadName() {
+	b.mu.Lock()
+	b.threadName = ""
+	b.mu.Unlock()
 }
 
 // SessionFilePath returns the on-disk path of this session's transcript.

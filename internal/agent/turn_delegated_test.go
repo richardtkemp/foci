@@ -129,6 +129,23 @@ type mockBackendDT struct {
 	sessionFile   string
 	sessionEvents *delegator.SessionEvents // captured by AttachSessionEvents; Inject splices delivery callbacks back into handler
 	awaiting      bool                     // AwaitingAutonomousRun() return, guarded by mu (#1068 Phase 2 gate tests)
+
+	// cachedThreadName/consumeThreadNameCalls model a Codex-style backend
+	// that auto-generates a session title once and otherwise never clears
+	// it — used by the #1329 item 2 auto-alias-reset tests. sendToPaneFn
+	// closures read cachedThreadName to decide whether a turn's result
+	// carries ThreadName; ConsumeThreadName clears it, satisfying
+	// delegator.ThreadNameConsumer.
+	cachedThreadName       string
+	consumeThreadNameCalls int
+}
+
+// ConsumeThreadName satisfies delegator.ThreadNameConsumer.
+func (m *mockBackendDT) ConsumeThreadName() {
+	m.mu.Lock()
+	m.cachedThreadName = ""
+	m.consumeThreadNameCalls++
+	m.mu.Unlock()
 }
 
 // setAwaiting toggles the AwaitingAutonomousRun() result under mu so the inbox
@@ -493,6 +510,154 @@ func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 	}
 	if ts.sessionFilePath != "/tmp/test-session.jsonl" {
 		t.Errorf("sessionFilePath = %q, want %q", ts.sessionFilePath, "/tmp/test-session.jsonl")
+	}
+}
+
+// TestDelegatedTransport_AutoAlias_ConsumesThreadNameOnSuccess is the
+// red/green regression for #1329 item 2: a backend like Codex that
+// auto-generates a thread name ONCE never clears it on its own, so
+// TurnResult.ThreadName resurfaces every subsequent turn — re-running the
+// two-read-plus-write alias path every turn even after the alias is already
+// set. Fix: on a successful SetChatAliasUnique, the caller tells the backend
+// (via the optional delegator.ThreadNameConsumer interface) to clear its
+// cached name. This drives two turns through the SAME backend/session and
+// asserts: turn 1 sets the alias and consumes the name; turn 2 (which the
+// mock reports with an EMPTY ThreadName, mirroring what a real backend would
+// now report post-consume) does not touch the alias again and does not call
+// ConsumeThreadName a second time.
+func TestDelegatedTransport_AutoAlias_ConsumesThreadNameOnSuccess(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+
+	const agentID = "test-agent"
+	const chatID int64 = 42
+	// Seed platform ownership so PlatformForChat resolves (the "registered"
+	// row a real first-contact handler would have written).
+	if err := idx.SetChatMetadata(agentID, "telegram", chatID, "registered", "1"); err != nil {
+		t.Fatalf("seed platform: %v", err)
+	}
+
+	be := &mockBackendDT{cachedThreadName: "my-generated-title"}
+	be.sendToPaneFn = func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+		be.mu.Lock()
+		name := be.cachedThreadName
+		be.mu.Unlock()
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "ok", ThreadName: name})
+		}
+		return nil, nil
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr, AgentID: agentID, SessionIndex: idx}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+	// Turn 1: alias should be set, and ConsumeThreadName called once.
+	ts1 := NewTurnState(context.Background(), "test/s", []string{"hello"}, nil)
+	ts1.Prompt = "hello"
+	ts1.ConvChatID = chatID
+	if err := tr.RunInference(ts1); err != nil {
+		t.Fatalf("RunInference (turn 1): %v", err)
+	}
+	<-ts1.CompletionChan
+
+	alias, _ := idx.GetChatMetadata(agentID, "telegram", chatID, "alias")
+	if alias != "my-generated-title" {
+		t.Fatalf("alias after turn 1 = %q, want %q", alias, "my-generated-title")
+	}
+	be.mu.Lock()
+	calls1 := be.consumeThreadNameCalls
+	nameAfter1 := be.cachedThreadName
+	be.mu.Unlock()
+	if calls1 != 1 {
+		t.Fatalf("ConsumeThreadName calls after turn 1 = %d, want 1", calls1)
+	}
+	if nameAfter1 != "" {
+		t.Fatalf("cachedThreadName after turn 1 = %q, want empty (consumed)", nameAfter1)
+	}
+
+	// Turn 2: the (now-consumed) backend reports no ThreadName, matching a
+	// real backend post-consume. The alias path must not fire again, and
+	// ConsumeThreadName must not be called a second time.
+	ts2 := NewTurnState(context.Background(), "test/s", []string{"again"}, nil)
+	ts2.Prompt = "again"
+	ts2.ConvChatID = chatID
+	if err := tr.RunInference(ts2); err != nil {
+		t.Fatalf("RunInference (turn 2): %v", err)
+	}
+	<-ts2.CompletionChan
+
+	be.mu.Lock()
+	calls2 := be.consumeThreadNameCalls
+	be.mu.Unlock()
+	if calls2 != 1 {
+		t.Errorf("ConsumeThreadName calls after turn 2 = %d, want still 1 (no re-trigger)", calls2)
+	}
+}
+
+// TestDelegatedTransport_AutoAlias_CollisionDoesNotConsume proves the
+// asymmetric half of #1329 item 2: a SetChatAliasUnique collision (another
+// chat already holds that alias) must NOT consume the thread name — a
+// transient/collision failure should keep retrying on a later turn, unlike
+// the success path which consumes so it stops re-running. This also pins
+// that the collision is no longer swallowed with zero signal: previously
+// there was nothing at all logged or observable on this path.
+func TestDelegatedTransport_AutoAlias_CollisionDoesNotConsume(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+
+	const agentID = "test-agent"
+	const chatA int64 = 1
+	const chatB int64 = 2
+	if err := idx.SetChatMetadata(agentID, "telegram", chatA, "registered", "1"); err != nil {
+		t.Fatalf("seed platform A: %v", err)
+	}
+	if err := idx.SetChatMetadata(agentID, "telegram", chatB, "registered", "1"); err != nil {
+		t.Fatalf("seed platform B: %v", err)
+	}
+	// Chat A already owns the alias the backend will try to give chat B.
+	if err := idx.SetChatAliasUnique(agentID, "telegram", chatA, "taken-name"); err != nil {
+		t.Fatalf("seed existing alias: %v", err)
+	}
+
+	be := &mockBackendDT{cachedThreadName: "taken-name"}
+	be.sendToPaneFn = func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+		be.mu.Lock()
+		name := be.cachedThreadName
+		be.mu.Unlock()
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "ok", ThreadName: name})
+		}
+		return nil, nil
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr, AgentID: agentID, SessionIndex: idx}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+	ts := NewTurnState(context.Background(), "test/s", []string{"hello"}, nil)
+	ts.Prompt = "hello"
+	ts.ConvChatID = chatB
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	<-ts.CompletionChan
+
+	be.mu.Lock()
+	calls := be.consumeThreadNameCalls
+	nameAfter := be.cachedThreadName
+	be.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("ConsumeThreadName calls = %d, want 0 (collision must not consume)", calls)
+	}
+	if nameAfter != "taken-name" {
+		t.Errorf("cachedThreadName = %q, want unchanged %q (retry opportunity preserved)", nameAfter, "taken-name")
 	}
 }
 

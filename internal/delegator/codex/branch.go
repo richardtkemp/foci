@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"foci/internal/delegator"
 )
@@ -47,10 +48,21 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 // backend before issuing a fork request.
 func (b *Backend) ForkRequiresRunningBackend() bool { return true }
 
+// noRolloutFoundMarker is the substring of codex's thread/delete error when
+// the thread id has no on-disk rollout — verified live against codex
+// app-server 0.144.5: identical wording ("no rollout found for thread id
+// ...") for a never-existed id AND a thread already deleted once, matching
+// BackendBrancher.CleanupSession's documented "deleting an already-absent
+// session is NOT an error" contract.
+const noRolloutFoundMarker = "no rollout found for thread id"
+
 // CleanupSession deletes a Codex thread by ID. Implements
 // delegator.BackendBrancher.
 func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupRequest) error {
-	if b.writer == nil {
+	b.mu.Lock()
+	wr := b.writer
+	b.mu.Unlock()
+	if wr == nil {
 		return fmt.Errorf("codex: backend not started (cleanup requires an active app-server connection)")
 	}
 
@@ -59,8 +71,19 @@ func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupReque
 	}{
 		ThreadID: req.SessionID,
 	})
-	if err != nil {
-		b.lg.Debugf("thread/delete for %s: %v", req.SessionID, err)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if strings.Contains(err.Error(), noRolloutFoundMarker) {
+		// Already absent (never existed, or a prior delete already ran) —
+		// documented as not-an-error, matching the contract above.
+		b.lg.Debugf("thread/delete for %s: already absent: %v", req.SessionID, err)
+		return nil
+	}
+	// A genuine failure was previously swallowed here (Debugf, return nil)
+	// regardless of cause, so callers had no way to notice or retry a real
+	// cleanup failure (e.g. a live app-server RPC error unrelated to the
+	// session already being gone).
+	b.lg.Warnf("thread/delete for %s failed: %v", req.SessionID, err)
+	return fmt.Errorf("codex: thread/delete failed: %w", err)
 }

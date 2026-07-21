@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"foci/internal/delegator"
 )
@@ -128,6 +129,157 @@ func TestDispatch_ItemCompleted(t *testing.T) {
 	}
 	if text != "hello" {
 		t.Errorf("turnText = %q, want %q", text, "hello")
+	}
+}
+
+// TestDispatch_AgentMessage_CommentaryExcludedFromTurnText is the red/green
+// regression for #1329 item 6: codex's own generate-json-schema (v0.144.5)
+// documents agentMessage's `phase` field as "commentary" | "final_answer",
+// and a live turn/start -> turn/steer -> turn/completed probe confirmed the
+// running app-server actually emits it (a b3d41c78 attempt to act on this
+// was reverted minutes later, with no live check either way — the problem it
+// described was left unfixed with no TODO, per #1329's own description).
+// Only "final_answer" (or an unphased item, for backward compat with a
+// provider/older codex that doesn't emit phase) should reach the delivered
+// turn result; "commentary" narration must not pollute it, though it still
+// reaches the live view via OnText.
+func TestDispatch_AgentMessage_CommentaryExcludedFromTurnText(t *testing.T) {
+	t.Parallel()
+	b := newTestBackend(t)
+
+	var texts []string
+	b.sessionEvents.Store(&delegator.SessionEvents{
+		OnText: func(s string) { texts = append(texts, s) },
+	})
+
+	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":{"type":"agentMessage","id":"m1","text":"Running the requested command now.","phase":"commentary"}}}`))
+	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":{"type":"agentMessage","id":"m2","text":"Done — here is the answer.","phase":"final_answer"}}}`))
+	// Unphased item (older codex / a provider that doesn't emit phase):
+	// backward-compat path, still accumulates.
+	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":{"type":"agentMessage","id":"m3","text":" Also unphased."}}}`))
+
+	b.turnMu.Lock()
+	text := b.turnText.String()
+	b.turnMu.Unlock()
+
+	want := "Done — here is the answer. Also unphased."
+	if text != want {
+		t.Errorf("turnText = %q, want %q (commentary must be excluded)", text, want)
+	}
+	if len(texts) != 3 {
+		t.Errorf("OnText calls = %d, want 3 (commentary still reaches the live view)", len(texts))
+	}
+}
+
+// TestDispatch_AgentMessageDelta_DoesNotDoubleTurnText is the red/green
+// regression for the double-accumulation bug found while live-verifying
+// phase semantics for item 6: onAgentMessageDelta used to ALSO write into
+// turnText, and a completed agentMessage item's full text (written by
+// onItemCompleted) is exactly the concatenation of its own deltas — not
+// additional content (verified live) — so every message's contribution to
+// the delivered turn result was silently doubled.
+func TestDispatch_AgentMessageDelta_DoesNotDoubleTurnText(t *testing.T) {
+	t.Parallel()
+	b := newTestBackend(t)
+
+	b.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":"tu_1","itemId":"m1","delta":"Hello, "}}`))
+	b.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":"tu_1","itemId":"m1","delta":"world."}}`))
+	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":{"type":"agentMessage","id":"m1","text":"Hello, world.","phase":"final_answer"}}}`))
+
+	b.turnMu.Lock()
+	text := b.turnText.String()
+	b.turnMu.Unlock()
+
+	if text != "Hello, world." {
+		t.Errorf("turnText = %q, want %q (deltas must not double-count the completed item's text)", text, "Hello, world.")
+	}
+}
+
+// TestDispatch_CollabAgentToolCall_DeterministicOrderAndCounted is the
+// red/green regression for #1329 item 4: AgentsStates is a Go map, so
+// ranging it directly delivers multi-agent collab messages in random
+// iteration order — this pins sorted-by-key (deterministic) delivery.
+// It also pins the ToolCalls fix: collabAgentToolCall previously never
+// incremented turnTools (undercounting a real subagent spawn) while
+// contextCompaction — internal bookkeeping, not a user tool call — did
+// (overcounting); collab should count, compaction should not.
+func TestDispatch_CollabAgentToolCall_DeterministicOrderAndCounted(t *testing.T) {
+	t.Parallel()
+	b := newTestBackend(t)
+
+	var order []string
+	var ended bool
+	b.sessionEvents.Store(&delegator.SessionEvents{
+		OnSubagentText: func(groupKey, text string, runIndex int) { order = append(order, text) },
+		OnSubagentEnd:  func(groupKey string, runIndex int) { ended = true },
+	})
+
+	// zzz/aaa/mmm keys chosen so map iteration order is virtually certain to
+	// differ from sorted order at least once across repeated runs — sorting
+	// makes the assertion below deterministic regardless.
+	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":{"type":"collabAgentToolCall","id":"c1","agentsStates":{"zzz":{"message":"third"},"aaa":{"message":"first"},"mmm":{"message":"second"}}}}}`))
+	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":{"type":"contextCompaction","id":"c2"}}}`))
+
+	want := []string{"first", "second", "third"}
+	if len(order) != len(want) {
+		t.Fatalf("OnSubagentText order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Errorf("OnSubagentText order = %v, want %v (must be sorted by agent id)", order, want)
+		}
+	}
+	if !ended {
+		t.Error("OnSubagentEnd was not fired")
+	}
+
+	b.turnMu.Lock()
+	tools := b.turnTools
+	b.turnMu.Unlock()
+	if tools != 1 {
+		t.Errorf("turnTools = %d, want 1 (collab counted, compaction not)", tools)
+	}
+}
+
+// TestTruncateArgs_UTF8SafeBoundary is the red/green regression for #1329
+// item 3: truncateArgs used to slice raw JSON at a fixed byte offset
+// (s[:200]), which can split a multibyte UTF-8 rune in half and produce
+// invalid UTF-8 for the activity indicator. This pins a boundary placed
+// mid-rune: a run of 2-byte runes ("é", 0xC3 0xA9) padded so byte 200 lands
+// inside one.
+func TestTruncateArgs_UTF8SafeBoundary(t *testing.T) {
+	t.Parallel()
+
+	// 99 ASCII bytes + repeated "é" (2 bytes each) pushes the 200-byte cut
+	// point into the middle of one of the multibyte runes.
+	raw := json.RawMessage(`"` + strings.Repeat("a", 99) + strings.Repeat("é", 60) + `"`)
+
+	got := truncateArgs(raw)
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateArgs produced invalid UTF-8: %q", got)
+	}
+}
+
+// TestSummarizePaths_Bounded is the red/green regression for #1329 item 3:
+// summarizePaths joined an unbounded list of changed file paths into the
+// fileChange approval prompt text — a large patch (hundreds of files) could
+// blow up that prompt. Output must be capped with a visible "+N more".
+func TestSummarizePaths_Bounded(t *testing.T) {
+	t.Parallel()
+
+	changes := make([]fileChangeEntry, 0, 500)
+	for i := 0; i < 500; i++ {
+		changes = append(changes, fileChangeEntry{Path: strings.Repeat("x", 20)})
+	}
+
+	got := summarizePaths(changes)
+
+	if len(got) > 2000 {
+		t.Errorf("summarizePaths output len = %d, want bounded (<2000)", len(got))
+	}
+	if !strings.Contains(got, "more") {
+		t.Errorf("summarizePaths = %q, want a truncation marker", got)
 	}
 }
 

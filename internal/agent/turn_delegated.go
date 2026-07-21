@@ -579,6 +579,24 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 								a.logger().Debugf("auto-alias: set alias_auto flag: %v", e)
 							}
 							a.logger().Infof("auto-alias: set %s chat %d → %q", platform, ts.ConvChatID, result.ThreadName)
+							// The backend (e.g. Codex) never resets its cached
+							// auto-generated name on its own — without this, the
+							// two reads + write above re-run every subsequent
+							// turn even though the alias is already set. Tell it
+							// the name has been durably applied.
+							if tnc, ok := be.(delegator.ThreadNameConsumer); ok {
+								tnc.ConsumeThreadName()
+							}
+						} else {
+							// Previously swallowed with no log at all: a unique-alias
+							// collision (or any other write failure) silently retried
+							// (and re-failed) this same read+write path every turn
+							// forever, with no visibility. threadName is left
+							// un-consumed so it keeps retrying — a transient failure
+							// can still succeed on a later turn — but it's now at
+							// least visible.
+							a.logger().Debugf("auto-alias: SetChatAliasUnique failed for %s chat %d alias %q: %v",
+								platform, ts.ConvChatID, result.ThreadName, err)
 						}
 					}
 				}

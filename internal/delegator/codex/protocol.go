@@ -123,6 +123,20 @@ type turnInput struct {
 	Text string `json:"text"`
 }
 
+// turnSteerParams is the turn/steer request payload. expectedTurnId is a
+// REQUIRED precondition (verified live against codex app-server 0.144.5 via
+// --strict-config/generate-json-schema and a live app-server probe): the
+// request is rejected with "no active turn to steer" if it doesn't match
+// the thread's currently active turn (e.g. the turn already completed
+// before the steer landed). Omitting the field entirely (the prior
+// implementation) is rejected outright: "Invalid request: missing field
+// `expectedTurnId`" — so unqualified turn/steer calls never succeeded.
+type turnSteerParams struct {
+	ThreadID       string      `json:"threadId"`
+	ExpectedTurnID string      `json:"expectedTurnId"`
+	Input          []turnInput `json:"input"`
+}
+
 type sandboxPolicy struct {
 	Type          string   `json:"type"` // "workspace-write", "read-only", "danger-full-access"
 	WritableRoots []string `json:"writableRoots,omitempty"`
@@ -293,6 +307,14 @@ type itemEnvelope struct {
 	// collabAgentToolCall fields
 	Prompt       string                 `json:"prompt,omitempty"`
 	AgentsStates map[string]collabState `json:"agentsStates,omitempty"`
+	// agentMessage fields. Phase distinguishes mid-turn narration from the
+	// terminal answer (live-verified against codex app-server 0.144.5's
+	// generate-json-schema output AND a live turn: "commentary" precedes a
+	// tool call, "final_answer" is the turn's actual response). The server's
+	// own schema doc notes it isn't emitted by every model/provider, so a
+	// missing/empty phase must be treated as "unknown" and accumulated as
+	// before (backward compat), never dropped.
+	Phase string `json:"phase,omitempty"`
 }
 
 // fileChangeEntry is one file change in a fileChange item's changes array.
