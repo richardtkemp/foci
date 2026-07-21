@@ -51,7 +51,7 @@ config.Load(path)                                        ← validates values; l
 
 → warnMissingSecrets(cfg, sec.store) / warnStreamOutputWithoutStreaming(cfg)   ← warn_secrets.go / warn_streaming.go; startup config-sanity WARNs, non-fatal
 
-→ initVoice(cfg, sec.store)                              ← voice_init.go; builds the STT/TTS provider maps shared by voice WS + send_to_chat TTS + app voice-mode replies (#1439: a trigger=voice app turn's reply is TTS'd into a fap.Media{VoiceMode:true} attachment, bundled with the text)
+→ initVoice(cfg, sec.store)                              ← voice_init.go; builds the STT/TTS provider maps shared by voice WS + send_to_chat TTS + app voice-mode replies (#1439: a trigger=voice app turn's reply is TTS'd into a fap.Media{VoiceMode:true} attachment, bundled with the text. #1444: synthesized PER user-facing text block — one clip per app bubble, not one per turn — since a turn's FinalText is the ccstream backend's whole-turn accumulation; text passes through voice.NormalizeForSpeech first to strip markdown/symbols that mangle TTS)
 
 → gwLiveApply = newLiveApply(configPath)                 ← liveapply.go; hot-config-reload registry (created early, appliers registered later via registerLiveAppliers after agent setup — see below)
 

@@ -633,6 +633,64 @@ func TestAppSink_VoiceTriggerSynthesisErrorIsGraceful(t *testing.T) {
 	}
 }
 
+// #1444: a voice-mode turn shaped text -> tool calls -> text (e.g. a recap
+// delivered as an intermediate TextBlock, then a "Filed as #1443" reply after
+// the tool call) must synthesize ONE voice clip PER delivered text block —
+// matching the two separate app bubbles the user sees — not a single clip
+// covering the whole turn. Before the fix, synthesizeVoiceMode fired once on
+// TurnComplete.FinalText, which the CC backend accumulates as the
+// concatenation of every assistant message this turn (turnText spans
+// tool-call boundaries) — so the recap's audio ran on into the next bubble's
+// text, unrelated to what was actually delivered as a distinct message.
+func TestAppSink_VoiceTriggerMultiBlockTurnSynthesizesPerBlock(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	tts := &mockVoiceTTS{data: []byte("clip")}
+	s.tts = tts
+	var attached [][]byte
+	s.attachVoice = func(audio []byte) error {
+		attached = append(attached, audio)
+		return nil
+	}
+
+	ctx := agent.WithTrigger(context.Background(), "voice")
+
+	// Both the recap and the post-tool-call reply are delivered mid-turn as
+	// their own intermediate TextBlock (their own app bubble, one OnReply
+	// call each) — mirrors ccstream's OnAssistant calling se.OnText once per
+	// assistant message, unconditionally, including the message that ends the
+	// turn.
+	s.Emit(ctx, turnevent.TextBlock{Text: "That is the whole design settled. Let me capture it.", Phase: turnevent.PhaseIntermediate})
+	s.Emit(ctx, turnevent.TextBlock{Text: "Filed as #1443.", Phase: turnevent.PhaseIntermediate})
+	// TurnComplete.FinalText carries the WHOLE turn's accumulated text — the
+	// ccstream backend's turnText spans tool-call boundaries, joining every
+	// assistant message's text with a blank line — so it duplicates content
+	// already delivered (and, under the fix, already spoken) via the two
+	// intermediate blocks above. Nothing new should be synthesized here.
+	s.Emit(ctx, turnevent.TurnComplete{
+		FinalText: "That is the whole design settled. Let me capture it.\n\nFiled as #1443.",
+	})
+
+	wantTexts := []string{
+		// NormalizeForSpeech (#1444) runs before synthesis, so the ticket
+		// reference reaches TTS with its mangling '#' already stripped.
+		"That is the whole design settled. Let me capture it.",
+		"Filed as 1443.",
+	}
+	if len(tts.got) != len(wantTexts) {
+		t.Fatalf("TTS synthesize calls = %v, want %v (one call per delivered block, not one accumulated call)", tts.got, wantTexts)
+	}
+	for i, want := range wantTexts {
+		if tts.got[i] != want {
+			t.Errorf("TTS call %d = %q, want %q", i, tts.got[i], want)
+		}
+	}
+	if len(attached) != 2 {
+		t.Fatalf("attachVoice calls = %d, want 2 (one voice clip per app bubble)", len(attached))
+	}
+}
+
 func newTestHub() *Hub {
 	return &Hub{
 		deps:          platform.ProviderDeps{},

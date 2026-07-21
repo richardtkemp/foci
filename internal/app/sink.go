@@ -53,6 +53,16 @@ type appSink struct {
 	// (checked before use) so a sink built directly in a test without it still
 	// behaves like "no TTS".
 	attachVoice func(audio []byte) error
+
+	// voiceBlockDelivered is set once a voice clip has been synthesized for a
+	// delivered intermediate TextBlock this turn (#1444). It gates the
+	// TurnComplete synthesis: a backend (e.g. ccstream) may accumulate
+	// FinalText as the concatenation of EVERY assistant message across
+	// tool-call boundaries, even though each one was already delivered — and
+	// spoken — as its own app bubble via an intermediate TextBlock. Without
+	// this gate, TurnComplete would re-synthesize that whole accumulation as
+	// one clip, reading past the bubble it belongs to and into the next.
+	voiceBlockDelivered bool
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -117,6 +127,14 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 
 	case turnevent.TextDelta, turnevent.TextBlock:
 		s.b.setTurnActivity(fap.ActivityKindTyping, "")
+		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
+			// Voice-mode per-block synthesis (#1444): speak THIS block before
+			// forwarding it — same "synthesize before delivery" ordering as
+			// TurnComplete below — so the resulting clip covers exactly the
+			// bubble this block is about to render as (renderer.OnReply), one
+			// clip per delivered app bubble rather than one clip per turn.
+			s.synthesizeVoiceModeBlock(ctx, tb.Text)
+		}
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.TurnComplete:
@@ -149,8 +167,11 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 // "voice" (gated so a normal typed app turn never gets an unsolicited voice
 // note), or the reply has no real content to speak (cleaned the same way the
 // renderer cleans delivered text — an empty/fully-silent, e.g. [[NO_RESPONSE]],
-// reply is never synthesized). A synthesis error is logged and swallowed —
-// same graceful degrade as no-TTS-configured, never fails the turn.
+// reply is never synthesized). Text is run through voice.NormalizeForSpeech
+// (#1444) before synthesis so markdown/symbol-heavy tokens (a "#1443" ticket
+// ref, an em-dash, a "path/like/slash") don't mangle the TTS model's output.
+// A synthesis error is logged and swallowed — same graceful degrade as
+// no-TTS-configured, never fails the turn.
 func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnComplete) []byte {
 	if s.tts == nil || e.Err != nil {
 		return nil
@@ -158,16 +179,55 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 	if agent.TriggerFromContext(ctx) != "voice" {
 		return nil
 	}
+	if s.voiceBlockDelivered {
+		// #1444: one or more intermediate TextBlocks were already
+		// synthesized-and-attached individually this turn. FinalText at this
+		// point is the backend's whole-turn accumulation (spans tool-call
+		// boundaries) and would duplicate/read past what per-block synthesis
+		// already spoke — there is nothing new left to say.
+		return nil
+	}
 	text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.FinalText))
 	if text == "" {
 		return nil
 	}
-	audio, err := s.tts.Synthesize(ctx, text)
+	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
 	if err != nil {
 		appLog.Warnf("voice-mode: TTS synthesis (conv=%s): %v", s.b.convID, err)
 		return nil
 	}
 	return audio
+}
+
+// synthesizeVoiceModeBlock synthesizes and attaches a voice clip for ONE
+// delivered intermediate text block (#1444) — the per-bubble counterpart to
+// synthesizeVoiceMode. Same gating as synthesizeVoiceMode (TTS configured,
+// trigger=="voice", non-silent after stripping), minus the e.Err check (a
+// mid-turn TextBlock never carries a turn error). Marks voiceBlockDelivered
+// so the terminal TurnComplete does not also speak the whole-turn
+// accumulation this block is part of. Text is run through
+// voice.NormalizeForSpeech (#1444) before synthesis, same as
+// synthesizeVoiceMode. A synthesis error is logged and swallowed, matching
+// synthesizeVoiceMode's graceful degrade.
+func (s *appSink) synthesizeVoiceModeBlock(ctx context.Context, rawText string) {
+	if s.tts == nil || agent.TriggerFromContext(ctx) != "voice" {
+		return
+	}
+	text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(rawText))
+	if text == "" {
+		return
+	}
+	s.voiceBlockDelivered = true
+	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
+	if err != nil {
+		appLog.Warnf("voice-mode: TTS synthesis (conv=%s): %v", s.b.convID, err)
+		return
+	}
+	if len(audio) > 0 && s.attachVoice != nil {
+		if err := s.attachVoice(audio); err != nil {
+			appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", s.b.convID, err)
+		}
+	}
 }
 
 // emitMeta sends the user-facing status chips (model, cost, tokens) the app
