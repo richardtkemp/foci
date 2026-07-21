@@ -36,11 +36,13 @@ type SessionKeyResolverFn func(target string) (key, via string, err error)
 // conversation; it is cleared when the caller's next turn begins. Optional.
 type SessionWaitFn func(callerSessionKey, targetAgent string)
 
-// CallerSessionTypeFn resolves a session key to its SessionType, so
-// reply_to=caller can tell whether the CALLING session is a oneshot
-// (see session.SessionType.IsOneshot) — see the oneshotCaller check in
-// Execute for why that matters. Optional; a nil fn disables the check (every
-// caller is treated as able to receive a relayed reply, the pre-existing
+// CallerSessionTypeFn resolves a session key to its SessionType. Two checks in
+// Execute depend on it: the hard bar on reflection/keepalive callers
+// (session.SessionType.IsBarredFromSessionSend, #1409) and, for callers that
+// aren't barred but are still oneshot (session.SessionType.IsOneshot), the
+// reply_to=caller downgrade to fire-and-forget (#1430) — see both checks in
+// Execute for why they matter. Optional; a nil fn disables both checks (every
+// caller is treated as a normal persistent session, the pre-existing
 // behaviour).
 type CallerSessionTypeFn func(sessionKey string) session.SessionType
 
@@ -53,9 +55,11 @@ type CallerSessionTypeFn func(sessionKey string) session.SessionType
 // names) are resolved to the active session key.
 // onWaitFn, when non-nil, is fired for reply_to=caller dispatches to signal that
 // the caller is now waiting on the target agent's reply (see SessionWaitFn).
-// callerSessionTypeFn, when non-nil, is used to downgrade a reply_to=caller
-// relay to fire-and-forget when the CALLER is a oneshot session (see
-// the oneshotCaller check below).
+// callerSessionTypeFn, when non-nil, is used for two caller-type checks: a
+// hard refusal when the CALLER is reflection/keepalive (#1409, see the
+// IsBarredFromSessionSend check below), and otherwise a downgrade of a
+// reply_to=caller relay to fire-and-forget when the CALLER is oneshot (#1430,
+// see the oneshotCaller check below).
 func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn, resolveKeyFn SessionKeyResolverFn, onWaitFn SessionWaitFn, callerSessionTypeFn CallerSessionTypeFn) *Tool {
 	return &Tool{
 		Name:       "send_to_session",
@@ -108,6 +112,22 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				return ToolResult{}, fmt.Errorf("reply_to must be 'caller' or 'session', got %q", p.ReplyTo)
 			}
 
+			originSession := SessionKeyFromContext(ctx)
+
+			// Hard bar (#1409): a reflection/consolidation/compaction pass or
+			// a keepalive cache-warm turn (session.SessionType.
+			// IsBarredFromSessionSend) must not message ANOTHER session at
+			// all — it runs headless with no human waiting and no context its
+			// parent/peers don't already have. A reflection branch once
+			// injected an in-flight-bisect status handoff into the main
+			// clutch session this way, confusing it. If such a branch has
+			// state worth preserving, that belongs in a handoff FILE on disk,
+			// not a cross-session message — so refuse before resolving or
+			// delivering anything.
+			if originSession != "" && callerSessionTypeFn != nil && callerSessionTypeFn(originSession).IsBarredFromSessionSend() {
+				return ToolResult{}, fmt.Errorf("tool disabled in oneshot forks, attempting to communicate with your parent or other branches is discouraged, they already have all the same info you have, don't worry!")
+			}
+
 			// Resolve loose targets — bare agent names, session names, chat
 			// aliases — through the shared route ladder. Full session keys
 			// parse cleanly and skip resolution.
@@ -123,20 +143,20 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				send_to_sessionLog.Infof("resolved %q → %s (via %s)", p.SessionKey, targetKey, via)
 			}
 
-			originSession := SessionKeyFromContext(ctx)
-
 			// A reply_to=caller relay only makes sense when the CALLER can
-			// actually receive it. A oneshot session (reflection, keepalive,
-			// background-task, spawn — see SessionType.IsOneshot) runs a
-			// single headless turn and typically terminates before an async
-			// reply could arrive; wiring the reply back to it anyway spins up
-			// a fresh, unusable turn whose output has nowhere sane to go —
-			// this is exactly how a reflection branch's stale reply leaked
-			// into the wrong chat (todo #1430). Downgrade such callers to the
-			// same fire-and-forget delivery reply_to="session" gets: the
-			// target's reply lands in the target's OWN chat instead of
-			// relaying back. Note 'unknown' (legacy) is deliberately NOT
-			// oneshot, so it keeps the pre-existing relay behaviour.
+			// actually receive it. A oneshot session (background-task, spawn
+			// — see SessionType.IsOneshot; reflection/keepalive are already
+			// barred outright above and never reach this line) runs a single
+			// headless turn and typically terminates before an async reply
+			// could arrive; wiring the reply back to it anyway spins up a
+			// fresh, unusable turn whose output has nowhere sane to go — this
+			// is exactly how a reflection branch's stale reply leaked into
+			// the wrong chat (todo #1430, back when reflection/keepalive
+			// still reached this path). Downgrade such callers to the same
+			// fire-and-forget delivery reply_to="session" gets: the target's
+			// reply lands in the target's OWN chat instead of relaying back.
+			// Note 'unknown' (legacy) is deliberately NOT oneshot, so it
+			// keeps the pre-existing relay behaviour.
 			oneshotCaller := p.ReplyTo == "caller" && originSession != "" &&
 				callerSessionTypeFn != nil && callerSessionTypeFn(originSession).IsOneshot()
 

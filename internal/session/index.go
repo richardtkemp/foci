@@ -74,6 +74,34 @@ func (t SessionType) IsOneshot() bool {
 		t == SessionTypeBackgroundTask || t == SessionTypeSpawn
 }
 
+// barredSenderTypes is the set of session types that must never message
+// ANOTHER session via send_to_session (#1409). A reflection/consolidation/
+// compaction pass (SessionTypeReflection) or a keepalive cache-warm turn
+// (SessionTypeKeepalive) runs headless, with no human waiting and no
+// perspective its parent/peers don't already have — pushing an unsolicited
+// status update into another session (typically the parent) only confuses
+// the recipient: a reflection branch once injected an in-flight-bisect
+// status handoff into the main clutch session, which then mischaracterized
+// it as routing to a different agent. If such a branch has state worth
+// preserving, it belongs in a handoff FILE on disk, not a cross-session
+// message.
+//
+// Deliberately narrower than IsOneshot(): SessionTypeSpawn and
+// SessionTypeBackgroundTask are also oneshot (can't meaningfully receive an
+// async reply, see IsOneshot) but are NOT barred from sending — a spawn's
+// whole purpose can be to report a result back, and background-task covers
+// /branch and nudge-extraction work that may legitimately need to notify
+// another session. Only reflection/keepalive are barred outright.
+var barredSenderTypes = map[SessionType]bool{
+	SessionTypeReflection: true,
+	SessionTypeKeepalive:  true,
+}
+
+// IsBarredFromSessionSend reports whether this session type must not send
+// messages to other sessions via send_to_session (#1409). See
+// barredSenderTypes for which types and why.
+func (t SessionType) IsBarredFromSessionSend() bool { return barredSenderTypes[t] }
+
 // reflectableTypesSQL renders reflectableTypes as a SQL-quoted, comma-separated
 // list for IN clauses, sorted for stable output. Built from the trusted
 // reflectableTypes constant (never user input), so string interpolation into

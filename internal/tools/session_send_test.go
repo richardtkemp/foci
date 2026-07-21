@@ -427,17 +427,24 @@ func TestSendToSessionBareNameUnresolved(t *testing.T) {
 }
 
 func TestSendToSessionOneshotCallerNoRelay(t *testing.T) {
-	// Bug #1430: a oneshot session (reflection, keepalive, background-task,
-	// spawn — see SessionType.IsOneshot) that calls send_to_session with
-	// reply_to=caller (the default) must NOT get the target's reply wired
-	// back to it. Those sessions run a single headless turn and typically
-	// terminate before an async reply could arrive; routing the reply back
-	// anyway spins up a fresh, unusable turn whose output has nowhere sane to
-	// go and can leak into the wrong chat — this is exactly how a reflection
-	// branch's stale reply leaked into Dick's main chat (see the #1429
-	// investigation). The relay must instead downgrade to fire-and-forget by
-	// passing replyToSession="" to InjectToAgent — same effective delivery as
-	// reply_to="session", just still tagged/logged as a caller-relay attempt.
+	// Bug #1430: a oneshot session that is NOT barred outright by #1409
+	// (background-task, spawn — see SessionType.IsOneshot) that calls
+	// send_to_session with reply_to=caller (the default) must NOT get the
+	// target's reply wired back to it. Those sessions run a single headless
+	// turn and typically terminate before an async reply could arrive;
+	// routing the reply back anyway spins up a fresh, unusable turn whose
+	// output has nowhere sane to go and can leak into the wrong chat — this
+	// is exactly how a reflection branch's stale reply leaked into Dick's
+	// main chat (see the #1429 investigation, back when reflection still
+	// reached this path). The relay must instead downgrade to fire-and-forget
+	// by passing replyToSession="" to InjectToAgent — same effective delivery
+	// as reply_to="session", just still tagged/logged as a caller-relay
+	// attempt.
+	//
+	// Reflection/keepalive are no longer exercised here — #1409 bars them
+	// from calling send_to_session at all (see
+	// TestSendToSessionBarsBarredCaller), so they never reach this
+	// downgrade logic; spawn stands in as the oneshot-but-not-barred example.
 	//
 	// 'unknown' (legacy/unclassifiable) is deliberately NOT oneshot — an
 	// unknown-type caller keeps the pre-existing relay behaviour, since it's
@@ -452,15 +459,15 @@ func TestSendToSessionOneshotCallerNoRelay(t *testing.T) {
 	})
 
 	sessionTypes := map[string]session.SessionType{
-		"clutch/c1/b1": session.SessionTypeReflection, // oneshot caller
-		"clutch/c2":    session.SessionTypeChat,       // persistent, user-facing caller
-		"clutch/c3":    session.SessionTypeUnknown,    // legacy/unclassifiable — NOT oneshot
+		"clutch/c1/b1": session.SessionTypeSpawn,   // oneshot, not barred, caller
+		"clutch/c2":    session.SessionTypeChat,    // persistent, user-facing caller
+		"clutch/c3":    session.SessionTypeUnknown, // legacy/unclassifiable — NOT oneshot
 	}
 	callerSessionTypeFn := func(sk string) session.SessionType { return sessionTypes[sk] }
 
 	tool := NewSendToSessionTool(store, notifier, nil, nil, nil, callerSessionTypeFn)
 
-	// Oneshot (reflection) caller: reply_to=caller must downgrade — the
+	// Oneshot (spawn) caller: reply_to=caller must downgrade — the
 	// notifier must receive replyToSession="" (no relay wired back).
 	ctx := WithSessionKey(context.Background(), "clutch/c1/b1")
 	params, _ := json.Marshal(map[string]string{"session_key": "scout/c0", "message": "status update"})
@@ -468,7 +475,7 @@ func TestSendToSessionOneshotCallerNoRelay(t *testing.T) {
 		t.Fatalf("Execute (oneshot caller): %v", err)
 	}
 	if got := <-relays; got != "" {
-		t.Errorf("oneshot (reflection) caller: InjectToAgent replyToSession = %q, want %q (no relay back)", got, "")
+		t.Errorf("oneshot (spawn) caller: InjectToAgent replyToSession = %q, want %q (no relay back)", got, "")
 	}
 
 	// Persistent (chat) caller: reply_to=caller must still wire the relay
@@ -495,4 +502,82 @@ func TestSendToSessionOneshotCallerNoRelay(t *testing.T) {
 	if got := <-relays; got != "clutch/c3" {
 		t.Errorf("unknown-type caller: InjectToAgent replyToSession = %q, want %q (relay still wired)", got, "clutch/c3")
 	}
+}
+
+func TestSendToSessionBarsBarredCaller(t *testing.T) {
+	// #1409: a reflection/consolidation/compaction pass or a keepalive
+	// cache-warm turn (session.SessionType.IsBarredFromSessionSend) must not
+	// be able to message ANOTHER session via send_to_session at all — not
+	// even fire-and-forget. Repro: a reflection branch once injected an
+	// operational status update (an in-flight scroll-test-bisect handoff)
+	// into the main clutch session this way, confusing it. The tool must now
+	// refuse with a clear error instead of delivering, and must not touch the
+	// notifier/session-notify at all. A normal (chat) caller is unaffected —
+	// its send still delivers exactly as before.
+	t.Parallel()
+
+	sessionTypes := map[string]session.SessionType{
+		"clutch/c1/b1": session.SessionTypeReflection, // barred
+		"clutch/c1/b2": session.SessionTypeKeepalive,  // barred
+		"clutch/c2":    session.SessionTypeChat,       // persistent, unaffected
+	}
+	callerSessionTypeFn := func(sk string) session.SessionType { return sessionTypes[sk] }
+
+	for _, tc := range []struct {
+		name   string
+		caller string
+	}{
+		{"reflection", "clutch/c1/b1"},
+		{"keepalive", "clutch/c1/b2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &mockSessionAppender{}
+			var notifyCalled bool
+			notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+				notifyCalled = true
+			})
+			var sessionNotifyCalled bool
+			sessionNotify := func(sessionKey, message string) { sessionNotifyCalled = true }
+
+			tool := NewSendToSessionTool(store, notifier, sessionNotify, nil, nil, callerSessionTypeFn)
+
+			ctx := WithSessionKey(context.Background(), tc.caller)
+			params, _ := json.Marshal(map[string]string{"session_key": "scout/c0", "message": "status update"})
+			_, err := tool.Execute(ctx, params)
+			if err == nil {
+				t.Fatalf("Execute (%s caller): expected error, got nil", tc.name)
+			}
+			const wantSubstr = "tool disabled in oneshot forks"
+			if !strings.Contains(err.Error(), wantSubstr) {
+				t.Errorf("Execute (%s caller) error = %q, want substring %q", tc.name, err.Error(), wantSubstr)
+			}
+			if notifyCalled {
+				t.Errorf("%s caller: notifier was invoked, want no delivery", tc.name)
+			}
+			if sessionNotifyCalled {
+				t.Errorf("%s caller: sessionNotifyFn was invoked, want no delivery", tc.name)
+			}
+		})
+	}
+
+	// A normal (chat) caller must be entirely unaffected: the send still
+	// delivers via the notifier exactly as before #1409.
+	t.Run("chat_caller_unaffected", func(t *testing.T) {
+		store := &mockSessionAppender{}
+		delivered := make(chan string, 1)
+		notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+			delivered <- sk
+		})
+
+		tool := NewSendToSessionTool(store, notifier, nil, nil, nil, callerSessionTypeFn)
+
+		ctx := WithSessionKey(context.Background(), "clutch/c2")
+		params, _ := json.Marshal(map[string]string{"session_key": "scout/c0", "message": "status update"})
+		if _, err := tool.Execute(ctx, params); err != nil {
+			t.Fatalf("Execute (chat caller): unexpected error: %v", err)
+		}
+		if got := <-delivered; got != "scout/c0" {
+			t.Errorf("chat caller: notifier target = %q, want %q", got, "scout/c0")
+		}
+	})
 }
