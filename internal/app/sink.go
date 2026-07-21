@@ -43,6 +43,12 @@ type appSink struct {
 	// turn completion. nil = no agent context, so the frame is skipped.
 	cacheExpiryFn func() int64
 
+	// compactionLimitFn returns the session's current auto-compaction token
+	// threshold (agent.Agent.CompactionLimitTokens), pushed on turn completion
+	// as fap.Meta.CompactionLimitTokens. nil = no agent context, so the field
+	// is omitted (0).
+	compactionLimitFn func() int64
+
 	// tts is the agent's resolved voice.TTS provider (#1439), reused from the
 	// same voice.TTS/ResolveTTS/VoiceConfig machinery telegram's outbound
 	// voice-note path uses. nil = no TTS configured, so voice-mode bundling is
@@ -266,7 +272,10 @@ func (s *appSink) emitMeta(e turnevent.TurnComplete) {
 	if s.statusFn != nil {
 		meta.Gap = s.statusFn()
 	}
-	if meta.Model == "" && meta.PrevCostUsd == nil && meta.Tokens == nil && meta.Gap == "" {
+	if s.compactionLimitFn != nil {
+		meta.CompactionLimitTokens = s.compactionLimitFn()
+	}
+	if meta.Model == "" && meta.PrevCostUsd == nil && meta.Tokens == nil && meta.Gap == "" && meta.CompactionLimitTokens == 0 {
 		return
 	}
 	s.b.send(meta)

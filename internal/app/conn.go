@@ -42,6 +42,7 @@ type agentCore interface {
 	Enqueue(agent.Envelope) bool
 	MetaStatus(sessionKey string) (gap string)
 	CacheExpiryMs(sessionKey string, at time.Time) int64
+	CompactionLimitTokens(sessionKey string) int64
 	TransformMessage(text string) string
 }
 
@@ -633,6 +634,7 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 		sk := env.SessionKey
 		sink.statusFn = func() string { return c.agentRef.MetaStatus(sk) }
 		sink.cacheExpiryFn = func() int64 { return c.agentRef.CacheExpiryMs(sk, time.Now()) }
+		sink.compactionLimitFn = func() int64 { return c.agentRef.CompactionLimitTokens(sk) }
 	}
 	// Voice-mode bundling (#1439): reuse the agent's already-resolved TTS
 	// provider (same voice.TTS/ResolveTTS machinery telegram's send_to_chat

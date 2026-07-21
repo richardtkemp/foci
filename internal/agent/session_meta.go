@@ -412,6 +412,23 @@ func (a *Agent) SessionContextLimit(sessionKey string) int {
 	return modelinfo.ContextWindow(model)
 }
 
+// CompactionLimitTokens returns the token count at which this session's next
+// turn will trigger auto-compaction — [compaction.Compactor.EffectiveThreshold]
+// applied to [SessionContextLimit] — or 0 if no Compactor is wired (auto-
+// compaction disabled), the caller's signal to omit the wire field entirely.
+// Mirrors the same computation the /context command uses for its "Compaction
+// at:" line, so the app's live context-usage bar and the text command agree.
+func (a *Agent) CompactionLimitTokens(sessionKey string) int64 {
+	if a.Compactor == nil {
+		return 0
+	}
+	limit := a.SessionContextLimit(sessionKey)
+	if limit <= 0 {
+		return 0
+	}
+	return int64(a.Compactor.EffectiveThreshold(limit))
+}
+
 // SetSessionModel sets the per-session model, endpoint, format, and client override and persists it.
 // client may be nil to fall back to the agent's default client.
 func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, client provider.Client) {
