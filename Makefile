@@ -335,8 +335,17 @@ endif
 # go build must not run as root under `sudo make`; drop to the service user
 # (mirrors what update.sh did). Real /usr/bin/sudo here — root's PATH has no
 # aisudo shim, so no re-prompt.
+#
+# The build flocks /tmp/heavy — the SAME lock `make test`/`make integration`
+# take — delivering the reciprocity the `test` target's comment already
+# promises: a deploy build and a test run are heavy CPU work that must not
+# thrash each other, so they serialise. Read-only fd (9<) + seed-if-missing +
+# close-before-exec (9<&-), all for the identical reasons documented on `test`
+# (fs.protected_regular=2 cross-user ownership; children must not inherit the
+# lock). Lock-order invariant (see below): a deploy takes ONLY /tmp/heavy and
+# never lands, so it cannot participate in a merge-lock→heavy cycle.
 deploy-build:
-	sudo -u $(FOCI_USER) bash -c "cd '$(CURDIR)' && $(MAKE) -s all"
+	sudo -u $(FOCI_USER) bash -c "cd '$(CURDIR)' && { [ -e /tmp/heavy ] || : > /tmp/heavy; }; ( echo '>>> waiting for heavy lock (/tmp/heavy; another build may be running) ...' >&2; flock 9; echo '>>> acquired heavy lock' >&2; $(MAKE) -s all 9<&- ) 9</tmp/heavy"
 
 install-bin:
 	@for b in $(DEPLOY_BINS); do echo "  install $$b"; install -m 755 bin/$$b $(INSTALL_DIR)/$$b; done
