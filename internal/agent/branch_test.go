@@ -89,6 +89,91 @@ func TestBranchStrategyForBranchCapable(t *testing.T) {
 	}
 }
 
+// TestBranchStrategyForForceInSessionOverride locks #1450: a per-operation
+// force_in_session override on a branch-capable backend must fall back to
+// EXACTLY the same strategy a non-branch-capable backend already uses for
+// that branchType (BranchInPlace for keepalive/reflection, BranchIndependent
+// for background/consolidation) — and must NOT affect any other branchType,
+// which stays BranchForkBackend (or BranchFork for session-end-memory).
+func TestBranchStrategyForForceInSessionOverride(t *testing.T) {
+	mgr := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil },
+	}
+
+	cases := []struct {
+		name        string
+		configure   func(a *Agent)
+		wantForType string // the branchType the override targets
+		wantForced  BranchStrategy
+	}{
+		{
+			name:        "keepalive override forces in-place",
+			configure:   func(a *Agent) { a.Keepalive.ForceInSession = true },
+			wantForType: "keepalive",
+			wantForced:  BranchInPlace,
+		},
+		{
+			name:        "reflection override forces in-place",
+			configure:   func(a *Agent) { a.Reflection.ForceInSession = true },
+			wantForType: "reflection",
+			wantForced:  BranchInPlace,
+		},
+		{
+			name:        "background override forces independent",
+			configure:   func(a *Agent) { a.Background.ForceInSession = true },
+			wantForType: "background",
+			wantForced:  BranchIndependent,
+		},
+		{
+			name:        "consolidation override forces independent",
+			configure:   func(a *Agent) { a.Maintenance.ConsolidationForceInSession = true },
+			wantForType: "consolidation",
+			wantForced:  BranchIndependent,
+		},
+	}
+
+	otherTypes := []string{"keepalive", "reflection", "background", "consolidation", "compaction-memory"}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := &Agent{DelegatedManager: mgr}
+			c.configure(a)
+
+			if got := a.BranchStrategyFor(c.wantForType); got != c.wantForced {
+				t.Errorf("%s: BranchStrategyFor(%q) = %v, want %v (forced)", c.name, c.wantForType, got, c.wantForced)
+			}
+
+			// Every OTHER operation must be unaffected — still a real backend
+			// fork, since the backend can branch and no override applies to it.
+			for _, other := range otherTypes {
+				if other == c.wantForType {
+					continue
+				}
+				if got := a.BranchStrategyFor(other); got != BranchForkBackend {
+					t.Errorf("%s: BranchStrategyFor(%q) = %v, want BranchForkBackend (unaffected by the %q override)", c.name, other, got, c.wantForType)
+				}
+			}
+
+			// session-end-memory is excluded from backend-forking entirely and
+			// must stay BranchFork regardless of any force_in_session override.
+			if got := a.BranchStrategyFor("session-end-memory"); got != BranchFork {
+				t.Errorf("%s: BranchStrategyFor(session-end-memory) = %v, want BranchFork", c.name, got)
+			}
+		})
+	}
+
+	// Default (unset) behaviour is unchanged: every one of the four ops still
+	// forks on a branch-capable backend when no override is set.
+	t.Run("unset override changes nothing", func(t *testing.T) {
+		a := &Agent{DelegatedManager: mgr}
+		for _, bt := range otherTypes {
+			if got := a.BranchStrategyFor(bt); got != BranchForkBackend {
+				t.Errorf("BranchStrategyFor(%q) = %v, want BranchForkBackend (no override set)", bt, got)
+			}
+		}
+	})
+}
+
 func TestForkSession_Routing(t *testing.T) {
 	t.Run("api agent branches the session store", func(t *testing.T) {
 		a := &Agent{Sessions: session.NewStore(t.TempDir())}

@@ -167,6 +167,9 @@ type Agent struct {
 	Backend                       string                                  // configured transport backend name; empty/api = traditional API loop
 	ReloginTrigger                func(reason, sessionKey string) bool    // nil unless an ccstream backend is wired; starts the #843 re-login flow, returns false if one is already in flight. sessionKey (may be "") targets the chat that gets the login URL; "" falls back to the agent's default chat.
 	Reflection                    config.ResolvedReflection               // resolved reflection config (agent+global merged)
+	Keepalive                     config.ResolvedKeepalive                // resolved keepalive config (agent+global merged); static-cfg fallback, see keepalive()
+	Background                    config.ResolvedBackground               // resolved background config (agent+global merged); static-cfg fallback, see background()
+	Maintenance                   config.ResolvedMaintenance              // resolved maintenance config (agent+global merged); static-cfg fallback, see maintenance()
 	SkillDirs                     []string                                // skill directories (shared + per-agent) for reflection creation/update detection
 	SkillChangeNotify             func(string, string, string)            // called with (sessionKey, skillName, markdown) when a GIT-REPO skill change is attributed to a commit that landed during the window (see skills.AttributeToGit); nil = disabled
 	SkillChangeNotifyText         func(string, string)                    // called with (sessionKey, formatted message) for a NON-git-repo skill change (skills.FormatChanges) — preserves the pre-#1404 plain-text behaviour there exactly; nil = disabled
@@ -290,6 +293,42 @@ func (a *Agent) reflection() config.ResolvedReflection {
 		return a.LiveConfigFn().Reflection
 	}
 	return a.Reflection
+}
+
+// keepalive returns the live keepalive config (agent+global merged), re-read
+// from the resolved snapshot so [keepalive] edits apply without a restart.
+// Falls back to the startup-resolved a.Keepalive in direct-constructed agents
+// (tests) where LiveConfigFn is nil.
+func (a *Agent) keepalive() config.ResolvedKeepalive {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Keepalive
+	}
+	return a.Keepalive
+}
+
+// backgroundConfig returns the live background-work config (agent+global
+// merged), re-read from the resolved snapshot so [background] edits apply
+// without a restart. Falls back to the startup-resolved a.Background in
+// direct-constructed agents (tests) where LiveConfigFn is nil. Named
+// backgroundConfig (not background) to avoid clashing with any future
+// receiver named after the section; canRunBackground already reads a single
+// field the same way.
+func (a *Agent) backgroundConfig() config.ResolvedBackground {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Background
+	}
+	return a.Background
+}
+
+// maintenance returns the live maintenance config (agent+global merged),
+// re-read from the resolved snapshot so [maintenance] edits apply without a
+// restart. Falls back to the startup-resolved a.Maintenance in
+// direct-constructed agents (tests) where LiveConfigFn is nil.
+func (a *Agent) maintenance() config.ResolvedMaintenance {
+	if a.LiveConfigFn != nil {
+		return a.LiveConfigFn().Maintenance
+	}
+	return a.Maintenance
 }
 
 func (a *Agent) maxToolLoops() int {

@@ -181,16 +181,16 @@ func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 }
 
 type ResolvedDebug struct {
-	LogAPIKeySuffix      bool
-	MessagesInLog        bool
-	CacheBustDetect      bool
+	LogAPIKeySuffix bool
+	MessagesInLog   bool
+	CacheBustDetect bool
 }
 
 func resolveDebug(m DebugConfig) ResolvedDebug {
 	return ResolvedDebug{
-		LogAPIKeySuffix:      DerefBool(m.LogAPIKeySuffix),
-		MessagesInLog:        DerefBool(m.MessagesInLog),
-		CacheBustDetect:      DerefBool(m.CacheBustDetect),
+		LogAPIKeySuffix: DerefBool(m.LogAPIKeySuffix),
+		MessagesInLog:   DerefBool(m.MessagesInLog),
+		CacheBustDetect: DerefBool(m.CacheBustDetect),
 	}
 }
 
@@ -212,6 +212,7 @@ type ResolvedKeepalive struct {
 	Prompt           string
 	WarmOpenAppChats bool
 	MaxUserIdle      string
+	ForceInSession   bool // force in-session (no backend fork) even on a fork-capable backend
 }
 
 func resolveKeepalive(m KeepaliveConfig) ResolvedKeepalive {
@@ -221,6 +222,7 @@ func resolveKeepalive(m KeepaliveConfig) ResolvedKeepalive {
 		Prompt:           DerefStr(m.Prompt),
 		WarmOpenAppChats: DerefBool(m.WarmOpenAppChats),
 		MaxUserIdle:      DerefStr(m.MaxUserIdle),
+		ForceInSession:   DerefBool(m.ForceInSession),
 	}
 }
 
@@ -239,6 +241,7 @@ type ResolvedBackground struct {
 	Interval         string
 	Prompt           string
 	CanRunBackground string
+	ForceInSession   bool // force in-session (no backend fork) even on a fork-capable backend
 }
 
 func resolveBackground(m BackgroundConfig) ResolvedBackground {
@@ -247,6 +250,7 @@ func resolveBackground(m BackgroundConfig) ResolvedBackground {
 		Interval:         DerefStr(m.Interval),
 		Prompt:           DerefStr(m.Prompt),
 		CanRunBackground: DerefStr(m.CanRunBackground),
+		ForceInSession:   DerefBool(m.ForceInSession),
 	}
 }
 
@@ -260,6 +264,7 @@ type ResolvedReflection struct {
 	CompactionPrompt      string
 	BackendQuietPeriod    string // default "5m"
 	NotifyOnSkillCreation bool   // default true
+	ForceInSession        bool   // force interval reflection in-session (no backend fork) even on a fork-capable backend
 }
 
 func resolveReflection(m ReflectionConfig) ResolvedReflection {
@@ -273,26 +278,29 @@ func resolveReflection(m ReflectionConfig) ResolvedReflection {
 		CompactionPrompt:      DerefStr(m.CompactionPrompt),
 		BackendQuietPeriod:    DerefStr(m.BackendQuietPeriod),
 		NotifyOnSkillCreation: DerefBool(m.NotifyOnSkillCreation),
+		ForceInSession:        DerefBool(m.ForceInSession),
 	}
 }
 
 type ResolvedMaintenance struct {
-	ConsolidationEnabled bool // default true
-	ConsolidationTime    string
-	ConsolidationPrompt  string
-	ConsolidationMaxIdle string // default "1h"; skip consolidation if idle longer
-	ResetTime            string // "" = disabled
-	ResetIdleGuard       string // default "55m"
+	ConsolidationEnabled        bool // default true
+	ConsolidationTime           string
+	ConsolidationPrompt         string
+	ConsolidationMaxIdle        string // default "1h"; skip consolidation if idle longer
+	ResetTime                   string // "" = disabled
+	ResetIdleGuard              string // default "55m"
+	ConsolidationForceInSession bool   // force consolidation in-session/independent (no backend fork) even on a fork-capable backend
 }
 
 func resolveMaintenance(m MaintenanceConfig) ResolvedMaintenance {
 	return ResolvedMaintenance{
-		ConsolidationEnabled: DerefBool(m.ConsolidationEnabled),
-		ConsolidationTime:    DerefStr(m.ConsolidationTime),
-		ConsolidationPrompt:  DerefStr(m.ConsolidationPrompt),
-		ConsolidationMaxIdle: DerefStr(m.ConsolidationMaxIdle),
-		ResetTime:            DerefStr(m.ResetTime),
-		ResetIdleGuard:       DerefStr(m.ResetIdleGuard),
+		ConsolidationEnabled:        DerefBool(m.ConsolidationEnabled),
+		ConsolidationTime:           DerefStr(m.ConsolidationTime),
+		ConsolidationPrompt:         DerefStr(m.ConsolidationPrompt),
+		ConsolidationMaxIdle:        DerefStr(m.ConsolidationMaxIdle),
+		ResetTime:                   DerefStr(m.ResetTime),
+		ResetIdleGuard:              DerefStr(m.ResetIdleGuard),
+		ConsolidationForceInSession: DerefBool(m.ConsolidationForceInSession),
 	}
 }
 
