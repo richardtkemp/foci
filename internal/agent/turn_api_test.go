@@ -667,6 +667,67 @@ func TestInjectNudges_RegexFires(t *testing.T) {
 	}
 }
 
+// TestInjectNudges_MultipleTriggersShareOneSystemReminderRegion is the
+// regression net for TODO 1434 (nudge wrapper now mirrors CC's own
+// <system-reminder> context wrapper): when two bundled triggers fire on the
+// same turn (turn-interval + regex), the wrapper must open exactly once and
+// close exactly once — not once per reminder — so the region stays a single
+// well-formed <system-reminder>...</system-reminder> block instead of
+// nesting tags.
+func TestInjectNudges_MultipleTriggersShareOneSystemReminderRegion(t *testing.T) {
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{
+				Text:    "Remember to be concise.",
+				Trigger: nudge.Trigger{Type: "every_n_turns", N: 1},
+			},
+			{
+				Text:    "Watch out for code quality.",
+				Trigger: nudge.Trigger{Type: "regex", Pattern: "(?i)refactor"},
+			},
+		},
+	}
+	scheduler := nudge.NewScheduler(rs, 5, 3)
+
+	a := &Agent{Nudger: scheduler}
+	tr := &APITransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"please refactor this"}, nil)
+	ts.UserMsg = provider.Message{
+		Role:    "user",
+		Content: provider.TextContent("please refactor this"),
+	}
+	ts.Messages = []provider.Message{ts.UserMsg}
+	ts.NewMessages = []provider.Message{ts.UserMsg}
+
+	tr.InjectNudges(ts)
+
+	// Expect layout: [turn-interval block (wrapped), regex block (bare),
+	// end-marker, user text].
+	if got := len(ts.UserMsg.Content); got != 4 {
+		t.Fatalf("UserMsg.Content len = %d, want 4 (2 nudges + end-marker + original); blocks: %v", got, ts.UserMsg.Content)
+	}
+
+	var region strings.Builder
+	for _, block := range ts.UserMsg.Content[:3] {
+		region.WriteString(block.Text)
+	}
+	if got := strings.Count(region.String(), a.nudgePreamble()); got != 1 {
+		t.Errorf("nudge region must open the <system-reminder> wrapper exactly once, got %d; region: %q", got, region.String())
+	}
+	if !strings.Contains(ts.UserMsg.Content[0].Text, "Remember to be concise.") {
+		t.Errorf("first nudge block should contain the turn-interval reminder; got %q", ts.UserMsg.Content[0].Text)
+	}
+	if ts.UserMsg.Content[1].Text != "Watch out for code quality." {
+		t.Errorf("second nudge block should be the bare regex reminder (no re-opened preamble); got %q", ts.UserMsg.Content[1].Text)
+	}
+	if ts.UserMsg.Content[2].Text != a.nudgeUserBoundary() {
+		t.Errorf("closing block should be the nudge end-marker; got %q", ts.UserMsg.Content[2].Text)
+	}
+	if ts.UserMsg.Content[3].Text != "please refactor this" {
+		t.Errorf("last content block should be the original user text; got %q", ts.UserMsg.Content[3].Text)
+	}
+}
+
 // TestNudgeWrapperContracts pins the contract difference between the two
 // nudge wrappers: wrapStandaloneNudge (standalone mid-loop paths: after-tools,
 // pre-answer) keeps the NO_RESPONSE footer; wrapBundledNudge (start-of-turn

@@ -314,6 +314,12 @@ func TestDelegatedTransport_InjectNudges_WithNudger(t *testing.T) {
 	if got := strings.Count(ts.Prompt, a.nudgeUserBoundary()); got != 1 {
 		t.Errorf("expected exactly 1 end-marker between nudges and prompt, got %d; prompt: %q", got, ts.Prompt)
 	}
+	// TODO 1434: the region must open the <system-reminder> wrapper exactly
+	// once too — not once per bundled nudge — so two triggers firing on the
+	// same turn (interval + regex, as here) don't nest the tag.
+	if got := strings.Count(ts.Prompt, a.nudgePreamble()); got != 1 {
+		t.Errorf("expected exactly 1 nudge-preamble (system-reminder open) even with 2 nudges fired, got %d; prompt: %q", got, ts.Prompt)
+	}
 	if !strings.Contains(ts.Prompt, a.nudgeUserBoundary()+"\n\noriginal prompt") {
 		t.Errorf("end-marker should sit directly before the original prompt, got: %q", ts.Prompt)
 	}
