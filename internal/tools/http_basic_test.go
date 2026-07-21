@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -116,7 +117,14 @@ func TestHTTPRequestTimeoutCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
-	if !strings.Contains(err.Error(), "deadline exceeded") && !strings.Contains(err.Error(), "context") {
-		t.Errorf("expected timeout error, got: %v", err)
+	// Assert the SEMANTIC timeout, not its phrasing. net/http's Client.Timeout
+	// wrapper reformats the message ("...request canceled (Client.Timeout
+	// exceeded...)") so it no longer literally contains "deadline exceeded" —
+	// wrapping the client transport in ratelimit.Transport (4e0af98f) surfaced
+	// this — but the wrapped error is still context.DeadlineExceeded (verified
+	// via errors.Is; the timeout is functionally unchanged). String-matching the
+	// phrasing was the fragility; errors.Is is stable across it.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected a context.DeadlineExceeded timeout, got: %v", err)
 	}
 }
