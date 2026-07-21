@@ -31,8 +31,6 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
 	// Watch
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation":         "watch",
@@ -78,8 +76,6 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-
-	time.Sleep(100 * time.Millisecond)
 
 	// Watch once
 	params, _ = json.Marshal(map[string]interface{}{
@@ -152,8 +148,6 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
 	// Watch with very short threshold (3 seconds)
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation":         "watch",
@@ -206,7 +200,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		mu.Unlock()
 	})
 
-	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, "")
+	watchCount, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, "")
 
 	name := "foci-test-dead"
 	tmuxSetup(t, name)
@@ -221,7 +215,6 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
 
 	// Watch it
 	params, _ = json.Marshal(map[string]interface{}{
@@ -235,10 +228,16 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 
 	// Kill the tmux session externally
 	exec.Command("tmux", "-S", tmuxSocketPath, "kill-session", "-t", name).Run()
-	time.Sleep(100 * time.Millisecond)
 
-	// Give the monitor time to detect the dead session (poll interval is 2s)
-	time.Sleep(2500 * time.Millisecond)
+	// Poll until the monitor goroutine actually detects the dead session and
+	// removes it from the watched map, instead of guessing its ~2s poll
+	// interval. The monitor's death path (tmuxWatchMonitor's capture-pane
+	// error branch) deletes the watch entry WITHOUT ever calling the notifier,
+	// so once watchCount is back to 0 the "no notification sent" check below
+	// is no longer a race — that code path structurally can't have sent one.
+	if !pollUntil(t, 10*time.Second, func() bool { return watchCount() == 0 }) {
+		t.Fatal("watch was not cleaned up after session death")
+	}
 
 	// The watch entry should have been cleaned up — unwatching should fail
 	params, _ = json.Marshal(map[string]interface{}{

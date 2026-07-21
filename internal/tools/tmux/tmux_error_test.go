@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestTmuxInvalidOperation(t *testing.T) {
@@ -65,8 +64,6 @@ func TestTmuxSendNoEnter(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
 	// Send without enter
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "send",
@@ -99,8 +96,6 @@ func TestTmuxSendBareEnter(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-
-	time.Sleep(100 * time.Millisecond)
 
 	// Send bare Enter (no keys, enter=true)
 	params, _ = json.Marshal(map[string]interface{}{

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"foci/internal/session"
 )
@@ -308,7 +307,6 @@ func TestTmuxPersistWatches(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
 
 	// Watch it
 	params, _ = json.Marshal(map[string]interface{}{
@@ -463,7 +461,6 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
 
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation":         "watch",
@@ -535,7 +532,6 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
 
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation":         "watch",
@@ -703,7 +699,6 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	if _, err := tool1.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
 
 	// Watch the session
 	params, _ = json.Marshal(map[string]interface{}{

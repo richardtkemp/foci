@@ -132,3 +132,42 @@ func pollForReadMatch(t *testing.T, tool *tools.Tool, name string, match func(te
 func testTmuxInstance() *tmuxInstance {
 	return &tmuxInstance{socketPath: tmuxSocketPath}
 }
+
+// pollUntil repeatedly calls cond (every 20ms) until it returns true or
+// timeout elapses, returning whether cond became true in time. General
+// sibling to pollForReadMatch for non-read wait conditions — a process
+// spawning or dying, a watch/monitor goroutine reaching some state, a /proc
+// field changing, etc. Any fixed time.Sleep that's really "wait for X to
+// become true" should poll for X instead of guessing a duration: under CPU
+// pressure (many parallel t.Parallel() tests sharing few cores) a fixed sleep
+// is a genuine race, not a "the machine was busy" excuse.
+func pollUntil(t *testing.T, timeout time.Duration, cond func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if cond() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// NOTE on a poll that was tried and reverted here: a `pollUntilSessionUp`
+// helper (poll tmuxSessionPIDs until non-empty) previously replaced the
+// package's many "start a session, sleep briefly, then send/read/watch it"
+// sleeps. It was removed after reproducing NEW flakiness under full-suite
+// load (go test -p=4 -parallel=16 ./...: 1/5 failures scoped to this package
+// alone, vs. 0/8 on the fixed-sleep baseline) — the poll's own repeated
+// `tmux list-panes` subprocess forks (one per site × ~25 call sites, each
+// potentially looping) added exactly the kind of contention this audit is
+// trying to remove. It also wasn't needed: `start`'s new-session call is
+// synchronous (tmux forks the pane and assigns its PID before returning, and
+// list-panes reflects that PID with zero measured delay in a 20-iteration
+// no-wait test), and send/read/watch all tolerate an unready pane already —
+// send-keys is TTY-buffered regardless of reader readiness, and read/watch's
+// own capture-pane calls are best-effort (silently skipped on error, not
+// required for the assertions these tests make). So these sites needed
+// neither a sleep nor a poll; see the removed sleeps' git history.
