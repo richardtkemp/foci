@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -50,6 +51,28 @@ func TestCacheExpiryResolution(t *testing.T) {
 		ag := &Agent{}
 		if got := ag.CacheExpiry("test-agent/c1", at); !got.Equal(at.Add(5 * time.Minute)) {
 			t.Errorf("got %v, want +5m", got.Sub(at))
+		}
+	})
+
+	t.Run("static backend TTL survives a restart (no live session yet)", func(t *testing.T) {
+		// Models a freshly-restarted gateway: DelegatedManager.backends is empty
+		// (no session has spawned a live backend since restart), so
+		// DelegatedManager.CacheTTL(sessionKey) — which only consults a RUNNING
+		// backend — reports 0. But the backend TYPE's cache TTL is a static
+		// constant knowable without a live session (ccstream reports CC's 1h via
+		// StaticCacheTTL, exactly as periodic_setup.go already uses at startup
+		// for the keepalive-interval sanity check). Before the fix, cacheTTLFor
+		// had no fallback to that static value and fell straight through to the
+		// hardcoded 5m default — understating a CC session's real TTL and
+		// reporting a still-warm session as cold right after restart (#1446).
+		mgr := &DelegatedManager{
+			NewBackend: func() (delegator.Delegator, error) {
+				return &mockBackendDM{running: true, cacheTTL: time.Hour}, nil
+			},
+		}
+		ag := &Agent{DelegatedManager: mgr}
+		if got := ag.CacheExpiry("test-agent/c1", at); !got.Equal(at.Add(time.Hour)) {
+			t.Errorf("got %v, want +1h (backend's static TTL), not the 5m default", got.Sub(at))
 		}
 	})
 }
