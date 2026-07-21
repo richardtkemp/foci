@@ -24,6 +24,11 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 			Mode:    r.Mode,
 		})
 	case *delegator.ApplyFlagSettingsRequest:
+		if eff, ok := r.Settings["effortLevel"].(string); ok {
+			b.mu.Lock()
+			b.effortLevel = eff
+			b.mu.Unlock()
+		}
 		return b.writer.SendControl(newRequestID(), &ApplyFlagSettingsRequest{
 			Subtype:  "apply_flag_settings",
 			Settings: r.Settings,

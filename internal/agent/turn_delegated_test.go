@@ -672,6 +672,204 @@ func TestDelegatedTransport_RunInference_TurnInFlightSendCommandError(t *testing
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Voice mode tests (#1445)
+// ---------------------------------------------------------------------------
+
+// voiceModeBackendDT wraps mockBackendDT with delegator.VoiceModer, recording
+// Enter/Exit call counts (and, via enterSeenBySendToPane, whether Enter had
+// already run by the time dispatch reached the backend) so RunInference's
+// voice-mode wiring can be asserted without a real CC/Codex process.
+type voiceModeBackendDT struct {
+	mockBackendDT
+	enterCalls int
+	exitCalls  int
+	enterErr   error
+}
+
+func (v *voiceModeBackendDT) EnterVoiceMode(_ context.Context) error {
+	v.mu.Lock()
+	v.enterCalls++
+	v.mu.Unlock()
+	return v.enterErr
+}
+
+func (v *voiceModeBackendDT) ExitVoiceMode(_ context.Context) error {
+	v.mu.Lock()
+	v.exitCalls++
+	v.mu.Unlock()
+	return nil
+}
+
+func (v *voiceModeBackendDT) counts() (enter, exit int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.enterCalls, v.exitCalls
+}
+
+// TestDelegatedTransport_RunInference_VoiceMode_EntersBeforeDispatchExitsAfterComplete
+// verifies the full voice-mode wiring: for a trigger=="voice" turn on a
+// backend implementing VoiceModer, EnterVoiceMode runs before the prompt
+// reaches the backend, and ExitVoiceMode runs once OnTurnComplete fires — not
+// merely once RunInference returns (buildTurnEvents' completion callback is
+// the true end of the turn on the async delegated path).
+func TestDelegatedTransport_RunInference_VoiceMode_EntersBeforeDispatchExitsAfterComplete(t *testing.T) {
+	be := &voiceModeBackendDT{}
+	var enterAtDispatch int
+	be.mockBackendDT.sendToPaneFn = func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+		enterAtDispatch, _ = be.counts()
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "done"})
+		}
+		return nil, nil
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hello"}, nil)
+	ts.Trigger = "voice"
+	ts.Prompt = "hello"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	if enterAtDispatch != 1 {
+		t.Errorf("EnterVoiceMode call count at dispatch time = %d, want 1 (must run before the prompt reaches the backend)", enterAtDispatch)
+	}
+	enter, exit := be.counts()
+	if enter != 1 {
+		t.Errorf("EnterVoiceMode calls = %d, want 1", enter)
+	}
+	if exit != 1 {
+		t.Errorf("ExitVoiceMode calls = %d, want 1 (fired from OnTurnComplete)", exit)
+	}
+}
+
+// TestDelegatedTransport_RunInference_VoiceMode_SkippedForNonVoiceTrigger
+// verifies a normal (non-voice) turn never touches VoiceModer even when the
+// backend implements it — the low-effort switch is scoped to voice-originated
+// turns only.
+func TestDelegatedTransport_RunInference_VoiceMode_SkippedForNonVoiceTrigger(t *testing.T) {
+	be := &voiceModeBackendDT{}
+	be.mockBackendDT.sendToPaneFn = func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "done"})
+		}
+		return nil, nil
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hello"}, nil)
+	ts.Prompt = "hello"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	enter, exit := be.counts()
+	if enter != 0 || exit != 0 {
+		t.Errorf("VoiceMode calls for a non-voice trigger = enter=%d exit=%d, want 0/0", enter, exit)
+	}
+}
+
+// TestDelegatedTransport_RunInference_VoiceMode_SkippedOnFold verifies that a
+// voice-triggered follow-up that folds into an already in-flight turn does
+// NOT enter/exit voice mode — the fold path never reaches the begin-turn
+// dispatch that voice mode is scoped to (entering here would toggle effort
+// mid-flight for a turn that already started, possibly under a different
+// trigger).
+func TestDelegatedTransport_RunInference_VoiceMode_SkippedOnFold(t *testing.T) {
+	be := &voiceModeBackendDT{}
+	be.mockBackendDT.turnInFlight = true
+	be.mockBackendDT.sendCommandFn = func(_ context.Context, _ string) error { return nil }
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"follow-up"}, nil)
+	ts.Trigger = "voice"
+	ts.Prompt = "follow-up"
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	enter, exit := be.counts()
+	if enter != 0 || exit != 0 {
+		t.Errorf("VoiceMode calls on a folded follow-up = enter=%d exit=%d, want 0/0", enter, exit)
+	}
+}
+
+// TestDelegatedTransport_RunInference_VoiceMode_ExitsOnDispatchError verifies
+// that when EnterVoiceMode succeeded but the begin-turn dispatch itself then
+// fails (so CC never begins a turn and OnTurnComplete will never fire),
+// RunInference still calls ExitVoiceMode before returning — otherwise the
+// session would be stuck at low effort until a later turn happened to
+// restore it.
+func TestDelegatedTransport_RunInference_VoiceMode_ExitsOnDispatchError(t *testing.T) {
+	be := &voiceModeBackendDT{}
+	be.mockBackendDT.sendToPaneFn = func(_ context.Context, _ string, _ *mockHandler) (*delegator.TurnResult, error) {
+		return nil, errors.New("dispatch failed")
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hello"}, nil)
+	ts.Trigger = "voice"
+	ts.Prompt = "hello"
+	ts.StartedAt = time.Now()
+
+	err := tr.RunInference(ts)
+	if err == nil || !strings.Contains(err.Error(), "dispatch failed") {
+		t.Fatalf("expected 'dispatch failed' error, got: %v", err)
+	}
+
+	enter, exit := be.counts()
+	if enter != 1 {
+		t.Errorf("EnterVoiceMode calls = %d, want 1", enter)
+	}
+	if exit != 1 {
+		t.Errorf("ExitVoiceMode calls = %d, want 1 (dispatch failed, so OnTurnComplete never fires — RunInference must undo Enter itself)", exit)
+	}
+}
+
+// TestDelegatedTransport_RunInference_VoiceMode_BackendWithoutInterface
+// verifies a voice-triggered turn on a backend that doesn't implement
+// VoiceModer (plain mockBackendDT) runs normally with no panic — VoiceModer
+// is an optional capability, same pattern as every other backend interface.
+func TestDelegatedTransport_RunInference_VoiceMode_BackendWithoutInterface(t *testing.T) {
+	be := &mockBackendDT{
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+			if handler != nil && handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "done"})
+			}
+			return nil, nil
+		},
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hello"}, nil)
+	ts.Trigger = "voice"
+	ts.Prompt = "hello"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if ts.FinalText != "done" {
+		t.Errorf("FinalText = %q, want %q", ts.FinalText, "done")
+	}
+}
+
 // questionBackendDT is a mockBackendDT that reports a pending AskUserQuestion
 // and records the answer routed to it.
 type questionBackendDT struct {
