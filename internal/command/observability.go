@@ -357,9 +357,22 @@ func ContextCommand() *Command {
 			if compactionThresh == 0 {
 				compactionThresh = info.CompactionThresh
 			}
+			// threshTokens: prefer the agent's actual EffectiveThreshold (mirrors
+			// Agent.CompactionLimitTokens, what the app's live context-usage bar
+			// divides by) over the flat compactionThresh fraction. For a large
+			// context window the nonlinear curve (compaction.Compactor) compacts
+			// well below the flat 80% anchor — using the flat fraction here made
+			// this line disagree with the bar/actual compaction point (#1454: Dick
+			// saw the bar sit far higher than the "80%" this line quoted, because
+			// the bar was right and this text wasn't).
 			threshTokens := int(float64(contextLimit) * compactionThresh)
+			if cc.Agent != nil {
+				if agentThresh := cc.Agent.CompactionLimitTokens(sk); agentThresh > 0 {
+					threshTokens = int(agentThresh)
+				}
+			}
 			percentUsed := float64(headerTokens) / float64(contextLimit) * 100
-			percentThresh := compactionThresh * 100
+			percentThresh := float64(threshTokens) / float64(contextLimit) * 100
 
 			var sb strings.Builder
 			sb.WriteString("```\n")

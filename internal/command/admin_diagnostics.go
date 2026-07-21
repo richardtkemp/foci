@@ -140,8 +140,16 @@ func StatusCommand() *Command {
 				pct := float64(contextTokens) / float64(contextLimit) * 100
 				fmt.Fprintf(&sb, "\n📈 Context: %.1f%% (%s / %s tokens)\n",
 					pct, display.FormatTokensAbbrev(contextTokens), display.FormatTokensAbbrev(contextLimit))
-				fmt.Fprintf(&sb, "   Compaction at %.0f%%\n",
-					cc.CompactionThreshold*100)
+				// Prefer the agent's actual EffectiveThreshold over the flat
+				// cc.CompactionThreshold fraction — for large context windows the
+				// nonlinear compaction curve compacts well below that flat anchor,
+				// so quoting it here disagreed with both the real compaction point
+				// and the app's live context-usage bar (#1454).
+				compactPct := cc.CompactionThreshold * 100
+				if agentThresh := cc.Agent.CompactionLimitTokens(sk); agentThresh > 0 {
+					compactPct = float64(agentThresh) / float64(contextLimit) * 100
+				}
+				fmt.Fprintf(&sb, "   Compaction at %.0f%%\n", compactPct)
 			}
 
 			if sessionCalls > 0 {
