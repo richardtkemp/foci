@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/agent"
+	"foci/internal/compaction"
+	"foci/internal/display"
 	"foci/internal/log"
 )
 
@@ -180,6 +183,57 @@ func TestContextCommandCustomThreshold(t *testing.T) {
 	// 100000 tokens is 50%, at threshold
 	if !strings.Contains(result.Text, "at/above threshold") {
 		t.Errorf("expected 'at/above threshold' with 50%% threshold:\n%s", result.Text)
+	}
+}
+
+// TestContextCommandMatchesNonlinearEffectiveThreshold verifies the "Compaction
+// at" line agrees with the agent's actual EffectiveThreshold (what
+// Agent.CompactionLimitTokens sends the app for the live context-usage bar) for
+// a large context window, instead of quoting the flat compaction_threshold
+// anchor. #1454: for a 1M-token window (opus-family), the nonlinear curve's
+// real compaction point is ~48% of the window, not the flat 80% anchor — Dick
+// saw the app's bar sit far higher than the "80%" /context quoted, because the
+// text (not the bar) was wrong.
+func TestContextCommandMatchesNonlinearEffectiveThreshold(t *testing.T) {
+	const sk = "main/i0"
+	const window = 1_000_000
+	now := time.Now().UTC()
+	// ~45% of the window used, matching the real-world numbers this bug was
+	// diagnosed from (a live session's api.db row).
+	path := writeAPILog(t, []log.APIEntry{
+		{Timestamp: now, Session: sk, Input: 2, CacheRead: 448454, CacheWrite: 1534},
+	})
+
+	compactor := compaction.NewCompactor(nil, 0.8)
+	compactor.SetNonlinear(true)
+	ag := &agent.Agent{Model: "claude/claude-opus-4-8", Compactor: compactor}
+
+	info := testContextInfo()
+	info.SessionKey = sk
+	info.Model = ag.Model
+	info.ContextLimit = window
+	info.CompactionThresh = 0.8
+	cmd := ContextCommand()
+
+	cc := contextCC(path, info)
+	cc.Agent = ag
+	cc.CompactionThreshold = 0.8
+
+	result, err := cmd.Execute(context.Background(), Request{}, cc)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	wantThreshTokens := int(ag.CompactionLimitTokens(sk))
+	if wantThreshTokens <= 0 || wantThreshTokens >= int(0.8*window) {
+		t.Fatalf("test setup sanity: expected a nonlinear threshold well below the flat 80%% anchor, got %d", wantThreshTokens)
+	}
+	wantLabel := display.FormatCommas(wantThreshTokens)
+	if !strings.Contains(result.Text, wantLabel) {
+		t.Errorf("expected the nonlinear EffectiveThreshold token count %q (not the flat 80%% anchor's 800,000) in:\n%s", wantLabel, result.Text)
+	}
+	if strings.Contains(result.Text, "(80%)") {
+		t.Errorf("expected the effective (~48%%) threshold percentage, not the flat 80%% anchor, in:\n%s", result.Text)
 	}
 }
 
