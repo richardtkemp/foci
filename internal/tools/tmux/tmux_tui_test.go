@@ -457,18 +457,12 @@ func TestTmuxReadRaw(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
-
-	// Read with raw=true — should contain the marker
-	params, _ = json.Marshal(map[string]interface{}{
-		"operation": "read",
-		"name":      name,
-		"raw":       true,
-	})
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("read raw: %v", err)
-	}
+	// Poll for the echoed marker rather than a fixed sleep + single read —
+	// see pollForReadMatch's doc comment for why a fixed sleep here is a
+	// genuine race, not a load/timing excuse.
+	result := pollForReadMatch(t, tool, name, func(text string) bool {
+		return strings.Contains(text, "Claude Code")
+	}, 5*time.Second, map[string]interface{}{"raw": true})
 	if !strings.Contains(result.Text, "Claude Code") {
 		t.Errorf("raw read should preserve all content, got:\n%s", result.Text)
 	}
@@ -478,8 +472,7 @@ func TestTmuxReadRaw(t *testing.T) {
 		"operation": "read",
 		"name":      name,
 	})
-	_, err = tool.Execute(context.Background(), params)
-	if err != nil {
+	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("read cleaned: %v", err)
 	}
 	// The "Claude Code v1.0" in `echo` output will be detected and the

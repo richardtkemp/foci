@@ -1,12 +1,16 @@
 package tmux
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"foci/internal/testtemp"
+	"foci/internal/tools"
 )
 
 func TestMain(m *testing.M) {
@@ -78,6 +82,47 @@ func tmuxSetup(t *testing.T, names ...string) {
 		t.Cleanup(func() {
 			exec.Command("tmux", "-S", tmuxSocketPath, "kill-session", "-t", name).Run()
 		})
+	}
+}
+
+// pollForReadMatch repeatedly issues a "read" operation against name via tool
+// until the result text satisfies match (or the timeout elapses), then
+// returns the last-seen result. Replaces a fixed time.Sleep before a single
+// read: under CPU pressure (many parallel t.Parallel() tests sharing few
+// cores) a fixed sleep is a genuine race — the shell inside the pane may not
+// have executed/echoed its command yet — not a "the machine was busy"
+// excuse. Polling for the expected content is the correct wait condition.
+//
+// extra merges additional read params (e.g. {"raw": true}) into the request;
+// pass nil for a plain cleaned read.
+func pollForReadMatch(t *testing.T, tool *tools.Tool, name string, match func(text string) bool, timeout time.Duration, extra ...map[string]interface{}) tools.ToolResult {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last tools.ToolResult
+	for {
+		req := map[string]interface{}{
+			"operation": "read",
+			"name":      name,
+			"lines":     100,
+		}
+		for _, e := range extra {
+			for k, v := range e {
+				req[k] = v
+			}
+		}
+		params, _ := json.Marshal(req)
+		result, err := tool.Execute(context.Background(), params)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		last = result
+		if match(result.Text) {
+			return last
+		}
+		if time.Now().After(deadline) {
+			return last
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

@@ -85,17 +85,12 @@ func TestTmuxSendAndRead(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
-	// Read output
-	params, _ = json.Marshal(map[string]interface{}{
-		"operation": "read",
-		"name":      name,
-	})
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
+	// Poll for the echoed text rather than a fixed sleep + single read — see
+	// pollForReadMatch's doc comment for why a fixed sleep here is a genuine
+	// race, not a load/timing excuse.
+	result := pollForReadMatch(t, tool, name, func(text string) bool {
+		return strings.Contains(text, "hello tmux")
+	}, 5*time.Second)
 	if !strings.Contains(result.Text, "hello tmux") {
 		t.Errorf("read result = %q, want 'hello tmux'", result.Text)
 	}
@@ -222,20 +217,16 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
-
-	// Read output — should show the working directory
-	params, _ = json.Marshal(map[string]interface{}{
-		"operation": "read",
-		"name":      name,
-		"lines":     100,
-	})
-	output, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
 	// Resolve any symlinks (e.g. /tmp -> /private/tmp on macOS)
 	resolvedDir, _ := filepath.EvalSymlinks(dir)
+
+	// Poll for the pwd output rather than a single read after a fixed sleep:
+	// a fixed sleep is a genuine race (not "the machine was busy") — under
+	// heavier parallel load, the shell inside the pane may simply not have
+	// executed/echoed "pwd" yet by the time a single read fires.
+	output := pollForReadMatch(t, tool, name, func(text string) bool {
+		return strings.Contains(text, dir) || strings.Contains(text, resolvedDir)
+	}, 5*time.Second)
 	if !strings.Contains(output.Text, dir) && !strings.Contains(output.Text, resolvedDir) {
 		t.Errorf("output = %q, want workdir %q or %q", output.Text, dir, resolvedDir)
 	}
