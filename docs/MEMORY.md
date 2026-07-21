@@ -171,9 +171,9 @@ The sweep exists to catch files added by external mechanisms that bypass fsnotif
 
 ### Conversation Indexing
 
-Conversation messages are indexed as they arrive:
-- **FTS5**: real-time indexing only (no historical backfill)
-- **Bleve**: real-time indexing plus startup backfill from the SQLite conversation database
+Conversation messages are indexed as they arrive, in both backends:
+- **FTS5**: real-time indexing, plus a one-time wipe+rebuild backfill from the conversation SQLite log(s), guarded by a marker table so it runs only once
+- **Bleve**: real-time indexing plus startup backfill from the SQLite conversation database (per-message doc IDs make it idempotent — safe to re-run every startup)
 
 ---
 

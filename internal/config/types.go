@@ -862,7 +862,7 @@ type MemorySource struct {
 // Sources are combined additively (not merged) — see load.go.
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
-	SearchBackend      *string        `toml:"search_backend"      default:"bleve" hot:"immediate" desc:"Which engine powers memory search: fts5 also searches conversation history, bleve only searches memory files but adds relevance ranking"`   // search backend: "fts5" or "bleve"
+	SearchBackend      *string        `toml:"search_backend"      default:"bleve" hot:"immediate" desc:"Which engine powers memory search: both index memory files and conversation history; bleve adds richer relevance ranking and highlighting"` // search backend: "fts5" or "bleve"
 	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"How long to wait after a memory file changes before reindexing it, so rapid edits do not trigger repeated reindexing; 0s reindexes immediately" type:"duration"`            // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"Relevance multiplier for conversation-history hits in memory search, relative to memory-file hits; 0 excludes them, 1 weighs them equally" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"Maximum number of results the memory search tool returns for a single query"`                                                                               // max search results to return (default 20)
