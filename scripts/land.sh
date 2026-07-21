@@ -25,9 +25,15 @@
 #
 # Cheap repo-state work (fetch, rebase, conflict/dirty detection) runs BEFORE
 # the compute step, so merge-lock hold time is ~= the unit suite + heavy
-# queueing, not a full rebuild. Pushes HEAD:main to origin (atomic remote ff);
-# does NOT touch the local main checkout — deploys read origin/main directly
-# (piece #4), so the local main ref is non-load-bearing.
+# queueing, not a full rebuild. Pushes HEAD:main to origin (atomic remote ff),
+# then best-effort fast-forwards the LOCAL main checkout to the just-landed
+# commit so it's current immediately (not just at the next deploy). land runs in
+# a feature worktree and cannot checkout/ref-update main from here — it's checked
+# out in the main checkout, and moving a checked-out branch's ref would desync
+# that worktree — so it ff's main IN its own checkout. This project never works
+# on main directly, so it should be clean; if it somehow is dirty / mid-deploy /
+# not on main, the ff is skipped with a note and the next deploy's sync-main
+# (piece #4) catches it up. Either way origin/main is the source of truth.
 #
 # /tmp lock-file gotchas, identical to the `test` target: /tmp is world-writable
 # + sticky and with fs.protected_regular=2 the kernel denies WRITE-opening a
@@ -75,6 +81,21 @@ land() {
 		echo "ABORT: push rejected (origin/main moved by a non-lander since fetch?) — re-run make land" >&2
 		return 5
 	}
+
+	# Bring the LOCAL main checkout current too (best-effort — the push above is
+	# the actual landing; a successful push already updated the local origin/main
+	# tracking ref). Find the worktree that has main checked out and ff it there
+	# (the only place ref+index+worktree move together consistently).
+	mc=$(git worktree list --porcelain | awk '/^worktree /{w=$2} /^branch refs\/heads\/main$/{print w; exit}')
+	if [ -z "$mc" ]; then
+		echo ">>> note: no worktree has main checked out — skipping local main ff" >&2
+	elif ! git -C "$mc" diff --quiet || ! git -C "$mc" diff --cached --quiet; then
+		echo ">>> note: main checkout ($mc) is dirty — skipping local main ff (deploy's sync-main will catch up)" >&2
+	elif git -C "$mc" merge --ff-only origin/main >/dev/null 2>&1; then
+		echo ">>> brought local main checkout ($mc) up to date" >&2
+	else
+		echo ">>> note: could not ff local main checkout ($mc) — skipping (deploy's sync-main will catch up)" >&2
+	fi
 
 	echo ">>> LANDED $(git rev-parse --short HEAD) to origin/main" >&2
 }
