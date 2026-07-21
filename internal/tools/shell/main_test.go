@@ -12,7 +12,7 @@ import (
 // FOCI_SOCK themselves. (Before 2.1's package split this lived in the unified
 // tools TestMain.)
 func TestMain(m *testing.M) {
-	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR"} {
+	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR", "FOCI_SESSION_KEY"} {
 		os.Unsetenv(k)
 	}
 	os.Exit(m.Run())

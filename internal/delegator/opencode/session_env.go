@@ -2,17 +2,19 @@
 // opencode server model.
 //
 // PROBLEM: opencode runs ONE 'opencode serve' subprocess per agent, shared
-// across all sessions. The subprocess's env (FOCI_SOCK, BASH_ENV) is
-// captured from the first session that launched it and frozen — so every
-// subsequent session's bash tool calls go through the FIRST session's exec
-// bridge socket. Session-scoped tools (foci_ask, send_to_session) then
-// route to the wrong chat.
+// across all sessions. The subprocess's env (FOCI_SOCK, BASH_ENV,
+// FOCI_SESSION_KEY) is captured from the first session that launched it and
+// frozen — so every subsequent session's bash tool calls go through the
+// FIRST session's exec bridge socket (and see the FIRST session's key).
+// Session-scoped tools (foci_ask, send_to_session) then route to the wrong
+// chat.
 //
 // FIX: opencode fires a `shell.env` plugin hook before every bash spawn,
 // passing the calling session's ID. A foci-generated plugin (.opencode/plugin/)
 // reads a per-session JSON file written by this code and injects the correct
-// FOCI_SOCK/BASH_ENV, overriding the subprocess default. Each session gets
-// its own mapping file in tempdir; the plugin reads it on every spawn.
+// FOCI_SOCK/BASH_ENV/FOCI_SESSION_KEY, overriding the subprocess default.
+// Each session gets its own mapping file in tempdir; the plugin reads it on
+// every spawn.
 
 package opencode
 
@@ -34,8 +36,9 @@ const (
 // that differ per-session are included; everything else inherits from the
 // subprocess env.
 type sessionEnvEntry struct {
-	FociSock string `json:"FOCI_SOCK,omitempty"`
-	BashEnv  string `json:"BASH_ENV,omitempty"`
+	FociSock   string `json:"FOCI_SOCK,omitempty"`
+	BashEnv    string `json:"BASH_ENV,omitempty"`
+	SessionKey string `json:"FOCI_SESSION_KEY,omitempty"`
 }
 
 // sessionEnvDir returns the tempdir subdirectory for per-session env files.
@@ -57,11 +60,12 @@ func WriteSessionEnvFile(sessionID string, env map[string]string) {
 		return
 	}
 	entry := sessionEnvEntry{
-		FociSock: env["FOCI_SOCK"],
-		BashEnv:  env["BASH_ENV"],
+		FociSock:   env["FOCI_SOCK"],
+		BashEnv:    env["BASH_ENV"],
+		SessionKey: env["FOCI_SESSION_KEY"],
 	}
-	if entry.FociSock == "" && entry.BashEnv == "" {
-		return // no bridge env to inject
+	if entry.FociSock == "" && entry.BashEnv == "" && entry.SessionKey == "" {
+		return // no per-session env to inject
 	}
 	dir := sessionEnvDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

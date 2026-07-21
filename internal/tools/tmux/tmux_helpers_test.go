@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 	// connect to the PRODUCTION bridge with the real secret store — firing real
 	// (host-check-blocked, but log-noisy) requests through the live session.
 	// Tests that genuinely need a bridge set FOCI_SOCK explicitly themselves.
-	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR"} {
+	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR", "FOCI_SESSION_KEY"} {
 		os.Unsetenv(k)
 	}
 

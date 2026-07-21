@@ -16,7 +16,7 @@ import (
 // (Before 2.1's package split this lived in the tmux test TestMain; it stays
 // here for the exec/shell tests that remain in package tools.)
 func TestMain(m *testing.M) {
-	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR"} {
+	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR", "FOCI_SESSION_KEY"} {
 		os.Unsetenv(k)
 	}
 	os.Exit(m.Run())

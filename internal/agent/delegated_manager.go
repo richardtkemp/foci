@@ -337,6 +337,21 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		}
 	}
 
+	// Expose the session key to the backend's shell environment as
+	// FOCI_SESSION_KEY, unconditionally (independent of exec-bridge success
+	// below) — agents and approval paths like aisudo need it for
+	// session-scoped correlation even if the bridge fails to start. Set here
+	// (rather than only inside the bridge success branch) so it survives the
+	// "no exec bridge" and "bridge creation failed" cases too.
+	if sessionKey != "" {
+		envCopy := make(map[string]string, len(opts.Env)+1)
+		for k, v := range opts.Env {
+			envCopy[k] = v
+		}
+		envCopy["FOCI_SESSION_KEY"] = sessionKey
+		opts.Env = envCopy
+	}
+
 	// Create the exec bridge so shell functions (foci_todo, foci_send_to_chat, etc.)
 	// are available in the backend's shell environment. The bridge is created here
 	// (not in individual backends) so all backend types get it automatically.

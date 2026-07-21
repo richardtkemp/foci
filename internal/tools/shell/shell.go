@@ -213,11 +213,18 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	}
 	proc.Dir = workDir
 
-	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.) and FOCI_SOCK
-	if len(extraEnv) > 0 || bridge != nil {
+	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.), FOCI_SOCK, and
+	// FOCI_SESSION_KEY (the agent/c<chatID> session key, when known — lets
+	// agents and approval paths like aisudo correlate exec calls back to a
+	// session).
+	sk := tools.SessionKeyFromContext(ctx)
+	if len(extraEnv) > 0 || bridge != nil || sk != "" {
 		proc.Env = append(os.Environ(), extraEnv...)
 		if bridge != nil {
 			proc.Env = append(proc.Env, "FOCI_SOCK="+bridge.SockPath())
+		}
+		if sk != "" {
+			proc.Env = append(proc.Env, "FOCI_SESSION_KEY="+sk)
 		}
 	}
 
@@ -279,11 +286,15 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	proc := procx.Spawn(context.Background(), execShell(), "-c", cmd)
 	proc.Dir = workDir
 
-	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.) and FOCI_SOCK
-	if len(extraEnv) > 0 || bridge != nil {
+	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.), FOCI_SOCK, and
+	// FOCI_SESSION_KEY (see execDirect for rationale).
+	if len(extraEnv) > 0 || bridge != nil || sessionKey != "" {
 		proc.Env = append(os.Environ(), extraEnv...)
 		if bridge != nil {
 			proc.Env = append(proc.Env, "FOCI_SOCK="+bridge.SockPath())
+		}
+		if sessionKey != "" {
+			proc.Env = append(proc.Env, "FOCI_SESSION_KEY="+sessionKey)
 		}
 	}
 	// Don't set proc.Cancel — let the command run to completion
