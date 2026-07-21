@@ -83,3 +83,23 @@ func TestIsOneshot(t *testing.T) {
 		}
 	}
 }
+
+func TestIsBarredFromSessionSend(t *testing.T) {
+	// #1409: only reflection/consolidation/keepalive are barred from
+	// send_to_session outright — narrower than IsOneshot(), which also
+	// covers spawn/background-task (those may still legitimately send; see
+	// IsBarredFromSessionSend's doc comment).
+	barred := map[SessionType]bool{
+		SessionTypeReflection: true,
+		SessionTypeKeepalive:  true,
+	}
+	for _, ty := range []SessionType{
+		SessionTypeChat, SessionTypeFacet, SessionTypeIndependent,
+		SessionTypeSpawn, SessionTypeReflection, SessionTypeKeepalive,
+		SessionTypeBackgroundTask, SessionTypeUnknown,
+	} {
+		if ty.IsBarredFromSessionSend() != barred[ty] {
+			t.Errorf("%s.IsBarredFromSessionSend()=%v want %v", ty, ty.IsBarredFromSessionSend(), barred[ty])
+		}
+	}
+}
