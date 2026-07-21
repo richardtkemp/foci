@@ -168,6 +168,36 @@ func TestCacheCommandEmpty(t *testing.T) {
 	}
 }
 
+// TestCacheCommandFallsBackToDB is /cache's counterpart to
+// TestLastCommandFallsBackToDB: /cache had the same JSONL-only read as /last
+// (foci_todo #1457), so after a restart empties api.jsonl it printed "No API
+// calls logged yet." while the durable db held entries. Now it reads via the
+// shared readDurableAPIEntries helper.
+func TestCacheCommandFallsBackToDB(t *testing.T) {
+	now := time.Now().UTC()
+	dbPath := t.TempDir() + "/api.db"
+	if err := log.InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	t.Cleanup(log.CloseAPIDB)
+
+	log.API(log.APIEntry{
+		Timestamp: now, Session: "clutch/c123", Model: "claude-opus-4-8",
+		Input: 100, Output: 50, CacheRead: 40, CallType: "delegated_turn",
+	})
+
+	// api.jsonl empty (as right after a restart); the db above has the entry.
+	cc := CommandContext{APILogPath: t.TempDir() + "/api.jsonl"}
+
+	result, err := CacheCommand().Execute(context.Background(), Request{}, cc)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(result.Text, "No API calls logged yet") {
+		t.Fatalf("/cache should fall back to the durable db after a restart, got:\n%s", result.Text)
+	}
+}
+
 // TestLastCommand verifies /last shows the most recent API call per agent
 // as a table, and supports filtering by agent name.
 func TestLastCommand(t *testing.T) {
@@ -220,5 +250,43 @@ func TestLastCommand(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, "No API calls for agent") {
 		t.Errorf("expected no-calls message, got:\n%s", result.Text)
+	}
+}
+
+// TestLastCommandFallsBackToDB reproduces foci_todo #1457 ("/last doesn't
+// seem to work"): api.jsonl is archived to empty on every service restart
+// (initLogging's startup RotateOnce), so a JSONL-only read reports "No API
+// calls logged yet." even though the durable api.db has current entries —
+// including for delegated (CC/codex) backends, which log usage via the same
+// log.API() call (turn_delegated.go's LogUsage) as the direct-API path.
+// Mirrors /cost's existing db-first, JSONL-fallback read (readEntries).
+func TestLastCommandFallsBackToDB(t *testing.T) {
+	now := time.Now().UTC()
+	dbPath := t.TempDir() + "/api.db"
+	if err := log.InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	t.Cleanup(log.CloseAPIDB)
+
+	// Delegated-backend call (as logged by turn_delegated.go's LogUsage).
+	log.API(log.APIEntry{
+		Timestamp: now, Session: "clutch/c123", Model: "claude-opus-4-8",
+		Input: 100, Output: 50, CallType: "delegated_turn",
+	})
+
+	// api.jsonl is empty — as it is right after a restart, or if the JSONL
+	// write path stalls — but the db above has the entry.
+	cc := CommandContext{APILogPath: t.TempDir() + "/api.jsonl"}
+
+	cmd := LastCommand()
+	result, err := cmd.Execute(context.Background(), Request{}, cc)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(result.Text, "No API calls logged yet") {
+		t.Fatalf("/last should fall back to the durable db after a restart, got:\n%s", result.Text)
+	}
+	if !strings.Contains(result.Text, "clutch") {
+		t.Errorf("expected clutch's delegated-turn call in:\n%s", result.Text)
 	}
 }

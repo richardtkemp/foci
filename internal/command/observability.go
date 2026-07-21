@@ -43,7 +43,7 @@ func CacheCommand() *Command {
 					n = parsed
 				}
 			}
-			entries := log.ReadAPILog(cc.APILogPath)
+			entries := readDurableAPIEntries(cc)
 			if len(entries) == 0 {
 				return Response{Text: "No API calls logged yet."}, nil
 			}
@@ -124,6 +124,24 @@ func truncateSession(session string) string {
 	return session
 }
 
+// readDurableAPIEntries returns API log entries, preferring the durable
+// SQLite db (survives service restarts, and is a superset of the JSONL —
+// written per call at insert time by log.API) over api.jsonl, which is
+// archived to empty on every process start (initLogging's startup
+// RotateOnce(Retention: 0)) and so under-reports — or, if the JSONL write
+// path is stalled for any reason, fully misses — everything logged since the
+// last restart. Falls back to the JSONL only when the db is empty/not
+// initialised (e.g. unit tests, very early startup). The db captures both
+// direct-API and delegated-backend (CC/codex) calls: turn_delegated.go's
+// LogUsage calls the same log.API() as the direct path, so this covers both.
+func readDurableAPIEntries(cc CommandContext) []log.APIEntry {
+	entries := log.ReadAPIDBLog()
+	if len(entries) == 0 {
+		entries = log.ReadAPILog(cc.APILogPath)
+	}
+	return entries
+}
+
 // LastCommand returns a /last command showing the most recent API call per agent.
 func LastCommand() *Command {
 	return &Command{
@@ -131,7 +149,7 @@ func LastCommand() *Command {
 		Description: "Last API call per agent (or /last <agent>)",
 		Category:    "observability",
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			entries := log.ReadAPILog(cc.APILogPath)
+			entries := readDurableAPIEntries(cc)
 			if len(entries) == 0 {
 				return Response{Text: "No API calls logged yet."}, nil
 			}
@@ -197,15 +215,7 @@ func LastCommand() *Command {
 // parseCostArgs into orthogonal filters.
 func CostCommand() *Command {
 	readEntries := func(cc CommandContext) ([]log.APIEntry, error) {
-		// Prefer the durable SQLite db: api.jsonl is reset on every service
-		// restart, so a JSONL-only read under-reports cost after a restart
-		// (e.g. yesterday shows $0). The db accumulates across restarts and is
-		// a superset of the JSONL. Fall back to the JSONL only if the db is not
-		// initialised (e.g. in tests).
-		entries := log.ReadAPIDBLog()
-		if len(entries) == 0 {
-			entries = log.ReadAPILog(cc.APILogPath)
-		}
+		entries := readDurableAPIEntries(cc)
 		if len(entries) == 0 {
 			return nil, fmt.Errorf("No API calls logged yet.")
 		}
