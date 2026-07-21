@@ -257,6 +257,30 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		if !wc.none && !wc.any() && noIfGate {
 			wc.cold = "1m"
 		}
+
+		// Rate-limit gate (#1417): a session whose endpoint is currently
+		// rate-limited must never be dispatched now — that would be a
+		// guaranteed-fail API call and, for an async send, a silently dropped
+		// message (deliverBufferedQueued just logs "async error" and returns).
+		// Unlike the activity conditions below, this is a hard capacity
+		// constraint rather than a scheduling preference, so it applies even
+		// under wait_none/--no-gate. It folds into the SAME persisted
+		// defer-then-sweep mechanism as the activity wait gates
+		// (enqueueDeferredSend / deferSweeper.sweep, which independently
+		// withholds delivery while the gate stays closed) — the existing 10s
+		// sweep tick becomes the "dispatch one at a time once the gate opens"
+		// replay for /send, mirroring the rate limit gate's own per-endpoint
+		// queue used for system-triggered work.
+		if limited, reason := inst.ag.SessionRateLimited(sessionKey); limited {
+			if d.deferStore != nil {
+				enqueueDeferredSend(w, d, inst.id, sessionKey, req.Text, string(res.Policy), req.Model, wc, rcpt)
+				return
+			}
+			// Store unavailable: degrade to immediate send (a user-trigger
+			// recovery probe) rather than failing outright.
+			deferLog.Warnf("%s but defer store unavailable — sending now (agent=%s session=%s)", reason, inst.id, sessionKey)
+		}
+
 		if !wc.none && wc.any() {
 			isUserActive, isSessionActive := buildActivityCheckers(d)
 			satisfied, err := waitSatisfied(wc, activityGateInputs{

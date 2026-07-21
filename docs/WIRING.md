@@ -110,7 +110,7 @@ config.Load(path)                                        ← validates values; l
   → plat.RestoreFacetSessions(...)                     ← restore bot→session mappings from state store
   → plat.StartAll(ctx)                                     ← starts all provider connections
   → startup notifications (inline in main.go)              ← uses connMgr.AllForAgent() for fan-out
-  → deferStore = defersend.NewStore(deferred-sends.db)     ← wait_defer.go; SQLite-backed queue for `foci send --wait-*` sends whose activity gate isn't yet satisfied, swept by a background goroutine (10s tick, 2h default send-anyway timeout) — see internal/defersend below
+  → deferStore = defersend.NewStore(deferred-sends.db)     ← wait_defer.go; SQLite-backed queue for `foci send --wait-*` sends whose activity gate isn't yet satisfied, swept by a background goroutine (10s tick, 2h default send-anyway timeout) — see internal/defersend below. Also the queue for ANY `/send` whose target endpoint is currently rate-limited (#1417): a hard capacity constraint, not a scheduling preference, so it defers even under `wait_none`/`--no-gate`, and the sweep withholds it unconditionally (no send-anyway-on-deadline) until `Agent.SessionRateLimited` clears — one record delivered per sweep tick.
   → http.Server{...}                                       ← http.go (registerHTTPHandlers)
   → startUnixSocket(...)                                   ← unix_socket.go (same-user auth, no API key)
   → setupAskgw(cfg, agents, connMgr)                       ← askgw_setup.go (opt-in [askgw] enabled=true; NDJSON Unix socket for external Apps to ask humans questions via foci's interactive button surface)
@@ -191,7 +191,7 @@ main
  ├── procx         (no internal deps — process-spawn helper: strips foci-secrets/foci-askgw supplementary groups from child processes, own process group; used by every subprocess spawn site)
  ├── peercred      (stdlib syscall only — SO_PEERCRED extraction for Unix-socket auth; see HTTP Gateway)
  ├── question      (no internal deps — backend-agnostic AskUserQuestion core: parsing, formatting, choice buttons, answer resolution/merge; shared by ccstream and tools so the two surfaces can't drift)
- ├── defersend     → sqlite, timeutil (leaf — SQLite-backed queue for `foci send --wait-*` deferred sends; a pending send that isn't yet warm/cold/user-active/-inactive is persisted and delivered by a background sweep, surviving a restart. Wired in `cmd/foci-gw/wait_defer.go`.)
+ ├── defersend     → sqlite, timeutil (leaf — SQLite-backed queue for `foci send --wait-*` deferred sends; a pending send that isn't yet warm/cold/user-active/-inactive, OR whose target endpoint is currently rate-limited (#1417), is persisted and delivered by a background sweep, surviving a restart. Wired in `cmd/foci-gw/wait_defer.go`.)
  ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
  ├── tools         → agent/turnevent, app/fap, config, convo, display, log, memory, modelinfo, peercred, platform, procx, provider, question, secrets, secrets/bitwarden, session, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool

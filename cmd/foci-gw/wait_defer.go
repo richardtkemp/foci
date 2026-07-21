@@ -196,18 +196,29 @@ func (s *deferSweeper) sweep() {
 			LastTurnEnd: inst.ag.LastTurnEnd(r.SessionKey),
 		}
 		wc := waitConds{warm: r.WaitWarm, cold: r.WaitCold, userActive: r.WaitUserActive, userInactive: r.WaitUserInactive}
-		ok, err = waitSatisfied(wc, in, s.isUserActive, s.isSessionActive)
+		activityOK, err := waitSatisfied(wc, in, s.isUserActive, s.isSessionActive)
 		if err != nil {
 			deferLog.Errorf("dropping deferred send %d: %v", r.ID, err)
 			_ = s.store.Delete(r.ID)
 			continue
 		}
+		// A rate-limited endpoint withholds delivery unconditionally (#1417) —
+		// unlike an activity condition, there is no "send anyway" escape hatch
+		// on deadline: firing into a live rate limit is a guaranteed-fail API
+		// call that only extends the backoff further. The record just stays
+		// queued (still persisted, still restart-surviving) until the endpoint
+		// gate reopens; this same 10s sweep tick is the drain, delivering one
+		// record at a time in FIFO order.
+		if limited, reason := inst.ag.SessionRateLimited(r.SessionKey); limited {
+			deferLog.Debugf("deferred send %d withheld: %s", r.ID, reason)
+			continue
+		}
 		timedOut := !r.DeadlineAt.IsZero() && now.After(r.DeadlineAt)
-		if !ok && !timedOut {
+		if !activityOK && !timedOut {
 			continue
 		}
 		reason := "condition met"
-		if !ok {
+		if !activityOK {
 			reason = "deadline reached — sending anyway"
 		}
 		deferLog.Infof("delivering deferred send %d (agent=%s session=%s): %s", r.ID, r.AgentID, r.SessionKey, reason)

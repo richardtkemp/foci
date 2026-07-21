@@ -9,8 +9,17 @@ import (
 	"time"
 
 	"foci/internal/defersend"
+	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 )
+
+// engageRateLimit closes the test agent's endpoint rate-limit gate for
+// roughly retryAfter (a trustworthy RetryAfter hint resolves to exactly
+// now+retryAfter — see internal/ratelimit.Resolve).
+func engageRateLimit(t *testing.T, d httpHandlerDeps, retryAfter time.Duration) {
+	t.Helper()
+	d.agents[testAgentID].ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindRequest, RetryAfter: retryAfter})
+}
 
 func TestWaitSatisfied(t *testing.T) {
 	active := func(_ string, _ time.Duration) bool { return true }
@@ -165,6 +174,78 @@ func TestSend_ExplicitWaitDefers(t *testing.T) {
 	}
 	if all, _ := store.All(); len(all) != 1 {
 		t.Errorf("queued=%d want 1", len(all))
+	}
+}
+
+// TestSend_DefersWhenRateLimited is the red test for #1417: an incoming
+// /send whose target endpoint is currently rate-limited must queue rather
+// than dispatch (which would be a guaranteed-fail API call, dropped silently
+// for an async send). Unlike the activity wait gates, this is a hard
+// capacity constraint, not a scheduling preference — it must defer even
+// under wait_none ("--no-gate"), which would otherwise send immediately.
+func TestSend_DefersWhenRateLimited(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	store := withDeferStore(t, &d)
+	engageRateLimit(t, d, time.Hour)
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/send", `{"text":"now please","wait_none":true}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("code=%d want 202; body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "deferred" {
+		t.Errorf("status=%v want deferred", resp["status"])
+	}
+	if all, _ := store.All(); len(all) != 1 {
+		t.Errorf("queued=%d want 1", len(all))
+	}
+	if calls := mock.snapshot(); len(calls) != 0 {
+		t.Errorf("backend called %d time(s) while rate limited, want 0: %+v", len(calls), calls)
+	}
+}
+
+// TestSweep_WithholdsWhileRateLimited proves the sweep side of #1417: a
+// pending deferred send whose activity conditions are already satisfied must
+// still be withheld while the endpoint's rate-limit gate is closed, and
+// delivered exactly once the gate reopens — no "send anyway on deadline"
+// escape hatch for rate limiting (that would just fail again).
+func TestSweep_WithholdsWhileRateLimited(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mock.entered = make(chan string, 1)
+	store := withDeferStore(t, &d)
+	now := timeutil.Now()
+	_, _ = store.Enqueue(defersend.Record{
+		AgentID: testAgentID, SessionKey: testSessionKey, Text: "held msg", Policy: "fallback",
+		CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	})
+	engageRateLimit(t, d, 150*time.Millisecond)
+	isU, isS := buildActivityCheckers(d)
+	sw := &deferSweeper{store: store, deps: d, isUserActive: isU, isSessionActive: isS}
+
+	sw.sweep()
+	select {
+	case text := <-mock.entered:
+		t.Fatalf("delivered %q while the endpoint was rate limited", text)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if all, _ := store.All(); len(all) != 1 {
+		t.Errorf("queued=%d want 1 (still withheld)", len(all))
+	}
+
+	time.Sleep(200 * time.Millisecond) // past the 150ms gate deadline
+	sw.sweep()
+	select {
+	case text := <-mock.entered:
+		if !strings.HasSuffix(text, "held msg") {
+			t.Errorf("delivered text = %q", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("send was not delivered once the rate limit cleared")
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Errorf("store not drained: %d", len(all))
 	}
 }
 
