@@ -163,17 +163,14 @@ bucket-audit:
 	@rm -rf $(TESTDIR)
 
 # `make land` — the sanctioned path to main (merge-lock landing, #1448 pieces 1+2).
-# Run FROM the feature-branch worktree you want to land. Serialises every
-# landing on this host through a per-repo MERGE lock (/tmp/foci-merge.lock),
-# distinct from the /tmp/heavy COMPUTE lock: merge arbitrates repo state, heavy
-# arbitrates CPU. A lander holds the merge lock for the whole landing and, in
-# its test step, `make test` transiently ALSO takes /tmp/heavy — so a lander
-# briefly holds BOTH locks.
-#
-# LOCK-ORDER INVARIANT (deadlock-safety): always merge-lock -> heavy, NEVER the
-# reverse. Nothing that holds /tmp/heavy may attempt a landing. Safe today:
-# only test / integration / deploy-build take heavy, and none of them land — do
-# not add a self-landing step to any heavy-holding target or you create a cycle.
+# Run FROM the feature-branch worktree you want to land. Serialises every landing
+# through a dedicated MERGE lock (/tmp/foci-merge.lock), separate from the
+# /tmp/heavy COMPUTE lock. The merge lock spans the WHOLE landing including
+# `make test` (so a second lander blocks and then tests once against the final
+# main — blocks, never redoes), so a lander briefly holds merge + heavy together.
+# Order is invariant BY CONSTRUCTION: land is the only taker of the merge lock and
+# always takes it before heavy, so no cycle is possible — just don't add a
+# heavy-holding target that also lands.
 #
 # Cheap repo-state work (fetch, rebase, conflict/dirty detection) runs BEFORE
 # the compute step, so merge-lock hold time is ~= the unit suite + heavy
