@@ -16,7 +16,7 @@ import (
 //
 // Mirrors internal/tools/main_test.go (the canonical pattern for this trap).
 func TestMain(m *testing.M) {
-	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR"} {
+	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR", "FOCI_SESSION_KEY"} {
 		os.Unsetenv(k)
 	}
 	os.Exit(m.Run())
