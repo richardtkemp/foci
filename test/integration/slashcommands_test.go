@@ -572,8 +572,8 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 	apiLogPath := filepath.Join(h.LogsDir(), "api.jsonl")
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	entries := []string{
-		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_A","model":"stub-model","input":100,"output":50,"cost_usd":1.00,"call_type":"conversation"}`,
-		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_B","model":"stub-model","input":200,"output":100,"cost_usd":1.50,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_A","model":"stub-model","input":100,"output":50,"golden_cost_usd":1.00,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_B","model":"stub-model","input":200,"output":100,"golden_cost_usd":1.50,"call_type":"conversation"}`,
 	}
 	apiContent := strings.Join(entries, "\n") + "\n"
 	if err := os.WriteFile(apiLogPath, []byte(apiContent), 0o600); err != nil {
