@@ -64,9 +64,15 @@ Only tools and skills actually registered for the agent appear in the reminder.
 
 ### Nudge header
 
-All nudge blocks are prefixed with a header that tells the model to treat them as background guidance:
+Nudges are wrapped in a `<system-reminder>` block — mirroring the same wrapper Claude Code itself uses for injected context (e.g. environment/date info) — so the model applies its native low-priority-context handling rather than treating the reminder as user input:
 
-> `[Background nudge — a private note to yourself, not from the user. Apply it only if it genuinely fits what you're already doing; if it doesn't, ignore it and don't bend your reply to accommodate it. Don't refer to the nudge directly in what you send.]`
+> `<system-reminder>`
+> `This is a background nudge for you to weigh — a private note to yourself, not a message from the user.`
+> `{reminder text}`
+> `IMPORTANT: this nudge may or may not be relevant to what you're doing — apply it only if it genuinely fits, and don't refer to it directly in your reply. ...`
+> `</system-reminder>`
+
+The opening preamble (`nudge-preamble.md`) and the closing line (`nudge-user-boundary.md` for the bundled path, `nudge-reply-instruction.md` for the standalone path) are per-agent-overridable prompts, resolved the same way as the compaction-summary prompt. When several nudges are bundled into the same turn (e.g. a regex trigger and a turn-interval trigger firing together), only the first reminder opens the tag and only the closing delimiter closes it, so the region stays a single well-formed block instead of nesting.
 
 ## Configuration
 

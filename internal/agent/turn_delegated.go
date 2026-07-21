@@ -111,11 +111,22 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 	a.Nudger.StartTurn(ts.Texts[0])
 
 	var nudges []string
+	// Only the first reminder in the batch opens the <system-reminder> region
+	// (via wrapBundledNudge's preamble) — later ones in the same batch are
+	// bare text, so two+ simultaneous triggers (e.g. regex + turn-interval)
+	// don't each re-open the tag. nudgeUserBoundary below closes it once.
+	addBundled := func(r string) {
+		if len(nudges) == 0 {
+			nudges = append(nudges, a.wrapBundledNudge(r))
+			return
+		}
+		nudges = append(nudges, r)
+	}
 	for _, r := range a.Nudger.CheckTurnInterval() {
-		nudges = append(nudges, a.wrapBundledNudge(r))
+		addBundled(r)
 	}
 	for _, r := range a.Nudger.CheckRegex() {
-		nudges = append(nudges, a.wrapBundledNudge(r))
+		addBundled(r)
 	}
 	if len(nudges) > 0 {
 		// Close the nudge region with a single delimiter so the agent can
