@@ -566,6 +566,8 @@ var todoActions = []struct {
 	{"get", "get <id>   (alias: show)", ""},
 	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
+	{"reopen", "reopen <id>   (status→open, clears completed_at/close_reason; or --id N / --ids 1,2,3)", "--id --ids"},
+	{"start", "start <id>   (status→started; or --id N / --ids 1,2,3)", "--id --ids"},
 	{"edit", "edit <id> [--text TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T]   (alias: update; or --id N / --ids 1,2,3)", "--id --ids --text --append --append-text --add --note --notes --priority --tag"},
 	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids"},
 }
@@ -686,7 +688,7 @@ func generateShellFunc(t *Tool) string {
     if [ -n "$action_usage" ]; then
       echo "usage: foci_todo $action_usage"
     else
-      echo "usage: foci_todo <add|list|list-all|search|get|complete|drop|edit|remove> [args...]"
+      echo "usage: foci_todo <add|list|list-all|search|get|complete|drop|reopen|start|edit|remove> [args...]"
       echo "Run 'foci_todo --help' for full help."
     fi
     return 0
@@ -744,7 +746,7 @@ func generateShellFunc(t *Tool) string {
         case "$action" in
           add) text="$text $1" ;;
           search) query="$query $1" ;;
-          get|complete|drop|remove) id="$1" ;;
+          get|complete|drop|reopen|start|remove) id="$1" ;;
           edit)
             # A numeric positional is the item id (so "update 6 ..." works like
             # complete/drop); anything else falls back to text for back-compat.
@@ -855,6 +857,18 @@ func generateShellFunc(t *Tool) string {
       [ -n "$reason" ] && params="$(echo "$params" | jq --arg r "$reason" '. + {reason: $r}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
+    reopen)
+      local params='{"action":"reopen"}'
+      [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
+      [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
+      ;;
+    start)
+      local params='{"action":"start"}'
+      [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
+      [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
+      ;;
     edit)
       local params='{"action":"edit"}'
       [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
@@ -872,7 +886,7 @@ func generateShellFunc(t *Tool) string {
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     *)
-      echo "usage: %s <add|list|list-all|search|get|complete|drop|edit|remove> [args...]" >&2
+      echo "usage: %s <add|list|list-all|search|get|complete|drop|reopen|start|edit|remove> [args...]" >&2
       return 1
       ;;
   esac

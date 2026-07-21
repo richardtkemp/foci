@@ -16,13 +16,13 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 		Name:        "todo",
 		ExecExport:  true,
 		Positional:  []string{"action"},
-		Description: "Manage a persistent todo list. Supports adding, listing, searching, getting, completing, dropping, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
+		Description: "Manage a persistent todo list. Supports adding, listing, searching, getting, completing, dropping, reopening, starting, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["add", "list", "search", "get", "complete", "drop", "edit", "remove"],
+					"enum": ["add", "list", "search", "get", "complete", "drop", "reopen", "start", "edit", "remove"],
 					"description": "The operation to perform"
 				},
 				"text": {
@@ -44,12 +44,12 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"id": {
 					"type": "integer",
-					"description": "Todo item ID (required for 'get', 'complete', 'drop', 'edit', and 'remove')"
+					"description": "Todo item ID (required for 'get', 'complete', 'drop', 'reopen', 'start', 'edit', and 'remove')"
 				},
 				"ids": {
 					"type": "array",
 					"items": {"type": "integer"},
-					"description": "Array of todo item IDs (alternative to 'id' for batch operations, used with 'complete', 'drop', 'edit', 'remove')"
+					"description": "Array of todo item IDs (alternative to 'id' for batch operations, used with 'complete', 'drop', 'reopen', 'start', 'edit', 'remove')"
 				},
 				"status": {
 					"type": "string",
@@ -121,6 +121,12 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return todoTransition(store, agentID, p.ID, p.IDs, "done", p.Reason)
 			case "drop":
 				return todoTransition(store, agentID, p.ID, p.IDs, "dropped", p.Reason)
+			case "reopen":
+				// No reason required: reopen isn't a close action, and
+				// Transition clears completed_at/close_reason for "open".
+				return todoTransition(store, agentID, p.ID, p.IDs, "open", "")
+			case "start":
+				return todoTransition(store, agentID, p.ID, p.IDs, "started", "")
 			case "transition":
 				// Back-compat: undocumented action for callers that send the
 				// raw transition+state pair (older API agents, format tests).
@@ -131,7 +137,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			case "remove":
 				return todoRemove(store, agentID, p.ID, p.IDs)
 			default:
-				return ToolResult{}, fmt.Errorf("unknown action: %s (use add, list, search, get, complete, drop, edit, or remove)", p.Action)
+				return ToolResult{}, fmt.Errorf("unknown action: %s (use add, list, search, get, complete, drop, reopen, start, edit, or remove)", p.Action)
 			}
 		},
 	}
