@@ -93,10 +93,18 @@ func SendInteractiveMessageWithID(resolve ConnResolver, id, header, text string,
 		return "", fmt.Errorf("no connection to present interactive message %q", id)
 	}
 	// Set the header before sending (app-only; Telegram/Discord don't
-	// implement InteractiveHeaderSetter and ignore it).
+	// implement InteractiveHeaderSetter and ignore it). question.FormatText
+	// bakes the same header into text as a bold leading line — the only way
+	// Telegram/Discord (no header UI) ever show it — so a header-capable
+	// connection would otherwise render it TWICE: once as the title, once as
+	// the body's first line (e.g. an askgw-relayed sudo approval showing
+	// "Sudo" on two consecutive lines, #1397). Strip that embedded line here,
+	// once we know this connection displays the header separately; text is
+	// left untouched for connections that don't (their only copy).
 	if header != "" {
 		if hs, ok := conn.(InteractiveHeaderSetter); ok {
 			hs.SetInteractiveHeader(id, header)
+			text = stripEmbeddedHeader(header, text)
 		}
 	}
 	bs, ok := conn.(ButtonSender)
@@ -139,6 +147,51 @@ func SendInteractiveMessageWithID(resolve ConnResolver, id, header, text string,
 	}
 	imMu.Unlock()
 	return msgID, nil
+}
+
+// stripEmbeddedHeader removes the leading bold header line that
+// question.FormatText bakes into text — "**<header>**\n\n" for a single
+// question, or "**<header>** (i/n)\n\n" for a sequential multi-question ask —
+// when header will ALSO be shown separately (see the SetInteractiveHeader
+// call site above). Only strips a line that exactly matches header, followed
+// by nothing or a "(i/n)" counter, then a blank line; any other shape is left
+// untouched so real content starting with "**<header>**" is never eaten.
+func stripEmbeddedHeader(header, text string) string {
+	prefix := "**" + header + "**"
+	if !strings.HasPrefix(text, prefix) {
+		return text
+	}
+	rest := text[len(prefix):]
+	nl := strings.Index(rest, "\n\n")
+	if nl < 0 {
+		return text
+	}
+	between := rest[:nl]
+	if between != "" && !isCounterSuffix(between) {
+		return text
+	}
+	return rest[nl+2:]
+}
+
+// isCounterSuffix reports whether s is a FormatText sequential-question
+// counter suffix of the form " (<digits>/<digits>)".
+func isCounterSuffix(s string) bool {
+	if !strings.HasPrefix(s, " (") || !strings.HasSuffix(s, ")") {
+		return false
+	}
+	num, den, ok := strings.Cut(s[2:len(s)-1], "/")
+	if !ok || num == "" || den == "" {
+		return false
+	}
+	isDigits := func(s string) bool {
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return isDigits(num) && isDigits(den)
 }
 
 // imEncodeButtons rewrites each button's callback Data to the routing token
