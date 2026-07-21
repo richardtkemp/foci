@@ -674,9 +674,10 @@ func TestAppSink_VoiceTriggerMultiBlockTurnSynthesizesPerBlock(t *testing.T) {
 
 	wantTexts := []string{
 		// NormalizeForSpeech (#1444) runs before synthesis, so the ticket
-		// reference reaches TTS with its mangling '#' already stripped.
+		// reference reaches TTS with its mangling '#' already stripped and
+		// (#1447) its 3+ digit run voiced digit-by-digit ("#1443" -> "1 4 4 3").
 		"That is the whole design settled. Let me capture it.",
-		"Filed as 1443.",
+		"Filed as 1 4 4 3.",
 	}
 	if len(tts.got) != len(wantTexts) {
 		t.Fatalf("TTS synthesize calls = %v, want %v (one call per delivered block, not one accumulated call)", tts.got, wantTexts)
