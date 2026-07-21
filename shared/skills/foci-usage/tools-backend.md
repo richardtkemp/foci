@@ -36,7 +36,7 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 - Optional grader: `--grader <abs-path>` runs an executable over `{request_id, questions, answers}` (JSON on stdin) and delivers *its* output to you instead of the raw answers. `--grader-args <json-array>` appends argv after request_id; `--grader-timeout-seconds` (default 15); `--grader-on-error fallback|report`.
 
 ### `foci_send_to_chat` — send a rich message to your own chat
-- Positional `text` (or stdin, or `--text`/`--description`). Markdown supported.
+- Positional `text` (or stdin, or `--text`/`--description`/`--caption`). Markdown supported.
 - `--file <path>` attaches a file; `--filename <name>` sets display name; `--send-as document|voice|video|photo|audio|animation`.
 - It always sends to **your own** chat (no chat-targeting parameter — the destination derives from your session). To reach a different chat, use `foci_send_to_session`.
 - **Don't use it to duplicate a plain reply** on a bot-attached session — your reply text is already delivered. Use it for attachments or piping command output (`… | foci_send_to_chat`).
