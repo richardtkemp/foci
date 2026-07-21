@@ -408,6 +408,71 @@ func TestTodoToolTransitionReopen(t *testing.T) {
 	}
 }
 
+func TestTodoToolReopenAction(t *testing.T) {
+	// Proves that the canonical "reopen" action (the CLI-facing surface added
+	// for #1437) transitions a done item back to open and clears
+	// completed_at/close_reason — without requiring a "reason" param, since
+	// reopen isn't a close action. Before #1437, "reopen" wasn't a recognized
+	// action at all (only the undocumented "transition"+state="open" pair
+	// worked), so this reproduces the reported gap.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Reopen me via canonical action", "high", "")
+	store.Complete("agent1", id, "closed too soon")
+
+	params := map[string]interface{}{
+		"action": "reopen",
+		"id":     id,
+	}
+	result, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if !strings.Contains(result, "open") {
+		t.Errorf("expected 'open' in result, got: %s", result)
+	}
+
+	item, _ := store.Get("agent1", id)
+	if item.Status != "open" {
+		t.Errorf("status = %q, want open", item.Status)
+	}
+	if item.CompletedAt != nil {
+		t.Error("completed_at should be nil after reopen")
+	}
+	if item.CloseReason != "" {
+		t.Errorf("close_reason should be empty after reopen, got %q", item.CloseReason)
+	}
+}
+
+func TestTodoToolStartAction(t *testing.T) {
+	// Proves that the canonical "start" action (added alongside "reopen" for
+	// #1437) transitions an open item to started.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Start me via canonical action", "medium", "")
+
+	params := map[string]interface{}{
+		"action": "start",
+		"id":     id,
+	}
+	result, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !strings.Contains(result, "started") {
+		t.Errorf("expected 'started' in result, got: %s", result)
+	}
+
+	item, _ := store.Get("agent1", id)
+	if item.Status != "started" {
+		t.Errorf("status = %q, want started", item.Status)
+	}
+}
+
 func TestTodoToolTransitionAliases(t *testing.T) {
 	// Proves that "cancelled" and "canceled" are accepted as aliases for "dropped".
 	t.Parallel()

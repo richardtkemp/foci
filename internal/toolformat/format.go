@@ -121,7 +121,7 @@ func TodoResultHint(params json.RawMessage, result string) string {
 			return "1 item"
 		}
 		return fmt.Sprintf("%d items", n)
-	case "transition", "complete", "drop":
+	case "transition", "complete", "drop", "reopen", "start":
 		// "#542: done" or "#1: done\n#2: done" -> "done" (first line's state)
 		if _, after, ok := strings.Cut(firstLine, ": "); ok {
 			return Truncate(after, 20)
