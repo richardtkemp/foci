@@ -28,7 +28,7 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 -include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.remote.mk
 -include .remote.mk
 
-.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check clean setup-hooks
+.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
 
 all: build cli foci-call foci-cc-hook nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging
 
@@ -161,6 +161,34 @@ bucket-audit:
 	@echo "--- high (-parallel=$(IPARALLEL)) ---"
 	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
 	@rm -rf $(TESTDIR)
+
+# `make land` — the sanctioned path to main (merge-lock landing, #1448 pieces 1+2).
+# Run FROM the feature-branch worktree you want to land. Serialises every
+# landing on this host through a per-repo MERGE lock (/tmp/foci-merge.lock),
+# distinct from the /tmp/heavy COMPUTE lock: merge arbitrates repo state, heavy
+# arbitrates CPU. A lander holds the merge lock for the whole landing and, in
+# its test step, `make test` transiently ALSO takes /tmp/heavy — so a lander
+# briefly holds BOTH locks.
+#
+# LOCK-ORDER INVARIANT (deadlock-safety): always merge-lock -> heavy, NEVER the
+# reverse. Nothing that holds /tmp/heavy may attempt a landing. Safe today:
+# only test / integration / deploy-build take heavy, and none of them land — do
+# not add a self-landing step to any heavy-holding target or you create a cycle.
+#
+# Cheap repo-state work (fetch, rebase, conflict/dirty detection) runs BEFORE
+# the compute step, so merge-lock hold time is ~= the unit suite + heavy
+# queueing, not a full rebuild. Pushes HEAD:main to origin (atomic remote ff);
+# does NOT touch the local main checkout — deploys read origin/main directly
+# (piece #4), so the local main ref is non-load-bearing.
+#
+# The logic lives in scripts/land.sh, NOT inline here, on purpose: an inline
+# recipe would need `$(MAKE) test` for the compute step, and GNU make's
+# recursive-make heuristic RUNS any recipe line containing $(MAKE) even under
+# `make -n` — so a `make -n land` "dry run" on a clean tree would really fetch,
+# rebase, test, and PUSH TO MAIN. A script keeps `make test` inside bash (not
+# make-scanned), so `make -n land` just prints the script call and runs nothing.
+land:
+	@bash scripts/land.sh
 
 coverage:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
