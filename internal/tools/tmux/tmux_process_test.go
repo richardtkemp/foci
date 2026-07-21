@@ -7,11 +7,39 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+// processHasSigIgn reports whether pid has sig in its /proc/<pid>/status
+// SigIgn bitmask (bit N-1 for signal N, per the kernel's sigset encoding) —
+// i.e. the process has set sig to be ignored, e.g. via the shell builtin
+// trap with an empty action. Lets a test poll for "the trap installed"
+// instead of a fixed sleep: no signal needs to be sent to observe it.
+func processHasSigIgn(pid int, sig syscall.Signal) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "SigIgn:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return false
+		}
+		mask, err := strconv.ParseUint(fields[1], 16, 64)
+		if err != nil {
+			return false
+		}
+		return mask&(1<<uint(sig-1)) != 0
+	}
+	return false
+}
 
 func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	// Verifies that killing a tmux session also terminates all descendant processes, not just the pane shell, preventing orphaned processes.
@@ -42,10 +70,10 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Give the process a moment to start
-	time.Sleep(200 * time.Millisecond)
-
-	// Get the pane PID before killing
+	// Get the pane PID before killing. No wait needed: `start`'s new-session
+	// call is synchronous, and tmux assigns+reports the pane's PID as part of
+	// that same call (verified: list-panes reflects it with zero measured
+	// delay), so it's already queryable the instant tool.Execute returns.
 	inst := &tmuxInstance{socketPath: sock}
 	pids := inst.tmuxSessionPIDs(name)
 	if len(pids) == 0 {
@@ -69,8 +97,20 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 		t.Errorf("kill result = %q, want session name", result.Text)
 	}
 
-	// Wait for processes to actually die
-	time.Sleep(500 * time.Millisecond)
+	// Wait for processes to actually die — poll Signal(0) rather than
+	// guessing how long kill-session's SIGHUP takes to propagate.
+	pollUntil(t, 5*time.Second, func() bool {
+		for _, pid := range allPIDs {
+			proc, err := os.FindProcess(pid)
+			if err != nil {
+				continue
+			}
+			if proc.Signal(syscall.Signal(0)) == nil {
+				return false // still alive
+			}
+		}
+		return true
+	})
 
 	// Verify all processes are gone
 	for _, pid := range allPIDs {
@@ -97,11 +137,14 @@ func TestCollectDescendants(t *testing.T) {
 		cmd.Wait()
 	}()
 
-	// Give it a moment to spawn the child
-	time.Sleep(200 * time.Millisecond)
-
+	// Poll until the child has actually spawned rather than guessing a fixed
+	// duration for bash to fork the `sleep 300` background job.
 	parentPID := cmd.Process.Pid
-	descendants := collectDescendants([]int{parentPID})
+	var descendants []int
+	pollUntil(t, 5*time.Second, func() bool {
+		descendants = collectDescendants([]int{parentPID})
+		return len(descendants) > 0
+	})
 
 	if len(descendants) == 0 {
 		t.Error("expected at least 1 descendant (the sleep process)")
@@ -132,8 +175,16 @@ func TestTerminateProcesses(t *testing.T) {
 	}
 	pid := cmd.Process.Pid
 
-	// Give trap time to install
-	time.Sleep(100 * time.Millisecond)
+	// Poll /proc/<pid>/status for the SigIgn bitmask rather than guessing how
+	// long bash takes to execute `trap '' HUP TERM` — SIGHUP(1) and
+	// SIGTERM(15) both show up as ignored (verified: `trap '' HUP TERM;
+	// sleep 300` sets /proc/<pid>/status SigIgn bit 0 and bit 14) the instant
+	// the trap builtin runs, no signal needs sending to observe it.
+	if !pollUntil(t, 5*time.Second, func() bool {
+		return processHasSigIgn(pid, syscall.SIGHUP) && processHasSigIgn(pid, syscall.SIGTERM)
+	}) {
+		t.Fatal("trap did not install within timeout")
+	}
 
 	// Verify process is alive
 	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
@@ -264,8 +315,12 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 		t.Fatalf("kill: %v", err)
 	}
 
-	// Give a moment for cleanup
-	time.Sleep(100 * time.Millisecond)
+	// Poll until the server actually shuts down rather than guessing a fixed
+	// cleanup duration.
+	pollUntil(t, 5*time.Second, func() bool {
+		_, err := runTmuxWithSocket(context.Background(), sock, "list-sessions", "-F", "#{session_name}")
+		return err != nil // "no server running" is the success case
+	})
 
 	// Verify no tmux server is running
 	out, err := runTmuxWithSocket(context.Background(), sock, "list-sessions", "-F", "#{session_name}")
@@ -292,8 +347,10 @@ func TestTmuxSessionPIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	time.Sleep(200 * time.Millisecond)
 
+	// No wait needed: new-session -d is synchronous and tmux assigns+reports
+	// the pane's PID as part of that same call (verified: list-panes reflects
+	// it with zero measured delay), so it's immediately queryable.
 	pids := testTmuxInstance().tmuxSessionPIDs(name)
 	if len(pids) == 0 {
 		t.Error("expected at least 1 pane PID")

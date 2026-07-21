@@ -186,8 +186,15 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 		t.Fatalf("expected auto-watch on start: %q", result.Text)
 	}
 
-	// Wait for inactivity notification (threshold=2s, monitor polls every 2s)
-	time.Sleep(3500 * time.Millisecond)
+	// Poll for the inactivity notification rather than guessing how long the
+	// monitor takes (threshold=2s, monitor polls every 2s) — an under-load
+	// scheduling delay on the monitor goroutine is a real race, not just
+	// "the machine was busy".
+	pollUntil(t, 10*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(notifications) > 0
+	})
 
 	mu.Lock()
 	gotNotification := len(notifications) > 0
@@ -239,8 +246,6 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-
-	time.Sleep(200 * time.Millisecond)
 
 	// Send keys — should auto-watch
 	params, _ = json.Marshal(map[string]interface{}{
@@ -307,8 +312,6 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-
-	time.Sleep(200 * time.Millisecond)
 
 	// Send keys — should NOT auto-watch when autopilot=false
 	params, _ = json.Marshal(map[string]interface{}{

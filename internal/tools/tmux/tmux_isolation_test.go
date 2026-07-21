@@ -154,8 +154,6 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 		t.Fatalf("agent B start: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
 	// Agent A watches with short threshold
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation":         "watch",
@@ -229,8 +227,6 @@ func TestTmuxWatchIsolation(t *testing.T) {
 	if _, err := toolA.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-
-	time.Sleep(100 * time.Millisecond)
 
 	watchParams, _ := json.Marshal(map[string]interface{}{
 		"operation": "watch",

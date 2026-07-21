@@ -445,8 +445,6 @@ func TestTmuxReadRaw(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
 	// Send some text that would trigger CC detection
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "send",

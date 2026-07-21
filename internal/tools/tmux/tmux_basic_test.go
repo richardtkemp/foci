@@ -73,8 +73,6 @@ func TestTmuxSendAndRead(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
 	// Send text
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "send",
@@ -112,8 +110,6 @@ func TestTmuxReadDefault(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-
-	time.Sleep(100 * time.Millisecond)
 
 	// Read with default lines (50)
 	params, _ = json.Marshal(map[string]interface{}{
@@ -204,8 +200,6 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 	if !strings.Contains(result.Text, name) {
 		t.Errorf("result = %q", result.Text)
 	}
-
-	time.Sleep(200 * time.Millisecond)
 
 	// Send pwd and read output
 	params, _ = json.Marshal(map[string]interface{}{

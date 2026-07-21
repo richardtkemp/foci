@@ -50,8 +50,6 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
 	// Read — should set conditional watch (autopilot=true)
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "read",
@@ -65,7 +63,11 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 		t.Errorf("expected conditional watch confirmation, got: %q", result.Text)
 	}
 
-	// Wait well past the threshold — should NOT fire because no activity occurred
+	// Wait well past the threshold — should NOT fire because no activity
+	// occurred. This is a genuine fixed-duration wait, not a latent race: it's
+	// proving a negative (the callback did NOT fire), and polling can't prove
+	// an absence faster than just waiting out the window the monitor would
+	// need to have fired in (threshold 2s + its ~2s poll interval).
 	time.Sleep(5 * time.Second)
 
 	if n := fired.Load(); n != 0 {
@@ -117,8 +119,6 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-
-	time.Sleep(200 * time.Millisecond)
 
 	// Read — sets conditional watch
 	params, _ = json.Marshal(map[string]interface{}{
@@ -192,8 +192,6 @@ func TestTmuxReadNoConditionalWatchWithoutAutopilot(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-
 	// Read — should NOT set conditional watch (autopilot=false)
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "read",
@@ -240,8 +238,6 @@ func TestTmuxReadNoConditionalWatchIfAlreadyWatched(t *testing.T) {
 	if !strings.Contains(result.Text, "Watching") {
 		t.Fatalf("expected auto-watch on start, got: %q", result.Text)
 	}
-
-	time.Sleep(200 * time.Millisecond)
 
 	// Read — should NOT add conditional watch (already watched)
 	params, _ = json.Marshal(map[string]interface{}{
@@ -293,8 +289,6 @@ func TestTmuxConditionalWatchPersistence(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-
-	time.Sleep(200 * time.Millisecond)
 
 	// Read — sets conditional watch
 	params, _ = json.Marshal(map[string]interface{}{

@@ -29,7 +29,6 @@ func TestTmuxSendRateLimit(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	time.Sleep(200 * time.Millisecond)
 
 	// First send should be fast
 	sendParams, _ := json.Marshal(map[string]interface{}{
