@@ -509,6 +509,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						OutputTokens:             result.Usage.OutputTokens,
 						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
 						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
+						CostUSD:                  result.Usage.CostUSD,
 					})
 				}
 			}
@@ -540,6 +541,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						OutputTokens:             result.Usage.OutputTokens,
 						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
 						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
+						CostUSD:                  result.Usage.CostUSD,
 					}
 				}
 			}
@@ -663,24 +665,32 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	// in chronological order. Sum per-call cost into FinalCost (turn total).
 	var turnCost float64
 	logCall := func(u *provider.Usage, ts0 time.Time) {
-		cost := modelinfo.Cost(model,
-			u.InputTokens, u.OutputTokens,
-			u.CacheReadInputTokens, u.CacheCreationInputTokens)
-		turnCost += cost
+		// turnCost (ts.FinalCost) is an immediate, in-memory display figure for
+		// the sink/header — not persisted — so it's fine to fall back to a live
+		// estimate at today's price when the backend gave no golden cost. What
+		// actually gets PERSISTED (APIEntry.GoldenCostUSD below) is the golden
+		// value verbatim, or nil — never a calculated stand-in (foci_todo #1407).
+		if u.CostUSD != nil {
+			turnCost += *u.CostUSD
+		} else {
+			turnCost += modelinfo.Cost(model,
+				u.InputTokens, u.OutputTokens,
+				u.CacheReadInputTokens, u.CacheCreationInputTokens)
+		}
 		log.API(log.APIEntry{
-			Timestamp:   ts0,
-			Provider:    "anthropic",
-			Session:     ts.SessionKey,
-			Model:       model,
-			Input:       u.InputTokens,
-			Output:      u.OutputTokens,
-			CacheRead:   u.CacheReadInputTokens,
-			CacheWrite:  u.CacheCreationInputTokens,
-			CostUSD:     cost,
-			DurationMS:  time.Since(ts.StartedAt).Milliseconds(),
-			StopReason:  "end_turn",
-			CallType:    "delegated_turn",
-			SessionFile: sessionFile,
+			Timestamp:     ts0,
+			Provider:      "anthropic",
+			Session:       ts.SessionKey,
+			Model:         model,
+			Input:         u.InputTokens,
+			Output:        u.OutputTokens,
+			CacheRead:     u.CacheReadInputTokens,
+			CacheWrite:    u.CacheCreationInputTokens,
+			GoldenCostUSD: u.CostUSD,
+			DurationMS:    time.Since(ts.StartedAt).Milliseconds(),
+			StopReason:    "end_turn",
+			CallType:      "delegated_turn",
+			SessionFile:   sessionFile,
 		})
 	}
 

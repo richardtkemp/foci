@@ -1693,6 +1693,79 @@ func TestOnResult_OutputTokensFromModelUsage(t *testing.T) {
 	}
 }
 
+// TestOnResult_GoldenCostFromModelUsage is the ccstream half of foci_todo
+// #1407: CC's own per-model cost accounting (ModelUsage[resultModel].CostUSD)
+// must be captured into TurnUsage.CostUSD verbatim — not discarded, and not
+// replaced by a foci-side modelinfo calculation.
+func TestOnResult_GoldenCostFromModelUsage(t *testing.T) {
+	t.Parallel()
+
+	var completedResult *delegator.TurnResult
+	b := &Backend{}
+	handler := &testHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
+	}
+	applyHandler(b, handler)
+
+	b.mu.Lock()
+	b.lastModel = "claude-opus-4-20250514"
+	b.lastUsage = &TokenUsage{InputTokens: 100, OutputTokens: 50}
+	b.mu.Unlock()
+
+	result := &ResultMessage{
+		Subtype: "success",
+		Result:  "ok",
+		ModelUsage: map[string]ModelUsage{
+			"claude-opus-4-20250514": {OutputTokens: 50, CostUSD: 0.04242},
+		},
+	}
+	b.OnResult(result)
+
+	if completedResult == nil || completedResult.Usage == nil {
+		t.Fatal("no result usage")
+	}
+	if completedResult.Usage.CostUSD == nil {
+		t.Fatal("CostUSD is nil, want CC's golden cost captured")
+	}
+	if *completedResult.Usage.CostUSD != 0.04242 {
+		t.Errorf("CostUSD = %v, want 0.04242 (verbatim from ModelUsage[primary])", *completedResult.Usage.CostUSD)
+	}
+}
+
+// TestOnResult_NoGoldenCostWhenModelMissingFromUsage verifies CostUSD stays
+// nil (never fabricated) when resultModel has no entry in ModelUsage at all —
+// mirrors the OutputTokens fallback-not-fired case, but for cost there is no
+// fallback: an unknown model means no golden figure, full stop.
+func TestOnResult_NoGoldenCostWhenModelMissingFromUsage(t *testing.T) {
+	t.Parallel()
+
+	var completedResult *delegator.TurnResult
+	b := &Backend{}
+	handler := &testHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
+	}
+	applyHandler(b, handler)
+
+	b.mu.Lock()
+	b.lastModel = "claude-opus-4-20250514"
+	b.lastUsage = &TokenUsage{InputTokens: 100, OutputTokens: 50}
+	b.mu.Unlock()
+
+	result := &ResultMessage{
+		Subtype:    "success",
+		Result:     "ok",
+		ModelUsage: map[string]ModelUsage{}, // no entry for resultModel
+	}
+	b.OnResult(result)
+
+	if completedResult == nil || completedResult.Usage == nil {
+		t.Fatal("no result usage")
+	}
+	if completedResult.Usage.CostUSD != nil {
+		t.Errorf("CostUSD = %v, want nil (no golden cost available)", *completedResult.Usage.CostUSD)
+	}
+}
+
 func TestOnResult_OutputFloorFromResultUsageOnKeyMiss(t *testing.T) {
 	// When resultModel has no ModelUsage entry, fall back to the result's
 	// accumulated all-model total (msg.Usage) as a floor — still far better

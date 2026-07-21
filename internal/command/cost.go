@@ -149,7 +149,7 @@ func costPerSessionView(entries []log.APIEntry, header string) string {
 	costs := make(map[string]float64)
 	counts := make(map[string]int)
 	for _, e := range entries {
-		costs[e.Session] += e.CostUSD
+		costs[e.Session] += e.EffectiveCost()
 		counts[e.Session]++
 	}
 
@@ -214,8 +214,8 @@ func costDailyView(entries []log.APIEntry, header string) string {
 	var total float64
 	for _, e := range entries {
 		day := e.Timestamp.Local().Format("2006-01-02")
-		dayCosts[day] += e.CostUSD
-		total += e.CostUSD
+		dayCosts[day] += e.EffectiveCost()
+		total += e.EffectiveCost()
 	}
 	mean := total / 7.0
 
@@ -295,10 +295,10 @@ func renderTypeBreakdown(filtered []log.APIEntry, typeMap map[string]string, hea
 			a = &agg{sessions: make(map[string]struct{})}
 			aggs[t] = a
 		}
-		a.cost += e.CostUSD
+		a.cost += e.EffectiveCost()
 		a.calls++
 		a.sessions[e.Session] = struct{}{}
-		total += e.CostUSD
+		total += e.EffectiveCost()
 		totalCalls++
 	}
 
@@ -469,7 +469,7 @@ func filterEntries(entries []log.APIEntry, pred func(log.APIEntry) bool) []log.A
 // sumCosts returns total cost and call count.
 func sumCosts(entries []log.APIEntry) (total float64, count int) {
 	for _, e := range entries {
-		total += e.CostUSD
+		total += e.EffectiveCost()
 		count++
 	}
 	return

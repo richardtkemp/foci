@@ -21,51 +21,51 @@ func TestAPIDB(t *testing.T) {
 	// Insert entries of different call types
 	entries := []APIEntry{
 		{
-			Timestamp:  time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
-			Session:    "main/c123",
-			Model:      "claude-haiku-4-5",
-			Input:      1000,
-			Output:     200,
-			CacheRead:  500,
-			CacheWrite: 300,
-			CostUSD:    0.005,
-			DurationMS: 1200,
-			StopReason: "end_turn",
-			CallType:   "conversation",
+			Timestamp:     time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
+			Session:       "main/c123",
+			Model:         "claude-haiku-4-5",
+			Input:         1000,
+			Output:        200,
+			CacheRead:     500,
+			CacheWrite:    300,
+			GoldenCostUSD: f64p(0.005),
+			DurationMS:    1200,
+			StopReason:    "end_turn",
+			CallType:      "conversation",
 		},
 		{
-			Timestamp:  time.Date(2026, 3, 1, 10, 1, 0, 0, time.UTC),
-			Session:    "main/c123",
-			Model:      "claude-haiku-4-5",
-			Input:      2000,
-			Output:     400,
-			CostUSD:    0.01,
-			DurationMS: 2400,
-			StopReason: "end_turn",
-			CallType:   "compaction",
+			Timestamp:     time.Date(2026, 3, 1, 10, 1, 0, 0, time.UTC),
+			Session:       "main/c123",
+			Model:         "claude-haiku-4-5",
+			Input:         2000,
+			Output:        400,
+			GoldenCostUSD: f64p(0.01),
+			DurationMS:    2400,
+			StopReason:    "end_turn",
+			CallType:      "compaction",
 		},
 		{
-			Timestamp:  time.Date(2026, 3, 1, 10, 2, 0, 0, time.UTC),
-			Session:    "main/c123",
-			Model:      "claude-haiku-4-5",
-			Input:      500,
-			Output:     100,
-			CostUSD:    0.002,
-			DurationMS: 800,
-			StopReason: "end_turn",
-			CallType:   "summary",
+			Timestamp:     time.Date(2026, 3, 1, 10, 2, 0, 0, time.UTC),
+			Session:       "main/c123",
+			Model:         "claude-haiku-4-5",
+			Input:         500,
+			Output:        100,
+			GoldenCostUSD: f64p(0.002),
+			DurationMS:    800,
+			StopReason:    "end_turn",
+			CallType:      "summary",
 		},
 		{
-			Timestamp:   time.Date(2026, 3, 1, 10, 3, 0, 0, time.UTC),
-			Session:     "main/ispawn-456",
-			Model:       "claude-sonnet-4-5",
-			Input:       3000,
-			Output:      600,
-			CostUSD:     0.02,
-			DurationMS:  3600,
-			StopReason:  "end_turn",
-			CallType:    "spawn",
-			SessionFile: "/data/sessions/agent/main/spawn/456.jsonl",
+			Timestamp:     time.Date(2026, 3, 1, 10, 3, 0, 0, time.UTC),
+			Session:       "main/ispawn-456",
+			Model:         "claude-sonnet-4-5",
+			Input:         3000,
+			Output:        600,
+			GoldenCostUSD: f64p(0.02),
+			DurationMS:    3600,
+			StopReason:    "end_turn",
+			CallType:      "spawn",
+			SessionFile:   "/data/sessions/agent/main/spawn/456.jsonl",
 		},
 	}
 
@@ -147,8 +147,8 @@ func TestReadAPIDBLog(t *testing.T) {
 	// Insert out of order to confirm ORDER BY ts ASC.
 	t1 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	t2 := time.Date(2026, 3, 2, 11, 0, 0, 0, time.UTC)
-	apiLog.insert(APIEntry{Timestamp: t2, Session: "s/c/2", Model: "m", Input: 20, Output: 4, CostUSD: 0.02, CallType: "delegated_turn"})
-	apiLog.insert(APIEntry{Timestamp: t1, Session: "s/c/1", Model: "m", Input: 10, Output: 2, CacheRead: 5, CostUSD: 0.01, CallType: "conversation"})
+	apiLog.insert(APIEntry{Timestamp: t2, Session: "s/c/2", Model: "m", Input: 20, Output: 4, GoldenCostUSD: f64p(0.02), CallType: "delegated_turn"})
+	apiLog.insert(APIEntry{Timestamp: t1, Session: "s/c/1", Model: "m", Input: 10, Output: 2, CacheRead: 5, GoldenCostUSD: f64p(0.01), CallType: "conversation"})
 
 	got := ReadAPIDBLog()
 	if len(got) != 2 {
@@ -161,10 +161,10 @@ func TestReadAPIDBLog(t *testing.T) {
 	if !got[1].Timestamp.Equal(t2) {
 		t.Errorf("entry[1].Timestamp = %v, want %v", got[1].Timestamp, t2)
 	}
-	if got[0].Session != "s/c/1" || got[0].Input != 10 || got[0].CacheRead != 5 || got[0].CostUSD != 0.01 {
+	if got[0].Session != "s/c/1" || got[0].Input != 10 || got[0].CacheRead != 5 || got[0].GoldenCostUSD == nil || *got[0].GoldenCostUSD != 0.01 {
 		t.Errorf("entry[0] fields mismatched: %+v", got[0])
 	}
-	if got[1].CostUSD != 0.02 || got[1].CallType != "delegated_turn" {
+	if got[1].GoldenCostUSD == nil || *got[1].GoldenCostUSD != 0.02 || got[1].CallType != "delegated_turn" {
 		t.Errorf("entry[1] fields mismatched: %+v", got[1])
 	}
 }

@@ -406,12 +406,14 @@ func (b *Backend) onMessageUpdated(msg Message) {
 	// Store usage (input/output/cache). opencode provides per-message
 	// token counts directly — no ccstream ModelUsage correction needed.
 	if msg.Tokens != nil {
+		cost := msg.Cost
 		b.mu.Lock()
 		b.lastUsage = &TokenUsage{
 			InputTokens:              msg.Tokens.Input,
 			OutputTokens:             msg.Tokens.Output,
 			CacheReadInputTokens:     msg.Tokens.Cache.Read,
 			CacheCreationInputTokens: msg.Tokens.Cache.Write,
+			CostUSD:                  &cost,
 		}
 		b.mu.Unlock()
 	}
@@ -499,6 +501,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 			OutputTokens:             usage.OutputTokens,
 			CacheReadInputTokens:     usage.CacheReadInputTokens,
 			CacheCreationInputTokens: usage.CacheCreationInputTokens,
+			CostUSD:                  usage.CostUSD,
 		}
 	}
 

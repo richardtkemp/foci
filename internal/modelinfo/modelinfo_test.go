@@ -3,6 +3,7 @@ package modelinfo
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRegisterAndLookup(t *testing.T) {
@@ -188,11 +189,11 @@ func TestAccessorsWithProviderPrefix(t *testing.T) {
 
 	Register("my-provider", "acc-test", Model{
 		ContextWindow: 333_000,
-		Effort:         true,
-		Thinking:       true,
-		Caching:        true,
-		InputPer1M:     3.00,
-		OutputPer1M:    9.00,
+		Effort:        true,
+		Thinking:      true,
+		Caching:       true,
+		InputPer1M:    3.00,
+		OutputPer1M:   9.00,
 	})
 
 	// ContextWindow with provider prefix.
@@ -299,10 +300,10 @@ func TestStripPrefix(t *testing.T) {
 		{"claude/claude-sonnet-5", "claude-sonnet-5"},
 		{"anthropic/claude-opus-4-6", "claude-opus-4-6"},
 		{"google/gemini-2.5-flash", "gemini-2.5-flash"},
-		{"claude-sonnet-5", "claude-sonnet-5"},   // no prefix → unchanged
-		{"sonnet", "sonnet"},                         // bare alias → unchanged
-		{"", ""},                                     // empty → unchanged
-		{"/weird", "/weird"},                         // leading slash (i>0 guard) → unchanged
+		{"claude-sonnet-5", "claude-sonnet-5"}, // no prefix → unchanged
+		{"sonnet", "sonnet"},                   // bare alias → unchanged
+		{"", ""},                               // empty → unchanged
+		{"/weird", "/weird"},                   // leading slash (i>0 guard) → unchanged
 	}
 	for _, tt := range tests {
 		if got := StripPrefix(tt.input); got != tt.want {
@@ -352,9 +353,9 @@ func TestBuildRegistryLatestFetchedWins(t *testing.T) {
 	data := []byte(`{"id":"hist-model","provider":"openrouter","input_per_1m":1.0}
 {"id":"hist-model","provider":"openrouter","input_per_1m":3.0,"fetched":"2026-03-01"}
 {"id":"hist-model","provider":"openrouter","input_per_1m":2.0,"fetched":"2026-01-01"}`)
-	reg, err := buildRegistry(data)
+	reg, _, err := parseModelsJSONL(data)
 	if err != nil {
-		t.Fatalf("buildRegistry: %v", err)
+		t.Fatalf("parseModelsJSONL: %v", err)
 	}
 	if got := reg["hist-model"]["openrouter"].InputPer1M; got != 3.0 {
 		t.Errorf("latest InputPer1M = %v, want 3.0 (max fetched wins regardless of file order)", got)
@@ -365,11 +366,115 @@ func TestBuildRegistryLatestFetchedWins(t *testing.T) {
 func TestBuildRegistryTieBreaksByFileOrder(t *testing.T) {
 	data := []byte(`{"id":"tie","provider":"","input_per_1m":1.0,"fetched":"2026-05-01"}
 {"id":"tie","provider":"","input_per_1m":9.0,"fetched":"2026-05-01"}`)
-	reg, err := buildRegistry(data)
+	reg, _, err := parseModelsJSONL(data)
 	if err != nil {
-		t.Fatalf("buildRegistry: %v", err)
+		t.Fatalf("parseModelsJSONL: %v", err)
 	}
 	if got := reg["tie"][""].InputPer1M; got != 9.0 {
 		t.Errorf("tie InputPer1M = %v, want 9.0 (later line wins on equal fetched)", got)
+	}
+}
+
+// TestLookupAsOfPicksHistoricalPrice is the core as-of-request-time pricing
+// case for foci_todo #1407: a model with multiple dated rows (price changed
+// over time) must resolve to whichever row was in effect at a GIVEN past
+// timestamp, not the latest.
+func TestLookupAsOfPicksHistoricalPrice(t *testing.T) {
+	data := []byte(`{"id":"asof-model","provider":"openrouter","input_per_1m":1.0,"fetched":"2026-01-01"}
+{"id":"asof-model","provider":"openrouter","input_per_1m":2.0,"fetched":"2026-03-01"}
+{"id":"asof-model","provider":"openrouter","input_per_1m":4.0,"fetched":"2026-06-01"}`)
+	reg, hist, err := parseModelsJSONL(data)
+	if err != nil {
+		t.Fatalf("parseModelsJSONL: %v", err)
+	}
+	// Sanity: registry (latest-only) picks the newest row.
+	if got := reg["asof-model"]["openrouter"].InputPer1M; got != 4.0 {
+		t.Fatalf("registry InputPer1M = %v, want 4.0 (latest)", got)
+	}
+
+	registryMu.Lock()
+	savedReg := registry
+	registry = reg
+	registryMu.Unlock()
+	historyMu.Lock()
+	savedHist := history
+	history = hist
+	historyMu.Unlock()
+	t.Cleanup(func() {
+		registryMu.Lock()
+		registry = savedReg
+		registryMu.Unlock()
+		historyMu.Lock()
+		history = savedHist
+		historyMu.Unlock()
+	})
+
+	tests := []struct {
+		name string
+		at   time.Time
+		want float64
+	}{
+		{"before any row falls back to earliest", time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC), 1.0},
+		{"exactly on a fetched date uses that row", time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), 2.0},
+		{"between two rows uses the earlier (preceding) one", time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC), 2.0},
+		{"on/after the latest row uses it", time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), 4.0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, ok := LookupAsOf("openrouter", "asof-model", tt.at)
+			if !ok {
+				t.Fatal("LookupAsOf: not found")
+			}
+			if m.InputPer1M != tt.want {
+				t.Errorf("LookupAsOf(%v).InputPer1M = %v, want %v", tt.at, m.InputPer1M, tt.want)
+			}
+		})
+	}
+}
+
+// TestCostAsOfUsesHistoricalPrice mirrors CostAsOf against the same
+// multi-row history, verifying the computed dollar figure (not just the raw
+// per-1M rate) reflects the price at the given timestamp.
+func TestCostAsOfUsesHistoricalPrice(t *testing.T) {
+	data := []byte(`{"id":"asof-cost-model","provider":"","input_per_1m":1.0,"output_per_1m":2.0,"fetched":"2026-01-01"}
+{"id":"asof-cost-model","provider":"","input_per_1m":3.0,"output_per_1m":6.0,"fetched":"2026-05-01"}`)
+	reg, hist, err := parseModelsJSONL(data)
+	if err != nil {
+		t.Fatalf("parseModelsJSONL: %v", err)
+	}
+
+	registryMu.Lock()
+	savedReg := registry
+	registry = reg
+	registryMu.Unlock()
+	historyMu.Lock()
+	savedHist := history
+	history = hist
+	historyMu.Unlock()
+	t.Cleanup(func() {
+		registryMu.Lock()
+		registry = savedReg
+		registryMu.Unlock()
+		historyMu.Lock()
+		history = savedHist
+		historyMu.Unlock()
+	})
+
+	// At a timestamp before the price change: 1M input @ $1.0 + 1M output @ $2.0 = $3.0.
+	early := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	if got := CostAsOf("asof-cost-model", early, 1_000_000, 1_000_000, 0, 0); got != 3.0 {
+		t.Errorf("CostAsOf(early) = %v, want 3.0 (pre-change price)", got)
+	}
+
+	// At a timestamp after the price change: 1M input @ $3.0 + 1M output @ $6.0 = $9.0.
+	late := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	if got := CostAsOf("asof-cost-model", late, 1_000_000, 1_000_000, 0, 0); got != 9.0 {
+		t.Errorf("CostAsOf(late) = %v, want 9.0 (post-change price)", got)
+	}
+
+	// Cost (latest-price) must differ from the early as-of figure, proving
+	// the as-of path is actually consulting history rather than the registry.
+	if got := Cost("asof-cost-model", 1_000_000, 1_000_000, 0, 0); got != 9.0 {
+		t.Errorf("Cost (latest) = %v, want 9.0", got)
 	}
 }

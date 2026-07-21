@@ -14,14 +14,18 @@ import (
 	"foci/internal/tools"
 )
 
-// categoryCosts computes per-category cost breakdown from API log entries,
-// delegating pricing to modelinfo.Cost.
+// categoryCosts computes per-category cost breakdown from API log entries.
+// This splits a LIVE estimate into its input/output/cache components (a
+// golden entry only gives one total, not a per-category split), priced as of
+// each entry's own request timestamp rather than today's latest rate
+// (modelinfo.CostAsOf — foci_todo #1407) so the category split stays
+// consistent with EffectiveCost's total for entries with no golden cost.
 func categoryCosts(entries []log.APIEntry) (cacheRead, cacheWrite, input, output float64) {
 	for _, e := range entries {
-		cacheRead += modelinfo.Cost(e.Model, 0, 0, e.CacheRead, 0)
-		cacheWrite += modelinfo.Cost(e.Model, 0, 0, 0, e.CacheWrite)
-		input += modelinfo.Cost(e.Model, e.Input, 0, 0, 0)
-		output += modelinfo.Cost(e.Model, 0, e.Output, 0, 0)
+		cacheRead += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, e.CacheRead, 0)
+		cacheWrite += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, 0, e.CacheWrite)
+		input += modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, 0, 0, 0)
+		output += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, e.Output, 0, 0)
 	}
 	return
 }
@@ -80,7 +84,7 @@ func CacheCommand() *Command {
 					input:  display.FormatCommas(e.Input),
 					cRead:  display.FormatCommas(e.CacheRead),
 					cWrite: display.FormatCommas(e.CacheWrite),
-					cost:   fmt.Sprintf("$%.3f", e.CostUSD),
+					cost:   fmt.Sprintf("$%.3f", e.EffectiveCost()),
 					hitPct: fmt.Sprintf("%.0f%%", hitRate),
 				}
 			}
@@ -174,7 +178,7 @@ func LastCommand() *Command {
 					display.CompactRelativeTime(e.Timestamp),
 					e.Model,
 					fmt.Sprintf("in=%d out=%d cR=%d", e.Input, e.Output, e.CacheRead),
-					fmt.Sprintf("%.4f", e.CostUSD),
+					fmt.Sprintf("%.4f", e.EffectiveCost()),
 					truncateSession(e.Session),
 				})
 			}

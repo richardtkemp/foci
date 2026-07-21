@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/modelinfo"
 )
 
 func TestAPILog(t *testing.T) {
@@ -18,15 +20,15 @@ func TestAPILog(t *testing.T) {
 	f := openAPIWriter(t, path)
 
 	entry := APIEntry{
-		Timestamp:  time.Date(2026, 2, 21, 3, 52, 41, 0, time.UTC),
-		Session:    "main/i0/0",
-		Model:      "claude-haiku-4-5",
-		Input:      1119,
-		Output:     164,
-		CacheRead:  0,
-		CacheWrite: 1119,
-		CostUSD:    0.003,
-		DurationMS: 1240,
+		Timestamp:     time.Date(2026, 2, 21, 3, 52, 41, 0, time.UTC),
+		Session:       "main/i0/0",
+		Model:         "claude-haiku-4-5",
+		Input:         1119,
+		Output:        164,
+		CacheRead:     0,
+		CacheWrite:    1119,
+		GoldenCostUSD: f64p(0.003),
+		DurationMS:    1240,
 	}
 
 	API(entry)
@@ -166,12 +168,12 @@ func TestQuerySessionStatsContextTokensSkipsSynthetic(t *testing.T) {
 
 	// Real delegated turn with a full context window...
 	API(APIEntry{
-		Timestamp: base,
-		Session:   sess,
-		Model:     "claude-opus-4-8",
-		CallType:  "delegated_turn",
-		Input:     2,
-		CacheRead: 163681,
+		Timestamp:  base,
+		Session:    sess,
+		Model:      "claude-opus-4-8",
+		CallType:   "delegated_turn",
+		Input:      2,
+		CacheRead:  163681,
 		CacheWrite: 615,
 	})
 	// ...then two synthetic no-inference turns on top (zero tokens).
@@ -258,5 +260,49 @@ func TestAPIProviderInference(t *testing.T) {
 		if decoded.Provider != tt.wantProv {
 			t.Errorf("model %q → provider = %q, want %q", tt.model, decoded.Provider, tt.wantProv)
 		}
+	}
+}
+
+// f64p returns a pointer to f — helper for building APIEntry.GoldenCostUSD
+// test fixtures (a float literal isn't addressable directly).
+func f64p(f float64) *float64 { return &f }
+
+// TestEffectiveCostGoldenVerbatim verifies a golden (provider-reported) cost
+// is returned exactly as stored — never recomputed — even if it disagrees
+// with what a flat modelinfo calculation from the same tokens would give
+// (foci_todo #1407).
+func TestEffectiveCostGoldenVerbatim(t *testing.T) {
+	golden := 0.12345
+	e := APIEntry{
+		Timestamp:     time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		Model:         "claude-haiku-4-5",
+		Input:         1_000_000,
+		Output:        1_000_000,
+		GoldenCostUSD: &golden,
+	}
+	if got := e.EffectiveCost(); got != golden {
+		t.Errorf("EffectiveCost() = %v, want golden value %v verbatim", got, golden)
+	}
+}
+
+// TestEffectiveCostLiveWhenGoldenAbsent verifies a nil GoldenCostUSD (no
+// provider-reported cost) falls back to a live calculation from the stored
+// tokens, rather than staying zero or persisting anything.
+func TestEffectiveCostLiveWhenGoldenAbsent(t *testing.T) {
+	e := APIEntry{
+		Timestamp: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		Model:     "claude-haiku-4-5",
+		Input:     1_000_000,
+		Output:    500_000,
+	}
+	want := modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, e.Output, e.CacheRead, e.CacheWrite)
+	if want <= 0 {
+		t.Fatal("test precondition: expected a positive live-calculated cost for claude-haiku-4-5")
+	}
+	if got := e.EffectiveCost(); got != want {
+		t.Errorf("EffectiveCost() = %v, want live-calculated %v", got, want)
+	}
+	if e.GoldenCostUSD != nil {
+		t.Error("GoldenCostUSD should stay nil — EffectiveCost must not mutate/persist a calculated value")
 	}
 }
