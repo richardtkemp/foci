@@ -32,6 +32,11 @@
 # not on main, the ff is skipped with a note and the next deploy's sync-main
 # (piece #4) catches it up. Either way origin/main is the source of truth.
 #
+# On a successful landing it then auto-removes the feature worktree + branch
+# (from the main checkout, since git won't remove the current worktree) — so a
+# clean land needs no manual `git worktree remove`. This deletes the caller's
+# cwd; `make land` does nothing after, and prints where to cd.
+#
 # /tmp lock-file gotchas, identical to the `test` target: /tmp is world-writable
 # + sticky and with fs.protected_regular=2 the kernel denies WRITE-opening a
 # lock file there owned by the other shared account (rich vs foci) — so open the
@@ -94,7 +99,30 @@ land() {
 		echo ">>> note: could not ff local main checkout ($mc) — skipping (deploy's sync-main will catch up)" >&2
 	fi
 
-	echo ">>> LANDED $(git rev-parse --short HEAD) to origin/main" >&2
+	local landed wt
+	landed=$(git rev-parse --short HEAD)
+	echo ">>> LANDED $landed to origin/main" >&2
+
+	# Auto-clean the feature worktree now that the landing succeeded. Must run
+	# from the main checkout ($mc, found above): `git worktree remove` refuses
+	# the CURRENT worktree, and we are inside the feature one. --force because a
+	# landed feature worktree normally carries untracked artifacts (built
+	# binaries, notes-*.md, local.properties) — land already refused any tracked
+	# uncommitted changes upfront (return 6), so nothing committable is lost.
+	# Removing the worktree deletes THIS shell's cwd; harmless for `make land`
+	# (nothing runs after), but the caller returns to a gone directory, so we
+	# say where to go. Skipped if no main checkout was found (can't remove a
+	# worktree from within itself).
+	wt=$(git rev-parse --show-toplevel)
+	if [ -z "$mc" ] || [ "$wt" = "$mc" ]; then
+		echo ">>> note: no separate main checkout — leaving worktree $wt in place (remove manually)" >&2
+	elif git -C "$mc" worktree remove --force "$wt"; then
+		git -C "$mc" branch -D "$branch" >/dev/null 2>&1 || true
+		echo ">>> cleaned up worktree $wt and branch $branch" >&2
+		echo ">>> NOTE: your cwd was that worktree and is now gone — cd $mc" >&2
+	else
+		echo ">>> note: could not auto-remove worktree $wt — remove manually (git -C $mc worktree remove --force $wt)" >&2
+	fi
 }
 
 # Hold the merge lock on FD 9 for the whole land() call; the subshell's exit
