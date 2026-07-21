@@ -90,8 +90,11 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 	a.taggedLog("session-end-memory").Infof("firing on %s", branchKey)
 
 	var skillBefore skills.SkillSnapshot
-	if refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
+	var winStart time.Time
+	notifySkills := refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && (a.SkillChangeNotify != nil || a.SkillChangeNotifyText != nil)
+	if notifySkills {
 		skillBefore = skills.Snapshot(a.SkillDirs)
+		winStart = time.Now()
 	}
 
 	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
@@ -101,8 +104,8 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 		a.taggedLog("session-end-memory").Warnf("failed for %s: %v", branchKey, err)
 	}
 
-	if skillBefore != nil {
-		a.detectAndNotifySkillChanges(branchKey, skillBefore)
+	if notifySkills {
+		a.detectAndNotifySkillChanges(ctx, branchKey, skillBefore, winStart, time.Now())
 	}
 
 	if a.DelegatedManager != nil {
@@ -129,13 +132,35 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 	a.RunSessionEndMemory(ctx, branchKey)
 }
 
-// detectAndNotifySkillChanges diffs the current skill state against before and
-// fires the SkillChangeNotify callback if anything changed. Shared by all
-// reflection paths (interval, session-end, compaction).
-func (a *Agent) detectAndNotifySkillChanges(sessionKey string, before skills.SkillSnapshot) {
+// detectAndNotifySkillChanges diffs the current skill state against before,
+// then splits the changes on whether their skill dir is a git repo
+// (skills.SplitByGitRepo — #1404, per Dick: a non-git-repo skill dir must
+// keep its EXACT pre-#1404 behaviour):
+//   - non-git-repo changes fire SkillChangeNotifyText with the plain
+//     mtime-diff message (skills.FormatChanges), unconditionally — same as
+//     before this fix ever existed.
+//   - git-repo changes are gated on a real git commit landing inside
+//     [winStart, winEnd] that touches the changed files
+//     (skills.AttributeToGit) — the causal check that replaces the old "any
+//     mtime moved in the window" attribution for the case that actually can
+//     have concurrent writers colliding via a shared directory. Only
+//     git-attributed changes fire SkillChangeNotify; anything else (no
+//     commit in the window) produces nothing.
+//
+// Shared by all reflection paths (interval, session-end, compaction).
+func (a *Agent) detectAndNotifySkillChanges(ctx context.Context, sessionKey string, before skills.SkillSnapshot, winStart, winEnd time.Time) {
 	after := skills.Snapshot(a.SkillDirs)
 	changes := skills.Diff(before, after)
-	if msg := skills.FormatChanges(changes); msg != "" {
-		a.SkillChangeNotify(sessionKey, msg)
+	gitDirChanges, nonGitDirChanges := skills.SplitByGitRepo(ctx, changes)
+
+	if a.SkillChangeNotifyText != nil {
+		if msg := skills.FormatChanges(nonGitDirChanges); msg != "" {
+			a.SkillChangeNotifyText(sessionKey, msg)
+		}
+	}
+	if a.SkillChangeNotify != nil {
+		for _, rep := range skills.AttributeToGit(ctx, gitDirChanges, winStart, winEnd) {
+			a.SkillChangeNotify(sessionKey, rep.Name, rep.Markdown)
+		}
 	}
 }

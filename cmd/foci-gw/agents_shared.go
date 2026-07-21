@@ -174,7 +174,12 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		}
 		ag.SkillDirs = reloadSkillsDirs
 		notifyAgentID := acfg.ID
-		ag.SkillChangeNotify = func(sessionKey, text string) {
+		ag.SkillChangeNotify = func(sessionKey, skillName, markdown string) {
+			sendSkillGitReport(p.connMgr, notifyAgentID, sessionKey, skillName, markdown)
+		}
+		// Non-git-repo skill dirs keep the exact pre-#1404 plain-text path —
+		// see skills.SplitByGitRepo / detectAndNotifySkillChanges.
+		ag.SkillChangeNotifyText = func(sessionKey, text string) {
 			route.NotifySessionChat(p.connMgr, notifyAgentID, sessionKey, text)
 		}
 	}

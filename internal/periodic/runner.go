@@ -95,19 +95,19 @@ type BackgroundAgent interface {
 
 // Runner manages keepalive, background work, and reflection timers for an agent.
 type Runner struct {
-	log                *log.ComponentLogger
-	agentID            string
-	client             provider.Client // for checking caching availability at runtime
-	cachingOverride    *bool           // nil=use client.IsCachingAvailable(), non-nil=override
-	kaCfg              config.ResolvedKeepalive
-	bgCfg              config.ResolvedBackground
-	reflectCfg         config.ResolvedReflection
-	maintCfg           config.ResolvedMaintenance
-	tickInterval       time.Duration // poll cadence for the timer loop (resolved from config)
-	cacheTTL           time.Duration // backend/model prompt-cache lifetime; keepalive upper bound (0 = unknown)
-	promptSearchDirs   []string
-	todoStore          *memory.TodoStore
-	sessionIndex       *session.SessionIndex
+	log              *log.ComponentLogger
+	agentID          string
+	client           provider.Client // for checking caching availability at runtime
+	cachingOverride  *bool           // nil=use client.IsCachingAvailable(), non-nil=override
+	kaCfg            config.ResolvedKeepalive
+	bgCfg            config.ResolvedBackground
+	reflectCfg       config.ResolvedReflection
+	maintCfg         config.ResolvedMaintenance
+	tickInterval     time.Duration // poll cadence for the timer loop (resolved from config)
+	cacheTTL         time.Duration // backend/model prompt-cache lifetime; keepalive upper bound (0 = unknown)
+	promptSearchDirs []string
+	todoStore        *memory.TodoStore
+	sessionIndex     *session.SessionIndex
 
 	// openSessionsFn returns the session keys of chats the app currently has open,
 	// used by keepalive when warm_open_app_chats is set. nil = feature unavailable
@@ -125,16 +125,21 @@ type Runner struct {
 	warningDispatcher     *warnings.Dispatcher
 	chatWarningDispatcher *warnings.Dispatcher
 
-	isDelegatedAgent bool // reflection needs quiet period in delegated mode; consolidation uses RunOnce
+	isDelegatedAgent          bool // reflection needs quiet period in delegated mode; consolidation uses RunOnce
 	characterSystemPromptFunc func() string
 
 	// skillDirs are the skill directories to scan for creation/update detection
 	// during reflection. nil = feature disabled.
 	skillDirs []string
-	// notifySkillChange is called with a formatted message when reflection creates
-	// or updates a skill. The session key identifies which session's chat to route
-	// the notification to. nil = notifications disabled.
-	notifySkillChange func(sessionKey, text string)
+	// notifySkillChange is called with (sessionKey, skillName, markdown) for a
+	// GIT-REPO skill change git-attributed to a commit landing during the
+	// reflection window (skills.AttributeToGit) — see #1404. nil = disabled.
+	notifySkillChange func(sessionKey, skillName, markdown string)
+	// notifySkillChangeText is called with (sessionKey, formatted message) for
+	// a NON-git-repo skill change (skills.FormatChanges) — preserves the
+	// pre-#1404 plain-text behaviour there exactly (Dick: that case must not
+	// change). nil = disabled.
+	notifySkillChangeText func(sessionKey, text string)
 
 	mu                  sync.Mutex
 	lastInteraction     time.Time
@@ -223,17 +228,17 @@ func (r *Runner) applySettings(s Settings, ticker *time.Ticker) {
 
 // RunnerConfig holds all the dependencies for creating a Runner.
 type RunnerConfig struct {
-	AgentID            string
-	Client             provider.Client // for checking caching availability at runtime
-	CachingOverride    *bool           // nil=use client.IsCachingAvailable(), non-nil=override (for OpenAI/DeepSeek)
-	Keepalive          config.ResolvedKeepalive
-	Background         config.ResolvedBackground
-	Reflection         config.ResolvedReflection
-	Maintenance        config.ResolvedMaintenance
-	TickInterval       string   // scheduler poll cadence (Go duration string, default: "30s")
-	PromptSearchDirs   []string // directories to search for prompt files (agent workspace, shared)
-	TodoStore          *memory.TodoStore
-	SessionIndex       *session.SessionIndex
+	AgentID          string
+	Client           provider.Client // for checking caching availability at runtime
+	CachingOverride  *bool           // nil=use client.IsCachingAvailable(), non-nil=override (for OpenAI/DeepSeek)
+	Keepalive        config.ResolvedKeepalive
+	Background       config.ResolvedBackground
+	Reflection       config.ResolvedReflection
+	Maintenance      config.ResolvedMaintenance
+	TickInterval     string   // scheduler poll cadence (Go duration string, default: "30s")
+	PromptSearchDirs []string // directories to search for prompt files (agent workspace, shared)
+	TodoStore        *memory.TodoStore
+	SessionIndex     *session.SessionIndex
 
 	// CacheTTL is the prompt-cache lifetime for this agent's backend/model — a
 	// static constant (CC = 1h; API = the model's configured cache_ttl). The
@@ -272,44 +277,58 @@ type RunnerConfig struct {
 	// SkillDirs are the skill directories to scan for creation/update detection
 	// during the reflection pass. When non-empty and NotifyOnSkillCreation is
 	// true in the reflection config, the runner snapshots skill files before
-	// firing reflection, diffs after, and calls NotifySkillChange with the result.
+	// firing reflection and diffs after. Each changed skill is split on
+	// whether its dir is a git repo (skills.SplitByGitRepo — #1404): a
+	// non-git-repo change fires NotifySkillChangeText unconditionally (the
+	// pre-#1404 behaviour, unchanged); a git-repo change is gated on a commit
+	// landing in the reflection window (skills.AttributeToGit) and, if
+	// matched, fires NotifySkillChange.
 	SkillDirs []string
 
-	// NotifySkillChange is called with a session key and formatted message when
-	// reflection creates or updates a skill. The session key routes the
-	// notification to the correct chat. nil = no notification.
-	NotifySkillChange func(sessionKey, text string)
+	// NotifySkillChange is called with (sessionKey, skillName, markdown) for
+	// each GIT-REPO skill change git-attributed to a commit within the
+	// reflection window. markdown is the commit message(s) + diff of the
+	// touched files, meant for delivery as a document attachment. nil = no
+	// notification.
+	NotifySkillChange func(sessionKey, skillName, markdown string)
+
+	// NotifySkillChangeText is called with (sessionKey, formatted message) for
+	// each NON-git-repo skill change (skills.FormatChanges) — preserves the
+	// pre-#1404 plain-text notification exactly for that case. nil = no
+	// notification.
+	NotifySkillChangeText func(sessionKey, text string)
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
 func New(cfg RunnerConfig) *Runner {
 	now := time.Now()
 	r := &Runner{
-		log:                log.NewComponentLogger("keepalive:" + cfg.AgentID),
-		agentID:            cfg.AgentID,
-		client:             cfg.Client,
-		cachingOverride:    cfg.CachingOverride,
-		kaCfg:              cfg.Keepalive,
-		bgCfg:              cfg.Background,
-		reflectCfg:         cfg.Reflection,
-		maintCfg:           cfg.Maintenance,
-		cacheTTL:           cfg.CacheTTL,
-		promptSearchDirs:   cfg.PromptSearchDirs,
-		todoStore:          cfg.TodoStore,
-		sessionIndex:       cfg.SessionIndex,
-		openSessionsFn:     cfg.OpenSessionsFn,
+		log:              log.NewComponentLogger("keepalive:" + cfg.AgentID),
+		agentID:          cfg.AgentID,
+		client:           cfg.Client,
+		cachingOverride:  cfg.CachingOverride,
+		kaCfg:            cfg.Keepalive,
+		bgCfg:            cfg.Background,
+		reflectCfg:       cfg.Reflection,
+		maintCfg:         cfg.Maintenance,
+		cacheTTL:         cfg.CacheTTL,
+		promptSearchDirs: cfg.PromptSearchDirs,
+		todoStore:        cfg.TodoStore,
+		sessionIndex:     cfg.SessionIndex,
+		openSessionsFn:   cfg.OpenSessionsFn,
 
 		ephemeralRetentionDays: cfg.EphemeralRetentionDays,
 
-		agent:                 cfg.Agent,
-		warningDispatcher:     cfg.WarningDispatcher,
-		chatWarningDispatcher: cfg.ChatWarningDispatcher,
-		isDelegatedAgent:      cfg.IsDelegatedAgent,
+		agent:                     cfg.Agent,
+		warningDispatcher:         cfg.WarningDispatcher,
+		chatWarningDispatcher:     cfg.ChatWarningDispatcher,
+		isDelegatedAgent:          cfg.IsDelegatedAgent,
 		characterSystemPromptFunc: cfg.CharacterSystemPromptFunc,
-		skillDirs:             cfg.SkillDirs,
-		notifySkillChange:     cfg.NotifySkillChange,
-		lastInteraction:       now,
-		lastReflection:        now,
+		skillDirs:                 cfg.SkillDirs,
+		notifySkillChange:         cfg.NotifySkillChange,
+		notifySkillChangeText:     cfg.NotifySkillChangeText,
+		lastInteraction:           now,
+		lastReflection:            now,
 		// Like lastReflection, anchor to boot so a FRESH agent waits a full
 		// interval before its first consolidation rather than firing one
 		// immediately on init (the zero value's Truncate(interval).Add(interval)
@@ -496,4 +515,3 @@ func (r *Runner) run(ctx context.Context) {
 		}
 	}
 }
-

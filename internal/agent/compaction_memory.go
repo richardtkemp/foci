@@ -64,8 +64,11 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 	a.taggedLog("compaction-memory").Infof("firing for %s → %s", sessionKey, targetKey)
 
 	var skillBefore skills.SkillSnapshot
-	if refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && a.SkillChangeNotify != nil {
+	var winStart time.Time
+	notifySkills := refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && (a.SkillChangeNotify != nil || a.SkillChangeNotifyText != nil)
+	if notifySkills {
 		skillBefore = skills.Snapshot(a.SkillDirs)
+		winStart = time.Now()
 	}
 
 	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
@@ -75,7 +78,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 		a.taggedLog("compaction-memory").Warnf("failed for %s: %v", targetKey, err)
 	}
 
-	if skillBefore != nil {
-		a.detectAndNotifySkillChanges(targetKey, skillBefore)
+	if notifySkills {
+		a.detectAndNotifySkillChanges(ctx, targetKey, skillBefore, winStart, time.Now())
 	}
 }

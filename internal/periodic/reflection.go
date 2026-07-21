@@ -1,7 +1,7 @@
 package periodic
 
-
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -9,7 +9,6 @@ import (
 
 	"foci/shared/prompts"
 )
-
 
 func (r *Runner) maybeReflection() {
 	if !r.reflectCfg.IntervalEnabled || r.agent == nil {
@@ -134,7 +133,7 @@ func (r *Runner) maybeReflection() {
 
 	r.log.Infof("firing reflection pass for agent %s (%d sessions)", r.agentID, len(keys))
 
-	notifySkills := r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && r.notifySkillChange != nil
+	notifySkills := r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && (r.notifySkillChange != nil || r.notifySkillChangeText != nil)
 
 	go func() {
 		defer func() {
@@ -146,20 +145,37 @@ func (r *Runner) maybeReflection() {
 		// Snapshot before each reflection branch and diff after it, so a skill
 		// create/update is attributed to the session that was reflected (the
 		// branch's parent) and the notification goes there — not to keys[0].
+		// The mtime diff only tells us WHICH files moved. Non-git-repo skill
+		// dirs fire the plain text notification unconditionally (unchanged
+		// pre-#1404 behaviour, per Dick); git-repo dirs are gated on a commit
+		// landing inside [winStart, winEnd] (skills.AttributeToGit) so a
+		// concurrent writer to the shared skills dir (another session's own
+		// reflection, another agent process, a human edit) can't get
+		// misattributed to this branch — see #1404.
 		var prev skills.SkillSnapshot
 		if notifySkills {
 			prev = skills.Snapshot(r.skillDirs)
 		}
 		for _, key := range keys {
-			t := time.Now()
+			winStart := time.Now()
 			ran := r.agent.Branch("reflection", key, promptText, true)
 			if ran {
-				r.sessionIndex.StampReflection(key, t)
+				r.sessionIndex.StampReflection(key, winStart)
 			}
 			if notifySkills && ran {
+				winEnd := time.Now()
 				after := skills.Snapshot(r.skillDirs)
-				if msg := skills.FormatChanges(skills.Diff(prev, after)); msg != "" {
-					r.notifySkillChange(key, msg)
+				changes := skills.Diff(prev, after)
+				gitDirChanges, nonGitDirChanges := skills.SplitByGitRepo(context.Background(), changes)
+				if r.notifySkillChangeText != nil {
+					if msg := skills.FormatChanges(nonGitDirChanges); msg != "" {
+						r.notifySkillChangeText(key, msg)
+					}
+				}
+				if r.notifySkillChange != nil {
+					for _, rep := range skills.AttributeToGit(context.Background(), gitDirChanges, winStart, winEnd) {
+						r.notifySkillChange(key, rep.Name, rep.Markdown)
+					}
 				}
 				prev = after
 			}
@@ -186,21 +202,29 @@ func (r *Runner) ReflectSessionIfDue(sessionKey string) {
 	}
 
 	var skillBefore skills.SkillSnapshot
-	if r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && r.notifySkillChange != nil {
+	notifySkills := r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && (r.notifySkillChange != nil || r.notifySkillChangeText != nil)
+	if notifySkills {
 		skillBefore = skills.Snapshot(r.skillDirs)
 	}
 
-	t := time.Now()
+	winStart := time.Now()
 	if r.agent.Branch("reflection", sessionKey, promptText, true) {
-		r.sessionIndex.StampReflection(sessionKey, t)
+		r.sessionIndex.StampReflection(sessionKey, winStart)
 	}
 
-	if skillBefore != nil {
+	if notifySkills {
 		after := skills.Snapshot(r.skillDirs)
 		changes := skills.Diff(skillBefore, after)
-		if msg := skills.FormatChanges(changes); msg != "" {
-			r.notifySkillChange(sessionKey, msg)
+		gitDirChanges, nonGitDirChanges := skills.SplitByGitRepo(context.Background(), changes)
+		if r.notifySkillChangeText != nil {
+			if msg := skills.FormatChanges(nonGitDirChanges); msg != "" {
+				r.notifySkillChangeText(sessionKey, msg)
+			}
+		}
+		if r.notifySkillChange != nil {
+			for _, rep := range skills.AttributeToGit(context.Background(), gitDirChanges, winStart, time.Now()) {
+				r.notifySkillChange(sessionKey, rep.Name, rep.Markdown)
+			}
 		}
 	}
 }
-
