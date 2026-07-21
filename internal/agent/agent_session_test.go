@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/compaction"
 	"foci/internal/modelcaps"
 	"foci/internal/modelinfo"
 	"foci/internal/session"
@@ -173,6 +174,31 @@ func TestSessionContextLimit(t *testing.T) {
 	ag.SetSessionModel("s2", "anthropic/claude-opus-4-6", "anthropic", "anthropic", nil)
 	if got := ag.SessionContextLimit("s2"); got != 1_000_000 {
 		t.Errorf("SessionContextLimit for opus = %d, want 1000000", got)
+	}
+}
+
+// TestCompactionLimitTokens proves the app-facing helper (backs meta's
+// compactionLimitTokens, #1386) mirrors the /context command's "Compaction
+// at:" computation: 0 with no Compactor wired (feature disabled — the sink
+// omits the field rather than sending a bogus 0-as-real-limit), else
+// Compactor.EffectiveThreshold applied to SessionContextLimit.
+func TestCompactionLimitTokens(t *testing.T) {
+	ag := &Agent{Model: "openrouter/z-ai/glm-5-turbo"}
+
+	if got := ag.CompactionLimitTokens("s1"); got != 0 {
+		t.Errorf("CompactionLimitTokens with no Compactor = %d, want 0", got)
+	}
+
+	ag.Compactor = compaction.NewCompactor(nil, 0.8)
+	ag.ModelMetaFn = func(model string) modelinfo.ModelMeta {
+		return modelinfo.ModelMeta{ContextWindow: 200_000}
+	}
+	want := int64(ag.Compactor.EffectiveThreshold(200_000))
+	if got := ag.CompactionLimitTokens("s1"); got != want {
+		t.Errorf("CompactionLimitTokens = %d, want %d (EffectiveThreshold(200000))", got, want)
+	}
+	if want <= 0 || want >= 200_000 {
+		t.Fatalf("sanity: want=%d should be a positive fraction of the 200k window", want)
 	}
 }
 

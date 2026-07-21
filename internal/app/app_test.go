@@ -2100,6 +2100,41 @@ func TestSink_EmitsStatusChips(t *testing.T) {
 	}
 }
 
+// A wired compactionLimitFn (agentRef.CompactionLimitTokens, via NewTurnSink)
+// surfaces as meta.compactionLimitTokens — the top of the app's live
+// context-usage bar (#1386).
+func TestSink_EmitsCompactionLimitTokens(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	s.compactionLimitFn = func() int64 { return 170000 }
+	s.emitMeta(turnevent.TurnComplete{Model: "claude"})
+
+	got := drain(t, c)
+	if len(got) != 1 || got[0].t != fap.TypeMeta {
+		t.Fatalf("frames = %v, want [meta]", types(got))
+	}
+	if got[0].d["compactionLimitTokens"] != float64(170000) {
+		t.Errorf("meta.compactionLimitTokens = %v, want 170000", got[0].d["compactionLimitTokens"])
+	}
+}
+
+// compactionLimitFn returning 0 (no Compactor / unknown limit) must NOT force
+// a meta frame to be sent when there's otherwise nothing to report — 0 is
+// indistinguishable from "omitted" on the wire (omitempty).
+func TestSink_ZeroCompactionLimitDoesNotForceMeta(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	s.compactionLimitFn = func() int64 { return 0 }
+	s.emitMeta(turnevent.TurnComplete{})
+
+	got := drain(t, c)
+	if len(got) != 0 {
+		t.Fatalf("frames = %v, want none (nothing to report)", types(got))
+	}
+}
+
 func TestSendTextWithButtons_SetsExpiresAt(t *testing.T) {
 	_, c, _, conn := boundConn(t)
 	_, err := conn.SendTextWithButtons("Allow?",

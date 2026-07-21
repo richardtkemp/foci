@@ -614,6 +614,13 @@ type Meta struct {
 	PrevCostUsd    *float64 `json:"prevCostUsd,omitempty"`
 	Tokens         *Tokens  `json:"tokens,omitempty"`
 	Gap            string   `json:"gap,omitempty"`
+	// CompactionLimitTokens is the token count at which this session's next
+	// turn auto-compacts (agent.Agent.CompactionLimitTokens) — the top of the
+	// app's live context-usage bar. 0/omitted = unknown or auto-compaction
+	// disabled; the app should not render the bar in that case. Current usage
+	// is NOT a separate field — the app derives it from Tokens (In+CR+CW),
+	// same as the /context command.
+	CompactionLimitTokens int64 `json:"compactionLimitTokens,omitempty"`
 }
 
 func (Meta) Type() string { return TypeMeta }
