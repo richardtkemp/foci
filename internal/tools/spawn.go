@@ -470,7 +470,6 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 			Output:      resp.Usage.OutputTokens,
 			CacheRead:   resp.Usage.CacheReadInputTokens,
 			CacheWrite:  resp.Usage.CacheCreationInputTokens,
-			CostUSD:     cost,
 			DurationMS:  duration.Milliseconds(),
 			StopReason:  resp.StopReason,
 			CallType:    "spawn",

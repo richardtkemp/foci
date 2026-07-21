@@ -420,6 +420,15 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		turnUsage.OutputTokens = authoritativeOutput
 	}
 
+	// Golden cost: CC computes its own per-model cost (from its own pricing
+	// table, which may know things ours doesn't) and reports it in the same
+	// authoritative per-model map used above for output tokens. Only trust it
+	// when resultModel has an entry — no fabricated fallback (foci_todo #1407).
+	if mu, ok := msg.ModelUsage[resultModel]; ok {
+		cost := mu.CostUSD
+		turnUsage.CostUSD = &cost
+	}
+
 	result := &delegator.TurnResult{
 		Text:      text,
 		Model:     prefixedModel("claude", resultModel),

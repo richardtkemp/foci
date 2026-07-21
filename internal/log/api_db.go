@@ -97,17 +97,21 @@ func QuerySessionStats(sessionKey string) (*SessionStats, error) {
 	var stats SessionStats
 	var createdStr, activeStr sql.NullString
 
-	// Aggregate stats in one query.
+	// Aggregate call counts + timestamps in one query. cost_usd is deliberately
+	// NOT summed here: it's now the golden (provider-reported) cost only —
+	// NULL for calls with no golden figure — so a SQL SUM would silently
+	// undercount every NULL row as $0. TotalCost is computed below in Go via
+	// APIEntry.EffectiveCost, which live-calculates from tokens for the NULL
+	// rows (foci_todo #1407).
 	err := apiLog.db.QueryRow(`
 		SELECT
 			COUNT(*) AS total_calls,
 			COUNT(CASE WHEN call_type IN ('conversation', 'delegated_turn') THEN 1 END) AS turn_count,
-			COALESCE(SUM(cost_usd), 0) AS total_cost,
 			MIN(ts) AS created_at,
 			MAX(ts) AS last_activity
 		FROM api_calls
 		WHERE session = ?`, sessionKey,
-	).Scan(&stats.TotalCalls, &stats.TurnCount, &stats.TotalCost, &createdStr, &activeStr)
+	).Scan(&stats.TotalCalls, &stats.TurnCount, &createdStr, &activeStr)
 	if err != nil {
 		return nil, fmt.Errorf("query session stats: %w", err)
 	}
@@ -117,6 +121,10 @@ func QuerySessionStats(sessionKey string) (*SessionStats, error) {
 	}
 	if activeStr.Valid {
 		stats.LastActivity, _ = time.Parse(time.RFC3339, activeStr.String)
+	}
+
+	for _, e := range querySessionCostRows(sessionKey) {
+		stats.TotalCost += e.EffectiveCost()
 	}
 
 	// Context tokens from the most recent turn (conversation or delegated)
@@ -140,6 +148,45 @@ func QuerySessionStats(sessionKey string) (*SessionStats, error) {
 	return &stats, nil
 }
 
+// apiRowCols is the column list shared by ReadAPIDBLog and
+// querySessionCostRows — kept in one place so both stay in sync.
+const apiRowCols = `ts, COALESCE(provider, ''), session, model,
+	       COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
+	       COALESCE(cache_read_tokens, 0), COALESCE(cache_write_tokens, 0),
+	       cost_usd, COALESCE(duration_ms, 0),
+	       COALESCE(stop_reason, ''), call_type,
+	       COALESCE(session_file, ''), COALESCE(session_line, 0),
+	       COALESCE(pre_messages, 0)`
+
+// scanAPIRows drains rows selected via apiRowCols into []APIEntry. cost_usd
+// (GoldenCostUSD) is read as a nullable column — NULL means no golden cost
+// was reported for that call (foci_todo #1407); callers needing a display
+// cost should call APIEntry.EffectiveCost, not read GoldenCostUSD directly.
+func scanAPIRows(rows *sql.Rows) []APIEntry {
+	var entries []APIEntry
+	for rows.Next() {
+		var e APIEntry
+		var tsStr string
+		var goldenCost sql.NullFloat64
+		if err := rows.Scan(
+			&tsStr, &e.Provider, &e.Session, &e.Model,
+			&e.Input, &e.Output, &e.CacheRead, &e.CacheWrite,
+			&goldenCost, &e.DurationMS, &e.StopReason, &e.CallType,
+			&e.SessionFile, &e.SessionLine, &e.PreMessages,
+		); err != nil {
+			continue
+		}
+		if goldenCost.Valid {
+			v := goldenCost.Float64
+			e.GoldenCostUSD = &v
+		}
+		// ts is written via timeutil.Format (RFC3339), so it round-trips here.
+		e.Timestamp, _ = time.Parse(time.RFC3339, tsStr)
+		entries = append(entries, e)
+	}
+	return entries
+}
+
 // ReadAPIDBLog returns all API call entries from the SQLite api.db in
 // chronological order (ts ASC), mapped to []APIEntry.
 //
@@ -156,38 +203,35 @@ func ReadAPIDBLog() []APIEntry {
 	apiLog.mu.Lock()
 	defer apiLog.mu.Unlock()
 
-	rows, err := apiLog.db.Query(`
-		SELECT ts, COALESCE(provider, ''), session, model,
-		       COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
-		       COALESCE(cache_read_tokens, 0), COALESCE(cache_write_tokens, 0),
-		       COALESCE(cost_usd, 0), COALESCE(duration_ms, 0),
-		       COALESCE(stop_reason, ''), call_type,
-		       COALESCE(session_file, ''), COALESCE(session_line, 0),
-		       COALESCE(pre_messages, 0)
-		FROM api_calls ORDER BY ts ASC`)
+	rows, err := apiLog.db.Query(`SELECT ` + apiRowCols + ` FROM api_calls ORDER BY ts ASC`)
 	if err != nil {
 		std.event(ERROR, "api_db", "read log query error: %v", err)
 		return nil
 	}
 	defer func() { _ = rows.Close() }()
 
-	var entries []APIEntry
-	for rows.Next() {
-		var e APIEntry
-		var tsStr string
-		if err := rows.Scan(
-			&tsStr, &e.Provider, &e.Session, &e.Model,
-			&e.Input, &e.Output, &e.CacheRead, &e.CacheWrite,
-			&e.CostUSD, &e.DurationMS, &e.StopReason, &e.CallType,
-			&e.SessionFile, &e.SessionLine, &e.PreMessages,
-		); err != nil {
-			continue
-		}
-		// ts is written via timeutil.Format (RFC3339), so it round-trips here.
-		e.Timestamp, _ = time.Parse(time.RFC3339, tsStr)
-		entries = append(entries, e)
+	return scanAPIRows(rows)
+}
+
+// querySessionCostRows returns the columns EffectiveCost needs for every call
+// in a session — used by QuerySessionStats to total cost with the live
+// as-of-request-time fallback applied per row (see the SUM(cost_usd) comment
+// in QuerySessionStats).
+func querySessionCostRows(sessionKey string) []APIEntry {
+	if apiLog == nil || apiLog.db == nil {
+		return nil
 	}
-	return entries
+	apiLog.mu.Lock()
+	defer apiLog.mu.Unlock()
+
+	rows, err := apiLog.db.Query(`SELECT `+apiRowCols+` FROM api_calls WHERE session = ?`, sessionKey)
+	if err != nil {
+		std.event(ERROR, "api_db", "query session cost rows error: %v", err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanAPIRows(rows)
 }
 
 func (a *apiDB) insert(entry APIEntry) {
@@ -212,7 +256,7 @@ func (a *apiDB) insert(entry APIEntry) {
 	_, err := a.stmt.Exec(
 		ts, entry.Provider, entry.Session, entry.Model,
 		entry.Input, entry.Output, entry.CacheRead, entry.CacheWrite,
-		entry.CostUSD, entry.DurationMS, entry.StopReason,
+		entry.GoldenCostUSD, entry.DurationMS, entry.StopReason,
 		entry.CallType, sessionFile, sessionLine,
 		preMessages,
 	)

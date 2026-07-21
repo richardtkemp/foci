@@ -14,21 +14,41 @@ import (
 
 // APIEntry is a structured record for one API request.
 type APIEntry struct {
-	Timestamp   time.Time `json:"ts"`
-	Provider    string    `json:"provider,omitempty"` // "anthropic" or "gemini" (empty = anthropic for backwards compat)
-	Session     string    `json:"session"`
-	Model       string    `json:"model"`
-	Input       int       `json:"input"`
-	Output      int       `json:"output"`
-	CacheRead   int       `json:"cache_read"`
-	CacheWrite  int       `json:"cache_write"`
-	CostUSD     float64   `json:"cost_usd"`
-	DurationMS  int64     `json:"duration_ms"`
-	StopReason  string    `json:"stop_reason"`
-	CallType    string    `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
-	SessionFile string    `json:"session_file,omitempty"` // path to session JSONL file
-	SessionLine int       `json:"session_line,omitempty"` // line number in session file (conversation calls)
-	PreMessages int       `json:"pre_messages,omitempty"` // message count before compaction
+	Timestamp  time.Time `json:"ts"`
+	Provider   string    `json:"provider,omitempty"` // "anthropic" or "gemini" (empty = anthropic for backwards compat)
+	Session    string    `json:"session"`
+	Model      string    `json:"model"`
+	Input      int       `json:"input"`
+	Output     int       `json:"output"`
+	CacheRead  int       `json:"cache_read"`
+	CacheWrite int       `json:"cache_write"`
+	// GoldenCostUSD is the provider-reported cost for this call, when one
+	// exists — CC's ModelUsage.CostUSD / opencode's Message.Cost, captured
+	// verbatim and never a foci-side calculation. nil when the backend gave
+	// no cost (e.g. foci's own direct Anthropic API calls, which report no
+	// cost at all). Never populate this from modelinfo.Cost — a calculated
+	// figure must NOT be persisted here (foci_todo #1407). Readers wanting a
+	// display cost should call EffectiveCost, which computes live from stored
+	// tokens (as-of the request time) when this is nil.
+	GoldenCostUSD *float64 `json:"golden_cost_usd,omitempty"`
+	DurationMS    int64    `json:"duration_ms"`
+	StopReason    string   `json:"stop_reason"`
+	CallType      string   `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
+	SessionFile   string   `json:"session_file,omitempty"` // path to session JSONL file
+	SessionLine   int      `json:"session_line,omitempty"` // line number in session file (conversation calls)
+	PreMessages   int      `json:"pre_messages,omitempty"` // message count before compaction
+}
+
+// EffectiveCost returns this entry's cost for display: the golden
+// (provider-reported) value verbatim if we have one, otherwise a LIVE
+// estimate computed from the stored tokens using the price effective AT THE
+// REQUEST'S TIMESTAMP (modelinfo.CostAsOf) — not today's latest price. Never
+// cache or persist the result; call this at read time (foci_todo #1407).
+func (e APIEntry) EffectiveCost() float64 {
+	if e.GoldenCostUSD != nil {
+		return *e.GoldenCostUSD
+	}
+	return modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, e.Output, e.CacheRead, e.CacheWrite)
 }
 
 // PayloadEntry is a full API request/response record.
@@ -123,7 +143,6 @@ func SystemHash(texts []string) string {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)[:8])
 }
-
 
 // ReadAPILog reads a JSONL API log file and returns all entries.
 func ReadAPILog(path string) []APIEntry {

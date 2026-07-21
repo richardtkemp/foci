@@ -20,9 +20,9 @@ func TestStatusCommand(t *testing.T) {
 	now := time.Now().UTC()
 	sk := "main/c1"
 	path := initAPIDB(t, []log.APIEntry{
-		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CostUSD: 0.001, CallType: "conversation"},
-		{Timestamp: now.Add(time.Minute), Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, CostUSD: 0.002, CallType: "conversation"},
-		{Timestamp: now, Session: "other/c2", Model: "claude-haiku-4-5", Input: 500, Output: 200, CostUSD: 0.005, CallType: "conversation"},
+		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, GoldenCostUSD: f64p(0.001), CallType: "conversation"},
+		{Timestamp: now.Add(time.Minute), Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, GoldenCostUSD: f64p(0.002), CallType: "conversation"},
+		{Timestamp: now, Session: "other/c2", Model: "claude-haiku-4-5", Input: 500, Output: 200, GoldenCostUSD: f64p(0.005), CallType: "conversation"},
 	})
 
 	sessDir := t.TempDir()
@@ -56,7 +56,7 @@ func TestStatusCommand(t *testing.T) {
 		"2h30m",
 		"$0.00",   // session cost
 		"2 calls", // session call count
-		"200k", // context limit (abbreviated, #1149)
+		"200k",    // context limit (abbreviated, #1149)
 	}
 	for _, check := range checks {
 		if !strings.Contains(result.Text, check) {
@@ -98,11 +98,11 @@ func TestCacheCommand(t *testing.T) {
 	entries := make([]log.APIEntry, 7)
 	for i := range entries {
 		entries[i] = log.APIEntry{
-			Timestamp:  now.Add(time.Duration(i) * time.Minute),
-			Input:      100,
-			CacheRead:  50,
-			CacheWrite: 100,
-			CostUSD:    0.001,
+			Timestamp:     now.Add(time.Duration(i) * time.Minute),
+			Input:         100,
+			CacheRead:     50,
+			CacheWrite:    100,
+			GoldenCostUSD: f64p(0.001),
 		}
 	}
 	path := writeAPILog(t, entries)
@@ -173,9 +173,9 @@ func TestCacheCommandEmpty(t *testing.T) {
 func TestLastCommand(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/c1", Model: "claude-haiku-4-5", Input: 100, Output: 50, CostUSD: 0.001},
-		{Timestamp: now.Add(time.Minute), Session: "main/c1", Model: "claude-haiku-4-5", Input: 200, Output: 100, CostUSD: 0.002},
-		{Timestamp: now.Add(2 * time.Minute), Session: "helper/c2", Model: "claude-sonnet-4-5", Input: 300, Output: 150, CostUSD: 0.005},
+		{Timestamp: now, Session: "main/c1", Model: "claude-haiku-4-5", Input: 100, Output: 50, GoldenCostUSD: f64p(0.001)},
+		{Timestamp: now.Add(time.Minute), Session: "main/c1", Model: "claude-haiku-4-5", Input: 200, Output: 100, GoldenCostUSD: f64p(0.002)},
+		{Timestamp: now.Add(2 * time.Minute), Session: "helper/c2", Model: "claude-sonnet-4-5", Input: 300, Output: 150, GoldenCostUSD: f64p(0.005)},
 	})
 	cc := CommandContext{APILogPath: path}
 

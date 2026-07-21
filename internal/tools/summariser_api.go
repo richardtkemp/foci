@@ -103,7 +103,6 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 		Output:     resp.Usage.OutputTokens,
 		CacheRead:  resp.Usage.CacheReadInputTokens,
 		CacheWrite: resp.Usage.CacheCreationInputTokens,
-		CostUSD:    cost,
 		DurationMS: duration.Milliseconds(),
 		StopReason: resp.StopReason,
 		CallType:   "summary",

@@ -837,4 +837,11 @@ type TurnUsage struct {
 	OutputTokens             int
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
+
+	// CostUSD is the backend's own provider-reported ("golden") cost for this
+	// call — CC's ModelUsage.CostUSD / opencode's Message.Cost — when the
+	// backend reported one. nil means the backend gave no cost figure (never
+	// faked from tokens here); callers persist this verbatim and fall back to
+	// a live modelinfo calculation only when it's nil (foci_todo #1407).
+	CostUSD *float64
 }

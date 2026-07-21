@@ -165,7 +165,7 @@ func (m *mockBackendDT) Interrupt(_ context.Context) error                { retu
 func (m *mockBackendDT) SessionID() string                                { return "" }
 func (m *mockBackendDT) WaitReady(_ context.Context) error                { return nil }
 func (m *mockBackendDT) CheckReady(_ context.Context) (bool, error)       { return true, nil }
-func (m *mockBackendDT) StatusDetail() string                              { return "" }
+func (m *mockBackendDT) StatusDetail() string                             { return "" }
 func (m *mockBackendDT) Close() error                                     { return nil }
 
 func (m *mockBackendDT) SessionFilePath() string {
@@ -1255,9 +1255,9 @@ func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
 
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{
-		Model:                  "test-model",
-		DelegatedManager:       mgr,
-		Nudger:                 sched,
+		Model:            "test-model",
+		DelegatedManager: mgr,
+		Nudger:           sched,
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -1323,9 +1323,9 @@ func TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection(t *
 
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{
-		Model:                  "test-model",
-		DelegatedManager:       mgr,
-		Nudger:                 sched,
+		Model:            "test-model",
+		DelegatedManager: mgr,
+		Nudger:           sched,
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"reflection prompt"}, nil)
@@ -1372,9 +1372,9 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{
-		Model:              "test-model",
-		DelegatedManager:   mgr,
-		Nudger:             sched,
+		Model:            "test-model",
+		DelegatedManager: mgr,
+		Nudger:           sched,
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -1417,9 +1417,9 @@ func TestDelegatedTransport_RunInference_PreAnswerKeepsRoundsSeparate(t *testing
 
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{
-		Model:                  "test-model",
-		DelegatedManager:       mgr,
-		Nudger:                 sched,
+		Model:            "test-model",
+		DelegatedManager: mgr,
+		Nudger:           sched,
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -1545,7 +1545,10 @@ func TestDelegatedTransport_GatedTurn_TwoRowsNoSpuriousCompaction(t *testing.T) 
 	if diff := ts.FinalCost - wantCost; diff > 1e-9 || diff < -1e-9 {
 		t.Errorf("FinalCost = %.8f, want %.8f (sum of per-call costs)", ts.FinalCost, wantCost)
 	}
-	if gotRowSum := rows[0].CostUSD + rows[1].CostUSD; gotRowSum-ts.FinalCost > 1e-9 || ts.FinalCost-gotRowSum > 1e-9 {
+	if rows[0].GoldenCostUSD != nil || rows[1].GoldenCostUSD != nil {
+		t.Errorf("rows should have no golden cost (backend reported none): row[0]=%v row[1]=%v", rows[0].GoldenCostUSD, rows[1].GoldenCostUSD)
+	}
+	if gotRowSum := rows[0].EffectiveCost() + rows[1].EffectiveCost(); gotRowSum-ts.FinalCost > 1e-9 || ts.FinalCost-gotRowSum > 1e-9 {
 		t.Errorf("sum of row costs %.8f != FinalCost %.8f", gotRowSum, ts.FinalCost)
 	}
 
@@ -1632,9 +1635,9 @@ func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *te
 
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{
-		Model:                  "test-model",
-		DelegatedManager:       mgr,
-		Nudger:                 sched,
+		Model:            "test-model",
+		DelegatedManager: mgr,
+		Nudger:           sched,
 	}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)

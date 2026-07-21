@@ -17,6 +17,11 @@ type TokenUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+
+	// CostUSD is opencode's own provider-reported cost for this message
+	// (Message.Cost), captured alongside the tokens it was computed from. nil
+	// only if no Tokens update has been seen yet (foci_todo #1407).
+	CostUSD *float64
 }
 
 // pendingPermission stores a pending opencode permission request.

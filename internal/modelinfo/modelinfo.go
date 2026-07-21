@@ -7,8 +7,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // syntheticModel is CC's sentinel model name for a zero-cost no-op /
@@ -87,13 +89,13 @@ type jsonlEntry struct {
 	// Extended pricing + quality captured by sync-modelinfo. Parsed but NOT yet
 	// used at runtime (see TODO #1407 — cost calc still uses only the flat base
 	// rates above). Kept here so the parser documents the full schema.
-	CacheWrite1hPer1M      float64           `json:"cache_write_1h_per_1m,omitempty"`
-	InternalReasoningPer1M float64           `json:"internal_reasoning_per_1m,omitempty"`
-	WebSearchPerCall       float64           `json:"web_search_per_call,omitempty"`
-	ImagePrice             float64           `json:"image_price,omitempty"`
-	AudioPrice             float64           `json:"audio_price,omitempty"`
-	PriceTiers             []jsonlPriceTier  `json:"price_tiers,omitempty"`
-	IntelligenceIndex      float64           `json:"intelligence_index,omitempty"`
+	CacheWrite1hPer1M      float64          `json:"cache_write_1h_per_1m,omitempty"`
+	InternalReasoningPer1M float64          `json:"internal_reasoning_per_1m,omitempty"`
+	WebSearchPerCall       float64          `json:"web_search_per_call,omitempty"`
+	ImagePrice             float64          `json:"image_price,omitempty"`
+	AudioPrice             float64          `json:"audio_price,omitempty"`
+	PriceTiers             []jsonlPriceTier `json:"price_tiers,omitempty"`
+	IntelligenceIndex      float64          `json:"intelligence_index,omitempty"`
 	// Fetched (UTC date the pricing was last confirmed against OpenRouter) and
 	// Comment are informational provenance only — not stored in the registry.
 	Fetched string `json:"fetched,omitempty"`
@@ -119,12 +121,45 @@ var registryMu sync.RWMutex
 // so live-apply can ResetToBuiltIn and re-apply config overrides from scratch.
 var builtIn = map[string]map[string]Model{}
 
+// historyRow is one models.jsonl row for a given (id, provider) key, kept for
+// as-of-time price lookups (see `history` below). fetched="" (a pre-history
+// baseline row) sorts before every real date and is treated as "in effect
+// since before any recorded history".
+type historyRow struct {
+	fetched string
+	model   Model
+}
+
+// history maps bare model ID → provider → that (id,provider)'s rows in
+// ASCENDING fetched order (ties broken by original file/append order — see
+// parseModelsJSONL). Kept alongside `registry` (which only retains the LATEST
+// row) so LookupAsOf/CostAsOf can reconstruct the price that was actually in
+// effect at an arbitrary past timestamp — e.g. re-deriving the live-estimated
+// cost of a session logged days ago after models.jsonl has since recorded a
+// newer price for that model (foci_todo #1407, point 4: price the call using
+// the rate effective AT THE REQUEST'S TIME, not today's latest rate).
+//
+// GRANULARITY CAVEAT (flagged deliberately, not hidden — see notes-1407.md):
+// `fetched` is a DATE (YYYY-MM-DD), not a timestamp, and it records when
+// sync-modelinfo OBSERVED a price, not when the price actually changed. Two
+// price changes on the same calendar day cannot be told apart, and a request
+// that landed inside the gap between two sync runs is priced at the nearest
+// PRECEDING observation — the best available approximation from the data
+// that exists today, not a guarantee of the exact historical price.
+var history = map[string]map[string][]historyRow{}
+var historyMu sync.RWMutex
+
+// builtInHistory is a deep snapshot of `history` taken at init, mirroring
+// `builtIn` for `registry` — so ResetToBuiltIn restores both together.
+var builtInHistory = map[string]map[string][]historyRow{}
+
 func init() {
-	reg, err := buildRegistry(builtInData)
+	reg, hist, err := parseModelsJSONL(builtInData)
 	if err != nil {
 		panic(err.Error())
 	}
 	registry = reg
+	history = hist
 
 	// Snapshot for ResetToBuiltIn.
 	for k, v := range registry {
@@ -133,20 +168,31 @@ func init() {
 			builtIn[k][pk] = pv
 		}
 	}
+	for k, v := range history {
+		builtInHistory[k] = map[string][]historyRow{}
+		for pk, pv := range v {
+			rows := make([]historyRow, len(pv))
+			copy(rows, pv)
+			builtInHistory[k][pk] = rows
+		}
+	}
 }
 
-// buildRegistry parses the append-only models.jsonl into a registry keyed by
-// bare model ID → provider → Model. models.jsonl is a HISTORY: a model may have
-// several rows over time, each stamped with the `fetched` date it was observed.
-// Only the LATEST row per (id, provider) populates the live registry — max
-// `fetched`, with later file position breaking ties (append order), and an
-// empty `fetched` (pre-history baseline rows) treated as oldest. Older rows are
-// historical reference only and never enter a lookup. Factored out of init for
-// testability.
-func buildRegistry(data []byte) (map[string]map[string]Model, error) {
-	registry := map[string]map[string]Model{}
-	// fetchedAt[id][provider] = the `fetched` of the row currently stored, so we
-	// only overwrite with a same-or-newer one.
+// parseModelsJSONL parses the append-only models.jsonl into BOTH the
+// latest-only `registry` (used by Lookup/Cost) and the full `history` per
+// (id, provider) (used by LookupAsOf/CostAsOf) — one pass, one source of
+// truth, rather than parsing the file twice. models.jsonl is a HISTORY: a
+// model may have several rows over time, each stamped with the `fetched` date
+// it was observed. Only the LATEST row per (id, provider) populates
+// `registry` — max `fetched`, with later file position breaking ties (append
+// order), and an empty `fetched` (pre-history baseline rows) treated as
+// oldest. `history` retains every row (sorted ascending by `fetched`) for the
+// as-of lookups. Factored out of init for testability.
+func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, history map[string]map[string][]historyRow, err error) {
+	registry = map[string]map[string]Model{}
+	history = map[string]map[string][]historyRow{}
+	// fetchedAt[id][provider] = the `fetched` of the row currently stored in
+	// `registry`, so we only overwrite with a same-or-newer one.
 	fetchedAt := map[string]map[string]string{}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -154,24 +200,15 @@ func buildRegistry(data []byte) (map[string]map[string]Model, error) {
 			continue
 		}
 		var e jsonlEntry
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			return nil, fmt.Errorf("modelinfo: parse models.jsonl line %q: %v", line, err)
+		if uerr := json.Unmarshal([]byte(line), &e); uerr != nil {
+			return nil, nil, fmt.Errorf("modelinfo: parse models.jsonl line %q: %v", line, uerr)
 		}
 		if e.ID == "" {
-			return nil, fmt.Errorf("modelinfo: models.jsonl entry missing id: %q", line)
+			return nil, nil, fmt.Errorf("modelinfo: models.jsonl entry missing id: %q", line)
 		}
 		provider := strings.ToLower(e.Provider)
 		id := strings.ToLower(e.ID)
-		if registry[id] == nil {
-			registry[id] = map[string]Model{}
-			fetchedAt[id] = map[string]string{}
-		}
-		// `fetched` is a YYYY-MM-DD date, so lexical compare is chronological;
-		// "" (baseline) precedes any real date. >= lets a later line win ties.
-		if _, has := registry[id][provider]; has && e.Fetched < fetchedAt[id][provider] {
-			continue // an older historical row — keep the newer one already stored
-		}
-		registry[id][provider] = Model{
+		m := Model{
 			Provider:        provider,
 			ContextWindow:   e.ContextWindow,
 			Effort:          e.Effort,
@@ -183,9 +220,38 @@ func buildRegistry(data []byte) (map[string]map[string]Model, error) {
 			CacheReadPer1M:  e.CacheReadPer1M,
 			CacheWritePer1M: e.CacheWritePer1M,
 		}
+
+		if history[id] == nil {
+			history[id] = map[string][]historyRow{}
+		}
+		history[id][provider] = append(history[id][provider], historyRow{fetched: e.Fetched, model: m})
+
+		if registry[id] == nil {
+			registry[id] = map[string]Model{}
+			fetchedAt[id] = map[string]string{}
+		}
+		// `fetched` is a YYYY-MM-DD date, so lexical compare is chronological;
+		// "" (baseline) precedes any real date. >= lets a later line win ties.
+		if _, has := registry[id][provider]; has && e.Fetched < fetchedAt[id][provider] {
+			continue // an older historical row — keep the newer one already stored
+		}
+		registry[id][provider] = m
 		fetchedAt[id][provider] = e.Fetched
 	}
-	return registry, nil
+
+	// history is appended in FILE order above, which is normally also
+	// ascending-by-fetched (sync-modelinfo's writeJSONL sorts the file that
+	// way) — but nothing enforces that invariant on a hand-edited or
+	// hand-constructed models.jsonl, and historyLookupAsOf's scan assumes
+	// ascending order. Sort explicitly (stable, so same-date rows keep their
+	// file-order tie-break) rather than trust the input's order.
+	for _, byProvider := range history {
+		for provider, rows := range byProvider {
+			sort.SliceStable(rows, func(i, j int) bool { return rows[i].fetched < rows[j].fetched })
+			byProvider[provider] = rows
+		}
+	}
+	return registry, history, nil
 }
 
 // Register adds or overrides a registry entry. Called at startup from
@@ -196,11 +262,23 @@ func Register(provider, modelID string, m Model) {
 	modelID = strings.ToLower(stripDateSuffix(modelID))
 	m.Provider = provider
 	registryMu.Lock()
-	defer registryMu.Unlock()
 	if registry[modelID] == nil {
 		registry[modelID] = map[string]Model{}
 	}
 	registry[modelID][provider] = m
+	registryMu.Unlock()
+
+	// Also append to `history` so an as-of lookup made after this call sees
+	// the override — stamped with today's date ("in effect from now on").
+	// Config overrides/live-apply have no natural historical `fetched` of
+	// their own, so "the day it was registered" is the best available anchor.
+	historyMu.Lock()
+	if history[modelID] == nil {
+		history[modelID] = map[string][]historyRow{}
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	history[modelID][provider] = append(history[modelID][provider], historyRow{fetched: today, model: m})
+	historyMu.Unlock()
 }
 
 // Lookup returns the model attributes for the given provider and model ID and
@@ -247,7 +325,6 @@ func registryLookup(provider, bare string) (Model, bool) {
 // models.jsonl), discarding all config overrides. Called by live-apply.
 func ResetToBuiltIn() {
 	registryMu.Lock()
-	defer registryMu.Unlock()
 	registry = make(map[string]map[string]Model, len(builtIn))
 	for k, v := range builtIn {
 		inner := make(map[string]Model, len(v))
@@ -256,6 +333,20 @@ func ResetToBuiltIn() {
 		}
 		registry[k] = inner
 	}
+	registryMu.Unlock()
+
+	historyMu.Lock()
+	history = make(map[string]map[string][]historyRow, len(builtInHistory))
+	for k, v := range builtInHistory {
+		inner := make(map[string][]historyRow, len(v))
+		for pk, pv := range v {
+			rows := make([]historyRow, len(pv))
+			copy(rows, pv)
+			inner[pk] = rows
+		}
+		history[k] = inner
+	}
+	historyMu.Unlock()
 }
 
 // StripPrefix removes a "developer/" prefix from a model string.
@@ -438,6 +529,120 @@ func familyPricing(bare string) (Model, bool) {
 		return registryLookup("", "gemini-2.5-flash")
 	}
 	return Model{}, false
+}
+
+// LookupAsOf returns the model attributes effective AT THE GIVEN TIME `at` —
+// the latest models.jsonl row for (provider, modelID) whose `fetched` date is
+// on or before at's UTC date — rather than Lookup's always-latest-known
+// price. Falls back to the earliest available row if `at` predates every
+// dated row (baseline/no-fetched rows always qualify, per the `history` var
+// doc). ok is false if there is no history at all under this (provider,
+// bare) key. See the `history` var doc for the day-granularity/
+// observation-date caveats: this is a best-effort reconstruction from the
+// data models.jsonl actually records, not an exact historical price.
+func LookupAsOf(provider, modelID string, at time.Time) (Model, bool) {
+	provider = strings.ToLower(provider)
+	modelID = strings.ToLower(stripDateSuffix(modelID))
+	historyMu.RLock()
+	defer historyMu.RUnlock()
+	return historyLookupAsOf(provider, modelID, at)
+}
+
+// historyLookupAsOf is LookupAsOf's body, factored out so CostAsOf can reuse
+// it while already holding historyMu (mirrors registryLookup/Lookup's split).
+// Provider resolution mirrors registryLookup: provider-specific row set first,
+// then providerless, then a sole remaining provider.
+func historyLookupAsOf(provider, bare string, at time.Time) (Model, bool) {
+	providers := history[bare]
+	if providers == nil {
+		return Model{}, false
+	}
+	atDate := at.UTC().Format("2006-01-02")
+	pick := func(rows []historyRow) (Model, bool) {
+		if len(rows) == 0 {
+			return Model{}, false
+		}
+		// rows is ascending by fetched (parseModelsJSONL/Register append
+		// order); pick the latest row whose fetched <= atDate, falling back to
+		// the earliest row if `at` predates all of them.
+		best := rows[0]
+		for _, r := range rows {
+			if r.fetched > atDate {
+				break
+			}
+			best = r
+		}
+		return best.model, true
+	}
+	if provider != "" {
+		if rows, ok := providers[provider]; ok {
+			return pick(rows)
+		}
+	}
+	if rows, ok := providers[""]; ok {
+		return pick(rows)
+	}
+	if len(providers) == 1 {
+		for _, rows := range providers {
+			return pick(rows)
+		}
+	}
+	return Model{}, false
+}
+
+// familyPricingAsOf mirrors familyPricing but resolves the canonical family
+// entry's price as of `at` rather than the latest known. Caller must hold
+// historyMu.
+func familyPricingAsOf(bare string, at time.Time) (Model, bool) {
+	switch {
+	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
+		return historyLookupAsOf("", "claude-fable-5", at)
+	case strings.Contains(bare, "opus"):
+		return historyLookupAsOf("", "claude-opus-4-6", at)
+	case strings.Contains(bare, "sonnet"):
+		return historyLookupAsOf("", "claude-sonnet-4-5", at)
+	case strings.Contains(bare, "haiku"):
+		return historyLookupAsOf("", "claude-haiku-4-5", at)
+	case strings.Contains(bare, "gemini"):
+		return historyLookupAsOf("", "gemini-2.5-flash", at)
+	}
+	return Model{}, false
+}
+
+// CostAsOf is Cost, but priced using the model's flat per-1M rates AS OF THE
+// GIVEN TIME `at` (see LookupAsOf's caveats) instead of the latest known
+// price. Used to compute a live estimate for a stored call that has no
+// provider-reported ("golden") cost — e.g. by /cost when rendering an old
+// api.db row — since the rate recorded in models.jsonl can have moved on
+// since that call was actually made. Never persisted: callers recompute
+// fresh on every read (foci_todo #1407).
+func CostAsOf(model string, at time.Time, input, output, cacheRead, cacheWrite int) float64 {
+	provider, bare := normalizeParts(model)
+	if IsSynthetic(model) || IsSynthetic(bare) {
+		return 0
+	}
+	historyMu.RLock()
+	m, ok := historyLookupAsOf(provider, bare, at)
+	if !ok {
+		m, ok = familyPricingAsOf(bare, at) // caller-holds-lock: mirrors Cost/familyPricing
+	}
+	historyMu.RUnlock()
+	if !ok {
+		// noteUnpriced uses its own mutex (unpricedMu), not historyMu.
+		noteUnpriced(bare)
+		switch {
+		case IsOpenAI(bare):
+			m = Model{InputPer1M: 5.00, OutputPer1M: 15.00}
+		default:
+			m, _ = LookupAsOf("", "claude-haiku-4-5", at)
+		}
+	}
+
+	mtok := 1_000_000.0
+	return float64(input)/mtok*m.InputPer1M +
+		float64(output)/mtok*m.OutputPer1M +
+		float64(cacheRead)/mtok*m.CacheReadPer1M +
+		float64(cacheWrite)/mtok*m.CacheWritePer1M
 }
 
 // ModelMeta holds structural metadata about a model from [models.*] config.

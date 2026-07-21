@@ -292,6 +292,13 @@ type Usage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+
+	// CostUSD is a provider-reported ("golden") cost passed through from a
+	// delegated backend (delegator.TurnUsage.CostUSD), when one was reported.
+	// Anthropic's own Messages API (the direct, non-delegated path) reports no
+	// cost, so this stays nil there. nil means "no golden cost" — never a
+	// stand-in for zero (foci_todo #1407).
+	CostUSD *float64 `json:"cost_usd,omitempty"`
 }
 
 // MessageResponse is the response from an LLM API call.
