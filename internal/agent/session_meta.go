@@ -291,7 +291,19 @@ func (a *Agent) CacheExpiry(sessionKey string, at time.Time) time.Time {
 }
 
 // cacheTTLFor resolves the prompt-cache TTL for a session: config override
-// (ModelDefaultsFn) first, then the live backend's reported TTL, else 5m.
+// (ModelDefaultsFn) first, then the session's LIVE backend TTL, then the
+// backend TYPE's static TTL (no live session required), else 5m.
+//
+// The live-vs-static distinction matters right after a gateway restart: no
+// session has a running backend yet, so DelegatedManager.CacheTTL (which only
+// consults an already-running backend) reports 0 for every session — even a
+// delegated (CC) one whose real TTL is a constant 1h known independent of any
+// live process. Falling straight to the 5m default in that gap understated CC
+// sessions' TTL and made the app's cache-warmth indicator (avatar grayscale)
+// report a still-warm session as cold until its next touch (#1446).
+// StaticCacheTTL closes that gap the same way periodic_setup.go already does
+// for the keepalive-interval sanity check at startup: it builds a throwaway
+// backend (never started) purely to read its constant CacheTTL().
 func (a *Agent) cacheTTLFor(sessionKey string) time.Duration {
 	if a.ModelDefaultsFn != nil {
 		if d, err := time.ParseDuration(a.ModelDefaultsFn(a.SessionModel(sessionKey)).CacheTTL); err == nil && d > 0 {
@@ -300,6 +312,9 @@ func (a *Agent) cacheTTLFor(sessionKey string) time.Duration {
 	}
 	if a.DelegatedManager != nil {
 		if d := a.DelegatedManager.CacheTTL(sessionKey); d > 0 {
+			return d
+		}
+		if d := a.DelegatedManager.StaticCacheTTL(); d > 0 {
 			return d
 		}
 	}
