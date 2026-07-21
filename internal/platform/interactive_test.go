@@ -522,6 +522,124 @@ func TestCancelInteractiveMessageUnknownID(t *testing.T) {
 	}
 }
 
+// TestSendInteractiveMessageDedupesHeaderForHeaderCapableConn is the #1397 repro:
+// an askgw-relayed ask (e.g. aisudo's sudo approval) presents with header="Sudo"
+// and text already carrying the same header baked in as a bold leading line by
+// question.FormatText ("**Sudo**\n\n..."), exactly as internal/askgw/server.go
+// and internal/tools/ask.go build it. Against a header-capable connection (the
+// app, mocked here), the header must be set via SetInteractiveHeader AND the
+// duplicate leading line must be stripped from the text handed to
+// SendTextWithButtons — otherwise the app renders "Sudo" as the title AND as
+// the body's bolded first line, i.e. the word twice on separate lines.
+func TestSendInteractiveMessageDedupesHeaderForHeaderCapableConn(t *testing.T) {
+	clearIMStore(t)
+
+	bs := &mockHeaderButtonSender{mockButtonSender: mockButtonSender{msgID: "1"}}
+	buttons := []ButtonChoice{
+		{Label: "Approve", Data: "qa:0"},
+		{Label: "Deny", Data: "qa:1"},
+	}
+
+	_, err := SendInteractiveMessageWithID(staticResolver(bs), "askgw-req1-q0", "Sudo",
+		"**Sudo**\n\nRun `ls` as root?\n\nUser: rich\nCWD: /home/rich",
+		buttons, func(ButtonChoice) string { return "" }, nil)
+	if err != nil {
+		t.Fatalf("SendInteractiveMessageWithID: %v", err)
+	}
+
+	if bs.setHeaderCalls != 1 || bs.lastHeader != "Sudo" || bs.lastHeaderID != "askgw-req1-q0" {
+		t.Fatalf("SetInteractiveHeader calls=%d id=%q header=%q, want 1/askgw-req1-q0/Sudo",
+			bs.setHeaderCalls, bs.lastHeaderID, bs.lastHeader)
+	}
+	if strings.Contains(bs.text, "Sudo") {
+		t.Errorf("body text still contains the header %q — renders twice on a header-capable conn: %q", "Sudo", bs.text)
+	}
+	want := "Run `ls` as root?\n\nUser: rich\nCWD: /home/rich"
+	if bs.text != want {
+		t.Errorf("body text = %q, want %q (embedded header line stripped)", bs.text, want)
+	}
+}
+
+// TestSendInteractiveMessageKeepsHeaderInTextForNonHeaderConn verifies the
+// Telegram/Discord path (no InteractiveHeaderSetter) is unchanged: since
+// header isn't shown anywhere else, the embedded "**Sudo**" line in text must
+// survive — it's the platform's only way to display it.
+func TestSendInteractiveMessageKeepsHeaderInTextForNonHeaderConn(t *testing.T) {
+	clearIMStore(t)
+
+	bs := &mockButtonSender{msgID: "1"}
+	buttons := []ButtonChoice{{Label: "Approve", Data: "qa:0"}}
+
+	text := "**Sudo**\n\nRun `ls` as root?"
+	_, err := SendInteractiveMessageWithID(staticResolver(bs), "req1", "Sudo", text, buttons,
+		func(ButtonChoice) string { return "" }, nil)
+	if err != nil {
+		t.Fatalf("SendInteractiveMessageWithID: %v", err)
+	}
+	if bs.text != text {
+		t.Errorf("body text = %q, want unchanged %q (conn has no separate header display)", bs.text, text)
+	}
+}
+
+// TestStripEmbeddedHeader exercises the dedup helper directly against the two
+// shapes question.FormatText actually produces (single question; sequential
+// multi-question with an "(i/n)" counter), plus the defensive no-ops:
+// non-matching header, and a body that merely starts with similar text but
+// isn't the generated header line.
+func TestStripEmbeddedHeader(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		text   string
+		want   string
+	}{
+		{
+			name:   "single question header stripped",
+			header: "Sudo",
+			text:   "**Sudo**\n\nRun `ls` as root?",
+			want:   "Run `ls` as root?",
+		},
+		{
+			name:   "sequential multi-question counter stripped",
+			header: "Sudo",
+			text:   "**Sudo** (2/3)\n\nRun `ls` as root?",
+			want:   "Run `ls` as root?",
+		},
+		{
+			name:   "no header set leaves text untouched",
+			header: "",
+			text:   "**Sudo**\n\nRun `ls` as root?",
+			want:   "**Sudo**\n\nRun `ls` as root?",
+		},
+		{
+			name:   "different header not stripped",
+			header: "Deploy",
+			text:   "**Sudo**\n\nRun `ls` as root?",
+			want:   "**Sudo**\n\nRun `ls` as root?",
+		},
+		{
+			name:   "bold text that merely starts similarly is left alone",
+			header: "Sudo",
+			text:   "**Sudo access requested** for something else entirely",
+			want:   "**Sudo access requested** for something else entirely",
+		},
+		{
+			name:   "no blank-line separator is left alone",
+			header: "Sudo",
+			text:   "**Sudo** single newline\nnot the generated shape",
+			want:   "**Sudo** single newline\nnot the generated shape",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripEmbeddedHeader(tt.header, tt.text)
+			if got != tt.want {
+				t.Errorf("stripEmbeddedHeader(%q, %q) = %q, want %q", tt.header, tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- Mocks ---
 
 // mockButtonSender implements Connection (via embedding mockConnection) and
@@ -563,6 +681,25 @@ func (m *mockButtonSender) EditMessageWithButtons(msgID, text string, buttons []
 
 // Compile-time verification.
 var _ ButtonSender = (*mockButtonSender)(nil)
+
+// mockHeaderButtonSender embeds mockButtonSender and additionally implements
+// InteractiveHeaderSetter — i.e. it stands in for the app connection, the one
+// case where SendInteractiveMessageWithID must dedupe an embedded header
+// (#1397).
+type mockHeaderButtonSender struct {
+	mockButtonSender
+	setHeaderCalls int
+	lastHeaderID   string
+	lastHeader     string
+}
+
+func (m *mockHeaderButtonSender) SetInteractiveHeader(promptID, header string) {
+	m.setHeaderCalls++
+	m.lastHeaderID = promptID
+	m.lastHeader = header
+}
+
+var _ InteractiveHeaderSetter = (*mockHeaderButtonSender)(nil)
 
 // mockConnectionCapture embeds mockConnection but captures text sent via
 // SendText — used to test the fallback path where no ButtonSender exists.
