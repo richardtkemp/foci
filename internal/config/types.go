@@ -1131,7 +1131,7 @@ type ReflectionConfig struct {
 	CompactionEnabled     *bool   `toml:"compaction_enabled"     default:"true" hot:"event" desc:"Run a reflection pass right before a session is compacted, so memories and skills are captured before older messages are summarized away"`         // reflect before compaction
 	CompactionPrompt      *string `toml:"compaction_prompt"                     hot:"event" desc:"Path to a custom prompt for pre-compaction reflection. Leave unset for the built-in default, or set to none to disable this trigger"`              // prompt override (nil = embedded, "none" = disabled)
 	BackendQuietPeriod    *string `toml:"backend_quiet_period"        default:"5m"   hot:"event" desc:"For delegated backends like Claude Code, how long the user must be idle before reflection is injected into the live session" type:"duration"` // min idle before firing in backend mode
-	NotifyOnSkillCreation *bool   `toml:"notify_on_skill_creation"     default:"true" hot:"event" desc:"Send a chat message telling the user when a reflection pass creates or updates a skill"`                                                     // notify user on skill creation/update during reflection
+	NotifyOnSkillCreation *bool   `toml:"notify_on_skill_creation"     default:"true" hot:"event" desc:"When a reflection pass edits a skill AND commits it within that same run, send the commit message + diff as a file attachment"`              // notify user on git-attributed skill creation/update during reflection (#1404)
 }
 
 // SchedulerConfig controls the periodic scheduler that drives all four timers

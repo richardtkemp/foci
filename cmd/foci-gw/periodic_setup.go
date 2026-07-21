@@ -261,8 +261,13 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			}
 			return workspace.CharacterSystemPrompt(acfg.Workspace, fileOrder)
 		},
-		SkillDirs:             inst.skillsDirs,
-		NotifySkillChange: func(sessionKey, text string) {
+		SkillDirs: inst.skillsDirs,
+		NotifySkillChange: func(sessionKey, skillName, markdown string) {
+			sendSkillGitReport(p.connMgr, agentID, sessionKey, skillName, markdown)
+		},
+		// Non-git-repo skill dirs keep the exact pre-#1404 plain-text path —
+		// see skills.SplitByGitRepo / detectAndNotifySkillChanges.
+		NotifySkillChangeText: func(sessionKey, text string) {
 			route.NotifySessionChat(p.connMgr, agentID, sessionKey, text)
 		},
 	})

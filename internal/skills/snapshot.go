@@ -157,7 +157,12 @@ func parseSkillMeta(dir string) (name, desc string) {
 }
 
 // FormatChanges renders skill changes as a human-readable notification message.
-// Returns empty string if there are no changes.
+// Returns empty string if there are no changes. This is the legacy
+// notification path — see AttributeToGit / SplitByGitRepo (#1404): callers
+// use FormatChanges only for changes whose skill directory is NOT a git
+// working tree, preserving the pre-#1404 behaviour there exactly (Dick:
+// the no-git-repo case must not change). Git-tracked skill dirs go through
+// the commit-window-gated attachment path instead.
 func FormatChanges(changes []SkillChange) string {
 	if len(changes) == 0 {
 		return ""
