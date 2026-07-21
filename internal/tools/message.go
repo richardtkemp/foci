@@ -21,18 +21,18 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts fu
 		ExecExport: true,
 		Positional: []string{"text"},
 		StdinParam: "text",
-		// description is a more natural flag when paired with a file —
-		// "this file with this caption". Maps to the canonical text field
-		// so `--description X --file Y` and `--text X --file Y` are
-		// equivalent.
-		Aliases:     map[string][]string{"text": {"description"}},
+		// description/caption are more natural flags when paired with a
+		// file — "this file with this caption". Both map to the canonical
+		// text field so `--description X --file Y`, `--caption X --file Y`,
+		// and `--text X --file Y` are all equivalent.
+		Aliases:     map[string][]string{"text": {"description", "caption"}},
 		Description: "Send a rich message to the user. Can send text, files, or TTS.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"text": {
 					"type": "string",
-					"description": "Text message to send. Supports Markdown formatting. When piped on stdin and --text/--description is omitted, stdin populates this field."
+					"description": "Text message to send. Supports Markdown formatting. When piped on stdin and --text/--description/--caption is omitted, stdin populates this field."
 				},
 				"file": {
 					"type": "string",
