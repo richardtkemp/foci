@@ -270,9 +270,43 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// also needs b.mu, causing a deadlock.
 	ts.sessionFilePath = be.SessionFilePath()
 
+	// Voice mode (#1445): a turn tagged trigger=="voice" (any envelope in the
+	// batch was produced by transcribing a spoken message, #1436) runs at low
+	// effort on backends that opt in via VoiceModer, scoped to exactly this
+	// begin-turn dispatch — the fold/answer-capture paths above already
+	// returned, so reaching here means a genuinely new turn is about to
+	// start. voiceMode stays nil (every use below is then a no-op) when the
+	// trigger isn't "voice", the backend doesn't implement VoiceModer
+	// (opencode has no effort knob at all), or EnterVoiceMode itself failed.
+	var voiceMode delegator.VoiceModer
+	if ts.Trigger == "voice" {
+		if vm, ok := be.(delegator.VoiceModer); ok {
+			if err := vm.EnterVoiceMode(ts.Ctx); err != nil {
+				t.logger().Warnf("session=%s voice mode enter failed: %v", ts.SessionKey, err)
+			} else {
+				voiceMode = vm
+			}
+		}
+	}
+
 	// Per-turn bookkeeping callbacks (nudge hooks + OnTurnComplete). Extracted so
 	// adopted autonomous turns build the identical completion accounting.
 	turnEvents := t.buildTurnEvents(ts, be)
+	if voiceMode != nil {
+		// The turn is async (delegated backends stream OnTurnComplete later,
+		// not on RunInference's return), so restoring effort has to hang off
+		// the same completion callback the rest of post-turn bookkeeping
+		// uses — not off RunInference returning, which happens as soon as
+		// the prompt is handed to the backend.
+		orig := turnEvents.OnTurnComplete
+		turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
+			if orig != nil {
+				orig(result)
+			}
+			t.exitVoiceMode(ts.SessionKey, voiceMode)
+		}
+	}
+
 	// Build the attachment list (empty when none); Inject's begin-turn path
 	// honors attachments only at idle+SourceUser, and backends that don't
 	// support structured content blocks (cctmux) silently drop them with a
@@ -328,6 +362,9 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		werr := be.WaitForTurn(wctx)
 		cancel()
 		if werr != nil && ts.Ctx.Err() != nil {
+			if voiceMode != nil {
+				t.exitVoiceMode(ts.SessionKey, voiceMode)
+			}
 			return ts.Ctx.Err()
 		}
 	}
@@ -338,8 +375,28 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		// Inject(SourceSteer) instead of racing the primary's write. See
 		// WithOnPrimaryWritten / TODO #777.
 		OnPrimaryWrittenFromContext(ts.Ctx)()
+	} else if voiceMode != nil {
+		// The turn never began, so CC will never fire OnTurnComplete — the
+		// wrapped exit installed above would otherwise never run, leaving
+		// the session stuck at low effort. Undo the switch now.
+		t.exitVoiceMode(ts.SessionKey, voiceMode)
 	}
 	return err
+}
+
+// exitVoiceMode restores the effort level a matching VoiceModer.EnterVoiceMode
+// saved. Uses a fresh background context with its own short timeout rather
+// than ts.Ctx: this runs either from the OnTurnComplete callback (which fires
+// after the turn's own context may already be done) or from a dispatch-error
+// path where the turn never truly began — in both cases ts.Ctx is the wrong
+// lifetime to depend on. Mirrors Agent.SetSessionEffort's own fire-and-forget
+// live push (internal/agent/session_meta.go).
+func (t *DelegatedTransport) exitVoiceMode(sessionKey string, vm delegator.VoiceModer) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := vm.ExitVoiceMode(ctx); err != nil {
+		t.logger().Warnf("session=%s voice mode exit failed: %v", sessionKey, err)
+	}
 }
 
 // buildTurnEvents constructs the per-turn bookkeeping callbacks (nudge hooks +

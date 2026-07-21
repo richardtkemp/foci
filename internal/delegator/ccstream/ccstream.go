@@ -91,6 +91,19 @@ type Backend struct {
 	readyOnce sync.Once     // ensures readyCh closed once
 	initReqID string        // request_id of the initialize control request
 
+	// effortLevel is foci's own record of the effort level CC is currently
+	// running at — set at cold launch (opts.Effort) and updated on every live
+	// apply_flag_settings effortLevel push (mid-session /effort). CC never
+	// echoes effort back on the wire, so this field is the only source of
+	// truth EnterVoiceMode/ExitVoiceMode have for "what to restore" (#1445).
+	effortLevel string
+	// voiceModeSavedEffort holds the effortLevel EnterVoiceMode saved before
+	// switching to "low"; ExitVoiceMode restores it and clears
+	// voiceModeActive. voiceModeActive guards against a mismatched/duplicate
+	// Exit (or an Exit with no prior Enter) clobbering effortLevel.
+	voiceModeActive      bool
+	voiceModeSavedEffort string
+
 	// finalizeOnce gates the dead-process cleanup so it runs exactly once,
 	// regardless of whether the waiter goroutine (cmd.Wait returned) or the
 	// reader goroutine (scanner EOF / ctx cancel) notices first. See

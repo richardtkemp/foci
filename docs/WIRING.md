@@ -560,6 +560,13 @@ for exact or substring aliases; Claude Code keeps receiving raw aliases.
 
 Adding a new control: define intent type in `delegator/control.go`, add case in ccstream's `SendControl`, add Agent method, register command with appropriate `Requires`.
 
+**VoiceModer pattern (`delegator.VoiceModer`, #1445):** a turn tagged `trigger == "voice"` (any envelope in the batch was produced by transcribing spoken audio, #1436) runs at low effort on backends that opt in via `EnterVoiceMode(ctx)`/`ExitVoiceMode(ctx)` — an optional interface, same pattern as `ControlSender`/`CompactionWaiter`. Effort is a request-side parameter CC/Codex never echo back on the wire, so unlike model/permission mode there's nothing for the Agent layer to read generically — each implementing backend tracks its own "current effort" and does the save/restore itself:
+- **ccstream** (`ccstream/voicemode.go`): tracks `effortLevel` (set at cold launch from `opts.Effort`, updated on every live `apply_flag_settings effortLevel` push — including voice mode's own). `EnterVoiceMode` saves it and pushes `"low"`; `ExitVoiceMode` pushes the saved value back (skipped if it was empty/`"off"` — mirrors `Agent.SetSessionEffort`'s own "clear takes effect on next launch, not live" limitation).
+- **codex** (`codex/voicemode.go`): reuses `pendingEffort` (the queued override `applyPendingControls` reads at the next `beginTurn` — Codex has no mid-session control channel) the same way.
+- **opencode**: no effort knob at all, so it doesn't implement the interface.
+
+Wired at `agent/turn_delegated.go`'s `RunInference`: `EnterVoiceMode` runs right before the begin-turn `ImmediateInject` (scoped to that dispatch only — the fold/answer-capture paths above it return early, so a voice follow-up folding into an already in-flight turn never re-enters/exits). `ExitVoiceMode` is wired into the same `TurnEvents.OnTurnComplete` callback `buildTurnEvents` installs (the delegated path is async — that callback, not `RunInference` returning, is the turn's true end), with a fallback call if the begin-turn dispatch itself errors (so a failed dispatch — CC never firing `OnTurnComplete` — doesn't strand the session at low effort).
+
 **Differences from tmux backend:**
 - No tmux pane, no `send-keys`, no pane capture — all communication is structured NDJSON.
 - Permissions are handled via structured control messages rather than pane scraping.

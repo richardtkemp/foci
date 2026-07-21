@@ -64,6 +64,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if eff := opts.Effort; eff != "" && eff != "off" {
 		args = append(args, "--effort", eff)
 	}
+	// Record the launch-time effort as foci's baseline for this backend
+	// instance — EnterVoiceMode/ExitVoiceMode (#1445) restore to this value
+	// when no mid-session /effort override has updated it since.
+	b.mu.Lock()
+	b.effortLevel = opts.Effort
+	b.mu.Unlock()
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}

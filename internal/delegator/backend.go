@@ -204,6 +204,32 @@ type ControlSender interface {
 	SendControl(ctx context.Context, req ControlRequest) error
 }
 
+// VoiceModer is optionally implemented by backends that provide a distinct
+// low-effort "voice mode" for voice-originated turns (trigger == "voice" —
+// any envelope in the batch was produced by transcribing a spoken message,
+// #1436). EnterVoiceMode is called once, synchronously, before such a turn is
+// dispatched to the backend; ExitVoiceMode once after that same turn's
+// OnTurnComplete fires, undoing whatever EnterVoiceMode did. Implementations
+// own the save/restore themselves — effort is a request-side parameter, not
+// something the backend echoes back on its wire (verified 2026-07-21: CC's
+// stream carries model + fast_mode_state but never the effort level), so the
+// Agent layer has no way to read "the effort CC is currently running at" and
+// can't do the save/restore generically. Backends without an analogous knob
+// (opencode has no effort concept at all) simply don't implement this
+// interface — #1445.
+type VoiceModer interface {
+	// EnterVoiceMode switches the backend to its low-effort mode. Called
+	// before the voice-originated turn's prompt reaches the backend.
+	EnterVoiceMode(ctx context.Context) error
+
+	// ExitVoiceMode restores the effort level that was in effect before the
+	// matching EnterVoiceMode call. Called once the voice-originated turn
+	// has fully completed (OnTurnComplete), not merely once it was
+	// dispatched — the delegated backends are async, so "dispatched" and
+	// "complete" are different instants.
+	ExitVoiceMode(ctx context.Context) error
+}
+
 // ErrCompactionNoBoundary is returned by WaitForCompaction when the /compact
 // run completed (session went idle) without emitting a compact_boundary — i.e.
 // the backend refused to compact (e.g. "Not enough messages to compact" on a
