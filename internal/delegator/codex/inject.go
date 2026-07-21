@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"foci/internal/delegator"
 )
@@ -85,31 +86,68 @@ func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
 	}
 
 	var tr turnStartedParams
-	if err := json.Unmarshal(result, &tr); err == nil && tr.Turn.Status == "failed" {
-		b.completeTurn(&delegator.TurnResult{Text: "codex turn/start: turn failed"})
-		return fmt.Errorf("codex: turn/start returned failed status")
+	if err := json.Unmarshal(result, &tr); err == nil {
+		if tr.Turn.Status == "failed" {
+			b.completeTurn(&delegator.TurnResult{Text: "codex turn/start: turn failed"})
+			return fmt.Errorf("codex: turn/start returned failed status")
+		}
+		if tr.Turn.ID != "" {
+			b.turnMu.Lock()
+			b.turnID = tr.Turn.ID
+			b.turnMu.Unlock()
+		}
 	}
 
 	return nil
 }
 
-// steerTurn appends input to the in-flight turn via turn/steer. The docs
-// say turn/steer returns the accepted turnId, so it's a request.
+// steerTurn folds input into the in-flight turn via turn/steer, waiting
+// synchronously for codex's accept/reject (fast — an RPC ack, not the model
+// turn itself; verified live it returns before any steered content streams).
+//
+// Previously this ran fire-and-forget in a goroutine and ImmediateInject
+// returned nil immediately, so the caller believed the message was
+// delivered — but turn/steer requires expectedTurnId (a live-verified
+// precondition; see turnSteerParams) and codex rejects the call with "no
+// active turn to steer" once the turn completes before the steer lands.
+// That rejection was only Warnf'd: the user's mid-turn message vanished
+// with no re-injection and no caller-visible error.
+//
+// Now: a turn-already-ended rejection returns delegator.ErrTurnNotInFlight,
+// the same sentinel ccstream's Inject(SourceSteer) uses for the analogous
+// race — the caller (inbox.go) already re-routes that error to the normal
+// idle path, which starts a properly-tracked fresh turn with the same text
+// instead of losing it. Any other error (dead stdin, protocol error) is
+// returned as-is; inbox.go's default case queues the text for a fresh turn
+// on any non-nil error too, so no message is dropped on the floor.
 func (b *Backend) steerTurn(text string) error {
 	threadID := b.SessionID()
-	go func() {
-		_, err := b.sendAndWait("turn/steer", struct {
-			ThreadID string      `json:"threadId"`
-			Input    []turnInput `json:"input"`
-		}{
-			ThreadID: threadID,
-			Input:    []turnInput{{Type: "text", Text: text}},
-		})
-		if err != nil {
-			b.lg.Warnf("turn/steer failed: %v", err)
+	b.turnMu.Lock()
+	turnID := b.turnID
+	b.turnMu.Unlock()
+
+	_, err := b.sendAndWait("turn/steer", turnSteerParams{
+		ThreadID:       threadID,
+		ExpectedTurnID: turnID,
+		Input:          []turnInput{{Type: "text", Text: text}},
+	})
+	if err != nil {
+		if isNoActiveTurnError(err) {
+			b.lg.Debugf("turn/steer raced turn completion (turnId=%s): %v", turnID, err)
+			return delegator.ErrTurnNotInFlight
 		}
-	}()
+		b.lg.Warnf("turn/steer failed: %v", err)
+		return err
+	}
 	return nil
+}
+
+// isNoActiveTurnError reports whether err is codex's rejection for a
+// turn/steer whose expectedTurnId no longer matches the active turn (the
+// turn completed in the race window between the in-flight check and the
+// steer landing). Message text verified live against codex 0.144.5.
+func isNoActiveTurnError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no active turn to steer")
 }
 
 // environ returns the current process environment.

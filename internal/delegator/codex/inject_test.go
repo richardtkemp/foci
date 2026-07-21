@@ -38,20 +38,6 @@ func openTurn(b *Backend, turn *delegator.TurnEvents) {
 	b.turnMu.Unlock()
 }
 
-// waitForContent polls the capture buffer up to the deadline for substr,
-// returning whether it appeared. The turn/steer sender runs in a goroutine,
-// so the write lands shortly after ImmediateInject returns.
-func waitForContent(c *captureCloser, substr string, deadline time.Duration) bool {
-	expire := time.Now().Add(deadline)
-	for time.Now().Before(expire) {
-		if strings.Contains(c.String(), substr) {
-			return true
-		}
-		time.Sleep(time.Millisecond)
-	}
-	return strings.Contains(c.String(), substr)
-}
-
 // TestBeginTurn_SetsStateResetsScratch proves beginTurn's synchronous setup:
 // it flips turnActive, allocates a fresh turnResultCh, installs TurnEvents,
 // and — critically — wipes the scratch fields a previous turn left behind so
@@ -137,9 +123,15 @@ func TestIsTurnInFlight_Lifecycle(t *testing.T) {
 }
 
 // TestCompleteTurn_FiresOnTurnCompleteWithAccumulatedTextAndUsage proves the
-// completion path delivers what the reader accumulated — streaming text deltas
-// summed into turnText and the latest tokenUsage stashed — through to
-// OnTurnComplete, then clears the turn bookkeeping.
+// completion path delivers what the reader accumulated — completed
+// agentMessage items summed into turnText and the latest tokenUsage stashed
+// — through to OnTurnComplete, then clears the turn bookkeeping.
+//
+// Text deltas (onAgentMessageDelta) are replayed too, matching a real turn's
+// event order (deltas stream, then the item completes with its full text),
+// but deliberately NOT summed into the expected text: deltas are live-display
+// only (see onAgentMessageDelta's doc) — accumulating both there and here
+// double-counted every message (#1329 item 6 finding).
 func TestCompleteTurn_FiresOnTurnCompleteWithAccumulatedTextAndUsage(t *testing.T) {
 	t.Parallel()
 
@@ -150,9 +142,13 @@ func TestCompleteTurn_FiresOnTurnCompleteWithAccumulatedTextAndUsage(t *testing.
 		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	})
 
-	// Replay the reader's accumulation: two text deltas and a usage update.
+	// Replay a real turn's event order: deltas stream live, then the item
+	// completes with its full final text.
 	b.onAgentMessageDelta(&agentMessageDeltaParams{Delta: "Hello, "})
 	b.onAgentMessageDelta(&agentMessageDeltaParams{Delta: "world."})
+	b.onItemCompleted(&itemCompletedParams{Item: mustItem(t, itemEnvelope{
+		Type: "agentMessage", ID: "m1", Text: "Hello, world.",
+	})})
 
 	tup := &tokenUsageParams{}
 	tup.TokenUsage.Last.InputTokens = 10
@@ -327,7 +323,9 @@ func TestImmediateInject_InFlight_SourceSystemRejected(t *testing.T) {
 // TestImmediateInject_InFlight_SteerAndUserFold proves the fold sources —
 // SourceSteer (platform dispatch) and SourceUser (queued user text) — route to
 // steerTurn when a turn is running, dispatching turn/steer with the injected
-// text while leaving the turn open.
+// text AND the required expectedTurnId precondition (item 1 — omitting this
+// field, the prior implementation, was rejected outright by a live
+// app-server), leaving the turn open once codex accepts it.
 func TestImmediateInject_InFlight_SteerAndUserFold(t *testing.T) {
 	t.Parallel()
 
@@ -339,8 +337,17 @@ func TestImmediateInject_InFlight_SteerAndUserFold(t *testing.T) {
 		{"SourceUser", delegator.SourceUser},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b, c := newInjectTestBackend(true)
+			var gotMethod string
+			var gotParams turnSteerParams
+			b := setupMockBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
+				gotMethod = method
+				_ = json.Unmarshal(params, &gotParams)
+				return json.RawMessage(`{"turnId":"turn-active"}`), nil
+			})
 			openTurn(b, &delegator.TurnEvents{})
+			b.turnMu.Lock()
+			b.turnID = "turn-active"
+			b.turnMu.Unlock()
 
 			if err := b.ImmediateInject(context.Background(), delegator.Inject{
 				Source: tc.source,
@@ -349,15 +356,81 @@ func TestImmediateInject_InFlight_SteerAndUserFold(t *testing.T) {
 				t.Fatalf("ImmediateInject = %v, want nil", err)
 			}
 
-			if !waitForContent(c, "turn/steer", time.Second) {
-				t.Errorf("turn/steer not dispatched; buf=%q", c.String())
+			if gotMethod != "turn/steer" {
+				t.Errorf("method = %q, want turn/steer", gotMethod)
 			}
-			if !waitForContent(c, "reconsider "+tc.name, time.Second) {
-				t.Errorf("steer text not written; buf=%q", c.String())
+			if gotParams.ExpectedTurnID != "turn-active" {
+				t.Errorf("expectedTurnId = %q, want %q", gotParams.ExpectedTurnID, "turn-active")
+			}
+			if len(gotParams.Input) != 1 || gotParams.Input[0].Text != "reconsider "+tc.name {
+				t.Errorf("input = %+v, want [{text %q}]", gotParams.Input, "reconsider "+tc.name)
 			}
 			if !b.IsTurnInFlight() {
 				t.Error("steer must keep the turn in flight")
 			}
 		})
+	}
+}
+
+// TestSteerTurn_RaceAfterTurnCompleted is the red/green regression for #1329
+// item 1: verified live against codex app-server 0.144.5 that a turn/steer
+// landing after the turn it targeted already completed is rejected with
+// "no active turn to steer" (expectedTurnId no longer matches). Before the
+// fix, steerTurn ran fire-and-forget in a goroutine and ImmediateInject
+// returned nil immediately regardless — the rejection was only Warnf'd, so
+// the caller (and the user) never learned the mid-turn message was lost.
+// Now steerTurn runs synchronously and this specific rejection surfaces as
+// delegator.ErrTurnNotInFlight — the same sentinel ccstream's Steer-at-idle
+// race uses — which inbox.go's existing re-route already turns into a fresh,
+// properly-tracked turn instead of silently dropping the text.
+func TestSteerTurn_RaceAfterTurnCompleted(t *testing.T) {
+	t.Parallel()
+
+	b := setupMockBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
+		if method != "turn/steer" {
+			t.Fatalf("method = %q, want turn/steer", method)
+		}
+		return nil, rpcErrorReply{code: -32600, message: "no active turn to steer"}
+	})
+	openTurn(b, &delegator.TurnEvents{})
+	b.turnMu.Lock()
+	b.turnID = "turn-that-just-ended"
+	b.turnMu.Unlock()
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSteer,
+		Text:   "mid-turn message",
+	})
+	if !errors.Is(err, delegator.ErrTurnNotInFlight) {
+		t.Fatalf("ImmediateInject(Steer) after turn completion = %v, want ErrTurnNotInFlight", err)
+	}
+}
+
+// TestSteerTurn_OtherErrorsSurfaced proves a turn/steer failure that ISN'T
+// the turn-already-ended race (a protocol error, dead connection, etc.) is
+// returned to the caller rather than swallowed — inbox.go's default case
+// already queues the text for a fresh turn on any non-nil error, so nothing
+// is lost, but only if the error actually gets there instead of being
+// discarded inside a fire-and-forget goroutine as before.
+func TestSteerTurn_OtherErrorsSurfaced(t *testing.T) {
+	t.Parallel()
+
+	b := setupMockBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
+		return nil, rpcErrorReply{code: -32000, message: "internal error"}
+	})
+	openTurn(b, &delegator.TurnEvents{})
+	b.turnMu.Lock()
+	b.turnID = "turn-1"
+	b.turnMu.Unlock()
+
+	err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSteer,
+		Text:   "steer text",
+	})
+	if err == nil {
+		t.Fatal("a genuine turn/steer failure must be surfaced, got nil")
+	}
+	if errors.Is(err, delegator.ErrTurnNotInFlight) {
+		t.Error("a non-race error must not be reported as ErrTurnNotInFlight")
 	}
 }

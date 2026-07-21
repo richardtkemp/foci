@@ -2,7 +2,10 @@ package codex
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"foci/internal/delegator"
 )
@@ -30,6 +33,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 
 	b.mu.Lock()
 	model := b.model
+	threadName := b.threadName
 	b.mu.Unlock()
 	if model != "" {
 		model = "codex/" + model
@@ -39,7 +43,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 		ToolCalls:  b.turnTools,
 		Usage:      usage,
 		Model:      model,
-		ThreadName: b.threadName,
+		ThreadName: threadName,
 	}
 	if params.Turn.Status == "failed" && params.Turn.Error != nil {
 		b.lg.Warnf("turn failed: %s", params.Turn.Error.Message)
@@ -131,9 +135,20 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 	se := b.sessionEvents.Load()
 	switch item.Type {
 	case "agentMessage":
-		b.turnMu.Lock()
-		b.turnText.WriteString(item.Text)
-		b.turnMu.Unlock()
+		// Only accumulate into the turn result when the phase isn't
+		// "commentary" (mid-turn narration ahead of a tool call) — live
+		// verified against codex app-server 0.144.5 (generate-json-schema +
+		// a live turn/start->turn/steer->turn/completed probe) that
+		// agentMessage items carry phase "commentary" or "final_answer".
+		// A missing/empty phase (older codex, or a provider that doesn't
+		// emit it — the schema's own doc calls this out) keeps the
+		// pre-existing behaviour: accumulate. Commentary still reaches the
+		// live view via OnText below, just excluded from the final text.
+		if item.Phase != "commentary" {
+			b.turnMu.Lock()
+			b.turnText.WriteString(item.Text)
+			b.turnMu.Unlock()
+		}
 		if se != nil && se.OnText != nil {
 			se.OnText(item.Text)
 		}
@@ -198,9 +213,10 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 
 	case "contextCompaction":
-		b.turnMu.Lock()
-		b.turnTools++
-		b.turnMu.Unlock()
+		// Not counted in turnTools: compaction is internal bookkeeping, not
+		// a user-facing tool call — counting it here skewed
+		// TurnResult.ToolCalls high while collabAgentToolCall (a real
+		// subagent spawn, below) skewed it low by never counting at all.
 		b.compactMu.Lock()
 		if b.compactDoneCh != nil {
 			close(b.compactDoneCh)
@@ -225,8 +241,19 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 	case "collabAgentToolCall":
 		// Extract agent response messages and deliver as subagent text,
 		// then close the run. Same pipeline as CC's Agent tool.
+		//
+		// AgentsStates is a map — Go randomizes iteration order, so ranging
+		// it directly delivered multi-agent collab messages to the client
+		// in a different, non-deterministic order every run. Sort by agent
+		// id first for stable, reproducible delivery order.
 		if se != nil {
-			for _, state := range item.AgentsStates {
+			agentIDs := make([]string, 0, len(item.AgentsStates))
+			for id := range item.AgentsStates {
+				agentIDs = append(agentIDs, id)
+			}
+			sort.Strings(agentIDs)
+			for _, id := range agentIDs {
+				state := item.AgentsStates[id]
 				if state.Message != "" && se.OnSubagentText != nil {
 					se.OnSubagentText(item.ID, state.Message, 1) // codex has no reactivation → run 1
 				}
@@ -235,6 +262,13 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 				se.OnSubagentEnd(item.ID, 1)
 			}
 		}
+		// Count as a tool call like every other item type above — this was
+		// previously never counted, undercounting TurnResult.ToolCalls for
+		// every subagent spawn (see the contextCompaction comment above for
+		// the matching overcount this pairs with).
+		b.turnMu.Lock()
+		b.turnTools++
+		b.turnMu.Unlock()
 	}
 }
 
@@ -246,37 +280,79 @@ func itemSuccess(item itemEnvelope) bool {
 	return true
 }
 
+// maxSummarizedPaths caps how many file paths summarizePaths joins into a
+// single string, so a large patch (hundreds of changed files) can't blow up
+// the activity indicator or, more importantly, the fileChange approval
+// prompt text sent to the user's chat.
+const maxSummarizedPaths = 10
+
 // summarizePaths extracts a comma-separated list of file paths from a
-// fileChange item's changes array for the activity indicator.
+// fileChange item's changes array for the activity indicator and approval
+// prompt. Bounded to maxSummarizedPaths entries — an unbounded join of a
+// large changeset previously produced unbounded approval text.
 func summarizePaths(changes []fileChangeEntry) string {
 	if len(changes) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(changes))
-	for _, c := range changes {
+	shown := changes
+	truncated := 0
+	if len(changes) > maxSummarizedPaths {
+		shown = changes[:maxSummarizedPaths]
+		truncated = len(changes) - maxSummarizedPaths
+	}
+	parts := make([]string, 0, len(shown))
+	for _, c := range shown {
 		parts = append(parts, c.Path)
 	}
-	return strings.Join(parts, ", ")
+	out := strings.Join(parts, ", ")
+	if truncated > 0 {
+		out += fmt.Sprintf(" (+%d more)", truncated)
+	}
+	return out
 }
 
+// maxTruncateArgsLen caps truncateArgs' output length in bytes.
+const maxTruncateArgsLen = 200
+
 // truncateArgs returns a truncated copy of raw JSON arguments for display.
+// Truncates at a rune boundary, not a raw byte offset: raw JSON arguments
+// can contain multibyte UTF-8 (non-ASCII string values), and slicing at a
+// fixed byte offset can split a rune in half, producing invalid UTF-8 for
+// the activity indicator.
 func truncateArgs(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
 	s := strings.TrimSpace(string(raw))
-	if len(s) > 200 {
-		return s[:200] + "…"
+	if len(s) <= maxTruncateArgsLen {
+		return s
 	}
-	return s
+	cut := maxTruncateArgsLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
-// onAgentMessageDelta delivers a streaming text delta.
+// onAgentMessageDelta delivers a streaming text delta for live display only.
+//
+// This does NOT accumulate into turnText. It used to (WriteString on every
+// delta), and onItemCompleted's "agentMessage" case ALSO writes the
+// completed item's full text into turnText — live-verified (codex 0.144.5)
+// that a completed agentMessage's `text` is exactly the concatenation of
+// its own deltas, not additional content, so every message's contribution
+// to TurnResult.Text (and therefore the delivered final answer) was
+// silently doubled. Found while live-verifying phase semantics for #1329
+// item 6; distinct from but entangled with that fix (phase-filtering the
+// doubled text would have just doubled the filtered result too).
+//
+// Trade-off: if the reader stops mid-message (process death / disconnect
+// before item/completed fires), the interrupted-turn fallback text
+// (onReaderStopped) now loses that last partial message instead of
+// contributing a partial-but-doubled string — an acceptable cost in a rare
+// path for correctness on every normal turn.
 func (b *Backend) onAgentMessageDelta(params *agentMessageDeltaParams) {
 	se := b.sessionEvents.Load()
-	b.turnMu.Lock()
-	b.turnText.WriteString(params.Delta)
-	b.turnMu.Unlock()
 	if se != nil && se.OnTextDelta != nil {
 		se.OnTextDelta(params.Delta)
 	}
@@ -348,6 +424,7 @@ func (b *Backend) completeTurn(result *delegator.TurnResult) {
 	turn := b.turnEvents
 	b.turnEvents = nil
 	b.turnActive = false
+	b.turnID = ""
 	ch := b.turnResultCh
 	b.turnResultCh = nil
 	b.turnText.Reset()

@@ -3,7 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -12,14 +12,31 @@ import (
 	"foci/internal/log"
 )
 
+// rpcErrorReply lets a setupMockBackend handler simulate a genuine JSON-RPC
+// error response — e.g. codex's real `{"error":{"code":...,"message":...}}`
+// for a rejected request — as distinct from a bare error, which simulates a
+// dropped connection / process exit (sendAndWait's "process cancelled"
+// path). Real callers (branch.go's CleanupSession, inject.go's steerTurn)
+// need to distinguish these: only a genuine server-side error carries codex's
+// actual rejection message ("no rollout found for thread id ...", "no active
+// turn to steer") that the fixes for #1329 items 1/5 match against.
+type rpcErrorReply struct {
+	code    int
+	message string
+}
+
+func (e rpcErrorReply) Error() string { return e.message }
+
 // setupMockBackend returns a Backend whose writer is backed by an in-process
 // pipe and a reader goroutine that plays the role of the codex app-server:
 // for every JSON-RPC request written by the Backend, handler is invoked with
 // (method, params, id). If handler returns a non-nil result, it is delivered
 // to the pendingRPC channel for that id (a successful server response). If
-// handler returns an error, nil is delivered instead, which sendAndWait
-// interprets as "request cancelled (process exited)" — the path a real
-// server-side error or dropped connection takes.
+// handler returns an rpcErrorReply, a matching JSON-RPC error is delivered
+// (the shape handleResponse produces for a real server-side rejection). If
+// handler returns any other non-nil error, nil is delivered instead, which
+// sendAndWait interprets as "request cancelled (process exited)" — the path
+// a dropped connection takes.
 //
 // handler may be nil to reply to every request with an empty {} result.
 func setupMockBackend(t *testing.T, handler func(method string, params json.RawMessage, id int64) (json.RawMessage, error)) *Backend {
@@ -58,10 +75,16 @@ func setupMockBackend(t *testing.T, handler func(method string, params json.RawM
 			if handler != nil {
 				result, err = handler(env.Method, env.Params, id)
 			}
-			if err != nil {
-				result = nil // triggers "request cancelled" in sendAndWait
+
+			var reply rpcReply
+			if rpcErr, ok := err.(rpcErrorReply); ok {
+				reply = rpcReply{err: fmt.Errorf("codex rpc error %d: %s", rpcErr.code, rpcErr.message)}
+			} else if err != nil {
+				reply = rpcReply{result: nil} // triggers "request cancelled" in sendAndWait
 			} else if result == nil {
-				result = json.RawMessage("{}")
+				reply = rpcReply{result: json.RawMessage("{}")}
+			} else {
+				reply = rpcReply{result: result}
 			}
 
 			b.rpcMu.Lock()
@@ -71,7 +94,7 @@ func setupMockBackend(t *testing.T, handler func(method string, params json.RawM
 				t.Errorf("mock app-server: no pending channel for id %d", id)
 				continue
 			}
-			ch <- rpcReply{result: result}
+			ch <- reply
 		}
 	}()
 
@@ -187,21 +210,54 @@ func TestCleanupSession_Success(t *testing.T) {
 	}
 }
 
-// TestCleanupSession_NonExistentNotError verifies that a failing thread/delete
-// (e.g. the thread is already gone) is swallowed: CleanupSession is best-effort
-// and must return nil so callers can tear down unconditionally.
+// TestCleanupSession_NonExistentNotError verifies that codex's real
+// "already absent" rejection (verified live against app-server 0.144.5: a
+// never-existed thread id AND an already-deleted one both produce this exact
+// message) is swallowed — CleanupSession is best-effort for that specific
+// case and must return nil so callers can tear down unconditionally.
 func TestCleanupSession_NonExistentNotError(t *testing.T) {
 	b := setupMockBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
-		// Simulate a server-side "no such thread" failure: returning an
-		// error causes the mock to deliver nil, which sendAndWait reports
-		// as "request cancelled (process exited)".
-		return nil, errors.New("thread not found")
+		return nil, rpcErrorReply{code: -32600, message: "no rollout found for thread id no-such-thread"}
 	})
 
 	err := b.CleanupSession(context.Background(), delegator.CleanupRequest{
 		SessionID: "no-such-thread",
 	})
 	if err != nil {
-		t.Errorf("cleanup of non-existent thread should be nil, got %v", err)
+		t.Errorf("cleanup of already-absent thread should be nil, got %v", err)
+	}
+}
+
+// TestCleanupSession_GenuineErrorNotSwallowed is the red/green pair for
+// #1329 item 5: a thread/delete failure that is NOT the documented
+// "already absent" case (a real app-server error, a dropped connection,
+// etc.) must be surfaced to the caller, not silently discarded as nil. The
+// prior implementation returned nil unconditionally regardless of cause.
+func TestCleanupSession_GenuineErrorNotSwallowed(t *testing.T) {
+	b := setupMockBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
+		return nil, rpcErrorReply{code: -32000, message: "internal server error"}
+	})
+
+	err := b.CleanupSession(context.Background(), delegator.CleanupRequest{
+		SessionID: "some-thread",
+	})
+	if err == nil {
+		t.Fatal("a genuine thread/delete failure must be surfaced, got nil")
+	}
+	if strings.Contains(err.Error(), "no rollout found") {
+		t.Errorf("error should not look like the already-absent case: %v", err)
+	}
+}
+
+// TestCleanupSession_WriterReadUnderLock proves CleanupSession's writer-nil
+// guard reads b.writer under b.mu, matching Close/Interrupt — the prior
+// unguarded direct read of b.writer was a data race with Start()'s
+// lock-protected write to the same field. -race exercises this.
+func TestCleanupSession_WriterReadUnderLock(t *testing.T) {
+	t.Parallel()
+	b := &Backend{lg: log.NewComponentLogger("test")}
+	err := b.CleanupSession(context.Background(), delegator.CleanupRequest{SessionID: "x"})
+	if err == nil || !strings.Contains(err.Error(), "not started") {
+		t.Fatalf("CleanupSession on unstarted backend = %v, want a not-started error", err)
 	}
 }

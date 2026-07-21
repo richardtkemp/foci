@@ -730,6 +730,19 @@ type TurnResult struct {
 	ThreadName string     // backend-generated session title (Codex auto-names threads)
 }
 
+// ThreadNameConsumer is an optional capability for backends whose
+// TurnResult.ThreadName is a one-time auto-generated title (Codex's
+// thread/name/updated fires once early in a thread's life) rather than a
+// per-turn value — nothing else clears the cached name, so it resurfaces in
+// every subsequent TurnResult until consumed. Without this, the caller
+// re-runs its whole read-then-write alias path (chat metadata reads plus a
+// SetChatAliasUnique/SetChatMetadata write) every single turn for the rest
+// of the session. ConsumeThreadName tells the backend the name has been
+// durably applied (e.g. set as a chat alias) so it stops resurfacing it.
+type ThreadNameConsumer interface {
+	ConsumeThreadName()
+}
+
 // InjectSource identifies the semantic origin of an injected user-role
 // event. The backend's Inject method routes based on Source + the
 // current IsTurnInFlight() state — see Delegator.ImmediateInject for the
