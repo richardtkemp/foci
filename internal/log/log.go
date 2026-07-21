@@ -319,7 +319,12 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 		return
 	}
 
-	msg := strings.ReplaceAll(fmt.Sprintf(format, args...), "\n", "\\n")
+	// Trim trailing whitespace BEFORE escaping: a message whose source text ends
+	// in a newline (e.g. an HTTP error body) would otherwise leave a dangling
+	// literal "\n" at the end of the log line — and of any client-facing warning
+	// injection built from it, where it gets swept into an auto-linked URL. Inner
+	// newlines are still escaped to keep each entry a single line.
+	msg := strings.ReplaceAll(strings.TrimRight(fmt.Sprintf(format, args...), " \t\r\n"), "\n", "\\n")
 	ts := timeutil.Format(timeutil.Now())
 
 	// Pad level to 5 chars: "DEBUG", "INFO ", "WARN ", "ERROR"
