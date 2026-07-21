@@ -358,7 +358,32 @@ WIZARD_ARGS += --api-key $(FOCI_API_KEY)
 endif
 endif
 
-.PHONY: deploy-build install-bin install-lib install-unit install-polkit provision install-shared install-docs wizard check-config stage-changelog reload restart enable setup update
+.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs wizard check-config stage-changelog reload restart enable setup update
+
+# sync-main (#1448 piece 4): deploy exactly origin/main, never a dirty or stale
+# local working tree. `make update` builds the working tree, so without this a
+# dirty/behind main checkout ships the wrong code. Fetch; REFUSE if the main
+# tree has uncommitted changes (deploying over them would ship unreviewed work);
+# else fast-forward local main to origin/main so the build == what is committed
+# and pushed. Composes with `make land` (which pushes remote-only): after a land,
+# this ff's local main up to the just-landed commit, so land+deploy needs no
+# manual local sync.
+#
+# Runs git as $(FOCI_USER) — who owns .git, holds the origin SSH key, and is
+# group-writable on the working tree — via real /usr/bin/sudo (root's PATH has
+# no aisudo shim), the same drop-from-root as deploy-build below. Each later
+# `$(MAKE)` step recomputes GIT_COMMIT (recursively-expanded, not exported), so
+# the embedded build version + staged changelog reflect the SYNCED head.
+sync-main:
+	@sudo -u $(FOCI_USER) bash -c 'cd "$(CURDIR)" && \
+	  b=$$(git rev-parse --abbrev-ref HEAD); \
+	  if [ "$$b" != "main" ]; then echo "ABORT: deploy must run on main (currently on $$b)" >&2; exit 2; fi; \
+	  if ! git diff --quiet || ! git diff --cached --quiet; then echo "ABORT: local main has uncommitted changes — commit or stash; refusing to deploy over a dirty tree" >&2; exit 3; fi; \
+	  echo ">>> sync-main: fetching origin ..." >&2; \
+	  git fetch -q origin || { echo "ABORT: git fetch failed" >&2; exit 1; }; \
+	  echo ">>> sync-main: fast-forwarding local main to origin/main ..." >&2; \
+	  git merge --ff-only origin/main || { echo "ABORT: local main diverged from origin/main (not fast-forwardable) — reconcile manually" >&2; exit 4; }; \
+	  echo ">>> sync-main: deploying $$(git rev-parse --short HEAD) (== origin/main)" >&2'
 
 # go build must not run as root under `sudo make`; drop to the service user
 # (mirrors what update.sh did). Real /usr/bin/sudo here — root's PATH has no
@@ -511,6 +536,7 @@ setup:
 # Deploy new code to an existing install. check-config runs against the FRESH
 # binary before anything is installed, so a bad config aborts untouched.
 update:
+	$(MAKE) sync-main
 	$(MAKE) deploy-build
 	$(MAKE) check-config
 	$(MAKE) install-bin
