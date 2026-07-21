@@ -939,33 +939,14 @@ func TestL2_SessionLifecycle_CompactCommandRoutesToBackend(t *testing.T) {
 			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
 	}
 
-	// Look for a user_message whose text_prefix surfaces the compact
-	// marker — this proves routing-to-backend rather than the
-	// API-side summariser. If foci doesn't pass a literal "/compact"
-	// string and instead uses a side-channel control message, the
-	// recorder won't see it; in that case at minimum the invocation
-	// count must not have grown (compact is not a reset).
-	allUMs := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
-	sawCompactMarker := false
-	for _, e := range allUMs {
-		if strings.Contains(strings.ToLower(e.TextPrefix), "compact") {
-			sawCompactMarker = true
-			break
-		}
-	}
-
+	// compact must route to the existing backend, not spawn a fresh
+	// subprocess — so the invocation count must not have grown. (foci
+	// dispatches compact via a control_request side-channel, not a
+	// literal "/compact" user_message, so the recorder never sees the
+	// command text; the no-reset invariant below is the real check.)
 	postInvs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
 	if len(postInvs) > preCount {
 		t.Errorf("compact spawned a fresh subprocess (pre=%d post=%d); compact must not reset", preCount, len(postInvs))
-	}
-
-	if !sawCompactMarker {
-		// Non-fatal: foci may dispatch compact via control_request
-		// rather than user_message text, which is invisible to the
-		// recorder. Log diagnostics so the failure mode is obvious if
-		// this becomes a flake.
-		t.Logf("no user_message with 'compact' marker; foci may route compact via a non-user-message channel. Recorder:\n%s",
-			recorderTail(t, h.RecorderPath()))
 	}
 }
 
