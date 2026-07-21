@@ -225,10 +225,12 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 }
 
 // runAgentBuffered attaches a BufferSink to ctx, calls HandleMessage, and
-// returns the captured FinalText. Used by HTTP/voice/async/notify callers
-// that just need the final response text rather than streaming events —
-// the alternative is repeating the buf-sink-handle-finaltext four-line
-// dance at every site, which makes adding a new caller error-prone.
+// returns the captured FinalText. Used by sync HTTP callers (runAgentQueued),
+// voice, and the silent/PolicyBroadcast carve-outs of deliverBufferedQueued
+// (http.go) — callers that need the final response text back rather than a
+// streamed chat delivery. The alternative is repeating the
+// buf-sink-handle-finaltext four-line dance at every site, which makes
+// adding a new caller error-prone.
 func runAgentBuffered(ctx context.Context, ag *agent.Agent, sessionKey, text string) (string, error) {
 	buf := turnevent.NewBufferSink()
 	ctx = turnevent.WithSink(ctx, buf)
@@ -329,50 +331,91 @@ func defaultSessionKey(d httpHandlerDeps, agentID string) string {
 
 // asyncDispatch handles async fire-and-forget requests: queues the agent
 // message on the session's inbox worker, writes a 202 response, and
-// optionally delivers the result via platform. Queueing (rather than a
-// detached goroutine) means the turn serialises with the session's platform
-// turns and waits behind any in-flight turn — system input never steers
-// running work.
+// delivers the result via platform. Queueing (rather than a detached
+// goroutine) means the turn serialises with the session's platform turns and
+// waits behind any in-flight turn — system input never steers running work.
 //
-// Silencing: the captured FinalText is routed through
-// platform.StripSilencingSuffix before being forwarded to
-// Connection.SendToSession — this both suppresses fully-silent text (strips to
-// "") and removes a trailing sentinel an agent appended to a real reply. This
-// is the convergence point for the BufferSink→platform forwarding class —
-// StreamingSink/SessionSink own their own gates (renderer chokepoints and
-// SessionSink.Emit respectively), so asyncDispatch is the one path where a
-// silencing sentinel reaches the user without an upstream gate unless we apply
-// one here.
-// deliverBufferedQueued queues a buffered turn on the session's inbox and, when
-// it completes, forwards the (silence-gated) response to the resolved platform
-// connection per policy. Returns false if the inbox is full. Shared by the
-// async /send path and the deferred-send sweep; the caller owns any HTTP reply.
+// deliverBufferedQueued queues a turn on the session's inbox and streams its
+// output to the resolved connection AS THE TURN RUNS — the same
+// turnSinkForConn selection deliverToSessionChat (agents_notify.go) uses for
+// every other injected delivery (wakes, restart changelogs, send_to_session):
+// a StreamingSink-equivalent for connections whose Driver can build one (the
+// app), or a SessionSink (typing indicator + per-block delivery) otherwise.
+//
+// Telegram/Discord land on SessionSink, not true per-token StreamingSink,
+// because neither platform's Bot.NewTurnSink can build one for an injected
+// turn: both require a live env.Original platform message (*gotgbot.Message /
+// *discordgo.Message) to seed the renderer — used only to read its chat/
+// channel ID — and an HTTP-injected /send, /branch, /webhook, or
+// deferred-send has no such originating message to attach. Closing that gap
+// (letting NewTurnSink build a renderer from a bare chat/channel ID) is
+// platform-driver surgery, flagged here rather than done speculatively as
+// part of this fix (#1385).
+//
+// #1385: before this, the async path ran the turn behind a bare
+// turnevent.BufferSink (internal/agent/turnevent/sinks.go — discards every
+// event but TurnComplete) and did exactly one flat SendToSession call at the
+// end: no typing indicator ever fired and nothing was visible until the
+// whole turn finished — the "basic sink / fallback" the bug report described.
+//
+// Two cases deliberately keep the old buffer-then-forward-once shape:
+//   - silent (branch --silent): no chat delivery happens at all, so there is
+//     nothing to stream into.
+//   - PolicyBroadcast: the same final text fans out to every live connection
+//     for the agent — there's no single chat to stream into, and teeing a
+//     capture sink alongside a delivery sink was explicitly ruled out (Dick,
+//     #1385) rather than built for this one case.
+//
+// Both still use runAgentBuffered/BufferSink, whose FinalText() is the only
+// thing they need — Usage/Cost/Model were never captured or used by any
+// caller of this function (async /send and async /branch return their HTTP
+// response before the turn runs; the deferred-send sweep discards the return
+// value outright — verified at every call site), so dropping the capture
+// costs nothing for the streamed case either.
+//
+// Returns false if the inbox is full. Shared by the async /send path,
+// /branch (both the backend-fork success and send-fallback branches),
+// /webhook, and the deferred-send sweep (wait_defer.go); the caller owns any
+// HTTP reply.
 func deliverBufferedQueued(inst *agentInstance, connMgr platform.ConnectionManager,
 	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy) bool {
 	run := func() {
-		resp, err := runAgentBuffered(ctx, inst.ag, sessionKey, text)
-		if err != nil {
-			log.NewComponentLogger(logTag).Errorf("async error: %v", err)
-			return
-		}
-		cleaned := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(resp))
-		if silent || cleaned == "" || connMgr == nil {
-			return
-		}
-		if policy == route.PolicyBroadcast {
+		if silent || policy == route.PolicyBroadcast {
+			resp, err := runAgentBuffered(ctx, inst.ag, sessionKey, text)
+			if err != nil {
+				log.NewComponentLogger(logTag).Errorf("async error: %v", err)
+				return
+			}
+			if silent || connMgr == nil {
+				return
+			}
+			cleaned := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(resp))
+			if cleaned == "" {
+				return
+			}
 			broadcastResponse(connMgr, inst.id, sessionKey, cleaned, logTag)
 			return
 		}
-		conn, outcome := route.ConnFor(connMgr, inst.id, sessionKey, policyOrFallback(policy))
-		if conn == nil {
-			log.NewComponentLogger(logTag).Warnf("no connection for session %s (policy=%s), async response not delivered", sessionKey, policyOrFallback(policy))
-			return
+
+		turnCtx := ctx
+		var cleanup func()
+		if connMgr != nil {
+			if conn, outcome := route.ConnFor(connMgr, inst.id, sessionKey, policyOrFallback(policy)); conn != nil {
+				if outcome == route.DeliveredViaPrimary {
+					log.NewComponentLogger(logTag).Infof("session %s has no live connection — delivering via agent %s primary", sessionKey, inst.id)
+				}
+				var sink turnevent.Sink
+				sink, cleanup = turnSinkForConn(conn, sessionKey, logTag)
+				turnCtx = turnevent.WithSink(ctx, sink)
+			} else {
+				log.NewComponentLogger(logTag).Warnf("no connection for session %s (policy=%s), async response not delivered", sessionKey, policyOrFallback(policy))
+			}
 		}
-		if outcome == route.DeliveredViaPrimary {
-			log.NewComponentLogger(logTag).Infof("session %s has no live connection — delivering via agent %s primary", sessionKey, inst.id)
+		if cleanup != nil {
+			defer cleanup()
 		}
-		if err := conn.SendToSession(sessionKey, cleaned); err != nil {
-			log.NewComponentLogger(logTag).Errorf("async platform delivery: %v", err)
+		if err := inst.ag.HandleMessage(turnCtx, sessionKey, []string{text}, nil); err != nil {
+			log.NewComponentLogger(logTag).Errorf("async error: %v", err)
 		}
 	}
 	return inst.ag.Enqueue(agent.Envelope{

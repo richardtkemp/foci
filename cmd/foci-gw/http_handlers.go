@@ -325,6 +325,19 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		app.DeliverExternalPrompt(sessionKey, req.Text)
 
 		sendCtx := agent.WithTrigger(d.ctx, "user")
+		// NOTE (#1385): this is the sync/async fork for /send delivery shape.
+		// async → asyncDispatch → deliverBufferedQueued streams to the resolved
+		// chat AS THE TURN RUNS (typing indicator + StreamingSink/SessionSink —
+		// see deliverBufferedQueued's doc comment in http.go). sync (below) →
+		// runAgentQueued stays on the buffered path: it returns the turn's
+		// FinalText as this HTTP call's response body and does NOT also push it
+		// to the chat (no PolicyBroadcast) — a blocking API caller is asking for
+		// a value back, not asking the chat to show anything, so there's no
+		// live surface to stream into here by default. If we ever want sync to
+		// BOTH return the text to the caller AND stream/show it in chat, the way
+		// to do that is a tee sink (a BufferSink for the return value +
+		// StreamingSink/SessionSink for chat delivery, run off the same turn) —
+		// deliberately not built now (Dick, #1385: skip the tee).
 		if req.Async {
 			asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, req.Text, "http", false, res.Policy, rcpt)
 			return
