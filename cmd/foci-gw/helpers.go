@@ -85,11 +85,12 @@ func modelDefaultsFn(models map[string]config.ModelConfig) func(string) config.M
 		for _, mc := range models {
 			if mc.Model == model {
 				return config.ModelDefaults{
-					Thinking:      string(mc.Thinking),
-					Effort:        mc.Effort,
-					Speed:         mc.Speed,
-					CacheStrategy: mc.CacheStrategy,
-					CacheTTL:      mc.CacheTTL,
+					Thinking:        string(mc.Thinking),
+					Effort:          mc.Effort,
+					Speed:           mc.Speed,
+					CacheStrategy:   mc.CacheStrategy,
+					CacheTTL:        mc.CacheTTL,
+					ProviderRouting: mc.Provider,
 				}
 			}
 		}

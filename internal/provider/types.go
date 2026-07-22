@@ -259,6 +259,69 @@ type ThinkingConfig struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty"` // token budget for thinking (Gemini)
 }
 
+// ProviderRouting controls OpenRouter's upstream-provider selection for a
+// request — which underlying provider(s) serve an "openrouter/..." model,
+// their ordering/fallback behaviour, and filters on quantization/price/
+// throughput/latency/data-retention. Field names and JSON tags mirror
+// OpenRouter's "provider" request-body object exactly (see
+// https://openrouter.ai/docs/guides/routing/provider-selection) so a
+// populated struct marshals straight through as that object.
+//
+// Only honored by the openai translate layer (internal/openai) when the
+// resolved endpoint is OpenRouter; other providers ignore it. Config
+// discipline is the guard: this is only reachable from a [models.*.provider]
+// TOML table under an "openrouter/..." model string (see
+// config.ModelConfig.Provider), the same precedent already used for the
+// "reasoning" extra field injection.
+type ProviderRouting struct {
+	Order                  []string           `json:"order,omitempty"                    toml:"order"`
+	AllowFallbacks         *bool              `json:"allow_fallbacks,omitempty"          toml:"allow_fallbacks"`
+	RequireParameters      bool               `json:"require_parameters,omitempty"       toml:"require_parameters"`
+	DataCollection         string             `json:"data_collection,omitempty"          toml:"data_collection"` // "allow" or "deny"
+	ZDR                    bool               `json:"zdr,omitempty"                      toml:"zdr"`
+	EnforceDistillableText bool               `json:"enforce_distillable_text,omitempty" toml:"enforce_distillable_text"`
+	Only                   []string           `json:"only,omitempty"                     toml:"only"`
+	Ignore                 []string           `json:"ignore,omitempty"                   toml:"ignore"`
+	Quantizations          []string           `json:"quantizations,omitempty"            toml:"quantizations"`
+	Sort                   *ProviderSort      `json:"sort,omitempty"                     toml:"sort"`
+	PreferredMinThroughput *ProviderThreshold `json:"preferred_min_throughput,omitempty" toml:"preferred_min_throughput"`
+	PreferredMaxLatency    *ProviderThreshold `json:"preferred_max_latency,omitempty"    toml:"preferred_max_latency"`
+	MaxPrice               *ProviderMaxPrice  `json:"max_price,omitempty"                toml:"max_price"`
+}
+
+// ProviderSort is OpenRouter's provider.sort object: sort candidate providers
+// by "price", "throughput", or "latency" before applying order/filters.
+// OpenRouter also accepts a bare string shorthand ("sort": "price") on the
+// wire, but config only exposes the object form (TOML can't polymorph a key
+// between a scalar and a table) — an inline table (`sort = {by = "price"}`)
+// is equally valid TOML and just as short.
+type ProviderSort struct {
+	By        string `json:"by"                   toml:"by"`        // "price", "throughput", or "latency"
+	Partition string `json:"partition,omitempty"  toml:"partition"` // "model" (default) or "none"
+}
+
+// ProviderThreshold is OpenRouter's percentile-object form for
+// preferred_min_throughput / preferred_max_latency. OpenRouter also accepts a
+// bare number (a plain threshold with no percentile semantics), but config
+// only exposes the percentile-object form for the same reason as
+// ProviderSort; P90 alone is the common case ("soft" threshold over a
+// rolling 5-minute window).
+type ProviderThreshold struct {
+	P50 float64 `json:"p50,omitempty" toml:"p50"`
+	P75 float64 `json:"p75,omitempty" toml:"p75"`
+	P90 float64 `json:"p90,omitempty" toml:"p90"`
+	P99 float64 `json:"p99,omitempty" toml:"p99"`
+}
+
+// ProviderMaxPrice is OpenRouter's provider.max_price object: a ceiling in
+// USD per 1M tokens (prompt/completion) or per request/image.
+type ProviderMaxPrice struct {
+	Prompt     float64 `json:"prompt,omitempty"     toml:"prompt"`
+	Completion float64 `json:"completion,omitempty" toml:"completion"`
+	Request    float64 `json:"request,omitempty"    toml:"request"`
+	Image      float64 `json:"image,omitempty"      toml:"image"`
+}
+
 // SystemBlock is a block of content in the system prompt.
 type SystemBlock struct {
 	Type string `json:"type"`
@@ -284,6 +347,17 @@ type MessageRequest struct {
 	CacheStrategy string          `json:"cache_strategy,omitempty"` // "auto" or "explicit" (read by Anthropic translate layer)
 	CacheTTL      string          `json:"cache_ttl,omitempty"`      // Anthropic prompt cache TTL: "5m" or "1h" (read by Anthropic translate layer)
 	Speed         string          `json:"speed,omitempty"`          // "fast" for Anthropic fast mode (Opus only, 6x pricing)
+
+	// ProviderRouting carries OpenRouter provider-selection preferences
+	// (order, sort, ignore, max_price, ...) from [models.*.provider] config
+	// through to the wire. Only read by the openai translate layer, and only
+	// meaningful when the resolved endpoint is OpenRouter. json:"-" because
+	// it's re-serialized as the top-level "provider" object by the openai
+	// translate layer's own extra-fields injection, not by this struct's own
+	// JSON encoding (MessageRequest isn't round-tripped through
+	// encoding/json for wire transmission — each translate layer builds its
+	// own SDK params type from these fields).
+	ProviderRouting *ProviderRouting `json:"-"`
 }
 
 // Usage contains token usage information from a response.

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"foci/internal/provider"
 )
 
 // ToolCallDisplay controls how tool calls are shown in Telegram.
@@ -224,6 +226,11 @@ type ModelConfig struct {
 	EnableKeepalive *bool         `toml:"enable_keepalive"` // nil=auto-detect, true/false=explicit
 	CacheTTL        string        `toml:"cache_ttl"`        // cache TTL: Go duration, empty=auto-detect (Anthropic: "5m"/"1h"; Gemini: any duration)
 	CacheStrategy   string        `toml:"cache_strategy"`   // cache marker strategy: "auto" or "explicit" (Anthropic only, default "auto")
+	// Provider carries OpenRouter provider-routing preferences (order, sort,
+	// ignore, max_price, ...) from a [models.*.provider] sub-table. Only
+	// meaningful when this model resolves to the openrouter endpoint; a
+	// nil/empty value means "let OpenRouter load-balance normally".
+	Provider *provider.ProviderRouting `toml:"provider" desc:"OpenRouter provider-routing preferences (order, sort, ignore, quantizations, max_price, ...). Only applies when this model resolves to the openrouter endpoint"`
 }
 
 // ModelInfoEntry holds user-supplied model registry attributes from

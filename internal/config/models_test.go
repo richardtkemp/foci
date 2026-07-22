@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	tomlParser "github.com/BurntSushi/toml"
 )
 
 func TestResolveModel(t *testing.T) {
@@ -314,6 +316,12 @@ func TestModelStringConfigToWire(t *testing.T) {
 		{"openrouter 3-segment", "openrouter/stepfun/step-3.5-flash", "stepfun/step-3.5-flash"},
 		{"openrouter anthropic model", "openrouter/anthropic/claude-opus-4-6", "anthropic/claude-opus-4-6"},
 		{"openrouter deepseek model", "openrouter/deepseek/deepseek-r1", "deepseek/deepseek-r1"},
+		// ":floor"/":nitro" are OpenRouter's own routing shortcuts (equivalent
+		// to provider.sort: "price"/"throughput"). They need NO special
+		// parsing here — the suffix rides along as part of the model leaf and
+		// is forwarded verbatim (#1478 locks this in as intentional).
+		{"openrouter :floor shortcut", "openrouter/deepseek/deepseek-v4-pro:floor", "deepseek/deepseek-v4-pro:floor"},
+		{"openrouter :nitro shortcut", "openrouter/moonshotai/kimi-k2.5:nitro", "moonshotai/kimi-k2.5:nitro"},
 	}
 
 	for _, tt := range tests {
@@ -334,6 +342,79 @@ func TestModelStringConfigToWire(t *testing.T) {
 					tt.config, fullModel, wireModel, tt.wantWire)
 			}
 		})
+	}
+}
+
+func TestModelConfigProviderRoutingTOML(t *testing.T) {
+	// Proves that a [models.X.provider] sub-table round-trips through TOML
+	// into the shared provider.ProviderRouting type (internal/provider),
+	// including a nested inline table for sort and a sub-table for max_price.
+	tomlData := `
+[models.deepseek]
+model = "openrouter/deepseek/deepseek-v4-pro:floor"
+
+[models.deepseek.provider]
+order = ["deepinfra", "novita"]
+allow_fallbacks = false
+data_collection = "deny"
+quantizations = ["fp8", "fp16"]
+sort = {by = "price"}
+
+[models.deepseek.provider.max_price]
+prompt = 1.0
+completion = 2.0
+`
+	var cfg Config
+	if _, err := tomlParser.Decode(tomlData, &cfg); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	mc, ok := cfg.Models["deepseek"]
+	if !ok {
+		t.Fatal("expected [models.deepseek] to be present")
+	}
+	pr := mc.Provider
+	if pr == nil {
+		t.Fatal("expected Provider to be populated")
+	}
+	if len(pr.Order) != 2 || pr.Order[0] != "deepinfra" || pr.Order[1] != "novita" {
+		t.Errorf("Order = %v, want [deepinfra novita]", pr.Order)
+	}
+	if pr.AllowFallbacks == nil || *pr.AllowFallbacks != false {
+		t.Errorf("AllowFallbacks = %v, want false", pr.AllowFallbacks)
+	}
+	if pr.DataCollection != "deny" {
+		t.Errorf("DataCollection = %q, want deny", pr.DataCollection)
+	}
+	if len(pr.Quantizations) != 2 || pr.Quantizations[0] != "fp8" {
+		t.Errorf("Quantizations = %v, want [fp8 fp16]", pr.Quantizations)
+	}
+	if pr.Sort == nil || pr.Sort.By != "price" {
+		t.Fatalf("Sort = %+v, want {By: price}", pr.Sort)
+	}
+	if pr.MaxPrice == nil || pr.MaxPrice.Prompt != 1.0 || pr.MaxPrice.Completion != 2.0 {
+		t.Fatalf("MaxPrice = %+v, want {Prompt: 1.0, Completion: 2.0}", pr.MaxPrice)
+	}
+}
+
+func TestModelConfigProviderRoutingAbsentByDefault(t *testing.T) {
+	// Proves that a [models.X] entry with no [models.X.provider] sub-table
+	// leaves Provider nil — no accidental zero-value provider object gets
+	// forwarded to the wire for models that don't configure routing.
+	tomlData := `
+[models.plain]
+model = "openrouter/stepfun/step-3.5-flash:nitro"
+`
+	var cfg Config
+	if _, err := tomlParser.Decode(tomlData, &cfg); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	mc, ok := cfg.Models["plain"]
+	if !ok {
+		t.Fatal("expected [models.plain] to be present")
+	}
+	if mc.Provider != nil {
+		t.Errorf("Provider = %+v, want nil", mc.Provider)
 	}
 }
 

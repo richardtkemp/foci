@@ -67,6 +67,82 @@ func validateNonNegative(value int, fieldName string) error {
 	return nil
 }
 
+// validProviderSortBy/validProviderPartition/validProviderQuantization are the
+// enum values OpenRouter documents for the corresponding provider-routing
+// fields (https://openrouter.ai/docs/guides/routing/provider-selection).
+var (
+	validProviderSortBy     = map[string]bool{"price": true, "throughput": true, "latency": true}
+	validProviderPartition  = map[string]bool{"": true, "model": true, "none": true}
+	validProviderDataPolicy = map[string]bool{"": true, "allow": true, "deny": true}
+	validProviderQuant      = map[string]bool{
+		"int4": true, "int8": true, "fp4": true, "fp6": true,
+		"fp8": true, "fp16": true, "bf16": true, "fp32": true, "unknown": true,
+	}
+)
+
+// validateModelProviderRouting validates a [models.*.provider] sub-table
+// against OpenRouter's documented enums for sort/data_collection/quantizations,
+// and warns (does not fail) on config that's merely dead weight — an
+// only/ignore overlap, or provider routing set on a model that doesn't
+// resolve to the openrouter endpoint (OpenRouter itself is similarly lenient
+// about the former; the latter is silently ignored by design — see
+// internal/openai/translate.go buildParams — so a warning avoids user
+// confusion without adding new endpoint plumbing).
+func validateModelProviderRouting(name string, mc ModelConfig) error {
+	pr := mc.Provider
+	if pr == nil {
+		return nil
+	}
+
+	if !validProviderDataPolicy[pr.DataCollection] {
+		return fmt.Errorf("[models.%s.provider] data_collection = %q: must be \"allow\" or \"deny\"", name, pr.DataCollection)
+	}
+
+	if pr.Sort != nil {
+		if !validProviderSortBy[pr.Sort.By] {
+			return fmt.Errorf("[models.%s.provider.sort] by = %q: must be \"price\", \"throughput\", or \"latency\"", name, pr.Sort.By)
+		}
+		if !validProviderPartition[pr.Sort.Partition] {
+			return fmt.Errorf("[models.%s.provider.sort] partition = %q: must be \"model\" or \"none\"", name, pr.Sort.Partition)
+		}
+	}
+
+	for _, q := range pr.Quantizations {
+		if !validProviderQuant[q] {
+			return fmt.Errorf("[models.%s.provider] quantizations: unknown level %q", name, q)
+		}
+	}
+
+	if pr.MaxPrice != nil {
+		for fieldName, v := range map[string]float64{
+			"prompt": pr.MaxPrice.Prompt, "completion": pr.MaxPrice.Completion,
+			"request": pr.MaxPrice.Request, "image": pr.MaxPrice.Image,
+		} {
+			if v < 0 {
+				return fmt.Errorf("[models.%s.provider.max_price] %s = %v: must not be negative", name, fieldName, v)
+			}
+		}
+	}
+
+	if len(pr.Only) > 0 && len(pr.Ignore) > 0 {
+		ignoreSet := make(map[string]bool, len(pr.Ignore))
+		for _, s := range pr.Ignore {
+			ignoreSet[s] = true
+		}
+		for _, s := range pr.Only {
+			if ignoreSet[s] {
+				configLog.Warnf("[models.%s.provider] provider %q is in both only and ignore — ignore wins, the only entry is dead", name, s)
+			}
+		}
+	}
+
+	if resolved, err := ResolveModel(mc.Model, mc.Endpoint, nil); err == nil && resolved.Endpoint != "openrouter" {
+		configLog.Warnf("[models.%s.provider] set but model %q resolves to endpoint %q, not openrouter — provider routing will be silently ignored", name, mc.Model, resolved.Endpoint)
+	}
+
+	return nil
+}
+
 // reservedAgentIDs are directory names in the foci home directory that must not
 // be used as agent IDs, since the workspace defaults to ~/agentid/.
 var reservedAgentIDs = map[string]bool{
@@ -245,6 +321,9 @@ func (cfg *Config) Validate() error {
 	for name, mc := range cfg.Models {
 		if !validStrategies[mc.CacheStrategy] {
 			return fmt.Errorf("[models.%s] cache_strategy = %q: must be \"auto\" or \"explicit\"", name, mc.CacheStrategy)
+		}
+		if err := validateModelProviderRouting(name, mc); err != nil {
+			return err
 		}
 	}
 
