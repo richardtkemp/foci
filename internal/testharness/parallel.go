@@ -3,9 +3,7 @@ package testharness
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
-	"sync"
 	"testing"
 
 	"golang.org/x/sync/semaphore"
@@ -60,37 +58,11 @@ func init() {
 	}
 }
 
-// bucketAuditEnv silences the in-run audit when set to "off". The audit is
-// the cheap, correct-direction half of weight detection (see auditWeight);
-// the thorough detector is the differential `make bucket-audit` target,
-// which is the only thing that sees contention sensitivity directly.
-const bucketAuditEnv = "FOCI_BUCKET_AUDIT"
-
-var (
-	weightsMu sync.Mutex
-	weights   = map[string]int{}
-)
-
-func setWeight(name string, w int) {
-	weightsMu.Lock()
-	weights[name] = w
-	weightsMu.Unlock()
-}
-
-func weightOf(name string) (int, bool) {
-	weightsMu.Lock()
-	defer weightsMu.Unlock()
-	w, ok := weights[name]
-	return w, ok
-}
-
-// acquire is the shared body: record the declared weight, hand control back
-// to the runtime via t.Parallel (so the acquire happens in the parallel
-// phase, not while the test is parked), draw the weight from the budget, and
-// return it at test end.
+// acquire is the shared body: hand control back to the runtime via t.Parallel
+// (so the acquire happens in the parallel phase, not while the test is parked),
+// draw the weight from the budget, and return it at test end.
 func acquire(t *testing.T, w int) {
 	t.Helper()
-	setWeight(t.Name(), w)
 	t.Parallel()
 	if err := sem.Acquire(context.Background(), int64(w)); err != nil {
 		t.Fatalf("acquire parallel budget (weight %d): %v", w, err)
@@ -125,31 +97,4 @@ func ParallelWeight(t *testing.T, w int) {
 		t.Fatalf("ParallelWeight: weight %d out of range [1, %d]", w, heavyLoad)
 	}
 	acquire(t, w)
-}
-
-// auditWeight flags the one mis-weighting an in-run check can catch cheaply
-// and correctly: a lightest-weight (ParallelWait) test that FAILED under the
-// high-parallelism shipping config. Wait-bound tests assert on events after
-// generous fixed sleeps, so they shouldn't fail from running slower — if one
-// does, the likeliest cause is a contention-sensitive deadline, i.e. it wants
-// a heavier weight. (The inverse error — an over-heavy weight on a truly
-// cheap test — only wastes budget and can't be seen from a single run; the
-// differential `make bucket-audit` target catches it.)
-//
-// Advisory by default; FOCI_BUCKET_AUDIT=off silences it. We deliberately do
-// NOT key off CPU: measurement showed heavy and wait tests consume
-// indistinguishable gateway CPU (both are light), so CPU misclassifies.
-func auditWeight(t *testing.T) {
-	if os.Getenv(bucketAuditEnv) == "off" {
-		return
-	}
-	w, ok := weightOf(t.Name())
-	if !ok || !t.Failed() {
-		return
-	}
-	if w == 1 {
-		t.Logf("weight audit: %s is ParallelWait (weight 1) but failed under high "+
-			"parallelism — if this is a timeout/contention flake rather than a logic "+
-			"bug, give it a heavier weight (ParallelHeavy or ParallelWeight)", t.Name())
-	}
 }

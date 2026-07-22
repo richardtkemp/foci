@@ -501,10 +501,6 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		opts:         opts,
 	}
 
-	// Registered before spawnGateway so it runs LAST (cleanups are LIFO),
-	// by which point t.Failed() reflects the test's final verdict.
-	t.Cleanup(func() { auditWeight(t) })
-
 	seed := mergeOnboardingSeed(opts)
 	if len(seed) > 0 {
 		seedAgentMetadata(t, filepath.Join(dataDir, "state.db"), seed)
