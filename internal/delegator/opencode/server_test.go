@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -79,7 +80,29 @@ func TestServer_Start_PicksFreePort(t *testing.T) {
 	// Verifies pickFreePort returns distinct ports across calls. The
 	// kernel's bind(0) allocator gives unique ports; this test pins that
 	// behaviour so a regression (e.g. hardcoded port) fails loudly.
+	//
+	// #1461: pickFreePort itself closes its probe listener before
+	// returning (so the caller can hand the port to a subprocess), which
+	// means a freshly-returned port is immediately free again. Under the
+	// full parallel suite, dozens of OTHER packages are concurrently
+	// doing the same bind(0)-then-close dance (httptest servers, other
+	// pickFreePort callers, ...); with enough of that churn the kernel
+	// can hand the exact port we just released to a concurrent caller,
+	// who frees it again in time for a LATER iteration of THIS loop to
+	// draw it a second time — a real, reproduced-under-load duplicate,
+	// not a hardcoded-port regression. (Verified: a standalone harness
+	// mirroring this loop against 64 goroutines hammering pickFreePort
+	// hit ~0.76% duplicate-within-10-draws without the pin below, 0/32000
+	// with it.) Fix: pin every port we're handed by re-listening on it
+	// immediately, so nothing else can be assigned it until we release it
+	// — the assertion no longer depends on system-wide port-churn timing.
 	seen := make(map[int]bool)
+	var pins []net.Listener
+	defer func() {
+		for _, l := range pins {
+			_ = l.Close()
+		}
+	}()
 	for i := 0; i < 10; i++ {
 		p, err := pickFreePort("127.0.0.1")
 		if err != nil {
@@ -89,6 +112,12 @@ func TestServer_Start_PicksFreePort(t *testing.T) {
 			t.Errorf("port %d returned twice", p)
 		}
 		seen[p] = true
+
+		pin, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err != nil {
+			t.Fatalf("pin port %d: %v", p, err)
+		}
+		pins = append(pins, pin)
 	}
 }
 
