@@ -871,8 +871,10 @@ Available in both `[defaults.nudge]` and `[agents.nudge]`.
 |-----|------|---------|-------------|
 | `nudge_enable` | bool | `true` | Enable the nudge system. When enabled, loads rules from disk and injects reminders during the agent loop. |
 | `nudge_auto_extract` | bool | `true` | Auto-extract rules from character files via LLM when they change. When false, nudges still fire from an existing `nudge-rules.json` but the LLM is never called to create or update it. |
-| `nudge_cooldown` | int | `5` | Minimum tool calls between repeating the same reminder. Prevents spam. |
-| `nudge_max_per_batch` | int | `1` | Maximum reminders injected per tool batch. |
+| `nudge_cooldown` | int | `5` | Minimum tool calls between repeating the same reminder. Prevents spam. Also the shared cross-rule window for `tool_pattern` — see docs/NUDGE.md#1309. |
+| `nudge_max_per_batch` | int | `1` | Maximum reminders injected per tool batch. Also caps simultaneous regex matches on one message. |
+| `nudge_max_per_turn` | int | `0` | Maximum total reminders injected across a whole turn, summed over every trigger type. `0` = unlimited. |
+| `nudge_extraction_model` | string | `""` | Model for the one-shot nudge-extraction LLM call. `""` uses the backend's own cheap-batch default. |
 | `nudge_pre_answer_gate` | bool | `false` | Enable pre-answer verification gate. When the model wants to end a turn after 2+ tool calls, inject pre_answer reminders and let it reconsider once. |
 | `nudge_pre_answer_min_tools` | int | `2` | Minimum tool call iterations before the pre-answer gate fires. |
 | `nudge_default_enable` | bool | `true` | Enable built-in tool/skill reminders. When enabled, periodically reminds the agent which tools and skills are available. |

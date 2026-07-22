@@ -716,3 +716,252 @@ func TestSchedulerLiveGating(t *testing.T) {
 		t.Errorf("default disabled: unexpected %v", r)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// #1309 — cross-rule tool_pattern cooldown, after_error benign-exit
+// exemption, regex/max-per-turn budget.
+// ---------------------------------------------------------------------------
+
+func TestToolPatternCrossRuleCooldown(t *testing.T) {
+	// Reproduces the "Edit/Write quartet fires on every edit" bug: four
+	// independent tool_pattern rules all matching Edit, each individually
+	// respecting its own per-rule cooldown, previously round-robined so a
+	// DIFFERENT rule fired on every single matching tool call. The shared
+	// lastFiredByType cooldown should now throttle the whole tool_pattern
+	// category together, so only the FIRST matching edit fires anything
+	// within one cooldown window — not one nudge per edit.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "rule-a", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^(Edit|Write)$"}, Priority: "high"},
+			{Text: "rule-b", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^(Edit|Write)$"}, Priority: "medium"},
+			{Text: "rule-c", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^(Edit|Write)$"}, Priority: "medium"},
+			{Text: "rule-d", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^(Edit|Write)$"}, Priority: "low"},
+		},
+	}
+	// cooldown=5 (the config default), maxPerBatch=1 (also default).
+	s := NewScheduler(rs, 5, 1)
+	s.StartTurn("hello")
+
+	var allFired []string
+	for i := 1; i <= 4; i++ {
+		s.RecordToolCall("Edit", `{"file_path":"/tmp/x.go"}`)
+		allFired = append(allFired, s.CheckAfterTools(i, false)...)
+	}
+
+	// Before the fix, each of the 4 edits fired a DIFFERENT rule (4 total).
+	// With the shared cooldown, only the first edit should fire anything —
+	// the next 3 stay silent until toolCount-lastFiredByType >= cooldown(5).
+	if len(allFired) != 1 {
+		t.Errorf("expected exactly 1 nudge across 4 consecutive edits (cross-rule cooldown), got %d: %v", len(allFired), allFired)
+	}
+
+	// A 5th edit, past the cooldown window (toolCount=6, last fired at
+	// toolCount=1, diff=5) should be allowed to fire again.
+	s.RecordToolCall("Edit", `{"file_path":"/tmp/y.go"}`)
+	s.CheckAfterTools(5, false) // toolCount=5, diff=4 — still within cooldown
+	s.RecordToolCall("Edit", `{"file_path":"/tmp/z.go"}`)
+	r := s.CheckAfterTools(6, false) // toolCount=6, diff=5 — cooldown elapsed
+	if len(r) != 1 {
+		t.Errorf("expected the group to fire again once cooldown elapsed, got %v", r)
+	}
+}
+
+func TestToolPatternCrossRuleCooldownDoesNotAffectOtherTypes(t *testing.T) {
+	// The cross-rule cooldown is scoped to tool_pattern only — an
+	// every_n_tools or after_error rule must still fire on its own schedule
+	// even while a tool_pattern rule is on its shared cooldown.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "tp", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^Edit$"}, Priority: "high"},
+			{Text: "periodic", Trigger: Trigger{Type: "every_n_tools", N: 2}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 5, 5) // maxPerBatch=5 so both can fire in one batch
+	s.StartTurn("hello")
+
+	s.RecordToolCall("Edit", "")
+	r := s.CheckAfterTools(1, false)
+	if len(r) != 1 || r[0] != "tp" {
+		t.Errorf("tool call 1: expected [tp], got %v", r)
+	}
+
+	// Tool call 2: tp is on its own + group cooldown, but periodic (N=2)
+	// should still fire independently.
+	s.RecordToolCall("Edit", "")
+	r = s.CheckAfterTools(2, false)
+	if len(r) != 1 || r[0] != "periodic" {
+		t.Errorf("tool call 2: expected [periodic] (tp on cooldown), got %v", r)
+	}
+}
+
+func TestAfterErrorExemptsBenignGrepNoMatch(t *testing.T) {
+	// #1309: grep/rg/ack/test/[ finding "no match" (exit 1) sets is_error
+	// via the raw shell exit code, indistinguishable from a real failure by
+	// exit code alone — after_error must not fire on it.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "check-errors", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	for _, cmd := range []string{
+		`grep foo bar.txt`,
+		`rg --hidden pattern .`,
+		`test -f /tmp/missing`,
+		`[ -z "$VAR" ]`,
+	} {
+		s.StartTurn("hello") // reset per-turn cooldown state between cases
+		s.RecordToolCall("Bash", `{"command":"`+cmd+`"}`)
+		if r := s.CheckAfterTools(1, true); len(r) != 0 {
+			t.Errorf("benign no-match command %q: expected no fire, got %v", cmd, r)
+		}
+	}
+}
+
+func TestAfterErrorStillFiresForRealErrors(t *testing.T) {
+	// A genuine failure (not a grep/test-style command) must still fire.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "check-errors", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	s.RecordToolCall("Bash", `{"command":"go build ./..."}`)
+	r := s.CheckAfterTools(1, true)
+	if len(r) != 1 || r[0] != "check-errors" {
+		t.Errorf("real build failure: expected [check-errors], got %v", r)
+	}
+}
+
+func TestAfterErrorExemptionRequiresRecentContext(t *testing.T) {
+	// With no recorded tool call (a caller that doesn't call RecordToolCall),
+	// the exemption must default to NOT exempting — preserves prior
+	// behaviour for callers without tool context.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "check-errors", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	r := s.CheckAfterTools(1, true)
+	if len(r) != 1 || r[0] != "check-errors" {
+		t.Errorf("no tool context: expected [check-errors] (fail open), got %v", r)
+	}
+}
+
+func TestCheckRegexCapsAtMaxPerBatch(t *testing.T) {
+	// #1309: a single message matching several independent regex rules
+	// previously stacked ALL of them into one turn-start injection. Capped
+	// at MaxPerBatch like the post-tool path.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "r1", Trigger: Trigger{Type: "regex", Pattern: "(?i)debug"}, Priority: "high"},
+			{Text: "r2", Trigger: Trigger{Type: "regex", Pattern: "(?i)issue"}, Priority: "medium"},
+			{Text: "r3", Trigger: Trigger{Type: "regex", Pattern: "(?i)problem"}, Priority: "low"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1) // maxPerBatch=1
+	s.StartTurn("debug this issue, there's a problem")
+
+	r := s.CheckRegex()
+	if len(r) != 1 {
+		t.Errorf("expected exactly 1 regex reminder (maxPerBatch=1), got %d: %v", len(r), r)
+	}
+}
+
+func TestCheckRegexMaxPerBatchUnlimitedWhenHigh(t *testing.T) {
+	// Sanity: raising MaxPerBatch allows more than one regex match through.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "r1", Trigger: Trigger{Type: "regex", Pattern: "(?i)debug"}, Priority: "high"},
+			{Text: "r2", Trigger: Trigger{Type: "regex", Pattern: "(?i)issue"}, Priority: "medium"},
+		},
+	}
+	s := NewScheduler(rs, 1, 5) // maxPerBatch=5
+	s.StartTurn("debug this issue")
+
+	r := s.CheckRegex()
+	if len(r) != 2 {
+		t.Errorf("expected both regex reminders with maxPerBatch=5, got %d: %v", len(r), r)
+	}
+}
+
+func TestMaxPerTurnBudget(t *testing.T) {
+	// #1309: a per-turn injection budget bounds the TOTAL nudges across
+	// every trigger type in one turn, not just per-batch/per-rule. 0 (the
+	// zero value) means unlimited — must not change behaviour by default.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "turn-reminder", Trigger: Trigger{Type: "every_n_turns", N: 1}, Priority: "low"},
+			{Text: "regex-hit", Trigger: Trigger{Type: "regex", Pattern: "(?i)debug"}, Priority: "low"},
+			{Text: "after-err", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
+		},
+	}
+	// Cooldown=10 (not 1): a regex rule's cooldown check is shared with
+	// CheckAfterTools's tool-count-based reevaluation — at cooldown=1 the
+	// very next tool call (diff=1) would be eligible to refire the SAME
+	// regex rule a second time, which is a separate, pre-existing quirk
+	// unrelated to the per-turn budget under test here. A higher cooldown
+	// keeps this test isolated to MaxPerTurn.
+	s := NewScheduler(rs, 10, 5)
+	s.Configure(Settings{Cooldown: 10, MaxPerBatch: 5, MaxPerTurn: 2})
+	s.StartTurn("debug this")
+
+	var total []string
+	total = append(total, s.CheckTurnInterval()...)
+	total = append(total, s.CheckRegex()...)
+	s.RecordToolCall("Bash", `{"command":"go build ./..."}`)
+	total = append(total, s.CheckAfterTools(1, true)...)
+
+	if len(total) != 2 {
+		t.Errorf("expected exactly 2 nudges total (MaxPerTurn=2), got %d: %v", len(total), total)
+	}
+}
+
+func TestMaxPerTurnZeroMeansUnlimited(t *testing.T) {
+	// The zero value (unset config) must not throttle anything — preserves
+	// every existing caller's behaviour.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "turn-reminder", Trigger: Trigger{Type: "every_n_turns", N: 1}, Priority: "low"},
+			{Text: "regex-hit", Trigger: Trigger{Type: "regex", Pattern: "(?i)debug"}, Priority: "low"},
+			{Text: "after-err", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 10, 5) // see TestMaxPerTurnBudget for why cooldown isn't 1
+	s.StartTurn("debug this")
+
+	var total []string
+	total = append(total, s.CheckTurnInterval()...)
+	total = append(total, s.CheckRegex()...)
+	s.RecordToolCall("Bash", `{"command":"go build ./..."}`)
+	total = append(total, s.CheckAfterTools(1, true)...)
+
+	if len(total) != 3 {
+		t.Errorf("expected all 3 nudges with MaxPerTurn unset (0=unlimited), got %d: %v", len(total), total)
+	}
+}

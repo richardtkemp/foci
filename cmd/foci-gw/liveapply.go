@@ -210,11 +210,13 @@ var (
 
 	liveApplyNudgeAddrs = []string{
 		"nudge.nudge_enable", "nudge.nudge_auto_extract", "nudge.nudge_cooldown",
-		"nudge.nudge_max_per_batch", "nudge.nudge_pre_answer_gate", "nudge.nudge_pre_answer_min_tools",
+		"nudge.nudge_max_per_batch", "nudge.nudge_max_per_turn", "nudge.nudge_extraction_model",
+		"nudge.nudge_pre_answer_gate", "nudge.nudge_pre_answer_min_tools",
 		"nudge.nudge_default_enable", "nudge.nudge_default_frequency", "nudge.nudge_default_scratchpad_frequency",
 		"nudge.nudge_default_braindead_threshold", "nudge.nudge_default_braindead_prompt",
 		"agent.nudge.nudge_enable", "agent.nudge.nudge_auto_extract", "agent.nudge.nudge_cooldown",
-		"agent.nudge.nudge_max_per_batch", "agent.nudge.nudge_pre_answer_gate", "agent.nudge.nudge_pre_answer_min_tools",
+		"agent.nudge.nudge_max_per_batch", "agent.nudge.nudge_max_per_turn", "agent.nudge.nudge_extraction_model",
+		"agent.nudge.nudge_pre_answer_gate", "agent.nudge.nudge_pre_answer_min_tools",
 		"agent.nudge.nudge_default_enable", "agent.nudge.nudge_default_frequency", "agent.nudge.nudge_default_scratchpad_frequency",
 		"agent.nudge.nudge_default_braindead_threshold", "agent.nudge.nudge_default_braindead_prompt",
 	}

@@ -412,6 +412,83 @@ func TestExtractViaRunOnce(t *testing.T) {
 	}
 }
 
+// mockModelRunner implements ModelOneShotRunner for testing the
+// nudge_extraction_model override path (#1309).
+type mockModelRunner struct {
+	mockRunner
+	gotModel string
+}
+
+func (m *mockModelRunner) RunOnceWithModel(_ context.Context, prompt, systemPrompt, model string) (string, error) {
+	m.gotPrompt = prompt
+	m.gotSysPrompt = systemPrompt
+	m.gotModel = model
+	return m.response, m.err
+}
+
+func TestExtractViaRunOnceWithModelOverride(t *testing.T) {
+	// #1309: when Extractor.Model is set and the runner supports
+	// ModelOneShotRunner, ExtractViaRunOnce must use RunOnceWithModel
+	// (carrying the model through) rather than the plain RunOnce.
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CRAFT.md"), []byte("Check before acting"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewExtractor("test", dir, []string{"CRAFT.md"}, 0640, true, true)
+	e.Model = "haiku"
+	runner := &mockModelRunner{
+		mockRunner: mockRunner{
+			response: `[{"text": "Check first", "source_file": "CRAFT.md", "source_text": "Check before acting", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
+		},
+	}
+
+	if err := e.ExtractViaRunOnce(context.Background(), runner); err != nil {
+		t.Fatalf("ExtractViaRunOnce: %v", err)
+	}
+	if runner.gotModel != "haiku" {
+		t.Errorf("expected RunOnceWithModel called with model=haiku, got %q", runner.gotModel)
+	}
+	if runner.gotPrompt == "" {
+		t.Error("expected RunOnceWithModel to receive the extraction prompt")
+	}
+}
+
+func TestExtractViaRunOnceModelSetButRunnerUnsupported(t *testing.T) {
+	// #1309: when Extractor.Model is set but the runner is a plain
+	// OneShotRunner (no ModelOneShotRunner), extraction must still succeed —
+	// falling back to RunOnce rather than failing outright.
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CRAFT.md"), []byte("Check before acting"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewExtractor("test", dir, []string{"CRAFT.md"}, 0640, true, true)
+	e.Model = "haiku"
+	runner := &mockRunner{
+		response: `[{"text": "Check first", "source_file": "CRAFT.md", "source_text": "Check before acting", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
+	}
+
+	if err := e.ExtractViaRunOnce(context.Background(), runner); err != nil {
+		t.Fatalf("ExtractViaRunOnce: %v", err)
+	}
+	if runner.gotPrompt == "" {
+		t.Error("expected fallback to RunOnce to still receive the extraction prompt")
+	}
+
+	rs, err := LoadRules(RulesPath(dir))
+	if err != nil {
+		t.Fatalf("LoadRules: %v", err)
+	}
+	if rs == nil || len(rs.Rules) != 1 {
+		t.Fatalf("expected 1 rule saved via fallback path, got %v", rs)
+	}
+}
+
 func TestCharacterSystemPrompt(t *testing.T) {
 	t.Parallel()
 

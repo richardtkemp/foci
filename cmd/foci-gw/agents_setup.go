@@ -123,6 +123,7 @@ func nudgeSettings(nc config.ResolvedNudge) nudge.Settings {
 	return nudge.Settings{
 		Cooldown:           nc.NudgeCooldown,
 		MaxPerBatch:        nc.NudgeMaxPerBatch,
+		MaxPerTurn:         nc.NudgeMaxPerTurn,
 		Enable:             nc.NudgeEnable,
 		DefaultEnable:      nc.NudgeDefaultEnable,
 		DefaultFreq:        nc.NudgeDefaultFrequency,
@@ -225,6 +226,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 			return
 		}
 		extractor := nudge.NewExtractor(acfg.ID, acfg.Workspace, fileOrder, fileMode, schedOpts.CanPostTool, schedOpts.CanPreAnswer)
+		extractor.Model = liveNudge().NudgeExtractionModel
 		_, needed := extractor.NeedsExtraction()
 		if needed {
 			// Don't extract while rate-limited — the LLM call would fail
