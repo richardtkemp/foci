@@ -46,6 +46,30 @@ func noteUnpriced(bare string) {
 	}
 }
 
+// AmbiguousModelHook, if set, is invoked once per distinct leaf id whose lookup
+// had to fall back to a deterministic pick among a genuine collision (two
+// entries under the same leaf that the input couldn't disambiguate by dev or
+// provider). Wired at startup to a log warning so a real collision surfaces.
+var AmbiguousModelHook func(bare string)
+
+var (
+	ambiguousMu   sync.Mutex
+	ambiguousSeen = map[string]bool{}
+)
+
+func noteAmbiguous(bare string) {
+	if AmbiguousModelHook == nil {
+		return
+	}
+	ambiguousMu.Lock()
+	first := !ambiguousSeen[bare]
+	ambiguousSeen[bare] = true
+	ambiguousMu.Unlock()
+	if first {
+		AmbiguousModelHook(bare)
+	}
+}
+
 // Model holds the static attributes of a model.
 type Model struct {
 	Provider        string  // provider qualifier / API host (e.g. "openrouter", "zai-coding-plan")
@@ -210,9 +234,11 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 		}
 		provider := strings.ToLower(e.Provider)
 		id := strings.ToLower(e.ID)
+		dev := strings.ToLower(e.Dev)
+		key := provKey(provider, dev)
 		m := Model{
 			Provider:        provider,
-			Dev:             strings.ToLower(e.Dev),
+			Dev:             dev,
 			ContextWindow:   e.ContextWindow,
 			Effort:          e.Effort,
 			Thinking:        e.Thinking,
@@ -227,7 +253,7 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 		if history[id] == nil {
 			history[id] = map[string][]historyRow{}
 		}
-		history[id][provider] = append(history[id][provider], historyRow{fetched: e.Fetched, model: m})
+		history[id][key] = append(history[id][key], historyRow{fetched: e.Fetched, model: m})
 
 		if registry[id] == nil {
 			registry[id] = map[string]Model{}
@@ -235,11 +261,14 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 		}
 		// `fetched` is a YYYY-MM-DD date, so lexical compare is chronological;
 		// "" (baseline) precedes any real date. >= lets a later line win ties.
-		if _, has := registry[id][provider]; has && e.Fetched < fetchedAt[id][provider] {
+		// Keyed by (provider, dev): two models can share a leaf id under the
+		// same provider with different devs (a genuine collision), so the
+		// latest-row dedup must not collapse them onto each other.
+		if _, has := registry[id][key]; has && e.Fetched < fetchedAt[id][key] {
 			continue // an older historical row — keep the newer one already stored
 		}
-		registry[id][provider] = m
-		fetchedAt[id][provider] = e.Fetched
+		registry[id][key] = m
+		fetchedAt[id][key] = e.Fetched
 	}
 
 	// history is appended in FILE order above, which is normally also
@@ -264,11 +293,13 @@ func Register(provider, modelID string, m Model) {
 	provider = strings.ToLower(provider)
 	modelID = strings.ToLower(stripDateSuffix(modelID))
 	m.Provider = provider
+	m.Dev = strings.ToLower(m.Dev)
+	key := provKey(provider, m.Dev)
 	registryMu.Lock()
 	if registry[modelID] == nil {
 		registry[modelID] = map[string]Model{}
 	}
-	registry[modelID][provider] = m
+	registry[modelID][key] = m
 	registryMu.Unlock()
 
 	// Also append to `history` so an as-of lookup made after this call sees
@@ -280,7 +311,7 @@ func Register(provider, modelID string, m Model) {
 		history[modelID] = map[string][]historyRow{}
 	}
 	today := time.Now().UTC().Format("2006-01-02")
-	history[modelID][provider] = append(history[modelID][provider], historyRow{fetched: today, model: m})
+	history[modelID][key] = append(history[modelID][key], historyRow{fetched: today, model: m})
 	historyMu.Unlock()
 }
 
@@ -288,40 +319,121 @@ func Register(provider, modelID string, m Model) {
 // whether it exists. Tries a provider-specific entry first, then falls back to
 // the providerless ("") entry.
 func Lookup(provider, modelID string) (Model, bool) {
-	provider = strings.ToLower(provider)
-	modelID = strings.ToLower(stripDateSuffix(modelID))
+	segs, bare := splitSegs(modelID)
+	if p := strings.ToLower(provider); p != "" {
+		segs[p] = true
+	}
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	return registryLookup(provider, modelID)
+	return registryLookupSegs(segs, bare)
 }
 
-// registryLookup tries a provider-specific entry first, then falls back to the
-// providerless ("") entry, then to a sole remaining provider entry. Provider
-// only distinguishes the preferred entry when the model already matches — a
-// model registered under a single provider matches regardless of which
-// provider the lookup carries (or none). Caller must hold registryMu.
-func registryLookup(provider, bare string) (Model, bool) {
-	providers := registry[bare]
-	if providers == nil {
+// provKey composes the registry/history inner-map key from a provider (the API
+// host, e.g. "openrouter") and a dev (the model author/vendor, e.g.
+// "moonshotai"). BOTH dimensions matter: two models can share a leaf id under
+// the same provider but different devs — a genuine collision the old
+// provider-only key silently overwrote at load time.
+func provKey(provider, dev string) string { return provider + "\x00" + dev }
+
+// candidates returns the distinct Models registered under a leaf id (one per
+// (provider, dev)). Caller must hold registryMu.
+func candidates(bare string) []Model {
+	byKey := registry[bare]
+	if len(byKey) == 0 {
+		return nil
+	}
+	out := make([]Model, 0, len(byKey))
+	for _, m := range byKey {
+		out = append(out, m)
+	}
+	return out
+}
+
+// pickIndex chooses which candidate a lookup resolves to, given the caller's
+// known segments — the provider/dev tokens parsed from the model string (plus
+// any explicit provider hint). It is the single disambiguation authority shared
+// by the registry and history lookups (which pass parallel candidate slices).
+//
+// Rules (confirmed design):
+//   - 0 candidates → miss.
+//   - 1 candidate  → that one (fast path): a sole entry matches regardless of a
+//     mismatched dev/provider — dev DISAMBIGUATES a collision, it never rejects
+//     an otherwise-unique model.
+//   - >1 → prefer an entry matching BOTH provider and dev in segs; else a
+//     unique dev match; else a unique provider match; else a providerless ("")
+//     default; else a deterministic sorted pick, reported via AmbiguousModelHook
+//     so a real collision surfaces instead of silently mis-resolving.
+func pickIndex(cands []Model, segs map[string]bool, bare string) (int, bool) {
+	switch len(cands) {
+	case 0:
+		return 0, false
+	case 1:
+		return 0, true
+	}
+	filter := func(pool []int, keep func(Model) bool) []int {
+		var out []int
+		for _, i := range pool {
+			if keep(cands[i]) {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
+	all := make([]int, len(cands))
+	for i := range cands {
+		all[i] = i
+	}
+
+	// Exact provider+dev match.
+	if ex := filter(all, func(m Model) bool { return segs[m.Provider] && segs[m.Dev] }); len(ex) == 1 {
+		return ex[0], true
+	} else if len(ex) > 1 {
+		all = ex
+	}
+	// Unique dev match.
+	if dm := filter(all, func(m Model) bool { return m.Dev != "" && segs[m.Dev] }); len(dm) == 1 {
+		return dm[0], true
+	} else if len(dm) > 1 {
+		all = dm
+	}
+	// Unique provider match.
+	if pm := filter(all, func(m Model) bool { return m.Provider != "" && segs[m.Provider] }); len(pm) == 1 {
+		return pm[0], true
+	} else if len(pm) > 1 {
+		all = pm
+	}
+	// Providerless ("") default entry.
+	if pl := filter(all, func(m Model) bool { return m.Provider == "" }); len(pl) >= 1 {
+		return pl[0], true
+	}
+	// Genuinely ambiguous: deterministic sorted pick, and log it.
+	noteAmbiguous(bare)
+	best := all[0]
+	for _, i := range all[1:] {
+		if cands[i].Provider < cands[best].Provider ||
+			(cands[i].Provider == cands[best].Provider && cands[i].Dev < cands[best].Dev) {
+			best = i
+		}
+	}
+	return best, true
+}
+
+// registryLookupSegs resolves a leaf id against the registry using the caller's
+// segment set. Caller must hold registryMu.
+func registryLookupSegs(segs map[string]bool, bare string) (Model, bool) {
+	cands := candidates(bare)
+	i, ok := pickIndex(cands, segs, bare)
+	if !ok {
 		return Model{}, false
 	}
-	if provider != "" {
-		if m, ok := providers[provider]; ok {
-			return m, true
-		}
-	}
-	if m, ok := providers[""]; ok {
-		return m, true
-	}
-	// No exact provider or providerless match. If only one provider entry
-	// exists, use it — the model matches, the provider is just not the one
-	// the lookup asked for.
-	if len(providers) == 1 {
-		for _, m := range providers {
-			return m, true
-		}
-	}
-	return Model{}, false
+	return cands[i], true
+}
+
+// registryLookup resolves a leaf id with no provider/dev hint — the family and
+// claude-haiku fallbacks target single-candidate leaves, so this is the
+// segment-less entry point. Caller must hold registryMu.
+func registryLookup(bare string) (Model, bool) {
+	return registryLookupSegs(map[string]bool{}, bare)
 }
 
 // ResetToBuiltIn restores the registry to its built-in defaults (from
@@ -384,24 +496,36 @@ func stripDateSuffix(model string) string {
 	return model[:len(model)-9]
 }
 
-// normalize strips provider prefixes and date suffixes from a model string.
+// normalize reduces a model string to its bare leaf id — the segment after the
+// LAST '/' (OpenRouter ids are host/dev/model or dev/model, so the leaf is the
+// registry key), with the date suffix stripped. Casing is preserved (matching
+// the prior behaviour that modelcaps relies on for its cache keys).
 func normalize(model string) string {
-	return stripDateSuffix(StripPrefix(model))
-}
-
-// normalizeParts splits a model string into provider and bare model ID,
-// both lowercased, with date suffix stripped from the bare ID.
-func normalizeParts(model string) (provider, bare string) {
-	if i := strings.IndexByte(model, '/'); i > 0 {
-		return strings.ToLower(model[:i]), strings.ToLower(stripDateSuffix(model[i+1:]))
+	if i := strings.LastIndexByte(model, '/'); i >= 0 {
+		model = model[i+1:]
 	}
-	return "", strings.ToLower(stripDateSuffix(model))
+	return stripDateSuffix(model)
 }
 
-// Normalize strips provider prefixes and date suffixes from a model string,
-// yielding the bare registry key (e.g. "anthropic/claude-opus-4-8-20260528" →
-// "claude-opus-4-8"). Exported so other packages (e.g. modelcaps) key their
-// caches the same way the registry does.
+// splitSegs splits a possibly-prefixed model string into its lowercased prefix
+// segments (a set, for dev/provider disambiguation) and its bare leaf id (the
+// last '/'-segment, lowercased, date-stripped). A leading '~' (OpenRouter's
+// shadow/variant listing marker) is stripped from each segment.
+// e.g. "openrouter/moonshotai/kimi-k3-20260101" → ({openrouter, moonshotai}, "kimi-k3").
+func splitSegs(model string) (segs map[string]bool, bare string) {
+	segs = map[string]bool{}
+	parts := strings.Split(model, "/")
+	for _, p := range parts[:len(parts)-1] {
+		if p = strings.ToLower(strings.TrimPrefix(p, "~")); p != "" {
+			segs[p] = true
+		}
+	}
+	return segs, strings.ToLower(stripDateSuffix(parts[len(parts)-1]))
+}
+
+// Normalize reduces a model string to its bare leaf registry key
+// (e.g. "openrouter/moonshotai/kimi-k3-20260101" → "kimi-k3"). Exported so
+// other packages (e.g. modelcaps) key their caches the same way the registry does.
 func Normalize(model string) string {
 	return normalize(model)
 }
@@ -410,9 +534,9 @@ func Normalize(model string) string {
 // Falls back to family defaults: gemini-1.5-* → 2M, gemini-* → 1M,
 // everything else (including claude) → 200k.
 func ContextWindow(model string) int {
-	provider, bare := normalizeParts(model)
+	segs, bare := splitSegs(model)
 	registryMu.RLock()
-	m, ok := registryLookup(provider, bare)
+	m, ok := registryLookupSegs(segs, bare)
 	registryMu.RUnlock()
 	if ok {
 		return m.ContextWindow
@@ -434,9 +558,9 @@ func ContextWindow(model string) int {
 // Falls back to family defaults: claude-sonnet → effort+thinking,
 // claude-opus → effort+thinking+speed, everything else → none.
 func Capabilities(model string) (effort, thinking, speed bool) {
-	provider, bare := normalizeParts(model)
+	segs, bare := splitSegs(model)
 	registryMu.RLock()
-	m, ok := registryLookup(provider, bare)
+	m, ok := registryLookupSegs(segs, bare)
 	registryMu.RUnlock()
 	if ok {
 		return m.Effort, m.Thinking, m.Speed
@@ -465,9 +589,9 @@ func Capabilities(model string) (effort, thinking, speed bool) {
 // Delegated/claude-code agents have no resolved model and are handled at the
 // call site (they keep keepalive — their backend has its own prompt cache).
 func Caching(model string) bool {
-	provider, bare := normalizeParts(model)
+	segs, bare := splitSegs(model)
 	registryMu.RLock()
-	m, ok := registryLookup(provider, bare)
+	m, ok := registryLookupSegs(segs, bare)
 	registryMu.RUnlock()
 	if ok {
 		return m.Caching
@@ -481,7 +605,7 @@ func Caching(model string) bool {
 // inherits its family's rates without needing a per-version registry entry.
 // Final fallbacks: OpenAI → $5/$15 approximation, everything else → haiku.
 func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
-	provider, bare := normalizeParts(model)
+	segs, bare := splitSegs(model)
 	// CC's synthetic sentinel is a zero-cost no-op / session-limit turn: there is
 	// nothing to price, and pricing it would spuriously trip the unpriced warning.
 	// Check the BARE key (not just the exact string) so a provider-prefixed
@@ -492,7 +616,7 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 	}
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	m, ok := registryLookup(provider, bare)
+	m, ok := registryLookupSegs(segs, bare)
 	if !ok {
 		m, ok = familyPricing(bare) // caller-holds-lock: Cost holds RLock
 	}
@@ -503,7 +627,7 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 		case IsOpenAI(bare):
 			m = Model{InputPer1M: 5.00, OutputPer1M: 15.00}
 		default:
-			m, _ = registryLookup("", "claude-haiku-4-5")
+			m, _ = registryLookup("claude-haiku-4-5")
 		}
 	}
 
@@ -521,15 +645,15 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 func familyPricing(bare string) (Model, bool) {
 	switch {
 	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
-		return registryLookup("", "claude-fable-5")
+		return registryLookup("claude-fable-5")
 	case strings.Contains(bare, "opus"):
-		return registryLookup("", "claude-opus-4-6")
+		return registryLookup("claude-opus-4-6")
 	case strings.Contains(bare, "sonnet"):
-		return registryLookup("", "claude-sonnet-4-5")
+		return registryLookup("claude-sonnet-4-5")
 	case strings.Contains(bare, "haiku"):
-		return registryLookup("", "claude-haiku-4-5")
+		return registryLookup("claude-haiku-4-5")
 	case strings.Contains(bare, "gemini"):
-		return registryLookup("", "gemini-2.5-flash")
+		return registryLookup("gemini-2.5-flash")
 	}
 	return Model{}, false
 }
@@ -544,20 +668,22 @@ func familyPricing(bare string) (Model, bool) {
 // observation-date caveats: this is a best-effort reconstruction from the
 // data models.jsonl actually records, not an exact historical price.
 func LookupAsOf(provider, modelID string, at time.Time) (Model, bool) {
-	provider = strings.ToLower(provider)
-	modelID = strings.ToLower(stripDateSuffix(modelID))
+	segs, bare := splitSegs(modelID)
+	if p := strings.ToLower(provider); p != "" {
+		segs[p] = true
+	}
 	historyMu.RLock()
 	defer historyMu.RUnlock()
-	return historyLookupAsOf(provider, modelID, at)
+	return historyLookupAsOfSegs(segs, bare, at)
 }
 
 // historyLookupAsOf is LookupAsOf's body, factored out so CostAsOf can reuse
 // it while already holding historyMu (mirrors registryLookup/Lookup's split).
 // Provider resolution mirrors registryLookup: provider-specific row set first,
 // then providerless, then a sole remaining provider.
-func historyLookupAsOf(provider, bare string, at time.Time) (Model, bool) {
-	providers := history[bare]
-	if providers == nil {
+func historyLookupAsOfSegs(segs map[string]bool, bare string, at time.Time) (Model, bool) {
+	byKey := history[bare]
+	if len(byKey) == 0 {
 		return Model{}, false
 	}
 	atDate := at.UTC().Format("2006-01-02")
@@ -577,20 +703,29 @@ func historyLookupAsOf(provider, bare string, at time.Time) (Model, bool) {
 		}
 		return best.model, true
 	}
-	if provider != "" {
-		if rows, ok := providers[provider]; ok {
-			return pick(rows)
+	// Parallel candidate slices: a representative (latest) model per
+	// (provider, dev) group carries the fields pickIndex matches on; groups[i]
+	// holds that group's full ascending row history for the as-of pick.
+	var reps []Model
+	var groups [][]historyRow
+	for _, rows := range byKey {
+		if len(rows) == 0 {
+			continue
 		}
+		reps = append(reps, rows[len(rows)-1].model)
+		groups = append(groups, rows)
 	}
-	if rows, ok := providers[""]; ok {
-		return pick(rows)
+	i, ok := pickIndex(reps, segs, bare)
+	if !ok {
+		return Model{}, false
 	}
-	if len(providers) == 1 {
-		for _, rows := range providers {
-			return pick(rows)
-		}
-	}
-	return Model{}, false
+	return pick(groups[i])
+}
+
+// historyLookupAsOf resolves a leaf id as-of `at` with no provider/dev hint
+// (familyPricingAsOf targets single-candidate leaves). Caller must hold historyMu.
+func historyLookupAsOf(bare string, at time.Time) (Model, bool) {
+	return historyLookupAsOfSegs(map[string]bool{}, bare, at)
 }
 
 // familyPricingAsOf mirrors familyPricing but resolves the canonical family
@@ -599,15 +734,15 @@ func historyLookupAsOf(provider, bare string, at time.Time) (Model, bool) {
 func familyPricingAsOf(bare string, at time.Time) (Model, bool) {
 	switch {
 	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
-		return historyLookupAsOf("", "claude-fable-5", at)
+		return historyLookupAsOf("claude-fable-5", at)
 	case strings.Contains(bare, "opus"):
-		return historyLookupAsOf("", "claude-opus-4-6", at)
+		return historyLookupAsOf("claude-opus-4-6", at)
 	case strings.Contains(bare, "sonnet"):
-		return historyLookupAsOf("", "claude-sonnet-4-5", at)
+		return historyLookupAsOf("claude-sonnet-4-5", at)
 	case strings.Contains(bare, "haiku"):
-		return historyLookupAsOf("", "claude-haiku-4-5", at)
+		return historyLookupAsOf("claude-haiku-4-5", at)
 	case strings.Contains(bare, "gemini"):
-		return historyLookupAsOf("", "gemini-2.5-flash", at)
+		return historyLookupAsOf("gemini-2.5-flash", at)
 	}
 	return Model{}, false
 }
@@ -620,12 +755,12 @@ func familyPricingAsOf(bare string, at time.Time) (Model, bool) {
 // since that call was actually made. Never persisted: callers recompute
 // fresh on every read (foci_todo #1407).
 func CostAsOf(model string, at time.Time, input, output, cacheRead, cacheWrite int) float64 {
-	provider, bare := normalizeParts(model)
+	segs, bare := splitSegs(model)
 	if IsSynthetic(model) || IsSynthetic(bare) {
 		return 0
 	}
 	historyMu.RLock()
-	m, ok := historyLookupAsOf(provider, bare, at)
+	m, ok := historyLookupAsOfSegs(segs, bare, at)
 	if !ok {
 		m, ok = familyPricingAsOf(bare, at) // caller-holds-lock: mirrors Cost/familyPricing
 	}

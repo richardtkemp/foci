@@ -357,7 +357,7 @@ func TestBuildRegistryLatestFetchedWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
-	if got := reg["hist-model"]["openrouter"].InputPer1M; got != 3.0 {
+	if got := reg["hist-model"][provKey("openrouter", "")].InputPer1M; got != 3.0 {
 		t.Errorf("latest InputPer1M = %v, want 3.0 (max fetched wins regardless of file order)", got)
 	}
 }
@@ -370,7 +370,7 @@ func TestBuildRegistryTieBreaksByFileOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
-	if got := reg["tie"][""].InputPer1M; got != 9.0 {
+	if got := reg["tie"][provKey("", "")].InputPer1M; got != 9.0 {
 		t.Errorf("tie InputPer1M = %v, want 9.0 (later line wins on equal fetched)", got)
 	}
 }
@@ -388,7 +388,7 @@ func TestLookupAsOfPicksHistoricalPrice(t *testing.T) {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
 	// Sanity: registry (latest-only) picks the newest row.
-	if got := reg["asof-model"]["openrouter"].InputPer1M; got != 4.0 {
+	if got := reg["asof-model"][provKey("openrouter", "")].InputPer1M; got != 4.0 {
 		t.Fatalf("registry InputPer1M = %v, want 4.0 (latest)", got)
 	}
 
