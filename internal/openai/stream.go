@@ -141,6 +141,7 @@ func (c *Client) streamOnce(ctx context.Context, req *provider.MessageRequest, h
 
 	result.WireRequest = wireReq
 	result.KeySuffix = log.FormatKeySuffix(c.apiKey)
+	c.logGenerationID(result, req.Model)
 	return result, nil
 }
 
