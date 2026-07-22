@@ -817,6 +817,116 @@ func TestResetDelegatedSession(t *testing.T) {
 	}
 }
 
+func TestResetDelegatedSession_StampsReflectionForRedundancyGuard(t *testing.T) {
+	// Reproduces #1465: "Memories from the previous session are being saved
+	// in the background" fired even though a session-end-memory reflection
+	// had already run and nothing happened since. RunSessionEndMemory never
+	// called SessionIndex.StampReflection — only the unrelated periodic
+	// interval-reflection pass (internal/periodic/reflection.go) did — so
+	// ReflectionRedundant could never observe that a session-end pass (reset
+	// / reclaim / scheduled reset) had just completed, and the very next
+	// /reset with zero intervening activity still reported "reflecting"
+	// instead of "already saved".
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	sessionKey := "test/istamp"
+
+	seedSession(t, store, sessionKey, 1)
+
+	created := time.Now().Add(-time.Hour)
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  sessionKey,
+		FilePath:    "/x/root.jsonl",
+		CreatedAt:   created,
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+	// Simulate real activity strictly after the row was created, so the
+	// freshly-seeded last_reflection==last_activity coincidence (see
+	// TestResetSession_MemoryAlreadySaved) can't mask the bug.
+	activityAt := time.Now().Add(-time.Minute)
+	idx.UpdateActivity(sessionKey, activityAt)
+
+	var backendClosed atomic.Bool
+	reflectStarted := make(chan struct{})
+	reflectRelease := make(chan struct{})
+	dm := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			be := &mockBackendDM{running: true}
+			be.closeFn = func() error {
+				backendClosed.Store(true)
+				return nil
+			}
+			return be, nil
+		},
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test",
+		IdleTimeout: time.Hour,
+	}
+	t.Cleanup(func() { dm.Close() })
+
+	if _, err := dm.Get(context.Background(), sessionKey); err != nil {
+		t.Fatalf("pre-create backend: %v", err)
+	}
+	mb, _ := dm.getManaged(sessionKey)
+	mock := mb.be.(*mockBackendDM)
+	mock.sendToPaneFn = func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+		close(reflectStarted)
+		<-reflectRelease
+		result := &delegator.TurnResult{Text: "memory formed"}
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(result)
+		}
+		return result, nil
+	}
+
+	ag := &Agent{
+		Sessions:         store,
+		Tools:            tools.NewRegistry(),
+		Bootstrap:        bootstrap,
+		DelegatedManager: dm,
+		SessionIndex:     idx,
+		Model:            "claude-haiku-4-5",
+		Reflection: config.ResolvedReflection{
+			SessionEndEnabled: true,
+		},
+	}
+
+	outcome, err := ag.ResetSession(context.Background(), sessionKey)
+	if err != nil {
+		t.Fatalf("ResetSession: %v", err)
+	}
+	if outcome != ResetMemoryReflecting {
+		t.Fatalf("memory outcome = %v, want ResetMemoryReflecting (first reset must actually reflect)", outcome)
+	}
+
+	select {
+	case <-reflectStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reflection did not start")
+	}
+	close(reflectRelease)
+	deadline := time.Now().Add(2 * time.Second)
+	for !backendClosed.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !backendClosed.Load() {
+		t.Fatal("reflection never completed (backend not closed)")
+	}
+
+	// The reflection just ran and covered everything up to activityAt, with
+	// no activity since — the redundancy guard must now report "redundant"
+	// so a FOLLOWING reset says "already saved" instead of reflecting again.
+	if !idx.ReflectionRedundant(sessionKey) {
+		t.Error("ReflectionRedundant = false right after a completed session-end-memory pass with no further activity, want true — RunSessionEndMemory must stamp last_reflection on the parent key (#1465)")
+	}
+}
+
 func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 	// Proves that when SessionEndEnabled is false, the delegated reset skips
 	// memory formation but still closes the backend and archives the session

@@ -80,7 +80,11 @@ func (a *Agent) PrepareSessionEndMemory(sessionKey, orientTemplate string, skipM
 // Blocks until the turn completes (HandleMessage is synchronous for all
 // transports). For delegated agents the branch's backend is destroyed
 // afterwards — reflection is the branch's last act.
-func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
+//
+// parentKey is the session this branch was forked from (the key
+// PrepareSessionEndMemory was called with) — needed to stamp last_reflection
+// on IT, not the branch, on success (see #1465 below).
+func (a *Agent) RunSessionEndMemory(ctx context.Context, parentKey, branchKey string) {
 	refl := a.reflection()
 	prompt := prompts.ResolvePrompt(refl.SessionEndPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
 	if prompt == "" {
@@ -97,11 +101,25 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, branchKey string) {
 		winStart = time.Now()
 	}
 
+	dispatchedAt := time.Now()
 	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	hookCtx = WithTrigger(hookCtx, "session_end_memory")
 	if err := a.HandleMessage(hookCtx, branchKey, []string{prompt}, nil); err != nil {
 		a.taggedLog("session-end-memory").Warnf("failed for %s: %v", branchKey, err)
+	} else if a.SessionIndex != nil && parentKey != "" {
+		// #1465: this used to be missing — only the unrelated periodic
+		// interval-reflection pass (internal/periodic/reflection.go) ever
+		// called StampReflection, so ReflectionRedundant (the "reflect-twice
+		// guard" PrepareSessionEndMemory checks on every /reset, scheduled
+		// reset, and TTL reclaim) could never see that a session-end pass had
+		// just covered parentKey. Symptom: "Memories from the previous
+		// session are being saved in the background" fired again on the very
+		// next reset even with zero activity since the prior reflection
+		// completed. Stamp with the pre-turn timestamp (not post-turn) so any
+		// activity that arrives while this turn is running is still counted
+		// as "since the last reflection" on the next check.
+		a.SessionIndex.StampReflection(parentKey, dispatchedAt)
 	}
 
 	if notifySkills {
@@ -129,7 +147,7 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 	if !ok {
 		return
 	}
-	a.RunSessionEndMemory(ctx, branchKey)
+	a.RunSessionEndMemory(ctx, sessionKey, branchKey)
 }
 
 // detectAndNotifySkillChanges diffs the current skill state against before,
