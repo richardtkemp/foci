@@ -4,10 +4,12 @@ Mid-turn behavioral reminders that keep the agent aligned with its character dur
 
 ## What nudges are
 
-Nudges are short reminders injected at strategic points during a turn. There are two kinds:
+Nudges are short reminders injected at strategic points during a turn. There are four categories:
 
 1. **Character nudges** — behavioral reminders ("Check your assumptions before answering", "Don't over-engineer") extracted from character files. They fire after tool calls, before final answers, or when the user's message matches a pattern.
 2. **Default nudges** — built-in reminders listing the agent's available tools and skills. They fire every N user turns (default 50) so agents in long conversations don't forget less-used capabilities.
+3. **Scratchpad nudges** — an `every_n_turns` rule that reminds the agent to review stale scratchpad entries. Configured via `nudge_default_scratchpad_frequency` (default 20 turns).
+4. **Braindead nudges** — an `every_n_tools` rule that warns when the agent makes many consecutive tool calls without checking in with the user. Configured via `nudge_default_braindead_threshold` (default 0 = off) and `nudge_default_braindead_prompt`.
 
 The goal is to reinforce guidance without bloating the system prompt. Character files define personality once; default nudges list capabilities once — both re-surface mid-conversation when most relevant.
 
@@ -101,6 +103,9 @@ All options are available in both `[nudge]` (global) and `[[agents]].nudge.*` (p
 | `nudge_pre_answer_min_tools` | int | `2` | Min tool iterations before pre-answer gate fires |
 | `nudge_default_enable` | bool | `true` | Enable built-in tool/skill reminders |
 | `nudge_default_frequency` | int | `50` | Turns between tool/skill reminders |
+| `nudge_default_scratchpad_frequency` | int | `20` | Turns between scratchpad-review reminders |
+| `nudge_default_braindead_threshold` | int | `0` | Consecutive tool calls before a braindead nudge fires. `0` = off |
+| `nudge_default_braindead_prompt` | string | `""` | Prompt text for the braindead nudge |
 
 ## Rules file format
 

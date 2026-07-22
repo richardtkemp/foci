@@ -44,12 +44,17 @@ The request body is the webhook payload (max 1 MB). It's appended to the prompt 
 | Param | Description |
 |-------|-------------|
 | `sync=true` | Wait for agent response (default: async 202) |
+| `session=<key>` | Route the webhook to a specific session instead of the default per-hook session |
 | `if_active=DURATION` | **Session-level**: skip unless the agent's session ran a turn within duration (e.g. `1h`). A turn currently in flight always counts as active. |
 | `if_inactive=DURATION` | **Session-level**: skip if the session ran a turn within duration. In-flight always counts. Keepalive shape. |
 | `if_user_active=DURATION` | **User-attention**: skip unless the user touched this agent within duration. CLI/cron/agent-to-agent does not count. |
 | `if_user_inactive=DURATION` | **User-attention**: skip if the user touched this agent within duration. |
 
 See [SPEC.md](SPEC.md) Activity gating for the distinction between the two domains and the in-flight short-circuit semantics.
+
+## Session Routing
+
+Absent `?session=`, each webhook fires into its own independent session keyed `agent/i<hookID>` (e.g., `scout/ideploy` for the `deploy` hook). This session is separate from the user's interactive chat — webhook turns do not pollute the user's conversation. To route a webhook into a specific session, pass `?session=<key>`.
 
 ## Response Codes
 
@@ -63,7 +68,7 @@ See [SPEC.md](SPEC.md) Activity gating for the distinction between the two domai
 
 ## Authentication
 
-All HTTP endpoints (including webhooks) require authentication via `Authorization: Bearer <key>` header or `api_key` query param. The key is configured in `secrets.toml` as `http.api_key`.
+Webhooks authenticate via the `Authorization: Bearer <key>` header only. The `api_key` query parameter is honored ONLY on `/voice` (for WebSocket compatibility) and is explicitly ignored everywhere else, including all webhook endpoints. The key is configured in `secrets.toml` as `http.api_key`.
 
 ## Examples
 

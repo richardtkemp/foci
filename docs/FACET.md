@@ -1,6 +1,6 @@
 # Facet — Parallel Conversations
 
-Facet lets you fork an agent session into a parallel conversation on a second Telegram bot. Same agent, same context snapshot, different thread.
+Facet lets you fork an agent session into a parallel conversation on a second Telegram bot, a new app conversation, or (on delegated CC/opencode backends) a real transcript fork. Same agent, same context snapshot, different thread.
 
 ## Why
 
@@ -13,7 +13,7 @@ You:    /facet
 Agent:  Forked to @wand_bot — same context, separate thread.
 ```
 
-The fork creates a new session on a **secondary Telegram bot** (configured as a facet bot). The forked session:
+The fork creates a new session — either on a **secondary Telegram bot** (configured as a facet bot), as a **new app conversation** (surfacing in the app's session list), or, on delegated backends (CC/opencode), as a **real transcript fork** that copies the full conversation history into an independent session. The forked session:
 
 - Starts with the parent session's full conversation context
 - Shares the same cached system prompt prefix (cheap fork)
@@ -28,10 +28,14 @@ Facet bots are configured in `foci.toml` by name. Tokens are resolved from `secr
 # Per-agent facet bots:
 [[agents]]
 id = "myagent"
-facet_bots = ["wand", "crystal"]
+
+  [[agents.platforms]]
+  id = "telegram"
+  facet_bots = ["wand", "crystal"]
 
 # Or shared pool (available to all agents):
-[telegram]
+[[platforms]]
+id = "telegram"
 facet_bots = ["wand", "crystal"]
 ```
 
@@ -56,10 +60,18 @@ Bots can be **per-agent** (dedicated) or **shared** (allocated from a pool). Whe
 From the agent's perspective, a facet session is just another session. It has:
 
 - Its own conversation history
-- Its own compaction cycle
+- **No compaction by default** — facets default to `facet_no_compact = true` and do NOT compact unless explicitly opted in (`facet_no_compact = false`)
 - Its own tool call context
 
 The agent knows it's in a facet session via its session key (e.g., `clutch/c123/b1709123456`).
+
+## Configuration
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `facet_bots` | string list | `[]` | Pool of secondary bot names available for facets (Telegram) |
+| `facet_session_ttl` | duration | `"60m"` | Idle time before a facet session is reclaimed |
+| `facet_no_compact` | bool | `true` | Whether facets skip compaction. Set `false` to enable compaction on facet sessions |
 
 ## Display Settings
 

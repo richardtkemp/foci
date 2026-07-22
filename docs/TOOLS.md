@@ -22,6 +22,23 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 | `bitwarden_unlock` | Unlock a vault item by ID — requires admin approval via aisudo/Telegram. Caches value for `secret_ttl`. Never returns the actual password. |
 | `app_android` | Invoke a tool on the user's connected Android device (via Tasker). `action="list"` returns the device's allowlisted tasks; `action="perform"` runs one. Returns an error string if no device is connected. Gated on `[[platforms]] id="app"` being configured. The on-device allowlist ships empty by default — the user edits `TaskerAllowlist` in the foci-android source to expose tasks. v1: a "pending" result (Tasker didn't finish in the device's 10s sync window) is final — late completion is dropped, async injection lands later. |
 | `mcp` | Call a tool on a connected MCP server. Re-reads `mcp.toml` on each call — servers can be added/removed without restarting. Only registered when `mcp.toml` exists or `configDir` is set. See [CONFIG.md](CONFIG.md#mcptoml) for configuration. |
+| `task_list` | Manage task items. Distinct from `todo`: `task_list` is its own subsystem for tracking task work in progress (see also [HEARTBEAT.md](HEARTBEAT.md)). |
+| `set_session_alias` (foci_set_session_alias) | Set a short descriptive name for the current conversation. The alias is surfaced in session listings and UI surfaces. Disabled for the Codex backend, which manages session naming server-side. |
+| `browser` | Full CDP browser automation via [go-rod](https://github.com/go-rod/rod). Only registered when `[browser] enabled = true`. Provides navigation, DOM interaction, screenshots, and script evaluation against a real Chromium instance. |
+
+## `ask` — Human-in-the-loop questioning
+
+`foci_ask` is a first-class tool exported as `foci_ask` for interactive human-in-the-loop questioning with selectable button options. It is the primary mechanism for getting a decision from the user mid-turn without forcing the model to guess.
+
+- **Async by design.** Posting an ask ends the current turn; the answer arrives later as a new user message routed back into the same session. The model does not block waiting.
+- **Persists across restarts (24h TTL).** Asks are stored durably, so a restart mid-question does not lose the pending prompt.
+- **Batched asks survive restart.** Multiple outstanding asks are tracked together; restarting does not drop any pending answer.
+- **Optional grader subprocess.** When `grader` is configured, the answer is fed to an external program that decides accept/reject. Keys: `grader` (binary), `grader_args`, `grader_timeout_seconds`, `grader_on_error` (controls behaviour when the grader itself fails or times out).
+- **Button clicks always work.** Selecting a button option submits the answer directly to the originating ask.
+- **Typed replies route to the ask when the session is idle** — so free-text answers reach the right outstanding question without disambiguation prompts.
+- **Capture control.** `/pause`, `/resume`, and `/complete` commands start, stop, and finalize answer capture for an ask.
+
+See [ASKGW.md](ASKGW.md) and [ASKGW-PROTOCOL.md](ASKGW-PROTOCOL.md) for the wire protocol and gateway details.
 
 ## Complex Tools
 
@@ -55,9 +72,9 @@ Autopilot mode (default on): auto-unwatches after inactivity notification, auto-
 
 Owned sessions persist across app restarts via the state store.
 
-### `summary` — Haiku-powered extraction
+### `summary` — Cheap-group extraction
 
-Summarize or extract specific information from a file via a Haiku side-call without loading the file into conversation context. Useful for large files where only specific data is needed — the full content never enters the agent's context window.
+Summarize or extract specific information from a file via a side-call to the `cheap` model group (which defaults to the `powerful` model when `cheap` is unset) without loading the file into conversation context. Useful for large files where only specific data is needed — the full content never enters the agent's context window.
 
 ### `spawn` — Sub-calls with context modes
 
@@ -68,9 +85,11 @@ Unified sub-call to a model with four context modes, all with tool access:
 | `raw` | None | Most (no `send_to_chat`, `send_to_session`) | One-shot. No character context means no communication awareness. |
 | `character` | Character files only | All | One-shot with identity. |
 | `clone` (default) | Full clone | All | Branch session — a headless self-fork. Runs async, delivers result on completion. |
-| `explore` | Code explorer | Read-only (`ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch`) | One-shot. Safe exploration — no file mutation, no shell exec, no messaging. Always haiku. |
+| `explore` | Code explorer | Read-only allowlist (see below) | One-shot. Safe exploration — no file mutation, no shell exec, no messaging. Uses the `cheap` model group (which defaults to the `powerful` model when `cheap` is unset). |
 
 `clone` creates a branch `{parentKey}/b{TIMESTAMP}`, runs via `AsyncNotifier`, and returns an immediate ack. Recursive `clone` is blocked. Concurrent spawns limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion.
+
+**`explore` allowlist.** The read-only tool set for `explore` is broader than just the search/read primitives: `git` and `todo` are always available, and the following are enabled conditionally (based on config/availability): `file`, `stat`, `wc`, `head`, `tail`, `tree`, `du`, `jq`, `yq`, `mdq`, `docker`, `systemctl`, `sqlite3`, `crontab`, `id`. None of these can mutate the workspace — they are inspection-only commands wrapped as tools.
 
 ## Slash Commands as Tools
 
@@ -89,10 +108,10 @@ exec subprocess                       foci process
 │ foci_web_fetch    ──┼──connect────▶ │ goroutine/conn │
 │ foci_spawn        ──┼──connect────▶ │ goroutine/conn │
 └─────────────────────┘               └───────────────┘
-    /tmp/foci-exec-<pid>-<n>.sock
+    <tempdir>/exec-<pid>-<n>.sock
 ```
 
-Each shell call creates a per-shell unix socket (0600 perms). The `foci-call` binary connects, sends a JSON request, and prints the result. Shell wrapper functions provide ergonomic interfaces on top of `foci-call`.
+Each shell call creates a per-shell unix socket (0600 perms) at `<tempdir>/exec-<pid>-<n>.sock` (no `foci-` prefix — the system temp directory is used as-is). The `foci-call` binary connects, sends a JSON request, and prints the result. Shell wrapper functions provide ergonomic interfaces on top of `foci-call`.
 
 ### Available Functions
 
@@ -183,7 +202,7 @@ foci_web_fetch https://example.com/docs | grep -i "api" > /tmp/api-notes.txt
 ### How It Works Internally
 
 1. When `shell` runs a command (non-background mode), it creates an `ExecBridge`
-2. The bridge opens a unix socket at `/tmp/foci-exec-<pid>-<n>.sock`
+2. The bridge opens a unix socket at `<tempdir>/exec-<pid>-<n>.sock`
 3. A shell functions file is generated with `foci_<toolname>()` for each tool with `ExecExport: true`
 4. The command is wrapped: `set -o pipefail; source <funcs.sh>; <original command>`
 5. `FOCI_SOCK` environment variable is set so `foci-call` knows where to connect

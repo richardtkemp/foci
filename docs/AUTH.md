@@ -35,8 +35,8 @@ For the Anthropic endpoint, foci checks credentials in this order:
 The first source that succeeds is used. Startup log shows which source was selected:
 
 ```
-using API key from secrets.toml
-using Claude Code credentials from ~/.claude/.credentials.json (fallback, read-only, expires in 4h 15m)
+using API key from secrets (endpoint %q)
+using CC credentials from ~/.claude/.credentials.json (endpoint %q, lazy)
 ```
 
 Other providers (Gemini, OpenAI, OpenRouter) use API keys only — no fallback mechanism.
@@ -80,7 +80,7 @@ If the gateway isn't running, `foci auth` prints a note and the new credentials 
 
 ## Auto-Refresh
 
-When using Claude Code credentials fallback, foci refreshes the token ~5 minutes before expiry. The refresh runs in the background — no manual intervention needed. API keys are static and do not need refresh.
+`CCTokenSource` does lazy on-disk reads — it reads whatever Claude Code last wrote to `~/.claude/.credentials.json` at the point a request is made. There is no background refresh and no expiry margin; refreshing the OAuth token is Claude Code's job, not foci's. API keys are static and do not need refresh.
 
 ## Automated Re-login
 

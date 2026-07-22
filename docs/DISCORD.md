@@ -33,8 +33,11 @@ To find your numeric ID:
 Add to `foci.toml`:
 
 ```toml
-[discord]
-allowed_users = ["YOUR_DISCORD_USER_ID"]
+[[platforms]]
+id = "discord"
+
+  [platforms.access]
+  allowed_users = ["YOUR_DISCORD_USER_ID"]
 ```
 
 Add to `secrets.toml`:
@@ -49,9 +52,12 @@ The secret key matches the agent ID by default. If your agent is `[[agents]] id 
 To use a different secret key:
 
 ```toml
-[agents.platforms.discord]
-bot = "mybot"                    # resolves from discord.mybot
-bot_secret = "custom.secret.key" # or use a custom key entirely
+[[agents.platforms]]
+id = "discord"
+
+  [agents.platforms.discord]
+  bot = "mybot"                    # resolves from discord.mybot
+  bot_secret = "custom.secret.key" # or use a custom key entirely
 ```
 
 ### Interactive Setup (Alternative)
@@ -86,17 +92,23 @@ Commands that return options (e.g. `.model`) render as interactive buttons.
 Real-time token streaming is available:
 
 ```toml
-[discord]
-stream_output = true
-stream_update_interval = "1200ms"  # default; Discord rate limits are strict
+[[platforms]]
+id = "discord"
+
+  [platforms.display]
+  stream_output = true
+  stream_interval = "1200ms"  # default; Discord rate limits are strict
 ```
 
 Per-agent override:
 
 ```toml
-[agents.platforms.discord]
-stream_output = true
-stream_interval = "1500ms"
+[[agents.platforms]]
+id = "discord"
+
+  [agents.platforms.display]
+  stream_output = true
+  stream_interval = "1500ms"
 ```
 
 ---
@@ -106,16 +118,21 @@ stream_interval = "1500ms"
 Control how tool calls and thinking are shown:
 
 ```toml
-[discord]
-show_tool_calls = "off"       # "off", "preview", or "full"
-show_thinking = "off"         # "off", "compact", or "true"
-display_width = 60
+[[platforms]]
+id = "discord"
+
+  [platforms.display]
+  show_tool_calls = "off"       # "off", "preview", or "full"
+  show_thinking = "off"         # "off", "compact", or "true"
+  display_width = 60
+  table_wrap_lines = 5          # default; tables wider than this wrap to vertical layout
+  table_style = "pretty"        # default; "pretty", "plain", etc.
 ```
 
 - **Tool calls:** `off` = silent, `preview` = shown then deleted, `full` = expandable summary with Show/Hide buttons
 - **Thinking:** `off` = hidden, `compact` = behind a button, `true` = inline
 
-Per-agent overrides go in `[agents.platforms.discord]`.
+Per-agent overrides go in `[[agents.platforms]] id = "discord"` + `[agents.platforms.display]`.
 
 ---
 
@@ -124,19 +141,28 @@ Per-agent overrides go in `[agents.platforms.discord]`.
 In guild channels, the bot only responds to messages that `@mention` it (DMs are always processed):
 
 ```toml
-[discord]
-require_mention = true   # default
+[[platforms]]
+id = "discord"
+
+  [platforms.discord]
+  require_mention = true   # default
 
 # Per-agent override:
-[agents.platforms.discord]
-require_mention = false  # respond to all messages
+[[agents.platforms]]
+id = "discord"
+
+  [agents.platforms.discord]
+  require_mention = false  # respond to all messages
 ```
 
 Lock the bot to a single server:
 
 ```toml
-[discord]
-guild_id = "123456789012345678"
+[[platforms]]
+id = "discord"
+
+  [platforms.discord]
+  guild_id = "123456789012345678"
 ```
 
 ---
@@ -146,9 +172,12 @@ guild_id = "123456789012345678"
 Facets create Discord threads for branched conversations:
 
 ```toml
-[discord]
-auto_thread = true              # default
-facet_session_ttl = "60m"       # idle time before thread is reclaimable
+[[platforms]]
+id = "discord"
+
+  [platforms.discord]
+  auto_thread = true              # default
+  facet_session_ttl = "60m"       # idle time before thread is reclaimable
 ```
 
 Use `/done` in a thread to detach the bot and return it to the pool.
@@ -165,8 +194,11 @@ Supported types:
 Optionally save attachments to disk:
 
 ```toml
-[discord]
-received_files_dir = "/path/to/save"
+[[platforms]]
+id = "discord"
+
+  [platforms.discord]
+  received_files_dir = "/path/to/save"
 ```
 
 ---

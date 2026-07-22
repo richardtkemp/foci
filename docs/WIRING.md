@@ -298,16 +298,16 @@ The core of the system. Single entry point:
 
 ### TurnContract Abstraction (`agent/turn_contract.go`)
 
-Both transport paths (API and delegated) are unified under the `TurnContract` interface — 20 methods grouped into four phases. Adding a method to the interface produces a compile error in both transports until implemented.
+Both transport paths (API and delegated) are unified under the `TurnContract` interface — 19 methods grouped into four phases. Adding a method to the interface produces a compile error in both transports until implemented.
 
 **Transports:**
 - `APITransport` (`turn_api.go`) — traditional API code path: direct provider calls with client-side tool execution loop.
 - `DelegatedTransport` (`turn_delegated.go`) — delegated path: the backend (Claude Code) owns inference and tool execution.
-- Both embed `sharedTurnOps` (`turn_contract.go`) for shared implementations (7 methods).
+- Both embed `sharedTurnOps` (`turn_contract.go`) for shared implementations (6 methods).
 
 **Transport selection:** In `HandleMessage`, if `Agent.DelegatedManager != nil` → `DelegatedTransport`; otherwise → `APITransport`.
 
-**Orchestrator:** `OrchestrateFullTurn` (`turn_orchestrator.go`) calls all 20 methods in canonical order:
+**Orchestrator:** `OrchestrateFullTurn` (`turn_orchestrator.go`) calls all 19 methods in canonical order:
 
 ```
 Phase 1 — Pre-lock gates and registration:
@@ -1315,7 +1315,7 @@ Both queues are independently rate-limited and severity-filtered at push time (`
 
 ### Tool Result Guard
 
-If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. Before returning a guard message, the agent makes a side-call to a cheap model to auto-summarise the oversized content, including recent conversation context (configurable via `summary_context_turns` and `summary_context_chars`). The summary model is resolved via `agent.ResolveCallSite(config.CallSummarizeTool, sessionKey)`, which delegates to the `GroupResolver` (see Model Group Resolution below). In multi-model mode this routes to the `cheap` group; in single-model mode it uses the session model. The agent receives the summary plus a reference to the saved file for deeper inspection. If the cheap-model call fails (API error, context cancelled, resolution error), falls back to the original guard message with file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown). This prevents large results from bloating session history while giving the agent useful visibility into the content.
+If a tool result exceeds `agent.MaxResultChars` (from config, default 15,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. Before returning a guard message, the agent makes a side-call to a cheap model to auto-summarise the oversized content, including recent conversation context (configurable via `summary_context_turns` and `summary_context_chars`). The summary model is resolved via `agent.ResolveCallSite(config.CallSummarizeTool, sessionKey)`, which delegates to the `GroupResolver` (see Model Group Resolution below). In multi-model mode this routes to the `cheap` group; in single-model mode it uses the session model. The agent receives the summary plus a reference to the saved file for deeper inspection. If the cheap-model call fails (API error, context cancelled, resolution error), falls back to the original guard message with file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown). This prevents large results from bloating session history while giving the agent useful visibility into the content.
 
 ## Slash Commands (`command/`)
 
@@ -2058,9 +2058,9 @@ Cooldown (min tool calls between repeating the same rule, default 5 — also the
 
 ## Deployment
 
-### setup.sh
+### `sudo make update`
 
-`/home/rich/git/foci/setup.sh -u foci` — builds Go binaries, installs to `/usr/local/bin`, restarts service. Allowlisted in aisudo (no approval needed). Uses `--no-block` restart to avoid deadlock when run from foci's own exec.
+`sudo make update` (from the foci repo root) — builds Go binaries, installs to `/usr/local/bin`, validates configs, restarts service.
 
 ## Testing
 

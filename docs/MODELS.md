@@ -6,7 +6,7 @@ Foci uses model groups to route different tasks to different models. This guide 
 
 ## Model Groups
 
-Group assignments are configured in `[groups]` using `developer/model_id` strings. Three groups are available:
+Group assignments are configured in `[groups]` using `developer/model_id` strings. `[groups]` is free-form — arbitrary group names work, and any name you add can be referenced from `[groups.calls]` or resolved via the `--model` flag. Three built-in groups are recognised by foci's own call sites:
 
 | Group | Purpose | Default call sites |
 |-------|---------|-------------------|
@@ -152,11 +152,113 @@ between any explicit config override and the static registry.
 
 When a model value is provided (via config, command, or flag), resolution follows these steps:
 
-1. **Parse** — split the `developer/model_id` string on `/` into `developer` and `model_id` (error if no slash)
-2. **Wire format** — inferred from developer: `anthropic` → anthropic, `google`/`gemini` → gemini, `openai` → openai, others → openai (universal fallback)
-3. **Endpoint** — auto-selected from developer (`anthropic` → anthropic endpoint, `google` → gemini endpoint, others → openrouter), or explicitly set via `endpoint` config
+1. **Named-model lookup.** First, the value is checked against the `[models.*]` map (see [Per-model configuration](#per-model-configuration-models)). A named-model entry can substitute a *different* `developer/model_id` than the key suggests, and carries per-model settings (thinking, effort, cache, provider routing, etc.). If the value matches a `[models.<name>]` table, that entry's `developer/model_id` (or the name itself if not overridden) is used as the resolved identifier, and the entry's settings are attached.
+2. **Parse** — split the resulting `developer/model_id` string on `/` into `developer` and `model_id` (error if no slash)
+3. **Wire format** — inferred from developer: `anthropic` → anthropic, `google`/`gemini` → gemini, `openai` → openai, others → openai (universal fallback)
+4. **Endpoint** — auto-selected from developer (`anthropic` → anthropic endpoint, `google` → gemini endpoint, others → openrouter), or explicitly set via `endpoint` config
+
+The named-model lookup runs *before* the `developer/model_id` string is parsed, so a `[models."anthropic/claude-haiku-4-5"]` entry can transparently reroute calls to a different underlying model without touching call sites.
 
 For `--model` flag and `/model` command, the override is per-session: it applies to the target session and persists across restarts (stored in SessionIndex). Group names (`powerful`, `fast`, `cheap`) are resolved to their configured model before applying.
+
+---
+
+## Per-model configuration (`[models.*]`)
+
+The `[models.*]` map lets you attach settings to a specific model identifier. Each key is a model name (typically a `developer/model_id` string); the sub-table holds per-model knobs. A `[models.*]` entry can also *substitute* a different underlying `developer/model_id` than its key, which is what makes the named-model lookup in [How Resolution Works](#how-resolution-works) able to reroute calls transparently.
+
+Recognised per-model settings:
+
+| Key | Purpose |
+|-----|---------|
+| `thinking` | Default thinking mode for the model |
+| `effort` | Default effort level (e.g. `low`/`medium`/`high`) |
+| `speed` | Default speed setting |
+| `context` | Override the effective context window |
+| `enable_keepalive` | Whether keepalive pings are sent for this model |
+| `cache_ttl` | Prompt-cache TTL override |
+| `cache_strategy` | Prompt-cache strategy override |
+
+### Provider routing (`[models.*.provider]`)
+
+For OpenRouter-backed models, a `[models.<name>.provider]` sub-table controls OpenRouter's provider selection. All keys are optional and map directly onto OpenRouter's routing parameters:
+
+| Key | Purpose |
+|-----|---------|
+| `order` | Ordered list of preferred providers |
+| `sort` | Sort mode for candidate providers |
+| `ignore` | Providers to skip |
+| `quantizations` | Allowed quantization levels |
+| `max_price` | Price ceiling |
+| `allow_fallbacks` | Whether to fall back to other providers |
+| `data_collection` | Accept providers that log requests for training |
+
+```toml
+[models."anthropic/claude-haiku-4-5"]
+effort = "low"
+cache_ttl = "10m"
+
+[models."anthropic/claude-haiku-4-5".provider]
+order = ["Anthropic"]
+allow_fallbacks = true
+max_price = 5
+```
+
+---
+
+## Registry overrides (`[[modelinfo]]`)
+
+The static `internal/modelinfo` registry is the fallback source of truth for pricing, context windows, and capability flags when the [live capability catalogue](#live-model-capability-catalogue) is cold or unavailable. You can extend or override it from config with `[[modelinfo]]` entries.
+
+Each entry can:
+
+- **Override** pricing, context window, or capability flags for a model that already exists in the registry.
+- **Define** an entirely new model the registry doesn't ship (useful for self-hosted or custom endpoints).
+
+Capability flags you can set:
+
+| Flag | Meaning |
+|------|---------|
+| `can_effort` | Model accepts effort levels |
+| `can_thinking` | Model supports extended thinking |
+| `can_speed` | Model supports the speed toggle |
+| `can_caching` | Model benefits from prompt caching |
+
+```toml
+[[modelinfo]]
+name = "anthropic/claude-haiku-4-5"
+context = 200000
+can_effort = true
+can_thinking = true
+can_caching = true
+
+[[modelinfo]]
+name = "local/my-finetune"
+context = 32768
+can_effort = false
+can_thinking = false
+can_caching = false
+```
+
+---
+
+## Fallback chains (`[groups.fallbacks]`)
+
+When a model fails (rate limit, 5xx, etc.), Foci can fall back to a designated alternate model. Per-model failover chains are configured in `[groups.fallbacks]`: the key is the failing model, the value is the model to try next.
+
+```toml
+[groups.fallbacks]
+"anthropic/claude-haiku-4-5" = "anthropic/claude-opus-4-6"
+"anthropic/claude-sonnet-4-6" = "google/gemini-2.5-pro"
+```
+
+With the above, a failed call to `anthropic/claude-haiku-4-5` is automatically retried against `anthropic/claude-opus-4-6`. Fallbacks apply to the API backend only — the delegated backends (CC, Codex, OpenCode) pick their own fallback internally and ignore this table.
+
+---
+
+## Routing variants (`:nitro`, `:floor`, `:free`, `:thinking`)
+
+OpenRouter-style routing variants are silently supported as suffixes on a model id: `anthropic/claude-haiku-4-5:nitro`, `...:floor`, `...:free`, `...:thinking`. When an exact variant lookup matches a known model, it is used as-is. When the variant string does not resolve to a known model, the lookup falls back to the **base model** (the part before the `:`), so a typo or unsupported variant degrades gracefully rather than erroring.
 
 ---
 

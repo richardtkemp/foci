@@ -44,12 +44,7 @@ Fields that exist only at the top level or in dedicated global sections. These c
 
 ### `[anthropic]`
 
-Anthropic API settings. API keys go in `secrets.toml` — see [AUTH.md](AUTH.md) for setup guide.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `cc_expiry_threshold` | string | `"5m"` | How far before expiry to trigger a proactive token refresh. Credentials are read lazily from `~/.claude/.credentials.json` on each API call. |
-See [AUTH.md](AUTH.md) for token resolution order and setup guide.
+No fields — requires `anthropic.api_key` in `secrets.toml`. Set `powerful = "anthropic/claude-sonnet-4-6"` in `[groups]` to use. See [AUTH.md](AUTH.md) for setup guide.
 
 ### `[gemini]`
 
@@ -112,6 +107,8 @@ auto_thread = true
 | `received_files_dir` | string | `""` | Save received files to this directory. Empty disables. |
 | `injected_message_header` | string | `"[[ System message ]]"` | Header prepended to injected/system messages. Empty disables. |
 | `statusline` | string | `""` | Template for the per-message `[meta]`/`[state]` header. Empty uses the built-in default. See [Statusline template](#statusline-template). |
+| `table_wrap_lines` | int | `5` | Max wrapped lines per table cell. `0` truncates with `…`. |
+| `table_style` | string | `"pretty"` | Table style: `"pretty"` or `"markdown"`. |
 
 #### Notify fields (`[platforms.notify]`)
 
@@ -138,8 +135,6 @@ auto_thread = true
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `long_poll_timeout` | string | `"30s"` | HTTP-client timeout for `getUpdates`. Telegram-side long-poll is derived as this minus 5s. Lower values keep TCP connections active across stateful middleboxes (CGNAT, ISP routers) that silently drop idle state. Must exceed 5s. |
-| `table_wrap_lines` | int | `5` | Max wrapped lines per table cell. `0` truncates with `…`. |
-| `table_style` | string | `"pretty"` | Table style: `"pretty"` or `"markdown"`. |
 
 #### Discord-specific fields (`[platforms.discord]`)
 
@@ -199,6 +194,21 @@ foci command -a research /cache
 ```
 
 When omitted, the first agent and main session are used (backward compatible).
+
+### `[askgw]`
+
+Ask gateway — a Unix-socket (and optionally HTTP) gateway for the `foci ask` command, allowing external tools and scripts to send a single query to an agent and receive the response. Access is gated by Unix group membership and/or a UID allowlist (checked via `SO_PEERCRED`).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the ask gateway. |
+| `socket_path` | string | `""` | Unix socket path for the ask gateway. Empty auto-resolves to a default under the data directory. |
+| `group` | string | `"foci-askgw"` | Unix group whose members may connect to the ask socket. |
+| `allowed_uids` | string[] | `[]` | Additional numeric user IDs allowed to connect, regardless of group membership. |
+| `default_agent` | string | `""` | Agent to target when the ask request doesn't specify one. Empty = first configured agent. |
+| `default_timeout_seconds` | int | varies | Default response timeout in seconds when the ask request doesn't specify one. |
+| `max_frame_bytes` | int | varies | Max size in bytes of a single NDJSON frame on the ask socket. Oversized frames close the connection. |
+| `http_enabled` | bool | `false` | Also expose the ask gateway over HTTP (alongside the Unix socket). |
 
 ### `[logging]`
 
@@ -268,7 +278,7 @@ Memory system (full-text search over markdown files + conversation history).
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format. |
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. FTS5 only — bleve does not index conversations. |
 | `search_limit` | int | `20` | Maximum number of search results to return. |
-| `sweep_interval` | string | `"1h"` | Periodic full reindex interval. Catches files added via git, rsync, or other mechanisms that bypass fsnotify. Go duration format. `"0"` disables. First sweep runs 30s after startup. |
+| `sweep_interval` | string | `"0"` | Periodic full reindex interval. Catches files added via git, rsync, or other mechanisms that bypass fsnotify. Go duration format. `"0"` (default) disables — fsnotify catches changes. First sweep runs 30s after startup when non-zero. |
 
 When set, creates databases in the data directory (`$HOME/data/` by default): `memory.db` (FTS5), `memory.bleve/` (bleve), `reminders.db`, `scratchpad.db`. Only the active backends' databases are created.
 
@@ -839,9 +849,9 @@ Models are configured via `[groups]` (group assignments with `developer/model_id
 | Key | Type | Default | Section | Description |
 |-----|------|---------|---------|-------------|
 | `max_output_tokens` | int | `16384` | `[defaults.loop]` | Maximum tokens in model response. Larger values allow longer responses. |
-| `max_tool_loops` | int | `25` | `[defaults.loop]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
-| `streaming` | bool | `false` | `[defaults.display]` | Use streaming API. Text and thinking deltas are delivered incrementally. Works with any provider that implements streaming (Anthropic, OpenAI). |
-| `cache_ttl` | string | `""` | `[defaults.loop]` | Anthropic prompt cache TTL override. Must be `"5m"` or `"1h"`. Empty inherits from `[cache] ttl` (default `"1h"`). Only applied to Anthropic API requests. |
+| `max_tool_loops` | int | `100` | `[defaults.loop]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
+| `streaming` | bool | `true` | `[defaults.loop]` | Use streaming API. Text and thinking deltas are delivered incrementally. Works with any provider that implements streaming (Anthropic, OpenAI). |
+| `cache_ttl` | string | `""` | `[defaults.loop]` | Anthropic prompt cache TTL override. Must be `"5m"` or `"1h"`. Empty = auto-detect from developer defaults. Only applied to Anthropic API requests. See `[models.*] cache_ttl` / `cache_strategy` for per-model control. |
 | `system_files` | string[] | see below | `[defaults.system]` | Ordered list of workspace files to load as system prompt blocks. |
 
 Default `system_files` order (most-stable first for cache efficiency):
@@ -1034,7 +1044,7 @@ Cache keepalive timer. Fires a lightweight branch session to keep the prompt cac
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable keepalive timer. |
-| `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be less than `[cache] ttl` (default 1h). |
+| `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be less than the model's cache TTL (Anthropic default 1h; configurable per-model via `[models.*] cache_ttl`). |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
 | `force_in_session` | bool | `false` | Force keepalive to run in the existing session instead of a real backend fork, even on a backend that can branch (e.g. Claude Code). Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for keepalive only. Live-appliable. |
 
@@ -1052,7 +1062,7 @@ Background work timer. Fires when the user is idle, there are open background-ta
 
 **Validation warnings:**
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
-- `keepalive.interval > [cache] ttl` — cache may expire between keepalives (default TTL is 1 hour).
+- `keepalive.interval > model cache TTL` — cache may expire between keepalives (Anthropic default TTL is 1 hour; configurable per-model via `[models.*] cache_ttl`).
 
 ### Scheduler (`[scheduler]` / `[[agents.scheduler]]`)
 
@@ -1681,7 +1691,7 @@ tmux_cols = 300
 tmux_rows = 30
 
 [skills]
-dirs = ["/home/foci/skills"]
+dir = "/home/foci/skills"
 
 [[commands]]
 name = "reheat"
