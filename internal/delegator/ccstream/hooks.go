@@ -360,10 +360,22 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		if se != nil && se.OnSubagentStart != nil && parsed.ToolName == "Agent" {
 			if !b.markSubagentStarted(parsed.ToolUseID) {
 				// The initial Agent spawn is always run 1; carry its prompt so the app
-				// can show what was asked at the top of the run view (#1355).
+				// can show what was asked at the top of the run view (#1355). Prefer the
+				// stash (populated from the COMPLETE assistant-message tool_use block in
+				// OnAssistant) over this hook payload's own prompt: the latter can arrive
+				// BLANK for a large prompt that outraces the tool_use stream, which then
+				// wins the start race and — via markSubagentStarted — suppresses the
+				// fallback that would have carried the real prompt, silently orphaning it
+				// (the client drops an empty prompt). The stash is authoritative and is
+				// what the #1425 fallback already trusts. Fall back to the hook payload
+				// only if the stash is somehow unset.
 				input := json.RawMessage(parsed.ToolInput)
+				prompt := b.getAgentPrompt(parsed.ToolUseID)
+				if prompt == "" {
+					prompt = delegator.ExtractAgentPrompt(input)
+				}
 				b.logger().Infof("subagent_start signal=agent_pre_tool_use group=%s", parsed.ToolUseID)
-				se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(input), delegator.ExtractAgentPrompt(input), 1)
+				se.OnSubagentStart(parsed.ToolUseID, delegator.ExtractAgentDescription(input), prompt, 1)
 				// Foreground transcript tailing is armed earlier, at the Agent
 				// tool_use detection in OnAssistant (race-free vs task_started).
 			}

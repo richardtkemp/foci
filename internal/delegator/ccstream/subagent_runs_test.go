@@ -468,3 +468,44 @@ func TestSubagentStartHookAndTaskStartedRaceEmitExactlyOnce(t *testing.T) {
 	t.Run("hook_then_task_started", func(t *testing.T) { run(t, true) })
 	t.Run("task_started_then_late_hook", func(t *testing.T) { run(t, false) })
 }
+
+// TestSubagentStartHookBlankPromptPrefersStash is the regression for the
+// large-prompt orphan: the PreToolUse hook WINS the start race (so its groupKey
+// claim suppresses the task_started fallback) but its OWN payload carries a BLANK
+// prompt — the observed failure where a multi-KB prompt outraces the tool_use
+// stream and the hook_response's tool_input arrives with an empty prompt field.
+// The native OnAssistant detection always sees the COMPLETE block, so the stash
+// holds the real prompt. The hook must emit the STASHED prompt, not its own blank
+// one — otherwise the client (which drops an empty SubagentStart.prompt) shows the
+// run with no "what was asked" and there is no later frame to recover it from.
+func TestSubagentStartHookBlankPromptPrefersStash(t *testing.T) {
+	mkTool := func(id, name, input string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
+		}}
+	}
+	b := &Backend{hookInstallID: "install-a"}
+	type start struct {
+		group, label, prompt string
+		run                  int
+	}
+	var starts []start
+	applyHandler(b, &testHandler{
+		OnSubagentStart: func(g, l, p string, r int) { starts = append(starts, start{g, l, p, r}) },
+	})
+
+	const groupKey = "toolu_blank_hook_agent"
+
+	// The complete tool_use block streams natively → stash gets the real prompt.
+	b.OnAssistant(mkTool(groupKey, "Agent",
+		`{"description":"Audit config","prompt":"the full multi-KB instruction","run_in_background":true}`))
+
+	// The hook wins the race but its payload's prompt is BLANK (the large-prompt
+	// race). It must fall back to the stashed prompt, not emit "".
+	fireAgentPreToolUse(b, groupKey, "install-a", `{"description":"Audit config","prompt":""}`)
+
+	want := start{groupKey, "Audit config", "the full multi-KB instruction", 1}
+	if len(starts) != 1 || starts[0] != want {
+		t.Fatalf("blank-hook start = %+v, want exactly [%+v]", starts, want)
+	}
+}
