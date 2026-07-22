@@ -44,11 +44,27 @@ func newStartableBackend(t *testing.T, handler func(method string, params json.R
 }
 
 // TestAppServerArgs_DisablesNestedSandbox ensures the app-server inherits the
-// outer foci sandbox instead of attempting a nested bwrap sandbox.
+// outer foci sandbox instead of attempting a nested bwrap sandbox. With no
+// compaction prompt, no compact_prompt override is layered in.
 func TestAppServerArgs_DisablesNestedSandbox(t *testing.T) {
 	want := []string{"app-server", "-c", "sandbox_policy.mode=danger-full-access"}
-	if got := appServerArgs(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("appServerArgs() = %v, want %v", got, want)
+	if got := appServerArgs(""); !reflect.DeepEqual(got, want) {
+		t.Fatalf("appServerArgs(\"\") = %v, want %v", got, want)
+	}
+}
+
+// TestAppServerArgs_CompactPrompt verifies the compaction prompt is layered in
+// as a per-process `-c compact_prompt=<TOML>` override (#1327 sub-issue 2), so
+// it never reaches the shared ~/.codex/config.toml. The value must be a valid
+// TOML basic string (escaped), matching the `-c instructions=` batch recipe.
+func TestAppServerArgs_CompactPrompt(t *testing.T) {
+	got := appServerArgs("summarise\tthe \"session\"")
+	want := []string{
+		"app-server", "-c", "sandbox_policy.mode=danger-full-access",
+		"-c", `compact_prompt="summarise\tthe \"session\""`,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("appServerArgs(prompt) = %v, want %v", got, want)
 	}
 }
 
@@ -212,33 +228,23 @@ func TestStartThread_CapturesModel(t *testing.T) {
 
 // --- triggerCompaction ---
 
-// TestTriggerCompaction_WritesCompactPromptBeforeCompaction verifies that when
-// CompactionPromptFunc returns a prompt, config/value/write (key
-// "compact_prompt") is sent BEFORE thread/compact/start. Ordering is asserted
-// by capturing the sequence of methods received by the mock app-server.
-func TestTriggerCompaction_WritesCompactPromptBeforeCompaction(t *testing.T) {
-	const wantPrompt = "summarise the session focusing on tests"
+// TestTriggerCompaction_NoGlobalConfigWrite verifies that triggerCompaction
+// NEVER sends config/value/write — even with a CompactionPromptFunc set — since
+// the compaction prompt is now a per-process launch override (#1327 sub-issue
+// 2), not a write to the shared ~/.codex/config.toml. It goes straight to
+// thread/compact/start.
+func TestTriggerCompaction_NoGlobalConfigWrite(t *testing.T) {
 	var seq methodSequence
-	var gotCompactKey, gotCompactValue string
 
 	b := newStartableBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
 		seq.record(method)
-		if method == "config/value/write" {
-			var p struct {
-				Key   string `json:"key"`
-				Value string `json:"value"`
-			}
-			if err := json.Unmarshal(params, &p); err != nil {
-				t.Errorf("unmarshal config/value/write params: %v", err)
-			}
-			gotCompactKey = p.Key
-			gotCompactValue = p.Value
-		}
 		return json.RawMessage(`{}`), nil
 	})
 	b.threadID = "th_compact"
+	// A CompactionPromptFunc is set, but it must NOT trigger a config write at
+	// compaction time — the prompt was already applied at launch.
 	b.startOpts = delegator.StartOptions{
-		CompactionPromptFunc: func(sessionKey string) string { return wantPrompt },
+		CompactionPromptFunc: func(sessionKey string) string { return "summarise the session" },
 	}
 
 	if err := b.triggerCompaction(); err != nil {
@@ -246,26 +252,18 @@ func TestTriggerCompaction_WritesCompactPromptBeforeCompaction(t *testing.T) {
 	}
 
 	methods := seq.snapshot()
-	wantSequence := []string{"config/value/write", "thread/compact/start"}
-	if len(methods) != len(wantSequence) {
-		t.Fatalf("method sequence = %v, want %v", methods, wantSequence)
-	}
-	for i, m := range methods {
-		if m != wantSequence[i] {
-			t.Errorf("methods[%d] = %q, want %q (full sequence %v)", i, m, wantSequence[i], methods)
+	for _, m := range methods {
+		if m == "config/value/write" {
+			t.Errorf("config/value/write must never be sent; sequence %v", methods)
 		}
 	}
-	if gotCompactKey != "compact_prompt" {
-		t.Errorf("config/value/write key = %q, want %q", gotCompactKey, "compact_prompt")
-	}
-	if gotCompactValue != wantPrompt {
-		t.Errorf("config/value/write value = %q, want %q", gotCompactValue, wantPrompt)
+	if len(methods) != 1 || methods[0] != "thread/compact/start" {
+		t.Errorf("method sequence = %v, want [thread/compact/start]", methods)
 	}
 }
 
 // TestTriggerCompaction_NoCompactionPromptFunc verifies that without a
-// CompactionPromptFunc the backend goes straight to thread/compact/start with
-// no preceding config/value/write.
+// CompactionPromptFunc the backend still goes straight to thread/compact/start.
 func TestTriggerCompaction_NoCompactionPromptFunc(t *testing.T) {
 	var seq methodSequence
 

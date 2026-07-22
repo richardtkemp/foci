@@ -43,7 +43,20 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		return fmt.Errorf("codex: binary %q not found: %w", bin, err)
 	}
 
-	args := appServerArgs()
+	// Resolve the compaction prompt ONCE at launch and pass it as a `-c`
+	// override (see appServerArgs). Doing this per-process at launch — rather
+	// than writing key "compact_prompt" to the shared ~/.codex/config.toml
+	// before each compaction — keeps foci's prompt out of the user's own codex
+	// CLI config and every other codex agent, and removes the concurrent
+	// last-writer-wins race (#1327 sub-issue 2). CompactionPromptFunc is a
+	// fresh read of compaction-summary.md, static within a session and
+	// re-resolved on every (re)start, so freezing it at launch loses nothing.
+	var compactPrompt string
+	if opts.CompactionPromptFunc != nil {
+		compactPrompt = opts.CompactionPromptFunc("")
+	}
+
+	args := appServerArgs(compactPrompt)
 	cmdCtx, cancel := context.WithCancel(context.Background())
 	cmd := procx.Spawn(cmdCtx, bin, args...)
 	cmd.Dir = b.workDir
@@ -131,8 +144,19 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 
 // appServerArgs keeps Codex from starting its nested bwrap sandbox: foci already
 // runs inside an outer sandbox that deliberately removes setuid/capability assumptions.
-func appServerArgs() []string {
-	return []string{"app-server", "-c", "sandbox_policy.mode=danger-full-access"}
+//
+// When compactPrompt is non-empty it is layered in as a per-process
+// `-c compact_prompt=<value>` config override (the value parses as TOML — same
+// escaping the batch runner's `-c instructions=` uses). This is an in-memory
+// override scoped to THIS app-server process; it never touches the shared
+// ~/.codex/config.toml, so foci's compaction prompt can't leak into the user's
+// own codex CLI or race a concurrent codex agent (#1327 sub-issue 2).
+func appServerArgs(compactPrompt string) []string {
+	args := []string{"app-server", "-c", "sandbox_policy.mode=danger-full-access"}
+	if compactPrompt != "" {
+		args = append(args, "-c", "compact_prompt="+tomlBasicString(compactPrompt))
+	}
+	return args
 }
 
 // WaitReady blocks until the backend is ready (handshake complete).
@@ -425,17 +449,11 @@ func (b *Backend) triggerCompaction() error {
 		return errors.New("codex: no active thread to compact")
 	}
 
-	if b.startOpts.CompactionPromptFunc != nil {
-		if prompt := b.startOpts.CompactionPromptFunc(""); prompt != "" {
-			if _, err := b.sendAndWait("config/value/write", struct {
-				Key   string `json:"key"`
-				Value string `json:"value"`
-			}{Key: "compact_prompt", Value: prompt}); err != nil {
-				b.lg.Warnf("config/value/write for compact_prompt failed: %v", err)
-			}
-		}
-	}
-
+	// The compaction prompt is set once at launch via `-c compact_prompt=`
+	// (see Start / appServerArgs), NOT written to the shared config here —
+	// that global-config write leaked foci's prompt into the user's own codex
+	// CLI and raced concurrent agents (#1327 sub-issue 2). thread/compact/start
+	// consumes the process-local override.
 	_, err := b.sendAndWait("thread/compact/start", compactStartParams{ThreadID: threadID})
 	return err
 }
