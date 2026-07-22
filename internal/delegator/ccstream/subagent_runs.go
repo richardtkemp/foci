@@ -68,6 +68,21 @@ func (b *Backend) setAgentPrompt(groupKey, prompt string) {
 	b.agentPrompts[groupKey] = prompt
 }
 
+// getAgentPrompt returns the stashed prompt for groupKey (the Agent tool_use_id),
+// or "" if none. The stash is taken from the COMPLETE assistant-message tool_use
+// block (handlers.go), so unlike the PreToolUse hook's own payload — whose prompt
+// field can arrive blank for a large input that outraces the tool_use stream — it
+// is authoritative. The hook path prefers it so a big-prompt run 1 still surfaces
+// what was asked (the fallback #1425 already trusts this same stash).
+func (b *Backend) getAgentPrompt(groupKey string) string {
+	if groupKey == "" {
+		return ""
+	}
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	return b.agentPrompts[groupKey]
+}
+
 // markSubagentStarted check-and-sets groupKey as having had its run-1
 // SubagentStart emitted. Two independent sources race to emit that start —
 // the PreToolUse hook (hooks.go) and the task_started fallback (#1425, below)
