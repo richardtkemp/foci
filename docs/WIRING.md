@@ -1661,9 +1661,18 @@ out a remote IP (`remoteIP`, X-Forwarded-For-aware) after repeated auth failures
 
 **Push (`push.go`, slice 5):** offline wake via FCM v1 data-messages. `fcmPusher`
 authenticates with a service-account token source (`golang.org/x/oauth2/google`,
-auto-refreshing); the service-account JSON path comes from
-`[platforms.app].fcm_credentials` config, falling back to secret
-`app.fcm_credentials` (absent or `push=false` → push disabled). The client
+auto-refreshing). `newFCMPusherForApp` resolves the credential in priority
+order: (1) decomposed `app.fcm_project_id`/`app.fcm_client_email`/
+`app.fcm_private_key` secret fields (plus optional `app.fcm_private_key_id`/
+`app.fcm_token_uri`) — the preferred path (#967), reconstructing the minimal
+service-account JSON in memory so the credential content never touches
+`foci.toml` or disk as a file; (2) `[platforms.app].fcm_credentials`, a
+service-account JSON file path in `foci.toml`; (3) the legacy
+`app.fcm_credentials` secret holding a file path (pre-#967 compat). Absent
+everywhere, or `push=false` → push disabled gracefully. `private_key` values are
+newline-normalized on read (`normalizeFCMPrivateKey`) since a PEM key pasted
+into a single-line `secrets.toml` string commonly carries literal `\n`
+two-char escapes instead of real newlines. The client
 registers its FCM token in `ClientHello` (or out-of-band via
 `POST /app/push/register` after an OS token rotation)
 → `pushTokens` (in-memory deviceId→token, repopulated each connect). When
