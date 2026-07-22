@@ -690,7 +690,12 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 		// value verbatim, or nil — never a calculated stand-in (foci_todo #1407).
 		if u.CostUSD != nil {
 			turnCost += *u.CostUSD
-		} else {
+		} else if model != "" {
+			// Skip when the model is unknown (e.g. a codex tokenUsage/updated
+			// notification firing before any message-completion event has set
+			// the model for this thread — plausible right after a resume/
+			// respawn). modelinfo.Cost("") would otherwise trip the unpriced-
+			// fallback warning and add a meaningless haiku-priced estimate.
 			turnCost += modelinfo.Cost(model,
 				u.InputTokens, u.OutputTokens,
 				u.CacheReadInputTokens, u.CacheCreationInputTokens)
