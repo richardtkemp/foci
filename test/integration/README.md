@@ -49,6 +49,8 @@ Each test:
 
 If your test needs a behaviour cc-stub doesn't yet have (e.g. multi-turn scripted tool_use, deliberate failure injection, partial-message streaming) extend cc-stub itself — that's the right place. Test-only behaviour goes behind env vars; the existing surface is documented in `cmd/cc-stub/main.go`.
 
+If your test needs a custom event log path (e.g. to seed fixture lines), use `scopedLoggingTOML` (`helpers_test.go`) for the `ExtraConfigTOML` — never hand-write a partial `[logging]\nevent_file = ...\n` block. A partial override leaves `api_file`/`payload_file`/`archive_dir` at their package defaults, which resolve against the real host `$HOME` and can alias production log files (foci_todo #1492/#1479's live incident). `testharness.verifyGeneratedLogPaths` fails the test loudly if this ever happens anyway, but `scopedLoggingTOML` gets it right the first time.
+
 ## What's tested today
 
 | Test | What it asserts |

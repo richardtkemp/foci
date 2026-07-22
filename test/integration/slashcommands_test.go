@@ -412,9 +412,9 @@ func TestL2_SlashCommands_ErrorsTailsEventLog(t *testing.T) {
 		// Disable log rotation: seeded lines must survive to be tailed
 		// by /errors. Default startup uses Retention=0 which archives
 		// every line older than now — incompatible with seeded fixtures.
-		ExtraConfigTOML: "[logging]\n" +
-			"event_file = \"" + logPath + "\"\n" +
-			"log_rotation = false\n",
+		// scopedLoggingTOML fully scopes api_file/payload_file/archive_dir
+		// too — see its doc comment (foci_todo #1492/#1479).
+		ExtraConfigTOML: scopedLoggingTOML(tempDir, logPath, false),
 	})
 
 	pushTelegramText(t, h, "alpha", 7080, "/errors")
@@ -450,31 +450,11 @@ func TestL2_SlashCommands_ErrorsMissingLogFile(t *testing.T) {
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7081}},
 		ReadyTimeout: 30 * time.Second,
-		// log_rotation = false: this ExtraConfigTOML's [logging] block only
-		// overrides event_file, which suppresses the harness's normal full
-		// [logging] emission (writeTestConfig skips it whenever the test
-		// supplies its own [logging] header) — so api_file/payload_file are
-		// NOT scoped to this test's tempdir and fall back to their config
-		// defaults ("logs/api.jsonl", "logs/api-payload.jsonl"), which
-		// resolve against $HOME. This test's agent has no OmitWorkspaceKey,
-		// so HOME is inherited from the OS process running the suite —
-		// on a real box that's the production home directory. Without this
-		// guard, the default log_rotation=true fires RotateOnce(Retention:0)
-		// at this spawned foci-gw's startup and archives+truncates the
-		// HOST'S REAL production api.jsonl/api-payload.jsonl out from under
-		// any live foci-gw holding those files open, discarding their
-		// content into an archive under THIS test's tempdir (deleted at
-		// test end — genuine, irreversible data loss, not just a stale fd).
-		// This is exactly what caused foci_todo #1479's live incident
-		// (confirmed via atop process-ancestry tracing: the spawned test
-		// subprocess's own countCrontabJobs()-adjacent startup rotation
-		// pass, not any human or system logrotate, truncated the files
-		// within the same `make integration` run this test is part of).
-		// See the sibling tests above/below in this file for the same
-		// pattern already guarded.
-		ExtraConfigTOML: "[logging]\n" +
-			"event_file = \"" + logPath + "\"\n" +
-			"log_rotation = false\n",
+		// scopedLoggingTOML fully scopes event_file/api_file/payload_file/
+		// archive_dir under tempDir (see its doc comment for why a
+		// hand-written partial "[logging]" override is unsafe —
+		// foci_todo #1492/#1479's live incident).
+		ExtraConfigTOML: scopedLoggingTOML(tempDir, logPath, false),
 	})
 
 	pushTelegramText(t, h, "alpha", 7081, "/errors")
@@ -529,9 +509,9 @@ func TestL2_SlashCommands_ErrorsRespectsLineCountArg(t *testing.T) {
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7082}},
 		ReadyTimeout: 30 * time.Second,
 		// Disable rotation so seeded lines survive (see ErrorsTailsEventLog).
-		ExtraConfigTOML: "[logging]\n" +
-			"event_file = \"" + logPath + "\"\n" +
-			"log_rotation = false\n",
+		// scopedLoggingTOML fully scopes api_file/payload_file/archive_dir
+		// too — see its doc comment (foci_todo #1492/#1479).
+		ExtraConfigTOML: scopedLoggingTOML(tempDir, logPath, false),
 	})
 
 	pushTelegramText(t, h, "alpha", 7082, "/errors 5")
