@@ -131,6 +131,38 @@ func TestOnFileChangeApproval_FiresPermPromptFn(t *testing.T) {
 	}
 }
 
+// TestOnFileChangeApproval_DetailWinsOverReason is the regression for #1326
+// sub-issue 2: when the file-path detail is available (from the stashed
+// item/started item), it must be shown as the approval summary — the model's
+// self-reported reason must NOT clobber it. Previously params.Reason
+// unconditionally overwrote the extracted file list.
+func TestOnFileChangeApproval_DetailWinsOverReason(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := newPermTestBackend(&buf)
+	b.itemCache = map[string]itemEnvelope{
+		"item_fc2": {
+			Type: "fileChange",
+			ID:   "item_fc2",
+			Changes: []fileChangeEntry{
+				{Path: "config.toml"},
+				{Path: "main.go"},
+			},
+		},
+	}
+	var gotSummary string
+	b.permPromptFn = func(itemID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		gotSummary = summary
+	}
+
+	b.onFileChangeApproval([]byte(`{"itemId":"item_fc2","threadId":"th_1","turnId":"tn_1","reason":"May I edit these?"}`), 14)
+
+	if gotSummary != "config.toml, main.go" {
+		t.Errorf("summary = %q, want the file list (detail must win over reason)", gotSummary)
+	}
+}
+
 func TestOnFileChangeApproval_AutoDenyWhenNoPermPromptFn(t *testing.T) {
 	t.Parallel()
 
