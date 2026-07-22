@@ -116,7 +116,7 @@ test:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
-	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:|weight audit' $(LOGFILE) || true; fi ; \
+	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,unit,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
@@ -145,25 +145,25 @@ integration:
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 600s -parallel=$(IPARALLEL) -v ./test/integration/... ./internal/testharness/... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
-	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:|weight audit' $(LOGFILE) || true; fi ; \
+	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,integration,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
-# bucket-audit: the differential half of weight-bucket detection. Runs the
-# L2 suite at low (-parallel=2) and high (-parallel=IPARALLEL) concurrency
-# and surfaces, from each pass, the tests that FAILED plus the in-run weight
-# auditor's advisories. A wait-weighted test that is green-and-flat at low
-# but fails/inflates at high is contention-sensitive and wants a heavier
-# weight; that is the signal a single run can't see. Advisory tool, not a
-# gate — read the two passes side by side.
+# bucket-audit: contention-sensitivity diff. Runs the L2 suite at low
+# (-parallel=2) and high (-parallel=IPARALLEL) concurrency and surfaces the
+# tests that FAILED in each pass. A test that is green at low but fails at
+# high is contention-sensitive — a signal a single run can't see. The fix is
+# to make that test robust to slow/contended execution (deterministic waits,
+# no wall-clock bets), NOT to hand it more parallelism budget. Advisory tool,
+# not a gate — read the two passes side by side.
 bucket-audit:
 	@echo "=== bucket-audit: low vs high parallelism ==="
 	$(eval TESTDIR := /tmp/foci/bktaudit-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "--- low (-parallel=2) ---"
-	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
+	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
 	@echo "--- high (-parallel=$(IPARALLEL)) ---"
-	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^(--- FAIL|    .*weight audit)' || echo "  (clean)"
+	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
 	@rm -rf $(TESTDIR)
 
 # `make land` — the sanctioned path to main (merge-lock landing, #1448 pieces 1+2).
