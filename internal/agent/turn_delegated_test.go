@@ -513,6 +513,38 @@ func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 	}
 }
 
+// TestDelegatedTransport_LogUsage_EmptyModelNoUnpricedWarning is the
+// red/green regression for #1290: a codex tokenUsage/updated notification can
+// fire before any message-completion event has set the model for the thread
+// (plausible right after a resume/respawn), leaving the model empty. LogUsage
+// must NOT call modelinfo.Cost("") in that case — doing so trips the
+// unpriced-fallback warning (UnpricedModelHook fired with "") and adds a
+// meaningless fallback-priced estimate to the turn total.
+func TestDelegatedTransport_LogUsage_EmptyModelNoUnpricedWarning(t *testing.T) {
+	prev := modelinfo.UnpricedModelHook
+	t.Cleanup(func() { modelinfo.UnpricedModelHook = prev })
+	var fired []string
+	modelinfo.UnpricedModelHook = func(m string) { fired = append(fired, m) }
+
+	a := &Agent{AgentID: "test-agent"}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.StartedAt = time.Now()
+	// No FinalModel and no TurnModel → model resolves to "".
+	ts.FinalModel = ""
+	ts.TurnModel = ""
+	ts.FinalUsage = &provider.Usage{InputTokens: 1000, OutputTokens: 200}
+
+	tr.LogUsage(ts)
+
+	if len(fired) != 0 {
+		t.Errorf("UnpricedModelHook fired for empty model: %v (want no fire)", fired)
+	}
+	if ts.FinalCost != 0 {
+		t.Errorf("FinalCost = %v, want 0 for unknown model", ts.FinalCost)
+	}
+}
+
 // TestDelegatedTransport_AutoAlias_ConsumesThreadNameOnSuccess is the
 // red/green regression for #1329 item 2: a backend like Codex that
 // auto-generates a thread name ONCE never clears it on its own, so
