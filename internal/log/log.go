@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"foci/internal/timeutil"
@@ -72,17 +73,37 @@ func ParseLevel(s string) Level {
 type Logger struct {
 	level       atomic.Int32 // Level; atomic so live config-apply can change it under concurrent logging
 	eventOut    io.Writer    // foci.log + stderr multiwriter
-	eventFile   *os.File    // foci.log file handle (nil = stderr only)
-	apiFile     *os.File    // api.jsonl (nil if disabled)
-	payloadFile *os.File    // api-payload.jsonl (nil if disabled)
-	eventPath   string      // path to foci.log
-	apiPath     string      // path to api.jsonl
-	payloadPath string      // path to api-payload.jsonl
-	fileMode    os.FileMode // permission bits for log files
-	buffer      []string    // pre-Init event lines, replayed to event file on Init
-	initialized bool        // true after Init completes
+	eventFile   *os.File     // foci.log file handle (nil = stderr only)
+	apiFile     *os.File     // api.jsonl (nil if disabled)
+	payloadFile *os.File     // api-payload.jsonl (nil if disabled)
+	eventPath   string       // path to foci.log
+	apiPath     string       // path to api.jsonl
+	payloadPath string       // path to api-payload.jsonl
+	fileMode    os.FileMode  // permission bits for log files
+	buffer      []string     // pre-Init event lines, replayed to event file on Init
+	initialized bool         // true after Init completes
 	mu          sync.Mutex
+
+	// lastEventStaleWarn/lastAPIStaleWarn/lastPayloadStaleWarn debounce the
+	// stale-inode warning (see reopen*IfStaleLocked below) to at most one per
+	// staleWarnCooldown per file. Without this, a reopen that keeps failing
+	// (e.g. the replacement directory is itself gone, or permission denied)
+	// would re-attempt and re-warn on every single write — for eventFile
+	// specifically that warning is itself a log call that re-enters event(),
+	// which would recurse without bound. The cooldown caps recursion depth at
+	// one nested call (the retry inside the cooldown window returns "" before
+	// recursing again) and keeps a persistently broken file from flooding
+	// stderr/the log with duplicate warnings on every write.
+	lastEventStaleWarn   time.Time
+	lastAPIStaleWarn     time.Time
+	lastPayloadStaleWarn time.Time
 }
+
+// staleWarnCooldown bounds how often the stale-inode-detected warning is
+// emitted for a given file while reopen keeps failing. The reopen attempt
+// itself is NOT throttled — every write still tries to recover as soon as
+// the underlying problem clears.
+const staleWarnCooldown = time.Minute
 
 // std is the global logger instance.
 var std = newLogger()
@@ -276,6 +297,106 @@ func (l *Logger) reopen() error {
 	return nil
 }
 
+// staleFile reports whether f's open file descriptor has diverged from the
+// file currently sitting at path — i.e. something (an external truncation,
+// a rename/rewrite that bypassed log.Reopen(), a foreign process touching
+// the log dir directly) replaced or removed the path out from under an
+// already-open, still-being-appended-to fd. os.Rename() — what our own
+// rotation uses — never affects an already-open fd; anything that
+// replaces the path via unlink+recreate (rather than rotate+Reopen) leaves
+// the old fd pointing at an orphaned, unlinked inode that no rotation pass
+// can ever see again, silently discarding every future write.
+//
+// Detected by comparing device+inode between an fstat of the open fd and a
+// fresh stat of the path. This is the exact mechanism behind foci_todo
+// #1479: api-payload.jsonl archiving stopped for 4 months because nothing
+// checked for this divergence between the rotation goroutine's 24h ticks
+// (StartRotation's unconditional Reopen() after each pass would have healed
+// it, but only once a day — and if the process restarts more often than
+// that, the periodic tick may never fire at all in a given process
+// lifetime).
+func staleFile(f *os.File, path string) bool {
+	if f == nil || path == "" {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return true // fd itself is unusable; treat as stale so we try to recover
+	}
+	pi, err := os.Stat(path)
+	if err != nil {
+		return true // path missing/inaccessible: the fd is orphaned either way
+	}
+	fst, ok1 := fi.Sys().(*syscall.Stat_t)
+	pst, ok2 := pi.Sys().(*syscall.Stat_t)
+	if !ok1 || !ok2 {
+		return false // can't compare on this platform; don't force a reopen
+	}
+	return fst.Dev != pst.Dev || fst.Ino != pst.Ino
+}
+
+// reopenIfStaleLocked is the shared implementation behind
+// reopenEventIfStaleLocked/reopenAPIIfStaleLocked/reopenPayloadIfStaleLocked:
+// it reopens *file at path if the path has been replaced underneath it,
+// debouncing the warning message via *lastWarn (see staleWarnCooldown).
+// Caller must hold l.mu. Returns whether a reopen was actually performed
+// (so the event-file variant knows to rebuild its stderr multiwriter even
+// on a cooldown-suppressed call — the reopen itself is never throttled,
+// only the warning) and a non-empty message when one should be logged.
+func (l *Logger) reopenIfStaleLocked(file **os.File, path string, lastWarn *time.Time, label string) (reopened bool, warnMsg string) {
+	if *file == nil || !staleFile(*file, path) {
+		return false, ""
+	}
+	fileMode := l.fileMode
+	if fileMode == 0 {
+		fileMode = 0600
+	}
+	var msg string
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
+	if err != nil {
+		msg = fmt.Sprintf("%s %s was replaced underneath the open writer (stale inode), reopen failed: %v", label, path, err)
+	} else {
+		old := *file
+		*file = f
+		_ = old.Close()
+		reopened = true
+		msg = fmt.Sprintf("%s %s was replaced underneath the open writer (stale inode) — reopened", label, path)
+	}
+	now := timeutil.Now()
+	if now.Sub(*lastWarn) < staleWarnCooldown {
+		return reopened, "" // warned recently; keep retrying silently until the cooldown elapses
+	}
+	*lastWarn = now
+	return reopened, msg
+}
+
+// reopenEventIfStaleLocked reopens l.eventFile (rebuilding the stderr
+// multiwriter) if the path it was opened from has been replaced underneath
+// it. Caller must hold l.mu. Returns a non-empty message to warn about if a
+// reopen was attempted and the warning isn't in its cooldown window; "" if
+// the file was fine or event-file logging isn't configured.
+func (l *Logger) reopenEventIfStaleLocked() string {
+	reopened, msg := l.reopenIfStaleLocked(&l.eventFile, l.eventPath, &l.lastEventStaleWarn, "event log")
+	if reopened {
+		l.eventOut = io.MultiWriter(os.Stderr, l.eventFile)
+	}
+	return msg
+}
+
+// reopenAPIIfStaleLocked is the api.jsonl analogue of reopenEventIfStaleLocked.
+// Caller must hold l.mu.
+func (l *Logger) reopenAPIIfStaleLocked() string {
+	_, msg := l.reopenIfStaleLocked(&l.apiFile, l.apiPath, &l.lastAPIStaleWarn, "API log")
+	return msg
+}
+
+// reopenPayloadIfStaleLocked is the api-payload.jsonl analogue of
+// reopenEventIfStaleLocked. Caller must hold l.mu.
+func (l *Logger) reopenPayloadIfStaleLocked() string {
+	_, msg := l.reopenIfStaleLocked(&l.payloadFile, l.payloadPath, &l.lastPayloadStaleWarn, "payload log")
+	return msg
+}
+
 // warnHookEntry is a buffered warning from before the hook was set.
 type warnHookEntry struct {
 	level     Level
@@ -333,11 +454,20 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	line := fmt.Sprintf("%s %s [%s] %s\n", ts, levelStr, component, msg)
 
 	l.mu.Lock()
+	staleWarn := l.reopenEventIfStaleLocked()
 	_, _ = l.eventOut.Write([]byte(line))
 	if !l.initialized {
 		l.buffer = append(l.buffer, line)
 	}
 	l.mu.Unlock()
+
+	// Logged AFTER releasing l.mu above: this is a recursive call into
+	// event() itself, which takes l.mu again to write its own line — safe
+	// only because the lock isn't held here. Its own staleness check will
+	// find the file already fresh (no further recursion).
+	if staleWarn != "" {
+		l.event(WARN, "log", "%s", staleWarn)
+	}
 
 	// Fire warn hook for WARN and ERROR levels, buffering if hook not yet set.
 	if level == WARN || level == ERROR {

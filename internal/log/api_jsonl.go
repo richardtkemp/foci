@@ -75,12 +75,18 @@ func (l *Logger) api(entry APIEntry) {
 
 	// JSONL (backward compatible)
 	l.mu.Lock()
+	staleWarn := l.reopenAPIIfStaleLocked()
 	if l.apiFile != nil {
 		if data, err := json.Marshal(entry); err == nil {
 			_, _ = l.apiFile.Write(append(data, '\n'))
 		}
 	}
 	l.mu.Unlock()
+
+	// Logged after releasing l.mu above — Warnf ultimately locks l.mu itself.
+	if staleWarn != "" {
+		Warnf("log", "%s", staleWarn)
+	}
 
 	// SQLite
 	if apiLog != nil {
@@ -91,17 +97,18 @@ func (l *Logger) api(entry APIEntry) {
 // payload writes a full API request/response record.
 func (l *Logger) payload(entry PayloadEntry) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.payloadFile == nil {
-		return
+	staleWarn := l.reopenPayloadIfStaleLocked()
+	if l.payloadFile != nil {
+		if data, err := json.Marshal(entry); err == nil {
+			_, _ = l.payloadFile.Write(append(data, '\n'))
+		}
 	}
+	l.mu.Unlock()
 
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return
+	// Logged after releasing l.mu above — Warnf ultimately locks l.mu itself.
+	if staleWarn != "" {
+		Warnf("log", "%s", staleWarn)
 	}
-	_, _ = l.payloadFile.Write(append(data, '\n'))
 }
 
 // PayloadEnabled returns true if full payload logging is active.
