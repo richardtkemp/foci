@@ -117,6 +117,31 @@ func EndpointNameFromURL(rawURL string) string {
 	return u.Host
 }
 
+// maxInlineRateLimitWait bounds how long a 429 is retried inline before the
+// caller's rate-limit gate takes over. A Retry-After beyond this means the
+// limit is long-lived (e.g. an account quota window), so blocking the turn is
+// wrong — the gate defers and replays instead.
+const maxInlineRateLimitWait = 30 * time.Second
+
+// inlineRateLimitWait decides whether a 429 should be retried inline, and how
+// long to wait first. A short (or absent) Retry-After retries inline, honoring
+// the hint when it exceeds the current backoff; a Retry-After beyond the cap
+// returns retry=false so the caller can fall back to the rate-limit gate.
+func inlineRateLimitWait(apiErr *APIError, backoff time.Duration) (wait time.Duration, retry bool) {
+	ra := time.Duration(apiErr.RetryAfterSeconds()) * time.Second
+	if ra > maxInlineRateLimitWait {
+		return 0, false
+	}
+	wait = backoff
+	if ra > wait {
+		wait = ra
+	}
+	if wait > maxInlineRateLimitWait {
+		wait = maxInlineRateLimitWait
+	}
+	return wait, true
+}
+
 // retryableClient is a type-assertion interface for clients that support
 // extended retry logic (currently only Anthropic).
 type retryableClient interface {
@@ -177,6 +202,18 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) {
 			return nil, err
+		}
+
+		// 429 rate limit: retry inline while the limit is short-lived
+		// (honoring Retry-After). A long limit returns here so the caller's
+		// rate-limit gate can defer and replay instead of blocking the turn.
+		if apiErr.IsRateLimit() {
+			wait, retry := inlineRateLimitWait(apiErr, backoff)
+			if !retry {
+				return nil, err
+			}
+			backoff = wait
+			continue
 		}
 
 		if !apiErr.IsRetryable() {

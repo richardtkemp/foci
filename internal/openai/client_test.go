@@ -892,3 +892,39 @@ func TestUserMessage_WithImage(t *testing.T) {
 		t.Fatal("expected user message")
 	}
 }
+
+func TestRetryAfterHint(t *testing.T) {
+	// Proves the openai transport surfaces a Retry-After hint for the provider
+	// retry layer: from the HTTP header (standard providers) and, failing that,
+	// from OpenRouter's error.metadata.retry_after_seconds body field.
+	t.Run("http header", func(t *testing.T) {
+		e := &openai.Error{Response: &http.Response{Header: http.Header{"Retry-After": []string{"5"}}}}
+		if got := retryAfterHint(e); got != "5" {
+			t.Errorf("retryAfterHint = %q, want 5", got)
+		}
+	})
+	t.Run("openrouter body metadata", func(t *testing.T) {
+		e := &openai.Error{}
+		if err := e.UnmarshalJSON([]byte(`{"error":{"code":429,"metadata":{"retry_after_seconds":1}}}`)); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got := retryAfterHint(e); got != "1" {
+			t.Errorf("retryAfterHint = %q, want 1", got)
+		}
+	})
+	t.Run("header wins over body", func(t *testing.T) {
+		e := &openai.Error{Response: &http.Response{Header: http.Header{"Retry-After": []string{"7"}}}}
+		if err := e.UnmarshalJSON([]byte(`{"error":{"metadata":{"retry_after_seconds":1}}}`)); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got := retryAfterHint(e); got != "7" {
+			t.Errorf("retryAfterHint = %q, want 7 (header should win)", got)
+		}
+	})
+	t.Run("no hint", func(t *testing.T) {
+		e := &openai.Error{}
+		if got := retryAfterHint(e); got != "" {
+			t.Errorf("retryAfterHint = %q, want empty", got)
+		}
+	})
+}

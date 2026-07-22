@@ -4,9 +4,11 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"foci/internal/log"
@@ -145,8 +147,33 @@ func classifyError(err error) error {
 		return &provider.APIError{
 			StatusCode: apiErr.StatusCode,
 			Body:       apiErr.Error(),
+			RetryAfter: retryAfterHint(apiErr),
 		}
 	}
 
 	return fmt.Errorf("openai: %w", err)
+}
+
+// retryAfterHint extracts a Retry-After hint (in seconds) from an OpenAI-format
+// error so the provider retry layer can honor it on a 429. Standard providers
+// set the HTTP Retry-After response header; OpenRouter instead reports the
+// upstream provider's hint in the JSON body at error.metadata.retry_after_seconds.
+// Returns "" when no hint is present.
+func retryAfterHint(apiErr *openai.Error) string {
+	if apiErr.Response != nil {
+		if ra := apiErr.Response.Header.Get("Retry-After"); ra != "" {
+			return ra
+		}
+	}
+	var body struct {
+		Error struct {
+			Metadata struct {
+				RetryAfterSeconds int `json:"retry_after_seconds"`
+			} `json:"metadata"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(apiErr.RawJSON()), &body) == nil && body.Error.Metadata.RetryAfterSeconds > 0 {
+		return strconv.Itoa(body.Error.Metadata.RetryAfterSeconds)
+	}
+	return ""
 }
