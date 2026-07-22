@@ -419,8 +419,22 @@ func pickIndex(cands []Model, segs map[string]bool, bare string) (int, bool) {
 }
 
 // registryLookupSegs resolves a leaf id against the registry using the caller's
-// segment set. Caller must hold registryMu.
+// segment set. A routing-variant leaf (":x") is tried EXACT first, then falls
+// back to its base — so a distinct variant entry keeps its own attributes while
+// an unlisted variant inherits the base's. Caller must hold registryMu.
 func registryLookupSegs(segs map[string]bool, bare string) (Model, bool) {
+	if m, ok := registryPick(segs, bare); ok {
+		return m, true
+	}
+	if base := stripVariantSuffix(bare); base != bare {
+		return registryPick(segs, base)
+	}
+	return Model{}, false
+}
+
+// registryPick resolves exactly the given leaf (no variant fallback).
+// Caller must hold registryMu.
+func registryPick(segs map[string]bool, bare string) (Model, bool) {
 	cands := candidates(bare)
 	i, ok := pickIndex(cands, segs, bare)
 	if !ok {
@@ -496,10 +510,27 @@ func stripDateSuffix(model string) string {
 	return model[:len(model)-9]
 }
 
+// stripVariantSuffix removes a trailing OpenRouter routing-variant suffix
+// (":floor", ":nitro", ":free", ":thinking", …) from a model leaf. These are
+// provider-ROUTING modifiers, not distinct models — they carry the base
+// model's pricing and caps — so a variant leaf that is NOT its own registry
+// entry resolves to the base. e.g. "deepseek-v4-pro:floor" → "deepseek-v4-pro".
+// A model id never contains a ':' except as this separator, so splitting on the
+// first ':' is safe. Applied as a lookup FALLBACK (exact leaf first), so a
+// variant that IS a distinct registry entry keeps its own attributes.
+func stripVariantSuffix(model string) string {
+	if i := strings.IndexByte(model, ':'); i >= 0 {
+		return model[:i]
+	}
+	return model
+}
+
 // normalize reduces a model string to its bare leaf id — the segment after the
 // LAST '/' (OpenRouter ids are host/dev/model or dev/model, so the leaf is the
-// registry key), with the date suffix stripped. Casing is preserved (matching
-// the prior behaviour that modelcaps relies on for its cache keys).
+// registry key), with the date suffix stripped. The routing-variant (":x")
+// suffix is NOT stripped here: the lookup tries the exact variant leaf first
+// and only falls back to the base, so a distinct variant entry keeps its own
+// attributes. Casing is preserved (modelcaps relies on it for cache keys).
 func normalize(model string) string {
 	if i := strings.LastIndexByte(model, '/'); i >= 0 {
 		model = model[i+1:]
@@ -681,7 +712,21 @@ func LookupAsOf(provider, modelID string, at time.Time) (Model, bool) {
 // it while already holding historyMu (mirrors registryLookup/Lookup's split).
 // Provider resolution mirrors registryLookup: provider-specific row set first,
 // then providerless, then a sole remaining provider.
+// historyLookupAsOfSegs tries the exact variant leaf first, then falls back to
+// the base leaf (mirrors registryLookupSegs). Caller must hold historyMu.
 func historyLookupAsOfSegs(segs map[string]bool, bare string, at time.Time) (Model, bool) {
+	if m, ok := historyPickAsOf(segs, bare, at); ok {
+		return m, true
+	}
+	if base := stripVariantSuffix(bare); base != bare {
+		return historyPickAsOf(segs, base, at)
+	}
+	return Model{}, false
+}
+
+// historyPickAsOf resolves exactly the given leaf as-of `at` (no variant
+// fallback). Caller must hold historyMu.
+func historyPickAsOf(segs map[string]bool, bare string, at time.Time) (Model, bool) {
 	byKey := history[bare]
 	if len(byKey) == 0 {
 		return Model{}, false
