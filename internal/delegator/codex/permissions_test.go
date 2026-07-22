@@ -205,6 +205,49 @@ func TestRespondApproval_FiresOnPromptsCleared(t *testing.T) {
 	}
 }
 
+// TestOnServerRequestResolved_DeletesEntryAndClears is the regression for
+// #1326 sub-issue 1: a codex-side resolution (abort/steer/timeout) emits
+// serverRequest/resolved with the resolved requestId. onServerRequestResolved
+// must delete the matching pendingPerms entry (keyed by that rpcID) and fire
+// onPromptsCleared once none remain. Previously the requestId was ignored, so
+// the entry lingered and onPromptsCleared never fired.
+func TestOnServerRequestResolved_DeletesEntryAndClears(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := newPermTestBackend(&buf)
+	cleared := 0
+	b.onPromptsCleared = func() { cleared++ }
+	b.permMu.Lock()
+	b.pendingPerms[7] = &pendingApproval{rpcID: 7, itemID: "a"}
+	b.pendingPerms[8] = &pendingApproval{rpcID: 8, itemID: "b"}
+	b.permMu.Unlock()
+
+	// requestId arrives as a JSON number → float64 in the decoded any.
+	b.onServerRequestResolved(&serverRequestResolvedParams{RequestID: float64(7)})
+	b.permMu.Lock()
+	_, still7 := b.pendingPerms[7]
+	b.permMu.Unlock()
+	if still7 {
+		t.Error("pendingPerms[7] not deleted after resolution")
+	}
+	if cleared != 0 {
+		t.Errorf("cleared = %d with one still pending, want 0", cleared)
+	}
+
+	// A string requestId must also match (RequestId = string|int64).
+	b.onServerRequestResolved(&serverRequestResolvedParams{RequestID: "8"})
+	b.permMu.Lock()
+	n := len(b.pendingPerms)
+	b.permMu.Unlock()
+	if n != 0 {
+		t.Errorf("pendingPerms not empty after both resolved: %d", n)
+	}
+	if cleared != 1 {
+		t.Errorf("cleared = %d after last resolution, want 1", cleared)
+	}
+}
+
 func TestRespondToPermission_ResolvesByItemID(t *testing.T) {
 	t.Parallel()
 
