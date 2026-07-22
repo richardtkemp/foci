@@ -28,6 +28,13 @@ func (b *Backend) onTurnStarted() {
 
 // onTurnCompleted finalises the turn.
 func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
+	// End any subagents still polling: codex emits no terminal
+	// subAgentActivity kind on normal completion, so turn completion is the
+	// boundary that stops the idle 500ms poll (#1324 sub-issue 1) and ends the
+	// stuck 'running' indicator (#1324 sub-issue 3). See finishAll.
+	if b.subagents != nil {
+		b.subagents.finishAll(b)
+	}
 	// Read turnText/turnTools under turnMu: onItemCompleted writes them under
 	// turnMu from the reader goroutine and completeTurn Resets turnText under
 	// turnMu from the agent goroutine (e.g. a turn/start >30s timeout firing
@@ -237,11 +244,16 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 
 	case "subAgentActivity":
 		if item.Kind == "interrupted" || item.Kind == "interacted" {
-			// Stop polling and deliver any final text.
+			// Both kinds are terminal for the poll (stop it and flush final
+			// text), so both must also end the client's activity indicator —
+			// otherwise a subagent that ends via 'interacted' leaves the
+			// indicator 'running' forever (#1324 sub-issue 3). A normal
+			// completion emits NEITHER kind (see finishAll); onTurnCompleted
+			// covers that case.
 			if b.subagents != nil && item.AgentThreadID != "" {
 				b.subagents.stop(b, item.AgentThreadID)
 			}
-			if item.Kind == "interrupted" && se != nil && se.OnSubagentEnd != nil {
+			if se != nil && se.OnSubagentEnd != nil {
 				se.OnSubagentEnd(item.ID, 1)
 			}
 		}
