@@ -456,6 +456,27 @@ func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpen
 	client.openConvIDs = open
 	client.mu.Unlock()
 	h.storeOpenChats(f.ConversationIDs)
+	// Attach this socket as a live fan-out target for every open conversation it
+	// already has a binding for but isn't attached to yet. A conversation first
+	// learned AFTER the socket's hello — minted on another device and mirrored via
+	// conversation.openSync, then rendered from durable HTTP backfill — never joined
+	// its binding's client set (attach otherwise happens only via connect-time
+	// resumeConversations, a self-minted ConversationOpen, or an active send), so it
+	// missed live fan-out until the socket's next reconnect/resume. Seed the ack to
+	// the current high-water: the socket backfilled history over HTTP and needs only
+	// future frames, and the seed keeps a fresh reader from pinning the replay-buffer
+	// trim floor at 0. Idempotent — skip an already-attached socket so an established
+	// reader's ack isn't reset.
+	for _, id := range f.ConversationIDs {
+		h.mu.RLock()
+		b := h.convs[id]
+		h.mu.RUnlock()
+		if b == nil || b.isAttached(client) {
+			continue
+		}
+		b.attach(client)
+		b.seedClientAck(client, b.currentSeq())
+	}
 	h.broadcastOpenSetExcept(f.ConversationIDs, client)
 }
 
