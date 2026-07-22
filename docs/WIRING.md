@@ -1561,7 +1561,14 @@ captured in `setupAgent`) and merged into the turn text before `Enqueue`;
 `interactive.response`→`handleInteractiveResponse`
 (`platform.HandleInteractiveCallback` on the echoed `<promptId>:<index>` data →
 `interactive.edit` resolution, suppressed when a follow-up question advanced the
-binding's seq); `ping`→`pong`; unknown→ignored. No agent → `error` frame.
+binding's seq); `conversation.openSet`→`handleConversationOpenSet` (records the
+socket's open-set for keepalive, persists + mirrors it, AND attaches the socket to
+each open conversation it has a binding for but isn't yet attached to — a 4th
+attach trigger alongside `resumeConversations`/`conversation.open`/an active send —
+so a conversation learned AFTER hello, mirrored via `conversation.openSync` and
+backfilled over HTTP, still gets live fan-out without waiting for the next resume;
+ack seeded to the current high-water, idempotent for an already-attached reader);
+`ping`→`pong`; unknown→ignored. No agent → `error` frame.
 
 **Platform lifecycle callbacks:** `SetLifecycleCallback` stores the gateway's
 `OnUserMessage`/`OnTurnComplete`/`OnTurnEnd` hooks on the per-agent `appConn`

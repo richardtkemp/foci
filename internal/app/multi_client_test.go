@@ -172,6 +172,85 @@ func TestAckInbound_PerClientTrim(t *testing.T) {
 	}
 }
 
+// TestConversationOpenSet_AttachesLateLearnedConvForFanOut proves the #1474 fix: a
+// socket that learns a conversation AFTER its hello (minted on another device and
+// mirrored via conversation.openSync, then rendered from durable HTTP backfill)
+// joins the binding's live client set when it reports the conversation in its
+// open-set — so a subsequent server frame fans out to it LIVE instead of waiting
+// for its next reconnect/resume. The seeded ack (history came over HTTP) keeps the
+// fresh reader from pinning the replay-buffer trim floor at 0.
+func TestConversationOpenSet_AttachesLateLearnedConvForFanOut(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+
+	// A conversation minted on another device, mirrored to this user: the durable
+	// binding exists, but THIS socket never attached (its hello predated it).
+	b := h.ensureBinding(nil, agentID, "conv-late")
+	for i := 0; i < 3; i++ {
+		b.send(fap.Notification{ConversationID: "conv-late", MessageID: "m", Text: "n"})
+	}
+	seqAtLearn := b.currentSeq()
+
+	late := fakeClient()
+	h.addClient(late)
+	if b.isAttached(late) {
+		t.Fatal("precondition: socket must NOT be attached before it reports the open-set")
+	}
+
+	h.handleConversationOpenSet(late, fap.ConversationOpenSet{ConversationIDs: []string{"conv-late"}})
+
+	if !b.isAttached(late) {
+		t.Fatal("socket must attach to a late-learned conversation on ConversationOpenSet")
+	}
+	// Ack seeded to the high-water at attach: HTTP backfill covered history, so the
+	// socket needs only future frames and must not pin the trim floor at 0.
+	b.mu.Lock()
+	st := b.clientStates[late]
+	b.mu.Unlock()
+	if st == nil || st.ackHW != seqAtLearn {
+		t.Fatalf("late socket ackHW = %v, want seeded to high-water %d", st, seqAtLearn)
+	}
+
+	// The load-bearing assertion: a subsequent frame fans out to the late socket live.
+	drain(t, late)
+	b.send(fap.ServerMessage{ConversationID: "conv-late", MessageID: "m1", Role: "agent", Text: "live"})
+	if got := types(drain(t, late)); len(got) == 0 || got[0] != "message" {
+		t.Fatalf("late socket got %v after open-set attach, want a live [message] fan-out", got)
+	}
+}
+
+// TestConversationOpenSet_IdempotentForAttachedReader proves the attach-on-open-set
+// is idempotent: a socket already attached (an established reader that has acked
+// frames) keeps its ack — the open-set must not reset it to the high-water and
+// re-hold the trim floor an already-caught-up reader had released.
+func TestConversationOpenSet_IdempotentForAttachedReader(t *testing.T) {
+	h := newHub(platform.ProviderDeps{})
+	defer h.Close()
+	const agentID = "arnix"
+	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
+	b := h.ensureBinding(nil, agentID, "conv-1")
+
+	reader := fakeClient()
+	h.addClient(reader)
+	b.attach(reader)
+	for i := 0; i < 5; i++ {
+		b.send(fap.Notification{ConversationID: "conv-1", MessageID: "m", Text: "n"})
+	}
+	drain(t, reader)
+	b.ackInbound(reader, 2) // reader has confirmed up to seq 2
+
+	h.handleConversationOpenSet(reader, fap.ConversationOpenSet{ConversationIDs: []string{"conv-1"}})
+
+	b.mu.Lock()
+	st := b.clientStates[reader]
+	b.mu.Unlock()
+	if st == nil || st.ackHW != 2 {
+		t.Fatalf("attached reader ackHW = %v, want 2 preserved (open-set must not reset it)", st)
+	}
+}
+
 // TestAttach_NilClearsLiveSet verifies the socketless-restore path: attach(nil)
 // drops all live sockets without otherwise touching durable state. Used at
 // startup to ensure a stale set never carries over from a previous process.

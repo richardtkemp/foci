@@ -1839,6 +1839,16 @@ func (b *convBinding) detachIf(client *wsClient) {
 	b.mu.Unlock()
 }
 
+// isAttached reports whether client is currently in this binding's live fan-out
+// set. Used by ConversationOpenSet's attach-late-learned-conversations pass to
+// stay idempotent — an already-attached reader is skipped so its ack isn't reset.
+func (b *convBinding) isAttached(client *wsClient) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, ok := b.clients[client]
+	return ok
+}
+
 // hasLiveClients reports whether any socket is still attached to this binding.
 func (b *convBinding) hasLiveClients() bool {
 	b.mu.Lock()
