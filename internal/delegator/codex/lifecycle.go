@@ -323,7 +323,10 @@ func (b *Backend) startThread() (string, error) {
 
 // resumeThread resumes an existing thread.
 func (b *Backend) resumeThread(threadID string) error {
-	params := threadResumeParams{ThreadID: threadID}
+	params := threadResumeParams{
+		ThreadID:         threadID,
+		BaseInstructions: b.startOpts.SystemPrompt,
+	}
 	_, err := b.sendAndWait("thread/resume", params)
 	if err != nil {
 		return err

@@ -75,6 +75,12 @@ type threadStartParams struct {
 
 type threadResumeParams struct {
 	ThreadID string `json:"threadId"`
+	// BaseInstructions re-sends the freshly-generated system prompt on resume
+	// (verified supported by codex 0.144.5's ThreadResumeParams schema, same
+	// field as ThreadStartParams). Without it a thread surviving a gateway
+	// restart runs forever on the prompt captured at thread-creation time —
+	// MEMORY.md edits, today's date, and skill changes never reach it.
+	BaseInstructions string `json:"baseInstructions,omitempty"`
 }
 
 type threadResult struct {
