@@ -398,6 +398,21 @@ type BatchButtonSender interface {
 	SendInteractiveBatch(promptID string, questions []BatchQuestion, onResponse func(answers []string)) (batched bool, err error)
 }
 
+// BatchButtonRestorer is optionally implemented by Connection types that can
+// RE-REGISTER a batched prompt's answer callback after a restart WITHOUT sending a
+// new form (the batched analogue of the sequential restore path). The native app
+// keeps its rendered form in local storage across a server restart, but the
+// server's in-memory batched registration is lost — this re-binds it so the app's
+// batched answer resolves instead of being dropped (#1473).
+type BatchButtonRestorer interface {
+	// RegisterInteractiveBatch re-registers onResponse for promptID against the
+	// session's durable conversation, sizing the accumulated-answers slice to
+	// questionCount. It sends no frame. Returns false when the conversation has no
+	// binding to register against (the caller then relies on the answer-time
+	// fallback).
+	RegisterInteractiveBatch(promptID string, questionCount int, onResponse func(answers []string)) bool
+}
+
 // ConnectionManager manages platform connection instances and facet pools.
 type ConnectionManager interface {
 	Primary(agentID string) Connection

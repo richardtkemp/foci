@@ -93,6 +93,25 @@ func batchQuestionsFor(qs []question.Question) []platform.BatchQuestion {
 	return questions
 }
 
+// newAskRestoreBatchFn builds the BATCHED restore hook: after a restart it
+// re-registers the server-side callback for an ask that was presented as a native-
+// app form, WITHOUT sending a new frame (the app still shows the form). This is the
+// batched analogue of newAskRestoreFn — the hub's in-memory batched registration is
+// lost on restart, so without it the app's batched answer (InteractiveResponse.
+// Answers) matches nothing and is silently dropped (#1473). Returns for any
+// transport that can't batch-restore (no app conn / no live binding); the app hub's
+// answer-time fallback (fix B) then catches the answer.
+func newAskRestoreBatchFn(agentID string, connMgr platform.ConnectionManager) tools.AskRestoreBatchFn {
+	return func(sessionKey, promptID string, questionCount int, onResponse func(answers []string)) {
+		conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+		br, ok := conn.(platform.BatchButtonRestorer)
+		if !ok {
+			return // not the app (or no addressable conn) — nothing to re-register
+		}
+		br.RegisterInteractiveBatch(promptID, questionCount, onResponse)
+	}
+}
+
 // newAskRestoreFn builds the restore hook for the foci-native `ask` tool. After a
 // restart the question's buttons still live on the platform (the message survived
 // in the chat), but foci's in-memory routing entry was lost. This re-registers

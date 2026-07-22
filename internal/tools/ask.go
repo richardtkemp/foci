@@ -108,6 +108,18 @@ type AskCloseFn func(msgID, finalText string)
 // the on-screen buttons carry.
 type AskRestoreFn func(sessionKey, msgID, platformMsgID string, choices []question.Choice, onResponse func(data string))
 
+// AskRestoreBatchFn re-registers the callback for a BATCHED (native-app) ask after
+// a restart — the batched analogue of AskRestoreFn. Like AskRestoreFn it must NOT
+// send a new message: the batched form still lives in the app's local store, so
+// this only re-binds onResponse to the server-side prompt registry that a restart
+// dropped (the registry is in-memory). Without it, an app answering a pre-restart
+// batched ask (InteractiveResponse.Answers) matches no registration and is silently
+// dropped — no resolution frame to siblings, no answer to the agent (#1473).
+// promptID is the colon-free routing id of the form; questionCount sizes the
+// server's accumulated-answers slice; onResponse receives one raw answer per
+// question, positionally (same shape as AskPresentBatchFn's onResponse).
+type AskRestoreBatchFn func(sessionKey, promptID string, questionCount int, onResponse func(answers []string))
+
 // pendingAsk is one in-flight ask: a sequential accumulator plus the context
 // needed to present follow-up questions and deliver the final answers.
 type pendingAsk struct {
@@ -126,6 +138,11 @@ type pendingAsk struct {
 	// the ask. Buttons still resolve it. Toggled by /pause and /resume; persisted
 	// so the pause survives a restart mid-ask.
 	paused bool
+	// batched records that this ask was presented as a single native-app form
+	// (tryPresentBatch succeeded), so the app answers via InteractiveResponse.Answers.
+	// Persisted so restore re-registers the BATCHED callback (restoreBatch) rather
+	// than the sequential one — the app still shows the same form (#1473).
+	batched bool
 }
 
 // askState is the registry of in-flight asks. Keyed by requestID for click
@@ -144,11 +161,12 @@ type askState struct {
 	present      AskPresentFn
 	presentBatch AskPresentBatchFn // app-only batched presentation; nil = always sequential
 	restore      AskRestoreFn
+	restoreBatch AskRestoreBatchFn // app-only batched re-registration on restart; nil = sequential restore only
 	deliver      AskDeliverFn
 	closeMsg     AskCloseFn
 	store        *session.SessionIndex // nil = no persistence
 	agentID      string
-	onResolve    func(sessionKey string) // fired when a session's pending ask clears; nil = disabled
+	onResolve    func(sessionKey string)      // fired when a session's pending ask clears; nil = disabled
 	cacheWarm    func(sessionKey string) bool // reports whether a session's prompt cache is live; nil = always warm (never suppress)
 }
 
@@ -195,6 +213,14 @@ type AskOption func(*askState)
 // Nil-safe (a nil fn just leaves batching disabled).
 func WithBatchPresent(fn AskPresentBatchFn) AskOption {
 	return func(s *askState) { s.presentBatch = fn }
+}
+
+// WithBatchRestore wires the batched analogue of the sequential AskRestoreFn: on
+// restart it re-registers the server-side callback for a batched ask (whose
+// in-memory registration a restart drops), so the app's batched answer still
+// resolves instead of being silently dropped (#1473). Nil-safe.
+func WithBatchRestore(fn AskRestoreBatchFn) AskOption {
+	return func(s *askState) { s.restoreBatch = fn }
 }
 
 // askMetaKey is the agent_metadata key under which pending asks are persisted.
@@ -293,6 +319,7 @@ func (a *askState) tryPresentBatch(p *pendingAsk) bool {
 	}
 	a.mu.Lock()
 	p.platformMsgID = promptID
+	p.batched = true
 	a.persistLocked()
 	a.mu.Unlock()
 	return true
@@ -483,6 +510,7 @@ type persistedAsk struct {
 	Grader        persistedGrader     `json:"grader,omitempty"`
 	PlatformMsgID string              `json:"platform_msg_id,omitempty"`
 	Paused        bool                `json:"paused,omitempty"`
+	Batched       bool                `json:"batched,omitempty"`
 }
 
 // persistedGrader mirrors graderConfig with exported, JSON-friendly fields
@@ -520,6 +548,7 @@ func (a *askState) persistLocked() {
 			},
 			PlatformMsgID: p.platformMsgID,
 			Paused:        p.paused,
+			Batched:       p.batched,
 		})
 	}
 	data, err := json.Marshal(out)
@@ -575,6 +604,7 @@ func (a *askState) restorePending() {
 			},
 			platformMsgID: s.PlatformMsgID,
 			paused:        s.Paused,
+			batched:       s.Batched,
 		}
 		a.byReqID[p.requestID] = p
 		a.bySession[p.sessionKey] = p.requestID
@@ -597,12 +627,16 @@ func (a *askState) restorePending() {
 // question with, so the existing buttons' "im:<msgID>:<idx>" data still routes
 // here. No new message is sent.
 func (a *askState) reattach(p *pendingAsk) {
-	// An un-advanced ask against a now-batch-capable app client (re)presents as a
-	// single batched form. Reusing promptID q0 makes the client UPSERT the same
-	// on-screen form rather than duplicate it. If the client can't batch (offline,
-	// or no capability), tryPresentBatch returns false and we fall through to the
-	// sequential reattach below — so a batch ask degrades gracefully to one-at-a-time.
-	if p.acc.Index() == 0 && a.tryPresentBatch(p) {
+	// One restore mechanism, parameterised by how the ask was presented. A batched
+	// (native-app) ask re-registers its server-side batched callback WITHOUT sending
+	// a frame (the app still shows the form); a sequential ask re-binds its
+	// on-screen buttons. Both rebind the ask-layer handler the LIVE path uses
+	// (handleBatchResponse / handleResponse), so the two cannot drift.
+	if p.acc.Index() == 0 && p.batched && a.restoreBatch != nil {
+		reqID := p.requestID
+		a.restoreBatch(p.sessionKey, questionMsgID(p.requestID, 0), p.acc.Total(), func(answers []string) {
+			a.handleBatchResponse(reqID, answers)
+		})
 		return
 	}
 	if a.restore == nil {
@@ -616,6 +650,29 @@ func (a *askState) reattach(p *pendingAsk) {
 	a.restore(p.sessionKey, msgID, p.platformMsgID, question.Choices(q), func(data string) {
 		a.handleResponse(p.requestID, data)
 	})
+}
+
+// handleBatchByPrompt routes a batched answer identified by its on-screen promptID
+// (rather than the requestID) to the SAME entry point a registered batched answer
+// uses (handleBatchResponse). It is the ask-layer target for the app-hub fallback
+// that catches a batched reply whose server-side registration a restart dropped
+// (#1473, fix B). The batched promptID is question 0's msg id, so it maps back to
+// the ask whose requestID yields it.
+func (a *askState) handleBatchByPrompt(promptID string, answers []string) {
+	a.mu.Lock()
+	var reqID string
+	for id := range a.byReqID {
+		if questionMsgID(id, 0) == promptID {
+			reqID = id
+			break
+		}
+	}
+	a.mu.Unlock()
+	if reqID == "" {
+		askLog.Warnf("batched answer for unregistered prompt %q: no matching pending ask (dropped)", promptID)
+		return
+	}
+	a.handleBatchResponse(reqID, answers)
 }
 
 func (a *askState) deliverMsg(sessionKey, msg string) {
@@ -899,6 +956,10 @@ type askInput struct {
 type AskRouter struct {
 	PendingForSession func(sessionKey string) string
 	HandleResponse    func(requestID, data string)
+	// HandleBatchByPrompt feeds a batched (native-app) answer set — identified by
+	// its on-screen promptID — into the waiting ask. Used by the app hub as a
+	// fallback when a restart dropped the in-memory batched registration (#1473).
+	HandleBatchByPrompt func(promptID string, answers []string)
 	// PauseSession / ResumeSession toggle answer-capture for a session's pending
 	// ask. While paused, the inbound routing guard skips answer-capture so the
 	// user's typed replies run as normal turns; buttons still resolve the ask.
@@ -1036,12 +1097,13 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 		},
 	}
 	router := &AskRouter{
-		PendingForSession: state.pendingForSession,
-		HandleResponse:    state.handleResponse,
-		PauseSession:      func(sk string) bool { return state.setPaused(sk, true) },
-		ResumeSession:     func(sk string) bool { return state.setPaused(sk, false) },
-		IsPaused:          state.isPaused,
-		CompleteSession:   state.completeSession,
+		PendingForSession:   state.pendingForSession,
+		HandleResponse:      state.handleResponse,
+		HandleBatchByPrompt: state.handleBatchByPrompt,
+		PauseSession:        func(sk string) bool { return state.setPaused(sk, true) },
+		ResumeSession:       func(sk string) bool { return state.setPaused(sk, false) },
+		IsPaused:            state.isPaused,
+		CompleteSession:     state.completeSession,
 	}
 	return t, router
 }

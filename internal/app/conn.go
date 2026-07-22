@@ -57,10 +57,16 @@ type appConn struct {
 	hub      *Hub
 	agentID  string
 	agentRef agentCore
-	commands *command.Registry
-	cmdCtx   command.CommandContext
-	stt      voice.STT // inbound voice transcription; nil = unsupported
-	tts      voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
+	// routeBatchAnswer feeds a batched ask answer (by promptID) into this agent's
+	// ask layer when the hub has no live batchPrompt registration for it — the
+	// restart-lost fallback (#1473, fix B). Set once at setupAgent; reads the
+	// agent's AskRouter lazily so it is safe before the router is wired. nil = no
+	// ask tool on this agent.
+	routeBatchAnswer func(promptID string, answers []string)
+	commands         *command.Registry
+	cmdCtx           command.CommandContext
+	stt              voice.STT // inbound voice transcription; nil = unsupported
+	tts              voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
 
 	// Pending interactive headers, set by SetInteractiveHeader and consumed
 	// by SendTextWithButtons. Keyed by prompt ID. Pointer-based so the
@@ -91,6 +97,7 @@ var (
 	_ platform.Connection           = (*appConn)(nil)
 	_ platform.ButtonSender         = (*appConn)(nil)
 	_ platform.BatchButtonSender    = (*appConn)(nil)
+	_ platform.BatchButtonRestorer  = (*appConn)(nil)
 	_ agent.Driver                  = (*appConn)(nil)
 	_ turn.SessionSubagentDeliverer = (*appConn)(nil)
 )
@@ -502,6 +509,21 @@ func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.Bat
 		ExpiresAt:      time.Now().Add(defaultPromptTTL).Format(time.RFC3339),
 	})
 	return true, nil
+}
+
+// RegisterInteractiveBatch re-registers a batched ask's answer callback after a
+// restart WITHOUT sending a frame — the app still shows the form it rendered
+// before the restart, but the hub's in-memory batchPrompts entry was lost, so an
+// answer would otherwise match nothing and be dropped (#1473). Implements
+// platform.BatchButtonRestorer. Returns false when the session has no durable
+// binding to register against (the answer-time fallback then catches it).
+func (c *appConn) RegisterInteractiveBatch(promptID string, questionCount int, onResponse func(answers []string)) bool {
+	b := c.hub.bindingForSession(c.SessionKey())
+	if b == nil {
+		return false
+	}
+	c.hub.registerBatchPrompt(promptID, b, questionCount, onResponse)
+	return true
 }
 
 // EditMessageText edits a previously-sent message in place. msgID is either a

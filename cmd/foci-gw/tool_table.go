@@ -325,6 +325,7 @@ var toolTable = []toolEntry{
 			func(msgID, finalText string) { _ = platform.CancelInteractiveMessage(msgID, finalText) },
 			d.p.sessionIndex, d.p.acfg.ID,
 			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr)),
+			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr)),
 			tools.WithOnResolve(func(sk string) {
 				if ag := d.agLazy(); ag != nil {
 					ag.DrainDeferredInjects(sk)

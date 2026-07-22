@@ -196,9 +196,29 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 		}
 		final := append([]string(nil), bp.answers...)
 		bp.mu.Unlock()
-		bp.b.send(fap.InteractiveProgressEdit{ConversationID: f.ConversationID, PromptID: f.PromptID, Answers: final, Done: true})
-		bp.onResp(final)
+		h.resolveBatchedAsk(bp.b, f.PromptID, final, bp.onResp)
 		return
+	}
+
+	// A batched reply (non-empty Answers) with NO live registration: a restart
+	// dropped the in-memory batchPrompts map, so a pre-restart batched ask arrives
+	// here unrecognised. Route it to the SAME ask-layer entry a registered batched
+	// answer uses and fan out the Done edit, instead of the single-prompt dead-end
+	// below (which reads the empty Data, fails the callback lookup, and silently
+	// deletes the prompt — dropping both the sibling sync AND the answer). #1473 (B).
+	if len(f.Answers) > 0 {
+		client.mu.Lock()
+		b := client.convByID[f.ConversationID]
+		client.mu.Unlock()
+		if b != nil {
+			if conn := h.PrimaryBot(b.agentID); conn != nil && conn.routeBatchAnswer != nil {
+				h.deletePrompt(f.PromptID) // drop any stale single-prompt registration
+				h.resolveBatchedAsk(b, f.PromptID, f.Answers, func(ans []string) {
+					conn.routeBatchAnswer(f.PromptID, ans)
+				})
+				return
+			}
+		}
 	}
 
 	client.mu.Lock()
