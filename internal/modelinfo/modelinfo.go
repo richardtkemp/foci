@@ -48,7 +48,8 @@ func noteUnpriced(bare string) {
 
 // Model holds the static attributes of a model.
 type Model struct {
-	Provider        string  // provider qualifier (e.g. "openrouter", "zai-coding-plan")
+	Provider        string  // provider qualifier / API host (e.g. "openrouter", "zai-coding-plan")
+	Dev             string  // model author/vendor slug (e.g. "moonshotai", "anthropic"); the segment OpenRouter puts before the model id. Distinct from Provider (the API host).
 	ContextWindow   int     // tokens
 	Effort          bool    // supports output_config.effort
 	Thinking        bool    // supports thinking (adaptive/enabled)
@@ -77,6 +78,7 @@ var builtInData []byte
 type jsonlEntry struct {
 	ID              string  `json:"id"`
 	Provider        string  `json:"provider"`
+	Dev             string  `json:"dev,omitempty"`
 	ContextWindow   int     `json:"context_window,omitempty"`
 	Effort          bool    `json:"effort,omitempty"`
 	Thinking        bool    `json:"thinking,omitempty"`
@@ -210,6 +212,7 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 		id := strings.ToLower(e.ID)
 		m := Model{
 			Provider:        provider,
+			Dev:             strings.ToLower(e.Dev),
 			ContextWindow:   e.ContextWindow,
 			Effort:          e.Effort,
 			Thinking:        e.Thinking,
