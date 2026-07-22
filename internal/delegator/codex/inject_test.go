@@ -173,8 +173,10 @@ func TestCompleteTurn_FiresOnTurnCompleteWithAccumulatedTextAndUsage(t *testing.
 	if got.Usage == nil {
 		t.Fatal("Usage not delivered")
 	}
-	if got.Usage.InputTokens != 10 || got.Usage.OutputTokens != 4 || got.Usage.CacheReadInputTokens != 2 {
-		t.Errorf("Usage = %+v, want in=10 out=4 cache-read=2", got.Usage)
+	// InputTokens is mapped input-minus-cached (10-2=8), CacheReadInputTokens=2
+	// — codex reports cached as a subset of input (see onTokenUsage).
+	if got.Usage.InputTokens != 8 || got.Usage.OutputTokens != 4 || got.Usage.CacheReadInputTokens != 2 {
+		t.Errorf("Usage = %+v, want in=8 out=4 cache-read=2", got.Usage)
 	}
 
 	// completeTurn must also release the turn.

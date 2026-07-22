@@ -57,7 +57,11 @@ func TestDispatch_TokenUsageStashedAndDeliveredOnTurnComplete(t *testing.T) {
 	b.turnMu.Lock()
 	stashed := b.stashedUsage
 	b.turnMu.Unlock()
-	if stashed == nil || stashed.InputTokens != 100 {
+	// codex reports cachedInputTokens (20) as a SUBSET of inputTokens (100).
+	// foci's downstream math is Anthropic-style additive, so InputTokens is
+	// mapped as input-minus-cached (80) with CacheReadInputTokens=20, keeping
+	// input+cacheRead == codex's reported input (100). See onTokenUsage.
+	if stashed == nil || stashed.InputTokens != 80 || stashed.CacheReadInputTokens != 20 {
 		t.Fatalf("stashedUsage not set correctly: %+v", stashed)
 	}
 
@@ -71,7 +75,7 @@ func TestDispatch_TokenUsageStashedAndDeliveredOnTurnComplete(t *testing.T) {
 
 	b.dispatch([]byte(`{"method":"turn/completed","params":{"threadId":"th_1","turn":{"id":"tu_1","status":"completed"}}}`))
 
-	if got == nil || got.Usage == nil || got.Usage.InputTokens != 100 {
+	if got == nil || got.Usage == nil || got.Usage.InputTokens != 80 || got.Usage.CacheReadInputTokens != 20 {
 		t.Fatalf("TurnResult.Usage not delivered from stash: %+v", got)
 	}
 }
