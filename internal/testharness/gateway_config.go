@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"foci/internal/config"
 )
 
 // testConfigOpts collects parameters for writing a synthetic foci.toml
@@ -261,6 +263,63 @@ model = "stub"
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}
+}
+
+// verifyGeneratedLogPaths loads the just-written test config exactly as
+// foci-gw's own main() does (config.Load applies the same tag-defaults and
+// ResolveAllPaths call) and asserts every resolved log/archive path stays
+// under the process's temp directory (os.TempDir(), i.e. /tmp or whatever
+// $TMPDIR the test run set) rather than escaping into a real home directory.
+//
+// os.TempDir() rather than this specific test's own t.TempDir() is the
+// deliberate containment boundary: a test is free to seed its own event log
+// at a SIBLING t.TempDir() allocation (t.TempDir() hands back a unique
+// numbered subdirectory — e.g. .../001, .../002 — per call within one test,
+// not the same directory every time), and that's exactly as safe as the
+// harness's own LogsDir. What must never happen is a path resolving via
+// config.ResolvePath's os.UserHomeDir() fallback, which only reaches outside
+// the shared /tmp (or $TMPDIR) tree in the first place.
+//
+// This is the harness-level, structural half of foci_todo #1492's fix. A
+// test that supplies its own [logging] section (see the skip-if-overridden
+// doc on writeTestConfig above) but only overrides SOME keys leaves the
+// rest at their package defaults ("logs/foci.log" etc, see types.go) —
+// relative paths that config.ResolvePath joins against os.UserHomeDir(),
+// i.e. the REAL host home for a `go test` process running under the real
+// account (nothing here has overridden ITS OWN env). #1479's live incident
+// was exactly this shape: a test-spawned foci-gw's startup log-rotation
+// pass truncated the production api.jsonl/api-payload.jsonl out from
+// under the live foci-gw holding them open. Rather than trust every
+// future test to remember the full-override-or-log_rotation=false guard,
+// fail LOUD here — before the risky subprocess is ever spawned — the
+// instant a generated config's resolved paths would escape the sandbox.
+//
+// A config.Load error is deliberately NOT reported here: tests that
+// intentionally feed malformed/invalid TOML (config_test.go's
+// TryStartGateway parse/validation-error cases) already assert on that
+// failure via the gateway's own (non-fatal) startup error; this check only
+// evaluates once the config parses successfully.
+func verifyGeneratedLogPaths(t *testing.T, configPath string) {
+	t.Helper()
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return
+	}
+	sandbox := os.TempDir()
+	checkContained := func(label, p string) {
+		if p == "" {
+			return
+		}
+		rel, err := filepath.Rel(sandbox, p)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Fatalf("STRUCTURAL GUARD (foci_todo #1492): generated test config's [logging].%s resolved to %q, OUTSIDE the test sandbox %q (os.TempDir()). A test-spawned foci-gw would open/rotate/truncate that file — if it happens to alias a real path (e.g. the host's production log), that is silent data loss, not a test failure. Fix: scope every [logging] key this test's ExtraConfigTOML sets under a t.TempDir()/LogsDir path (see writeTestConfig's skip-if-overridden doc above), or drop the [logging] header entirely and let the harness supply its own tempdir-scoped defaults.",
+				label, p, sandbox)
+		}
+	}
+	checkContained("event_file", cfg.Logging.EventFile)
+	checkContained("api_file", cfg.Logging.APIFile)
+	checkContained("payload_file", cfg.Logging.PayloadFile)
+	checkContained("archive_dir", cfg.Logging.ArchiveDir)
 }
 
 // extraConfigHasSection reports whether extra contains a top-level

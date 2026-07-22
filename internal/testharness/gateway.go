@@ -457,6 +457,10 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		ExtraConfigTOML:         opts.ExtraConfigTOML,
 		SuppressNudgeExtraction: !opts.EnableNudgeExtraction,
 	})
+	// Structural guard (foci_todo #1492): fail loudly, before foci-gw is
+	// ever spawned, if the config we just generated would resolve any log
+	// path outside this test's own temp tree. See verifyGeneratedLogPaths.
+	verifyGeneratedLogPaths(t, configPath)
 	if !opts.SkipSecretsFile {
 		writeTestSecrets(t, secretsPath, opts.Agents, opts.ExtraSecretsTOML)
 	}
@@ -613,19 +617,25 @@ func (h *Harness) spawnGateway() error {
 	if h.opts.BackendReadyTimeout > 0 {
 		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+h.opts.BackendReadyTimeout.String())
 	}
-	// If any agent has OmitWorkspaceKey set, override HOME so foci's
-	// load.go convention default ($HOME/<id>) resolves to the tempDir
-	// workspaces subdir that writeWorkspaces already populated with the
-	// per-agent character/CRAFT.md. Without this override, the host
-	// user's actual home would be the resolved root — workspaces don't
-	// exist there, foci's startup file loader complains, and the test
-	// is observing host state instead of the test artefact.
-	for _, a := range h.agents {
-		if a.OmitWorkspaceKey {
-			cmd.Env = append(cmd.Env, "HOME="+filepath.Join(h.tempDir, "workspaces"))
-			break
-		}
-	}
+	// Always override HOME for the spawned foci-gw to a directory inside
+	// THIS test's own temp tree — never the real host home.
+	//
+	// Structural half of foci_todo #1492: any config value left at its
+	// package default (a relative path — logging fields chief among them,
+	// see writeTestConfig's skip-if-overridden doc and
+	// verifyGeneratedLogPaths above) resolves via config.ResolvePath
+	// against os.UserHomeDir(). For a subprocess spawned from a `go test`
+	// run under the real host account, that IS the real host's home —
+	// without this override, a test whose [logging] section only partially
+	// overrides the defaults would have its spawned foci-gw rotate/write
+	// the HOST'S REAL production logs (#1479's live incident). This was
+	// previously only done for agents with OmitWorkspaceKey (so foci's
+	// load.go convention default, $HOME/<id>, resolves to the tempDir
+	// workspaces subdir writeWorkspaces already populated with the
+	// per-agent character/CRAFT.md) — unconditional is strictly safer and
+	// changes nothing for the non-Omit case, since those agents' workspace
+	// paths are always written as explicit absolute values in the config.
+	cmd.Env = append(cmd.Env, "HOME="+filepath.Join(h.tempDir, "workspaces"))
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		cancel()

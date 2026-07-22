@@ -12,6 +12,42 @@ import (
 	"foci/internal/testharness"
 )
 
+// scopedLoggingTOML returns a "[logging]" TOML block that fully scopes ALL
+// FOUR log-path keys (event_file, api_file, payload_file, archive_dir) under
+// tempDir, with an explicit event_file override at eventLogPath and the
+// given log_rotation setting.
+//
+// Use this — never a hand-written "[logging]\nevent_file = ...\n" block —
+// whenever a test needs a custom event log path. writeTestConfig only emits
+// its own tempdir-scoped [logging] defaults when a test's ExtraConfigTOML
+// has NO "[logging]" header at all (skip-if-overridden, since TOML rejects
+// duplicate tables): a test-supplied header that overrides only SOME keys
+// leaves the rest at their package defaults ("logs/api.jsonl" etc, see
+// types.go), which config.ResolvePath joins against the REAL host
+// os.UserHomeDir() — this test process never overrides its own $HOME, only
+// the subprocess it spawns does. Those defaults can then alias the host's
+// actual production log files. This is exactly what caused foci_todo
+// #1479's live incident (a test-spawned foci-gw's startup rotation pass
+// truncated the production api.jsonl/api-payload.jsonl out from under the
+// live foci-gw holding them open) and is guarded structurally in two
+// places: this helper (so new tests don't reintroduce the partial-override
+// shape) and testharness.verifyGeneratedLogPaths (a harness-level assertion
+// that fails loudly, before ANY config with an escaping log path ever
+// reaches a spawned foci-gw, regardless of how it was generated) — see
+// foci_todo #1492.
+func scopedLoggingTOML(tempDir, eventLogPath string, rotation bool) string {
+	rot := "false"
+	if rotation {
+		rot = "true"
+	}
+	return "[logging]\n" +
+		"event_file = \"" + eventLogPath + "\"\n" +
+		"api_file = \"" + tempDir + "/api.jsonl\"\n" +
+		"payload_file = \"" + tempDir + "/api-payload.jsonl\"\n" +
+		"archive_dir = \"" + tempDir + "/archive\"\n" +
+		"log_rotation = " + rot + "\n"
+}
+
 // waitForStderr polls the harness stderr until it contains substr or
 // the timeout expires. Returns true on hit. Used for assertions about
 // foci's log surface (escalate lines, sanitized error messages).
