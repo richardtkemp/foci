@@ -76,6 +76,23 @@ type CancelFrame struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+// NotifyFrame carries an out-of-band update about a previously *answered*
+// ask — typically a client (e.g. aisudo) reporting the completion status of
+// whatever the human's answer authorized (a command, an approval, ...). ID
+// correlates back to the original AskFrame.ID; there is no reply frame for a
+// notify (see docs/ASKGW-PROTOCOL.md).
+//
+// ExitCode is a pointer so 0 (success) is distinguishable from "not
+// supplied" (a notify with no numeric outcome, just Message/Status text).
+type NotifyFrame struct {
+	Protocol string `json:"protocol"`
+	Type     string `json:"type"`
+	ID       string `json:"id"`
+	Status   string `json:"status,omitempty"`    // free-form outcome label, e.g. "completed", "failed"
+	ExitCode *int   `json:"exit_code,omitempty"` // process exit code, when the notify concerns a command
+	Message  string `json:"message,omitempty"`   // optional human-readable detail appended to the rendered status
+}
+
 type AckFrame struct {
 	Protocol string `json:"protocol"`
 	Type     string `json:"type"`
@@ -120,6 +137,14 @@ func DecodeAsk(b []byte) (*AskFrame, error) {
 
 func DecodeCancel(b []byte) (*CancelFrame, error) {
 	var f CancelFrame
+	if err := json.Unmarshal(b, &f); err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+func DecodeNotify(b []byte) (*NotifyFrame, error) {
+	var f NotifyFrame
 	if err := json.Unmarshal(b, &f); err != nil {
 		return nil, err
 	}

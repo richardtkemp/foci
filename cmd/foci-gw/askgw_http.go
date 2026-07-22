@@ -27,10 +27,11 @@ const (
 )
 
 // setupAskgwHTTP registers the askgw HTTP transport (POST /askgw/ask, GET
-// /askgw/ask/{id}, POST /askgw/ask/{id}/cancel) on mux, reusing srv (the
-// same *askgw.Server the Unix-socket transport already runs — same
-// Registry, same present/cancel/resolveSession closures). Auth is whatever
-// authMiddleware already wraps mux with (http.api_key) — no new auth scheme.
+// /askgw/ask/{id}, POST /askgw/ask/{id}/cancel, POST /askgw/notify) on mux,
+// reusing srv (the same *askgw.Server the Unix-socket transport already
+// runs — same Registry, same present/cancel/resolveSession/editMessage
+// closures). Auth is whatever authMiddleware already wraps mux with
+// (http.api_key) — no new auth scheme.
 //
 // Returns nil (and registers nothing) unless BOTH [askgw] enabled=true AND
 // [askgw] http_enabled=true: http_enabled is a separate, explicit opt-in
@@ -57,9 +58,50 @@ func setupAskgwHTTP(ctx context.Context, cfg *config.Config, mux *http.ServeMux,
 
 	mux.HandleFunc("/askgw/ask", handleAskgwSubmit(t, maxBytes))
 	mux.HandleFunc("/askgw/ask/", handleAskgwPollOrCancel(t))
+	mux.HandleFunc("/askgw/notify", handleAskgwNotify(srv, maxBytes))
 
-	askgwLog.Infof("HTTP transport enabled: POST /askgw/ask, GET /askgw/ask/{id}, POST /askgw/ask/{id}/cancel")
+	askgwLog.Infof("HTTP transport enabled: POST /askgw/ask, GET /askgw/ask/{id}, POST /askgw/ask/{id}/cancel, POST /askgw/notify")
 	return t
+}
+
+// handleAskgwNotify returns the handler for POST /askgw/notify — the fire-
+// and-forget HTTP counterpart to the socket transport's `notify` frame
+// (internal/askgw/server.go's handleNotify). Unlike /askgw/ask, this has no
+// id/poll bookkeeping of its own: it goes straight to srv.HandleNotifyFrame,
+// which looks up the notify's own embedded `id` (correlating to a
+// previously-answered ask, over EITHER transport) and renders it — this
+// endpoint's response only reports whether the frame itself was well-formed
+// and accepted, not whether an answered ask was found to render it against
+// (see docs/ASKGW-PROTOCOL.md — an unknown/expired id is logged and dropped
+// server-side, there is nothing more specific to report back).
+func handleAskgwNotify(srv *askgw.Server, maxBytes int64) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			if bodyTooLarge(err) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		id, ok, code, msg := srv.HandleNotifyFrame(body)
+		w.Header().Set("Content-Type", "application/json")
+		if !ok {
+			askgwLog.Warnf("POST /askgw/notify: %s (%s)", msg, code)
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "code": code, "error": msg})
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "status": "accepted"})
+	}
 }
 
 // handleAskgwSubmit returns the handler for POST /askgw/ask. Body is the

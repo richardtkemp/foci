@@ -40,9 +40,9 @@ func askBody(id string) []byte {
 
 func TestHTTPSubmitAnswerRoundTrip(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -99,7 +99,9 @@ func TestHTTPPollUnknownID(t *testing.T) {
 }
 
 func TestHTTPSubmitDuplicateID(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) bool { return true }
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+		return "", true
+	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv := newHTTPTestServer(t, present, resolve, 0)
 	tr := NewHTTPTransport(srv)
@@ -155,9 +157,9 @@ func TestHTTPSubmitWrongType(t *testing.T) {
 }
 
 func TestHTTPSubmitUnavailable(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) bool {
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
 		t.Fatal("present should not be called when no session resolves")
-		return false
+		return "", false
 	}
 	resolve := func(string) (string, string) { return "", "" }
 	srv := newHTTPTestServer(t, present, resolve, 0)
@@ -178,9 +180,9 @@ func TestHTTPSubmitUnavailable(t *testing.T) {
 
 func TestHTTPTimeout(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv := newHTTPTestServer(t, present, resolve, 30*time.Millisecond)
@@ -202,9 +204,9 @@ func TestHTTPTimeout(t *testing.T) {
 func TestHTTPCancel(t *testing.T) {
 	cb := &capturedCallback{}
 	cancelled := make(chan struct{})
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv, err := NewServer(ServerDeps{
@@ -257,9 +259,9 @@ func TestHTTPCancel(t *testing.T) {
 
 func TestHTTPSweepAbandoned(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
 	srv := newHTTPTestServer(t, present, resolve, 0)
@@ -281,5 +283,95 @@ func TestHTTPSweepAbandoned(t *testing.T) {
 
 	if _, found := tr.Poll(id, 10*time.Millisecond); found {
 		t.Error("expected the abandoned entry to have been swept")
+	}
+}
+
+// notifyBody mirrors askBody for a NotifyFrame — used by
+// Server.HandleNotifyFrame, the entry point cmd/foci-gw/askgw_http.go's
+// POST /askgw/notify handler calls (it has no connWriter/connID of its own,
+// unlike the socket transport, so it can't go through handleFrame).
+func notifyBody(id string, exitCode int) []byte {
+	b, _ := Encode(&NotifyFrame{
+		Protocol: ProtocolVersion,
+		Type:     TypeNotify,
+		ID:       id,
+		ExitCode: &exitCode,
+	})
+	return b
+}
+
+func TestHTTPNotifyEditsAnsweredAsk(t *testing.T) {
+	cb := &capturedCallback{}
+	nr := &notifyRecorder{}
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+		cb.set(onResponse)
+		return "platform-msg-http", true
+	}
+	resolve := func(string) (string, string) { return "agent1", "agent1/chat1" }
+
+	srv, err := NewServer(ServerDeps{
+		SocketPath:     "",
+		AllowedUIDs:    nil,
+		MaxFrameBytes:  1 << 20,
+		Present:        present,
+		CancelPrompt:   func(string, string) {},
+		ResolveSession: resolve,
+		EditMessage:    nr.edit,
+		NotifyFallback: nr.fallback,
+	})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	tr := NewHTTPTransport(srv)
+
+	id, ok, _, _ := tr.Submit(askBody("http-notify-1"))
+	if !ok {
+		t.Fatal("submit failed")
+	}
+	cb.fire(question.OptionData(0))
+	af, found := tr.Poll(id, time.Second)
+	if !found || af.Status != StatusAnswered {
+		t.Fatalf("poll = (found=%v, status=%v), want answered", found, af.Status)
+	}
+
+	// The HTTP notify endpoint calls srv.HandleNotifyFrame directly — it
+	// never touches HTTPTransport (notify is fire-and-forget, no id/poll
+	// bookkeeping of its own).
+	gotID, ok, code, msg := srv.HandleNotifyFrame(notifyBody(id, 0))
+	if !ok {
+		t.Fatalf("HandleNotifyFrame failed: code=%s msg=%s", code, msg)
+	}
+	if gotID != id {
+		t.Errorf("returned id = %q, want %q", gotID, id)
+	}
+
+	calls, _, fellBack := nr.snapshot()
+	if fellBack {
+		t.Fatal("expected the edit path, not the standalone fallback")
+	}
+	if len(calls) != 1 || calls[0].msgID != "platform-msg-http" {
+		t.Fatalf("edit calls = %+v, want one call against platform-msg-http", calls)
+	}
+}
+
+func TestHTTPNotifyRejectsMalformedEnvelope(t *testing.T) {
+	srv := newHTTPTestServer(t, func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+		return "", true
+	}, func(string) (string, string) { return "agent1", "agent1/chat1" }, 0)
+
+	_, ok, code, _ := srv.HandleNotifyFrame([]byte(`{not json`))
+	if ok {
+		t.Fatal("expected malformed JSON to be rejected")
+	}
+	if code != "malformed" {
+		t.Errorf("code = %q, want %q", code, "malformed")
+	}
+
+	_, ok, code, _ = srv.HandleNotifyFrame(askBody("wrong-type"))
+	if ok {
+		t.Fatal("expected a non-notify frame type to be rejected")
+	}
+	if code != "unknown_type" {
+		t.Errorf("code = %q, want %q", code, "unknown_type")
 	}
 }
