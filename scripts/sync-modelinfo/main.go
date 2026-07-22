@@ -51,6 +51,7 @@ const openrouterAPI = "https://openrouter.ai/api/v1/models"
 type jsonlEntry struct {
 	ID              string  `json:"id"`
 	Provider        string  `json:"provider"`
+	Dev             string  `json:"dev,omitempty"`
 	ContextWindow   int     `json:"context_window,omitempty"`
 	Effort          bool    `json:"effort,omitempty"`
 	Thinking        bool    `json:"thinking,omitempty"`
@@ -179,6 +180,29 @@ func main() {
 		}
 	}
 
+	// --- Backfill the `dev` (author/vendor) field on existing entries ---
+	//
+	// `dev` is a STATIC identity attribute (the OpenRouter author slug —
+	// moonshotai, anthropic, …), not time-varying price/caps data, so unlike a
+	// price change it is corrected IN PLACE on every historic row rather than by
+	// appending a new row. Every row whose bare id matches a live API model and
+	// has no `dev` yet gets it from that model's API id. Rows for models no
+	// longer in the API (unavailable) can't be resolved here and are left for a
+	// manual fix.
+	backfilledDevs := 0
+	for i := range entries {
+		if entries[i].Dev != "" {
+			continue
+		}
+		lookupID := strings.TrimSuffix(entries[i].ID, ":nitro")
+		if api, ok := apiByBare[lookupID]; ok {
+			if dev := devFromAPIID(api.ID); dev != "" {
+				entries[i].Dev = dev
+				backfilledDevs++
+			}
+		}
+	}
+
 	// --- Verify existing entries (append-only history) ---
 	//
 	// models.jsonl is an APPEND-ONLY ledger: a model may have several rows over
@@ -292,7 +316,7 @@ func main() {
 		}
 		// New model: effort/thinking/speed left false — curated by hand (not
 		// derivable from the API; see the note in the verify section).
-		ne := jsonlEntry{ID: bare, Provider: "openrouter", Fetched: fetchDate}
+		ne := jsonlEntry{ID: bare, Provider: "openrouter", Dev: devFromAPIID(m.ID), Fetched: fetchDate}
 		applyAPIFields(&ne, af)
 		newEntries = append(newEntries, ne)
 		existing[bare] = true
@@ -308,8 +332,8 @@ func main() {
 
 	// --- Summary ---
 
-	summary := fmt.Sprintf("%d new models, %d changed (rows appended), %d unavailable",
-		len(newEntries), len(appended), len(unavailable))
+	summary := fmt.Sprintf("%d new models, %d changed (rows appended), %d dev backfilled, %d unavailable",
+		len(newEntries), len(appended), backfilledDevs, len(unavailable))
 
 	if len(unavailable) > 0 {
 		summary += "\n  unavailable: " + strings.Join(unavailable, ", ")
@@ -457,6 +481,19 @@ func fetchAPI() ([]orModel, error) {
 		return nil, err
 	}
 	return r.Data, nil
+}
+
+// devFromAPIID extracts the model author/dev slug — the segment BEFORE the
+// first '/' — from an OpenRouter API id (e.g. "moonshotai/kimi-k3" →
+// "moonshotai"). This is the counterpart to stripProvider (which keeps the part
+// AFTER the slash). A leading '~' (OpenRouter's shadow/variant listing marker,
+// e.g. "~moonshotai/kimi-latest") is dropped so the dev is the plain author
+// slug. Returns "" when the id has no '/'.
+func devFromAPIID(id string) string {
+	if i := strings.IndexByte(id, '/'); i > 0 {
+		return strings.ToLower(strings.TrimPrefix(id[:i], "~"))
+	}
+	return ""
 }
 
 // stripProvider removes the "provider/" prefix from an OpenRouter model ID.
