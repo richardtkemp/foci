@@ -36,6 +36,7 @@ const cannedDevRegistry = `
 {"id":"glm-5.2","provider":"openrouter","dev":"z-ai","input_per_1m":0.78}
 {"id":"glm-5.2","provider":"zai-coding-plan","dev":"z-ai","input_per_1m":0.50}
 {"id":"claude-opus-4-8","provider":"openrouter","dev":"anthropic","input_per_1m":15.0}
+{"id":"kimi-k2.5","provider":"openrouter","dev":"moonshotai","input_per_1m":0.55}
 {"id":"kimi-k2.5:nitro","provider":"openrouter","dev":"moonshotai","input_per_1m":0.60}
 {"id":"grok-4","provider":"openrouter","dev":"x-ai","input_per_1m":5.0}
 `
@@ -97,7 +98,12 @@ func TestDevAwareLookup(t *testing.T) {
 		{"multi-provider dev-match provider-tiebreak", "openrouter/z-ai/glm-5.2", 0.78, false},
 		{"multi-provider provider-segment picks host", "zai-coding-plan/glm-5.2", 0.50, false},
 		{"date suffix single candidate", "anthropic/claude-opus-4-8-20260528", 15.0, false},
-		{"dot-in-leaf plus nitro variant", "openrouter/moonshotai/kimi-k2.5:nitro", 0.60, false},
+		// Variant handling: an EXACT variant entry (kimi-k2.5:nitro, 0.60) wins
+		// over the base (kimi-k2.5, 0.55); a variant with NO entry (:floor)
+		// falls back to the base.
+		{"variant with distinct entry: exact match", "openrouter/moonshotai/kimi-k2.5:nitro", 0.60, false},
+		{"variant without entry: strip to base", "openrouter/moonshotai/kimi-k2.5:floor", 0.55, false},
+		{"base leaf unaffected by variant logic", "openrouter/moonshotai/kimi-k2.5", 0.55, false},
 	}
 
 	for _, tc := range cases {
@@ -136,6 +142,34 @@ func TestRealRegistry_MultiSegmentResolves(t *testing.T) {
 	_ = Cost(model, 1_000_000, 0, 0, 0)
 	if len(unpriced) != 0 {
 		t.Errorf("Cost(%q) tripped unpriced warning %v — the multi-segment id didn't resolve", model, unpriced)
+	}
+}
+
+// TestRealRegistry_VariantSuffixFallsBackToBase is the regression for the
+// ":floor"/":nitro" warnings: a routing-variant leaf with no distinct registry
+// entry must fall back to its base model's price rather than trip the unpriced
+// warning. Covers gilette's gemini-3.1-pro-preview:floor and deepseek-v4-pro:floor.
+func TestRealRegistry_VariantSuffixFallsBackToBase(t *testing.T) {
+	var unpriced []string
+	savedHook := UnpricedModelHook
+	UnpricedModelHook = func(bare string) { unpriced = append(unpriced, bare) }
+	t.Cleanup(func() { UnpricedModelHook = savedHook })
+
+	for _, m := range []string{
+		"openrouter/deepseek/deepseek-v4-pro:floor",
+		"openrouter/google/gemini-3.1-pro-preview:floor",
+		"openrouter/moonshotai/kimi-k2.5:nitro",
+	} {
+		resetUnpricedSeen()
+		unpriced = nil
+		got := Cost(m, 1_000_000, 0, 0, 0)
+		if len(unpriced) != 0 {
+			t.Errorf("Cost(%q) tripped unpriced warning %v — variant didn't fall back to base", m, unpriced)
+		}
+		// deepseek-v4-pro base is 0.435/1M; assert the variant inherits it.
+		if m == "openrouter/deepseek/deepseek-v4-pro:floor" && got != 0.435 {
+			t.Errorf("Cost(%q) = %v, want 0.435 (base deepseek-v4-pro price)", m, got)
+		}
 	}
 }
 
