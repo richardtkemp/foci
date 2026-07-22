@@ -46,7 +46,7 @@ type toolDeps struct {
 	notifier   *tools.AsyncNotifier
 	connMgr    platform.ConnectionManager
 	agLazy     func() *agent.Agent
-	summariser tools.Summariser // APISummariser (API) or CLISummariser (delegated)
+	summariser tools.Summariser // APISummariser (API) or BatchSummariser (delegated)
 	wakeFn     tools.ScheduleWakeFn
 
 	sessionNotify tools.SessionNotifyFn // send_to_session → via=agent

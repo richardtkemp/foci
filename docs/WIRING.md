@@ -354,6 +354,7 @@ Used by:
 - **Nudge extraction** — `ExtractViaRunOnce` sends conversation context to the model and parses structured nudge rules from the response.
 - **Consolidation** — The periodic `Runner` is wired with a `RunOnceFunc` for memory consolidation tasks that don't need an interactive session; consolidation one-shots also now receive the agent's character system prompt (previously ran with none).
 - **First-run onboarding** — also routes through `RunOnce` (per the interface doc comment on `BatchRunner`).
+- **`foci_summary` tool for delegated agents (#1317)** — `internal/tools.BatchSummariser` dispatches through `DelegatedManager.RunBatch(ctx, delegator.BatchRequest)` (the general form that `RunOnce` is now a thin wrapper over, exposing `req.Model` for the cheap/haiku preference), so a delegated agent's `foci_summary` runs on its *own* backend (codex/opencode/ccstream) instead of always shelling `claude` via the deleted `CLISummariser`. Wired in `buildExecRegistry` with a lazy runner closure because that registry is built before `ag.DelegatedManager` is assigned. (The oversized-tool-result auto-summarise on line ~1313 is a *separate* API/`ResolveCallSite` path, unaffected.)
 
 ### Session Lifecycle Operations (`agent/lifecycle.go`)
 

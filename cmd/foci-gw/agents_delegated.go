@@ -649,10 +649,28 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 		return resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
 	}
 
-	// Delegated agents shell out to `claude --print` (CLISummariser) for the
-	// summary tool, routing through the parent CC subprocess's subscription auth
-	// so the call charges mana, not API spend. (API agents use APISummariser.)
-	cliSummariser := tools.NewCLISummariser("", "haiku", func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
+	// Delegated agents dispatch the summary tool through the agent's own
+	// DelegatedManager.RunBatch (BatchSummariser) — i.e. through whichever
+	// backend (claude-code, codex, opencode) the agent is actually configured
+	// to use, rather than always shelling `claude --print` (the old
+	// CLISummariser behaviour, which ran every delegated agent's foci_summary
+	// on claude even on codex/opencode backends — foci_todo #1317). (API
+	// agents use APISummariser.)
+	//
+	// The runner closure resolves ag.DelegatedManager lazily: buildExecRegistry
+	// runs BEFORE configureDelegated assigns ag.DelegatedManager (see below),
+	// so capturing it now would capture nil — by the time Summarise() actually
+	// executes, setup has long finished.
+	batchSummariser := tools.NewBatchSummariser(func() tools.BatchRunner {
+		if agLazy == nil {
+			return nil
+		}
+		a := agLazy()
+		if a == nil || a.DelegatedManager == nil {
+			return nil
+		}
+		return a.DelegatedManager
+	}, "haiku", acfg.Workspace, acfg.ID, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
 
 	// Register the exec-exported subset from the single data-driven table (see
 	// tool_table.go) — the same source of truth that drives the API path. The
@@ -666,7 +684,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 		notifier:      notifier,
 		connMgr:       connMgr,
 		agLazy:        agLazy,
-		summariser:    cliSummariser,
+		summariser:    batchSummariser,
 		wakeFn:        wakeScheduleFn,
 		sessionNotify: newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),
 		askDeliver:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "ask_grader"),

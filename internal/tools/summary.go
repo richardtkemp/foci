@@ -15,9 +15,10 @@ import (
 //
 // Inference dispatch is decoupled from the tool body: the caller passes a
 // Summariser implementation chosen at agent setup time. API-mode agents get
-// APISummariser (provider.Send through foci's client). Delegated/CC-mode
-// agents get CLISummariser (shells out to `claude --print` using the parent
-// CC subprocess's subscription auth). Adding a third backend later is a new
+// APISummariser (provider.Send through foci's client). Delegated agents get
+// BatchSummariser (dispatches via the agent's own DelegatedManager.RunBatch,
+// so the call runs on whichever backend — claude-code, codex, opencode — the
+// agent is actually configured to use). Adding a third backend later is a new
 // Summariser impl, not a tool rewrite.
 //
 // Stdin handling lives in the bash wrapper (execbridge.go's "summary" case):
