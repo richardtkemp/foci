@@ -213,27 +213,29 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		if h.frames != nil {
 			safeGo("frame-store-janitor", func() { h.frames.janitor(deps.Ctx.Done()) })
 		}
-		// Offline wake-push via FCM. The service-account JSON path comes from
-		// [platforms.app].fcm_credentials, falling back to the app.fcm_credentials
-		// secret; absent (or push=false) → push stays disabled gracefully.
+		// Offline wake-push via FCM. Credential resolution, in priority order:
+		// decomposed app.fcm_* secret fields (#967, preferred — no JSON/path ever
+		// touches foci.toml or disk), then [platforms.app].fcm_credentials (a
+		// JSON file path in foci.toml), then the legacy app.fcm_credentials
+		// secret holding a file path. Absent (or push=false) → push stays
+		// disabled gracefully. See newFCMPusherForApp.
 		pushEnabled := appCfg == nil || appCfg.Push == nil || *appCfg.Push
-		fcmPath := ""
-		if appCfg != nil {
-			fcmPath = appCfg.FCMCredentials
-		}
-		if fcmPath == "" && deps.SecretStore != nil {
-			if v, ok := deps.SecretStore.Get("app.fcm_credentials"); ok {
-				fcmPath = strings.TrimSpace(v)
+		window := durationOr(appCfgPushCoalesce(appCfg), defaultPushCoalesce)
+		if pushEnabled {
+			// Convert only a genuinely non-nil store to the config.SecretGetter
+			// interface: passing a nil *secrets.Store straight into an interface
+			// parameter yields a non-nil interface wrapping a nil pointer (the
+			// classic Go "typed nil" trap), which would make newFCMPusherForApp's
+			// own `secrets != nil` check pass and then panic on first .Get call.
+			var secretStore config.SecretGetter
+			if deps.SecretStore != nil {
+				secretStore = deps.SecretStore
+			}
+			h.pusher = newFCMPusherForApp(deps.Ctx, appCfg, secretStore, tokens, window)
+			if h.pusher == nil {
+				appLog.Warnf("app push enabled but no FCM credentials found (checked app.fcm_project_id/fcm_client_email/fcm_private_key secret fields, [platforms.app].fcm_credentials, and the legacy app.fcm_credentials secret path) — offline wake pushes disabled")
 			}
 		}
-		if pushEnabled && fcmPath == "" {
-			appLog.Warnf("app push enabled but no FCM credentials found (neither [platforms.app].fcm_credentials nor app.fcm_credentials secret) — offline wake pushes disabled")
-		}
-		if !pushEnabled {
-			fcmPath = "" // disabled → newFCMPusher returns nil
-		}
-		window := durationOr(appCfgPushCoalesce(appCfg), defaultPushCoalesce)
-		h.pusher = newFCMPusher(deps.Ctx, fcmPath, tokens, window)
 	}
 	return h
 }

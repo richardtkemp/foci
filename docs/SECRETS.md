@@ -57,6 +57,21 @@ allowed_in_body = ["api_key"]    # only api_key can appear in request body; othe
 
 `allowed_in_body` lists the key names within the section that may appear in `http_request` body, body_file, or form_fields. Secrets not listed are restricted to headers only. See [Body Restriction](#body-restricted-secrets) below.
 
+### `app.fcm_*` — FCM push credential
+
+The `[app]` platform's offline wake-push (FCM v1) reads its Google service-account credential as **decomposed fields**, never the raw JSON file and never a file path — the credential content stays out of `foci.toml` and off disk entirely. Field names mirror the standard Google service-account JSON schema (public schema, not secret):
+
+```toml
+[app]
+fcm_project_id     = "my-firebase-project"
+fcm_client_email   = "firebase-adminsdk-xxxxx@my-firebase-project.iam.gserviceaccount.com"
+fcm_private_key    = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+fcm_private_key_id = "abc123..."   # optional; sets the JWT "kid" header
+fcm_token_uri      = "..."         # optional; defaults to Google's OAuth token endpoint
+```
+
+`fcm_project_id`, `fcm_client_email`, and `fcm_private_key` are required — if any is missing, foci falls back to `[platforms.app].fcm_credentials` (a JSON file path in `foci.toml`), then the legacy `app.fcm_credentials` secret (also a file path), then disables push. `fcm_private_key` accepts either real newlines or literal `\n` escapes (the value copied straight out of the downloaded JSON key file) — both are normalized on read.
+
 ### `http.api_key` — HTTP API authentication
 
 All TCP HTTP endpoints (including `/voice`) require authentication via `http.api_key`. This key is **auto-generated** on first startup as a 5-word passphrase (~52 bits entropy, e.g. `maple-thunder-basket-olive-crane`) and saved to `secrets.toml`.

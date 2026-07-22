@@ -15,6 +15,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"foci/internal/app/fap"
+	"foci/internal/config"
 )
 
 const (
@@ -111,19 +112,125 @@ type fcmPusher struct {
 // fcmBaseURL is the production FCM v1 send endpoint base.
 const fcmBaseURL = "https://fcm.googleapis.com"
 
+// googleJWTTokenURL is the default OAuth token endpoint Google's service-account
+// JWT flow uses when a credential's token_uri is empty (mirrors
+// golang.org/x/oauth2/google.JWTTokenURL, unexported by that package).
+const googleJWTTokenURL = "https://oauth2.googleapis.com/token"
+
 // newFCMPusher builds a pusher from a service-account JSON file. Returns nil (push
 // disabled, gracefully) if path is empty or the credentials can't be loaded.
 func newFCMPusher(ctx context.Context, path string, tokens *pushTokens, window time.Duration) *fcmPusher {
 	if path == "" {
 		return nil
 	}
-	if window <= 0 {
-		window = defaultPushCoalesce
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		appLog.Warnf("fcm credentials %s: %v — push disabled", path, err)
 		return nil
+	}
+	return newFCMPusherFromJSON(ctx, data, tokens, window)
+}
+
+// fcmCredentialFields holds the individual Google service-account fields needed
+// to authenticate FCM v1, as stored (one secret key per field) in secrets.toml —
+// never the raw JSON file and never a file path. Field names mirror the
+// standard Google service-account JSON schema; those names are public schema,
+// not secret, only the values are.
+type fcmCredentialFields struct {
+	ProjectID    string // app.fcm_project_id      (required)
+	ClientEmail  string // app.fcm_client_email     (required)
+	PrivateKey   string // app.fcm_private_key      (required)
+	PrivateKeyID string // app.fcm_private_key_id   (optional; sets the JWT "kid" header)
+	TokenURI     string // app.fcm_token_uri        (optional; defaults to Google's token endpoint)
+}
+
+// normalizeFCMPrivateKey fixes the classic private_key footgun: a PEM key
+// pasted into a single-line secrets.toml string often carries literal two-char
+// `\n` sequences (an artifact of copying it out of a JSON file) instead of real
+// newlines. PEM body content is base64 plus header/footer text, which never
+// legitimately contains a backslash, so unconditionally turning `\n` into a
+// real newline is safe — it's a no-op for a key that already has real
+// newlines (e.g. pasted as a TOML triple-quoted multi-line string).
+func normalizeFCMPrivateKey(key string) string {
+	return strings.ReplaceAll(key, `\n`, "\n")
+}
+
+// newFCMPusherFromFields reconstructs the minimal service-account JSON in
+// memory from decomposed secret-store fields and builds a pusher from it — no
+// path or file is read. Returns nil if any required field is missing or the
+// reconstructed credential fails to parse.
+func newFCMPusherFromFields(ctx context.Context, fields fcmCredentialFields, tokens *pushTokens, window time.Duration) *fcmPusher {
+	if fields.ProjectID == "" || fields.ClientEmail == "" || fields.PrivateKey == "" {
+		return nil
+	}
+	sa := struct {
+		Type         string `json:"type"`
+		ProjectID    string `json:"project_id"`
+		PrivateKeyID string `json:"private_key_id,omitempty"`
+		PrivateKey   string `json:"private_key"`
+		ClientEmail  string `json:"client_email"`
+		TokenURI     string `json:"token_uri,omitempty"`
+	}{
+		Type:         "service_account",
+		ProjectID:    fields.ProjectID,
+		PrivateKeyID: fields.PrivateKeyID,
+		PrivateKey:   normalizeFCMPrivateKey(fields.PrivateKey),
+		ClientEmail:  fields.ClientEmail,
+		TokenURI:     fields.TokenURI,
+	}
+	if sa.TokenURI == "" {
+		sa.TokenURI = googleJWTTokenURL
+	}
+	data, err := json.Marshal(sa)
+	if err != nil {
+		appLog.Warnf("fcm credentials (secret fields): marshal: %v — push disabled", err)
+		return nil
+	}
+	return newFCMPusherFromJSON(ctx, data, tokens, window)
+}
+
+// newFCMPusherForApp resolves the FCM credential in priority order:
+//  1. decomposed secret-store fields (app.fcm_project_id / app.fcm_client_email
+//     / app.fcm_private_key, plus optional app.fcm_private_key_id /
+//     app.fcm_token_uri) — the preferred path (#967): the credential content
+//     never touches foci.toml or disk as a file.
+//  2. [platforms.app].fcm_credentials — a service-account JSON file path
+//     configured in foci.toml.
+//  3. the legacy app.fcm_credentials secret holding a file path (pre-#967
+//     compat, superseded by (1) but kept so an already-configured deployment
+//     that only set this keeps working).
+//
+// Returns nil (push disabled, gracefully) if none resolve.
+func newFCMPusherForApp(ctx context.Context, appCfg *config.AppSpecific, secrets config.SecretGetter, tokens *pushTokens, window time.Duration) *fcmPusher {
+	if secrets != nil {
+		var fields fcmCredentialFields
+		fields.ProjectID, _ = secrets.Get("app.fcm_project_id")
+		fields.ClientEmail, _ = secrets.Get("app.fcm_client_email")
+		fields.PrivateKey, _ = secrets.Get("app.fcm_private_key")
+		fields.PrivateKeyID, _ = secrets.Get("app.fcm_private_key_id")
+		fields.TokenURI, _ = secrets.Get("app.fcm_token_uri")
+		if p := newFCMPusherFromFields(ctx, fields, tokens, window); p != nil {
+			return p
+		}
+	}
+	fcmPath := ""
+	if appCfg != nil {
+		fcmPath = appCfg.FCMCredentials
+	}
+	if fcmPath == "" && secrets != nil {
+		if v, ok := secrets.Get("app.fcm_credentials"); ok {
+			fcmPath = strings.TrimSpace(v)
+		}
+	}
+	return newFCMPusher(ctx, fcmPath, tokens, window)
+}
+
+// newFCMPusherFromJSON builds a pusher from already-loaded service-account JSON
+// bytes (from a file or reconstructed from secret-store fields). Returns nil
+// (push disabled, gracefully) if the credentials can't be parsed.
+func newFCMPusherFromJSON(ctx context.Context, data []byte, tokens *pushTokens, window time.Duration) *fcmPusher {
+	if window <= 0 {
+		window = defaultPushCoalesce
 	}
 	creds, err := google.CredentialsFromJSON(ctx, data, fcmScope)
 	if err != nil {
