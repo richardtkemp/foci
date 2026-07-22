@@ -32,6 +32,17 @@ func buildParams(req *provider.MessageRequest) openai.ChatCompletionNewParams {
 		params.Tools = tools
 	}
 
+	// OpenRouter extra top-level fields ("reasoning", "provider") are
+	// accumulated into ONE map and set via a SINGLE SetExtraFields call.
+	// openai-go's SetExtraFields OVERWRITES rather than merges (it assigns
+	// m.any = metadataExtraFields(extraFields) — see
+	// packages/param/param.go), so two separate calls would silently drop
+	// whichever field was set first. In practice this bit immediately: every
+	// model in the reference config uses both ":floor"/":nitro" AND
+	// thinking = "adaptive", so reasoning and provider are set together on
+	// nearly every OpenRouter request.
+	extra := map[string]any{}
+
 	// OpenRouter reasoning support: inject reasoning params for thinking and/or effort.
 	// On OpenRouter, both "enabled" and "effort" live inside a top-level "reasoning" object.
 	if req.Thinking != nil || (req.Output != nil && req.Output.Effort != "") {
@@ -42,9 +53,20 @@ func buildParams(req *provider.MessageRequest) openai.ChatCompletionNewParams {
 		if req.Output != nil && req.Output.Effort != "" {
 			reasoning["effort"] = req.Output.Effort
 		}
-		params.SetExtraFields(map[string]any{
-			"reasoning": reasoning,
-		})
+		extra["reasoning"] = reasoning
+	}
+
+	// OpenRouter provider-routing: forward [models.*.provider] config verbatim
+	// as the top-level "provider" object. Config discipline is the guard here
+	// (mirroring the reasoning injection above): ProviderRouting is only ever
+	// populated from a model resolved to the openrouter endpoint, so no
+	// endpoint check is done at this layer.
+	if req.ProviderRouting != nil {
+		extra["provider"] = req.ProviderRouting
+	}
+
+	if len(extra) > 0 {
+		params.SetExtraFields(extra)
 	}
 
 	return params

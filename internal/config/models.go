@@ -5,16 +5,18 @@ import (
 	"strings"
 
 	"foci/internal/modelinfo"
+	"foci/internal/provider"
 )
 
 // ModelDefaults holds per-model settings resolved at request time from [models.*] config.
 // Used by ModelDefaultsFn callbacks in the agent and compaction packages.
 type ModelDefaults struct {
-	Thinking      string
-	Effort        string
-	Speed         string
-	CacheStrategy string
-	CacheTTL      string
+	Thinking        string
+	Effort          string
+	Speed           string
+	CacheStrategy   string
+	CacheTTL        string
+	ProviderRouting *provider.ProviderRouting // OpenRouter provider-routing preferences from [models.*.provider]; nil = none configured
 }
 
 // ResolvedModel holds the canonical resolution of a model string.

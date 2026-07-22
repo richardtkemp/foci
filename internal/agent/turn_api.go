@@ -269,13 +269,14 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		ts.Messages = sanitizeEmptyTextBlocks(ts.Messages)
 
 		req := &provider.MessageRequest{
-			Model:         ts.TurnModel,
-			MaxTokens:     maxOutput,
-			System:        ts.System,
-			Messages:      ts.Messages,
-			Tools:         ts.ToolDefs,
-			CacheStrategy: a.CacheStrategy,
-			CacheTTL:      md.CacheTTL,
+			Model:           ts.TurnModel,
+			MaxTokens:       maxOutput,
+			System:          ts.System,
+			Messages:        ts.Messages,
+			Tools:           ts.ToolDefs,
+			CacheStrategy:   a.CacheStrategy,
+			CacheTTL:        md.CacheTTL,
+			ProviderRouting: md.ProviderRouting,
 		}
 		if ts.TurnEffort != "" && ts.TurnEffort != "off" {
 			req.Output = &provider.OutputConfig{Effort: ts.TurnEffort}

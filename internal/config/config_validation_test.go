@@ -146,6 +146,103 @@ cache_strategy = "invalid"
 	}
 }
 
+func TestValidateModelProviderRouting(t *testing.T) {
+	// Proves that invalid enum values in a [models.X.provider] sub-table
+	// (sort.by, data_collection, quantizations) each produce a validation
+	// error, and that a fully valid provider block loads cleanly.
+	dir := t.TempDir()
+	cases := []struct {
+		name      string
+		provider  string
+		wantErr   bool
+		wantMatch string
+	}{
+		{
+			name: "invalid sort.by",
+			provider: `
+[models.bad.provider.sort]
+by = "cheapest"
+`,
+			wantErr:   true,
+			wantMatch: "sort",
+		},
+		{
+			name: "invalid data_collection",
+			provider: `
+[models.bad.provider]
+data_collection = "sometimes"
+`,
+			wantErr:   true,
+			wantMatch: "data_collection",
+		},
+		{
+			name: "invalid quantization",
+			provider: `
+[models.bad.provider]
+quantizations = ["int9"]
+`,
+			wantErr:   true,
+			wantMatch: "quantizations",
+		},
+		{
+			name: "valid provider block",
+			provider: `
+[models.bad.provider]
+order = ["deepinfra"]
+data_collection = "deny"
+quantizations = ["fp8"]
+
+[models.bad.provider.sort]
+by = "price"
+partition = "none"
+
+[models.bad.provider.max_price]
+prompt = 1.0
+`,
+			wantErr: false,
+		},
+		{
+			name: "negative max_price",
+			provider: `
+[models.bad.provider.max_price]
+prompt = -1.0
+`,
+			wantErr:   true,
+			wantMatch: "negative",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, fmt.Sprintf("foci-%s.toml", strings.ReplaceAll(tc.name, " ", "-")))
+			toml := fmt.Sprintf(`
+[groups]
+powerful = "openrouter/deepseek/deepseek-v4-pro"
+
+[[agents]]
+id = "test"
+
+[models.bad]
+model = "openrouter/deepseek/deepseek-v4-pro"
+%s
+`, tc.provider)
+			os.WriteFile(path, []byte(toml), 0644)
+
+			_, err := Load(path)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected validation error")
+				}
+				if !strings.Contains(err.Error(), tc.wantMatch) {
+					t.Errorf("error = %q, want mention of %q", err.Error(), tc.wantMatch)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateModelCacheTTL(t *testing.T) {
 	// Proves that valid Go duration strings like "5m" and "1h" are accepted as
 	// cache_ttl values on named model entries.

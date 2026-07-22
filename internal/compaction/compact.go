@@ -387,10 +387,11 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s thinking=%s", model, c.maxTokens, len(summaryMessages), mdEffort, mdThinking)
 	start := time.Now()
 	req := &provider.MessageRequest{
-		Model:     model,
-		MaxTokens: c.maxTokens,
-		System:    system,
-		Messages:  summaryMessages,
+		Model:           model,
+		MaxTokens:       c.maxTokens,
+		System:          system,
+		Messages:        summaryMessages,
+		ProviderRouting: md.ProviderRouting,
 	}
 	if mdEffort != "" && mdEffort != "off" {
 		req.Output = &provider.OutputConfig{Effort: mdEffort}

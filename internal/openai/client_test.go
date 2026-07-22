@@ -788,6 +788,172 @@ func TestBuildParams_WithThinkingAndEffort(t *testing.T) {
 	}
 }
 
+func TestBuildParams_WithProviderRouting(t *testing.T) {
+	// Proves that a populated ProviderRouting is injected as the top-level
+	// "provider" extra field, mirroring the OpenRouter request-body shape
+	// (order/allow_fallbacks/sort/max_price etc.).
+	allowFallbacks := false
+	req := &provider.MessageRequest{
+		Model:     "openrouter/deepseek/deepseek-v4-pro",
+		MaxTokens: 4096,
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent("hello")},
+		},
+		ProviderRouting: &provider.ProviderRouting{
+			Order:          []string{"deepinfra", "novita"},
+			AllowFallbacks: &allowFallbacks,
+			DataCollection: "deny",
+			Quantizations:  []string{"fp8", "fp16"},
+			Sort:           &provider.ProviderSort{By: "price"},
+			MaxPrice:       &provider.ProviderMaxPrice{Prompt: 1.0, Completion: 2.0},
+		},
+	}
+
+	params := buildParams(req)
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	prov, ok := raw["provider"]
+	if !ok {
+		t.Fatal("expected provider field in params")
+	}
+	pm, ok := prov.(map[string]any)
+	if !ok {
+		t.Fatalf("provider is %T, want map", prov)
+	}
+	if order, _ := pm["order"].([]any); len(order) != 2 || order[0] != "deepinfra" || order[1] != "novita" {
+		t.Errorf("provider.order = %v, want [deepinfra novita]", pm["order"])
+	}
+	if pm["allow_fallbacks"] != false {
+		t.Errorf("provider.allow_fallbacks = %v, want false", pm["allow_fallbacks"])
+	}
+	if pm["data_collection"] != "deny" {
+		t.Errorf("provider.data_collection = %v, want deny", pm["data_collection"])
+	}
+	sortObj, ok := pm["sort"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider.sort is %T, want map", pm["sort"])
+	}
+	if sortObj["by"] != "price" {
+		t.Errorf("provider.sort.by = %v, want price", sortObj["by"])
+	}
+	if _, ok := sortObj["partition"]; ok {
+		t.Error("provider.sort.partition should be omitted when unset (omitempty)")
+	}
+	maxPrice, ok := pm["max_price"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider.max_price is %T, want map", pm["max_price"])
+	}
+	if maxPrice["prompt"] != 1.0 || maxPrice["completion"] != 2.0 {
+		t.Errorf("provider.max_price = %v, want prompt=1 completion=2", maxPrice)
+	}
+}
+
+func TestBuildParams_NoProviderRoutingByDefault(t *testing.T) {
+	// Proves that when ProviderRouting is nil (default), no "provider" field
+	// appears in the serialized params — safe for non-OpenRouter endpoints.
+	req := &provider.MessageRequest{
+		Model:     "openai/gpt-4o",
+		MaxTokens: 4096,
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent("hello")},
+		},
+	}
+
+	params := buildParams(req)
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if _, ok := raw["provider"]; ok {
+		t.Error("provider field should not be present when ProviderRouting is nil")
+	}
+}
+
+func TestBuildParams_ReasoningSurvivesAlongsideProviderRouting(t *testing.T) {
+	// Regression test for the SetExtraFields overwrite gotcha: openai-go's
+	// SetExtraFields REPLACES the extra-fields map on each call rather than
+	// merging (packages/param/param.go). buildParams must accumulate
+	// "reasoning" and "provider" into one map and call SetExtraFields once —
+	// otherwise whichever field is set second silently wipes out the first.
+	// This combination (":floor"/":nitro" model + thinking=adaptive) is the
+	// NORMAL case for every model in the reference foci.toml, so this isn't
+	// an edge case — it's the common path.
+	req := &provider.MessageRequest{
+		Model:     "openrouter/deepseek/deepseek-v4-pro:floor",
+		MaxTokens: 4096,
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent("hello")},
+		},
+		Thinking: &provider.ThinkingConfig{Type: "adaptive"},
+		ProviderRouting: &provider.ProviderRouting{
+			Sort: &provider.ProviderSort{By: "price"},
+		},
+	}
+
+	params := buildParams(req)
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if _, ok := raw["reasoning"]; !ok {
+		t.Error("expected reasoning field to survive alongside provider field")
+	}
+	if _, ok := raw["provider"]; !ok {
+		t.Error("expected provider field to survive alongside reasoning field")
+	}
+}
+
+func TestBuildParams_RoutingVariantSuffixPassesThroughUnchanged(t *testing.T) {
+	// Locks in existing (pre-#1478) behaviour: OpenRouter's ":floor"/":nitro"
+	// model-string shortcuts need NO parsing or config plumbing — the raw
+	// developer/vendor/model:variant string is forwarded verbatim as the
+	// wire "model" field, which is exactly OpenRouter's own catalog+shortcut
+	// syntax. This is a regression guard, not new behaviour: it documents
+	// that #1478's "provider" object support is additive, and doesn't
+	// require (or accidentally strip) the ":floor"/":nitro" suffix.
+	cases := []struct {
+		reqModel string // provider.MessageRequest.Model (already resolved developer/model_id form)
+		wantWire string // expected wire "model" field sent to OpenRouter
+	}{
+		{"openrouter/deepseek/deepseek-v4-pro:floor", "deepseek/deepseek-v4-pro:floor"},
+		{"openrouter/moonshotai/kimi-k2.5:nitro", "moonshotai/kimi-k2.5:nitro"},
+		{"openrouter/google/gemini-3.1-pro-preview:floor", "google/gemini-3.1-pro-preview:floor"},
+	}
+	for _, tc := range cases {
+		req := &provider.MessageRequest{
+			Model:     tc.reqModel,
+			MaxTokens: 4096,
+			Messages: []provider.Message{
+				{Role: "user", Content: provider.TextContent("hello")},
+			},
+		}
+		params := buildParams(req)
+		if params.Model != tc.wantWire {
+			t.Errorf("buildParams(%q).Model = %q, want %q", tc.reqModel, params.Model, tc.wantWire)
+		}
+	}
+}
+
 func TestExtractReasoningText(t *testing.T) {
 	// Proves that extractReasoningText handles string, array-of-objects, and
 	// fallback formats for reasoning_details from various OpenRouter models.
