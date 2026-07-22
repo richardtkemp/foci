@@ -37,6 +37,23 @@
 # clean land needs no manual `git worktree remove`. This deletes the caller's
 # cwd; `make land` does nothing after, and prints where to cd.
 #
+# EXIT CODE IS TRUSTWORTHY (#1496): this script's own exit code always
+# reflects the merge result — 0 iff the push to origin/main succeeded, nonzero
+# (see the `return` codes below) otherwise — and a final `LAND_RESULT:` line
+# is always the last thing printed, so grepping for it (or just checking $?)
+# is sufficient. Landing itself never touches this script's own process cwd
+# (every command after the worktree-removal point is either a plain builtin
+# or explicitly `-C`'d), so removing the caller's own worktree out from under
+# it cannot flip this script's exit status. What it CAN do is strand *the
+# caller's shell* (if the caller's cwd — not this script's — was inside the
+# worktree, e.g. via a persisted `cd` rather than `-C`): that shell's own next
+# getcwd-dependent command (plain `pwd`, relative paths, etc.) will fail with
+# something like "getcwd: cannot access parent directories". That failure
+# belongs to the CALLER's session, is reported by the CALLER's next command,
+# and is unrelated to whether the land itself (already complete by then)
+# succeeded — the fix is to `cd` (the printed `$mc`) before running anything
+# else in that session, not to distrust `make land`'s own exit code.
+#
 # /tmp lock-file gotchas, identical to the `test` target: /tmp is world-writable
 # + sticky and with fs.protected_regular=2 the kernel denies WRITE-opening a
 # lock file there owned by the other shared account (rich vs foci) — so open the
@@ -58,29 +75,41 @@ land() {
 	branch=$(git rev-parse --abbrev-ref HEAD)
 	if [ "$branch" = "main" ]; then
 		echo "ABORT: refusing to land from main itself — run from your feature branch" >&2
+		echo ">>> LAND_RESULT: FAILED refusing to land from main itself" >&2
 		return 2
 	fi
 	if ! git diff --quiet || ! git diff --cached --quiet; then
 		echo "ABORT: uncommitted changes — commit or stash before landing" >&2
+		echo ">>> LAND_RESULT: FAILED uncommitted changes" >&2
 		return 6
 	fi
 
 	echo ">>> fetching origin ..." >&2
-	git fetch -q origin || { echo "ABORT: git fetch failed" >&2; return 1; }
+	git fetch -q origin || {
+		echo "ABORT: git fetch failed" >&2
+		echo ">>> LAND_RESULT: FAILED git fetch failed" >&2
+		return 1
+	}
 
 	echo ">>> rebasing $branch onto origin/main ..." >&2
 	if ! git rebase origin/main; then
 		git rebase --abort 2>/dev/null || true
 		echo "ABORT: rebase conflict onto origin/main — resolve manually, then re-run make land" >&2
+		echo ">>> LAND_RESULT: FAILED rebase conflict onto origin/main" >&2
 		return 3
 	fi
 
 	echo ">>> running unit tests (make test) ..." >&2
-	make test 9<&- || { echo "ABORT: unit tests failed — not landing" >&2; return 4; }
+	make test 9<&- || {
+		echo "ABORT: unit tests failed — not landing" >&2
+		echo ">>> LAND_RESULT: FAILED unit tests failed" >&2
+		return 4
+	}
 
 	echo ">>> pushing HEAD:main to origin ..." >&2
 	git push origin HEAD:main || {
 		echo "ABORT: push rejected (origin/main moved by a non-lander since fetch?) — re-run make land" >&2
+		echo ">>> LAND_RESULT: FAILED push rejected" >&2
 		return 5
 	}
 
@@ -114,17 +143,37 @@ land() {
 	# say where to go. Skipped if no main checkout was found (can't remove a
 	# worktree from within itself).
 	wt=$(git rev-parse --show-toplevel)
+
+	# Defensively relocate THIS script's own process out of $wt before removing
+	# it below (#1496) — belt-and-braces so nothing in our own process tree
+	# (now, or after a future edit) ever inherits a cwd that's about to be
+	# deleted. This cannot relocate the CALLER's shell (a child can't chdir an
+	# ancestor) — that's the harmless caller-side artifact documented above.
+	if [ -n "$mc" ] && [ "$wt" != "$mc" ] && [ -d "$mc" ]; then
+		cd "$mc" 2>/dev/null || true
+	fi
+
 	if [ -z "$mc" ] || [ "$wt" = "$mc" ]; then
 		echo ">>> note: no separate main checkout — leaving worktree $wt in place (remove manually)" >&2
 	elif git -C "$mc" worktree remove --force "$wt"; then
 		git -C "$mc" branch -D "$branch" >/dev/null 2>&1 || true
 		echo ">>> cleaned up worktree $wt and branch $branch" >&2
-		echo ">>> NOTE: your cwd was that worktree and is now gone — cd $mc" >&2
+		echo ">>> NOTE: if YOUR shell's cwd was $wt (not just this script's), it is now" >&2
+		echo ">>> invalid until you 'cd $mc' — a harmless side effect of this SUCCESSFUL" >&2
+		echo ">>> land, not a failure (see EXIT CODE IS TRUSTWORTHY note up top)." >&2
 	else
 		echo ">>> note: could not auto-remove worktree $wt — remove manually (git -C $mc worktree remove --force $wt)" >&2
 	fi
+
+	echo ">>> LAND_RESULT: SUCCESS $landed" >&2
+	return 0
 }
 
 # Hold the merge lock on FD 9 for the whole land() call; the subshell's exit
 # (any return above, or normal completion) closes FD 9 and releases the lock.
+# Capture the result explicitly and exit with it deliberately (#1496) — rather
+# than falling through to whatever the last command in the script happened to
+# return — so this script's own exit code is always exactly land()'s verdict.
 ( land ) 9<"$LOCK"
+rc=$?
+exit "$rc"
