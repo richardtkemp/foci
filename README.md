@@ -6,7 +6,7 @@
 
 **One binary. ~35 MB idle. No framework.**
 
-AI agents on Telegram, written in Go.
+AI agents on Telegram and Discord, written in Go.
 
 [Quick Start](#quick-start) · [Design](#design) · [Docs](#documentation)
 
@@ -19,7 +19,7 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw), built from scratch
 ## Quick Start
 
 ```bash
-git clone https://github.com/richardtkemp/foci.git && cd foci && ./setup.sh
+git clone https://github.com/richardtkemp/foci.git && cd foci && sudo make setup
 ```
 
 See [docs/INSTALL.md](docs/INSTALL.md) for prerequisites, options, and next steps.
@@ -32,7 +32,7 @@ OpenClaw is the established, full-featured choice in this space — broad provid
 |---|---|---|
 | Runtime | Node.js + TypeScript | Go, single binary |
 | Memory | ~500MB+ idle | **~35 MB** |
-| Dependencies | ~560 packages (594MB) | **15 direct modules** |
+| Dependencies | ~560 packages (594MB) | **22 direct modules** |
 | Startup | Seconds (transpile + boot) | **Instant** |
 | Config | YAML + env + scattered files | **One TOML file** |
 | Cache strategy | Not cache-aware | **Day-zero architectural** |
@@ -56,7 +56,7 @@ Fewer moving parts means fewer surprises. Secret management follows the same pri
 
 </td><td width="50%" valign="top">
 
-**Multi-agent, single process** — Multiple agents share one binary with separate workspaces, identities, and Telegram bots. No containers, no orchestration. One TOML file.
+**Multi-agent, single process** — Multiple agents share one binary with separate workspaces, identities, and Telegram/Discord bots. No containers, no orchestration. One TOML file.
 
 **Coding agent orchestration** — Tmux management and coding agent control are structured tool calls. Start sessions, send instructions, watch for inactivity, read output.
 
@@ -98,6 +98,8 @@ Fewer moving parts means fewer surprises. Secret management follows the same pri
 | | | |
 |---|---|---|
 | **Claude Code** | Subscription tracking + coding agent orchestration | [docs/AUTH.md](docs/AUTH.md) |
+| **Codex** | Coding agent backend | [docs/AUTH.md](docs/AUTH.md) |
+| **OpenCode** | Coding agent backend | [docs/AUTH.md](docs/AUTH.md) |
 | **bash** | `set -o pipefail`, tool-piping shell functions | Falls back to `sh` |
 | **Groq API key** | Voice input (Whisper STT) | Free tier |
 | **Brave Search API key** | `web_search` tool | Free tier |
@@ -156,7 +158,7 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for full details.
 
 ## Stats
 
-~67k lines of Go (~158k with tests) · 1,670+ commits · 15 dependencies · 47 packages
+~130k lines of Go (~310k with tests) · 2,900+ commits · 22 dependencies · 75 packages
 
 ## License
 

@@ -14,15 +14,29 @@ Foci ships embedded prompt files in the binary. These provide sensible defaults 
 | `shared/prompts/background.md` | `Background()` | Background work trigger |
 | `shared/prompts/reflection.md` | `Reflection()` | Interval + session-end reflection pass (memory + skill formation) |
 | `shared/prompts/memory-consolidation.md` | `MemoryConsolidation()` | MEMORY.md curation |
+| `shared/prompts/weekly-character-review.md` | `WeeklyCharacterReview()` | Scheduled weekly character review |
+| `shared/prompts/nudge-preamble.md` | `NudgePreamble()` | Nudge framing preamble |
+| `shared/prompts/nudge-reply-instruction.md` | `NudgeReplyInstruction()` | Nudge reply instruction |
+| `shared/prompts/nudge-user-boundary.md` | `NudgeUserBoundary()` | Nudge user boundary guard |
 
 ## First-Run Seeding
 
-On startup, foci seeds editable copies of the 4 new prompt files to `~/shared/prompts/`:
+On startup, foci seeds editable copies of the 12 embedded prompt files to `~/shared/prompts/`:
 
 - `keepalive.md`
 - `background.md`
 - `reflection.md`
 - `memory-consolidation.md`
+- `compaction-summary.md`
+- `compaction-handoff.md`
+- `branch-orientation-headless.md`
+- `branch-orientation-facet.md`
+- `weekly-character-review.md`
+- `nudge-preamble.md`
+- `nudge-reply-instruction.md`
+- `nudge-user-boundary.md`
+
+Additional backend/platform-specific prompt files may also be seeded depending on the configured backends.
 
 Existing files are never overwritten. This gives users a starting point for customisation without needing to know the embedded content.
 
@@ -83,8 +97,9 @@ interval_enabled = false
 id = "minimal-agent"
 [agents.reflection]
 interval_enabled = false
-consolidation_enabled = false
 session_end_enabled = false
+[agents.maintenance]
+consolidation_enabled = false
 ```
 
 ## How to Restore Defaults

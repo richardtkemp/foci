@@ -1,15 +1,31 @@
 # Keepalive & Background Work
 
-Two timer-driven mechanisms keep the agent productive without wasting effort.
+The runner tick loop invokes six timer-driven operations, each on a single goroutine per agent with ~30-second ticks:
 
 ## Overview
 
-| Mechanism | Purpose | Trigger | Cost |
+| Operation | Purpose | Trigger | Cost |
 |-----------|---------|---------|------|
 | **Keepalive** | Cache keepalive | Cache not warmed within interval | Minimal (1 API call) |
 | **Background work** | Task execution | User idle + open tasks + `can_run_background` allows | Variable (full agent turn) |
+| **Reflection** | Memory capture | Interval elapsed or session end | Variable (agent turn on a branch) |
+| **Consolidation** | Curate MEMORY.md from daily files | Configured time of day | Variable (agent turn) |
+| **Scheduled reset** | Reset session on a schedule | Configured reset time | Minimal |
+| **Ephemeral cleanup** | Reap expired ephemeral sessions | TTL elapsed | Minimal |
 
-Both run on a single goroutine per agent with ~30-second ticks. Neither fires during active conversation.
+Reflection, consolidation, scheduled reset, and ephemeral cleanup are covered in their own sections. Neither keepalive nor background work fires during active conversation.
+
+## Session Index Timestamps
+
+The session index tracks multiple granular timestamps (not a single "last interaction"):
+
+| Timestamp | What bumps it | What it gates |
+|-----------|--------------|---------------|
+| `last_cache_touch` | Every turn AND mid-turn rounds (NOT memory triggers) | Keepalive interval |
+| `last_activity_at` | Turns and mid-turn rounds (NOT memory triggers) | Background `if_active`/`if_inactive` gating |
+| `last_user_activity_at` | Interactive turns only — a human message via any platform (Telegram/Discord/app/HTTP). NOT bumped by background/reflection/memory. | Background work trigger, `if_user_active`/`if_user_inactive` webhook gating |
+| `last_reflection` | When a reflection ran | Reflection interval |
+| `lastBackgroundEnded` (runner, not DB) | Background branch completion | Cooldown before the next background branch can fire |
 
 ## Keepalive
 
@@ -50,17 +66,18 @@ Background work executes tasks from the todo list while the user is away, gated 
 **When it fires:**
 ```
 if background.enabled
-   AND time_since(last_interaction) >= background.interval
+   AND time_since(last_user_activity_at) >= background.interval
    AND no background work already running
    AND open todos tagged "background" exist
    AND can_run_background allows (exit 0, or unset)
+   AND no active tmux watches (HasActiveWork gate)
 ```
 
-**Self-chaining:** When a background task completes, it resets `last_interaction` to the completion time. After the interval elapses again, the next task can fire. This creates a chain: finish task -> wait interval -> check `can_run_background` -> dispatch next task.
+**`HasActiveWork` gate.** Background work is suppressed when active tmux watches exist. The runner checks `HasActiveWork` before dispatching — if any tmux watch is outstanding (e.g. an autopilot session or a long-running coding agent under observation), background work is skipped for that tick so it doesn't interfere with work already in progress.
 
-**Interaction** = last of:
-- Last inbound user message (via Telegram)
-- Last background branch completion
+**Self-chaining prevention.** Background completion does NOT reset `last_user_activity_at` (a test explicitly asserts this). Instead, the runner tracks a separate `lastBackgroundEnded` timestamp that enforces a cooldown before the next background branch can fire. This prevents background work from self-chaining: after a task completes, the `lastBackgroundEnded` cooldown must elapse (in addition to `background.interval` since `last_user_activity_at`) before the next task can fire.
+
+**Interaction** (`last_user_activity_at`) — bumped only by interactive turns: a human message via any platform (Telegram/Discord/app/HTTP). Background work, reflection, and memory triggers do NOT bump it.
 
 ## The `can_run_background` gate
 
@@ -98,7 +115,7 @@ todo list --tag background --status open
 
 Tags are stored as comma-separated strings. Filtering uses whole-word matching to prevent partial matches (e.g., "back" won't match "background").
 
-The background work trigger checks: `SELECT COUNT(*) FROM todos WHERE agent_id = ? AND status = 'open' AND tags LIKE '%background%'`
+The background work trigger checks: `SELECT COUNT(*) FROM todos WHERE agent_id = ? AND status = 'open' AND (',' || tags || ',' LIKE '%,' || ? || ',%')` — comma-delimited whole-word matching prevents partial matches.
 
 ## Config
 
@@ -107,10 +124,13 @@ The background work trigger checks: `SELECT COUNT(*) FROM todos WHERE agent_id =
 enabled = true
 interval = "55m"                    # time since cache last warmed
 prompt = "prompts/keepalive.md"     # path to prompt file
+warm_open_app_chats = false         # warm every open app chat, not just default
+max_user_idle = "96h"               # stop warming sessions idle longer than this
+force_in_session = false            # force warming within an existing session
 
 [background]
 enabled = true
-interval = "5m"                     # time since last interaction
+interval = "5m"                     # time since last user activity
 prompt = "prompts/background.md"    # path to prompt file
 can_run_background = "check.sh"     # optional gate executable (exit 0 = allowed)
 ```
@@ -132,7 +152,7 @@ can_run_background = "check.sh"     # optional gate executable (exit 0 = allowed
 ### Background branches
 
 - **Prompt:** Tells the agent to check background todos and work on one.
-- **Flags:** `no_reset_hook` (may need compaction for longer tasks)
+- **Flags:** `no_reset_hook`, `no_compact`
 - **Trigger context:** `"background"`
 - **Telegram delivery:** None (silent).
 - **Cost:** Variable. The `can_run_background` gate can prevent overspend.

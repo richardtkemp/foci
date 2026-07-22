@@ -22,8 +22,8 @@ These flags are accepted by all commands:
 | `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent. |
 | `--session <sel>` | `-s` | `FOCI_SESSION` | Target session selector: full session key, session name, or chat alias. Empty = the agent's default session. |
 | `--model <model>` | `-m` | `FOCI_MODEL` | Model override: group name (`powerful`/`fast`/`cheap`), model name, or `developer/model_id`. See [MODELS.md](MODELS.md). |
-| `--if-active <dur>` | | `FOCI_IF_ACTIVE` | **Session-level**: skip if the target session has not run a turn within duration (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
-| `--if-inactive <dur>` | | `FOCI_IF_INACTIVE` | **Session-level**: skip if the target session has run a turn within duration (e.g. `30m`, `1h`). Opposite of `--if-active`; in-flight always counts. Standard keepalive shape. |
+| `--if-warm <dur>` (`--if-active`) | | `FOCI_IF_WARM` (`FOCI_IF_ACTIVE`) | **Session-level**: skip if the target session has not run a turn within duration (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
+| `--if-cold <dur>` (`--if-inactive`) | | `FOCI_IF_COLD` (`FOCI_IF_INACTIVE`) | **Session-level**: skip if the target session has run a turn within duration (e.g. `30m`, `1h`). Opposite of `--if-warm`; in-flight always counts. Standard keepalive shape. |
 | `--if-user-active <dur>` | | `FOCI_IF_USER_ACTIVE` | **User-attention**: skip if the user has not touched this agent within duration. In-flight counts as user attention. |
 | `--if-user-inactive <dur>` | | `FOCI_IF_USER_INACTIVE` | **User-attention**: skip if the user has touched this agent within duration. In-flight counts as user attention. |
 | `--message-text <text>` | `-mt` | `FOCI_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
@@ -33,6 +33,12 @@ These flags are accepted by all commands:
 | `--no-compact` | | `FOCI_NO_COMPACT` | Skip compaction (branch only, non-empty = true). |
 | `--no-reset-hook` | | `FOCI_NO_RESET_HOOK` | Skip reset hook (branch only, non-empty = true). |
 | `--oneshot` | | `FOCI_ONESHOT` | No compaction + no reset hook (branch only, non-empty = true). |
+| `--wait-warm <dur>` | | `FOCI_WAIT_WARM` | **Send-only**: wait (block) until the target session has run a turn within duration before sending. Session-level. |
+| `--wait-cold <dur>` | | `FOCI_WAIT_COLD` | **Send-only**: wait (block) until the target session has not run a turn within duration before sending. Opposite of `--wait-warm`. |
+| `--wait-user-active <dur>` | | `FOCI_WAIT_USER_ACTIVE` | **Send-only**: wait (block) until the user has touched this agent within duration before sending. User-attention. |
+| `--wait-user-inactive <dur>` | | `FOCI_WAIT_USER_INACTIVE` | **Send-only**: wait (block) until the user has not touched this agent within duration before sending. Opposite of `--wait-user-active`. |
+| `--wait-timeout <dur>` | | `FOCI_WAIT_TIMEOUT` | **Send-only**: max time to wait for a `--wait-*` gate to be satisfied. Default `0` = no limit. |
+| `--no-gate` | | `FOCI_NO_GATE` | **Send-only**: disable all gate checks (ignore `--if-*` / `--wait-*` / `FOCI_IF_*` / `FOCI_WAIT_*`). |
 
 **Resolution order:** explicit flag > env var > default. Every flag has a corresponding `FOCI_` env var and vice versa.
 
@@ -42,7 +48,7 @@ Setting env vars is useful for crontab entries where the same agent/session is t
 
 ```crontab
 FOCI_AGENT=clutch
-FOCI_IF_ACTIVE=4h
+FOCI_IF_WARM=4h
 */30 * * * * foci send -mf /home/foci/shared/prompts/reflection.md
 0 7 * * * foci branch --oneshot -mf /home/foci/shared/prompts/morning-routine.md
 ```
@@ -61,7 +67,7 @@ Every response carries a **routing receipt** — which session the message resol
 
 **Usage:**
 ```
-foci send [-a agent] [-s session] [-m model] [--if-active <duration>] [--if-inactive <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--sync] [-mt text | -mf file] [message text]
+foci send [-a agent] [-s session] [-m model] [--if-warm <duration>] [--if-cold <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--sync] [-mt text | -mf file] [message text]
 ```
 
 **Flags:**
@@ -71,8 +77,8 @@ foci send [-a agent] [-s session] [-m model] [--if-active <duration>] [--if-inac
 | `--agent <id>` | `-a` | Target agent. |
 | `--session <sel>` | `-s` | Target session selector, resolved through one ladder on the server: full session key (`clutch/c123`) → existing named session (`research` → `clutch/iresearch`) → chat alias → create-named. Empty = the agent's default session. |
 | `--model <model>` | `-m` | Model override for this request. Group name (`powerful`/`fast`/`cheap`), model name (`opus`), or `developer/model_id`. |
-| `--if-active <dur>` | | **Session-level gate**: skip if the target session has not run a turn within duration. Go duration format (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
-| `--if-inactive <dur>` | | **Session-level gate**: skip if the target session has run a turn within duration. Opposite of `--if-active` — keepalive shape; in-flight always counts. |
+| `--if-warm <dur>` (`--if-active`) | | **Session-level gate**: skip if the target session has not run a turn within duration. Go duration format (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
+| `--if-cold <dur>` (`--if-inactive`) | | **Session-level gate**: skip if the target session has run a turn within duration. Opposite of `--if-warm` — keepalive shape; in-flight always counts. |
 | `--if-user-active <dur>` | | **User-attention gate**: skip if the user has not touched this agent within duration. CLI/cron/agent-to-agent traffic does not count. |
 | `--if-user-inactive <dur>` | | **User-attention gate**: skip if the user has touched this agent within duration. |
 | `--sync` / `--wait` | | Wait for the agent's response instead of returning immediately. |
@@ -103,7 +109,7 @@ foci send -a research "summarize today's news"
 foci send -a clutch -s research "continue the analysis"
 
 # Only send if the session ran a turn in the last 8 hours (for cron jobs)
-foci send --if-active 8h "daily health check"
+foci send --if-warm 8h "daily health check"
 
 # Only send if the user has touched this agent in the last 4 hours
 foci send --if-user-active 4h "follow-up question"
@@ -115,7 +121,7 @@ foci send --model fast "quick question"
 foci send -m opus "think carefully about this"
 
 # Send file contents with session-level activity gating
-foci send -a clutch --if-active 4h -mf tasks/review.md
+foci send -a clutch --if-warm 4h -mf tasks/review.md
 ```
 
 **Exit codes:** 0 on success, 1 on error (network failure, HTTP error).
@@ -128,11 +134,9 @@ Creates a branch session from the agent's default chat session, optionally injec
 
 By default, branch is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to Telegram. Use `--sync`/`--wait` to block until the response is available.
 
-Aliased as `wake` for backward compatibility.
-
 **Usage:**
 ```
-foci branch [-a agent] [-m model] [--if-active <duration>] [--if-inactive <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+foci branch [-a agent] [-m model] [--if-warm <duration>] [--if-cold <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 ```
 
 **Flags:**
@@ -141,8 +145,8 @@ foci branch [-a agent] [-m model] [--if-active <duration>] [--if-inactive <durat
 |------|-------------|
 | `--agent <id>` / `-a` | Target agent. |
 | `--model <model>` / `-m` | Model override for this branch. Group name, model name, or `developer/model_id`. |
-| `--if-active <dur>` | **Session-level gate**: skip if the target session has not run a turn within duration. In-flight counts. |
-| `--if-inactive <dur>` | **Session-level gate**: skip if the target session has run a turn within duration. In-flight counts. Keepalive shape. |
+| `--if-warm <dur>` (`--if-active`) | **Session-level gate**: skip if the target session has not run a turn within duration. In-flight counts. |
+| `--if-cold <dur>` (`--if-inactive`) | **Session-level gate**: skip if the target session has run a turn within duration. In-flight counts. Keepalive shape. |
 | `--if-user-active <dur>` | **User-attention gate**: skip if the user has not touched this agent within duration. |
 | `--if-user-inactive <dur>` | **User-attention gate**: skip if the user has touched this agent within duration. |
 | `--sync` / `--wait` | Wait for the agent's response instead of returning immediately. |
@@ -171,7 +175,7 @@ foci branch --oneshot -m cheap -a clutch "run health check"
 foci branch --oneshot -a scout -mf /home/foci/shared/prompts/daily-health-check.md
 
 # Only branch if the session has been active recently (in-flight counts)
-foci branch --if-active 12h -a clutch "daily memory review"
+foci branch --if-warm 12h -a clutch "daily memory review"
 
 # Only branch if the user has reached out recently
 foci branch --if-user-active 4h -a clutch "follow-up on this morning's chat"
@@ -228,7 +232,7 @@ Dispatches a slash command directly via the HTTP API and returns the result to t
 
 **Usage:**
 ```
-foci command [-a agent] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] </cmd> [args]
+foci command [-a agent] [--if-warm <dur>] [--if-cold <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] </cmd> [args]
 ```
 
 **Activity gates:** `command` accepts the same four activity-gate flags as `send` (and reads the same `FOCI_IF_*` env vars). The gate is evaluated server-side against the session the command targets; a turn in flight always counts as active, so a gated command never interrupts mid-turn work. This is what makes an unattended `/reset` safe — see the example below.
@@ -242,7 +246,7 @@ foci command /cost today
 
 # Overnight reset that skips if the session ran a turn within 55m (or one is
 # in flight) — the shape used by an unattended reset cron:
-foci command --if-inactive 55m -a helen /reset
+foci command --if-cold 55m -a helen /reset
 ```
 
 ---
@@ -330,6 +334,33 @@ foci ping -a research
 
 ---
 
+### `debug` — Tail session files
+
+Tails the session files for a given session key with formatted output. Useful for live debugging of what an agent is writing to its session JSONL.
+
+**Usage:**
+```
+foci debug session <key>
+```
+
+**Examples:**
+```bash
+foci debug session clutch/c12345
+```
+
+---
+
+### `pair` — Mint Android pairing key
+
+Mints a single-use Android pairing key for registering a new device with the gateway. The key can be used once to complete the `/android` onboarding flow.
+
+**Usage:**
+```
+foci pair
+```
+
+---
+
 ## Cron Integration
 
 The CLI is designed for cron jobs. Both `send` and `branch` default to async mode — the cron job returns immediately and the agent's response is delivered to Telegram. Typical patterns:
@@ -345,7 +376,7 @@ The CLI is designed for cron jobs. Both `send` and `branch` default to async mod
 0 2 * * * /home/foci/bin/foci branch --oneshot -a clutch "nightly cleanup"
 
 # Keepalive — only if the session has been idle for 30+ minutes (yields to in-flight turns and recent work)
-*/30 * * * * /home/foci/bin/foci branch --oneshot --if-inactive 30m -a clutch "Check emails and calendar"
+*/30 * * * * /home/foci/bin/foci branch --oneshot --if-cold 30m -a clutch "Check emails and calendar"
 
 # Force sync if you need the output in the cron log
 0 6 * * * /home/foci/bin/foci send --sync -a clutch "morning report" >> /var/log/foci-report.log
@@ -354,7 +385,7 @@ The CLI is designed for cron jobs. Both `send` and `branch` default to async mod
 **Choosing the right gate:**
 
 - `--if-user-active` / `--if-user-inactive` track *user attention* (real platform inbound — Telegram/Discord). Use these for nudges that should only fire when the user is engaged or specifically away.
-- `--if-active` / `--if-inactive` track *session activity* — whether any turn (user, cron, CLI, agent-to-agent) ran on the session, plus an in-flight short-circuit so a turn currently running always counts as active. Use these for keepalives that must yield to running work — they prevent crons piling up behind a long turn.
+- `--if-warm` (`--if-active`) / `--if-cold` (`--if-inactive`) track *session activity* — whether any turn (user, cron, CLI, agent-to-agent) ran on the session, plus an in-flight short-circuit so a turn currently running always counts as active. Use these for keepalives that must yield to running work — they prevent crons piling up behind a long turn.
 
 ## HTTP API
 

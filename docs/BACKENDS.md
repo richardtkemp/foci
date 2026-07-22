@@ -1,35 +1,40 @@
 # Coding Agent Backends — API vs Delegated
 
-Foci runs each agent's turns through one of two very different code paths. This doc explains what they are, how they differ, and when to pick which. For the wiring details, see [WIRING.md](WIRING.md). For the exact config keys, see [CONFIG.md — Coding Agent Backends](CONFIG.md#coding-agent-backends).
+Foci runs each agent's turns through one of several different code paths. This doc explains what they are, how they differ, and when to pick which. For the wiring details, see [WIRING.md](WIRING.md). For the exact config keys, see [CONFIG.md — Coding Agent Backends](CONFIG.md#coding-agent-backends).
 
-## The two paths
+## The turn transports
 
-Every `[[agents]]` entry has a `backend` field. It selects one of two turn-handling transports, both implementing the same 20-method `TurnContract` interface (`internal/agent/turn_contract.go`):
+Every `[[agents]]` entry has a `backend` field. It selects one of four registered backends, all implementing the same 19-method `TurnContract` interface (`internal/agent/turn_contract.go`):
 
 - **`backend = "api"` (default) — API transport.** Foci calls the LLM API directly, executes tools in-process, and manages the session history.
-- **`backend = "claude-code"` or `"claude-code-tmux"` — Delegated transport.** Foci spawns Claude Code as a subprocess. CC handles inference, tool execution, and its own context management; Foci feeds it prompts and reads back the assistant output.
+- **`backend = "claude-code"` (ccstream) — Delegated transport.** Foci spawns Claude Code as a subprocess via structured NDJSON over stdin/stdout. CC handles inference, tool execution, and its own context management; Foci feeds it prompts and reads back the assistant output.
+- **`backend = "claude-code-tmux"` (cctmux) — Delegated transport, legacy.** Same role as ccstream but talks to the `claude` binary by screen-scraping a tmux pane.
+- **`backend = "codex"` — Delegated transport.** OpenAI Codex CLI driven via `codex app-server` JSON-RPC 2.0 over stdio. Persistent subprocess like ccstream; the server holds the session and Foci drives it with RPC calls.
+- **`backend = "opencode"` — Delegated transport.** OpenCode driven via its HTTP/SSE server. Foci spawns one `opencode serve` subprocess per agent (shared across that agent's sessions and refcounted) and talks to it over HTTP.
 
-The orchestrator (`OrchestrateFullTurn`) calls both transports through the same interface, which is why nearly every Foci feature — reminders, scratchpad, todos, tasks, nudges, multi-platform delivery, steering — works identically on both paths.
+The orchestrator (`OrchestrateFullTurn`) calls every backend through the same interface, which is why nearly every Foci feature — reminders, scratchpad, todos, tasks, nudges, multi-platform delivery, steering — works identically across all of them.
 
 ## What each owns
 
-| Concern | API backend | Delegated backend |
+The table below contrasts the API backend with the delegated backends in general. Backend-specific notes (Codex, OpenCode) appear in their own sections below.
+
+| Concern | API backend | Delegated backend (CC / Codex / OpenCode) |
 |---|---|---|
-| LLM inference | Foci → `provider.Send` | CC subprocess |
-| Tool registry & execution | Foci's `tools/` package | CC's built-in tools + MCP |
-| Session history | Foci-managed JSONL in `data/sessions/` | CC-managed JSONL in `~/.claude/projects/` |
-| Context / compaction | Foci `compaction/compact.go` | CC's own context manager (triggered via `/compact`) |
-| Rate limiting | Foci per-endpoint gate | CC's own limiter |
-| Turn serialization | Foci per-session lock | CC serializes internally |
-| Model fallback chain | Foci `[groups.fallbacks]` | CC picks its own fallback |
-| Prompt caching | Foci's append-only cache contract | CC manages its own cache |
+| LLM inference | Foci → `provider.Send` | Subprocess (CC / `codex app-server` / `opencode serve`) |
+| Tool registry & execution | Foci's `tools/` package | Backend's built-in tools + MCP |
+| Session history | Foci-managed JSONL in `data/sessions/` | Backend-managed (CC: `~/.claude/projects/`; Codex/OpenCode: their own stores) |
+| Context / compaction | Foci `compaction/compact.go` | Backend's own context manager (CC: `/compact`; Codex: `thread/compact/start`; OpenCode: its own mechanism) |
+| Rate limiting | Foci per-endpoint gate | Backend's own limiter |
+| Turn serialization | Foci per-session lock | Backend serializes internally |
+| Model fallback chain | Foci `[groups.fallbacks]` | Backend picks its own fallback |
+| Prompt caching | Foci's append-only cache contract | Backend manages its own cache |
 | Branching / `/branch` | Full support | **Rejected** (HTTP 400) |
 
-Anything not in this table — platform I/O, command dispatch, nudges, reminders, task list, memory search, attachments, message transforms — is identical across both backends because it happens outside `RunInference`.
+Anything not in this table — platform I/O, command dispatch, nudges, reminders, task list, memory search, attachments, message transforms — is identical across all backends because it happens outside `RunInference`.
 
 ## Delegated backend flavours
 
-There are two implementations of the delegated path. They share the `TurnContract` surface, the `DelegatedManager` plumbing, and the permission system — they only differ in how they talk to the `claude` binary.
+There are four registered delegated backends. The two CC flavours share the `TurnContract` surface, the `DelegatedManager` plumbing, and the permission system — they only differ in how they talk to the `claude` binary. Codex and OpenCode are independent transports that implement the same `TurnContract` directly.
 
 ### `claude-code` — ccstream (preferred)
 
@@ -48,6 +53,23 @@ Pros: the pane is a real terminal — you can attach, observe, and interact dire
 Cons: screen-scraped permissions, JSONL file-watching for turn boundaries, send-keys based `/stop`, tmux as a hard dependency.
 
 **Unless you specifically need the interactive pane, use `claude-code`.**
+
+### `codex` — OpenAI Codex via app-server
+
+`backend = "codex"`. Foci drives the OpenAI Codex CLI through `codex app-server`, which speaks JSON-RPC 2.0 over stdio. Like ccstream, it runs as a persistent subprocess: the server holds the session state and Foci issues RPC calls to advance turns, list models, and trigger compaction.
+
+- **Model catalogue** is fetched live via `model/list` RPC, populating the [capability catalogue](#) the same way CC's `/v1/models` does for Anthropic.
+- **Compaction** uses Codex's own `thread/compact/start` RPC, not Foci's compaction pipeline.
+- **Server-side session naming.** Codex assigns and tracks session names itself, which is why the `set_session_alias` tool is disabled for this backend — the alias would be overwritten by the server.
+- Persistent subprocess semantics match ccstream: one long-lived process, multiplexed turns.
+
+### `opencode` — OpenCode via HTTP/SSE
+
+`backend = "opencode"`. Foci drives OpenCode through its HTTP/SSE server. One `opencode serve` subprocess is spawned per agent (not per session); the subprocess is shared across that agent's sessions and **refcounted**, so it stays alive while any session needs it and exits when the last session releases it.
+
+- **System-prompt suppression** is done via a `blank-system.ts` plugin loaded into the OpenCode instance, so Foci owns the system prompt instead of OpenCode.
+- **No elicitation.** OpenCode's elicitation channel is not wired into Foci's `ask` flow; use Foci's `ask` tool directly if a human decision is needed.
+- **No auto-relogin.** Unlike ccstream's startup readiness probe, the OpenCode backend does not perform credential revival — a dead session surfaces the error to the user rather than recovering silently.
 
 ## What still applies on the delegated path
 

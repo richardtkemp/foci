@@ -62,5 +62,5 @@ Connect to the Unix socket, send an `ask` frame as a single line of JSON, and re
 ## Limitations
 
 - **No persistence across restarts.** Socket connections die on foci restart. Answers can only reach the original connection — there's no way to deliver a response after a reconnect.
-- **No streaming or long-polling.** One `ask` → one `answer` (or timeout/error). The app blocks on the socket read.
+- **No streaming or long-polling (Unix socket only).** One `ask` → one `answer` (or timeout/error). The app blocks on the socket read. The HTTP transport (`http_enabled = true`) supports long-polling via `GET /askgw/ask/{id}?wait=<seconds>`.
 - **Agent routing is session-based.** Questions route to the agent's default (most recently active) session. If the agent has no active session, the question returns `unavailable`.

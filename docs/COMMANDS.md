@@ -27,6 +27,9 @@ API cost summary for a time period.
 ### `/context`
 Context window breakdown — total vs limit, compaction threshold, tokens until compaction, system prompt breakdown by section (environment, workspace files, skills), tool token count, conversation breakdown (user/assistant/tool results), last API call token breakdown.
 
+### `/mana`
+Alias: `/usage`. Claude Code plan and rate-limit usage report. Shows remaining plan quota, rate-limit windows, and recent usage for agents on the Claude Code backend.
+
 ### `/todo [subcommand] [args]`
 Manage todo items. Bare `/todo` shows usage (available verbs). Use `/todo list` or `/todo active` to list items.
 
@@ -146,8 +149,27 @@ Show or set per-session display options.
 - `/display display_width <20-200>` — output width in characters (alias: `width`)
 - `/display reset` — clear all per-session display overrides
 
-### `/voice`
-Toggle voice mode — when on, all agent replies are sent as voice notes via TTS.
+### `/mode [mode]`
+Show or set the permission mode for the ccstream (Claude Code stream) backend. Only available for agents on the ccstream backend.
+- `/mode` — show current permission mode
+- `/mode ask` — prompt for side-effecting tools
+- `/mode acceptEdits` — auto-accept edits
+- `/mode plan` — plan mode (read-only exploration)
+- `/mode bypassPermissions` — skip all permission prompts
+
+### `/plan`
+Put a coding-agent backend into plan mode. The agent explores and reasons read-only without making changes. Only available for agents with a delegated coding backend.
+
+### `/overrides [subcommand]`
+Session overrides management. Inspect and clear per-session overrides previously set via `/display`, `/model`, `/thinking`, `/effort`, `/speed`, etc.
+- `/overrides` — list active per-session overrides
+- `/overrides clear` — clear all per-session overrides
+
+### `/pause` / `/resume` / `/complete`
+Answer-capture control for a pending `foci ask`. When an ask is waiting for an answer, these commands control whether/how the captured reply is delivered:
+- `/pause` — pause answer capture for the pending ask
+- `/resume` — resume answer capture
+- `/complete` — finalise and deliver the captured answer
 
 ### `/reset [hard]`
 Clear session history.
@@ -220,6 +242,10 @@ Show configured prompts and prompt files on disk.
 ### `/version`
 Build version info — version, commit, build date, Go version.
 
+### `/misc <subcommand>`
+Miscellaneous operations.
+- `/misc pprof [on|off]` — toggle `net/http/pprof` profiling endpoints on the gateway HTTP server at `/debug/pprof/*`.
+
 ---
 
 ## Session
@@ -251,6 +277,16 @@ List available commands grouped by category. Commands whose features aren't supp
 
 ### `//`
 Repeat the last message. Not shown in `/help`.
+
+---
+
+## Onboarding
+
+### `/android`
+Android onboarding. Initiates the pairing flow for the Android companion app.
+
+### `/pair`
+Aliases: `/pairkey`, `/pair-key`. Mint a single-use Android pairing key. The key can be used once to register a new Android device with the gateway.
 
 ---
 

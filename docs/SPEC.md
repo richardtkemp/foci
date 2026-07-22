@@ -147,19 +147,16 @@ Converted text is subject to the tool result size guard (`max_result_chars`): ov
 Each user message injected into the conversation carries metadata the agent can see. This is NOT in the system prompt (that would bust cache) — it's prepended to the user message content. The exact lines are produced by the per-agent `statusline` template (the default reproduces the `[meta]`/`[state]` layout shown below); see `docs/CONFIG.md` for the field list and `${cmd}` embedding.
 
 ```
-[meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 prev_cost=$0.043 prev_tokens=in:2400/out:312/cR:18000/cW:200
+[meta] time={time} gap={gap} model={model} via={via}
 ```
 
 Fields:
 - `time` — current UTC timestamp
 - `gap` — time since the previous message in this session (human-readable: "3h12m", "2d4h", "38s")
 - `model` — current model name (so the agent knows its own capabilities)
-- `prev_cost` — total cost of the previous agent turn (API call that generated the last response)
-- `prev_tokens` — token breakdown of the previous turn (input/output/cache_read/cache_write)
+- `via` — transport that delivered the message (telegram, discord, app, voice, api, cron)
 
 **Why metadata on messages, not system prompt:** Dynamic values in the system prompt would bust the cache every turn. See [docs/CACHING.md](docs/CACHING.md).
-
-**Why previous turn's cost, not current:** The current turn's cost isn't known until after the API responds. So each message carries the cost of the turn that came before it. The agent always knows what its last response cost.
 
 ### Deferred Replies
 
@@ -256,9 +253,9 @@ Foci supports two turn-handling paths, selected per-agent via the `backend` conf
 - **API path (`APITransport`)** — Foci calls the LLM API directly and executes tools locally. The traditional path.
 - **Delegated path (`DelegatedTransport`)** — A coding agent (Claude Code) runs as a subprocess, handling inference and tool execution. Foci sends composed prompts via stdin and receives streaming JSONL events via stdout (ccstream backend), or via a tmux pane with JSONL session file watcher (cctmux backend).
 
-Both implement the `TurnContract` interface (`internal/agent/turn_contract.go`) — 20 methods covering every concern of a turn (rate limiting, session registration, prompt composition, execution, saving, compaction, etc.). Adding a new concern requires adding a method to the interface, producing compile errors in both transports until implemented.
+Both implement the `TurnContract` interface (`internal/agent/turn_contract.go`) — 19 methods covering every concern of a turn (rate limiting, session registration, prompt composition, execution, saving, compaction, etc.). Adding a new concern requires adding a method to the interface, producing compile errors in both transports until implemented.
 
-The orchestrator (`OrchestrateFullTurn` in `turn_orchestrator.go`) calls all 20 methods in a fixed order. Each transport provides real implementations or explicit no-ops. Seven methods are shared via `sharedTurnOps` embedding.
+The orchestrator (`OrchestrateFullTurn` in `turn_orchestrator.go`) calls all 19 methods in a fixed order. Each transport provides real implementations or explicit no-ops. Six methods are shared via `sharedTurnOps` embedding.
 
 The sync/async split is handled by `TurnState.CompletionChan`: API closes it synchronously; delegated closes it when the backend fires `OnTurnComplete` (ccstream: on `result` message; cctmux: on `end_turn` in JSONL). Post-turn methods (save, metadata, compaction, logging) run after `CompletionChan` closes, with an activity-based timeout (2 minutes of stream silence) rather than a fixed deadline.
 
@@ -271,7 +268,7 @@ The sync/async split is handled by `TurnState.CompletionChan`: API closes it syn
 - **/stop:** Sends Escape×2 + Ctrl-C to the CC TUI to interrupt the current turn.
 - **Stable exec bridge sockets:** Socket path derived from session key (not random), so CC keeps the same `FOCI_SOCK` path across foci restarts.
 
-See [WIRING.md — The Agent Loop](../shared/docs/WIRING.md) for the full phase-by-phase breakdown.
+See [WIRING.md — The Agent Loop](WIRING.md) for the full phase-by-phase breakdown.
 
 ## Tools
 
@@ -297,6 +294,10 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering
 - `bitwarden_search` — search Bitwarden vault items by name/URI/folder (metadata only, no passwords)
 - `bitwarden_unlock` — unlock a vault item (requires admin approval via aisudo/Telegram), caches for TTL
+- `http_request` — HTTP client with file saves, binary handling, multipart uploads, and auto-background support
+- `task_list` — manage cross-session task tracking
+- `ask` — ask the user a question with structured options (backend-agnostic, async, no 4-item cap)
+- `browser` — browser automation via go-rod (navigate, click, read, screenshot)
 
 ### Tool Piping (Exec Bridge)
 
@@ -375,12 +376,12 @@ Entire feature is disableable via `memory_guard_enabled = false`.
 
 ### Tool Result Guard
 
-When a tool returns a result exceeding a configurable character threshold (default: 5,000 chars), foci does NOT inject the full result into session history. Instead:
+When a tool returns a result exceeding a configurable character threshold (default: 15,000 chars), foci does NOT inject the full result into session history. Instead:
 
 1. Write the full result to a temp file: `{temp_dir}/tool-result-{tool}-{random}.txt`
 2. Return only a guard message — no partial content is included:
    ```
-   Result too large (47231 chars, limit 5000). Full output saved to /tmp/foci/tool-results/tool-result-shell-a1b2c3d4.txt.
+   Result too large (47231 chars, limit 15000). Full output saved to /tmp/foci/tool-results/tool-result-shell-a1b2c3d4.txt.
    Use `head -n 50` to preview, or `grep`/`ack` to search for specific content.
    ```
 
@@ -832,14 +833,14 @@ Minimal:
 - `github.com/go-telegram-bot-api/telegram-bot-api/v5` — Telegram (or hand-roll, it's just HTTP)
 - Standard library for everything else (net/http, encoding/json, os/exec, etc.)
 
-## Setup Script (`setup.sh`)
+## Setup (`make setup`)
 
 Idempotent. Run it once to install, run it again to update. Safe to re-run.
 
 ### What it does
 
 1. **System user:** Create `foci` user if it doesn't exist (no login shell, home at `/home/foci`)
-2. **Binary:** Build from source (`go build`) or download prebuilt release. Install `foci-gw`, `foci`, and `foci-call` to `/usr/local/bin/`
+2. **Binaries:** Build from source (`go build`). Install `foci-gw`, `foci`, `foci-call`, and `foci-cc-hook` to `/usr/local/bin/`
 3. **systemd service:** Install `/etc/systemd/system/foci.service` if it doesn't exist. `User=foci`, `WorkingDirectory=/home/foci`, restart on failure. Enable and start.
 4. **Config:** Write `/home/foci/foci.toml` if it doesn't exist. Prompt interactively for:
    - Telegram bot token
@@ -855,19 +856,10 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
    - `memory.md` — what you've learned
 6. **Directories:** Create `~/sessions/`, `~/workspace/memory/`, `~/character/` under foci's home
 7. **Log rotation:** Install logrotate config for `foci.log` and `api.jsonl` (weekly, keep 4, compress)
-8. **PATH:** Symlinks already in `/usr/local/bin/`, nothing extra needed
-
-### Config references character files
-
-The agent's `workspace` path points to the character file directory. Bootstrap loads system files in the configured order.
-
-### Template content
-
-Character file templates are minimal starters — just enough structure for the agent to understand what goes where, with placeholder text encouraging the human to fill them in. Not our files — generic ones.
 
 ### Update mode
 
-When binaries already exist: rebuild/re-download, restart service. When config already exists: don't touch it. When character files already exist: don't touch them. Idempotent means safe.
+`make update` rebuilds binaries, validates configs with the freshly-built binary before restarting, and restarts the service. When config already exists: don't touch it. When character files already exist: don't touch them. Idempotent means safe.
 
 ### What it doesn't do
 
@@ -883,29 +875,32 @@ foci/
 ├── foci.toml
 ├── go.mod
 ├── go.sum
-├── main.go              # entry point, wire everything together
-├── anthropic/           # API client, streaming, caching
-│   ├── client.go
-│   ├── types.go
-│   └── cache_test.go   # THE critical test
-├── session/             # session store, branching
-│   ├── store.go
-│   ├── branch.go
-│   └── store_test.go
-├── telegram/            # bot, message routing
-│   └── bot.go
-├── tools/               # tool implementations
-│   ├── registry.go
-│   ├── exec.go
-│   ├── files.go
-│   ├── web.go
-│   └── memory.go
-├── workspace/           # bootstrap file loading
-│   └── bootstrap.go
-├── compaction/          # simple compaction
-│   └── compact.go
-└── config/              # TOML config loading
-    └── config.go
+├── cmd/
+│   └── foci-gw/
+│       └── main.go          # entry point, wire everything together
+├── internal/
+│   ├── anthropic/           # API client, streaming, caching
+│   │   ├── client.go
+│   │   ├── types.go
+│   │   └── cache_test.go   # THE critical test
+│   ├── session/             # session store, branching
+│   │   ├── store.go
+│   │   ├── branch.go
+│   │   └── store_test.go
+│   ├── telegram/            # bot, message routing
+│   │   └── bot.go
+│   ├── tools/               # tool implementations
+│   │   ├── registry.go
+│   │   ├── shell.go
+│   │   ├── files.go
+│   │   ├── web.go
+│   │   └── memory.go
+│   ├── workspace/           # bootstrap file loading
+│   │   └── bootstrap.go
+│   ├── compaction/          # simple compaction
+│   │   └── compact.go
+│   └── config/              # TOML config loading
+│       └── config.go
 ```
 
 ---

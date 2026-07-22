@@ -25,7 +25,7 @@ The rest of this guide covers the traditional bare-metal install with systemd.
 
 Install these before running setup:
 
-- **Go 1.24+** — downloaded automatically by `setup.sh` if not available (requires `curl` or `wget`)
+- **Go 1.24+** — downloaded automatically by `make setup` if not available (requires `curl` or `wget`)
 - **git** — for cloning the repo
 - **gcc / build-essential** — C compiler (needed for SQLite CGO)
 - **make** — build tool
@@ -70,7 +70,7 @@ cd foci
 The setup script creates a system user, builds binaries, sets up systemd, and launches the `foci first-run` wizard for interactive configuration:
 
 ```bash
-./setup.sh
+sudo make setup
 ```
 
 The wizard prompts for:
@@ -83,7 +83,7 @@ The wizard prompts for:
 
 Setup creates:
 - System user `foci` with home at `/home/foci`
-- Binaries at `/usr/local/bin/` (`foci-gw`, `foci`, `foci-call`)
+- Binaries at `/usr/local/bin/` (`foci-gw`, `foci`, `foci-call`, `foci-cc-hook`)
 - Systemd service `foci`
 - Config at `/home/foci/config/foci.toml`
 - Secrets at `/home/foci/config/secrets.toml` (restricted permissions: `root:foci-secrets`, mode `0660`)
@@ -99,7 +99,7 @@ FOCI_TELEGRAM_USER="5970082313" \
 FOCI_PROVIDER="anthropic" \
 FOCI_API_KEY="sk-ant-..." \
 FOCI_AGENT_ID="myagent" \
-./setup.sh
+sudo make setup
 ```
 
 Available env vars:
@@ -107,20 +107,12 @@ Available env vars:
 |----------|----------|-------------|
 | `FOCI_TELEGRAM_TOKEN` | Yes | Telegram bot token |
 | `FOCI_TELEGRAM_USER` | Yes | Your Telegram user ID |
-| `FOCI_PROVIDER` | No | LLM provider: `anthropic`, `gemini`, `openai`, `openrouter` (default: `anthropic`) |
+| `FOCI_PROVIDER` | No | LLM provider: `anthropic`, `gemini`, `openai`, `openrouter`, `claude-code`, `custom` (default: `anthropic`) |
 | `FOCI_API_KEY` | No | API key for the chosen provider |
 | `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
 | `FOCI_CHAR_MODE` | No | Character mode: `defaults`, `openclaw`, `import`, `blank` (default: `defaults`) |
 | `FOCI_CHAR_IMPORT_DIR` | If import | Directory to import character `.md` files from |
 | `FOCI_MEMORY_IMPORT_DIR` | No | Directory to import memory `.md` files from |
-
-### Dry run
-
-Preview what setup would do without making changes:
-
-```bash
-./setup.sh --dry-run
-```
 
 ### Re-running the wizard
 
@@ -150,14 +142,14 @@ Pull and re-run setup. It's idempotent — safe to run repeatedly:
 ```bash
 cd /path/to/foci
 git pull
-./setup.sh
+make update
 ```
 
 On update, setup generates a changelog (`WELCOME.md`) that the agent summarises and sends to you via Telegram.
 
 ### Config compatibility pre-check
 
-`update.sh` validates every foci service's config with the freshly-built binary
+`make update` validates every foci service's config with the freshly-built binary
 *before* installing it or restarting anything. Each service's config (the
 `-config` path from its `ExecStart`) is checked via:
 
@@ -168,7 +160,7 @@ foci-gw -check-config -config /path/to/foci.toml
 This exits `0` if the config loads cleanly and `1` on a parse/validate error or
 any unknown/deprecated key (e.g. a renamed setting — strict policy, since the
 old value would be silently dropped at startup). If any service's config fails,
-`update.sh` aborts with the running daemon untouched, so a config incompatibility
+`make update` aborts with the running daemon untouched, so a config incompatibility
 can no longer brick the service mid-upgrade. You can run the same check by hand
 before upgrading.
 
@@ -183,17 +175,22 @@ After setup, the foci user's home looks like:
     secrets.toml           ← API keys, bot tokens (restricted permissions)
   data/
     sessions/              ← session JSONL files
-    conversation.db        ← Telegram message log
+    api.db                 ← API call log (SQLite)
     state.db               ← persistent state (SQLite)
-    memory.db              ← memory FTS index
-    todo.db                ← todo store
-    reminders.db           ← reminder store
+    session_index.db       ← session metadata index
+    tool_details.db        ← tool detail store
   logs/
     foci.log               ← event log
     api.jsonl              ← API call log
   <agent-id>/              ← agent workspace (one per agent)
     character/             ← identity files (SOUL.md, CRAFT.md, etc.)
     memory/                ← daily memory files
+    .data/                 ← per-agent databases
+      conversation.db      ← Telegram message log
+      reminders.db         ← reminder store
+      scratchpad.db        ← scratchpad store
+      todo.db              ← todo store
+      memory.db            ← memory FTS index
 ```
 
 ## Troubleshooting
@@ -216,7 +213,7 @@ sudo chmod 660 /home/foci/config/secrets.toml
 Ensure Go 1.24+: `go version`. Setup downloads Go automatically if needed. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
 
 ### "unknown command: setup"
-Older `setup.sh` versions emitted a `foci setup` call in the generated root-install script, but the wizard command is `foci first-run`. The bad call aborted the install before the systemd service was created. Pull the latest repo and re-run `./setup.sh --install`.
+Older versions emitted a `foci setup` call in the generated root-install script, but the wizard command is `foci first-run`. The bad call aborted the install before the systemd service was created. Pull the latest repo and re-run `sudo make setup`.
 
 ## Next Steps
 
@@ -255,24 +252,14 @@ In Telegram, type `/help` to see available slash commands: `/status`, `/model`, 
 ### Build targets
 
 ```bash
-make              # build all 3 binaries (foci-gw, foci, foci-call)
+make              # build all 5 targets (build, cli, foci-call, foci-cc-hook, nosgid)
 make build        # gateway only
 make cli          # CLI only
 make test         # run all tests
 make vet          # go vet
-make lint         # vet + errcheck (production only) + gocyclo/gocognit (>75/100 threshold)
-make check        # test + lint
+make lint         # golangci-lint + deadcode + custom finders
+make check        # lint + coverage-check + verify-persistence
 make clean        # remove built binaries
-```
-
-### Static analysis tools
-
-`make lint` requires these tools (install once):
-
-```bash
-go install github.com/kisielk/errcheck@latest
-go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
-go install github.com/uudashr/gocognit/cmd/gocognit@latest
 ```
 
 ### Further reading

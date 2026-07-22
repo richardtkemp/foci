@@ -19,7 +19,7 @@ foci secrets delete <section.key>          # remove
 
 Use `--config <path>` to specify a custom `foci.toml` location (secrets.toml is resolved alongside it). Default: `~/config/secrets.toml`.
 
-The `get` subcommand prints the raw value with no decoration, so it's pipe-friendly: `foci secrets get anthropic.token | pbcopy`.
+The `get` subcommand prints the raw value with no decoration, so it's pipe-friendly: `foci secrets get anthropic.api_key | pbcopy`.
 
 See [CLI.md](CLI.md#secrets--manage-secrets) for full details.
 
@@ -33,10 +33,10 @@ See [CLI.md](CLI.md#secrets--manage-secrets) for full details.
 
 ```toml
 [anthropic]
-token = "sk-ant-..."
+api_key = "sk-ant-..."
 
 [telegram]
-bot_token = "123:ABC"
+scout = "123:ABC"   # key is the agent ID (e.g. telegram.scout)
 
 [custom]
 github_token = "ghp_..."
@@ -56,6 +56,22 @@ allowed_in_body = ["api_key"]    # only api_key can appear in request body; othe
 ```
 
 `allowed_in_body` lists the key names within the section that may appear in `http_request` body, body_file, or form_fields. Secrets not listed are restricted to headers only. See [Body Restriction](#body-restricted-secrets) below.
+
+### `allowed_agents` / `denied_agents`
+
+Each section can restrict which agents may use its secrets. The two fields are **mutually exclusive** — set one or the other, never both:
+
+```toml
+[github]
+token = "ghp_..."
+allowed_hosts = ["api.github.com"]
+allowed_agents = ["scout", "researcher"]   # only these agents can use github.token
+
+[internal]
+admin_key = "sk-..."
+allowed_hosts = ["internal.example.com"]
+denied_agents = ["temp-bot"]               # all agents except temp-bot can use internal.admin_key
+```
 
 ### `app.fcm_*` — FCM push credential
 
@@ -112,6 +128,12 @@ api_key = "sk-..."
 allowed_hosts = ["api.example.com", "api.backup.example.com"]
 
 ```
+
+**Managing via `/secrets`:**
+- `/secrets hosts <section>` — view current allowed_hosts
+- `/secrets hosts <section> add <host>` — allow a host
+- `/secrets hosts <section> remove <host>` — revoke host permission
+- `/secrets hosts <section> clear` — remove all host permissions
 
 ### Agent usage
 
@@ -238,7 +260,6 @@ Set `skip_security_checks = true` in `foci.toml` to disable startup checks (e.g.
 
 `setup.sh` handles all security setup automatically:
 - Creates the `foci-secrets` group
-- Adds the `foci` user to the group
 - Sets `secrets.toml` ownership to `root:foci-secrets` with mode `0660`
 - Configures the systemd unit with `SupplementaryGroups=foci-secrets` and `AmbientCapabilities=CAP_SETGID`
 
@@ -251,9 +272,6 @@ If not using `setup.sh`:
 ```bash
 # Create group
 sudo groupadd foci-secrets
-
-# Add foci user to group
-sudo usermod -aG foci-secrets foci
 
 # Set file ownership and permissions
 sudo chown root:foci-secrets /home/foci/config/secrets.toml

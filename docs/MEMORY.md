@@ -104,7 +104,7 @@ search_backend = "bleve"             # "bleve" (default) or "fts5"
 conversation_weight = 0.1            # weight for conversation results (0.0–1.0)
 search_limit = 20                    # max results returned
 reindex_debounce = "0s"              # delay before reindex on file change
-sweep_interval = "1h"                # periodic full reindex interval ("0" disables)
+sweep_interval = "0"                 # periodic full reindex interval ("0" disables; fsnotify alone catches changes)
 temporal_decay = true                # recency boost on relevance search (default true)
 decay_half_life = 10                 # days for the recency boost to halve
 decay_boost = 1.0                    # max recency multiplier is 1+this (1.0 = up to 2x for brand-new)
@@ -117,7 +117,7 @@ evergreen_patterns = ["MEMORY.md", "research-*"]  # basename globs never recency
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation results. Lower values push conversation below memory files. |
 | `search_limit` | int | `20` | Maximum search results returned per query. |
 | `reindex_debounce` | string | `"0s"` | Delay before reindex after file changes. Go duration format. |
-| `sweep_interval` | string | `"1h"` | Periodic full reindex interval. Catches files added by git, rsync, or other external tools. First sweep runs 30s after startup. `"0"` disables. |
+| `sweep_interval` | string | `"0"` | Periodic full reindex interval. Catches files added by git, rsync, or other external tools. First sweep runs 30s after startup. `"0"` disables — fsnotify watching alone catches changes. |
 | `temporal_decay` | bool | `true` | Boost recent results in relevance search (recency boost only — old results are never penalised). |
 | `decay_half_life` | float | `10` | Days for the recency boost to halve. |
 | `decay_boost` | float | `1.0` | Max recency multiplier is `1+decay_boost` (1.0 = up to 2× for brand-new). |
@@ -235,6 +235,11 @@ reset_time = ""              # e.g. "04:20" for a daily soft /reset
 | `interval_prompt` | string | `""` | Prompt override. `""` = embedded default, `"none"` = disabled, file path = custom prompt. |
 | `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and facet reclaim. |
 | `session_end_prompt` | string | `""` | Prompt override (same 3-state resolution). |
+| `compaction_enabled` | bool | `true` | Enable conversation compaction in the reflection pass. |
+| `compaction_prompt` | string | `""` | Prompt override for compaction (same 3-state resolution). |
+| `backend_quiet_period` | string | `"5m"` | Minimum quiet period after the last backend activity before a reflection pass runs. |
+| `notify_on_skill_creation` | bool | `true` | Send a notification when a new skill is auto-generated. |
+| `force_in_session` | bool | `false` | Force reflection to run in-session instead of in a branch. |
 
 Consolidation and the daily reset live in `[maintenance]` (or per-agent `[[agents.maintenance]]`):
 
@@ -245,6 +250,7 @@ Consolidation and the daily reset live in `[maintenance]` (or per-agent `[[agent
 | `consolidation_prompt` | string | `""` | Prompt override (same 3-state resolution). |
 | `reset_time` | string | `""` | Daily soft `/reset`: `"HH:MM"`, a duration, or `""` to disable. |
 | `reset_idle_guard` | string | `"55m"` | Skip the scheduled reset if the user was active within this window. |
+| `consolidation_max_idle` | string | `"1h"` | Skip consolidation if the user has been idle longer than this window. |
 
 ### Prompt Customization
 
@@ -256,7 +262,7 @@ Each formation trigger has its own prompt field (`interval_prompt`, `session_end
 | `"none"` | Disable this trigger entirely. |
 | `/path/to/file.md` | Use the custom file as the prompt. Falls back to the embedded prompt on read error. |
 
-Source: `internal/periodic/keepalive.go` (`prompts.ResolvePrompt`).
+Source: `shared/prompts/prompts.go:100` (`ResolvePrompt`). The function is called from `internal/periodic/keepalive.go` but defined in the `shared/prompts` package.
 
 ---
 

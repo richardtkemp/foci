@@ -31,7 +31,7 @@ Cache pricing is expressed as multipliers of the model's base input price:
 
 These multipliers are the same across all models (Haiku, Sonnet, Opus). The savings on reads (90%) always dwarf the write surcharge — even with 1-hour TTL, a single cache read recoups the write cost.
 
-Foci uses **1-hour TTL** by default (the `2x` write tier). This costs more upfront than the 5-min TTL but keeps the cache alive across idle periods, which matters for long-running agent sessions.
+Foci uses **1-hour TTL** by default (the `2x` write tier). This costs more upfront than the 5-min TTL but keeps the cache alive across idle periods, which matters for long-running agent sessions. A per-model `cache_ttl` override can be set in the model definition (e.g. `cache_ttl = "1h"` or `"5m"`) to tune the cache TTL for individual models.
 
 ## What Foci Caches
 
@@ -50,11 +50,16 @@ Items 1–4 form the **cached prefix**. They change rarely (character edits, con
 
 ## Cache Breakpoints
 
-Two cache breakpoints per API request:
+The number of cache breakpoints depends on the `cache_strategy` config option:
 
-1. **System prompt** — on the last system block. Caches the entire system prompt so it's not re-tokenized each turn.
+1. **System prompt** (always) — on the last system block. Caches the entire system prompt so it's not re-tokenized each turn. Applied by both strategies.
 
-2. **Conversation history** — on the second-to-last message. Caches system prompt + all conversation history up to the previous turn.
+2. **Conversation history** (`"explicit"` only) — on the second-to-last message. Caches system prompt + all conversation history up to the previous turn. Applied only by the `"explicit"` strategy.
+
+```toml
+cache_strategy = "auto"        # default — mark only the last system block
+# cache_strategy = "explicit"  # also mark the second-to-last message
+```
 
 Breakpoints are added **only to the API request payload**, never persisted to session storage.
 
@@ -108,19 +113,18 @@ When idle, a lightweight branch session fires to keep the cache prefix warm — 
 
 ### Cache bust alerts
 
-When a single API call writes more than a configurable threshold of cache tokens, foci sends an immediate Telegram notification. This is a plain Telegram message, not an agent turn — zero tokens spent.
+When `cache_read` drops versus the previous request on a session, foci sends an alert to whatever platform owns the session (Telegram, app, etc.). This is a plain notification, not an agent turn — zero tokens spent.
 
 ```toml
 [debug]
-cache_bust_detect = true           # alert when cache_read drops vs previous request
-cache_bust_idle_minutes = 10       # suppress alert if session idle > N minutes (cache expired naturally)
+cache_bust_detect = true           # alert when cache_read drops vs previous request (set false to disable)
 ```
 
 ```
-⚠️ Cache write: 43,201 tokens ($0.27) on main/i0/0
+⚠️ main/i0/0: cache bust, cache_read dropped 43201 → 0
 ```
 
-Default threshold: 20,000 tokens. Set to 0 to disable. Helps catch system prompt mutations, unexpected session resets, or compaction failures that silently blow up costs.
+Detection fires on **any** drop in `cache_read` compared to the previous request on the same session — there is no fixed token threshold. To avoid false positives when the cache simply expired due to idle time, alerts are suppressed if the session has been idle longer than 95 % of its cache TTL (computed dynamically per session). The only way to disable detection is `cache_bust_detect = false`; there is no threshold-to-zero knob.
 
 ## Monitoring
 

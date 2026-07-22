@@ -4,6 +4,8 @@
 
 In addition to static secrets in `secrets.toml`, Foci can dynamically access credentials stored in a Bitwarden vault via the `bw` CLI. This provides a larger, centrally-managed credential store with approval-gated access.
 
+> **Note:** The Bitwarden integration is currently **disabled by default**. The systemd unit sets `NoNewPrivileges=yes`, which blocks the sudo/aisudo privilege-escalation path the integration depends on. Operators must configure sudoers/aisudo externally to enable it.
+
 ## How It Works
 
 The integration uses a dedicated `bitwarden` system user and the `aisudo` privilege escalation system:
@@ -25,14 +27,14 @@ Metadata is refreshed on a configurable interval (default 15 minutes). The `bitw
 **Tier 2: Passwords (approval-required)**
 
 `sudo -u bitwarden bw get password <id>` is NOT allowlisted — it goes through aisudo's Telegram approval workflow. The agent's `bitwarden_unlock` tool call blocks until:
-- Dick approves on Telegram → password is fetched and cached
-- Dick denies on Telegram → agent gets "unlock denied by administrator" error
+- The operator approves on Telegram → password is fetched and cached
+- The operator denies on Telegram → agent gets "unlock denied by administrator" error
 - aisudo times out → agent gets a timeout error
 
 ## TTL Lifecycle
 
 1. Agent calls `bitwarden_unlock` with an item ID
-2. aisudo sends Telegram notification to Dick for approval
+2. aisudo sends Telegram notification to the operator for approval
 3. On approval, `bw get password` runs as the `bitwarden` user
 4. Password is cached in memory with a TTL (default 30 minutes)
 5. Subsequent `{{secret:bw.UUID}}` references resolve from cache — no re-approval needed
