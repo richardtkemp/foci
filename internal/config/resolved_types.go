@@ -65,6 +65,8 @@ type ResolvedNudge struct {
 	NudgeAutoExtract                bool // default true
 	NudgeCooldown                   int
 	NudgeMaxPerBatch                int
+	NudgeMaxPerTurn                 int // 0 = unlimited
+	NudgeExtractionModel            string
 	NudgePreAnswerGate              bool
 	NudgePreAnswerMinTools          int
 	NudgeDefaultEnable              bool // default true
@@ -80,6 +82,8 @@ func resolveNudge(m NudgeConfig) ResolvedNudge {
 		NudgeAutoExtract:                DerefBool(m.NudgeAutoExtract),
 		NudgeCooldown:                   DerefInt(m.NudgeCooldown),
 		NudgeMaxPerBatch:                DerefInt(m.NudgeMaxPerBatch),
+		NudgeMaxPerTurn:                 DerefInt(m.NudgeMaxPerTurn),
+		NudgeExtractionModel:            DerefStr(m.NudgeExtractionModel),
 		NudgePreAnswerGate:              DerefBool(m.NudgePreAnswerGate),
 		NudgePreAnswerMinTools:          DerefInt(m.NudgePreAnswerMinTools),
 		NudgeDefaultEnable:              DerefBool(m.NudgeDefaultEnable),

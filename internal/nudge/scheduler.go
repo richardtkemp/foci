@@ -6,6 +6,18 @@ import (
 	"sync"
 )
 
+// benignExitCommandRe matches a Bash tool_input whose command is a
+// match/test-style invocation (grep/rg/ack "no match" or shell test/[
+// "condition false") — these legitimately return a nonzero exit as their
+// normal "false" outcome, not a real error. CC's Bash tool sets is_error
+// purely from the shell exit code, so "grep -q foo file" finding nothing
+// (exit 1) is indistinguishable from a genuine failure by exit code alone.
+// Anchored to the start of the command string so it only exempts the
+// LEADING invocation, not an occurrence deep in a pipeline/heredoc body.
+// (#1309: grep no-match fired the after_error "hooks" nudge ~25x/day, 100%
+// false-positive.)
+var benignExitCommandRe = regexp.MustCompile(`"command"\s*:\s*"\s*((grep|egrep|fgrep|rg|ack|test)\b|\[)`)
+
 // recentBufferDepth bounds the ring buffer of recent tool events the
 // scheduler keeps for tool_pattern evaluation. Long enough to detect
 // "Consecutive: 5" patterns; short enough to keep memory tiny. Tuneable
@@ -36,6 +48,17 @@ type Settings struct {
 	BraindeadPrompt    string // text for the "braindead" rule ("" = built-in)
 	PreAnswerGate      bool   // enable the pre-answer verification gate
 	PreAnswerMinTools  int    // min tool calls before the gate fires
+
+	// MaxPerTurn caps the TOTAL number of nudge reminders injected across a
+	// whole turn, summed over every Check* call (turn-interval, regex,
+	// every post-tool batch, pre-answer). 0 = unlimited (default; preserves
+	// prior behaviour). A safety valve independent of MaxPerBatch/Cooldown,
+	// which only bound a single batch / a single rule's repeat rate — an
+	// eventful turn with many tool calls can still accumulate an unbounded
+	// number of DIFFERENT reminders over its lifetime without this. Added
+	// for #1309, which correlated ~270 injections/day into one agent with
+	// the #1303 text-swallowing incidents.
+	MaxPerTurn int
 }
 
 // Scheduler tracks per-turn state and evaluates nudge triggers.
@@ -44,7 +67,7 @@ type Scheduler struct {
 	rules []Rule
 
 	mu                 sync.Mutex
-	settings           Settings // live-tunable config, guarded by mu (Configure swaps)
+	settings           Settings               // live-tunable config, guarded by mu (Configure swaps)
 	lastFired          map[int]int            // rule index → tool call count when last fired
 	regexResults       map[int]bool           // rule index → whether regex trigger matches current message
 	compiledRegex      map[int]*regexp.Regexp // user-message regex (Trigger.Pattern)
@@ -52,6 +75,24 @@ type Scheduler struct {
 	compiledInputRegex map[int]*regexp.Regexp // tool-input regex (Trigger.InputPattern)
 	toolCount          int
 	turnCount          int // lifetime turn counter (never reset)
+
+	// lastFiredByType tracks, per trigger TYPE, the tool call count when any
+	// rule of that type last fired — a cross-rule cooldown on top of the
+	// per-rule one in lastFired. Currently applied only to "tool_pattern":
+	// several character-derived rules routinely share near-duplicate
+	// tool/input patterns (e.g. multiple independent security-passage
+	// extractions all matching Edit/Write), and the per-rule cooldown alone
+	// lets them round-robin — each individual rule respects its own
+	// cooldown, but a DIFFERENT sibling rule is free to fire on literally
+	// the next matching tool call, so the group as a whole nags on every
+	// single edit (#1309, proven 2026-07-16: ~77 firings/day from one such
+	// quartet). This makes the whole "tool_pattern" category share one
+	// cooldown clock instead.
+	lastFiredByType map[string]int
+
+	// turnInjections counts nudges already injected this turn, across every
+	// Check* method. Reset in StartTurn; bounded by Settings.MaxPerTurn.
+	turnInjections int
 
 	// recent is a ring buffer of the most recent tool events (newest at
 	// the highest index). Used by tool_pattern triggers to evaluate
@@ -62,19 +103,19 @@ type Scheduler struct {
 
 // SchedulerOpts configures optional Scheduler behaviour.
 type SchedulerOpts struct {
-	Cooldown       int
-	MaxPerBatch    int
+	Cooldown    int
+	MaxPerBatch int
 	// CanPostTool gates every_n_tools, after_error, and tool_pattern
 	// triggers. Rules requiring this that are present in the RuleSet but
 	// unsupported get a warning and are silently skipped at evaluation.
-	CanPostTool    bool
+	CanPostTool bool
 	// CanPreAnswer gates pre_answer triggers.
-	CanPreAnswer   bool
+	CanPreAnswer bool
 	// AgentID names the owning agent in the skip warnings. These warnings are
 	// fanned out to *every* agent's session (post_agent_setup.go's warn hook),
 	// so without the id the reader can't tell which agent's rule was skipped —
 	// especially confusing on a CC session receiving an opencode agent's warning.
-	AgentID        string
+	AgentID string
 }
 
 // NewScheduler creates a Scheduler from a RuleSet.
@@ -134,6 +175,7 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 		compiledRegex:      make(map[int]*regexp.Regexp),
 		compiledToolRegex:  make(map[int]*regexp.Regexp),
 		compiledInputRegex: make(map[int]*regexp.Regexp),
+		lastFiredByType:    make(map[string]int),
 	}
 	// Pre-compile regex patterns. Compile failures degrade gracefully:
 	// the rule retains its trigger config but the missing compiled regex
@@ -251,7 +293,9 @@ func (s *Scheduler) StartTurn(userMessage string) {
 	defer s.mu.Unlock()
 	s.turnCount++
 	s.toolCount = 0
+	s.turnInjections = 0
 	s.lastFired = make(map[int]int)
+	s.lastFiredByType = make(map[string]int)
 	s.regexResults = make(map[int]bool)
 	// Clear the recent-tools buffer between turns so tool_pattern
 	// triggers evaluate "consecutive tools within this turn" rather than
@@ -288,6 +332,9 @@ func (s *Scheduler) CheckTurnInterval() []string {
 			if r.Condition != nil && !r.Condition() {
 				continue
 			}
+			if !s.turnBudgetLocked() {
+				break
+			}
 			result = append(result, s.effectiveText(r))
 		}
 	}
@@ -322,7 +369,11 @@ func (s *Scheduler) CheckAfterTools(toolCount int, lastToolError bool) []string 
 		if !s.shouldFire(i, r, lastToolError) {
 			continue
 		}
+		if !s.turnBudgetLocked() {
+			break
+		}
 		s.lastFired[i] = s.toolCount
+		s.lastFiredByType[r.Trigger.Type] = s.toolCount
 		result = append(result, s.effectiveText(r))
 		fired++
 	}
@@ -377,6 +428,15 @@ func (s *Scheduler) CheckPreAnswer() string {
 // CheckRegex returns the text of regex rules that matched the user message
 // but haven't fired yet. Ensures regex triggers fire even on turns without
 // tool calls, where CheckAfterTools is never reached.
+//
+// Capped at MaxPerBatch, same as CheckAfterTools: a single message can
+// legitimately match several independent regex rules at once, and without a
+// cap every one of them stacks into the same turn-start injection (#1309 —
+// "multiple rules sharing one trigger should inject as one combined
+// reminder... not stack"). Callers invoke this once per turn (turn-start),
+// so any match beyond the cap is simply skipped for this turn rather than
+// deferred — a rare-in-practice tradeoff of noise over completeness, and the
+// same message won't recur to re-match once the turn ends.
 func (s *Scheduler) CheckRegex() []string {
 	if s == nil {
 		return nil
@@ -385,7 +445,11 @@ func (s *Scheduler) CheckRegex() []string {
 	defer s.mu.Unlock()
 
 	var result []string
+	fired := 0
 	for i, r := range s.rules {
+		if fired >= s.settings.MaxPerBatch {
+			break
+		}
 		if r.Trigger.Type != "regex" {
 			continue
 		}
@@ -395,11 +459,15 @@ func (s *Scheduler) CheckRegex() []string {
 		if !s.regexResults[i] {
 			continue
 		}
-		if _, fired := s.lastFired[i]; fired {
+		if _, has := s.lastFired[i]; has {
 			continue
+		}
+		if !s.turnBudgetLocked() {
+			break
 		}
 		s.lastFired[i] = s.toolCount
 		result = append(result, s.effectiveText(r))
+		fired++
 	}
 	return result
 }
@@ -430,6 +498,20 @@ func (s *Scheduler) shouldFire(i int, r Rule, lastToolError bool) bool {
 			return false
 		}
 	}
+	// Cross-rule cooldown for tool_pattern: several character-derived rules
+	// routinely share near-duplicate tool/input patterns, and the per-rule
+	// cooldown above lets a sibling rule take over the very next matching
+	// tool call — see lastFiredByType's doc comment. Scoped to tool_pattern
+	// only: every_n_tools/after_error already have their own frequency
+	// discipline (N, and MaxPerBatch respectively) and are usually
+	// deliberately distinct (different N per concern), not near-duplicates.
+	if r.Trigger.Type == "tool_pattern" {
+		if last, ok := s.lastFiredByType[r.Trigger.Type]; ok {
+			if s.toolCount-last < s.settings.Cooldown {
+				return false
+			}
+		}
+	}
 	// Runtime condition check
 	if r.Condition != nil && !r.Condition() {
 		return false
@@ -444,7 +526,11 @@ func (s *Scheduler) shouldFire(i int, r Rule, lastToolError bool) bool {
 		return s.toolCount > 0 && s.toolCount%n == 0
 
 	case "after_error":
-		return lastToolError
+		// Exempt a benign match/test "false" exit (grep/test/[ finding
+		// nothing) — is_error is derived from the raw exit code, so it's
+		// indistinguishable from a real failure without inspecting the
+		// command itself (#1309).
+		return lastToolError && !s.lastToolIsBenignExitLocked()
 
 	case "regex":
 		return s.regexResults[i]
@@ -493,6 +579,36 @@ func (s *Scheduler) matchesRecentLocked(idx int, t Trigger) bool {
 		}
 	}
 	return true
+}
+
+// turnBudgetLocked reports whether one more nudge may be injected this turn
+// and, if so, consumes one unit of the per-turn budget. Settings.MaxPerTurn
+// <= 0 means unlimited (the default — preserves prior behaviour for anyone
+// who hasn't opted into the cap). Caller must hold s.mu.
+func (s *Scheduler) turnBudgetLocked() bool {
+	if s.settings.MaxPerTurn <= 0 {
+		return true
+	}
+	if s.turnInjections >= s.settings.MaxPerTurn {
+		return false
+	}
+	s.turnInjections++
+	return true
+}
+
+// lastToolIsBenignExitLocked reports whether the most recently recorded
+// tool call (via RecordToolCall) is a Bash invocation of a match/test-style
+// command whose nonzero exit is a normal "no match"/"false" result rather
+// than a genuine error — see benignExitCommandRe. Caller must hold s.mu.
+func (s *Scheduler) lastToolIsBenignExitLocked() bool {
+	if len(s.recent) == 0 {
+		return false
+	}
+	ev := s.recent[len(s.recent)-1]
+	if ev.Name != "Bash" {
+		return false
+	}
+	return benignExitCommandRe.MatchString(ev.Input)
 }
 
 func truncate(s string, n int) string {

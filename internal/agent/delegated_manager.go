@@ -1116,6 +1116,21 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 	})
 }
 
+// RunOnceWithModel is RunOnce with an explicit model override, implementing
+// nudge.ModelOneShotRunner. Added for #1309 (nudge extraction previously had
+// no way to use anything but the hardcoded ccstream default): callers that
+// want extraction (or any other one-shot RunOnce use) on a specific model —
+// e.g. a cheaper one — pass it here instead of leaving req.Model empty.
+func (m *DelegatedManager) RunOnceWithModel(ctx context.Context, prompt, systemPrompt, model string) (string, error) {
+	return m.RunBatch(ctx, delegator.BatchRequest{
+		Prompt:       prompt,
+		SystemPrompt: systemPrompt,
+		Model:        model,
+		WorkDir:      m.StartOpts.WorkDir,
+		AgentID:      m.StartOpts.AgentID,
+	})
+}
+
 // RunBatch executes a one-shot batch run described by req and returns the
 // response synchronously. No tmux session, no watcher, no session index
 // entry, no platform delivery. It is the general entry point behind RunOnce

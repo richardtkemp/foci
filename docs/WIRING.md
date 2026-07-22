@@ -2045,7 +2045,7 @@ Without this gate, the pre-answer gate fired "verify before answering" on reflec
 
 ### Configuration
 
-Cooldown (min tool calls between repeating the same rule, default 5) and max-per-batch (max reminders per tool batch, default 1) prevent spam. All config is per-agent via `nudge_enable`, `nudge_cooldown`, `nudge_max_per_batch`, `nudge_pre_answer_gate`, `nudge_pre_answer_min_tools`, `nudge_default_enable`, `nudge_default_frequency`.
+Cooldown (min tool calls between repeating the same rule, default 5 — also the shared cross-rule window for `tool_pattern`, #1309) and max-per-batch (max reminders per tool batch, default 1 — also caps simultaneous regex matches) prevent spam; `nudge_max_per_turn` (default 0 = unlimited) additionally bounds the total injected across a whole turn. All config is per-agent via `nudge_enable`, `nudge_cooldown`, `nudge_max_per_batch`, `nudge_max_per_turn`, `nudge_extraction_model`, `nudge_pre_answer_gate`, `nudge_pre_answer_min_tools`, `nudge_default_enable`, `nudge_default_frequency`.
 
 ## Deployment
 

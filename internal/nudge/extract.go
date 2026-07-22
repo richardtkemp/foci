@@ -96,6 +96,17 @@ fire that often; most should use N=25 or higher. Rules about edge cases can have
 even higher N or more specific triggers. tool_pattern is usually a better fit
 than every_n_tools when the rule has a clear "what kind of tool use" signal.
 
+tool_pattern rules need the SAME frequency discipline as every_n_tools — a
+tool_pattern rule fires on every matching tool call, not just occasionally, so
+several rules whose tool_pattern/input_pattern overlap (e.g. multiple
+"security" passages that each independently match Edit/Write) will collectively
+nag on nearly every matching call even though each individual rule looks
+reasonable alone. Before emitting a tool_pattern rule, check whether one you
+already emitted matches an overlapping set of tools/inputs — if so, MERGE them
+into a single rule (broaden the pattern, combine the text) rather than emitting
+a near-duplicate. Prefer fewer, broader tool_pattern rules over many narrow ones
+that all fire on the same routine edit.
+
 `)
 	}
 
@@ -115,8 +126,10 @@ than every_n_tools when the rule has a clear "what kind of tool use" signal.
 		case 2:
 			b.WriteString(" for " + constrained[0] + " and at most ONE rule for " + constrained[1] + ".\n")
 		}
-		b.WriteString(`If multiple rules would use the same trigger type, synthesize them into a single
-combined nudge that covers all the key points. Keep the combined text under 50 words.
+		b.WriteString(`If multiple rules would use the same trigger type — this applies to "tool_pattern"
+and "regex" too, not just the constrained types above — synthesize them into a
+single combined nudge that covers all the key points, rather than emitting several
+separate rules that will fire together. Keep the combined text under 50 words.
 
 `)
 	}
@@ -128,6 +141,9 @@ you write will actually do what you intend:
 - Avoid overly broad patterns that fire on routine messages
 - Test mentally: what common messages would this match? Would the nudge be useful there?
 - If a rule can't be meaningfully scoped by regex, use a different trigger type
+- Avoid several regex rules matching near-identical message shapes — a single
+  user message that matches multiple overlapping regexes injects multiple
+  reminders at once; merge overlapping candidates into one rule instead
 
 Return a JSON array. If no extractable rules exist, return [].
 
@@ -144,6 +160,18 @@ type Extractor struct {
 	fileMode     os.FileMode
 	canPostTool  bool
 	canPreAnswer bool
+
+	// Model optionally overrides the model ExtractViaRunOnce uses for the
+	// one-shot extraction call. Empty (the default, set by the constructor)
+	// preserves prior behaviour: the runner picks its own cheap-batch
+	// default (currently "sonnet", hardcoded in ccstream's RunBatch). Set
+	// via the exported field rather than a constructor param so existing
+	// callers/tests are unaffected. Only honoured by ExtractViaRunOnce when
+	// the runner implements ModelOneShotRunner — the branch-session path
+	// (Extract) has no equivalent model override since it inherits the
+	// live session's own model. (#1309: extraction previously had no way to
+	// use a cheaper/different model than the hardcoded default.)
+	Model string
 }
 
 // NewExtractor creates an Extractor for the given workspace.
@@ -159,6 +187,16 @@ func NewExtractor(agentID, workspaceDir string, fileOrder []string, fileMode os.
 		canPostTool:  canPostTool,
 		canPreAnswer: canPreAnswer,
 	}
+}
+
+// modelOrDefault returns e.Model for logging, substituting a label for the
+// unset case (the runner's own default applies then, not literally "sonnet"
+// — that's ccstream's current default but not this package's business).
+func (e *Extractor) modelOrDefault() string {
+	if e.Model == "" {
+		return "(runner default)"
+	}
+	return e.Model
 }
 
 // logger returns an agent-scoped logger so extraction log lines (fanned to
@@ -181,6 +219,17 @@ type BranchHandler interface {
 // DelegatedManager implements this via claude --print.
 type OneShotRunner interface {
 	RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error)
+}
+
+// ModelOneShotRunner is an optional extension of OneShotRunner for runners
+// that support overriding the model for a single one-shot call. Kept
+// separate from OneShotRunner (rather than widening its signature) because
+// OneShotRunner's two-arg shape is a stable contract other callers
+// (periodic.BackgroundAgent) depend on structurally. DelegatedManager
+// implements this via RunOnceWithModel.
+type ModelOneShotRunner interface {
+	OneShotRunner
+	RunOnceWithModel(ctx context.Context, prompt, systemPrompt, model string) (string, error)
 }
 
 // NeedsExtraction checks if character files have changed since the last extraction.
@@ -278,14 +327,30 @@ func (e *Extractor) ExtractViaRunOnce(ctx context.Context, runner OneShotRunner)
 		return nil
 	}
 
-	e.logger().Infof("extracting nudge rules via RunOnce (hash=%s)", hash[:16])
+	e.logger().Infof("extracting nudge rules via RunOnce (hash=%s, model=%s)", hash[:16], e.modelOrDefault())
 
 	// Replace the CLI's default system prompt with the agent's character files
 	// (the same replacement ccstream's initialize performs for live sessions).
 	// Without this the one-shot run sees only the harness's own system prompt
 	// and — told "your character files are loaded in the system prompt" —
 	// extracts rules from THAT (the 2026-07-16 wrong-corpus rule sets, #1307).
-	response, err := runner.RunOnce(ctx, e.buildExtractionPrompt(), e.characterSystemPrompt())
+	//
+	// Use the model override when both configured (e.Model) and supported by
+	// the runner (ModelOneShotRunner) — otherwise fall back to the runner's
+	// own default (RunOnce), preserving prior behaviour for callers/tests
+	// that don't set Model or use a plain OneShotRunner.
+	var response string
+	var err error
+	if e.Model != "" {
+		if mr, ok := runner.(ModelOneShotRunner); ok {
+			response, err = mr.RunOnceWithModel(ctx, e.buildExtractionPrompt(), e.characterSystemPrompt(), e.Model)
+		} else {
+			e.logger().Warnf("nudge_extraction_model=%q set but runner %T doesn't support a model override — using its default", e.Model, runner)
+			response, err = runner.RunOnce(ctx, e.buildExtractionPrompt(), e.characterSystemPrompt())
+		}
+	} else {
+		response, err = runner.RunOnce(ctx, e.buildExtractionPrompt(), e.characterSystemPrompt())
+	}
 	if err != nil {
 		return fmt.Errorf("nudge extraction (RunOnce): %w", err)
 	}

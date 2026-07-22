@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/nudge"
 )
 
 // TestBuildCompactor_LiveConfigEditUpdatesCompactor proves the OnChange
@@ -44,5 +45,22 @@ func TestBuildCompactor_LiveConfigEditUpdatesCompactor(t *testing.T) {
 	// instead of the flat 0.9 fraction — proves SetNonlinear also applied.
 	if got := compactor.EffectiveThreshold(1_000_000); got == int(0.9*1_000_000) {
 		t.Errorf("EffectiveThreshold(1M) = %d still using flat fraction — SetNonlinear did not take effect", got)
+	}
+}
+
+// TestNudgeSettingsMapsMaxPerTurn verifies nudgeSettings threads the #1309
+// nudge_max_per_turn field through to nudge.Settings.MaxPerTurn — a plain
+// field-mapping bug here (e.g. a typo'd struct field) would silently make
+// the config knob a no-op without any compile error.
+func TestNudgeSettingsMapsMaxPerTurn(t *testing.T) {
+	nc := config.ResolvedNudge{
+		NudgeCooldown:    5,
+		NudgeMaxPerBatch: 1,
+		NudgeMaxPerTurn:  3,
+	}
+	got := nudgeSettings(nc)
+	want := nudge.Settings{Cooldown: 5, MaxPerBatch: 1, MaxPerTurn: 3}
+	if got != want {
+		t.Errorf("nudgeSettings(%+v) = %+v, want %+v", nc, got, want)
 	}
 }
