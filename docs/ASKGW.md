@@ -29,9 +29,18 @@ allowed_uids = ["root", "1000"]               # required when enabled; usernames
 default_agent = "arnix"                       # which agent to route questions to
 default_timeout_seconds = 120                 # 0 = no timeout
 max_frame_bytes = 1048576                     # 1 MiB default
+http_enabled = false                          # also expose askgw over foci's HTTP server — see below
 ```
 
 **Required when enabled:** `allowed_uids` (at least one UID), `default_agent` (must match a configured agent).
+
+## Using askgw over HTTP (remote callers)
+
+Setting `http_enabled = true` (in addition to `enabled = true`) registers `POST /askgw/ask`, `GET /askgw/ask/{id}`, and `POST /askgw/ask/{id}/cancel` on foci's existing HTTP server, authenticated by the same `http.api_key` bearer token as `/send` etc. This is for a caller that can reach foci over the network but not the local Unix socket — e.g. a remote Mac running `aisudo`, instead of ssh-forwarding the socket.
+
+**Why a separate flag:** the Unix socket's security model (SO_PEERCRED UID allow-list + Unix group) is materially stronger than a single bearer token, so exposing the same capability over HTTP is an explicit second opt-in rather than automatic once `enabled = true` — upgrading foci must not silently open a network-reachable ask endpoint on an existing install.
+
+**Shape:** unlike the socket (one blocking read per ask), HTTP is submit-then-poll: `POST /askgw/ask` returns immediately once the question is presented to chat, then `GET /askgw/ask/{id}?wait=<seconds>` long-polls (bounded, resumable) until a human answers. Full protocol details and the design rationale (why poll rather than a single held-open call) are in [ASKGW-PROTOCOL.md](ASKGW-PROTOCOL.md)'s HTTP transport section.
 
 The group (`foci-askgw`) is created at install time by `make provision`. The foci gateway process runs with `SupplementaryGroups=... foci-askgw`.
 

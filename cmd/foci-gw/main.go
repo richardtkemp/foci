@@ -645,6 +645,9 @@ Subcommands:
 	if askgwSrv != nil {
 		defer askgwSrv.Close()
 	}
+	// HTTP transport onto the same askgw Server/Registry, for remote callers
+	// that can't reach the local Unix socket (opt-in — see setupAskgwHTTP).
+	setupAskgwHTTP(ctx, cfg, mux, askgwSrv)
 
 	// Log startup
 	var agentNames []string

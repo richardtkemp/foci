@@ -79,3 +79,37 @@ On disconnect:
 | Agent isolation | `procx` strips `foci-askgw` group from child agent subprocesses — they cannot reach the socket |
 
 Both layers must pass: the connecting process must be in the group AND have its UID in the allow-list.
+
+## HTTP transport
+
+An opt-in second transport (`[askgw] enabled = true` **and** `[askgw] http_enabled = true`) exposes the same ask machinery over foci's existing HTTP server, for a remote caller (e.g. a Mac running `aisudo`) that can reach foci over the network but not its local Unix socket. It is a different front door onto the *same* `AskRouter`/registry the Unix socket uses — not a parallel implementation — and it reuses the HTTP server's existing `http.api_key` bearer-token auth (no new auth scheme). See [ASKGW.md](ASKGW.md) for the config flag and [WIRING.md](WIRING.md)'s Ask Gateway section for the full design-fork rationale (why poll, not a single held-open call).
+
+**Transport shape:** request/response, not persistent-duplex — a decision can take minutes, so submission and result-collection are two separate calls:
+
+1. **`POST /askgw/ask`** — body is the identical `ask` frame JSON the socket accepts. Returns immediately (202, `{"id","status":"pending"}`) once the question is presented to chat — this is the HTTP equivalent of the socket's `ack`, it does **not** wait for a human answer.
+2. **`GET /askgw/ask/{id}?wait=<seconds>`** — polls for the result. The server holds the request open for up to `wait` (default 20s, capped at 25s — comfortably inside the HTTP server's 30s read/write timeout) waiting for a human answer; if none arrives in time it returns `{"status":"pending"}` and the caller re-issues the same GET to keep waiting. This is a bounded, **resumable** long-poll: if the connection drops mid-wait, nothing is lost — just GET the same `id` again. Once resolved, it returns the same `answer` frame shape the socket sends (`status`: `answered`/`timeout`/`dismissed`/`unavailable`), plus an HTTP-only `cancelled` status for an ask withdrawn via (3). A 404 means `id` is not currently trackable — never submitted, already collected by an earlier terminal poll, or aged out (an answered-but-never-polled ask is evicted after 15 minutes).
+3. **`POST /askgw/ask/{id}/cancel`** — withdraws a pending ask, same effect as the socket's `cancel` frame (tears down the chat prompt). Unlike the socket transport (which sends no frame back for a cancel), an in-flight poll on that `id` unblocks immediately with `cancelled` rather than waiting out the timeout.
+
+**Example (bash, mirrors the socket example above):**
+
+```bash
+API_KEY=...        # http.api_key
+BASE=https://foci-host:PORT
+
+id=deploy-002
+curl -s -X POST "$BASE/askgw/ask" \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -d "{\"protocol\":\"askgw/1\",\"type\":\"ask\",\"id\":\"$id\",\"source\":\"deploy-bot\",\"questions\":[{\"key\":\"go\",\"question\":\"Deploy v1.2.3?\",\"options\":[{\"label\":\"Yes\"},{\"label\":\"No\"}]}]}"
+
+# Poll until it's no longer "pending" (each call waits up to ~20s server-side).
+while :; do
+  resp=$(curl -s -H "Authorization: Bearer $API_KEY" "$BASE/askgw/ask/$id?wait=20")
+  status=$(echo "$resp" | jq -r .status)
+  [ "$status" != "pending" ] && break
+done
+echo "$resp" | jq -r '.status'
+```
+
+**What's unchanged from the socket transport:** validation rules, frame/answer shapes, `askgw-<askID>-q<idx>` message-ID namespacing, multi-question flow, and per-ask timeout resolution (`timeout_seconds` or `default_timeout_seconds`) all pass through the identical `AskFrame.Validate()`/registry/present code path — the HTTP layer only adds the id-keyed submit/poll/cancel bookkeeping needed to bridge request/response HTTP onto it.
+
+**What's new/different:** each HTTP-submitted ask gets its own private registry connection (HTTP has no persistent connection to reuse across asks, unlike a socket connection which can host many concurrent asks); an id must be unique among *currently pending* HTTP asks (a second `POST /askgw/ask` reusing a still-pending id gets 409 `duplicate_id`); and an answered ask that nobody polls is retained (not delivered) for 15 minutes before eviction, since there is no persistent listener to push it to.
