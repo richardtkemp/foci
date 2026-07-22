@@ -625,6 +625,14 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 		return nil
 	}
 	conn := &appConn{hub: h, agentID: params.AgentID, agentRef: ag, headerState: &interactiveHeaderState{pending: make(map[string]string)}}
+	// Route a batched ask answer into this agent's ask layer when a restart dropped
+	// the hub's in-memory registration (#1473, fix B). Reads ag.AskRouter lazily —
+	// it may be wired after setupAgent — so this is safe to capture now.
+	conn.routeBatchAnswer = func(promptID string, answers []string) {
+		if ag.AskRouter != nil && ag.AskRouter.HandleBatchByPrompt != nil {
+			ag.AskRouter.HandleBatchByPrompt(promptID, answers)
+		}
+	}
 	if reg, ok := params.Commands.(*command.Registry); ok {
 		conn.commands = reg
 	}
@@ -1607,6 +1615,21 @@ func (h *Hub) deleteBatchPrompt(promptID string) {
 	delete(h.batchPrompts, promptID)
 	h.mu.Unlock()
 	h.frames.DeletePrompt(promptID)
+}
+
+// resolveBatchedAsk completes a batched (native-app) ask: it fans out the terminal
+// Done progressEdit — which closes the form / clears the banner / renders the
+// complete chit on EVERY attached client (not just the answering one) — and
+// delivers the assembled answers into the ask layer. The single shared resolution
+// core for BOTH the registered path (a live batchPrompt) and the restart-lost
+// fallback (#1473, fix B), so the two cannot drift.
+func (h *Hub) resolveBatchedAsk(b *convBinding, promptID string, answers []string, deliver func(answers []string)) {
+	if b != nil {
+		b.send(fap.InteractiveProgressEdit{ConversationID: b.convID, PromptID: promptID, Answers: answers, Done: true})
+	}
+	if deliver != nil {
+		deliver(answers)
+	}
 }
 
 func (h *Hub) addClient(c *wsClient) {
