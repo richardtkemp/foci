@@ -1,18 +1,36 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
+	"foci/internal/log"
 	"foci/internal/messages"
 	"foci/internal/provider"
 
 	"github.com/openai/openai-go/v3"
 )
+
+// captureDebugLog redirects log event output to a buffer at DEBUG level so
+// tests can assert on Debugf lines, restoring the previous output/level on
+// cleanup.
+func captureDebugLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetLevel(log.DEBUG)
+	t.Cleanup(func() {
+		log.SetOutput(os.Stderr)
+		log.SetLevel(log.INFO)
+	})
+	return &buf
+}
 
 func TestListModels(t *testing.T) {
 	// Proves that ListModels hits GET /models, parses the response correctly, and maps unix timestamps to time.Time values.
@@ -1091,6 +1109,80 @@ func TestRetryAfterHint(t *testing.T) {
 		e := &openai.Error{}
 		if got := retryAfterHint(e); got != "" {
 			t.Errorf("retryAfterHint = %q, want empty", got)
+		}
+	})
+}
+
+func TestIsOpenRouter(t *testing.T) {
+	// Proves isOpenRouter identifies the OpenRouter endpoint by base URL and
+	// nothing else — the gate that keeps generation-id debug logging
+	// (foci_todo #1482) from firing for other OpenAI-compatible providers.
+	tests := []struct {
+		name    string
+		baseURL string
+		want    bool
+	}{
+		{"openrouter base URL", "https://openrouter.ai/api/v1", true},
+		{"openrouter with api subdomain", "https://api.openrouter.ai/v1", true},
+		{"plain openai (empty base URL)", "", false},
+		{"together", "https://api.together.xyz/v1", false},
+		{"groq", "https://api.groq.com/openai/v1", false},
+		{"local proxy", "http://localhost:8080", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{baseURL: tt.baseURL}
+			if got := c.isOpenRouter(); got != tt.want {
+				t.Errorf("isOpenRouter() with baseURL %q = %v, want %v", tt.baseURL, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLogGenerationID(t *testing.T) {
+	// Proves logGenerationID surfaces resp.ID (the OpenRouter "gen-..." id,
+	// foci_todo #1482) at DEBUG level, but only when the endpoint is
+	// OpenRouter and the response actually carries an id.
+	t.Run("openrouter with id logs it", func(t *testing.T) {
+		buf := captureDebugLog(t)
+		c := &Client{baseURL: "https://openrouter.ai/api/v1"}
+		c.logGenerationID(&provider.MessageResponse{ID: "gen-abc123"}, "z-ai/glm-5-turbo")
+
+		if !bytes.Contains(buf.Bytes(), []byte("gen-abc123")) {
+			t.Errorf("expected generation id in debug log, got: %s", buf.String())
+		}
+		if !bytes.Contains(buf.Bytes(), []byte("z-ai/glm-5-turbo")) {
+			t.Errorf("expected model in debug log, got: %s", buf.String())
+		}
+	})
+
+	t.Run("non-openrouter endpoint does not log", func(t *testing.T) {
+		buf := captureDebugLog(t)
+		c := &Client{baseURL: "https://api.openai.com/v1"}
+		c.logGenerationID(&provider.MessageResponse{ID: "gen-abc123"}, "gpt-4o")
+
+		if bytes.Contains(buf.Bytes(), []byte("gen-abc123")) {
+			t.Errorf("expected no generation id logged for non-openrouter endpoint, got: %s", buf.String())
+		}
+	})
+
+	t.Run("openrouter with empty id does not log", func(t *testing.T) {
+		buf := captureDebugLog(t)
+		c := &Client{baseURL: "https://openrouter.ai/api/v1"}
+		c.logGenerationID(&provider.MessageResponse{ID: ""}, "z-ai/glm-5-turbo")
+
+		if buf.Len() != 0 {
+			t.Errorf("expected no debug output for empty id, got: %s", buf.String())
+		}
+	})
+
+	t.Run("nil result does not panic or log", func(t *testing.T) {
+		buf := captureDebugLog(t)
+		c := &Client{baseURL: "https://openrouter.ai/api/v1"}
+		c.logGenerationID(nil, "z-ai/glm-5-turbo")
+
+		if buf.Len() != 0 {
+			t.Errorf("expected no debug output for nil result, got: %s", buf.String())
 		}
 	})
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"foci/internal/log"
@@ -82,6 +83,27 @@ func (c *Client) Endpoint() string {
 	return provider.EndpointNameFromURL(c.baseURL)
 }
 
+// isOpenRouter reports whether this client's configured endpoint is
+// OpenRouter, identified by its base URL. Used to gate OpenRouter-only
+// debug logging (foci_todo #1482) — other OpenAI-compatible providers
+// (Together, Groq, plain OpenAI, ...) don't expose a queryable generation id.
+func (c *Client) isOpenRouter() bool {
+	return strings.Contains(c.baseURL, "openrouter.ai")
+}
+
+// logGenerationID surfaces OpenRouter's per-call generation id (resp.ID, the
+// "gen-..." id) at DEBUG level so a cache-bust (or other cost/behaviour)
+// investigation can be settled directly against OpenRouter's authoritative
+// GET /api/v1/generation?id=<id> record instead of by inference (foci_todo
+// #1482, surfaced by #1477). No-op for non-OpenRouter endpoints or when the
+// response carries no id.
+func (c *Client) logGenerationID(result *provider.MessageResponse, model string) {
+	if !c.isOpenRouter() || result == nil || result.ID == "" {
+		return
+	}
+	openaiLog.Debugf("openrouter generation id: id=%s model=%s key=%s", result.ID, model, result.KeySuffix)
+}
+
 // SendMessage sends a message to the OpenAI API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 	params := buildParams(req)
@@ -104,6 +126,7 @@ func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) 
 		return nil, err
 	}
 	result.KeySuffix = log.FormatKeySuffix(c.apiKey)
+	c.logGenerationID(result, req.Model)
 	return result, nil
 }
 
