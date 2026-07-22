@@ -68,6 +68,47 @@ func (st *subagentTracker) stopAll() {
 	st.mu.Unlock()
 }
 
+// finishAll ends every active subagent poll at parent-turn completion.
+//
+// Codex emits NO terminal subAgentActivity kind for a normally-completing
+// subagent: the SubAgentActivityKind enum is exactly {started, interacted,
+// interrupted} (verified against codex 0.144.5's app-server JSON schema —
+// `codex app-server generate-json-schema`). So a subagent that just finishes
+// its work never triggers the kind==interrupted path in handlers.go, and
+// without this its 500ms poll would idle-tick until the NEXT turn's
+// onTurnStarted stopAll (#1324 sub-issue 1), and the client's activity
+// indicator would stay 'running' forever (#1324 sub-issue 3).
+//
+// The parent turn cannot complete while a spawned subagent is still running
+// (every SubAgentSource — thread_spawn/review/compact/memory_consolidation —
+// feeds its result back into the parent turn), so turn completion is the
+// correct, kind-independent boundary at which to flush any final text and end
+// the indicator. Closing poll.done triggers the goroutine's final read (the
+// same flush the interrupted stop() path relies on); OnSubagentEnd then ends
+// the run's indicator.
+func (st *subagentTracker) finishAll(b *Backend) {
+	st.mu.Lock()
+	polls := make([]*subagentPoll, 0, len(st.active))
+	for _, poll := range st.active {
+		select {
+		case <-poll.done:
+		default:
+			close(poll.done)
+		}
+		polls = append(polls, poll)
+	}
+	st.active = make(map[string]*subagentPoll)
+	st.mu.Unlock()
+
+	se := b.sessionEvents.Load()
+	if se == nil || se.OnSubagentEnd == nil {
+		return
+	}
+	for _, poll := range polls {
+		se.OnSubagentEnd(poll.groupKey, 1) // codex has no reactivation → run 1
+	}
+}
+
 func (st *subagentTracker) pollLoop(b *Backend, agentThreadID string, poll *subagentPoll) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
