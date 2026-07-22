@@ -361,8 +361,22 @@ func (b *Backend) onAgentMessageDelta(params *agentMessageDeltaParams) {
 // onTokenUsage stashes the latest usage for the current turn. Delivered
 // in TurnResult.Usage when the turn completes.
 func (b *Backend) onTokenUsage(params *tokenUsageParams) {
+	// codex/OpenAI token semantics differ from Anthropic's: cachedInputTokens
+	// is a SUBSET of inputTokens (live-verified against codex 0.144.5 rollout
+	// token_count entries: input_tokens=14550 with cached_input_tokens=8960,
+	// and total_tokens == input_tokens + output_tokens — the cached count is
+	// already included in inputTokens, not additive). foci's downstream
+	// context-fullness (internal/compaction/compact.go: input + cacheRead +
+	// cacheWrite) and cost math are Anthropic-style additive, so we subtract
+	// the cached portion out of InputTokens here. Reporting it in both fields
+	// otherwise double-counts the cache: context occupancy inflates (premature
+	// auto-compaction) and cost double-charges the cached tokens.
+	inputTokens := params.TokenUsage.Last.InputTokens - params.TokenUsage.Last.CachedInputTokens
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
 	u := &delegator.TurnUsage{
-		InputTokens:          params.TokenUsage.Last.InputTokens,
+		InputTokens:          inputTokens,
 		OutputTokens:         params.TokenUsage.Last.OutputTokens,
 		CacheReadInputTokens: params.TokenUsage.Last.CachedInputTokens,
 	}
