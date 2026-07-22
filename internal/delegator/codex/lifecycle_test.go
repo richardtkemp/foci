@@ -83,6 +83,43 @@ func TestStartThread_PassesBaseInstructions(t *testing.T) {
 	}
 }
 
+// TestResumeThread_PassesBaseInstructions is the regression for #1327
+// sub-issue 1: resumeThread must re-send the freshly-generated system prompt
+// as baseInstructions so a thread surviving a gateway restart picks up
+// MEMORY/date/skill changes, rather than running forever on the prompt from
+// thread-creation time. codex 0.144.5's ThreadResumeParams accepts the field.
+func TestResumeThread_PassesBaseInstructions(t *testing.T) {
+	const wantPrompt = "refreshed system prompt with today's memory"
+
+	var gotBaseInstructions string
+	var sawResume bool
+	b := newStartableBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
+		if method != "thread/resume" {
+			t.Errorf("unexpected method %q, want thread/resume", method)
+			return json.RawMessage(`{}`), nil
+		}
+		sawResume = true
+		var p threadResumeParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			t.Fatalf("unmarshal thread/resume params: %v", err)
+		}
+		gotBaseInstructions = p.BaseInstructions
+		return json.RawMessage(`{"thread":{"id":"th_r"}}`), nil
+	})
+	b.workDir = "/tmp"
+	b.startOpts = delegator.StartOptions{SystemPrompt: wantPrompt}
+
+	if err := b.resumeThread("th_r"); err != nil {
+		t.Fatalf("resumeThread: %v", err)
+	}
+	if !sawResume {
+		t.Fatal("thread/resume was not sent")
+	}
+	if gotBaseInstructions != wantPrompt {
+		t.Errorf("baseInstructions = %q, want %q", gotBaseInstructions, wantPrompt)
+	}
+}
+
 // TestStartThread_PassesSandbox verifies the mock app-server receives
 // thread/start with sandbox matching the configured sandbox mode.
 func TestStartThread_PassesSandbox(t *testing.T) {
