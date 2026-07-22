@@ -83,12 +83,17 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 	// fires before the approval request).
 	detail := b.lookupItemDetail(params.ItemID)
 
+	// Prefer the extracted file-path detail (what will actually be written),
+	// falling back to the model's self-reported reason, then a generic label.
+	// This previously ran in the OPPOSITE order — params.Reason unconditionally
+	// clobbered the file-path detail — so the user approved against the model's
+	// reason instead of the actual file list.
 	summary := detail
+	if summary == "" && params.Reason != "" {
+		summary = strings.TrimPrefix(params.Reason, "May I ")
+	}
 	if summary == "" {
 		summary = "File change"
-	}
-	if params.Reason != "" {
-		summary = strings.TrimPrefix(params.Reason, "May I ")
 	}
 
 	prompt := "Approve file change"
