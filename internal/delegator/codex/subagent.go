@@ -99,10 +99,7 @@ func (b *Backend) readSubagentThread(agentThreadID string, poll *subagentPoll) {
 	var resp struct {
 		Thread struct {
 			Turns []struct {
-				Items []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"items"`
+				Items []subagentItem `json:"items"`
 			} `json:"turns"`
 		} `json:"thread"`
 	}
@@ -110,24 +107,35 @@ func (b *Backend) readSubagentThread(agentThreadID string, poll *subagentPoll) {
 		return
 	}
 
-	// Flatten all turns' items into a single list
-	var items []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
+	// Flatten all turns' items into a single list (chronological order:
+	// turns come oldest-first, items within a turn oldest-first).
+	var items []subagentItem
 	for _, turn := range resp.Thread.Turns {
 		items = append(items, turn.Items...)
 	}
 
-	// Deliver only new agentMessage items
-	for i := len(items) - 1; i >= 0; i-- {
+	b.deliverSubagentItems(items, poll)
+}
+
+// subagentItem is the subset of a subagent thread's item we care about.
+type subagentItem struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// deliverSubagentItems delivers the not-yet-seen agentMessage items to
+// OnSubagentText in chronological (oldest-first) order and advances the seen
+// cursor. Only items at index >= poll.seenItems are new; non-agentMessage /
+// empty-text items in that range are skipped for delivery but still advance
+// the cursor. Iterating forward from the cursor (rather than the previous
+// newest-first reverse loop) preserves the thread's chronological order so a
+// subagent's messages reach the client in the order it produced them.
+func (b *Backend) deliverSubagentItems(items []subagentItem, poll *subagentPoll) {
+	se := b.sessionEvents.Load()
+	for i := poll.seenItems; i < len(items); i++ {
 		if items[i].Type == "agentMessage" && items[i].Text != "" {
-			// Check if this is a new item (beyond what we've seen)
-			if i >= poll.seenItems {
-				se := b.sessionEvents.Load()
-				if se != nil && se.OnSubagentText != nil {
-					se.OnSubagentText(poll.groupKey, items[i].Text, 1) // codex has no reactivation → run 1
-				}
+			if se != nil && se.OnSubagentText != nil {
+				se.OnSubagentText(poll.groupKey, items[i].Text, 1) // codex has no reactivation → run 1
 			}
 		}
 	}
