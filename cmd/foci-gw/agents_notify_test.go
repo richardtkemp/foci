@@ -2,15 +2,63 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/delegator"
+	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
 )
+
+// TestLogInjectionErrorSeverity is the regression test for #1442: an inject
+// failing because the backend's transport closed concurrently with the write
+// (delegator.ErrBackendClosed, e.g. ccstream's writer racing its own
+// teardown) is transient and self-healing — DelegatedManager respawns the
+// backend on the very next Get — and must log at WARN so it stops tripping
+// the novel-ERROR health check. A genuine failure (any other error) must
+// still log at ERROR — this is log-severity hygiene, not a "never alert"
+// suppression.
+//
+// Red without the fix: before wrapping errWriterClosed in
+// delegator.ErrBackendClosed and adding the errors.Is branch in
+// logInjectionError, both cases logged at ERROR and this test's first
+// assertion failed.
+func TestLogInjectionErrorSeverity(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		entries []log.Level
+	)
+	log.SetWarnHook(func(level log.Level, component, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		entries = append(entries, level)
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
+	closedErr := fmt.Errorf("ccstream: send user message: %w", delegator.ErrBackendClosed)
+	logInjectionError("async_notify", closedErr, "error for session %s", "test/main")
+
+	genuineErr := errors.New("boom")
+	logInjectionError("async_notify", genuineErr, "error for session %s", "test/main")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(entries) != 2 {
+		t.Fatalf("got %d warn-hook events %v, want 2", len(entries), entries)
+	}
+	if entries[0] != log.WARN {
+		t.Errorf("backend-closed error logged at %v, want WARN (self-healing race, not a real failure)", entries[0])
+	}
+	if entries[1] != log.ERROR {
+		t.Errorf("genuine error logged at %v, want ERROR", entries[1])
+	}
+}
 
 // stubConnMgr implements platform.ConnectionManager for tests.
 // Set agentID and sessionKey to make AllForAgent return a stub connection.

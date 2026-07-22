@@ -27,6 +27,18 @@ var ErrTurnNotInFlight = errors.New("delegator: turn not in flight")
 // (WaitForTurn) before retrying. See the System row in Delegator.ImmediateInject.
 var ErrTurnInFlight = errors.New("delegator: turn in flight")
 
+// ErrBackendClosed marks an ImmediateInject failure caused by the backend's
+// transport (stdin pipe / process) having been closed concurrently with the
+// write — e.g. an inject racing the backend's own teardown (idle close,
+// respawn) rather than a genuine send failure. DelegatedManager.Get always
+// detects a dead backend and respawns it on the very next call (see
+// getOrCreate), so this class of error is inherently transient and
+// self-healing — callers logging it should use a lower severity than a real
+// delivery failure. Backend implementations should wrap their
+// transport-closed sentinel with this (%w) so callers across backend types
+// can detect it via errors.Is without importing backend-specific packages.
+var ErrBackendClosed = errors.New("delegator: backend closed")
+
 // Backend is the interface that all coding agent backends implement.
 // A Backend owns the entire turn: inference, tool execution, and context
 // management. Foci sends composed prompts (with metadata, nudges, reminders)

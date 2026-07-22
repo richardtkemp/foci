@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
@@ -143,7 +145,7 @@ func relayResponseToCaller(
 		buf := turnevent.NewBufferSink()
 		notifyCtx := turnevent.WithSink(agent.WithTrigger(ctx, trigger), buf)
 		if err := targetAg.HandleMessage(notifyCtx, targetSession, []string{message}, nil); err != nil {
-			log.NewComponentLogger(trigger).Errorf("error processing on target %s: %v", targetSession, err)
+			logInjectionError(trigger, err, "error processing on target %s", targetSession)
 			return
 		}
 		resp := buf.FinalText()
@@ -205,6 +207,24 @@ func turnSinkForConn(conn platform.Connection, sessionKey, trigger string) (turn
 		})), nil
 }
 
+// logInjectionError logs a failed HandleMessage from an injected turn (system
+// notifications, async tool results, session relays) at the severity the
+// failure actually warrants. An err wrapping delegator.ErrBackendClosed means
+// the inject raced the backend's own teardown (e.g. an async_notify landing
+// the instant ccstream closes a stale subprocess, #1442) — DelegatedManager
+// respawns the backend on the very next Get, so this is transient and
+// self-healing, not a real delivery failure, and logging it at ERROR trips
+// novel-error alarms for noise. Genuine failures (composition errors, tool
+// panics, permanent backend faults) still log at ERROR.
+func logInjectionError(trigger string, err error, format string, args ...interface{}) {
+	logger := log.NewComponentLogger(trigger)
+	if errors.Is(err, delegator.ErrBackendClosed) {
+		logger.Warnf(format+" (backend closed mid-inject — self-heals on next turn): %v", append(args, err)...)
+		return
+	}
+	logger.Errorf(format+": %v", append(args, err)...)
+}
+
 // enqueueInject queues body as a system injection on sessionKey's inbox worker —
 // the ONE place injection queueing/serialisation/safety is defined. body runs
 // wrapped in panic recovery (a bad injection must never crash the foci process),
@@ -252,7 +272,7 @@ func deliverToSessionChat(
 			// No deliverable connection anywhere. Still run the turn (it lands
 			// in the session JSONL); just don't render to a chat.
 			if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
-				log.NewComponentLogger(trigger).Errorf("error for session %s: %v", sessionKey, err)
+				logInjectionError(trigger, err, "error for session %s", sessionKey)
 				return
 			}
 			log.NewComponentLogger(trigger).Warnf("no connection for agent %s session %s, response not delivered", agentID, sessionKey)
@@ -271,7 +291,7 @@ func deliverToSessionChat(
 		notifyCtx = turnevent.WithSink(notifyCtx, sink)
 
 		if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
-			log.NewComponentLogger(trigger).Errorf("error for session %s: %v", sessionKey, err)
+			logInjectionError(trigger, err, "error for session %s", sessionKey)
 		}
 	})
 }
