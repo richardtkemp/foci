@@ -591,6 +591,27 @@ func main() {
 				// without needing to set the env var.
 				reply = "stub-reply: " + userText
 			}
+			// Faithful keepalive compliance. The cache-keepalive ping
+			// (shared/prompts/keepalive.md, carrying the "[KEEPALIVE]"
+			// marker) instructs the agent to "Respond with `[[NO_RESPONSE]]`
+			// and nothing else" — an UNCONDITIONAL silence directive (unlike
+			// the proactive-injection note, which offers the agent a choice
+			// and must NOT be silenced here). A real, compliant agent emits
+			// exactly the silencing sentinel, which foci strips to "" on every
+			// delivery path (in-turn sink AND late-delivery fallback), so a
+			// keepalive never produces a user-visible reply. The stub's
+			// default echo instead spills the prompt back as a NON-silent
+			// reply; with the delegated backend that reply races the turn's
+			// (silent) sink setup and, when it loses, leaks to the chat via
+			// the late-delivery path — a contention-sensitive flake that no
+			// real agent would ever cause. Mirror the real agent's compliance
+			// so the stub is faithful and keepalive is deterministically
+			// silent. An explicit scripted reply (script.Text) still wins, so
+			// a test that deliberately scripts a keepalive-turn reply is
+			// unaffected.
+			if (script == nil || script.Text == "") && strings.Contains(userText, "[KEEPALIVE]") {
+				reply = "[[NO_RESPONSE]]"
+			}
 			// Scripted raw-lines / extra envelopes / sleep land BEFORE
 			// any other pre-assistant emission. RawLinesBeforeAssistant is
 			// written verbatim (use for malformed JSON); ExtraEnvelopes is
