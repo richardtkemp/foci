@@ -1102,13 +1102,36 @@ func (m *DelegatedManager) idleReaper(ctx context.Context) {
 // entry, no platform delivery. Ideal for internal tasks like nudge
 // extraction and memory consolidation.
 //
-// systemPrompt is passed via --system-prompt; empty uses CC's default.
+// systemPrompt is passed via --system-prompt; empty uses CC's default. This is
+// a thin wrapper over RunBatch with no model override (the backend picks its
+// own cheap batch default) — kept as its own method because it's the stable
+// two-arg shape callers outside this package depend on structurally
+// (nudge.OneShotRunner, periodic.BackgroundAgent).
 func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error) {
-	req := delegator.BatchRequest{
+	return m.RunBatch(ctx, delegator.BatchRequest{
 		Prompt:       prompt,
 		SystemPrompt: systemPrompt,
 		WorkDir:      m.StartOpts.WorkDir,
 		AgentID:      m.StartOpts.AgentID,
+	})
+}
+
+// RunBatch executes a one-shot batch run described by req and returns the
+// response synchronously. No tmux session, no watcher, no session index
+// entry, no platform delivery. It is the general entry point behind RunOnce
+// (nudge extraction, memory consolidation, onboarding) and the tool-layer
+// summary tool (tools.BatchSummariser, #1317) — the latter needs req.Model
+// (e.g. "haiku") where the former leave it empty for the backend's own cheap
+// batch default.
+//
+// req.WorkDir / req.AgentID default to the manager's own StartOpts values
+// when left empty, so callers that don't care can omit them (as RunOnce does).
+func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error) {
+	if req.WorkDir == "" {
+		req.WorkDir = m.StartOpts.WorkDir
+	}
+	if req.AgentID == "" {
+		req.AgentID = m.StartOpts.AgentID
 	}
 
 	// Dispatch to the agent's own backend (same unstarted-instance probe as
@@ -1117,25 +1140,25 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 	// fallback: a backend without a BatchRunner would silently run one-shots
 	// on a different vendor's CLI (the pre-#1312 behaviour).
 	if m.NewBackend == nil {
-		return "", fmt.Errorf("RunOnce: no backend factory configured")
+		return "", fmt.Errorf("RunBatch: no backend factory configured")
 	}
 	be, err := m.NewBackend()
 	if err != nil {
-		return "", fmt.Errorf("RunOnce: construct backend: %w", err)
+		return "", fmt.Errorf("RunBatch: construct backend: %w", err)
 	}
 	br, ok := be.(delegator.BatchRunner)
 	if !ok {
-		m.logger().Errorf("RunOnce: backend %T does not implement delegator.BatchRunner — one-shot runs (nudge extraction, memory consolidation, onboarding) are unavailable; implement RunBatch on this backend to enable them", be)
+		m.logger().Errorf("RunBatch: backend %T does not implement delegator.BatchRunner — one-shot runs (nudge extraction, memory consolidation, onboarding, foci_summary) are unavailable; implement RunBatch on this backend to enable them", be)
 		return "", fmt.Errorf("backend %T does not implement delegator.BatchRunner", be)
 	}
 
-	m.logger().Infof("RunOnce: batch via %T (workdir=%s, system_prompt=%d bytes)",
-		be, req.WorkDir, len(systemPrompt))
+	m.logger().Infof("RunBatch: batch via %T (workdir=%s, model=%s, system_prompt=%d bytes)",
+		be, req.WorkDir, req.Model, len(req.SystemPrompt))
 	result, err := br.RunBatch(ctx, req)
 	if err != nil {
 		return "", err
 	}
-	m.logger().Infof("RunOnce: complete (%d bytes)", len(result))
+	m.logger().Infof("RunBatch: complete (%d bytes)", len(result))
 	return result, nil
 }
 

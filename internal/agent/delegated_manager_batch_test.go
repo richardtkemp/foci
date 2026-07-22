@@ -61,6 +61,76 @@ func TestRunOnce_DispatchesToBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRunBatch_ThreadsModelAndDefaultsWorkDirAgentID(t *testing.T) {
+	// RunBatch is the general entry point behind RunOnce: it must forward a
+	// caller-supplied Model untouched (RunOnce never sets one), and fill in
+	// WorkDir/AgentID from the manager's own StartOpts when the caller leaves
+	// them empty — the shape tools.BatchSummariser (#1317) relies on so it can
+	// pass Model="haiku" without also having to know the agent's workdir/ID.
+	t.Parallel()
+
+	mb := &mockBatchBackend{resp: "batch result"}
+	m := &DelegatedManager{
+		AgentID: "test",
+		StartOpts: delegator.StartOptions{
+			WorkDir: "/tmp/test-workdir",
+			AgentID: "test-agent",
+		},
+		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
+	}
+
+	got, err := m.RunBatch(context.Background(), delegator.BatchRequest{
+		Prompt:       "the prompt",
+		SystemPrompt: "the system prompt",
+		Model:        "haiku",
+	})
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if got != "batch result" {
+		t.Errorf("result = %q", got)
+	}
+
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+	if mb.gotReq.Model != "haiku" {
+		t.Errorf("Model = %q, want haiku", mb.gotReq.Model)
+	}
+	if mb.gotReq.WorkDir != "/tmp/test-workdir" || mb.gotReq.AgentID != "test-agent" {
+		t.Errorf("WorkDir/AgentID not defaulted from StartOpts: %+v", mb.gotReq)
+	}
+}
+
+func TestRunBatch_CallerWorkDirAgentIDWin(t *testing.T) {
+	// A caller-supplied WorkDir/AgentID must NOT be overwritten by the
+	// manager's StartOpts defaults.
+	t.Parallel()
+
+	mb := &mockBatchBackend{resp: "ok"}
+	m := &DelegatedManager{
+		StartOpts: delegator.StartOptions{
+			WorkDir: "/default/workdir",
+			AgentID: "default-agent",
+		},
+		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
+	}
+
+	_, err := m.RunBatch(context.Background(), delegator.BatchRequest{
+		Prompt:  "p",
+		WorkDir: "/caller/workdir",
+		AgentID: "caller-agent",
+	})
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+	if mb.gotReq.WorkDir != "/caller/workdir" || mb.gotReq.AgentID != "caller-agent" {
+		t.Errorf("caller-supplied WorkDir/AgentID overwritten: %+v", mb.gotReq)
+	}
+}
+
 func TestRunOnce_ErrorsWithoutBatchRunner(t *testing.T) {
 	// A backend without BatchRunner (cctmux) gets a clear error — NOT the old
 	// silent claude --print fallback, which ran one-shots on a different

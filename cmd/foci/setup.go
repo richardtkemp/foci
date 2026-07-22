@@ -383,7 +383,7 @@ func runSetupNonInteractive(f setupFlags) error {
 	}
 	// Local backends (claude-code, etc.) route EVERYTHING through the host tool —
 	// agent turns AND foci's auxiliary calls (compaction → /compact, summaries →
-	// CLISummariser, memory → backend turn). They never touch the model groups,
+	// BatchSummariser, memory → backend turn). They never touch the model groups,
 	// so we write NO [groups]/[models.default]/[endpoints.anthropic] at all.
 	// Emitting an anthropic group here only caused a spurious startup "no
 	// Anthropic credentials" error and a missing-secret warning on keyless
