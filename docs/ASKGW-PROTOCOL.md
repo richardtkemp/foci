@@ -34,9 +34,22 @@ The server receives an `ask` frame, validates it, resolves the target agent/sess
 
 The client withdraws a pending ask. The server cancels the prompt UI (`CancelInteractiveMessage`), tears down the registry entry, and sends nothing back (no `answer` frame for cancelled asks).
 
-### Inbound: `notify`, `error`
+### Inbound: `notify`
 
-Tolerated from the client — silently accepted, no action taken. Only `ask` and `cancel` trigger server-side behaviour.
+Reports an out-of-band update about a previously **answered** ask — e.g. `aisudo`'s socket backend sends one after it finishes executing whatever the human approved (`update_completion_status`, "Command completed: exit 0"). There is no reply frame; `notify` is fire-and-forget from the client's perspective.
+
+**Fields:** `id` (required — correlates to the original `ask`'s `id`), `status` (free-form outcome label), `exit_code` (integer; distinguishes success/failure when present), `message` (free-form text). At least one of `status`/`exit_code`/`message` is expected, though none are required by the decoder itself.
+
+**Rendering:** the server looks up the answered-ask's chat message (recorded when the human's answer was sent — see Registry's `recordAnswered`) and renders the notify onto it:
+- **Primary: edit in place.** The message the human answered is edited to show the completion status — a checkmark/cross plus `completed, exit N` when `exit_code` is present (`✅ completed, exit 0` / `❌ completed, exit 1`), else a status line built from `status`, plus `message` appended if given.
+- **Fallback: standalone message.** If the platform message ID wasn't captured (e.g. the connection only supports the plain-text button fallback) or the edit itself fails, the same text is sent as a new message to the session's chat instead.
+- **Unknown/expired `id`:** a notify referencing an ask that was never answered (wrong id, never asked, or the answer aged out — answered-ask info is retained for 15 minutes, mirroring the HTTP transport's own abandoned-answer TTL) is logged and dropped. There's no reply frame to report that back through.
+
+This lights up for **both** transports at once: the Unix-socket path acts on an inbound `notify` frame the same way regardless of which transport originally submitted the `ask` (socket or HTTP — see HTTP transport below for a remote client that can't hold a socket connection open to send one).
+
+### Inbound: `error`
+
+Tolerated from the client — silently accepted, no action taken.
 
 ### Outbound: `answer`
 
@@ -89,6 +102,7 @@ An opt-in second transport (`[askgw] enabled = true` **and** `[askgw] http_enabl
 1. **`POST /askgw/ask`** — body is the identical `ask` frame JSON the socket accepts. Returns immediately (202, `{"id","status":"pending"}`) once the question is presented to chat — this is the HTTP equivalent of the socket's `ack`, it does **not** wait for a human answer.
 2. **`GET /askgw/ask/{id}?wait=<seconds>`** — polls for the result. The server holds the request open for up to `wait` (default 20s, capped at 25s — comfortably inside the HTTP server's 30s read/write timeout) waiting for a human answer; if none arrives in time it returns `{"status":"pending"}` and the caller re-issues the same GET to keep waiting. This is a bounded, **resumable** long-poll: if the connection drops mid-wait, nothing is lost — just GET the same `id` again. Once resolved, it returns the same `answer` frame shape the socket sends (`status`: `answered`/`timeout`/`dismissed`/`unavailable`), plus an HTTP-only `cancelled` status for an ask withdrawn via (3). A 404 means `id` is not currently trackable — never submitted, already collected by an earlier terminal poll, or aged out (an answered-but-never-polled ask is evicted after 15 minutes).
 3. **`POST /askgw/ask/{id}/cancel`** — withdraws a pending ask, same effect as the socket's `cancel` frame (tears down the chat prompt). Unlike the socket transport (which sends no frame back for a cancel), an in-flight poll on that `id` unblocks immediately with `cancelled` rather than waiting out the timeout.
+4. **`POST /askgw/notify`** — fire-and-forget HTTP counterpart to the socket's `notify` frame (see "Inbound: `notify`" above). Body is the same `notify` frame JSON (`protocol`/`type`/`id`/`status`/`exit_code`/`message`); unlike `/askgw/ask` this endpoint carries **no id/poll bookkeeping of its own** — it goes straight to rendering against the answered ask `id` refers to (over *either* transport — an ask submitted over the socket can be notified over HTTP and vice versa, since both share the same `Registry`). Returns 202 `{"id","status":"accepted"}` once the frame itself is validated and accepted, or 400 `{"id","code","error"}` if the envelope is malformed/wrong-type — it does **not** report whether a matching answered ask was found, since there's nothing more specific to tell the caller (an unknown/expired `id` is logged server-side and dropped, same as the socket path).
 
 **Example (bash, mirrors the socket example above):**
 
@@ -108,6 +122,11 @@ while :; do
   [ "$status" != "pending" ] && break
 done
 echo "$resp" | jq -r '.status'
+
+# After acting on the answer, report completion — fire-and-forget, no poll.
+curl -s -X POST "$BASE/askgw/notify" \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -d "{\"protocol\":\"askgw/1\",\"type\":\"notify\",\"id\":\"$id\",\"exit_code\":0}"
 ```
 
 **What's unchanged from the socket transport:** validation rules, frame/answer shapes, `askgw-<askID>-q<idx>` message-ID namespacing, multi-question flow, and per-ask timeout resolution (`timeout_seconds` or `default_timeout_seconds`) all pass through the identical `AskFrame.Validate()`/registry/present code path — the HTTP layer only adds the id-keyed submit/poll/cancel bookkeeping needed to bridge request/response HTTP onto it.

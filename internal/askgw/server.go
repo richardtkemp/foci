@@ -16,11 +16,28 @@ import (
 	"foci/internal/question"
 )
 
-type PresentFn func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool
+// PresentFn presents a question to the human. Returns the platform-native
+// message ID of the posted message (empty if unknown, e.g. a plain-text
+// fallback send) and whether presentation succeeded — the platformMsgID is
+// retained (see Registry.SetPresentedMsgID) so a later `notify` frame can
+// edit the same message in place once the ask is answered.
+type PresentFn func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (platformMsgID string, ok bool)
 
 type CancelFn func(msgID, finalText string)
 
 type ResolveSessionFn func(frameAgent string) (agentID, sessionKey string)
+
+// EditFn edits an already-sent chat message in place — used to render a
+// `notify` frame onto the answered ask's own message. Returns false if the
+// edit could not be performed (no live connection, platform doesn't support
+// editing that message, ...), signalling the caller to fall back to
+// NotifyFn instead.
+type EditFn func(agentID, sessionKey, msgID, text string) bool
+
+// NotifyFn posts a standalone chat message — the fallback used to render a
+// `notify` frame when EditFn is unavailable or fails (e.g. the original
+// message's platform ID was never captured).
+type NotifyFn func(agentID, sessionKey, text string)
 
 type Server struct {
 	socketPath     string
@@ -34,6 +51,8 @@ type Server struct {
 	present        PresentFn
 	cancelPrompt   CancelFn
 	resolveSession ResolveSessionFn
+	editMessage    EditFn
+	notifyFallback NotifyFn
 
 	listener net.Listener
 	closeMu  sync.Mutex
@@ -50,6 +69,13 @@ type ServerDeps struct {
 	Present        PresentFn
 	CancelPrompt   CancelFn
 	ResolveSession ResolveSessionFn
+
+	// EditMessage / NotifyFallback render a `notify` frame (see
+	// handleNotify). Both may be nil (notify then becomes a no-op beyond
+	// logging) — callers that don't care about notify rendering, e.g. a
+	// minimal test harness, aren't required to wire them.
+	EditMessage    EditFn
+	NotifyFallback NotifyFn
 }
 
 func NewServer(deps ServerDeps) (*Server, error) {
@@ -75,6 +101,8 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		present:        deps.Present,
 		cancelPrompt:   deps.CancelPrompt,
 		resolveSession: deps.ResolveSession,
+		editMessage:    deps.EditMessage,
+		notifyFallback: deps.NotifyFallback,
 	}, nil
 }
 
@@ -234,7 +262,9 @@ func (s *Server) handleFrame(connID uint64, cw connWriter, line []byte) error {
 		return s.handleAsk(connID, cw, id, line)
 	case TypeCancel:
 		return s.handleCancel(connID, id, line)
-	case TypeNotify, TypeError:
+	case TypeNotify:
+		return s.handleNotify(id, line)
+	case TypeError:
 		return nil
 	default:
 		return errFrame(id, "unknown_type", fmt.Sprintf("unexpected frame type %q", typ))
@@ -291,9 +321,13 @@ func (s *Server) presentQuestion(e *entry, connID uint64, askID string, idx int)
 		summary = "Question"
 	}
 
-	return s.present(e.agentID, e.sessionKey, msgID, text, summary, choices, func(data string) {
+	platformMsgID, ok := s.present(e.agentID, e.sessionKey, msgID, text, summary, choices, func(data string) {
 		s.onAnswer(connID, askID, data)
 	})
+	if ok {
+		s.registry.SetPresentedMsgID(connID, askID, platformMsgID)
+	}
+	return ok
 }
 
 func (s *Server) onAnswer(connID uint64, askID, data string) {
@@ -342,6 +376,91 @@ func (s *Server) handleCancel(connID uint64, id string, line []byte) error {
 		s.cancelPrompt(cancelMsgID, "❌ Cancelled by App")
 	}
 	return nil
+}
+
+// handleNotify decodes an inbound `notify` frame and renders it. Unlike ask/
+// cancel there is no reply frame — notify is fire-and-forget from the
+// client's perspective (see docs/ASKGW-PROTOCOL.md).
+func (s *Server) handleNotify(id string, line []byte) error {
+	nf, err := DecodeNotify(line)
+	if err != nil {
+		return errFrame(id, "malformed", err.Error())
+	}
+	if nf.ID == "" {
+		return errFrame(id, "malformed", "notify frame missing id")
+	}
+	s.renderNotify(nf)
+	return nil
+}
+
+// HandleNotifyFrame is handleNotify's entry point for transports that have
+// no connWriter/connID of their own — currently the HTTP `POST
+// /askgw/notify` endpoint (cmd/foci-gw/askgw_http.go). It validates the
+// envelope itself (handleFrame normally does this) since callers here never
+// go through handleFrame's dispatch.
+func (s *Server) HandleNotifyFrame(body []byte) (id string, ok bool, code, msg string) {
+	proto, typ, envID, err := DecodeEnvelope(body)
+	if err != nil {
+		return "", false, "malformed", err.Error()
+	}
+	if proto != ProtocolVersion {
+		return envID, false, "bad_protocol", fmt.Sprintf("protocol %q; want %q", proto, ProtocolVersion)
+	}
+	if typ != TypeNotify {
+		return envID, false, "unknown_type", fmt.Sprintf("expected type %q, got %q", TypeNotify, typ)
+	}
+	if err := s.handleNotify(envID, body); err != nil {
+		if fe, ok2 := err.(*frameError); ok2 {
+			return envID, false, fe.code, fe.message
+		}
+		return envID, false, "error", err.Error()
+	}
+	return envID, true, "", ""
+}
+
+// renderNotify looks up the answered ask nf.ID refers to and delivers it:
+// preferentially by editing that ask's own chat message in place (so the
+// human sees the outcome right where they made the decision), falling back
+// to a standalone message when editing isn't available or fails. A nil
+// lookup (unknown/expired id) is logged and dropped — there is nowhere to
+// render it and no reply frame to report the failure through.
+func (s *Server) renderNotify(nf *NotifyFrame) {
+	info := s.registry.getAnswered(nf.ID)
+	if info == nil {
+		askgwLog.Debugf("notify for unknown or expired ask id=%s", nf.ID)
+		return
+	}
+	text := formatNotifyText(nf)
+	if info.msgID != "" && s.editMessage != nil && s.editMessage(info.agentID, info.sessionKey, info.msgID, text) {
+		return
+	}
+	if s.notifyFallback != nil {
+		s.notifyFallback(info.agentID, info.sessionKey, text)
+	}
+}
+
+// formatNotifyText renders a NotifyFrame into the text shown in chat: a
+// checkmark/cross plus "completed, exit N" when an exit code is present
+// (the common case — aisudo's update_completion_status notify), else a
+// generic status line, plus any free-form Message appended on its own line.
+func formatNotifyText(nf *NotifyFrame) string {
+	var status string
+	switch {
+	case nf.ExitCode != nil:
+		icon := "✅"
+		if *nf.ExitCode != 0 {
+			icon = "❌"
+		}
+		status = fmt.Sprintf("%s completed, exit %d", icon, *nf.ExitCode)
+	case nf.Status != "":
+		status = "✅ " + nf.Status
+	default:
+		status = "✅ completed"
+	}
+	if nf.Message != "" {
+		status += "\n" + nf.Message
+	}
+	return status
 }
 
 func (s *Server) frameTimeout(ask *AskFrame) time.Duration {

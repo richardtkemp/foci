@@ -16,7 +16,7 @@ type AskgwConfig struct {
 	DefaultAgent       string   `toml:"default_agent" desc:"Agent ID that receives ask-gateway questions not addressed to a specific agent"`
 	DefaultTimeoutSecs int      `toml:"default_timeout_seconds" desc:"Default timeout for unanswered questions before auto-denial (default 0 = no timeout)"`
 	MaxFrameBytes      int      `toml:"max_frame_bytes"        default:"1048576" desc:"Maximum NDJSON frame size for ask-gateway messages (1 MiB)"`
-	HTTPEnabled        bool     `toml:"http_enabled" desc:"Also expose ask-gateway over foci's HTTP server (POST /askgw/ask, GET /askgw/ask/{id}, POST /askgw/ask/{id}/cancel), authenticated by http.api_key — for remote callers that can't reach the local Unix socket. Requires [askgw] enabled=true; explicit opt-in since http.api_key is a weaker gate than the socket's UID allow-list"`
+	HTTPEnabled        bool     `toml:"http_enabled" desc:"Also expose ask-gateway over foci's HTTP server (POST /askgw/ask, GET /askgw/ask/{id}, POST /askgw/ask/{id}/cancel, POST /askgw/notify), authenticated by http.api_key — for remote callers that can't reach the local Unix socket. Requires [askgw] enabled=true; explicit opt-in since http.api_key is a weaker gate than the socket's UID allow-list"`
 }
 
 func (a AskgwConfig) ResolvedGroup() string {

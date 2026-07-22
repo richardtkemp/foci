@@ -7,6 +7,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/platform"
 	"foci/internal/question"
+	"foci/internal/route"
 )
 
 func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder []string, connMgr platform.ConnectionManager) *askgw.Server {
@@ -43,17 +44,17 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		return agentID, sk
 	}
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		resolve := connResolver(connMgr, sessionKey, agentID)
 		conn := resolve()
 		if conn == nil {
-			return false
+			return "", false
 		}
 		buttons := make([]platform.ButtonChoice, len(choices))
 		for i, c := range choices {
 			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
 		}
-		_, err := platform.SendInteractiveMessageWithID(resolve, msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
+		platformMsgID, err := platform.SendInteractiveMessageWithID(resolve, msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"
@@ -62,13 +63,41 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		}, func() {
 			onResponse(question.CancelData)
 		})
-		return err == nil
+		if err != nil {
+			return "", false
+		}
+		return platformMsgID, true
 	}
 
 	cancelPrompt := func(msgID, finalText string) {
 		if err := platform.CancelInteractiveMessage(msgID, finalText); err != nil {
 			askgwLog.Warnf("cancel prompt %s: %v", msgID, err)
 		}
+	}
+
+	// editMessage renders a `notify` frame onto the answered ask's own
+	// message, in place — same session-aware edit preference the compaction
+	// notify path uses (agent_platforms.go): SessionNotifier where the
+	// transport supports per-session edits (Telegram/Discord), else a plain
+	// ButtonSender edit (app, already session-bound via its connection).
+	editMessage := func(agentID, sessionKey, msgID, text string) bool {
+		conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+		if conn == nil {
+			return false
+		}
+		if sn, ok := conn.(platform.SessionNotifier); ok {
+			return sn.EditNotificationInSession(sessionKey, msgID, text) == nil
+		}
+		if bs, ok := conn.(platform.ButtonSender); ok {
+			return bs.EditMessageText(msgID, text) == nil
+		}
+		return false
+	}
+
+	// notifyFallback posts a standalone message when editMessage can't
+	// (platform msgID unknown, or the edit itself failed).
+	notifyFallback := func(agentID, sessionKey, text string) {
+		route.NotifySessionChat(connMgr, agentID, sessionKey, text)
 	}
 
 	timeout := time.Duration(cfg.Askgw.DefaultTimeoutSecs) * time.Second
@@ -80,6 +109,8 @@ func setupAskgw(cfg *config.Config, agents map[string]*agentInstance, agentOrder
 		DefaultTimeout: timeout,
 		Group:          cfg.Askgw.ResolvedGroup(),
 		Present:        present,
+		EditMessage:    editMessage,
+		NotifyFallback: notifyFallback,
 		CancelPrompt:   cancelPrompt,
 		ResolveSession: resolveSession,
 	})

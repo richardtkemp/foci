@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,12 +16,19 @@ import (
 )
 
 type capturedCallback struct {
-	mu   sync.Mutex
-	cb   func(data string)
+	mu sync.Mutex
+	cb func(data string)
 }
 
 func (c *capturedCallback) set(cb func(data string)) { c.mu.Lock(); c.cb = cb; c.mu.Unlock() }
-func (c *capturedCallback) fire(data string)         { c.mu.Lock(); cb := c.cb; c.mu.Unlock(); if cb != nil { cb(data) } }
+func (c *capturedCallback) fire(data string) {
+	c.mu.Lock()
+	cb := c.cb
+	c.mu.Unlock()
+	if cb != nil {
+		cb(data)
+	}
+}
 
 func startTestServer(t *testing.T, present PresentFn, resolve ResolveSessionFn) (*Server, string) {
 	t.Helper()
@@ -82,9 +90,9 @@ func readFrame(t *testing.T, r *bufio.Reader) map[string]any {
 
 func TestE2E_AnsweredRoundTrip(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	resolve := func(frameAgent string) (string, string) {
 		return "agent1", "agent1/chat1"
@@ -129,9 +137,9 @@ func TestE2E_AnsweredRoundTrip(t *testing.T) {
 }
 
 func TestE2E_UnavailableNoSession(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) bool {
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
 		t.Fatal("present should not be called")
-		return false
+		return "", false
 	}
 	resolve := func(frameAgent string) (string, string) { return "", "" }
 
@@ -156,8 +164,8 @@ func TestE2E_UnavailableNoSession(t *testing.T) {
 }
 
 func TestE2E_PresentFails(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) bool {
-		return false
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+		return "", false
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -183,9 +191,9 @@ func TestE2E_Cancel(t *testing.T) {
 	var cancelMu sync.Mutex
 	cb := &capturedCallback{}
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	cancelPrompt := func(msgID, finalText string) {
 		cancelMu.Lock()
@@ -247,9 +255,9 @@ func TestE2E_Cancel(t *testing.T) {
 
 func TestE2E_DismissedViaCancelButton(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -275,7 +283,9 @@ func TestE2E_DismissedViaCancelButton(t *testing.T) {
 }
 
 func TestE2E_BadProtocolRejected(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) bool { return true }
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+		return "", true
+	}
 	resolve := func(frameAgent string) (string, string) { return "a", "a/c" }
 
 	_, sockPath := startTestServer(t, present, resolve)
@@ -302,11 +312,11 @@ func TestE2E_MultiQuestion(t *testing.T) {
 	var callbacks []func(string)
 	var cbMu sync.Mutex
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cbMu.Lock()
 		callbacks = append(callbacks, onResponse)
 		cbMu.Unlock()
-		return true
+		return "", true
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -360,9 +370,9 @@ func TestE2E_ConnectionDropCancelsPending(t *testing.T) {
 	var cancelMu sync.Mutex
 	cb := &capturedCallback{}
 
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	cancelPrompt := func(msgID, finalText string) {
 		cancelMu.Lock()
@@ -419,9 +429,11 @@ func TestE2E_RejectBadUID(t *testing.T) {
 	}
 	sockPath := filepath.Join(t.TempDir(), "askgw-baduid.sock")
 	srv, err := NewServer(ServerDeps{
-		SocketPath:     sockPath,
-		AllowedUIDs:    []string{"99999"},
-		Present:        func(string, string, string, string, string, []question.Choice, func(string)) bool { return true },
+		SocketPath:  sockPath,
+		AllowedUIDs: []string{"99999"},
+		Present: func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+			return "", true
+		},
 		CancelPrompt:   func(string, string) {},
 		ResolveSession: func(string) (string, string) { return "a", "a/c" },
 	})
@@ -459,8 +471,8 @@ func TestE2E_RejectBadUID(t *testing.T) {
 }
 
 func TestE2E_AckSentOnSuccess(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) bool {
-		return true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+		return "", true
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -485,8 +497,8 @@ func TestE2E_AckSentOnSuccess(t *testing.T) {
 }
 
 func TestE2E_DuplicateAskID(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) bool {
-		return true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+		return "", true
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -512,9 +524,9 @@ func TestE2E_DuplicateAskID(t *testing.T) {
 
 func TestE2E_GatewayTimeout(t *testing.T) {
 	cb := &capturedCallback{}
-	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) bool {
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
 		cb.set(onResponse)
-		return true
+		return "", true
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -554,8 +566,8 @@ func TestE2E_GatewayTimeout(t *testing.T) {
 }
 
 func TestE2E_FrameTimeoutOverride(t *testing.T) {
-	present := func(string, string, string, string, string, []question.Choice, func(string)) bool {
-		return true
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+		return "", true
 	}
 	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
 
@@ -598,5 +610,232 @@ func TestE2E_FrameTimeoutOverride(t *testing.T) {
 	}
 	if elapsed > 2*time.Second {
 		t.Errorf("frame timeout should fire ~100ms, took %v", elapsed)
+	}
+}
+
+// editCall/notifyCall record invocations of a test's EditMessage/
+// NotifyFallback fakes, guarded by a mutex since the socket conn's frame
+// loop runs on its own goroutine.
+type notifyRecorder struct {
+	mu         sync.Mutex
+	editCalls  []editCall
+	notifyText string
+	notifyGot  bool
+}
+
+type editCall struct {
+	agentID, sessionKey, msgID, text string
+}
+
+func (nr *notifyRecorder) edit(agentID, sessionKey, msgID, text string) bool {
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+	nr.editCalls = append(nr.editCalls, editCall{agentID, sessionKey, msgID, text})
+	return true
+}
+
+func (nr *notifyRecorder) editFails(agentID, sessionKey, msgID, text string) bool {
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+	nr.editCalls = append(nr.editCalls, editCall{agentID, sessionKey, msgID, text})
+	return false
+}
+
+func (nr *notifyRecorder) fallback(agentID, sessionKey, text string) {
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+	nr.notifyGot = true
+	nr.notifyText = text
+}
+
+func (nr *notifyRecorder) snapshot() ([]editCall, string, bool) {
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+	return append([]editCall(nil), nr.editCalls...), nr.notifyText, nr.notifyGot
+}
+
+// answerFirstQuestion drives an ask through to a StatusAnswered outcome,
+// returning once the answer frame has been read — the point at which
+// Registry.recordAnswered has run and a subsequent notify frame has
+// somewhere to render.
+func answerFirstQuestion(t *testing.T, conn net.Conn, r *bufio.Reader, cb *capturedCallback, askID string) {
+	t.Helper()
+	sendFrame(t, conn, &AskFrame{
+		Protocol:  ProtocolVersion,
+		Type:      TypeAsk,
+		ID:        askID,
+		Questions: makeQuestions(),
+	})
+	_ = readFrame(t, r) // ack
+	time.Sleep(50 * time.Millisecond)
+	cb.fire(question.OptionData(0))
+	ans := readFrame(t, r)
+	if ans["status"] != StatusAnswered {
+		t.Fatalf("status = %v, want %v", ans["status"], StatusAnswered)
+	}
+}
+
+func TestE2E_NotifyEditsAnsweredMessage(t *testing.T) {
+	cb := &capturedCallback{}
+	nr := &notifyRecorder{}
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+		cb.set(onResponse)
+		return "platform-msg-1", true
+	}
+	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
+
+	sockPath := shortSockPath(t)
+	uid := strconv.Itoa(os.Getuid())
+	srv, err := NewServer(ServerDeps{
+		SocketPath:     sockPath,
+		AllowedUIDs:    []string{uid},
+		Present:        present,
+		CancelPrompt:   func(string, string) {},
+		ResolveSession: resolve,
+		EditMessage:    nr.edit,
+		NotifyFallback: nr.fallback,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+
+	conn := dialServer(t, sockPath)
+	r := bufio.NewReader(conn)
+	answerFirstQuestion(t, conn, r, cb, "notify-edit-1")
+
+	exitCode := 0
+	sendFrame(t, conn, &NotifyFrame{
+		Protocol: ProtocolVersion,
+		Type:     TypeNotify,
+		ID:       "notify-edit-1",
+		ExitCode: &exitCode,
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	calls, _, fellBack := nr.snapshot()
+	if fellBack {
+		t.Fatal("expected the edit path to be used, not the standalone fallback")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("edit calls = %d, want 1", len(calls))
+	}
+	got := calls[0]
+	if got.agentID != "agent1" || got.sessionKey != "agent1/chat1" || got.msgID != "platform-msg-1" {
+		t.Errorf("edit call = %+v, want agent1/agent1-chat1/platform-msg-1", got)
+	}
+	if !strings.Contains(got.text, "✅") || !strings.Contains(got.text, "exit 0") {
+		t.Errorf("edit text = %q, want a checkmark and \"exit 0\"", got.text)
+	}
+}
+
+// shortSockPath returns a short unix-socket path. t.TempDir() embeds the (long)
+// test name, which under a long TMPDIR — e.g. the land gate's /tmp/fgw/test-<pid>/
+// — overflows sun_path's 108-byte limit and fails Start() with "bind: invalid
+// argument". os.MkdirTemp with a short prefix keeps the path well under the cap.
+func shortSockPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "agw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "s.sock")
+}
+
+func TestE2E_NotifyFallsBackWhenNoPlatformMsgID(t *testing.T) {
+	cb := &capturedCallback{}
+	nr := &notifyRecorder{}
+	present := func(agentID, sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) (string, bool) {
+		cb.set(onResponse)
+		return "", true // e.g. the plain-text fallback send — no platform msgID to edit
+	}
+	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
+
+	sockPath := shortSockPath(t)
+	uid := strconv.Itoa(os.Getuid())
+	srv, err := NewServer(ServerDeps{
+		SocketPath:     sockPath,
+		AllowedUIDs:    []string{uid},
+		Present:        present,
+		CancelPrompt:   func(string, string) {},
+		ResolveSession: resolve,
+		EditMessage:    nr.edit,
+		NotifyFallback: nr.fallback,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+
+	conn := dialServer(t, sockPath)
+	r := bufio.NewReader(conn)
+	answerFirstQuestion(t, conn, r, cb, "notify-fallback-1")
+
+	exitCode := 1
+	sendFrame(t, conn, &NotifyFrame{
+		Protocol: ProtocolVersion,
+		Type:     TypeNotify,
+		ID:       "notify-fallback-1",
+		ExitCode: &exitCode,
+		Message:  "custom failure detail",
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	calls, text, fellBack := nr.snapshot()
+	if len(calls) != 0 {
+		t.Fatalf("edit calls = %d, want 0 (no platform msgID to edit)", len(calls))
+	}
+	if !fellBack {
+		t.Fatal("expected the standalone-message fallback to fire")
+	}
+	if !strings.Contains(text, "❌") || !strings.Contains(text, "exit 1") || !strings.Contains(text, "custom failure detail") {
+		t.Errorf("fallback text = %q, want a cross, \"exit 1\", and the message", text)
+	}
+}
+
+func TestE2E_NotifyForUnknownIDIsDropped(t *testing.T) {
+	nr := &notifyRecorder{}
+	present := func(string, string, string, string, string, []question.Choice, func(string)) (string, bool) {
+		return "", true
+	}
+	resolve := func(frameAgent string) (string, string) { return "agent1", "agent1/chat1" }
+
+	sockPath := shortSockPath(t)
+	uid := strconv.Itoa(os.Getuid())
+	srv, err := NewServer(ServerDeps{
+		SocketPath:     sockPath,
+		AllowedUIDs:    []string{uid},
+		Present:        present,
+		CancelPrompt:   func(string, string) {},
+		ResolveSession: resolve,
+		EditMessage:    nr.edit,
+		NotifyFallback: nr.fallback,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+
+	conn := dialServer(t, sockPath)
+	sendFrame(t, conn, &NotifyFrame{
+		Protocol: ProtocolVersion,
+		Type:     TypeNotify,
+		ID:       "never-asked",
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	_, _, fellBack := nr.snapshot()
+	if fellBack {
+		t.Fatal("notify for an unknown id should be dropped, not delivered")
 	}
 }
