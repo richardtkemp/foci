@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -398,14 +399,52 @@ func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 	}
 }
 
-// onServerRequestResolved confirms an approval was answered. Fires
-// onPromptsCleared if no more pending approvals remain.
-func (b *Backend) onServerRequestResolved(_ *serverRequestResolvedParams) {
+// onServerRequestResolved handles a codex-side resolution of a pending
+// approval (abort / steer / timeout). It deletes the matching pendingPerms
+// entry keyed by the resolved requestId, then fires onPromptsCleared if no
+// more pending approvals remain.
+//
+// Previously the requestId was ignored, so a codex-side resolution left a
+// stale pendingPerms entry: onPromptsCleared never fired (leaving a dead
+// approval button in the chat), and a later user click could respond to an
+// already-resolved id. The requestId is the id of the resolved server request
+// — the same JSON-RPC id foci stored as the pendingPerms key when it received
+// the requestApproval (verified against codex 0.144.5's app-server schema:
+// ServerRequestResolvedNotification.requestId is a RequestId = string|int64,
+// the id of the request being resolved).
+func (b *Backend) onServerRequestResolved(params *serverRequestResolvedParams) {
+	rpcID, ok := coerceRPCID(params.RequestID)
 	b.permMu.Lock()
+	if ok {
+		delete(b.pendingPerms, rpcID)
+	}
 	isEmpty := len(b.pendingPerms) == 0
 	b.permMu.Unlock()
 	if isEmpty && b.onPromptsCleared != nil {
 		b.onPromptsCleared()
+	}
+}
+
+// coerceRPCID converts a JSON-RPC RequestId (string | int64, decoded into an
+// interface{} as float64 for numbers) into the int64 key foci uses for
+// pendingPerms / pendingRPC. Returns ok=false if the value can't be
+// interpreted as an integer id.
+func coerceRPCID(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	case string:
+		i, err := strconv.ParseInt(n, 10, 64)
+		return i, err == nil
+	default:
+		return 0, false
 	}
 }
 
