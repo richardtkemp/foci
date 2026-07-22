@@ -152,7 +152,11 @@ func TestSessionModel(t *testing.T) {
 func TestSessionContextLimit(t *testing.T) {
 	// Proves that SessionContextLimit returns config-defined context when
 	// ModelMetaFn matches, and falls back to modelinfo registry otherwise.
-	ag := &Agent{Model: "openrouter/z-ai/glm-5-turbo"}
+	// Use a genuinely-unknown leaf: the model resolver reduces a
+	// host/dev/model id to its last segment, so the leaf must not exist in the
+	// built-in registry for the "unknown → 200k default" branch to hold.
+	// (A real leaf like glm-5-turbo now correctly resolves to its own window.)
+	ag := &Agent{Model: "openrouter/acme/nonexistent-turbo-x"}
 
 	// No ModelMetaFn — falls back to registry (200k default for unknown models)
 	if got := ag.SessionContextLimit("s1"); got != 200_000 {
@@ -161,7 +165,7 @@ func TestSessionContextLimit(t *testing.T) {
 
 	// Set ModelMetaFn with config-defined context
 	ag.ModelMetaFn = func(model string) modelinfo.ModelMeta {
-		if model == "openrouter/z-ai/glm-5-turbo" {
+		if model == "openrouter/acme/nonexistent-turbo-x" {
 			return modelinfo.ModelMeta{ContextWindow: 202_000}
 		}
 		return modelinfo.ModelMeta{}

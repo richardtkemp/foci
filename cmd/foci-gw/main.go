@@ -115,6 +115,9 @@ Subcommands:
 	modelinfo.UnpricedModelHook = func(model string) {
 		modelinfoLog.Warnf("no pricing for model %q — using fallback rate; add it to the registry or a family match in internal/modelinfo", model)
 	}
+	modelinfo.AmbiguousModelHook = func(bare string) {
+		modelinfoLog.Warnf("ambiguous model %q — multiple registry entries share this leaf id and the lookup couldn't disambiguate by dev/provider; picked deterministically. Qualify the model id with its dev (e.g. openrouter/<dev>/%s)", bare, bare)
+	}
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
