@@ -94,7 +94,7 @@ func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (ResetMemor
 		// call returning. RunSessionEndMemory destroys the branch's backend
 		// when it finishes.
 		bg := context.WithoutCancel(ctx)
-		go a.RunSessionEndMemory(bg, reflectKey)
+		go a.RunSessionEndMemory(bg, sessionKey, reflectKey)
 	}
 	return outcome, nil
 }
