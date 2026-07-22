@@ -279,13 +279,32 @@ func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 	}
 }
 
-// TestL2_Cron_KeepaliveDoesNotReplyToTelegram proves the keepalive
-// prompt "[KEEPALIVE] ... respond with [[NO_RESPONSE]]" is treated as
-// internal: even though cc-stub by default echoes the user text, the
-// runner branches with noCompact=true into a fresh session and the
-// branch egress path must not produce a sendMessage to the Telegram
-// stub. The assertion is the absence of any user-visible message for
-// the keepalive prompt body in the Telegram stub's call log.
+// TestL2_Cron_KeepaliveDoesNotReplyToTelegram proves a keepalive tick
+// produces no user-visible Telegram message: the "[KEEPALIVE] … respond
+// with [[NO_RESPONSE]]" prompt is injected, the agent honours it by
+// answering with the silencing sentinel, and foci's egress must swallow
+// that reply on every delivery path (in-turn sink AND the late-delivery
+// fallback) so nothing reaches the chat.
+//
+// FIDELITY NOTE — this test relies on cc-stub faithfully modelling a
+// keepalive-honouring agent. The keepalive ping INSTRUCTS the agent to
+// reply "[[NO_RESPONSE]]" and nothing else; in production the model does
+// exactly that and foci strips the sentinel to "" (internal/platform:
+// StripSilencingSuffix), so no message is delivered. cc-stub used to
+// ECHO the prompt back instead ("stub-reply: …[KEEPALIVE]…") — a
+// non-silent reply no real keepalive-honouring agent would emit. With the
+// delegated (cc) backend the transcript fork is unavailable under the
+// stub, so keepalive falls back to an in-place inject on the main
+// (chat-bound) session; whether the echoed reply was swallowed then hinged
+// on a pure timing race — if it landed before the turn's (silent) sink was
+// attached it spilled into the late-delivery SessionSink (a real,
+// deliberately-tested path, see TestL2_Egress_LateAssistantTextReachesTelegram)
+// and reached Telegram. Under CPU contention that race flipped and the
+// echo leaked. The fix lives in cc-stub (cmd/cc-stub/main.go): it now
+// answers a "[KEEPALIVE]" ping with the same "[[NO_RESPONSE]]" sentinel a
+// real agent uses, so the reply strips to "" on BOTH paths and "no reply"
+// holds deterministically, independent of how fast the reply arrives
+// relative to sink setup.
 func TestL2_Cron_KeepaliveDoesNotReplyToTelegram(t *testing.T) {
 	testharness.ParallelWait(t)
 	const testUserID = 5303
@@ -315,34 +334,80 @@ func TestL2_Cron_KeepaliveDoesNotReplyToTelegram(t *testing.T) {
 	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
 		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
-	time.Sleep(500 * time.Millisecond)
 
-	// Drain anything Telegram received from the bootstrap turn so the post-
-	// keepalive scan only sees sends emitted after the tick (if any).
+	// Drive the bootstrap egress to a known-quiescent point BEFORE draining,
+	// rather than sleeping a fixed interval: wait until the bootstrap reply has
+	// actually landed on the Telegram stub. Only then is it safe to drain and
+	// know that any sendMessage seen afterwards was emitted by a keepalive tick,
+	// not a straggling bootstrap reply that a fixed sleep might have missed under
+	// load. The bootstrap turn carries script text "bootstrap" (not the
+	// "[KEEPALIVE]" marker), so it takes the stub's normal reply path and is
+	// delivered verbatim — the faithful keepalive-silence rule does not apply.
+	if waitForSendMessageContaining(h, token, "bootstrap", 20*time.Second) == "" {
+		t.Fatalf("bootstrap reply never reached Telegram; sent calls:\n%s\nstderr:\n%s",
+			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+	}
 	_ = h.TelegramStub().DrainSent(token)
 
-	// First sanity-check: the keepalive prompt DID reach cc-stub as a
-	// user_message (test would otherwise be a tautology). Poll for it.
+	// Sanity: the keepalive prompt DID reach cc-stub as a user_message (else the
+	// silence assertion would be a tautology).
 	if _, ok := waitForUserMessageContaining(t, h, "alpha", 20*time.Second, "[KEEPALIVE]"); !ok {
 		t.Fatalf("keepalive prompt never reached cc-stub as user_message — cannot meaningfully assert Telegram silence\n%s",
 			recorderTail(t, h.RecorderPath()))
 	}
 
-	// Settle: give any (erroneous) branch egress a moment to land on the
-	// Telegram stub before we assert silence — a misrouted reply would follow
-	// the keepalive injection by one turn.
-	time.Sleep(2 * time.Second)
-
-	// Real assertion: no payload sent to Telegram carries the keepalive
-	// prompt text. If the branch/inject egress path were misrouted, the
-	// cc-stub reply (default "stub-reply: <user prompt>") would echo the
-	// [KEEPALIVE] body to the chat — visible in the stub's sent buffer.
-	for _, call := range h.TelegramStub().PeekSent(token) {
-		body := string(call.Body)
-		if strings.Contains(body, "[KEEPALIVE]") || strings.Contains(body, "Cache keepalive ping") {
-			t.Errorf("keepalive leaked to Telegram via %s: %s", call.Method, body)
-		}
+	// Drive to a deterministic quiescent point instead of a fixed settle sleep:
+	// wait until a SECOND keepalive has been injected. Keepalive ticks serialise
+	// on the session (keepaliveRunning guard + EnqueueInjectWait), so a second
+	// injection is proof the first keepalive turn ran to completion — INCLUDING
+	// its reply egress. If that first reply were going to leak to Telegram, it
+	// has already been delivered (or swallowed) by now; there is no in-flight
+	// egress left to race the assertion.
+	if !waitForKeepaliveCount(t, h, "alpha", 2, 30*time.Second) {
+		t.Fatalf("keepalive never injected twice — cannot confirm a full keepalive turn completed\n%s",
+			recorderTail(t, h.RecorderPath()))
 	}
+
+	// Assertion: a keepalive tick produced NO user-visible message. The keepalive
+	// reply ([[NO_RESPONSE]]) strips to "" on every delivery path, and foci never
+	// echoes the injected prompt itself back to the user — so there must be zero
+	// sendMessage calls after the drain. A regression on either front (silencing
+	// broken, or the injected prompt/echo delivered) surfaces here as a sendMessage.
+	for _, call := range h.TelegramStub().PeekSent(token) {
+		if call.Method != "sendMessage" {
+			continue // typing indicators / getUpdates polling are not user-visible replies
+		}
+		t.Errorf("keepalive tick produced a user-visible sendMessage: %s", string(call.Body))
+	}
+}
+
+// waitForKeepaliveCount polls the recorder until at least n user_message
+// entries carrying the "[KEEPALIVE]" marker have been injected into the
+// agent's session, or the timeout elapses. Keepalive ticks serialise on the
+// session, so reaching count n proves n-1 keepalive turns ran to completion
+// (including their reply egress) — a concrete quiescence signal that replaces
+// a fixed settle sleep.
+func waitForKeepaliveCount(t *testing.T, h *testharness.Harness, agentID string, n int, timeout time.Duration) bool {
+	t.Helper()
+	if timeout < testharness.CorrectnessWaitFloor {
+		timeout = testharness.CorrectnessWaitFloor
+	}
+	wantWd := "workspaces/" + agentID
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		count := 0
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind == "user_message" && strings.Contains(e.Workdir, wantWd) &&
+				strings.Contains(e.TextPrefix, "[KEEPALIVE]") {
+				count++
+			}
+		}
+		if count >= n {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
 }
 
 // TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos proves the
