@@ -2,15 +2,24 @@ package ccstream
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
+
+	"foci/internal/delegator"
 )
 
-// errWriterClosed is returned by all Send methods after Close has been called.
-var errWriterClosed = errors.New("ccstream: writer is closed")
+// errWriterClosed is returned by all Send methods after Close has been
+// called. Wraps delegator.ErrBackendClosed so callers outside this package
+// (e.g. the agent layer's error-severity decision at delivery time) can
+// detect "closed mid-write" via errors.Is without depending on ccstream
+// internals — this is the writer-is-closed/inject-vs-teardown race (#1442):
+// an inject can land in the tiny window between Close() flipping `closed`
+// and the underlying pipe actually going away, and that failure mode is
+// transient/self-healing (DelegatedManager respawns on the next Get), not a
+// genuine delivery error.
+var errWriterClosed = fmt.Errorf("ccstream: writer is closed: %w", delegator.ErrBackendClosed)
 
 // interruptSeq is an atomic counter used to generate unique request IDs for
 // interrupt control requests. Unique per process lifetime, which is sufficient
