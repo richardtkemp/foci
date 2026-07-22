@@ -1,13 +1,13 @@
 # Feature Comparison: Foci vs OpenClaw vs Nanobot vs Hermes
 
-Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github.com/HKUDS/nanobot), and [Hermes Agent](https://github.com/NousResearch/hermes-agent) are self-hosted AI agent platforms. OpenClaw is the established, broadly-featured choice. Foci makes different architectural bets — trading breadth of platform and provider support for depth in cache architecture, secret isolation, and operational simplicity. Nanobot is a lightweight Python alternative. Hermes Agent is Nous Research's MIT-licensed agent, notable for self-improving skills, broad messaging-platform support, and a large community.
+Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github.com/HKUDS/nanobot), and [Hermes Agent](https://github.com/NousResearch/hermes-agent) are self-hosted AI agent platforms. OpenClaw is the established, broadly-featured choice with the largest ecosystem. Hermes Agent is Nous Research's community-driven agent (219k+ stars), notable for self-improving skills, 26+ messaging platforms, and a large contributor base. Nanobot (HKUDS) is a feature-rich Python runtime with 46k+ stars and 17+ platform adapters. Foci makes different architectural bets — trading breadth of platform and provider support for depth in cache architecture, secret isolation, interactive tooling, and operational simplicity.
 
 | | **Foci** | **OpenClaw** | **Nanobot** | **Hermes** |
 |---|---|---|---|---|
 | Language | Go | Node.js/TypeScript | Python | Python |
 | Binary size / runtime | ~50 MB static binary | Node 22+, ~500 MB+ | Python 3.11+, pip | Python 3.11+ + Node/ffmpeg |
 | Typical RAM | ~35 MB | ~500 MB+ | ~45 MB | — |
-| Core LOC | ~53k | ~250k+ | ~4k | — |
+| Core LOC | ~130k | ~250k+ | ~4k core | — |
 | License | Proprietary | MIT | MIT | MIT |
 
 ## Security
@@ -29,7 +29,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 
 | | **Foci** | **OpenClaw** | **Nanobot** | **Hermes** |
 |---|---|---|---|---|
-| Session branching | ✅ cron/spawn/facet | ❌ | ❌ | ❌ |
+| Session branching | ✅ cron/spawn/facet | ✅ `sessions_spawn` fork context | ❌ | ❌ |
 | Crash recovery | ✅ orphan repair on startup | ❌ | ❌ | ❌ manual `/resume` only |
 | Parallel conversations | ✅ facet bot pool | ❌ | ❌ | ✅ |
 
@@ -40,7 +40,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | Shell execution | ✅ with async execution | ✅ | ✅ | ✅ |
 | Permission auto-approve | ✅ glob rules with shell-operator splitting | ✅ exec allowlist / ask modes | ❌ | ✅ allowlist + ask modes |
 | File read/write/edit | ✅ syntax validation on edit | ✅ | ✅ | ✅ |
-| HTTP requests | ✅ domain-locked API secret protection | ❌ | ❌ | ❌ |
+| Domain-locked HTTP | ✅ per-secret allowed hosts | ❌ | ❌ | ❌ blocklist/SSRF only |
 | Web search | ✅ Anthropic or Brave | ✅ Brave | ✅ Brave | ✅ |
 | Web fetch | ✅ | ✅ | ✅ | ✅ |
 | Low-cost summarization | ✅ Haiku-powered | ❌ | ❌ | ✅ cheap-model compaction |
@@ -56,7 +56,8 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | Tool result guard | ✅ auto-summarize large output to preserve meaningful context while conserving tokens | ❌ | ✅ truncation at 500 chars | ✅ truncation |
 | [Tool piping](TOOLS.md#tool-piping-exec-bridge) | ✅ tools ↔ shell ↔ each other | ❌ | ❌ | ❌ |
 | Loop detection | ✅ configurable threshold | ✅ pattern-based detectors | ❌ | ❌ |
-| Mid-turn behavioral nudges | ✅ LLM-extracted from character files, 5 trigger types | ❌ | ❌ | ✅ budget/memory nudges |
+| Mid-turn behavioral nudges | ✅ LLM-extracted from character files, 5 trigger types, frequency guardrails | ❌ | ❌ | ✅ budget/memory nudges |
+| Interactive human-in-the-loop | ✅ `foci_ask` (async, button-based, restart-persistent) + [askgw](ASKGW.md) for external apps | ❌ permission prompts only | ❌ | ❌ permission prompts only |
 
 ## Prompt Caching
 
@@ -79,6 +80,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | Compaction archives | ✅ timestamp-based rotation | ✅ stored in transcript | ❌ | ❌ in-place summary |
 | Async-pending guard | ✅ defers if results pending | ❌ | ❌ | ❌ |
 | Context breakdown | ✅ | ✅ | ❌ | ❌ aggregate only |
+| Adaptive compaction threshold | ✅ non-linear (compacts earlier on large windows to control cost and reduce forgetting) | ❌ fixed percentage | ❌ | ❌ fixed percentage |
 
 ## Memory System
 
@@ -97,9 +99,9 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 
 | | **Foci** | **OpenClaw** | **Nanobot** | **Hermes** |
 |---|---|---|---|---|
-| Per-turn cost display | ✅ injected as metadata | ✅ `/usage full` footer | ❌ | ✅ status bar |
-| Cumulative cost tracking | ✅ `/cost` | ✅ `/usage cost` | ❌ | ✅ `/usage` |
-| Quota monitoring | ❌ | ❌ | ❌ | ✅ Google only (`/gquota`) |
+| Per-turn cost display | ✅ injected as metadata | ✅ `/usage full` footer | ✅ `/cost` | ✅ status bar |
+| Cumulative cost tracking | ✅ `/cost` (provider-reported golden cost) | ✅ `/usage cost` | ✅ `/cost` | ✅ `/usage` |
+| Quota monitoring | ❌ | ❌ | ❌ | ❌ |
 | API call log | ✅ JSONL + SQLite | ✅ JSONL | ❌ | ❌ |
 | Budget gating | ✅ `can_run_background` gate for background work | ❌ | ❌ | ✅ turn-budget |
 | Full payload recording | ✅ optional | ✅ optional | ❌ | ❌ |
@@ -152,8 +154,8 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 |---|---|---|---|---|
 | Anthropic Claude | ✅ | ✅ | ✅ | ✅ |
 | Other popular platforms | ✅ Gemini, OpenAI-compatible (OpenRouter, DeepSeek, etc.) | ✅ | ✅ | ✅ Gemini, OpenAI-compat, 300+ via OpenRouter |
-| Coding agent backends | ✅ Claude Code (stream-JSON + tmux), OpenCode (HTTP/SSE) | ✅ Claude Code / Codex / OpenCode runtimes | ❌ | ✅ via ACP (Copilot, Claude, Codex) |
-| Model failover chain | ❌ | ✅ ordered fallbacks | ❌ | ✅ `fallback_providers` |
+| Coding agent backends | ✅ Claude Code (stream-JSON + tmux), Codex, OpenCode (HTTP/SSE) | ✅ Claude Code / Codex / OpenCode runtimes | ❌ | ✅ via MCP (Copilot, Claude, Codex); ACP for editors |
+| Model failover chain | ✅ FallbackResolver (global + per-agent, cycle detection) | ✅ ordered fallbacks | ✅ FallbackProvider | ✅ `fallback_providers` |
 | Model aliasing | ✅ | ✅ | ✅ | ✅ |
 | Per-session model switch | ✅ | ✅ | ❌ | ✅ `/model` |
 | Extended thinking | ✅ | ✅ | ✅ | ✅ `reasoning_effort` |
@@ -179,7 +181,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 |---|---|---|---|---|
 | Skill format | SKILL.md + frontmatter | ClawHub registry | SKILL.md + frontmatter | SKILL.md + frontmatter |
 | Self-improving skills | ✅ | ❌ | ❌ | ✅ |
-| Skill marketplace | ❌ | ✅ ClawHub, 13.7k+ skills | ✅ ClawHub integration | ✅ Skills Hub (multi-source) |
+| Skill marketplace | ❌ | ✅ ClawHub, 50k+ skills | ✅ ClawHub integration | ✅ Skills Hub (multi-source) |
 | Per-agent skill dirs | ✅ | ✅ | ❌ | ✅ |
 | Progressive disclosure | ❌ full inject or on-demand | ❌ | ✅ summary + read on demand | ✅ 3-level disclosure |
 | Plugin system | ❌ | ✅ channel plugins | ❌ | ✅ |
@@ -210,10 +212,10 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | | **Foci** | **OpenClaw** | **Nanobot** | **Hermes** |
 |---|---|---|---|---|
 | Telegram | ✅ | ✅ | ✅ | ✅ |
-| Discord | ✅ | ✅ | ❌ | ✅ |
-| Other popular platforms | ❌ | ✅ | ✅ | ✅ 24+ platforms |
-| Android app | 🔜 coming soon | ✅ andClaw (Play Store) | ❌ | ❌ Termux only |
-| WebChat UI | ❌ | ✅ Control UI | ❌ | ✅ Open WebUI |
+| Discord | ✅ | ✅ | ✅ | ✅ |
+| Other popular platforms | ❌ | ✅ | ✅ 17+ platforms | ✅ 26+ platforms |
+| Android app | ✅ | ✅ andClaw (Play Store) | ❌ | ❌ Termux only |
+| WebChat UI | ❌ | ✅ Control UI | ✅ WebUI | ✅ Open WebUI |
 | CLI interactive mode | ❌ | ✅ `openclaw tui` | ✅ `nanobot agent` | ✅ |
 | HTTP gateway | ✅ REST API | ✅ WebSocket hub | ❌ | ✅ REST (OpenAI-compatible) |
 
@@ -236,7 +238,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | systemd integration | ✅ setup.sh | ✅ `openclaw onboard` | ✅ user service | ✅ documented |
 | Docker | ✅ Dockerfile + Compose | ✅ Compose + sandbox | ✅ Compose | ✅ Compose + sandbox |
 | Nix | ❌ | ✅ | ❌ | ✅ flake + NixOS module |
-| Native apps (macOS/iOS/Android) | 🔜 Android coming soon | ✅ macOS + Android (iOS alpha) | ❌ | ❌ desktop only (Electron) |
+| Native apps (macOS/iOS/Android) | ✅ macOS + Android (iOS 🔜) | ✅ macOS + iOS + Android | ❌ | ❌ desktop only (Electron) |
 | Idempotent setup script | ✅ | ✅ | ✅ | ✅ curl installer |
 
 ## Platform Support
@@ -244,7 +246,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | | **Foci** | **OpenClaw** | **Nanobot** | **Hermes** |
 |---|---|---|---|---|
 | Linux | ✅ | ✅ | ✅ | ✅ |
-| macOS | NYI | ✅ native app | ✅ | ✅ |
-| iOS app | ❌ | ❌ alpha, unreleased | ❌ | ❌ |
-| Android app | 🔜 client, coming soon | ✅ | ❌ | ❌ Termux only |
+| macOS | ✅ desktop client | ✅ native app | ✅ | ✅ |
+| iOS app | 🔜 coming soonish | ✅ released (App Store) | ❌ | ❌ |
+| Android app | ✅ | ✅ | ❌ | ❌ Termux only |
 | Camera / screen control | ❌ | ✅ Apple only | ❌ | ❌ |
