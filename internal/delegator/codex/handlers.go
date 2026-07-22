@@ -27,8 +27,15 @@ func (b *Backend) onTurnStarted() {
 
 // onTurnCompleted finalises the turn.
 func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
+	// Read turnText/turnTools under turnMu: onItemCompleted writes them under
+	// turnMu from the reader goroutine and completeTurn Resets turnText under
+	// turnMu from the agent goroutine (e.g. a turn/start >30s timeout firing
+	// while the turn is still running) — reading the strings.Builder without
+	// the lock is a real data race.
 	b.turnMu.Lock()
 	usage := b.stashedUsage
+	text := b.turnText.String()
+	tools := b.turnTools
 	b.turnMu.Unlock()
 
 	b.mu.Lock()
@@ -39,8 +46,8 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 		model = "codex/" + model
 	}
 	result := &delegator.TurnResult{
-		Text:       b.turnText.String(),
-		ToolCalls:  b.turnTools,
+		Text:       text,
+		ToolCalls:  tools,
 		Usage:      usage,
 		Model:      model,
 		ThreadName: threadName,
