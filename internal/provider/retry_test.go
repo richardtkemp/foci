@@ -300,6 +300,108 @@ func TestRetryStreamingClient(t *testing.T) {
 	}
 }
 
+func TestRetry429RetriesAndSucceeds(t *testing.T) {
+	t.Parallel()
+	// Verifies a 429 rate limit is now retried inline (it used to fail the
+	// turn immediately). Uses a retryableClient for a 1ms base delay so the
+	// test is fast; the 429 carries no Retry-After so backoff drives the wait.
+	attempts := &atomic.Int32{}
+	client := &retryMockRetryableClient{
+		retryMockClient: retryMockClient{
+			attempts:  attempts,
+			failUntil: 2, // fail first 2 with 429, succeed on 3rd
+			failWith: &APIError{
+				StatusCode: 429,
+				Body:       "rate limited",
+			},
+			successResp: &MessageResponse{
+				ID:      "msg_ok",
+				Content: []ContentBlock{{Type: "text", Text: "hello"}},
+			},
+		},
+	}
+
+	resp, err := sendWithRetry(context.Background(), client, &MessageRequest{
+		Model:     "test-model",
+		MaxTokens: 256,
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if int(attempts.Load()) != 3 {
+		t.Errorf("attempts = %d, want 3 (429 should retry inline)", attempts.Load())
+	}
+	if resp.ID != "msg_ok" {
+		t.Errorf("resp.ID = %q, want msg_ok", resp.ID)
+	}
+}
+
+func TestRetry429LongRetryAfterDefersToGate(t *testing.T) {
+	t.Parallel()
+	// Verifies a 429 whose Retry-After exceeds the inline cap is NOT retried
+	// inline — it returns immediately so the caller's rate-limit gate can
+	// defer and replay rather than blocking the turn for the full window.
+	attempts := &atomic.Int32{}
+	client := &retryMockRetryableClient{
+		retryMockClient: retryMockClient{
+			attempts:  attempts,
+			failUntil: 100, // would retry many times if inline retry applied
+			failWith: &APIError{
+				StatusCode: 429,
+				Body:       "rate limited",
+				RetryAfter: "3600", // 1h — well beyond maxInlineRateLimitWait
+			},
+		},
+	}
+
+	_, err := sendWithRetry(context.Background(), client, &MessageRequest{
+		Model:     "test-model",
+		MaxTokens: 256,
+	}, nil)
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if int(attempts.Load()) != 1 {
+		t.Errorf("attempts = %d, want 1 (long Retry-After should defer to gate, not retry)", attempts.Load())
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || !apiErr.IsRateLimit() {
+		t.Errorf("err = %v, want a 429 APIError propagated to the caller", err)
+	}
+}
+
+func TestInlineRateLimitWait(t *testing.T) {
+	t.Parallel()
+	// Verifies the inline-vs-gate decision and the wait computation across the
+	// Retry-After boundary.
+	tests := []struct {
+		name       string
+		retryAfter string
+		backoff    time.Duration
+		wantWait   time.Duration
+		wantRetry  bool
+	}{
+		{"no hint uses backoff", "", 2 * time.Second, 2 * time.Second, true},
+		{"short hint below backoff keeps backoff", "1", 2 * time.Second, 2 * time.Second, true},
+		{"hint above backoff is honored", "10", 2 * time.Second, 10 * time.Second, true},
+		{"hint at cap retries inline", "30", time.Second, 30 * time.Second, true},
+		{"hint over cap defers to gate", "31", time.Second, 0, false},
+		{"wait clamped to cap", "20", 40 * time.Second, 30 * time.Second, true},
+	}
+	for _, tt := range tests {
+		apiErr := &APIError{StatusCode: 429, RetryAfter: tt.retryAfter}
+		wait, retry := inlineRateLimitWait(apiErr, tt.backoff)
+		if retry != tt.wantRetry {
+			t.Errorf("%s: retry = %v, want %v", tt.name, retry, tt.wantRetry)
+		}
+		if retry && wait != tt.wantWait {
+			t.Errorf("%s: wait = %s, want %s", tt.name, wait, tt.wantWait)
+		}
+	}
+}
+
 func TestEndpointNameFromURL(t *testing.T) {
 	t.Parallel()
 	// Verifies that EndpointNameFromURL extracts a readable name from
