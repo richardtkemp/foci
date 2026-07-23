@@ -39,9 +39,9 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 -include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.remote.mk
 -include .remote.mk
 
-.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging llbox test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
 
-all: build cli foci-call foci-cc-hook nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging
+all: build cli foci-call foci-cc-hook nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging llbox
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -103,7 +103,24 @@ find-unscoped-logging:
 	@mkdir -p bin
 	cd scripts/find-unscoped-logging && go build -o ../../bin/find-unscoped-logging .
 
-test:
+# llbox — Landlock write-whitelist sealer, promoted from a throwaway POC
+# (foci_todo #1517) into a proper repo tool for #1523. `make test`/`make
+# integration` seal themselves with it BY DEFAULT via scripts/seal-test.sh;
+# it degrades gracefully (warns + runs unsealed) when Landlock is
+# unavailable, so it's always safe to invoke. Lives in its own go.mod for the
+# same reason as the other checkers above (dependency-free, out of foci's
+# main module) — see scripts/llbox/main.go for the full design.
+llbox:
+	@mkdir -p bin
+	cd scripts/llbox && go build -o ../../bin/llbox .
+
+# `make test` seals itself under Landlock BY DEFAULT (foci_todo #1523) via
+# scripts/seal-test.sh — read that script for the full design (whitelist,
+# the diagnostic re-run). Degrades gracefully to unsealed (single warning
+# line) when Landlock is unavailable; FOCI_TEST_UNSEALED=1 opts out
+# explicitly, for debugging a test that genuinely needs to write somewhere
+# odd.
+test: llbox
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
 	$(eval LOGFILE := $(TESTDIR).log)
 	@mkdir -p $(TESTDIR)/home
@@ -132,7 +149,7 @@ test:
 	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
 	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -143,7 +160,9 @@ test:
 # stubbed Telegram. Build-tagged so they only run under this target — not
 # as part of `make test`. See test/integration/README.md for the
 # architecture, and internal/testharness/ for the scaffolding.
-integration:
+# Seals itself under Landlock BY DEFAULT too (#1523) — same scripts/seal-test.sh
+# as `test`.
+integration: llbox
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
 	$(eval TESTDIR := /tmp/fgw/integration-$(shell date +%s))
 	$(eval LOGFILE := $(TESTDIR).log)
@@ -172,7 +191,7 @@ integration:
 	@# any runaway foci-gw/cc-stub first avoids racing a still-open binary FD
 	@# against the removal (harmless on Linux either way, but tidier).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 600s -parallel=$(IPARALLEL) -v ./test/integration/... ./internal/testharness/... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
