@@ -338,20 +338,27 @@ func sessionsDefaultCmd(cc CommandContext, chatID int64) (string, error) {
 // how each renders when unset. There is no single source of truth for these in
 // the codebase (they are scattered string literals at the read/write sites), so
 // this list is the display contract for /sessions info.
+//
+// branchOnly marks a key that is only ever meaningful for a branch session —
+// e.g. orientation_consumed, which ConsumeOrientation (session/branch.go) only
+// sets for sessions with branch_meta. Rendering it as "false" on every root
+// (non-branch) session falsely implies a mechanism that never even applies
+// there (#1297); metadataRows skips it for roots when unset.
 var knownSessionMetadataKeys = []struct {
-	key   string
-	unset string
+	key        string
+	unset      string
+	branchOnly bool
 }{
-	{"model", "null"},
-	{"model_endpoint", "null"},
-	{"model_format", "null"},
-	{"effort", "null"},
-	{"permission_mode", "null"},
-	{"cc_resume_id", "null"},
-	{"last_activity", "null"},
-	{"no_compact", "false"},
-	{"display_show_thinking", "false"},
-	{"orientation_consumed", "false"},
+	{"model", "null", false},
+	{"model_endpoint", "null", false},
+	{"model_format", "null", false},
+	{"effort", "null", false},
+	{"permission_mode", "null", false},
+	{"cc_resume_id", "null", false},
+	{"last_activity", "null", false},
+	{"no_compact", "false", false},
+	{"display_show_thinking", "false", false},
+	{"orientation_consumed", "false", true},
 }
 
 // chatSessionExists reports whether a session exists for agent+chat in any
@@ -397,6 +404,14 @@ func sessionsInfoCmd(cc CommandContext, sessionKey string, chatID int64) (string
 		return "", fmt.Errorf("read session metadata: %w", err)
 	}
 
+	// isBranch determines whether branch-only metadata (e.g. orientation_consumed)
+	// is applicable here. Parsed from the key itself (not the index row) so it's
+	// correct even for a brand-new branch that hasn't been indexed yet.
+	isBranch := false
+	if sk, err := session.ParseSessionKey(sessionKey); err == nil {
+		isBranch = !sk.IsRoot()
+	}
+
 	tableCols := []display.Column{{Header: "Field"}, {Header: "Value"}}
 	var rows [][]string
 	if found {
@@ -409,7 +424,7 @@ func sessionsInfoCmd(cc CommandContext, sessionKey string, chatID int64) (string
 			[]string{"(index)", "no row — new or backend-only session"},
 		)
 	}
-	rows = append(rows, metadataRows(meta)...)
+	rows = append(rows, metadataRows(meta, isBranch)...)
 
 	return fmt.Sprintf("Session info — %s\n\n%s",
 		sessionKey, display.MarkdownTable(tableCols, rows)), nil
@@ -417,13 +432,19 @@ func sessionsInfoCmd(cc CommandContext, sessionKey string, chatID int64) (string
 
 // metadataRows renders every known session_metadata key (unset ones as their
 // null/false default) plus any present-but-unknown keys, as Field/Value rows.
-func metadataRows(meta map[string]string) [][]string {
+// A branchOnly key is skipped when unset and isBranch is false — it isn't
+// applicable to a root session, so showing its default is misleading rather
+// than informative (#1297).
+func metadataRows(meta map[string]string, isBranch bool) [][]string {
 	seen := make(map[string]bool, len(knownSessionMetadataKeys))
 	var rows [][]string
 	for _, mk := range knownSessionMetadataKeys {
 		seen[mk.key] = true
 		v, ok := meta[mk.key]
 		if !ok {
+			if mk.branchOnly && !isBranch {
+				continue
+			}
 			v = mk.unset
 		}
 		rows = append(rows, []string{"meta:" + mk.key, v})
