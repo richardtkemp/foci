@@ -26,6 +26,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/defersend"
+	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/modelcaps"
@@ -36,6 +37,7 @@ import (
 	"foci/internal/shellenv"
 	"foci/internal/skills"
 	"foci/internal/startup"
+	"foci/internal/tempdir"
 	"foci/internal/timeutil"
 	"foci/shared/prompts"
 )
@@ -175,6 +177,18 @@ Subcommands:
 	// so the warning survives the startup log rotation).
 	if len(cfg.UndefinedKeys) > 0 {
 		configLog.Warnf("unknown config keys in %s: %v", configPath, cfg.UndefinedKeys)
+	}
+
+	// ========== Reclaim orphaned temp state ==========
+	// Wipe the temp root's orphaned per-session state (exec bridge sockets,
+	// spill/pair/browser scratch, spawn sandboxes, …) before anything below
+	// resolves the root for its own use. This is the one moment no session,
+	// exec bridge, spill file, pairing scratch, or browser scratch can be
+	// referenced by a live process — so everything already on disk there is
+	// provably orphaned rather than merely old. app-blobs/ is excluded: it's
+	// the app blob store's own restart-durable state (internal/app/blob.go).
+	if r := tempdir.CleanStale(); r.Removed > 0 || r.Failed > 0 {
+		startupLog.Infof("temp cleanup: reclaimed %d entries (%s), %d failed", r.Removed, display.FormatBytes(r.Bytes), r.Failed)
 	}
 
 	// ========== Seed shared defaults ==========

@@ -25,6 +25,21 @@ config.Load(path)                                        ← validates values; l
   → log.Init, log.InitAPIDB, log.InitConversation, log rotation
   → returns cleanup func
 
+→ tempdir.CleanStale()                                   ← internal/tempdir/cleanup.go; best-effort wipe of orphaned
+                                                            top-level temp state (exec bridge sockets, spill/pair/
+                                                            browser scratch, escaped test dirs, spawn/ sandbox
+                                                            contents, …) under the RESOLVED root (tempdir.Dir(),
+                                                            never a hardcoded path). Runs once, right after logging
+                                                            init, before anything below (bridges, the app blob
+                                                            store, spawn sandboxes) creates its own state for this
+                                                            process lifetime — the one moment everything already on
+                                                            disk there is provably orphaned, not just old.
+                                                            app-blobs/ is excluded entirely (owned by the app blob
+                                                            store, see internal/app/blob.go — restart-durable, #1500).
+                                                            Never fatal; failures (e.g. a spawn/ sandbox dir owned by
+                                                            a different rich-readers-group uid) are counted and logged,
+                                                            never block startup.
+
 → initSecrets(configPath, cfg)                           ← secrets_init.go
   → secrets.Load(secretsPath)                            ← secrets.toml overrides foci.toml
   → [if bitwarden.enabled] bitwarden.New(executor, ttl) ← aisudo-backed vault store
