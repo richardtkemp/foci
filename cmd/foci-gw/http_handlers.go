@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -444,13 +443,8 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			http.Error(w, "unknown command", http.StatusNotFound)
 			return
 		}
-		if result.DocPath != "" {
-			if conn := d.connMgr.ForSessionOrPrimary(sk, inst.id); conn != nil {
-				if err := conn.SendDocument(result.DocPath, ""); err != nil {
-					httpLog.Warnf("POST /command: send document: %v", err)
-				}
-			}
-			_ = os.Remove(result.DocPath)
+		if err := platform.SendDocAndRemove(d.connMgr.ForSessionOrPrimary(sk, inst.id), 0, result.DocPath, ""); err != nil {
+			httpLog.Warnf("POST /command: send document: %v", err)
 		}
 		writeJSONResponse(w, result.Text)
 	}

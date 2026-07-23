@@ -1,10 +1,10 @@
 package discord
 
 import (
-	"os"
 	"strings"
 
 	"foci/internal/dispatch"
+	"foci/internal/platform"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -46,9 +46,6 @@ func (b *Bot) renderCommandOutcome(msg *discordgo.Message, outcome *dispatch.Com
 		} else if result.Response.Text != "" {
 			b.sendReply(msg, result.Response.Text)
 		}
-		if result.Response.DocPath != "" {
-			_ = b.SendDocumentToChat(chatIDFromMsg(msg), result.Response.DocPath, "")
-			_ = os.Remove(result.Response.DocPath)
-		}
+		_ = platform.SendDocAndRemove(b, chatIDFromMsg(msg), result.Response.DocPath, "")
 	}
 }

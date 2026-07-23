@@ -3,7 +3,6 @@ package discord
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -205,10 +204,7 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 	}
 	if result.WizardReply != "" {
 		b.sendReply(qm.msg, result.WizardReply)
-		if result.WizardDocPath != "" {
-			_ = b.SendDocumentToChat(chatIDFromMsg(qm.msg), result.WizardDocPath, "")
-			_ = os.Remove(result.WizardDocPath)
-		}
+		_ = platform.SendDocAndRemove(b, chatIDFromMsg(qm.msg), result.WizardDocPath, "")
 		return true
 	}
 	if result.Outcome != nil {

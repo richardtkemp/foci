@@ -584,9 +584,7 @@ func (h *Hub) dispatchCommand(client *wsClient, conn *appConn, b *convBinding, r
 			b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system", Text: part})
 		}
 	}
-	if resp.DocPath != "" {
-		_ = conn.SendDocumentToChat(b.chatID, resp.DocPath, "")
-	}
+	_ = platform.SendDocAndRemove(conn, b.chatID, resp.DocPath, "")
 	// Foreground a conversation on the requesting device only (e.g. the new
 	// conversation /facet just minted). Existence + open-set already synced to
 	// all devices; focus is device-local, so this frame targets one socket.
