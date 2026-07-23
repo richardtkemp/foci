@@ -2065,9 +2065,14 @@ func TestOnResult_SignalsWaitForTurn(t *testing.T) {
 		done <- b.WaitForTurn(context.Background())
 	}()
 
-	// Give the goroutine a moment to start waiting.
-	time.Sleep(10 * time.Millisecond)
-
+	// No settling sleep needed here (unlike a naive "give the goroutine a
+	// moment to start waiting" guess, which would be a #1519-class flake risk
+	// under load): applyHandler above already installed turnResultCh —
+	// buffered(1) — before this goroutine was even spawned, and OnResult's
+	// send below is non-blocking into that buffer. So the value lands
+	// regardless of whether WaitForTurn's select has been reached yet; the
+	// goroutine picks it up whenever it's scheduled, with no window where the
+	// signal could be dropped.
 	result := &ResultMessage{
 		Subtype: "success",
 		Result:  "done",
@@ -2472,8 +2477,10 @@ func TestArmCompactionWait_SignaledByCompactBoundary(t *testing.T) {
 		done <- b.WaitForCompaction(ctx)
 	}()
 
-	// Give the goroutine time to block.
-	time.Sleep(10 * time.Millisecond)
+	// No sleep needed: nothing has fed compact_boundary yet, so this check
+	// holds regardless of goroutine scheduling — a fixed "give it a moment"
+	// sleep here would only add a #1519-class timing guess with no extra
+	// verification value.
 	select {
 	case <-done:
 		t.Fatal("WaitForCompaction returned before compact_boundary")
@@ -2507,7 +2514,10 @@ func TestArmCompactionWait_ContextCancellation(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- b.WaitForCompaction(ctx) }()
 
-	time.Sleep(10 * time.Millisecond)
+	// No settling sleep needed: cancel() closes ctx.Done(), and a closed
+	// channel stays observably closed however late WaitForCompaction's
+	// select reaches it — ordering can't drop this signal (unlike a real
+	// channel send racing an unarmed receiver, #1519).
 	cancel()
 
 	select {
@@ -2570,7 +2580,20 @@ func TestWaitForCompaction_IdleWithoutBoundary(t *testing.T) {
 	defer cancel()
 	go func() { done <- b.WaitForCompaction(ctx) }()
 
-	// Give the goroutine time to block.
+	// Unlike the sibling cases above, this sleep is load-bearing, not
+	// decorative: signalCompactionAbort's fire-and-clear (compaction.go) nils
+	// both compactDoneCh/compactAbortCh as part of firing, so a WaitForCompaction
+	// call that hasn't yet captured its local copies of those channels
+	// (b.turnMu.Lock(); done := b.compactDoneCh; abort := b.compactAbortCh)
+	// before the clear reads them back as nil and takes the "never armed"
+	// fast path — silently returning nil (success) instead of
+	// ErrCompactionNoBoundary. Confirmed by deleting this sleep: the test
+	// then flakes with "err = <nil>, want ErrCompactionNoBoundary" under
+	// load. That's a genuine pre-existing production race in
+	// WaitForCompaction/signalCompactionAbort, out of scope for #1519 to fix
+	// (needs its own todo — see notes-1519.md) — keep the sleep here so this
+	// test still exercises the intended (armed-before-fire) ordering rather
+	// than silently degrading into a coin flip.
 	time.Sleep(10 * time.Millisecond)
 	select {
 	case <-done:
@@ -2802,7 +2825,11 @@ func TestOnReaderStopped_UnblocksWaitForTurn(t *testing.T) {
 		done <- b.WaitForTurn(context.Background())
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	// No settling sleep needed: applyHandler above installed turnResultCh —
+	// buffered(1) — before this goroutine was spawned, and finalizeExit's
+	// send into it is non-blocking, so the signal lands regardless of
+	// whether WaitForTurn's select has been reached yet (see the identical
+	// reasoning in TestOnResult_SignalsWaitForTurn, #1519).
 	b.OnReaderStopped(fmt.Errorf("crash"))
 
 	select {
@@ -3560,7 +3587,10 @@ func TestWaitReady_UnblockedByInit(t *testing.T) {
 		"model": "test", "permissionMode": "default", "tools": [],
 		"session_id": "s1"
 	}`)
-	time.Sleep(10 * time.Millisecond)
+	// No settling sleep needed: OnSystem/init closes readyCh (sync.Once),
+	// and a closed channel stays observably closed whenever WaitReady's
+	// select reaches it — order-independent, unlike a value racing an
+	// unarmed receiver (#1519).
 	b.OnSystem("init", raw)
 
 	select {
@@ -3601,7 +3631,8 @@ func TestWaitReady_UnblockedByInitControlResponse(t *testing.T) {
 			"response": {}
 		}
 	}`)
-	time.Sleep(10 * time.Millisecond)
+	// No settling sleep needed — same close()-based reasoning as
+	// TestWaitReady_UnblockedByInit above.
 	b.OnControlResponse(raw)
 
 	select {

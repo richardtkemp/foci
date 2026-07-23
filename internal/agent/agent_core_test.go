@@ -418,8 +418,13 @@ func TestProcessingDetails(t *testing.T) {
 		close(done)
 	}()
 
+	// No settling sleep needed after <-started: registerTurn (Phase 1 of
+	// OrchestrateFullTurn) runs strictly before RunInference invokes the
+	// client on the same goroutine, so by the time the mocked client closes
+	// `started`, the ProcessingDetails entry is already registered — a fixed
+	// "let it register" sleep here would just be a #1519-class timing guess
+	// with no extra verification value.
 	<-started
-	time.Sleep(50 * time.Millisecond) // let HandleMessageWithAttachments register
 
 	details := ag.ProcessingDetails()
 	if len(details) != 1 {
