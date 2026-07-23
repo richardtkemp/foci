@@ -60,7 +60,90 @@ func newBlobStore() *blobStore {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		appLog.Warnf("blob store dir %s: %v", dir, err)
 	}
-	return &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
+	s := &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
+	s.rehydrate()
+	return s
+}
+
+// rehydrate scans s.dir at construction time and rebuilds a blobMeta for
+// every file already there, so blobs written before a restart stay servable
+// and stay visible to reap() — instead of becoming permanent, unreapable
+// dead weight (the whole reason this method exists: #1500).
+//
+// What's recoverable vs. not, honestly:
+//   - created: decoded straight from the id, which is a ULID (48-bit ms
+//     timestamp + entropy, fap.NewULID) — exact, no fallback needed. A
+//     filename that doesn't decode as a well-formed ULID was never written
+//     by put()/putFile()/putBytes(), so it isn't one of ours; it's left
+//     alone (not registered, not deleted) rather than guessed at via stat,
+//     which would make an unrelated file dropped in the dir web-servable.
+//   - size: from stat — exact.
+//   - mime: NOT recoverable from the id or filename (there's no sidecar).
+//     Sniffed from the first 512 bytes via http.DetectContentType — a fixed,
+//     bounded read per file so this stays cheap even for a large blob (the
+//     size cap is 50MB; some real files here are ~18MB APKs) and for a large
+//     directory (3000+ files is normal in production).
+//   - kind: derived from the sniffed mime via the existing kindForMIME.
+//   - name: genuinely lost — the original upload filename was never
+//     persisted anywhere on disk, only held in the in-memory meta that a
+//     restart just erased. Using the id itself as name rather than inventing
+//     one; this only affects the http.ServeContent name/ext hint, since
+//     ServeBlobGet already sets the Content-Type header explicitly from
+//     meta.mime before calling it.
+//
+// A file already past TTL at startup is reaped immediately rather than
+// resurrected. maxBytes (the upload-time size cap) is deliberately NOT
+// re-enforced here: it gates new uploads, not retention of files already on
+// disk — a config change that lowers the cap shouldn't punitively delete
+// pre-existing blobs at the next restart. They still age out via the normal
+// TTL reaper like everything else.
+func (s *blobStore) rehydrate() {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		appLog.Warnf("blob store rehydrate: reading %s: %v", s.dir, err)
+		return
+	}
+	cutoff := time.Now().Add(-s.ttl)
+	var kept, reaped, skipped int
+	for _, e := range entries {
+		if e.IsDir() {
+			skipped++
+			continue
+		}
+		id := e.Name()
+		created, ok := fap.ULIDTime(id)
+		if !ok {
+			// Not a ULID -> not something put() wrote. Leave it untouched.
+			skipped++
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			// Raced with a concurrent delete, or unreadable -- skip, don't crash.
+			skipped++
+			continue
+		}
+		path := filepath.Join(s.dir, id)
+		if created.Before(cutoff) {
+			_ = os.Remove(path)
+			reaped++
+			continue
+		}
+		mimeType := sniffMime(path)
+		s.blobs[id] = &blobMeta{
+			id:      id,
+			path:    path,
+			mime:    mimeType,
+			kind:    kindForMIME(mimeType),
+			name:    id,
+			size:    info.Size(),
+			created: created,
+		}
+		kept++
+	}
+	if kept+reaped+skipped > 0 {
+		appLog.Infof("blob store rehydrate: %d recovered, %d expired, %d skipped (%s)", kept, reaped, skipped, s.dir)
+	}
 }
 
 // put streams data from r into a new blob file, enforcing the size cap. kind /
@@ -149,6 +232,20 @@ func (s *blobStore) reaper(ctx context.Context) {
 			s.reap()
 		}
 	}
+}
+
+// sniffMime reads a bounded prefix of path and detects its MIME type, for
+// rehydrating a blob whose original upload MIME wasn't persisted anywhere on
+// disk. Falls back to DetectContentType's own generic default on read error.
+func sniffMime(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return "application/octet-stream"
+	}
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	return http.DetectContentType(buf[:n])
 }
 
 // mimeByName guesses a MIME type from a filename extension.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // decode the wire string back into a generic map to assert exact field names —
@@ -432,5 +433,36 @@ func TestNewULID_Format(t *testing.T) {
 	// Two ULIDs must differ (entropy) and sort by time (monotonic prefix).
 	if a, b := NewULID(), NewULID(); a == b {
 		t.Errorf("two ULIDs collided: %q", a)
+	}
+}
+
+func TestULIDTime_RoundTrip(t *testing.T) {
+	before := time.Now()
+	id := NewULID()
+	after := time.Now()
+
+	got, ok := ULIDTime(id)
+	if !ok {
+		t.Fatalf("ULIDTime(%q) rejected a real NewULID() output", id)
+	}
+	// ULID timestamp resolution is 1ms; got must land within [before, after]
+	// truncated/rounded to that resolution.
+	if got.Before(before.Truncate(time.Millisecond)) || got.After(after) {
+		t.Errorf("ULIDTime(%q) = %v, want within [%v, %v]", id, got, before, after)
+	}
+}
+
+func TestULIDTime_RejectsMalformed(t *testing.T) {
+	cases := []string{
+		"",
+		"too-short",
+		"not-a-ulid-at-all-junk-nam", // 26 chars, but not Crockford
+		strings.Repeat("0", 25),      // wrong length
+		strings.Repeat("!", 26),      // right length, invalid alphabet throughout
+	}
+	for _, id := range cases {
+		if _, ok := ULIDTime(id); ok {
+			t.Errorf("ULIDTime(%q) = ok, want rejected", id)
+		}
 	}
 }

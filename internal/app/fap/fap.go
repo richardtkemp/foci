@@ -15,6 +15,7 @@ package fap
 import (
 	"crypto/rand"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -1045,4 +1046,40 @@ func NewULID() string {
 	out[24] = crockford[((r[8]&3)<<3)|((r[9]&224)>>5)]
 	out[25] = crockford[r[9]&31]
 	return string(out[:])
+}
+
+// crockfordValue reverse-maps a byte to its 5-bit Crockford value, or -1 if
+// it's not one of the 32 symbols NewULID emits (no case-folding / I-L-O
+// aliasing — we only ever need to decode our own output).
+func crockfordValue(c byte) int {
+	i := strings.IndexByte(crockford, c)
+	return i // strings.IndexByte already returns -1 on no match
+}
+
+// ULIDTime recovers the embedded millisecond timestamp from a ULID minted by
+// NewULID (48-bit ms timestamp packed into the first 10 Crockford chars, high
+// bits first). Returns false if id isn't a well-formed 26-char ULID over the
+// Crockford alphabet — callers must treat that as "not a ULID", not guess a
+// time.
+func ULIDTime(id string) (time.Time, bool) {
+	if len(id) != 26 {
+		return time.Time{}, false
+	}
+	var ms uint64
+	for i := 0; i < 10; i++ {
+		v := crockfordValue(id[i])
+		if v < 0 {
+			return time.Time{}, false
+		}
+		ms = ms<<5 | uint64(v)
+	}
+	// Entropy half must also be valid Crockford, or this isn't one of ours.
+	for i := 10; i < 26; i++ {
+		if crockfordValue(id[i]) < 0 {
+			return time.Time{}, false
+		}
+	}
+	// ms is built from 10 Crockford 5-bit chunks, so it's capped at 2^50-1
+	// regardless of input -- always well inside int64 range.
+	return time.UnixMilli(int64(ms)), true //nolint:gosec // bounded to 50 bits, see above
 }
