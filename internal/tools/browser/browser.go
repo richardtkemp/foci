@@ -62,6 +62,21 @@ func (m *BrowserManager) Start() error {
 	if m.config.ExecutablePath != "" {
 		l = l.Bin(m.config.ExecutablePath)
 	}
+	// Always force NoSandbox: go-rod's own default (lib/launcher/launcher.go)
+	// only sets it `if inContainer`, a heuristic (checks for /.dockerenv /
+	// a container cgroup) that's false on a bare-metal host, so Chrome's
+	// setuid-root chrome-sandbox helper is left enabled there by default.
+	// That helper requires being able to elevate privileges on execve, which
+	// is exactly what prctl(PR_SET_NO_NEW_PRIVS) (set by process sandboxing
+	// such as Landlock, foci_todo #1517) forbids — under NO_NEW_PRIVS the
+	// setuid path AND Chrome's namespace fallback both fail fatally.
+	// Deliberately always-on rather than conditional-on-inContainer/NO_NEW_PRIVS:
+	// once the process tree is sealed under Landlock (#1517), that OS-level
+	// restriction is the outer sandbox layer and Chrome's own sandbox is
+	// redundant defence-in-depth, not the only line of defence — and it must
+	// already be forced with no other change for this same launch to work
+	// identically whether or not the calling process happens to be sealed.
+	l = l.NoSandbox(true)
 	// Always launch with an explicit, isolated user-data-dir. Relying on
 	// go-rod's implicit default is unreliable on some hosts (notably the Linux
 	// Mint chromium wrapper): the implicit flag fails to take and chromium falls
