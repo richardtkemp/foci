@@ -298,6 +298,56 @@ func TestSessionsInfoNoChatID(t *testing.T) {
 	}
 }
 
+// TestSessionsInfoOrientationConsumedHiddenForRoot verifies that "info" does
+// NOT render the orientation_consumed metadata row for a root (non-branch)
+// session — orientation is a branch-only concept (ConsumeOrientation only
+// ever sets it for sessions with branch_meta), so showing it as "false" on
+// every ordinary chat session falsely implies a mechanism that never even
+// applies there (#1297).
+func TestSessionsInfoOrientationConsumedHiddenForRoot(t *testing.T) {
+	cc, _, ss := sessionsTestCC(t, "test-agent")
+	key := session.NewChatSessionKey("test-agent", 123456789)
+	ss.Upsert(session.SessionIndexEntry{
+		SessionKey:  key,
+		CreatedAt:   time.Now().UTC(),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "info", ChatID: 123456789}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.Text, "meta:orientation_consumed") {
+		t.Errorf("root session should not show orientation_consumed (not applicable), got %q", result.Text)
+	}
+}
+
+// TestSessionsInfoOrientationConsumedShownForBranch verifies that "info"
+// still renders orientation_consumed (as its unset "false" default) for an
+// actual branch session, where the field is applicable and meaningful.
+func TestSessionsInfoOrientationConsumedShownForBranch(t *testing.T) {
+	cc, _, ss := sessionsTestCC(t, "test-agent")
+	key := "test-agent/c123/b1700000000"
+	ss.Upsert(session.SessionIndexEntry{
+		SessionKey:       key,
+		CreatedAt:        time.Now().UTC(),
+		ParentSessionKey: "test-agent/c123",
+		SessionType:      session.SessionTypeFacet,
+		Status:           session.SessionStatusActive,
+	})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "info", SessionKey: key, ChatID: 123}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "meta:orientation_consumed") {
+		t.Errorf("branch session should show orientation_consumed, got %q", result.Text)
+	}
+}
+
 // TestSessionsInfoBySessionKey verifies "info" resolves the request's
 // SessionKey directly (e.g. a facet/branch) rather than deriving it from ChatID.
 func TestSessionsInfoBySessionKey(t *testing.T) {
