@@ -10,18 +10,33 @@ import (
 // mockSink is a configurable mock StreamSink. It records Update/Close calls and
 // reports a configurable surfaced flag and msgID sequence. It is mutex-guarded
 // since Update is driven by the pump goroutine while the test reads its state.
+// cond broadcasts on every Update so tests can wait for a target update count
+// instead of sleeping a fixed duration (see waitForUpdateCount, #1503).
 type mockSink struct {
 	mu          sync.Mutex
+	cond        *sync.Cond
 	updates     []string
 	closeCount  int
 	surfacedRet bool
 	msgIDsRet   []string
 }
 
+// newMockSink returns a ready-to-use mockSink with its condition variable wired
+// to its mutex. Always use this instead of &mockSink{} when the test needs
+// waitForUpdateCount.
+func newMockSink() *mockSink {
+	m := &mockSink{}
+	m.cond = sync.NewCond(&m.mu)
+	return m
+}
+
 func (m *mockSink) Update(fullText string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.updates = append(m.updates, fullText)
+	if m.cond != nil {
+		m.cond.Broadcast()
+	}
 }
 
 func (m *mockSink) Close() (surfaced bool) {
@@ -41,6 +56,34 @@ func (m *mockSink) updateCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.updates)
+}
+
+// waitForUpdateCount blocks until at least n updates have been recorded, or
+// timeout elapses, returning whether the count was reached. It wakes on the
+// actual Update signal (via cond) rather than sleeping a fixed duration and
+// asserting after the fact, so the test completes as fast as the pump
+// actually ticks and only fails when the pump genuinely never fires within
+// the (generous) timeout — see #1503.
+func (m *mockSink) waitForUpdateCount(n int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for len(m.updates) < n {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		timer := time.AfterFunc(remaining, func() {
+			m.mu.Lock()
+			m.cond.Broadcast()
+			m.mu.Unlock()
+		})
+		m.cond.Wait()
+		timer.Stop()
+	}
+	return true
 }
 
 func (m *mockSink) lastUpdate() string {
@@ -95,19 +138,22 @@ func TestStreamBuffer_Live_FirstDeltaImmediateUpdate(t *testing.T) {
 
 func TestStreamBuffer_Live_SubsequentDeltasPump(t *testing.T) {
 	// After the first release, subsequent deltas are pushed by the pump.
-	sink := &mockSink{}
+	sink := newMockSink()
 	sb := NewStreamBuffer(sink, 10*time.Millisecond, true)
 
 	sb.OnDelta("first")
-	time.Sleep(40 * time.Millisecond)
 	sb.OnDelta(" second")
-	time.Sleep(40 * time.Millisecond)
+
+	// Wait for the immediate update plus at least one pump tick, rather than
+	// sleeping fixed durations and asserting after the fact — a wall-clock
+	// sleep is not a property the test can rely on under load (#1503). This
+	// wakes as soon as the pump actually delivers, and only times out if it
+	// genuinely never fires within the generous window.
+	if !sink.waitForUpdateCount(2, 5*time.Second) {
+		t.Fatalf("Update calls = %d, want >= 2 (immediate + pump) within timeout", sink.updateCount())
+	}
 	sb.Finish()
 
-	// Immediate update ("first") + at least one pump update carrying "first second".
-	if sink.updateCount() < 2 {
-		t.Fatalf("Update calls = %d, want >= 2 (immediate + pump)", sink.updateCount())
-	}
 	if got := sink.lastUpdate(); !strings.Contains(got, "first second") {
 		t.Errorf("last update = %q, want it to contain %q", got, "first second")
 	}
