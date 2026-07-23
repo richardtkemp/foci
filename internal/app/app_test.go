@@ -1654,6 +1654,97 @@ func TestBlobStore_SizeCap(t *testing.T) {
 	}
 }
 
+// --- slice 4a: blob store rehydration (#1500) ---
+
+func TestBlobStore_Rehydrate_SurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	s1 := &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
+	before := time.Now()
+	meta, err := s1.putBytes([]byte("hello"), "document", "f.txt", "text/plain")
+	after := time.Now()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a restart: a brand new store over the same directory, with no
+	// in-memory state carried over.
+	s2 := &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
+	s2.rehydrate()
+
+	got, ok := s2.get(meta.id)
+	if !ok {
+		t.Fatalf("blob %s not rehydrated after simulated restart", meta.id)
+	}
+	if got.size != 5 {
+		t.Errorf("rehydrated size = %d, want 5", got.size)
+	}
+	// created is decoded from the id's embedded ULID timestamp (ms
+	// resolution, captured before the file write), so it must land in
+	// [before, after] rather than equal meta.created exactly.
+	if got.created.Before(before.Truncate(time.Millisecond)) || got.created.After(after) {
+		t.Errorf("rehydrated created = %v, want within [%v, %v]", got.created, before, after)
+	}
+	data, err := os.ReadFile(got.path)
+	if err != nil || string(data) != "hello" {
+		t.Errorf("rehydrated blob content = %q (%v), want %q", data, err, "hello")
+	}
+}
+
+func TestBlobStore_Rehydrate_ExpiredReapedNotResurrected(t *testing.T) {
+	dir := t.TempDir()
+	s1 := &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
+	meta, err := s1.putBytes([]byte("stale"), "document", "old.txt", "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A negative TTL puts the cutoff in the future, so any created time --
+	// however recent -- reads as already-expired. Deterministic without
+	// needing to hand-craft an old ULID.
+	s2 := &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: -time.Hour, blobs: make(map[string]*blobMeta)}
+	s2.rehydrate()
+
+	if _, ok := s2.get(meta.id); ok {
+		t.Errorf("expired blob %s was rehydrated instead of reaped", meta.id)
+	}
+	if _, err := os.Stat(meta.path); !os.IsNotExist(err) {
+		t.Errorf("expired blob file %s still on disk after rehydrate, want reaped", meta.path)
+	}
+}
+
+func TestBlobStore_Rehydrate_IgnoresJunk(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	junkPath := filepath.Join(dir, "not-a-ulid-name.txt")
+	if err := os.WriteFile(junkPath, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A zero-byte file with a genuine ULID name: not junk (put() places no
+	// floor on upload size), so it should still come back, just empty.
+	zeroID := fap.NewULID()
+	if err := os.WriteFile(filepath.Join(dir, zeroID), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
+	s.rehydrate() // must not panic or error on the subdir / non-ULID name
+
+	if len(s.blobs) != 1 {
+		t.Fatalf("blobs = %d, want 1 (only the zero-byte ULID-named file)", len(s.blobs))
+	}
+	if m, ok := s.get(zeroID); !ok || m.size != 0 {
+		t.Errorf("zero-byte valid-ULID blob not rehydrated cleanly: ok=%v m=%+v", ok, m)
+	}
+	if _, err := os.Stat(junkPath); err != nil {
+		t.Errorf("non-ULID file was touched during rehydrate: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, "subdir")); err != nil || !info.IsDir() {
+		t.Errorf("subdir was touched during rehydrate: %v", err)
+	}
+}
+
 func TestSendPhoto_StoresBlobAndEmitsMedia(t *testing.T) {
 	h, c, _, conn := boundConn(t)
 	tmp := filepath.Join(t.TempDir(), "pic.png")

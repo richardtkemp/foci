@@ -1631,7 +1631,15 @@ destination.
 
 **Media / blobs (`blob.go`, slice 4):** binary payloads never cross the
 WebSocket. `blobStore` keeps blobs on disk under `tempdir.Dir()/app-blobs`
-(metadata in memory; size-capped + TTL-reaped). Outbound: a `Send*` media call
+(metadata in memory; size-capped + TTL-reaped). `newBlobStore` rehydrates that
+in-memory metadata from the directory itself at construction (`rehydrate`,
+#1500): each filename is decoded as a ULID for its `created` time (`fap.ULIDTime`,
+mirroring `fap.NewULID`'s encoding), mime is sniffed from a 512-byte content
+prefix (never persisted, so unrecoverable any other way), and anything already
+past TTL is reaped immediately instead of resurrected — this is what makes
+app-blobs/ self-managing across a restart, and is why the sibling startup
+temp-wipe (`tempdir.CleanStale`, #1499) excludes that directory entirely rather
+than reaping it itself. Outbound: a `Send*` media call
 → `putFile`/`putBytes` → `media {blobId,mime,…}` (no `kind` — app clients derive
 presentation from `mime`; kind is an internal blob/Telegram-method label only); the app fetches bytes via
 `GET /app/blob/<id>` (`ServeBlobGet`, range-capable `http.ServeContent`).
