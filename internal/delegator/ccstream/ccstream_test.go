@@ -2541,8 +2541,9 @@ func TestWaitForCompaction_NoArm(t *testing.T) {
 }
 
 func TestArmCompactionWait_OneShot(t *testing.T) {
-	// Verifies compactDoneCh is cleared after compact_boundary fires,
-	// so a second call to WaitForCompaction returns immediately.
+	// Verifies compactCh is consumed (and cleared) by the first
+	// WaitForCompaction call after compact_boundary fires, so a second call
+	// returns immediately (unarmed).
 	t.Parallel()
 
 	b := &Backend{}
@@ -2580,21 +2581,13 @@ func TestWaitForCompaction_IdleWithoutBoundary(t *testing.T) {
 	defer cancel()
 	go func() { done <- b.WaitForCompaction(ctx) }()
 
-	// Unlike the sibling cases above, this sleep is load-bearing, not
-	// decorative: signalCompactionAbort's fire-and-clear (compaction.go) nils
-	// both compactDoneCh/compactAbortCh as part of firing, so a WaitForCompaction
-	// call that hasn't yet captured its local copies of those channels
-	// (b.turnMu.Lock(); done := b.compactDoneCh; abort := b.compactAbortCh)
-	// before the clear reads them back as nil and takes the "never armed"
-	// fast path — silently returning nil (success) instead of
-	// ErrCompactionNoBoundary. Confirmed by deleting this sleep: the test
-	// then flakes with "err = <nil>, want ErrCompactionNoBoundary" under
-	// load. That's a genuine pre-existing production race in
-	// WaitForCompaction/signalCompactionAbort, out of scope for #1519 to fix
-	// (needs its own todo — see notes-1519.md) — keep the sleep here so this
-	// test still exercises the intended (armed-before-fire) ordering rather
-	// than silently degrading into a coin flip.
-	time.Sleep(10 * time.Millisecond)
+	// No settling sleep needed (#1526): resolveCompactionWait no longer signals
+	// resolution by nil-ing shared fields, so it can't race a WaitForCompaction
+	// call that hasn't yet captured its local copy of compactCh — the channel
+	// identity is stable and the outcome value is buffered on it regardless of
+	// which goroutine reaches its critical section first. A fixed sleep here
+	// used to be load-bearing (masked a real bug, see git history/#1526); it
+	// no longer is.
 	select {
 	case <-done:
 		t.Fatal("WaitForCompaction returned before idle")
