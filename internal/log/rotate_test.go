@@ -530,11 +530,23 @@ func TestStartRotationRunsImmediately(t *testing.T) {
 	})
 	defer stop()
 
-	// Wait for the immediate run to complete
-	time.Sleep(200 * time.Millisecond)
+	// Wait for the immediate run to complete. Previously a fixed
+	// time.Sleep(200ms) hoping the goroutine's file I/O (read + gzip +
+	// write) finished by then — a real forward-progress requirement with no
+	// completion signal, which a loaded `go test -p=$(nproc) -parallel=16`
+	// run could blow through under disk contention (#1513). Poll for the
+	// actual archive file instead.
+	deadline := time.Now().Add(2 * time.Second)
+	var archives []string
+	for time.Now().Before(deadline) {
+		archives, _ = filepath.Glob(filepath.Join(archiveDir, "*.jsonl.gz"))
+		if len(archives) > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	// Archive should exist from the immediate run
-	archives, _ := filepath.Glob(filepath.Join(archiveDir, "*.jsonl.gz"))
 	if len(archives) != 1 {
 		t.Errorf("expected 1 archive from immediate run, got %d", len(archives))
 	}

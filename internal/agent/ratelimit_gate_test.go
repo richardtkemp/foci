@@ -172,8 +172,15 @@ func TestRateLimitGate_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Wait for gate to expire, then drain
-	time.Sleep(150 * time.Millisecond)
+	// Wait for the gate to expire, then drain. Previously a fixed
+	// time.Sleep(150ms) against a 100ms gate — only 1.5x margin on a real
+	// wall-clock deadline, which a loaded `go test -p=$(nproc)
+	// -parallel=16` run could blow through (#1513). Poll IsLimited instead
+	// of guessing how long "expired" takes.
+	deadline := time.Now().Add(2 * time.Second)
+	for limited, _ := g.IsLimited(); limited && time.Now().Before(deadline); limited, _ = g.IsLimited() {
+		time.Sleep(time.Millisecond)
+	}
 	items := g.DrainQueue()
 	if len(items) != 50 {
 		t.Errorf("expected 50 queued items, got %d", len(items))

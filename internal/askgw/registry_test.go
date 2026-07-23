@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/clock"
 )
 
 type mockWriter struct {
@@ -129,8 +131,15 @@ func TestRegistryCancel(t *testing.T) {
 	}
 }
 
+// TestRegistryTimeout proves an unanswered ask is auto-resolved once its
+// timeout elapses. Driven by a *clock.Fake so the wait for the timeout is
+// virtual (Advance fires it synchronously) rather than a real sleep racing
+// the registry's internal timer — the fixed 50ms-timeout/150ms-sleep margin
+// this replaced could flake under a loaded `go test -p=$(nproc)
+// -parallel=16` run (#1513).
 func TestRegistryTimeout(t *testing.T) {
-	r := NewRegistry()
+	fc := clock.NewFake()
+	r := NewRegistryWithClock(fc)
 	connID := r.RegisterConn()
 	w := &mockWriter{}
 
@@ -139,7 +148,7 @@ func TestRegistryTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	time.Sleep(150 * time.Millisecond)
+	fc.Advance(50 * time.Millisecond)
 
 	if r.Get(connID, "ask-1") != nil {
 		t.Fatal("entry should be removed after timeout")

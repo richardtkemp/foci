@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"foci/internal/clock"
 )
 
 type connWriter interface {
@@ -22,7 +24,7 @@ type entry struct {
 	current    int
 	answers    map[string]json.RawMessage
 	msgID      string
-	timer      *time.Timer
+	timer      clock.Timer
 	cancelFn   func()
 
 	// platformMsgID is the platform-native message ID of the most recently
@@ -45,6 +47,7 @@ type Registry struct {
 	mu      sync.Mutex
 	connSeq uint64
 	conns   map[uint64]map[string]*entry
+	clock   clock.Clock
 
 	// answered tracks recently-answered asks (see answeredInfo/recordAnswered)
 	// so a later `notify` frame — arriving after the entry above has already
@@ -53,9 +56,18 @@ type Registry struct {
 }
 
 func NewRegistry() *Registry {
+	return NewRegistryWithClock(clock.Real())
+}
+
+// NewRegistryWithClock is NewRegistry with an injectable time source, so
+// tests can drive the per-ask timeout deterministically via a *clock.Fake
+// instead of racing a real sleep against it (#1513). Production callers
+// should use NewRegistry.
+func NewRegistryWithClock(clk clock.Clock) *Registry {
 	return &Registry{
 		conns:    make(map[uint64]map[string]*entry),
 		answered: make(map[string]*answeredInfo),
+		clock:    clk,
 	}
 }
 
@@ -158,7 +170,7 @@ func (r *Registry) Add(connID uint64, askID, agentID, sessionKey string, w connW
 		cancelFn:   cancelFn,
 	}
 	if timeout > 0 {
-		e.timer = time.AfterFunc(timeout, func() {
+		e.timer = r.clock.AfterFunc(timeout, func() {
 			r.ResolveTimeout(connID, askID)
 		})
 	}

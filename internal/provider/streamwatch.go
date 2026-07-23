@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"foci/internal/clock"
 )
 
 // StreamIdleWatchdog bounds the gap between streamed chunks without capping the
@@ -20,7 +22,7 @@ type StreamIdleWatchdog struct {
 	cancel context.CancelFunc
 
 	mu    sync.Mutex
-	timer *time.Timer
+	timer clock.Timer
 	fired bool
 }
 
@@ -28,11 +30,19 @@ type StreamIdleWatchdog struct {
 // that cancels it after idle of inactivity. An idle <= 0 disables the timeout:
 // the returned watchdog still cancels on Stop, but never fires on its own.
 func NewStreamIdleWatchdog(parent context.Context, idle time.Duration) (context.Context, *StreamIdleWatchdog) {
+	return NewStreamIdleWatchdogWithClock(parent, idle, clock.Real())
+}
+
+// NewStreamIdleWatchdogWithClock is NewStreamIdleWatchdog with an injectable
+// time source, so tests can drive the idle countdown deterministically via a
+// *clock.Fake instead of racing real sleeps against the idle window (#1513).
+// Production callers should use NewStreamIdleWatchdog.
+func NewStreamIdleWatchdogWithClock(parent context.Context, idle time.Duration, clk clock.Clock) (context.Context, *StreamIdleWatchdog) {
 	ctx, cancel := context.WithCancel(parent)
 	w := &StreamIdleWatchdog{idle: idle, cancel: cancel}
 	if idle > 0 {
 		w.mu.Lock()
-		w.timer = time.AfterFunc(idle, w.onTimeout)
+		w.timer = clk.AfterFunc(idle, w.onTimeout)
 		w.mu.Unlock()
 	}
 	return ctx, w

@@ -4,19 +4,26 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/clock"
 )
 
 // Tests that the timer fires after the configured window and flushes all
 // accumulated messages as a single batch.
+//
+// Driven by a *clock.Fake so the wait for the timer is virtual: Advance fires
+// it synchronously with no wall-clock sleep, so this can't flake under load
+// (#1513) the way a fixed Sleep-then-assert racing the real window would.
 func TestGroupThrottle_TimerFlush(t *testing.T) {
 	var mu sync.Mutex
 	var flushed []QueuedMessage
 
-	gt := NewGroupThrottle(50*time.Millisecond, func(msgs []QueuedMessage) {
+	fc := clock.NewFake()
+	gt := NewGroupThrottleWithClock(50*time.Millisecond, func(msgs []QueuedMessage) {
 		mu.Lock()
 		flushed = append(flushed, msgs...)
 		mu.Unlock()
-	}, nil)
+	}, nil, fc)
 	defer gt.Stop()
 
 	gt.Add(QueuedMessage{ChatID: 1, Text: "a"})
@@ -29,7 +36,7 @@ func TestGroupThrottle_TimerFlush(t *testing.T) {
 	}
 	mu.Unlock()
 
-	time.Sleep(100 * time.Millisecond)
+	fc.Advance(50 * time.Millisecond)
 
 	mu.Lock()
 	if len(flushed) != 2 {
@@ -81,24 +88,27 @@ func TestGroupThrottle_MentionFlush(t *testing.T) {
 
 // Tests that messages from different chat IDs are isolated in separate
 // buckets with independent timers.
+//
+// Driven by a *clock.Fake — see TestGroupThrottle_TimerFlush.
 func TestGroupThrottle_MultiChat(t *testing.T) {
 	var mu sync.Mutex
 	chatFlushCount := map[int64]int{}
 
-	gt := NewGroupThrottle(50*time.Millisecond, func(msgs []QueuedMessage) {
+	fc := clock.NewFake()
+	gt := NewGroupThrottleWithClock(50*time.Millisecond, func(msgs []QueuedMessage) {
 		mu.Lock()
 		for _, m := range msgs {
 			chatFlushCount[m.ChatID]++
 		}
 		mu.Unlock()
-	}, nil)
+	}, nil, fc)
 	defer gt.Stop()
 
 	gt.Add(QueuedMessage{ChatID: 100, Text: "chat100-a"})
 	gt.Add(QueuedMessage{ChatID: 200, Text: "chat200-a"})
 	gt.Add(QueuedMessage{ChatID: 100, Text: "chat100-b"})
 
-	time.Sleep(100 * time.Millisecond)
+	fc.Advance(50 * time.Millisecond)
 
 	mu.Lock()
 	if chatFlushCount[100] != 2 {
@@ -144,34 +154,45 @@ func TestGroupThrottle_Stop(t *testing.T) {
 // Tests that the timer is a fixed-window cooldown: subsequent messages do NOT
 // reset the timer. The first message starts the window, and all messages
 // accumulated within the window are delivered when it fires.
+//
+// Previously this asserted a wall-clock upper bound (elapsed > 130ms after two
+// real sleeps) — exactly the class of assertion that flakes under a loaded
+// `go test -p=$(nproc) -parallel=16` run (#1513). Driven by a *clock.Fake
+// instead: virtual time only moves on Advance, so the exact "fires at 80ms
+// virtual, not 120ms" claim is checked with no tolerance and no wall-clock
+// wait at all.
 func TestGroupThrottle_FixedWindow(t *testing.T) {
 	var mu sync.Mutex
-	var flushTimes []time.Time
+	var flushCount int
 
-	gt := NewGroupThrottle(80*time.Millisecond, func(msgs []QueuedMessage) {
+	fc := clock.NewFake()
+	gt := NewGroupThrottleWithClock(80*time.Millisecond, func(msgs []QueuedMessage) {
 		mu.Lock()
-		flushTimes = append(flushTimes, time.Now())
+		flushCount++
 		mu.Unlock()
-	}, nil)
+	}, nil, fc)
 	defer gt.Stop()
 
-	start := time.Now()
 	gt.Add(QueuedMessage{ChatID: 1, Text: "t=0"})
 
 	// Add another message 40ms later — timer should NOT reset.
-	time.Sleep(40 * time.Millisecond)
+	fc.Advance(40 * time.Millisecond)
 	gt.Add(QueuedMessage{ChatID: 1, Text: "t=40ms"})
 
-	time.Sleep(100 * time.Millisecond)
-
+	// If the timer had (wrongly) reset on the second Add, it would fire at
+	// 40+80=120ms virtual, not 80ms — so at exactly 80ms it must NOT have
+	// fired yet if it reset, but must have fired if it didn't.
+	fc.Advance(39 * time.Millisecond) // now at 79ms virtual
 	mu.Lock()
-	if len(flushTimes) != 1 {
-		t.Fatalf("expected exactly 1 flush, got %d", len(flushTimes))
+	if flushCount != 0 {
+		t.Fatalf("flushed before the 80ms window closed (got %d)", flushCount)
 	}
-	elapsed := flushTimes[0].Sub(start)
-	// Should fire around 80ms, not 120ms (40+80). Allow generous tolerance.
-	if elapsed > 130*time.Millisecond {
-		t.Errorf("flush took %v — timer appears to have reset (expected ~80ms)", elapsed)
+	mu.Unlock()
+
+	fc.Advance(1 * time.Millisecond) // now at 80ms virtual: window closes
+	mu.Lock()
+	if flushCount != 1 {
+		t.Fatalf("expected exactly 1 flush at the 80ms window, got %d", flushCount)
 	}
 	mu.Unlock()
 }
