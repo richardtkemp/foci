@@ -139,6 +139,32 @@ func TestFireTurnComplete_StopsTypingIndicator(t *testing.T) {
 	}
 }
 
+// waitForArmed polls until WaitForTurn has installed b.waitCh (i.e. it has
+// reached its blocking select) or fails the test after a generous deadline.
+// notifyTurnComplete's send is a best-effort non-blocking write against
+// b.waitCh — if it's called while waitCh is still nil (WaitForTurn's
+// goroutine hasn't been scheduled yet), the signal is silently dropped and
+// WaitForTurn blocks forever, with the test's own timeout later reporting a
+// failure that has nothing to do with the code under test. A fixed sleep
+// before notifyTurnComplete is exactly this bug waiting to happen under `go
+// test -p=$(nproc) -parallel=16` (#1519, same shape as #1503/#1513) — poll
+// the actual state instead of guessing a duration (mirrors
+// ccstream's waitFor / control_test.go's waitForPendingControl).
+func waitForArmed(t *testing.T, b *Backend) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		b.waitMu.Lock()
+		armed := b.waitCh != nil
+		b.waitMu.Unlock()
+		if armed {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("WaitForTurn did not arm its wait channel in time")
+}
+
 // --- WaitForTurn tests ---
 
 // TestWaitForTurn_AlreadySignalled verifies that WaitForTurn returns
@@ -158,8 +184,9 @@ func TestWaitForTurn_AlreadySignalled(t *testing.T) {
 		done <- b.WaitForTurn(ctx)
 	}()
 
-	// Give WaitForTurn time to set up its channel.
-	time.Sleep(10 * time.Millisecond)
+	// Wait for WaitForTurn to actually install its channel before signalling
+	// — see waitForArmed.
+	waitForArmed(t, b)
 	b.notifyTurnComplete()
 
 	select {
@@ -211,6 +238,11 @@ func TestWaitForTurn_BlocksUntilSignal(t *testing.T) {
 		close(returned)
 	}()
 
+	// Confirm WaitForTurn has actually installed its channel (reached the
+	// blocking select) before asserting it hasn't returned yet — see
+	// waitForArmed.
+	waitForArmed(t, b)
+
 	// Verify it's still blocking after a short delay.
 	select {
 	case <-returned:
@@ -243,7 +275,7 @@ func TestWaitForTurn_CleansUpChannel(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	waitForArmed(t, b)
 	b.notifyTurnComplete()
 	<-done
 
