@@ -555,20 +555,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		if b.onCompactionDone != nil {
 			b.onCompactionDone(cb.CompactMetadata.PreTokens)
 		}
-		// Signal any armed compaction waiter (one-shot; clear after firing).
-		// Clear the abort channel too so the following idle's abort check
-		// (signalCompactionAbort) sees the wait already satisfied and no-ops.
+		// Resolve any armed compaction waiter with success. This also makes
+		// the following idle's abort check (signalCompactionAbort) a no-op —
+		// see resolveCompactionWait.
 		b.turnMu.Lock()
-		ch := b.compactDoneCh
-		b.compactDoneCh = nil
-		b.compactAbortCh = nil
+		b.resolveCompactionWait(nil)
 		b.turnMu.Unlock()
-		if ch != nil {
-			select {
-			case ch <- struct{}{}:
-			default:
-			}
-		}
 
 	case "session_state_changed":
 		// CC's authoritative run-loop boundary (opt-in via

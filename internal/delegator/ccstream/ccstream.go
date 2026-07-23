@@ -145,11 +145,15 @@ type Backend struct {
 	lastGraceLogEnd time.Time
 	turnEvents      *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
 	turnResultCh    chan *ResultMessage   // buffered(1), receives result
-	compactDoneCh   chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
-	compactAbortCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on idle-without-boundary (CC refused /compact)
-	compactStartCh  chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
-	turnText        strings.Builder       // accumulates text across assistant messages
-	turnTools       int                   // tool_use count this turn
+	// compactCh is armed by ArmCompactionWait and carries the resolved outcome:
+	// nil on compact_boundary (success), delegator.ErrCompactionNoBoundary on
+	// idle-without-boundary (CC refused /compact). A single value-carrying,
+	// buffered(1) channel rather than two separate signal channels — see
+	// resolveCompactionWait for why that matters (#1526).
+	compactCh      chan error
+	compactStartCh chan struct{}   // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
+	turnText       strings.Builder // accumulates text across assistant messages
+	turnTools      int             // tool_use count this turn
 	// Idle-keyed turn completion (#813 successor). The turn boundary is CC's
 	// own `session_state_changed` running/idle SDK stream (enabled via
 	// CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1 at launch): running/idle bracket
