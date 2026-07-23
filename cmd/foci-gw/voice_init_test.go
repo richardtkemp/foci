@@ -15,11 +15,13 @@ import (
 
 // newTestStore creates a secrets store from a key-value map.
 // Keys use "section.key" format (e.g. "groq.api_key" → [groq] api_key = "...").
-func newTestStore(vals map[string]string) *secrets.Store {
+func newTestStore(t *testing.T, vals map[string]string) *secrets.Store {
+	t.Helper()
 	dir, err := os.MkdirTemp(testtemp.Dir(), "foci-test-secrets-*")
 	if err != nil {
 		panic(err)
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	// Group by section
 	sections := map[string][]string{}
 	for k, v := range vals {
@@ -51,7 +53,7 @@ func newTestStore(vals map[string]string) *secrets.Store {
 // TestResolveVoiceAPIKey_Explicit verifies that an explicit secret name
 // is looked up directly in the secrets store.
 func TestResolveVoiceAPIKey_Explicit(t *testing.T) {
-	store := newTestStore(map[string]string{
+	store := newTestStore(t, map[string]string{
 		"groq.api_key": "groq-key-123",
 	})
 	got := resolveVoiceAPIKey(store, "groq.api_key", "https://api.groq.com/v1/audio")
@@ -64,7 +66,7 @@ func TestResolveVoiceAPIKey_Explicit(t *testing.T) {
 // is given, the hostname prefix is extracted from the endpoint URL and used
 // to look up "{prefix}.api_key" in the secrets store.
 func TestResolveVoiceAPIKey_HostnameFallback(t *testing.T) {
-	store := newTestStore(map[string]string{
+	store := newTestStore(t, map[string]string{
 		"groq.api_key": "groq-key-456",
 	})
 	got := resolveVoiceAPIKey(store, "", "https://api.groq.com/openai/v1/audio/speech")
@@ -76,7 +78,7 @@ func TestResolveVoiceAPIKey_HostnameFallback(t *testing.T) {
 // TestResolveVoiceAPIKey_MissingReturnsEmpty verifies that missing secrets
 // return an empty string without error.
 func TestResolveVoiceAPIKey_MissingReturnsEmpty(t *testing.T) {
-	store := newTestStore(map[string]string{})
+	store := newTestStore(t, map[string]string{})
 	got := resolveVoiceAPIKey(store, "nonexistent.key", "")
 	if got != "" {
 		t.Errorf("got %q, want empty string", got)
@@ -86,7 +88,7 @@ func TestResolveVoiceAPIKey_MissingReturnsEmpty(t *testing.T) {
 // TestResolveVoiceAPIKey_NoEndpoint verifies that an empty endpoint with no
 // explicit secret returns empty.
 func TestResolveVoiceAPIKey_NoEndpoint(t *testing.T) {
-	store := newTestStore(map[string]string{})
+	store := newTestStore(t, map[string]string{})
 	got := resolveVoiceAPIKey(store, "", "")
 	if got != "" {
 		t.Errorf("got %q, want empty string", got)
