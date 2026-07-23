@@ -594,12 +594,22 @@ func TestStartCleanupAndClose(t *testing.T) {
 
 	s.StartCleanup(10 * time.Millisecond)
 
-	// Wait for cleanup to run
-	time.Sleep(50 * time.Millisecond)
-
-	s.mu.RLock()
-	_, exists := s.values["test"]
-	s.mu.RUnlock()
+	// Wait for cleanup to run. Previously a fixed time.Sleep(50ms) racing the
+	// 10ms cleanup ticker (5x margin) — polling for the actual removal
+	// instead means this can't flake under a loaded `go test -p=$(nproc)
+	// -parallel=16` run regardless of how long the goroutine takes to be
+	// scheduled (#1513).
+	deadline := time.Now().Add(2 * time.Second)
+	var exists bool
+	for time.Now().Before(deadline) {
+		s.mu.RLock()
+		_, exists = s.values["test"]
+		s.mu.RUnlock()
+		if !exists {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	if exists {
 		t.Error("expired value should have been cleaned up by background goroutine")

@@ -300,8 +300,12 @@ lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
 	@# internal/testharness and internal/testtemp are test-only scaffolding:
 	# reachable solely from -tags=integration tests and _test.go files, which
 	# deadcode ./... does not compile, so they always appear unreachable.
+	# internal/clock/fake.go is the same shape: *clock.Fake is the shared
+	# injectable-time test double (#1513) imported only from other packages'
+	# _test.go files (clock.Real()/Clock/Timer in clock.go ARE used from
+	# production and stay covered).
 	@raw=$$($(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
-	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' || true); \
+	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@./bin/find-disconnected-tests ./...

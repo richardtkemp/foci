@@ -269,8 +269,15 @@ func TestRunInBackgroundPendingCount(t *testing.T) {
 	// Complete the work.
 	close(signal)
 
-	// Wait for goroutine to finish.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the delivery goroutine to finish. Previously a fixed
+	// time.Sleep(100ms) hoping the goroutine had run by then — a real
+	// forward-progress requirement with no signal to wait on, which a
+	// loaded `go test -p=$(nproc) -parallel=16` run could blow through
+	// (#1513). Poll the actual pending flag instead.
+	deadline := time.Now().Add(2 * time.Second)
+	for notifier.HasPending("test-pending") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 
 	if notifier.HasPending("test-pending") {
 		t.Error("expected pending count = 0 after delivery")

@@ -46,8 +46,9 @@ func TestBackgroundRunningGuard(t *testing.T) {
 	// Second call while first is still running should be skipped
 	r.maybeBackgroundWork(context.Background())
 
-	// Wait for first to complete
-	time.Sleep(200 * time.Millisecond)
+	// Wait for first to complete (see waitIdle: polls backgroundRunning under
+	// r.mu rather than a fixed sleep, so this can't flake under load #1513).
+	waitIdle(t, r)
 
 	mu.Lock()
 	got := calls
@@ -106,10 +107,17 @@ func TestBackgroundCooldown(t *testing.T) {
 }
 
 func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
-	// Verifies lastBackgroundEnded is stamped when the session finishes, not when it starts.
-	// Runs a simulated long session and checks the timestamp is recent relative to completion.
+	// Verifies lastBackgroundEnded is stamped when the session finishes, not
+	// when it starts: capture the session's own end time inside branchFn and
+	// assert lastBackgroundEnded is no earlier than that — a pure ordering
+	// check with no wall-clock tolerance to get wrong. (Previously compared
+	// time.Since(lastBackgroundEnded) against a fixed budget after a fixed
+	// time.Sleep(200ms) racing the goroutine's 100ms simulated work — a 2x
+	// margin a loaded `go test -p=$(nproc) -parallel=16` run could blow
+	// through, corrupting the result either way (#1513).)
 	var mu sync.Mutex
 	calls := 0
+	var sessionEnd time.Time
 
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -127,6 +135,9 @@ func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
 				mu.Unlock()
 				// Simulate a session that runs longer than the interval
 				time.Sleep(100 * time.Millisecond)
+				mu.Lock()
+				sessionEnd = time.Now()
+				mu.Unlock()
 				return true
 			},
 		},
@@ -136,17 +147,20 @@ func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
 	// First call fires — runs for 100ms (simulating a long session)
 	r.maybeBackgroundWork(context.Background())
 
-	// Wait for it to finish
-	time.Sleep(200 * time.Millisecond)
+	// Wait for it to finish (polls the actual completion flag rather than
+	// racing a fixed sleep against it).
+	waitIdle(t, r)
 
-	// Verify lastBackgroundEnded was set after the session finished
 	r.mu.Lock()
-	endedAge := time.Since(r.lastBackgroundEnded)
+	ended := r.lastBackgroundEnded
 	r.mu.Unlock()
 
-	// lastBackgroundEnded should be very recent (< 200ms ago, not 300ms+ ago)
-	if endedAge > 200*time.Millisecond {
-		t.Errorf("lastBackgroundEnded is %v old, expected < 200ms (should be set at end, not start)", endedAge)
+	mu.Lock()
+	end := sessionEnd
+	mu.Unlock()
+
+	if ended.Before(end) {
+		t.Errorf("lastBackgroundEnded (%v) is before the session actually finished (%v) — stamped at start, not end", ended, end)
 	}
 }
 

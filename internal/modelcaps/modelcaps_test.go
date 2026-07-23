@@ -252,8 +252,6 @@ func TestBackgroundRefreshSingleFlight(t *testing.T) {
 	}
 	wg.Wait()
 	<-done
-	// Allow the in-flight goroutine to store its result.
-	time.Sleep(30 * time.Millisecond)
 
 	mu.Lock()
 	got := calls
@@ -261,7 +259,22 @@ func TestBackgroundRefreshSingleFlight(t *testing.T) {
 	if got != 1 {
 		t.Errorf("fetcher called %d times, want 1 (single-flight)", got)
 	}
-	if _, ok := LookupFor(tb, "claude-opus-4-8"); !ok {
+
+	// Wait for the in-flight goroutine to store its result. Previously a
+	// fixed time.Sleep(30ms) after <-done — a real forward-progress
+	// requirement (the singleflight winner still has to write the cache
+	// after signalling done) with no completion signal, which a loaded
+	// `go test -p=$(nproc) -parallel=16` run could blow through (#1513).
+	// Poll LookupFor itself instead of guessing how long the store takes.
+	deadline := time.Now().Add(2 * time.Second)
+	var ok bool
+	for time.Now().Before(deadline) {
+		if _, ok = LookupFor(tb, "claude-opus-4-8"); ok {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !ok {
 		t.Error("background refresh result did not land")
 	}
 }

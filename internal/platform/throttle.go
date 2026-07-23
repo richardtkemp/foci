@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/clock"
 	"foci/internal/log"
 )
 
@@ -16,6 +17,7 @@ type GroupThrottle struct {
 	window  time.Duration
 	flushFn func([]QueuedMessage)
 	log     *log.ComponentLogger
+	clock   clock.Clock
 
 	mu    sync.Mutex
 	chats map[int64]*chatBucket
@@ -24,17 +26,26 @@ type GroupThrottle struct {
 // chatBucket holds buffered messages and the pending timer for a single chat.
 type chatBucket struct {
 	msgs  []QueuedMessage
-	timer *time.Timer
+	timer clock.Timer
 }
 
 // NewGroupThrottle creates a throttle with the given window duration.
 // flushFn is called (on a timer goroutine) with accumulated messages when the
 // window expires or a mention forces an immediate flush.
 func NewGroupThrottle(window time.Duration, flushFn func([]QueuedMessage), logger *log.ComponentLogger) *GroupThrottle {
+	return NewGroupThrottleWithClock(window, flushFn, logger, clock.Real())
+}
+
+// NewGroupThrottleWithClock is NewGroupThrottle with an injectable time
+// source, so tests can drive the fixed-window cooldown deterministically via
+// a *clock.Fake instead of racing real sleeps against the window (#1513).
+// Production callers should use NewGroupThrottle.
+func NewGroupThrottleWithClock(window time.Duration, flushFn func([]QueuedMessage), logger *log.ComponentLogger, clk clock.Clock) *GroupThrottle {
 	return &GroupThrottle{
 		window:  window,
 		flushFn: flushFn,
 		log:     logger,
+		clock:   clk,
 		chats:   make(map[int64]*chatBucket),
 	}
 }
@@ -69,7 +80,7 @@ func (g *GroupThrottle) Add(msg QueuedMessage) {
 
 	// Non-mention: start a timer if one isn't already running (fixed window).
 	if bucket.timer == nil {
-		bucket.timer = time.AfterFunc(g.window, func() {
+		bucket.timer = g.clock.AfterFunc(g.window, func() {
 			g.mu.Lock()
 			defer g.mu.Unlock()
 			b, ok := g.chats[chatID]
