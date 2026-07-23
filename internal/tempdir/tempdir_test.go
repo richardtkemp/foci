@@ -61,14 +61,27 @@ func TestMkdirTemp(t *testing.T) {
 // for a writable one.
 func TestProbeDir(t *testing.T) {
 	// Unwritable path should return empty.
-	if result := probeDir("/proc/nonexistent"); result != "" {
+	if result := probeDir("/proc/nonexistent", rootMode); result != "" {
 		t.Errorf("probeDir(/proc/nonexistent) = %q, want empty", result)
 	}
 
 	// Writable path should succeed.
 	dir := t.TempDir()
-	if result := probeDir(dir); result != dir {
+	if result := probeDir(dir, rootMode); result != dir {
 		t.Errorf("probeDir(%q) = %q, want %q", dir, result, dir)
+	}
+}
+
+// Verifies the root/spawn dir request no longer asks for a world-writable
+// mode (#1501): a fresh install where MkdirAll actually creates the dir
+// must not hand every local user a symlink-plant target against every
+// predictable-path writer under the root.
+func TestRootModeNotWorldWritable(t *testing.T) {
+	if rootMode&0o002 != 0 {
+		t.Fatalf("rootMode %o is world-writable — must not request 1777", rootMode)
+	}
+	if privateMode&0o077 != 0 {
+		t.Fatalf("privateMode %o grants non-owner access — must be private", privateMode)
 	}
 }
 

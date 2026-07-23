@@ -6,9 +6,7 @@ import (
 	"foci/internal/tools"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"foci/internal/tempdir"
 	"foci/internal/tools/browserjs"
@@ -350,8 +348,8 @@ func browserScreenshot(mgr *BrowserManager, p browserParams) (tools.ToolResult, 
 		}
 	}
 
-	path := filepath.Join(tempdir.Dir(), fmt.Sprintf("browser-screenshot-%d.png", time.Now().Unix()))
-	if err := os.WriteFile(path, buf, mgr.FileMode); err != nil {
+	path, err := writeTempFileExcl("browser-screenshot-*.png", buf, mgr.FileMode)
+	if err != nil {
 		return tools.ToolResult{Text: fmt.Sprintf("Error: save screenshot failed: %v", err)}, nil
 	}
 
@@ -379,12 +377,46 @@ func browserPDF(mgr *BrowserManager) (tools.ToolResult, error) {
 		return tools.ToolResult{Text: fmt.Sprintf("Error: read pdf failed: %v", err)}, nil
 	}
 
-	path := filepath.Join(tempdir.Dir(), fmt.Sprintf("browser-page-%d.pdf", time.Now().Unix()))
-	if err := os.WriteFile(path, buf, mgr.FileMode); err != nil {
+	path, err := writeTempFileExcl("browser-page-*.pdf", buf, mgr.FileMode)
+	if err != nil {
 		return tools.ToolResult{Text: fmt.Sprintf("Error: save pdf failed: %v", err)}, nil
 	}
 
 	return tools.ToolResult{Text: fmt.Sprintf("PDF saved to: %s", path)}, nil
+}
+
+// writeTempFileExcl saves data under the foci temp root using pattern (a
+// tempdir.Create glob pattern, e.g. "browser-screenshot-*.png") and returns
+// the resulting path. Unlike the previous
+// fmt.Sprintf("...-%d", time.Now().Unix()) + os.WriteFile approach, this
+// can't be symlink-planted: tempdir.Create opens with O_EXCL under a random
+// suffix, so a pre-existing file/symlink at any guessable name is simply
+// not the path picked — there's nothing for the write to follow (#1501: the
+// exec bridge's funcs-file used the same unsafe pattern into the same temp
+// root; this shares it and gets the same fix). mode restores the caller's
+// desired permission bits, since CreateTemp always creates 0600 regardless
+// of what's requested.
+func writeTempFileExcl(pattern string, data []byte, mode os.FileMode) (string, error) {
+	f, err := tempdir.Create(pattern)
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr != nil {
+		_ = os.Remove(path)
+		return "", writeErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return "", closeErr
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
 }
 
 func browserEvaluate(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
