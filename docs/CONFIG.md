@@ -1467,7 +1467,7 @@ dir = "/var/data/foci/sessions"
 
 | Variable | Description |
 |----------|-------------|
-| `FOCI_TMPDIR` | Overrides the canonical temp root (default `/tmp/foci`, falling back to `/tmp/foci-<uid>` then the OS temp dir if unwritable). All foci temp state — exec-bridge sockets, spawn sandboxes, app blobs, session-env files — lives under this root. Set it to run two foci instances on one host without sharing temp state; the Makefile test targets set it (alongside `TMPDIR`) to a per-run directory so tests never touch a live install's temp state. An unusable value falls through to the default ladder. |
+| `FOCI_TMPDIR` | Overrides the canonical temp root (default `/tmp/foci`, falling back to `/tmp/foci-<uid>` then the OS temp dir if unwritable). All foci temp state — exec-bridge sockets, spawn sandboxes, app blobs, session-env files — lives under this root. Set it to run two foci instances on one host without sharing temp state; the Makefile test targets set it (alongside `TMPDIR`) to a per-run directory so tests never touch a live install's temp state. An unusable value falls through to the default ladder. **Ad-hoc manual debug runs** (a one-off `go test` invocation with a custom scratch dir, outside `make test`/`make integration`) should point this at `/tmp/fgw/<name>`, never `/tmp/foci/<name>`: `/tmp/fgw` gets a daily cron sweep of anything older than 24h (`find /tmp/fgw -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} +`), while `/tmp/foci` — the live server root — has no age-based sweep at all, so an override that lands there survives forever if the run is killed before its own cleanup runs (confirmed: #1507 found 260 such abandoned directories, 2.6GB, in `/tmp/foci`). |
 
 ---
 
