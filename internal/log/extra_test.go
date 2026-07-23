@@ -7,10 +7,13 @@ import (
 )
 
 // Tests for per-package "extra" verbose logging (xtra:<pkg>), gated by
-// EnableExtra and emitted by Extra. Uses a unique component name so the
-// process-global enabled set doesn't collide with other tests.
+// EnableExtra and emitted by Extra. Each test uses a unique component name so
+// they don't collide with each other, and calls resetExtraLogging(t) so the
+// process-global enabled set doesn't leak into a later test or a `-count>1`
+// rerun of this same test binary.
 
 func TestExtraEnabled_DefaultOffAndPrefixMatch(t *testing.T) {
+	resetExtraLogging(t)
 	const pkg = "extratest_pkg_a"
 
 	if ExtraEnabled(pkg) {
@@ -37,6 +40,7 @@ func TestExtraEnabled_DefaultOffAndPrefixMatch(t *testing.T) {
 }
 
 func TestExtra_EmitsWhenEnabledTaggedXtra(t *testing.T) {
+	resetExtraLogging(t)
 	const pkg = "extratest_pkg_b"
 
 	// Redirect output to a buffer; restore on exit.
@@ -79,6 +83,7 @@ func TestExtra_EmitsWhenEnabledTaggedXtra(t *testing.T) {
 // ComponentLogger.Extra routes through the base-package enable too, even when
 // the logger carries a ":label" suffix.
 func TestComponentLoggerExtra_LabelMatchesBaseEnable(t *testing.T) {
+	resetExtraLogging(t)
 	const base = "extratest_pkg_c"
 
 	std.mu.Lock()

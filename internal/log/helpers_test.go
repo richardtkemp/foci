@@ -64,6 +64,20 @@ func withDebugLevel(t *testing.T) {
 	t.Cleanup(func() { setLevel(INFO) })
 }
 
+// resetExtraLogging clears the process-global "xtra:" per-package enabled set
+// and registers cleanup to restore whatever was there before. Without this,
+// EnableExtra/SetExtra calls made by one test persist in the package-level
+// atomic for the rest of the process — including into a later `-count>1`
+// rerun of the same test binary, where a test asserting "disabled by
+// default" would otherwise find its component already enabled by its own
+// prior run.
+func resetExtraLogging(t *testing.T) {
+	t.Helper()
+	prev := extraLogging.Load()
+	extraLogging.Store(nil)
+	t.Cleanup(func() { extraLogging.Store(prev) })
+}
+
 // openAPIWriter opens a file as the API JSONL writer and registers cleanup.
 func openAPIWriter(t *testing.T, path string) *os.File {
 	t.Helper()
