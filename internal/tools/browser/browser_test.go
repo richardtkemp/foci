@@ -12,10 +12,27 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/config"
 	"foci/internal/testtemp"
 )
+
+// removeAllRetry tolerates chromium's async shutdown: Stop() (browser.go)
+// closes the CDP connection but doesn't wait for the underlying chromium OS
+// process to exit, so a profile-dir write can land after RemoveAll has
+// already walked past that subdirectory, leaving it non-empty and the
+// top-level rmdir failing with ENOTEMPTY. A few short retries absorb that
+// window without masking a real removal failure (foci_todo #1498).
+func removeAllRetry(dir string) {
+	var err error
+	for i := 0; i < 5; i++ {
+		if err = os.RemoveAll(dir); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
 
 // marshalParams is a test helper that JSON-marshals params and fails the test on error.
 func marshalParams(t *testing.T, v map[string]any) json.RawMessage {
@@ -697,7 +714,7 @@ func TestBrowserPersistentProfile(t *testing.T) {
 		DOMStableSec: 0.1,
 		UserDataDir:  profile,
 	}, 0640)
-	t.Cleanup(func() { mgr.Stop(); _ = os.RemoveAll(base) })
+	t.Cleanup(func() { mgr.Stop(); removeAllRetry(base) })
 	tool := NewBrowserTool(mgr)
 
 	// incognito=false so the configured persistent profile is used.

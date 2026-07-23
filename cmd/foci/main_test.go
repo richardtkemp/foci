@@ -20,22 +20,30 @@ var testBinary string
 
 func TestMain(m *testing.M) {
 	// Build the CLI binary once for all tests.
+	//
+	// NOTE: os.Exit does not run deferred calls, so `defer os.RemoveAll(dir)`
+	// here would silently never fire once TestMain itself ends in os.Exit —
+	// this used to be exactly that bug (foci_todo #1498: every run of this
+	// package's tests leaked its temp dir + built binary, unconditionally).
+	// Every exit path below must remove dir explicitly before calling os.Exit.
 	dir, err := os.MkdirTemp(testtemp.Dir(), "foci-test-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create temp dir: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.RemoveAll(dir)
 
 	testBinary = filepath.Join(dir, "foci")
 	build := exec.Command("go", "build", "-o", testBinary, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build failed: %v\n%s\n", err, out)
+		os.RemoveAll(dir)
 		os.Exit(1)
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // mockGateway creates a test server that mimics the foci HTTP gateway.

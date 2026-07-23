@@ -111,12 +111,20 @@ test:
 	@# cc-stub) do NOT inherit the lock — a lingering child must not keep the
 	@# lock held after the runner exits, or the next run would block forever.
 	@# Full output → $(LOGFILE) on disk; stdout gets only the failure summary +
-	@# a file ref (see the `integration` target for the rationale). Output is
-	@# retained (no cleanup) under /tmp/fgw — a daily cron sweeps entries >24h.
+	@# a file ref (see the `integration` target for the rationale). $(LOGFILE)
+	@# (the *result* — tiny, KB-scale) is RETAINED regardless of pass/fail, so a
+	@# green run's log is still there to check what actually ran. $(TESTDIR)
+	@# itself (the *bulk* — go's own build-cache workdir plus, for callers that
+	@# also build helper binaries into it, their linked output) is reclaimed
+	@# unconditionally right after the run: it's 100% reproducible scratch, not
+	@# a result, and letting it survive is what used to fill /tmp/fgw (foci_todo
+	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
+	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
+	  rm -rf $(TESTDIR) ; \
 	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,unit,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
@@ -133,19 +141,31 @@ integration:
 	@# LARGE — write it to $(LOGFILE) on disk and print only the failure summary
 	@# + a file ref on stdout, so a caller (incl. an agent piping this into
 	@# context) never ingests the whole transcript. Open $(LOGFILE) to review a
-	@# run carefully. Both $(TESTDIR) and $(LOGFILE) are RETAINED (no cleanup) so
-	@# a run's artifacts survive for inspection; they live under /tmp/fgw, which a
-	@# daily cron sweeps for entries >24h.
+	@# run carefully. $(LOGFILE) (the *result*) is RETAINED regardless of
+	@# pass/fail. $(TESTDIR) (the *bulk* — two full foci-gw + cc-stub builds via
+	@# internal/testharness's shared-binary cache, ~165M/run) is reclaimed
+	@# unconditionally right after the run: nothing diagnostic lives there that
+	@# isn't already in $(LOGFILE) (on-failure gateway stderr is dumped into the
+	@# test log itself, and per-test scratch already lives under t.TempDir(),
+	@# which Go removes on its own regardless of pass/fail) — retaining the
+	@# binaries bought nothing and is what filled /tmp/fgw (foci_todo #1498).
+	@# The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop for
+	@# anything this recipe doesn't reach (e.g. an aborted run).
 	@# Read-only lock fd (9<) — see the `test` target above for why (fs.protected_regular).
 	@# The orphan-sweep pattern below is anchored `foci-l2-bin[0-9]` (a real run dir is
 	@# foci-l2-bin<rand>/): a bare `foci-l2-bin` self-matches this recipe shell's OWN
 	@# cmdline (which contains the pkill literal), SIGTERM-ing it before the failure
 	@# summary below prints — so make reported `Terminated` and the FAIL lines vanished.
+	@# The pkill sweep runs BEFORE rm -rf $(TESTDIR) below: pkill matches a live
+	@# process's cmdline, not the directory's continued existence, but killing
+	@# any runaway foci-gw/cc-stub first avoids racing a still-open binary FD
+	@# against the removal (harmless on Linux either way, but tidier).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 600s -parallel=$(IPARALLEL) -v ./test/integration/... ./internal/testharness/... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
+	  rm -rf $(TESTDIR) ; \
 	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,integration,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 

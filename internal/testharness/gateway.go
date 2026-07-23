@@ -1112,6 +1112,35 @@ func sharedBinary(t *testing.T, repoRoot, pkg string) string {
 	return sharedBins[pkg]
 }
 
+// CleanupSharedBinaries removes the process-lifetime shared-binary cache
+// directory built by sharedBinary (foci_todo #1498). It must be called from a
+// TestMain, once, after m.Run() returns and before os.Exit — never from
+// os.Exit(m.Run()) directly, since os.Exit skips deferred/subsequent cleanup
+// only if placed wrong; here it's a plain statement before the real exit, so
+// order is what matters, not defer.
+//
+// Without this, sharedBinDir is only ever reclaimed by whatever happens to be
+// wrapping the test invocation: `make test`/`make integration` point
+// FOCI_TEST_TMPDIR at a per-run dir it deletes at the end of the run (see the
+// Makefile), but a bare `go test -tags=integration ./test/integration/...`
+// (the normal thing to do while iterating on a fix, not through make) has no
+// such wrapper — testtemp.Dir() falls back to the shared /tmp/fgw root
+// directly, and the ~83M binary pair (foci-gw + cc-stub) becomes a permanent,
+// unowned top-level entry there, bounded only by the daily cron sweep. This
+// was measured as the single largest contributor to /tmp/fgw's growth: 84
+// orphaned foci-l2-bin* dirs, 6.6G, from one afternoon of direct test runs.
+func CleanupSharedBinaries() {
+	sharedBinMu.Lock()
+	defer sharedBinMu.Unlock()
+	if sharedBinDir != "" {
+		_ = os.RemoveAll(sharedBinDir)
+		sharedBinDir = ""
+		sharedBins = map[string]string{}
+		sharedBinErr = map[string]error{}
+		sharedBinOnce = map[string]*sync.Once{}
+	}
+}
+
 // ----- Internal: synthetic buffer with mutex ------------------------
 
 type syncBuffer struct {
