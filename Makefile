@@ -3,6 +3,17 @@ GIT_COMMIT ?= $(shell git -c safe.directory=$(CURDIR) rev-parse --short HEAD 2>/
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 GOBIN ?= $(shell go env GOPATH)/bin
+# Pinned at Makefile-parse time, under the REAL $HOME — not inside a recipe,
+# where the test/coverage targets below override HOME to a per-run scratch dir
+# (see TESTDIR/home). GOCACHE/GOMODCACHE/GOPATH default to $HOME-relative paths
+# (~/.cache/go-build, ~/go/pkg/mod), so an unpinned recipe would have the HOME
+# override silently drag the build+module cache into the scratch dir too — empty
+# on every run, forcing a full cold rebuild, then deleting it with $(TESTDIR).
+# Exporting these alongside HOME on each go test line keeps the shared caches
+# (warm, reused across runs) while still sandboxing $HOME's dotfiles/state.
+GOCACHE_PIN    := $(shell go env GOCACHE)
+GOMODCACHE_PIN := $(shell go env GOMODCACHE)
+GOPATH_PIN     := $(shell go env GOPATH)
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 # -parallel ceiling for L2 integration tests. Set well above the real
 # governor — the weighted budget in internal/testharness/parallel.go
@@ -95,7 +106,7 @@ find-unscoped-logging:
 test:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
 	$(eval LOGFILE := $(TESTDIR).log)
-	@mkdir -p $(TESTDIR)
+	@mkdir -p $(TESTDIR)/home
 	@# /tmp/heavy serialises the test runner against any other heavy build
 	@# (e.g. a concurrent `update.sh` deploy build) that holds the same lock,
 	@# so they don't starve each other for CPU and trip deadline-sensitive
@@ -121,7 +132,7 @@ test:
 	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
 	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 ./... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -136,7 +147,7 @@ integration:
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
 	$(eval TESTDIR := /tmp/fgw/integration-$(shell date +%s))
 	$(eval LOGFILE := $(TESTDIR).log)
-	@mkdir -p $(TESTDIR)
+	@mkdir -p $(TESTDIR)/home
 	@# Full -v output (every RUN/PASS line + on-failure gateway stderr dumps) is
 	@# LARGE — write it to $(LOGFILE) on disk and print only the failure summary
 	@# + a file ref on stdout, so a caller (incl. an agent piping this into
@@ -161,7 +172,7 @@ integration:
 	@# any runaway foci-gw/cc-stub first avoids racing a still-open binary FD
 	@# against the removal (harmless on Linux either way, but tidier).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 600s -parallel=$(IPARALLEL) -v ./test/integration/... ./internal/testharness/... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 600s -parallel=$(IPARALLEL) -v ./test/integration/... ./internal/testharness/... > $(LOGFILE) 2>&1 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
@@ -179,11 +190,11 @@ integration:
 bucket-audit:
 	@echo "=== bucket-audit: low vs high parallelism ==="
 	$(eval TESTDIR := /tmp/fgw/bktaudit-$(shell date +%s))
-	@mkdir -p $(TESTDIR)
+	@mkdir -p $(TESTDIR)/home
 	@echo "--- low (-parallel=2) ---"
-	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
+	-@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
 	@echo "--- high (-parallel=$(IPARALLEL)) ---"
-	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
+	-@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
 	@rm -rf $(TESTDIR)
 
 # `make land` — the sanctioned path to main (merge-lock landing, #1448 pieces 1+2).
@@ -213,15 +224,15 @@ land:
 
 coverage:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
-	@mkdir -p $(TESTDIR)
+	@mkdir -p $(TESTDIR)/home
 	@echo "=== Test Coverage ==="
-	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage-report:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
-	@mkdir -p $(TESTDIR)
+	@mkdir -p $(TESTDIR)/home
 	@echo "=== Generating Coverage Report ==="
-	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
+	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
 	@rm -rf $(TESTDIR)
 	@go tool cover -func=coverage.out | tail -20
 	@echo ""
@@ -230,9 +241,9 @@ coverage-report:
 
 coverage-html:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
-	@mkdir -p $(TESTDIR)
+	@mkdir -p $(TESTDIR)/home
 	@echo "=== Generating HTML Coverage Report ==="
-	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
+	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
 	@rm -rf $(TESTDIR)
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report saved to coverage.html"
@@ -243,9 +254,9 @@ COVERAGE_PKG_MIN ?= 45.0
 
 coverage-check:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
-	@mkdir -p $(TESTDIR)
+	@mkdir -p $(TESTDIR)/home
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
-	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
+	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
 	@rm -rf $(TESTDIR)
 	@if grep -q '^FAIL' .test-output.tmp; then \
 		rm -f .test-output.tmp; \
