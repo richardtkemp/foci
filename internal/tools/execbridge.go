@@ -328,7 +328,26 @@ func (b *ExecBridge) writeShellFuncs() error {
 		}
 	}
 
-	return os.WriteFile(b.funcsPath, []byte(sb.String()), 0600)
+	// O_EXCL rather than os.WriteFile (O_TRUNC, no O_EXCL): funcsPath is
+	// built from a predictable pattern (session key + gw pid + counter, all
+	// discoverable by a local user), and the temp root it lives under can be
+	// group- or world-writable depending on deployment (see
+	// internal/tempdir's rootMode). os.WriteFile follows an existing symlink
+	// at that path and truncates whatever it points at; O_EXCL makes an
+	// existing file/symlink at the path a hard error instead of a silent
+	// follow — an attacker who pre-plants the path gets a failed bridge
+	// startup, never a write into an arbitrary target (#1501). This is safe
+	// to require: the path is never reused (see NewSessionExecBridge's
+	// doc comment) and writeShellFuncs runs exactly once per bridge.
+	f, err := os.OpenFile(b.funcsPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("create funcs file: %w", err)
+	}
+	if _, err := f.WriteString(sb.String()); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write funcs file: %w", err)
+	}
+	return f.Close()
 }
 
 // validateShellFuncSchemaParity ensures every non-positional parameter in a

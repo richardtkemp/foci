@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -72,6 +73,40 @@ func TestExecBridgeLifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(bridge.FuncsPath()); !os.IsNotExist(err) {
 		t.Errorf("funcs file not cleaned up")
+	}
+}
+
+func TestExecBridgeFuncsFileRejectsSymlink(t *testing.T) {
+	// #1501 regression: writeShellFuncs must not follow a pre-existing
+	// symlink at its target path. A local attacker who predicts the
+	// (session-key + gw-pid + counter)-derived funcsPath and pre-plants a
+	// symlink to an arbitrary file must get a hard error from bridge
+	// construction — never a ~43KB write into that target.
+	t.Parallel()
+	r := testRegistry()
+
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("do-not-touch"), 0600); err != nil {
+		t.Fatalf("seed victim file: %v", err)
+	}
+	funcsPath := filepath.Join(dir, "exec-test-funcs.sh")
+	if err := os.Symlink(victim, funcsPath); err != nil {
+		t.Fatalf("plant symlink: %v", err)
+	}
+	sockPath := filepath.Join(dir, "exec-test.sock")
+
+	if bridge, err := newExecBridge(r, context.Background(), sockPath, funcsPath); err == nil {
+		bridge.Close()
+		t.Fatal("newExecBridge succeeded despite a pre-existing symlink at funcsPath — should have failed rather than following it")
+	}
+
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(got) != "do-not-touch" {
+		t.Fatalf("victim file was overwritten through the symlink: %q", got)
 	}
 }
 

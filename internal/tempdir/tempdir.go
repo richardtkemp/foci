@@ -41,30 +41,52 @@ func resolve() string {
 }
 
 // resolveRoot walks the root ladder: the override (when set and usable),
-// then the shared Root (created with sticky-bit world-writable perms like
-// /tmp), then a per-uid fallback if Root isn't writable, then the OS temp
-// dir as a last resort. An unusable override falls through to the ladder
-// rather than failing — a bad FOCI_TMPDIR degrades to default behaviour
-// instead of breaking every temp write.
+// then the shared Root (created setgid + group-writable, matching how it's
+// actually deployed — see rootMode), then a per-uid fallback if Root isn't
+// writable (created private to that uid — see privateMode, nothing else
+// legitimately needs to write there), then the OS temp dir as a last
+// resort. An unusable override falls through to the ladder rather than
+// failing — a bad FOCI_TMPDIR degrades to default behaviour instead of
+// breaking every temp write.
 func resolveRoot(override string) string {
 	if override != "" {
-		if dir := probeDir(override); dir != "" {
+		if dir := probeDir(override, privateMode); dir != "" {
 			return dir
 		}
 	}
-	if dir := probeDir(Root); dir != "" {
+	if dir := probeDir(Root, rootMode); dir != "" {
 		return dir
 	}
-	if dir := probeDir(fmt.Sprintf("/tmp/foci-%d", os.Getuid())); dir != "" {
+	if dir := probeDir(fmt.Sprintf("/tmp/foci-%d", os.Getuid()), privateMode); dir != "" {
 		return dir
 	}
 	return os.TempDir()
 }
 
-// probeDir tries to create dir (mode 1777) and write a temp file in it.
-// Returns dir if writable, empty string otherwise.
-func probeDir(dir string) string {
-	if err := os.MkdirAll(dir, 0o1777); err != nil {
+// rootMode is the mode requested for the shared temp root when this process
+// creates it (MkdirAll only ever applies a mode on actual creation — an
+// already-existing dir keeps whatever ops set up out-of-band, e.g. an ACL).
+// It must match live deployment reality: on a real install the root is
+// observed as setgid + group-writable, NOT world-writable
+// (`drwxrwsr-x`, i.e. 02775 — see #1501). Requesting 1777 (world-writable)
+// here was misleading to every reader and, on a fresh install where
+// MkdirAll genuinely creates the dir, handed any local user a symlink-plant
+// target against every predictable-path writer under the root. Group-write
+// is kept because a shared multi-uid root (the daemon plus other members of
+// its group) is the deployed reality; "other" only gets read+execute.
+const rootMode = 0o2775
+
+// privateMode is the mode for a temp root that is legitimately single-uid
+// (the FOCI_TMPDIR override, and the per-uid /tmp/foci-<uid> fallback used
+// only when the shared Root isn't writable). Nothing else needs access, so
+// there's no reason to widen it beyond the owner.
+const privateMode = 0o700
+
+// probeDir tries to create dir (with mode, applied only if this call is the
+// one that actually creates it — see os.MkdirAll) and write a temp file in
+// it. Returns dir if writable, empty string otherwise.
+func probeDir(dir string, mode os.FileMode) string {
+	if err := os.MkdirAll(dir, mode); err != nil {
 		return ""
 	}
 	f, err := os.CreateTemp(dir, ".probe-*")
@@ -85,7 +107,10 @@ func Dir() string {
 func SpawnDir() string {
 	root := resolve()
 	dir := root + "/spawn"
-	_ = os.MkdirAll(dir, 0o1777)
+	// Same rootMode rationale as resolveRoot: MkdirAll only applies this on
+	// actual creation, and the live spawn/ dir is likewise observed
+	// group-writable, not world-writable (#1501).
+	_ = os.MkdirAll(dir, rootMode)
 	return dir
 }
 
