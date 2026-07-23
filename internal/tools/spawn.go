@@ -200,6 +200,16 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				}
 				filesCreated := listCreatedFiles(tempDir)
 				if filesCreated != "" {
+					// tempDir is now durably quoted in conversation history (same
+					// class of reference as an app-blobs/ or tool-results/ path),
+					// but — unlike those two — it is NOT excluded from
+					// cleanStaleRoot's unconditional wipe of spawn/'s children
+					// (internal/tempdir/cleanup.go). That's a deliberate choice,
+					// not an oversight (#1506): a later turn re-reading this path
+					// across a gateway restart is rare in practice, and excluding
+					// it would need a new age-based sweep to avoid an unbounded
+					// leak (no session-end hook retires a raw spawn's tempDir).
+					// So a raw-mode spawn's created files do not survive a restart.
 					result += "\n\n---\nFiles created in " + tempDir + "/:\n" + filesCreated
 				} else {
 					_ = os.Remove(tempDir) // clean up empty spawn dir

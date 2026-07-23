@@ -42,6 +42,19 @@ const appBlobsDir = "app-blobs"
 // 2775) that CleanStale must not disturb by removing and letting SpawnDir()
 // recreate it (which would mint it with whatever default mode MkdirAll asks
 // for, not the one actually in place).
+//
+// Unlike appBlobsDir/toolResultsDir, NO child of spawn/ is excluded from this
+// wipe — including a "foci-spawn-*" raw-mode sandbox (internal/tools/spawn.go)
+// whose path can be quoted in conversation history via "Files created in
+// <tempDir>/: ..." the same way a spilled tool-result path is. That's a
+// deliberate decision (#1506), not an oversight left over from #1499: a raw
+// spawn's files are rarely re-read across a gateway restart in practice, and
+// excluding them the way toolResultsDir is excluded would need a NEW
+// age-based sweep (nothing today retires a raw spawn's tempDir on session
+// end or turn completion, unlike toolResultsDir's CleanOldFiles sweep) to
+// avoid leaking them forever. So: raw-mode spawn artifacts do NOT survive a
+// gateway restart — a later turn re-reading one after a deploy will get "no
+// such file".
 const spawnDirName = "spawn"
 
 // toolResultsDir names the tool-result overflow subdirectory (config
