@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"testing"
 )
 
 const (
@@ -35,9 +36,60 @@ var (
 // resolve determines the effective root directory, once per process.
 func resolve() string {
 	resolveOnce.Do(func() {
-		resolved = resolveRoot(os.Getenv(EnvOverride))
+		override := os.Getenv(EnvOverride)
+		resolved = resolveRoot(override)
+		guardLiveRootInTest(override, resolved)
 	})
 	return resolved
+}
+
+// guardLiveRootInTest panics loudly the one time a test binary is about to
+// use the resolved root as the SHARED production /tmp/foci with no override
+// set — see #1510. That combination means a bare `go test ./...` (no
+// Makefile, no FOCI_TMPDIR) is about to write test fixtures into a real
+// foci install's live state, exactly like the 289 orphaned
+// foci-spill-*.tmp fixtures the #1502 audit found sitting in production.
+//
+// `testing.Testing()` is the discriminator: it's true in any test binary
+// (unlike a build-tag or env-var scheme, it needs no cooperation from the
+// calling package) and, called here — lazily, on first resolution inside a
+// test/production function body rather than from a package-level init() —
+// it's reliably populated: init()-time detection is unsafe because
+// testing.Testing() depends on state the testing package sets up in
+// Init/MainStart, which may not have run yet during a dependency's package
+// init (verified: this must NOT be hoisted into an init() in this file).
+//
+// Only the exact shared Root triggers this. An explicit FOCI_TMPDIR
+// override (wherever it points — even back at Root itself, since that's a
+// deliberate choice), the per-uid fallback (/tmp/foci-<uid>, used only when
+// Root itself isn't writable), and os.TempDir() are all legitimate under
+// test and must not panic.
+func guardLiveRootInTest(override, resolvedRoot string) {
+	if !testing.Testing() {
+		return
+	}
+	if resolvedRoot != Root {
+		return // per-uid fallback, os.TempDir(), or an override pointing elsewhere
+	}
+	// Deliberately NOT exempting "an override was set": resolveRoot degrades an
+	// UNUSABLE override (typo, deleted dir, wrong perms) by falling through to
+	// the shared Root, so exempting on `override != ""` would let a broken
+	// FOCI_TMPDIR silently write into a live install — the exact failure this
+	// guard exists to prevent, and likelier in CI than an unset var. The
+	// resolved root is the only thing that matters: under test, landing on the
+	// shared root is never acceptable, however we got there.
+	cause := fmt.Sprintf("%s is unset", EnvOverride)
+	if override != "" {
+		cause = fmt.Sprintf("%s=%q is unusable (unwritable or missing) and fell through the ladder", EnvOverride, override)
+	}
+	panic(fmt.Sprintf(
+		"tempdir: test run resolved the temp root to the LIVE shared root %s "+
+			"because %s — this would write test fixtures into a real "+
+			"foci install's state. `make test` (and the other Makefile test "+
+			"targets) set %s for you; running `go test` directly, set it "+
+			"yourself to a scratch dir, e.g.:\n\n"+
+			"    %s=$(mktemp -d) go test ./...\n",
+		Root, cause, EnvOverride, EnvOverride))
 }
 
 // resolveRoot walks the root ladder: the override (when set and usable),
