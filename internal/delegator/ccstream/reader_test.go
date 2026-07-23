@@ -3,6 +3,7 @@ package ccstream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -226,12 +227,29 @@ func TestReaderEOF(t *testing.T) {
 func TestReaderContextCancel(t *testing.T) {
 	t.Parallel()
 
-	// Use a reader that blocks (never returns data). We use a pipe so the
-	// scanner blocks on Read. Cancel the context to unblock.
+	// Cancel BEFORE Run is ever started, rather than racing cancel() against
+	// the reader goroutine's startup (#1527). Run's loop only checks
+	// ctx.Done() *before* blocking on the next line (see its doc comment) —
+	// it cannot preempt a syscall already parked inside the underlying
+	// io.Reader, and doesn't need to: in production, Close() only cancels
+	// the reader's context once the subprocess is confirmed dead or killed,
+	// at which point the stdout pipe is already closing, so any in-flight
+	// Read unblocks via EOF/error on its own. A test that spawns the reader
+	// goroutine and then immediately calls cancel() from the outside is
+	// exercising exactly the same race, with nothing to close the pipe on
+	// the other side: whichever goroutine the scheduler runs first decides
+	// the outcome. Under -p=4 -parallel=16 the reader goroutine occasionally
+	// wins, reaches its blocking ReadBytes call before cancel() fires, and
+	// then never returns — this pipe's Read only unblocks on Close(), which
+	// this test doesn't call until the *deferred* pw.Close(), long after the
+	// 2s assertion window. Cancelling up front removes the race entirely and
+	// still exercises the real guarantee: Run must not start a new blocking
+	// read once its context is done.
 	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	// Create a reader that blocks forever by using a channel-based approach.
-	// We'll use a pipe: the write end is never written to, so the read blocks.
+	// Reader that blocks forever on Read (never returns data) — proves Run
+	// exits via the ctx.Done() check without ever touching it.
 	pr, pw := newTestPipe()
 	defer pw.Close()
 
@@ -244,15 +262,16 @@ func TestReaderContextCancel(t *testing.T) {
 		close(done)
 	}()
 
-	// Cancel context.
-	cancel()
-
 	// Run should return promptly.
 	select {
 	case <-done:
 		// OK
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after context cancellation within 2 seconds")
+	}
+
+	if len(h.errors) != 1 || !errors.Is(h.errors[0], context.Canceled) {
+		t.Fatalf("errors = %v, want exactly one context.Canceled", h.errors)
 	}
 }
 
