@@ -1,10 +1,10 @@
 package telegram
 
 import (
-	"os"
 	"strings"
 
 	"foci/internal/dispatch"
+	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -46,9 +46,6 @@ func (b *Bot) renderCommandOutcome(msg *gotgbot.Message, outcome *dispatch.Comma
 		} else if result.Response.Text != "" {
 			b.sendReply(msg, result.Response.Text)
 		}
-		if result.Response.DocPath != "" {
-			_ = b.SendDocumentToChat(msg.Chat.Id, result.Response.DocPath, "")
-			_ = os.Remove(result.Response.DocPath)
-		}
+		_ = platform.SendDocAndRemove(b, msg.Chat.Id, result.Response.DocPath, "")
 	}
 }
