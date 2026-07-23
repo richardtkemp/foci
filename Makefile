@@ -158,7 +158,7 @@ integration:
 # not a gate — read the two passes side by side.
 bucket-audit:
 	@echo "=== bucket-audit: low vs high parallelism ==="
-	$(eval TESTDIR := /tmp/foci/bktaudit-$(shell date +%s))
+	$(eval TESTDIR := /tmp/fgw/bktaudit-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "--- low (-parallel=2) ---"
 	-@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
@@ -192,13 +192,13 @@ land:
 	@bash scripts/land.sh
 
 coverage:
-	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Test Coverage ==="
 	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage-report:
-	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Generating Coverage Report ==="
 	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
@@ -209,7 +209,7 @@ coverage-report:
 	@go tool cover -func=coverage.out | grep total | awk '{print $$3}'
 
 coverage-html:
-	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Generating HTML Coverage Report ==="
 	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
@@ -222,7 +222,7 @@ COVERAGE_TOTAL_MIN ?= 75.0
 COVERAGE_PKG_MIN ?= 45.0
 
 coverage-check:
-	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
 	@TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp

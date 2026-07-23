@@ -29,7 +29,10 @@ config.Load(path)                                        ← validates values; l
                                                             top-level temp state (exec bridge sockets, spill/pair/
                                                             browser scratch, escaped test dirs, spawn/ sandbox
                                                             contents, …) under the RESOLVED root (tempdir.Dir(),
-                                                            never a hardcoded path). Runs once, right after logging
+                                                            never a hardcoded path). Note tempdir.resolve() PANICS
+                                                            under `go test` if it lands on the shared /tmp/foci
+                                                            (#1510) — tests must set FOCI_TMPDIR; the Makefile test
+                                                            targets do. Runs once, right after logging
                                                             init, before anything below (bridges, the app blob
                                                             store, spawn sandboxes) creates its own state for this
                                                             process lifetime — the one moment everything already on

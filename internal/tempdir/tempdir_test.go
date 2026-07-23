@@ -1,6 +1,7 @@
 package tempdir
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -83,6 +84,67 @@ func TestRootModeNotWorldWritable(t *testing.T) {
 	if privateMode&0o077 != 0 {
 		t.Fatalf("privateMode %o grants non-owner access — must be private", privateMode)
 	}
+}
+
+// Verifies the #1510 guard: when no override is set and the root would
+// resolve to the shared production Root, a test binary must panic loudly
+// rather than silently write into the live install's state.
+func TestGuardLiveRootInTestFiresOnUnsetOverride(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("guardLiveRootInTest(\"\", Root) did not panic")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("panic value is %T, want string", r)
+		}
+		if !strings.Contains(msg, EnvOverride) {
+			t.Errorf("panic message %q doesn't name %s", msg, EnvOverride)
+		}
+		if !strings.Contains(msg, Root) {
+			t.Errorf("panic message %q doesn't name the live root %s", msg, Root)
+		}
+		if !strings.Contains(msg, "go test") {
+			t.Errorf("panic message %q doesn't give the actionable one-liner", msg)
+		}
+	}()
+	guardLiveRootInTest("", Root)
+}
+
+// Verifies the guard STILL fires when an override was set but the run
+// nonetheless landed on the shared Root — resolveRoot degrades an unusable
+// override by falling through the ladder, so an override that is set is no
+// evidence the run is isolated. The panic must name the override so the cause
+// is obvious.
+func TestGuardLiveRootInTestFiresWhenUnusableOverrideFellThrough(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("guardLiveRootInTest with an override resolving to Root did not panic")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("panic value is %T, want string", r)
+		}
+		if !strings.Contains(msg, "/some/override/dir") {
+			t.Errorf("panic message %q should name the unusable override", msg)
+		}
+	}()
+	guardLiveRootInTest("/some/override/dir", Root)
+}
+
+// Verifies an override that resolves somewhere OTHER than the shared root is
+// fine — that is the normal isolated-test case.
+func TestGuardLiveRootInTestDoesNotFireWithWorkingOverride(t *testing.T) {
+	guardLiveRootInTest("/some/override/dir", "/some/override/dir") // must not panic
+}
+
+// Verifies the guard does NOT fire for the per-uid fallback or os.TempDir()
+// — only the exact shared Root is disallowed under test with no override.
+func TestGuardLiveRootInTestDoesNotFireOnFallback(t *testing.T) {
+	guardLiveRootInTest("", fmt.Sprintf("/tmp/foci-%d", os.Getuid())) // must not panic
+	guardLiveRootInTest("", os.TempDir())                             // must not panic
 }
 
 // Verifies the FOCI_TMPDIR override ladder: a usable override wins over the
