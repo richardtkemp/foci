@@ -152,7 +152,8 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 		}
 
 		// Close independent CC sessions after the turn completes. Without this,
-		// the backend process leaks until the idle reaper (24h default).
+		// the backend process leaks until the idle reaper (agent.DefaultIdleTimeout,
+		// 3h default).
 		ag.DelegatedManager.ResetSession(sessionKey)
 		return true
 	}
