@@ -13,11 +13,21 @@ import (
 func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindow, error) {
 	b.mu.Lock()
 	maxTokens := b.contextWindow
+	model := b.pendingModel
+	if model == "" {
+		model = b.model
+	}
+	if model == "" {
+		model = b.launchModel
+	}
 	b.mu.Unlock()
+	if model == "" {
+		model = b.requestedModelFromOpts()
+	}
 
 	cw := &delegator.ContextWindow{
 		MaxTokens: maxTokens,
-		Model:     b.modelFromOpts(),
+		Model:     model,
 	}
 
 	b.turnMu.Lock()
