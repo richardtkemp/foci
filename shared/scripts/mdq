@@ -1,0 +1,87 @@
+#!/bin/bash
+# mdq wrapper — lets you paste markdown headings verbatim as selectors.
+#
+# The real mdq is a separate binary (https://github.com/yshavit/mdq). This
+# wrapper shadows it on PATH and normalises the common case, because mdq's
+# selector syntax rejects a heading you copied straight out of a file:
+#
+#   1. Collapse any heading level to a single '#'. mdq wants one '#' whatever
+#      the heading's actual level, so '## Foo' and '### Foo' both become '# Foo'.
+#   2. Wrap the heading text in mdq's quoted-literal syntax ('# "text"') so
+#      regex-special characters that occur in real headings (?, (), [], ., *, +)
+#      match literally instead of throwing "Syntax error in select specifier".
+#      Quoted literals are SUBSTRING matches, so a partial heading still
+#      resolves — '# Closed' finds '## 8. Closed'.
+#
+# Already-quoted text passes through untouched, so callers that pre-quote (the
+# mds script does) keep working. Anything not starting with '#' is passed
+# straight through, so flags and other selector types are unaffected. To bypass
+# this wrapper entirely and write a real regex selector, call the binary by its
+# own path, or set MDQ_BIN.
+#
+# Usage: mdq '## Some Heading' file.md
+#        mdq '# Exact' file.md
+#        mdq '## 7. Open: ship now or defer?' file.md   # would be a syntax error unwrapped
+
+set -uo pipefail
+
+# Find the real mdq binary. This wrapper is installed AS 'mdq' on PATH, so a
+# naive lookup finds this script and execs itself forever — an infinite loop is
+# a far worse failure than the syntax error the wrapper exists to prevent.
+# Every candidate is therefore resolved and compared against this script.
+resolve_mdq() {
+    local cand d
+    # NOTE: the self-comparison below uses bash's built-in `-ef` (same device
+    # and inode). Do NOT reintroduce readlink here: this must work on a PATH so
+    # minimal that readlink is absent, and when it is, a readlink-based check
+    # silently compares empty strings, decides nothing is itself, and execs
+    # this script forever. Verified by test, not by inspection.
+
+    if [[ -n "${MDQ_BIN:-}" ]]; then
+        printf '%s' "$MDQ_BIN"
+        return 0
+    fi
+
+    local IFS=:
+    for d in $PATH; do
+        [[ -n "$d" ]] || continue
+        cand="$d/mdq"
+        [[ -x "$cand" && ! -d "$cand" ]] || continue
+        [[ "$cand" -ef "${BASH_SOURCE[0]}" ]] && continue
+        printf '%s' "$cand"
+        return 0
+    done
+
+    # Not on PATH (or only this wrapper is): try where mdq usually installs.
+    for cand in /usr/local/bin/mdq /usr/bin/mdq "$HOME/.cargo/bin/mdq"; do
+        [[ -x "$cand" ]] || continue
+        [[ "$cand" -ef "${BASH_SOURCE[0]}" ]] && continue
+        printf '%s' "$cand"
+        return 0
+    done
+
+    return 1
+}
+
+MDQ=$(resolve_mdq) || {
+    echo "mdq: the mdq binary is not installed (only this wrapper is on PATH)." >&2
+    echo "     Install it from https://github.com/yshavit/mdq, or set MDQ_BIN to its path." >&2
+    exit 127
+}
+
+if [[ $# -ge 1 && "$1" == \#* ]]; then
+    # Strip the leading run of '#' plus one optional space to get heading text.
+    text=$(sed -E 's/^#+[[:space:]]?//' <<<"$1")
+    shift
+    if [[ "$text" == '"'*'"' ]]; then
+        # Caller already quoted it — preserve verbatim.
+        selector="# $text"
+    else
+        # Escape any embedded double-quotes, then wrap as a literal substring.
+        esc=${text//\"/\\\"}
+        selector="# \"$esc\""
+    fi
+    exec "$MDQ" "$selector" "$@"
+else
+    exec "$MDQ" "$@"
+fi
