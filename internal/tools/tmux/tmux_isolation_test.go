@@ -118,19 +118,29 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	// Verifies that wake callbacks fire on the correct tool instance: when agent A's watch triggers, only agent A's callback is invoked, not agent B's.
 	t.Parallel()
-	tmuxAvailable(t)
+
+	// Own socket, not the package-shared one: this test creates two sessions
+	// and needs both alive for ~10s while their watches poll. On the shared
+	// socket a sibling test's maybeKillTmuxServer — which kills the server
+	// whenever it observes zero sessions, a read that races a concurrent
+	// create — destroys them mid-test. That is exactly what made this flaky
+	// (#1586): agent A's session was killed microseconds after new-session
+	// returned, so its watch polled a pane that no longer existed and never
+	// fired, surfacing 10s later as the misleading "wake callbacks not
+	// called: A=0". tmuxSetup's own doc says to prefer this helper for
+	// sessions that must survive; this test was not following it.
+	sock := tmuxIsolatedSocket(t)
 
 	var wakeA, wakeB atomic.Int32
 	_, toolA, _ := NewTmuxTool(300, 30, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		wakeA.Add(1)
-	}), nil, "", false, 30, 0, "")
+	}), nil, "", false, 30, 0, sock)
 	_, toolB, _ := NewTmuxTool(300, 30, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		wakeB.Add(1)
-	}), nil, "", false, 30, 0, "")
+	}), nil, "", false, 30, 0, sock)
 
 	nameA := "foci-test-wakeroute-a"
 	nameB := "foci-test-wakeroute-b"
-	tmuxSetup(t, nameA, nameB)
 
 	// Agent A starts a session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{

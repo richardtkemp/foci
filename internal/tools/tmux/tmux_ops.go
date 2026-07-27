@@ -62,7 +62,20 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 	if inst.cols > 0 && inst.rows > 0 {
 		out, err = inst.runTmux(ctx, "resize-window", "-t", name, "-x", fmt.Sprintf("%d", inst.cols), "-y", fmt.Sprintf("%d", inst.rows))
 		if err != nil {
-			tmuxLog.Warnf("resize-window: session=%s %s %v", sessionKey, strings.TrimSpace(out), err)
+			// A resize failure is usually cosmetic, but it is also the first
+			// place we would notice the session having vanished between
+			// new-session and here — maybeKillTmuxServer tears down the whole
+			// server when it observes zero sessions, and that read races a
+			// concurrent create. Reporting "Session started" for a session
+			// that no longer exists hands the caller a handle to nothing: the
+			// failure then resurfaces much later and unrecognisably (a watch
+			// that never fires, a read that returns empty). Confirm the
+			// session is really there before deciding which this was.
+			if _, herr := inst.runTmux(ctx, "has-session", "-t", name); herr != nil {
+				return tools.ToolResult{}, fmt.Errorf("tmux start: session %q vanished immediately after creation (resize: %s): %w%s",
+					name, strings.TrimSpace(out), herr, tmuxStartDiag(inst.socketPath))
+			}
+			tmuxLog.Warnf("resize-window: session=%s %s %v (session is alive; continuing)", sessionKey, strings.TrimSpace(out), err)
 		}
 	}
 
