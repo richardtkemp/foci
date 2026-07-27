@@ -12,14 +12,29 @@ homepage: https://openrouter.ai/
 
 Generate images using OpenRouter's image-capable models via `http_request`.
 
+> **"Send me an image" ≠ "generate an image."** If the user asks you to *send* an image with no details at all, they mean find an existing one on disk and send it — not generate a new one. Only generate when they describe what they want, or explicitly say "generate"/"make"/"create".
+
+> **Generation is slow (often 30s–2min).** Always pass a timeout of **at least 3 minutes** (180s) on the `http_request` call, or it will exceed the 10s foreground threshold, drop to background, and may hit `context deadline exceeded`.
+
 ## Models
 
 | Alias | Model ID | Notes |
 |-------|----------|-------|
-| `gpt5` | openai/gpt-5-image | Best quality, slower |
-| `gpt5-mini` | openai/gpt-5-image-mini | **Default.** Fast + cheap |
+| `gpt5` | openai/gpt-5-image | Best quality, slower. **Square 1024×1024 only** — no aspect/size control (see below) |
+| `gpt5-mini` | openai/gpt-5-image-mini | **Default.** Fast + cheap. **Square 1024×1024 only** — no aspect/size control |
 | `gemini-pro` | google/gemini-3-pro-image-preview | Supports resolution/aspect config |
-| `gemini-flash` | google/gemini-2.5-flash-image | Cheapest, fast |
+| `gemini-flash` | google/gemini-2.5-flash-image | Cheapest, fast. Supports resolution/aspect config |
+
+> **Aspect ratio / size is a Gemini-only capability, verified 2026-07-06.** The GPT-5 image
+> endpoints on OpenRouter do **not** advertise `aspect_ratio`, `resolution`, `image_config`, or
+> `size` in their `supported_parameters` — passing `image_config` is silently ignored and you get
+> 1024×1024 back regardless. If you prompt a tall/wide layout, GPT-5 either self-squeezes it into
+> the square (dropping detail/text) or overflows the frame. **Need non-square? Use a Gemini model.**
+> Confirm any model's real capabilities via
+> `GET https://openrouter.ai/api/v1/models/<id>/endpoints` → `supported_parameters` before asserting.
+> Trade-off seen in practice: Gemini does portrait but garbles Greek/accented text; GPT-5 renders
+> text cleaner but is square-only. For a card needing *both* correct text and a chosen shape,
+> generate the art with the right model then **overlay** the text programmatically (PIL).
 
 ## Workflow
 
@@ -39,7 +54,7 @@ http_request(
 )
 ```
 
-Then send the image to the user:
+Then send the image:
 ```
 send_to_chat(file_path: "/tmp/generated-image.png", text: "Here's your image")
 ```
@@ -80,4 +95,6 @@ For Gemini models, add `image_config` to the request body:
 
 - No Python dependency — uses `http_request` tool directly
 - Secret `openrouter.api_key` must be configured in secrets.toml with `allowed_hosts = ["openrouter.ai"]`
-- Image generation can take 10-30 seconds depending on model
+- Image generation is slow — often 30s to 2min depending on model. Use a `timeout` of at least 180s on the `http_request` call.
+- **High-res Gemini (`image_size: "2K"`/"4K") can exceed even the 300s max timeout** and return a truncated/empty body — which surfaces as `extract ... from JSON: unexpected end of JSON input` (looks like a parse bug, is really a timeout). Verified 2026-07-18: `gemini-3-pro` at 2K failed at 240s; **1K succeeded** (~1408×768 at 16:9 — plenty sharp for a web/email banner). If you hit that JSON error, drop resolution before assuming the request is broken.
+- The old Python script (`scripts/generate_image.py`) is deprecated
