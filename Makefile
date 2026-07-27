@@ -415,7 +415,7 @@ WIZARD_ARGS += --api-key $(FOCI_API_KEY)
 endif
 endif
 
-.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs wizard check-config stage-changelog reload restart enable setup update
+.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts wizard check-config stage-changelog reload restart enable setup update
 
 # sync-main (#1448 piece 4): deploy exactly origin/main, never a dirty or stale
 # local working tree. `make update` builds the working tree, so without this a
@@ -561,6 +561,32 @@ install-docs:
 	  chown -R "$$user:$$user" "$$home/shared/docs"; \
 	done
 
+# Ship shared/scripts/* into each agent home's shared/scripts on every update.
+#
+# Deliberately NOT folded into install-shared: that does `cp -r shared/*`, which
+# would also overwrite the deployed prompts/ and skill SKILL.md files — the
+# seed-if-missing ones an install is meant to be able to customise. install-shared
+# is therefore first-run only, and this target is the narrow slice that is safe to
+# re-run.
+#
+# Deliberately NOT `rsync --delete` (unlike install-docs): the deployed
+# shared/scripts holds operator-authored scripts foci knows nothing about, and
+# deleting them would be catastrophic and silent. Copy only what we ship.
+install-scripts:
+	@[ -d shared/scripts ] || exit 0; \
+	for svcfile in /etc/systemd/system/foci*.service; do \
+	  [ -f "$$svcfile" ] || continue; \
+	  home=$$(grep '^WorkingDirectory=' "$$svcfile" | cut -d= -f2); \
+	  user=$$(grep '^User=' "$$svcfile" | cut -d= -f2); \
+	  [ -n "$$home" ] && [ -n "$$user" ] || continue; \
+	  mkdir -p "$$home/shared/scripts"; \
+	  for f in shared/scripts/*; do \
+	    [ -f "$$f" ] || continue; \
+	    echo "  install $$f -> $$home/shared/scripts/"; \
+	    install -m 755 -o "$$user" -g "$$user" "$$f" "$$home/shared/scripts/$$(basename $$f)"; \
+	  done; \
+	done
+
 reload:
 	systemctl daemon-reload
 
@@ -582,6 +608,7 @@ setup:
 	$(MAKE) deploy-build
 	$(MAKE) provision
 	$(MAKE) install-shared
+	$(MAKE) install-scripts
 	$(MAKE) install-bin
 	$(MAKE) install-lib
 	$(MAKE) install-unit
@@ -599,6 +626,7 @@ update:
 	$(MAKE) install-bin
 	$(MAKE) install-lib
 	$(MAKE) install-docs
+	$(MAKE) install-scripts
 	$(MAKE) install-unit
 	$(MAKE) stage-changelog
 	$(MAKE) restart
