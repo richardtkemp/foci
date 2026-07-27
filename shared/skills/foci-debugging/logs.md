@@ -8,7 +8,13 @@ Two scopes for on-disk data:
 - **Global** (`~/data/` by default, configurable via `data_dir`): `api.db`, `state.db`, `sessions/`
 - **Per-agent** (`<workspace>/.data/`): `conversation.db`, `todo.db`, `scratchpad.db`, `reminders.db`, `tasklist.db`, `memory.db` + `search.bleve`, `tool_details.db`
 
-(API/cost DBs → **api-cost.md**; session/state DBs → **sessions.md**.)
+(API/cost DBs → **api-cost.md**; session/state DBs → **sessions.md**; app frame store → **app-delivery.md**.)
+
+Whichever database you land on, read its shape before querying it — the schemas below drift:
+
+```bash
+sqlite3 ~/data/state.db ".schema"        # or .schema <table> for one table
+```
 
 ### Per-Agent SQLite Databases (`<workspace>/.data/`)
 
@@ -46,8 +52,24 @@ grep 'compact' ~/logs/foci.log | tail -20
 grep '<SESSION_KEY>' ~/logs/foci.log | grep -E 'branch created|turn_lock' | tail -20
 ```
 
+### Searching rotated archives
+
+Today's log only covers today. To answer "when did this last happen?" or "what
+was the context around a known timestamp?", you have to reach into `~/logs/archive/`:
+
+```bash
+# Most recent occurrence of a pattern across ALL history (when did it last fire?)
+zgrep -hE "possible zombie|did not exit after" ~/logs/archive/foci-*.gz | awk '{print $1}' | sort | tail
+
+# Which archive file contains an event at a known timestamp
+zgrep -lE "PATTERN" ~/logs/archive/foci-2026-06-25T*.gz
+
+# Full context inside one archive
+zcat ~/logs/archive/foci-<range>.log.gz | grep '<SESSION_KEY>'
+```
+
 **Gotchas:**
-- **Archives are `.gz`** — `zgrep`/`zcat` them. A bare `grep -r` over `~/logs/` silently returns 0 on gzipped files (it doesn't decompress), so you'll miss everything in rotated logs.
+- **Archives are `.gz`** — `zgrep`/`zcat` them. A bare `grep -r` over `~/logs/` silently returns 0 on gzipped files (it doesn't decompress), so you'll miss everything in rotated logs. A zero result from `grep -r … *.gz` is a tooling false-negative, **not evidence that the thing never occurred**.
 - **Filter errors on the level column** (`awk '$2=="ERROR"'`), not a bare `grep ERROR` — the word "error" appears in plenty of non-error lines (payloads, messages), giving false positives.
 - **A real panic** starts with `^panic:` at column 0.
 
