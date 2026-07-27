@@ -61,6 +61,26 @@ Use instead of `cat` for large markdown files. Extract just the section you need
 
 **mdq selects sections, not headings.** `mdq '# Foo'` returns the heading AND all its content.
 
+### mds — find the section you need without reading the file
+
+`mds` (shipped in `shared/scripts/`, on PATH as `mds`) is the discovery front-end to mdq, for
+when you don't know a file's structure. Two moves: see the shape, then take one section.
+
+```bash
+mds file.md                # list all headings (a TOC)
+mds file.md deploy         # match a heading, extract just that section
+mds file.md "setup toml"   # multi-word: matches a heading containing both, in order
+mds SPEC.md websocket      # find the WebSocket section without knowing its exact heading
+```
+
+Matching is tiered, most precise first — whole word, then substring (`auth` finds
+`Authentication`), then all-words-in-order, then fuzzy subsequence if `fzf` happens to be
+installed. Only that last tier needs fzf and it degrades silently without it. No match prints
+the available headings so you can refine rather than guess again.
+
+**Prefer `mds` over `mdq` when exploring an unfamiliar file** — reading a whole large markdown
+file to answer one question is the expensive mistake this exists to avoid.
+
 ## yq — TOML, YAML, XML, CSV, and more
 
 yq auto-detects format from file extensions. No `-p` flag needed for `.toml`, `.yaml`, `.yml`, `.xml`, `.csv` files.

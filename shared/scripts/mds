@@ -1,0 +1,76 @@
+#!/bin/bash
+# mds — Markdown Section selector
+# Find a heading in a markdown file and extract just that section.
+#
+# Usage:
+#   mds file.md              # list all headings (a TOC)
+#   mds file.md pattern      # match a heading, extract that section
+#
+# The point is context economy: reading a whole large markdown file to answer
+# one question is the expensive mistake. `mds file.md` shows you the shape,
+# then `mds file.md <pattern>` gives you only the part you need.
+#
+# Matching is tiered, most precise first, so an ID-like query ('N1') picks 'N1'
+# rather than ranking the longer 'N11' above it:
+#   1. whole-word, literal        'deploy'      -> '## Deploy'
+#   2. substring, literal         'auth'        -> '## Authentication'
+#   3. all words in order         'setup toml'  -> '## Setup ... TOML'
+#   4. fzf subsequence, IF fzf is installed     'stp' -> '## Setup'
+#
+# Only tier 4 needs fzf, and it degrades silently when fzf is absent — the
+# three plain-grep tiers cover everything documented above, so the script is
+# useful on any install. Tier 4 is a nicety, not a dependency.
+#
+# Requires: mdq (the extraction is delegated to it). fzf is optional.
+
+set -euo pipefail
+
+if [[ $# -lt 1 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+    echo "Usage: mds <file.md> [pattern]"
+    echo "  No pattern: list headings"
+    echo "  With pattern: match a heading, extract that section"
+    exit 0
+fi
+
+file="$1"
+pattern="${2:-}"
+
+headings=$(grep '^#' "$file" 2>/dev/null) || { echo "No headings found in $file" >&2; exit 1; }
+
+if [[ -z "$pattern" ]]; then
+    echo "$headings"
+    exit 0
+fi
+
+# Tier 1: whole-word literal. First so 'N1' doesn't lose to 'N11'.
+match=$(echo "$headings" | grep -iwF "$pattern" | head -1) || true
+
+# Tier 2: substring literal — 'auth' -> 'Authentication'.
+[[ -z "$match" ]] && match=$(echo "$headings" | grep -iF "$pattern" | head -1) || true
+
+# Tier 3: all words, in order, anything between — 'setup toml' -> 'Setup ... TOML'.
+if [[ -z "$match" ]]; then
+    words_re=$(printf '%s' "$pattern" | sed 's/[[:space:]]\+/.*/g')
+    match=$(echo "$headings" | grep -iE "$words_re" | head -1) || true
+fi
+
+# Tier 4: true subsequence matching, only when fzf is present. `fzf -f` is
+# filter mode (non-interactive), so this never opens a UI.
+if [[ -z "$match" ]] && command -v fzf >/dev/null 2>&1; then
+    match=$(echo "$headings" | fzf -f "$pattern" | head -1) || true
+fi
+
+if [[ -z "$match" ]]; then
+    echo "No match for '$pattern'. Available headings:" >&2
+    echo "$headings"
+    exit 1
+fi
+
+# mdq's selector parser chokes on characters that are common in real headings:
+# backticks, angle brackets, square brackets. Two fixes:
+#   1. Strip backticks — mdq matches a heading's plain text content, not its
+#      markdown source, so '#### `foo`' matches on "foo", not "`foo`".
+#   2. Wrap in double quotes — mdq's quoted-string syntax is a literal match,
+#      so <, [ and friends are not parsed as selector syntax.
+clean=$(echo "$match" | sed 's/^#* //' | sed 's/`//g')
+mdq "# \"$clean\"" "$file"
