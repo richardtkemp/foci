@@ -27,39 +27,40 @@ Before choosing a model, consider the query:
 
 ## API Setup
 
-The skill uses OpenRouter's API. Your OpenRouter API key must be configured in secrets.toml.
+The skill uses OpenRouter's API via the **`foci_http_request`** tool (aka `http_request`), which
+resolves the API key **server-side** from the secret store — you never handle the raw key.
+
+> ⚠️ **Do NOT use `curl` with an `$OPENROUTER_API_KEY` env var.** That variable is *not* exported in
+> the agent shell, so curl returns `401 Missing Authentication header`. Use the secret template below.
+
+The key lives as the `openrouter.api_key` secret; reference it as `{{secret:openrouter.api_key}}` in
+the `Authorization` header. It resolves at execution time, provided `openrouter.ai` is in that
+secret's `allowed_hosts` in `secrets.toml`.
 
 ## Making Requests
 
-Call OpenRouter's completion endpoint with the Perplexity model ID:
+Call OpenRouter's completion endpoint with `foci_http_request`:
 
 ```
-POST https://openrouter.ai/api/v1/chat/completions
-
-Headers:
-  Authorization: Bearer {{secret:openrouter.api_key}}
-
-Body:
-{
-  "model": "perplexity/sonar",  // or "perplexity/sonar-deep-research"
-  "messages": [
-    {
-      "role": "user",
-      "content": "Your research query here"
-    }
-  ]
-}
+foci_http_request https://openrouter.ai/api/v1/chat/completions \
+  --method POST \
+  --header 'Authorization: Bearer {{secret:openrouter.api_key}}' \
+  --header 'Content-Type: application/json' \
+  --body '{"model":"perplexity/sonar","messages":[{"role":"user","content":"Your research query here"}]}' \
+  | jq -r '.choices[0].message.content'
 ```
 
-**Response structure:**
-- `choices[0].message.content` — Research result with citations
-- `usage.prompt_tokens`, `usage.completion_tokens` — Token counts for tracking
+Swap the model to `perplexity/sonar-deep-research` for deeper analysis.
+
+**Response structure** (pull with `jq` so only what you need hits context):
+- `.choices[0].message.content` — research result with citations
+- `.usage.prompt_tokens`, `.usage.completion_tokens` — token counts for tracking
 
 ## Workflow
 
 1. **Parse the request** — Is this a research task?
 2. **Pick the model** — Basic Sonar for simple queries, suggest Deep Research for complex ones
-3. **Make the API call** — Use `http_request` to hit the OpenRouter endpoint
+3. **Make the API call** — Use `foci_http_request` (never curl/env-var) to hit the OpenRouter endpoint
 4. **Return results** — Include citations and summary in your response
 
 ## Cost Reference
@@ -73,16 +74,13 @@ See references/pricing.md for full details.
 
 Query: "What's the current state of AI safety regulations in the EU?"
 
-```
-http_request(
-  method: "POST",
-  url: "https://openrouter.ai/api/v1/chat/completions",
-  headers: {
-    "Authorization": "Bearer {{secret:openrouter.api_key}}",
-    "Content-Type": "application/json"
-  },
-  body: '{"model":"perplexity/sonar","messages":[{"role":"user","content":"What is the current state of AI safety regulations in the EU?"}]}'
-)
+```bash
+foci_http_request https://openrouter.ai/api/v1/chat/completions \
+  --method POST \
+  --header 'Authorization: Bearer {{secret:openrouter.api_key}}' \
+  --header 'Content-Type: application/json' \
+  --body '{"model":"perplexity/sonar","messages":[{"role":"user","content":"What is the current state of AI safety regulations in the EU?"}]}' \
+  | jq -r '.choices[0].message.content'
 ```
 
 ## Example: Complex Research (suggest deep research first)
