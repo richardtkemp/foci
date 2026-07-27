@@ -408,13 +408,26 @@ func sessionFamily(idx *session.SessionIndex, key string) (map[string]struct{}, 
 	}
 
 	// Collect the whole subtree rooted at the root ancestor.
+	//
+	// visited is deliberately SEPARATE from family. family is the result set
+	// and is pre-seeded with the requested key (see above), so using it as the
+	// visited set makes the very first pop look like a duplicate whenever the
+	// requested key IS the root — the ordinary case for a root chat — which
+	// would skip the subtree entirely. The previous code papered over that with
+	// a `k != root` exemption, and that exemption is what turned a
+	// self-parented row (parent_session_key == session_key, so children[root]
+	// contains root) into an infinite loop with unbounded queue growth: the
+	// duplicate check could never fire for root. Tracking the two concerns
+	// separately needs no exemption, so neither hazard exists.
+	visited := make(map[string]bool, len(children)+1)
 	queue := []string{root}
 	for len(queue) > 0 {
 		k := queue[0]
 		queue = queue[1:]
-		if _, dup := family[k]; dup && k != root {
+		if visited[k] {
 			continue
 		}
+		visited[k] = true
 		family[k] = struct{}{}
 		queue = append(queue, children[k]...)
 	}

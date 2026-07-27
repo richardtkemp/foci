@@ -2,7 +2,7 @@ package codex
 
 import (
 	"encoding/json"
-	"os"
+	"strings"
 )
 
 // JSON-RPC 2.0 message types (without the "jsonrpc":"2.0" header, as per
@@ -70,6 +70,12 @@ type threadStartParams struct {
 	Cwd              string `json:"cwd,omitempty"`
 	Sandbox          string `json:"sandbox,omitempty"`
 	BaseInstructions string `json:"baseInstructions,omitempty"`
+	Ephemeral        bool   `json:"ephemeral,omitempty"`
+}
+
+type threadForkParams struct {
+	ThreadID  string `json:"threadId"`
+	Ephemeral bool   `json:"ephemeral,omitempty"`
 }
 
 type threadResumeParams struct {
@@ -82,11 +88,39 @@ type threadResumeParams struct {
 	BaseInstructions string `json:"baseInstructions,omitempty"`
 }
 
+type threadInfo struct {
+	ID     string       `json:"id"`
+	Path   string       `json:"path,omitempty"`
+	Status threadStatus `json:"status"`
+}
+
+type threadStatus struct {
+	Type        string   `json:"type"`
+	ActiveFlags []string `json:"activeFlags,omitempty"`
+}
+
+func (s threadStatus) String() string {
+	if s.Type == "" {
+		return ""
+	}
+	if len(s.ActiveFlags) == 0 {
+		return s.Type
+	}
+	return s.Type + " (" + strings.Join(s.ActiveFlags, ",") + ")"
+}
+
 type threadResult struct {
-	Thread struct {
-		ID string `json:"id"`
-	} `json:"thread"`
-	Model string `json:"model,omitempty"`
+	Thread threadInfo `json:"thread"`
+	Model  string     `json:"model,omitempty"`
+}
+
+type threadStartedParams struct {
+	Thread threadInfo `json:"thread"`
+}
+
+type threadStatusChangedParams struct {
+	ThreadID string       `json:"threadId"`
+	Status   threadStatus `json:"status"`
 }
 
 // --- Models ---
@@ -143,7 +177,12 @@ type turnSteerParams struct {
 }
 
 type sandboxPolicy struct {
-	Type          string   `json:"type"` // "workspace-write", "read-only", "danger-full-access"
+	// camelCase enum: "readOnly", "workspaceWrite", "dangerFullAccess",
+	// "externalSandbox". Deliberately NOT the same spelling as
+	// threadStartParams.Sandbox, which is kebab ("read-only",
+	// "workspace-write", "danger-full-access") — codex uses different casing
+	// for the two, and each rejects the other's spelling with -32600.
+	Type          string   `json:"type"`
 	WritableRoots []string `json:"writableRoots,omitempty"`
 	NetworkAccess bool     `json:"networkAccess,omitempty"`
 }
@@ -310,8 +349,10 @@ type itemEnvelope struct {
 	AgentPath     string `json:"agentPath,omitempty"`
 	AgentThreadID string `json:"agentThreadId,omitempty"`
 	// collabAgentToolCall fields
-	Prompt       string                 `json:"prompt,omitempty"`
-	AgentsStates map[string]collabState `json:"agentsStates,omitempty"`
+	Prompt            string                 `json:"prompt,omitempty"`
+	ReceiverThreadIDs []string               `json:"receiverThreadIds,omitempty"`
+	SenderThreadID    string                 `json:"senderThreadId,omitempty"`
+	AgentsStates      map[string]collabState `json:"agentsStates,omitempty"`
 	// agentMessage fields. Phase distinguishes mid-turn narration from the
 	// terminal answer (live-verified against codex app-server 0.144.5's
 	// generate-json-schema output AND a live turn: "commentary" precedes a
@@ -332,9 +373,4 @@ type fileChangeEntry struct {
 type collabState struct {
 	Status  string `json:"status,omitempty"`
 	Message string `json:"message,omitempty"`
-}
-
-// userHomeDir wraps os.UserHomeDir for testability.
-func userHomeDir() (string, error) {
-	return os.UserHomeDir()
 }

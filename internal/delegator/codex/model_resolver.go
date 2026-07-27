@@ -15,9 +15,7 @@ import (
 // substring matches prefer the numerically newest model version; catalogue
 // order breaks ties because app-server presents its preferred models first.
 func (b *Backend) ResolveModel(_ context.Context, model string) (delegator.ModelResolution, error) {
-	b.mu.Lock()
-	models := append([]string(nil), b.catalogueModels...)
-	b.mu.Unlock()
+	models := b.catalogue()
 	if len(models) == 0 {
 		models = modelcaps.ModelsFor(modelcaps.BackendCodex)
 	}

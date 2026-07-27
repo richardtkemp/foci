@@ -291,22 +291,16 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 					ag.EngageRateLimit(signal)
 				})
 			}
-			// Deliver Codex config/runtime warnings to the user's chat as
-			// system notifications — same pattern as ccstream's rate-limit
-			// notices. Deliberately off the generic log→WarningQueue path
-			// so they reach the human instead of being injected into the
-			// agent's own context.
+			// Codex config/runtime warnings deliberately have NO wiring here.
+			// They are operator diagnostics emitted before any thread exists,
+			// so the backend just logs them at WARN and the generic
+			// log.SetWarnHook path (setupWarningHooks) delivers them per
+			// notify.inject_chat_warnings / inject_agent_warnings. A
+			// backend-specific hook alongside that generic path only produced
+			// duplicates and a routing question with no correct answer.
 			if cb, ok := be.(*codex.Backend); ok {
 				cb.SetOnModelCaps(func(entries map[string]modelcaps.Caps) {
 					modelcaps.Publish(modelcaps.BackendCodex, entries)
-				})
-				cb.SetOnWarning(func(notice string) {
-					if conn := connMgr.Primary(agentID); conn != nil {
-						conn.SendNotification(notice)
-						log.NewComponentLogger("agent:" + agentID).Debugf("codex warning delivered to default chat")
-					} else {
-						log.NewComponentLogger("agent:"+agentID).Debugf("codex warning undelivered (no primary connection): %s", notice)
-					}
 				})
 			}
 			return be, nil

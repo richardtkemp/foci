@@ -3,7 +3,6 @@ package codex
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -12,6 +11,43 @@ import (
 	"foci/internal/delegator/sessionenv"
 )
 
+// onThreadStarted records the transcript path Codex associates with a thread.
+func (b *Backend) onThreadStarted(params *threadStartedParams) {
+	if params.Thread.ID == "" {
+		return
+	}
+	// Batch-only app-server instances and ephemeral multiplexed threads must
+	// never become the backend's interactive root. The root is established
+	// only by Start's explicit session mapping.
+	if b.startOpts.BatchOnly {
+		return
+	}
+	b.mu.Lock()
+	root := b.threadID == "" || b.threadID == params.Thread.ID
+	if root {
+		b.threadID = params.Thread.ID
+		if params.Thread.Path != "" {
+			b.sessionFilePath = params.Thread.Path
+		}
+		if params.Thread.Status.Type != "" {
+			b.threadStatus = params.Thread.Status
+		}
+	}
+	b.mu.Unlock()
+	if root && b.startOpts.SessionKey != "" {
+		b.registerThread(b.startOpts.SessionKey, params.Thread.ID)
+	}
+}
+
+func (b *Backend) onThreadStatusChanged(params *threadStatusChangedParams) {
+	if params.Status.Type == "" {
+		return
+	}
+	b.mu.Lock()
+	b.threadStatus = params.Status
+	b.mu.Unlock()
+}
+
 // onTurnStarted signals the typing indicator.
 func (b *Backend) onTurnStarted() {
 	b.itemMu.Lock()
@@ -19,9 +55,11 @@ func (b *Backend) onTurnStarted() {
 		b.itemCache = make(map[string]itemEnvelope)
 	}
 	b.itemMu.Unlock()
-	if b.subagents != nil {
-		b.subagents.stopAll()
-	}
+	// Subagent runs are deliberately NOT reset here. A child outlives its
+	// parent's turn in both directions — it can still be working when the
+	// parent's turn ends, and still working when the next one starts — so
+	// clearing at a turn boundary orphaned a live child's run. Runs end on the
+	// child's own turn/completed (see handleSubagentNotification).
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
@@ -29,13 +67,14 @@ func (b *Backend) onTurnStarted() {
 
 // onTurnCompleted finalises the turn.
 func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
-	// End any subagents still polling: codex emits no terminal
-	// subAgentActivity kind on normal completion, so turn completion is the
-	// boundary that stops the idle 500ms poll (#1324 sub-issue 1) and ends the
-	// stuck 'running' indicator (#1324 sub-issue 3). See finishAll.
-	if b.subagents != nil {
-		b.subagents.finishAll(b)
-	}
+	// Subagent runs are NOT ended here (#1588). #1324 used this boundary
+	// because SubAgentActivityKind has no terminal variant, so nothing seemed
+	// to end a run — but a child has its own thread and codex streams that
+	// thread's turn/completed, which is the real signal
+	// (handleSubagentNotification). A live probe showed a parent's turn
+	// completing with its child still working, so ending runs here reported
+	// children as finished while they were going.
+	//
 	// Read turnText/turnTools under turnMu: onItemCompleted writes them under
 	// turnMu from the reader goroutine and completeTurn Resets turnText under
 	// turnMu from the agent goroutine (e.g. a turn/start >30s timeout firing
@@ -62,7 +101,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 		ThreadName: threadName,
 	}
 	if params.Turn.Status == "failed" && params.Turn.Error != nil {
-		b.lg.Warnf("turn failed: %s", params.Turn.Error.Message)
+		b.logWarnf("turn failed: %s", params.Turn.Error.Message)
 	}
 	b.completeTurn(result)
 }
@@ -71,7 +110,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 func (b *Backend) onItemStarted(params *itemStartedParams) {
 	var item itemEnvelope
 	if err := json.Unmarshal(params.Item, &item); err != nil {
-		b.lg.Warnf("dropping malformed item in item/started: %v", err)
+		b.logWarnf("dropping malformed item in item/started: %v", err)
 		return
 	}
 
@@ -121,33 +160,125 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 		if se != nil && se.OnToolStart != nil {
 			se.OnToolStart(item.ID, "compact", "")
 		}
-	// Subagent — start polling the subagent's thread for text output.
+	// subAgentActivity is the authoritative child-thread lifecycle. Its item ID
+	// is transient; the agentThreadId is stable across collab follow-ups.
+	// Handled on BOTH notifications — see openSubagentRun.
 	case "subAgentActivity":
-		if item.Kind == "started" {
-			if se != nil && se.OnSubagentStart != nil {
-				// codex has no SendMessage-style reactivation: every subagent is a
-				// single run (#1355 fields default to run 1, no prompt).
-				se.OnSubagentStart(item.ID, item.AgentPath, "", 1)
-			}
-			if b.subagents != nil && item.AgentThreadID != "" {
-				b.subagents.start(b, item.AgentThreadID, item.ID)
-			}
-		}
-	// collabAgentToolCall — the tool-call view of a subagent spawn.
-	// Carries the prompt (what was asked). Fire OnSubagentStart with the
-	// prompt as the label so the client shows what the subagent is doing.
+		b.openSubagentRun(&item, se)
 	case "collabAgentToolCall":
-		if se != nil && se.OnSubagentStart != nil {
-			se.OnSubagentStart(item.ID, item.Prompt, "", 1)
-		}
+		b.logUnhandledCollabItem("item/started", params.Item)
 	}
+}
+
+// handleSubagentNotification consumes every notification belonging to a
+// subagent's child thread. Nothing here may reach the process owner: the
+// thread lookup in dispatch is the whole ownership decision, exactly as it is
+// for batch threads, so the default is to swallow rather than fall through.
+//
+// The child's own turn/completed is what ends a run. afe20cd0 concluded no
+// completion signal existed, reasoning from SubAgentActivityKind being
+// {started, interacted, interrupted} with no terminal variant — true of that
+// enum, but the child has its own THREAD, and codex streams that thread's full
+// turn lifecycle. Ending runs at the parent-turn boundary instead reported
+// children as finished while they were still working (#1588); the child's own
+// turn ending is the honest signal, and it arrives on the wire already.
+func (b *Backend) handleSubagentNotification(threadID, method string, params []byte) {
+	se := b.sessionEvents.Load()
+	switch method {
+	case "item/completed":
+		// Whole messages only. Deltas are consumed silently below: the
+		// completed item carries the same text in one piece, and the subagent
+		// panel renders messages, not a token stream.
+		var p itemCompletedParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		var item itemEnvelope
+		if json.Unmarshal(p.Item, &item) != nil {
+			return
+		}
+		if item.Type != "agentMessage" || item.Text == "" {
+			return
+		}
+		if run := b.subagents.current(threadID); run != nil && se != nil && se.OnSubagentText != nil {
+			se.OnSubagentText(run.groupKey, item.Text, run.runIndex)
+		}
+	case "turn/completed":
+		if run := b.subagents.stop(threadID); run != nil && se != nil && se.OnSubagentEnd != nil {
+			se.OnSubagentEnd(run.groupKey, run.runIndex)
+		}
+	default:
+		// Consumed, not ignored: the event is the child's and the owner must
+		// not see it. Logged so an event type worth extracting from is
+		// visible rather than silently swallowed.
+		b.logDebugf("subagent thread %s: consuming %s", threadID, method)
+	}
+}
+
+// logUnhandledCollabItem reports a collabAgentToolCall item verbatim instead of
+// interpreting it.
+//
+// foci previously drove the whole subagent UI from these — spawnAgent opened a
+// run, sendInput/resumeAgent emitted prompts, closeAgent ended it. That was
+// written from codex's type definitions, never from observed traffic, and live
+// probing shows codex does not send them: across codex 0.144.5 and 0.145.0,
+// with collab mode genuinely enabled (`collab = true`) and the model
+// demonstrably calling collaboration.spawn_agent / send_message /
+// interrupt_agent, the wire carried ONLY subAgentActivity items. Zero
+// collabAgentToolCall items appeared in the notification stream OR in either
+// thread's history. openai/codex#31300 canonicalised these for the *v1*
+// collaboration tools; current codex uses MultiAgentV2, which reports through
+// subAgentActivity (see openSubagentRun, the live path).
+//
+// So the old handling was an elaborate interpretation of a payload nobody had
+// ever seen. Rather than keep guessing — or delete the case and be blind if it
+// returns — this logs the raw item at WARN. WARN is deliberate: it is the
+// level that reaches an operator through log.SetWarnHook and the
+// notify.inject_chat_warnings path, so the first real specimen surfaces
+// immediately, with its full payload, instead of being silently consumed by
+// handling built on assumptions.
+func (b *Backend) logUnhandledCollabItem(method string, raw json.RawMessage) {
+	b.logWarnf("unhandled collabAgentToolCall on %s — foci has never observed one of these; "+
+		"please capture this payload and see openSubagentRun for the live path: %s", method, string(raw))
+}
+
+// openSubagentRun opens a child's run for a subAgentActivity item with
+// kind=started, and is a no-op for anything else.
+//
+// Called from BOTH onItemStarted and onItemCompleted on purpose. Codex 0.145.0
+// delivers the entire subAgentActivity lifecycle — started, interacted,
+// interrupted — on item/completed; item/started carries only agentMessage,
+// reasoning and userMessage (verified against a live app-server over a
+// spawn -> message -> close sequence). Watching item/started alone therefore
+// opened no run at all: no poll, no OnSubagentStart, and the later stop() had
+// nothing to end, leaving the subagent display inert along with everything
+// layered on it. Rather than move the handler and re-break on the next
+// protocol shift, both notifications feed this: start() is idempotent for an
+// already-active child, so a release that emits on item/started, on
+// item/completed, or on both behaves identically.
+func (b *Backend) openSubagentRun(item *itemEnvelope, se *delegator.SessionEvents) {
+	if item.Kind != "started" || b.subagents == nil || item.AgentThreadID == "" {
+		return
+	}
+	run, created := b.subagents.start(item.AgentThreadID, item.ID, item.AgentPath)
+	if !created || se == nil || se.OnSubagentStart == nil {
+		return
+	}
+	// The prompt argument is empty because subAgentActivity does not carry one:
+	// the observed payload is {type, id, kind, agentThreadId, agentPath} and
+	// nothing else. The prompt used to come from collabAgentToolCall.prompt,
+	// which foci no longer interprets (see logUnhandledCollabItem) — and which
+	// codex has never actually been observed to send, so that prompt was never
+	// really populated either. agentPath is the only descriptive field
+	// available, and it serves as the label.
+	se.OnSubagentStart(run.groupKey, item.AgentPath, "", run.runIndex)
 }
 
 // onItemCompleted maps a Codex item/completed notification to SessionEvents.
 func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 	var item itemEnvelope
 	if err := json.Unmarshal(params.Item, &item); err != nil {
-		b.lg.Warnf("dropping malformed item in item/completed: %v", err)
+		b.logWarnf("dropping malformed item in item/completed: %v", err)
 		return
 	}
 
@@ -247,49 +378,21 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 
 	case "subAgentActivity":
-		if item.Kind == "interrupted" || item.Kind == "interacted" {
-			// Both kinds are terminal for the poll (stop it and flush final
-			// text), so both must also end the client's activity indicator —
-			// otherwise a subagent that ends via 'interacted' leaves the
-			// indicator 'running' forever (#1324 sub-issue 3). A normal
-			// completion emits NEITHER kind (see finishAll); onTurnCompleted
-			// covers that case.
-			if b.subagents != nil && item.AgentThreadID != "" {
-				b.subagents.stop(b, item.AgentThreadID)
-			}
-			if se != nil && se.OnSubagentEnd != nil {
-				se.OnSubagentEnd(item.ID, 1)
+		// Codex 0.145.0 delivers the WHOLE lifecycle here, including
+		// kind=started — see openSubagentRun.
+		b.openSubagentRun(&item, se)
+		if (item.Kind == "interrupted" || item.Kind == "interacted") && b.subagents != nil {
+			if run := b.subagents.stop(item.AgentThreadID); run != nil && se != nil && se.OnSubagentEnd != nil {
+				se.OnSubagentEnd(run.groupKey, run.runIndex)
 			}
 		}
 
 	case "collabAgentToolCall":
-		// Extract agent response messages and deliver as subagent text,
-		// then close the run. Same pipeline as CC's Agent tool.
-		//
-		// AgentsStates is a map — Go randomizes iteration order, so ranging
-		// it directly delivered multi-agent collab messages to the client
-		// in a different, non-deterministic order every run. Sort by agent
-		// id first for stable, reproducible delivery order.
-		if se != nil {
-			agentIDs := make([]string, 0, len(item.AgentsStates))
-			for id := range item.AgentsStates {
-				agentIDs = append(agentIDs, id)
-			}
-			sort.Strings(agentIDs)
-			for _, id := range agentIDs {
-				state := item.AgentsStates[id]
-				if state.Message != "" && se.OnSubagentText != nil {
-					se.OnSubagentText(item.ID, state.Message, 1) // codex has no reactivation → run 1
-				}
-			}
-			if se.OnSubagentEnd != nil {
-				se.OnSubagentEnd(item.ID, 1)
-			}
-		}
-		// Count as a tool call like every other item type above — this was
-		// previously never counted, undercounting TurnResult.ToolCalls for
-		// every subagent spawn (see the contextCompaction comment above for
-		// the matching overcount this pairs with).
+		b.logUnhandledCollabItem("item/completed", params.Item)
+		// Still counted as a tool call, like every other item type above.
+		// That accounting is independent of what the item MEANS — if one ever
+		// arrives, undercounting TurnResult.ToolCalls would be wrong whatever
+		// we later decide the payload represents.
 		b.turnMu.Lock()
 		b.turnTools++
 		b.turnMu.Unlock()
@@ -481,7 +584,20 @@ func (b *Backend) onReasoningSummaryDelta(params *reasoningSummaryDeltaParams) {
 }
 
 // onConfigWarning logs recoverable configuration problems surfaced by the
-// app-server and fires the onWarning hook so they reach the user's chat.
+// app-server.
+//
+// Logging is the ENTIRE delivery mechanism, deliberately. These are operator
+// diagnostics — emitted at initialize before any thread exists, carrying a
+// file:line:col and an instruction to edit a config file — so there is no
+// thread they belong to and no agent that could act on one. WARN (not Info)
+// is what makes them visible: log.SetWarnHook fires only at WARN/ERROR, and
+// it is the single path behind notify.inject_chat_warnings and
+// notify.inject_agent_warnings. Anything wanting these subscribes there
+// rather than to a codex-specific callback.
+//
+// Severity is not incidental: codex logs these at ERROR itself, and
+// "Invalid configuration; using defaults." means one typo silently swapped
+// the agent's model and sandbox for defaults.
 func (b *Backend) onConfigWarning(params *configWarningParams) {
 	msg := params.Summary
 	if params.Details != "" {
@@ -490,8 +606,7 @@ func (b *Backend) onConfigWarning(params *configWarningParams) {
 	if params.Path != "" {
 		msg += " (" + params.Path + ")"
 	}
-	b.lg.Infof("config warning: %s", msg)
-	b.fireWarning(msg)
+	b.logWarnf("config warning: %s", msg)
 }
 
 // completeTurn fires the OnTurnComplete callback and clears turn state.

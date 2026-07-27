@@ -1,184 +1,132 @@
 package codex
 
 import (
-	"encoding/json"
 	"sync"
-	"time"
 )
 
-// subagentTracker manages polling of subagent threads to deliver their text
-// output via OnSubagentText. Multiple subagents can run simultaneously;
-// each is tracked by its agentThreadId and polled independently.
+// subagentTracker maps Codex's stable child thread ID to the foci subagent
+// group. Codex emits a new collab item ID for every spawn/input/resume call;
+// that ID is not a UI identity. The child thread ID survives those calls.
+//
+// A subagent runs in its own codex thread, and the app-server streams that
+// thread's entire lifecycle down the SAME connection as the parent's — turn
+// start/completion, message deltas, completed items, token usage, all tagged
+// with the child's threadId (verified live on 0.144.5 and 0.145.0, for both
+// the subagents feature and collab mode). So this tracker exists to answer one
+// question for the reader: "is this threadId a child, and which run is it?"
+// Everything the UI needs then arrives as ordinary notifications.
+//
+// It used to poll each child with thread/read every 500ms instead. That was
+// unnecessary — the data was already being delivered — and actively harmful: a
+// full re-read needs a de-dup cursor (#1571), and a collab child's thread is a
+// FORK of its parent, so a full re-read replays the parent's own transcript
+// into the subagent panel (#1592). Consuming the stream has neither problem,
+// because each item arrives exactly once and only the child's own items do.
 type subagentTracker struct {
-	mu     sync.Mutex
-	active map[string]*subagentPoll // agentThreadId → poll state
+	mu         sync.Mutex
+	active     map[string]*subagentRun // agentThreadId -> the run currently open
+	identities map[string]*subagentIdentity
 }
 
-type subagentPoll struct {
-	groupKey  string        // the item ID used as the OnSubagentStart groupKey
-	seenItems int           // items already delivered (avoids re-delivery)
-	done      chan struct{} // closed to stop the polling goroutine
+type subagentIdentity struct {
+	groupKey string
+	label    string
+	runIndex int
+}
+
+// subagentRun is the run currently open for a child thread: the UI group it
+// belongs to and which run within that group. A child may run many times —
+// codex starts a fresh turn on the child's thread for every parent
+// interaction — and each of those is a run.
+type subagentRun struct {
+	groupKey string
+	runIndex int
 }
 
 func newSubagentTracker() *subagentTracker {
-	return &subagentTracker{active: make(map[string]*subagentPoll)}
-}
-
-// start begins polling a subagent thread for agentMessage items.
-// Called when subAgentActivity kind=started fires.
-func (st *subagentTracker) start(b *Backend, agentThreadID, groupKey string) {
-	st.mu.Lock()
-	if _, exists := st.active[agentThreadID]; exists {
-		st.mu.Unlock()
-		return // already tracking
+	return &subagentTracker{
+		active:     make(map[string]*subagentRun),
+		identities: make(map[string]*subagentIdentity),
 	}
-	poll := &subagentPoll{groupKey: groupKey, done: make(chan struct{})}
-	st.active[agentThreadID] = poll
-	st.mu.Unlock()
-
-	go st.pollLoop(b, agentThreadID, poll)
 }
 
-// stop signals the polling goroutine to do a final read then exit.
-// Called when subAgentActivity kind=interrupted or kind=interacted fires.
-func (st *subagentTracker) stop(_ *Backend, agentThreadID string) {
+// start binds an agent thread to a stable foci group. It returns started=false
+// when the child is already active, preventing follow-up items from opening a
+// second UI subagent. An inactive identity is a reactivation and gets a new
+// run index while retaining the original group key.
+func (st *subagentTracker) start(agentThreadID, groupKey, label string) (*subagentRun, bool) {
+	if agentThreadID == "" {
+		return nil, false
+	}
 	st.mu.Lock()
-	poll, ok := st.active[agentThreadID]
-	if ok {
+	defer st.mu.Unlock()
+	if run := st.active[agentThreadID]; run != nil {
+		if label != "" {
+			st.identities[agentThreadID].label = label
+		}
+		return run, false
+	}
+	identity := st.identities[agentThreadID]
+	if identity == nil {
+		if groupKey == "" {
+			return nil, false
+		}
+		identity = &subagentIdentity{groupKey: groupKey, label: label, runIndex: 0}
+		st.identities[agentThreadID] = identity
+	} else if identity.groupKey == "" {
+		identity.groupKey = groupKey
+	}
+	if label != "" {
+		identity.label = label
+	}
+	identity.runIndex++
+	run := &subagentRun{groupKey: identity.groupKey, runIndex: identity.runIndex}
+	st.active[agentThreadID] = run
+	return run, true
+}
+
+// isChild reports whether agentThreadID belongs to a subagent this backend has
+// seen. The identity outlives any single run, so a notification arriving
+// between runs is still recognised as the child's and kept away from the
+// process owner.
+func (st *subagentTracker) isChild(agentThreadID string) bool {
+	if agentThreadID == "" {
+		return false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.identities[agentThreadID] != nil
+}
+
+// current returns the open run for a child thread, or nil when it is between
+// runs.
+func (st *subagentTracker) current(agentThreadID string) *subagentRun {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.active[agentThreadID]
+}
+
+// stop closes the child's open run and returns it for the matching
+// OnSubagentEnd callback. The identity is deliberately retained so a later
+// reactivation reuses the same UI group with a fresh run index.
+func (st *subagentTracker) stop(agentThreadID string) *subagentRun {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	run := st.active[agentThreadID]
+	if run != nil {
 		delete(st.active, agentThreadID)
 	}
-	st.mu.Unlock()
-	if !ok {
-		return
-	}
-	close(poll.done)
+	return run
 }
 
-// stopAll stops all active subagent polls (used on backend shutdown / turn reset).
+// stopAll drops every open run WITHOUT emitting ends. It is for teardown of
+// the whole backend, where the UI state is going away regardless. It is
+// deliberately not called at parent-turn boundaries: a child routinely
+// outlives its parent's turn (proven live — a parent's turn/completed arrived
+// with the child still working and no terminal signal for it, #1588), so
+// ending runs there reported children as finished while they were still going.
 func (st *subagentTracker) stopAll() {
 	st.mu.Lock()
-	for _, poll := range st.active {
-		select {
-		case <-poll.done:
-		default:
-			close(poll.done)
-		}
-	}
-	st.active = make(map[string]*subagentPoll)
-	st.mu.Unlock()
-}
-
-// finishAll ends every active subagent poll at parent-turn completion.
-//
-// Codex emits NO terminal subAgentActivity kind for a normally-completing
-// subagent: the SubAgentActivityKind enum is exactly {started, interacted,
-// interrupted} (verified against codex 0.144.5's app-server JSON schema —
-// `codex app-server generate-json-schema`). So a subagent that just finishes
-// its work never triggers the kind==interrupted path in handlers.go, and
-// without this its 500ms poll would idle-tick until the NEXT turn's
-// onTurnStarted stopAll (#1324 sub-issue 1), and the client's activity
-// indicator would stay 'running' forever (#1324 sub-issue 3).
-//
-// The parent turn cannot complete while a spawned subagent is still running
-// (every SubAgentSource — thread_spawn/review/compact/memory_consolidation —
-// feeds its result back into the parent turn), so turn completion is the
-// correct, kind-independent boundary at which to flush any final text and end
-// the indicator. Closing poll.done triggers the goroutine's final read (the
-// same flush the interrupted stop() path relies on); OnSubagentEnd then ends
-// the run's indicator.
-func (st *subagentTracker) finishAll(b *Backend) {
-	st.mu.Lock()
-	polls := make([]*subagentPoll, 0, len(st.active))
-	for _, poll := range st.active {
-		select {
-		case <-poll.done:
-		default:
-			close(poll.done)
-		}
-		polls = append(polls, poll)
-	}
-	st.active = make(map[string]*subagentPoll)
-	st.mu.Unlock()
-
-	se := b.sessionEvents.Load()
-	if se == nil || se.OnSubagentEnd == nil {
-		return
-	}
-	for _, poll := range polls {
-		se.OnSubagentEnd(poll.groupKey, 1) // codex has no reactivation → run 1
-	}
-}
-
-func (st *subagentTracker) pollLoop(b *Backend, agentThreadID string, poll *subagentPoll) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-poll.done:
-			b.readSubagentThread(agentThreadID, poll)
-			return
-		case <-ticker.C:
-			b.readSubagentThread(agentThreadID, poll)
-		case <-b.done:
-			return
-		}
-	}
-}
-
-// readSubagentThread calls thread/read on a subagent's thread, extracts
-// new agentMessage items, and delivers them via OnSubagentText.
-func (b *Backend) readSubagentThread(agentThreadID string, poll *subagentPoll) {
-	result, err := b.sendAndWait("thread/read", map[string]interface{}{
-		"threadId":     agentThreadID,
-		"includeTurns": true,
-	})
-	if err != nil {
-		return
-	}
-
-	var resp struct {
-		Thread struct {
-			Turns []struct {
-				Items []subagentItem `json:"items"`
-			} `json:"turns"`
-		} `json:"thread"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return
-	}
-
-	// Flatten all turns' items into a single list (chronological order:
-	// turns come oldest-first, items within a turn oldest-first).
-	var items []subagentItem
-	for _, turn := range resp.Thread.Turns {
-		items = append(items, turn.Items...)
-	}
-
-	b.deliverSubagentItems(items, poll)
-}
-
-// subagentItem is the subset of a subagent thread's item we care about.
-type subagentItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-// deliverSubagentItems delivers the not-yet-seen agentMessage items to
-// OnSubagentText in chronological (oldest-first) order and advances the seen
-// cursor. Only items at index >= poll.seenItems are new; non-agentMessage /
-// empty-text items in that range are skipped for delivery but still advance
-// the cursor. Iterating forward from the cursor (rather than the previous
-// newest-first reverse loop) preserves the thread's chronological order so a
-// subagent's messages reach the client in the order it produced them.
-func (b *Backend) deliverSubagentItems(items []subagentItem, poll *subagentPoll) {
-	se := b.sessionEvents.Load()
-	for i := poll.seenItems; i < len(items); i++ {
-		if items[i].Type == "agentMessage" && items[i].Text != "" {
-			if se != nil && se.OnSubagentText != nil {
-				se.OnSubagentText(poll.groupKey, items[i].Text, 1) // codex has no reactivation → run 1
-			}
-		}
-	}
-	poll.seenItems = len(items)
+	defer st.mu.Unlock()
+	st.active = make(map[string]*subagentRun)
 }

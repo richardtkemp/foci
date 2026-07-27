@@ -22,7 +22,7 @@ func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
 func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	switch inj.Source {
 	case delegator.SourcePass:
-		b.lg.Debugf("ignoring %s inject", inj.Source)
+		b.logDebugf("ignoring %s inject", inj.Source)
 		return nil
 	case delegator.SourceCompact:
 		return b.triggerCompaction()
@@ -53,8 +53,8 @@ func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
 	b.stashedUsage = nil
 	b.turnMu.Unlock()
 
-	threadID := b.SessionID()
-	if threadID == "" {
+	threadID := b.SessionIDFor(b.startOpts.SessionKey)
+	if b.startOpts.SessionKey == "" || threadID == "" {
 		b.completeTurn(&delegator.TurnResult{Text: "codex: no active thread"})
 		return fmt.Errorf("codex: no active thread")
 	}
@@ -121,7 +121,10 @@ func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
 // returned as-is; inbox.go's default case queues the text for a fresh turn
 // on any non-nil error too, so no message is dropped on the floor.
 func (b *Backend) steerTurn(text string) error {
-	threadID := b.SessionID()
+	threadID := b.SessionIDFor(b.startOpts.SessionKey)
+	if b.startOpts.SessionKey == "" || threadID == "" {
+		return fmt.Errorf("codex: no explicit session/thread mapping")
+	}
 	b.turnMu.Lock()
 	turnID := b.turnID
 	b.turnMu.Unlock()
@@ -133,10 +136,10 @@ func (b *Backend) steerTurn(text string) error {
 	})
 	if err != nil {
 		if isNoActiveTurnError(err) {
-			b.lg.Debugf("turn/steer raced turn completion (turnId=%s): %v", turnID, err)
+			b.logDebugf("turn/steer raced turn completion (turnId=%s): %v", turnID, err)
 			return delegator.ErrTurnNotInFlight
 		}
-		b.lg.Warnf("turn/steer failed: %v", err)
+		b.logWarnf("turn/steer failed: %v", err)
 		return err
 	}
 	return nil

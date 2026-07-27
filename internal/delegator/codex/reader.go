@@ -34,11 +34,49 @@ func (b *Backend) readStream(ctx context.Context, r io.Reader) {
 }
 
 func (b *Backend) dispatch(line []byte) {
+	p := b.process()
+	var env struct {
+		ID     *int64          `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	if json.Unmarshal(line, &env) == nil && env.Method != "" {
+		var x struct {
+			ThreadID string `json:"threadId"`
+			Thread   struct {
+				ID string `json:"id"`
+			} `json:"thread"`
+		}
+		_ = json.Unmarshal(env.Params, &x)
+		id := x.ThreadID
+		if id == "" {
+			id = x.Thread.ID
+		}
+		if target := p.facadeForThread(id); target != nil && target != p {
+			target.dispatchLocal(line)
+			return
+		}
+		// A subagent's child thread is NOT a foci session, so it resolves to no
+		// facade and would fall through to the process owner below — handing
+		// the owner the child's turn/completed (ending the parent's live turn
+		// with the child's answer), the child's message deltas (streamed into
+		// the user's chat as the parent's text) and the child's token usage.
+		// Same class as the batch-thread leak fixed in 825ac551. The child's
+		// events belong to the subagent UI, so consume them here.
+		if b.subagents != nil && b.subagents.isChild(id) {
+			b.handleSubagentNotification(id, env.Method, env.Params)
+			return
+		}
+	}
+	b.dispatchLocal(line)
+}
+
+func (b *Backend) dispatchLocal(line []byte) {
 	b.touchActivity()
 
 	var env wireEnvelope
 	if err := json.Unmarshal(line, &env); err != nil {
-		b.lg.Warnf("dropping unparseable line: %v", err)
+		b.logWarnf("dropping unparseable line: %v", err)
 		return
 	}
 
@@ -57,13 +95,13 @@ func (b *Backend) dispatch(line []byte) {
 		return
 	}
 
-	b.lg.Debugf("unrecognised message shape: %s", string(line))
+	b.logDebugf("unrecognised message shape: %s", string(line))
 }
 
 func (b *Backend) handleResponse(line []byte) {
 	var resp rpcResponse
 	if err := json.Unmarshal(line, &resp); err != nil {
-		b.lg.Warnf("dropping malformed response: %v", err)
+		b.logWarnf("dropping malformed response: %v", err)
 		return
 	}
 
@@ -102,73 +140,90 @@ func (b *Backend) handleServerRequest(line []byte, id int64, method string) {
 	case "item/permissions/requestApproval":
 		b.onPermissionApproval(params, id)
 	default:
-		b.lg.Debugf("unhandled server request: %s (id=%d)", method, id)
+		b.logDebugf("unhandled server request: %s (id=%d)", method, id)
 	}
 }
 
 func (b *Backend) handleNotification(line []byte, method string) {
 	params := extractParams(line)
+	if b.handleBatchNotification(method, params) {
+		return
+	}
 	if len(params) == 0 {
-		b.lg.Warnf("dropping %s: missing params", method)
+		b.logWarnf("dropping %s: missing params", method)
 		return
 	}
 
 	switch method {
+	case "thread/started":
+		var p threadStartedParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			b.logWarnf("dropping malformed thread/started: %v", err)
+			return
+		}
+		b.onThreadStarted(&p)
+	case "thread/status/changed":
+		var p threadStatusChangedParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			b.logWarnf("dropping malformed thread/status/changed: %v", err)
+			return
+		}
+		b.onThreadStatusChanged(&p)
 	case "turn/started":
 		b.onTurnStarted()
 	case "turn/completed":
 		var p turnCompletedParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			b.lg.Warnf("dropping malformed turn/completed: %v", err)
+			b.logWarnf("dropping malformed turn/completed: %v", err)
 			return
 		}
 		b.onTurnCompleted(&p)
 	case "item/started":
 		var p itemStartedParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			b.lg.Warnf("dropping malformed item/started: %v", err)
+			b.logWarnf("dropping malformed item/started: %v", err)
 			return
 		}
 		b.onItemStarted(&p)
 	case "item/completed":
 		var p itemCompletedParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			b.lg.Warnf("dropping malformed item/completed: %v", err)
+			b.logWarnf("dropping malformed item/completed: %v", err)
 			return
 		}
 		b.onItemCompleted(&p)
 	case "item/agentMessage/delta":
 		var p agentMessageDeltaParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			b.lg.Warnf("dropping malformed item/agentMessage/delta: %v", err)
+			b.logWarnf("dropping malformed item/agentMessage/delta: %v", err)
 			return
 		}
 		b.onAgentMessageDelta(&p)
 	case "thread/tokenUsage/updated":
 		var p tokenUsageParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			b.lg.Warnf("dropping malformed thread/tokenUsage/updated: %v", err)
+			b.logWarnf("dropping malformed thread/tokenUsage/updated: %v", err)
 			return
 		}
 		b.onTokenUsage(&p)
 	case "serverRequest/resolved":
 		var p serverRequestResolvedParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			b.lg.Warnf("dropping malformed serverRequest/resolved: %v", err)
+			b.logWarnf("dropping malformed serverRequest/resolved: %v", err)
 			return
 		}
 		b.onServerRequestResolved(&p)
 	case "item/reasoning/textDelta":
 		var p reasoningDeltaParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			b.lg.Warnf("dropping malformed item/reasoning/textDelta: %v", err)
+			b.logWarnf("dropping malformed item/reasoning/textDelta: %v", err)
 			return
 		}
 		b.onReasoningDelta(&p)
 	case "item/reasoning/summaryTextDelta":
 		var p reasoningSummaryDeltaParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			b.lg.Warnf("dropping malformed item/reasoning/summaryTextDelta: %v", err)
+			b.logWarnf("dropping malformed item/reasoning/summaryTextDelta: %v", err)
 			return
 		}
 		b.onReasoningSummaryDelta(&p)
@@ -177,18 +232,19 @@ func (b *Backend) handleNotification(line []byte, method string) {
 		case "configWarning":
 			var p configWarningParams
 			if err := json.Unmarshal(params, &p); err != nil {
-				b.lg.Warnf("dropping malformed configWarning: %v", err)
+				b.logWarnf("dropping malformed configWarning: %v", err)
 				return
 			}
 			b.onConfigWarning(&p)
 		case "warning":
 			var p runtimeWarningParams
 			if err := json.Unmarshal(params, &p); err != nil {
-				b.lg.Warnf("dropping malformed warning: %v", err)
+				b.logWarnf("dropping malformed warning: %v", err)
 				return
 			}
-			b.lg.Infof("codex runtime warning: %s", p.Message)
-			b.fireWarning(p.Message)
+			// WARN, not Info — see onConfigWarning: the log level IS the
+			// delivery mechanism, and log.SetWarnHook ignores Info.
+			b.logWarnf("codex runtime warning: %s", p.Message)
 		case "model/rerouted":
 			var p struct {
 				ToModel string `json:"toModel"`
@@ -199,7 +255,7 @@ func (b *Backend) handleNotification(line []byte, method string) {
 			b.mu.Lock()
 			b.model = p.ToModel
 			b.mu.Unlock()
-			b.lg.Infof("model rerouted to %s", p.ToModel)
+			b.logInfof("model rerouted to %s", p.ToModel)
 		case "thread/name/updated":
 			var p threadNameUpdatedParams
 			if err := json.Unmarshal(params, &p); err != nil {
@@ -209,28 +265,37 @@ func (b *Backend) handleNotification(line []byte, method string) {
 				b.mu.Lock()
 				b.threadName = *p.ThreadName
 				b.mu.Unlock()
-				b.lg.Infof("thread name: %s", *p.ThreadName)
+				b.logInfof("thread name: %s", *p.ThreadName)
 			}
 		default:
-			b.lg.Debugf("unhandled notification: %s", method)
+			b.logDebugf("unhandled notification: %s", method)
 		}
 	}
 }
 
 func (b *Backend) onReaderStopped(err error) {
-	b.lg.Debugf("reader stopped: %v", err)
+	b.logDebugf("reader stopped: %v", err)
 
 	b.mu.Lock()
 	b.running = false
 	b.mu.Unlock()
 
-	b.turnMu.Lock()
-	active := b.turnActive
-	b.turnMu.Unlock()
-	if active {
-		b.completeTurn(&delegator.TurnResult{
-			Text: b.turnText.String(),
-		})
+	// The connection owns the reader, but each facade owns its turn state.
+	b.threadMapMu.RLock()
+	facades := make(map[*Backend]struct{})
+	for _, f := range b.threadBackends {
+		facades[f] = struct{}{}
+	}
+	b.threadMapMu.RUnlock()
+	facades[b] = struct{}{}
+	for f := range facades {
+		f.turnMu.Lock()
+		active := f.turnActive
+		text := f.turnText.String()
+		f.turnMu.Unlock()
+		if active {
+			f.completeTurn(&delegator.TurnResult{Text: text})
+		}
 	}
 
 	b.rpcMu.Lock()
@@ -240,5 +305,7 @@ func (b *Backend) onReaderStopped(err error) {
 	}
 	b.rpcMu.Unlock()
 
-	close(b.done)
+	if b.done != nil {
+		close(b.done)
+	}
 }

@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -418,3 +419,64 @@ func TestCostSession_IncludesStartTime(t *testing.T) {
 // f64p returns a pointer to f — helper for building APIEntry.GoldenCostUSD
 // test fixtures (a float literal isn't addressable directly).
 func f64p(f float64) *float64 { return &f }
+
+// sessionFamily's BFS used `family` as BOTH the result set and the visited
+// set, and `family` is pre-seeded with the requested key (see its first line).
+// When the requested key IS the root — the ordinary case for a root chat —
+// the first pop therefore looks like a duplicate, so the walk carried an
+// exemption (`dup && k != root`) to avoid skipping the entire subtree.
+//
+// That exemption is what makes a self-parented row fatal: `children[root]`
+// contains `root`, the exemption suppresses the duplicate check on every pop
+// of root, and the queue grows without bound. Deleting the exemption is NOT
+// the fix — it reintroduces the collapse it was written to prevent, which
+// TestSessionFamily_TransitiveClosure covers. The fix is to stop conflating
+// the two sets.
+//
+// No self-parented row exists in production and f3816f36 closed the one known
+// producer, so this is hazard removal rather than a live-bug fix — but the
+// hang is unbounded-memory, and a walk that cannot terminate on malformed
+// input is worth fixing on its own terms.
+func TestSessionFamily_SelfParentedRowTerminates(t *testing.T) {
+	idx := costTestIndex(t)
+	base := time.Now().Add(-4 * time.Hour)
+	const root = "bot/c777"
+	// The pathological shape: parent_session_key == session_key.
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: root, ParentSessionKey: root, CreatedAt: base,
+		SessionType: session.SessionTypeChat, Status: session.SessionStatusActive,
+	})
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: "bot/c777/b1", ParentSessionKey: root, CreatedAt: base.Add(time.Hour),
+		SessionType: session.SessionTypeReflection, Status: session.SessionStatusActive,
+	})
+
+	done := make(chan map[string]struct{}, 1)
+	go func() {
+		fam, _ := sessionFamily(idx, root)
+		done <- fam
+	}()
+
+	select {
+	case fam := <-done:
+		// Terminating is the point, but it must still be CORRECT: the child
+		// has to be found, or a "fix" that returns early would pass.
+		if _, ok := fam["bot/c777/b1"]; !ok {
+			t.Errorf("family = %v, missing the child — the walk terminated by not walking", keysOf(fam))
+		}
+		if _, ok := fam[root]; !ok {
+			t.Errorf("family = %v, missing the root itself", keysOf(fam))
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("sessionFamily did not return on a self-parented row — the BFS queue grows without bound, hanging /cost and exhausting memory")
+	}
+}
+
+func keysOf(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

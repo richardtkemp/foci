@@ -19,8 +19,10 @@ func newInjectTestBackend(failWrites bool) (*Backend, *captureCloser) {
 		threadID:   "thread-test",
 		workDir:    "/tmp",
 		pendingRPC: make(map[int64]chan rpcReply),
+		startOpts:  delegator.StartOptions{SessionKey: "test/session"},
 	}
 	b.writer = NewWriter(c)
+	b.registerThread("test/session", "thread-test")
 	return b, c
 }
 
@@ -49,6 +51,9 @@ func TestBeginTurn_NoThreadErrors(t *testing.T) {
 	b.mu.Lock()
 	b.threadID = ""
 	b.mu.Unlock()
+	b.threadMapMu.Lock()
+	delete(b.sessionThreads, b.startOpts.SessionKey)
+	b.threadMapMu.Unlock()
 
 	err := b.beginTurn("hello", &delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}})
 	if err == nil || !strings.Contains(err.Error(), "no active thread") {
@@ -86,7 +91,7 @@ func TestBeginTurn_CommitsPendingModel(t *testing.T) {
 		}
 		return json.RawMessage(`{"turn":{"id":"turn-model","status":"inProgress"}}`), nil
 	})
-	b.threadID = "thread-model"
+	setTestThread(b, "thread-model")
 	b.pendingModel = "gpt-5.6-luna"
 	if err := b.beginTurn("hello", &delegator.TurnEvents{}); err != nil {
 		t.Fatalf("beginTurn: %v", err)
@@ -267,8 +272,11 @@ func TestImmediateInject_SourceCompact_NoThreadErrors(t *testing.T) {
 
 	b, _ := newInjectTestBackend(true)
 	b.mu.Lock()
-	b.threadID = "" // no active thread → triggerCompaction's guard fires
+	b.threadID = ""
 	b.mu.Unlock()
+	b.threadMapMu.Lock()
+	delete(b.sessionThreads, b.startOpts.SessionKey)
+	b.threadMapMu.Unlock() // no active thread → triggerCompaction's guard fires
 
 	err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact, Text: "/compact",

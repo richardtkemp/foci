@@ -21,7 +21,7 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 		b.mu.Lock()
 		b.pendingModel = resolution.BackendModel
 		b.mu.Unlock()
-		b.lg.Infof("model override queued: %s (applies next turn)", resolution.BackendModel)
+		b.logInfof("model override queued: %s (applies next turn)", resolution.BackendModel)
 		return nil
 
 	case *delegator.SetPermissionModeRequest:
@@ -32,7 +32,7 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 		b.mu.Lock()
 		b.pendingApproval = mode
 		b.mu.Unlock()
-		b.lg.Infof("approval policy override queued: %s (applies next turn)", mode)
+		b.logInfof("approval policy override queued: %s (applies next turn)", mode)
 		return nil
 
 	case *delegator.ApplyFlagSettingsRequest:
@@ -40,7 +40,7 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 			b.mu.Lock()
 			b.pendingEffort = effort
 			b.mu.Unlock()
-			b.lg.Infof("effort override queued: %s (applies next turn)", effort)
+			b.logInfof("effort override queued: %s (applies next turn)", effort)
 		}
 		return nil
 

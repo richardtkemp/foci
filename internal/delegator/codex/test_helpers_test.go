@@ -25,6 +25,8 @@ func newTestBackend(t *testing.T) *Backend {
 		pendingPerms: make(map[int64]*pendingApproval),
 	}
 	b.writer = NewWriter(nopWriteCloser{&bytes.Buffer{}})
+	b.startOpts.SessionKey = "test/session"
+	b.registerThread("test/session", "thread-1")
 	return b
 }
 
@@ -66,4 +68,11 @@ func panics(fn func()) (yes bool) {
 	}()
 	fn()
 	return
+}
+
+func setTestThread(b *Backend, id string) {
+	b.mu.Lock()
+	b.threadID = id
+	b.mu.Unlock()
+	b.registerThread(b.startOpts.SessionKey, id)
 }
