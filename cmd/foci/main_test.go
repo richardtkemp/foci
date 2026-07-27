@@ -33,7 +33,11 @@ func TestMain(m *testing.M) {
 	}
 
 	testBinary = filepath.Join(dir, "foci")
-	build := exec.Command("go", "build", "-o", testBinary, ".")
+	// -buildvcs=false: VCS stamping shells out to git, which fails when `make test`
+	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
+	// git needs when the checkout is owned by a different user than the test runner
+	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", testBinary, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build failed: %v\n%s\n", err, out)
