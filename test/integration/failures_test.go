@@ -64,25 +64,39 @@ func TestL2_Failures_BackendExitsNonZeroBeforeHandshake(t *testing.T) {
 		BackendReadyTimeout: 4 * time.Second,
 	})
 
-	// First turn — cc-stub exits with code 1 before handshake.
-	// WaitReady times out at 4s; foci logs the warning and proceeds
-	// with a dead backend.
+	// First turn — cc-stub exits with code 1 before handshake. The
+	// subprocess is gone before the init response can arrive, so WaitReady
+	// returns as soon as the reader sees EOF and foci proceeds with a dead
+	// backend.
 	pushUserMessage(t, h, "alpha", userID, "first-attempt-doomed")
 
-	// Wait for the WaitReady warning to land in stderr, proving the
-	// timeout path actually fired (rather than the test passing for
-	// the wrong reason via a happy-path spawn).
+	// A pre-handshake death has exactly ONE observable outcome, whichever
+	// goroutine notices it first. Start's initialize write races the waiter
+	// goroutine's cmd.Wait (which closes the parent's end of the stdin pipe):
+	// if the write wins it lands in the pipe buffer, if cmd.Wait wins the
+	// write fails with ErrClosed/EPIPE. ccstream.transportGone folds the
+	// second ordering into the first, so both report the death through
+	// WaitReady rather than one of them failing Start with a bare write
+	// error. Pin that single outcome — accepting a menu of markers is what
+	// let the race hide (it flaked once in 118 CI runs, then reproduced at
+	// 3/24 under CPU contention).
+	const wantMarker = "waitready for alpha/c8001: ccstream: subprocess exited before init"
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		low := strings.ToLower(h.Stderr())
-		if strings.Contains(low, "waitready") || strings.Contains(low, "is dead, respawning") {
+		if strings.Contains(strings.ToLower(h.Stderr()), wantMarker) {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	low := strings.ToLower(h.Stderr())
-	if !strings.Contains(low, "waitready") && !strings.Contains(low, "is dead, respawning") {
-		t.Fatalf("expected WaitReady-timeout warning or respawn marker in stderr; tail:\n%s", stderrTail(h.Stderr()))
+	if !strings.Contains(low, wantMarker) {
+		t.Fatalf("expected %q in stderr (the one deterministic pre-handshake-death outcome); tail:\n%s",
+			wantMarker, stderrTail(h.Stderr()))
+	}
+	// And the race's other loser must NOT surface as a Start failure.
+	if strings.Contains(low, "send initialize") {
+		t.Fatalf("pre-handshake death leaked out as a Start error (the race the fix removes); tail:\n%s",
+			stderrTail(h.Stderr()))
 	}
 
 	// Second turn — the marker file now exists, so cc-stub's

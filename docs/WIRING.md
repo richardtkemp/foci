@@ -529,12 +529,12 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 
 **Lifecycle:**
 1. `Start` spawns `claude` with stream-json flags, creates stdin/stdout/stderr pipes.
-2. Sends an `initialize` control request with the system prompt.
+2. Sends an `initialize` control request with the system prompt. If that write fails because the transport is already gone (`transportGone`: `errors.Is` on `os.ErrClosed`/`EPIPE`/`io.ErrClosedPipe`/`EBADF`), the subprocess died before the handshake and `Start` does **not** report a distinct error — it logs and falls through so the death surfaces via the single dead-backend path (`WaitReady` → `subprocess exited before init`, `IsRunning()==false`, manager respawns next turn). Otherwise a pre-handshake death's observable outcome would depend on whether the write or the waiter goroutine's `cmd.Wait` (which closes the parent's pipe end) won the race. For the same reason `running` is only claimed when `finalized` is unset, so a finalize that already declared the process dead is never overwritten.
 3. Reader goroutine dispatches stdout lines to typed handler methods.
 4. `OnSystem("init", ...)` fires `readyOnce` (unblocks `WaitReady`) and persists session ID.
 5. Keep-alive goroutine sends heartbeats every 30s.
 6. `Close` sends interrupt + EOF, waits up to 5s, escalates SIGTERM → SIGKILL.
-7. `Restart` calls `Close`, resets state, calls `Start` with saved options.
+7. There is no `Restart`: a `Backend` is single-use. `DelegatedManager.Get` sees `IsRunning()==false` and constructs a fresh Backend, resuming via `--resume <saved session id>`. (Stale `Reset in Restart()` comments on `finalizeOnce`/`closeOnce` refer to a method that does not exist.)
 
 **Two-lifetime callback split (TODO #747):** ccstream divides backend callbacks across two distinct lifetimes that match the actual semantics — delivery is session-scoped, bookkeeping is per-turn:
 
