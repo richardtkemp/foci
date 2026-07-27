@@ -100,6 +100,8 @@ cat something | yq -p toml '.key'
 
 **Output format flag:** `-oy` (YAML), `-oj` (JSON), `-ot` (TOML), `-ox` (XML).
 
+**TOML root must be a mapping:** for `keys`, or any filter that emits a list or multiple roots, ask for `-oy`/`-oj` instead — TOML cannot represent them at the top level, so the default TOML output errors on a query that is otherwise correct.
+
 **Input format flag (`-p`):** Only needed when piping or reading files with non-standard extensions.
 
 ## When to use what
