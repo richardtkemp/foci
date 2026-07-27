@@ -1,3 +1,5 @@
+<!-- GOLDEN: ships with foci (shared/skills/bouncer/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
+
 # Auditing Model Prompt Template
 
 These are the exact prompts sent to an AI auditing model when scanning skills.

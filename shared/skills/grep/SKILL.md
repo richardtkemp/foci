@@ -1,6 +1,8 @@
 ---
 name: grep
 description: Finding text on disk — use ack, not grep (grep is only for filtering the piped output of other commands). Conventions for fast, correct file-content search across a codebase.
+owner: foci
+seeded: true
 ---
 
 # Grep

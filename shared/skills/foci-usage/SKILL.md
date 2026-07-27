@@ -1,6 +1,8 @@
 ---
 name: foci-usage
 description: How to operate as a foci agent — the tools you call, how your prompts and turns are built, the databases behind your state, and the config that shapes you. Read the relevant subfile before doing related work.
+owner: foci
+seeded: true
 ---
 
 # Foci Usage — Operating Manual for a Foci Agent

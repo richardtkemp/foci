@@ -1,6 +1,8 @@
 ---
 name: research
 description: "Web research with Perplexity via OpenRouter. Use when you need to search the web and synthesize current information. Supports two modes: (1) Basic Sonar for general research and fact-checking, (2) Sonar Deep Research for complex analysis, multi-step queries, or when you're uncertain if deep research might be needed (ask for confirmation). Uses OpenRouter's API - no separate Perplexity key required."
+owner: foci
+seeded: true
 ---
 
 # OpenRouter Perplexity Research Skill

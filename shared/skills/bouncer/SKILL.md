@@ -1,6 +1,8 @@
 ---
 name: bouncer
 description: Security scanner for untrusted code and AI agent skills. Detects credential theft, code injection, privacy violations, deception, resource abuse, and ethical issues before you read or activate untrusted content.
+owner: foci
+seeded: true
 metadata:
   foci:
     always: true

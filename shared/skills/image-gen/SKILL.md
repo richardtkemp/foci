@@ -1,6 +1,8 @@
 ---
 name: image-gen
 description: Generate images via OpenRouter (GPT-5 Image, GPT-5 Image Mini, Gemini Pro/Flash).
+owner: foci
+seeded: true
 homepage: https://openrouter.ai/
 metadata:
   foci:

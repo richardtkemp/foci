@@ -351,6 +351,8 @@ lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
 		echo "bare t.Parallel() in L2 tests — use testharness.ParallelWait/ParallelHeavy/ParallelWeight:"; \
 		echo "$$bad"; exit 1; \
 	fi
+	@echo "=== skill provenance (shipped skills declare seed-if-missing vs golden) ==="
+	@bash scripts/check-skill-provenance.sh
 
 lint-fix:
 	@echo "=== golangci-lint --fix ==="

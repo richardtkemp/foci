@@ -1,6 +1,8 @@
 ---
 name: browser
 description: Drive a live browser via accessibility-tree snapshots — navigate, click, fill forms, select, press keys, screenshot. Use when a task needs interacting with a real web page (logins, JS-rendered content, multi-step flows), not a static read (that's web_fetch).
+owner: foci
+seeded: true
 ---
 
 # Browser Tool Reference

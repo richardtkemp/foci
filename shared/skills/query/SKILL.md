@@ -1,6 +1,8 @@
 ---
 name: query
 description: "Query structured data (JSON, JSONL, TOML, YAML, XML, CSV, Markdown) using jq, mdq, and yq. Use instead of grep/cat/sed for structured files."
+owner: foci
+seeded: true
 ---
 # Structured Query Tools
 
