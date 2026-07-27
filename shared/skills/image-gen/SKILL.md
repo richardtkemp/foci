@@ -4,11 +4,6 @@ description: Generate images via OpenRouter (GPT-5 Image, GPT-5 Image Mini, Gemi
 owner: foci
 seeded: true
 homepage: https://openrouter.ai/
-metadata:
-  foci:
-    requires:
-      secrets:
-        - openrouter.api_key
 ---
 
 # Image Generation (OpenRouter)
