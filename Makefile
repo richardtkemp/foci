@@ -331,9 +331,11 @@ lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
 	# internal/clock/fake.go is the same shape: *clock.Fake is the shared
 	# injectable-time test double (#1513) imported only from other packages'
 	# _test.go files (clock.Real()/Clock/Timer in clock.go ARE used from
-	# production and stay covered).
+	# production and stay covered). internal/testmarker is the same shape
+	# again (#1562): Err/ID are called only from other packages' _test.go
+	# files to mark injected fake values that reach WARN/ERROR log lines.
 	@raw=$$($(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
-	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' || true); \
+	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@./bin/find-disconnected-tests ./...

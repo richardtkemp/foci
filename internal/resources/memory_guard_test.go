@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/testmarker"
 )
 
 // writeProcFile writes a file at procDir/relPath, creating parent dirs.
@@ -75,7 +77,7 @@ func newTestGuard(warnPct, killPct int, pressureThreshold float64) (*MemoryGuard
 			ms.mu.Lock()
 			defer ms.mu.Unlock()
 			if ms.largestPid == 0 {
-				return 0, "", 0, fmt.Errorf("no process found")
+				return 0, "", 0, testmarker.Err("no process found")
 			}
 			return ms.largestPid, ms.largestComm, ms.largestRSS, nil
 		},
@@ -214,7 +216,7 @@ func TestMemoryGuard_AboveKill_WithPressure_Kills(t *testing.T) {
 	ms.userRSSKB = ms.memTotalKB * 50 / 100
 	ms.pressureAvg10 = 20.0
 	ms.largestPid = 12345
-	ms.largestComm = "node"
+	ms.largestComm = testmarker.ID("node")
 	ms.largestRSS = ms.memTotalKB * 40 / 100
 
 	g.checkOnce()
@@ -245,7 +247,7 @@ func TestMemoryGuard_Kill_NoPressure_NoAction(t *testing.T) {
 	ms.userRSSKB = ms.memTotalKB * 50 / 100
 	ms.pressureAvg10 = 2.0
 	ms.largestPid = 12345
-	ms.largestComm = "node"
+	ms.largestComm = testmarker.ID("node")
 	ms.largestRSS = ms.memTotalKB * 40 / 100
 
 	g.checkOnce()
@@ -518,11 +520,11 @@ func TestMemoryGuard_KillError_StillWarns(t *testing.T) {
 	ms.userRSSKB = ms.memTotalKB * 50 / 100
 	ms.pressureAvg10 = 20.0
 	ms.largestPid = 12345
-	ms.largestComm = "node"
+	ms.largestComm = testmarker.ID("node")
 	ms.largestRSS = ms.memTotalKB * 40 / 100
 
 	g.killProcessFn = func(pid int) error {
-		return fmt.Errorf("permission denied")
+		return testmarker.Err("permission denied")
 	}
 
 	g.checkOnce()
@@ -719,7 +721,7 @@ func TestMemoryGuard_KillIncludesSelfRSS(t *testing.T) {
 	ms.selfRSSKB = 1024 * 1024 // 1GB
 	ms.pressureAvg10 = 20.0
 	ms.largestPid = 12345
-	ms.largestComm = "node"
+	ms.largestComm = testmarker.ID("node")
 	ms.largestRSS = ms.memTotalKB * 40 / 100
 
 	g.checkOnce()

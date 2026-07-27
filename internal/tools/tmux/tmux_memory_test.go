@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"foci/internal/testmarker"
 )
 
 func TestParseThreshold(t *testing.T) {
@@ -436,7 +438,7 @@ func TestCheckOnce_KillFails(t *testing.T) {
 	m.getTmuxRSSFn = func() (int64, error) { return memTotalKB * 35 / 100, nil }
 	m.getMemTotalFn = func() (int64, error) { return memTotalKB, nil }
 	m.killTmuxFn = func() ([]string, error) {
-		return nil, fmt.Errorf("permission denied")
+		return nil, testmarker.Err("permission denied")
 	}
 
 	m.checkOnce()
