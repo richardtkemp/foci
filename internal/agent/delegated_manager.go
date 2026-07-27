@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/codex"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -1038,6 +1039,7 @@ func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey stri
 	}
 	res, err := br.ForkSession(ctx, delegator.ForkRequest{
 		ParentSessionID: parentID,
+		FociSessionKey:  parentKey,
 		WorkDir:         m.StartOpts.WorkDir,
 		AgentID:         m.StartOpts.AgentID,
 	})
@@ -1098,8 +1100,8 @@ func (m *DelegatedManager) idleReaper(ctx context.Context) {
 }
 
 // RunOnce executes a one-shot prompt via claude --print and returns the
-// response synchronously. No tmux session, no watcher, no session index
-// entry, no platform delivery. Ideal for internal tasks like nudge
+// response synchronously. No tmux session, watcher, or platform delivery;
+// Codex batches are indexed against their owning foci session. Ideal for internal tasks like nudge
 // extraction and memory consolidation.
 //
 // systemPrompt is passed via --system-prompt; empty uses CC's default. This is
@@ -1113,6 +1115,7 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 		SystemPrompt: systemPrompt,
 		WorkDir:      m.StartOpts.WorkDir,
 		AgentID:      m.StartOpts.AgentID,
+		SessionKey:   tools.SessionKeyFromContext(ctx),
 	})
 }
 
@@ -1128,12 +1131,13 @@ func (m *DelegatedManager) RunOnceWithModel(ctx context.Context, prompt, systemP
 		Model:        model,
 		WorkDir:      m.StartOpts.WorkDir,
 		AgentID:      m.StartOpts.AgentID,
+		SessionKey:   tools.SessionKeyFromContext(ctx),
 	})
 }
 
 // RunBatch executes a one-shot batch run described by req and returns the
-// response synchronously. No tmux session, no watcher, no session index
-// entry, no platform delivery. It is the general entry point behind RunOnce
+// response synchronously. No tmux session, watcher, or platform delivery;
+// Codex batches are indexed against their owning foci session. It is the general entry point behind RunOnce
 // (nudge extraction, memory consolidation, onboarding) and the tool-layer
 // summary tool (tools.BatchSummariser, #1317) — the latter needs req.Model
 // (e.g. "haiku") where the former leave it empty for the backend's own cheap
@@ -1149,11 +1153,67 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 		req.AgentID = m.StartOpts.AgentID
 	}
 
-	// Dispatch to the agent's own backend (same unstarted-instance probe as
-	// BackendCanBranch), so the one-shot runs on the same auth/billing/model
-	// family as the agent itself. There is deliberately NO claude --print
-	// fallback: a backend without a BatchRunner would silently run one-shots
-	// on a different vendor's CLI (the pre-#1312 behaviour).
+	// Every batch is a real, distinct foci session. The owner is only the
+	// explicit process to multiplex onto; it is never reused as the batch's
+	// own session key or thread target.
+	ownerKey := req.OwnerSessionKey
+	if ownerKey == "" {
+		ownerKey = req.SessionKey
+	}
+	if ownerKey == "" {
+		ownerKey = tools.SessionKeyFromContext(ctx)
+	}
+	// A batch session is a CHILD of the owning chat, so its key must be a
+	// well-formed <agent>/<c|i><id>/b<ts>: ParseSessionKey only accepts c/i as
+	// the second segment's type rune, and a key it can't parse indexes with
+	// chat_id=0/is_root=0, which no family query can ever reach.
+	batchRoot := req.AgentID
+	if sk, err := session.ParseSessionKey(ownerKey); err == nil {
+		batchRoot = sk.Root().String()
+	}
+	batchKey := fmt.Sprintf("%s/b%d", batchRoot, time.Now().UnixNano())
+	req.OwnerSessionKey = ownerKey
+	req.SessionKey = batchKey
+
+	// A running Codex backend is the app-server multiplexing host: when the
+	// owner session already has a live *codex.Backend, m.NewBackend() below
+	// constructs a FRESH facade for the batch -- never mb.be, the owner's own
+	// object -- and starts it with req.AgentID equal to the owner's AgentID.
+	// Start's pool-attach path (keyed on AgentID) then multiplexes that
+	// facade onto the SAME app-server process, so the app-server is still
+	// shared; only the object is not. This replaces the old special case that
+	// called cb.RunBatch(ctx, req) directly on the owner's live backend:
+	// routing the batch's turn onto the very Go object that also holds the
+	// owner's own turn/callback state meant a mis-delivered notification
+	// (e.g. a late turn/completed arriving after RunBatch's cancel/timeout
+	// path, #1570) could complete the owner's in-flight turn. With a
+	// distinct facade object, thread-ID routing failing can no longer reach
+	// the owner's state at all.
+	isCodexMultiplex := false
+	if ownerKey != "" {
+		if mb, ok := m.getManaged(ownerKey); ok && mb.be.IsRunning() {
+			if _, ok := mb.be.(*codex.Backend); ok {
+				isCodexMultiplex = true
+			}
+		}
+	}
+	// Index the batch session ONLY on the path that actually multiplexes onto
+	// a live app-server. This bookkeeping is codex-specific; running it
+	// unconditionally made every ccstream agent write a permanent row per
+	// nudge-extraction/consolidation one-shot. Such a row is unreclaimable by
+	// construction: PruneOrphans skips empty file_path ("backend session, not
+	// an orphan"), so it never prunes, and a self-parented row makes
+	// ArchiveSweep's active-branch guard match it against ITSELF, so it never
+	// archives either -- while ArchiveSweep runs a full index query per
+	// candidate. Guard on a real, distinct parent so neither can recur.
+	if isCodexMultiplex && m.SessionIndex != nil && batchKey != ownerKey {
+		m.SessionIndex.Upsert(session.SessionIndexEntry{
+			SessionKey: batchKey, ParentSessionKey: ownerKey,
+			CreatedAt: time.Now(), SessionType: session.SessionTypeBackgroundTask,
+			Status: session.SessionStatusActive,
+		})
+	}
+
 	if m.NewBackend == nil {
 		return "", fmt.Errorf("RunBatch: no backend factory configured")
 	}
@@ -1163,17 +1223,17 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 	}
 	br, ok := be.(delegator.BatchRunner)
 	if !ok {
-		m.logger().Errorf("RunBatch: backend %T does not implement delegator.BatchRunner — one-shot runs (nudge extraction, memory consolidation, onboarding, foci_summary) are unavailable; implement RunBatch on this backend to enable them", be)
+		m.logger().Errorf("RunBatch: backend %T does not implement delegator.BatchRunner", be)
 		return "", fmt.Errorf("backend %T does not implement delegator.BatchRunner", be)
 	}
 
-	m.logger().Infof("RunBatch: batch via %T (workdir=%s, model=%s, system_prompt=%d bytes)",
-		be, req.WorkDir, req.Model, len(req.SystemPrompt))
+	m.logger().Infof("RunBatch: batch via %T (workdir=%s, model=%s, system_prompt=%d bytes, session=%s, owner=%s)",
+		be, req.WorkDir, req.Model, len(req.SystemPrompt), req.SessionKey, ownerKey)
 	result, err := br.RunBatch(ctx, req)
 	if err != nil {
 		return "", err
 	}
-	m.logger().Infof("RunBatch: complete (%d bytes)", len(result))
+	m.logger().Infof("RunBatch: complete (%d bytes, session=%s)", len(result), req.SessionKey)
 	return result, nil
 }
 

@@ -18,7 +18,7 @@ func (b *Backend) tryAutoApprove(rpcID int64, itemID, command string) bool {
 	if !autoapprove.MatchWithEnv(b.autoApproveRules, "Bash", input, b.autoApproveEnv) {
 		return false
 	}
-	b.lg.Infof("auto-approved: command=%q item=%s", command, itemID)
+	b.logInfof("auto-approved: command=%q item=%s", command, itemID)
 	b.respondApproval(rpcID, "accept")
 	return true
 }
@@ -26,7 +26,7 @@ func (b *Backend) tryAutoApprove(rpcID int64, itemID, command string) bool {
 func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 	var params commandApprovalParams
 	if err := json.Unmarshal(line, &params); err != nil {
-		b.lg.Warnf("dropping malformed command approval: %v", err)
+		b.logWarnf("dropping malformed command approval: %v", err)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 			},
 		)
 	} else {
-		b.lg.Warnf("no permission prompt handler, auto-denying command: %s", command)
+		b.logWarnf("no permission prompt handler, auto-denying command: %s", command)
 		b.respondApproval(rpcID, "decline")
 	}
 }
@@ -77,7 +77,7 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 	var params fileChangeApprovalParams
 	if err := json.Unmarshal(line, &params); err != nil {
-		b.lg.Warnf("dropping malformed file approval: %v", err)
+		b.logWarnf("dropping malformed file approval: %v", err)
 		return
 	}
 
@@ -122,7 +122,7 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 			},
 		)
 	} else {
-		b.lg.Warnf("no permission prompt handler, auto-denying file change")
+		b.logWarnf("no permission prompt handler, auto-denying file change")
 		b.respondApproval(rpcID, "decline")
 	}
 }
@@ -148,7 +148,7 @@ func (b *Backend) lookupItemDetail(itemID string) string {
 }
 
 func (b *Backend) onPermissionApproval(_ []byte, rpcID int64) {
-	b.lg.Debugf("permission approval request (id=%d), auto-denying", rpcID)
+	b.logDebugf("permission approval request (id=%d), auto-denying", rpcID)
 	b.respondApproval(rpcID, "decline")
 }
 
@@ -159,8 +159,8 @@ func (b *Backend) respondApproval(rpcID int64, decision string) {
 	isEmpty := len(b.pendingPerms) == 0
 	b.permMu.Unlock()
 
-	if err := b.writer.sendResponse(rpcID, approvalResponse{Decision: decision}); err != nil {
-		b.lg.Errorf("failed to send approval response: %v", err)
+	if err := b.process().writer.sendResponse(rpcID, approvalResponse{Decision: decision}); err != nil {
+		b.logErrorf("failed to send approval response: %v", err)
 	}
 
 	if isEmpty && b.onPromptsCleared != nil {

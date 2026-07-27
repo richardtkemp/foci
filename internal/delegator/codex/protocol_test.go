@@ -3,11 +3,13 @@ package codex
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 func TestDispatch_TurnStarted(t *testing.T) {
@@ -200,48 +202,68 @@ func TestDispatch_AgentMessageDelta_DoesNotDoubleTurnText(t *testing.T) {
 }
 
 // TestDispatch_CollabAgentToolCall_DeterministicOrderAndCounted is the
-// red/green regression for #1329 item 4: AgentsStates is a Go map, so
-// ranging it directly delivers multi-agent collab messages in random
-// iteration order — this pins sorted-by-key (deterministic) delivery.
-// It also pins the ToolCalls fix: collabAgentToolCall previously never
-// incremented turnTools (undercounting a real subagent spawn) while
-// contextCompaction — internal bookkeeping, not a user tool call — did
-// (overcounting); collab should count, compaction should not.
-func TestDispatch_CollabAgentToolCall_DeterministicOrderAndCounted(t *testing.T) {
-	t.Parallel()
+// collabAgentToolCall is no longer interpreted — see logUnhandledCollabItem.
+// foci has never observed one on the wire (two codex versions, collab mode on,
+// collaboration.* tools demonstrably used), so the old handling was an
+// interpretation of a payload nobody had seen. This pins the replacement
+// contract: the raw item reaches the log at WARN so the first real specimen is
+// captured, subagent state is left completely alone, and the item still counts
+// as a tool call.
+func TestDispatch_CollabAgentToolCall_IsLoggedNotInterpreted(t *testing.T) {
 	b := newTestBackend(t)
+	b.subagents = newSubagentTracker()
 
-	var order []string
-	var ended bool
+	var touched []string
 	b.sessionEvents.Store(&delegator.SessionEvents{
-		OnSubagentText: func(groupKey, text string, runIndex int) { order = append(order, text) },
-		OnSubagentEnd:  func(groupKey string, runIndex int) { ended = true },
+		OnSubagentStart: func(g, l, p string, r int) { touched = append(touched, "start") },
+		OnSubagentText:  func(g, text string, r int) { touched = append(touched, "text") },
+		OnSubagentPrompt: func(g, p string, r int) { touched = append(touched, "prompt") },
+		OnSubagentEnd:   func(g string, r int) { touched = append(touched, "end") },
 	})
 
-	// zzz/aaa/mmm keys chosen so map iteration order is virtually certain to
-	// differ from sorted order at least once across repeated runs — sorting
-	// makes the assertion below deterministic regardless.
-	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":{"type":"collabAgentToolCall","id":"c1","agentsStates":{"zzz":{"message":"third"},"aaa":{"message":"first"},"mmm":{"message":"second"}}}}}`))
-	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":{"type":"contextCompaction","id":"c2"}}}`))
+	var mu sync.Mutex
+	var logged []string
+	log.SetWarnHook(func(level log.Level, component, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if level.String() == "WARN" {
+			logged = append(logged, msg)
+		}
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
 
-	want := []string{"first", "second", "third"}
-	if len(order) != len(want) {
-		t.Fatalf("OnSubagentText order = %v, want %v", order, want)
+	const raw = `{"type":"collabAgentToolCall","id":"c1","tool":"spawnAgent","receiverThreadIds":["agent-9"],"agentsStates":{"zzz":{"message":"third"},"aaa":{"message":"first"}}}`
+	b.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"th_1","turnId":"tu_1","item":` + raw + `}}`))
+
+	if len(touched) != 0 {
+		t.Errorf("collab item drove subagent callbacks %v — it must not, the payload is unverified", touched)
 	}
-	for i := range want {
-		if order[i] != want[i] {
-			t.Errorf("OnSubagentText order = %v, want %v (must be sorted by agent id)", order, want)
+
+	// The WHOLE payload must survive to the log: a specimen is only useful if
+	// nothing was dropped on the way, so assert distinctive fields from every
+	// part of it rather than that some warning fired.
+	var found string
+	mu.Lock()
+	for _, m := range logged {
+		if strings.Contains(m, "collabAgentToolCall") {
+			found = m
 		}
 	}
-	if !ended {
-		t.Error("OnSubagentEnd was not fired")
+	mu.Unlock()
+	if found == "" {
+		t.Fatal("no WARN logged for a collabAgentToolCall — the first real specimen would vanish silently")
+	}
+	for _, frag := range []string{`"tool":"spawnAgent"`, `"receiverThreadIds":["agent-9"]`, `"message":"third"`} {
+		if !strings.Contains(found, frag) {
+			t.Errorf("logged payload is missing %s — a truncated specimen cannot be acted on:\n%s", frag, found)
+		}
 	}
 
 	b.turnMu.Lock()
 	tools := b.turnTools
 	b.turnMu.Unlock()
 	if tools != 1 {
-		t.Errorf("turnTools = %d, want 1 (collab counted, compaction not)", tools)
+		t.Errorf("turnTools = %d, want 1 — accounting is independent of what the payload means", tools)
 	}
 }
 
@@ -310,24 +332,70 @@ func TestDispatch_StreamingDeltas(t *testing.T) {
 	}
 }
 
-func TestDispatch_Warnings(t *testing.T) {
-	t.Parallel()
+// Codex warnings are operator diagnostics, not conversation. Both observed
+// shapes ("Invalid configuration; using defaults." with a file:line:col, and
+// the untrusted-project notice) are emitted at initialize BEFORE any thread
+// exists, are addressed to a human at a terminal, and are logged by codex
+// itself at ERROR. So foci's only job is to log them at a level that is
+// actually monitored — WARN, not Info.
+//
+// That level is load-bearing, not cosmetic: log.SetWarnHook fires only for
+// WARN/ERROR, and it is the single mechanism feeding notify.inject_chat_warnings
+// (chat) and notify.inject_agent_warnings (agent context). Logging at Info
+// makes a warning invisible to BOTH, which is why this asserts through the
+// real hook rather than through a backend-local callback — the hook is the
+// production path, and a backend-local assertion would prove nothing about
+// whether the operator ever sees it.
+//
+// Not parallel: log.SetWarnHook is process-global. Entries are filtered by
+// content so a concurrent test's own warnings cannot pollute the assertion.
+func TestDispatch_WarningsAreLoggedAtWarnLevel(t *testing.T) {
 	b := newTestBackend(t)
 
-	var warnings []string
-	b.onWarning = func(detail string) { warnings = append(warnings, detail) }
+	type entry struct {
+		level string
+		msg   string
+	}
+	var mu sync.Mutex
+	var got []entry
+	log.SetWarnHook(func(level log.Level, component, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, entry{level.String(), msg})
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
 
-	b.dispatch([]byte(`{"method":"configWarning","params":{"summary":"model not found","details":"falling back","path":"/etc/codex.toml"}}`))
+	b.dispatch([]byte(`{"method":"configWarning","params":{"summary":"Invalid configuration; using defaults.","details":"/home/foci/.codex/config.toml:1:6: key with no value, expected ` + "`=`" + `","path":"/home/foci/.codex/config.toml"}}`))
 	b.dispatch([]byte(`{"method":"warning","params":{"threadId":"th_1","message":"rate limited"}}`))
 
-	if len(warnings) != 2 {
-		t.Fatalf("warnings = %d, want 2", len(warnings))
+	find := func(substr string) *entry {
+		mu.Lock()
+		defer mu.Unlock()
+		for i := range got {
+			if strings.Contains(got[i].msg, substr) {
+				return &got[i]
+			}
+		}
+		return nil
 	}
-	if want := "model not found: falling back (/etc/codex.toml)"; warnings[0] != want {
-		t.Errorf("configWarning = %q, want %q", warnings[0], want)
+
+	e := find("Invalid configuration; using defaults.")
+	if e == nil {
+		t.Fatal("configWarning never reached log.SetWarnHook — logged below WARN, so notify.inject_chat_warnings cannot deliver it and a silently-defaulted codex config is invisible")
 	}
-	if warnings[1] != "rate limited" {
-		t.Errorf("runtime warning = %q, want %q", warnings[1], "rate limited")
+	// The whole formatted diagnostic must survive: summary alone omits the
+	// file:line:col that makes it actionable.
+	if want := "/home/foci/.codex/config.toml:1:6"; !strings.Contains(e.msg, want) {
+		t.Errorf("configWarning msg = %q, missing location %q", e.msg, want)
+	}
+	if e.level != "WARN" {
+		t.Errorf("configWarning level = %q, want %q", e.level, "WARN")
+	}
+
+	if e := find("rate limited"); e == nil {
+		t.Error("runtime warning never reached log.SetWarnHook — logged below WARN")
+	} else if e.level != "WARN" {
+		t.Errorf("runtime warning level = %q, want %q", e.level, "WARN")
 	}
 }
 

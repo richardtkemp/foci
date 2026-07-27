@@ -45,6 +45,8 @@ func setupMockBackend(t *testing.T, handler func(method string, params json.RawM
 	b.lg = log.NewComponentLogger("test")
 	b.pendingRPC = make(map[int64]chan rpcReply)
 	b.running = true
+	b.startOpts.SessionKey = "test/session"
+	b.registerThread("test/session", "thread-1")
 
 	pr, pw := io.Pipe()
 	b.writer = NewWriter(pw)

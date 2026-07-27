@@ -68,6 +68,24 @@ func (b *Backend) listModelCatalogue() (modelCatalogue, error) {
 }
 
 // refreshModelCaps fetches and delivers one complete catalogue snapshot.
+// catalogue returns a copy of the live model catalogue for this backend's
+// app-server. It reads through process(), so a facade always sees the OWNER's
+// current catalogue rather than a snapshot taken when it attached.
+//
+// Facades deliberately hold no catalogue of their own (#1577). A copy taken at
+// attach time was both a data race — the attach path holds only sharedPool,
+// never the owner's mu, while refreshModelCaps writes the field under it, and a
+// slice header is not read atomically — and permanently stale, since
+// refreshModelCaps rebinds the owner's field to a freshly allocated slice that
+// a facade's copy never sees. Reading through the owner removes the duplicated
+// state instead of synchronising it.
+func (b *Backend) catalogue() []string {
+	p := b.process()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.catalogueModels...)
+}
+
 func (b *Backend) refreshModelCaps() error {
 	catalogue, err := b.listModelCatalogue()
 	if err != nil {

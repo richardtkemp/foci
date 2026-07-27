@@ -552,6 +552,9 @@ type CleanupRequest struct {
 type ForkRequest struct {
 	// ParentSessionID is the backend session id to fork (for CC, its UUID).
 	ParentSessionID string
+	// FociSessionKey identifies the owning foci session for explicit thread
+	// resolution on multiplexed backends.
+	FociSessionKey string
 	// WorkDir is the agent workspace (cwd); backends that key session storage
 	// by cwd (CC's ~/.claude/projects/<slug>/) need it to locate the session.
 	WorkDir string
@@ -604,6 +607,14 @@ type BatchRequest struct {
 	WorkDir string
 	// AgentID identifies the agent, for log attribution.
 	AgentID string
+	// SessionKey identifies this batch execution itself. It must be unique and
+	// explicit when the caller wants the execution recorded in session_index.
+	SessionKey string
+	// OwnerSessionKey identifies the persistent foci session whose backend
+	// process should host this batch. It is deliberately separate from
+	// SessionKey: the batch is its own indexed ephemeral session, never an
+	// implicit/default turn on the owner thread.
+	OwnerSessionKey string
 }
 
 // SkipPermissions reports whether the backend config disables the permission
@@ -618,13 +629,15 @@ func SkipPermissions(cfg map[string]any) bool {
 
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
-	WorkDir          string            // agent workspace directory (becomes cwd)
-	SystemPrompt     string            // concatenated character/system files (static fallback; see SystemPromptFunc)
-	Model            string            // initial model (e.g. "opus", "sonnet")
-	AgentID          string            // foci agent ID
-	Label            string            // unique label for this instance (used for tmux window naming); falls back to AgentID
-	ResumeSessionID  string            // resume a previous CC session (e.g. --resume <uuid>); empty = new session
-	SessionKey       string            // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
+	WorkDir         string // agent workspace directory (becomes cwd)
+	SystemPrompt    string // concatenated character/system files (static fallback; see SystemPromptFunc)
+	Model           string // initial model (e.g. "opus", "sonnet")
+	AgentID         string // foci agent ID
+	Label           string // unique label for this instance (used for tmux window naming); falls back to AgentID
+	ResumeSessionID string // resume a previous CC session (e.g. --resume <uuid>); empty = new session
+	SessionKey      string // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
+	// BatchOnly starts the app-server without a durable initial thread.
+	BatchOnly        bool
 	ExecRegistry     any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
 	Env              map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
 	TmuxCols         int               // tmux window width (0 = use tools.tmux_cols default)

@@ -240,10 +240,11 @@ func TestTriggerCompaction_NoGlobalConfigWrite(t *testing.T) {
 		seq.record(method)
 		return json.RawMessage(`{}`), nil
 	})
-	b.threadID = "th_compact"
+	setTestThread(b, "th_compact")
 	// A CompactionPromptFunc is set, but it must NOT trigger a config write at
 	// compaction time — the prompt was already applied at launch.
 	b.startOpts = delegator.StartOptions{
+		SessionKey:           "test/session",
 		CompactionPromptFunc: func(sessionKey string) string { return "summarise the session" },
 	}
 
@@ -271,7 +272,7 @@ func TestTriggerCompaction_NoCompactionPromptFunc(t *testing.T) {
 		seq.record(method)
 		return json.RawMessage(`{}`), nil
 	})
-	b.threadID = "th_compact2"
+	setTestThread(b, "th_compact2")
 	// CompactionPromptFunc intentionally left nil.
 
 	if err := b.triggerCompaction(); err != nil {
@@ -297,7 +298,10 @@ func TestTriggerCompaction_NoThreadErrors(t *testing.T) {
 		handlerCalled = true
 		return json.RawMessage(`{}`), nil
 	})
-	// b.threadID left empty.
+	// No mapping exists for the explicit session.
+	b.threadMapMu.Lock()
+	delete(b.sessionThreads, b.startOpts.SessionKey)
+	b.threadMapMu.Unlock()
 
 	err := b.triggerCompaction()
 	if err == nil {
