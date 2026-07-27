@@ -64,7 +64,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	sharedPool.Unlock()
 
 	if !attached {
-		if err := b.launchAppServer(opts); err != nil {
+		if err := b.launchAppServer(ctx, opts); err != nil {
 			return err
 		}
 	}
@@ -111,7 +111,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 // The caller has already installed b as the pool owner, so a failure here must
 // tear that down; each error path cancels the process context, and Start's
 // tail uses b.Close() thereafter.
-func (b *Backend) launchAppServer(opts delegator.StartOptions) error {
+//
+// ctx is Start's caller context and bounds only the pre-spawn hook-trust probe
+// (prepareHookArgs spawns a throwaway app-server to ask codex for the key it
+// assigns our hook config). The long-lived subprocess deliberately gets its own
+// context.Background()-rooted cmdCtx: it outlives the Start call.
+func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptions) error {
 	b.pendingRPC = make(map[int64]chan rpcReply)
 	b.sessionThreads = make(map[string]string)
 	b.threadSessions = make(map[string]string)
@@ -274,10 +279,10 @@ func (b *Backend) Close() error {
 	}
 	sharedPool.Unlock()
 	if !last {
-		// Stop this facade's subagent polls. They wait on the PROCESS's done
-		// channel, which stays open while siblings keep the app-server alive,
-		// so without this each reaped session leaves pollLoops issuing
-		// thread/read RPCs every 500ms on the shared connection forever.
+		// Drop this facade's open subagent runs. The shared connection outlives
+		// us while siblings keep the app-server alive, so a child's late
+		// notifications would otherwise still resolve to a facade whose UI is
+		// gone.
 		if b.subagents != nil {
 			b.subagents.stopAll()
 		}
@@ -291,9 +296,16 @@ func (b *Backend) Close() error {
 	b.closing = true
 	cancel := b.cancel
 	wr := b.writer
-	threadID := b.threadID
+	// Re-read, not re-declare: b is the OWNER now, and its thread is not the
+	// facade's thread that was read at the top of this function.
+	threadID = b.threadID
 	b.mu.Unlock()
 
+	// The owner's own thread never goes through unregisterThread — the whole
+	// process and its maps are being torn down — so this is the one place the
+	// session-env unbind still stands alone. Every facade and batch thread
+	// unbinds via unregisterThread, and refs hitting zero means they all
+	// already have.
 	b.unbindThreadEnv(threadID)
 
 	if wr != nil {
@@ -460,8 +472,6 @@ func (b *Backend) startThread() (string, error) {
 	}
 	b.mu.Unlock()
 	b.registerThread(b.startOpts.SessionKey, tr.Thread.ID)
-
-	b.bindThreadEnv(tr.Thread.ID)
 	b.readyOnce.Do(func() { close(b.readyCh) })
 	if b.onSessionReady != nil {
 		b.onSessionReady(tr.Thread.ID)
@@ -491,8 +501,6 @@ func (b *Backend) resumeThread(threadID string) error {
 	}
 	b.mu.Unlock()
 	b.registerThread(b.startOpts.SessionKey, threadID)
-
-	b.bindThreadEnv(threadID)
 	b.readyOnce.Do(func() { close(b.readyCh) })
 	if b.onSessionReady != nil {
 		b.onSessionReady(threadID)
