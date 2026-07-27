@@ -139,14 +139,14 @@ Note the `grep` shim too: bare `grep` is really ugrep with `-G --ignore-files --
 silently change what it matches, and the result is another well-formed empty set:
 
 ```bash
-pgrep -f "time.sleep(1800)"   # → nothing. `(1800)` is a capture group, so this really
+pgrep -Af "time.sleep(1800)"  # → nothing. `(1800)` is a capture group, so this really
                               #   searches for the literal `time.sleep1800`, which no
                               #   cmdline contains. Reads as "the process is gone".
-pgrep -af "python3 -c"        # → found it, alive, 20 minutes in.
+pgrep -Aaf "python3 -c"       # → found it, alive, 20 minutes in.
 ```
 
 Seen 2026-07-27 while checking whether a long-running process had been killed at a timeout
 boundary: the false negative landed exactly where a kill was expected, so it looked like a clean
 positive result. Use `-F`-style literal thinking: escape the metacharacters, or match a distinctive
-plain-text substring, or match a PID/lockfile instead. (`pgrep -f` can also self-match the caller's
-own cmdline — a separate trap, same tool.)
+plain-text substring, or match a PID/lockfile instead. (Always pass `-A`/`--ignore-ancestors`, as
+above — without it `-f` also matches the *calling shell's* cmdline. Separate trap, same tool.)
