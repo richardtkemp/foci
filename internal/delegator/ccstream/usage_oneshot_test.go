@@ -3,6 +3,10 @@ package ccstream
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -154,5 +158,101 @@ func TestWaitForControlResponseRaw_ContextCancelled(t *testing.T) {
 	_, err := waitForControlResponseRaw(ctx, resCh, readerDone, "req-1")
 	if err == nil {
 		t.Fatal("expected ctx.Err(), got nil")
+	}
+}
+
+// TestOneshotRoundTrip_TransportGoneReportsTheDeath pins the deterministic
+// outcome of a one-shot subprocess dying before the handshake completes.
+//
+// Which side notices is a scheduling race (measured: a write in the same
+// instant as the child's exit succeeds; one 5ms later fails with EPIPE), so a
+// bare `return` on the write error made /mana's message depend on a coin flip:
+// "send initialize: write |1: broken pipe" one run, "initialize: claude exited
+// before responding" the next. Here the write end is handed a pipe whose read
+// end is already closed, forcing the EPIPE ordering — the arm that used to
+// report differently. Both orderings must now yield the reader-EOF message.
+func TestOneshotRoundTrip_TransportGoneReportsTheDeath(t *testing.T) {
+	r, wp, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	// Closing the read end is what the dying subprocess does to us.
+	if err := r.Close(); err != nil {
+		t.Fatalf("close read end: %v", err)
+	}
+	defer func() { _ = wp.Close() }()
+
+	// Sanity-check the arm: the write must actually fail with a transport
+	// sentinel, or this test would pass for the wrong reason.
+	if _, werr := wp.Write([]byte("probe\n")); !errors.Is(werr, syscall.EPIPE) {
+		t.Fatalf("test arm broken: want EPIPE from a closed-read-end pipe, got %v", werr)
+	}
+
+	readerDone := make(chan struct{})
+	close(readerDone) // the reader has seen the child's stdout EOF
+
+	_, err = oneshotRoundTrip(context.Background(), NewWriter(wp),
+		make(chan json.RawMessage), readerDone,
+		"initialize", &InitializeRequest{Subtype: "initialize"})
+	if err == nil {
+		t.Fatal("want an error when the subprocess is gone, got nil")
+	}
+	if !strings.Contains(err.Error(), "claude exited before responding") {
+		t.Errorf("want the canonical death message, got %q", err)
+	}
+	if strings.Contains(err.Error(), "send initialize") {
+		t.Errorf("transport-gone write must not surface as its own error: %q", err)
+	}
+}
+
+// TestOneshotRoundTrip_RealWriteErrorStillFails is the negative control: only
+// transport-gone errors are swallowed. A write error that is NOT one of the
+// transport sentinels (errWriteCloser returns a plain errors.New) still fails
+// the call at the send, and says so.
+func TestOneshotRoundTrip_RealWriteErrorStillFails(t *testing.T) {
+	readerDone := make(chan struct{})
+	close(readerDone)
+
+	_, err := oneshotRoundTrip(context.Background(),
+		NewWriter(errWriteCloser{}),
+		make(chan json.RawMessage), readerDone,
+		"get_usage", &GetUsageRequest{Subtype: "get_usage"})
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "send get_usage") {
+		t.Errorf("a non-transport write error must fail at the send: %q", err)
+	}
+	if !strings.Contains(err.Error(), "stdin closed") {
+		t.Errorf("want the underlying cause preserved: %q", err)
+	}
+}
+
+// TestOneshotRoundTrip_Success walks the happy path over a real pipe, matching
+// the response to whatever request ID the round trip minted.
+func TestOneshotRoundTrip_Success(t *testing.T) {
+	r, wp, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer func() { _ = r.Close(); _ = wp.Close() }()
+
+	resCh := make(chan json.RawMessage, 1)
+	go func() {
+		var sent ControlRequest
+		if err := json.NewDecoder(r).Decode(&sent); err != nil {
+			return
+		}
+		resCh <- json.RawMessage(`{"type":"control_response","response":{"subtype":"success","request_id":"` +
+			sent.RequestID + `","response":{"ok":true}}}`)
+	}()
+
+	raw, err := oneshotRoundTrip(context.Background(), NewWriter(wp), resCh,
+		make(chan struct{}), "get_usage", &GetUsageRequest{Subtype: "get_usage"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(raw) != `{"ok":true}` {
+		t.Errorf("payload = %s, want {\"ok\":true}", raw)
 	}
 }

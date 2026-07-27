@@ -150,30 +150,57 @@ func QueryUsage(ctx context.Context) (*UsageInfo, error) {
 	// verify-cc-stream-hooks skill's control_test_harness.py precedent).
 	// Wait for its control_response before sending get_usage, rather than a
 	// fixed sleep.
-	initReqID := newRequestID()
-	if err := w.SendControl(initReqID, &InitializeRequest{Subtype: "initialize"}); err != nil {
-		return nil, fmt.Errorf("ccstream: usage oneshot: send initialize: %w", err)
-	}
-	if err := waitForControlResponse(ctx, resCh, readerDone, initReqID); err != nil {
-		return nil, fmt.Errorf("ccstream: usage oneshot: initialize: %w", err)
+	if _, err := oneshotRoundTrip(ctx, w, resCh, readerDone, "initialize", &InitializeRequest{Subtype: "initialize"}); err != nil {
+		return nil, err
 	}
 
-	usageReqID := newRequestID()
-	if err := w.SendControl(usageReqID, &GetUsageRequest{Subtype: "get_usage"}); err != nil {
-		return nil, fmt.Errorf("ccstream: usage oneshot: send get_usage: %w", err)
-	}
-	raw, err := waitForControlResponseRaw(ctx, resCh, readerDone, usageReqID)
+	raw, err := oneshotRoundTrip(ctx, w, resCh, readerDone, "get_usage", &GetUsageRequest{Subtype: "get_usage"})
 	if err != nil {
-		return nil, fmt.Errorf("ccstream: usage oneshot: get_usage: %w", err)
+		return nil, err
 	}
 	return parseUsagePayload(raw)
 }
 
-// waitForControlResponse discards a matching control_response's payload —
-// used for the initialize handshake, where only "did it succeed" matters.
-func waitForControlResponse(ctx context.Context, resCh <-chan json.RawMessage, readerDone <-chan struct{}, reqID string) error {
-	_, err := waitForControlResponseRaw(ctx, resCh, readerDone, reqID)
-	return err
+// oneshotRoundTrip sends one control request and waits for its response.
+//
+// A write failure that only means "the transport is already gone"
+// (transportGone) is deliberately NOT returned. The one-shot subprocess can
+// die at any point before the handshake completes — a `claude` that exits on
+// bad flags, a failed auth check, a missing binary's shell wrapper — and which
+// side notices first is a pure scheduling race:
+//
+//   - the write wins: the line lands in the pipe buffer and succeeds, then the
+//     reader hits EOF on stdout and waitForControlResponseRaw reports
+//     "claude exited before responding";
+//   - the death wins: the kernel has already torn down the pipe's read end and
+//     the write fails with EPIPE ("broken pipe").
+//
+// Measured, not assumed: with the child exiting immediately, a write issued in
+// the same scheduling instant succeeds, and one issued 5ms later fails with
+// EPIPE. Both orderings mean exactly one thing, so both must report it the same
+// way — otherwise /mana's error text depends on a coin flip. Falling through to
+// the wait produces the single canonical message from the reader's EOF.
+//
+// Note the sentinel differs from Start's version of this race (e1fe3779), which
+// saw os.ErrClosed: there a concurrent waiter goroutine's cmd.Wait closed the
+// PARENT's end of the pipe. Here cmd.Wait is deferred to teardown, so nothing
+// closes our end and only the kernel's EPIPE is reachable. transportGone
+// matches both, so it applies unchanged.
+//
+// A transport-gone write followed by a child that somehow stays alive with its
+// stdout open would block here rather than erroring immediately; the whole call
+// is bounded by usageOneshotTimeout, and CC does not close its stdin while
+// running in stream-json input mode.
+func oneshotRoundTrip(ctx context.Context, w *Writer, resCh <-chan json.RawMessage, readerDone <-chan struct{}, what string, req any) (json.RawMessage, error) {
+	reqID := newRequestID()
+	if err := w.SendControl(reqID, req); err != nil && !transportGone(err) {
+		return nil, fmt.Errorf("ccstream: usage oneshot: send %s: %w", what, err)
+	}
+	raw, err := waitForControlResponseRaw(ctx, resCh, readerDone, reqID)
+	if err != nil {
+		return nil, fmt.Errorf("ccstream: usage oneshot: %s: %w", what, err)
+	}
+	return raw, nil
 }
 
 // waitForControlResponseRaw blocks until a control_response for reqID
