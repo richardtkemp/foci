@@ -5,6 +5,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
+	"foci/internal/delegator/sessionenv"
 )
 
 // tryAutoApprove checks a command against compiled auto-approve rules.
@@ -29,7 +30,16 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 		return
 	}
 
-	if b.tryAutoApprove(rpcID, params.ItemID, params.Command) {
+	// Auto-approve rules and the prompt text must both see the command the
+	// agent asked for, not foci's session-env wrapper around it — otherwise
+	// installing the hook silently invalidates every operator-written Bash
+	// rule and shows the user a command they didn't write. Codex still raises
+	// this approval for a hook-rewritten command (the hook's mandatory
+	// permissionDecision:allow does not bypass the approval flow), so the
+	// unwrap is the only thing keeping the two in sync.
+	command := sessionenv.UnwrapDisplayCommand(params.Command)
+
+	if b.tryAutoApprove(rpcID, params.ItemID, command) {
 		return
 	}
 
@@ -37,11 +47,11 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 	b.pendingPerms[rpcID] = &pendingApproval{
 		rpcID:   rpcID,
 		itemID:  params.ItemID,
-		command: params.Command,
+		command: command,
 	}
 	b.permMu.Unlock()
 
-	summary := "Run: " + params.Command
+	summary := "Run: " + command
 	if params.Reason != "" {
 		summary = params.Reason
 	}
@@ -49,7 +59,7 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 	if b.permPromptFn != nil {
 		b.permPromptFn(
 			params.ItemID,
-			"Approve command: "+params.Command,
+			"Approve command: "+command,
 			summary,
 			"",
 			[]delegator.PromptChoice{
@@ -58,7 +68,7 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 			},
 		)
 	} else {
-		b.lg.Warnf("no permission prompt handler, auto-denying command: %s", params.Command)
+		b.lg.Warnf("no permission prompt handler, auto-denying command: %s", command)
 		b.respondApproval(rpcID, "decline")
 	}
 }

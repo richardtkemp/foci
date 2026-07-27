@@ -1,5 +1,5 @@
-// session_env.go — Per-session exec-bridge env routing for the shared
-// opencode server model.
+// session_env.go — opencode's half of the per-session exec-bridge env routing
+// described in internal/delegator/sessionenv.
 //
 // PROBLEM: opencode runs ONE 'opencode serve' subprocess per agent, shared
 // across all sessions. The subprocess's env (FOCI_SOCK, BASH_ENV,
@@ -11,84 +11,43 @@
 //
 // FIX: opencode fires a `shell.env` plugin hook before every bash spawn,
 // passing the calling session's ID. A foci-generated plugin (.opencode/plugin/)
-// reads a per-session JSON file written by this code and injects the correct
-// FOCI_SOCK/BASH_ENV/FOCI_SESSION_KEY, overriding the subprocess default.
-// Each session gets its own mapping file in tempdir; the plugin reads it on
-// every spawn.
+// reads the per-session JSON file the sessionenv package writes and injects
+// the correct FOCI_SOCK/BASH_ENV/FOCI_SESSION_KEY, overriding the subprocess
+// default. Each session gets its own mapping file in tempdir; the plugin reads
+// it on every spawn.
+//
+// The file format, its location and its lifecycle are shared with the codex
+// backend (which cannot set a spawn env at all and has to rewrite the command
+// instead) — only the injector below is opencode-specific.
 
 package opencode
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 
-	"foci/internal/tempdir"
+	"foci/internal/delegator/sessionenv"
 )
 
-const (
-	sessionEnvSubdir   = "session-env"         // under tempdir
-	sessionEnvPluginFn = "foci-session-env.ts" // under .opencode/plugin/
-)
-
-// sessionEnvEntry is the JSON the plugin reads. Only the bridge env vars
-// that differ per-session are included; everything else inherits from the
-// subprocess env.
-type sessionEnvEntry struct {
-	FociSock   string `json:"FOCI_SOCK,omitempty"`
-	BashEnv    string `json:"BASH_ENV,omitempty"`
-	SessionKey string `json:"FOCI_SESSION_KEY,omitempty"`
-}
-
-// sessionEnvDir returns the tempdir subdirectory for per-session env files.
-func sessionEnvDir() string {
-	return filepath.Join(tempdir.Dir(), sessionEnvSubdir)
-}
-
-// sessionEnvPath returns the env file path for one opencode session.
-func sessionEnvPath(sessionID string) string {
-	return filepath.Join(sessionEnvDir(), sessionID+".json")
-}
+const sessionEnvPluginFn = "foci-session-env.ts" // under .opencode/plugin/
 
 // WriteSessionEnvFile writes the per-session env mapping that the opencode
 // plugin reads on every bash spawn. Best-effort: errors are logged but do
 // not fail Start (the fallback is the existing shared-subprocess env —
 // wrong session, but functional).
 func WriteSessionEnvFile(sessionID string, env map[string]string) {
-	if sessionID == "" {
+	if err := sessionenv.Write(sessionID, env); err != nil {
+		opencodeLog.Warnf("session-env: %v", err)
 		return
 	}
-	entry := sessionEnvEntry{
-		FociSock:   env["FOCI_SOCK"],
-		BashEnv:    env["BASH_ENV"],
-		SessionKey: env["FOCI_SESSION_KEY"],
-	}
-	if entry.FociSock == "" && entry.BashEnv == "" && entry.SessionKey == "" {
-		return // no per-session env to inject
-	}
-	dir := sessionEnvDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		opencodeLog.Warnf("session-env: mkdir %s: %v", dir, err)
-		return
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		opencodeLog.Warnf("session-env: marshal: %v", err)
-		return
-	}
-	if err := os.WriteFile(sessionEnvPath(sessionID), data, 0o644); err != nil {
-		opencodeLog.Warnf("session-env: write %s: %v", sessionID, err)
-	}
-	opencodeLog.Debugf("session-env: wrote mapping for session %s (sock=%s)", sessionID, entry.FociSock)
+	opencodeLog.Debugf("session-env: wrote mapping for session %s", sessionID)
 }
 
 // RemoveSessionEnvFile removes the per-session env mapping. Best-effort.
 func RemoveSessionEnvFile(sessionID string) {
-	if sessionID == "" {
-		return
+	if err := sessionenv.Remove(sessionID); err != nil {
+		opencodeLog.Debugf("session-env: %v", err)
 	}
-	_ = os.Remove(sessionEnvPath(sessionID))
 }
 
 // EnsureSessionEnvPlugin writes the shell.env plugin file into the workspace
@@ -103,7 +62,7 @@ func EnsureSessionEnvPlugin(workDir string) {
 	if workDir == "" {
 		return
 	}
-	ensureWorkspacePlugin(workDir, sessionEnvPluginFn, sessionEnvPluginSource(sessionEnvDir()))
+	ensureWorkspacePlugin(workDir, sessionEnvPluginFn, sessionEnvPluginSource(sessionenv.Dir()))
 }
 
 // ensureWorkspacePlugin writes a foci-generated plugin file into the agent
@@ -118,18 +77,14 @@ func ensureWorkspacePlugin(workDir, filename, content string) {
 		return
 	}
 	path := filepath.Join(workDir, ".opencode", "plugin", filename)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		opencodeLog.Warnf("plugin: mkdir %s: %v", filepath.Dir(path), err)
+	wrote, err := sessionenv.EnsureFile(path, content, 0o644)
+	if err != nil {
+		opencodeLog.Warnf("plugin: %v", err)
 		return
 	}
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
-		return
+	if wrote {
+		opencodeLog.Debugf("plugin: wrote %s", path)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		opencodeLog.Warnf("plugin: write %s: %v", path, err)
-		return
-	}
-	opencodeLog.Debugf("plugin: wrote %s", path)
 }
 
 // sessionEnvPluginSource returns the TypeScript source for the shell.env
