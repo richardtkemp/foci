@@ -20,7 +20,11 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		thresholdSeconds = 30
 	}
 
-	tmuxLog.Debugf("session=%s watch: name=%s window=%d threshold=%ds conditional=%v", tools.SessionKeyFromContext(ctx), name, window, thresholdSeconds, conditional)
+	// Info, not Debug: the watch lifecycle's other events ("inactivity
+	// detected", "auto-unwatched") are Info, so at the default level a watch
+	// that fires tells a complete story while one that never fires leaves no
+	// trace at all — which is exactly the shape #1560 could not diagnose.
+	tmuxLog.Infof("session=%s watch: name=%s window=%d threshold=%ds conditional=%v", tools.SessionKeyFromContext(ctx), name, window, thresholdSeconds, conditional)
 
 	inst.mu.Lock()
 	inst.lastAccess[name] = time.Now()
@@ -36,6 +40,12 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 	if out, err := inst.runTmux(context.Background(), "capture-pane", "-t",
 		fmt.Sprintf("%s:%d", name, window), "-p"); err == nil {
 		initialHash = md5.Sum([]byte(normalizePaneContent(out))) // #nosec G401
+	} else {
+		// Not fatal — the monitor re-reads on its first tick. But a pane that
+		// is unreadable the instant a watch is placed usually means the
+		// session is already gone, and the watch is about to tear itself down
+		// silently. Say so now rather than leaving a watch that never fires.
+		tmuxLog.Warnf("watch: initial capture-pane on %s:%d failed (%v) — watch may not fire", name, window, err)
 	}
 
 	monCtx, cancel := context.WithCancel(context.Background())
@@ -143,8 +153,13 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 			out, err := inst.runTmux(context.Background(), "capture-pane", "-t",
 				fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
 			if err != nil {
-				// Session exited — clean up the watch (debug log is sufficient)
-				tmuxLog.Debugf("watch: session %s exited, cleaning up watch", ws.session)
+				// Usually the session exited normally, but this branch also
+				// swallows a transient capture-pane failure — and either way
+				// the watch stops firing forever. Warn, with the underlying
+				// error: at Debug this was invisible at the default level, so
+				// a watch that vanished looked identical to one that was
+				// never registered (#1560).
+				tmuxLog.Warnf("watch: capture-pane on %s:%d failed (%v) — treating session as exited, removing watch", ws.session, ws.window, err)
 				inst.mu.Lock()
 				delete(inst.watched, key)
 				inst.persistWatches()
