@@ -26,8 +26,33 @@ func (inst *tmuxInstance) killSessionWithChildren(ctx context.Context, name stri
 	return terminateProcesses(allPIDs), nil
 }
 
+// autoReapEmptyServer gates the AUTOMATIC "kill the server once the last
+// session goes" behaviour at its two call sites (the kill operation and the
+// TTL reaper). Production leaves it true.
+//
+// The test binary sets it false, because the behaviour is hostile to a shared
+// fixture: this package's tests share one tmux server, and the reap is
+// inherently racy — list-sessions and kill-server are two separate tmux calls,
+// so a session created in between is destroyed by a decision made before it
+// existed. That is not a hypothetical; it silently killed sibling tests'
+// sessions for months, surfacing as unrelated-looking failures 10s later
+// (#1560, #1586).
+//
+// Gating the CALL SITES rather than the function keeps maybeKillTmuxServer
+// itself directly testable — the tests that actually exercise it call it
+// explicitly, on their own isolated servers.
+//
+// A grace period was considered and rejected: delaying the kill WIDENS the
+// window between the check and the kill rather than closing it.
+var autoReapEmptyServer = true
+
 // maybeKillTmuxServer kills the tmux server if no sessions remain.
 // Returns true if the server was killed.
+//
+// Racy by construction: "no sessions remain" is read before kill-server runs,
+// so a session created in between dies for a reason that was true a moment
+// ago. Callers that must not do that to a concurrently-used server should
+// check autoReapEmptyServer first.
 func (inst *tmuxInstance) maybeKillTmuxServer(ctx context.Context) bool {
 	out, err := inst.runTmux(ctx, "list-sessions", "-F", "#{session_name}")
 	if err != nil {

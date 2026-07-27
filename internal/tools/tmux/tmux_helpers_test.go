@@ -26,6 +26,14 @@ func TestMain(m *testing.M) {
 		os.Unsetenv(k)
 	}
 
+	// These tests share one tmux server, so the automatic "kill the server
+	// once the last session goes" reap would let any test's cleanup destroy a
+	// sibling's session — the check and the kill are separate tmux calls, so a
+	// session created between them dies for a reason that stopped being true.
+	// The tests that actually exercise the reap call maybeKillTmuxServer
+	// directly, on their own isolated servers, so they are unaffected.
+	autoReapEmptyServer = false
+
 	dir, _ := os.MkdirTemp(testtemp.Dir(), "foci-tmux-test-*")
 	tmuxSocketPath = filepath.Join(dir, "tmux.sock")
 
