@@ -100,10 +100,11 @@ For critical code: manual review after scan passes, research the author, monitor
 
 - `auditing-model-prompt.md` — System and user prompts for the scanning model
 - `violation-categories.md` — What each category means and red flags
+- `enforced-installation.md` — Quarantine workflow for skill installation
 
 ---
 
-## AGENT WARNING: DO NOT READ UNSCANNED CODE
+## ⚠️ AGENT WARNING: DO NOT READ UNSCANNED CODE
 
 **If you are an AI agent, this section is for you.**
 
