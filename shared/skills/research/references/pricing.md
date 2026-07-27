@@ -1,3 +1,5 @@
+<!-- GOLDEN: ships with foci (shared/skills/research/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
+
 # OpenRouter Perplexity Pricing
 
 ## Per-Model Pricing

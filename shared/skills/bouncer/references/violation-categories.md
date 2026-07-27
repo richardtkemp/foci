@@ -1,3 +1,5 @@
+<!-- GOLDEN: ships with foci (shared/skills/bouncer/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
+
 # Violation Categories — Editable Scanning Rules
 
 Bouncer uses these categories when scanning skills. **You can edit this file to add, remove, or modify categories.**

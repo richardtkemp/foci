@@ -1,6 +1,8 @@
 ---
 name: foci-debugging
 description: Debug and investigate foci platform internals. Service logs and archives, API/cost and payload logs, session files and CC backend transcripts, cache-bust diagnosis, app (FAP) delivery gaps, permission-rule failures, and reproducing a make test failure. Read the relevant subfile before investigating.
+owner: foci
+seeded: true
 ---
 
 # Foci Debugging — Internals & Investigation

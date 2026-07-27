@@ -1,6 +1,8 @@
 ---
 name: foci-development
 description: Developing the foci platform itself (Go server + backends). Architecture, the CC/opencode backends, the routing/delivery model, and the turn/steer/ask lifecycle — the internals you need when CODING foci, not when operating as an agent. Read the relevant subfile before changing that area.
+owner: foci
+seeded: true
 ---
 
 # Foci Development — Coding the Platform
