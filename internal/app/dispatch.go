@@ -109,7 +109,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleConversationRename(client, f)
 
 	case fap.ConversationSetDefault:
-		h.handleConversationSetDefault(client, f)
+		h.handleConversationSetDefault(f)
 
 	case fap.ConversationArchive:
 		h.handleConversationArchive(client, f)
@@ -309,15 +309,20 @@ func (h *Hub) handleConversationOpen(client *wsClient, f fap.ConversationOpen) {
 		h.adoptSession(b, f.SessionKey)
 	}
 	// Advertise the new conversation (+ its session key) via an updated roster;
-	// the app upserts it from the hello frame.
-	h.pushRoster(client)
+	// the app upserts it from the hello frame. Broadcast, not just to the
+	// creating socket: the user's other live devices must learn a new chat the
+	// moment it is minted, not on their next reconnect (#1558). The roster is
+	// how they get its metadata at all — conversation.openSync carries bare IDs,
+	// so a mirrored open-set alone names a conversation the peer knows nothing
+	// about.
+	h.pushRosterAll()
 }
 
 // handleConversationRename sets (or clears, when Title is empty) the user-friendly
 // alias for a conversation. The alias persists in the session index's chat_metadata
 // keyed by the stable app chatID — so it survives session-key rotation and restarts —
-// and the updated roster is pushed back to this socket (other devices refresh on their
-// next hello/conversation.list).
+// and the updated roster is broadcast to every live socket, so the new name appears
+// on the user's other devices immediately rather than on their next reconnect (#1558).
 func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRename) {
 	h.mu.RLock()
 	b := h.convs[f.ConversationID]
@@ -341,18 +346,19 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 			appLog.Debugf("rename %s: clear alias_auto: %v", f.ConversationID, err)
 		}
 	}
-	h.pushRoster(client)
+	h.pushRosterAll()
 }
 
 // handleConversationSetDefault sets (f.IsDefault) or clears this conversation as
 // the agent's default chat for the app platform. The default persists in the
 // session index keyed by the stable app chatID — surviving session-key rotation
 // and restarts — and is used by keepalive/cron routing. The updated roster (with
-// ConversationInfo.IsDefault) is pushed back to this socket; other devices
-// refresh on their next hello/conversation.list. Setting a new default clears any
+// ConversationInfo.IsDefault) is broadcast to every live socket, so the moved
+// default lands on the user's other devices immediately (#1558) — it must, since
+// a stale default there would mis-route a session-blind send. Setting a new default clears any
 // previous one for the platform (SetDefaultChat deletes-then-sets). Mirrors
 // handleConversationRename (the established per-chat-metadata round-trip).
-func (h *Hub) handleConversationSetDefault(client *wsClient, f fap.ConversationSetDefault) {
+func (h *Hub) handleConversationSetDefault(f fap.ConversationSetDefault) {
 	h.mu.RLock()
 	b := h.convs[f.ConversationID]
 	h.mu.RUnlock()
@@ -370,15 +376,16 @@ func (h *Hub) handleConversationSetDefault(client *wsClient, f fap.ConversationS
 			appLog.Warnf("setDefault %s (isDefault=%v): %v", f.ConversationID, f.IsDefault, err)
 		}
 	}
-	h.pushRoster(client)
+	h.pushRosterAll()
 }
 
 // handleConversationArchive sets or clears the archived flag on a conversation.
 // Reversible — unlike the old destructive archive, this does NOT purge replay
 // frames, drop the binding, flip session status, or fire a final reflection.
 // It persists only the is_archived flag (keyed by agent+platform+chatID in
-// chat_metadata, alongside is_default) and pushes back an updated roster so the
-// app and every other device reconciles. The binding stays live: inbound frames
+// chat_metadata, alongside is_default) and broadcasts an updated roster so the
+// app and every other device reconciles at once, rather than on their next
+// reconnect (#1558). The binding stays live: inbound frames
 // still flow and history is retained, so unarchive (Archived=false) restores the
 // full thread. Archiving the agent's default chat is refused with an ErrorFrame
 // (the client's Archive control is disabled for the default, so this is a
@@ -398,7 +405,9 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 		if f.Archived && idx.DefaultChatForAgent(b.agentID, "app") == b.chatID {
 			appLog.Infof("refused archive of default conversation %s (agent %s)", f.ConversationID, b.agentID)
 			client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "archive_default", Message: "This is the default chat. Set another default before archiving it."})
-			h.pushRoster(client) // reverts the client's optimistic archived flag
+			// Per-socket, deliberately: nothing changed server-side, and only this
+			// device applied the optimistic flag that needs reverting.
+			h.pushRoster(client)
 			return
 		}
 		if err := idx.SetArchivedChat(b.agentID, "app", b.chatID, f.Archived); err != nil {
@@ -406,7 +415,7 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 		}
 	}
 	appLog.Infof("archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.sessionKey)
-	h.pushRoster(client)
+	h.pushRosterAll()
 }
 
 // handleSettingPut persists one synced app-preference to the global bag and
@@ -752,6 +761,13 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		// First message on a cold binding: record its envelope id so the gate
 		// drops the replayed copy after a reconnect.
 		b.acceptInbound(client, inID, inSeq)
+		// This message just MINTED the conversation — the app can send into an id
+		// the server has never seen (ConversationOpen is fire-and-forget and is
+		// dropped outright if the socket was down when the chat was created), and
+		// ensureBinding pushes no roster of its own. Without this the conversation
+		// exists server-side yet appears on no device's roster until each one
+		// reconnects, which is #1558 through a second entry point.
+		h.pushRosterAll()
 	}
 	text, atts, voiceTranscribed := h.transcribeVoice(conn, text, atts)
 	if transcribeOnly {

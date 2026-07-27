@@ -2047,6 +2047,12 @@ func TestConversationOpen_MintsAndAdvertises(t *testing.T) {
 	registerBareAgent(h, "ag")
 	c := fakeClient()
 	c.hub = h
+	// The roster ack for a mint is a broadcast over h.clients (#1558), so the
+	// socket must be registered to receive its own. That mirrors production
+	// exactly: serveWS calls addClient BEFORE readPump, and readPump is
+	// dispatchInbound's only caller — so a socket that can dispatch a frame is
+	// always in h.clients. An unregistered fake client is an unreachable state.
+	h.clients[c] = struct{}{}
 
 	h.dispatchInbound(c, []byte(`{"t":"conversation.open","id":"x","d":{"agentId":"ag"}}`))
 
