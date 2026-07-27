@@ -17,5 +17,6 @@ How to investigate a running foci: where the data lives and how to read it. This
 | **api-cost.md** | Provider auth, the API call log (`api.db`), payload logs, and "where did the cost go?" — cost/token/cache-stat queries. |
 | **cache.md** | Anthropic prompt-cache mechanics and cache-bust diagnosis (companion to the `cache-diagnosis` skill). |
 | **sessions.md** | Session history files (stable-key JSONL), CC backend transcripts, the `state.db` session/archive/resume tables, and compaction/reset/cron lifecycle. |
+| **test-harness.md** | A test fails under `make test` but not under a plain `go test` — the sealed/redirected environment `scripts/seal-test.sh` builds, how to replicate it for one package, and which arm isolates which variable. |
 
 For **normal operation** (not investigation) — tools, prompts, turn lifecycle, config — see the companion **`foci-usage`** skill.
