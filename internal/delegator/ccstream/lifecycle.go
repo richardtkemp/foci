@@ -230,14 +230,63 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		Subtype:      "initialize",
 		SystemPrompt: opts.SystemPrompt,
 	}); err != nil {
-		return fmt.Errorf("ccstream: send initialize: %w", err)
+		if !transportGone(err) {
+			return fmt.Errorf("ccstream: send initialize: %w", err)
+		}
+		// The subprocess died between cmd.Start and this write — a CC that
+		// exits before the handshake (bad --resume, bad flags, auth failure,
+		// an exit-code test stub). Which goroutine notices first is a pure
+		// scheduling race: if we get here first the write lands in the pipe
+		// buffer and succeeds; if the waiter goroutine's cmd.Wait returns
+		// first it closes our end of the stdin pipe (os/exec closes the
+		// parent's pipe ends on Wait) and this write fails with ErrClosed —
+		// or EPIPE if the kernel tore down the read end before that.
+		//
+		// Both orderings mean exactly one thing: the process is gone. Do NOT
+		// report it as a distinct Start failure, or the observable outcome of
+		// a pre-handshake death would depend on which goroutine won
+		// (TestL2_Failures_BackendExitsNonZeroBeforeHandshake flaked on exactly
+		// this). Fall through with the backend started-but-not-running so the
+		// death is reported through the single dead-backend path every other
+		// early-exit already uses: WaitReady returns "subprocess exited before
+		// init", IsRunning() reports false, and DelegatedManager respawns on
+		// the next turn.
+		b.logger().Warnf("subprocess died before the initialize handshake: %v", err)
 	}
 
+	// Claim `running` only if no finalize path has already declared the
+	// process dead. finalizeExit (reached from either the waiter or the
+	// reader goroutine) sets running=false; setting it back to true here
+	// would hand DelegatedManager a corpse it believes is live — the same
+	// scheduling race as above, one step later. b.finalized and b.running are
+	// written under b.mu by both sides, so the last writer is always the
+	// truthful one.
 	b.mu.Lock()
-	b.running = true
+	if !b.finalized {
+		b.running = true
+	}
 	b.mu.Unlock()
 
 	return nil
+}
+
+// transportGone reports whether err means the stdin pipe to the subprocess no
+// longer exists — the process died and something already tore the pipe down.
+// Matched with errors.Is on the sentinels rather than on message text: the
+// error travels through json.Encoder and fs.PathError, and a future transport
+// could reformat the string while keeping the sentinel intact.
+//
+//   - os.ErrClosed      os/exec's Wait closed the parent's pipe end ("file
+//     already closed"); also io/fs.ErrClosed.
+//   - syscall.EPIPE     the read end is gone ("broken pipe").
+//   - io.ErrClosedPipe  same condition from an in-process io.Pipe (tests).
+//   - syscall.EBADF     the fd was closed under an in-flight write (see
+//     Writer.Close, which deliberately closes the fd to evict a wedged Send).
+func transportGone(err error) bool {
+	return errors.Is(err, os.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, syscall.EBADF)
 }
 
 // Close shuts down the Claude Code subprocess gracefully.
@@ -425,6 +474,7 @@ func (b *Backend) finalizeExit(reason error) {
 		b.mu.Lock()
 		expected := b.closing
 		b.running = false
+		b.finalized = true
 		b.mu.Unlock()
 		b.logger().Debugf("finalizeExit: post-mu elapsed=%s", time.Since(start))
 

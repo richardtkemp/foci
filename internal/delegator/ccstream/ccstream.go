@@ -110,6 +110,14 @@ type Backend struct {
 	// finalizeExit. Reset in Restart() before relaunching the subprocess.
 	finalizeOnce sync.Once
 
+	// finalized records that finalizeExit has run, i.e. the subprocess has
+	// been declared dead. Written under mu alongside `running` so a caller
+	// still inside Start cannot resurrect a corpse by setting running=true
+	// after a finalize path already set it false (Start's initialize write
+	// races the waiter/reader goroutines when CC dies pre-handshake).
+	// finalizeOnce alone can't answer "has it run?", hence the flag.
+	finalized bool
+
 	// closeOnce gates the shutdown kill-ladder so it runs exactly once and is
 	// driven off the subprocess being started, NOT the `running` flag — a
 	// finalize path can flip running=false on a still-alive process, and Close
