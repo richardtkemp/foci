@@ -18,19 +18,19 @@ func TestHandleConversationSetDefault_PersistsAndClears(t *testing.T) {
 	h.convs["c1"] = b
 
 	// Set.
-	h.handleConversationSetDefault(fakeClient(), fap.ConversationSetDefault{ConversationID: "c1", IsDefault: true})
+	h.handleConversationSetDefault(fap.ConversationSetDefault{ConversationID: "c1", IsDefault: true})
 	if got := idx.DefaultChatForAgent("clutch", "app"); got != 42 {
 		t.Fatalf("default after set = %d, want 42", got)
 	}
 
 	// Clear.
-	h.handleConversationSetDefault(fakeClient(), fap.ConversationSetDefault{ConversationID: "c1", IsDefault: false})
+	h.handleConversationSetDefault(fap.ConversationSetDefault{ConversationID: "c1", IsDefault: false})
 	if got := idx.DefaultChatForAgent("clutch", "app"); got != 0 {
 		t.Fatalf("default after clear = %d, want 0", got)
 	}
 
 	// Unknown conversation: no panic, no write.
-	h.handleConversationSetDefault(fakeClient(), fap.ConversationSetDefault{ConversationID: "ghost", IsDefault: true})
+	h.handleConversationSetDefault(fap.ConversationSetDefault{ConversationID: "ghost", IsDefault: true})
 	if got := idx.DefaultChatForAgent("clutch", "app"); got != 0 {
 		t.Fatalf("default after ghost set = %d, want 0", got)
 	}
@@ -45,8 +45,8 @@ func TestHandleConversationSetDefault_MovesDefault(t *testing.T) {
 	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42}
 	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 99}
 
-	h.handleConversationSetDefault(fakeClient(), fap.ConversationSetDefault{ConversationID: "c1", IsDefault: true})
-	h.handleConversationSetDefault(fakeClient(), fap.ConversationSetDefault{ConversationID: "c2", IsDefault: true})
+	h.handleConversationSetDefault(fap.ConversationSetDefault{ConversationID: "c1", IsDefault: true})
+	h.handleConversationSetDefault(fap.ConversationSetDefault{ConversationID: "c2", IsDefault: true})
 
 	if got := idx.DefaultChatForAgent("clutch", "app"); got != 99 {
 		t.Fatalf("default after move = %d, want 99 (c2 replaces c1)", got)

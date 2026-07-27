@@ -1305,16 +1305,29 @@ func (h *Hub) createDefaultConversation(agentID string) (string, error) {
 	return b.sessionKey, nil
 }
 
-// pushRoster re-advertises the roster to one socket — the ack half of every
-// roster-changing round-trip (hello, conversation.list/open/rename/setDefault/
-// archive), through which the client reconciles server-authoritative state.
+// pushRoster re-advertises the roster to one socket — the ack half of a
+// read-only or rejected round-trip (hello, conversation.list, an archive the
+// server refused), through which that client reconciles server-authoritative
+// state. Use pushRosterAll for anything that MUTATES the roster: a change only
+// the originating socket hears is invisible on the user's other devices until
+// they reconnect (#1558).
 func (h *Hub) pushRoster(client *wsClient) {
 	client.sendRaw(fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()})
 	h.pushCommandsAll()
 }
 
 // pushRosterAll re-advertises the roster to every live socket, so connected
-// devices learn server-originated conversation changes without reconnecting.
+// devices learn conversation changes — created, renamed, archived, re-defaulted —
+// without reconnecting. This is the ack half of every roster-MUTATING round-trip,
+// whether the mutation originated server-side (mintFacetConversation,
+// deliverBinding) or on a client (conversation.open/rename/setDefault/archive).
+// A client-originated mutation needs no separate per-socket ack: serveWS calls
+// addClient BEFORE readPump, and readPump is dispatchInbound's only caller, so
+// any socket able to send a frame is already in h.clients and receives its own
+// ack from this broadcast. Caps and agentRoster are global, so one frame is
+// valid for every socket. The client applies any mid-session hello and upserts conversations it
+// has never seen (InboundFrameDispatcher.applyRoster), which is what makes the
+// broadcast sufficient without a client-side change.
 func (h *Hub) pushRosterAll() {
 	hello := fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()}
 	h.mu.RLock()
@@ -1326,6 +1339,7 @@ func (h *Hub) pushRosterAll() {
 	for _, c := range clients {
 		c.sendRaw(hello)
 	}
+	h.pushCommandsAll()
 }
 
 func (h *Hub) loadAppSettings() map[string]string {
