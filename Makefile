@@ -39,28 +39,26 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 -include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.remote.mk
 -include .remote.mk
 
-.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests find-static-config-reads find-unscoped-logging llbox test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+# Every plain cmd/<name> → bin/<name> binary shares one recipe (see $(SIMPLE_BINS)
+# below); adding another is a one-word change here, not a copy of the rule.
+# Defined ABOVE .PHONY because .PHONY expands its prerequisites immediately —
+# referencing it before this assignment would silently expand to nothing.
+SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 
-all: build cli foci-call foci-cc-hook nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging llbox
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-unscoped-logging llbox test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+
+all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging llbox
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
-build:
+$(SIMPLE_BINS):
 	@mkdir -p bin
-	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-gw ./cmd/foci-gw
-	@command -v upx >/dev/null 2>&1 && upx -q bin/foci-gw || true
+	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/$@ ./cmd/$@
 
-cli:
-	@mkdir -p bin
-	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci ./cmd/foci
-
-foci-call:
-	@mkdir -p bin
-	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-call ./cmd/foci-call
-
-foci-cc-hook:
-	@mkdir -p bin
-	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-cc-hook ./cmd/foci-cc-hook
+# Back-compat aliases: both predate SIMPLE_BINS, are in muscle memory, and
+# `make build` is documented in CLAUDE.md and docs/INSTALL.md.
+build: foci-gw
+cli: foci
 
 # nosgid.so — LD_PRELOAD shim that strips setuid/setgid bits from chmod-family
 # calls (see deploy/nosgid/nosgid.c). Injected into every shell tool and backend
@@ -395,7 +393,7 @@ ASKGW_GROUP   ?= foci-askgw
 SERVICE_NAME  ?= foci
 SERVICE_FILE  := /etc/systemd/system/$(SERVICE_NAME).service
 SECRETS_FILE  := $(FOCI_HOME)/config/secrets.toml
-DEPLOY_BINS   := foci-gw foci foci-call foci-cc-hook
+DEPLOY_BINS   := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 
 # Base PATH baked into the unit (shellenv layers the operator dotfile env on top
 # at startup): FOCI_HOME/.local/bin plus the standard system dirs that exist.

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"foci/internal/delegator/sessionenv"
 )
 
 func TestWriteSessionEnvFile_CreatesMapping(t *testing.T) {
@@ -19,11 +21,11 @@ func TestWriteSessionEnvFile_CreatesMapping(t *testing.T) {
 
 	WriteSessionEnvFile(sessionID, env)
 
-	data, err := os.ReadFile(sessionEnvPath(sessionID))
+	data, err := os.ReadFile(sessionenv.Path(sessionID))
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	var entry sessionEnvEntry
+	var entry sessionenv.Entry
 	if err := json.Unmarshal(data, &entry); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
@@ -41,7 +43,7 @@ func TestWriteSessionEnvFile_SkipsEmpty(t *testing.T) {
 
 	WriteSessionEnvFile(sessionID, map[string]string{"HOME": "/tmp"})
 
-	if _, err := os.Stat(sessionEnvPath(sessionID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(sessionenv.Path(sessionID)); !os.IsNotExist(err) {
 		t.Error("expected no file when FOCI_SOCK/BASH_ENV are absent")
 	}
 }
@@ -55,13 +57,13 @@ func TestRemoveSessionEnvFile_DeletesMapping(t *testing.T) {
 	env := map[string]string{"FOCI_SOCK": "/tmp/x.sock", "BASH_ENV": "/tmp/x.sh"}
 	WriteSessionEnvFile(sessionID, env)
 
-	if _, err := os.Stat(sessionEnvPath(sessionID)); err != nil {
+	if _, err := os.Stat(sessionenv.Path(sessionID)); err != nil {
 		t.Fatalf("file should exist after write: %v", err)
 	}
 
 	RemoveSessionEnvFile(sessionID)
 
-	if _, err := os.Stat(sessionEnvPath(sessionID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(sessionenv.Path(sessionID)); !os.IsNotExist(err) {
 		t.Error("expected file removed after RemoveSessionEnvFile")
 	}
 }

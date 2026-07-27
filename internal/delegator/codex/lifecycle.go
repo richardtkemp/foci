@@ -57,6 +57,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	}
 
 	args := appServerArgs(compactPrompt)
+	// The session-env hook must be configured at spawn: hook config and its
+	// trust state are session flags on this argv, and there is no way to add
+	// either to a running app-server. See hooks.go.
+	args = append(args, b.prepareHookArgs(ctx)...)
+
 	cmdCtx, cancel := context.WithCancel(context.Background())
 	cmd := procx.Spawn(cmdCtx, bin, args...)
 	cmd.Dir = b.workDir
@@ -184,7 +189,10 @@ func (b *Backend) Close() error {
 	b.closing = true
 	cancel := b.cancel
 	wr := b.writer
+	threadID := b.threadID
 	b.mu.Unlock()
+
+	b.unbindThreadEnv(threadID)
 
 	if wr != nil {
 		_ = wr.Close()
@@ -338,6 +346,7 @@ func (b *Backend) startThread() (string, error) {
 	}
 	b.mu.Unlock()
 
+	b.bindThreadEnv(tr.Thread.ID)
 	b.readyOnce.Do(func() { close(b.readyCh) })
 	if b.onSessionReady != nil {
 		b.onSessionReady(tr.Thread.ID)
@@ -359,6 +368,7 @@ func (b *Backend) resumeThread(threadID string) error {
 	b.threadID = threadID
 	b.mu.Unlock()
 
+	b.bindThreadEnv(threadID)
 	b.readyOnce.Do(func() { close(b.readyCh) })
 	if b.onSessionReady != nil {
 		b.onSessionReady(threadID)

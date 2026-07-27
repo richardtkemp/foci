@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/sessionenv"
 )
 
 // onTurnStarted signals the typing indicator.
@@ -86,7 +87,10 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 	// Tools — feed OnToolStart so the activity indicator shows what's running.
 	case "commandExecution":
 		if se != nil && se.OnToolStart != nil {
-			se.OnToolStart(item.ID, "bash", item.Command)
+			// Unwrapped: codex reports the argv it built from the tool input,
+			// which for a bash call is foci's session-env wrapper. Agents and
+			// users must see the command they actually asked for.
+			se.OnToolStart(item.ID, "bash", sessionenv.UnwrapDisplayCommand(item.Command))
 		}
 	case "fileChange":
 		if se != nil && se.OnToolStart != nil {
