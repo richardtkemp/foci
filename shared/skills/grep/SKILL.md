@@ -45,7 +45,7 @@ ack -f
 
 ## Flag translation — `-r` and `-n` are the trap
 
-**The two flags grep muscle-memory reaches for first, `-r` and `-n`, are exactly the two that mean something else in ack and rg.** Neither tool needs a recursion flag — recursion is their default — so the fix is not to translate `-rn`, it is to **stop typing it**. `ack 'pattern' path/` and `rg 'pattern' path/` are already what `grep -rn 'pattern' path/` was reaching for.
+**The two flags grep muscle-memory reaches for first, `-r` and `-n`, are exactly the two that mean something else — but in *different* tools, so learning one doesn't protect you from the other.** In **ack**, `-n` is `--no-recurse` (line numbers are already default), so `ack -n pat dir/` silently searches only depth 1. In **rg**, `-n` is fine (`--line-number`, same as grep) but `-r` is `--replace=REPL`, which eats the next argument. Neither tool needs a recursion flag — recursion is their default — so the fix is not to translate `-rn`, it is to **stop typing it**. `ack 'pattern' path/` and `rg 'pattern' path/` are already what `grep -rn 'pattern' path/` was reaching for.
 
 | Intent | grep | ack | rg |
 |---|---|---|---|
