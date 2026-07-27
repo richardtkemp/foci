@@ -1,6 +1,6 @@
 ---
 name: foci-debugging
-description: Debug and investigate foci platform internals. API logs, payload logs, session files, CC backend transcripts, cache diagnosis, service logs, and common investigation patterns. Read the relevant subfile before investigating.
+description: Debug and investigate foci platform internals. Service logs and archives, API/cost and payload logs, session files and CC backend transcripts, cache-bust diagnosis, app (FAP) delivery gaps, permission-rule failures, and reproducing a make test failure. Read the relevant subfile before investigating.
 ---
 
 # Foci Debugging — Internals & Investigation
@@ -17,6 +17,8 @@ How to investigate a running foci: where the data lives and how to read it. This
 | **api-cost.md** | Provider auth, the API call log (`api.db`), payload logs, and "where did the cost go?" — cost/token/cache-stat queries. |
 | **cache.md** | Anthropic prompt-cache mechanics and cache-bust diagnosis (companion to the `cache-diagnosis` skill). |
 | **sessions.md** | Session history files (stable-key JSONL), CC backend transcripts, the `state.db` session/archive/resume tables, and compaction/reset/cron lifecycle. |
-| **test-harness.md** | A test fails under `make test` but not under a plain `go test` — the sealed/redirected environment `scripts/seal-test.sh` builds, how to replicate it for one package, and which arm isolates which variable. |
+| **test-harness.md** | A test fails under `make test` but not under a plain `go test` — the sealed/redirected environment `scripts/seal-test.sh` builds, how to replicate it for one package, which arm isolates which variable, and how to triage a red-main CI-runner notification. |
+| **permissions.md** | A task fails with `Permission allow rule Write(...) is not matched by file permission checks` — why it's order-dependent, how to audit exposure across agents, and the seed constant that reintroduces it. |
+| **app-delivery.md** | A message never reached the native app — the durable frame store (`~/data/app-frames.db`), reading `seq` to tell a sink bug from a replay/ack bug, and the ULID-vs-chat-id trap. |
 
 For **normal operation** (not investigation) — tools, prompts, turn lifecycle, config — see the companion **`foci-usage`** skill.

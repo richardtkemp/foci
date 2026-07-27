@@ -1,3 +1,5 @@
+<!-- GOLDEN: ships with foci (shared/skills/foci-debugging/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
+
 # Reproducing a `make test` failure outside the harness
 
 ## Trigger
@@ -88,3 +90,39 @@ Only a `--- FAIL:` line is a failure verdict. A `foo_test.go:NNN:` line can be a
 however alarming its wording, and a value in a log line may be an injected test fake — those are
 marked `FAKE-TEST` since #1562, but only where the fake is a *string*; values rendered from
 injected numbers still read as real events.
+
+## Triaging a red-main CI-runner notification — "foci `<commit>` tests FAILED"
+
+Different problem from the one above: not "why can't I reproduce it?" but "who broke main?"
+
+**The commit named in the `[foci-test-runner]` notification is whatever was HEAD when the runner
+ran — usually NOT the cause.** Several sessions land to a shared `main`; the runner just caught the
+tip. Treat the name as a timestamp, not an accusation. Method, in order:
+
+1. **Read the real failure, don't trust the summary.** `grep -A25 <TestName> /tmp/fgw/test-<ts>.log`
+   (the log path is in the notification). Get the actual assertion and its got-vs-want.
+2. **Can the named commit even reach the failing package?** `git show <commit> --stat`. If its diff
+   cannot touch the failing package (a log-only commit vs `internal/tools`, say), it is innocent and
+   the cause is upstream of it.
+3. **Bound the culprit range.** Find last-green in `~/git/ci-runner/results.csv` (grep for `,foci,`
+   and `,unit,`), then
+   `git log --oneline <last-green>..<failing> -- <failing/package/>` for the commit that actually
+   touched it.
+4. **Settle flake-vs-real with a control, never a guess.** Reproduce the single test
+   (`go test ./pkg/ -run TestX -count=10`), and a serialized low-load run (`-parallel=1`) to rule out
+   self-induced timing. Deterministic ≠ your fault — it can be the tree's state.
+
+**Recurring causes** (three in one day, 2026-07-21):
+
+- **A shared-semantics change breaks a cross-package assertion.** A commit reworks a shared helper
+  and updates *its own* package's test, missing an over-specific assertion in another package.
+  When you change a shared function, grep other packages for tests asserting the old behaviour.
+- **Error-string reformatting.** Wrapping a transport (e.g. `ratelimit.Transport`) makes net/http's
+  `Client.Timeout` wrapper reword the message, so a `strings.Contains(err, "deadline exceeded")`
+  test goes red — while `errors.Is(err, context.DeadlineExceeded)` and `net.Error.Timeout()` stay
+  TRUE. Verify empirically with a throwaway `_test.go`, then fix the test to assert **semantics
+  (`errors.Is`), never message text**.
+- **Local main ahead of origin.** A peer committed to the shared main checkout without pushing, so
+  the runner tests a red local HEAD while `origin/main` sits green-but-stale. Check with
+  `git rev-list --left-right --count origin/main...HEAD`. Fix on a worktree off local HEAD, ff local
+  main, push. (`make land` exists to prevent this class.)
