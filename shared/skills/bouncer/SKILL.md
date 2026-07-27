@@ -5,6 +5,8 @@ owner: foci
 seeded: true
 ---
 
+> **This `SKILL.md` is yours to customise** (seed-if-missing — override it, add your own sibling files). The content files it lists below **ship with foci and are overwritten on restart** — edit those in the foci repo (`shared/skills/bouncer/`), not the deployed `~/shared/skills/` copy.
+
 # Bouncer — Security Scanner
 
 Scan untrusted code before reading or activating it. Works on any file — skills, scripts, configs, repos.

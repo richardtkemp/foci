@@ -40,6 +40,23 @@ if [ ! -d "$SKILLS_DIR" ]; then
   exit 1
 fi
 
+# This validates a foci REPO tree, where every skill ships with foci by
+# definition. Pointed at a DEPLOYED tree (~/shared/skills) it would demand
+# 'owner: foci' of the locally-authored skills that correctly say
+# 'owner: clutch', and emit hundreds of false failures — which is exactly what
+# it did before this guard. Refuse instead of lying. To compare a deployed
+# tree against its source, use scripts/skill-drift-report.sh.
+# go.mod is the discriminator: it exists in a checkout (and in a worktree) and
+# never in a deployed tree. Do NOT use shared/prompts/prompts.go — the whole
+# shared/ tree including the .go file is seeded to the deployed side, so it is
+# present in both and silently defeats the guard.
+if [ ! -e "$SKILLS_DIR/../../go.mod" ]; then
+  echo "check-skill-provenance: $SKILLS_DIR does not look like a foci repo's shared/skills." >&2
+  echo "  This check only applies to the repo tree, where every skill is foci-shipped." >&2
+  echo "  For a deployed tree, use scripts/skill-drift-report.sh instead." >&2
+  exit 1
+fi
+
 fail=0
 checked_skill=0
 checked_golden=0
@@ -57,6 +74,15 @@ while IFS= read -r f; do
   fi
   if ! printf '%s\n' "$fm" | grep -q '^seeded: *true *$'; then
     echo "  $f: frontmatter missing 'seeded: true'" >&2
+    fail=1
+  fi
+  # The frontmatter is for tooling; this note is for whoever OPENS the
+  # deployed copy intending to edit it. It is the only thing that tells them
+  # their edit will survive (SKILL.md) while the same edit to a sibling file
+  # will not. Frontmatter alone was not enough — that is how six of these
+  # shipped without any human-readable statement of the rule.
+  if ! grep -q 'seed-if-missing' "$f"; then
+    echo "  $f: body missing the seed-if-missing note (see any sibling SKILL.md for the wording)" >&2
     fail=1
   fi
 done < <(find "$SKILLS_DIR" -name SKILL.md | sort)

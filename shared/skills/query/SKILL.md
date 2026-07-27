@@ -4,6 +4,9 @@ description: "Query structured data (JSON, JSONL, TOML, YAML, XML, CSV, Markdown
 owner: foci
 seeded: true
 ---
+
+> **This `SKILL.md` is yours to customise** (seed-if-missing — override it, add your own sibling files). Changes to it survive a restart, but they live only on this install: to change the skill for every agent, edit it in the foci repo (`shared/skills/query/`).
+
 # Structured Query Tools
 
 Query structured data instead of dumping it into context. Three tools, one per format family.

@@ -5,6 +5,8 @@ owner: foci
 seeded: true
 ---
 
+> **This `SKILL.md` is yours to customise** (seed-if-missing — override it, add your own sibling files). Changes to it survive a restart, but they live only on this install: to change the skill for every agent, edit it in the foci repo (`shared/skills/browser/`).
+
 # Browser Tool Reference
 
 Control a browser using accessibility tree snapshots and element refs.
