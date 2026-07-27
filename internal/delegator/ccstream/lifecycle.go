@@ -111,20 +111,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	cmdCtx, cmdCancel := context.WithCancel(context.Background())
 	cmd := procx.Spawn(cmdCtx, claudeBin, args...)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
-
-	// Turn completion is keyed to CC's session_state_changed running/idle SDK
-	// events (see OnSystem / onSessionIdle) — opt-in in CC, so the backend
-	// enables them itself. Placed before opts.Env so a per-agent
-	// backend_config.env can override for debugging (the backend then falls
-	// back to complete-on-result with a Warnf).
-	cmd.Env = append(cmd.Env, "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1")
-
-	// Apply extra environment variables from StartOptions (e.g. BASH_ENV,
-	// FOCI_SOCK from the exec bridge created by DelegatedManager).
-	for k, v := range opts.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = buildEnv(opts.Env)
 	b.autoApproveEnv = autoapprove.EnvironmentFromList(cmd.Env)
 
 	// Get pipes.
