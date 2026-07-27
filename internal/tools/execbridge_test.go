@@ -1343,7 +1343,11 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	// Build foci-call binary to a temp directory
 	binDir := t.TempDir()
 	binPath := binDir + "/foci-call"
-	build := osexec.Command("go", "build", "-o", binPath, "foci/cmd/foci-call")
+	// -buildvcs=false: VCS stamping shells out to git, which fails when `make test`
+	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
+	// git needs when the checkout is owned by a different user than the test runner
+	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build foci-call: %v\n%s", err, out)
@@ -1449,7 +1453,11 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 
 	binDir := t.TempDir()
 	binPath := binDir + "/foci-call"
-	build := osexec.Command("go", "build", "-o", binPath, "foci/cmd/foci-call")
+	// -buildvcs=false: VCS stamping shells out to git, which fails when `make test`
+	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
+	// git needs when the checkout is owned by a different user than the test runner
+	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build foci-call: %v\n%s", err, out)
@@ -1628,7 +1636,11 @@ func TestTodoShellFunc_AppendAliasesResolve(t *testing.T) {
 
 	binDir := t.TempDir()
 	binPath := binDir + "/foci-call"
-	build := osexec.Command("go", "build", "-o", binPath, "foci/cmd/foci-call")
+	// -buildvcs=false: VCS stamping shells out to git, which fails when `make test`
+	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
+	// git needs when the checkout is owned by a different user than the test runner
+	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build foci-call: %v\n%s", err, out)
@@ -1901,7 +1913,11 @@ func TestGeneratedRemindShellFuncEndToEnd(t *testing.T) {
 
 	binDir := t.TempDir()
 	binPath := binDir + "/foci-call"
-	build := osexec.Command("go", "build", "-o", binPath, "foci/cmd/foci-call")
+	// -buildvcs=false: VCS stamping shells out to git, which fails when `make test`
+	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
+	// git needs when the checkout is owned by a different user than the test runner
+	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build foci-call: %v\n%s", err, out)
