@@ -6,6 +6,8 @@ seeded: true
 homepage: https://openrouter.ai/
 ---
 
+> **This `SKILL.md` is yours to customise** (seed-if-missing — override it, add your own sibling files). Changes to it survive a restart, but they live only on this install: to change the skill for every agent, edit it in the foci repo (`shared/skills/image-gen/`).
+
 # Image Generation (OpenRouter)
 
 Generate images using OpenRouter's image-capable models via `http_request`.

@@ -5,6 +5,8 @@ owner: foci
 seeded: true
 ---
 
+> **This `SKILL.md` is yours to customise** (seed-if-missing — override it, add your own sibling files). The content files it lists below **ship with foci and are overwritten on restart** — edit those in the foci repo (`shared/skills/research/`), not the deployed `~/shared/skills/` copy.
+
 # OpenRouter Perplexity Research Skill
 
 This skill enables web research using Perplexity models through OpenRouter, with two research depths available.
