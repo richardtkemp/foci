@@ -315,9 +315,11 @@ func readRPCResult(ctx context.Context, r interface{ Read([]byte) (int, error) }
 // ---------------------------------------------------------------------------
 
 // bindThreadEnv publishes this session's exec-bridge environment under the
-// codex thread id, which is what the hook sees as session_id. Called wherever
-// a thread becomes bound to a foci session — the single point at which the
-// mapping exists.
+// codex thread id, which is what the hook sees as session_id. Call it from
+// registerThread and nowhere else: that IS the point at which a thread becomes
+// bound to a foci session, and hand-placing this next to some of
+// registerThread's call sites is exactly how batch and notification-discovered
+// threads ended up with no env of their own.
 func (b *Backend) bindThreadEnv(threadID string) {
 	if err := sessionenv.Write(threadID, b.startOpts.Env); err != nil {
 		b.lg.Warnf("session-env: %v", err)
@@ -330,6 +332,13 @@ func (b *Backend) bindThreadEnv(threadID string) {
 // a leftover file is harmless (tempdir is wiped at gateway startup) and its
 // thread id is never reused.
 func (b *Backend) unbindThreadEnv(threadID string) {
+	// Exactly the condition bindThreadEnv writes under (sessionenv.Write
+	// returns early on a zero entry, before it resolves the temp root). Without
+	// this, a session with no exec-bridge env still resolves the session-env
+	// directory on every thread teardown just to unlink a file it never wrote.
+	if threadID == "" || sessionenv.EntryFrom(b.startOpts.Env).IsZero() {
+		return
+	}
 	if err := sessionenv.Remove(threadID); err != nil {
 		b.lg.Debugf("session-env: %v", err)
 	}

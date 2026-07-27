@@ -293,13 +293,25 @@ func (b *Backend) logWarnf(format string, args ...any) {
 	b.lg.Warnf("["+b.threadLogPrefix()+"] "+format, args...)
 }
 
+// registerThread records a codex thread's owning foci session and facade, and
+// publishes the same mapping to the PreToolUse hook (#1557) via the session-env
+// file keyed by thread id.
+//
+// The two must be written together. They are the same fact — "this thread
+// belongs to that session" — seen from foci's side and from a spawned bash's
+// side, and a thread that has one without the other runs its shell tools under
+// whichever session happened to launch the shared app-server. That was a live
+// gap: bindThreadEnv used to be called by hand next to two of this function's
+// four call sites, so batch threads (batch.go) and threads first seen via a
+// thread/started notification (handlers.go) were registered with no env of
+// their own. Keeping the two writes in one place makes the drift impossible
+// rather than merely fixed.
 func (b *Backend) registerThread(fociSessionID, codexThreadID string) {
 	if codexThreadID == "" {
 		return
 	}
 	p := b.process()
 	p.threadMapMu.Lock()
-	defer p.threadMapMu.Unlock()
 	if p.sessionThreads == nil {
 		p.sessionThreads = make(map[string]string)
 	}
@@ -314,6 +326,11 @@ func (b *Backend) registerThread(fociSessionID, codexThreadID string) {
 	}
 	p.threadSessions[codexThreadID] = fociSessionID
 	p.threadBackends[codexThreadID] = b
+	p.threadMapMu.Unlock()
+
+	// Outside the map lock: this writes a file, and nothing reads it through
+	// threadMapMu.
+	b.bindThreadEnv(codexThreadID)
 }
 
 func (b *Backend) threadForSession(fociSessionID string) string {
@@ -323,10 +340,12 @@ func (b *Backend) threadForSession(fociSessionID string) string {
 	return p.sessionThreads[fociSessionID]
 }
 
+// unregisterThread is registerThread's exact inverse, including the session-env
+// file — a facade or batch that closed used to drop its map entries and leave
+// the env file behind.
 func (b *Backend) unregisterThread(codexThreadID string) {
 	p := b.process()
 	p.threadMapMu.Lock()
-	defer p.threadMapMu.Unlock()
 	delete(p.threadSessions, codexThreadID)
 	delete(p.threadBackends, codexThreadID)
 	for key, id := range p.sessionThreads {
@@ -334,6 +353,9 @@ func (b *Backend) unregisterThread(codexThreadID string) {
 			delete(p.sessionThreads, key)
 		}
 	}
+	p.threadMapMu.Unlock()
+
+	b.unbindThreadEnv(codexThreadID)
 }
 
 func (b *Backend) logErrorf(format string, args ...any) {
