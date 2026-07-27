@@ -427,8 +427,11 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (tools.ToolResu
 	}
 
 	// If no sessions remain, kill the server to avoid an orphaned tmux
-	// server process. This is safe: we only kill when the server is empty.
-	serverKilled := inst.maybeKillTmuxServer(ctx)
+	// server process. NOT unconditionally safe, despite how it reads: the
+	// emptiness check and the kill are two separate tmux calls, so a session
+	// created in between is destroyed by a decision taken before it existed.
+	// See autoReapEmptyServer — the test binary opts out for that reason.
+	serverKilled := autoReapEmptyServer && inst.maybeKillTmuxServer(ctx)
 
 	inst.mu.Lock()
 	delete(inst.owned, name)

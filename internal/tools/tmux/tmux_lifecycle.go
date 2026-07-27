@@ -95,5 +95,7 @@ func (inst *tmuxInstance) reapExpiredSessions() {
 	}
 	inst.sendMu.Unlock()
 
-	inst.maybeKillTmuxServer(context.Background())
+	if autoReapEmptyServer {
+		inst.maybeKillTmuxServer(context.Background())
+	}
 }
