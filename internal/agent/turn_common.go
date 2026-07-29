@@ -74,6 +74,27 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 
 // JoinPrompt joins all non-empty parts into a single prompt string.
 // Used by the delegated path.
+//
+// Parts are separated by a BLANK LINE, not a single newline. On the API path
+// every part is its own ContentBlock, so the structure is explicit; flat text
+// has to carry that structure itself, and a lone "\n" does not — it makes the
+// injected header and the human's first line indistinguishable.
+//
+// That is not hypothetical. The default statusline is
+//
+//	[meta] time={time} gap={gap} model={model} via={via}\n[state] {state}\n[ask] {ask}
+//
+// and an all-empty placeholder line is dropped, so with no pending ask the
+// user's text landed directly beneath "[state] …". coach — whose MEMORY.md
+// tells it to expect a "yesterday" line in the state block — read Dick's
+// "Yesterday: social yes, drive 3, …" as part of [state] and reported the
+// message as EMPTY, twice (#1627). Short, structured user messages are the
+// worst case, and they are exactly what a habit-tracking agent receives.
+//
+// "\n\n" is already the separator this package uses everywhere else a distinct
+// block is prepended to the prompt (first-run message, branch orientation, the
+// nudge/user boundary — all in turn_delegated.go); the single "\n" here was the
+// outlier. Cost is one newline per boundary.
 func (p turnTextParts) JoinPrompt() string {
 	var parts []string
 	if p.MetaPrefix != "" {
@@ -94,5 +115,5 @@ func (p turnTextParts) JoinPrompt() string {
 			parts = append(parts, "[follow-up] "+t)
 		}
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n\n")
 }
