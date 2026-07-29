@@ -8,7 +8,7 @@ import (
 )
 
 // TestJoinPrompt_AllFields verifies that JoinPrompt joins all non-empty fields
-// with newline separators and formats follow-up texts with the [follow-up] prefix.
+// with BLANK-LINE separators and formats follow-up texts with the [follow-up] prefix.
 func TestJoinPrompt_AllFields(t *testing.T) {
 	p := turnTextParts{
 		MetaPrefix:      "[meta: test]",
@@ -34,15 +34,32 @@ func TestJoinPrompt_AllFields(t *testing.T) {
 		}
 	}
 
-	// Verify parts are separated by newlines.
+	// Seven parts separated by blank lines: 7 content lines + 6 blanks.
 	lines := strings.Split(got, "\n")
-	if len(lines) != 7 {
-		t.Errorf("expected 7 lines, got %d: %v", len(lines), lines)
+	if len(lines) != 13 {
+		t.Errorf("expected 13 lines (7 parts + 6 blank separators), got %d: %v", len(lines), lines)
+	}
+	// Every part must be preceded by a blank line — that separation IS the fix.
+	for _, want := range []string{
+		"[meta: test]\n\nreminder1",
+		"reminder1\n\nstate: ok",
+		"[Image saved to: /tmp/img.png]\n\nhello",
+		"hello\n\n[follow-up] follow up 1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("parts not blank-line separated; missing %q in:\n%s", want, got)
+		}
 	}
 }
 
-// TestJoinPrompt_SkipsEmptyParts verifies that empty fields are omitted,
-// producing no extra newlines or blank segments.
+// TestJoinPrompt_SkipsEmptyParts verifies that empty fields are omitted entirely
+// rather than contributing an empty segment — an absent part must not leave a
+// double blank line behind.
+//
+// This test previously asserted the OPPOSITE ("should not contain consecutive
+// newlines"), which encoded the very bug #1627 reports: with a single-newline
+// join, an agent cannot tell the injected header from the user's first line.
+// The assertion was a stale contract, not a regression.
 func TestJoinPrompt_SkipsEmptyParts(t *testing.T) {
 	p := turnTextParts{
 		MetaPrefix: "[meta]",
@@ -51,13 +68,12 @@ func TestJoinPrompt_SkipsEmptyParts(t *testing.T) {
 	}
 
 	got := p.JoinPrompt()
-	if strings.Contains(got, "\n\n") {
-		t.Errorf("should not contain consecutive newlines: %q", got)
+	if got != "[meta]\n\nhello" {
+		t.Errorf("got %q, want %q", got, "[meta]\n\nhello")
 	}
-
-	lines := strings.Split(got, "\n")
-	if len(lines) != 2 {
-		t.Errorf("expected 2 lines (meta + user text), got %d: %v", len(lines), lines)
+	// Exactly ONE blank line: three empty parts must contribute nothing.
+	if strings.Contains(got, "\n\n\n") {
+		t.Errorf("empty parts leaked blank lines: %q", got)
 	}
 }
 
@@ -107,7 +123,7 @@ func TestJoinPrompt_PrimaryAndOneFollowUp(t *testing.T) {
 	}
 
 	got := p.JoinPrompt()
-	want := "primary\n[follow-up] extra"
+	want := "primary\n\n[follow-up] extra"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -197,5 +213,48 @@ func TestAttachmentPathBuilding(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestJoinPrompt_HeaderIsSeparatedFromUserText is the #1627 regression: coach
+// received Dick's habit line as if it were part of the [state] block and
+// reported the message as EMPTY, twice.
+//
+// The inputs are the real ones. The default statusline drops an all-empty
+// placeholder line, so with no pending ask the rendered header ENDS on
+// "[state] …" — putting the user's first line immediately beneath it. This test
+// asserts the property that actually matters (the user's text begins a new
+// block) rather than the exact byte layout, so a future statusline change
+// cannot quietly reintroduce the ambiguity.
+func TestJoinPrompt_HeaderIsSeparatedFromUserText(t *testing.T) {
+	const userText = "Yesterday: social yes, drive 3, self-directed no, feeds low no, cold no, walk yes, drink no"
+	p := turnTextParts{
+		MetaPrefix: "[meta] time=2026-07-29T11:00:02+01:00 gap=none model=opus via=app\n" +
+			"[state] todos: 6 open (1 high)",
+		UserTexts: []string{userText},
+	}
+
+	got := p.JoinPrompt()
+
+	// The bug, stated directly: the user's text must not be the line straight
+	// after the state line.
+	if strings.Contains(got, "[state] todos: 6 open (1 high)\n"+userText) {
+		t.Fatalf("user text abuts the [state] line with no boundary:\n%s", got)
+	}
+	if !strings.Contains(got, "\n\n"+userText) {
+		t.Errorf("user text is not preceded by a blank line:\n%s", got)
+	}
+
+	// Everything above the first blank line is foci's; everything below is the
+	// human's. That split is the contract the environment block documents.
+	header, body, found := strings.Cut(got, "\n\n")
+	if !found {
+		t.Fatal("no blank line separating header from body")
+	}
+	if body != userText {
+		t.Errorf("body = %q, want %q", body, userText)
+	}
+	if strings.Contains(header, "Yesterday:") {
+		t.Errorf("user text leaked into the header block: %q", header)
 	}
 }
