@@ -35,16 +35,26 @@ func forkFacet(ctx context.Context, req Request, cc CommandContext) (Response, e
 }
 
 // forkFacetBranch forks parentKey through the single fork entry point. On a
-// fork-capable delegated backend (CC/opencode) this is a REAL transcript fork
-// carrying the parent's full conversation; an API agent — or a delegated backend
-// whose session hasn't started yet — falls back to a plain history-reading branch
-// (unchanged from the pre-fork behaviour).
+// fork-capable delegated backend this is a REAL transcript fork carrying the
+// parent's full conversation; an API agent — or a delegated backend whose
+// session hasn't started yet — falls back to a plain history-reading branch.
 func forkFacetBranch(ctx context.Context, cc CommandContext, parentKey string, opts session.BranchOptions) (string, error) {
+	// A facet IS a branch — there is no meaningful degraded form of it. On a
+	// backend that cannot branch, refuse rather than quietly handing back a
+	// session the user did not ask for. (It used to fall through to a plain
+	// history-reading branch for this case as well as for the empty-parent one,
+	// which made an unsupportable request look like it had succeeded.)
+	if cc.Agent.DelegatedManager != nil && !cc.Agent.DelegatedManager.BackendCanBranch() {
+		return "", fmt.Errorf("this agent's backend cannot branch, so it cannot host a facet")
+	}
 	branchKey, forked, err := cc.Agent.ForkSession(ctx, parentKey, opts)
 	if err != nil {
 		return "", fmt.Errorf("fork session: %w", err)
 	}
 	if !forked {
+		// The backend CAN branch (checked above) but the parent has no backend
+		// session to clone — never started, or reset. Still a real branch, just
+		// one with nothing inherited.
 		branchKey, err = cc.Sessions.CreateBranchWithOptions(parentKey, opts)
 		if err != nil {
 			return "", fmt.Errorf("create branch: %w", err)

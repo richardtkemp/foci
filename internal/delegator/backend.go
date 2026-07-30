@@ -509,7 +509,7 @@ func HumanReadableBackendName(backendType string) string {
 // underlying conversation session into a new, independent backend session —
 // i.e. the backend "can branch". A foci branch key backed by such a fork
 // starts its first delegated turn with the PARENT's full backend context,
-// instead of an empty session (BranchIndependent) or a shared in-place turn.
+// instead of an empty session (RunIndependent) or a shared in-place turn.
 //
 // Backends that don't implement this interface are treated as unable to
 // branch; the branch machinery falls back to the existing behaviour. The

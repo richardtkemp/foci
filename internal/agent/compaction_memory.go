@@ -35,7 +35,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 	//     This hook already runs inside the parent's inbox worker (post-turn
 	//     phase), so the parent is exclusive — clone directly, no EnqueueInjectWait
 	//     (which would deadlock). Reset the forked backend after the turn.
-	//   - otherwise (BranchInPlace): inject into the live session.
+	//   - otherwise (RunInPlace): inject into the live session.
 	targetKey := sessionKey
 	var forkedBranch string
 	switch a.BranchStrategyFor("compaction-memory") {

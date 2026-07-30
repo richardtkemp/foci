@@ -466,7 +466,7 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 
 **Branching a delegated agent.** (Superseded the old "delegated agents return HTTP 400 for `/branch`" rule — they branch for real now. `Agent.BranchStrategyFor` picks per branch type; the legacy inject-in-place / independent-session strategies below are what a *non-branch-capable* backend still falls back to.)
 
-`ForkSession` is the single routing point: an API agent gets a history-reading session branch, a delegated agent whose backend implements `delegator.BackendBrancher` (ccstream, codex — not opencode) gets a **real transcript fork** that starts with the parent's full context and leaves the parent running.
+`ForkSession` is the single routing point: an API agent gets a history-reading session branch, a delegated agent whose backend implements `delegator.BackendBrancher` gets a **real transcript fork** that starts with the parent's full context and leaves the parent running. Some backends can branch and some can't; both cases are supported, and the answer is a runtime capability check (`BackendCanBranch`) — deliberately not a list of backend names here, since such a list has already gone stale and mislabelled a backend that had gained the capability.
 
 `ForkSession` returns `ok=false` for **two unrelated reasons**, and conflating them was #1634:
 - the backend cannot branch at all → no branch is possible;

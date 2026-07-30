@@ -6,20 +6,25 @@ import (
 	"foci/internal/session"
 )
 
-// BranchStrategy is how a memory / reflection turn is realised for an agent.
-// It is the SINGLE source for the "should this branch?" decision that used to
-// be duplicated — and inconsistent — across the periodic scheduler, the
-// compaction-memory hook, and the session-end / reset path. All three now route
-// through BranchStrategyFor; do not re-derive the decision inline anywhere.
+// BranchStrategy answers WHERE an extra turn (a memory pass, a reflection, a
+// /branch) runs for a given agent. Two of the four answers are not branches at
+// all — RunInPlace takes another turn on the existing key and RunIndependent
+// spins an unrelated session — so read this as "how is the pass realised",
+// not "should it branch".
+//
+// It is the SINGLE source for that decision, which used to be duplicated — and
+// inconsistent — across the periodic scheduler, the compaction-memory hook, and
+// the session-end / reset path. All three now route through BranchStrategyFor;
+// do not re-derive the decision inline anywhere.
 type BranchStrategy int
 
 const (
-	// BranchInPlace injects the turn into the existing session. Used for
+	// RunInPlace injects the turn into the existing session. Used for
 	// DELEGATED agents on non-terminal passes (reflection, keepalive,
 	// compaction-memory): the live backend already holds the conversation
 	// context and the session continues afterwards, so there is nothing to
 	// branch — we just run one more turn on the same key.
-	BranchInPlace BranchStrategy = iota
+	RunInPlace BranchStrategy = iota
 
 	// BranchFork creates a separate branch session that reads the parent's
 	// history. Used for every API-agent pass (they keep no live backend to
@@ -28,21 +33,24 @@ const (
 	// its backend does not support real conversation forks.
 	BranchFork
 
-	// BranchIndependent spins a fresh, isolated session (its own key, reset when
+	// RunIndependent spins a fresh, isolated session (its own key, reset when
 	// the turn completes). Used for DELEGATED background / consolidation work
 	// that must not touch the main conversation at all.
-	BranchIndependent
+	RunIndependent
 
 	// BranchForkBackend creates a branch session whose BACKEND conversation is a
 	// REAL fork of the parent — the backend implements delegator.BackendBrancher
-	// (e.g. the CC stream backend clones its transcript). The branch starts with
-	// the parent's full context in an isolated session and the parent keeps
-	// running untouched. This is the payoff of backend branching: chosen for
-	// every delegated branch (reflection, background, session-end, the /branch
-	// endpoint) whose backend can fork, replacing both BranchInPlace (which
-	// polluted the main thread) and BranchIndependent (which started empty).
-	// Falls back at execution time to in-place/independent when there's no
-	// parent backend session to fork yet.
+	// and clones its own conversation. The branch starts with the parent's full
+	// context in an isolated session and the parent keeps running untouched.
+	// This is the payoff of backend branching: chosen for every delegated branch
+	// (reflection, background, session-end, the /branch endpoint) whose backend
+	// can fork, replacing both RunInPlace (which polluted the main thread) and
+	// RunIndependent (which started empty).
+	//
+	// Whether a given backend can fork is a CAPABILITY, asked at runtime via
+	// BackendCanBranch. Never encode the answer as a list of backend names,
+	// here or anywhere: that list has already gone stale once and mislabelled a
+	// backend that had since gained the capability.
 	BranchForkBackend
 )
 
@@ -91,10 +99,10 @@ func (a *Agent) BranchStrategyFor(branchType string) BranchStrategy {
 	// path) — legacy per-type behaviour.
 	switch branchType {
 	case "reflection", "keepalive", "compaction-memory":
-		return BranchInPlace
+		return RunInPlace
 	default:
 		// background / consolidation / maintenance: isolated one-off sessions.
-		return BranchIndependent
+		return RunIndependent
 	}
 }
 
