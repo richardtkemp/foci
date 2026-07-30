@@ -464,10 +464,20 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 
 **Schema-driven shell functions:** Shell functions for `ExecExport: true` tools are emitted by `generateShellFunc` in `internal/tools/execbridge.go`. A small set of tools with custom UX (stdin reading, accumulator flags, subcommand dispatch — `web_search`, `memory_search`, `web_fetch`, `http_request`, `send_to_chat`, `todo`, `summary`, `spawn`, `tmux`) have hand-rolled cases. Every other tool falls through to `generateGenericShellFunc`, which emits a flag-parser for each schema parameter: snake_case keys become kebab-case flags, booleans are presence-only, strings consume two args, and required params trigger a usage line on missing. Both `--help` text (`generateHelpText`) and the body derive from the same JSON schema, so they cannot drift. `writeShellFuncs` calls `validateShellFuncSchemaParity` before writing — any tool whose schema gains a parameter without a matching `--<flag>` case arm in its body returns an error from `NewExecBridge`, surfacing the failure at production startup rather than at runtime. The write itself uses `O_EXCL` (#1501): the funcs path embeds the gateway PID and a per-process counter so it is never reused, and an existing file or symlink at it is therefore a hard error from `NewExecBridge` rather than a followed write.
 
-**Branch rejection:** Delegated agents return HTTP 400 for `/branch` endpoint requests. The three task-type strategies:
-- **Inject into main session** — reflection and compaction-memory prompts are sent directly into the running CC session (no branch needed).
+**Branching a delegated agent.** (Superseded the old "delegated agents return HTTP 400 for `/branch`" rule — they branch for real now. `Agent.BranchStrategyFor` picks per branch type; the legacy inject-in-place / independent-session strategies below are what a *non-branch-capable* backend still falls back to.)
+
+`ForkSession` is the single routing point: an API agent gets a history-reading session branch, a delegated agent whose backend implements `delegator.BackendBrancher` (ccstream, codex — not opencode) gets a **real transcript fork** that starts with the parent's full context and leaves the parent running.
+
+`ForkSession` returns `ok=false` for **two unrelated reasons**, and conflating them was #1634:
+- the backend cannot branch at all → no branch is possible;
+- the backend *can* branch but the parent has **no backend session to clone** — never started, or `/reset`. `ForkParentSession` resolves a live backend's session id then the persisted `cc_resume_id`; with neither it returns `("", nil)`.
+
+The second is not a failure: a branch of an empty parent is well-defined — a fresh session, exactly what the API path already produces. **`Agent.ForkOrFreshBranch`** encodes that policy (`branchKey == ""` with `err == nil` now means only the first case, plus an `inherited` bool so callers log honestly), and `POST /branch` uses it. Callers that genuinely *require* inherited context keep using `ForkSession`/`ForkBackendBranch` and treat `ok=false` as failure — **spawn**'s clone mode (whose promise is the parent's history) and **compaction-memory** (which summarises a transcript that must exist). `/facet` deliberately uses neither: it wants a branch even when the backend can't fork, so it keeps its own unconditional `CreateBranchWithOptions` fallback.
+
+Legacy strategies a non-branch-capable backend still uses:
+- **Inject into main session** — reflection and compaction-memory prompts go directly into the running CC session.
 - **New independent CC session** — consolidation, background tasks, and nudge extraction use `RunOnce` (see above), which spawns an independent headless CC process.
-- **Reject** — the HTTP `/branch` endpoint is explicitly rejected since delegated agents don't support session branching.
+- **Fall through to `/send`** — the `/branch` endpoint runs the turn on the parent instead, warning that the branch options were ignored. Reachable only for a backend that cannot branch; before #1634 it also caught every reset/never-started parent, silently polluting the session the branch existed to keep clean.
 
 **/reset:** Archives the session in place and returns — it does not block on memory formation. The live CC backend (and its resume ID) is handed to the reflection branch via `DelegatedManager.RemapSession`; the reflection pass then runs on that branch in the background and destroys the backend when done. The main key starts clean — a fresh CC session spawns lazily on the next message. See `agent/lifecycle.go:ResetSession`.
 

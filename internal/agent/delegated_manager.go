@@ -978,6 +978,15 @@ func (m *DelegatedManager) BackendCanBranch() bool {
 	if err != nil {
 		return false
 	}
+	// delegator.New returns (nil, nil) for a name that was never registered, so
+	// a typo'd `backend =` in config arrives here as a nil interface with no
+	// error. Asserting on it yields false and the agent silently presents as
+	// "cannot branch" with no other signal anywhere. Say so instead: the config
+	// is wrong, not the backend's capabilities.
+	if be == nil {
+		m.logger().Warnf("configured backend is not a registered delegated backend — treating as non-branchable (check the agent's `backend =` value)")
+		return false
+	}
 	_, ok := be.(delegator.BackendBrancher)
 	return ok
 }

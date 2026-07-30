@@ -199,6 +199,45 @@ func (a *Agent) ForkSession(ctx context.Context, parentKey string, opts session.
 	return bk, true, nil
 }
 
+// ForkOrFreshBranch is ForkSession for a caller that wants a branch whenever
+// branching is possible AT ALL, rather than only when the parent's conversation
+// can be cloned. It exists because ForkSession returns ok=false for two
+// unrelated reasons and callers were treating them as one:
+//
+//   - the backend cannot branch (opencode) — no branch of any kind exists, so
+//     this returns branchKey=="" and the caller must fall back to something
+//     that isn't a branch;
+//   - the backend CAN branch but the parent has no backend session to clone
+//     (never started, or /reset) — that is not a failure. A branch of an empty
+//     parent is well-defined: a fresh session, exactly what the API path
+//     already produces. There is simply nothing to inherit.
+//
+// branchKey=="" with err==nil means the first case. inherited reports whether
+// the branch carries the parent's conversation, so a caller can log honestly.
+//
+// A caller that REQUIRES inherited context (spawn's clone mode, whose whole
+// promise is the parent's history; compaction-memory, which summarises a
+// transcript that must exist) must keep using ForkSession/ForkBackendBranch and
+// treat ok=false as the failure it genuinely is for them.
+func (a *Agent) ForkOrFreshBranch(ctx context.Context, parentKey string, opts session.BranchOptions) (branchKey string, inherited bool, err error) {
+	bk, forked, err := a.ForkSession(ctx, parentKey, opts)
+	if err != nil {
+		return "", false, err
+	}
+	if forked {
+		return bk, true, nil
+	}
+	if a.DelegatedManager == nil || !a.DelegatedManager.BackendCanBranch() {
+		return "", false, nil
+	}
+	bk, err = a.Sessions.CreateBranchWithOptions(parentKey, opts)
+	if err != nil {
+		return "", false, err
+	}
+	a.TouchRootCacheForBranch(bk)
+	return bk, false, nil
+}
+
 // createMemoryBranch creates the branch session used by the BranchFork strategy:
 // a NoResetHook child of parentKey that reads its history, marked no-compact so
 // it can't summarise itself mid-pass. Shared by the compaction-memory and
