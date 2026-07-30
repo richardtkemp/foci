@@ -22,8 +22,8 @@ type BranchDoneFunc func(branchType, branchKey string)
 //
 // For delegated agents (CC), branching is handled differently — the strategy
 // comes from the single authority, agent.BranchStrategyFor:
-//   - BranchInPlace (reflection, keepalive) → inject into the existing CC session
-//   - BranchIndependent (background, …)     → spin up a new independent CC session
+//   - RunInPlace (reflection, keepalive) → inject into the existing CC session
+//   - RunIndependent (background, …)     → spin up a new independent CC session
 func buildBranchFunc(
 	agentID string,
 	ag *agent.Agent,
@@ -77,13 +77,13 @@ func buildBranchFunc(
 // dispatching on the strategy from the single authority, agent.BranchStrategyFor:
 //   - BranchForkBackend → real backend fork (clone), run the turn on the branch
 //     key; falls back to in-place inject if the fork can't be performed.
-//   - BranchInPlace     → inject one more turn into the existing session.
-//   - BranchIndependent → spin up a fresh, isolated session and reset it after.
+//   - RunInPlace     → inject one more turn into the existing session.
+//   - RunIndependent → spin up a fresh, isolated session and reset it after.
 func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, promptText, orientTemplate string, ctx context.Context) bool {
 	turnCtx := agent.WithTrigger(ctx, branchType)
 
 	// injectInPlace runs one turn on the parent's existing session. Used both
-	// for the BranchInPlace strategy and as the BranchForkBackend fallback.
+	// for the RunInPlace strategy and as the BranchForkBackend fallback.
 	// Routed through the session's inbox worker: these are system turns and must
 	// serialise with (never steer) any in-flight platform turn. EnqueueInjectWait
 	// blocks until the turn has run, preserving the scheduler's completion
@@ -105,7 +105,7 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 	}
 
 	switch ag.BranchStrategyFor(branchType) {
-	case agent.BranchInPlace:
+	case agent.RunInPlace:
 		return injectInPlace()
 
 	case agent.BranchForkBackend:
@@ -136,7 +136,7 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 		}
 		return true
 
-	default: // BranchIndependent
+	default: // RunIndependent
 		// New independent CC session for isolated work. Fresh key — nothing can
 		// be in flight on it, so the turn runs directly.
 		sessionKey := session.SessionKey{

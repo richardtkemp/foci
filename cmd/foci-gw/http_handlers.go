@@ -522,8 +522,8 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		}
 
 		// Delegated agents: attempt a REAL backend-conversation fork when the
-		// backend supports it (implements delegator.BackendBrancher — e.g. the
-		// CC stream backend, which clones its transcript). The forked branch
+		// backend supports it (implements delegator.BackendBrancher, cloning its
+		// own conversation). The forked branch
 		// starts with the parent's full context.
 		//
 		// A branch is wanted whenever branching is possible AT ALL, so this uses

@@ -39,13 +39,13 @@ func TestBranchStrategyFor(t *testing.T) {
 		delegated  BranchStrategy
 		api        BranchStrategy
 	}{
-		{"reflection", BranchInPlace, BranchFork},
-		{"keepalive", BranchInPlace, BranchFork},
-		{"compaction-memory", BranchInPlace, BranchFork},
+		{"reflection", RunInPlace, BranchFork},
+		{"keepalive", RunInPlace, BranchFork},
+		{"compaction-memory", RunInPlace, BranchFork},
 		{"session-end-memory", BranchFork, BranchFork},
-		{"background", BranchIndependent, BranchFork},
-		{"consolidation", BranchIndependent, BranchFork},
-		{"maintenance", BranchIndependent, BranchFork},
+		{"background", RunIndependent, BranchFork},
+		{"consolidation", RunIndependent, BranchFork},
+		{"maintenance", RunIndependent, BranchFork},
 	}
 
 	for _, c := range cases {
@@ -94,7 +94,7 @@ func TestBranchStrategyForBranchCapable(t *testing.T) {
 // TestBranchStrategyForForceInSessionOverride locks #1450: a per-operation
 // force_in_session override on a branch-capable backend must fall back to
 // EXACTLY the same strategy a non-branch-capable backend already uses for
-// that branchType (BranchInPlace for keepalive/reflection, BranchIndependent
+// that branchType (RunInPlace for keepalive/reflection, RunIndependent
 // for background/consolidation) — and must NOT affect any other branchType,
 // which stays BranchForkBackend (or BranchFork for session-end-memory).
 func TestBranchStrategyForForceInSessionOverride(t *testing.T) {
@@ -112,25 +112,25 @@ func TestBranchStrategyForForceInSessionOverride(t *testing.T) {
 			name:        "keepalive override forces in-place",
 			configure:   func(a *Agent) { a.Keepalive.ForceInSession = true },
 			wantForType: "keepalive",
-			wantForced:  BranchInPlace,
+			wantForced:  RunInPlace,
 		},
 		{
 			name:        "reflection override forces in-place",
 			configure:   func(a *Agent) { a.Reflection.ForceInSession = true },
 			wantForType: "reflection",
-			wantForced:  BranchInPlace,
+			wantForced:  RunInPlace,
 		},
 		{
 			name:        "background override forces independent",
 			configure:   func(a *Agent) { a.Background.ForceInSession = true },
 			wantForType: "background",
-			wantForced:  BranchIndependent,
+			wantForced:  RunIndependent,
 		},
 		{
 			name:        "consolidation override forces independent",
 			configure:   func(a *Agent) { a.Maintenance.ConsolidationForceInSession = true },
 			wantForType: "consolidation",
-			wantForced:  BranchIndependent,
+			wantForced:  RunIndependent,
 		},
 	}
 
