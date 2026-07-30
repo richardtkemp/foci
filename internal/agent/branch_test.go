@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/internal/delegator"
@@ -200,6 +202,79 @@ func TestForkSession_Routing(t *testing.T) {
 		bk, ok, err := a.ForkSession(context.Background(), "agent/c123", session.BranchOptions{BranchType: "spawn"})
 		if err != nil || ok || bk != "" {
 			t.Fatalf("want no fork (ok=false, no err), got bk=%q ok=%v err=%v", bk, ok, err)
+		}
+	})
+}
+
+// TestForkOrFreshBranch locks the distinction that #1634 lost: ForkSession
+// declines for two unrelated reasons, and only one of them means "no branch is
+// possible". A caller that treated them alike sent a reset agent's /branch turn
+// into its MAIN session — polluting the context the branch existed to keep
+// clean, and silently dropping no_compact/no_reset_hook/silent.
+//
+// Note the deliberate asymmetry with TestForkSession_Routing above, which
+// asserts ok=false for BOTH reasons and stays correct: ForkSession's contract
+// is "clone the parent's conversation", and it genuinely cannot. Callers that
+// require inherited context (spawn's clone mode, compaction-memory) still want
+// that answer. This is the other policy, for callers that just want a branch.
+func TestForkOrFreshBranch(t *testing.T) {
+	newBrancher := func() (delegator.Delegator, error) { return &brancherBackend{}, nil }
+
+	t.Run("can branch but parent has no backend session — fresh branch, nothing inherited", func(t *testing.T) {
+		a := &Agent{
+			Sessions:         session.NewStore(t.TempDir()),
+			DelegatedManager: &DelegatedManager{NewBackend: newBrancher},
+		}
+		bk, inherited, err := a.ForkOrFreshBranch(context.Background(), "agent/c123", session.BranchOptions{BranchType: "branch"})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		// The whole point: a branch EXISTS. Pre-#1634 this reported "no branch"
+		// and the caller ran the turn on the parent instead.
+		if bk == "" {
+			t.Fatal("no branch produced for an empty parent — the caller will fall back to the parent session and pollute it")
+		}
+		if !strings.HasPrefix(bk, "agent/c123/b") {
+			t.Errorf("branchKey = %q, want a branch of agent/c123", bk)
+		}
+		if inherited {
+			t.Error("inherited = true, but the parent had no conversation to inherit")
+		}
+	})
+
+	t.Run("backend cannot branch — no branch at all", func(t *testing.T) {
+		// No NewBackend → BackendCanBranch() == false. This is the ONLY case
+		// that should reach a caller's non-branch fallback.
+		a := &Agent{
+			Sessions:         session.NewStore(t.TempDir()),
+			DelegatedManager: &DelegatedManager{},
+		}
+		bk, inherited, err := a.ForkOrFreshBranch(context.Background(), "agent/c123", session.BranchOptions{BranchType: "branch"})
+		if err != nil || bk != "" || inherited {
+			t.Fatalf("want no branch (bk=\"\", inherited=false, no err), got bk=%q inherited=%v err=%v", bk, inherited, err)
+		}
+	})
+
+	t.Run("parent has a backend session — real fork, context inherited", func(t *testing.T) {
+		idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+		if err != nil {
+			t.Fatalf("NewSessionIndex: %v", err)
+		}
+		t.Cleanup(func() { _ = idx.Close() })
+		mgr := &DelegatedManager{NewBackend: newBrancher, SessionIndex: idx}
+		a := &Agent{Sessions: session.NewStore(t.TempDir()), DelegatedManager: mgr}
+		// A persisted resume id is what makes the parent forkable.
+		mgr.saveResumeID("agent/c123", "parent-cc-session")
+
+		bk, inherited, err := a.ForkOrFreshBranch(context.Background(), "agent/c123", session.BranchOptions{BranchType: "branch"})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if bk == "" {
+			t.Fatal("no branch produced for a forkable parent")
+		}
+		if !inherited {
+			t.Error("inherited = false, but the parent's conversation was cloned")
 		}
 	})
 }
