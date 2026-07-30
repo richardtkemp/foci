@@ -53,6 +53,49 @@ func TestStatuslineDefault_FullLine(t *testing.T) {
 	}
 }
 
+// TestStatuslineModelSpellingCollapses is the #1629 regression: the model value
+// reaches the statusline from three sources that spell one model three ways, and
+// which source wins is positional (ResolveModelEffort falls back to the
+// agent-level name until the first turn completes). Observed in ONE session with
+// no model change: `opus`, then `claude-opus-5`, then `claude/claude-opus-5`
+// across four consecutive messages.
+//
+// The provider-qualified and bare forms must render identically. A bare ALIAS
+// must NOT be forced to join them — foci has not yet been told what it resolved
+// to, and inventing that mapping here would hardcode a guess that goes stale
+// whenever an alias moves. Both halves are asserted, because a fix that collapsed
+// everything would pass the first half alone while shipping a lie.
+func TestStatuslineModelSpellingCollapses(t *testing.T) {
+	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
+	render := func(model string) string {
+		return renderTmpl("{model}", statuslineInputs{
+			now: now, model: model, platform: "app", sm: &sessionMeta{},
+		})
+	}
+
+	// The two spellings of a known model collapse.
+	for _, tc := range []struct{ stored, want string }{
+		{"claude/claude-opus-5", "claude-opus-5"},
+		{"claude-opus-5", "claude-opus-5"},
+		{"zai-coding-plan/glm-5.2", "glm-5.2"},
+		{"glm-5.2", "glm-5.2"},
+	} {
+		if got := render(tc.stored); got != tc.want {
+			t.Errorf("model %q rendered %q, want %q — the provider prefix must not survive to the header", tc.stored, got, tc.want)
+		}
+	}
+
+	// A bare alias is left alone: it is what is actually known pre-first-turn.
+	if got := render("opus"); got != "opus" {
+		t.Errorf("alias rendered %q, want %q — an unresolved alias must not be guessed into a concrete id", got, "opus")
+	}
+
+	// An empty model must not acquire a value.
+	if got := render(""); got != "" {
+		t.Errorf("empty model rendered %q, want empty", got)
+	}
+}
+
 // TestStatuslineLineDrop proves rule 3: a line whose every placeholder rendered
 // empty is dropped, while a line with at least one non-empty placeholder stays.
 func TestStatuslineLineDrop(t *testing.T) {

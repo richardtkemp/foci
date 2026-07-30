@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"foci/internal/display"
+	"foci/internal/modelinfo"
 	"foci/internal/procx"
 	"foci/internal/timeutil"
 )
@@ -80,8 +81,28 @@ func statuslineFirstMsg(sm *sessionMeta) bool {
 // values that always render.
 var statuslineFields = map[string]func(statuslineInputs) string{
 	// Always-present meta fields (bare values; labels live in the template).
-	"time":  func(in statuslineInputs) string { return timeutil.Format(in.now) },
-	"model": func(in statuslineInputs) string { return in.model },
+	"time": func(in statuslineInputs) string { return timeutil.Format(in.now) },
+	// Normalised, because the value reaching here has three possible sources and
+	// each spells the same model differently (#1629): the config/session setting
+	// (`claude/claude-opus-5`, or a bare alias), and the backend's own id learned
+	// from the JSONL watcher (`claude-opus-5`). Which one wins is positional —
+	// ResolveModelEffort falls back to the agent-level name until the first turn
+	// completes — so one session showed `opus`, then `claude-opus-5`, then
+	// `claude/claude-opus-5` across four consecutive messages with no model change.
+	//
+	// Normalize collapses the provider-qualified and bare forms onto the registry's
+	// leaf key, which is the "what actually ran" answer and the one that matters for
+	// a cost or behaviour post-mortem.
+	//
+	// It does NOT collapse a bare alias (`opus` stays `opus`), and deliberately so:
+	// that difference is not cosmetic. Before the first turn completes foci has not
+	// been told which concrete model the alias resolved to, and mapping it here
+	// would mean hardcoding a guess that goes stale every time Anthropic moves an
+	// alias. The alias IS the honest answer at that moment.
+	//
+	// Safe as a pure display change: nothing parses this field — it exists only in
+	// DefaultStatuslineTemplate.
+	"model": func(in statuslineInputs) string { return modelinfo.Normalize(in.model) },
 	"via":   func(in statuslineInputs) string { return in.platform },
 	"gap": func(in statuslineInputs) string {
 		if in.sm.lastMessageTime.IsZero() {
