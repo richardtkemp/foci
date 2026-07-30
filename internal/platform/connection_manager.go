@@ -143,15 +143,34 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 		}
 	}
 	if claimed {
-		// A platform DID claim this chat, but neither its live session
-		// connection nor its primary is registered yet. This is a benign
-		// startup transient — typically a callback re-registered from
-		// persisted state before the platform's connection comes up — not
-		// genuine routing ambiguity, so it doesn't warrant a WARN.
-		platformLog.Debugf("session %s agent %s: platform claimed the chat but its connection isn't up yet; using first available primary", sessionKey, agentID)
-	} else {
-		platformLog.Warnf("ambiguous routing for session %s agent %s: no platform claim, falling back to first primary", sessionKey, agentID)
+		// A platform DID claim this chat, but neither its live session connection nor its
+		// primary is registered yet. Return nil rather than falling through to the
+		// promiscuous first-available primary below — SYMMETRIC with the identical guard in
+		// [ForSession] above, and for the same reason (#990): that fallback iterates all
+		// platforms in registration order, so a chat owned by the app gets handed to
+		// telegram, which is then asked to sendMessage an APP conversation id.
+		//
+		// This branch previously only chose a log line and fell through anyway, on the
+		// reasoning that it was "a benign startup transient — a callback re-registered from
+		// persisted state before the platform's connection comes up". That reasoning was
+		// wrong in the case that matters. Measured 2026-07-22 (#1493): ten consecutive
+		//   ERROR [telegram:clutch] send: unable to sendMessage: Bad Request: chat not found
+		// for an app-owned session, in the window between a foci restart and the app client
+		// reconnecting. Every turn's text from that session went nowhere live. Not data loss
+		// — the app store still received it — but a silent live-delivery failure, and a
+		// cross-namespace id leak (app conv_id handed to the Telegram API).
+		//
+		// nil is the correct answer here: it routes delivery to the proper offline path
+		// (queue/push) for the owning platform, which is exactly what a claimed-but-offline
+		// chat needs. The transient is still benign; it is just no longer resolved by
+		// guessing at a different platform.
+		platformLog.Debugf("session %s agent %s: platform claimed the chat but its connection isn't up yet; returning nil so delivery takes the offline path", sessionKey, agentID)
+		return nil
 	}
+	// Unclaimed only: the first-message-ever case, facet bots, and anything with no
+	// chat_metadata row yet. Guessing a primary is legitimate here — there is no owner to
+	// misroute away from.
+	platformLog.Warnf("ambiguous routing for session %s agent %s: no platform claim, falling back to first primary", sessionKey, agentID)
 	return a.Primary(agentID)
 }
 

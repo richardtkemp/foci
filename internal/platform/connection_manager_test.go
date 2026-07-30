@@ -183,3 +183,68 @@ func TestForSession_Unclaimed_UsesFallback(t *testing.T) {
 		t.Error("ForSession returned nil/wrong conn; unclaimed chat should use the fallback")
 	}
 }
+
+// TestForSessionOrPrimary_ClaimedButOwnerOffline is the #1493 regression: a chat CLAIMED by one
+// platform whose session connection AND primary are both absent must return nil, not fall through
+// to the first-available primary of some OTHER platform.
+//
+// Observed 2026-07-22 before the fix: an app-owned session, app client not yet reconnected after a
+// restart, produced ten consecutive
+//
+//	ERROR [telegram:clutch] send: unable to sendMessage: Bad Request: chat not found
+//
+// because the app's conversation id was handed to the Telegram API. nil instead routes delivery to
+// the owning platform's offline path (queue/push).
+//
+// Note the ordering here is deliberate: "app" is registered but has no primary, and "telegram" DOES
+// have one and sorts first in `order` — i.e. the exact configuration that produced the misroute.
+func TestForSessionOrPrimary_ClaimedButOwnerOffline(t *testing.T) {
+	telegramConn := &namedConn{name: "telegram-bot"}
+
+	appMgr := &testConnMgr{primary: nil}               // owner is up but has no primary yet
+	telegramMgr := &testConnMgr{primary: telegramConn} // a tempting, wrong, first-in-order match
+
+	mgr := &aggregatingConnMgr{
+		named: map[string]ConnectionManager{
+			"telegram": telegramMgr,
+			"app":      appMgr,
+		},
+		order: []string{"telegram", "app"},
+		chatPlatformFn: func(string, int64) string {
+			return "app" // the chat IS claimed, by the platform that is offline
+		},
+	}
+
+	if got := mgr.ForSessionOrPrimary("myagent/c42", "myagent"); got != nil {
+		t.Fatalf("claimed-but-offline chat routed to %q; want nil so delivery takes the offline path", got.Username())
+	}
+}
+
+// TestForSessionOrPrimary_UnclaimedStillFallsBack guards the other half of the #1493 fix: the
+// unclaimed fallback must be UNCHANGED. A chat with no owner (first message ever, facet bots, no
+// chat_metadata row) has nothing to misroute away from, so guessing a primary is still correct.
+// Without this, a fix that returned nil unconditionally would look green against the test above.
+func TestForSessionOrPrimary_UnclaimedStillFallsBack(t *testing.T) {
+	telegramConn := &namedConn{name: "telegram-bot"}
+	telegramMgr := &testConnMgr{primary: telegramConn}
+	appMgr := &testConnMgr{primary: nil}
+
+	mgr := &aggregatingConnMgr{
+		named: map[string]ConnectionManager{
+			"telegram": telegramMgr,
+			"app":      appMgr,
+		},
+		order: []string{"telegram", "app"},
+		chatPlatformFn: func(string, int64) string {
+			return "" // NOT claimed
+		},
+	}
+
+	got := mgr.ForSessionOrPrimary("myagent/c99", "myagent")
+	if got == nil {
+		t.Fatal("unclaimed chat returned nil; the first-primary fallback must survive the #1493 fix")
+	}
+	if got.Username() != "telegram-bot" {
+		t.Errorf("got %q, want telegram-bot (first in order)", got.Username())
+	}
+}
