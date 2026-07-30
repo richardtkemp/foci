@@ -1303,8 +1303,31 @@ func generateGenericShellFunc(t *Tool) string {
 			// NUL bytes in a variable — on all-NUL piped input it silently misses
 			// the guard while still consuming the whole stream. head/wc operate on
 			// raw bytes, so NUL-safe and short-circuits on the first byte either way.
-			"  if [ -n \"$%s\" ] && [ ! -t 0 ]%s; then\n"+
-				"    if [ \"$(head -c 1 | wc -c)\" -gt 0 ]; then\n"+
+			//
+			// BOUNDED (`timeout 5`), because this branch does not even want stdin:
+			// the body already arrived as an argument, and the only thing left to do
+			// with the pipe is warn that it will be discarded. A courtesy check must
+			// not be able to hang the send it is decorating.
+			//
+			// [ ! -t 0 ] cannot prevent that on its own — it is an isatty check,
+			// i.e. "am I non-interactive", equally true of a pipe with data, a pipe
+			// whose writer has not written yet, /dev/null, a regular file, and an fd
+			// a parent process merely left open. That last shape is #1552: a
+			// cron/daemon context inherits a pipe nobody will ever write to or
+			// close, so an unbounded `head -c 1` waits for a byte or an EOF that
+			// never come, and a call whose message body was supplied in full
+			// produces nothing and dies on its caller's timeout.
+			//
+			// The bound is a wait, deliberately, NOT a non-blocking poll. `read -t 0`
+			// looks like the right tool and is not: in `cmd | foci_send_to_chat
+			// --text x` the function reaches this guard before upstream has written
+			// byte one, so the poll reports "no data" and the warning is skipped on
+			// the most ordinary pipeline there is (measured: the 10MB case below
+			// went green-but-wrong). Waiting is correct here; waiting FOREVER is the
+			// bug. 5s keeps the warning for every realistic writer and caps the
+			// pathological fd at a rounding error.
+			"  if [ -n \"$%[1]s\" ] && [ ! -t 0 ]%[2]s; then\n"+
+				"    if [ \"$(timeout 5 head -c 1 | wc -c)\" -gt 0 ]; then\n"+
 				"      echo \"error: --%s is set but stdin has piped content that will be discarded. %s.\" >&2\n"+
 				"      return 1\n"+
 				"    fi\n"+
