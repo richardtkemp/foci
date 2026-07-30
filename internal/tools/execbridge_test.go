@@ -1678,6 +1678,65 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	if gotText != "inherited pipe body" {
 		t.Errorf("text = %q, want %q", gotText, "inherited pipe body")
 	}
+
+	// Cases 8 and 9 cover the SIBLING branch — no --text, so stdin is the body and
+	// `cat` reads it. Blocking there is the job, but two stdin shapes never end, and
+	// both used to hang the call outright rather than report anything. The bound is
+	// 30s in production; FOCI_STDIN_WAIT exists so these run in ~1s.
+	//
+	// Case 8 (B1): nothing ever arrives — the supervisor-inherited fd, same shape as
+	// case 7 but on the branch that actually wants stdin. Body ends up empty; what
+	// must not happen is silence.
+	mu.Lock()
+	capturedText = ""
+	mu.Unlock()
+	start8 := time.Now()
+	out8, _ := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s\n"+
+			"export FOCI_STDIN_WAIT=1\n"+
+			"__d=$(mktemp -d); mkfifo \"$__d/f\"\n"+
+			"sleep 20 > \"$__d/f\" 2>/dev/null &\n"+
+			"foci_send_to_chat <\"$__d/f\"; __rc=$?\n"+
+			"rm -rf \"$__d\"\n"+
+			"exit $__rc",
+		bridge.FuncsPath(),
+	))
+	if elapsed := time.Since(start8); elapsed > 10*time.Second {
+		t.Errorf("stdin-as-body with a never-written pipe took %v; the read must be bounded", elapsed)
+	}
+	if !strings.Contains(string(out8), "still open after") {
+		t.Errorf("B1 produced no warning — a cut-off read must never be silent\noutput: %s", out8)
+	}
+
+	// Case 9 (B2): data arrives, stream never closes (`tail -f`, `curl -N`). The
+	// bound alone would send the fragment looking like a clean success; the warning
+	// is what makes the truncation a diagnosis instead of corruption. So assert BOTH
+	// that the partial body went through and that it was announced.
+	mu.Lock()
+	capturedText = ""
+	mu.Unlock()
+	out9, err9 := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s\n"+
+			"export FOCI_STDIN_WAIT=1\n"+
+			"__d=$(mktemp -d); mkfifo \"$__d/f\"\n"+
+			"{ echo 'partial body'; sleep 20; } > \"$__d/f\" 2>/dev/null &\n"+
+			"foci_send_to_chat <\"$__d/f\"; __rc=$?\n"+
+			"rm -rf \"$__d\"\n"+
+			"exit $__rc",
+		bridge.FuncsPath(),
+	))
+	if err9 != nil {
+		t.Fatalf("stdin-as-body with a live unending stream should still send what arrived: %v\noutput: %s", err9, out9)
+	}
+	if !strings.Contains(string(out9), "still open after") {
+		t.Errorf("B2 truncated the body without warning — silent truncation is worse than the hang it replaced\noutput: %s", out9)
+	}
+	mu.Lock()
+	gotText = capturedText
+	mu.Unlock()
+	if !strings.Contains(gotText, "partial body") {
+		t.Errorf("text = %q, want it to contain 'partial body' (what arrived before the bound)", gotText)
+	}
 }
 
 // TestTodoShellFunc_AppendAliasesResolve runs the generated foci_todo through
