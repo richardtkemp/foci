@@ -37,11 +37,26 @@ func mockModelServer(handler func(req *provider.MessageRequest) *provider.Messag
 }
 
 // mockSessionBrancher captures branch creation calls.
+//
+// The real ForkSession has THREE outcomes and this must be able to produce all
+// of them, or a branch of the code under test becomes unreachable from any test
+// no matter how many cases are added:
+//
+//	(key, true, nil)   forked
+//	("", false, nil)   no fork possible — NOT an error (cannotFork)
+//	("", false, err)   genuine failure (err)
+//
+// The middle one used to be inexpressible — ok=false only ever came bundled
+// with a non-nil err — which silently hid spawn's "backend cannot fork this
+// session" path from coverage while making the double look complete.
 type mockSessionBrancher struct {
 	parentKey string
 	branchKey string
 	opts      BranchOptions
 	err       error
+	// cannotFork makes ForkSession report "no fork produced" WITHOUT an error,
+	// as the real one does for a backend that cannot branch.
+	cannotFork bool
 }
 
 func (m *mockSessionBrancher) ForkSession(_ context.Context, parentKey string, opts BranchOptions) (string, bool, error) {
@@ -51,6 +66,9 @@ func (m *mockSessionBrancher) ForkSession(_ context.Context, parentKey string, o
 	m.branchKey = parentKey + "/b1000000000"
 	if m.err != nil {
 		return "", false, m.err
+	}
+	if m.cannotFork {
+		return "", false, nil
 	}
 	return m.branchKey, true, nil
 }
@@ -211,5 +229,41 @@ func TestSpawnGuardResult(t *testing.T) {
 	}
 	if !strings.Contains(got, "read tool") {
 		t.Errorf("expected 'read tool' hint, got %q", got)
+	}
+}
+
+// TestSpawnInherit_BackendCannotFork covers the outcome the double could not
+// previously express: ForkSession reports no fork WITHOUT an error, meaning this
+// agent's backend has no fork capability at all.
+//
+// spawn must fail rather than degrade. Unlike /branch — which has a meaningful
+// non-branch fallback, running the turn on the parent — context='clone' promises
+// the parent's conversation, and a session with none is not a lesser version of
+// that, it is a different thing the caller did not ask for.
+//
+// Note this is the ONLY route to spawn's error: the other ForkSession
+// no-fork cause (parent has no backend session to clone) is unreachable here,
+// because calling the spawn tool at all means a turn is in flight on the parent,
+// which means its backend is live or has a persisted resume id.
+func TestSpawnInherit_BackendCannotFork(t *testing.T) {
+	t.Parallel()
+
+	brancher := &mockSessionBrancher{cannotFork: true}
+	agent := &mockSpawnAgent{response: "should never run"}
+	deps := SpawnDeps{Sessions: brancher, MaxInherit: 2}
+	sem := make(chan struct{}, 2)
+	ctx := WithSessionKey(context.Background(), "test/c123")
+
+	_, err := spawnInherit(ctx, deps, func() SpawnAgent { return agent }, sem, "test prompt", 5*time.Second)
+	if err == nil {
+		t.Fatal("want an error when the backend cannot fork, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot fork") {
+		t.Errorf("error should name the missing capability, got %q", err)
+	}
+	// No turn may have run: a contextless clone is worse than a refusal.
+	// HandleMessage records the key it was called with, so empty means never.
+	if agent.sessionKey != "" {
+		t.Errorf("agent ran a turn on %q despite the failed fork, want none", agent.sessionKey)
 	}
 }
