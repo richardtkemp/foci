@@ -1617,6 +1617,67 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	if !strings.Contains(string(out6), "will be discarded") {
 		t.Errorf("error output missing 'will be discarded'\noutput: %s", out6)
 	}
+
+	// Case 7 (#1552): --text supplied, stdin is an OPEN PIPE THAT NOBODY WILL EVER
+	// WRITE TO OR CLOSE. Must succeed, immediately.
+	//
+	// This is the shape a cron/daemon context hands down: not a tty, not /dev/null,
+	// not a pipe with data — an fd a parent merely left open. Case 5 does not cover
+	// it (a /dev/null redirect EOFs instantly) and case 1 does not either (data is
+	// available at once). The distinction matters because the guard's condition was
+	// [ ! -t 0 ], an isatty check, which is equally true of all four; only this one
+	// makes `head -c 1` wait for a byte or an EOF that never arrive. Observed as a
+	// send that produced nothing and returned rc=124 after its caller's full
+	// timeout, with a perfectly good --text sitting in argv.
+	//
+	// A FIFO whose only writer is a `sleep` reproduces it exactly: the writer holds
+	// the pipe open, never writes a byte, and releases it after WRITER_HOLD seconds.
+	// The hold MUST outlast the guard's own bound, so the two outcomes separate
+	// cleanly on elapsed time:
+	//
+	//	fixed   -> the guard gives up at its bound (~5s) and sends
+	//	unfixed -> the guard waits out the writer (~20s), then sends
+	//
+	// and it matters that the writer eventually lets go. An earlier version of this
+	// case held the FIFO open forever and relied on a `kill -9 $$` watchdog to stop
+	// a regression hanging the suite. That does not work: killing the shell leaves
+	// the blocked `head` alive, still holding the stdout pipe that Go is reading, so
+	// CombinedOutput waits on a dead shell's orphan. Measured on the unfixed
+	// generator: bash and `head -c 1` were still resident 329 seconds later. A
+	// self-releasing writer needs no watchdog and cannot orphan anything.
+	//
+	// The property asserted is TERMINATION, not speed. The guard waits — it has to;
+	// see the generator's note on why a non-blocking poll silently skips the warning
+	// on ordinary pipelines — so this case legitimately costs its full bound. 10s
+	// sits between the two outcomes without re-litigating either constant.
+	mu.Lock()
+	capturedText = ""
+	mu.Unlock()
+	start7 := time.Now()
+	out7, err := runBash(fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s\n"+
+			"__d=$(mktemp -d); mkfifo \"$__d/f\"\n"+
+			// The writer: opens the FIFO, writes nothing, releases at 20s. stderr
+			// goes to /dev/null so it holds none of the pipes Go is reading, and a
+			// passing run returns as soon as the guard does rather than waiting it out.
+			"sleep 20 > \"$__d/f\" 2>/dev/null &\n"+
+			"foci_send_to_chat --text 'inherited pipe body' <\"$__d/f\"; __rc=$?\n"+
+			"rm -rf \"$__d\"\n"+
+			"exit $__rc",
+		bridge.FuncsPath(),
+	))
+	if elapsed := time.Since(start7); elapsed > 10*time.Second {
+		t.Errorf("send with an inherited never-EOF pipe took %v; the discard guard must be bounded, not open-ended, on stdin it does not want (#1552)", elapsed)
+	}
+	if err != nil {
+		t.Fatalf("--text with an inherited never-EOF pipe should succeed, got error: %v\noutput: %s", err, out7)
+	}
+	mu.Lock()
+	gotText = capturedText
+	mu.Unlock()
+	if gotText != "inherited pipe body" {
+		t.Errorf("text = %q, want %q", gotText, "inherited pipe body")
+	}
 }
 
 // TestTodoShellFunc_AppendAliasesResolve runs the generated foci_todo through
