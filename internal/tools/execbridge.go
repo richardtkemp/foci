@@ -1333,7 +1333,41 @@ func generateGenericShellFunc(t *Tool) string {
 				"    fi\n"+
 				"  fi\n",
 			t.StdinParam, extraGuard, stdinFlag, suggestion)
-		fmt.Fprintf(&b, "  if [ -z \"$%s\" ] && [ ! -t 0 ]%s; then\n    %s=\"$(cat)\"\n  fi\n", t.StdinParam, extraGuard, t.StdinParam)
+		// The sibling branch: no value given, so stdin IS the body and reading it is
+		// the job. Blocking here is legitimate in a way it is not in the guard above
+		// — but only until the stream ends, and two shapes never end:
+		//
+		//   B1  nothing ever arrives — an fd a supervisor left open (systemd
+		//       StandardInput, an inherited `exec 3< <(cmd)`), with no --%[3]s to fall
+		//       back on. Same fd as #1552, other branch.
+		//   B2  data arrives but the stream does not close — a `tail -f` or a
+		//       `curl -N` piped in. Reads happily, returns never.
+		//
+		// Both present as SILENCE rather than an error, which is the actual harm: a
+		// cron job simply stops, and you find out when the message never arrives.
+		//
+		// 30s, then WARN and proceed with whatever was read. The warning is the
+		// load-bearing half. A bound alone would make B2 truncate a slow-but-finite
+		// upstream and send the fragment looking like a success — corruption traded
+		// for a hang, which is a bad trade. Announced on stderr, it is a diagnosis.
+		// (Note the common slow-pipe case degrades safely on its own: an upstream
+		// that buffers and flushes at the end delivers nothing by 30s, so the body
+		// is empty and the required-param check below rejects the call outright
+		// rather than sending a fragment.)
+		//
+		// FOCI_STDIN_WAIT overrides the bound, and exists so the regression test can
+		// assert this in a second instead of thirty.
+		fmt.Fprintf(&b,
+			"  if [ -z \"$%[1]s\" ] && [ ! -t 0 ]%[2]s; then\n"+
+				"    %[1]s=\"$(timeout \"${FOCI_STDIN_WAIT:-30}\" cat)\"\n"+
+				"    if [ $? -eq 124 ]; then\n"+
+				"      echo \"warning: stdin was still open after ${FOCI_STDIN_WAIT:-30}s and has been cut off there;"+
+				" using the ${#%[1]s} bytes that had arrived (if that is 0 this call fails below)."+
+				" A never-ending stream (tail -f, curl -N) or an inherited pipe nobody writes to always lands here —"+
+				" pass the body with --%[3]s instead.\" >&2\n"+
+				"    fi\n"+
+				"  fi\n",
+			t.StdinParam, extraGuard, stdinFlag)
 	}
 
 	// Required-param usage check.
