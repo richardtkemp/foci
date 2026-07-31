@@ -912,6 +912,19 @@ func commandInfos(conn *appConn) []fap.CommandInfo {
 // session's current state (model capabilities, backend type). Commands whose
 // Visible func evaluates false are excluded.
 func (h *Hub) pushCommands(b *convBinding) {
+	// An archived conversation is hidden from the roster, so a palette for it
+	// can never be displayed — but the frame is still built, sent and DURABLY
+	// STORED, which is what made dead branch sessions a standing cost.
+	// pushCommandsTo does this check itself, memoised per agent, and calls
+	// sendCommands directly so a fan-out is not one DB query per conversation.
+	if h.conversationArchived(b) {
+		return
+	}
+	h.sendCommands(b)
+}
+
+// sendCommands is pushCommands with the archived check already made.
+func (h *Hub) sendCommands(b *convBinding) {
 	conn := h.PrimaryBot(b.agentID)
 	if conn == nil || conn.commands == nil {
 		return
@@ -927,20 +940,100 @@ func (h *Hub) pushCommands(b *convBinding) {
 	for _, c := range visibleCmds {
 		cmds = append(cmds, fap.CommandInfo{Name: c.Name, Description: c.Description, Category: c.Category})
 	}
+
+	// Send only on an actual change. The palette is derived from the command
+	// registry and the session's capability gating, neither of which moves on a
+	// reconnect — so a device that drops and re-attaches 361 times a day (normal
+	// wifi power-saving) used to cost 361 identical broadcasts per conversation.
+	sum := commandsHash(cmds)
+	b.mu.Lock()
+	unchanged := b.lastCmdHash == sum
+	if !unchanged {
+		b.lastCmdHash = sum
+	}
+	b.mu.Unlock()
+	if unchanged {
+		return
+	}
+
 	b.send(fap.Commands{ConversationID: b.convID, Commands: cmds})
 }
 
+// commandsHash fingerprints a palette for change detection. Name, description
+// and category are every field that reaches the wire, so two palettes with the
+// same hash are byte-identical to the client. Order is part of the identity —
+// the app renders them in the order given, so a reorder is a real change.
+func commandsHash(cmds []fap.CommandInfo) uint64 {
+	hsh := fnv.New64a()
+	for _, c := range cmds {
+		// Length-prefix each field so ("ab","c") and ("a","bc") differ.
+		for _, f := range []string{c.Name, c.Description, c.Category} {
+			_, _ = fmt.Fprintf(hsh, "%d:%s", len(f), f)
+		}
+	}
+	return hsh.Sum64()
+}
+
+// conversationArchived reports whether this conversation is archived on the app
+// platform. Best-effort: with no session index we cannot tell, and treating the
+// unknown case as "not archived" preserves delivery rather than silently
+// dropping palettes.
+func (h *Hub) conversationArchived(b *convBinding) bool {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return false
+	}
+	return idx.ArchivedChatsForAgent(b.agentID, "app")[b.chatID]
+}
+
 // pushCommandsAll sends per-conversation command palettes for every live
-// conversation (e.g. after roster push).
+// conversation (e.g. after a roster MUTATION). Each send is skipped when the
+// conversation is archived or its palette is unchanged, so the common case —
+// a sweep that changes nothing — costs one archived-set query per agent and no
+// frames at all.
 func (h *Hub) pushCommandsAll() {
+	h.pushCommandsTo(nil)
+}
+
+// pushCommandsTo pushes palettes for every live conversation, or — when client
+// is non-nil — only those the client is actually attached to.
+//
+// The distinction is the point: a single socket reconnecting is not a reason to
+// rebuild every OTHER conversation's palette. pushRoster serves one device and
+// used to call pushCommandsAll, so one phone's wifi blip fanned a ~3.4KB frame
+// out across every live conversation (#app-palette-storm).
+func (h *Hub) pushCommandsTo(client *wsClient) {
 	h.mu.RLock()
 	bindings := make([]*convBinding, 0, len(h.convs))
 	for _, b := range h.convs {
 		bindings = append(bindings, b)
 	}
 	h.mu.RUnlock()
+
+	// Memoise the per-agent archived set for this sweep, mirroring agentRoster:
+	// without it a 150-conversation sweep is 150 chat_metadata queries.
+	idx := h.deps.SessionIndex
+	archivedByAgent := make(map[string]map[int64]bool)
+	archived := func(b *convBinding) bool {
+		if idx == nil {
+			return false
+		}
+		set, ok := archivedByAgent[b.agentID]
+		if !ok {
+			set = idx.ArchivedChatsForAgent(b.agentID, "app")
+			archivedByAgent[b.agentID] = set
+		}
+		return set[b.chatID]
+	}
+
 	for _, b := range bindings {
-		h.pushCommands(b)
+		if client != nil && !b.isAttached(client) {
+			continue
+		}
+		if archived(b) {
+			continue
+		}
+		h.sendCommands(b)
 	}
 }
 
@@ -1313,7 +1406,11 @@ func (h *Hub) createDefaultConversation(agentID string) (string, error) {
 // they reconnect (#1558).
 func (h *Hub) pushRoster(client *wsClient) {
 	client.sendRaw(fap.HelloServer{Version: fap.ProtocolVersion, Caps: h.caps(), Agents: h.agentRoster()})
-	h.pushCommandsAll()
+	// Scoped to THIS client, matching the roster frame above it. The global
+	// pushCommandsAll that used to be here contradicted the doc comment's own
+	// distinction between pushRoster and pushRosterAll, and made every
+	// reconnect a fleet-wide palette broadcast.
+	h.pushCommandsTo(client)
 }
 
 // pushRosterAll re-advertises the roster to every live socket, so connected
@@ -1795,6 +1892,16 @@ type convBinding struct {
 	waitingDetail  string           // target agent id we're awaiting, empty if none
 	activityKind   fap.ActivityKind // last-emitted resolved kind ("" == idle)
 	activityDetail string           // last-emitted resolved detail
+
+	// lastCmdHash fingerprints the command palette last sent on this
+	// conversation, so pushCommands is a no-op when nothing changed — the same
+	// send-only-on-change discipline activityKind/activityDetail already apply
+	// to Activity frames. The palette is ~3.4KB and changes almost never, but
+	// every roster push re-derived and re-sent it: 87% of every byte foci has
+	// ever sent to the app was a duplicate palette (#app-palette-storm).
+	// Zero means "nothing sent yet", which no real palette hashes to in
+	// practice and which correctly forces the first send.
+	lastCmdHash uint64
 
 	lastPreview string // last visible frame's preview; seeds the roster row
 	lastActMs   int64  // last visible frame's send time (unix ms); seeds the roster row
