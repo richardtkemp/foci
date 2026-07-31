@@ -137,7 +137,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// and restore pending wakes here so both API and delegated transports can
 	// register the remind tool into their own registries below.
 	agLazy := func() *agent.Agent { return ag }
-	shared.wakeScheduleFn = buildWakeScheduler(agLazy, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
+	shared.wakeScheduleFn, shared.wakeCancelFn = buildWakeScheduler(agLazy, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
 	// Transport-specific configuration
 	isDelegated := acfg.IsDelegated()
@@ -250,6 +250,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		agLazy:           agLazy,
 		summariser:       tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars }),
 		wakeFn:           shared.wakeScheduleFn,
+		wakeCancelFn:     shared.wakeCancelFn,
 		sessionNotify:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),
 		askDeliver:       newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "ask_grader"),
 		agentTTS:         agentTTS,

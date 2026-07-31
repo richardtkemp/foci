@@ -124,7 +124,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// always-on FociShellRules — keeps the auto-approve list in sync with
 	// what's actually wired in (no hand-list to drift).
 	agLazy := func() *agent.Agent { return ag }
-	registry := buildExecRegistry(p, shared.wakeScheduleFn, agLazy)
+	registry := buildExecRegistry(p, shared.wakeScheduleFn, shared.wakeCancelFn, agLazy)
 
 	// Build auto-approve rules from resolved config. bakedPerms is the same
 	// frozen snapshot, reused below so the environment block's Command
@@ -620,7 +620,7 @@ func buildAutoApproveRules(p setupParams, fociExecNames []string) []string {
 // send_to_session can deliver replies back to the calling session. May be nil
 // in tests where the notifier path isn't exercised; when nil, send_to_session
 // is still registered but reply_to=caller deliveries are a no-op.
-func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLazy func() *agent.Agent) *tools.Registry {
+func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeCancelFn tools.CancelWakeFn, agLazy func() *agent.Agent) *tools.Registry {
 	registry := tools.NewRegistry()
 	acfg := p.acfg
 	connMgr := p.connMgr
@@ -680,6 +680,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 		agLazy:        agLazy,
 		summariser:    batchSummariser,
 		wakeFn:        wakeScheduleFn,
+		wakeCancelFn:  wakeCancelFn,
 		sessionNotify: newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),
 		askDeliver:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "ask_grader"),
 		agentTTS:      agentTTS,

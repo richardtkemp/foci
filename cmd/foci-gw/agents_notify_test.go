@@ -308,9 +308,88 @@ func TestBuildWakeSchedulerNilStore(t *testing.T) {
 	// must return nil so callers can detect "reminders unsupported" and skip
 	// remind-tool registration.
 	t.Parallel()
-	fn := buildWakeScheduler(func() *agent.Agent { return nil }, nil, "test", context.Background(), stubConnMgr{})
+	fn, cancelFn := buildWakeScheduler(func() *agent.Agent { return nil }, nil, "test", context.Background(), stubConnMgr{})
 	if fn != nil {
 		t.Errorf("buildWakeScheduler with nil store = non-nil, want nil")
+	}
+	if cancelFn != nil {
+		t.Errorf("cancel fn with nil store = non-nil, want nil")
+	}
+}
+
+func TestWakeCancelStopsTimerAndDismissesRow(t *testing.T) {
+	// #1648: a scheduled wake lives in an in-process timer, so the cancel path
+	// has to reach that timer — not just the DB row. Verifies the returned
+	// cancel fn reports success, and that cancelling drives the goroutine's
+	// Done branch which dismisses the stored row (so a later restart cannot
+	// resurrect a wake the user cancelled).
+	t.Parallel()
+	rs, err := memory.NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
+	if err != nil {
+		t.Fatalf("NewReminderStore: %v", err)
+	}
+	t.Cleanup(func() { rs.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fn, cancelFn := buildWakeScheduler(func() *agent.Agent { return &agent.Agent{} }, rs, "test", ctx, stubConnMgr{})
+	if fn == nil || cancelFn == nil {
+		t.Fatal("buildWakeScheduler returned nil fns despite valid store")
+	}
+
+	id, err := rs.AddWake("test", "test/main", "cancel me", "24h")
+	if err != nil {
+		t.Fatalf("AddWake: %v", err)
+	}
+	// Far enough out that it cannot fire on its own during the test.
+	if err := fn(id, 24*time.Hour, "cancel me", "test/main"); err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	if pending, _ := rs.PendingWakes("test"); len(pending) != 1 {
+		t.Fatalf("premise failed: %d pending rows before cancel, want 1", len(pending))
+	}
+
+	if !cancelFn(id) {
+		t.Fatal("cancelFn returned false for a live wake")
+	}
+
+	// The goroutine dismisses the row on its Done branch — poll briefly.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		pending, err := rs.PendingWakes("test")
+		if err != nil {
+			t.Fatalf("PendingWakes: %v", err)
+		}
+		if len(pending) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("row still pending %v after cancel, want dismissed", 2*time.Second)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// A second cancel finds no timer — the map entry is gone.
+	if cancelFn(id) {
+		t.Error("second cancelFn returned true, want false (timer already removed)")
+	}
+}
+
+func TestWakeCancelUnknownID(t *testing.T) {
+	// Verifies cancelling an id that was never scheduled reports false rather
+	// than panicking on a missing map entry.
+	t.Parallel()
+	rs, err := memory.NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
+	if err != nil {
+		t.Fatalf("NewReminderStore: %v", err)
+	}
+	t.Cleanup(func() { rs.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, cancelFn := buildWakeScheduler(func() *agent.Agent { return &agent.Agent{} }, rs, "test", ctx, stubConnMgr{})
+	if cancelFn(4242) {
+		t.Error("cancelFn(unknown) = true, want false")
 	}
 }
 
@@ -327,7 +406,7 @@ func TestBuildWakeSchedulerReturnsCallback(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fn := buildWakeScheduler(func() *agent.Agent { return &agent.Agent{} }, rs, "test", ctx, stubConnMgr{})
+	fn, _ := buildWakeScheduler(func() *agent.Agent { return &agent.Agent{} }, rs, "test", ctx, stubConnMgr{})
 	if fn == nil {
 		t.Fatal("buildWakeScheduler with valid store = nil, want non-nil")
 	}
@@ -357,7 +436,7 @@ func TestBuildWakeSchedulerRestoresPending(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fn := buildWakeScheduler(func() *agent.Agent { return &agent.Agent{} }, rs, "test", ctx, stubConnMgr{})
+	fn, _ := buildWakeScheduler(func() *agent.Agent { return &agent.Agent{} }, rs, "test", ctx, stubConnMgr{})
 	if fn == nil {
 		t.Fatal("buildWakeScheduler returned nil despite valid store")
 	}

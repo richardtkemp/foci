@@ -47,7 +47,8 @@ type toolDeps struct {
 	connMgr    platform.ConnectionManager
 	agLazy     func() *agent.Agent
 	summariser tools.Summariser // APISummariser (API) or BatchSummariser (delegated)
-	wakeFn     tools.ScheduleWakeFn
+	wakeFn       tools.ScheduleWakeFn
+	wakeCancelFn tools.CancelWakeFn
 
 	sessionNotify tools.SessionNotifyFn // send_to_session → via=agent
 	askDeliver    tools.SessionNotifyFn // ask answer/grader delivery → via=ask-grader
@@ -394,7 +395,7 @@ var toolTable = []toolEntry{
 	{name: "remind", paths: pathBoth,
 		enabled: func(d *toolDeps) bool { return d.p.reminderStore != nil && d.wakeFn != nil },
 		build: func(d *toolDeps) *tools.Tool {
-			return tools.NewRemindTool(d.p.reminderStore, d.p.acfg.ID, d.wakeFn)
+			return tools.NewRemindTool(d.p.reminderStore, d.p.acfg.ID, d.wakeFn, d.wakeCancelFn)
 		}},
 
 	{name: "app_android", paths: pathBoth,
