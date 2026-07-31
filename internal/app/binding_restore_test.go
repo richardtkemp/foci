@@ -330,11 +330,17 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// zero value is harmless because the one place its truth matters
 	// (agentRoster's snapshot) recomputes live from the agent instead of
 	// reading this field (see the cache-expiry comment in agentRoster).
+	// lastCmdHash is the same shape as activityKind/activityDetail: a
+	// send-only-on-change cache whose zero value means "nothing sent yet", so a
+	// restored binding sends its palette exactly once on the first push and is
+	// correct from then on. Rehydrating it would be actively WRONG — the client
+	// reconnecting to a fresh process should be told the palette, not have it
+	// suppressed by a hash that survived the restart.
 	restartSafe := map[string]bool{
 		"mu": true, "clients": true, "clientStates": true, "buffer": true,
 		"seenOrder": true, "turnKind": true, "turnDetail": true,
 		"subagentDetail": true, "waitingDetail": true, "activityKind": true,
-		"activityDetail": true, "cacheExpiryMs": true,
+		"activityDetail": true, "cacheExpiryMs": true, "lastCmdHash": true,
 	}
 
 	rt := reflect.TypeOf(convBinding{})
