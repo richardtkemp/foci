@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"foci/internal/memory"
@@ -14,37 +15,59 @@ import (
 // sessionKey is the originating session so the wake fires on the correct platform.
 type ScheduleWakeFn func(id int64, delay time.Duration, message, sessionKey string) error
 
-func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWakeFn) *Tool {
+// CancelWakeFn cancels a scheduled wake by DB row ID, reporting whether a
+// live timer was found. A scheduled wake lives in an in-process timer, so the
+// DB row alone is not authoritative — cancelling has to go through the
+// scheduler that owns the timer.
+type CancelWakeFn func(id int64) bool
+
+func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWakeFn, cancelFn CancelWakeFn) *Tool {
 	return &Tool{
 		Name:        "remind",
-		Description: "Defer a thought for later. By default the reminder surfaces as injected context at the specified time. Set wake=true to actively wake the session (fires a message to yourself at the specified time).",
+		Description: "Defer a thought for later. By default the reminder surfaces as injected context at the specified time. Set wake=true to actively wake the session (fires a message to yourself at the specified time). Set list=true to show pending wakes, or cancel=<id> to cancel one.",
 		ExecExport:  true,
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"text": {
 					"type": "string",
-					"description": "The thought or reminder text"
+					"description": "The thought or reminder text (required unless list or cancel is set)"
 				},
 				"when": {
 					"type": "string",
-					"description": "When to surface: 'next_keepalive', 'next_session', 'tomorrow', a date (YYYY-MM-DD), an ISO timestamp (e.g. '2026-02-26T12:00:00Z'), or a duration (e.g. '2h', '30m')"
+					"description": "When to surface: 'next_keepalive', 'next_session', 'tomorrow', a date (YYYY-MM-DD), an ISO timestamp (e.g. '2026-02-26T12:00:00Z'), or a duration (e.g. '2h', '30m'). Required unless list or cancel is set."
 				},
 				"wake": {
 					"type": "boolean",
 					"description": "If true, actively wake the session at the specified time instead of passively injecting context (default false)"
+				},
+				"list": {
+					"type": "boolean",
+					"description": "If true, list pending scheduled wakes (id, due time, text) instead of setting a reminder"
+				},
+				"cancel": {
+					"type": "integer",
+					"description": "Cancel the pending scheduled wake with this id (from list). Stops the timer and removes the stored reminder."
 				}
-			},
-			"required": ["text", "when"]
+			}
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			p, err := UnmarshalParams[struct {
-				Text string `json:"text"`
-				When string `json:"when"`
-				Wake bool   `json:"wake"`
+				Text   string `json:"text"`
+				When   string `json:"when"`
+				Wake   bool   `json:"wake"`
+				List   bool   `json:"list"`
+				Cancel int64  `json:"cancel"`
 			}](params)
 			if err != nil {
 				return ToolResult{}, err
+			}
+
+			if p.List {
+				return remindListWakes(rs, agentID)
+			}
+			if p.Cancel != 0 {
+				return remindCancelWake(rs, agentID, p.Cancel, cancelFn)
 			}
 
 			if p.Text == "" {
@@ -90,7 +113,77 @@ func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when
 	}
 
 	remindLog.Debugf("session=%s scheduled wake id=%d in %v: %q", sessionKey, id, dur, text)
-	return TextResult(fmt.Sprintf("Wake scheduled in %v: %q", dur, text)), nil
+	return TextResult(fmt.Sprintf("Wake scheduled in %v (id=%d): %q", dur, id, text)), nil
+}
+
+// remindListWakes renders this agent's pending scheduled wakes, newest due first.
+func remindListWakes(rs *memory.ReminderStore, agentID string) (ToolResult, error) {
+	pending, err := rs.PendingWakes(agentID)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("list wakes: %w", err)
+	}
+	if len(pending) == 0 {
+		return TextResult("No pending wakes."), nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d pending wake(s):\n", len(pending))
+	now := time.Now()
+	for _, r := range pending {
+		until := r.DueAt.Sub(now).Round(time.Second)
+		when := fmt.Sprintf("in %v", until)
+		if until < 0 {
+			when = "overdue"
+		}
+		fmt.Fprintf(&b, "  id=%d  due %s (%s)  %q\n",
+			r.ID, r.DueAt.Format(time.RFC3339), when, truncateWakeText(r.Text))
+	}
+	return TextResult(strings.TrimRight(b.String(), "\n")), nil
+}
+
+// remindCancelWake stops a pending wake's timer and removes its stored row.
+// The id must belong to this agent — PendingWakes is agent-scoped, so an id
+// from another agent reads as not found rather than cancelling across agents.
+func remindCancelWake(rs *memory.ReminderStore, agentID string, id int64, cancelFn CancelWakeFn) (ToolResult, error) {
+	if cancelFn == nil {
+		return ToolResult{}, fmt.Errorf("wake not configured")
+	}
+
+	pending, err := rs.PendingWakes(agentID)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("look up wake: %w", err)
+	}
+	var target *memory.Reminder
+	for i := range pending {
+		if pending[i].ID == id {
+			target = &pending[i]
+			break
+		}
+	}
+	if target == nil {
+		return ToolResult{}, fmt.Errorf("no pending wake with id %d", id)
+	}
+
+	// The timer owns the DB row: cancelling it makes the scheduler dismiss the
+	// row itself. Deleting here as well would race that cleanup for no gain.
+	if !cancelFn(id) {
+		return ToolResult{}, fmt.Errorf("wake id %d is stored but has no live timer — it may have already fired", id)
+	}
+
+	remindLog.Debugf("cancelled wake id=%d for agent %s", id, agentID)
+	return TextResult(fmt.Sprintf("Cancelled wake id=%d (was due %s): %q",
+		id, target.DueAt.Format(time.RFC3339), truncateWakeText(target.Text))), nil
+}
+
+// truncateWakeText shortens reminder text so a list stays scannable; wake
+// prompts are routinely multi-paragraph.
+func truncateWakeText(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
+	const max = 70
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 // resolveWakeDuration converts a when string to a duration from now.

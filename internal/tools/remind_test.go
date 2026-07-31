@@ -20,7 +20,7 @@ func testRemindTool(t *testing.T) *Tool {
 		t.Fatalf("NewReminderStore: %v", err)
 	}
 	t.Cleanup(func() { rs.Close() })
-	return NewRemindTool(rs, "test", nil)
+	return NewRemindTool(rs, "test", nil, nil)
 }
 
 func testRemindToolWithWake(t *testing.T, fn ScheduleWakeFn) *Tool {
@@ -31,7 +31,195 @@ func testRemindToolWithWake(t *testing.T, fn ScheduleWakeFn) *Tool {
 		t.Fatalf("NewReminderStore: %v", err)
 	}
 	t.Cleanup(func() { rs.Close() })
-	return NewRemindTool(rs, "test", fn)
+	return NewRemindTool(rs, "test", fn, nil)
+}
+
+// testRemindToolWithCancel returns a tool sharing one store, plus the store,
+// so a test can schedule wakes and then list/cancel them.
+func testRemindToolWithCancel(t *testing.T, cancelFn CancelWakeFn) (*Tool, *memory.ReminderStore) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	rs, err := memory.NewReminderStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewReminderStore: %v", err)
+	}
+	t.Cleanup(func() { rs.Close() })
+	noopSchedule := func(id int64, d time.Duration, msg, sessionKey string) error { return nil }
+	return NewRemindTool(rs, "test", noopSchedule, cancelFn), rs
+}
+
+// scheduleWake drives the tool's own wake path so the row is created exactly
+// as production creates it.
+func scheduleWake(t *testing.T, tool *Tool, text, when string) {
+	t.Helper()
+	params, _ := json.Marshal(map[string]interface{}{"text": text, "when": when, "wake": true})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("schedule %q: %v", text, err)
+	}
+}
+
+// --- list / cancel tests (#1648) ---
+
+func TestRemindListWakesEmpty(t *testing.T) {
+	// Verifies list=true on an agent with no scheduled wakes reports the empty
+	// case rather than erroring or printing a bare header.
+	t.Parallel()
+	tool, _ := testRemindToolWithCancel(t, nil)
+	params, _ := json.Marshal(map[string]interface{}{"list": true})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "No pending wakes") {
+		t.Errorf("result = %q, want empty-case message", result.Text)
+	}
+}
+
+func TestRemindListWakes(t *testing.T) {
+	// Verifies list=true enumerates pending wakes with their ids, so the id
+	// needed by cancel is actually discoverable. Without ids in the listing
+	// there is no way to name a wake for cancellation.
+	t.Parallel()
+	tool, rs := testRemindToolWithCancel(t, nil)
+	scheduleWake(t, tool, "first wake", "30m")
+	scheduleWake(t, tool, "second wake", "2h")
+
+	pending, err := rs.PendingWakes("test")
+	if err != nil {
+		t.Fatalf("PendingWakes: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("premise failed: %d pending wakes, want 2", len(pending))
+	}
+
+	params, _ := json.Marshal(map[string]interface{}{"list": true})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "2 pending wake(s)") {
+		t.Errorf("result = %q, want count header", result.Text)
+	}
+	for _, r := range pending {
+		if !strings.Contains(result.Text, fmt.Sprintf("id=%d", r.ID)) {
+			t.Errorf("result = %q, want id=%d", result.Text, r.ID)
+		}
+	}
+	if !strings.Contains(result.Text, "first wake") || !strings.Contains(result.Text, "second wake") {
+		t.Errorf("result = %q, want both texts", result.Text)
+	}
+}
+
+func TestRemindCancelWake(t *testing.T) {
+	// Verifies cancel=<id> reaches the scheduler's cancel callback with that
+	// exact id. The timer lives in-process, so cancelling MUST go through the
+	// callback — deleting the DB row alone would leave the timer armed.
+	t.Parallel()
+	var cancelled []int64
+	tool, rs := testRemindToolWithCancel(t, func(id int64) bool {
+		cancelled = append(cancelled, id)
+		return true
+	})
+	scheduleWake(t, tool, "doomed wake", "45m")
+
+	pending, err := rs.PendingWakes("test")
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("premise failed: pending=%d err=%v", len(pending), err)
+	}
+	id := pending[0].ID
+
+	params, _ := json.Marshal(map[string]interface{}{"cancel": id})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(cancelled) != 1 || cancelled[0] != id {
+		t.Fatalf("cancel callback got %v, want [%d]", cancelled, id)
+	}
+	if !strings.Contains(result.Text, fmt.Sprintf("id=%d", id)) {
+		t.Errorf("result = %q, want the cancelled id", result.Text)
+	}
+	if !strings.Contains(result.Text, "doomed wake") {
+		t.Errorf("result = %q, want the cancelled text", result.Text)
+	}
+}
+
+func TestRemindCancelWakeUnknownID(t *testing.T) {
+	// Verifies cancelling an id that is not pending errors instead of silently
+	// reporting success — a false "cancelled" would leave a live wake armed.
+	t.Parallel()
+	called := false
+	tool, _ := testRemindToolWithCancel(t, func(id int64) bool { called = true; return true })
+
+	params, _ := json.Marshal(map[string]interface{}{"cancel": 9999})
+	if _, err := tool.Execute(context.Background(), params); err == nil {
+		t.Fatal("expected error for unknown id")
+	} else if !strings.Contains(err.Error(), "no pending wake with id 9999") {
+		t.Errorf("error = %q", err.Error())
+	}
+	if called {
+		t.Error("cancel callback must not fire for an unknown id")
+	}
+}
+
+func TestRemindCancelWakeOtherAgent(t *testing.T) {
+	// Verifies an id belonging to a DIFFERENT agent cannot be cancelled.
+	// PendingWakes is agent-scoped, so the lookup is what enforces isolation.
+	t.Parallel()
+	called := false
+	tool, rs := testRemindToolWithCancel(t, func(id int64) bool { called = true; return true })
+
+	otherID, err := rs.AddWake("someone-else", "sk", "not yours", "1h")
+	if err != nil {
+		t.Fatalf("AddWake: %v", err)
+	}
+
+	params, _ := json.Marshal(map[string]interface{}{"cancel": otherID})
+	if _, err := tool.Execute(context.Background(), params); err == nil {
+		t.Fatal("expected error cancelling another agent's wake")
+	}
+	if called {
+		t.Error("cancel callback must not fire across agents")
+	}
+}
+
+func TestRemindCancelWakeNoLiveTimer(t *testing.T) {
+	// Verifies that a stored row with no live timer (callback returns false)
+	// surfaces as an error, not a bogus success.
+	t.Parallel()
+	tool, rs := testRemindToolWithCancel(t, func(id int64) bool { return false })
+	scheduleWake(t, tool, "stale row", "1h")
+
+	pending, _ := rs.PendingWakes("test")
+	if len(pending) != 1 {
+		t.Fatalf("premise failed: %d pending", len(pending))
+	}
+
+	params, _ := json.Marshal(map[string]interface{}{"cancel": pending[0].ID})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error when no live timer exists")
+	}
+	if !strings.Contains(err.Error(), "no live timer") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestRemindCancelWakeNilFunction(t *testing.T) {
+	// Verifies cancel with no scheduler configured errors rather than panicking,
+	// mirroring the existing nil-wakeFn behaviour.
+	t.Parallel()
+	tool, _ := testRemindToolWithCancel(t, nil)
+	params, _ := json.Marshal(map[string]interface{}{"cancel": 1})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for nil cancel function")
+	}
+	if !strings.Contains(err.Error(), "not configured") {
+		t.Errorf("error = %q", err.Error())
+	}
 }
 
 // --- Passive reminder tests (wake=false, default) ---

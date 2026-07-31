@@ -297,22 +297,23 @@ func deliverToSessionChat(
 }
 
 // buildWakeScheduler creates the agent-scoped wake-scheduling machinery and
-// restores any pending wakes from the database. Returns the schedule callback
-// for use by NewRemindTool. Returns nil if reminderStore is nil (reminder
-// support disabled for this agent).
+// restores any pending wakes from the database. Returns the schedule and
+// cancel callbacks for use by NewRemindTool. Both are nil if reminderStore is
+// nil (reminder support disabled for this agent).
 //
 // Transport-independent: call once per agent at setup time. Tool registration
 // is the caller's responsibility — register tools.NewRemindTool(reminderStore,
-// agentID, wakeScheduleFn) into whichever registry the transport uses.
+// agentID, wakeScheduleFn, wakeCancelFn) into whichever registry the transport
+// uses.
 func buildWakeScheduler(
 	getAgent func() *agent.Agent,
 	reminderStore *memory.ReminderStore,
 	agentID string,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
-) tools.ScheduleWakeFn {
+) (tools.ScheduleWakeFn, tools.CancelWakeFn) {
 	if reminderStore == nil {
-		return nil
+		return nil, nil
 	}
 
 	var wakesMu sync.Mutex
@@ -357,6 +358,20 @@ func buildWakeScheduler(
 		return nil
 	}
 
+	// wakeCancelFn stops a pending wake. Cancelling the context makes the
+	// wake goroutine take its Done branch, which dismisses the DB row and
+	// removes the map entry — so the row cleanup stays in one place.
+	wakeCancelFn := func(id int64) bool {
+		wakesMu.Lock()
+		cancel, ok := wakes[id]
+		wakesMu.Unlock()
+		if !ok {
+			return false
+		}
+		cancel()
+		return true
+	}
+
 	// Restore pending wakes from DB (survives restart).
 	if pending, err := reminderStore.PendingWakes(agentID); err != nil {
 		remindLog.Errorf("failed to load pending wakes for %s: %v", agentID, err)
@@ -371,5 +386,5 @@ func buildWakeScheduler(
 		remindLog.Infof("restored %d pending wake(s) for agent %s", len(pending), agentID)
 	}
 
-	return wakeScheduleFn
+	return wakeScheduleFn, wakeCancelFn
 }

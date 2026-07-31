@@ -44,6 +44,10 @@ type sharedAgentSetup struct {
 	// (reminder support disabled). Used by both transports to register the
 	// remind tool into their respective registries.
 	wakeScheduleFn tools.ScheduleWakeFn
+	// wakeCancelFn cancels a pending wake by id. Built alongside
+	// wakeScheduleFn and nil under the same condition — a scheduled wake is
+	// an in-process timer, so cancelling requires the scheduler that owns it.
+	wakeCancelFn tools.CancelWakeFn
 }
 
 // resolveSharedSetup performs the common preamble for all agent types:

@@ -48,7 +48,7 @@ func TestBuildExecRegistryWiresAsyncNotifier(t *testing.T) {
 
 	p := minimalSetupParams(t, "test")
 	ag := &agent.Agent{}
-	buildExecRegistry(p, stubWakeFn, func() *agent.Agent { return ag })
+	buildExecRegistry(p, stubWakeFn, nil, func() *agent.Agent { return ag })
 
 	if ag.AsyncNotifier == nil {
 		t.Error("delegated agent's AsyncNotifier is nil; /plan injection and #845 compaction-resume need it set (mirror the API path)")
@@ -72,7 +72,7 @@ func TestBuildExecRegistryRegistersRemind(t *testing.T) {
 	p := minimalSetupParams(t, "test")
 	p.reminderStore = rs
 
-	registry := buildExecRegistry(p, stubWakeFn, nil)
+	registry := buildExecRegistry(p, stubWakeFn, nil, nil)
 	if got := registry.Get("remind"); got == nil {
 		t.Fatal("registry missing remind tool when reminderStore + wakeFn are set")
 	}
@@ -99,7 +99,7 @@ func TestBuildExecRegistrySkipsRemindWhenStoreNil(t *testing.T) {
 	p := minimalSetupParams(t, "test")
 	// p.reminderStore intentionally nil
 
-	registry := buildExecRegistry(p, stubWakeFn, nil)
+	registry := buildExecRegistry(p, stubWakeFn, nil, nil)
 	if got := registry.Get("remind"); got != nil {
 		t.Error("registry contains remind tool despite nil reminderStore")
 	}
@@ -139,7 +139,7 @@ func TestBuildExecRegistryAllToolsHaveShellFuncParity(t *testing.T) {
 	// just needs len > 0; the searcher value is never invoked here.
 	p.memBackends = map[string]memory.Searcher{"stub": nil}
 
-	registry := buildExecRegistry(p, stubWakeFn, nil)
+	registry := buildExecRegistry(p, stubWakeFn, nil, nil)
 
 	// Sanity: every conditional tool we expect should be present. If the
 	// tool table's pathExec set changes, update this list AND the test
@@ -171,7 +171,7 @@ func TestBuildExecRegistryRegistersSendToSession(t *testing.T) {
 
 	p := minimalSetupParams(t, "test")
 
-	registry := buildExecRegistry(p, stubWakeFn, nil)
+	registry := buildExecRegistry(p, stubWakeFn, nil, nil)
 	if got := registry.Get("send_to_session"); got == nil {
 		t.Fatal("registry missing send_to_session tool")
 	}
@@ -268,7 +268,7 @@ func TestBuildExecRegistrySkipsRemindWhenWakeFnNil(t *testing.T) {
 	p.reminderStore = rs
 
 	var nilFn tools.ScheduleWakeFn
-	registry := buildExecRegistry(p, nilFn, nil)
+	registry := buildExecRegistry(p, nilFn, nil, nil)
 	if got := registry.Get("remind"); got != nil {
 		t.Error("registry contains remind tool despite nil wakeFn")
 	}
