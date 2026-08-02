@@ -132,3 +132,28 @@ func TestTmuxMissingName(t *testing.T) {
 		}
 	}
 }
+
+func TestIsNoTmuxServer(t *testing.T) {
+	// Verifies the classification of tmux's several "there is no server" phrasings,
+	// which list() reads as "zero sessions" rather than as a failure.
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{"no server running", "no server running on /tmp/x.sock", true},
+		{"missing socket file", "error connecting to /tmp/x.sock (No such file or directory)", true},
+		{"no current session", "no current session", true},
+		// Reached by an ordinary kill: killing the last session lets the server
+		// be reaped, so the next list races the teardown. Missing this case made
+		// TestTmuxKill flaky once the tests stopped sharing one server.
+		{"server exited during teardown", "server exited unexpectedly", true},
+		{"real error is not swallowed", "can't find session: nope", false},
+		{"empty output", "", false},
+	} {
+		if got := isNoTmuxServer(tc.out); got != tc.want {
+			t.Errorf("%s: isNoTmuxServer(%q) = %v, want %v", tc.name, tc.out, got, tc.want)
+		}
+	}
+}

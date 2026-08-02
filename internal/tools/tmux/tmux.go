@@ -428,6 +428,36 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	return runTmuxWithSocket(ctx, tmuxSocketPath, args...)
 }
 
+// isNoTmuxServer reports whether tmux output means "there is no server to talk
+// to", which callers that are only asking about sessions should read as "zero
+// sessions" rather than as an error.
+//
+// tmux words this condition several ways depending on exactly when the client
+// looked, and they are not interchangeable:
+//
+//   - "no server running on <socket>" — the socket has no live server.
+//   - "No such file or directory"     — the socket file itself is not there.
+//   - "no current client/session"     — a server, but nothing to report against.
+//   - "server exited unexpectedly"    — the client connected just as the server
+//     was shutting down. Reached routinely by an ordinary kill: killing the last
+//     session lets the reaper (or tmux's own exit-empty) take the server down,
+//     so the very next list races that teardown.
+//
+// All four mean the same thing to a caller asking "what sessions exist?".
+func isNoTmuxServer(out string) bool {
+	for _, s := range []string{
+		"no server running",
+		"no current",
+		"No such file or directory",
+		"server exited unexpectedly",
+	} {
+		if strings.Contains(out, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // runTmuxRetryWithSocket runs a tmux command, retrying a transient failure up
 // to attempts times with a short growing backoff. Returns the last attempt's
 // output and error.
