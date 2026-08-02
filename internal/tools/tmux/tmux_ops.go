@@ -310,7 +310,7 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 func (inst *tmuxInstance) list(ctx context.Context) (tools.ToolResult, error) {
 	out, err := inst.runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}")
 	if err != nil {
-		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") || strings.Contains(out, "No such file or directory") {
+		if isNoTmuxServer(out) {
 			inst.clearStaleOwned()
 			return tools.TextResult("No tmux sessions."), nil
 		}
