@@ -44,14 +44,11 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 	if err != nil {
 		// new-session can transiently fail if the tmux server died or failed to
 		// spawn (e.g. "server exited unexpectedly" under fork/resource pressure).
-		// Ensure the server is up and retry once before giving up. start-server
-		// is idempotent — a no-op if a server is already running, so it never
-		// disturbs sibling sessions on a shared socket.
-		tmuxLog.Warnf("new-session failed, restarting server and retrying: session=%s name=%s out=%q err=%v", sessionKey, name, strings.TrimSpace(out), err)
-		if sout, serr := inst.runTmux(ctx, "start-server"); serr != nil {
-			tmuxLog.Warnf("start-server before retry failed: session=%s %s %v", sessionKey, strings.TrimSpace(sout), serr)
-		}
-		out, err = inst.runTmux(ctx, args...)
+		// new-session starts the server itself, so the fix is simply to try
+		// again after a pause — see runTmuxRetryWithSocket for why the explicit
+		// "start-server" this used to do first was a no-op.
+		tmuxLog.Warnf("new-session failed, retrying: session=%s name=%s out=%q err=%v", sessionKey, name, strings.TrimSpace(out), err)
+		out, err = inst.runTmuxRetry(ctx, 3, args...)
 		if err != nil {
 			return tools.ToolResult{}, fmt.Errorf("tmux new-session (after retry): %s: %w%s", strings.TrimSpace(out), err, tmuxStartDiag(inst.socketPath))
 		}
@@ -387,13 +384,19 @@ func (inst *tmuxInstance) list(ctx context.Context) (tools.ToolResult, error) {
 		rows = append(rows, []string{name, windows, age, owner, watchInfo})
 	}
 
-	if len(rows) == 0 {
-		return tools.TextResult("No tmux sessions."), nil
-	}
-
-	// Clean up stale owned entries if none still exist in tmux
+	// Clean up stale owned entries if none still exist in tmux. This runs
+	// BEFORE the empty-result return: "no rows to display" and "no owned
+	// sessions still alive" are different conditions, and the empty case is
+	// precisely when the persisted map is most likely to be stale. Returning
+	// first meant clearStaleOwned was only ever reachable via the "no server
+	// running" error branch above, so a live server holding only sessions this
+	// agent doesn't own left the stale entries in place indefinitely.
 	if len(ownedNames) > 0 && !ownedStillExist {
 		inst.clearStaleOwned()
+	}
+
+	if len(rows) == 0 {
+		return tools.TextResult("No tmux sessions."), nil
 	}
 
 	cols := []display.Column{
@@ -430,7 +433,8 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (tools.ToolResu
 	// server process. NOT unconditionally safe, despite how it reads: the
 	// emptiness check and the kill are two separate tmux calls, so a session
 	// created in between is destroyed by a decision taken before it existed.
-	// See autoReapEmptyServer — the test binary opts out for that reason.
+	// See autoReapEmptyServer for why that is tolerable here and what it
+	// costs anything sharing a server with this instance.
 	serverKilled := autoReapEmptyServer && inst.maybeKillTmuxServer(ctx)
 
 	inst.mu.Lock()

@@ -16,7 +16,7 @@ import (
 func TestTmuxStartAutoWatch(t *testing.T) {
 	// Verifies that starting a session with the default watch setting automatically activates watch monitoring and persists the watch entry to the state store.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	dir := t.TempDir()
@@ -25,10 +25,9 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-autowatch", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-autowatch", false, 30, 0, sock)
 
 	name := "foci-test-autowatch"
-	tmuxSetup(t, name)
 
 	// Start with default watch=true (omitted from params)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -77,7 +76,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 func TestTmuxStartWatchFalse(t *testing.T) {
 	// Verifies that explicitly setting watch=false on start prevents auto-watch and leaves no watch entries in the state store.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	dir := t.TempDir()
@@ -86,10 +85,9 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-nowatch", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-nowatch", false, 30, 0, sock)
 
 	name := "foci-test-nowatch"
-	tmuxSetup(t, name)
 
 	// Start with watch=false
 	params, _ := json.Marshal(map[string]interface{}{
@@ -122,11 +120,10 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	// Verifies that auto-watch is silently skipped when no notifier is configured, so the session starts successfully without watch-related output.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-autowatch-nonotif"
-	tmuxSetup(t, name)
 
 	// Start with default watch=true but no notifier
 	params, _ := json.Marshal(map[string]interface{}{
@@ -150,7 +147,7 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	// Verifies that in autopilot mode, a session watch is automatically removed after the inactivity threshold fires, so the agent is not re-woken repeatedly.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	var mu sync.Mutex
 	var notifications []string
@@ -167,10 +164,9 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	}
 
 	// autopilot=true, threshold=2s for fast test
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-unwatch", true, 2, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-unwatch", true, 2, 0, sock)
 
 	name := "foci-test-ap-unwatch"
-	tmuxSetup(t, name)
 
 	// Start session (auto-watches with 2s threshold due to autopilot)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -220,7 +216,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	// Verifies that in autopilot mode, sending keys to an unwatched session automatically starts watching it, and subsequent sends don't register a duplicate watch.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	dir := t.TempDir()
@@ -230,10 +226,9 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	}
 
 	// autopilot=true
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-send", true, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-send", true, 30, 0, sock)
 
 	name := "foci-test-ap-send"
-	tmuxSetup(t, name)
 
 	// Start with watch=false so session is unwatched
 	params, _ := json.Marshal(map[string]interface{}{
@@ -286,7 +281,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 func TestTmuxAutopilotDisabled(t *testing.T) {
 	// Verifies that when autopilot is disabled, sending to an unwatched session does not trigger auto-watch, leaving watch management entirely manual.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	dir := t.TempDir()
@@ -296,10 +291,9 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	}
 
 	// autopilot=false
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-autopilot", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-autopilot", false, 30, 0, sock)
 
 	name := "foci-test-no-ap"
-	tmuxSetup(t, name)
 
 	// Start with watch=false
 	params, _ := json.Marshal(map[string]interface{}{

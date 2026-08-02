@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,22 +27,18 @@ func TestMain(m *testing.M) {
 		os.Unsetenv(k)
 	}
 
-	// These tests share one tmux server, so the automatic "kill the server
-	// once the last session goes" reap would let any test's cleanup destroy a
-	// sibling's session — the check and the kill are separate tmux calls, so a
-	// session created between them dies for a reason that stopped being true.
-	// The tests that actually exercise the reap call maybeKillTmuxServer
-	// directly, on their own isolated servers, so they are unaffected.
-	autoReapEmptyServer = false
-
+	// Every test that touches a tmux server takes its own via
+	// tmuxIsolatedSocket, so no server is shared and autoReapEmptyServer is
+	// left at its production value — the reap can only ever collect the
+	// server belonging to the test that created it.
+	//
+	// tmuxSocketPath is still repointed at a temp path: it is the fallback
+	// NewTmuxTool uses when socketPath is empty, so leaving it at the
+	// production default would let a test that forgets to pass a socket
+	// reach the live agent's tmux server. Nothing should create sessions
+	// here; the redirect is a backstop, not a shared workspace.
 	dir, _ := os.MkdirTemp(testtemp.Dir(), "foci-tmux-test-*")
 	tmuxSocketPath = filepath.Join(dir, "tmux.sock")
-
-	// Pre-start the tmux server so parallel tests don't race on startup.
-	// "start-server" is a no-op if a server is already running.
-	if _, err := exec.LookPath("tmux"); err == nil {
-		exec.Command("tmux", "-S", tmuxSocketPath, "start-server").Run()
-	}
 
 	code := m.Run()
 	exec.Command("tmux", "-S", tmuxSocketPath, "kill-server").Run()
@@ -60,37 +57,62 @@ func tmuxAvailable(t *testing.T) {
 // registers cleanup to kill it. Returns the socket path to pass to NewTmuxTool
 // (and to any direct tmux commands the test issues).
 //
-// Unlike the package-shared tmuxSocketPath, this fully isolates the test from
-// sibling parallel tests: a kill-server (or production maybeKillTmuxServer) in
-// another test can never destroy this test's sessions. Tests that depend on a
-// session staying alive across a NewTmuxTool restore MUST use this — sharing the
-// package socket lets a concurrent kill-server prune their watches mid-test.
-// Skips the test if tmux is unavailable.
+// This is the ONLY way a test in this package should reach a tmux server. It
+// fully isolates the test from its siblings: a kill-server (or production
+// maybeKillTmuxServer, or a reap of the last session) in another test can never
+// destroy this test's sessions, and no test needs to invent a unique session
+// name to avoid colliding with one. Skips the test if tmux is unavailable.
 func tmuxIsolatedSocket(t *testing.T) string {
 	t.Helper()
 	tmuxAvailable(t)
 	sock := filepath.Join(t.TempDir(), "tmux.sock")
-	exec.Command("tmux", "-S", sock, "start-server").Run()
+
+	// "start-server" on its own does NOT leave a server running: tmux's
+	// exit-empty option (default on) makes a server with no sessions exit
+	// immediately. Measured — start-server returns 0 and the very next
+	// list-sessions reports "no server running on <sock>". So a bare
+	// start-server is a no-op, and the first real command each test issues is
+	// what actually cold-starts the server. Under parallel load that fork
+	// races and fails, surfacing as "create session: exit status 1" or
+	// "server exited unexpectedly" attributed to whichever test drew the short
+	// straw — a setup failure wearing the costume of a product bug.
+	//
+	// exit-empty off keeps the empty server alive, so the server is warm
+	// before the test's first command and there is no cold start to race.
+	// Uses the production runTmuxRetryWithSocket for both steps: the server
+	// start is subject to exactly the transient failure it exists to absorb,
+	// so the fixture and the product should not have separate ideas about how
+	// to survive it.
+	ctx := context.Background()
+	if out, err := runTmuxRetryWithSocket(ctx, sock, 3,
+		"start-server", ";", "set", "-g", "exit-empty", "off"); err != nil {
+		t.Fatalf("tmux start-server on %s: %v: %s", sock, err, strings.TrimSpace(out))
+	}
 	t.Cleanup(func() {
-		exec.Command("tmux", "-S", sock, "kill-server").Run()
+		runTmuxWithSocket(ctx, sock, "kill-server") //nolint:errcheck // best-effort teardown
 	})
+
+	// Guard the premise: don't hand back a socket until the server actually
+	// answers. list-sessions exits 0 on a live empty server (and 1 with
+	// "no server running" if it died), so it is the readiness signal.
+	if _, err := runTmuxRetryWithSocket(ctx, sock, 20, "list-sessions"); err != nil {
+		t.Fatalf("tmux server on %s never became ready: %v", sock, err)
+	}
 	return sock
 }
 
-// tmuxSetup pre-cleans named sessions (from prior crashed runs) and registers
-// t.Cleanup to kill them when the test finishes. All operations use the
-// shared package tmux socket.
+// tmuxNoServerSocket returns a socket path with NO tmux server behind it, for
+// the tests that specifically exercise the "no server running" branch (tmux
+// commands fail, and the tool is expected to treat that as "zero sessions").
 //
-// Prefer tmuxIsolatedSocket for any test that creates sessions and depends on
-// them surviving: the shared socket is vulnerable to cross-test kill-server.
-func tmuxSetup(t *testing.T, names ...string) {
+// Kept distinct from tmuxIsolatedSocket because that helper deliberately keeps
+// an empty server alive (exit-empty off) to avoid cold-start races — which
+// means a command against it succeeds-with-no-rows rather than failing. Both
+// shapes are real; a test that cares which one it gets should say so.
+func tmuxNoServerSocket(t *testing.T) string {
 	t.Helper()
-	for _, name := range names {
-		exec.Command("tmux", "-S", tmuxSocketPath, "kill-session", "-t", name).Run()
-		t.Cleanup(func() {
-			exec.Command("tmux", "-S", tmuxSocketPath, "kill-session", "-t", name).Run()
-		})
-	}
+	tmuxAvailable(t)
+	return filepath.Join(t.TempDir(), "tmux.sock")
 }
 
 // pollForReadMatch repeatedly issues a "read" operation against name via tool
@@ -134,11 +156,12 @@ func pollForReadMatch(t *testing.T, tool *tools.Tool, name string, match func(te
 	}
 }
 
-// testTmuxInstance returns a minimal tmuxInstance using the global test socket.
-// Used by tests that call methods like tmuxSessionPIDs or maybeKillTmuxServer
-// directly (outside of a full NewTmuxTool).
-func testTmuxInstance() *tmuxInstance {
-	return &tmuxInstance{socketPath: tmuxSocketPath}
+// testTmuxInstance returns a minimal tmuxInstance bound to sock. Used by tests
+// that call methods like tmuxSessionPIDs or maybeKillTmuxServer directly
+// (outside of a full NewTmuxTool). Pass a socket from tmuxIsolatedSocket so the
+// instance can never see — or kill — a sibling parallel test's server.
+func testTmuxInstance(sock string) *tmuxInstance {
+	return &tmuxInstance{socketPath: sock}
 }
 
 // pollUntil repeatedly calls cond (every 20ms) until it returns true or

@@ -20,7 +20,7 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 	// activity is detected, the watch remains in conditional state and does not
 	// send an inactivity notification.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	var fired atomic.Int32
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
@@ -34,10 +34,9 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 	}
 
 	// autopilot=true, threshold=2s for fast test
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-nofire", true, 2, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-nofire", true, 2, 0, sock)
 
 	name := "foci-test-cond-nofire"
-	tmuxSetup(t, name)
 
 	// Start with watch=false, then read to trigger conditional watch
 	params, _ := json.Marshal(map[string]interface{}{
@@ -87,7 +86,7 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 	// detecting activity, then fires the inactivity notification once the
 	// session becomes idle again.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	var mu sync.Mutex
 	var notifications []string
@@ -104,10 +103,9 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 	}
 
 	// autopilot=true, threshold=2s
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-fire", true, 2, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-fire", true, 2, 0, sock)
 
 	name := "foci-test-cond-fire"
-	tmuxSetup(t, name)
 
 	// Start with watch=false, use cat so we can produce output
 	params, _ := json.Marshal(map[string]interface{}{
@@ -134,8 +132,8 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 	}
 
 	// Produce activity: send some text to cat (which echoes it)
-	exec.Command("tmux", "-S", tmuxSocketPath, "send-keys", "-t", name, "-l", "activity!").Run()
-	exec.Command("tmux", "-S", tmuxSocketPath, "send-keys", "-t", name, "Enter").Run()
+	exec.Command("tmux", "-S", sock, "send-keys", "-t", name, "-l", "activity!").Run()
+	exec.Command("tmux", "-S", sock, "send-keys", "-t", name, "Enter").Run()
 
 	// Wait for the monitor to detect activity (poll interval 2s) then
 	// for the inactivity threshold (2s) to fire — total ~6s should be enough.
@@ -167,7 +165,7 @@ func TestTmuxReadNoConditionalWatchWithoutAutopilot(t *testing.T) {
 	// Verifies that read does NOT set a conditional watch when autopilot is
 	// disabled, keeping watch management fully manual.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	dir := t.TempDir()
@@ -177,10 +175,9 @@ func TestTmuxReadNoConditionalWatchWithoutAutopilot(t *testing.T) {
 	}
 
 	// autopilot=false
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-cond", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-cond", false, 30, 0, sock)
 
 	name := "foci-test-no-cond"
-	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -210,7 +207,7 @@ func TestTmuxReadNoConditionalWatchIfAlreadyWatched(t *testing.T) {
 	// Verifies that reading a session that is already watched does NOT add a
 	// second (conditional) watch, even with autopilot enabled.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	dir := t.TempDir()
@@ -220,10 +217,9 @@ func TestTmuxReadNoConditionalWatchIfAlreadyWatched(t *testing.T) {
 	}
 
 	// autopilot=true
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-dup", true, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-dup", true, 30, 0, sock)
 
 	name := "foci-test-cond-dup"
-	tmuxSetup(t, name)
 
 	// Start with watch=true — auto-watches normally
 	params, _ := json.Marshal(map[string]interface{}{
@@ -264,7 +260,7 @@ func TestTmuxConditionalWatchPersistence(t *testing.T) {
 	// Verifies that a conditional watch is persisted with the conditional flag
 	// set, so it survives restarts in its conditional state.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	dir := t.TempDir()
@@ -274,10 +270,9 @@ func TestTmuxConditionalWatchPersistence(t *testing.T) {
 	}
 
 	// autopilot=true
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-persist", true, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-persist", true, 30, 0, sock)
 
 	name := "foci-test-cond-persist"
-	tmuxSetup(t, name)
 
 	// Start with watch=false
 	params, _ := json.Marshal(map[string]interface{}{

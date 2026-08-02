@@ -13,14 +13,13 @@ import (
 func TestTmuxInstanceIsolation(t *testing.T) {
 	// Verifies that separate tool instances have independent ownership state: instance B cannot read, send to, or kill sessions owned by instance A.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
-	_, toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
-	_, toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
+	_, toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	nameA := "foci-test-iso-a"
 	nameB := "foci-test-iso-b"
-	tmuxSetup(t, nameA, nameB)
 
 	// Agent A starts a session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -219,14 +218,13 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 func TestTmuxWatchIsolation(t *testing.T) {
 	// Verifies that watch/unwatch state is per-instance: instance B can watch the same session name as A, and A's unwatch does not affect B's watch.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
-	_, toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
-	_, toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-watchiso"
-	tmuxSetup(t, name)
 
 	// Agent A starts and watches
 	params, _ := json.Marshal(map[string]interface{}{

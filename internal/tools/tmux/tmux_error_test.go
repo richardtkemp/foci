@@ -27,8 +27,8 @@ func TestTmuxInvalidOperation(t *testing.T) {
 func TestTmuxStartNoName(t *testing.T) {
 	// Verifies that omitting the name parameter auto-generates a foci-prefixed session name rather than failing.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -41,20 +41,15 @@ func TestTmuxStartNoName(t *testing.T) {
 	if !strings.Contains(result.Text, "foci-") {
 		t.Errorf("result = %q, want auto-generated foci-N name", result.Text)
 	}
-
-	// Extract name and clean up
-	name := strings.TrimPrefix(result.Text, "Session started: ")
-	tmuxSetup(t, name)
 }
 
 func TestTmuxSendNoEnter(t *testing.T) {
 	// Verifies that keys can be sent without triggering Enter, leaving typed text in the input buffer without executing it.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-noenter"
-	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -83,11 +78,10 @@ func TestTmuxSendNoEnter(t *testing.T) {
 func TestTmuxSendBareEnter(t *testing.T) {
 	// Verifies that enter=true with no keys succeeds (sends just Enter), while enter=false with no keys correctly fails as an empty operation.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-bareenter"
-	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",

@@ -428,6 +428,56 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	return runTmuxWithSocket(ctx, tmuxSocketPath, args...)
 }
 
+// runTmuxRetryWithSocket runs a tmux command, retrying a transient failure up
+// to attempts times with a short growing backoff. Returns the last attempt's
+// output and error.
+//
+// This exists because tmux's server start is genuinely racy under fork /
+// resource pressure: a command that must talk to a not-yet-running server can
+// fail with "server exited unexpectedly" or a bare exit 1, and simply doing it
+// again a moment later succeeds.
+//
+// The backoff is the load-bearing part. The obvious remediation — call
+// "start-server" first, then retry immediately — does NOT work, and it is worth
+// recording why, because the code here used to do exactly that. tmux's
+// exit-empty option (on by default) makes a server with no sessions exit as
+// soon as it has started, so "start-server" on an idle socket returns 0 and
+// leaves nothing running:
+//
+//	$ tmux -S /tmp/x.sock start-server ; echo $?
+//	0
+//	$ tmux -S /tmp/x.sock list-sessions
+//	no server running on /tmp/x.sock
+//
+// So the explicit start was always a no-op, and the retry only ever worked by
+// accident when the second attempt's own implicit server start happened to win
+// the race. Retrying with a pause is the honest version of that.
+func runTmuxRetryWithSocket(ctx context.Context, socket string, attempts int, args ...string) (string, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var out string
+	var err error
+	for i := range attempts {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			case <-time.After(time.Duration(i) * 100 * time.Millisecond):
+			}
+		}
+		if out, err = runTmuxWithSocket(ctx, socket, args...); err == nil {
+			return out, nil
+		}
+	}
+	return out, err
+}
+
+// runTmuxRetry is runTmuxRetryWithSocket bound to this instance's socket.
+func (inst *tmuxInstance) runTmuxRetry(ctx context.Context, attempts int, args ...string) (string, error) {
+	return runTmuxRetryWithSocket(ctx, inst.socketPath, attempts, args...)
+}
+
 // tmuxStartDiag probes a tmux server start with verbose logging (-vv) and
 // returns a best-effort diagnostic string explaining why the server won't come
 // up — tmux's own "server exited unexpectedly" carries no detail on its own.
