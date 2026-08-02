@@ -99,22 +99,32 @@ func TestParseCostArgs(t *testing.T) {
 		scopes  []string
 		brk     bool
 	}{
-		{"empty", "", false, durNone, nil, false},
-		{"today", "today", false, durToday, nil, false},
-		{"24h", "24h", false, durWindow, nil, false},
-		{"week", "week", false, durWindow, nil, false},
-		{"4h Go duration", "4h", false, durWindow, nil, false},
-		{"3 days numeric", "3", false, durWindow, nil, false},
-		{"breakdown only", "breakdown", false, durNone, nil, true},
+		// No ownership scope named → defaults to the calling agent.
+		{"empty", "", false, durNone, []string{"agent"}, false},
+		{"today", "today", false, durToday, []string{"agent"}, false},
+		{"24h", "24h", false, durWindow, []string{"agent"}, false},
+		{"week", "week", false, durWindow, []string{"agent"}, false},
+		{"4h Go duration", "4h", false, durWindow, []string{"agent"}, false},
+		{"3 days numeric", "3", false, durWindow, []string{"agent"}, false},
+		{"breakdown only", "breakdown", false, durNone, []string{"agent"}, true},
+		// "all" opts out of the default, leaving no ownership filter.
+		{"all scope", "all", false, durNone, nil, false},
+		{"household alias", "household", false, durNone, nil, false},
+		{"everyone alias", "everyone", false, durNone, nil, false},
+		{"all+week", "all week", false, durWindow, nil, false},
+		{"all+type scope", "all facet", false, durNone, []string{"facet"}, false},
 		{"session scope", "session", false, durNone, []string{"session"}, false},
 		{"self alias", "self", false, durNone, []string{"session"}, false},
 		{"strict-self", "strict-self", false, durNone, []string{"strict-self"}, false},
 		{"descendants alias", "forks", false, durNone, []string{"descendants"}, false},
 		{"agent scope", "agent", false, durNone, []string{"agent"}, false},
-		{"facet type scope", "facet", false, durNone, []string{"facet"}, false},
+		// A session-type scope is orthogonal: it does NOT suppress the
+		// default agent scope, so "/cost facet" means this agent's facets.
+		{"facet type scope", "facet", false, durNone, []string{"facet", "agent"}, false},
 		{"today+session", "today session", false, durToday, []string{"session"}, false},
 		{"24h+agent+breakdown", "24h agent breakdown", false, durWindow, []string{"agent"}, true},
 		{"multiple scopes", "session facet", false, durNone, []string{"session", "facet"}, false},
+		{"multiple scopes reversed", "facet session", false, durNone, []string{"facet", "session"}, false},
 		{"unknown token", "banana", true, 0, nil, false},
 		{"two durations", "today 24h", true, 0, nil, false},
 	} {
@@ -257,6 +267,69 @@ func TestScopePredicate_Agent(t *testing.T) {
 	// Other agent should not match.
 	if pred("other/x1") {
 		t.Error("other/x1 should not match agent scope")
+	}
+}
+
+// A bare /cost must report only the calling agent's spend. Regression test for
+// the household-wide totals a scopeless /cost used to produce.
+func TestScopePredicate_DefaultsToAgent(t *testing.T) {
+	idx := costTestIndex(t)
+	root, _ := seedFamily(t, idx)
+
+	args, err := parseCostArgs("week")
+	if err != nil {
+		t.Fatalf("parseCostArgs: %v", err)
+	}
+	pred, label := scopePredicate(args.scopes, root, idx)
+
+	if !pred(root) || !pred("bot/c999") {
+		t.Error("own agent sessions should match the default scope")
+	}
+	if pred("other/x1") {
+		t.Error("another agent's session must not match the default scope")
+	}
+	if !strings.Contains(label, "agent bot") {
+		t.Errorf("label = %q, want it to mention agent bot", label)
+	}
+}
+
+// "all" opts back into household-wide reporting.
+func TestScopePredicate_AllScope(t *testing.T) {
+	idx := costTestIndex(t)
+	root, _ := seedFamily(t, idx)
+
+	args, err := parseCostArgs("week all")
+	if err != nil {
+		t.Fatalf("parseCostArgs: %v", err)
+	}
+	pred, _ := scopePredicate(args.scopes, root, idx)
+
+	if !pred(root) || !pred("other/x1") {
+		t.Error("all scope should match every agent's sessions")
+	}
+}
+
+// Without a session index the agent scope still resolves, via the key prefix.
+func TestScopePredicate_AgentWithoutIndex(t *testing.T) {
+	pred, _ := scopePredicate([]string{"agent"}, "bot/c123", nil)
+
+	if !pred("bot/c999") {
+		t.Error("own agent session should match without an index")
+	}
+	if pred("other/x1") {
+		t.Error("other agent should not match without an index")
+	}
+}
+
+// An unknown caller agent must not silently zero the report.
+func TestScopePredicate_AgentUnknownCallerNoFilter(t *testing.T) {
+	idx := costTestIndex(t)
+	seedFamily(t, idx)
+
+	pred, _ := scopePredicate([]string{"agent"}, "", idx)
+
+	if !pred("bot/c123") || !pred("other/x1") {
+		t.Error("empty caller key should fall back to no ownership filter")
 	}
 }
 

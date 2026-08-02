@@ -28,7 +28,8 @@ func costUsage() string {
 		"  session / self   this session and all descendants\n" +
 		"  strict-self      only this session (no descendants)\n" +
 		"  descendants      only descendant sessions\n" +
-		"  agent            all sessions owned by this agent\n" +
+		"  agent            all sessions owned by this agent (default)\n" +
+		"  all              every agent in the household\n" +
 		"  facet reflection chat independent spawn keepalive background-task\n" +
 		"\n" +
 		"breakdown          split by session type instead of default view"

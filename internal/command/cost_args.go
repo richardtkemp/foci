@@ -48,6 +48,27 @@ var scopeAliases = map[string]string{
 	"agent":       "agent",
 }
 
+// ownershipScopes are the scopes that answer "whose sessions?". Exactly one
+// family of these is always in effect: if the user names none, /cost defaults
+// to "agent" so a bare /cost reports the calling agent's spend rather than the
+// whole household's. Session-type scopes (reflection, keepalive, …) are
+// orthogonal and do NOT suppress the default — "/cost week reflection" means
+// "this agent's reflection sessions".
+var ownershipScopes = map[string]bool{
+	"session":     true,
+	"strict-self": true,
+	"descendants": true,
+	"agent":       true,
+}
+
+// allScopeAliases are the keywords that opt out of the default agent scope and
+// report across every agent in the household.
+var allScopeAliases = map[string]bool{
+	"all":       true,
+	"everyone":  true,
+	"household": true,
+}
+
 // sessionTypeScopes is the set of session_type values accepted as scopes.
 var sessionTypeScopes = map[string]bool{
 	string(session.SessionTypeChat):          true,
@@ -65,10 +86,15 @@ var sessionTypeScopes = map[string]bool{
 func parseCostArgs(args string) (costArgs, error) {
 	fields := strings.Fields(args)
 	var result costArgs
+	allScope := false
 	for _, f := range fields {
 		lower := strings.ToLower(f)
 		if lower == "breakdown" {
 			result.breakdown = true
+			continue
+		}
+		if allScopeAliases[lower] {
+			allScope = true
 			continue
 		}
 		if dk, dur, label, calendar, ok := tryParseCostDuration(lower); ok {
@@ -91,7 +117,23 @@ func parseCostArgs(args string) (costArgs, error) {
 		}
 		return costArgs{}, fmt.Errorf("unknown /cost argument %q", f)
 	}
+	// Default to the calling agent's own sessions unless the user named an
+	// ownership scope explicitly or opted into household-wide with "all".
+	if !allScope && !hasOwnershipScope(result.scopes) {
+		result.scopes = append(result.scopes, "agent")
+	}
 	return result, nil
+}
+
+// hasOwnershipScope reports whether the scope list already answers "whose
+// sessions?", meaning the default agent scope should not be applied.
+func hasOwnershipScope(scopes []string) bool {
+	for _, s := range scopes {
+		if ownershipScopes[s] {
+			return true
+		}
+	}
+	return false
 }
 
 // tryParseCostDuration attempts to classify a token as a duration.
@@ -161,31 +203,43 @@ func scopePredicate(scopes []string, sessionKey string, idx *session.SessionInde
 		return func(string) bool { return true }, ""
 	}
 	if idx == nil {
-		// Without an index, only strict-self resolves (to the bare key).
+		// Without an index, only strict-self, session and agent resolve.
 		// Other scopes match nothing.
 		var labelParts []string
 		pred := func(sk string) bool { return true }
 		for _, scope := range scopes {
-			var keys map[string]struct{}
+			var match func(string) bool
 			var label string
 			switch scope {
 			case "strict-self":
-				keys = map[string]struct{}{sessionKey: {}}
 				label = "this session only"
+				match = func(sk string) bool { return sk == sessionKey }
 			case "session":
-				keys = map[string]struct{}{sessionKey: {}}
 				label = "this session"
+				match = func(sk string) bool { return sk == sessionKey }
+			case "agent":
+				// Session keys are "<agent>/<session-id>", so the agent's
+				// sessions are exactly those under its key prefix. This works
+				// without an index and also covers any session the index has
+				// not (yet) recorded.
+				agentID := agentFromSession(sessionKey)
+				if agentID == "" {
+					continue
+				}
+				label = "agent " + agentID
+				match = func(sk string) bool {
+					return agentFromSession(sk) == agentID
+				}
 			default:
 				label = scope
 			}
 			labelParts = append(labelParts, label)
 			prev := pred
 			pred = func(sk string) bool {
-				if keys == nil {
+				if match == nil {
 					return false
 				}
-				_, ok := keys[sk]
-				return prev(sk) && ok
+				return prev(sk) && match(sk)
 			}
 		}
 		return pred, strings.Join(labelParts, " ∩ ")
@@ -194,9 +248,25 @@ func scopePredicate(scopes []string, sessionKey string, idx *session.SessionInde
 	var labelParts []string
 	pred := func(sk string) bool { return true }
 	for _, scope := range scopes {
+		prev := pred
+		if scope == "agent" {
+			// Prefix match rather than an index lookup: session keys are
+			// "<agent>/<session-id>", so ownership is derivable from the key
+			// itself and cannot under-report a session the index is missing.
+			agentID := agentFromSession(sessionKey)
+			if agentID == "" {
+				// Caller's agent is unknown — filtering on it would silently
+				// report zero. Fall through to no ownership filter instead.
+				continue
+			}
+			labelParts = append(labelParts, "agent "+agentID)
+			pred = func(sk string) bool {
+				return prev(sk) && agentFromSession(sk) == agentID
+			}
+			continue
+		}
 		keys, label := resolveScopeKeys(scope, sessionKey, idx)
 		labelParts = append(labelParts, label)
-		prev := pred
 		pred = func(sk string) bool {
 			_, ok := keys[sk]
 			return prev(sk) && ok
