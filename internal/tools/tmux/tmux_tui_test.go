@@ -430,11 +430,10 @@ func TestCleanTUIOutput_PureChromeEmpty(t *testing.T) {
 func TestTmuxReadRaw(t *testing.T) {
 	// Verifies that raw=true bypasses TUI cleaning and preserves all content including CC markers, while raw=false (default) applies the cleaning pipeline.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-readraw"
-	tmuxSetup(t, name)
 
 	// Start a session that echoes CC-like content
 	params, _ := json.Marshal(map[string]interface{}{

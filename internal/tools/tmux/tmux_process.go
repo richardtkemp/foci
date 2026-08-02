@@ -28,19 +28,23 @@ func (inst *tmuxInstance) killSessionWithChildren(ctx context.Context, name stri
 
 // autoReapEmptyServer gates the AUTOMATIC "kill the server once the last
 // session goes" behaviour at its two call sites (the kill operation and the
-// TTL reaper). Production leaves it true.
+// TTL reaper).
 //
-// The test binary sets it false, because the behaviour is hostile to a shared
-// fixture: this package's tests share one tmux server, and the reap is
-// inherently racy — list-sessions and kill-server are two separate tmux calls,
-// so a session created in between is destroyed by a decision made before it
-// existed. That is not a hypothetical; it silently killed sibling tests'
-// sessions for months, surfacing as unrelated-looking failures 10s later
-// (#1560, #1586).
+// The reap is inherently racy: the emptiness check and the kill are two
+// separate tmux calls, so a session created in between is destroyed by a
+// decision taken before it existed. Anything sharing a tmux server with a
+// reaping instance is exposed to that. In production each agent has its own
+// server, so the only session that can be lost is one the same instance just
+// created; in tests, a shared server meant one test's cleanup silently killed
+// a sibling's sessions, surfacing as unrelated-looking failures 10s later
+// (#1560, #1586, #1673).
 //
-// Gating the CALL SITES rather than the function keeps maybeKillTmuxServer
-// itself directly testable — the tests that actually exercise it call it
-// explicitly, on their own isolated servers.
+// The flag stays because the gate is the honest place to express "this is not
+// unconditionally safe", and because gating the CALL SITES rather than the
+// function keeps maybeKillTmuxServer itself directly testable. Nothing sets it
+// false today: the test binary no longer needs to, because every test that
+// touches a tmux server now takes its own via tmuxIsolatedSocket, so a reap
+// can only ever collect the server belonging to the test that created it.
 //
 // A grace period was considered and rejected: delaying the kill WIDENS the
 // window between the check and the kill rather than closing it.

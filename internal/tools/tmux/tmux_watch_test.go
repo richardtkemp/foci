@@ -15,11 +15,10 @@ import (
 func TestTmuxWatchUnwatch(t *testing.T) {
 	// Verifies that watch registers monitoring for a session and unwatch stops it, both returning appropriate confirmation messages.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-watch"
-	tmuxSetup(t, name)
 
 	// Start a session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -62,11 +61,10 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	// Verifies that a second watch call on an already-watched session returns a clear error, preventing duplicate watch registrations.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-watch-dup"
-	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -125,17 +123,16 @@ func TestTmuxUnwatchNotWatched(t *testing.T) {
 func TestTmuxWatchWakeCallback(t *testing.T) {
 	// Verifies that when a watched session is inactive longer than the threshold, the wake notifier fires with a message containing the session name and TMUX WATCH context.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	var wakeMsg atomic.Value
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		wakeMsg.Store(msg)
 	})
 
-	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-wake"
-	tmuxSetup(t, name)
 
 	// Start a session that does nothing (sleep) — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -190,7 +187,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 func TestTmuxWatchDeadSession(t *testing.T) {
 	// Verifies that when a watched session is externally killed, the watch state is cleaned up automatically without sending a spurious notification.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	var msgs []string
 	var mu sync.Mutex
@@ -200,10 +197,9 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		mu.Unlock()
 	})
 
-	watchCount, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, "")
+	watchCount, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-dead"
-	tmuxSetup(t, name)
 
 	// Start a session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -227,7 +223,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	}
 
 	// Kill the tmux session externally
-	exec.Command("tmux", "-S", tmuxSocketPath, "kill-session", "-t", name).Run()
+	exec.Command("tmux", "-S", sock, "kill-session", "-t", name).Run()
 
 	// Poll until the monitor goroutine actually detects the dead session and
 	// removes it from the watched map, instead of guessing its ~2s poll

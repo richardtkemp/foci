@@ -154,7 +154,9 @@ func TestTmuxPersistOnKill(t *testing.T) {
 
 func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	// Verifies that listing sessions clears stale entries from persisted state when the corresponding tmux sessions no longer exist.
-	sock := tmuxIsolatedSocket(t)
+	// No server: this test covers list()'s "no server running" branch, which is
+	// where clearStaleOwned is reached.
+	sock := tmuxNoServerSocket(t)
 
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
@@ -181,6 +183,64 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	}
 
 	// Verify persisted state was cleared
+	raw, err := idx.GetAgentMetadata("test-agent", "tmux_owned")
+	if err != nil || raw == "" {
+		t.Fatal("owned sessions key should still exist")
+	}
+	var owned map[string]string
+	if err := json.Unmarshal([]byte(raw), &owned); err != nil {
+		t.Fatalf("unmarshal owned: %v", err)
+	}
+	if len(owned) != 0 {
+		t.Errorf("persisted sessions after list = %v, want empty", owned)
+	}
+}
+
+func TestTmuxPersistClearedWhenServerHoldsOnlyUnownedSessions(t *testing.T) {
+	// Verifies that stale owned entries are cleared even when the tmux server is
+	// still ALIVE because sessions this agent does not own are keeping it up.
+	//
+	// The sibling test above covers the easy shape — the server is gone, so
+	// list() takes its "no server running" branch. This covers the shape that
+	// branch cannot reach: tmux answers normally, but none of the rows belong
+	// to us. list() used to return early on "nothing to display" before it got
+	// as far as the cleanup, so the persisted map stayed stale forever.
+	t.Parallel()
+	sock := tmuxIsolatedSocket(t)
+
+	// A session this agent does not own, keeping the server up.
+	if _, err := runTmuxWithSocket(context.Background(), sock,
+		"new-session", "-d", "-s", "foci-test-unowned", "sleep", "60"); err != nil {
+		t.Fatalf("create unowned session: %v", err)
+	}
+
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedJSON, _ := json.Marshal(map[string]string{"foci-test-gone1": "", "foci-test-gone2": ""})
+	if err := idx.SetAgentMetadata("test-agent", "tmux_owned", string(ownedJSON)); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	_, tool, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
+
+	// Guard the premise: the fixture is only meaningful if tmux really does
+	// answer this list successfully. If the server were absent, list() would
+	// take the error branch and clear the map for the wrong reason — the test
+	// would pass without exercising anything.
+	if out, err := runTmuxWithSocket(context.Background(), sock, "list-sessions", "-F", "#{session_name}"); err != nil {
+		t.Fatalf("premise failed: list-sessions must succeed, got %v: %s", err, out)
+	} else if !strings.Contains(out, "foci-test-unowned") {
+		t.Fatalf("premise failed: unowned session missing from %q", out)
+	}
+
+	params, _ := json.Marshal(map[string]interface{}{"operation": "list"})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
 	raw, err := idx.GetAgentMetadata("test-agent", "tmux_owned")
 	if err != nil || raw == "" {
 		t.Fatal("owned sessions key should still exist")

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"foci/internal/tools"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,11 +12,10 @@ import (
 func TestTmuxSendRateLimit(t *testing.T) {
 	// Verifies that consecutive sends are rate-limited: the first send completes quickly but the second is delayed ~2s, enforcing the send rate limit.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-ratelimit"
-	tmuxSetup(t, name)
 
 	// Start a session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -67,14 +64,13 @@ func TestTmuxSendRateLimit(t *testing.T) {
 func TestTmuxSessionKeyIsolation(t *testing.T) {
 	// Verifies that session key isolation is enforced: one session context cannot read, send to, or kill sessions owned by a different context.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	// Single tool instance, two different session keys
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	nameA := "foci-test-skiso-a"
 	nameB := "foci-test-skiso-b"
-	tmuxSetup(t, nameA, nameB)
 
 	ctxA := tools.WithSessionKey(context.Background(), "test/c111")
 	ctxB := tools.WithSessionKey(context.Background(), "test/c222")
@@ -156,18 +152,10 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 
 func TestTmuxReapExpiredSessions(t *testing.T) {
 	// Verifies that the reaper removes sessions whose lastAccess time is past the TTL, killing both the internal tracking state and the actual tmux session.
-	tmuxAvailable(t)
-
+	t.Parallel()
 	// Isolated tmux server so the reaper's maybeKillTmuxServer
 	// can't race with other parallel tests on the shared server.
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "tmux.sock")
-	exec.Command("tmux", "-S", sock, "start-server").Run()
-	t.Cleanup(func() {
-		exec.Command("tmux", "-S", sock, "kill-server").Run()
-	})
-
-	t.Parallel()
+	sock := tmuxIsolatedSocket(t)
 
 	name := "foci-test-reap"
 
@@ -211,10 +199,9 @@ func TestTmuxReapExpiredSessions(t *testing.T) {
 func TestTmuxReapPreservesActiveSession(t *testing.T) {
 	// Verifies that recently-accessed sessions are not reaped even when the reaper runs, distinguishing active from expired by TTL comparison.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	name := "foci-test-reap-active"
-	tmuxSetup(t, name)
 
 	inst := &tmuxInstance{
 		watched:    make(map[string]*watchedSession),
@@ -222,11 +209,11 @@ func TestTmuxReapPreservesActiveSession(t *testing.T) {
 		lastSend:   make(map[string]time.Time),
 		lastAccess: make(map[string]time.Time),
 		sessionTTL: 1 * time.Hour,
-		socketPath: tmuxSocketPath,
+		socketPath: sock,
 	}
 
 	// Create a real tmux session
-	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep", "60")
+	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, "sleep", "60")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -244,7 +231,7 @@ func TestTmuxReapPreservesActiveSession(t *testing.T) {
 	}
 
 	// Verify tmux session still exists
-	_, err = runTmux(context.Background(), "has-session", "-t", name)
+	_, err = runTmuxWithSocket(context.Background(), sock, "has-session", "-t", name)
 	if err != nil {
 		t.Error("active tmux session should still exist after reap")
 	}

@@ -210,24 +210,23 @@ func TestTerminateProcesses(t *testing.T) {
 func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 	// Verifies that maybeKillTmuxServer does not kill the server when active sessions still exist, preserving running work.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	name := "foci-test-maybekill"
-	tmuxSetup(t, name)
 
 	// Start a session so the server has at least one.
-	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep 300")
+	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, "sleep 300")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
 	// maybeKillTmuxServer should NOT kill because sessions exist.
-	if testTmuxInstance().maybeKillTmuxServer(context.Background()) {
+	if testTmuxInstance(sock).maybeKillTmuxServer(context.Background()) {
 		t.Error("maybeKillTmuxServer killed server while sessions exist")
 	}
 
 	// Verify the session is still there.
-	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
+	out, err := runTmuxWithSocket(context.Background(), sock, "list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		t.Fatalf("list-sessions after maybeKillTmuxServer: %v", err)
 	}
@@ -238,15 +237,8 @@ func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 
 func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
 	// Verifies that maybeKillTmuxServer kills the server when no sessions remain, and handles both "server already exited" and "server still running" cases gracefully.
-	tmuxAvailable(t)
-
 	// Isolated tmux server so killing it doesn't affect other parallel tests.
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "tmux.sock")
-	exec.Command("tmux", "-S", sock, "start-server").Run()
-	t.Cleanup(func() {
-		exec.Command("tmux", "-S", sock, "kill-server").Run()
-	})
+	sock := tmuxIsolatedSocket(t)
 	inst := &tmuxInstance{socketPath: sock}
 
 	t.Parallel()
@@ -337,13 +329,12 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 func TestTmuxSessionPIDs(t *testing.T) {
 	// Verifies that tmuxSessionPIDs returns valid process IDs for a running session's panes, confirming they are real /proc entries.
 	t.Parallel()
-	tmuxAvailable(t)
+	sock := tmuxIsolatedSocket(t)
 
 	name := "foci-test-pids"
-	tmuxSetup(t, name)
 
 	// Create a session
-	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep 300")
+	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, "sleep 300")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -351,7 +342,7 @@ func TestTmuxSessionPIDs(t *testing.T) {
 	// No wait needed: new-session -d is synchronous and tmux assigns+reports
 	// the pane's PID as part of that same call (verified: list-panes reflects
 	// it with zero measured delay), so it's immediately queryable.
-	pids := testTmuxInstance().tmuxSessionPIDs(name)
+	pids := testTmuxInstance(sock).tmuxSessionPIDs(name)
 	if len(pids) == 0 {
 		t.Error("expected at least 1 pane PID")
 	}

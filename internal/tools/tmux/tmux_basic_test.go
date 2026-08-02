@@ -3,7 +3,6 @@ package tmux
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,11 +12,10 @@ import (
 func TestTmuxStartAndList(t *testing.T) {
 	// Verifies that sessions can be started and listed correctly, confirming the session name appears in list output with proper ownership markers.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-start"
-	tmuxSetup(t, name)
 
 	// Start
 	params, _ := json.Marshal(map[string]interface{}{
@@ -57,11 +55,10 @@ func TestTmuxStartAndList(t *testing.T) {
 func TestTmuxSendAndRead(t *testing.T) {
 	// Verifies that text sent to a session appears in the read output, confirming the send→read round-trip works correctly.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-sendread"
-	tmuxSetup(t, name)
 
 	// Start a session with cat (echoes input)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -97,11 +94,10 @@ func TestTmuxSendAndRead(t *testing.T) {
 func TestTmuxReadDefault(t *testing.T) {
 	// Verifies that read succeeds with no explicit line count, confirming the default parameter works without error.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-readdefault"
-	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -124,20 +120,11 @@ func TestTmuxReadDefault(t *testing.T) {
 
 func TestTmuxKill(t *testing.T) {
 	// Verifies that killing a session removes it from the list, confirming kill actually terminates and deregisters the session.
-	tmuxAvailable(t)
-
+	t.Parallel()
 	// Isolated tmux server so the kill path's maybeKillTmuxServer
 	// can't race with other parallel tests on the shared server.
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "tmux.sock")
-	exec.Command("tmux", "-S", sock, "start-server").Run()
-	t.Cleanup(func() {
-		exec.Command("tmux", "-S", sock, "kill-server").Run()
-	})
-
+	sock := tmuxIsolatedSocket(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
-
-	t.Parallel()
 
 	name := "foci-test-kill"
 
@@ -180,11 +167,10 @@ func TestTmuxKill(t *testing.T) {
 func TestTmuxStartWithWorkdir(t *testing.T) {
 	// Verifies that a session started with a workdir parameter actually runs in that directory, confirmed by reading pwd output.
 	t.Parallel()
-	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	sock := tmuxIsolatedSocket(t)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
 
 	name := "foci-test-workdir"
-	tmuxSetup(t, name)
 
 	dir := t.TempDir()
 	params, _ := json.Marshal(map[string]interface{}{
