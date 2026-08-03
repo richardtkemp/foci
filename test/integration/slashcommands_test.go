@@ -583,11 +583,19 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 		t.Fatalf("seed api.jsonl: %v", err)
 	}
 
-	pushTelegramText(t, h, "alpha", userID, "/cost today")
+	// "all" is required since a7a618b2: a bare /cost now defaults to the CALLING
+	// agent's own sessions, and the seeded session names above are deliberately
+	// synthetic ("won't collide with anything foci writes internally"), so they
+	// are not attributable to alpha and the per-agent default filters them out.
+	// This test is about aggregation and rendering, not scoping, so it opts back
+	// out to household-wide rather than reshaping the fixture. The per-agent
+	// default has its own test below.
+	pushTelegramText(t, h, "alpha", userID, "/cost today all")
 
 	// Expect a sendMessage with the "Today: $2.50" header and BOTH
 	// session names. Total comes from sumCosts; per-session table comes
-	// from costToday's grouping.
+	// from costToday's grouping. With the all-scope, scopePredicate returns an
+	// empty label, so the header stays the bare "Today" this asserts on.
 	text := waitForSendMessageText(t, h, token, 8*time.Second, "Today:")
 	if text == "" {
 		t.Fatalf("/cost today never produced a 'Today:' reply\nsent so far:\n%v\nstderr tail:\n%s",
@@ -598,6 +606,59 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 	}
 	if !strings.Contains(text, "L2_COST_TEST_SESSION_A") || !strings.Contains(text, "L2_COST_TEST_SESSION_B") {
 		t.Errorf("expected both seeded session names in /cost today reply; got:\n%s", text)
+	}
+}
+
+// TestL2_SlashCommands_CostTodayDefaultsToCallingAgent proves the a7a618b2
+// default: a BARE /cost reports only the calling agent's own sessions, not the
+// whole household's. Seeds the api log with rows that belong to no agent and
+// asserts they are excluded — the same fixture the all-scope test above proves
+// IS aggregated, so the pair pins the scoping decision rather than the totals.
+//
+// Worth an integration test rather than leaving it to cost_args' unit tests:
+// the unit tests exercise scope parsing, but "which agent is calling" only
+// exists once a real request carries a SessionKey through the gateway, and it
+// was this end of it that the old test's failure surfaced.
+func TestL2_SlashCommands_CostTodayDefaultsToCallingAgent(t *testing.T) {
+	testharness.ParallelWait(t)
+	const userID = 7065
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	apiLogPath := filepath.Join(h.LogsDir(), "api.jsonl")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	entries := []string{
+		`{"ts":"` + now + `","session":"L2_COST_OTHER_SESSION_A","model":"stub-model","input":100,"output":50,"golden_cost_usd":1.00,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","session":"L2_COST_OTHER_SESSION_B","model":"stub-model","input":200,"output":100,"golden_cost_usd":1.50,"call_type":"conversation"}`,
+	}
+	if err := os.WriteFile(apiLogPath, []byte(strings.Join(entries, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("seed api.jsonl: %v", err)
+	}
+
+	pushTelegramText(t, h, "alpha", userID, "/cost today")
+
+	// The header names the scope it applied — that is the part under test.
+	text := waitForSendMessageText(t, h, token, 8*time.Second, "agent alpha")
+	if text == "" {
+		t.Fatalf("bare /cost today never produced an agent-scoped reply\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+	// Guard the premise: if the seeding failed, "no rows for alpha" would be
+	// true for the wrong reason and this test would pass without testing anything.
+	seeded, err := os.ReadFile(apiLogPath)
+	if err != nil || !strings.Contains(string(seeded), "L2_COST_OTHER_SESSION_A") {
+		t.Fatalf("premise failed: api.jsonl does not contain the seeded rows (err=%v)", err)
+	}
+	for _, unwanted := range []string{"L2_COST_OTHER_SESSION_A", "L2_COST_OTHER_SESSION_B"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("bare /cost leaked another owner's session %q into the calling agent's report:\n%s", unwanted, text)
+		}
+	}
+	if !strings.Contains(text, "$0.00") {
+		t.Errorf("expected $0.00 for an agent with no attributable rows; got:\n%s", text)
 	}
 }
 
