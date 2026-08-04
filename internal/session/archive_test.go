@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"foci/internal/log"
 	"foci/internal/provider"
 )
 
@@ -418,4 +420,80 @@ func mustSessionPath(t *testing.T, store *Store, key string) string {
 		t.Fatalf("SessionPath(%s): %v", key, err)
 	}
 	return path
+}
+
+func TestArchiveSweep_SkipsIndexEntryPointingAtADirectory(t *testing.T) {
+	// Proves that an index row whose file_path names a DIRECTORY rather than a
+	// session file is skipped outright, instead of being handed to gzipFile and
+	// failing with a misleading "compress ...: is a directory" WARN.
+	//
+	// #1555. Live shape: session_index row codex/c7508215090037080023 has
+	// file_path "/home/foci/.codex/sessions/". A directory can never be gzipped,
+	// and a failed gzip `continue`s WITHOUT calling UpdateStatus — so the row
+	// stays `active`, stays a candidate, and re-warns on every sweep forever
+	// (544 occurrences in the archived logs). It went quiet on 2026-07-28 only
+	// because that session is being touched often enough to sit inside the
+	// maxAge window; it returns the moment codex idles past archive_after.
+	dir := t.TempDir()
+	store := NewStore(dir)
+	idx := tempIndex(t)
+
+	// Control: an ordinary session that MUST still archive in the same sweep.
+	// Without this, a "fix" that skipped every candidate would pass.
+	store.TestAppend("bot/c100", msg("user", "hello"))
+	if _, err := idx.Rebuild(store); err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+
+	// The defect: an index row whose file_path is a directory.
+	badDir := filepath.Join(t.TempDir(), "sessions") + string(os.PathSeparator)
+	if err := os.MkdirAll(badDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:  "codex/c999",
+		FilePath:    badDir,
+		CreatedAt:   time.Now().UTC().Add(-72 * time.Hour),
+		SessionType: SessionTypeChat,
+		Status:      SessionStatusActive,
+	})
+
+	past := time.Now().UTC().Add(-48 * time.Hour)
+	idx.UpdateActivity("bot/c100", past)
+	idx.UpdateActivity("codex/c999", past)
+
+	var mu sync.Mutex
+	var warns []string
+	log.SetWarnHook(func(_ log.Level, _ string, msg string) {
+		mu.Lock()
+		warns = append(warns, msg)
+		mu.Unlock()
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ArchiveSweep: %v", err)
+	}
+
+	// Premise guard: if the control did not archive, the sweep never reached its
+	// candidates and a clean warn log would mean nothing.
+	if archived != 1 {
+		t.Fatalf("premise failed: expected the control session to archive (1), got %d — the sweep did not process candidates, so this test proves nothing", archived)
+	}
+
+	// The directory must be left exactly as it was.
+	if fi, err := os.Stat(badDir); err != nil || !fi.IsDir() {
+		t.Errorf("directory entry was disturbed: stat err=%v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, w := range warns {
+		if strings.Contains(w, "gzip") || strings.Contains(w, "is a directory") {
+			t.Errorf("sweep tried to gzip a directory and warned: %q\n"+
+				"an index entry that is not a regular file can never be archived; it must be skipped, "+
+				"not retried-and-warned on every sweep", w)
+		}
+	}
 }

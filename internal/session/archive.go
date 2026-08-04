@@ -348,10 +348,25 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 
 	cutoff := time.Now().Add(-maxAge)
 	archived := 0
+	var unarchivable []string
 
 	for _, entry := range candidates {
 		// Never archive an agent's current chat session.
 		if currentKeys[entry.SessionKey] {
+			continue
+		}
+
+		// An index row whose file_path names something that isn't a regular
+		// file (a directory, a socket) can never be gzipped. Handing it to
+		// gzipFile fails, and the failure path `continue`s without calling
+		// UpdateStatus — so the row stays `active`, stays a candidate, and
+		// re-warns on every sweep in perpetuity. Skip it here and report it
+		// once per sweep as what it actually is: an index-integrity problem,
+		// not an archiving error. An empty path is deliberately NOT treated
+		// this way — Stat fails, so it falls through to the existing
+		// gzipFile-swallows-ENOENT behaviour, unchanged (#1555).
+		if fi, err := os.Stat(entry.FilePath); err == nil && !fi.Mode().IsRegular() {
+			unarchivable = append(unarchivable, entry.SessionKey)
 			continue
 		}
 
@@ -394,6 +409,15 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 		index.UpdateStatus(entry.SessionKey, SessionStatusArchived)
 		archived++
 		sessLog.Infof("archived session %s (last active %s)", entry.SessionKey, lastActivity.Format(time.RFC3339))
+	}
+
+	// Reported at Info, not Warn: the sweep cannot act on these and repeating a
+	// WARN every 6h for a condition nobody can fix from here is what eroded the
+	// zero-warning baseline in the first place (#1555). One line per sweep,
+	// naming a key, is enough to find the row.
+	if len(unarchivable) > 0 {
+		sessLog.Infof("archive sweep: %d index entries point at a non-regular file and can never be archived (e.g. %s) — needs index repair",
+			len(unarchivable), unarchivable[0])
 	}
 
 	return archived, nil
