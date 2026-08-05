@@ -1693,11 +1693,12 @@ func TestOnResult_OutputTokensFromModelUsage(t *testing.T) {
 	}
 }
 
-// TestOnResult_GoldenCostFromModelUsage is the ccstream half of foci_todo
-// #1407: CC's own per-model cost accounting (ModelUsage[resultModel].CostUSD)
-// must be captured into TurnUsage.CostUSD verbatim — not discarded, and not
-// replaced by a foci-side modelinfo calculation.
-func TestOnResult_GoldenCostFromModelUsage(t *testing.T) {
+// TestOnResult_ProvidedCostFromModelUsage: CC's own per-model cost accounting
+// (ModelUsage[resultModel].CostUSD) must be captured into
+// TurnUsage.ProvidedCostUSD verbatim — not discarded, and not replaced by a
+// foci-side calculation. It is no longer authoritative (#1674), but it is what
+// the divergence check is priced against, so it must still arrive intact.
+func TestOnResult_ProvidedCostFromModelUsage(t *testing.T) {
 	t.Parallel()
 
 	var completedResult *delegator.TurnResult
@@ -1724,19 +1725,27 @@ func TestOnResult_GoldenCostFromModelUsage(t *testing.T) {
 	if completedResult == nil || completedResult.Usage == nil {
 		t.Fatal("no result usage")
 	}
-	if completedResult.Usage.CostUSD == nil {
-		t.Fatal("CostUSD is nil, want CC's golden cost captured")
+	if completedResult.Usage.ProvidedCostUSD == nil {
+		t.Fatal("ProvidedCostUSD is nil, want CC's reported cost captured")
 	}
-	if *completedResult.Usage.CostUSD != 0.04242 {
-		t.Errorf("CostUSD = %v, want 0.04242 (verbatim from ModelUsage[primary])", *completedResult.Usage.CostUSD)
+	if *completedResult.Usage.ProvidedCostUSD != 0.04242 {
+		t.Errorf("ProvidedCostUSD = %v, want 0.04242 (verbatim from ModelUsage[primary])", *completedResult.Usage.ProvidedCostUSD)
+	}
+	// And the authoritative figure is OURS, computed from tokens — never the
+	// provider's number copied across (#1674).
+	if completedResult.Usage.CalculatedCostUSD == nil {
+		t.Fatal("CalculatedCostUSD is nil, want foci's own priced figure")
+	}
+	if *completedResult.Usage.CalculatedCostUSD == 0.04242 {
+		t.Error("CalculatedCostUSD equals the PROVIDED figure — it must be priced from tokens, not copied (#1674)")
 	}
 }
 
-// TestOnResult_NoGoldenCostWhenModelMissingFromUsage verifies CostUSD stays
-// nil (never fabricated) when resultModel has no entry in ModelUsage at all —
-// mirrors the OutputTokens fallback-not-fired case, but for cost there is no
-// fallback: an unknown model means no golden figure, full stop.
-func TestOnResult_NoGoldenCostWhenModelMissingFromUsage(t *testing.T) {
+// TestOnResult_NoCostWhenModelMissingFromUsage verifies both cost fields stay
+// nil (never fabricated) when resultModel has no entry in ModelUsage at all.
+// Without that entry there are no per-turn token deltas to price either, so
+// neither a provided nor a calculated figure exists — full stop.
+func TestOnResult_NoCostWhenModelMissingFromUsage(t *testing.T) {
 	t.Parallel()
 
 	var completedResult *delegator.TurnResult
@@ -1761,8 +1770,11 @@ func TestOnResult_NoGoldenCostWhenModelMissingFromUsage(t *testing.T) {
 	if completedResult == nil || completedResult.Usage == nil {
 		t.Fatal("no result usage")
 	}
-	if completedResult.Usage.CostUSD != nil {
-		t.Errorf("CostUSD = %v, want nil (no golden cost available)", *completedResult.Usage.CostUSD)
+	if completedResult.Usage.ProvidedCostUSD != nil {
+		t.Errorf("ProvidedCostUSD = %v, want nil (no reported cost available)", *completedResult.Usage.ProvidedCostUSD)
+	}
+	if completedResult.Usage.CalculatedCostUSD != nil {
+		t.Errorf("CalculatedCostUSD = %v, want nil (no token deltas to price)", *completedResult.Usage.CalculatedCostUSD)
 	}
 }
 

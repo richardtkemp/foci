@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/modelinfo"
 	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 )
@@ -412,21 +414,53 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// stay excluded from the primary's cost. On a key miss, fall back to the
 	// result's accumulated total (msg.Usage, all models). Apply as a floor so
 	// it can only correct an undercount, never regress a good value.
+	// EVERY ModelUsage counter is CUMULATIVE over the CC process, so this
+	// cycle's own figures come out by SUBTRACTION (#1674). Reading them raw was
+	// the over-count bug: each api.db row carried a running total, so summing
+	// rows inflated ~quadratically in turns-per-session (13x measured over
+	// 28 Jul - 4 Aug: $32,566 reported against ~$2,500 real).
+	mu, haveModelUsage := msg.ModelUsage[resultModel]
+	var usageDelta ModelUsage
+	if haveModelUsage {
+		b.mu.Lock()
+		usageDelta = b.modelUsageDelta(resultModel, mu)
+		b.mu.Unlock()
+	}
+
 	authoritativeOutput := msg.Usage.OutputTokens
-	if mu, ok := msg.ModelUsage[resultModel]; ok {
-		authoritativeOutput = mu.OutputTokens
+	if haveModelUsage {
+		authoritativeOutput = usageDelta.OutputTokens
 	}
 	if authoritativeOutput > turnUsage.OutputTokens {
 		turnUsage.OutputTokens = authoritativeOutput
 	}
 
-	// Golden cost: CC computes its own per-model cost (from its own pricing
-	// table, which may know things ours doesn't) and reports it in the same
-	// authoritative per-model map used above for output tokens. Only trust it
-	// when resultModel has an entry — no fabricated fallback (foci_todo #1407).
-	if mu, ok := msg.ModelUsage[resultModel]; ok {
-		cost := mu.CostUSD
-		turnUsage.CostUSD = &cost
+	// Cost is OURS now (#1674). We price the per-turn token deltas from the
+	// modelinfo table rather than storing CC's figure, because CC's is
+	// cumulative and its scope is opaque, while token counts have unambiguous
+	// semantics. CC's raw (still cumulative) number is kept verbatim as
+	// ProvidedCostUSD — never authoritative, but it is what the divergence
+	// check below is priced against, and it is the forensic record if that
+	// check ever fires.
+	//
+	// Deliberately NOT priced from turnUsage's token fields: those are the
+	// FINAL call's context fill (what compaction needs), not turn totals, so
+	// pricing them would undercount a multi-call turn by roughly the call
+	// count.
+	if haveModelUsage {
+		priced := modelinfo.CostAsOf(
+			prefixedModel("claude", resultModel), time.Now(),
+			usageDelta.InputTokens, usageDelta.OutputTokens,
+			usageDelta.CacheReadInputTokens, usageDelta.CacheCreationInputTokens,
+		)
+		provided := mu.CostUSD
+		turnUsage.ProvidedCostUSD = &provided
+
+		b.turnMu.Lock()
+		b.turnCalcCostUSD += priced
+		b.turnProvidedUSD += usageDelta.CostUSD
+		b.turnProvidedSeen = true
+		b.turnMu.Unlock()
 	}
 
 	result := &delegator.TurnResult{
@@ -437,21 +471,36 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	}
 
 	// Stash this cycle's result; the turn total for output tokens is the sum
-	// across cycles (each result's usage is per-ask-cycle, probe-verified),
-	// while text (turnText spans the whole turn), tool count, model and
-	// input/cache (the FINAL cycle's context fill — what compaction needs)
-	// are latest-wins. A fresh result also satisfies any pre-answer
-	// re-dispatch that was holding the turn open at idle.
+	// across cycles (each cycle's figure is now a DELTA — see #1674 above; the
+	// note that once stood here calling the raw result usage "per-ask-cycle,
+	// probe-verified" was wrong, and summing the cumulative values it described
+	// is what produced the over-count), while text (turnText spans the whole
+	// turn), tool count, model and input/cache (the FINAL cycle's context fill
+	// — what compaction needs) are latest-wins. A fresh result also satisfies
+	// any pre-answer re-dispatch that was holding the turn open at idle.
 	b.turnMu.Lock()
 	b.turnCalls++
 	cycle := b.turnCalls
 	b.turnOutputTokens += result.Usage.OutputTokens
 	result.Usage.OutputTokens = b.turnOutputTokens
+	checkCost := b.turnProvidedSeen
+	calcSoFar, providedSoFar := b.turnCalcCostUSD, b.turnProvidedUSD
+	if checkCost {
+		calc := calcSoFar
+		result.Usage.CalculatedCostUSD = &calc
+	}
 	b.stashedResult = result
 	b.stashedResultMsg = msg
 	b.redispatchInFlight = false
 	stateSeen := b.stateEventsSeen
 	b.turnMu.Unlock()
+
+	// Emitted OUTSIDE turnMu: this is the live indicator that our pricing table
+	// still matches the provider's, so it must not be able to stall the turn
+	// path it is reporting on.
+	if checkCost {
+		b.costCheck.Check(result.Model, calcSoFar, providedSoFar, b.logger().Warnf)
+	}
 
 	b.logger().Debugf("OnResult: stashed ask-cycle result (turn_active=%v cycle=%d textlen=%d out_total=%d)",
 		turnActive, cycle, len(text), result.Usage.OutputTokens)

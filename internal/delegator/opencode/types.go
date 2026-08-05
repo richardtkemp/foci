@@ -18,10 +18,15 @@ type TokenUsage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 
-	// CostUSD is opencode's own provider-reported cost for this message
+	// ProvidedCostUSD is opencode's own reported cost for this message
 	// (Message.Cost), captured alongside the tokens it was computed from. nil
-	// only if no Tokens update has been seen yet (foci_todo #1407).
-	CostUSD *float64
+	// only if no Tokens update has been seen yet. Not authoritative (#1674) —
+	// kept for forensics and as the reference for the divergence warning.
+	ProvidedCostUSD *float64
+
+	// CalculatedCostUSD is foci's own priced figure for this message, from the
+	// modelinfo table applied to the same token counts. Authoritative (#1674).
+	CalculatedCostUSD *float64
 }
 
 // pendingPermission stores a pending opencode permission request.

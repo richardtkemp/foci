@@ -876,10 +876,18 @@ type TurnUsage struct {
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
 
-	// CostUSD is the backend's own provider-reported ("golden") cost for this
-	// call — CC's ModelUsage.CostUSD / opencode's Message.Cost — when the
-	// backend reported one. nil means the backend gave no cost figure (never
-	// faked from tokens here); callers persist this verbatim and fall back to
-	// a live modelinfo calculation only when it's nil (foci_todo #1407).
-	CostUSD *float64
+	// ProvidedCostUSD is the backend's own reported cost for this call — CC's
+	// ModelUsage.CostUSD / opencode's Message.Cost — captured verbatim when the
+	// backend reported one, nil when it did not. It is NO LONGER AUTHORITATIVE
+	// (#1674): CC's figure is cumulative over the CC process, and what any
+	// given provider folds into it is opaque. It is persisted for forensics and
+	// as the reference for the cost-divergence check.
+	ProvidedCostUSD *float64
+
+	// CalculatedCostUSD is foci's own priced figure for this call, from the
+	// modelinfo table applied to this call's real (per-turn) token counts. This
+	// is the authoritative cost: token counts have unambiguous semantics where
+	// a provider's cost total does not. nil when the backend could not supply
+	// per-call tokens to price.
+	CalculatedCostUSD *float64
 }

@@ -509,7 +509,8 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						OutputTokens:             result.Usage.OutputTokens,
 						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
 						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
-						CostUSD:                  result.Usage.CostUSD,
+						ProvidedCostUSD:          result.Usage.ProvidedCostUSD,
+						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
 					})
 				}
 			}
@@ -541,7 +542,8 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						OutputTokens:             result.Usage.OutputTokens,
 						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
 						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
-						CostUSD:                  result.Usage.CostUSD,
+						ProvidedCostUSD:          result.Usage.ProvidedCostUSD,
+						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
 					}
 				}
 			}
@@ -683,13 +685,14 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	// in chronological order. Sum per-call cost into FinalCost (turn total).
 	var turnCost float64
 	logCall := func(u *provider.Usage, ts0 time.Time) {
-		// turnCost (ts.FinalCost) is an immediate, in-memory display figure for
-		// the sink/header — not persisted — so it's fine to fall back to a live
-		// estimate at today's price when the backend gave no golden cost. What
-		// actually gets PERSISTED (APIEntry.GoldenCostUSD below) is the golden
-		// value verbatim, or nil — never a calculated stand-in (foci_todo #1407).
-		if u.CostUSD != nil {
-			turnCost += *u.CostUSD
+		// turnCost (ts.FinalCost) is the in-memory display figure for the
+		// sink/header. Prefer the backend-supplied CALCULATED cost — foci's own
+		// priced figure for that call — and fall back to a live estimate at
+		// today's price when the backend gave none. The backend's PROVIDED cost
+		// is deliberately not used here (#1674): it is cumulative for ccstream,
+		// so adding it up per call is exactly what inflated the totals.
+		if u.CalculatedCostUSD != nil {
+			turnCost += *u.CalculatedCostUSD
 		} else if model != "" {
 			// Skip when the model is unknown (e.g. a codex tokenUsage/updated
 			// notification firing before any message-completion event has set
@@ -709,7 +712,8 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			Output:        u.OutputTokens,
 			CacheRead:     u.CacheReadInputTokens,
 			CacheWrite:    u.CacheCreationInputTokens,
-			GoldenCostUSD: u.CostUSD,
+			ProvidedCostUSD:   u.ProvidedCostUSD,
+			CalculatedCostUSD: u.CalculatedCostUSD,
 			DurationMS:    time.Since(ts.StartedAt).Milliseconds(),
 			StopReason:    "end_turn",
 			CallType:      "delegated_turn",

@@ -17,6 +17,8 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
+	"foci/internal/timeutil"
 )
 
 // handleEvent is the dispatcher callback. It switches on ev.Type,
@@ -404,18 +406,31 @@ func (b *Backend) onMessageUpdated(msg Message) {
 	}
 
 	// Store usage (input/output/cache). opencode provides per-message
-	// token counts directly — no ccstream ModelUsage correction needed.
+	// token counts directly — no ccstream ModelUsage correction needed, and
+	// unlike CC's ModelUsage these are genuinely per-message, not cumulative.
+	//
+	// Cost still follows the same rule as ccstream (#1674): OURS is
+	// authoritative, priced from the tokens, and opencode's own figure is kept
+	// only to check our pricing table against. Deliberately no special case for
+	// opencode reporting a trustworthy per-message cost — a single rule across
+	// backends is what makes the divergence warning mean one thing.
 	if msg.Tokens != nil {
-		cost := msg.Cost
+		provided := msg.Cost
+		calculated := modelinfo.CostAsOf(msg.ModelID, timeutil.Now(),
+			msg.Tokens.Input, msg.Tokens.Output,
+			msg.Tokens.Cache.Read, msg.Tokens.Cache.Write)
 		b.mu.Lock()
 		b.lastUsage = &TokenUsage{
 			InputTokens:              msg.Tokens.Input,
 			OutputTokens:             msg.Tokens.Output,
 			CacheReadInputTokens:     msg.Tokens.Cache.Read,
 			CacheCreationInputTokens: msg.Tokens.Cache.Write,
-			CostUSD:                  &cost,
+			ProvidedCostUSD:          &provided,
+			CalculatedCostUSD:        &calculated,
 		}
 		b.mu.Unlock()
+		b.costCheck.Check(msg.ModelID, calculated, provided,
+			log.NewComponentLogger(b.logComponent()).Warnf)
 	}
 
 	// Error handling. ProviderAuthError fires onAuthFailure (authfail.go
@@ -501,7 +516,8 @@ func (b *Backend) onSessionIdle(sessionID string) {
 			OutputTokens:             usage.OutputTokens,
 			CacheReadInputTokens:     usage.CacheReadInputTokens,
 			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CostUSD:                  usage.CostUSD,
+			ProvidedCostUSD:          usage.ProvidedCostUSD,
+			CalculatedCostUSD:        usage.CalculatedCostUSD,
 		}
 	}
 

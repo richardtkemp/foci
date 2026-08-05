@@ -1742,8 +1742,8 @@ func TestDelegatedTransport_GatedTurn_TwoRowsNoSpuriousCompaction(t *testing.T) 
 	if diff := ts.FinalCost - wantCost; diff > 1e-9 || diff < -1e-9 {
 		t.Errorf("FinalCost = %.8f, want %.8f (sum of per-call costs)", ts.FinalCost, wantCost)
 	}
-	if rows[0].GoldenCostUSD != nil || rows[1].GoldenCostUSD != nil {
-		t.Errorf("rows should have no golden cost (backend reported none): row[0]=%v row[1]=%v", rows[0].GoldenCostUSD, rows[1].GoldenCostUSD)
+	if rows[0].ProvidedCostUSD != nil || rows[1].ProvidedCostUSD != nil {
+		t.Errorf("rows should have no provided cost (backend reported none): row[0]=%v row[1]=%v", rows[0].ProvidedCostUSD, rows[1].ProvidedCostUSD)
 	}
 	if gotRowSum := rows[0].EffectiveCost() + rows[1].EffectiveCost(); gotRowSum-ts.FinalCost > 1e-9 || ts.FinalCost-gotRowSum > 1e-9 {
 		t.Errorf("sum of row costs %.8f != FinalCost %.8f", gotRowSum, ts.FinalCost)

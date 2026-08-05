@@ -104,6 +104,11 @@ func (b *Backend) tryPreAnswerRedispatch(turn *delegator.TurnEvents, result *del
 	// (which would double-count round-1 when both rows are summed).
 	b.turnText.Reset()
 	b.turnOutputTokens = 0
+	// Same reasoning for cost (#1674): round-1's cost rides its own api.db row,
+	// so round-2 must not re-carry it.
+	b.turnCalcCostUSD = 0
+	b.turnProvidedUSD = 0
+	b.turnProvidedSeen = false
 	b.turnMu.Unlock()
 	if b.typingFunc != nil {
 		b.typingFunc(true)

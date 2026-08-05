@@ -20,15 +20,16 @@ func TestAPILog(t *testing.T) {
 	f := openAPIWriter(t, path)
 
 	entry := APIEntry{
-		Timestamp:     time.Date(2026, 2, 21, 3, 52, 41, 0, time.UTC),
-		Session:       "main/i0/0",
-		Model:         "claude-haiku-4-5",
-		Input:         1119,
-		Output:        164,
-		CacheRead:     0,
-		CacheWrite:    1119,
-		GoldenCostUSD: f64p(0.003),
-		DurationMS:    1240,
+		Timestamp:         time.Date(2026, 2, 21, 3, 52, 41, 0, time.UTC),
+		Session:           "main/i0/0",
+		Model:             "claude-haiku-4-5",
+		Input:             1119,
+		Output:            164,
+		CacheRead:         0,
+		CacheWrite:        1119,
+		ProvidedCostUSD:   f64p(0.003),
+		CalculatedCostUSD: f64p(0.0025),
+		DurationMS:        1240,
 	}
 
 	API(entry)
@@ -263,32 +264,79 @@ func TestAPIProviderInference(t *testing.T) {
 	}
 }
 
-// f64p returns a pointer to f — helper for building APIEntry.GoldenCostUSD
-// test fixtures (a float literal isn't addressable directly).
+// f64p returns a pointer to f — helper for building APIEntry cost-field
+// fixtures (a float literal isn't addressable directly).
 func f64p(f float64) *float64 { return &f }
 
-// TestEffectiveCostGoldenVerbatim verifies a golden (provider-reported) cost
-// is returned exactly as stored — never recomputed — even if it disagrees
-// with what a flat modelinfo calculation from the same tokens would give
+// TestEffectiveCostCalculatedVerbatim verifies foci's own calculated cost is
+// returned exactly as stored — never recomputed — even when it disagrees with
+// what a flat modelinfo calculation from the same tokens would give
 // (foci_todo #1407).
-func TestEffectiveCostGoldenVerbatim(t *testing.T) {
-	golden := 0.12345
+func TestEffectiveCostCalculatedVerbatim(t *testing.T) {
+	calculated := 0.12345
 	e := APIEntry{
-		Timestamp:     time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
-		Model:         "claude-haiku-4-5",
-		Input:         1_000_000,
-		Output:        1_000_000,
-		GoldenCostUSD: &golden,
+		Timestamp:         time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		Model:             "claude-haiku-4-5",
+		Input:             1_000_000,
+		Output:            1_000_000,
+		CalculatedCostUSD: &calculated,
 	}
-	if got := e.EffectiveCost(); got != golden {
-		t.Errorf("EffectiveCost() = %v, want golden value %v verbatim", got, golden)
+	if got := e.EffectiveCost(); got != calculated {
+		t.Errorf("EffectiveCost() = %v, want calculated value %v verbatim", got, calculated)
 	}
 }
 
-// TestEffectiveCostLiveWhenGoldenAbsent verifies a nil GoldenCostUSD (no
-// provider-reported cost) falls back to a live calculation from the stored
-// tokens, rather than staying zero or persisting anything.
-func TestEffectiveCostLiveWhenGoldenAbsent(t *testing.T) {
+// TestEffectiveCostIgnoresProvided is the #1674 regression guard: the
+// backend-provided cost must NEVER reach a total.
+//
+// For ccstream that figure is CUMULATIVE over the CC process, so when it won
+// here every api.db row carried a running session total and summing rows
+// inflated ~quadratically in turns-per-session — 13x measured over
+// 28 Jul - 4 Aug 2026 ($32,566 reported against ~$2,500 real). The provided
+// value below is deliberately absurd relative to the tokens, exactly as a
+// late-session cumulative figure would be.
+func TestEffectiveCostIgnoresProvided(t *testing.T) {
+	provided := 999.0
+	e := APIEntry{
+		Timestamp:       time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		Model:           "claude-haiku-4-5",
+		Input:           1_000_000,
+		Output:          500_000,
+		ProvidedCostUSD: &provided,
+	}
+	want := modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, e.Output, e.CacheRead, e.CacheWrite)
+	if want <= 0 {
+		t.Fatal("test precondition: expected a positive live-calculated cost for claude-haiku-4-5")
+	}
+	if got := e.EffectiveCost(); got == provided {
+		t.Fatalf("EffectiveCost() returned the PROVIDED cost %v — that figure is cumulative for ccstream and must never be totalled (#1674)", provided)
+	} else if got != want {
+		t.Errorf("EffectiveCost() = %v, want live-calculated %v", got, want)
+	}
+}
+
+// TestEffectiveCostPrefersCalculatedOverProvided pins the precedence when both
+// are present — the calculated figure wins.
+func TestEffectiveCostPrefersCalculatedOverProvided(t *testing.T) {
+	provided, calculated := 999.0, 0.5
+	e := APIEntry{
+		Timestamp:         time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		Model:             "claude-haiku-4-5",
+		Input:             1_000,
+		Output:            1_000,
+		ProvidedCostUSD:   &provided,
+		CalculatedCostUSD: &calculated,
+	}
+	if got := e.EffectiveCost(); got != calculated {
+		t.Errorf("EffectiveCost() = %v, want calculated %v (provided must lose)", got, calculated)
+	}
+}
+
+// TestEffectiveCostLiveWhenCalculatedAbsent verifies a nil CalculatedCostUSD
+// (a row written before #1674, or a backend supplying no per-call tokens)
+// falls back to a live calculation from the stored tokens, rather than staying
+// zero or persisting anything.
+func TestEffectiveCostLiveWhenCalculatedAbsent(t *testing.T) {
 	e := APIEntry{
 		Timestamp: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
 		Model:     "claude-haiku-4-5",
@@ -302,7 +350,7 @@ func TestEffectiveCostLiveWhenGoldenAbsent(t *testing.T) {
 	if got := e.EffectiveCost(); got != want {
 		t.Errorf("EffectiveCost() = %v, want live-calculated %v", got, want)
 	}
-	if e.GoldenCostUSD != nil {
-		t.Error("GoldenCostUSD should stay nil — EffectiveCost must not mutate/persist a calculated value")
+	if e.CalculatedCostUSD != nil {
+		t.Error("CalculatedCostUSD should stay nil — EffectiveCost must not mutate/persist a calculated value")
 	}
 }
