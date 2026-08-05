@@ -50,6 +50,10 @@ func InitAPIDB(path string) error {
 	// Migrations for existing DBs (ALTER TABLE is a no-op if column exists).
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN provider TEXT DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN pre_messages INTEGER`)
+	// #1674: foci's own priced cost. cost_usd keeps its historical meaning (the
+	// backend's PROVIDED figure) so existing rows are untouched — but for CC
+	// rows that figure is cumulative per process and must not be summed.
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN calculated_cost_usd REAL`)
 	// new_session was wired end-to-end but never written by any producer (dead
 	// plumbing for a compaction-rotation feature that never landed). Drop it from
 	// existing DBs; the Exec is a no-op (ignored error) once the column is gone.
@@ -57,8 +61,9 @@ func InitAPIDB(path string) error {
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages,
+		 calculated_cost_usd)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -156,29 +161,35 @@ const apiRowCols = `ts, COALESCE(provider, ''), session, model,
 	       cost_usd, COALESCE(duration_ms, 0),
 	       COALESCE(stop_reason, ''), call_type,
 	       COALESCE(session_file, ''), COALESCE(session_line, 0),
-	       COALESCE(pre_messages, 0)`
+	       COALESCE(pre_messages, 0), calculated_cost_usd`
 
-// scanAPIRows drains rows selected via apiRowCols into []APIEntry. cost_usd
-// (GoldenCostUSD) is read as a nullable column — NULL means no golden cost
-// was reported for that call (foci_todo #1407); callers needing a display
-// cost should call APIEntry.EffectiveCost, not read GoldenCostUSD directly.
+// scanAPIRows drains rows selected via apiRowCols into []APIEntry. Both cost
+// columns are nullable: cost_usd (ProvidedCostUSD) is NULL when the backend
+// reported none, and calculated_cost_usd is NULL for rows written before
+// #1674. Callers needing a display cost must call APIEntry.EffectiveCost —
+// never read either column directly, and never SUM cost_usd, which for CC rows
+// holds a per-process running total rather than a per-turn cost.
 func scanAPIRows(rows *sql.Rows) []APIEntry {
 	var entries []APIEntry
 	for rows.Next() {
 		var e APIEntry
 		var tsStr string
-		var goldenCost sql.NullFloat64
+		var providedCost, calculatedCost sql.NullFloat64
 		if err := rows.Scan(
 			&tsStr, &e.Provider, &e.Session, &e.Model,
 			&e.Input, &e.Output, &e.CacheRead, &e.CacheWrite,
-			&goldenCost, &e.DurationMS, &e.StopReason, &e.CallType,
-			&e.SessionFile, &e.SessionLine, &e.PreMessages,
+			&providedCost, &e.DurationMS, &e.StopReason, &e.CallType,
+			&e.SessionFile, &e.SessionLine, &e.PreMessages, &calculatedCost,
 		); err != nil {
 			continue
 		}
-		if goldenCost.Valid {
-			v := goldenCost.Float64
-			e.GoldenCostUSD = &v
+		if providedCost.Valid {
+			v := providedCost.Float64
+			e.ProvidedCostUSD = &v
+		}
+		if calculatedCost.Valid {
+			v := calculatedCost.Float64
+			e.CalculatedCostUSD = &v
 		}
 		// ts is written via timeutil.Format (RFC3339), so it round-trips here.
 		e.Timestamp, _ = time.Parse(time.RFC3339, tsStr)
@@ -256,9 +267,9 @@ func (a *apiDB) insert(entry APIEntry) {
 	_, err := a.stmt.Exec(
 		ts, entry.Provider, entry.Session, entry.Model,
 		entry.Input, entry.Output, entry.CacheRead, entry.CacheWrite,
-		entry.GoldenCostUSD, entry.DurationMS, entry.StopReason,
+		entry.ProvidedCostUSD, entry.DurationMS, entry.StopReason,
 		entry.CallType, sessionFile, sessionLine,
-		preMessages,
+		preMessages, entry.CalculatedCostUSD,
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)

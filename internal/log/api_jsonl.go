@@ -22,15 +22,22 @@ type APIEntry struct {
 	Output     int       `json:"output"`
 	CacheRead  int       `json:"cache_read"`
 	CacheWrite int       `json:"cache_write"`
-	// GoldenCostUSD is the provider-reported cost for this call, when one
+	// ProvidedCostUSD is the cost the backend reported for this call, when one
 	// exists — CC's ModelUsage.CostUSD / opencode's Message.Cost, captured
-	// verbatim and never a foci-side calculation. nil when the backend gave
-	// no cost (e.g. foci's own direct Anthropic API calls, which report no
-	// cost at all). Never populate this from modelinfo.Cost — a calculated
-	// figure must NOT be persisted here (foci_todo #1407). Readers wanting a
-	// display cost should call EffectiveCost, which computes live from stored
-	// tokens (as-of the request time) when this is nil.
-	GoldenCostUSD *float64 `json:"golden_cost_usd,omitempty"`
+	// verbatim and never a foci-side calculation. nil when the backend gave no
+	// cost (e.g. foci's own direct Anthropic API calls, which report none).
+	//
+	// NOT AUTHORITATIVE, and not what any total should be built from (#1674).
+	// CC's figure is cumulative over the CC process, so historical rows here
+	// carry running totals rather than per-turn costs. It is retained for
+	// forensics and as the reference for the cost-divergence warning.
+	ProvidedCostUSD *float64 `json:"provided_cost_usd,omitempty"`
+
+	// CalculatedCostUSD is foci's own priced figure for this call — the
+	// authoritative cost (#1674). nil for rows written before the change, and
+	// for backends that supply no per-call tokens to price; EffectiveCost falls
+	// back to a live calculation in that case.
+	CalculatedCostUSD *float64 `json:"calculated_cost_usd,omitempty"`
 	DurationMS    int64    `json:"duration_ms"`
 	StopReason    string   `json:"stop_reason"`
 	CallType      string   `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
@@ -39,14 +46,20 @@ type APIEntry struct {
 	PreMessages   int      `json:"pre_messages,omitempty"` // message count before compaction
 }
 
-// EffectiveCost returns this entry's cost for display: the golden
-// (provider-reported) value verbatim if we have one, otherwise a LIVE
-// estimate computed from the stored tokens using the price effective AT THE
-// REQUEST'S TIMESTAMP (modelinfo.CostAsOf) — not today's latest price. Never
-// cache or persist the result; call this at read time (foci_todo #1407).
+// EffectiveCost returns this entry's cost for display: foci's own calculated
+// figure when we have one, otherwise a LIVE estimate computed from the stored
+// tokens using the price effective AT THE REQUEST'S TIMESTAMP
+// (modelinfo.CostAsOf) — not today's latest price. Never cache or persist the
+// result; call this at read time (foci_todo #1407).
+//
+// ProvidedCostUSD is deliberately NOT consulted (#1674). It used to win here,
+// which is how CC's cumulative-per-process figure became every row's "cost"
+// and inflated totals ~13x. Our own number is preferred precisely because
+// token counts have unambiguous semantics where a provider's cost total does
+// not; the provider's figure now only backs the divergence warning.
 func (e APIEntry) EffectiveCost() float64 {
-	if e.GoldenCostUSD != nil {
-		return *e.GoldenCostUSD
+	if e.CalculatedCostUSD != nil {
+		return *e.CalculatedCostUSD
 	}
 	return modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, e.Output, e.CacheRead, e.CacheWrite)
 }

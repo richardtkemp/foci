@@ -495,7 +495,7 @@ func TestOnMessageUpdated_AssistantSetsModelAndUsage(t *testing.T) {
 
 // TestOnMessageUpdated_CapturesGoldenCost is the opencode half of foci_todo
 // #1407: opencode's own reported Message.Cost must be captured into
-// lastUsage.CostUSD verbatim whenever a Tokens update is seen — it's
+// lastUsage.ProvidedCostUSD verbatim whenever a Tokens update is seen — it's
 // currently parsed off the wire but was discarded before this.
 func TestOnMessageUpdated_CapturesGoldenCost(t *testing.T) {
 	b := newHandlerTestBackend(t)
@@ -518,11 +518,11 @@ func TestOnMessageUpdated_CapturesGoldenCost(t *testing.T) {
 	if usage == nil {
 		t.Fatal("lastUsage nil")
 	}
-	if usage.CostUSD == nil {
+	if usage.ProvidedCostUSD == nil {
 		t.Fatal("CostUSD nil, want opencode's golden cost captured")
 	}
-	if *usage.CostUSD != 0.06789 {
-		t.Errorf("CostUSD = %v, want 0.06789", *usage.CostUSD)
+	if *usage.ProvidedCostUSD != 0.06789 {
+		t.Errorf("CostUSD = %v, want 0.06789", *usage.ProvidedCostUSD)
 	}
 }
 
@@ -681,7 +681,7 @@ func TestOnMessageUpdated_FinishSetDoesNotFireTurnCompleteEarly(t *testing.T) {
 // session.idle — turn completion
 // ---------------------------------------------------------------------------
 
-// TestOnSessionIdle_PropagatesGoldenCost verifies lastUsage.CostUSD (opencode's
+// TestOnSessionIdle_PropagatesGoldenCost verifies lastUsage.ProvidedCostUSD (opencode's
 // golden cost, captured by onMessageUpdated) survives into the built
 // TurnResult.Usage.CostUSD — the other half of foci_todo #1407's opencode
 // wiring, completing the message.updated → session.idle → TurnResult chain.
@@ -692,7 +692,7 @@ func TestOnSessionIdle_PropagatesGoldenCost(t *testing.T) {
 	cost := 0.09999
 	b.mu.Lock()
 	b.lastModel = "claude-sonnet-4"
-	b.lastUsage = &TokenUsage{InputTokens: 100, OutputTokens: 50, CostUSD: &cost}
+	b.lastUsage = &TokenUsage{InputTokens: 100, OutputTokens: 50, ProvidedCostUSD: &cost}
 	b.mu.Unlock()
 
 	b.onSessionIdle("sess-test")
@@ -701,11 +701,11 @@ func TestOnSessionIdle_PropagatesGoldenCost(t *testing.T) {
 		t.Fatal("OnTurnComplete was not called")
 	}
 	r := *c.completed
-	if r.Usage == nil || r.Usage.CostUSD == nil {
+	if r.Usage == nil || r.Usage.ProvidedCostUSD == nil {
 		t.Fatal("result.Usage.CostUSD nil, want golden cost propagated")
 	}
-	if *r.Usage.CostUSD != cost {
-		t.Errorf("result.Usage.CostUSD = %v, want %v", *r.Usage.CostUSD, cost)
+	if *r.Usage.ProvidedCostUSD != cost {
+		t.Errorf("result.Usage.CostUSD = %v, want %v", *r.Usage.ProvidedCostUSD, cost)
 	}
 }
 

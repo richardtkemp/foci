@@ -1276,13 +1276,38 @@ Four outputs:
    - Levels: DEBUG < INFO < WARN < ERROR
    - Newlines in messages are replaced with literal `\n` to guarantee one log line per event
 
-2. **API log — JSONL** (`api.jsonl`): One JSON object per Anthropic API call with ts, session, model, token counts, cost_usd, duration_ms.
+2. **API log — JSONL** (`api.jsonl`): One JSON object per Anthropic API call with ts, session, model, token counts, both cost fields, duration_ms.
    - Use: `log.API(log.APIEntry{...})`
    - Queryable with `jq`
 
 3. **API log — SQLite** (`api.db`): Same data as JSONL but in a `api_calls` table with indexes on `ts` and `session`. Includes `call_type` column (conversation, compaction, summary, spawn).
    - Written automatically by `log.API()` when `api_db` is configured
    - Queryable: `sqlite3 api.db "SELECT call_type, count(*) FROM api_calls GROUP BY call_type"`
+
+   **Two cost columns, and only one of them is a cost you may total (#1674):**
+
+   | field / column | meaning | safe to sum? |
+   |---|---|---|
+   | `CalculatedCostUSD` / `calculated_cost_usd` | foci's own figure, `modelinfo` pricing applied to real per-turn tokens. **Authoritative.** | yes |
+   | `ProvidedCostUSD` / `cost_usd` | what the backend reported, verbatim | **NO** |
+
+   `cost_usd` keeps its historical name and its historical contents. For ccstream
+   rows it holds a figure that is CUMULATIVE over the CC process, so `SUM(cost_usd)`
+   inflates roughly quadratically in turns-per-session — 13x measured over
+   28 Jul - 4 Aug 2026 ($32,566 against ~$2,500 real). Rows written before #1674
+   have `calculated_cost_usd` NULL and are not repaired.
+
+   **Always read cost via `APIEntry.EffectiveCost()`**, which prefers the calculated
+   figure and falls back to a live `modelinfo.CostAsOf` from stored tokens. Never read
+   either column directly, and never `SUM` in SQL — `QuerySessionStats` deliberately
+   totals in Go for this reason.
+
+   The provided figure has exactly one live consumer: `delegator.CostDivergenceChecker`
+   (`internal/delegator/costcheck.go`), which compares it against ours per turn and
+   WARNs past 1%. Since our number is the stored one, nothing else would notice the
+   `modelinfo` table going stale — that warning is the alarm. Both delegated backends
+   call it (`ccstream/handlers.go` OnResult, `opencode/handlers.go` on Tokens update);
+   deliberately one shared implementation so the warning means one thing everywhere.
 
 4. **Conversation log** (`conversation-{agentID}.db`): Per-agent SQLite databases logging exact Telegram messages sent and received. Entries are routed to the correct agent's database by parsing the session key. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
    - Use: `log.Conversation(log.ConversationEntry{...})`

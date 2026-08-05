@@ -20,9 +20,9 @@ func TestStatusCommand(t *testing.T) {
 	now := time.Now().UTC()
 	sk := "main/c1"
 	path := initAPIDB(t, []log.APIEntry{
-		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, GoldenCostUSD: f64p(0.001), CallType: "conversation"},
-		{Timestamp: now.Add(time.Minute), Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, GoldenCostUSD: f64p(0.002), CallType: "conversation"},
-		{Timestamp: now, Session: "other/c2", Model: "claude-haiku-4-5", Input: 500, Output: 200, GoldenCostUSD: f64p(0.005), CallType: "conversation"},
+		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CalculatedCostUSD: f64p(0.001), CallType: "conversation"},
+		{Timestamp: now.Add(time.Minute), Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, CalculatedCostUSD: f64p(0.002), CallType: "conversation"},
+		{Timestamp: now, Session: "other/c2", Model: "claude-haiku-4-5", Input: 500, Output: 200, CalculatedCostUSD: f64p(0.005), CallType: "conversation"},
 	})
 
 	sessDir := t.TempDir()
@@ -102,7 +102,7 @@ func TestCacheCommand(t *testing.T) {
 			Input:         100,
 			CacheRead:     50,
 			CacheWrite:    100,
-			GoldenCostUSD: f64p(0.001),
+			CalculatedCostUSD: f64p(0.001),
 		}
 	}
 	path := writeAPILog(t, entries)
@@ -203,9 +203,9 @@ func TestCacheCommandFallsBackToDB(t *testing.T) {
 func TestLastCommand(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/c1", Model: "claude-haiku-4-5", Input: 100, Output: 50, GoldenCostUSD: f64p(0.001)},
-		{Timestamp: now.Add(time.Minute), Session: "main/c1", Model: "claude-haiku-4-5", Input: 200, Output: 100, GoldenCostUSD: f64p(0.002)},
-		{Timestamp: now.Add(2 * time.Minute), Session: "helper/c2", Model: "claude-sonnet-4-5", Input: 300, Output: 150, GoldenCostUSD: f64p(0.005)},
+		{Timestamp: now, Session: "main/c1", Model: "claude-haiku-4-5", Input: 100, Output: 50, CalculatedCostUSD: f64p(0.001)},
+		{Timestamp: now.Add(time.Minute), Session: "main/c1", Model: "claude-haiku-4-5", Input: 200, Output: 100, CalculatedCostUSD: f64p(0.002)},
+		{Timestamp: now.Add(2 * time.Minute), Session: "helper/c2", Model: "claude-sonnet-4-5", Input: 300, Output: 150, CalculatedCostUSD: f64p(0.005)},
 	})
 	cc := CommandContext{APILogPath: path}
 

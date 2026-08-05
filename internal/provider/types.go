@@ -367,12 +367,18 @@ type Usage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 
-	// CostUSD is a provider-reported ("golden") cost passed through from a
-	// delegated backend (delegator.TurnUsage.CostUSD), when one was reported.
-	// Anthropic's own Messages API (the direct, non-delegated path) reports no
-	// cost, so this stays nil there. nil means "no golden cost" — never a
-	// stand-in for zero (foci_todo #1407).
-	CostUSD *float64 `json:"cost_usd,omitempty"`
+	// ProvidedCostUSD is the cost a delegated backend reported for this call
+	// (delegator.TurnUsage.ProvidedCostUSD), passed through verbatim. Not
+	// authoritative (#1674) — CC's figure is cumulative over the CC process and
+	// what a provider folds into it is opaque. Anthropic's own Messages API
+	// (the direct, non-delegated path) reports no cost, so this stays nil
+	// there. nil means "the backend gave no cost" — never a stand-in for zero.
+	ProvidedCostUSD *float64 `json:"provided_cost_usd,omitempty"`
+
+	// CalculatedCostUSD is foci's own priced figure for this call, from the
+	// modelinfo table applied to real per-call token counts. Authoritative when
+	// present (#1674).
+	CalculatedCostUSD *float64 `json:"calculated_cost_usd,omitempty"`
 }
 
 // MessageResponse is the response from an LLM API call.

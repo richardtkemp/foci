@@ -76,8 +76,8 @@ func TestSessionFamily_TransitiveClosure(t *testing.T) {
 func TestRenderTypeBreakdown_UntypedBucket(t *testing.T) {
 	typeMap := map[string]string{"bot/c123": "chat"}
 	entries := []log.APIEntry{
-		{Session: "bot/c123", GoldenCostUSD: f64p(1.00)},
-		{Session: "bot/cGHOST", GoldenCostUSD: f64p(0.25)}, // absent from index
+		{Session: "bot/c123", CalculatedCostUSD: f64p(1.00)},
+		{Session: "bot/cGHOST", CalculatedCostUSD: f64p(0.25)}, // absent from index
 	}
 	out := renderTypeBreakdown(entries, typeMap, "Test")
 	if !strings.Contains(out, "(untyped)") {
@@ -381,9 +381,9 @@ func TestScopePredicate_NilIndex(t *testing.T) {
 func TestCostSession_CategoryView(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: "main/i0/0/abc", GoldenCostUSD: f64p(0.010), Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 300},
-		{Timestamp: now, Session: "main/i0/0/abc", GoldenCostUSD: f64p(0.020), Input: 800, Output: 300, CacheRead: 1500, CacheWrite: 0},
-		{Timestamp: now, Session: "other/session", GoldenCostUSD: f64p(0.500), Input: 5000, Output: 2000, CacheRead: 10000, CacheWrite: 5000},
+		{Timestamp: now, Session: "main/i0/0/abc", CalculatedCostUSD: f64p(0.010), Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 300},
+		{Timestamp: now, Session: "main/i0/0/abc", CalculatedCostUSD: f64p(0.020), Input: 800, Output: 300, CacheRead: 1500, CacheWrite: 0},
+		{Timestamp: now, Session: "other/session", CalculatedCostUSD: f64p(0.500), Input: 5000, Output: 2000, CacheRead: 10000, CacheWrite: 5000},
 	})
 
 	cmd := CostCommand()
@@ -408,9 +408,9 @@ func TestCostSession_WithIndex_FamilyDetail(t *testing.T) {
 	root, _ := seedFamily(t, idx)
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: root, GoldenCostUSD: f64p(1.00)},
-		{Timestamp: now, Session: "bot/c123/b100", GoldenCostUSD: f64p(0.10)},
-		{Timestamp: now, Session: "bot/c999", GoldenCostUSD: f64p(9.00)},
+		{Timestamp: now, Session: root, CalculatedCostUSD: f64p(1.00)},
+		{Timestamp: now, Session: "bot/c123/b100", CalculatedCostUSD: f64p(0.10)},
+		{Timestamp: now, Session: "bot/c999", CalculatedCostUSD: f64p(9.00)},
 	})
 
 	cc := costCC(path)
@@ -436,12 +436,12 @@ func TestCostSessionBreakdown_WithIndex(t *testing.T) {
 	root, _ := seedFamily(t, idx)
 	now := time.Now().UTC()
 	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: root, GoldenCostUSD: f64p(1.00)},
-		{Timestamp: now, Session: root, GoldenCostUSD: f64p(1.00)},
-		{Timestamp: now, Session: "bot/c123/b100", GoldenCostUSD: f64p(0.10)},
-		{Timestamp: now, Session: "bot/c123/b200", GoldenCostUSD: f64p(0.05)},
-		{Timestamp: now, Session: "bot/ispawn-1", GoldenCostUSD: f64p(0.50)},
-		{Timestamp: now, Session: "bot/c999", GoldenCostUSD: f64p(9.00)},
+		{Timestamp: now, Session: root, CalculatedCostUSD: f64p(1.00)},
+		{Timestamp: now, Session: root, CalculatedCostUSD: f64p(1.00)},
+		{Timestamp: now, Session: "bot/c123/b100", CalculatedCostUSD: f64p(0.10)},
+		{Timestamp: now, Session: "bot/c123/b200", CalculatedCostUSD: f64p(0.05)},
+		{Timestamp: now, Session: "bot/ispawn-1", CalculatedCostUSD: f64p(0.50)},
+		{Timestamp: now, Session: "bot/c999", CalculatedCostUSD: f64p(9.00)},
 	})
 
 	cc := costCC(path)
@@ -474,7 +474,7 @@ func TestCostSession_IncludesStartTime(t *testing.T) {
 	idx := costTestIndex(t)
 	root, _ := seedFamily(t, idx)
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{{Timestamp: now, Session: root, GoldenCostUSD: f64p(1.00)}})
+	path := writeAPILog(t, []log.APIEntry{{Timestamp: now, Session: root, CalculatedCostUSD: f64p(1.00)}})
 
 	cc := costCC(path)
 	cc.SessionIndex = idx
@@ -489,7 +489,7 @@ func TestCostSession_IncludesStartTime(t *testing.T) {
 	}
 }
 
-// f64p returns a pointer to f — helper for building APIEntry.GoldenCostUSD
+// f64p returns a pointer to f — helper for building APIEntry.CalculatedCostUSD
 // test fixtures (a float literal isn't addressable directly).
 func f64p(f float64) *float64 { return &f }
 

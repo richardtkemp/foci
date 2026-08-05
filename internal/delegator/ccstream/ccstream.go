@@ -179,6 +179,9 @@ type Backend struct {
 	stashedResultMsg   *ResultMessage        // raw message of the stash, for WaitForTurn signalling
 	turnOutputTokens   int                   // output tokens summed across this turn's ask cycles
 	turnCalls          int                   // ask cycles (result events) observed this turn
+	turnCalcCostUSD    float64               // foci's own priced cost, summed across this turn's ask cycles (#1674)
+	turnProvidedUSD    float64               // CC's reported cost for this turn, recovered by delta (#1674)
+	turnProvidedSeen   bool                  // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
 	redispatchInFlight bool                  // pre-answer follow-up sent at idle; hold the turn open until its result arrives
 	stateEventsSeen    bool                  // CC emitted ≥1 session_state_changed this session; gates the legacy complete-on-result fallback
 	fallbackWarned     bool                  // one-shot Warnf when falling back to complete-on-result
@@ -202,6 +205,26 @@ type Backend struct {
 	lastModel     string             // from assistant message
 	lastUsage     *TokenUsage        // per-call usage from last assistant message
 	rlThrottle    *RateLimitThrottle // OnRateLimit throttle; shared per-agent via SetRateLimitThrottle
+
+	// Previous ModelUsage snapshot per model, for recovering per-turn figures
+	// by subtraction (#1674). CC's ModelUsage counters are CUMULATIVE over the
+	// life of the CC PROCESS — every field, not just cost. Probe-verified
+	// 2026-08-05: four turns in one process reported outputTokens 56/105/141/174
+	// and cacheRead 21624/46722/72545/98434 for four identical trivial prompts.
+	//
+	// Deliberately keyed on nothing but the model, and deliberately NOT reset
+	// between turns: this map's lifetime IS the Backend's, which IS the CC
+	// process's, which is exactly the counters' reset boundary. A resumed
+	// session in a NEW process restarts them at zero even though the session id
+	// is unchanged (probe-verified: 0.0243 -> 0.0035 across a --resume), so
+	// keying on the session would silently miss the reset. A fresh Backend
+	// starts with an empty map and therefore treats the first snapshot as the
+	// whole delta, which is correct.
+	lastModelUsage map[string]ModelUsage
+
+	// Compares foci's priced cost against CC's reported one (#1674). Shared
+	// implementation so this means the same thing across backends.
+	costCheck delegator.CostDivergenceChecker
 
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule

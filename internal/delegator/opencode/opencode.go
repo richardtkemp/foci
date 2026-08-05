@@ -216,6 +216,8 @@ type Backend struct {
 	turnText      strings.Builder
 	turnTools     int
 	lastModel     string
+	// Compares foci's priced cost against opencode's reported one (#1674).
+	costCheck delegator.CostDivergenceChecker
 	lastProvider  string // paired with lastModel; required by /summarize compaction
 	lastUsage     *TokenUsage
 	ctxLimitCache int               // cached context window from /config/providers (GetContextWindow)
