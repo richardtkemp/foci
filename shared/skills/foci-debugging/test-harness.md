@@ -128,6 +128,13 @@ tip. Treat the name as a timestamp, not an accusation. Method, in order:
    `448192bf` pass 16:17, fail 11:24/11:30/11:34 the next morning.)
 1. **Read the real failure, don't trust the summary.** `grep -A25 <TestName> /tmp/fgw/test-<ts>.log`
    (the log path is in the notification). Get the actual assertion and its got-vs-want.
+   **In a PARALLEL package (all of `test/integration`) the `--- FAIL:` line carries no detail at all**
+   — it is just a verdict, and grepping context around *it* returns nothing useful. Go's parallel
+   output groups each test's own writes under `=== NAME  <TestName>` blocks that can sit hundreds of
+   lines earlier, and there are usually SEVERAL per test: one holding the `t.Errorf` assertion, a
+   later one holding the `gateway.go:NNN: foci-gw stderr:` dump. Read both — the stderr block is
+   where the causal clue lives (a `WARN [modelinfo] no pricing for model "stub-model"` is what
+   explained a $0.00 total on 2026-08-05). So grep the bare test name, never `--- FAIL: <TestName>`.
 2. **Can the named commit even reach the failing package?** `git show <commit> --stat`. If its diff
    cannot touch the failing package (a log-only commit vs `internal/tools`, say), it is innocent and
    the cause is upstream of it.
@@ -149,6 +156,16 @@ tip. Treat the name as a timestamp, not an accusation. Method, in order:
   test goes red — while `errors.Is(err, context.DeadlineExceeded)` and `net.Error.Timeout()` stay
   TRUE. Verify empirically with a throwaway `_test.go`, then fix the test to assert **semantics
   (`errors.Is`), never message text**.
+- **The test encodes a contract the commit deliberately CHANGED.** The failure points straight at
+  the file the commit touched, so "fix the code until the test passes" would undo the fix. Tell them
+  apart by asking what the commit *meant* to change: if the test asserts on a field or default the
+  commit demoted, the test is stale. Bit twice in 48h on the same test
+  (`TestL2_SlashCommands_CostTodayReadsAPILog`): first when `/cost` changed its default scope to the
+  calling agent, then when #1674 demoted the backend's `golden_cost_usd` to a validator and priced
+  from token deltas instead — the fixture still seeded cost via that now-ignored field. Fix the
+  fixture to exercise the NEW path rather than routing around it (seed a model with real pricing,
+  not a pre-computed total), or the test goes green while covering nothing.
+
 - **Local main ahead of origin.** A peer committed to the shared main checkout without pushing, so
   the runner tests a red local HEAD while `origin/main` sits green-but-stale. Check with
   `git rev-list --left-right --count origin/main...HEAD`. Fix on a worktree off local HEAD, ff local
