@@ -43,10 +43,27 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 
 	r.mu.Lock()
 	running := r.keepaliveRunning
+	reflectionRunning := r.reflectionRunning
+	consolidationRunning := r.consolidationRunning
 	r.mu.Unlock()
 
 	if running {
 		skip = "already running"
+		return
+	}
+	// Defer to the memory-forming passes. Reflection and consolidation branch
+	// off the same parent session keepalive would, and the branch key carries
+	// only a one-second timestamp (session.withChild) — so two branches off one
+	// parent inside the same second collide on the key and one has to retry.
+	// The run loop runs both of those BEFORE keepalive precisely so this check
+	// sees their flags on the same tick; do not reorder without reading the
+	// comment there. Yielding costs a single tick of cache warmth and never a
+	// cache expiry (the keepalive window's upper bound is the cache TTL, which
+	// is orders of magnitude longer than a tick), and it is the right way
+	// round: reflection is real work with a deadline of its own, keepalive is
+	// maintenance that is equally happy 30 seconds later.
+	if reflectionRunning || consolidationRunning {
+		skip = "memory task running"
 		return
 	}
 

@@ -2044,6 +2044,8 @@ Reflection and consolidation run on the shared `periodic.Runner` tick (30s defau
 
 Reflection runs before consolidation so the latest memory content is available. Consolidation is blocked while reflection is running.
 
+**Tick order is load-bearing** (`runner.go`, `run()`): `maybeReflection` → `maybeConsolidation` → `maybeKeepalive` → `maybeBackgroundWork` → `maybeReset` → `maybeEphemeralCleanup`. Every `maybeX` sets its `xRunning` flag *synchronously* and then dispatches the branch in a goroutine, so a scheduler can only observe a sibling's flag if it runs **after** it in the same tick. Two consumers of that: consolidation/reset skip while reflection is running (memory-mutating passes are mutually exclusive), and **keepalive skips while reflection or consolidation is running** (#1694) — they would otherwise branch the same parent inside the same second and collide on the one-second branch key (`session.withChild`'s `ChildTS`), costing a `branch key collision … retrying` warning and a second of latency. Keepalive yields rather than the reverse: it loses one tick of cache warmth and never a cache expiry, since the warm window's upper bound is the cache TTL.
+
 **Consolidation** (`maybeConsolidation`, `internal/periodic/consolidation.go`) — config now under `[maintenance]` (`r.maintCfg`):
 1. Check `consolidation_enabled` (nil = true)
 2. Compute next-fire via `parseSchedule(consolidation_time).nextFire(...)` — `consolidation_time` is `"HH:MM"` daily (process tz) or a Go duration; persisted last-run in state store
