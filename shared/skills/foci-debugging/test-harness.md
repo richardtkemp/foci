@@ -118,6 +118,14 @@ Different problem from the one above: not "why can't I reproduce it?" but "who b
 ran — usually NOT the cause.** Several sessions land to a shared `main`; the runner just caught the
 tip. Treat the name as a timestamp, not an accusation. Method, in order:
 
+0. **FIRST, check for a same-commit flip — it decides whether any of the rest is worth doing.**
+   ```
+   grep ',unit,' ~/git/ci-runner/results.csv | tail -15
+   ```
+   If the SAME commit sha appears as `pass` and later as `fail`, **no commit caused this** and steps
+   2–4 can only find nothing. The cause is environmental: something on the machine changed between
+   the two runs. Costs one query; saves a bisect that was never going to converge. (2026-08-06:
+   `448192bf` pass 16:17, fail 11:24/11:30/11:34 the next morning.)
 1. **Read the real failure, don't trust the summary.** `grep -A25 <TestName> /tmp/fgw/test-<ts>.log`
    (the log path is in the notification). Get the actual assertion and its got-vs-want.
 2. **Can the named commit even reach the failing package?** `git show <commit> --stat`. If its diff
@@ -145,3 +153,39 @@ tip. Treat the name as a timestamp, not an accusation. Method, in order:
   the runner tests a red local HEAD while `origin/main` sits green-but-stale. Check with
   `git rev-list --left-right --count origin/main...HEAD`. Fix on a worktree off local HEAD, ff local
   main, push. (`make land` exists to prevent this class.)
+
+### Environmental cause: a DEPLOY changed the machine under the tests
+
+The cause behind a same-commit flip (step 0) is often that foci was **installed** between the two
+runs. Production code that resolves a foci-own binary — `exec.LookPath("foci-cc-hook")`,
+`exec.LookPath("foci-codex-hook")`, an `os.Executable()` sibling — finds whatever is deployed at
+`/usr/local/bin`, so the unit suite silently reads the install. Under test `os.Executable()` is a
+temp binary, so the sibling check always misses and it falls through to `$PATH`.
+
+Confirm causally with a two-arm run rather than by correlation:
+
+```
+export FOCI_TMPDIR=$(mktemp -d)                       # else the guard panics, see Gotchas
+env PATH=/usr/bin:/bin FOCI_TMPDIR=$FOCI_TMPDIR /usr/bin/go test ./pkg/ -run TestX -count=1
+go test -C <repo> ./pkg/ -run TestX -count=1
+```
+Different verdicts from the two arms = the test is reading the install. Then date it:
+`ls -la --time-style=full-iso $(command -v foci-codex-hook)` against the last-green CI timestamp.
+
+Third-party lookups (`jq`, `rg`, `tmux`, `bash`, `python3`, `codex`) are NOT this class — they don't
+change when we deploy. **Only foci-own binaries move under you.**
+
+Fix belongs in `internal/delegator/hookbin`, whose `Resolve()` disables both lookups under
+`testing.Testing()`; a `make lint` gate forbids raw `exec.LookPath("foci-*")` in production code.
+
+Two traps found while fixing this, both worth reusing:
+
+- **A `t.Skipf` keyed on environment is a coverage hole that reports green.** `TestResolveHookBinary_
+  SiblingFound` skipped itself whenever the sibling existed — so on any deployed machine it asserted
+  nothing, indefinitely, while reading as a pass. Grep `t.Skipf` whenever a test touches PATH or the
+  filesystem. Fix by injecting the environment reads as parameters so the behaviour is assertable
+  everywhere, not by deleting the test.
+- **An assertion counting a PROXY must not name a mechanism it cannot observe.** "app-server
+  initialize count = 2 — the batch spawned its own process" was wrong: there was one `launching:`
+  line; the second `initialize` came from a trust probe. The message sends the next reader into the
+  wrong subsystem. Check the message describes what the assertion can actually distinguish.
