@@ -26,7 +26,18 @@ import (
 const (
 	// CostDivergenceTolerance is the fraction by which foci's own priced figure
 	// may differ from the backend's before it is worth saying so.
-	CostDivergenceTolerance = 0.01
+	//
+	// Raised 1% -> 3% on 2026-08-06, once the check had done its job. Its first
+	// 47 fires were all claude-opus-5 at ~2.2x, and they were RIGHT: the model
+	// had no registry entry and fell back to a stale claude-opus-4-6 row priced
+	// at the Opus-4.1 rates. With that corrected the residual gap is small and
+	// structural — per-turn rounding, and the 5m/1h cache-write split foci
+	// deliberately does not model (standing ruling) — not a stale table. 1% sat
+	// close enough to that noise floor to risk training everyone to ignore the
+	// warning, which costs the whole mechanism. 3% still catches the failure it
+	// exists for: a wrong-family fallback or an upstream rate change moves the
+	// price by tens of percent, never by two.
+	CostDivergenceTolerance = 0.03
 
 	// costDivergenceFloorUSD suppresses the check for turns too cheap to carry
 	// signal: 1% of a fraction of a cent is rounding, and warning on it would
