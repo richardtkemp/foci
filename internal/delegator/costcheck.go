@@ -31,8 +31,12 @@ const (
 	// 47 fires were all claude-opus-5 at ~2.2x, and they were RIGHT: the model
 	// had no registry entry and fell back to a stale claude-opus-4-6 row priced
 	// at the Opus-4.1 rates. With that corrected the residual gap is small and
-	// structural — per-turn rounding, and the 5m/1h cache-write split foci
-	// deliberately does not model (standing ruling) — not a stale table. 1% sat
+	// structural — per-turn rounding — not a stale table. (This comment
+	// originally also blamed the unmodelled 5m/1h cache-write split; that was
+	// true when written and is no longer: the split was the dominant residual,
+	// worth 11.4% of a measured session, and modelinfo now prices cache writes
+	// at the 1h rate. 3% therefore has MORE headroom than it needs, which is
+	// the safe direction.) 1% sat
 	// close enough to that noise floor to risk training everyone to ignore the
 	// warning, which costs the whole mechanism. 3% still catches the failure it
 	// exists for: a wrong-family fallback or an upstream rate change moves the
