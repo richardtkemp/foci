@@ -40,7 +40,7 @@ func TestCostDivergence_SilentWithinTolerance(t *testing.T) {
 	var msgs []string
 	var c CostDivergenceChecker
 
-	c.Check("m", 1.000, 1.005, capture(&msgs)) // 0.5%, inside the 1% tolerance
+	c.Check("m", 1.000, 1.005, capture(&msgs)) // 0.5%, inside the 3% tolerance
 
 	if len(msgs) != 0 {
 		t.Errorf("got %d warnings, want 0 — 0.5%% is within tolerance:\n%s", len(msgs), strings.Join(msgs, "\n"))
@@ -125,4 +125,42 @@ func TestCostDivergence_NilWarnfSafe(t *testing.T) {
 	t.Parallel()
 	var c CostDivergenceChecker
 	c.Check("m", 1.00, 1.50, nil)
+}
+
+// TestCostDivergence_SilentInTheRaisedBand pins the 2026-08-06 widening 1% -> 3%
+// specifically. The existing SilentWithinTolerance case (0.5%) is silent under
+// BOTH values, so it cannot detect the change; this one sits in the band that
+// used to warn and must not any more.
+//
+// 2% is where the residual lives once the pricing table is right: per-turn
+// rounding plus the 5m/1h cache-write split foci deliberately does not model.
+// Warning on it trains everyone to ignore the warning, which costs the whole
+// mechanism — and this check is the ONLY thing that would ever notice a stale
+// table, since foci's own figure is the stored one.
+func TestCostDivergence_SilentInTheRaisedBand(t *testing.T) {
+	t.Parallel()
+	var msgs []string
+	var c CostDivergenceChecker
+
+	c.Check("m", 1.00, 1.02, capture(&msgs)) // 2%: warned at the old 1%, silent at 3%
+
+	if len(msgs) != 0 {
+		t.Errorf("got %d warnings, want 0 — 2%% is inside the raised 3%% tolerance:\n%s",
+			len(msgs), strings.Join(msgs, "\n"))
+	}
+}
+
+// TestCostDivergence_StillWarnsJustBeyondTheBand is the other half: widening the
+// band must not blunt it. A gap the far side of 3% still has to be reported, or
+// the constant could be raised to anything and every test would stay green.
+func TestCostDivergence_StillWarnsJustBeyondTheBand(t *testing.T) {
+	t.Parallel()
+	var msgs []string
+	var c CostDivergenceChecker
+
+	c.Check("m", 1.00, 1.05, capture(&msgs)) // 5%: outside 3%
+
+	if len(msgs) != 1 {
+		t.Fatalf("got %d warnings, want 1 — 5%% is beyond the 3%% tolerance", len(msgs))
+	}
 }
