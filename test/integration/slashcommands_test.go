@@ -572,11 +572,28 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 
 	// Two synthetic entries dated today. Choose session names that won't
 	// collide with anything foci writes internally. Costs sum to 2.50.
+	//
+	// The totals are PRICED FROM TOKENS through the real registry, not asserted
+	// from a cost field, because #1674 made foci's own calculation authoritative
+	// and stopped consulting the backend's figure at all. claude-haiku-4-5 is
+	// $1.00/1M input and $5.00/1M output in models.jsonl, with a null `from`, so
+	// CostAsOf resolves it at any timestamp and today's clock can't drift it:
+	//
+	//   A: 500k in ($0.50) + 100k out ($0.50) = $1.00
+	//   B: 500k in ($0.50) + 200k out ($1.00) = $1.50
+	//                                   total   $2.50
+	//
+	// provided_cost_usd is deliberately ABSURD and deliberately not $2.50's
+	// share. It is this fixture's fail-arm: if the provided figure ever creeps
+	// back into a total, the reply reads $198.00 rather than $2.50 and the
+	// negative assertion below names it. The old fixture used `golden_cost_usd`,
+	// a field #1674 renamed out of existence, so it silently parsed to nothing
+	// and every row priced at $0.00 — which is how this test went red.
 	apiLogPath := filepath.Join(h.LogsDir(), "api.jsonl")
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	entries := []string{
-		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_A","model":"stub-model","input":100,"output":50,"golden_cost_usd":1.00,"call_type":"conversation"}`,
-		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_B","model":"stub-model","input":200,"output":100,"golden_cost_usd":1.50,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_A","model":"claude-haiku-4-5","input":500000,"output":100000,"provided_cost_usd":99.00,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_B","model":"claude-haiku-4-5","input":500000,"output":200000,"provided_cost_usd":99.00,"call_type":"conversation"}`,
 	}
 	apiContent := strings.Join(entries, "\n") + "\n"
 	if err := os.WriteFile(apiLogPath, []byte(apiContent), 0o600); err != nil {
@@ -602,7 +619,14 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
 	}
 	if !strings.Contains(text, "$2.50") {
-		t.Errorf("expected total $2.50 in /cost today reply; got:\n%s", text)
+		t.Errorf("expected total $2.50 (priced from tokens) in /cost today reply; got:\n%s", text)
+	}
+	// The other half of #1674, and the reason this fixture sets an absurd
+	// provided_cost_usd: asserting the right total alone would also pass if the
+	// provided figure happened to agree. $198.00 can only appear if the backend's
+	// number is being summed again.
+	if strings.Contains(text, "$198.00") || strings.Contains(text, "$99.00") {
+		t.Errorf("provided_cost_usd leaked into the total — it is a validator, not a source (#1674); got:\n%s", text)
 	}
 	if !strings.Contains(text, "L2_COST_TEST_SESSION_A") || !strings.Contains(text, "L2_COST_TEST_SESSION_B") {
 		t.Errorf("expected both seeded session names in /cost today reply; got:\n%s", text)
@@ -631,8 +655,13 @@ func TestL2_SlashCommands_CostTodayDefaultsToCallingAgent(t *testing.T) {
 	apiLogPath := filepath.Join(h.LogsDir(), "api.jsonl")
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	entries := []string{
-		`{"ts":"` + now + `","session":"L2_COST_OTHER_SESSION_A","model":"stub-model","input":100,"output":50,"golden_cost_usd":1.00,"call_type":"conversation"}`,
-		`{"ts":"` + now + `","session":"L2_COST_OTHER_SESSION_B","model":"stub-model","input":200,"output":100,"golden_cost_usd":1.50,"call_type":"conversation"}`,
+		// Same shape as the all-scope test's fixture above — the doc comment's
+		// claim that this is "the same fixture" is only true if it stays so.
+		// The amounts are irrelevant here (this asserts on session names, not
+		// money); what matters is that it is not a fixture the other test's
+		// pricing path would reject.
+		`{"ts":"` + now + `","session":"L2_COST_OTHER_SESSION_A","model":"claude-haiku-4-5","input":500000,"output":100000,"provided_cost_usd":99.00,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","session":"L2_COST_OTHER_SESSION_B","model":"claude-haiku-4-5","input":500000,"output":200000,"provided_cost_usd":99.00,"call_type":"conversation"}`,
 	}
 	if err := os.WriteFile(apiLogPath, []byte(strings.Join(entries, "\n")+"\n"), 0o600); err != nil {
 		t.Fatalf("seed api.jsonl: %v", err)
