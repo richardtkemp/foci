@@ -1,6 +1,12 @@
 <!-- GOLDEN: ships with foci (shared/skills/research/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
 
-# OpenRouter Perplexity Pricing
+# OpenRouter Perplexity Cost and Latency
+
+> **Latency, timeout guidance and the prefer-a-structured-feed rule live in `SKILL.md`** — they are
+> operational rules you need before you call anything, so they belong in the file you open first.
+> Kept here only as the measured backing: `sonar-deep-research` blew a 600s timeout on 2026-08-06 and
+> surfaced ~25 min later as an async `Client.Timeout` while basic `sonar` answered in seconds; token
+> pricing is identical between the tiers, so wall-clock is the differentiating cost.
 
 ## Per-Model Pricing
 

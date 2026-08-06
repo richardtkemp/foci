@@ -1,6 +1,6 @@
 ---
 name: research
-description: "Web research with Perplexity via OpenRouter. Use when you need to search the web and synthesize current information. Supports two modes: (1) Basic Sonar for general research and fact-checking, (2) Sonar Deep Research for complex analysis, multi-step queries, or when you're uncertain if deep research might be needed (ask for confirmation). Uses OpenRouter's API - no separate Perplexity key required."
+description: "Web research with Perplexity via OpenRouter. Use when you need to search the web and synthesize current information. Basic Sonar is the DEFAULT and suits almost all use cases; reserve Sonar Deep Research for when the user asks for it, the subject is genuinely complex, or you specifically want an extremely detailed response — it takes minutes and can outlive your tool timeout. Uses OpenRouter's API - no separate Perplexity key required."
 owner: foci
 seeded: true
 ---
@@ -16,14 +16,63 @@ This skill enables web research using Perplexity models through OpenRouter, with
 - **perplexity/sonar** — Fast, general-purpose web research. Good for fact-checking, recent news, quick lookups.
 - **perplexity/sonar-deep-research** — Deeper analysis with multi-step reasoning. Use for complex questions, comparative research, or investigation-style queries.
 
-## When to Suggest Deep Research
+## Latency — read this BEFORE choosing a tier
 
-Before choosing a model, consider the query:
+The two tiers cost the same per token and differ by **orders of magnitude in wall-clock**. That is the
+cost that actually bites, and it is not visible in the depth-based descriptions above.
 
-- **Use basic Sonar** for: "What's X's current stock price?", "Who won Y award?", "Latest news on Z"
-- **Suggest Deep Research** for: Multi-part questions, "Compare X vs Y", "How would Z affect...", "What are implications of...", investigative queries
+| Model | Typical latency | Tool timeout |
+|-------|-----------------|--------------|
+| `perplexity/sonar` | seconds | 300s is ample |
+| `perplexity/sonar-deep-research` | **minutes — can outlive ANY timeout you set** | see below |
 
-**If unsure**, suggest deep research and ask for confirmation. The user can always say "no, just use basic Sonar" and save tokens.
+**Measured 2026-08-06:** one `sonar-deep-research` call blew a **600s** timeout and surfaced roughly
+25 minutes later as an async
+`net/http: request canceled (Client.Timeout ... while reading body)`. Basic `sonar` answered the same
+question in seconds.
+
+- **Never put a deep-research call on the critical path of work you are mid-way through.** The answer
+  can arrive after you have finished, moved on, or ended the turn. Treat it as fire-and-collect-later,
+  not a blocking lookup.
+- **Try basic `sonar` first.** It often suffices, and when it does not its failure is *informative* —
+  "I could not verify X from official sources" names the sub-questions that actually need depth, so
+  the follow-up can be narrow instead of open-ended.
+- **A timed-out deep-research call still bills you** for reasoning you never read.
+
+## Before either tier: is there a structured feed?
+
+For **table lookups** — prices, model catalogues, release dates, version numbers, changelogs — a real
+API beats both tiers on every axis: exact values, no hallucination surface, no wait, and re-runnable
+later to detect drift.
+
+Worked example: for "current Anthropic model prices and when they took effect",
+`https://openrouter.ai/api/v1/models` returns per-model `pricing` **and** a `created` timestamp — the
+whole answer in one fast call. The same question put to Perplexity came back with partial coverage and
+declined to confirm several models.
+
+Research models earn their keep where no such feed exists: synthesis, comparison, causal "why did X
+happen", anything needing judgement across sources. Reach for them there, not for lookups.
+
+## Which tier — basic Sonar is the DEFAULT
+
+**Use basic `sonar` unless one of these three is true:**
+
+1. **The user explicitly asked for deep research.**
+2. **The subject is genuinely complex** — multi-part, comparative, causal, investigative; the kind of
+   question where sources must be weighed against each other rather than looked up.
+3. **You specifically want an EXTREMELY detailed response.**
+
+**Basic Sonar is suitable for almost all use cases.** Treat deep research as the exception you must
+justify, not the safe default.
+
+This reverses the advice that used to sit here ("if unsure, suggest deep research"). Defaulting to
+deep research is not the cautious choice — it costs minutes of wall-clock (see Latency above), can
+outlive your tool timeout, still bills you when it times out, and usually answers no better. If
+basic Sonar turns out to be insufficient, its shortfall is *informative* and tells you exactly what
+to escalate; starting deep loses that signal along with the time.
+
+If unsure: **run basic Sonar first and read the answer.** That is cheaper and faster than deliberating,
+and it is the same move as trying the cheap experiment before the expensive one.
 
 ## API Setup
 
@@ -66,9 +115,9 @@ Swap the model to `perplexity/sonar-deep-research` for deeper analysis.
 ## Cost Reference
 
 - **Sonar**: $2/M input tokens, $8/M output tokens
-- **Sonar Deep Research**: Same pricing, more reasoning
+- **Sonar Deep Research**: Same token pricing, more reasoning — but the real cost is WALL-CLOCK, not tokens
 
-See references/pricing.md for full details.
+See references/pricing.md for full details, including measured latency and timeout guidance.
 
 ## Example: Basic Research
 
