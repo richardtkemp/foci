@@ -3,7 +3,6 @@ package codex
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,31 +67,6 @@ func TestHookConfigArgs_EmptyCommand(t *testing.T) {
 		t.Errorf("want nil for an unresolved hook binary, got %v", got)
 	}
 }
-
-func TestResolveHookBinary_FindsSibling(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, hookCommandName)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if !isExecutableFile(path) {
-		t.Fatal("fixture should be executable")
-	}
-	if isExecutableFile(dir) {
-		t.Error("a directory must not resolve as the hook binary")
-	}
-	nonExec := filepath.Join(dir, "not-exec")
-	if err := os.WriteFile(nonExec, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if isExecutableFile(nonExec) {
-		t.Error("a non-executable file must not resolve as the hook binary")
-	}
-}
-
-// The binding is keyed by codex THREAD id, because that is what the hook sees
-// as session_id — keying it by foci's session key would route every thread on
-// a shared app-server to the same bridge, which is the bug.
 func TestBindThreadEnv_KeyedByThreadID(t *testing.T) {
 	threadID := "test-thread-" + t.Name()
 	t.Cleanup(func() { _ = sessionenv.Remove(threadID) })

@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"foci/internal/delegator/hookbin"
 	"foci/internal/delegator/sessionenv"
 	"foci/internal/procx"
 )
@@ -117,41 +115,13 @@ func buildHookCommand(hookPath, envDir string) string {
 	return sessionenv.ShellQuote(hookPath) + " " + envDirFlag + " " + sessionenv.ShellQuote(envDir)
 }
 
-// resolveHookBinary locates foci-codex-hook: first as a sibling of the running
-// executable (the Makefile builds both into bin/), then on $PATH. Mirrors
-// ccstream's resolveHookBinary — same install layout, same fallbacks.
-func resolveHookBinary() (string, error) {
-	var siblingErr error
-	if self, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(self), hookCommandName)
-		if isExecutableFile(candidate) {
-			return candidate, nil
-		}
-		siblingErr = fmt.Errorf("sibling %s not executable", candidate)
-	} else {
-		siblingErr = fmt.Errorf("os.Executable: %w", err)
-	}
-	if path, err := exec.LookPath(hookCommandName); err == nil {
-		return path, nil
-	}
-	return "", fmt.Errorf("%s not found (%v; and not on $PATH)", hookCommandName, siblingErr)
-}
-
-func isExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir() && info.Mode()&0o111 != 0
-}
-
 // prepareHookArgs returns the full set of `-c` flags installing the session-env
 // hook in a trusted state, or nil to launch without it. Every failure is a
 // logged warning rather than an error: a codex session without the hook is the
 // pre-existing behaviour (correct for the process's own session, misrouted for
 // the rest), and that is strictly better than refusing to start.
 func (b *Backend) prepareHookArgs(ctx context.Context) []string {
-	hookPath, err := resolveHookBinary()
+	hookPath, err := hookbin.Resolve(hookCommandName)
 	if err != nil {
 		b.lg.Warnf("session-env hook skipped: %v (bash tool calls will use the app-server's own bridge env)", err)
 		return nil

@@ -351,6 +351,25 @@ lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
 		echo "bare t.Parallel() in L2 tests — use testharness.ParallelWait/ParallelHeavy/ParallelWeight:"; \
 		echo "$$bad"; exit 1; \
 	fi
+	@echo "=== hermetic hook-binary resolution (no foci-own binary off \$$PATH) ==="
+	@# Production code must never resolve a FOCI-OWN binary (foci-gw, foci-call,
+	@# foci-cc-hook, foci-codex-hook) via exec.LookPath or an os.Executable()
+	@# sibling: under test those find whatever this machine has DEPLOYED, so the
+	@# same commit passes on a box without foci installed and fails on one with
+	@# it. That is not hypothetical — it turned main red on 2026-08-06, six
+	@# minutes after a deploy installed /usr/local/bin/foci-codex-hook, on a
+	@# commit that had already passed CI. Route it through
+	@# internal/delegator/hookbin, whose Resolve() disables both lookups under
+	@# testing.Testing() so a test must opt in explicitly via FOCI_HOOK_BIN.
+	@# Third-party tools (jq, tmux, bash, rg, codex, ...) are NOT covered: they
+	@# don't change when we deploy, which is the property that makes this class
+	@# dangerous.
+	@bad=$$(grep -rnE 'exec\.LookPath\((\"foci-|hookCommandName)' internal/ cmd/ \
+		--include='*.go' | grep -v '_test\.go' | grep -v 'internal/delegator/hookbin/' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "foci-own binary resolved off \$$PATH in production code — use hookbin.Resolve:"; \
+		echo "$$bad"; exit 1; \
+	fi
 	@echo "=== skill provenance (shipped skills declare seed-if-missing vs golden) ==="
 	@bash scripts/check-skill-provenance.sh
 
