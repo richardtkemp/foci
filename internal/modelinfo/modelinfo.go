@@ -82,7 +82,42 @@ type Model struct {
 	InputPer1M      float64 // cost per 1M input tokens
 	OutputPer1M     float64 // cost per 1M output tokens
 	CacheReadPer1M  float64 // cost per 1M cache-read tokens
-	CacheWritePer1M float64 // cost per 1M cache-write tokens
+	CacheWritePer1M float64 // cost per 1M cache-write tokens (5-minute TTL)
+
+	// CacheWrite1hPer1M is the 1-HOUR cache-write rate (Anthropic bills it at
+	// 2x base input). PREFERRED over CacheWritePer1M wherever it is set — see
+	// cacheWriteRate. Zero means the registry has no 1h figure for this model,
+	// not that 1h caching is free.
+	CacheWrite1hPer1M float64
+}
+
+// cacheWriteRate returns the rate to price cache-WRITE tokens at.
+//
+// It prefers the 1-hour rate, reversing the earlier standing ruling that the
+// TTL split was immaterial and a single rate would do. Measured 2026-08-06 on
+// helen's live session: 273,094 cache-write tokens, of which ephemeral_1h was
+// 273,094 and ephemeral_5m was ZERO. Claude Code caches at 1h exclusively, so
+// "assume the 5m rate" was wrong for 100% of writes and understated the bill
+// by $3.75/M on opus-5 — $1.02 on that session alone, 11.4% of it, and 16.6%
+// on the single turn that triggered the divergence warning.
+//
+// We do not model both rates: nothing in the delegated stream's ModelUsage
+// carries the split (it reports a single cacheCreationInputTokens), so there is
+// no per-token TTL to branch on even if we wanted one. The 1h rate is simply
+// the truthful single rate for the traffic foci actually has.
+//
+// Safe for the API path too, which requests the 5m default (cache_ttl unset):
+// it logged ZERO cache-write tokens in the month to 2026-08-06, so there is
+// nothing there to misprice. If that changes, this is the function to split.
+//
+// Falls back to the 5m rate when the registry carries no 1h figure (only 26 of
+// 477 rows do) rather than inventing one from the 2x-input rule, which holds
+// for Anthropic but is not a general truth.
+func (m Model) cacheWriteRate() float64 {
+	if m.CacheWrite1hPer1M > 0 {
+		return m.CacheWrite1hPer1M
+	}
+	return m.CacheWritePer1M
 }
 
 // registry maps bare model IDs to provider→Model maps. The "" provider key is
@@ -237,17 +272,18 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 		dev := strings.ToLower(e.Dev)
 		key := provKey(provider, dev)
 		m := Model{
-			Provider:        provider,
-			Dev:             dev,
-			ContextWindow:   e.ContextWindow,
-			Effort:          e.Effort,
-			Thinking:        e.Thinking,
-			Speed:           e.Speed,
-			Caching:         e.Caching,
-			InputPer1M:      e.InputPer1M,
-			OutputPer1M:     e.OutputPer1M,
-			CacheReadPer1M:  e.CacheReadPer1M,
-			CacheWritePer1M: e.CacheWritePer1M,
+			Provider:          provider,
+			Dev:               dev,
+			ContextWindow:     e.ContextWindow,
+			Effort:            e.Effort,
+			Thinking:          e.Thinking,
+			Speed:             e.Speed,
+			Caching:           e.Caching,
+			InputPer1M:        e.InputPer1M,
+			OutputPer1M:       e.OutputPer1M,
+			CacheReadPer1M:    e.CacheReadPer1M,
+			CacheWritePer1M:   e.CacheWritePer1M,
+			CacheWrite1hPer1M: e.CacheWrite1hPer1M,
 		}
 
 		if history[id] == nil {
@@ -666,7 +702,7 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 	return float64(input)/mtok*m.InputPer1M +
 		float64(output)/mtok*m.OutputPer1M +
 		float64(cacheRead)/mtok*m.CacheReadPer1M +
-		float64(cacheWrite)/mtok*m.CacheWritePer1M
+		float64(cacheWrite)/mtok*m.cacheWriteRate()
 }
 
 // familyPricing maps a bare model name to a canonical per-family price entry by
@@ -825,7 +861,7 @@ func CostAsOf(model string, at time.Time, input, output, cacheRead, cacheWrite i
 	return float64(input)/mtok*m.InputPer1M +
 		float64(output)/mtok*m.OutputPer1M +
 		float64(cacheRead)/mtok*m.CacheReadPer1M +
-		float64(cacheWrite)/mtok*m.CacheWritePer1M
+		float64(cacheWrite)/mtok*m.cacheWriteRate()
 }
 
 // ModelMeta holds structural metadata about a model from [models.*] config.

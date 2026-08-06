@@ -1304,7 +1304,7 @@ Four outputs:
 
    The provided figure has exactly one live consumer: `delegator.CostDivergenceChecker`
    (`internal/delegator/costcheck.go`), which compares it against ours per turn and
-   WARNs past 3% (was 1% until 2026-08-06; raised once the opus mispricing it caught was fixed, so the residual is rounding plus the unmodelled cache-write TTL split rather than a stale table). Since our number is the stored one, nothing else would notice the
+   WARNs past 3% (was 1% until 2026-08-06; raised once the opus mispricing it caught was fixed. The other residual it was sized for — the unmodelled 5m/1h cache-write split, 11.4% of a measured session — was closed the same day: `modelinfo` now prices cache writes at the 1h rate, because Claude Code caches at 1h exclusively (273,094 ephemeral_1h tokens vs 0 ephemeral_5m on a live session)). Since our number is the stored one, nothing else would notice the
    `modelinfo` table going stale — that warning is the alarm. Both delegated backends
    call it (`ccstream/handlers.go` OnResult, `opencode/handlers.go` on Tokens update);
    deliberately one shared implementation so the warning means one thing everywhere.
