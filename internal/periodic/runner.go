@@ -497,13 +497,19 @@ func (r *Runner) run(ctx context.Context) {
 			if r.agent != nil {
 				r.agent.DrainRateLimitQueue(ctx)
 			}
-			r.maybeKeepalive(ctx)
-			r.maybeBackgroundWork(ctx)
-			// Reflection runs before consolidation so that all the latest
-			// memory content is available when consolidation curates MEMORY.md.
-			// Consolidation also skips if reflection is still running.
+			// ORDER IS LOAD-BEARING. Reflection runs before consolidation so
+			// that all the latest memory content is available when
+			// consolidation curates MEMORY.md (consolidation also skips if
+			// reflection is still running). Both run before keepalive so that
+			// keepalive's "memory task running" check sees their flags on the
+			// SAME tick: each maybeX sets its running flag synchronously and
+			// then dispatches in a goroutine, so ordering here decides who
+			// wins, and without it keepalive would race a reflection branch
+			// off the same parent and collide on the one-second branch key.
 			r.maybeReflection()
 			r.maybeConsolidation()
+			r.maybeKeepalive(ctx)
+			r.maybeBackgroundWork(ctx)
 			r.maybeReset(ctx)
 			r.maybeEphemeralCleanup(ctx)
 			if r.warningDispatcher != nil {
