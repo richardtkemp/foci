@@ -64,8 +64,9 @@ func Keepalive() string { return read("keepalive.md") }
 // Background returns the default background work prompt.
 func Background() string { return read("background.md") }
 
-// Reflection returns the default reflection pass prompt, which covers both
-// memory formation (factual capture) and skill formation (procedural capture).
+// Reflection returns the default reflection pass prompt, covering memory
+// formation (factual capture), todo filing (friction fixable at source), and
+// skill formation (procedural capture).
 func Reflection() string { return read("reflection.md") }
 
 // MemoryConsolidation returns the default memory consolidation (MEMORY.md review) prompt.
