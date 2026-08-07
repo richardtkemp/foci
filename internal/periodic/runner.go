@@ -500,7 +500,8 @@ func (r *Runner) run(ctx context.Context) {
 			// ORDER IS LOAD-BEARING. Reflection runs before consolidation so
 			// that all the latest memory content is available when
 			// consolidation curates MEMORY.md (consolidation also skips if
-			// reflection is still running). Both run before keepalive so that
+			// reflection is still running), and reset runs after both because
+			// it defers to them too. All three run before keepalive so that
 			// keepalive's "memory task running" check sees their flags on the
 			// SAME tick: each maybeX sets its running flag synchronously and
 			// then dispatches in a goroutine, so ordering here decides who
@@ -508,9 +509,9 @@ func (r *Runner) run(ctx context.Context) {
 			// off the same parent and collide on the one-second branch key.
 			r.maybeReflection()
 			r.maybeConsolidation()
+			r.maybeReset(ctx)
 			r.maybeKeepalive(ctx)
 			r.maybeBackgroundWork(ctx)
-			r.maybeReset(ctx)
 			r.maybeEphemeralCleanup(ctx)
 			if r.warningDispatcher != nil {
 				r.warningDispatcher.MaybeFire()
