@@ -45,24 +45,31 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	running := r.keepaliveRunning
 	reflectionRunning := r.reflectionRunning
 	consolidationRunning := r.consolidationRunning
+	resetRunning := r.resetRunning
 	r.mu.Unlock()
 
 	if running {
 		skip = "already running"
 		return
 	}
-	// Defer to the memory-forming passes. Reflection and consolidation branch
+	// Defer to the memory-forming passes — the same three that are already
+	// mutually exclusive with each other. Reflection and consolidation branch
 	// off the same parent session keepalive would, and the branch key carries
 	// only a one-second timestamp (session.withChild) — so two branches off one
 	// parent inside the same second collide on the key and one has to retry.
-	// The run loop runs both of those BEFORE keepalive precisely so this check
-	// sees their flags on the same tick; do not reorder without reading the
-	// comment there. Yielding costs a single tick of cache warmth and never a
-	// cache expiry (the keepalive window's upper bound is the cache TTL, which
-	// is orders of magnitude longer than a tick), and it is the right way
-	// round: reflection is real work with a deadline of its own, keepalive is
+	// Reset is included for a second reason as well as that one: it forms
+	// memory and then ROTATES the session key, so a keepalive racing it warms
+	// a cache that is about to be discarded (ClearSessionState nulls
+	// last_cache_touch) — wasted at best.
+	//
+	// The run loop runs all three BEFORE keepalive precisely so this check sees
+	// their flags on the same tick; do not reorder without reading the comment
+	// there. Yielding costs a single tick of cache warmth and never a cache
+	// expiry (the keepalive window's upper bound is the cache TTL, which is
+	// orders of magnitude longer than a tick), and it is the right way round:
+	// these are real work with deadlines of their own, keepalive is
 	// maintenance that is equally happy 30 seconds later.
-	if reflectionRunning || consolidationRunning {
+	if reflectionRunning || consolidationRunning || resetRunning {
 		skip = "memory task running"
 		return
 	}

@@ -115,19 +115,92 @@ func TestTick_KeepaliveYieldsToReflection(t *testing.T) {
 	}
 }
 
-// TestMaybeKeepalive_YieldsToMemoryPasses covers the gate directly, for both
-// flags, without the loop.
+// TestTick_KeepaliveYieldsToReset is the same proof for the reset pass, whose
+// position in the tick is load-bearing for the same reason. Reset earns the
+// gate twice over: it branches nothing itself (it calls ResetSession) but it
+// ROTATES the session key, so a keepalive racing it warms a cache that is
+// about to be discarded.
+func TestTick_KeepaliveYieldsToReset(t *testing.T) {
+	resetStarted := make(chan struct{})
+	keepaliveFired := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	r := dueRunner(t, &fakeBackgroundAgent{
+		sessionKeyFn: func() string { return "test/c1" },
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+			if branchType == "keepalive" {
+				select {
+				case keepaliveFired <- struct{}{}:
+				default:
+				}
+			}
+			return true
+		},
+		resetFn: func(ctx context.Context, sessionKey string) error {
+			close(resetStarted)
+			<-release // hold resetRunning true for the rest of the test
+			return nil
+		},
+	})
+	// Reflection off, reset due: last reset 2h ago against a 1h schedule.
+	r.reflectCfg = config.ResolvedReflection{}
+	r.maintCfg = config.ResolvedMaintenance{ResetTime: "1h"}
+	r.lastReset = time.Now().Add(-2 * time.Hour)
+	r.tickInterval = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.Start(ctx)
+	defer func() { close(release); r.Stop(); waitReset(t, r) }()
+
+	select {
+	case <-resetStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reset never fired — the fixture is not due, so this test proves nothing")
+	}
+
+	select {
+	case <-keepaliveFired:
+		t.Fatal("keepalive branched while a session reset was in flight — the reset rotates the " +
+			"session key, discarding the cache keepalive just warmed (see runner.go tick order)")
+	case <-time.After(250 * time.Millisecond):
+	}
+}
+
+// waitReset waits for the reset goroutine to clear (waitIdle does not watch
+// resetRunning), so t.Cleanup doesn't close the index under it.
+func waitReset(t *testing.T, r *Runner) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r.mu.Lock()
+		busy := r.resetRunning
+		r.mu.Unlock()
+		if !busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reset goroutine did not finish within 2s")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestMaybeKeepalive_YieldsToMemoryPasses covers the gate directly, for all
+// three flags, without the loop.
 func TestMaybeKeepalive_YieldsToMemoryPasses(t *testing.T) {
 	cases := []struct {
 		name        string
 		reflection  bool
 		consolidate bool
+		reset       bool
 		wantCalls   int
 	}{
-		{"neither running fires normally", false, false, 1},
-		{"reflection running yields", true, false, 0},
-		{"consolidation running yields", false, true, 0},
-		{"both running yields", true, true, 0},
+		{"none running fires normally", false, false, false, 1},
+		{"reflection running yields", true, false, false, 0},
+		{"consolidation running yields", false, true, false, 0},
+		{"reset running yields", false, false, true, 0},
+		{"all running yields", true, true, true, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,11 +214,12 @@ func TestMaybeKeepalive_YieldsToMemoryPasses(t *testing.T) {
 			})
 			r.reflectionRunning = tc.reflection
 			r.consolidationRunning = tc.consolidate
+			r.resetRunning = tc.reset
 
 			r.maybeKeepalive(context.Background())
 			// Clear the flags so waitIdle only waits on the keepalive goroutine.
 			r.mu.Lock()
-			r.reflectionRunning, r.consolidationRunning = false, false
+			r.reflectionRunning, r.consolidationRunning, r.resetRunning = false, false, false
 			r.mu.Unlock()
 			waitIdle(t, r)
 
