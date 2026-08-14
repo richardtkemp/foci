@@ -257,7 +257,53 @@ func Reopen() error {
 func (l *Logger) reopen() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.reopenLocked()
+}
 
+// SwapUnderWriterLock runs swap (a file replacement — in practice rotation's
+// final os.Rename of the trimmed temp file over the live log) with the writer
+// lock held, then reopens the handles before releasing it.
+//
+// This is what stops OUR OWN rotation tripping the stale-inode detector. The
+// rename installs a new inode at the path; without the lock, any goroutine
+// logging in the gap between the rename and the reopen takes l.mu first, finds
+// its fd pointing at the replaced inode, and emits the "replaced underneath the
+// open writer" WARN — once per rotation, every rotation (observed at 19:53:19
+// daily). Holding the lock across both makes the swap invisible to writers:
+// they see the old fd or the new one, never a stale one.
+//
+// Deliberately narrow. The alternative — suppressing the warning while a
+// rotation is in flight — would also mask a genuine EXTERNAL replacement that
+// happened to land in the same window, and that warning is the whole point of
+// the detector (#1479: an integration test truncated the live api/payload logs
+// out from under foci-gw's fds for ~2 months, several MB/hour vanishing into
+// unlinked inodes with nothing to show for it). This changes when the condition
+// ARISES rather than when it is reported, so the detector keeps its full meaning.
+//
+// Cheap: everything expensive in a rotation (scanning, gzipping, writing the
+// temp file) happens before the swap. Only a rename and an open are serialised
+// against logging, once per file per rotation.
+//
+// swap MUST NOT log. It runs with l.mu held and every log call takes that same
+// lock, so a stray Infof/Warnf inside it deadlocks the process. (The writer that
+// actually tripped the old warning was rotateFile's own "rotated %s: archived %d
+// old lines" line, which fires just after the swap returns — outside the lock,
+// which is why it is safe there and would not be here.)
+func SwapUnderWriterLock(swap func() error) error {
+	return std.swapUnderWriterLock(swap)
+}
+
+func (l *Logger) swapUnderWriterLock(swap func() error) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := swap(); err != nil {
+		return err
+	}
+	return l.reopenLocked()
+}
+
+// reopenLocked is reopen's body; caller must hold l.mu.
+func (l *Logger) reopenLocked() error {
 	fileMode := l.fileMode
 	if fileMode == 0 {
 		fileMode = 0600

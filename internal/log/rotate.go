@@ -217,8 +217,16 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	// os.CreateTemp creates files with 0600; apply configured permissions
 	// so the rotated file matches what Init() creates.
 	_ = os.Chmod(tmpPath, fileMode)
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename temp to %s: %w", path, err)
+	// Swap the trimmed file in with the writer lock held, reopening before it is
+	// released. Doing the rename bare here is what made our own rotation trip the
+	// stale-inode detector once a day — see SwapUnderWriterLock.
+	if err := SwapUnderWriterLock(func() error {
+		if err := os.Rename(tmpPath, path); err != nil {
+			return fmt.Errorf("rename temp to %s: %w", path, err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	archivePath := archiveName(path, archiveDir, archiveFirst, archiveLast)
