@@ -112,6 +112,32 @@ func TestGuardLiveRootInTestFiresOnUnsetOverride(t *testing.T) {
 	guardLiveRootInTest("", Root)
 }
 
+// The guard fires LAZILY, inside whichever test first resolves a temp root, so
+// Go attributes the panic to an arbitrary unrelated test name. Reading that
+// name as the culprit is the actual failure mode this message exists to
+// prevent: it was misread as a flaky test in an unrelated package (2026-08-15).
+// So the message must (a) point at the Makefile target rather than leading with
+// the manual override, and (b) explicitly disown the test name Go printed.
+func TestGuardLiveRootInTestMessageDirectsToMake(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("guard did not panic")
+		}
+		msg, _ := r.(string)
+		if !strings.Contains(msg, "make test") {
+			t.Errorf("panic message does not name `make test` as the remedy:\n%s", msg)
+		}
+		if !strings.Contains(msg, "NOT AT FAULT") && !strings.Contains(msg, "NOT at fault") {
+			t.Errorf("panic message does not disown the reported test name:\n%s", msg)
+		}
+		if !strings.Contains(msg, "NOT A TEST FAILURE") {
+			t.Errorf("panic message does not say this is an environment error:\n%s", msg)
+		}
+	}()
+	guardLiveRootInTest("", Root)
+}
+
 // Verifies the guard STILL fires when an override was set but the run
 // nonetheless landed on the shared Root — resolveRoot degrades an unusable
 // override by falling through the ladder, so an override that is set is no

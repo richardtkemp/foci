@@ -82,13 +82,22 @@ func guardLiveRootInTest(override, resolvedRoot string) {
 	if override != "" {
 		cause = fmt.Sprintf("%s=%q is unusable (unwritable or missing) and fell through the ladder", EnvOverride, override)
 	}
+	// The whole remedy goes on the FIRST line — the one prefixed by "panic: ".
+	// Anything below it is invisible to the usual ways this output gets read:
+	// a grep for '^(--- FAIL|FAIL|ok)', or `make test`'s own failure summary.
+	// Those show only Go's "--- FAIL: <arbitrary test>" line, which is how this
+	// got misread as a flaky test in an unrelated package (2026-08-15).
 	panic(fmt.Sprintf(
-		"tempdir: test run resolved the temp root to the LIVE shared root %s "+
-			"because %s — this would write test fixtures into a real "+
-			"foci install's state. `make test` (and the other Makefile test "+
-			"targets) set %s for you; running `go test` directly, set it "+
-			"yourself to a scratch dir, e.g.:\n\n"+
-			"    %s=$(mktemp -d) go test ./...\n",
+		"tempdir: ENVIRONMENT ERROR, NOT A TEST FAILURE — run `make test`, not a bare `go test`. "+
+			"The test named in the --- FAIL: line is NOT at fault; this guard fires in whichever "+
+			"test resolves a temp root first, so that name is arbitrary. Do not debug it, and do "+
+			"not read it as a flake.\n\n"+
+			"Cause: the run resolved the temp root to the LIVE shared root %s because %s, which "+
+			"would write test fixtures into a real foci install's state. The Makefile test targets "+
+			"(`make test`, `make integration`) set %s for you.\n\n"+
+			"To run ONE package directly — the only reason to bypass make — set a scratch root "+
+			"yourself:\n\n"+
+			"    %s=$(mktemp -d) go test ./internal/<pkg>/\n",
 		Root, cause, EnvOverride, EnvOverride))
 }
 
