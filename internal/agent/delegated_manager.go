@@ -991,9 +991,48 @@ func (m *DelegatedManager) BackendCanBranch() bool {
 	return ok
 }
 
-// CleanupBackendSession deletes the on-disk backend session file for sessionID
-// (via BackendBrancher.CleanupSession). No-op if the backend can't branch or
-// sessionID is empty. A pure filesystem delete — no process is spawned.
+// OpenBackendCleanupScope acquires whatever the backend needs to service a run
+// of CleanupBackendSession calls, returning a release that MUST be called once.
+// Backends that delete straight from disk (ccstream, codex) need nothing, so
+// the release is a no-op; opencode uses it to hold one pooled server across the
+// whole sweep instead of acquiring per session.
+//
+// The release is always non-nil, including on error, so callers can
+// unconditionally `defer release()`. An error means the resource is
+// unavailable — the caller may still proceed and let each CleanupBackendSession
+// fail individually, which is the pre-scope behaviour.
+func (m *DelegatedManager) OpenBackendCleanupScope(ctx context.Context) (func(), error) {
+	noop := func() {}
+	if m.NewBackend == nil {
+		return noop, nil
+	}
+	be, err := m.NewBackend()
+	if err != nil {
+		return noop, err
+	}
+	sc, ok := be.(delegator.RunningBackendCleaner)
+	if !ok {
+		return noop, nil
+	}
+	release, err := sc.OpenCleanupScope(ctx, delegator.CleanupRequest{
+		WorkDir: m.StartOpts.WorkDir,
+		AgentID: m.StartOpts.AgentID,
+	})
+	if err != nil {
+		return noop, err
+	}
+	if release == nil {
+		return noop, nil
+	}
+	return release, nil
+}
+
+// CleanupBackendSession deletes the backend session for sessionID (via
+// BackendBrancher.CleanupSession). No-op if the backend can't branch or
+// sessionID is empty. Usually a pure filesystem delete; for backends
+// implementing delegator.RunningBackendCleaner it is an RPC to a live server,
+// so a caller deleting several sessions should bracket them with
+// OpenBackendCleanupScope.
 func (m *DelegatedManager) CleanupBackendSession(ctx context.Context, sessionID string) error {
 	if sessionID == "" {
 		return nil

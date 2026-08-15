@@ -26,6 +26,22 @@ func (a *Agent) CleanupEphemeralSessions(ctx context.Context, retentionDays int)
 		return 0
 	}
 
+	if len(keys) == 0 {
+		return 0
+	}
+
+	// One scope for the whole sweep. Backends that delete from disk get a
+	// no-op; opencode acquires a single server here rather than once per
+	// session — and without it an idle agent's sessions could never be
+	// collected at all, because its server is down precisely because it is
+	// idle (#1707). A failure is not fatal: the per-session deletes below then
+	// fail individually and are logged as before.
+	release, err := a.DelegatedManager.OpenBackendCleanupScope(ctx)
+	if err != nil {
+		a.taggedLog("ephemeral-cleanup").Warnf("open cleanup scope: %v", err)
+	}
+	defer release()
+
 	deleted := 0
 	for _, key := range keys {
 		// A session may have produced several transcripts over its life (each
