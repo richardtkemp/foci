@@ -12,9 +12,15 @@ import (
 )
 
 // pooledServer returns the live pooled Server for agentID, or nil if none is
-// running. Unlike acquireServer it never spawns one: fork and cleanup only make
-// sense against an already-running server, because an opencode conversation
-// lives in the server (its SQLite store), not on disk.
+// running. Unlike acquireServer it never spawns one: an opencode conversation
+// lives in the server (its SQLite store), not on disk, so a caller with no
+// server has nothing to operate on.
+//
+// That makes it right for ForkSession, which runs mid-turn when the parent's
+// server is up by construction. It is NOT sufficient for a cleanup sweep: an
+// agent idle long enough for its sessions to expire has no server precisely
+// because it is idle, so cleanup could never run (#1707). Sweeps acquire a
+// server via OpenCleanupScope and then find it here.
 func pooledServer(agentID string) *Server {
 	serverPoolMu.Lock()
 	defer serverPoolMu.Unlock()
@@ -83,11 +89,42 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	return delegator.ForkResult{SessionID: session.ID}, nil
 }
 
+// OpenCleanupScope implements delegator.RunningBackendCleaner. It acquires the
+// agent's pooled server — SPAWNING one if the agent is idle and has none — and
+// holds a refcount for the life of the scope, so every CleanupSession that
+// follows finds it via pooledServer. Release hands the refcount back; if this
+// scope spawned the server, that drops it to zero and shuts it down.
+//
+// Without this, an idle agent could never have its expired sessions collected:
+// pooledServer deliberately never spawns, so cleanup failed permanently for
+// exactly the agents whose sessions were expiring (#1707). Spawning is cheap
+// relative to a daily sweep and, because the scope closes the server again, it
+// also lets opencode's WAL checkpoint — a long-lived reader pins it (#1677).
+func (b *Backend) OpenCleanupScope(_ context.Context, req delegator.CleanupRequest) (func(), error) {
+	if req.AgentID == "" {
+		return nil, fmt.Errorf("opencode cleanup scope: empty agent id")
+	}
+	// Same acquire path as RunBatch, which fixed this identical bug class for
+	// background batches (no live session → "no running server" hard-fail):
+	// acquireServerFn is the shared pool/key/config path Backend.Start uses, so
+	// a cleanup-triggered spawn is indistinguishable from an interactive one.
+	// Env is nil for the same reason a batch's is — there is no interactive
+	// session whose FOCI_SOCK/BASH_ENV would need routing.
+	cfg := b.serverConfigFromOpts(delegator.StartOptions{WorkDir: req.WorkDir})
+	srv, err := acquireServerFn(req.AgentID, cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("opencode cleanup scope: acquire server: %w", err)
+	}
+	return func() { releaseServer(req.AgentID, srv) }, nil
+}
+
 // CleanupSession implements delegator.BackendBrancher for opencode: it deletes
 // an opencode session via DELETE /session/{id} on the agent's pooled server,
 // reclaiming an ephemeral fork. A 404 (already gone) is treated as success. If
 // no server is pooled the delete can't be performed now (the row stays in
-// opencode's store until a later run when the server is up).
+// opencode's store until a later run when the server is up) — callers that
+// sweep many sessions should bracket the sweep with OpenCleanupScope, which
+// guarantees a server for the whole batch at the cost of one acquire.
 func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupRequest) error {
 	if req.SessionID == "" {
 		return fmt.Errorf("opencode cleanup: empty session id")

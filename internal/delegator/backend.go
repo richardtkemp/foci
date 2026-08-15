@@ -519,11 +519,13 @@ func HumanReadableBackendName(backendType string) string {
 // state, not a live process.
 type BackendBrancher interface {
 	ForkSession(ctx context.Context, req ForkRequest) (ForkResult, error)
-	// CleanupSession deletes the on-disk backend session identified by
-	// req.SessionID (typically a fork produced by ForkSession), reclaiming
-	// ephemeral clones so their transcripts don't accumulate. Deleting an
-	// already-absent session is NOT an error. Like ForkSession it is a pure
-	// filesystem operation and must not require a started backend.
+	// CleanupSession deletes the backend session identified by req.SessionID
+	// (typically a fork produced by ForkSession), reclaiming ephemeral clones
+	// so their transcripts don't accumulate. Deleting an already-absent
+	// session is NOT an error. For most backends this is a pure filesystem
+	// delete needing no started backend; backends that instead service it as
+	// an RPC to a live server advertise RunningBackendCleaner so callers can
+	// hold that server open across a sweep.
 	CleanupSession(ctx context.Context, req CleanupRequest) error
 }
 
@@ -533,6 +535,31 @@ type BackendBrancher interface {
 // invoking BackendBrancher.ForkSession when this capability is present.
 type RunningBackendForker interface {
 	ForkRequiresRunningBackend() bool
+}
+
+// RunningBackendCleaner is the CleanupSession analogue of
+// RunningBackendForker: an optional capability for backends whose cleanup is
+// an RPC to a live server rather than a local file delete (opencode: DELETE
+// /session/{id} on the agent's pooled server). Such a backend cannot delete
+// anything while that server is down — which is precisely the state of an
+// agent that has been idle long enough for its sessions to expire.
+//
+// Where fork answers this with a bool (the manager then starts the ONE parent
+// session it is about to fork), cleanup is a sweep over many sessions, so the
+// capability hands back a scope instead: callers acquire once, delete N
+// sessions, release once. A per-session acquire would spawn and tear down a
+// server for every expired session in the pass.
+type RunningBackendCleaner interface {
+	// OpenCleanupScope acquires whatever CleanupSession needs (for opencode, a
+	// pooled server for req.AgentID, spawning one if none is running) and
+	// returns the release. req.SessionID is ignored — the scope covers every
+	// session belonging to req.AgentID.
+	//
+	// The returned release is non-nil whenever err is nil and MUST be called
+	// exactly once, or the resource is held forever. On error the caller may
+	// still proceed: CleanupSession then fails per session exactly as it does
+	// without a scope.
+	OpenCleanupScope(ctx context.Context, req CleanupRequest) (release func(), err error)
 }
 
 // CleanupRequest identifies a backend session to delete.
