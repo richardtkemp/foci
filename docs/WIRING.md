@@ -1630,6 +1630,19 @@ trimmed; trimmed further on inbound ack), and an inbound dedup `seen` set.
 `attach`/`detachIf` move it between the sockets a phone churns through;
 `removeClient` detaches but RETAINS state for reconnect.
 
+**Handshake observability (#1713).** A socket is only useful once its `hello`
+arrives; everything the app receives follows from it. Two signals record that,
+because until 2026-08-15 nothing did: a `hello: device=… resume=N features=…
+push_token=<bool>` DEBUG line on receipt (push token presence ONLY — the value is
+a credential), and `wsClient.helloSeen`, checked by `noteSocketClosed` when the
+socket closes. A run of `helloLessWarnAt` (5) consecutive hello-less sockets logs
+a WARN. This exists because a ~3-hour near-total app outage produced **zero log
+lines above DEBUG**: the 1006 disconnects are DEBUG by design (#888, mobile 1006s
+are normal) and `replayTo` is DEBUG, so hundreds of connects that delivered
+nothing were invisible. `resume=N` is also the sole discriminator between "socket
+died before `hello`" and "`hello` arrived asking to resume nothing" — both
+produce no `replayTo`, and conflating them is what stalled the diagnosis.
+
 **Inbound (`dispatch.go`):** decode → **reliability gate** (`inboundConvID` →
 `convForReliability`: dedup by `(conversationId, envelope id)`, drop resent
 outbox entries, fold piggybacked `ack` to trim the replay buffer) → switch.

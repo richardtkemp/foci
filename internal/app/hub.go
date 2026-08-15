@@ -68,6 +68,11 @@ type Hub struct {
 	devices  *deviceStore
 	authLim  *authLimiter
 
+	// helloMu guards helloLessRun only — deliberately not h.mu, which is held
+	// across conversation fan-out; a disconnect must never queue behind that.
+	helloMu      sync.Mutex
+	helloLessRun int // consecutive sockets closed without a hello (#1713)
+
 	host           string          // advertised in hello.caps.host (config [platforms.app].host)
 	replayDepth    int             // config-driven replay buffer depth (0 = default)
 	replayTTL      time.Duration   // config-driven replay buffer TTL (0 = default)
@@ -2445,6 +2450,7 @@ type wsClient struct {
 	// conversations concurrently. Each inbound frame names its agent (or its
 	// conversation's binding does), so the agent is resolved per-frame.
 	deviceID    string                  // from the client hello
+	helloSeen   bool                    // a ClientHello was received on this socket (#1713)
 	features    map[string]struct{}     // advertised client capabilities (from the hello)
 	convByID    map[string]*convBinding // conversationId → binding
 	openConvIDs map[string]struct{}     // conversations the app currently has open (its pager tabs)
@@ -2646,6 +2652,48 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 	appLog.Infof("device connected")
 	safeGo("ws-writepump", client.writePump)
+	connectedAt := time.Now()
 	client.readPump() // blocks until the socket closes
+	h.noteSocketClosed(client, time.Since(connectedAt))
 	appLog.Infof("device disconnected")
+}
+
+// helloLessWarnAt is how many CONSECUTIVE hello-less sockets it takes to warn.
+// A single one is ordinary (a probe, a racing reconnect); a run of them means
+// the app is reaching the server and receiving nothing. At the app's observed
+// ~30s reconnect backoff this is a few minutes of dead air before the first
+// warning, and it repeats every helloLessWarnAt after that so a long outage
+// keeps saying so rather than warning once and going quiet.
+const helloLessWarnAt = 5
+
+// noteHelloSeen resets the hello-less run: the handshake is completing again.
+func (h *Hub) noteHelloSeen() {
+	h.helloMu.Lock()
+	h.helloLessRun = 0
+	h.helloMu.Unlock()
+}
+
+// noteSocketClosed records whether a closing socket ever completed the app-level
+// handshake, and warns on a run of failures. This exists because a 3-hour
+// near-total app outage on 2026-08-14/15 produced ZERO log lines above DEBUG
+// (#1713): the disconnects are DEBUG by design (#888, mobile 1006s are normal)
+// and replayTo is DEBUG, so nothing above DEBUG could reveal that the app was
+// connecting hundreds of times and receiving nothing.
+func (h *Hub) noteSocketClosed(c *wsClient, lifetime time.Duration) {
+	c.mu.Lock()
+	seen := c.helloSeen
+	c.mu.Unlock()
+	if seen {
+		return
+	}
+	h.helloMu.Lock()
+	h.helloLessRun++
+	n := h.helloLessRun
+	h.helloMu.Unlock()
+	appLog.Debugf("socket closed without a hello after %s (consecutive=%d)",
+		lifetime.Round(time.Millisecond), n)
+	if n%helloLessWarnAt == 0 {
+		appLog.Warnf("%d consecutive app connects closed without completing the handshake — "+
+			"the app is reaching the server but receiving nothing (#1713)", n)
+	}
 }
