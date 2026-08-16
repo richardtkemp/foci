@@ -9,6 +9,21 @@ random loss. Don't anchor on connection flapping (`close 1006` every ~15s is
 normal mobile churn the replay design is *built* to absorb) — that's the visible
 symptom, not the cause.
 
+**First, though, confirm the sockets are usable.** Flapping is only benign when
+the handshake completes; a connect that never sends `hello` delivers nothing,
+and `device connected` is logged for it either way. Count them:
+
+```
+grep -c 'device connected'  ~/logs/foci.log     # sockets opened
+grep -c '\[app\] hello:'    ~/logs/foci.log     # sockets that became usable
+```
+
+A large gap means the app is reaching the server and receiving nothing — look
+for `WARN … consecutive app connects closed without completing the handshake`.
+The `resume=N` on each `hello:` line is the discriminator between a socket that
+died before `hello` (no line) and one that asked to resume nothing (`resume=0`);
+both produce zero `replayTo`, so replay counts alone cannot tell them apart.
+
 ## Approach — look at the durable artifact, don't derive from code
 
 1. **Query the durable frame store** (the decisive artifact). Every server→app
