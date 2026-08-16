@@ -61,14 +61,16 @@ was the context around a known timestamp?", you have to reach into `~/logs/archi
 # Most recent occurrence of a pattern across ALL history (when did it last fire?)
 zgrep -hE "possible zombie|did not exit after" ~/logs/archive/foci-*.gz | awk '{print $1}' | sort | tail
 
-# Which archive file contains an event at a known timestamp
-zgrep -lE "PATTERN" ~/logs/archive/foci-2026-06-25T*.gz
+# Which archive file contains an event at a known timestamp — list ranges and pick
+# by eye; do NOT glob on the date you want (see gotcha)
+ls ~/logs/archive/ | grep '^foci-'
 
 # Full context inside one archive
 zcat ~/logs/archive/foci-<range>.log.gz | grep '<SESSION_KEY>'
 ```
 
 **Gotchas:**
+- **Archives are named `foci-<START>--<END>.log.gz`, by their START.** An event at time T lives in the file whose *range contains* T — normally one starting the previous day. So `ls foci-<the-date-you-want>*` returns nothing and reads exactly like the data was deleted. List the ranges (`ls ~/logs/archive/`) and pick, or `zgrep` across `foci-*.gz`. Same trap after a restart: the live log begins at the restart, so everything earlier is already archived.
 - **Archives are `.gz`** — `zgrep`/`zcat` them. A bare `grep -r` over `~/logs/` silently returns 0 on gzipped files (it doesn't decompress), so you'll miss everything in rotated logs. A zero result from `grep -r … *.gz` is a tooling false-negative, **not evidence that the thing never occurred**.
 - **Filter errors on the level column** (`awk '$2=="ERROR"'`), not a bare `grep ERROR` — the word "error" appears in plenty of non-error lines (payloads, messages), giving false positives.
 - **A real panic** starts with `^panic:` at column 0.
