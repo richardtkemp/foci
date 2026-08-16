@@ -71,7 +71,8 @@ type Hub struct {
 	// helloMu guards helloLessRun only — deliberately not h.mu, which is held
 	// across conversation fan-out; a disconnect must never queue behind that.
 	helloMu      sync.Mutex
-	helloLessRun int // consecutive sockets closed without a hello (#1713)
+	helloLessRun int       // consecutive sockets closed without a hello (#1713)
+	lastHelloAt  time.Time // when a handshake last completed (#1713)
 
 	host           string          // advertised in hello.caps.host (config [platforms.app].host)
 	replayDepth    int             // config-driven replay buffer depth (0 = default)
@@ -2451,6 +2452,7 @@ type wsClient struct {
 	// conversation's binding does), so the agent is resolved per-frame.
 	deviceID    string                  // from the client hello
 	helloSeen   bool                    // a ClientHello was received on this socket (#1713)
+	closeErr    string                  // why the read loop ended, for the hello-less diagnostic (#1713)
 	features    map[string]struct{}     // advertised client capabilities (from the hello)
 	convByID    map[string]*convBinding // conversationId → binding
 	openConvIDs map[string]struct{}     // conversations the app currently has open (its pager tabs)
@@ -2580,7 +2582,11 @@ func (c *wsClient) readPump() {
 		if err != nil {
 			// 1006/EOF is how a mobile client normally vanishes — cell<->wifi
 			// handoff, backgrounding, doze, tunnel drop: the socket dies with no
-			// close frame, so there's never a clean 1000/1001. Treat it (and the
+			// close frame, so there's never a clean 1000/1001. The commonest
+			// source is none of those, though: FapClient.closeSocket() cancels
+			// an in-flight handshake when a newer connect supersedes it, and an
+			// incomplete upgrade cannot carry a close frame, so every abandoned
+			// attempt arrives here as a sub-second 1006. Treat it (and the
 			// clean closes) as expected; only genuinely anomalous close codes
 			// (protocol error, oversize frame, ...) warrant a WARN.
 			if websocket.IsUnexpectedCloseError(err,
@@ -2591,6 +2597,9 @@ func (c *wsClient) readPump() {
 			} else {
 				appLog.Debugf("client disconnected: %v", err)
 			}
+			c.mu.Lock()
+			c.closeErr = err.Error()
+			c.mu.Unlock()
 			return
 		}
 		if mt != websocket.TextMessage {
@@ -2666,10 +2675,26 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 // keeps saying so rather than warning once and going quiet.
 const helloLessWarnAt = 5
 
-// noteHelloSeen resets the hello-less run: the handshake is completing again.
+// helloQuietPeriod is how long the app must go with NO successful handshake
+// before a run of hello-less sockets is treated as an outage.
+//
+// This second condition is load-bearing, and its absence was a defect in the
+// first version of this warning. A hello-less 1006 is usually NOT a failure:
+// the client aborts a superseded connect attempt with an OkHttp cancel(), which
+// tears down TCP with no close frame, so every abandoned attempt reaches us
+// looking exactly like a dead socket. Bursts of those are ordinary churn when
+// several reconnect triggers fire together, and the 2026-08-16 13:26 burst —
+// three aborts then a clean hello 8 seconds later — would have warned on count
+// alone. What actually means "the user is getting nothing" is attempts
+// continuing while NO hello succeeds, which is what this adds.
+const helloQuietPeriod = 5 * time.Minute
+
+// noteHelloSeen records a completed handshake: it resets the hello-less run and
+// starts the quiet-period clock over.
 func (h *Hub) noteHelloSeen() {
 	h.helloMu.Lock()
 	h.helloLessRun = 0
+	h.lastHelloAt = time.Now()
 	h.helloMu.Unlock()
 }
 
@@ -2689,11 +2714,38 @@ func (h *Hub) noteSocketClosed(c *wsClient, lifetime time.Duration) {
 	h.helloMu.Lock()
 	h.helloLessRun++
 	n := h.helloLessRun
+	last := h.lastHelloAt
 	h.helloMu.Unlock()
-	appLog.Debugf("socket closed without a hello after %s (consecutive=%d)",
-		lifetime.Round(time.Millisecond), n)
-	if n%helloLessWarnAt == 0 {
-		appLog.Warnf("%d consecutive app connects closed without completing the handshake — "+
-			"the app is reaching the server but receiving nothing (#1713)", n)
+
+	// closeCode is the discriminator between a client-abandoned attempt and a
+	// genuinely killed socket, so it belongs on the same line as the lifetime.
+	appLog.Debugf("socket closed without a hello after %s (consecutive=%d, close=%q)",
+		lifetime.Round(time.Millisecond), n, c.closeReason())
+
+	if n%helloLessWarnAt != 0 {
+		return
 	}
+	// Only an outage if attempts keep coming while nothing succeeds. A recent
+	// hello means the app IS getting through and these are abandoned attempts.
+	if !last.IsZero() {
+		if quiet := time.Since(last); quiet < helloQuietPeriod {
+			appLog.Debugf("%d consecutive hello-less sockets, but a handshake succeeded %s ago "+
+				"— treating as supersession churn, not an outage (#1713)", n, quiet.Round(time.Second))
+			return
+		}
+	}
+	since := "since this gateway started"
+	if !last.IsZero() {
+		since = "for " + time.Since(last).Round(time.Second).String()
+	}
+	appLog.Warnf("%d consecutive app connects closed without completing the handshake and "+
+		"NO handshake has succeeded %s — the app is reaching the server but receiving "+
+		"nothing (#1713)", n, since)
+}
+
+// closeReason reports why this socket's read loop ended ("" if it has not).
+func (c *wsClient) closeReason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closeErr
 }

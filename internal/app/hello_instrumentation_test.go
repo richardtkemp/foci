@@ -184,3 +184,88 @@ func TestHelloLog_RecordsResumeCount_ViaDispatch(t *testing.T) {
 		})
 	}
 }
+
+// The defect this fixes: warning on COUNT alone. A hello-less 1006 is usually a
+// client-abandoned attempt, so a burst of them while the app is otherwise
+// getting through is churn, not an outage. Modelled on the real 2026-08-16
+// 13:26 burst — three aborts, then a clean hello — which the count-only version
+// would have warned about.
+func TestNoteSocketClosed_RecentHelloSuppressesWarn(t *testing.T) {
+	warns := captureWarns(t)
+	h := newTestHub()
+
+	h.noteHelloSeen() // app is getting through
+	for i := 0; i < helloLessWarnAt*2; i++ {
+		h.noteSocketClosed(helloLessClient(h), 200*time.Millisecond)
+	}
+	if got := warns(); len(got) != 0 {
+		t.Errorf("warned on supersession churn despite a handshake %s ago: %v", "just now", got)
+	}
+}
+
+// The complement: once nothing has succeeded for the quiet period, the same run
+// IS an outage and must warn. Without this the change would silence the alarm
+// entirely rather than aim it.
+func TestNoteSocketClosed_WarnsOnceQuietPeriodElapsed(t *testing.T) {
+	warns := captureWarns(t)
+	h := newTestHub()
+
+	h.noteHelloSeen()
+	// Backdate the last success beyond the quiet period.
+	h.helloMu.Lock()
+	h.lastHelloAt = time.Now().Add(-helloQuietPeriod - time.Minute)
+	h.helloMu.Unlock()
+
+	for i := 0; i < helloLessWarnAt; i++ {
+		h.noteSocketClosed(helloLessClient(h), 200*time.Millisecond)
+	}
+	got := warns()
+	if len(got) != 1 {
+		t.Fatalf("warns = %d (%v), want 1 once the quiet period elapsed", len(got), got)
+	}
+	if !strings.Contains(got[0], "NO handshake has succeeded") {
+		t.Errorf("warning does not state the discriminating condition: %q", got[0])
+	}
+}
+
+// A never-connected gateway has a zero lastHelloAt; that must warn rather than
+// be read as "a handshake succeeded at the zero time".
+func TestNoteSocketClosed_WarnsWhenNoHelloEverSucceeded(t *testing.T) {
+	warns := captureWarns(t)
+	h := newTestHub()
+
+	for i := 0; i < helloLessWarnAt; i++ {
+		h.noteSocketClosed(helloLessClient(h), 200*time.Millisecond)
+	}
+	got := warns()
+	if len(got) != 1 {
+		t.Fatalf("warns = %d, want 1 when no handshake has ever succeeded", len(got))
+	}
+	if !strings.Contains(got[0], "since this gateway started") {
+		t.Errorf("warning should say no handshake has succeeded since startup: %q", got[0])
+	}
+}
+
+// The close reason is what separates a client-abandoned attempt from a socket
+// something else killed, so it has to reach the DEBUG line. readPump is the
+// only writer and its sole exit path sets it; this asserts the value survives
+// to the diagnostic rather than being recorded and dropped.
+func TestNoteSocketClosed_DebugLineCarriesCloseReason(t *testing.T) {
+	var buf bytes.Buffer
+	flog.SetOutput(&buf)
+	flog.SetLevel(flog.DEBUG)
+	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
+
+	h := newTestHub()
+	c := helloLessClient(h)
+	c.closeErr = "websocket: close 1006 (abnormal closure): unexpected EOF"
+	h.noteSocketClosed(c, 145*time.Millisecond)
+
+	out := buf.String()
+	if !strings.Contains(out, "1006") {
+		t.Errorf("hello-less DEBUG line lacks the close reason:\n%s", out)
+	}
+	if !strings.Contains(out, "145ms") {
+		t.Errorf("hello-less DEBUG line lacks the socket lifetime:\n%s", out)
+	}
+}
