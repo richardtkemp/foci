@@ -1636,7 +1636,15 @@ because until 2026-08-15 nothing did: a `hello: device=… resume=N features=…
 push_token=<bool>` DEBUG line on receipt (push token presence ONLY — the value is
 a credential), and `wsClient.helloSeen`, checked by `noteSocketClosed` when the
 socket closes. A run of `helloLessWarnAt` (5) consecutive hello-less sockets logs
-a WARN. This exists because a ~3-hour near-total app outage produced **zero log
+a WARN — **but only if no handshake has succeeded within `helloQuietPeriod`**
+(5 min). Both conditions are needed: a hello-less socket is usually the client
+abandoning a superseded connect (`FapClient.closeSocket` cancels the in-flight
+handshake, and an incomplete upgrade cannot send a close frame, so it reaches us
+as a sub-second 1006), which is ordinary churn when several reconnect triggers
+fire at once. Count alone would cry wolf; count *plus* silence is what actually
+means the user is getting nothing.
+
+This exists because a ~3-hour near-total app outage produced **zero log
 lines above DEBUG**: the 1006 disconnects are DEBUG by design (#888, mobile 1006s
 are normal) and `replayTo` is DEBUG, so hundreds of connects that delivered
 nothing were invisible. `resume=N` is also the sole discriminator between "socket
