@@ -24,20 +24,15 @@ The `resume=N` on each `hello:` line is the discriminator between a socket that
 died before `hello` (no line) and one that asked to resume nothing (`resume=0`);
 both produce zero `replayTo`, so replay counts alone cannot tell them apart.
 
-**Then read the close reason — three distinct modes, only one is a fault:**
+**Then read the close reason**, and read it out of the code that emits it:
+client-side in foci-client's `FapClient.kt` (`release()` sends `"backgrounded"`;
+the superseded branch sends `"superseded"`; `closeSocket()`'s `pending.cancel()`
+aborts an in-flight handshake with no close frame at all, which the server sees
+as a sub-second `1006`), server-side in `internal/app/hub.go` (`i/o timeout` is
+its own `pongWait`).
 
-| `client disconnected: …`            | Means                                                    |
-|-------------------------------------|----------------------------------------------------------|
-| `1000 (normal): backgrounded`       | the app chose to close — healthy                          |
-| `1006 (abnormal): unexpected EOF`   | killed with no close frame — the failure mode             |
-| `read tcp …: i/o timeout`           | the server's own 60s `pongWait`; client silent, TCP open  |
-
-A burst of `1006` whose sockets live only **100–600 ms** is a *rejection*, not a
-fade — nothing waits that briefly. Then check whether plain HTTP over the same
-tunnel (`replay GET` lines) is succeeding in those same seconds: if it is, the
-network and the device are fine and something is killing the **WebSocket
-upgrades** specifically. That one comparison rules out both weak signal and the
-client giving up.
+The part no code states: if `replay GET` lines succeed in the same seconds the
+upgrades die, network and device are both exonerated — suspect the upgrade path.
 
 ## Approach — look at the durable artifact, don't derive from code
 
