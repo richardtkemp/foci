@@ -84,32 +84,37 @@ type Logger struct {
 	initialized bool         // true after Init completes
 	mu          sync.Mutex
 
-	// lastEventStaleWarn/lastAPIStaleWarn/lastPayloadStaleWarn debounce the
-	// stale-inode warning (see reopen*IfStaleLocked below) to at most one per
-	// staleWarnCooldown per file. Without this, a reopen that keeps failing
-	// (e.g. the replacement directory is itself gone, or permission denied)
-	// would re-attempt and re-warn on every single write — for eventFile
-	// specifically that warning is itself a log call that re-enters event(),
-	// which would recurse without bound. The cooldown caps recursion depth at
-	// one nested call (the retry inside the cooldown window returns "" before
-	// recursing again) and keeps a persistently broken file from flooding
-	// stderr/the log with duplicate warnings on every write.
-	lastEventStaleWarn   time.Time
-	lastAPIStaleWarn     time.Time
-	lastPayloadStaleWarn time.Time
+	// staleWarns debounces the stale-inode warning (see reopen*IfStaleLocked
+	// below) to at most one per staleWarnCooldown per file, keyed by log path.
+	// Without this, a reopen that keeps failing (e.g. the replacement directory
+	// is itself gone, or permission denied) would re-attempt and re-warn on
+	// every single write — for eventFile specifically that warning is itself a
+	// log call that re-enters event(), which would recurse without bound. The
+	// cooldown caps recursion depth at one nested call (the retry inside the
+	// cooldown window returns "" before recursing again) and keeps a
+	// persistently broken file from flooding stderr/the log with duplicate
+	// warnings on every write.
+	staleWarns *WarnLimiter
 }
 
 // staleWarnCooldown bounds how often the stale-inode-detected warning is
 // emitted for a given file while reopen keeps failing. The reopen attempt
 // itself is NOT throttled — every write still tries to recover as soon as
 // the underlying problem clears.
+//
+// It is a FIXED interval (base == max), not an escalating one: unlike an
+// outage warning, this one gates a recursion hazard, so its ceiling has to
+// stay predictable.
 const staleWarnCooldown = time.Minute
 
 // std is the global logger instance.
 var std = newLogger()
 
 func newLogger() *Logger {
-	l := &Logger{eventOut: os.Stderr}
+	// staleWarns must be non-nil: a nil *WarnLimiter allows every call, which
+	// is the right default for an optional throttle but is exactly wrong here,
+	// where the throttle is what bounds the event-file re-entry recursion.
+	l := &Logger{eventOut: os.Stderr, staleWarns: NewWarnLimiter(staleWarnCooldown, staleWarnCooldown)}
 	l.level.Store(int32(INFO))
 	return l
 }
@@ -384,12 +389,13 @@ func staleFile(f *os.File, path string) bool {
 // reopenIfStaleLocked is the shared implementation behind
 // reopenEventIfStaleLocked/reopenAPIIfStaleLocked/reopenPayloadIfStaleLocked:
 // it reopens *file at path if the path has been replaced underneath it,
-// debouncing the warning message via *lastWarn (see staleWarnCooldown).
+// debouncing the warning message via l.staleWarns keyed on path (see
+// staleWarnCooldown).
 // Caller must hold l.mu. Returns whether a reopen was actually performed
 // (so the event-file variant knows to rebuild its stderr multiwriter even
 // on a cooldown-suppressed call — the reopen itself is never throttled,
 // only the warning) and a non-empty message when one should be logged.
-func (l *Logger) reopenIfStaleLocked(file **os.File, path string, lastWarn *time.Time, label string) (reopened bool, warnMsg string) {
+func (l *Logger) reopenIfStaleLocked(file **os.File, path string, label string) (reopened bool, warnMsg string) {
 	if *file == nil || !staleFile(*file, path) {
 		return false, ""
 	}
@@ -408,11 +414,9 @@ func (l *Logger) reopenIfStaleLocked(file **os.File, path string, lastWarn *time
 		reopened = true
 		msg = fmt.Sprintf("%s %s was replaced underneath the open writer (stale inode) — reopened", label, path)
 	}
-	now := timeutil.Now()
-	if now.Sub(*lastWarn) < staleWarnCooldown {
+	if emit, _ := l.staleWarns.Allow(path); !emit {
 		return reopened, "" // warned recently; keep retrying silently until the cooldown elapses
 	}
-	*lastWarn = now
 	return reopened, msg
 }
 
@@ -422,7 +426,7 @@ func (l *Logger) reopenIfStaleLocked(file **os.File, path string, lastWarn *time
 // reopen was attempted and the warning isn't in its cooldown window; "" if
 // the file was fine or event-file logging isn't configured.
 func (l *Logger) reopenEventIfStaleLocked() string {
-	reopened, msg := l.reopenIfStaleLocked(&l.eventFile, l.eventPath, &l.lastEventStaleWarn, "event log")
+	reopened, msg := l.reopenIfStaleLocked(&l.eventFile, l.eventPath, "event log")
 	if reopened {
 		l.eventOut = io.MultiWriter(os.Stderr, l.eventFile)
 	}
@@ -432,14 +436,14 @@ func (l *Logger) reopenEventIfStaleLocked() string {
 // reopenAPIIfStaleLocked is the api.jsonl analogue of reopenEventIfStaleLocked.
 // Caller must hold l.mu.
 func (l *Logger) reopenAPIIfStaleLocked() string {
-	_, msg := l.reopenIfStaleLocked(&l.apiFile, l.apiPath, &l.lastAPIStaleWarn, "API log")
+	_, msg := l.reopenIfStaleLocked(&l.apiFile, l.apiPath, "API log")
 	return msg
 }
 
 // reopenPayloadIfStaleLocked is the api-payload.jsonl analogue of
 // reopenEventIfStaleLocked. Caller must hold l.mu.
 func (l *Logger) reopenPayloadIfStaleLocked() string {
-	_, msg := l.reopenIfStaleLocked(&l.payloadFile, l.payloadPath, &l.lastPayloadStaleWarn, "payload log")
+	_, msg := l.reopenIfStaleLocked(&l.payloadFile, l.payloadPath, "payload log")
 	return msg
 }
 

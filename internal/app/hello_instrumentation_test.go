@@ -41,7 +41,54 @@ func captureWarns(t *testing.T) func() []string {
 	}
 }
 
-func helloLessClient(h *Hub) *wsClient { return &wsClient{hub: h} }
+func helloLessClient(h *Hub) *wsClient { return helloLessClientFor(h, "dev-1") }
+
+func helloLessClientFor(h *Hub, device string) *wsClient {
+	return &wsClient{hub: h, deviceID: device}
+}
+
+// withWarnClock installs a hand-wound limiter so the escalating repeat schedule
+// can be asserted by advancing time rather than by sleeping through a 30-minute
+// cap. Returns the clock.
+func withWarnClock(t *testing.T, h *Hub) *warnClock {
+	t.Helper()
+	clk := &warnClock{t: time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)}
+	h.helloMu.Lock()
+	h.helloWarns = flog.NewWarnLimiterWithClock(helloWarnBase, helloWarnMax, clk.Now)
+	h.helloMu.Unlock()
+	return clk
+}
+
+type warnClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *warnClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *warnClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
+// backdateHello makes device look like it last shook hands d ago, which is what
+// takes a run of hello-less sockets past the quiet period into outage territory.
+func backdateHello(h *Hub, device string, d time.Duration) {
+	h.helloMu.Lock()
+	h.helloStateLocked(device).lastHello = time.Now().Add(-d)
+	h.helloMu.Unlock()
+}
+
+func helloRun(h *Hub, device string) int {
+	h.helloMu.Lock()
+	defer h.helloMu.Unlock()
+	return h.helloStateLocked(device).run
+}
 
 // The point of the change (#1713): a RUN of sockets closing without completing
 // the handshake must become visible above DEBUG. A 3-hour outage previously
@@ -86,8 +133,8 @@ func TestNoteSocketClosed_HelloSeenNeitherCountsNorWarns(t *testing.T) {
 	if got := warns(); len(got) != 0 {
 		t.Fatalf("warned on healthy sockets: %v", got)
 	}
-	if h.helloLessRun != 0 {
-		t.Errorf("helloLessRun = %d after only healthy sockets, want 0", h.helloLessRun)
+	if got := helloRun(h, "dev-1"); got != 0 {
+		t.Errorf("hello-less run = %d after only healthy sockets, want 0", got)
 	}
 }
 
@@ -100,7 +147,7 @@ func TestNoteHelloSeen_ResetsPartialRun(t *testing.T) {
 	for i := 0; i < helloLessWarnAt-1; i++ {
 		h.noteSocketClosed(helloLessClient(h), time.Second)
 	}
-	h.noteHelloSeen() // a successful handshake lands here
+	h.noteHelloSeen("dev-1") // a successful handshake lands here
 	for i := 0; i < helloLessWarnAt-1; i++ {
 		h.noteSocketClosed(helloLessClient(h), time.Second)
 	}
@@ -110,16 +157,166 @@ func TestNoteHelloSeen_ResetsPartialRun(t *testing.T) {
 }
 
 // A sustained outage must keep warning rather than warning once and going
-// quiet — otherwise a 3-hour outage is one line, easily missed.
-func TestNoteSocketClosed_KeepsWarningWhileOutageContinues(t *testing.T) {
+// quiet — but on a schedule set by TIME, not by how hard the client retries.
+// The old contract warned every 5th failed connect, so the line count scaled
+// with the retry rate: the real 2026-08-17 outage produced 31 WARN lines in
+// three hours, 82% of every warning in the log.
+func TestNoteSocketClosed_RepeatsOnAnEscalatingSchedule(t *testing.T) {
 	warns := captureWarns(t)
 	h := newTestHub()
+	clk := withWarnClock(t, h)
+
+	// A burst of failures inside one window is ONE line, however many arrive.
+	for i := 0; i < helloLessWarnAt*10; i++ {
+		h.noteSocketClosed(helloLessClient(h), time.Second)
+	}
+	if got := warns(); len(got) != 1 {
+		t.Fatalf("warns for %d failures inside one window = %d (%v), want 1",
+			helloLessWarnAt*10, len(got), got)
+	}
+
+	// The window then doubles: base, 2*base, 4*base.
+	for i, window := range []time.Duration{helloWarnBase, 2 * helloWarnBase, 4 * helloWarnBase} {
+		clk.Advance(window - time.Second)
+		h.noteSocketClosed(helloLessClient(h), time.Second)
+		if got := len(warns()); got != i+1 {
+			t.Fatalf("warned early at step %d (window %s): warns = %d, want %d", i, window, got, i+1)
+		}
+		clk.Advance(time.Second)
+		h.noteSocketClosed(helloLessClient(h), time.Second)
+		if got := len(warns()); got != i+2 {
+			t.Fatalf("did not warn after the %s window elapsed: warns = %d, want %d", window, got, i+2)
+		}
+	}
+}
+
+// Throttling is only safe if a reader can tell that lines were dropped —
+// otherwise a gap is ambiguous between "healthy" and "the logger ate it".
+func TestNoteSocketClosed_ReportsSuppressedCount(t *testing.T) {
+	warns := captureWarns(t)
+	h := newTestHub()
+	clk := withWarnClock(t, h)
 
 	for i := 0; i < helloLessWarnAt*3; i++ {
 		h.noteSocketClosed(helloLessClient(h), time.Second)
 	}
-	if got := len(warns()); got != 3 {
-		t.Errorf("warns over %d consecutive failures = %d, want 3", helloLessWarnAt*3, got)
+	clk.Advance(helloWarnBase)
+	h.noteSocketClosed(helloLessClient(h), time.Second)
+
+	got := warns()
+	if len(got) != 2 {
+		t.Fatalf("warns = %d (%v), want 2", len(got), got)
+	}
+	if !strings.Contains(got[1], "further failed connects") {
+		t.Errorf("repeat line does not say how many lines were suppressed: %q", got[1])
+	}
+}
+
+// The closing half of the alarm. Without it the end of an outage is invisible —
+// during the 2026-08-17 investigation each recovery had to be INFERRED from a
+// counter resetting in some later line.
+func TestNoteHelloSeen_AnnouncesRecoveryAfterAWarnedOutage(t *testing.T) {
+	warns := captureWarns(t)
+	h := newTestHub()
+	withWarnClock(t, h)
+
+	for i := 0; i < helloLessWarnAt; i++ {
+		h.noteSocketClosed(helloLessClient(h), time.Second)
+	}
+	if len(warns()) != 1 {
+		t.Fatalf("setup: want exactly 1 outage warning, got %v", warns())
+	}
+
+	h.noteHelloSeen("dev-1")
+	got := warns()
+	if len(got) != 2 {
+		t.Fatalf("warns = %d (%v), want an outage line and a recovery line", len(got), got)
+	}
+	if !strings.Contains(got[1], "RECOVERED") || !strings.Contains(got[1], "dev-1") {
+		t.Errorf("recovery line does not announce recovery for the device: %q", got[1])
+	}
+}
+
+// ...but a handshake that ends a run which never warned must stay silent, or
+// ordinary supersession churn would emit "recovered" lines for a fleet that was
+// never reported broken.
+func TestNoteHelloSeen_SilentWhenNoOutageWasReported(t *testing.T) {
+	warns := captureWarns(t)
+	h := newTestHub()
+	withWarnClock(t, h)
+
+	for i := 0; i < helloLessWarnAt-1; i++ {
+		h.noteSocketClosed(helloLessClient(h), time.Second)
+	}
+	h.noteHelloSeen("dev-1")
+	if got := warns(); len(got) != 0 {
+		t.Errorf("announced recovery from an outage that was never warned about: %v", got)
+	}
+}
+
+// The property that keeps an INTERMITTENT fault loud: recovery re-arms the
+// alarm, so the next episode warns immediately instead of inheriting the
+// silence the previous one earned. Without this, a flapping client would be
+// muted progressively as it got worse — the failure mode a throttle must not
+// introduce.
+func TestNoteHelloSeen_RecoveryReArmsImmediateWarning(t *testing.T) {
+	warns := captureWarns(t)
+	h := newTestHub()
+	withWarnClock(t, h) // clock never advances: any second warning must come from the re-arm
+
+	for i := 0; i < helloLessWarnAt; i++ {
+		h.noteSocketClosed(helloLessClient(h), time.Second)
+	}
+	h.noteHelloSeen("dev-1") // episode 1 ends
+	before := len(warns())
+
+	// The device is healthy for a while, then breaks again. Backdating past the
+	// quiet period is what makes the new run an outage rather than churn — that
+	// gate is separate from the throttle and must keep doing its own job.
+	backdateHello(h, "dev-1", helloQuietPeriod+time.Minute)
+	for i := 0; i < helloLessWarnAt; i++ {
+		h.noteSocketClosed(helloLessClient(h), time.Second)
+	}
+	got := warns()
+	if len(got) != before+1 {
+		t.Fatalf("second episode produced %d new lines, want 1 — a new fault must warn at once", len(got)-before)
+	}
+	if !strings.Contains(got[len(got)-1], "consecutive app connects") {
+		t.Errorf("last line is not a fresh outage warning: %q", got[len(got)-1])
+	}
+}
+
+// Handshake health is PER DEVICE. The fleet-wide version lied in both
+// directions on 2026-08-17: a healthy phone's handshakes reset the global run
+// while the Mac was dead throughout, and the warning named no device at all, so
+// it read as a fleet outage when half the fleet was fine.
+func TestNoteSocketClosed_PerDeviceIndependence(t *testing.T) {
+	warns := captureWarns(t)
+	h := newTestHub()
+	withWarnClock(t, h)
+
+	// The broken device warns.
+	for i := 0; i < helloLessWarnAt; i++ {
+		h.noteSocketClosed(helloLessClientFor(h, "mac"), time.Second)
+	}
+	got := warns()
+	if len(got) != 1 || !strings.Contains(got[0], "mac") {
+		t.Fatalf("want one warning naming the broken device, got %v", got)
+	}
+
+	// A DIFFERENT device's successful handshake must not clear it...
+	h.noteHelloSeen("phone")
+	if n := len(warns()); n != 1 {
+		t.Fatalf("a healthy peer device changed the broken device's state: %v", warns())
+	}
+	if run := helloRun(h, "mac"); run != helloLessWarnAt {
+		t.Errorf("broken device's run = %d after a peer's handshake, want %d", run, helloLessWarnAt)
+	}
+
+	// ...and a peer's failures must not count toward it.
+	h.noteSocketClosed(helloLessClientFor(h, "phone"), time.Second)
+	if run := helloRun(h, "mac"); run != helloLessWarnAt {
+		t.Errorf("a peer device's failure counted toward the broken device: run = %d", run)
 	}
 }
 
@@ -194,7 +391,7 @@ func TestNoteSocketClosed_RecentHelloSuppressesWarn(t *testing.T) {
 	warns := captureWarns(t)
 	h := newTestHub()
 
-	h.noteHelloSeen() // app is getting through
+	h.noteHelloSeen("dev-1") // app is getting through
 	for i := 0; i < helloLessWarnAt*2; i++ {
 		h.noteSocketClosed(helloLessClient(h), 200*time.Millisecond)
 	}
@@ -210,11 +407,9 @@ func TestNoteSocketClosed_WarnsOnceQuietPeriodElapsed(t *testing.T) {
 	warns := captureWarns(t)
 	h := newTestHub()
 
-	h.noteHelloSeen()
+	h.noteHelloSeen("dev-1")
 	// Backdate the last success beyond the quiet period.
-	h.helloMu.Lock()
-	h.lastHelloAt = time.Now().Add(-helloQuietPeriod - time.Minute)
-	h.helloMu.Unlock()
+	backdateHello(h, "dev-1", helloQuietPeriod+time.Minute)
 
 	for i := 0; i < helloLessWarnAt; i++ {
 		h.noteSocketClosed(helloLessClient(h), 200*time.Millisecond)

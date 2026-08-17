@@ -20,6 +20,7 @@ import (
 	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/config"
+	flog "foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -68,11 +69,12 @@ type Hub struct {
 	devices  *deviceStore
 	authLim  *authLimiter
 
-	// helloMu guards helloLessRun only — deliberately not h.mu, which is held
-	// across conversation fan-out; a disconnect must never queue behind that.
-	helloMu      sync.Mutex
-	helloLessRun int       // consecutive sockets closed without a hello (#1713)
-	lastHelloAt  time.Time // when a handshake last completed (#1713)
+	// helloMu guards helloByDevice/helloWarns only — deliberately not h.mu,
+	// which is held across conversation fan-out; a disconnect must never queue
+	// behind that.
+	helloMu       sync.Mutex
+	helloByDevice map[string]*helloState // deviceID → handshake health (#1713)
+	helloWarns    *flog.WarnLimiter      // debounces the outage warning, keyed by deviceID (#1713)
 
 	host           string          // advertised in hello.caps.host (config [platforms.app].host)
 	replayDepth    int             // config-driven replay buffer depth (0 = default)
@@ -2701,13 +2703,92 @@ const helloLessWarnAt = 5
 // continuing while NO hello succeeds, which is what this adds.
 const helloQuietPeriod = 5 * time.Minute
 
-// noteHelloSeen records a completed handshake: it resets the hello-less run and
-// starts the quiet-period clock over.
-func (h *Hub) noteHelloSeen() {
+// helloWarnBase/helloWarnMax bound how often ONE device's outage warning
+// repeats. The first crossing warns immediately; after that the window doubles
+// from base to max, and a successful handshake resets it (see WarnLimiter).
+//
+// A repeat's value decays with the age of the condition — minute two of an
+// outage is news, minute ninety is not — so a fixed repeat interval either
+// spams a long outage or under-reports a fresh one. The 2026-08-17 outage is
+// the worked example: warning every 5th failed connect produced 31 WARN lines
+// in 3 hours (82% of ALL warnings in the log), of which about 10 carried
+// anything the previous line had not. These bounds turn that into ~5 lines per
+// episode plus a recovery line.
+//
+// Note what is NOT throttled: the client keeps reconnecting at its own cadence
+// and the server keeps accepting, counting and recovering at full rate. Only
+// the announcing is rationed. Slowing the retry loop would have bought the same
+// quiet by trading away reconnection responsiveness, which is the wrong layer.
+const (
+	helloWarnBase = time.Minute
+	helloWarnMax  = 30 * time.Minute
+)
+
+// helloState is one device's handshake health.
+//
+// Keyed PER DEVICE because the fleet-wide version lied in both directions: on
+// 2026-08-17 a healthy phone's occasional handshake reset the global run while
+// the Mac was dead throughout, and the resulting warning named no device, so it
+// read as a fleet outage when half the fleet was fine.
+type helloState struct {
+	run       int       // consecutive sockets closed without a hello
+	lastHello time.Time // when this device last completed a handshake
+	outage    bool      // true while this device's outage warning is active
+}
+
+// helloStateLocked returns the device's state, creating it on first sight.
+// Caller must hold helloMu.
+func (h *Hub) helloStateLocked(deviceID string) *helloState {
+	if h.helloByDevice == nil {
+		h.helloByDevice = map[string]*helloState{}
+	}
+	st := h.helloByDevice[deviceID]
+	if st == nil {
+		st = &helloState{}
+		h.helloByDevice[deviceID] = st
+	}
+	return st
+}
+
+// helloWarnsLocked returns the warn limiter, creating it on first use so that a
+// Hub built as a bare struct literal (as tests do) stays valid. Caller must
+// hold helloMu. Tests substitute a clock-injecting limiter before first use.
+func (h *Hub) helloWarnsLocked() *flog.WarnLimiter {
+	if h.helloWarns == nil {
+		h.helloWarns = flog.NewWarnLimiter(helloWarnBase, helloWarnMax)
+	}
+	return h.helloWarns
+}
+
+// noteHelloSeen records a completed handshake for deviceID: it resets that
+// device's hello-less run, restarts the quiet-period clock, re-arms the warn
+// limiter, and announces recovery if the device was in a warned outage.
+//
+// The recovery line is the closing half of the alarm, and it is WARN for the
+// same reason the alarm is: anyone reading at WARN who sees the outage but
+// never the all-clear is worse off than if neither had been logged. It is also
+// what makes throttling safe — with both edges recorded, silence is
+// unambiguous rather than a choice between "healthy" and "the logger ate it".
+func (h *Hub) noteHelloSeen(deviceID string) {
 	h.helloMu.Lock()
-	h.helloLessRun = 0
-	h.lastHelloAt = time.Now()
+	st := h.helloStateLocked(deviceID)
+	run, outage, prev := st.run, st.outage, st.lastHello
+	st.run = 0
+	st.outage = false
+	st.lastHello = time.Now()
+	lim := h.helloWarnsLocked()
 	h.helloMu.Unlock()
+
+	lim.Reset(deviceID)
+	if !outage {
+		return
+	}
+	down := "since this gateway started"
+	if !prev.IsZero() {
+		down = "after " + time.Since(prev).Round(time.Second).String()
+	}
+	appLog.Warnf("app handshakes RECOVERED for device=%s %s and %d consecutive failed connects (#1713)",
+		deviceID, down, run)
 }
 
 // noteSocketClosed records whether a closing socket ever completed the app-level
@@ -2719,40 +2800,66 @@ func (h *Hub) noteHelloSeen() {
 func (h *Hub) noteSocketClosed(c *wsClient, lifetime time.Duration) {
 	c.mu.Lock()
 	seen := c.helloSeen
+	deviceID := c.deviceID
 	c.mu.Unlock()
 	if seen {
 		return
 	}
 	h.helloMu.Lock()
-	h.helloLessRun++
-	n := h.helloLessRun
-	last := h.lastHelloAt
+	st := h.helloStateLocked(deviceID)
+	st.run++
+	n := st.run
+	last := st.lastHello
+	lim := h.helloWarnsLocked()
 	h.helloMu.Unlock()
 
 	// closeCode is the discriminator between a client-abandoned attempt and a
 	// genuinely killed socket, so it belongs on the same line as the lifetime.
-	appLog.Debugf("socket closed without a hello after %s (consecutive=%d, close=%q)",
-		lifetime.Round(time.Millisecond), n, c.closeReason())
+	appLog.Debugf("socket closed without a hello after %s (device=%s, consecutive=%d, close=%q)",
+		lifetime.Round(time.Millisecond), deviceID, n, c.closeReason())
 
-	if n%helloLessWarnAt != 0 {
+	// helloLessWarnAt is now an ENTRY condition, not a repeat interval: it
+	// decides when a run first becomes worth reporting, and the limiter decides
+	// how often to say so afterwards. Repeating on every Nth failure made the
+	// line count scale with how hard the client retried.
+	if n < helloLessWarnAt {
 		return
 	}
 	// Only an outage if attempts keep coming while nothing succeeds. A recent
 	// hello means the app IS getting through and these are abandoned attempts.
 	if !last.IsZero() {
 		if quiet := time.Since(last); quiet < helloQuietPeriod {
-			appLog.Debugf("%d consecutive hello-less sockets, but a handshake succeeded %s ago "+
-				"— treating as supersession churn, not an outage (#1713)", n, quiet.Round(time.Second))
+			// Kept on the count so ordinary supersession churn does not multiply
+			// this DEBUG line by the retry rate either.
+			if n%helloLessWarnAt == 0 {
+				appLog.Debugf("%d consecutive hello-less sockets for device=%s, but a handshake "+
+					"succeeded %s ago — treating as supersession churn, not an outage (#1713)",
+					n, deviceID, quiet.Round(time.Second))
+			}
 			return
 		}
+	}
+	emit, dropped := lim.Allow(deviceID)
+	h.helloMu.Lock()
+	h.helloStateLocked(deviceID).outage = true
+	h.helloMu.Unlock()
+	if !emit {
+		return
 	}
 	since := "since this gateway started"
 	if !last.IsZero() {
 		since = "for " + time.Since(last).Round(time.Second).String()
 	}
-	appLog.Warnf("%d consecutive app connects closed without completing the handshake and "+
-		"NO handshake has succeeded %s — the app is reaching the server but receiving "+
-		"nothing (#1713)", n, since)
+	// Naming the suppressed count keeps the throttle honest: a reader can tell
+	// that lines were dropped, so a gap never has to be read as either health
+	// or a broken logger.
+	andMore := ""
+	if dropped > 0 {
+		andMore = fmt.Sprintf(" (%d further failed connects since the last of these lines)", dropped)
+	}
+	appLog.Warnf("%d consecutive app connects from device=%s closed without completing the "+
+		"handshake and NO handshake has succeeded %s — the app is reaching the server but "+
+		"receiving nothing%s (#1713)", n, deviceID, since, andMore)
 }
 
 // closeReason reports why this socket's read loop ended ("" if it has not).

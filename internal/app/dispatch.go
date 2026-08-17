@@ -54,6 +54,14 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	switch f := in.Frame.(type) {
 	case fap.ClientHello:
 		client.mu.Lock()
+		// Captured BEFORE the hello's advisory deviceId overwrites it. The
+		// handshake-health bookkeeping (#1713) is keyed on the AUTHENTICATED
+		// identity that ServeWS set at connect, because that is the only one a
+		// socket dying before its hello ever has. Keying recovery on the
+		// advisory value instead would, on any mismatch, reset a different
+		// device's counter than the outage was counted against — leaving the
+		// real one warned forever and the innocent one silently re-armed.
+		authDevice := client.deviceID
 		client.deviceID = f.Client.DeviceID
 		client.features = featureSet(f.Features)
 		client.helloSeen = true
@@ -65,7 +73,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// discriminator: 0 means the client asked to resume nothing.
 		appLog.Debugf("hello: device=%s resume=%d features=%d push_token=%t",
 			f.Client.DeviceID, len(f.Resume), len(f.Features), f.PushToken != "")
-		h.noteHelloSeen()
+		h.noteHelloSeen(authDevice)
 		// A master-key socket learns its deviceId here; evict any older socket for
 		// the same device (wire §9, close 4409) so a reconnecting phone never ends
 		// up with two live sockets on one conversation.
