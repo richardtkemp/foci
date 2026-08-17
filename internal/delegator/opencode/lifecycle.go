@@ -46,6 +46,15 @@ var (
 	// healthProbeInterval is the polling cadence for GET /global/health
 	// during Start. The probe times out via the caller's context.
 	healthProbeInterval = 200 * time.Millisecond
+
+	// subscriberAttachWait bounds how long Start waits for the SSE stream
+	// AFTER the health probe has passed. Sized from the observed gap, not
+	// from taste: on 2026-08-16 /global/health answered 200 at 21:58:28 while
+	// GET /event kept refusing until 21:58:36 — 8s, with the connect loop
+	// retrying every 100ms throughout. 30s is ~4x that, so the ordinary
+	// startup never reaches it and the WARN means something is genuinely
+	// wrong rather than merely slow. A var so tests can shorten it.
+	subscriberAttachWait = 30 * time.Second
 )
 
 // Start launches the opencode-server subprocess and blocks until the
@@ -167,6 +176,19 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.healthProbe(ctx); err != nil {
 		_ = s.Close()
 		return fmt.Errorf("opencode: health probe: %w", err)
+	}
+
+	// Then wait for the SSE stream, which is a SEPARATE readiness signal from
+	// health — see waitForSubscriber. Deliberately non-fatal on timeout: a
+	// subscriber that never attaches already breaks turn completion, and
+	// failing Start here would convert that into "this agent cannot be used
+	// at all" for a window opencode may simply be slow through. Proceeding
+	// leaves today's behaviour with a findable WARN instead of silence.
+	if !s.waitForSubscriber(ctx, subscriberAttachWait) {
+		log.NewComponentLogger(component).Warnf(
+			"SSE stream not established within %s of the health probe passing — "+
+				"a prompt sent now can complete unobserved and wedge the session (#1722)",
+			subscriberAttachWait)
 	}
 
 	s.mu.Lock()
