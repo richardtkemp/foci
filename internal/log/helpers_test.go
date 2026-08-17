@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"testing"
-	"time"
 )
 
 // setLevel changes the log level at runtime (test-only).
@@ -42,9 +41,7 @@ func resetGlobal() {
 	std.payloadFile = nil
 	std.buffer = nil
 	std.initialized = false
-	std.lastEventStaleWarn = time.Time{}
-	std.lastAPIStaleWarn = time.Time{}
-	std.lastPayloadStaleWarn = time.Time{}
+	std.staleWarns = NewWarnLimiter(staleWarnCooldown, staleWarnCooldown)
 	std.mu.Unlock()
 }
 
