@@ -1633,11 +1633,18 @@ trimmed; trimmed further on inbound ack), and an inbound dedup `seen` set.
 `removeClient` detaches but RETAINS state for reconnect.
 
 **Handshake observability (#1713).** A socket is only useful once its `hello`
-arrives; everything the app receives follows from it. Two signals record that,
+arrives; everything the app receives follows from it. Three signals record that,
 because until 2026-08-15 nothing did: a `hello: device=… resume=N features=…
 push_token=<bool>` DEBUG line on receipt (push token presence ONLY — the value is
-a credential), and `wsClient.helloSeen`, checked by `noteSocketClosed` when the
-socket closes. A run of `helloLessWarnAt` (5) consecutive hello-less sockets logs
+a credential), `wsClient.helloSeen`, checked by `noteSocketClosed` when the
+socket closes, and the **`device connected: device=…`** INFO line in `ServeWS`.
+That last one exists because the other two cannot identify a socket that dies
+BEFORE its hello: `deviceID` normally arrives in the hello frame, which such a
+socket never sends, so a burst of hello-less connects was unattributable from
+the server and the diagnosis had to move to client-side logging. Device-token
+auth resolves the device before the upgrade, so `ServeWS` can name it
+unconditionally (`authenticate` returns ok only with a device — there is no
+master key since #862). A run of `helloLessWarnAt` (5) consecutive hello-less sockets logs
 a WARN — **but only if no handshake has succeeded within `helloQuietPeriod`**
 (5 min). Both conditions are needed: a hello-less socket is usually the client
 abandoning a superseded connect (`FapClient.closeSocket` cancels the in-flight
