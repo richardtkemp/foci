@@ -1269,7 +1269,7 @@ Data flow:
 
 **Two-phase init:** Before `log.Init()`, events go to stderr and are buffered in memory. When `Init()` opens the event file, buffered events are replayed to it. This ensures config-load warnings (e.g. unknown keys) appear in the log file despite being emitted before the file path is known.
 
-**Rotation and stale-inode self-heal (`rotate.go`, `log.go`):** `StartRotation` runs `rotateAll` on a timer (`rotation_period`, default 24h): it moves lines older than `retention_period` into a gzip archive via `os.Rename`, then always calls `log.Reopen()` so the writer's fd follows the renamed-in file. `os.Rename` never disturbs an already-open fd on its own — that's why the paired `Reopen()` exists. **The final rename runs inside `log.SwapUnderWriterLock`**, which holds the writer mutex across the rename AND the reopen: pairing them in sequence was not enough, because the very next write — rotation's own `rotated %s: archived %d old lines` line — took the lock first, found its fd on the replaced inode and emitted the stale-inode WARN, once per rotation, every rotation. Holding the lock makes the swap invisible to writers, so the detector below now fires only for genuinely external replacement. (The callback must not log: it runs under that mutex.) If something OUTSIDE this pair replaces one of the three files directly (external truncation, a stray script, anything that doesn't call `Reopen()` afterward), the open fd is silently orphaned: it keeps appending into an unlinked inode that no rotation pass — and no rotation cadence, however short — can ever see again, while the visible file at the path stays empty. This actually happened in production (foci_todo #1479: `api-payload.jsonl` archiving stopped silently for 4 months). Fix: every write through `event()`/`api()`/`payload()` now compares the open fd's `(dev, ino)` (fstat) against a fresh `stat` of the configured path before writing (`staleFile`/`reopen{Event,API,Payload}IfStaleLocked` in `log.go`); on a mismatch it reopens the current path immediately (no 24h wait) and logs a WARN (debounced to once per minute per file via `staleWarnCooldown`, so a persistently-failing reopen — e.g. the replacement dir is gone — can't flood the log or recurse into itself through `event()`).
+**Rotation and stale-inode self-heal (`rotate.go`, `log.go`):** `StartRotation` runs `rotateAll` on a timer (`rotation_period`, default 24h): it moves lines older than `retention_period` into a gzip archive via `os.Rename`, then always calls `log.Reopen()` so the writer's fd follows the renamed-in file. `os.Rename` never disturbs an already-open fd on its own — that's why the paired `Reopen()` exists. **The final rename runs inside `log.SwapUnderWriterLock`**, which holds the writer mutex across the rename AND the reopen: pairing them in sequence was not enough, because the very next write — rotation's own `rotated %s: archived %d old lines` line — took the lock first, found its fd on the replaced inode and emitted the stale-inode WARN, once per rotation, every rotation. Holding the lock makes the swap invisible to writers, so the detector below now fires only for genuinely external replacement. (The callback must not log: it runs under that mutex.) If something OUTSIDE this pair replaces one of the three files directly (external truncation, a stray script, anything that doesn't call `Reopen()` afterward), the open fd is silently orphaned: it keeps appending into an unlinked inode that no rotation pass — and no rotation cadence, however short — can ever see again, while the visible file at the path stays empty. This actually happened in production (foci_todo #1479: `api-payload.jsonl` archiving stopped silently for 4 months). Fix: every write through `event()`/`api()`/`payload()` now compares the open fd's `(dev, ino)` (fstat) against a fresh `stat` of the configured path before writing (`staleFile`/`reopen{Event,API,Payload}IfStaleLocked` in `log.go`); on a mismatch it reopens the current path immediately (no 24h wait) and logs a WARN (debounced to once per minute per file via `Logger.staleWarns`, a `WarnLimiter` keyed by log path with base == max == `staleWarnCooldown`, so a persistently-failing reopen — e.g. the replacement dir is gone — can't flood the log or recurse into itself through `event()`; the interval is deliberately FIXED rather than escalating here because it bounds that recursion, unlike the app's outage warning which escalates).
 
 Four outputs:
 
@@ -1652,6 +1652,28 @@ handshake, and an incomplete upgrade cannot send a close frame, so it reaches us
 as a sub-second 1006), which is ordinary churn when several reconnect triggers
 fire at once. Count alone would cry wolf; count *plus* silence is what actually
 means the user is getting nothing.
+
+All of that state is **per device** (`Hub.helloByDevice`, keyed by the
+AUTHENTICATED `deviceID` `ServeWS` set at connect — `dispatch.go` captures it
+before the hello's advisory value overwrites it, since a socket dying before its
+hello only ever has the former). A fleet-wide counter lied in both directions on
+2026-08-17: a healthy phone's handshakes kept resetting the global run while the
+Mac was dead throughout, and the line named no device, so it read as a fleet
+outage when half the fleet was fine.
+
+`helloLessWarnAt` is the **entry** condition, not the repeat interval. Repeats
+come from `Hub.helloWarns`, a `log.WarnLimiter` keyed by device: immediate, then
+`helloWarnBase` (1 min) doubling to `helloWarnMax` (30 min), with the count of
+suppressed lines carried on the next one that does emit. Warning every 5th
+failed connect made the volume scale with the client's retry rate — the
+2026-08-17 outage produced 31 WARN lines in 3 hours, 82% of every warning in the
+log. **Nothing about reconnection is throttled:** `noteSocketClosed` runs after
+the socket is already dead, so only the announcing is rationed. `noteHelloSeen`
+then logs a **`app handshakes RECOVERED for device=…`** WARN (same severity as
+the alarm, so a WARN-level reader never sees an outage without its all-clear)
+and calls `Reset`, which re-arms the immediate warning — an intermittent fault
+therefore stays loud instead of inheriting the silence its previous episode
+earned.
 
 This exists because a ~3-hour near-total app outage produced **zero log
 lines above DEBUG**: the 1006 disconnects are DEBUG by design (#888, mobile 1006s
