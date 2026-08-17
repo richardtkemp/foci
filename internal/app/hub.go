@@ -2659,7 +2659,19 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		// the hello frame and are evicted in the ClientHello handler instead.
 		h.evictOtherDeviceSockets(client, dev.DeviceID)
 	}
-	appLog.Infof("device connected")
+	// Name the device. This is the ONLY identity available on a socket that dies
+	// before its hello, and those are exactly the ones worth attributing: the
+	// deviceID otherwise arrives in the hello frame, which such a socket never
+	// sends. Without this, a burst of hello-less connects cannot be pinned to a
+	// client from the server at all — which is what pushed the #1713 diagnosis
+	// onto client-side logging and a device that was not always reachable.
+	//
+	// Unconditional because authenticate() returns ok only with a device
+	// (there is no master key since #862), so dev is never nil here.
+	//
+	// deviceID is an identifier, not a credential — auth is the separate Token
+	// (authToken/byTok), which must never be logged.
+	appLog.Infof("device connected: device=%s", dev.DeviceID)
 	safeGo("ws-writepump", client.writePump)
 	connectedAt := time.Now()
 	client.readPump() // blocks until the socket closes
