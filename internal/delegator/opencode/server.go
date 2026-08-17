@@ -37,6 +37,18 @@ type Server struct {
 	waitCh  chan error         // receives cmd.Wait() result
 	exitErr error              // set by waiter goroutine
 
+	// subscribed is closed once the SSE subscriber's GET /event has
+	// established (HTTP 200). Start waits on it before returning, because
+	// health and /event become ready at DIFFERENT times and a prompt POSTed
+	// in that gap loses its completion event (#1722).
+	//
+	// Created lazily by subscribedCh, NOT in newServer: a Server built as a
+	// bare struct literal must work, because ~33 tests across this package do
+	// exactly that and would otherwise close a nil channel.
+	subscribedMu   sync.Mutex
+	subscribed     chan struct{}
+	subscribedOnce sync.Once
+
 	// Lifecycle.
 	mu           sync.Mutex
 	refCount     int  // read/written by pool via acquireServer/releaseServer
@@ -118,6 +130,50 @@ func newServer(agentID string, cfg serverConfig) *Server {
 	}
 	s.wrapAuthCheckingTransport()
 	return s
+}
+
+// subscribedCh returns the attach signal, creating it on first use so the
+// Server zero value is usable.
+func (s *Server) subscribedCh() chan struct{} {
+	s.subscribedMu.Lock()
+	defer s.subscribedMu.Unlock()
+	if s.subscribed == nil {
+		s.subscribed = make(chan struct{})
+	}
+	return s.subscribed
+}
+
+// markSubscribed reports that the SSE stream is established. Idempotent —
+// the subscriber's connect loop is the only caller, but a mid-stream
+// reconnect (deferred future work, see runSubscriber) would call it again.
+func (s *Server) markSubscribed() {
+	ch := s.subscribedCh()
+	s.subscribedOnce.Do(func() { close(ch) })
+}
+
+// waitForSubscriber blocks until the SSE stream is established, the
+// subprocess dies, ctx expires, or the bound elapses. It reports whether the
+// stream attached.
+//
+// Start calls this after the health probe because the two readiness signals
+// are NOT the same event: GET /global/health returned 200 a full 8 seconds
+// before GET /event did on 2026-08-16, and the prompt POSTed in between ran
+// to completion with nobody listening, wedging the session worker forever
+// (#1722). Waiting closes that window at the only point that covers every
+// caller — no prompt of any kind is sent before Start returns.
+func (s *Server) waitForSubscriber(ctx context.Context, bound time.Duration) bool {
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case <-s.subscribedCh():
+		return true
+	case <-s.done:
+		return false
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	}
 }
 
 // serverConfig is the resolved configuration used to construct a Server.

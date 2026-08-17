@@ -308,6 +308,12 @@ func (s *Server) runSubscriber(ctx context.Context) {
 		r, derr := client.Do(req)
 		if derr == nil && r.StatusCode == http.StatusOK {
 			resp = r
+			// The stream is live from here, so Start may stop waiting and
+			// let prompts flow (#1722). Signalled on HTTP 200 rather than on
+			// the first decoded event: server.connected is the first frame in
+			// practice, but gating on a frame would make readiness depend on
+			// the server choosing to speak.
+			s.markSubscribed()
 			break
 		}
 		if r != nil {
