@@ -30,6 +30,12 @@ import (
 // and returns everything logged. Asserting against a format string retyped in
 // the test would pass with the log line deleted.
 func dialAndCaptureConnectLog(t *testing.T, deviceID string) (out string, token string) {
+	return dialAndCaptureConnectLogWithHeaders(t, deviceID, nil)
+}
+
+// dialAndCaptureConnectLogWithHeaders is the same, with extra request headers —
+// used to drive the CF-Connecting-IP path that only exists behind the tunnel.
+func dialAndCaptureConnectLogWithHeaders(t *testing.T, deviceID string, extra map[string]string) (out string, token string) {
 	t.Helper()
 
 	var buf bytes.Buffer
@@ -55,10 +61,16 @@ func dialAndCaptureConnectLog(t *testing.T, deviceID string) (out string, token 
 	}
 	conn, _, err := websocket.DefaultDialer.Dial(
 		"ws"+strings.TrimPrefix(srv.URL, "http")+"/app/ws",
-		http.Header{
-			"Authorization":          {"Bearer " + d.Token},
-			"Sec-WebSocket-Protocol": {fap.Subprotocol},
-		})
+		func() http.Header {
+			h := http.Header{
+				"Authorization":          {"Bearer " + d.Token},
+				"Sec-WebSocket-Protocol": {fap.Subprotocol},
+			}
+			for k, v := range extra {
+				h.Set(k, v)
+			}
+			return h
+		}())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -96,5 +108,42 @@ func TestConnectLog_NeverLogsTheDeviceToken(t *testing.T) {
 	}
 	if !strings.Contains(out, "device=leak-check") {
 		t.Errorf("expected the id to be present while the token is absent:\n%s", out)
+	}
+}
+
+// The connect line must carry the client IP. deviceID answers "who"; ip answers
+// "from where" — and the difference between a client that BROKE and one that
+// merely MOVED NETWORK is a different diagnosis with a different owner. On
+// 2026-08-17/18 a phone moved from Wi-Fi to 5G unnoticed, and the resulting
+// behaviour change was attributed to a Cloudflare config edit, which was then
+// reverted on a false premise (#1728).
+func TestConnectLog_NamesClientIP(t *testing.T) {
+	out, _ := dialAndCaptureConnectLog(t, "ip-check")
+
+	if !strings.Contains(out, "ip=") {
+		t.Errorf("connect line carries no client IP:\n%s", out)
+	}
+	if !strings.Contains(out, "device=ip-check") {
+		t.Errorf("expected the device id alongside the ip:\n%s", out)
+	}
+}
+
+// Behind the Cloudflare tunnel the ORIGIN client address arrives in
+// CF-Connecting-IP; the socket peer and the rightmost X-Forwarded-For hop are
+// both the proxy. Preferring it is the whole point of clientIPForLog — using
+// remoteIP here would log a constant and answer nothing.
+func TestConnectLog_PrefersCFConnectingIP(t *testing.T) {
+	const origin = "203.0.113.77"
+	out, _ := dialAndCaptureConnectLogWithHeaders(t, "cf-ip-check", map[string]string{
+		"CF-Connecting-IP": origin,
+		// A hostile leftmost XFF that must NOT win.
+		"X-Forwarded-For": "198.51.100.1",
+	})
+
+	if !strings.Contains(out, "ip="+origin) {
+		t.Errorf("connect line did not use CF-Connecting-IP (%s):\n%s", origin, out)
+	}
+	if strings.Contains(out, "ip=198.51.100.1") {
+		t.Errorf("a spoofable X-Forwarded-For value won over CF-Connecting-IP:\n%s", out)
 	}
 }
