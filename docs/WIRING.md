@@ -1808,14 +1808,18 @@ advertised and each command no-ops when invoked out of context, exactly as on
 Telegram. The list rides the existing `hello`/`conversation.open` roster
 frames, so it refreshes whenever the roster does; no dedicated frame type.
 
-**Auth hardening (`devices.go`, slice 7):** the shared master key (`app.api_key`)
-remains the bootstrap, but a device pairs once (`POST /app/pair`, master-key only)
-to mint a revocable per-device token (`deviceStore`, 256-bit random, persisted to
+**Auth hardening (`devices.go`, slice 7):** there is **no shared master key** —
+`app.api_key` was removed in #862, so no long-lived shared secret exists to leak.
+The bootstrap is instead a single-use, short-TTL **pairing key** held only in
+memory (`pairKeyStore`, never written to disk; a restart clears an unused one and
+you re-mint). A device exchanges it once at `POST /app/pair` for a revocable
+per-device token (`deviceStore`, 256-bit random, persisted to
 `<DataDir>/app-devices.json` so pairings survive deploys). Thereafter `/app/ws`
-and `/app/blob` accept the master key OR a device token (`Hub.authenticate` →
-`authToken`; device-token auth seeds `client.deviceID`). `POST /app/pair/revoke`
-(master-key) drops the token and force-closes the device's live socket(s) with
-`4403`; `GET /app/devices` lists pairings (tokens omitted). An `authLimiter` locks
+and `/app/blob` accept **only** a device token (`Hub.authenticate` → `authToken`),
+which is why `authenticate` returning ok implies a non-nil device and `ServeWS`
+can seed `client.deviceID` and name the device unconditionally. `POST
+/app/pair/revoke` drops the token and force-closes the device's live socket(s)
+with `4403`; `GET /app/devices` lists pairings (tokens omitted). An `authLimiter` locks
 out a remote IP (`remoteIP`, X-Forwarded-For-aware) after repeated auth failures
 — the endpoint is internet-facing.
 
