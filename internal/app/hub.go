@@ -2647,29 +2647,27 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := newWsClient(ws, h)
-	if dev != nil {
-		// Authenticated with a device token: the deviceId is authoritative (the
-		// client hello's is advisory and should match).
-		client.mu.Lock()
-		client.deviceID = dev.DeviceID
-		client.mu.Unlock()
-	}
+	// dev is never nil past this point: authenticate() returns ok only with a
+	// device, because there is no master key any more (#862). Everything below
+	// therefore uses it unconditionally — the `if dev != nil` guards that used
+	// to wrap these three sites were dead, and the master-key fallbacks they
+	// described (learn the deviceId from the hello instead) no longer exist.
+	//
+	// The authenticated deviceId is also AUTHORITATIVE; the client hello's is
+	// advisory and should match.
+	client.mu.Lock()
+	client.deviceID = dev.DeviceID
+	client.mu.Unlock()
 	h.addClient(client)
-	if dev != nil {
-		// Device-token auth gives the deviceId up front, so we can evict a stale
-		// prior socket immediately. Master-key sockets learn their deviceId from
-		// the hello frame and are evicted in the ClientHello handler instead.
-		h.evictOtherDeviceSockets(client, dev.DeviceID)
-	}
+	// Device-token auth gives the deviceId up front, so a stale prior socket for
+	// the same device can be evicted immediately rather than at hello time.
+	h.evictOtherDeviceSockets(client, dev.DeviceID)
 	// Name the device. This is the ONLY identity available on a socket that dies
 	// before its hello, and those are exactly the ones worth attributing: the
 	// deviceID otherwise arrives in the hello frame, which such a socket never
 	// sends. Without this, a burst of hello-less connects cannot be pinned to a
 	// client from the server at all — which is what pushed the #1713 diagnosis
 	// onto client-side logging and a device that was not always reachable.
-	//
-	// Unconditional because authenticate() returns ok only with a device
-	// (there is no master key since #862), so dev is never nil here.
 	//
 	// deviceID is an identifier, not a credential — auth is the separate Token
 	// (authToken/byTok), which must never be logged.

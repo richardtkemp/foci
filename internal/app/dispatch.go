@@ -74,9 +74,10 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		appLog.Debugf("hello: device=%s resume=%d features=%d push_token=%t",
 			f.Client.DeviceID, len(f.Resume), len(f.Features), f.PushToken != "")
 		h.noteHelloSeen(authDevice)
-		// A master-key socket learns its deviceId here; evict any older socket for
-		// the same device (wire §9, close 4409) so a reconnecting phone never ends
-		// up with two live sockets on one conversation.
+		// Re-evict on the hello's advisory deviceId (wire §9, close 4409) so a
+		// reconnecting phone never ends up with two live sockets on one
+		// conversation. ServeWS already evicted on the AUTHENTICATED id at
+		// connect; this covers the two disagreeing.
 		h.evictOtherDeviceSockets(client, f.Client.DeviceID)
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
