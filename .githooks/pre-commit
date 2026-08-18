@@ -18,6 +18,37 @@ if [ -z "$staged_go" ]; then
 	exit 0
 fi
 
+# Formatting gate. Runs BEFORE `make lint` because it costs milliseconds and
+# lint costs ~a minute, so the cheap verdict lands first.
+#
+# Judges the STAGED CONTENT (`git show :file`), not the working tree: a
+# partially-staged file must be assessed on what is actually being committed,
+# and the working-tree copy can differ in both directions.
+#
+# NOTE `gofmt -l` exits 0 whether or not the file is clean — it reports by
+# PRINTING the name (`<standard input>` when reading a pipe). So this tests its
+# OUTPUT; testing its exit status would silently pass everything.
+#
+# --diff-filter=d drops deletions: `git show` on a removed path fails, and a
+# deleted file has no formatting to check.
+#
+# gofmt only, not `gofmt -s`: -s also rewrites simplifiable code, which is a
+# content opinion rather than a formatting one and would reintroduce drift
+# against the baseline this gate exists to hold.
+unformatted=""
+while IFS= read -r f; do
+	[ -n "$f" ] || continue
+	if [ -n "$(git show ":$f" | gofmt -l)" ]; then
+		unformatted="$unformatted $f"
+	fi
+done <<< "$(git diff --cached --name-only --diff-filter=d | grep -E '\.go$' || true)"
+
+if [ -n "$unformatted" ]; then
+	echo "❌ gofmt: staged Go files are not formatted — run: gofmt -w$unformatted && git add$unformatted"
+	echo "   (repo baseline was made clean in the #1735 sweep; this gate keeps it that way)"
+	exit 1
+fi
+
 echo "Running pre-commit lint (staged Go changes detected)..."
 make lint
 echo "✅ pre-commit lint passed"
