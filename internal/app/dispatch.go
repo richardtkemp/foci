@@ -103,16 +103,13 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 				}
 			}
 		}
-		// Seed the open-set from the resume points' open flags.
-		open := make(map[string]struct{})
-		for _, rp := range f.Resume {
-			if rp.Open {
-				open[rp.ConversationID] = struct{}{}
-			}
-		}
-		client.mu.Lock()
-		client.openConvIDs = open
-		client.mu.Unlock()
+		// NOTE: the hello's ResumePoint.Open flags are deliberately NOT consumed.
+		// They used to seed a per-socket open-set that nothing ever read (#1742);
+		// the open-set that matters is the PERSISTED one, kept in sync by
+		// conversation.openSet below. Open therefore has no server-side consumer
+		// at all now, which makes it a candidate to drop from the wire — relevant
+		// to #1737, where every byte in a ResumePoint is multiplied by the
+		// conversation count.
 
 	case fap.ConversationOpen:
 		h.handleConversationOpen(client, f)
@@ -475,13 +472,10 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 // user's other devices so they reconcile their open tabs. Idempotent full
 // replace, last-write-wins.
 func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpenSet) {
-	open := make(map[string]struct{}, len(f.ConversationIDs))
-	for _, id := range f.ConversationIDs {
-		open[id] = struct{}{}
-	}
-	client.mu.Lock()
-	client.openConvIDs = open
-	client.mu.Unlock()
+	// storeOpenChats is the load-bearing half. The per-socket map that used to be
+	// built here was written and never read (#1742); OpenSessionsForAgent resolves
+	// keepalive warming from the PERSISTED set, precisely because a live-socket
+	// view was abandoned the moment the app backgrounded.
 	h.storeOpenChats(f.ConversationIDs)
 	// Attach this socket as a live fan-out target for every open conversation it
 	// already has a binding for but isn't attached to yet. A conversation first
