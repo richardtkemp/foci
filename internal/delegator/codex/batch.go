@@ -122,7 +122,7 @@ func (b *Backend) RunBatch(ctx context.Context, req delegator.BatchRequest) (str
 		// field — the two enums genuinely differ (verified against a live
 		// codex 0.145.0 app-server). Kebab here is rejected with JSON-RPC
 		// -32600 and the batch fails at turn/start.
-		SandboxPolicy:  &sandboxPolicy{Type: "dangerFullAccess", NetworkAccess: true},
+		SandboxPolicy: &sandboxPolicy{Type: "dangerFullAccess", NetworkAccess: true},
 	}
 	turnResp, err := b.sendAndWait("turn/start", turnParams)
 	if err != nil {

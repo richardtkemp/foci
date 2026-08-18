@@ -183,23 +183,23 @@ var planErr = planError{}
 
 type fakeDelegator struct{}
 
-func (fakeDelegator) Start(context.Context, delegator.StartOptions) error { return nil }
-func (fakeDelegator) ImmediateInject(context.Context, delegator.Inject) error      { return nil }
-func (fakeDelegator) WaitForTurn(context.Context) error                   { return nil }
-func (fakeDelegator) IsTurnInFlight() bool                                { return false }
-func (fakeDelegator) IsRunning() bool                                     { return false }
-func (fakeDelegator) SetPermissionPromptFunc(delegator.PermissionPromptFunc) {}
-func (fakeDelegator) SetOnPromptsCleared(func())                          {}
-func (fakeDelegator) RegisterPromptCancelListener(string, func(string))   {}
-func (fakeDelegator) SetOnSessionReady(func(string))                      {}
-func (fakeDelegator) SetTypingFunc(func(bool))                            {}
-func (fakeDelegator) AttachSessionEvents(*delegator.SessionEvents)        {}
-func (fakeDelegator) SendKeystroke(context.Context, string) error         { return nil }
-func (fakeDelegator) SendSpecialKey(context.Context, string) error        { return nil }
-func (fakeDelegator) Interrupt(context.Context) error                     { return nil }
-func (fakeDelegator) SessionID() string                                   { return "" }
-func (fakeDelegator) SessionFilePath() string                             { return "" }
-func (fakeDelegator) WaitReady(context.Context) error                     { return nil }
-func (fakeDelegator) CheckReady(context.Context) (bool, error)            { return true, nil }
-func (fakeDelegator) StatusDetail() string                                  { return "" }
-func (fakeDelegator) Close() error                                        { return nil }
+func (fakeDelegator) Start(context.Context, delegator.StartOptions) error     { return nil }
+func (fakeDelegator) ImmediateInject(context.Context, delegator.Inject) error { return nil }
+func (fakeDelegator) WaitForTurn(context.Context) error                       { return nil }
+func (fakeDelegator) IsTurnInFlight() bool                                    { return false }
+func (fakeDelegator) IsRunning() bool                                         { return false }
+func (fakeDelegator) SetPermissionPromptFunc(delegator.PermissionPromptFunc)  {}
+func (fakeDelegator) SetOnPromptsCleared(func())                              {}
+func (fakeDelegator) RegisterPromptCancelListener(string, func(string))       {}
+func (fakeDelegator) SetOnSessionReady(func(string))                          {}
+func (fakeDelegator) SetTypingFunc(func(bool))                                {}
+func (fakeDelegator) AttachSessionEvents(*delegator.SessionEvents)            {}
+func (fakeDelegator) SendKeystroke(context.Context, string) error             { return nil }
+func (fakeDelegator) SendSpecialKey(context.Context, string) error            { return nil }
+func (fakeDelegator) Interrupt(context.Context) error                         { return nil }
+func (fakeDelegator) SessionID() string                                       { return "" }
+func (fakeDelegator) SessionFilePath() string                                 { return "" }
+func (fakeDelegator) WaitReady(context.Context) error                         { return nil }
+func (fakeDelegator) CheckReady(context.Context) (bool, error)                { return true, nil }
+func (fakeDelegator) StatusDetail() string                                    { return "" }
+func (fakeDelegator) Close() error                                            { return nil }

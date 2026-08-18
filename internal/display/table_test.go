@@ -429,9 +429,9 @@ func TestFormatTokensAbbrev(t *testing.T) {
 		{999, "999"},
 		{1000, "1k"},
 		{200000, "200k"},
-		{374686, "375k"},   // rounds to nearest thousand
-		{999600, "1M"},     // 1000k boundary promotes to M
-		{1000000, "1M"},    // trailing .0 trimmed
+		{374686, "375k"}, // rounds to nearest thousand
+		{999600, "1M"},   // 1000k boundary promotes to M
+		{1000000, "1M"},  // trailing .0 trimmed
 		{1234567, "1.2M"},
 		{1500000, "1.5M"},
 		{10000000, "10M"},

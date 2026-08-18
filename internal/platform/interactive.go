@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 )
 
 // ButtonCallback is called when an interactive message button is pressed.

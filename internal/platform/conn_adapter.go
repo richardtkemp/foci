@@ -69,4 +69,6 @@ func (a *ConnectionManagerAdapter[B]) AcquireFacet(agentID string) (Connection, 
 
 func (a *ConnectionManagerAdapter[B]) StartAll(ctx context.Context) { a.source.StartAll(ctx) }
 func (a *ConnectionManagerAdapter[B]) Wait()                        { a.source.Wait() }
-func (a *ConnectionManagerAdapter[B]) HasFacet(agentID string) bool { return a.source.HasFacet(agentID) }
+func (a *ConnectionManagerAdapter[B]) HasFacet(agentID string) bool {
+	return a.source.HasFacet(agentID)
+}

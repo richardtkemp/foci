@@ -12,7 +12,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
 )
 
 // defaultProcDir is the real procfs mount point. Tests substitute a fake tree.

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
 )
 
 // killSessionWithChildren kills a tmux session and terminates any child

@@ -59,8 +59,8 @@ func TestDecodeAsk(t *testing.T) {
 
 func TestValidateRejections(t *testing.T) {
 	cases := []struct {
-		name string
-		frame *AskFrame
+		name   string
+		frame  *AskFrame
 		errSub string
 	}{
 		{"bad protocol", &AskFrame{Protocol: "askgw/2", Type: TypeAsk, ID: "x", Questions: []AskQuestion{{Key: "k", Question: "q?", Options: []AskOption{{Label: "a"}}}}}, "protocol"},

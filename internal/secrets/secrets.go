@@ -30,7 +30,6 @@ func GeneratePassphrase(wordCount int) (string, error) {
 	return strings.Join(words, "-"), nil
 }
 
-
 // Default paths that the exec tool should refuse to read.
 var defaultBlockedPaths = []string{
 	"secrets.toml",

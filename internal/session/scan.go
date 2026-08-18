@@ -191,9 +191,9 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 				}
 
 				results[i] = SessionIndexEntry{
-					SessionKey:       key,
-					FilePath:         af.path,
-					CreatedAt:        createdAt,
+					SessionKey: key,
+					FilePath:   af.path,
+					CreatedAt:  createdAt,
 					// The file's mtime is the last append — the true "last
 					// activity" for a file-backed session. Without it, a
 					// rebuild seeds activity from created_at and the

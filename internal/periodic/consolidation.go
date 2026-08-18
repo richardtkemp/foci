@@ -1,16 +1,13 @@
 package periodic
 
-
 import (
 	"context"
 	"fmt"
 	"time"
 
-
 	"foci/internal/timeutil"
 	"foci/shared/prompts"
 )
-
 
 func (r *Runner) maybeConsolidation() {
 	if !r.maintCfg.ConsolidationEnabled || r.agent == nil {

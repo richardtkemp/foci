@@ -164,8 +164,8 @@ func TestWriteCommandApproval(t *testing.T) {
 		"**CC pre-approved** (auto-run, no prompt — not a restriction): Read(/tmp/**), Write(/tmp/**)", // the CC --allowedTools layer
 		"every `foci_*` shell function is always auto-approved",
 		"**read-only** (on):",
-		"sqlite3 -readonly",           // a rendered read-only rule (Bash: stripped)
-		"**safe-write** (off",         // disabled state surfaced
+		"sqlite3 -readonly",   // a rendered read-only rule (Bash: stripped)
+		"**safe-write** (off", // disabled state surfaced
 		"**configured for this agent**: gh search, git -C /home/rich/git/foci", // Bash: stripped
 	} {
 		if !strings.Contains(out, want) {

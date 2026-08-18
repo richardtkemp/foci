@@ -152,7 +152,6 @@ func stepAPIKey(reader *bufio.Reader, providerKey string, total int) (apiKey str
 	}
 }
 
-
 // stepAgentID prompts for an agent identifier.
 func stepAgentID(reader *bufio.Reader, current string, total int) (agentID string, back bool) {
 	fmt.Println()

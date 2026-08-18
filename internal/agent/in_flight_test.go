@@ -588,8 +588,10 @@ type fakeDurableSink struct {
 	events []turnevent.Event
 }
 
-func (f *fakeDurableSink) Emit(_ context.Context, ev turnevent.Event) { f.events = append(f.events, ev) }
-func (f *fakeDurableSink) DeliversToPlatform() bool                   { return false }
+func (f *fakeDurableSink) Emit(_ context.Context, ev turnevent.Event) {
+	f.events = append(f.events, ev)
+}
+func (f *fakeDurableSink) DeliversToPlatform() bool { return false }
 
 // TestAutonomousTurnSink_NoConnection_FallsBackToDurableSink is the clutch
 // #1350 follow-up (2026-07-17): a running-edge autonomous adoption landing

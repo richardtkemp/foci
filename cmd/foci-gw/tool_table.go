@@ -39,14 +39,14 @@ const (
 // other — the tools that need them don't run there. Per-path "prep" (agentStore,
 // notifier, summariser, etc.) is computed at each call site before registerTools.
 type toolDeps struct {
-	p          setupParams
-	path       toolPath
-	registry   *tools.Registry
-	agentStore *secrets.Store
-	notifier   *tools.AsyncNotifier
-	connMgr    platform.ConnectionManager
-	agLazy     func() *agent.Agent
-	summariser tools.Summariser // APISummariser (API) or BatchSummariser (delegated)
+	p            setupParams
+	path         toolPath
+	registry     *tools.Registry
+	agentStore   *secrets.Store
+	notifier     *tools.AsyncNotifier
+	connMgr      platform.ConnectionManager
+	agLazy       func() *agent.Agent
+	summariser   tools.Summariser // APISummariser (API) or BatchSummariser (delegated)
 	wakeFn       tools.ScheduleWakeFn
 	wakeCancelFn tools.CancelWakeFn
 

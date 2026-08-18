@@ -98,10 +98,10 @@ func TestCacheCommand(t *testing.T) {
 	entries := make([]log.APIEntry, 7)
 	for i := range entries {
 		entries[i] = log.APIEntry{
-			Timestamp:     now.Add(time.Duration(i) * time.Minute),
-			Input:         100,
-			CacheRead:     50,
-			CacheWrite:    100,
+			Timestamp:         now.Add(time.Duration(i) * time.Minute),
+			Input:             100,
+			CacheRead:         50,
+			CacheWrite:        100,
 			CalculatedCostUSD: f64p(0.001),
 		}
 	}

@@ -27,7 +27,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
 )
 
 // setupTestharnessControl checks for the FOCI_TESTHARNESS_CONTROL_SOCK env

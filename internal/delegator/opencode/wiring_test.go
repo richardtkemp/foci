@@ -61,10 +61,10 @@ func TestConfigureDelegated_PlanDeliveryRegistered(t *testing.T) {
 // agents_delegated.go does: merge global defaults into backend_config.
 func TestNewFromConfig_ReadsGlobalConfig(t *testing.T) {
 	cfg := map[string]any{
-		"binary": "/usr/local/bin/opencode",
-		"hostname":        "0.0.0.0",
-		"port":            int64(4096),
-		"server_auth":     "secret",
+		"binary":      "/usr/local/bin/opencode",
+		"hostname":    "0.0.0.0",
+		"port":        int64(4096),
+		"server_auth": "secret",
 	}
 	be, err := delegator.New("opencode", cfg)
 	if err != nil {

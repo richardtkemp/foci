@@ -50,7 +50,7 @@ func TestSubagentPostRestartFollowUpRehydratesIdentity(t *testing.T) {
 	const (
 		workDir      = "/work/dir"
 		sessionID    = "11111111-2222-3333-4444-555555555555"
-		taskID       = "a_restart_task"           // stable subagent identity
+		taskID       = "a_restart_task"            // stable subagent identity
 		origGroupKey = "toolu_orig_agent"          // the pre-restart Agent tool_use id (in meta.json)
 		sendMsgID    = "toolu_send_after_restart"  // the follow-up SendMessage's tool_use id
 		label        = "Explore the codebase"      // meta.json description

@@ -71,4 +71,3 @@ func TestLogConversationRecv_SetsChatID(t *testing.T) {
 		t.Fatal("ConvChatID should be set from session key")
 	}
 }
-

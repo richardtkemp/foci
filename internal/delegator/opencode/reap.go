@@ -21,7 +21,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
 )
 
 // procDir is the procfs mount point. Tests override this to point at a

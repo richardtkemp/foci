@@ -1,15 +1,12 @@
 package periodic
 
-
 import (
 	"context"
 	"fmt"
 	"time"
 
-
 	"foci/shared/prompts"
 )
-
 
 func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	if !r.bgCfg.Enabled || r.agent == nil {
@@ -101,4 +98,3 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		r.agent.Branch("background", parentKey, promptText, true)
 	}()
 }
-
