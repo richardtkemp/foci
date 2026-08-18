@@ -2677,12 +2677,21 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	//
 	// deviceID is an identifier, not a credential — auth is the separate Token
 	// (authToken/byTok), which must never be logged.
-	appLog.Infof("device connected: device=%s", dev.DeviceID)
+	//
+	// ip answers a question the deviceID cannot: whether a client that started
+	// misbehaving BROKE or simply MOVED NETWORK. Those have different owners and
+	// different fixes, and telling them apart from the log is what was missing on
+	// 2026-08-17/18 (#1728). See clientIPForLog for why it is not remoteIP.
+	clientIP := clientIPForLog(r)
+	appLog.Infof("device connected: device=%s ip=%s", dev.DeviceID, clientIP)
 	safeGo("ws-writepump", client.writePump)
 	connectedAt := time.Now()
 	client.readPump() // blocks until the socket closes
 	h.noteSocketClosed(client, time.Since(connectedAt))
-	appLog.Infof("device disconnected")
+	// Named for the same reason as the connect line: an unattributed
+	// "device disconnected" cannot be paired with its connect in a log where
+	// several clients reconnect concurrently.
+	appLog.Infof("device disconnected: device=%s ip=%s", dev.DeviceID, clientIP)
 }
 
 // helloLessWarnAt is how many CONSECUTIVE hello-less sockets it takes to warn.

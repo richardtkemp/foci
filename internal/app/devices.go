@@ -212,6 +212,31 @@ func (l *authLimiter) reset(ip string) {
 	l.mu.Unlock()
 }
 
+// clientIPForLog reports the best-effort ORIGIN client IP, for diagnostics only.
+//
+// Deliberately NOT remoteIP: that one answers a security question ("which
+// bucket does this request rate-limit against") and correctly trusts only the
+// rightmost X-Forwarded-For hop, which behind the Cloudflare tunnel is the
+// proxy rather than the user. Perfect for lockout, useless for "which network
+// is this device on" — the question that cost a wrong diagnosis and a reverted
+// production change on 2026-08-17/18 (#1728, #1744), when a phone silently
+// moved from Wi-Fi to 5G and the behaviour change was attributed to a config
+// edit instead.
+//
+// CF-Connecting-IP is set by Cloudflare and overwritten on every request, so a
+// client cannot forge it while the origin is reachable only through the tunnel.
+// That assumption is exactly why this value must never reach a security
+// decision: if the origin were ever exposed directly, the header becomes
+// caller-controlled. Logging a spoofed IP is harmless; rate-limiting on one is
+// not. Falls back to remoteIP when the header is absent (direct/tailnet/local
+// connections), which is also how a tailnet client shows its 100.x address.
+func clientIPForLog(r *http.Request) string {
+	if ip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); ip != "" {
+		return ip
+	}
+	return remoteIP(r)
+}
+
 // remoteIP extracts the client IP for rate-limiting. foci sits behind Traefik,
 // which APPENDS the downstream socket address to the right of X-Forwarded-For;
 // everything to the left of that final hop is attacker-controlled. We therefore

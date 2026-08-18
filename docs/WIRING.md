@@ -1675,6 +1675,20 @@ and calls `Reset`, which re-arms the immediate warning — an intermittent fault
 therefore stays loud instead of inheriting the silence its previous episode
 earned.
 
+**The connect/disconnect lines also carry the client IP** (`clientIPForLog`,
+`devices.go`), which is deliberately NOT `remoteIP`. `remoteIP` answers a
+security question — which bucket to rate-limit against — and correctly trusts
+only the RIGHTMOST `X-Forwarded-For` hop, which behind the Cloudflare tunnel is
+the proxy, not the user. `clientIPForLog` prefers `CF-Connecting-IP` (set by
+Cloudflare, unforgeable while the origin is reachable only through the tunnel)
+and falls back to `remoteIP`, so a tailnet client shows its `100.x` address.
+It must never feed a security decision: logging a spoofed IP is harmless,
+rate-limiting on one is not. The field exists because deviceID answers "who"
+but not "from where", and a client that BROKE versus one that merely MOVED
+NETWORK is a different diagnosis with a different owner — on 2026-08-17/18 a
+phone moved Wi-Fi→5G unnoticed and the behaviour change was blamed on a
+Cloudflare config edit, which was reverted on that false premise (#1728).
+
 **Every authenticated app endpoint names its device.** `Hub.authenticate`
 resolves the device from the bearer token, and the HTTP handlers used to
 discard it (`if _, ok := h.authenticate(w, r); !ok`). They now log it:
