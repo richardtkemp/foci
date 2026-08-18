@@ -657,11 +657,26 @@ update:
 # .remote.mk:  REMOTE_HOST := mac   REMOTE_DIR := ~/git/foci
 # Additive — no existing target uses it. Requires Go on the remote.
 REMOTE_SSH_TIMEOUT ?= 5
+# The reachability probe below already bounds CONNECTING. These bound an already-ESTABLISHED
+# session whose peer silently vanishes — a different failure, and the one that hangs forever:
+# no EOF ever arrives, so ssh/rsync block with no error and no exit. ServerAlive is not a
+# wall-clock cap and does not threaten a long quiet build; the probes are SSH-protocol-level and
+# sshd answers them whether or not the remote command is producing output.
+#
+# Measured on the foci-client side of this same fix (foci-client#1749), against a proxy SIGSTOPed
+# to black-hole the path: WITHOUT these, ssh was still hanging when the harness killed it at 87s;
+# WITH them it died on schedule. A healthy peer running a command that printed nothing for 60s
+# survived untouched. 15 x 8 = a 2 minute grace.
+#
+# This target is opt-in and currently unused, which is exactly why it is worth fixing now: it is
+# the same shape as the bug that cost foci-client an unattributable 19-minute stall — a protected
+# probe followed by unprotected work.
+REMOTE_LIVE_OPTS ?= -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=8
 .PHONY: remote-build
 remote-build:
 	@[ -n "$(REMOTE_HOST)" ] || { echo ">>> set REMOTE_HOST + REMOTE_DIR in .remote.mk to enable remote builds"; exit 1; }
 	@ssh -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes $(REMOTE_HOST) true 2>/dev/null || { echo ">>> '$(REMOTE_HOST)' not reachable"; exit 1; }
 	@echo ">>> Syncing foci -> $(REMOTE_HOST):$(REMOTE_DIR) ..."
-	rsync -az --delete --exclude='.git' --exclude='/bin/' --exclude='.remote.mk' --exclude='.ci.mk' ./ "$(REMOTE_HOST):$(REMOTE_DIR)/"
+	rsync -e 'ssh $(REMOTE_LIVE_OPTS)' --timeout=300 -az --delete --exclude='.git' --exclude='/bin/' --exclude='.remote.mk' --exclude='.ci.mk' ./ "$(REMOTE_HOST):$(REMOTE_DIR)/"
 	@echo ">>> GOOS=linux GOARCH=amd64 go build ./... on $(REMOTE_HOST) ..."
-	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...'
+	ssh $(REMOTE_LIVE_OPTS) $(REMOTE_HOST) 'cd $(REMOTE_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...'
