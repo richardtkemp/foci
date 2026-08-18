@@ -29,8 +29,8 @@ import (
 // how fast or slow the machine is. Nothing here asserts on elapsed time.
 func attachStub(t *testing.T) (*httptest.Server, func(), *int32) {
 	t.Helper()
-	var open int32       // 0 = /event refuses, 1 = /event streams
-	var eventHits int32  // how many times /event was actually requested
+	var open int32      // 0 = /event refuses, 1 = /event streams
+	var eventHits int32 // how many times /event was actually requested
 	gate := make(chan struct{})
 	done := make(chan struct{})
 

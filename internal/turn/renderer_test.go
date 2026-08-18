@@ -109,10 +109,12 @@ type mockSubagentBackend struct {
 }
 
 func (m *mockSubagentBackend) DeliverSubagentStart(string, string, int, string) {}
-func (m *mockSubagentBackend) DeliverSubagentText(_, text string, _ int) { m.texts = append(m.texts, text) }
+func (m *mockSubagentBackend) DeliverSubagentText(_, text string, _ int) {
+	m.texts = append(m.texts, text)
+}
 func (m *mockSubagentBackend) DeliverSubagentEnd(string, int)            {}
 func (m *mockSubagentBackend) DeliverSubagentPrompt(string, string, int) {}
-func (m *mockSubagentBackend) SubagentTextRaw() bool                { return m.raw }
+func (m *mockSubagentBackend) SubagentTextRaw() bool                     { return m.raw }
 
 // The renderer heads each blockquoted subagent block with the agent name (from
 // the start event) for non-raw platforms, and passes text through unchanged for

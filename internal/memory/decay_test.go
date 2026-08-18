@@ -9,7 +9,7 @@ import (
 func TestRecencyBoostFactor(t *testing.T) {
 	const hl, boost = 10.0, 1.0
 	cases := []struct {
-		name    string
+		name                 string
 		age, hl, boost, want float64
 	}{
 		{"today = full boost", 0, hl, boost, 2.0},

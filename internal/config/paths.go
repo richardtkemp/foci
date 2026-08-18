@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-
 	"github.com/BurntSushi/toml"
 )
 

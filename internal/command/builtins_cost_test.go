@@ -117,8 +117,8 @@ func TestCostCommandTop10Limit(t *testing.T) {
 	var entries []log.APIEntry
 	for i := 0; i < 12; i++ {
 		entries = append(entries, log.APIEntry{
-			Timestamp:     now,
-			Session:       fmt.Sprintf("session-%02d", i),
+			Timestamp:         now,
+			Session:           fmt.Sprintf("session-%02d", i),
 			CalculatedCostUSD: f64p(float64(12-i) * 0.01),
 		})
 	}

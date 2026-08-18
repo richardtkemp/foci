@@ -303,7 +303,6 @@ func (s *sharedTurnOps) CheckStaleContext(ts *TurnState) error {
 	return ts.Ctx.Err()
 }
 
-
 // LogConversationRecv logs the inbound user message. Extracted from
 // agent.go:335-350 and turn_delegated.go:25-32.
 func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {

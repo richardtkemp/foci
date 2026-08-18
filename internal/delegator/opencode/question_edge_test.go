@@ -42,7 +42,9 @@ func TestRespondToQuestion_MultipleQuestionsAnsweredIndependently(t *testing.T) 
 		t.Fatalf("RespondToQuestion Q1: %v", err)
 	}
 	post1, _ := rec.lastPermPost()
-	var body1 struct{ Response string `json:"response"` }
+	var body1 struct {
+		Response string `json:"response"`
+	}
 	json.Unmarshal(post1.Body, &body1)
 	if body1.Response != "A" {
 		t.Errorf("Q1 response = %q, want A", body1.Response)
@@ -84,7 +86,9 @@ func TestCancelQuestion_OneOfMultipleRemains(t *testing.T) {
 		t.Fatalf("CancelQuestion: %v", err)
 	}
 	post, _ := rec.lastPermPost()
-	var body struct{ Response string `json:"response"` }
+	var body struct {
+		Response string `json:"response"`
+	}
 	json.Unmarshal(post.Body, &body)
 	if body.Response != "deny" {
 		t.Errorf("cancelled response = %q, want deny", body.Response)

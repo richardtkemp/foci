@@ -169,11 +169,11 @@ func TestAgentKeyInSubTable(t *testing.T) {
 
 func TestMapObjectEntries(t *testing.T) {
 	flat := map[string]string{
-		"models.powerful.model":   "anthropic/claude-sonnet-4-20250514",
-		"models.powerful.context": "200000",
-		"models.cheap.model":      "openrouter/qwen",
+		"models.powerful.model":       "anthropic/claude-sonnet-4-20250514",
+		"models.powerful.context":     "200000",
+		"models.cheap.model":          "openrouter/qwen",
 		"endpoints.openrouter.format": "openai",
-		"logging.level":           "INFO",
+		"logging.level":               "INFO",
 	}
 	got := MapObjectEntries("models", flat)
 	if len(got) != 2 {

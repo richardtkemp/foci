@@ -38,4 +38,3 @@ func (b *Backend) SetTypingFunc(fn func(typing bool)) {
 func (b *Backend) SetOnModelCaps(fn func(entries map[string]modelcaps.Caps)) {
 	b.onModelCaps = fn
 }
-

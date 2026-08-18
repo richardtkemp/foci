@@ -196,11 +196,11 @@ type contextUsageCategoryRaw struct {
 // by encoding/json. See usage_oneshot.go's QueryUsage / UsageInfo (the public,
 // package-level result type this maps into).
 type usagePayload struct {
-	SubscriptionType    string             `json:"subscription_type"`
-	RateLimitsAvailable bool               `json:"rate_limits_available"`
-	RateLimits          usageRateLimits    `json:"rate_limits"`
-	Session             usageSession       `json:"session"`
-	Behaviors           usageBehaviors     `json:"behaviors"`
+	SubscriptionType    string          `json:"subscription_type"`
+	RateLimitsAvailable bool            `json:"rate_limits_available"`
+	RateLimits          usageRateLimits `json:"rate_limits"`
+	Session             usageSession    `json:"session"`
+	Behaviors           usageBehaviors  `json:"behaviors"`
 }
 
 type usageRateLimits struct {

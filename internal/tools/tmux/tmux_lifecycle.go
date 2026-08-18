@@ -3,7 +3,6 @@ package tmux
 import (
 	"context"
 	"time"
-
 )
 
 // ClearAll stops all watches, clears the owned sessions map, and stops the

@@ -445,19 +445,19 @@ func TestScopeAllowlistExcludesRows(t *testing.T) {
 	// (#1199) carry scope:"global" or scope:"global,agent" so the config
 	// editor stops advertising a knob that does nothing.
 	present := []string{
-		"debug.enable_pprof",             // scope:"global" — global row kept
-		"debug.cache_bust_detect",        // scope:"global,agent"
-		"agent.debug.cache_bust_detect",  // agent allowed
-		"keepalive.interval",             // no scope tag — all scopes
-		"agent.keepalive.interval",       // no scope tag — all scopes
-		"tools.max_result_chars",         // no scope tag
+		"debug.enable_pprof",            // scope:"global" — global row kept
+		"debug.cache_bust_detect",       // scope:"global,agent"
+		"agent.debug.cache_bust_detect", // agent allowed
+		"keepalive.interval",            // no scope tag — all scopes
+		"agent.keepalive.interval",      // no scope tag — all scopes
+		"tools.max_result_chars",        // no scope tag
 	}
 	absent := []string{
-		"agent.debug.enable_pprof",           // scope:"global" drops agent
-		"platforms.debug.enable_pprof",       // and platform
-		"agent.voice.max_frame_bytes",        // scope:"global" drops agent
-		"agent.permissions.prompt_ttl",       // scope:"global" drops agent
-		"platforms.debug.cache_bust_detect",  // scope:"global,agent" drops platform
+		"agent.debug.enable_pprof",                // scope:"global" drops agent
+		"platforms.debug.enable_pprof",            // and platform
+		"agent.voice.max_frame_bytes",             // scope:"global" drops agent
+		"agent.permissions.prompt_ttl",            // scope:"global" drops agent
+		"platforms.debug.cache_bust_detect",       // scope:"global,agent" drops platform
 		"platforms.notify.warning_max_per_window", // scope:"global,agent" drops platform
 	}
 	for _, k := range present {

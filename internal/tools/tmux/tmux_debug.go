@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-
 )
 
 // tmuxDebugLog provides comprehensive debugging for tmux operations.

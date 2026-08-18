@@ -1,14 +1,11 @@
 package periodic
 
-
 import (
 	"context"
 	"time"
 
-
 	"foci/shared/prompts"
 )
-
 
 func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	if !r.kaCfg.Enabled || r.agent == nil {
@@ -158,4 +155,3 @@ func (r *Runner) keepaliveTargets(interval time.Duration) []string {
 	}
 	return ready
 }
-

@@ -704,20 +704,20 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 				u.CacheReadInputTokens, u.CacheCreationInputTokens)
 		}
 		log.API(log.APIEntry{
-			Timestamp:     ts0,
-			Provider:      "anthropic",
-			Session:       ts.SessionKey,
-			Model:         model,
-			Input:         u.InputTokens,
-			Output:        u.OutputTokens,
-			CacheRead:     u.CacheReadInputTokens,
-			CacheWrite:    u.CacheCreationInputTokens,
+			Timestamp:         ts0,
+			Provider:          "anthropic",
+			Session:           ts.SessionKey,
+			Model:             model,
+			Input:             u.InputTokens,
+			Output:            u.OutputTokens,
+			CacheRead:         u.CacheReadInputTokens,
+			CacheWrite:        u.CacheCreationInputTokens,
 			ProvidedCostUSD:   u.ProvidedCostUSD,
 			CalculatedCostUSD: u.CalculatedCostUSD,
-			DurationMS:    time.Since(ts.StartedAt).Milliseconds(),
-			StopReason:    "end_turn",
-			CallType:      "delegated_turn",
-			SessionFile:   sessionFile,
+			DurationMS:        time.Since(ts.StartedAt).Milliseconds(),
+			StopReason:        "end_turn",
+			CallType:          "delegated_turn",
+			SessionFile:       sessionFile,
 		})
 	}
 

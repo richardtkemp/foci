@@ -956,11 +956,11 @@ func TestSessionsDefaultRegisteredOnly(t *testing.T) {
 func TestParseIndexArgsScope(t *testing.T) {
 	agents := map[string]bool{"scout": true}
 	tests := []struct {
-		name        string
-		args        []string
-		wantAgent   string
-		wantRoot    string
-		wantStatus  string
+		name       string
+		args       []string
+		wantAgent  string
+		wantRoot   string
+		wantStatus string
 	}{
 		{"family word", []string{"this"}, "", "clutch/c123", ""},
 		{"self word", []string{"me"}, "clutch", "", "active"},

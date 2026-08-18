@@ -15,9 +15,9 @@ import (
 type costDurKind int
 
 const (
-	durNone      costDurKind = iota // no duration specified (all time)
-	durToday                        // since midnight today
-	durWindow                       // last Dur (24h, week, Go-duration, N-days)
+	durNone   costDurKind = iota // no duration specified (all time)
+	durToday                     // since midnight today
+	durWindow                    // last Dur (24h, week, Go-duration, N-days)
 )
 
 // --- Parsed args ---
@@ -71,12 +71,12 @@ var allScopeAliases = map[string]bool{
 
 // sessionTypeScopes is the set of session_type values accepted as scopes.
 var sessionTypeScopes = map[string]bool{
-	string(session.SessionTypeChat):          true,
-	string(session.SessionTypeFacet):         true,
-	string(session.SessionTypeIndependent):   true,
-	string(session.SessionTypeSpawn):         true,
-	string(session.SessionTypeReflection):    true,
-	string(session.SessionTypeKeepalive):     true,
+	string(session.SessionTypeChat):           true,
+	string(session.SessionTypeFacet):          true,
+	string(session.SessionTypeIndependent):    true,
+	string(session.SessionTypeSpawn):          true,
+	string(session.SessionTypeReflection):     true,
+	string(session.SessionTypeKeepalive):      true,
 	string(session.SessionTypeBackgroundTask): true,
 }
 

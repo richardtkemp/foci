@@ -1,15 +1,12 @@
 package periodic
 
-
 import (
 	"context"
 	"fmt"
 	"time"
 
-
 	"foci/internal/timeutil"
 )
-
 
 func (r *Runner) maybeEphemeralCleanup(ctx context.Context) {
 	if r.ephemeralRetentionDays <= 0 || r.agent == nil {

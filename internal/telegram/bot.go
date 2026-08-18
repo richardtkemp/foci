@@ -106,8 +106,8 @@ type Bot struct {
 	sessionIndex platform.SessionIndex // nil = no session key persistence across restarts
 	chatmeta     *chatmeta.Resolver    // shared session key management
 
-	displayMu sync.RWMutex // guards display; hot-reloadable fields (stream_output, table settings, messages_in_log) can be updated after startup, see updateDisplay
-	display   BotDisplayConfig
+	displayMu     sync.RWMutex // guards display; hot-reloadable fields (stream_output, table settings, messages_in_log) can be updated after startup, see updateDisplay
+	display       BotDisplayConfig
 	fileMode      os.FileMode          // permission bits for saved files (media, etc.)
 	toolStore     turn.ToolResultStore // tool-call display state (in-memory + optional SQLite write-through)
 	thinkingStore sync.Map             // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion

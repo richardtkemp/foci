@@ -308,7 +308,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	ag.Endpoint = defaultEndpoint
 	ag.ExtraSystemBlocks = bs.extraSystemBlocks
 	ag.CacheStrategy = primaryCacheStrategy
-	ag.CacheBustDetect = p.resolved.Debug.CacheBustDetect                                          // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
+	ag.CacheBustDetect = p.resolved.Debug.CacheBustDetect // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above
 	ag.DuplicateMessages = al.DuplicateMessages
 	ag.BatchPartialAssistantMessages = al.BatchPartialAssistantMessages
 	ag.BatchPartialJoiner = al.BatchPartialJoiner

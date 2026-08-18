@@ -399,7 +399,7 @@ func (m *mockPassBackend) SessionID() string                                    
 func (m *mockPassBackend) SessionFilePath() string                                { return "" }
 func (m *mockPassBackend) WaitReady(context.Context) error                        { return nil }
 func (m *mockPassBackend) CheckReady(context.Context) (bool, error)               { return true, nil }
-func (m *mockPassBackend) StatusDetail() string                                    { return "" }
+func (m *mockPassBackend) StatusDetail() string                                   { return "" }
 func (m *mockPassBackend) Close() error                                           { return nil }
 
 func (m *mockPassBackend) CaptureCommandOutput(_ context.Context, _, _ time.Duration) (string, error) {
@@ -454,7 +454,7 @@ func (m *mockPassBackendNoCapturer) SessionID() string                          
 func (m *mockPassBackendNoCapturer) SessionFilePath() string                                { return "" }
 func (m *mockPassBackendNoCapturer) WaitReady(context.Context) error                        { return nil }
 func (m *mockPassBackendNoCapturer) CheckReady(context.Context) (bool, error)               { return true, nil }
-func (m *mockPassBackendNoCapturer) StatusDetail() string                                    { return "" }
+func (m *mockPassBackendNoCapturer) StatusDetail() string                                   { return "" }
 func (m *mockPassBackendNoCapturer) Close() error                                           { return nil }
 
 // Compile-time verification.

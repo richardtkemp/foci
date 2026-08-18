@@ -22,7 +22,7 @@ import (
 // The zero value is not usable; construct with [NewLiveValue].
 type LiveValue[T any] struct {
 	ptr  atomic.Pointer[T]
-	mu   sync.Mutex        // guards subs
+	mu   sync.Mutex // guards subs
 	subs []func(old, new T)
 }
 

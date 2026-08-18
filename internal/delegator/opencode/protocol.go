@@ -337,8 +337,8 @@ type eventMessagePartDelta struct {
 	SessionID string `json:"sessionID"`
 	MessageID string `json:"messageID"`
 	PartID    string `json:"partID"`
-	Field     string `json:"field"`            // "text" for both text and reasoning parts
-	Delta     string `json:"delta,omitempty"`  // incremental fragment
+	Field     string `json:"field"`           // "text" for both text and reasoning parts
+	Delta     string `json:"delta,omitempty"` // incremental fragment
 }
 
 type eventPermissionUpdated struct {

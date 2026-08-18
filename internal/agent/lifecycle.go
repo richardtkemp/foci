@@ -39,6 +39,7 @@ func (a *Agent) reloadAfterMutation() {
 //     no_compact, …) so the reset session starts from a clean slate.
 //  4. Run reflection on the branch in the background — the caller is not
 //     blocked on it.
+//
 // ResetMemoryOutcome reports what happened to the previous session's memories on
 // a soft reset, so the caller can tell the user accurately.
 type ResetMemoryOutcome int

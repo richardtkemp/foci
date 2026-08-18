@@ -39,11 +39,11 @@ func newPermTestBackend(t *testing.T) (*Backend, *permRecorder) {
 	}
 
 	b := &Backend{
-		server:      &Server{baseURL: hs.URL, http: hs.Client(), agentID: "perm-test"},
-		agentID:     "perm-test",
-		sessionID:   "sess-perm",
-		readyCh:     make(chan struct{}),
-		outstanding: delegator.NewOutstandingRegistry(),
+		server:       &Server{baseURL: hs.URL, http: hs.Client(), agentID: "perm-test"},
+		agentID:      "perm-test",
+		sessionID:    "sess-perm",
+		readyCh:      make(chan struct{}),
+		outstanding:  delegator.NewOutstandingRegistry(),
 		pendingPerms: make(map[string]*pendingPermission),
 	}
 	b.permPromptFn = func(id, text, summary, attachmentPath string, choices []delegator.PromptChoice) {

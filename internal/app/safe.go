@@ -2,7 +2,6 @@ package app
 
 import (
 	"runtime/debug"
-
 )
 
 // Panic isolation for the app provider.

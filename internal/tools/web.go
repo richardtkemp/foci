@@ -13,7 +13,6 @@ import (
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	readability "github.com/go-shiori/go-readability"
-
 )
 
 func NewWebFetchTool() *Tool {

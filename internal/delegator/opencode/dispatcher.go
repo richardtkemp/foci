@@ -8,8 +8,7 @@
 
 package opencode
 
-import (
-)
+import ()
 
 // eventHandler is the per-Backend callback invoked for every event
 // routed to the Backend. Implementations are called serially from the

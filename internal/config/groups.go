@@ -2,7 +2,6 @@ package config
 
 import (
 	"sync"
-
 )
 
 // Call site names — each identifies a specific LLM call site in the codebase.

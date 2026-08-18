@@ -304,9 +304,9 @@ func TestServer_Close_GracefulDisposeBeforeSIGTERM(t *testing.T) {
 	defer hs.Close()
 
 	srv := &Server{
-		baseURL:    hs.URL,
-		agentID:    "agent-dispose",
-		sessions:   map[string]*Backend{},
+		baseURL:  hs.URL,
+		agentID:  "agent-dispose",
+		sessions: map[string]*Backend{},
 	}
 	srv.done = make(chan struct{})
 	srv.waitCh = make(chan error, 1)

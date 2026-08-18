@@ -33,8 +33,8 @@ type SessionIndexInfo struct {
 
 // SessionIndexOpts controls filtering for the /sessions index subcommand.
 type SessionIndexOpts struct {
-	AgentID      string        // scope to one agent (empty = all agents)
-	RootKey      string        // scope to a session family: this root + its branches
+	AgentID      string // scope to one agent (empty = all agents)
+	RootKey      string // scope to a session family: this root + its branches
 	TypeFilter   string
 	StatusFilter string
 	MaxAge       time.Duration // 0 = no limit

@@ -928,8 +928,8 @@ func TestBackend_Dispatcher_HandsEventsToHandler(t *testing.T) {
 	be := &Backend{sessionID: "sess-handler"}
 
 	var (
-		mu     sync.Mutex
-		got    []string
+		mu  sync.Mutex
+		got []string
 	)
 	be.SetDispatchHandler(func(ev rawEvent) {
 		mu.Lock()

@@ -102,4 +102,3 @@ func activityItem(id, kind, thread string) json.RawMessage {
 	})
 	return raw
 }
-

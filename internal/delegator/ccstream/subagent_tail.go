@@ -14,7 +14,9 @@ import (
 // subagentTranscriptPath returns the on-disk path of the subagent transcript
 // for agentID (== the task_started task_id, == the SubagentStop agent_id),
 // which CC writes at
-//   ~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
+//
+//	~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
+//
 // Returns "" if the session id isn't known yet or the home dir can't be found.
 func (b *Backend) subagentTranscriptPath(agentID string) string {
 	return b.subagentFilePath(agentID, ".jsonl")
@@ -90,7 +92,9 @@ func (b *Backend) loadSubagentMeta(taskID string) (groupKey, label string, ok bo
 //
 // The subagent's full message stream IS written — line by line, flushed
 // per-message — to its own transcript at
-//   ~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
+//
+//	~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id>.jsonl
+//
 // So to populate a foreground subagent's chit live, we tail that file and
 // forward each newly-appended assistant text block via OnSubagentText under the
 // run's group key (the Agent tool_use id, matching OnSubagentStart/End).

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 )
 
 // TmuxMemoryConfig holds the parsed configuration for the tmux memory monitor.

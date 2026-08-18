@@ -215,10 +215,10 @@ func TestDispatch_CollabAgentToolCall_IsLoggedNotInterpreted(t *testing.T) {
 
 	var touched []string
 	b.sessionEvents.Store(&delegator.SessionEvents{
-		OnSubagentStart: func(g, l, p string, r int) { touched = append(touched, "start") },
-		OnSubagentText:  func(g, text string, r int) { touched = append(touched, "text") },
+		OnSubagentStart:  func(g, l, p string, r int) { touched = append(touched, "start") },
+		OnSubagentText:   func(g, text string, r int) { touched = append(touched, "text") },
 		OnSubagentPrompt: func(g, p string, r int) { touched = append(touched, "prompt") },
-		OnSubagentEnd:   func(g string, r int) { touched = append(touched, "end") },
+		OnSubagentEnd:    func(g string, r int) { touched = append(touched, "end") },
 	})
 
 	var mu sync.Mutex
