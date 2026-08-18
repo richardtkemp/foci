@@ -1675,6 +1675,20 @@ and calls `Reset`, which re-arms the immediate warning — an intermittent fault
 therefore stays loud instead of inheriting the silence its previous episode
 earned.
 
+**Every authenticated app endpoint names its device.** `Hub.authenticate`
+resolves the device from the bearer token, and the HTTP handlers used to
+discard it (`if _, ok := h.authenticate(w, r); !ok`). They now log it:
+`replay GET: device=…`, `history GET: device=…`, `blob GET: device=…`,
+`devices list: device=…`, and `revoked device "X" (by device=Y)` — the revoke
+line previously recorded only its target, never the actor. `authBlob` returns
+`(*device, bool)` to match. This is the HTTP half of the same lesson as the
+`device connected:` line: on 2026-08-17, 1370 anonymous `GET /app/replay` calls
+proved SOME client's HTTPS was healthy while its WebSockets died, but not
+which one — so "the network path is broken" and "only WebSockets are broken"
+could not be told apart from the server. `deviceID` is an identifier; the
+`Token` is the credential and is never logged (asserted in
+`request_identity_test.go`, whose leak arm is verified by injecting it).
+
 This exists because a ~3-hour near-total app outage produced **zero log
 lines above DEBUG**: the 1006 disconnects are DEBUG by design (#888, mobile 1006s
 are normal) and `replayTo` is DEBUG, so hundreds of connects that delivered
