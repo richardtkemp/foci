@@ -22,7 +22,7 @@ var (
 )
 
 func (h *Hub) ServeAvatar(w http.ResponseWriter, r *http.Request) {
-	if !h.authBlob(w, r) {
+	if _, ok := h.authBlob(w, r); !ok {
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
