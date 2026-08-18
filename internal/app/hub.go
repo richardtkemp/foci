@@ -1808,7 +1808,7 @@ func (h *Hub) removeClient(c *wsClient) {
 //
 // The persisted set is retained when the app backgrounds/disconnects, so keepalive
 // keeps warming the chats the user had open — facet/branch conversations included —
-// even with no client connected. A live-socket source (each client's openConvIDs)
+// even with no client connected. A live-socket source (a per-client open-set)
 // abandoned them the instant the app backgrounded: candidates went empty, keepalive
 // fell back to warming only the root, and every non-root open cache silently
 // expired (~1h after its last touch). Persisted open_chats is kept in sync while a
@@ -2458,12 +2458,11 @@ type wsClient struct {
 	// No socket-wide "current agent": one socket multiplexes every agent's
 	// conversations concurrently. Each inbound frame names its agent (or its
 	// conversation's binding does), so the agent is resolved per-frame.
-	deviceID    string                  // from the client hello
-	helloSeen   bool                    // a ClientHello was received on this socket (#1713)
-	closeErr    string                  // why the read loop ended, for the hello-less diagnostic (#1713)
-	features    map[string]struct{}     // advertised client capabilities (from the hello)
-	convByID    map[string]*convBinding // conversationId → binding
-	openConvIDs map[string]struct{}     // conversations the app currently has open (its pager tabs)
+	deviceID  string                  // from the client hello
+	helloSeen bool                    // a ClientHello was received on this socket (#1713)
+	closeErr  string                  // why the read loop ended, for the hello-less diagnostic (#1713)
+	features  map[string]struct{}     // advertised client capabilities (from the hello)
+	convByID  map[string]*convBinding // conversationId → binding
 }
 
 // supportsFeature reports whether the binding's app advertised feat. It reads the
