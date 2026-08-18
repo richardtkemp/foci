@@ -424,9 +424,11 @@ func (h *Hub) ServePair(w http.ResponseWriter, r *http.Request) {
 // lists the paired devices (tokens omitted). #862: management no longer needs a
 // master key — a device manages from the token it already holds.
 func (h *Hub) ServeDevices(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.authenticate(w, r); !ok {
+	dev, ok := h.authenticate(w, r)
+	if !ok {
 		return
 	}
+	appLog.Debugf("devices list: device=%s", dev.DeviceID)
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -439,7 +441,8 @@ func (h *Hub) ServeDevices(w http.ResponseWriter, r *http.Request) {
 // revokes a device's token and closes its live socket(s) with 4403. A device
 // may revoke itself or any other paired device (#862).
 func (h *Hub) ServeRevoke(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.authenticate(w, r); !ok {
+	actor, ok := h.authenticate(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -458,7 +461,7 @@ func (h *Hub) ServeRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.closeDeviceSockets(req.DeviceID)
-	appLog.Infof("revoked device %q", req.DeviceID)
+	appLog.Infof("revoked device %q (by device=%s)", req.DeviceID, actor.DeviceID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -506,7 +509,8 @@ func (h *Hub) ServePushRegister(w http.ResponseWriter, r *http.Request) {
 // app's Room DB is authoritative. Full message bodies live in the app's local
 // store by design; this endpoint carries reconciliation state, not content.
 func (h *Hub) ServeHistory(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.authenticate(w, r); !ok {
+	dev, ok := h.authenticate(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -518,6 +522,7 @@ func (h *Hub) ServeHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "conversationId required", http.StatusBadRequest)
 		return
 	}
+	appLog.Debugf("history GET: device=%s conv=%s", dev.DeviceID, convID)
 	resp := map[string]any{"conversationId": convID, "lastSeq": int64(0), "present": false}
 	if b := h.convForReliability(convID); b != nil {
 		b.mu.Lock()
@@ -541,7 +546,8 @@ func (h *Hub) ServeHistory(w http.ResponseWriter, r *http.Request) {
 // returned seq. Distinct from /app/history (which carries reconciliation state,
 // not content).
 func (h *Hub) ServeReplay(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.authenticate(w, r); !ok {
+	dev, ok := h.authenticate(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -560,7 +566,7 @@ func (h *Hub) ServeReplay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	frames := h.frames.Range(convID, fromSeq, limit)
-	appLog.Debugf("replay GET: conv=%s fromSeq=%d returned=%d more=%v", convID, fromSeq, len(frames), len(frames) == limit)
+	appLog.Debugf("replay GET: device=%s conv=%s fromSeq=%d returned=%d more=%v", dev.DeviceID, convID, fromSeq, len(frames), len(frames) == limit)
 	// Same closed-ask substitution as the reconnect replayTo path (see there).
 	orphaned := h.frames.OrphanedResolvedAsks(convID)
 	out := make([]map[string]any, 0, len(frames))

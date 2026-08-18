@@ -278,7 +278,8 @@ func kindForMIME(m string) string {
 // ServeBlobGet handles GET /app/blob/<id>: authenticates, then serves the blob
 // range-capably (http.ServeContent) so the client can resume partial fetches.
 func (h *Hub) ServeBlobGet(w http.ResponseWriter, r *http.Request) {
-	if !h.authBlob(w, r) {
+	dev, ok := h.authBlob(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -290,6 +291,7 @@ func (h *Hub) ServeBlobGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad blob id", http.StatusBadRequest)
 		return
 	}
+	appLog.Debugf("blob GET: device=%s blob=%s", dev.DeviceID, id)
 	meta, ok := h.blobs.get(id)
 	if !ok {
 		// The request is authenticated with a valid device token and the id is a
@@ -314,7 +316,8 @@ func (h *Hub) ServeBlobGet(w http.ResponseWriter, r *http.Request) {
 // ServeBlobPost handles POST /app/blob: authenticates, stores the request body
 // as a new blob (cap-enforced), and returns {blobId,size,mime}.
 func (h *Hub) ServeBlobPost(w http.ResponseWriter, r *http.Request) {
-	if !h.authBlob(w, r) {
+	dev, ok := h.authBlob(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodPost && r.Method != http.MethodPut {
@@ -329,7 +332,7 @@ func (h *Hub) ServeBlobPost(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "blob too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		appLog.Errorf("blob upload: %v", err)
+		appLog.Errorf("blob upload from device=%s: %v", dev.DeviceID, err)
 		http.Error(w, "upload failed", http.StatusInternalServerError)
 		return
 	}
@@ -337,9 +340,10 @@ func (h *Hub) ServeBlobPost(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"blobId": meta.id, "size": meta.size, "mime": meta.mime})
 }
 
-// authBlob enforces a valid device token on a blob request
-// (rate-limited), writing the error response and returning false on failure.
-func (h *Hub) authBlob(w http.ResponseWriter, r *http.Request) bool {
-	_, ok := h.authenticate(w, r)
-	return ok
+// authBlob enforces a valid device token on a blob request (rate-limited),
+// writing the error response and returning false on failure. It RETURNS the
+// device: blob transfers are per-client traffic, and a log line that cannot
+// name the client cannot answer "which one is doing this".
+func (h *Hub) authBlob(w http.ResponseWriter, r *http.Request) (*device, bool) {
+	return h.authenticate(w, r)
 }
