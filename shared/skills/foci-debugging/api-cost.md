@@ -25,6 +25,11 @@ sqlite3 ~/data/api.db "SELECT SUM(cost_usd) FROM api_calls WHERE ts > '2026-03-0
 
 **Token-field gotcha:** `cache_read` is the ONLY cumulative-per-call field — `input`/`output`/`cache_write` are per-call deltas (summable). Folding cumulative `cache_read` into a running total double-counts.
 
+**`cost_usd` does not reconcile against those columns.** Cost accumulates over every round of a turn;
+the columns hold one round's snapshot. So cost ÷ a token column is a ROUND COUNT dressed as a rate —
+3 rounds at Opus-5's $0.50/M cache-read reads as "$1.50/M", indistinguishable from a stale-pricing
+fallback. Check per-round usage in the CC transcript before calling a rate wrong.
+
 ## Payload Logs (JSONL)
 
 Full request/response payloads per API call. Written whenever `payload_file` is non-empty — it defaults to `logs/api-payload.jsonl`, so payload logging is **on by default**; set `payload_file = ""` in `[logging]` to disable. (A separate `full_payload` bool exists in `[logging]` but does NOT gate writing.) Large file — filter with jq, don't cat.
