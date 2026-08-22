@@ -84,6 +84,32 @@ func Load(dirs []string) *Registry {
 // failures are logged and skipped. scanDir performs no loaded/override
 // logging — that belongs to mergeInto, which alone holds the cross-directory
 // dedup state needed to tell a fresh load from an override.
+// resolveSkillDir reports whether entry names a skill directory and, if so, the
+// path to read it from.
+//
+// os.ReadDir yields a DirEntry describing the ENTRY, not its target, so IsDir()
+// is FALSE for a symlink pointing at a directory. A bare `if !entry.IsDir()`
+// therefore drops every symlinked skill — and drops it one step before the
+// SKILL.md parse, so the "skip %s: %v" warning never fires and the exclusion is
+// completely silent. Four skills sat unloadable and unlogged this way.
+//
+// os.Stat (not Lstat) follows the link; a dangling or non-directory link is
+// still correctly rejected.
+func resolveSkillDir(parent string, entry os.DirEntry) (string, bool) {
+	path := filepath.Join(parent, entry.Name())
+	if entry.IsDir() {
+		return path, true
+	}
+	if entry.Type()&os.ModeSymlink == 0 {
+		return "", false
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	return path, true
+}
+
 func scanDir(dir string) []Skill {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -92,10 +118,10 @@ func scanDir(dir string) []Skill {
 	}
 	var out []Skill
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		skillDir, ok := resolveSkillDir(dir, entry)
+		if !ok {
 			continue
 		}
-		skillDir := filepath.Join(dir, entry.Name())
 		skillFile := filepath.Join(skillDir, "SKILL.md")
 		skill, err := parseSkillFile(skillFile, skillDir)
 		if err != nil {
