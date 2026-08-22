@@ -26,10 +26,10 @@ func Snapshot(dirs []string) SkillSnapshot {
 			continue
 		}
 		for _, entry := range entries {
-			if !entry.IsDir() {
+			skillDir, ok := resolveSkillDir(dir, entry)
+			if !ok {
 				continue
 			}
-			skillDir := filepath.Join(dir, entry.Name())
 			files := scanSkillFiles(skillDir)
 			if len(files) > 0 {
 				out[skillDir] = files
@@ -44,7 +44,15 @@ func Snapshot(dirs []string) SkillSnapshot {
 // no files (empty map) so that an empty skill dir is still tracked as existing.
 func scanSkillFiles(skillDir string) map[string]time.Time {
 	files := make(map[string]time.Time)
-	_ = filepath.WalkDir(skillDir, func(path string, d os.DirEntry, err error) error {
+	// WalkDir does not follow a symlinked ROOT either: handed a link it reports the
+	// link as a non-directory and never descends, so a symlinked skill would snapshot
+	// as one file (the link) and its real contents would never register a change.
+	// Resolve first; the map key stays the link path so the skill's identity is stable.
+	root := skillDir
+	if resolved, err := filepath.EvalSymlinks(skillDir); err == nil {
+		root = resolved
+	}
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable
 		}
@@ -55,7 +63,7 @@ func scanSkillFiles(skillDir string) map[string]time.Time {
 		if err != nil {
 			return nil
 		}
-		rel, err := filepath.Rel(skillDir, path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
