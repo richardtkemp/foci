@@ -19,16 +19,20 @@ sqlite3 ~/data/api.db "SELECT ts, call_type, cost_usd FROM api_calls ORDER BY ts
 # Filter by type: conversation, compaction, summary, spawn
 sqlite3 ~/data/api.db "SELECT ts, cost_usd, cache_read, cache_write FROM api_calls WHERE call_type='conversation' ORDER BY ts DESC LIMIT 10"
 
-# Cost in a time window
-sqlite3 ~/data/api.db "SELECT SUM(cost_usd) FROM api_calls WHERE ts > '2026-03-04T06:00'"
+# Cost in a time window -- SUM calculated_cost_usd, NEVER cost_usd (see below)
+sqlite3 ~/data/api.db "SELECT SUM(calculated_cost_usd) FROM api_calls WHERE ts > '2026-03-04T06:00'"
 ```
 
 **Token-field gotcha:** `cache_read` is the ONLY cumulative-per-call field — `input`/`output`/`cache_write` are per-call deltas (summable). Folding cumulative `cache_read` into a running total double-counts.
 
-**`cost_usd` does not reconcile against those columns.** Cost accumulates over every round of a turn;
-the columns hold one round's snapshot. So cost ÷ a token column is a ROUND COUNT dressed as a rate —
-3 rounds at Opus-5's $0.50/M cache-read reads as "$1.50/M", indistinguishable from a stale-pricing
-fallback. Check per-round usage in the CC transcript before calling a rate wrong.
+**`cost_usd` is CUMULATIVE over the CC process — never `SUM` it; sum `calculated_cost_usd`.**
+Two consequences. (1) Summing inflates ~quadratically in turns-per-process: 5.0x on 2026-08-21
+($1028 vs $206), 13x over 28 Jul-4 Aug ($32,566 vs ~$2,500) — but 1.0x on quiet days, which is
+what lets it survive review. (2) It does not reconcile against the token columns, which hold one
+round's snapshot: cost / a token column is a ROUND COUNT dressed as a rate — 3 rounds at Opus-5's
+$0.50/M cache-read reads as "$1.50/M", indistinguishable from a stale-pricing fallback. Check
+per-round usage in the CC transcript before calling a rate wrong. `calculated_cost_usd` is foci's
+own priced figure and is authoritative (WIRING.md "Cost columns"); rows before #1674 have it NULL.
 
 ## Payload Logs (JSONL)
 
@@ -55,7 +59,7 @@ tail -200 ~/logs/api-payload.jsonl | jq -c '
 
 ```bash
 # Total cost in last N hours
-sqlite3 ~/data/api.db "SELECT SUM(cost_usd), COUNT(*) FROM api_calls WHERE ts > datetime('now', '-3 hours')"
+sqlite3 ~/data/api.db "SELECT SUM(calculated_cost_usd), COUNT(*) FROM api_calls WHERE ts > datetime('now', '-3 hours')"
 
 # Biggest individual calls
 sqlite3 ~/data/api.db "SELECT ts, call_type, cost_usd, cache_read, cache_write FROM api_calls WHERE ts > datetime('now', '-3 hours') ORDER BY cost_usd DESC LIMIT 10"
