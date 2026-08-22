@@ -99,11 +99,12 @@ config.Load(path)                                        ← validates values; l
          A skill directory may itself be a SYMLINK (e.g. a skill vendored in another repo and
          linked into shared/skills). os.ReadDir's DirEntry describes the entry, not its target,
          so IsDir() is false for one, and filepath.WalkDir will not follow such a root either.
-         `resolveSkillDir` is the single place that handles both: it os.Stat's through the link
-         and returns `skillPath{Link, Real}` — Link is the stable identity (map key, messages,
-         the skill's recorded Path), Real is what you read or walk. Never conflate them: keying
-         on Real moves a skill's identity when the link is repointed; walking Link silently
-         descends into nothing. Snapshot keys on Link and hands Real to scanSkillFiles.
+         `resolveSkillDir` is the single gate: it os.Stat's THROUGH the link but returns the
+         LINK path, because that path is the skill's identity — map key, log lines, recorded
+         Dir — and must not move when someone repoints the link. Reading through it follows the
+         link, so most callers need nothing more; walking it does not, so `scanSkillFiles`
+         EvalSymlinks its OWN root rather than trusting a caller to hand it a resolved one.
+         Resolution sits with the walk that needs it, so no call site can get it wrong.
        → compaction.NewCompactor(sessions, model, threshold)
        → config.NewFallbackResolver(global, perAgent, aliases) ← nil if no fallbacks configured
        → agent.Agent{shared fields + Client, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}
