@@ -84,14 +84,21 @@ func Load(dirs []string) *Registry {
 // failures are logged and skipped. scanDir performs no loaded/override
 // logging — that belongs to mergeInto, which alone holds the cross-directory
 // dedup state needed to tell a fresh load from an override.
-// resolveSkillDir reports whether entry names a skill directory and, if so, the
-// path to read it from.
+// resolveSkillDir reports whether entry names a skill directory, and returns
+// the path it was FOUND AT — for a symlink that is the link, not its target.
+// That path is the skill's identity: it is the map key, what messages print,
+// and what a skill records as its Dir, so it must not move when someone
+// repoints the link.
+//
+// Reading through the returned path follows the link, so most callers need
+// nothing further. A caller that WALKS it must resolve it first, and does so
+// itself — see scanSkillFiles.
 //
 // os.ReadDir yields a DirEntry describing the ENTRY, not its target, so IsDir()
 // is FALSE for a symlink pointing at a directory. A bare `if !entry.IsDir()`
 // therefore drops every symlinked skill — and drops it one step before the
 // SKILL.md parse, so the "skip %s: %v" warning never fires and the exclusion is
-// completely silent. Four skills sat unloadable and unlogged this way.
+// completely silent.
 //
 // os.Stat (not Lstat) follows the link; a dangling or non-directory link is
 // still correctly rejected.

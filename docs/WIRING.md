@@ -98,10 +98,12 @@ config.Load(path)                                        ← validates values; l
        → skills.Load(resolvedDirs)                          ← shared first, then per-agent (overrides on collision)
          A skill directory may itself be a SYMLINK (e.g. a skill vendored in another repo and
          linked into shared/skills). os.ReadDir's DirEntry describes the entry, not its target,
-         so IsDir() is false for one — `resolveSkillDir` os.Stat's through the link. Snapshot
-         resolves it too, and scanSkillFiles EvalSymlinks the walk root, because filepath.WalkDir
-         does not follow a symlinked root either. Keep all three together: fixing only the load
-         side makes such a skill visible while its edits stay invisible to change detection.
+         so IsDir() is false for one, and filepath.WalkDir will not follow such a root either.
+         `resolveSkillDir` is the single place that handles both: it os.Stat's through the link
+         and returns `skillPath{Link, Real}` — Link is the stable identity (map key, messages,
+         the skill's recorded Path), Real is what you read or walk. Never conflate them: keying
+         on Real moves a skill's identity when the link is repointed; walking Link silently
+         descends into nothing. Snapshot keys on Link and hands Real to scanSkillFiles.
        → compaction.NewCompactor(sessions, model, threshold)
        → config.NewFallbackResolver(global, perAgent, aliases) ← nil if no fallbacks configured
        → agent.Agent{shared fields + Client, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}

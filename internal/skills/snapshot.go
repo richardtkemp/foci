@@ -44,13 +44,16 @@ func Snapshot(dirs []string) SkillSnapshot {
 // no files (empty map) so that an empty skill dir is still tracked as existing.
 func scanSkillFiles(skillDir string) map[string]time.Time {
 	files := make(map[string]time.Time)
-	// WalkDir does not follow a symlinked ROOT either: handed a link it reports the
-	// link as a non-directory and never descends, so a symlinked skill would snapshot
-	// as one file (the link) and its real contents would never register a change.
-	// Resolve first; the map key stays the link path so the skill's identity is stable.
+	// Resolve the root HERE rather than trusting the caller: filepath.WalkDir
+	// does not follow a symlinked root — it reports the link as a non-directory
+	// and never descends — so walking the link path would silently snapshot
+	// nothing, and every edit inside a symlinked skill would go undetected.
+	// Doing it inside the walker makes that impossible to get wrong at a call
+	// site. Relative paths stay relative to the resolved root, which is what
+	// callers compare.
 	root := skillDir
-	if resolved, err := filepath.EvalSymlinks(skillDir); err == nil {
-		root = resolved
+	if target, err := filepath.EvalSymlinks(root); err == nil {
+		root = target
 	}
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
