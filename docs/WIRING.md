@@ -96,6 +96,12 @@ config.Load(path)                                        ← validates values; l
        → buildEnvironmentBlock(acfg, configPath, cfg)       ← if [environment] enabled
        → skills.ResolveDirs(home, workspace, cfg.Skills.Dir, acfg.SkillsDir)
        → skills.Load(resolvedDirs)                          ← shared first, then per-agent (overrides on collision)
+         A skill directory may itself be a SYMLINK (e.g. a skill vendored in another repo and
+         linked into shared/skills). os.ReadDir's DirEntry describes the entry, not its target,
+         so IsDir() is false for one — `resolveSkillDir` os.Stat's through the link. Snapshot
+         resolves it too, and scanSkillFiles EvalSymlinks the walk root, because filepath.WalkDir
+         does not follow a symlinked root either. Keep all three together: fixing only the load
+         side makes such a skill visible while its edits stay invisible to change detection.
        → compaction.NewCompactor(sessions, model, threshold)
        → config.NewFallbackResolver(global, perAgent, aliases) ← nil if no fallbacks configured
        → agent.Agent{shared fields + Client, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}
