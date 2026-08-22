@@ -1,6 +1,6 @@
 ## Weekly character review.
 
-Read recent memory files (/home/foci/memory/ from the past week). Then read your character/identity documents (whatever files define who you are).
+Read recent memory files (memory/ in your workspace, from the past week). Then read your character/identity documents (whatever files define who you are).
 
 **You're asking: given what's happened recently, who am I now?**
 
