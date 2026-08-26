@@ -70,6 +70,56 @@ func (b *Backend) ForkRequiresRunningBackend() bool { return true }
 // session is NOT an error" contract.
 const noRolloutFoundMarker = "no rollout found for thread id"
 
+// OpenCleanupScope implements delegator.RunningBackendCleaner. Codex deletes a
+// thread by RPC to a live app-server, so an idle agent could never have its
+// expired sessions collected: the daily sweep built a fresh Backend, found no
+// connection, and failed once per session — permanently, for exactly the agents
+// whose sessions were expiring. 1df68081 fixed this bug class for opencode on
+// 2026-08-15 but left codex out, because WIRING recorded codex as deleting
+// straight from disk. It does not.
+//
+// Acquisition is deliberately Start, the SAME path an interactive session or a
+// background batch uses, so a cleanup-triggered spawn is indistinguishable from
+// any other: it attaches to the pooled app-server for this agent, or launches
+// one if none exists. BatchOnly is what makes it safe to reuse — it returns as
+// soon as the connection is ready, BEFORE Start would otherwise start or resume
+// a thread. Cleaning up must not create the very thing it reclaims.
+//
+// Release closes this facade, handing back the pool ref; if this scope launched
+// the app-server, that drops the refcount to zero and shuts it down again.
+func (b *Backend) OpenCleanupScope(ctx context.Context, req delegator.CleanupRequest) (func(), error) {
+	if req.AgentID == "" {
+		return nil, fmt.Errorf("codex cleanup scope: empty agent id")
+	}
+	if err := b.Start(ctx, delegator.StartOptions{
+		WorkDir:   req.WorkDir,
+		AgentID:   req.AgentID,
+		BatchOnly: true,
+	}); err != nil {
+		return nil, fmt.Errorf("codex cleanup scope: start backend: %w", err)
+	}
+	return func() { _ = b.Close() }, nil
+}
+
+// pooledOwner returns the app-server owner for agentID, or nil. A Backend built
+// fresh by DelegatedManager.NewBackend has never run Start, so its `shared`
+// pointer is nil and process() returns itself — with no writer. The sweep builds
+// exactly such a Backend per session, so without this lookup an OpenCleanupScope
+// that successfully launched a server would still be invisible to every
+// CleanupSession that followed it, and the fix would appear to do nothing.
+func pooledOwner(agentID string) *Backend {
+	if agentID == "" {
+		return nil
+	}
+	sharedPool.Lock()
+	owner := sharedPool.servers[agentID]
+	sharedPool.Unlock()
+	if owner == nil || !owner.IsRunning() {
+		return nil
+	}
+	return owner
+}
+
 // CleanupSession deletes a Codex thread by ID. Implements
 // delegator.BackendBrancher.
 func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupRequest) error {
@@ -77,6 +127,17 @@ func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupReque
 	p.mu.Lock()
 	wr := p.writer
 	p.mu.Unlock()
+	if wr == nil {
+		// No connection of our own: fall back to the agent's pooled app-server,
+		// which OpenCleanupScope guarantees for the duration of a sweep.
+		if owner := pooledOwner(req.AgentID); owner != nil {
+			b = owner
+			p = owner
+			p.mu.Lock()
+			wr = p.writer
+			p.mu.Unlock()
+		}
+	}
 	if wr == nil {
 		return fmt.Errorf("codex: backend not started (cleanup requires an active app-server connection)")
 	}
