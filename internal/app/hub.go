@@ -1295,7 +1295,7 @@ func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 		return set[b.chatID]
 	}
 
-	replayed, skipped := 0, 0
+	replayed, skipped, truncated := 0, 0, 0
 	for _, rp := range points {
 		h.mu.RLock()
 		b := h.convs[rp.ConversationID]
@@ -1323,11 +1323,16 @@ func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 			skipped++
 			continue
 		}
-		b.replayTo(client, rp.Ack)
+		// A truncated conversation does NOT stop the resume: each conversation has
+		// its own seq stream, so a short prefix in one leaves no gap in another,
+		// and the queue may well have drained by the next one.
+		if !b.replayTo(client, rp.Ack) {
+			truncated++
+		}
 		replayed++
 	}
-	if skipped > 0 {
-		appLog.Infof("resume: device=%s replayed %d conversation(s), skipped %d archived", client.device(), replayed, skipped)
+	if skipped > 0 || truncated > 0 {
+		appLog.Infof("resume: device=%s replayed %d conversation(s), skipped %d archived, truncated %d (client pulls the rest)", client.device(), replayed, skipped, truncated)
 	}
 }
 
@@ -2429,7 +2434,10 @@ func substituteResolvedAsk(wire string, orphaned map[string]struct{}) string {
 
 // replayTo re-sends buffered frames with seq > fromSeq to the socket, in seq
 // order — the reconnect resume path.
-func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
+// replayTo pushes this conversation's frames above fromSeq to client. It
+// returns false when the socket queue filled and the replay was cut short — the
+// client holds a contiguous prefix and fetches the remainder via GET /app/replay.
+func (b *convBinding) replayTo(client *wsClient, fromSeq int64) bool {
 	b.mu.Lock()
 	hasMem := len(b.buffer) > 0
 	memFloor := int64(0) // lowest seq the in-memory buffer still holds
@@ -2464,20 +2472,36 @@ func (b *convBinding) replayTo(client *wsClient, fromSeq int64) {
 	// frames at seq >= memFloor would duplicate `pending`, so stop there. No
 	// in-memory frames (hasMem == false) → the store supplies everything > fromSeq.
 	// A gap larger than maxResumeStoreReplay is finished by the client via GET /app/replay.
-	storeCount := 0
+	// Bounded by the socket queue itself rather than by a frame count: the
+	// per-conversation cap (maxResumeStoreReplay) bounds nothing once a hello
+	// carries many conversations, because each one spends the cap again into the
+	// SAME sendBuffer-slot queue. Stopping when the queue is full is
+	// self-tuning — a fast client gets everything, a slow one gets a contiguous
+	// prefix and pulls the rest (#1779).
+	storeCount, sentBuffer, truncated := 0, 0, false
 	if store != nil && (!hasMem || fromSeq < memFloor-1) {
 		for _, sf := range store.Range(convID, fromSeq, maxResumeStoreReplay) {
 			if hasMem && sf.seq >= memFloor {
 				break
 			}
-			client.enqueue(stampAck(substituteResolvedAsk(sf.wire, orphaned), ack))
+			if !client.enqueueReplay(stampAck(substituteResolvedAsk(sf.wire, orphaned), ack)) {
+				truncated = true
+				break
+			}
 			storeCount++
 		}
 	}
-	for _, wire := range pending {
-		client.enqueue(stampAck(substituteResolvedAsk(wire, orphaned), ack))
+	if !truncated {
+		for _, wire := range pending {
+			if !client.enqueueReplay(stampAck(substituteResolvedAsk(wire, orphaned), ack)) {
+				truncated = true
+				break
+			}
+			sentBuffer++
+		}
 	}
-	appLog.Debugf("replayTo: conv=%s fromSeq=%d memFloor=%d fromStore=%d fromBuffer=%d", convID, fromSeq, memFloor, storeCount, len(pending))
+	appLog.Debugf("replayTo: conv=%s fromSeq=%d memFloor=%d fromStore=%d fromBuffer=%d truncated=%t", convID, fromSeq, memFloor, storeCount, sentBuffer, truncated)
+	return !truncated
 }
 
 // --- wsClient: one physical socket ---
@@ -2569,6 +2593,37 @@ func (c *wsClient) enqueue(wire string) {
 		// hello lines by timestamp (#1779).
 		appLog.Warnf("outbound queue stalled %s, closing slow client to force resume: device=%s", enqueueBlockWait, c.device())
 		go c.close() // async: close locks the hub; don't reenter from the send path
+	}
+}
+
+// enqueueReplay is enqueue's bulk sibling, and its policy is the OPPOSITE on
+// purpose.
+//
+// enqueue must never drop a LIVE frame: the replay buffer holds it, but the
+// client acks past it and never asks again, so a drop punches an unrecoverable
+// hole below the resume high-water. Blocking, then closing the socket, is the
+// right price for that.
+//
+// A REPLAY frame has none of that risk. It is durable by construction, and the
+// client is built to fetch it: FociRepository backfills the active conversation
+// on every reconnect and every other conversation on open, treating the resume
+// replay as an optimisation rather than the source of truth ("Other
+// conversations backfill on open"). So when the socket queue is full, the right
+// move is to STOP PUSHING, not to kill a healthy connection — which is what
+// turned a slow drain into a reconnect loop (#1779).
+//
+// Returns false when nothing more should be sent for this conversation. The
+// caller MUST stop rather than skip and continue: a contiguous short prefix is
+// what the client's pull path expects, whereas a hole in the middle is the very
+// thing enqueue's no-drop rule exists to prevent.
+func (c *wsClient) enqueueReplay(wire string) bool {
+	select {
+	case c.send <- []byte(wire):
+		return true
+	case <-c.done:
+		return false
+	default:
+		return false // queue full: back-pressure, not failure
 	}
 }
 
