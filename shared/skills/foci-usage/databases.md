@@ -22,13 +22,18 @@ Foci keeps state in SQLite, split into two scopes. As an agent you rarely query 
 | Database | Table(s) | Contents |
 |----------|----------|----------|
 | `conversation.db` | `messages` | Telegram/Discord send/receive log (NOT the session history — that's the JSONL store). |
-| `todo.db` | `todos` | Todo items (`foci_todo`). |
+| `todo.db` | `todos` | Todo items (`foci_todo`). One content column, `text` — there is NO title or body column. |
 | `tasklist.db` | `tasks` | Task-list items (the Task* tools). |
 | `scratchpad.db` | `scratchpad` | Working notes. |
 | `reminders.db` | `reminders` | Scheduled reminders (`foci_remind`). |
 | `tool_details.db` | `tool_call_details` | Tool-call display data for inline buttons. |
 | `memory.db` | `memory_fts`, `memory_meta` | FTS5 full-text index over your memory sources (powers `foci_memory_search`). |
 | `search.bleve/` | — | Bleve search index (alternative search backend). |
+
+**A tool's flag list is not its schema.** `foci_todo add` takes `--title` and `--body`, but neither
+is a field: the shell function composes them into the single `text` column (`--title` is prepended
+as a bold first line). So "change the title" means rewriting the first line of a text blob, not
+updating a column. Check the table above before proposing or attempting any field-level edit.
 
 ## Memory: files are the source of truth
 
