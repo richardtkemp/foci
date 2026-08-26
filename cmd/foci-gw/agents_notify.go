@@ -195,16 +195,23 @@ func newSessionNotifyFn(
 // app receives activity frames (warming → thinking → typing → idle). For
 // Telegram/Discord, falls back to SessionSink (drives SetTyping). The returned
 // cleanup func (nil for SessionSink) must be deferred.
-func turnSinkForConn(conn platform.Connection, sessionKey, trigger string) (turnevent.Sink, func()) {
+//
+// BOTH branches are wrapped in WrapConversationLogging. Injected turns never
+// reach Agent.RunTurn, which is where platform turns pick up that wrapper, so
+// without it their replies deliver to the user and are never written to
+// conversation.db (#1784). Wrapping here rather than at the call sites keeps
+// the two current callers — asyncDispatch (http.go) and deliverToSessionChat —
+// and any future one from having to remember.
+func turnSinkForConn(ag *agent.Agent, conn platform.Connection, sessionKey, trigger string) (turnevent.Sink, func()) {
 	if driver, ok := conn.(agent.Driver); ok {
 		if sink, cleanup := driver.NewTurnSink(agent.Envelope{SessionKey: sessionKey}); sink != nil {
-			return sink, cleanup
+			return ag.WrapConversationLogging(sink, sessionKey), cleanup
 		}
 	}
-	return turn.NewSessionSink(conn, sessionKey, trigger,
+	return ag.WrapConversationLogging(turn.NewSessionSink(conn, sessionKey, trigger,
 		turn.WithSessionSinkErrorHandler(func(t string, err error) {
 			log.NewComponentLogger(t).Errorf("platform delivery: %v", err)
-		})), nil
+		})), sessionKey), nil
 }
 
 // logInjectionError logs a failed HandleMessage from an injected turn (system
@@ -284,7 +291,7 @@ func deliverToSessionChat(
 
 		// turnSinkForConn selects appSink for app connections (activity frames)
 		// or SessionSink for TG/Discord (SetTyping).
-		sink, cleanup := turnSinkForConn(conn, sessionKey, trigger)
+		sink, cleanup := turnSinkForConn(ag, conn, sessionKey, trigger)
 		if cleanup != nil {
 			defer cleanup()
 		}
