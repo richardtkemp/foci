@@ -34,7 +34,11 @@ sqlite3 ~/data/state.db ".schema"        # or .schema <table> for one table
 sqlite3 <workspace>/.data/conversation.db "SELECT * FROM messages ORDER BY rowid DESC LIMIT 5"
 ```
 
-**Reading `messages`.** Empty `user_id` = non-human sender (cron `foci send`, keepalive); filtering on `user_id`/`username` hides every injected prompt. `sent` rows come from intermediate text blocks, so a turn emitting no chat text has none — zero is correct for a branch session (`session` ends `/b<ts>`), an anomaly for a main one. Scope recv→sent correlation by `session`, never a time window: a shared chat carries concurrent peers.
+**Reading `messages`.** Empty `user_id` = non-human sender (cron `foci send`, keepalive); filtering on `user_id`/`username` hides every injected prompt. Scope recv→sent correlation by `session`, never a time window: a shared chat carries concurrent peers. **A missing `sent` row does not mean the turn stayed silent** — only some delivery paths write one; read the turn's log lines, not the table.
+
+**Timestamps are `2026-08-26T13:12:03+01:00`** (`T` separator, offset) in foci's SQLite DBs. A space-separated bound (`ts >= '2026-08-26 07:45'`) matches nothing and returns a clean empty result indistinguishable from "no rows". Re-run unbounded before believing a zero.
+
+**Sinks log their own decisions.** When output reached the user but nothing was recorded (or vice versa), grep the turn window for `turn-sink sink=0x…`: it prints each event's type, phase, length and silent verdict — what the sink did, which outranks inferring it from the code.
 
 ## Service logs
 
