@@ -51,7 +51,7 @@ sudo make -C /home/rich/git/foci update                # then END YOUR TURN IMME
 
 Gotchas: the changelog line (`foci: changelog staged (<old> -> <new>)`) is the cheapest confirmation the rollback direction was right. Afterwards, check whether the bad build left **residue** the rollback can't undo (it reverts code, not data) — e.g. rows written to `~/data/state.db` while it ran. And `git branch --contains` before resetting is the whole safety argument: if a sibling branch descends from the commits you're rewinding, they survive the reset; if none does, you are about to orphan work.
 
-## Verifying a change (two traps)
+## Verifying a change (three traps)
 
 **Running ONE package.** `make test` has no package filter and bare `go test ./<pkg>/` panics — several packages need the sandboxed HOME the Makefile sets. Replicate it:
 
@@ -63,3 +63,5 @@ HOME=$T/home TMPDIR=$T FOCI_TMPDIR=$T FOCI_TEST_TMPDIR=$T go test ./internal/<pk
 That sandboxed HOME also strips git's `safe.directory`, so anything invoking `go build` with VCS stamping fails as "dubious ownership" — add `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=<repo>`.
 
 **You cannot sandbox a `foci` CLI probe.** The CLI prefers the gateway's unix socket, so `FOCI_ADDR` is never read when you run as an agent — pointing it at a dead port does nothing and the command really executes. A `foci send` you run "as a test" is delivered for real.
+
+**A `cmd/foci-gw` test cannot reproduce a delegated-transport bug.** `httpTestSetup` builds an API-transport agent; where the API and delegated transports differ (e.g. `LogConversationSent` is real on one, a no-op override on the other), the test passes for the wrong reason and keeps passing with the fix removed. Run the fail-arm before believing any such test.

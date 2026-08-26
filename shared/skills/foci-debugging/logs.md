@@ -34,7 +34,7 @@ sqlite3 ~/data/state.db ".schema"        # or .schema <table> for one table
 sqlite3 <workspace>/.data/conversation.db "SELECT * FROM messages ORDER BY rowid DESC LIMIT 5"
 ```
 
-**Reading `messages`.** Empty `user_id` = non-human sender (cron `foci send`, keepalive); filtering on `user_id`/`username` hides every injected prompt. Scope recv→sent correlation by `session`, never a time window: a shared chat carries concurrent peers. **A missing `sent` row does not mean the turn stayed silent** — only some delivery paths write one; read the turn's log lines, not the table.
+**Reading `messages`.** Empty `user_id` = non-human sender (cron `foci send`, keepalive); filtering on `user_id`/`username` hides every injected prompt. Scope recv→sent correlation by `session`, never a time window: a shared chat carries concurrent peers. **A missing `sent` row now does mean no chat text was emitted** — every delivery path wraps the conversation logger. The exception is a turn whose whole output is a stripped sentinel (a keepalive/branch answering `HEARTBEAT_OK`), which legitimately writes nothing. Confirm either way from the turn's log lines, not the table.
 
 **Timestamps are `2026-08-26T13:12:03+01:00`** (`T` separator, offset) in foci's SQLite DBs. A space-separated bound (`ts >= '2026-08-26 07:45'`) matches nothing and returns a clean empty result indistinguishable from "no rows". Re-run unbounded before believing a zero.
 
