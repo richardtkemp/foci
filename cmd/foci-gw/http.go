@@ -300,6 +300,13 @@ func policyOrFallback(p route.Policy) route.Policy {
 // for the agent (PolicyBroadcast): the session's own chat gets it via
 // SendToSession; every other surface gets it via SendText (its default chat).
 func broadcastResponse(connMgr platform.ConnectionManager, agentID, sessionKey, text, logTag string) {
+	// The broadcast fan-out runs its turn behind a BufferSink, which emits no
+	// TextBlock, so the sink wrapper used everywhere else has nothing to
+	// intercept — record here instead, once, before delivery (#1784). This is
+	// the choke point for both broadcast callers: async /send
+	// (deliverBufferedQueued) and sync /send (handleSend).
+	agent.RecordConversationSent(sessionKey, text)
+
 	sessionConn := connMgr.ForSession(sessionKey)
 	delivered := 0
 	for _, conn := range route.Broadcast(connMgr, agentID) {
@@ -405,7 +412,7 @@ func deliverBufferedQueued(inst *agentInstance, connMgr platform.ConnectionManag
 					log.NewComponentLogger(logTag).Infof("session %s has no live connection — delivering via agent %s primary", sessionKey, inst.id)
 				}
 				var sink turnevent.Sink
-				sink, cleanup = turnSinkForConn(conn, sessionKey, logTag)
+				sink, cleanup = turnSinkForConn(inst.ag, conn, sessionKey, logTag)
 				turnCtx = turnevent.WithSink(ctx, sink)
 			} else {
 				log.NewComponentLogger(logTag).Warnf("no connection for session %s (policy=%s), async response not delivered", sessionKey, policyOrFallback(policy))

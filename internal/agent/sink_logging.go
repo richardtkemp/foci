@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"foci/internal/agent/turnevent"
+	"foci/internal/convo"
+	"foci/internal/session"
 )
 
 // activityHeartbeatInterval bounds how often a single turn's loggingSink
@@ -100,4 +102,34 @@ func (s *loggingSink) heartbeat(ctx context.Context, ev turnevent.Event) {
 // doesn't change whether the underlying sink reaches a user-facing platform.
 func (s *loggingSink) DeliversToPlatform() bool {
 	return s.inner.DeliversToPlatform()
+}
+
+// WrapConversationLogging wraps sink so the session's outbound text reaches the
+// conversation DB. Turn paths that build their own delivery sink instead of
+// going through Agent.RunTurn — the async HTTP /send path and every
+// system-injected delivery, both via turnSinkForConn in cmd/foci-gw — must call
+// this, or their replies deliver to the user and are never persisted (#1784).
+//
+// Injected turns carry no incoming message, so the chat ID resolves from the
+// session key rather than TurnMetadata, exactly as the adopted-autonomous path
+// in in_flight.go does.
+func (a *Agent) WrapConversationLogging(sink turnevent.Sink, sessionKey string) turnevent.Sink {
+	return newLoggingSink(sink, a, session.ChatIDFromKey(sessionKey), &TurnMetadata{}, sessionKey)
+}
+
+// RecordConversationSent persists text as an outbound conversation entry for
+// sessionKey, for delivery paths that have no per-event sink to wrap. The
+// broadcast fan-out runs the turn behind a turnevent.BufferSink, which emits no
+// TextBlock at all, so WrapConversationLogging has nothing to intercept there
+// and the text would otherwise reach every surface unlogged (#1784).
+func RecordConversationSent(sessionKey, text string) {
+	if text == "" {
+		return
+	}
+	convo.Record(convo.Entry{
+		Direction: "sent",
+		ChatID:    session.ChatIDFromKey(sessionKey),
+		Text:      text,
+		Session:   sessionKey,
+	})
 }
