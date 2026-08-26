@@ -1279,6 +1279,23 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 // hello's resume points to the new socket and replays buffered frames the client
 // has not yet acked (seq > ack), restoring the live stream after a reconnect.
 func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
+	// Memoise the per-agent archived set for this resume, mirroring
+	// pushCommandsTo: without it a 169-point hello is 169 chat_metadata queries.
+	idx := h.deps.SessionIndex
+	archivedByAgent := make(map[string]map[int64]bool)
+	archived := func(b *convBinding) bool {
+		if idx == nil {
+			return false
+		}
+		set, ok := archivedByAgent[b.agentID]
+		if !ok {
+			set = idx.ArchivedChatsForAgent(b.agentID, "app")
+			archivedByAgent[b.agentID] = set
+		}
+		return set[b.chatID]
+	}
+
+	replayed, skipped := 0, 0
 	for _, rp := range points {
 		h.mu.RLock()
 		b := h.convs[rp.ConversationID]
@@ -1292,7 +1309,25 @@ func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 		// reader (which never sends a frame, hence never hits ackInbound) doesn't
 		// pin the trim floor at 0 forever (#4).
 		b.seedClientAck(client, rp.Ack)
+		// An archived conversation is hidden from the roster, so replaying its
+		// backlog produces frames the app cannot display. It is not free: each
+		// replayTo pushes up to maxResumeStoreReplay frames into a sendBuffer-slot
+		// queue, and a hello carrying every conversation the device has ever seen
+		// overflows that queue by construction — enqueue then blocks, closes the
+		// socket "to force resume", and the reconnect replays exactly the same
+		// backlog (#1779). ATTACH still happens above, so a live frame arriving on
+		// an archived conversation is still delivered; only the historical replay
+		// is withheld, and the client can still pull it via GET /app/replay if the
+		// user unarchives.
+		if archived(b) {
+			skipped++
+			continue
+		}
 		b.replayTo(client, rp.Ack)
+		replayed++
+	}
+	if skipped > 0 {
+		appLog.Infof("resume: device=%s replayed %d conversation(s), skipped %d archived", client.device(), replayed, skipped)
 	}
 }
 
@@ -2465,6 +2500,14 @@ type wsClient struct {
 	convByID  map[string]*convBinding // conversationId → binding
 }
 
+// device returns the socket's device id under the mutex that guards it. Safe
+// from the send path: no enqueue call site holds c.mu.
+func (c *wsClient) device() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.deviceID
+}
+
 // supportsFeature reports whether the binding's app advertised feat. It reads the
 // cached set from the last hello rather than the live socket, so it stays true
 // across a disconnect — a known-capable but offline app still gets capability-gated
@@ -2521,7 +2564,10 @@ func (c *wsClient) enqueue(wire string) {
 	case c.send <- []byte(wire):
 	case <-c.done:
 	case <-t.C:
-		appLog.Warnf("outbound queue stalled %s, closing slow client to force resume", enqueueBlockWait)
+		// Name the device: this line is the ONLY record of the stall, and without
+		// it the culprit can be identified only by correlating adjacent connect /
+		// hello lines by timestamp (#1779).
+		appLog.Warnf("outbound queue stalled %s, closing slow client to force resume: device=%s", enqueueBlockWait, c.device())
 		go c.close() // async: close locks the hub; don't reenter from the send path
 	}
 }
