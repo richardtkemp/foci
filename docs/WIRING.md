@@ -1731,7 +1731,18 @@ conversation pushes frames the roster hides, and each `replayTo` can enqueue up 
 overflows, `enqueue` closes the socket "to force resume", and the reconnect replays
 the identical backlog — #1779. Attach is NOT skipped, so a live frame on an archived
 conversation still arrives; only history is withheld, and `GET /app/replay` can still
-pull it. The archived set is memoised per agent for the resume, as in `pushCommandsTo`); `conversation.open`→bind socket to agent;
+pull it. The archived set is memoised per agent for the resume, as in `pushCommandsTo`.
+Replay uses `enqueueReplay`, NOT `enqueue`, and the difference is the point: `enqueue`
+must never drop a LIVE frame (the client acks past it and never re-asks, so a drop is an
+unrecoverable hole) and pays for that by blocking then closing the socket. A replay frame
+is durable and the client already fetches it — `FociRepository` backfills the active
+conversation on every reconnect and the rest on open — so `enqueueReplay` is non-blocking
+and simply STOPS on a full queue. Stopping must be clean: a contiguous short prefix is what
+the pull path finishes, a mid-stream hole is what the no-drop rule exists to prevent. A
+truncated conversation does not abort the resume, since each conversation has its own seq
+stream. The bound is therefore the socket queue itself, self-tuning per client, rather than
+`maxResumeStoreReplay` — which bounds nothing once a hello carries many conversations,
+because each one spends the cap again into the SAME queue); `conversation.open`→bind socket to agent;
 `message`→`routeUserTurn`→`ensureBinding`→`agent.Enqueue(Envelope{Driver:
 appConn})`; `conversation.open`→`handleConversationOpen` (adopts a client-assigned
 `conversationId` when the frame carries one — so the app creates + opens the
