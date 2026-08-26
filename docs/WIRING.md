@@ -1722,8 +1722,16 @@ produce no `replayTo`, and conflating them is what stalled the diagnosis.
 **Inbound (`dispatch.go`):** decode → **reliability gate** (`inboundConvID` →
 `convForReliability`: dedup by `(conversationId, envelope id)`, drop resent
 outbox entries, fold piggybacked `ack` to trim the replay buffer) → switch.
-`hello`→server hello (roster) + `resumeConversations` (re-attach + replay each
-resume point's `seq > ack`); `conversation.open`→bind socket to agent;
+`hello`→server hello (roster) + `resumeConversations` (re-attach EVERY resume
+point, but replay `seq > ack` only for **non-archived** ones — the two halves are
+deliberately split: a hello names every conversation the device has ever seen, and
+one device sent 169 points against 11 live conversations. Replaying an archived
+conversation pushes frames the roster hides, and each `replayTo` can enqueue up to
+`maxResumeStoreReplay` 2000 frames into a `sendBuffer` 256-slot queue, so the burst
+overflows, `enqueue` closes the socket "to force resume", and the reconnect replays
+the identical backlog — #1779. Attach is NOT skipped, so a live frame on an archived
+conversation still arrives; only history is withheld, and `GET /app/replay` can still
+pull it. The archived set is memoised per agent for the resume, as in `pushCommandsTo`); `conversation.open`→bind socket to agent;
 `message`→`routeUserTurn`→`ensureBinding`→`agent.Enqueue(Envelope{Driver:
 appConn})`; `conversation.open`→`handleConversationOpen` (adopts a client-assigned
 `conversationId` when the frame carries one — so the app creates + opens the
