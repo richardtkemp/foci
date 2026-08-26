@@ -20,7 +20,7 @@ sqlite3 ~/data/state.db ".schema"        # or .schema <table> for one table
 
 | Database | Table(s) | Contents |
 |---|---|---|
-| `conversation.db` | `messages` | Telegram send/receive log (NOT session history) |
+| `conversation.db` | `messages` | Chat send/receive log, all transports (NOT session history) |
 | `todo.db` | `todos` | Todo items |
 | `tasklist.db` | `tasklist` | Task list items |
 | `scratchpad.db` | `scratchpad` | Working notes |
@@ -33,6 +33,8 @@ sqlite3 ~/data/state.db ".schema"        # or .schema <table> for one table
 # Example: conversation log (replace <workspace> with the agent's workspace path)
 sqlite3 <workspace>/.data/conversation.db "SELECT * FROM messages ORDER BY rowid DESC LIMIT 5"
 ```
+
+**Reading `messages`.** Empty `user_id` = non-human sender (cron `foci send`, keepalive); filtering on `user_id`/`username` hides every injected prompt. `sent` rows come from intermediate text blocks, so a turn emitting no chat text has none — zero is correct for a branch session (`session` ends `/b<ts>`), an anomaly for a main one. Scope recv→sent correlation by `session`, never a time window: a shared chat carries concurrent peers.
 
 ## Service logs
 
