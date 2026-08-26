@@ -260,7 +260,10 @@ func main() {
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		// The single funnel for every command's fatal error, which is why
+		// stamping here covers the HTTP 412s and the "reading message file"
+		// failures that fill cron.log without stamping each call site.
+		logStderr("error: %v", err)
 		os.Exit(1)
 	}
 }
@@ -378,6 +381,20 @@ func postJSON(url string, body interface{}) error {
 	return printResponse(resp)
 }
 
+// logStderr writes one ISO-8601-stamped line to stderr.
+//
+// STDERR ONLY, deliberately. Every agent crontab appends both streams to one
+// shared /home/foci/logs/cron.log, where an undated line cannot be attributed to
+// a job or even a day: that file holds 4,591 "skipped: session recently active"
+// and 229 "HTTP 412" lines with nothing to tell them apart, which is how a
+// three-day delivery gap went unnoticed (#1787). Stdout is a DATA channel —
+// `foci send ... | jq` and the "queued" single-token contract both depend on it
+// being unprefixed — so it is left exactly as it was, and the attribution is
+// carried on stderr instead, where nothing parses it.
+func logStderr(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, a...))
+}
+
 func printResponse(resp *http.Response) error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -399,8 +416,13 @@ func printResponse(resp *http.Response) error {
 		ResolvedVia string `json:"resolved_via"`
 	}
 	if json.Unmarshal(body, &result) == nil {
-		if result.Session != "" {
-			fmt.Fprintf(os.Stderr, "session: %s (%s)\n", result.Session, result.ResolvedVia)
+		// The receipt carries the STATUS too. Without it the only record of a
+		// no-op run ("skipped: session recently active") is the bare stdout token,
+		// which is undated and unattributable in a shared cron log — the whole
+		// point of #1787. Duplicating one word on stderr is the cheap half of
+		// that; corrupting stdout would be the expensive half.
+		if result.Session != "" || result.Status != "" {
+			logStderr("session: %s (%s) status=%s", result.Session, result.ResolvedVia, result.Status)
 		}
 		if result.Response != "" {
 			fmt.Println(result.Response)
