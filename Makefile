@@ -14,6 +14,20 @@ GOBIN ?= $(shell go env GOPATH)/bin
 GOCACHE_PIN    := $(shell go env GOCACHE)
 GOMODCACHE_PIN := $(shell go env GOMODCACHE)
 GOPATH_PIN     := $(shell go env GOPATH)
+
+# Creating the sandboxed HOME is not enough — it must also carry the one real
+# ~/.gitconfig setting the BUILD depends on: safe.directory for this checkout.
+# With HOME overridden, git no longer reads ~/.gitconfig, so it reports
+# "dubious ownership" (exit 128) whenever the checkout is owned by a different
+# user than the one running the tests — e.g. the rich-owned main checkout run
+# under the foci user. Go's buildvcs stamping turns that into "error obtaining
+# VCS status", so EVERY target that builds a main package fails, and the L2
+# suite surfaces it as a scatter of unrelated-looking FAILs. That silently
+# removed all L2 coverage for the foci user (#1776). Same idiom as the
+# `git -c safe.directory=$(CURDIR)` already used at the top of this file.
+# NOTE: a foci-OWNED worktree does not reproduce it, so this must be verified
+# against the main checkout, not a scratch worktree.
+MKTESTHOME = mkdir -p $(TESTDIR)/home && printf '[safe]\n\tdirectory = %s\n' '$(CURDIR)' > $(TESTDIR)/home/.gitconfig
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 # -parallel ceiling for L2 integration tests. Set well above the real
 # governor — the weighted budget in internal/testharness/parallel.go
@@ -121,7 +135,7 @@ llbox:
 test: llbox
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
 	$(eval LOGFILE := $(TESTDIR).log)
-	@mkdir -p $(TESTDIR)/home
+	@$(MKTESTHOME)
 	@# /tmp/heavy serialises the test runner against any other heavy build
 	@# (e.g. a concurrent `update.sh` deploy build) that holds the same lock,
 	@# so they don't starve each other for CPU and trip deadline-sensitive
@@ -164,7 +178,7 @@ integration: llbox
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
 	$(eval TESTDIR := /tmp/fgw/integration-$(shell date +%s))
 	$(eval LOGFILE := $(TESTDIR).log)
-	@mkdir -p $(TESTDIR)/home
+	@$(MKTESTHOME)
 	@# Full -v output (every RUN/PASS line + on-failure gateway stderr dumps) is
 	@# LARGE — write it to $(LOGFILE) on disk and print only the failure summary
 	@# + a file ref on stdout, so a caller (incl. an agent piping this into
@@ -207,7 +221,7 @@ integration: llbox
 bucket-audit:
 	@echo "=== bucket-audit: low vs high parallelism ==="
 	$(eval TESTDIR := /tmp/fgw/bktaudit-$(shell date +%s))
-	@mkdir -p $(TESTDIR)/home
+	@$(MKTESTHOME)
 	@echo "--- low (-parallel=2) ---"
 	-@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
 	@echo "--- high (-parallel=$(IPARALLEL)) ---"
@@ -241,13 +255,13 @@ land:
 
 coverage:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
-	@mkdir -p $(TESTDIR)/home
+	@$(MKTESTHOME)
 	@echo "=== Test Coverage ==="
 	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage-report:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
-	@mkdir -p $(TESTDIR)/home
+	@$(MKTESTHOME)
 	@echo "=== Generating Coverage Report ==="
 	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
 	@rm -rf $(TESTDIR)
@@ -258,7 +272,7 @@ coverage-report:
 
 coverage-html:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
-	@mkdir -p $(TESTDIR)/home
+	@$(MKTESTHOME)
 	@echo "=== Generating HTML Coverage Report ==="
 	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
 	@rm -rf $(TESTDIR)
@@ -271,7 +285,7 @@ COVERAGE_PKG_MIN ?= 45.0
 
 coverage-check:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
-	@mkdir -p $(TESTDIR)/home
+	@$(MKTESTHOME)
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
 	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
 	@rm -rf $(TESTDIR)
