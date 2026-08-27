@@ -1049,7 +1049,12 @@ func buildBinary(t *testing.T, repoRoot, pkg, outPath string) {
 	t.Helper()
 	// Compiling a test binary with the go toolchain — not a foci subprocess, so
 	// procx.Spawn does not apply.
-	cmd := exec.Command("go", "build", "-o", outPath, pkg) //nolint:forbidigo // builds the gw test binary with the go toolchain
+	// -buildvcs=false: VCS stamping shells out to git, which fails when the test
+	// targets redirect HOME away from ~/.gitconfig and its safe.directory
+	// exception, which git needs when the checkout is owned by a different user
+	// than the test runner (#1561, #1792). The stamp is worthless to a throwaway
+	// test binary anyway.
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", outPath, pkg) //nolint:forbidigo // builds the gw test binary with the go toolchain
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1092,7 +1097,12 @@ func sharedBinary(t *testing.T, repoRoot, pkg string) string {
 	// once.Do blocks all concurrent callers until the single build finishes.
 	once.Do(func() {
 		out := filepath.Join(sharedBinDir, filepath.Base(pkg))
-		cmd := exec.Command("go", "build", "-o", out, pkg) //nolint:forbidigo // builds a test binary with the go toolchain
+		// -buildvcs=false: VCS stamping shells out to git, which fails when the test
+		// targets redirect HOME away from ~/.gitconfig and its safe.directory
+		// exception, which git needs when the checkout is owned by a different user
+		// than the test runner (#1561, #1792). The stamp is worthless to a throwaway
+		// test binary anyway.
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", out, pkg) //nolint:forbidigo // builds a test binary with the go toolchain
 		cmd.Dir = repoRoot
 		b, err := cmd.CombinedOutput()
 		sharedBinMu.Lock()
