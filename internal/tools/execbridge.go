@@ -737,7 +737,12 @@ func generateShellFunc(t *Tool) string {
       --body) body="$2"; shift 2 ;;
       --title) title="$2"; shift 2 ;;
       --priority) priority="$2"; shift 2 ;;
-      --tag) tag="$2"; shift 2 ;;
+      # #1794: a REPEATED --tag accumulates rather than overwriting. Building a
+      # list by repeating a flag is the usual CLI convention (and --ids here
+      # already takes several values), so the old last-one-wins silently dropped
+      # every tag but the last and left the item unfindable under the others.
+      # Joining with "," lands on the comma form the tool already accepts.
+      --tag) if [ -n "$tag" ]; then tag="$tag,$2"; else tag="$2"; fi; shift 2 ;;
       --query) query="$2"; shift 2 ;;
       --status) status="$2"; shift 2 ;;
       --id) id="$2"; shift 2 ;;

@@ -2239,3 +2239,110 @@ func TestValidateShellFuncSchemaParityCatchesDrift(t *testing.T) {
 		}
 	}
 }
+
+// TestTodoShellFunc_RepeatedTagAccumulates verifies #1794: a REPEATED --tag
+// flag accumulates instead of silently keeping only the last value. Repeating
+// a flag to build a list is the convention in most CLIs — and foci_todo's own
+// --ids already takes multiple values — so `--tag a --tag b` looked like it
+// worked while discarding "a". The item then went missing under the tag the
+// caller thought they had set, with nothing printed to say so.
+//
+// The accumulated form is the comma string the tool already accepts
+// (--tag "a,b"), so nothing downstream changes: todo.go stores Tags as a
+// comma-separated string and splits on "," to render them.
+//
+// This drives the generated bash through real bash and reads the params the
+// tool actually received, rather than asserting on the text of the function —
+// the defect was behavioural, so the test has to be.
+func TestTodoShellFunc_RepeatedTagAccumulates(t *testing.T) {
+	t.Parallel()
+
+	if _, err := osexec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := osexec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	binDir := t.TempDir()
+	binPath := binDir + "/foci-call"
+	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
+	build.Dir = findModuleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build foci-call: %v\n%s", err, out)
+	}
+
+	var mu sync.Mutex
+	var captured string
+	var calls int
+
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		Positional: []string{"action"},
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"text":{"type":"string"},"tag":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var p struct {
+				Tag string `json:"tag"`
+			}
+			json.Unmarshal(params, &p)
+			mu.Lock()
+			captured = p.Tag
+			calls++
+			mu.Unlock()
+			return TextResult("ok"), nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	run := func(args string) string {
+		t.Helper()
+		mu.Lock()
+		captured, calls = "", 0
+		mu.Unlock()
+		script := fmt.Sprintf(
+			"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_todo %s",
+			bridge.FuncsPath(), args,
+		)
+		cmd := osexec.Command("bash", "-c", script)
+		cmd.Env = append(os.Environ(),
+			"FOCI_SOCK="+bridge.SockPath(),
+			"PATH="+binDir+":"+os.Getenv("PATH"),
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bash failed for %q: %v\noutput: %s", args, err, out)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		// Premise guard: a green assertion below is only meaningful if the
+		// tool was actually reached. Without this, a shell function that
+		// returned early would read as a pass.
+		if calls != 1 {
+			t.Fatalf("tool invoked %d times for %q, want 1", calls, args)
+		}
+		return captured
+	}
+
+	// The defect: the second --tag overwrote the first.
+	if got := run(`add --tag dotfiles --tag dx "repeated flag"`); got != "dotfiles,dx" {
+		t.Errorf("repeated --tag: tag = %q, want %q", got, "dotfiles,dx")
+	}
+	// Three, to prove it accumulates rather than merely keeping the first two.
+	if got := run(`add --tag a --tag b --tag c "three"`); got != "a,b,c" {
+		t.Errorf("three --tag flags: tag = %q, want %q", got, "a,b,c")
+	}
+	// Control: the comma form that already worked must be unchanged.
+	if got := run(`add --tag "dotfiles,dx" "comma form"`); got != "dotfiles,dx" {
+		t.Errorf("comma form: tag = %q, want %q", got, "dotfiles,dx")
+	}
+	// Control: a single --tag must not gain a stray separator.
+	if got := run(`add --tag solo "single"`); got != "solo" {
+		t.Errorf("single --tag: tag = %q, want %q", got, "solo")
+	}
+}

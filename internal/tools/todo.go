@@ -40,7 +40,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"tag": {
 					"type": "string",
-					"description": "Comma-separated tags (used with 'add'/'edit' to set tags, with 'list' to filter by tag, e.g. 'background')"
+					"description": "Comma-separated tags, or repeat --tag per tag (used with 'add'/'edit' to set tags, with 'list' to filter by tag, e.g. 'background')"
 				},
 				"id": {
 					"type": "integer",
