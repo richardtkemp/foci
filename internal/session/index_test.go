@@ -1730,8 +1730,16 @@ func TestPurgeSession_CascadesMetadataAndResumeHistory(t *testing.T) {
 		if v, _ := idx.GetSessionMetadata(key, "cc_resume_id"); v != "" {
 			t.Errorf("%s: session_metadata stranded (%q)", key, v)
 		}
-		if r := idx.AllBackendResumes(key); len(r) != 0 {
-			t.Errorf("%s: backend_resume_history stranded (%v)", key, r)
+		// Counted straight off the table rather than through UnsweptResumes:
+		// the question here is whether the cascade left ANY row behind, and a
+		// swept row is still a stranded row.
+		var n int
+		if err := idx.db.QueryRow(
+			`SELECT COUNT(*) FROM backend_resume_history WHERE session_key = ?`, key).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%s: backend_resume_history stranded (%d row(s))", key, n)
 		}
 	}
 

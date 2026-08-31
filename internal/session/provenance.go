@@ -62,11 +62,20 @@ func initProvenanceSchema(db *sql.DB) {
 			session_key TEXT NOT NULL,
 			observed_at TEXT NOT NULL,
 			resume_id   TEXT NOT NULL,
+			swept_at    TEXT,
 			PRIMARY KEY (session_key, observed_at, resume_id)
 		)`,
+		// Existing installs get swept_at by ALTER; "duplicate column" on an
+		// already-migrated DB is expected and ignored below.
+		`ALTER TABLE backend_resume_history ADD COLUMN swept_at TEXT`,
 	} {
 		if _, err := db.Exec(ddl); err != nil {
-			sessLog.Errorf("init provenance schema: %v", err)
+			// The ADD COLUMN above fails with "duplicate column name" on every
+			// run after the first. That is the intended steady state, not a
+			// fault, so it must not reach the log as an error.
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				sessLog.Errorf("init provenance schema: %v", err)
+			}
 		}
 	}
 }
@@ -160,27 +169,61 @@ func (idx *SessionIndex) RecordBackendResume(sessionKey, resumeID string) {
 // BackendResumeAt returns the CC resume ID that was live for a session at moment
 // `at`: the newest observation at or before it. ok=false means no CC session
 // had been observed by then.
-// AllBackendResumes returns every CC resume ID ever recorded for sessionKey (newest
-// first). Used by ephemeral-session cleanup to find every transcript file a
-// session produced over its life (each post-compaction JSONL is a distinct ID).
-func (idx *SessionIndex) AllBackendResumes(sessionKey string) []string {
+// UnsweptResumes returns the backend session IDs recorded for sessionKey whose
+// transcripts have NOT yet been swept (newest first). This is what the daily
+// ephemeral cleanup iterates.
+//
+// #1801: it used to be AllBackendResumes — every ID ever recorded — and because
+// session_index rows are deliberately kept forever as a historical record, the
+// same expired sessions were re-selected every night and every already-deleted
+// transcript re-attempted. Each backend reports an absent transcript as success
+// (ccstream: os.Remove tolerating IsNotExist; codex: "no rollout found for
+// thread id"), so those re-attempts were counted, and the nightly figure meant
+// "rows attempted" rather than "transcripts reclaimed" — the one thing it was
+// there to report. Rows are never deleted, so the marker records the sweep
+// instead: the provenance timeline stays intact and BackendResumeAt is
+// unaffected.
+func (idx *SessionIndex) UnsweptResumes(sessionKey string) []string {
+	if idx == nil {
+		return nil
+	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	rows, err := idx.db.Query(
-		`SELECT resume_id FROM backend_resume_history WHERE session_key = ?
+		`SELECT resume_id FROM backend_resume_history
+		 WHERE session_key = ? AND swept_at IS NULL
 		 ORDER BY unixepoch(observed_at) DESC`, sessionKey)
 	if err != nil {
+		sessLog.Warnf("unswept resumes for %s: %v", sessionKey, err)
 		return nil
 	}
 	defer rows.Close() // nolint:errcheck
 	var ids []string
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err == nil && id != "" {
+		if err := rows.Scan(&id); err == nil {
 			ids = append(ids, id)
 		}
 	}
 	return ids
+}
+
+// MarkResumeSwept records that this session's transcript for resumeID has been
+// swept, so later sweeps skip it. Called ONLY after the backend delete returned
+// nil: marking a failed delete would exempt a real, still-present transcript
+// from collection permanently, and silently, since nothing else reads it.
+func (idx *SessionIndex) MarkResumeSwept(sessionKey, resumeID string) {
+	if idx == nil {
+		return
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if _, err := idx.db.Exec(
+		`UPDATE backend_resume_history SET swept_at = ?
+		 WHERE session_key = ? AND resume_id = ? AND swept_at IS NULL`,
+		timeutil.Format(timeutil.Now()), sessionKey, resumeID); err != nil {
+		sessLog.Warnf("mark swept %s (%s): %v", sessionKey, resumeID, err)
+	}
 }
 
 func (idx *SessionIndex) BackendResumeAt(sessionKey string, at time.Time) (resumeID string, observedAt time.Time, ok bool) {

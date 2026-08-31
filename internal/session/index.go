@@ -582,6 +582,17 @@ var EphemeralCleanupTypes = []SessionType{
 // never active — predates cutoff. Used by the daily cleanup to find stale
 // throwaway sessions whose backend transcripts can be reclaimed. Gating on
 // session_type (not is_root) keeps user conversations and their branches safe.
+// EphemeralSessionsOlderThan returns the ephemeral sessions past the cutoff
+// that still have at least one UNSWEPT transcript.
+//
+// #1801: age alone is not enough. session_index rows are kept forever as a
+// historical record, so selecting purely on age re-selected the same expired
+// sessions every night for the life of the install. The EXISTS clause also
+// excludes sessions that never recorded a transcript at all, which in the live
+// DB is most of them (backend_resume_history covers ~3,632 sessions against
+// 6,726 index rows) — they contributed nothing but kept the candidate list
+// non-empty, which is what made an otherwise-idle agent open a backend cleanup
+// scope, and for codex and opencode that scope spawns an app-server.
 func (idx *SessionIndex) EphemeralSessionsOlderThan(agentID string, cutoff time.Time) ([]string, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
@@ -598,7 +609,10 @@ func (idx *SessionIndex) EphemeralSessionsOlderThan(agentID string, cutoff time.
 		`SELECT session_key FROM session_index
 		 WHERE agent_id = ?
 		   AND session_type IN (`+strings.Join(placeholders, ",")+`)
-		   AND unixepoch(COALESCE(NULLIF(last_activity_at, ''), created_at)) < unixepoch(?)`,
+		   AND unixepoch(COALESCE(NULLIF(last_activity_at, ''), created_at)) < unixepoch(?)
+		   AND EXISTS (SELECT 1 FROM backend_resume_history h
+		                WHERE h.session_key = session_index.session_key
+		                  AND h.swept_at IS NULL)`,
 		args...)
 }
 

@@ -150,3 +150,61 @@ func TestCleanupEphemeral_ProceedsWhenScopeUnavailable(t *testing.T) {
 		t.Errorf("releases = %d after a failed acquire, want 0", sb.releases)
 	}
 }
+
+// The #1718 exposure argument, made concrete. A sweep with nothing left to
+// reclaim must not open a backend cleanup scope — for codex and opencode that
+// scope SPAWNS an app-server, nightly, for an agent that is idle precisely
+// because it has nothing to do. Before #1801 the same expired rows were
+// re-selected forever, so the spawn happened every night in perpetuity.
+func TestCleanupEphemeral_SecondSweepDoesNotAcquire(t *testing.T) {
+	sb := &scopingBrancher{}
+	a := agentFor(expiredIndex(t, 3), sb)
+
+	if got := a.CleanupEphemeralSessions(context.Background(), 30); got != 3 {
+		t.Fatalf("first sweep deleted %d, want 3 — test premise broken", got)
+	}
+	sb.mu.Lock()
+	afterFirst := sb.acquires
+	sb.mu.Unlock()
+	if afterFirst != 1 {
+		t.Fatalf("first sweep acquires = %d, want 1 — test premise broken", afterFirst)
+	}
+
+	a.CleanupEphemeralSessions(context.Background(), 30)
+
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.acquires != 1 {
+		t.Errorf("acquires = %d after a second sweep, want still 1 — the nightly spawn survives", sb.acquires)
+	}
+}
+
+// An expired ephemeral session that never recorded a transcript has nothing to
+// delete, so selecting it is pure cost — and in the live DB that is the common
+// case: backend_resume_history covers ~3,632 sessions against 6,726 rows in
+// session_index. Selecting them is what kept an otherwise-empty sweep opening a
+// scope.
+func TestCleanupEphemeral_SessionWithNoTranscriptNotSelected(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().AddDate(0, 0, -60)
+	// Expired and ephemeral, but no RecordBackendResume — no transcript exists.
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey: "alpha/c1/bNoTranscript", CreatedAt: old, LastActivityAt: old,
+		SessionType: session.SessionTypeReflection,
+	})
+
+	sb := &scopingBrancher{}
+	a := agentFor(idx, sb)
+
+	if got := a.CleanupEphemeralSessions(context.Background(), 30); got != 0 {
+		t.Fatalf("deleted = %d, want 0", got)
+	}
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.acquires != 0 {
+		t.Errorf("acquires = %d for a session with no transcript, want 0", sb.acquires)
+	}
+}

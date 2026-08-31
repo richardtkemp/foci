@@ -8,8 +8,9 @@ import (
 
 // CleanupEphemeralSessions deletes the backend transcript files of ephemeral
 // (non-root) sessions whose last activity — or creation — predates
-// retentionDays. FILES ONLY: the session_index rows and backend_resume_history are
-// left intact as a historical record. This reclaims the disk used by cloned
+// retentionDays. FILES ONLY: the session_index rows and backend_resume_history
+// rows are left intact as a historical record; a swept transcript is recorded
+// by stamping swept_at on its resume row, so it is never re-attempted (#1801). This reclaims the disk used by cloned
 // fork transcripts (reflection/keepalive/background/branch) without disturbing
 // any live root session's files.
 //
@@ -46,11 +47,14 @@ func (a *Agent) CleanupEphemeralSessions(ctx context.Context, retentionDays int)
 	for _, key := range keys {
 		// A session may have produced several transcripts over its life (each
 		// post-compaction JSONL is a distinct UUID). Delete them all.
-		for _, id := range a.SessionIndex.AllBackendResumes(key) {
+		for _, id := range a.SessionIndex.UnsweptResumes(key) {
 			if err := a.DelegatedManager.CleanupBackendSession(ctx, id); err != nil {
 				a.taggedLog("ephemeral-cleanup").Warnf("delete %s (%s): %v", key, id, err)
 				continue
 			}
+			// Only after a successful delete: a failed one must stay eligible,
+			// or a transient backend error exempts a real transcript forever.
+			a.SessionIndex.MarkResumeSwept(key, id)
 			deleted++
 		}
 	}
