@@ -70,8 +70,8 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"sort": {
 					"type": "string",
-					"enum": ["priority", "created", "updated", "closed", "relevance"],
-					"description": "Sort order. Default 'created' when listing, 'relevance' when searching. All sort descending (newest/highest first) unless reversed"
+					"enum": ["priority", "created", "updated", "closed", "id", "relevance"],
+					"description": "Sort order. Default 'created' when listing, 'relevance' when searching. 'id' is issue order, which is not the same as 'created' once an item is edited. All sort descending (newest/highest first) unless reversed"
 				},
 				"reverse": {
 					"type": "boolean",
