@@ -276,7 +276,7 @@ func cmdDebugAt(args []string, configPath string) error {
 		fmt.Printf("file:    %s (live)\n", livePath)
 	}
 
-	if id, observedAt, ok := idx.CCResumeAt(sessionKey, at); ok {
+	if id, observedAt, ok := idx.BackendResumeAt(sessionKey, at); ok {
 		fmt.Printf("cc:      %s (observed %s)\n", id, observedAt.Format(time.RFC3339))
 	} else {
 		fmt.Printf("cc:      none observed at or before that time\n")

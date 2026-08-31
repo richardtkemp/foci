@@ -1720,7 +1720,7 @@ func TestPurgeSession_CascadesMetadataAndResumeHistory(t *testing.T) {
 		if err := idx.SetSessionMetadata(key, "cc_resume_id", "rid-"+key); err != nil {
 			t.Fatal(err)
 		}
-		idx.RecordCCResume(key, "rid-"+key)
+		idx.RecordBackendResume(key, "rid-"+key)
 	}
 	assertGone := func(idx *SessionIndex, key string) {
 		t.Helper()
@@ -1730,8 +1730,8 @@ func TestPurgeSession_CascadesMetadataAndResumeHistory(t *testing.T) {
 		if v, _ := idx.GetSessionMetadata(key, "cc_resume_id"); v != "" {
 			t.Errorf("%s: session_metadata stranded (%q)", key, v)
 		}
-		if r := idx.AllCCResumes(key); len(r) != 0 {
-			t.Errorf("%s: cc_resume_history stranded (%v)", key, r)
+		if r := idx.AllBackendResumes(key); len(r) != 0 {
+			t.Errorf("%s: backend_resume_history stranded (%v)", key, r)
 		}
 	}
 

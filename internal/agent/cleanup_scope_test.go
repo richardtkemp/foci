@@ -70,14 +70,14 @@ func expiredIndex(t *testing.T, n int) *session.SessionIndex {
 			SessionKey: key, CreatedAt: old, LastActivityAt: old,
 			SessionType: session.SessionTypeReflection,
 		})
-		idx.RecordCCResume(key, "uuid-"+string(rune('A'+i)))
+		idx.RecordBackendResume(key, "uuid-"+string(rune('A'+i)))
 	}
 	now := time.Now()
 	idx.Upsert(session.SessionIndexEntry{
 		SessionKey: "alpha/c1/bRecent", CreatedAt: now, LastActivityAt: now,
 		SessionType: session.SessionTypeKeepalive,
 	})
-	idx.RecordCCResume("alpha/c1/bRecent", "uuid-recent")
+	idx.RecordBackendResume("alpha/c1/bRecent", "uuid-recent")
 	return idx
 }
 
