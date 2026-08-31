@@ -2346,3 +2346,70 @@ func TestTodoShellFunc_RepeatedTagAccumulates(t *testing.T) {
 		t.Errorf("single --tag: tag = %q, want %q", got, "solo")
 	}
 }
+
+// TestTodoHelpFlagActionsDerivedFromAllowlist is the #1786 guard. The flags
+// table used to carry hand-written "(used with 'list' and 'search')" prose in
+// each schema description, which drifted from the per-action allowlist that
+// actually enforces flag validity (#1218): the table promised
+// `search --status`, the subcommand line omitted it, and the shell rejected it
+// — three statements, one screen, two of them wrong.
+//
+// #723 added validateShellFuncSchemaParity for exactly this drift class, but
+// its boundary is schema-param → shell-case; the prose annotations were outside
+// it. Deriving them from todoActions closes the gap at the source: there is now
+// one statement of which actions accept a flag, not two.
+func TestTodoHelpFlagActionsDerivedFromAllowlist(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	help := generateHelpText(NewTodoTool(store, "agent-help"))
+
+	// The ticket's case: --status belongs to `list` alone — NOT to search
+	// (which rejects it), and not to list-all, which IS list with status=all
+	// and would render the flag meaningless.
+	if !strings.Contains(help, "[actions: list]") {
+		t.Errorf("--status must be annotated as list-only\n%s", help)
+	}
+	// Every flag's annotation must match the allowlist exactly.
+	for _, line := range strings.Split(help, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "--") {
+			continue
+		}
+		flag := strings.Fields(line)[0]
+		flag = strings.SplitN(flag, "|", 2)[0]
+		want := todoFlagActions(flag)
+		if len(want) == 0 {
+			continue // positional-only or no action accepts it
+		}
+		marker := "[actions: " + strings.Join(want, ", ") + "]"
+		if !strings.Contains(line, marker) {
+			t.Errorf("flag %s: help line lacks %q\n  line: %s", flag, marker, line)
+		}
+	}
+	// The drift SOURCE must be gone: no hand-written "which actions" prose in
+	// the schema descriptions. Checked case-INSENSITIVELY — the first version of
+	// this guard missed "Used with 'edit'" on --append for want of a lowercase u,
+	// and passed, which is how a decorative check looks from the outside.
+	lower := strings.ToLower(help)
+	for _, bad := range []string{"used with '", "(used with", "for 'list'", "for 'search'", "required for '"} {
+		if strings.Contains(lower, bad) {
+			t.Errorf("hand-written action prose %q survives in the flags table — it will drift from "+
+				"the allowlist again, and can now contradict the derived [actions: ...] on its own line", bad)
+		}
+	}
+}
+
+// TestTodoActionsAllowlistMatchesRealBehaviour guards the second #1786 defect:
+// the bash gate only applies when action_flags is NON-EMPTY, so an action
+// declaring no flags silently accepts every globally-known one. `get` declared
+// "" while `foci_todo get --id 5` worked and is the documented form, so the
+// allowlist was describing something the shell did not enforce.
+func TestTodoActionsAllowlistMatchesRealBehaviour(t *testing.T) {
+	t.Parallel()
+	for _, a := range todoActions {
+		if a.Flags == "" {
+			t.Errorf("action %q declares an EMPTY flag allowlist; the bash gate is skipped entirely "+
+				"for such actions, so it would accept any known flag while claiming to accept none", a.Name)
+		}
+	}
+}

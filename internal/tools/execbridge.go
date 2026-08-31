@@ -492,6 +492,12 @@ func generateHelpText(t *Tool) string {
 					desc += " [" + strings.Join(p.Enum, "|") + "]"
 				}
 				flag := "--" + strings.ReplaceAll(k, "_", "-")
+				// #1786: state which actions accept this flag from the SAME data the
+				// shell gate enforces, so the table cannot contradict the subcommand
+				// lines below it or the rejection the user actually gets.
+				if acts := todoFlagActions(flag); len(acts) > 0 {
+					desc = strings.TrimSpace(desc) + " [actions: " + strings.Join(acts, ", ") + "]"
+				}
 				// Append aliases so --help shows them alongside the canonical name.
 				for _, alias := range t.Aliases[k] {
 					flag += "|--" + strings.ReplaceAll(alias, "_", "-")
@@ -581,14 +587,36 @@ var todoActions = []struct {
 	{"add", "add --text TEXT [--body TEXT] [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; --title prepended in bold to --body/--text)", "--text --body --title --priority --tag"},
 	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --status --priority --sort --reverse --limit"},
 	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --priority --sort --reverse --limit"},
-	{"search", "search <query> [--sort F] [--reverse] [--limit N]", "--sort --reverse --limit"},
-	{"get", "get <id>   (alias: show)", ""},
+	{"search", "search <query> [--sort F] [--reverse] [--limit N]   (query may also be given as --query TEXT)", "--query --sort --reverse --limit"},
+	{"get", "get <id>   (alias: show; or --id N)", "--id"},
 	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"reopen", "reopen <id>   (status→open, clears completed_at/close_reason; or --id N / --ids 1,2,3)", "--id --ids"},
 	{"start", "start <id>   (status→started; or --id N / --ids 1,2,3)", "--id --ids"},
 	{"edit", "edit <id> [--text TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T]   (alias: update; or --id N / --ids 1,2,3)", "--id --ids --text --append --append-text --add --note --notes --priority --tag"},
 	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids"},
+}
+
+// todoFlagActions returns the actions whose allowlist accepts flag, in
+// todoActions order. Empty means no action accepts it — a positional-only
+// parameter such as --query, which `search` takes as an argument.
+//
+// #1786: this is the single source for the "which actions is this flag for?"
+// annotation in `foci_todo --help`. That annotation used to be hand-written
+// prose inside each schema description, so it drifted from the allowlist that
+// actually enforces validity: the table advertised `search --status`, the
+// subcommand line below it did not, and the shell rejected it.
+func todoFlagActions(flag string) []string {
+	var out []string
+	for _, a := range todoActions {
+		for _, f := range strings.Fields(a.Flags) {
+			if f == flag {
+				out = append(out, a.Name)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // todoActionsBashCase emits the inner body of a `case "$action" in ... esac`
