@@ -23,9 +23,13 @@ import (
 //   - session_archives: one row per in-place archive rotation. The stamp
 //     means "archived at": that file holds the session's history UP TO the
 //     stamp. Written by the store event handler on compaction/reset events.
-//   - cc_resume_history: one row per observed CC resume-ID change. The ID
-//     live at time T is the newest observation at or before T. Written by
-//     DelegatedManager.saveResumeID.
+//   - backend_resume_history: one row per observed backend session-ID change.
+//     The ID live at time T is the newest observation at or before T. Written
+//     by DelegatedManager.saveResumeID. EVERY delegated backend records here,
+//     not just claude-code — the live table holds CC UUIDs, opencode ses_*
+//     and codex UUIDv7 side by side. It was called cc_resume_history until
+//     #1801, when the cc_ prefix misled a reader into scoping a cleanup fix
+//     to one backend.
 //
 // Store.ArchiveFileAt provides a filesystem fallback that derives the same
 // answer from archive filename stamps — covering archives that predate the
@@ -35,6 +39,17 @@ import (
 // initProvenanceSchema creates the provenance tables. Called from
 // NewSessionIndex alongside the main schema.
 func initProvenanceSchema(db *sql.DB) {
+	// #1801: rename cc_resume_history -> backend_resume_history. This MUST run
+	// before the CREATE below: CREATE TABLE IF NOT EXISTS would otherwise mint
+	// an empty backend_resume_history, the rename would then find its target
+	// occupied and skip, and every existing observation would be stranded in
+	// the old table with nothing reading it. Guarded both ways, so it is a
+	// no-op on a fresh install and on an already-migrated one.
+	if tableExists(db, "cc_resume_history") && !tableExists(db, "backend_resume_history") {
+		if _, err := db.Exec(`ALTER TABLE cc_resume_history RENAME TO backend_resume_history`); err != nil {
+			sessLog.Errorf("rename cc_resume_history -> backend_resume_history: %v", err)
+		}
+	}
 	for _, ddl := range []string{
 		`CREATE TABLE IF NOT EXISTS session_archives (
 			session_key TEXT NOT NULL,
@@ -43,7 +58,7 @@ func initProvenanceSchema(db *sql.DB) {
 			reason      TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (session_key, archived_at, file_path)
 		)`,
-		`CREATE TABLE IF NOT EXISTS cc_resume_history (
+		`CREATE TABLE IF NOT EXISTS backend_resume_history (
 			session_key TEXT NOT NULL,
 			observed_at TEXT NOT NULL,
 			resume_id   TEXT NOT NULL,
@@ -54,6 +69,14 @@ func initProvenanceSchema(db *sql.DB) {
 			sessLog.Errorf("init provenance schema: %v", err)
 		}
 	}
+}
+
+// tableExists reports whether a table of this name is present in the schema.
+func tableExists(db *sql.DB, name string) bool {
+	var found string
+	err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, name).Scan(&found)
+	return err == nil && found == name
 }
 
 // RecordArchive records that a session's live file was archived (compaction
@@ -74,7 +97,7 @@ func (idx *SessionIndex) RecordArchive(sessionKey, filePath, reason string) {
 }
 
 // timelineLookup runs a two-column (value, RFC3339 stamp) point-in-time
-// query. Shared by ArchiveFileAt and CCResumeAt, whose only difference is
+// query. Shared by ArchiveFileAt and BackendResumeAt, whose only difference is
 // the query direction.
 func (idx *SessionIndex) timelineLookup(query, sessionKey string, at time.Time) (string, time.Time, bool) {
 	if idx == nil {
@@ -103,10 +126,10 @@ func (idx *SessionIndex) ArchiveFileAt(sessionKey string, at time.Time) (path st
 	)
 }
 
-// RecordCCResume appends a CC resume-ID observation for a session.
+// RecordBackendResume appends a backend session-ID observation for a session.
 // Consecutive observations of the same ID are collapsed (a respawn that
 // resumes the same CC session is not a change).
-func (idx *SessionIndex) RecordCCResume(sessionKey, resumeID string) {
+func (idx *SessionIndex) RecordBackendResume(sessionKey, resumeID string) {
 	if idx == nil || sessionKey == "" || resumeID == "" {
 		return
 	}
@@ -115,7 +138,7 @@ func (idx *SessionIndex) RecordCCResume(sessionKey, resumeID string) {
 
 	var latest string
 	err := idx.db.QueryRow(
-		`SELECT resume_id FROM cc_resume_history WHERE session_key = ?
+		`SELECT resume_id FROM backend_resume_history WHERE session_key = ?
 		 ORDER BY unixepoch(observed_at) DESC LIMIT 1`,
 		sessionKey,
 	).Scan(&latest)
@@ -127,24 +150,24 @@ func (idx *SessionIndex) RecordCCResume(sessionKey, resumeID string) {
 		return
 	}
 	if _, err := idx.db.Exec(
-		`INSERT OR IGNORE INTO cc_resume_history (session_key, observed_at, resume_id) VALUES (?, ?, ?)`,
+		`INSERT OR IGNORE INTO backend_resume_history (session_key, observed_at, resume_id) VALUES (?, ?, ?)`,
 		sessionKey, timeutil.Format(timeutil.Now()), resumeID,
 	); err != nil {
 		sessionLog(sessionKey).Warnf("record cc resume for %s: %v", sessionKey, err)
 	}
 }
 
-// CCResumeAt returns the CC resume ID that was live for a session at moment
+// BackendResumeAt returns the CC resume ID that was live for a session at moment
 // `at`: the newest observation at or before it. ok=false means no CC session
 // had been observed by then.
-// AllCCResumes returns every CC resume ID ever recorded for sessionKey (newest
+// AllBackendResumes returns every CC resume ID ever recorded for sessionKey (newest
 // first). Used by ephemeral-session cleanup to find every transcript file a
 // session produced over its life (each post-compaction JSONL is a distinct ID).
-func (idx *SessionIndex) AllCCResumes(sessionKey string) []string {
+func (idx *SessionIndex) AllBackendResumes(sessionKey string) []string {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	rows, err := idx.db.Query(
-		`SELECT resume_id FROM cc_resume_history WHERE session_key = ?
+		`SELECT resume_id FROM backend_resume_history WHERE session_key = ?
 		 ORDER BY unixepoch(observed_at) DESC`, sessionKey)
 	if err != nil {
 		return nil
@@ -160,9 +183,9 @@ func (idx *SessionIndex) AllCCResumes(sessionKey string) []string {
 	return ids
 }
 
-func (idx *SessionIndex) CCResumeAt(sessionKey string, at time.Time) (resumeID string, observedAt time.Time, ok bool) {
+func (idx *SessionIndex) BackendResumeAt(sessionKey string, at time.Time) (resumeID string, observedAt time.Time, ok bool) {
 	return idx.timelineLookup(
-		`SELECT resume_id, observed_at FROM cc_resume_history
+		`SELECT resume_id, observed_at FROM backend_resume_history
 		 WHERE session_key = ? AND unixepoch(observed_at) <= unixepoch(?)
 		 ORDER BY unixepoch(observed_at) DESC LIMIT 1`,
 		sessionKey, at,

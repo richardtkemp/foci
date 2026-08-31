@@ -45,26 +45,26 @@ func TestCleanupEphemeralSessions(t *testing.T) {
 		SessionKey: "alpha/c1/b100", CreatedAt: old, LastActivityAt: old,
 		SessionType: session.SessionTypeReflection,
 	})
-	idx.RecordCCResume("alpha/c1/b100", "uuid-reflection")
+	idx.RecordBackendResume("alpha/c1/b100", "uuid-reflection")
 	idx.Upsert(session.SessionIndexEntry{
 		SessionKey: "alpha/c1/b200", CreatedAt: old, LastActivityAt: old,
 		SessionType: session.SessionTypeSpawn,
 	})
-	idx.RecordCCResume("alpha/c1/b200", "uuid-spawn")
+	idx.RecordBackendResume("alpha/c1/b200", "uuid-spawn")
 
 	// Ephemeral type but recent → NOT cleaned (age gate).
 	idx.Upsert(session.SessionIndexEntry{
 		SessionKey: "alpha/c1/b300", CreatedAt: recent, LastActivityAt: recent,
 		SessionType: session.SessionTypeKeepalive,
 	})
-	idx.RecordCCResume("alpha/c1/b300", "uuid-recent")
+	idx.RecordBackendResume("alpha/c1/b300", "uuid-recent")
 
 	// Old but conversational type → NOT cleaned (type gate).
 	idx.Upsert(session.SessionIndexEntry{
 		SessionKey: "alpha/c2", CreatedAt: old, LastActivityAt: old,
 		SessionType: session.SessionTypeChat,
 	})
-	idx.RecordCCResume("alpha/c2", "uuid-chat")
+	idx.RecordBackendResume("alpha/c2", "uuid-chat")
 
 	rec := &recordingBrancher{}
 	mgr := &DelegatedManager{

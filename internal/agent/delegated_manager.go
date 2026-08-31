@@ -900,9 +900,10 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 // don't store agent_id separately.
 const resumeIDKey = "cc_resume_id"
 
-// saveResumeID persists the CC session UUID to state.db and appends it to
-// the cc_resume_history provenance timeline, so "which CC session was live
-// for this key at time T" stays answerable after resets and respawns.
+// saveResumeID persists the backend session ID to state.db and appends it to
+// the backend_resume_history provenance timeline, so "which backend session
+// was live for this key at time T" stays answerable after resets and respawns.
+// Every delegated backend goes through here, not just claude-code.
 func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 	if sessionID == "" || m.SessionIndex == nil {
 		return
@@ -910,7 +911,7 @@ func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 	if err := m.SessionIndex.SetSessionMetadata(sessionKey, resumeIDKey, sessionID); err != nil {
 		m.logger().Warnf("save resume ID for %s: %v", sessionKey, err)
 	}
-	m.SessionIndex.RecordCCResume(sessionKey, sessionID)
+	m.SessionIndex.RecordBackendResume(sessionKey, sessionID)
 }
 
 // clearResumeID removes a saved CC session UUID from state.db.

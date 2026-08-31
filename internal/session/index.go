@@ -802,7 +802,7 @@ func (idx *SessionIndex) Delete(sessionKey string) {
 }
 
 // PurgeSession removes every trace of a session key from the mutable session
-// tables (index row, all session_metadata, cc_resume_history) in one locked
+// tables (index row, all session_metadata, backend_resume_history) in one locked
 // pass — the cascade a bare `DELETE FROM session_index` lacks. Deleting an
 // index row alone stranded its metadata + resume-history (the orphan rows that
 // accumulated behind reinstalled/pruned app chats, surfaced 2026-07-11).
@@ -822,7 +822,7 @@ func (idx *SessionIndex) purgeLocked(sessionKey string) {
 	for _, stmt := range []string{
 		`DELETE FROM session_index     WHERE session_key = ?`,
 		`DELETE FROM session_metadata  WHERE session_key = ?`,
-		`DELETE FROM cc_resume_history WHERE session_key = ?`,
+		`DELETE FROM backend_resume_history WHERE session_key = ?`,
 	} {
 		if _, err := idx.db.Exec(stmt, sessionKey); err != nil {
 			sessionLog(sessionKey).Errorf("purge session %q: %v", sessionKey, err)
