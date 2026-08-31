@@ -465,6 +465,10 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		b.turnMu.Lock()
 		b.turnCalcCostUSD += priced
 		b.turnProvidedUSD += usageDelta.CostUSD
+		b.turnCalcInput += usageDelta.InputTokens
+		b.turnCalcOutput += usageDelta.OutputTokens
+		b.turnCalcCacheRead += usageDelta.CacheReadInputTokens
+		b.turnCalcCacheWrite += usageDelta.CacheCreationInputTokens
 		b.turnProvidedSeen = true
 		b.turnMu.Unlock()
 	}
@@ -491,6 +495,15 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	result.Usage.OutputTokens = b.turnOutputTokens
 	checkCost := b.turnProvidedSeen
 	calcSoFar, providedSoFar := b.turnCalcCostUSD, b.turnProvidedUSD
+	cycles := b.turnCalls
+	bd := costBreakdown{
+		model:      prefixedModel("claude", resultModel),
+		cycles:     cycles,
+		input:      b.turnCalcInput,
+		output:     b.turnCalcOutput,
+		cacheRead:  b.turnCalcCacheRead,
+		cacheWrite: b.turnCalcCacheWrite,
+	}
 	if checkCost {
 		calc := calcSoFar
 		result.Usage.CalculatedCostUSD = &calc
@@ -505,7 +518,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// still matches the provider's, so it must not be able to stall the turn
 	// path it is reporting on.
 	if checkCost {
-		b.costCheck.Check(result.Model, calcSoFar, providedSoFar, b.logger().Warnf)
+		b.costCheck.Check(result.Model, calcSoFar, providedSoFar, bd.String, b.logger().Warnf)
 	}
 
 	b.logger().Debugf("OnResult: stashed ask-cycle result (turn_active=%v cycle=%d textlen=%d out_total=%d)",

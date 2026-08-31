@@ -1332,6 +1332,14 @@ Four outputs:
    `modelinfo` table going stale — that warning is the alarm. Both delegated backends
    call it (`ccstream/handlers.go` OnResult, `opencode/handlers.go` on Tokens update);
    deliberately one shared implementation so the warning means one thing everywhere.
+   The warning carries a per-class BREAKDOWN (cycles, and each token class with its own
+   price) supplied by the caller as a `func() string`, evaluated only when it fires. That
+   is not decoration: the stored token columns are the FINAL cycle's context fill, not the
+   deltas that were priced, so a turn's row can legitimately price at $0.74 against a
+   recorded $4.39 — and without the breakdown, identifying which class disagrees means
+   reconstructing the turn from CC's transcript with inferred boundaries. Note the warning
+   no longer claims a stale table: measured 2026-08-31 over 1,827 opus-5 turns, ~95% price
+   correctly, which a stale rate cannot do (#1695).
 
 4. **Conversation log** (`conversation-{agentID}.db`): Per-agent SQLite databases logging exact Telegram messages sent and received. Entries are routed to the correct agent's database by parsing the session key. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
    - Use: `log.Conversation(log.ConversationEntry{...})`

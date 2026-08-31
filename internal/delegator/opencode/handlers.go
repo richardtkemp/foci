@@ -14,6 +14,7 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -429,7 +430,12 @@ func (b *Backend) onMessageUpdated(msg Message) {
 			CalculatedCostUSD:        &calculated,
 		}
 		b.mu.Unlock()
+		in, out := msg.Tokens.Input, msg.Tokens.Output
+		cr, cw := msg.Tokens.Cache.Read, msg.Tokens.Cache.Write
 		b.costCheck.Check(msg.ModelID, calculated, provided,
+			func() string {
+				return fmt.Sprintf("in=%d out=%d cache_read=%d cache_write=%d", in, out, cr, cw)
+			},
 			log.NewComponentLogger(b.logComponent()).Warnf)
 	}
 
