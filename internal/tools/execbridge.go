@@ -667,8 +667,10 @@ func generateShellFunc(t *Tool) string {
 %s
 %s
   local url="" method="GET" body="" body_file="" save_to="" save_json_path="" headers="{}" query="{}" inc_headers=false background=false timeout="" max_bytes="" files="[]" form_fields="{}"
+  local __foci_url_via=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      --url) if [ "$__foci_url_via" = pos ]; then echo "error: url was already given positionally; use --url OR the positional form, not both" >&2; return 1; fi; __foci_url_via=flag; url="$2"; shift 2 ;;
       --method) method="$2"; shift 2 ;;
       --body) body="$2"; shift 2 ;;
       --body-file) body_file="$2"; shift 2 ;;
@@ -685,9 +687,12 @@ func generateShellFunc(t *Tool) string {
       --include-headers) inc_headers=true; shift ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --method --body --body-file --header --headers --query --save-to --save-from-json-path --timeout --max-response-bytes --files --form-fields --background --include-headers" >&2
+        echo "valid flags: --url --method --body --body-file --header --headers --query --save-to --save-from-json-path --timeout --max-response-bytes --files --form-fields --background --include-headers" >&2
+        echo "note: foci_http_request <url> [flags...] — <url> may also be given as a bare argument" >&2
         return 1 ;;
-      *) url="$1"; shift ;;
+      *)
+        if [ "$__foci_url_via" = flag ]; then echo "error: url was already given as --url; use --url OR the positional form, not both" >&2; return 1; fi
+        __foci_url_via=pos; url="$1"; shift ;;
     esac
   done
   if [ -z "$url" ]; then
@@ -951,14 +956,19 @@ func generateShellFunc(t *Tool) string {
 %s
 %s
   local prompt="" file=""
+  local __foci_prompt_via=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      --prompt) if [ "$__foci_prompt_via" = pos ]; then echo "error: prompt was already given positionally; use --prompt OR the positional form, not both" >&2; return 1; fi; __foci_prompt_via=flag; prompt="$2"; shift 2 ;;
       --file) file="$2"; shift 2 ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --file" >&2
+        echo "valid flags: --prompt --file" >&2
+        echo "note: foci_summary <prompt> [flags...] — <prompt> may also be given as a bare argument" >&2
         return 1 ;;
-      *) prompt="$prompt $1"; shift ;;
+      *)
+        if [ "$__foci_prompt_via" = flag ]; then echo "error: prompt was already given as --prompt; use --prompt OR the positional form, not both" >&2; return 1; fi
+        __foci_prompt_via=pos; prompt="$prompt $1"; shift ;;
     esac
   done
   prompt="${prompt# }"
@@ -1076,9 +1086,10 @@ func generateShellFunc(t *Tool) string {
 %s
 %s
   local json="" grader="" grader_args="" grader_timeout="" grader_on_error=""
+  local __foci_json_via=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --json) json="$2"; shift 2 ;;
+      --json) if [ "$__foci_json_via" = pos ]; then echo "error: the questions JSON was already given positionally; use --json OR the positional form, not both" >&2; return 1; fi; __foci_json_via=flag; json="$2"; shift 2 ;;
       --grader) grader="$2"; shift 2 ;;
       --grader-args) grader_args="$2"; shift 2 ;;
       --grader-timeout-seconds) grader_timeout="$2"; shift 2 ;;
@@ -1087,7 +1098,9 @@ func generateShellFunc(t *Tool) string {
         echo "error: unrecognized flag: $1" >&2
         echo "valid: --json --grader --grader-args --grader-timeout-seconds --grader-on-error (or pass JSON positionally, or pipe it on stdin)" >&2
         return 1 ;;
-      *) json="$1"; shift ;;
+      *)
+        if [ "$__foci_json_via" = flag ]; then echo "error: the questions JSON was already given as --json; use --json OR the positional form, not both" >&2; return 1; fi
+        __foci_json_via=pos; json="$1"; shift ;;
     esac
   done
   if [ -z "$json" ] && [ ! -t 0 ]; then
@@ -1211,19 +1224,35 @@ func generateGenericShellFunc(t *Tool) string {
 	if hasStdinFile {
 		b.WriteString("  local __foci_stdin_file=\"\" __foci_rc=0\n")
 	}
+	// Origin tracking for a positional param, which also gets a --flag arm
+	// below. Records which form supplied the value so giving BOTH is an error
+	// rather than a silent merge (#1778): `foci_web_search --query a b` used to
+	// concatenate into "a b", which is indistinguishable from a typo.
+	if len(positional) == 1 {
+		fmt.Fprintf(&b, "  local __foci_%s_via=\"\"\n", positional[0])
+	}
 
 	// Flag-parsing while-loop. Positional params still get a --flag arm so
 	// callers can use either `foci_X --query foo` or `foci_X foo`. The
 	// bare-arg case handles the second form below.
 	b.WriteString("  while [ $# -gt 0 ]; do\n    case \"$1\" in\n")
+	// posDup emits the both-forms-given guard for the positional param's flag
+	// arms. Empty for every other param, so non-positional flags are untouched.
+	posDup := func(k string) string {
+		if len(positional) != 1 || positional[0] != k {
+			return ""
+		}
+		return fmt.Sprintf("if [ \"$__foci_%s_via\" = pos ]; then echo \"error: %s was already given positionally; use --%s OR the positional form, not both\" >&2; return 1; fi; __foci_%s_via=flag; ",
+			k, k, strings.ReplaceAll(k, "_", "-"), k)
+	}
 	var flagList []string
 	for _, k := range paramNames {
 		flag := strings.ReplaceAll(k, "_", "-")
 		flagList = append(flagList, "--"+flag)
 		if schema.Properties[k].Type == "boolean" {
-			fmt.Fprintf(&b, "      --%s) %s=true; shift ;;\n", flag, k)
+			fmt.Fprintf(&b, "      --%s) %s%s=true; shift ;;\n", flag, posDup(k), k)
 		} else {
-			fmt.Fprintf(&b, "      --%s) %s=\"$2\"; shift 2 ;;\n", flag, k)
+			fmt.Fprintf(&b, "      --%s) %s%s=\"$2\"; shift 2 ;;\n", flag, posDup(k), k)
 		}
 		// Emit alias arms that set the same canonical variable. Aliases
 		// silently skip if the canonical key isn't a schema property
@@ -1232,15 +1261,22 @@ func generateGenericShellFunc(t *Tool) string {
 			aliasFlag := strings.ReplaceAll(alias, "_", "-")
 			flagList = append(flagList, "--"+aliasFlag)
 			if schema.Properties[k].Type == "boolean" {
-				fmt.Fprintf(&b, "      --%s) %s=true; shift ;;\n", aliasFlag, k)
+				fmt.Fprintf(&b, "      --%s) %s%s=true; shift ;;\n", aliasFlag, posDup(k), k)
 			} else {
-				fmt.Fprintf(&b, "      --%s) %s=\"$2\"; shift 2 ;;\n", aliasFlag, k)
+				fmt.Fprintf(&b, "      --%s) %s%s=\"$2\"; shift 2 ;;\n", aliasFlag, posDup(k), k)
 			}
 		}
 	}
+	// A "valid flags" list can only ever list FLAGS, so when the caller wanted a
+	// POSITIONAL the list is complete, correct and useless (#1778). Name the
+	// positional form too — the same usage line --help already prints.
+	posNote := ""
+	if len(positional) == 1 {
+		posNote = fmt.Sprintf("        echo \"note: %s <%s> [flags...] — <%s> may also be given as a bare argument\" >&2\n", name, positional[0], positional[0])
+	}
 	fmt.Fprintf(&b,
-		"      --*)\n        echo \"error: unrecognized flag: $1\" >&2\n        echo \"valid flags: %s\" >&2\n        return 1 ;;\n",
-		strings.Join(flagList, " "),
+		"      --*)\n        echo \"error: unrecognized flag: $1\" >&2\n        echo \"valid flags: %s\" >&2\n%s        return 1 ;;\n",
+		strings.Join(flagList, " "), posNote,
 	)
 
 	// Positional arg handling.
@@ -1250,7 +1286,8 @@ func generateGenericShellFunc(t *Tool) string {
 	case 1:
 		// Multi-word join — matches existing query/prompt UX.
 		p := positional[0]
-		fmt.Fprintf(&b, "      *) %s=\"$%s $1\"; shift ;;\n", p, p)
+		fmt.Fprintf(&b, "      *)\n        if [ \"$__foci_%s_via\" = flag ]; then echo \"error: %s was already given as --%s; use --%s OR the positional form, not both\" >&2; return 1; fi\n        __foci_%s_via=pos; %s=\"$%s $1\"; shift ;;\n",
+			p, p, strings.ReplaceAll(p, "_", "-"), strings.ReplaceAll(p, "_", "-"), p, p, p)
 	default:
 		// No current tool uses multiple positional params. Bail rather than
 		// emit unverified code.
