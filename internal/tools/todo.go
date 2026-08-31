@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"foci/internal/display"
 	"foci/internal/memory"
@@ -477,7 +478,7 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 		}
 		var changes []string
 		if text != "" && oldItem.Text != item.Text {
-			changes = append(changes, fmt.Sprintf("text: %s → %s", oldItem.Text, item.Text))
+			changes = append(changes, describeTextChange(oldItem.Text, item.Text, appendText))
 		}
 		if priority != "" && oldItem.Priority != item.Priority {
 			changes = append(changes, fmt.Sprintf("priority: %s → %s", oldItem.Priority, item.Priority))
@@ -500,6 +501,37 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 		}
 	}
 	return TextResult(strings.Join(results, "\n")), nil
+}
+
+// editSummaryTextBudget is the combined old+new length below which an edit
+// summary still quotes both bodies verbatim. Small edits are the interactive
+// case where seeing the exact before and after IS the confirmation; the terse
+// form exists to stop a LARGE body being echoed, not to withhold information.
+const editSummaryTextBudget = 200
+
+// describeTextChange renders an edit's text change without echoing a large body
+// back at the caller (#1764).
+//
+// The old summary printed `text: <old> → <new>` unconditionally, so appending a
+// ~900-char note to a 50KB ticket returned ~100KB — enough to trip the
+// oversized-tool-result guard, which persists the result to a file and leaves
+// the one fact the caller wanted (did the note land?) out of the preview. The
+// cost scales with the ticket's existing size, so the long-running investigation
+// tickets that get annotated most are precisely the ones that cost most to
+// annotate. #227 fixed this class for priority and tags and never reached text.
+//
+// On an APPEND the echo is doubly redundant: the new body is the old body plus
+// the exact string the caller just passed in. What they cannot compute is the
+// size, so that is what this reports.
+func describeTextChange(oldText, newText string, appended bool) string {
+	oldLen, newLen := utf8.RuneCountInString(oldText), utf8.RuneCountInString(newText)
+	if appended {
+		return fmt.Sprintf("text: appended %d chars (now %d)", newLen-oldLen, newLen)
+	}
+	if len(oldText)+len(newText) <= editSummaryTextBudget {
+		return fmt.Sprintf("text: %s → %s", oldText, newText)
+	}
+	return fmt.Sprintf("text: replaced %d chars with %d chars", oldLen, newLen)
 }
 
 func todoRemove(store *memory.TodoStore, agentID string, id int64, ids []int64) (ToolResult, error) {

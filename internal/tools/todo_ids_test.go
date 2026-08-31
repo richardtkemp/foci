@@ -126,3 +126,71 @@ printf '%s' "$ids"
 		})
 	}
 }
+
+// TestTodoEditAppend_DoesNotEchoTheWholeBody guards #1764. The edit summary
+// rendered `text: <old> → <new>` in full, so appending a 900-char note to a
+// 50KB ticket returned ~100KB — it tripped the oversized-tool-result guard and
+// got persisted to a file, which meant the one thing the caller needed (did the
+// note land?) was NOT in the preview. The cost scales with the ticket's existing
+// size, so the long-running investigation tickets that get annotated most often
+// are exactly the ones that cost most to annotate.
+//
+// #227 fixed this class ("return only what changed") and was closed as
+// implemented, but the fix reached the priority and tag cases and never the text
+// one. On an append the echoed text is doubly redundant: the new body is the old
+// body plus the very string the caller just passed in.
+func TestTodoEditAppend_DoesNotEchoTheWholeBody(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent-echo")
+
+	body := strings.Repeat("ORIGINAL-BODY-MARKER. ", 400) // ~8.8KB, well over any preview
+	if _, err := executeTodoTool(tool, map[string]interface{}{"action": "add", "text": body}); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := store.List("agent-echo", "", nil, "", "", false, 0)
+	if len(items) != 1 {
+		t.Fatalf("expected the seeded item, got %d", len(items))
+	}
+	out, err := executeTodoTool(tool, map[string]interface{}{
+		"action": "edit", "id": items[0].ID, "text": "a short appended note", "append": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Premise guard: if the append did not happen there is nothing to be terse
+	// about, and a green result would mean nothing.
+	if !strings.Contains(out, "appended") {
+		t.Fatalf("edit did not report an append at all — test premise broken:\n%s", out)
+	}
+	if strings.Contains(out, "ORIGINAL-BODY-MARKER") {
+		t.Errorf("edit echoed the existing body back (%d bytes of result):\n%.400s…", len(out), out)
+	}
+	if len(out) > 300 {
+		t.Errorf("edit result is %d bytes; a confirmation should be a line, not the item:\n%.400s…", len(out), out)
+	}
+}
+
+// A SMALL replacement must keep the readable old → new form: the terse summary
+// is there to stop a large body being echoed, not to remove information from the
+// interactive case where seeing both values is the whole point.
+func TestTodoEditReplace_KeepsBothValuesWhenSmall(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent-small")
+
+	if _, err := executeTodoTool(tool, map[string]interface{}{"action": "add", "text": "buy milk"}); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := store.List("agent-small", "", nil, "", "", false, 0)
+	out, err := executeTodoTool(tool, map[string]interface{}{
+		"action": "edit", "id": items[0].ID, "text": "buy oat milk",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "buy milk") || !strings.Contains(out, "buy oat milk") {
+		t.Errorf("a small replacement should still show both values:\n%s", out)
+	}
+}
