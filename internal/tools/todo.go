@@ -71,7 +71,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				"sort": {
 					"type": "string",
 					"enum": ["priority", "created", "updated", "closed", "id", "relevance"],
-					"description": "Sort order. Default 'created' when listing, 'relevance' when searching. 'id' is issue order, which is not the same as 'created' once an item is edited. All sort descending (newest/highest first) unless reversed"
+					"description": "Sort order. Default 'created' when listing, 'relevance' when searching ('relevance' is search-only and is REJECTED by list). 'id' is issue order, which is not the same as 'created' once an item is edited. An unrecognised value is rejected, not silently defaulted. All sort descending (newest/highest first) unless reversed"
 				},
 				"reverse": {
 					"type": "boolean",
@@ -310,7 +310,38 @@ func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (Tool
 	return TextResult(fmt.Sprintf("Added #%d (%s)", id, pri)), nil
 }
 
+// Sort orders each action accepts. Kept as explicit lists rather than derived from
+// the schema enum because they DIFFER: "relevance" is meaningful only when there is
+// a query to be relevant to.
+//
+// Validated rather than defaulted (#1773-adjacent, found via db6ee6cc): the store's
+// ORDER BY switch falls through to PRIORITY for anything it does not recognise, so a
+// typo — or `relevance` passed to list — quietly returned priority order. That is
+// worse than a hard failure, because the caller gets a well-formed, plausibly-ordered
+// list that answers a different question than the one they asked.
+var (
+	listSortOrders   = []string{"created", "updated", "closed", "priority", "id"}
+	searchSortOrders = []string{"relevance", "created", "updated", "closed", "priority", "id"}
+)
+
+// checkSort rejects a sort value the action cannot honour. An empty value means
+// "use the default" and is always allowed.
+func checkSort(action, sort string, valid []string) error {
+	if sort == "" {
+		return nil
+	}
+	for _, v := range valid {
+		if sort == v {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown sort %q for %s; valid: %s", sort, action, strings.Join(valid, ", "))
+}
+
 func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort string, reverse bool, limit int) (ToolResult, error) {
+	if err := checkSort("list", sort, listSortOrders); err != nil {
+		return ToolResult{}, err
+	}
 	// Defaults: 10 most recently created active todos.
 	if sort == "" {
 		sort = "created"
@@ -349,6 +380,9 @@ func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, re
 	// we default to no filter (search all statuses) unless explicitly set.
 	if status == "" {
 		statusFilter = ""
+	}
+	if err := checkSort("search", sort, searchSortOrders); err != nil {
+		return ToolResult{}, err
 	}
 	if sort == "" {
 		sort = "relevance"
