@@ -829,3 +829,60 @@ func newTestTodoStore(t *testing.T) *memory.TodoStore {
 	t.Cleanup(func() { store.Close() })
 	return store
 }
+
+// TestTodoRejectsUnknownSort: an unrecognised --sort VALUE must be an error, not a
+// silent fallback.
+//
+// The SQL path's default arm is PRIORITY, so any value that is not a case there —
+// a typo, or `relevance` which only search understands — quietly returned priority
+// order instead. That is worse than a hard failure: the caller gets a well-formed,
+// plausibly-ordered list that answers a different question than the one asked.
+// Found via `--sort id` before it existed (db6ee6cc), which returned priority order
+// with id as the tiebreak and read as working.
+func TestTodoRejectsUnknownSort(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	store.Add("agent1", "a task", "high", "")
+
+	for _, tc := range []struct {
+		name, action, sort string
+		wantErr            bool
+	}{
+		{"list: typo", "list", "creaetd", true},
+		{"list: relevance is search-only", "list", "relevance", true},
+		{"list: valid", "list", "id", false},
+		{"list: empty means default", "list", "", false},
+		{"search: typo", "search", "prioroty", true},
+		{"search: relevance", "search", "relevance", false},
+		{"search: valid", "search", "id", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			if tc.action == "list" {
+				_, err = todoList(store, "agent1", "", "", "", tc.sort, false, 0)
+			} else {
+				_, err = todoSearch(store, "agent1", "task", "", tc.sort, false, 0)
+			}
+			// Asserted on the SENTINEL rather than on error/no-error: search needs a
+			// bleve index this store has not got, so an accepted sort still fails
+			// downstream. Wiring bleve in would test the search stack, not the
+			// validation, and would hide the case where validation stopped running.
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			rejected := strings.Contains(got, "unknown sort")
+			if tc.wantErr && !rejected {
+				t.Fatalf("sort=%q on %s: not rejected (err=%v)", tc.sort, tc.action, err)
+			}
+			if !tc.wantErr && rejected {
+				t.Fatalf("sort=%q on %s: wrongly rejected: %v", tc.sort, tc.action, err)
+			}
+			// A rejection has to say what IS allowed, or the caller's next guess is
+			// as blind as the first — the whole point of #1778's flag listing.
+			if tc.wantErr && !strings.Contains(got, "valid:") {
+				t.Errorf("sort=%q: error does not list the valid values: %v", tc.sort, err)
+			}
+		})
+	}
+}
