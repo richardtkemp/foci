@@ -147,3 +147,83 @@ func TestConnectLog_PrefersCFConnectingIP(t *testing.T) {
 		t.Errorf("a spoofable X-Forwarded-For value won over CF-Connecting-IP:\n%s", out)
 	}
 }
+
+// TestStallWarn_NamesDeviceAndIP guards #1782 site 1. The stall WARN is the
+// ONLY record of a slow client being closed, and it was 879 of 919 WARNs in a
+// live log — yet it named neither the device nor its IP, so "one bad client or
+// a server fault?" needed three greps and a manual timestamp correlation
+// against adjacent connect/hello lines, every single time it was asked.
+//
+// The IP is not decoration: per the connect line's own rationale (#1728), it is
+// what distinguishes a client that BROKE from one that merely MOVED NETWORK —
+// different owners, different fixes — and the stall is exactly where that
+// question gets asked.
+func TestStallWarn_NamesDeviceAndIP(t *testing.T) {
+	var buf bytes.Buffer
+	flog.SetOutput(&buf)
+	flog.SetLevel(flog.DEBUG)
+	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
+
+	// enqueueBlockWait is a const, so this test really does wait it out. The
+	// duration is itself evidence the blocking path ran rather than the fast
+	// path returning early.
+
+	h := newTestHub()
+	c := newWsClient(nil, h, "203.0.113.9") // nil ws: close() documents this as the test shape
+	c.deviceID = "stalled-dev"
+
+	// Premise guard: the blocking path is only reached with a genuinely FULL
+	// queue. Without this a capacity change would make the test pass by never
+	// stalling at all.
+	if cap(c.send) == 0 {
+		t.Fatal("send buffer has zero capacity — the test would stall for the wrong reason")
+	}
+	for i := 0; i < cap(c.send); i++ {
+		c.send <- []byte("filler")
+	}
+
+	c.enqueue(`{"t":"noop"}`)
+
+	out := buf.String()
+	if !strings.Contains(out, "outbound queue stalled") {
+		t.Fatalf("the stall warn never fired — test premise broken:\n%s", out)
+	}
+	if !strings.Contains(out, "device=stalled-dev") {
+		t.Errorf("stall warn does not name the device:\n%s", out)
+	}
+	if !strings.Contains(out, "ip=203.0.113.9") {
+		t.Errorf("stall warn does not name the client IP:\n%s", out)
+	}
+}
+
+// TestHelloLog_NamesClientBuild guards #1782 site 2. Asked "is the latest
+// client code deployed?", the server could answer for itself from its binary
+// and could not answer for the app at all — so a client-side regression was
+// invisible in server logs and could not be correlated against a release.
+//
+// The fix is server-only, which was worth checking rather than assuming: the
+// wire already carries it. fap.ClientInfo has App/OS/Version and the Android
+// client already populates all three; the hello line simply dropped them.
+func TestHelloLog_NamesClientBuild(t *testing.T) {
+	var buf bytes.Buffer
+	flog.SetOutput(&buf)
+	flog.SetLevel(flog.DEBUG)
+	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
+
+	h := newTestHub()
+	c := newWsClient(nil, h, "198.51.100.4")
+
+	hello := `{"v":1,"t":"` + fap.TypeHello + `","id":"h1","seq":1,"d":{"client":` +
+		`{"app":"foci-android","os":"Android 14","version":"1.4.2","deviceId":"dev-x"}}}`
+	h.dispatchInbound(c, []byte(hello))
+
+	out := buf.String()
+	if !strings.Contains(out, "hello: device=dev-x") {
+		t.Fatalf("the hello line never fired — test premise broken:\n%s", out)
+	}
+	for _, want := range []string{"app=foci-android", `os="Android 14"`, "version=1.4.2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("hello line lacks %s:\n%s", want, out)
+		}
+	}
+}

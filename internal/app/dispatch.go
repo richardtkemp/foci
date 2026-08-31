@@ -71,8 +71,14 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// resume points are indistinguishable in the log — both simply produce no
 		// replayTo — which is what blocked the #1713 diagnosis. resume is the
 		// discriminator: 0 means the client asked to resume nothing.
-		appLog.Debugf("hello: device=%s resume=%d features=%d push_token=%t",
-			f.Client.DeviceID, len(f.Resume), len(f.Features), f.PushToken != "")
+		// app/os/version answer "which client build is talking to us?" — the
+		// server can read its own version from its binary but had no way at all
+		// to know the app's, so a client-side regression was invisible here and
+		// could not be correlated against a release (#1782). The wire already
+		// carried them: fap.ClientInfo has all three and the app populates them.
+		appLog.Debugf("hello: device=%s app=%s os=%q version=%s resume=%d features=%d push_token=%t",
+			f.Client.DeviceID, f.Client.App, f.Client.OS, f.Client.Version,
+			len(f.Resume), len(f.Features), f.PushToken != "")
 		h.noteHelloSeen(authDevice)
 		// Re-evict on the hello's advisory deviceId (wire §9, close 4409) so a
 		// reconnecting phone never ends up with two live sockets on one

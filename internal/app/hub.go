@@ -2513,6 +2513,12 @@ type wsClient struct {
 	done    chan struct{}
 	closeMu sync.Once
 
+	// ip is the origin client address, resolved once at connect by
+	// clientIPForLog (which prefers CF-Connecting-IP — behind the tunnel the
+	// socket peer is the proxy). Written before the client is published to the
+	// hub and never mutated, so the send path reads it without c.mu (#1782).
+	ip string
+
 	mu sync.Mutex
 	// No socket-wide "current agent": one socket multiplexes every agent's
 	// conversations concurrently. Each inbound frame names its agent (or its
@@ -2556,10 +2562,11 @@ func featureSet(feats []string) map[string]struct{} {
 	return m
 }
 
-func newWsClient(ws *websocket.Conn, h *Hub) *wsClient {
+func newWsClient(ws *websocket.Conn, h *Hub, ip string) *wsClient {
 	return &wsClient{
 		ws:       ws,
 		hub:      h,
+		ip:       ip,
 		send:     make(chan []byte, sendBuffer),
 		done:     make(chan struct{}),
 		convByID: make(map[string]*convBinding),
@@ -2588,10 +2595,14 @@ func (c *wsClient) enqueue(wire string) {
 	case c.send <- []byte(wire):
 	case <-c.done:
 	case <-t.C:
-		// Name the device: this line is the ONLY record of the stall, and without
-		// it the culprit can be identified only by correlating adjacent connect /
-		// hello lines by timestamp (#1779).
-		appLog.Warnf("outbound queue stalled %s, closing slow client to force resume: device=%s", enqueueBlockWait, c.device())
+		// Name the device AND the ip: this line is the ONLY record of the stall,
+		// and without them the culprit can be identified only by correlating
+		// adjacent connect / hello lines by timestamp (#1779, #1782). The ip
+		// carries its own question — per the connect line's rationale (#1728) it
+		// is what separates a client that BROKE from one that MOVED NETWORK, and
+		// this is precisely where that gets asked.
+		appLog.Warnf("outbound queue stalled %s, closing slow client to force resume: device=%s ip=%s",
+			enqueueBlockWait, c.device(), c.ip)
 		go c.close() // async: close locks the hub; don't reenter from the send path
 	}
 }
@@ -2752,7 +2763,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		appLog.Errorf("ws upgrade: %v", err)
 		return
 	}
-	client := newWsClient(ws, h)
+	client := newWsClient(ws, h, clientIPForLog(r))
 	// dev is never nil past this point: authenticate() returns ok only with a
 	// device, because there is no master key any more (#862). Everything below
 	// therefore uses it unconditionally — the `if dev != nil` guards that used
@@ -2782,7 +2793,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// misbehaving BROKE or simply MOVED NETWORK. Those have different owners and
 	// different fixes, and telling them apart from the log is what was missing on
 	// 2026-08-17/18 (#1728). See clientIPForLog for why it is not remoteIP.
-	clientIP := clientIPForLog(r)
+	clientIP := client.ip
 	appLog.Infof("device connected: device=%s ip=%s", dev.DeviceID, clientIP)
 	safeGo("ws-writepump", client.writePump)
 	connectedAt := time.Now()

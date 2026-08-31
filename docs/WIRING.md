@@ -1652,10 +1652,15 @@ trimmed; trimmed further on inbound ack), and an inbound dedup `seen` set.
 
 **Handshake observability (#1713).** A socket is only useful once its `hello`
 arrives; everything the app receives follows from it. Three signals record that,
-because until 2026-08-15 nothing did: a `hello: device=… resume=N features=…
-push_token=<bool>` DEBUG line on receipt (push token presence ONLY — the value is
-a credential), `wsClient.helloSeen`, checked by `noteSocketClosed` when the
-socket closes, and the **`device connected: device=…`** INFO line in `ServeWS`.
+because until 2026-08-15 nothing did: a `hello: device=… app=… os=… version=… resume=N
+features=… push_token=<bool>` DEBUG line on receipt (push token presence ONLY —
+the value is a credential; app/os/version come straight off `fap.ClientInfo`,
+which the wire has always carried, and are how the server can tell WHICH app
+build is talking to it — #1782), `wsClient.helloSeen`, checked by
+`noteSocketClosed` when the socket closes, and the **`device connected:
+device=… ip=…`** INFO line in `ServeWS`. The ip is resolved once by
+`clientIPForLog` and cached on `wsClient.ip`, so the disconnect line and the
+outbound-stall WARN can name it too without recomputing (#1782).
 That last one exists because the other two cannot identify a socket that dies
 BEFORE its hello: `deviceID` normally arrives in the hello frame, which such a
 socket never sends, so a burst of hello-less connects was unattributable from
