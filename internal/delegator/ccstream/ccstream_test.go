@@ -2690,8 +2690,12 @@ func TestOnSystem_TaskNotificationCompleted(t *testing.T) {
 }
 
 func TestOnSystem_TaskNotificationCompleted_WithTracked(t *testing.T) {
-	// With a tracked subagent, task_notification (completed) removes one from
-	// the tracker; the last removal resolves to the empty (cleared) detail.
+	// A task_notification carrying NO identity — no tool_use_id, no task_id —
+	// still decrements the tracker, because it names nothing better to remove.
+	// This is the one surviving count-based path after #1770 moved identified
+	// completions to exact-match (see the handler); an identified notification
+	// for an untracked id removes NOTHING, which is what
+	// TestTaskNotificationRemovesNamedEntry pins.
 	t.Parallel()
 
 	var statusText string
