@@ -1101,3 +1101,49 @@ func newTestTodoStore(t *testing.T) *TodoStore {
 	t.Cleanup(func() { store.Close() })
 	return store
 }
+
+// TestTodoSortByID verifies `--sort id` orders by ID rather than falling through
+// to the priority default.
+//
+// Before this, "id" was not a case in either sort switch. The SQL path's default
+// arm is PRIORITY, so `--sort id` silently returned priority order with id only
+// as the tiebreak — which reads as working, because within one priority band the
+// ids ARE ordered. It surfaced on a mixed-priority list: asking for the newest
+// todos returned the oldest, because reverse had flipped only the tiebreak.
+func TestTodoSortByID(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	// Priorities chosen so a priority sort and an id sort DISAGREE: the lowest id
+	// is the highest priority, so a fallthrough to priority puts it first.
+	idHigh, _ := store.Add("agent1", "first, high", "high", "")
+	idLow, _ := store.Add("agent1", "second, low", "low", "")
+	idMed, _ := store.Add("agent1", "third, medium", "medium", "")
+
+	// Descending (the documented default direction): newest id first.
+	items, err := store.List("agent1", "open", nil, "", "id", false, 0)
+	if err != nil {
+		t.Fatalf("List sort=id: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("got %d items, want 3", len(items))
+	}
+	if got := []int64{items[0].ID, items[1].ID, items[2].ID}; got[0] != idMed || got[1] != idLow || got[2] != idHigh {
+		t.Errorf("sort=id order = %v, want [%d %d %d] (newest id first)", got, idMed, idLow, idHigh)
+	}
+
+	// Reversed: oldest id first.
+	items, err = store.List("agent1", "open", nil, "", "id", true, 0)
+	if err != nil {
+		t.Fatalf("List sort=id reverse: %v", err)
+	}
+	if got := []int64{items[0].ID, items[1].ID, items[2].ID}; got[0] != idHigh || got[1] != idLow || got[2] != idMed {
+		t.Errorf("sort=id reverse order = %v, want [%d %d %d] (oldest id first)", got, idHigh, idLow, idMed)
+	}
+
+	// The in-memory sorter (search results) must agree with the SQL path.
+	mem := []TodoItem{{ID: idHigh, Priority: "high"}, {ID: idLow, Priority: "low"}, {ID: idMed, Priority: "medium"}}
+	sortTodoItems(mem, "id", false)
+	if got := []int64{mem[0].ID, mem[1].ID, mem[2].ID}; got[0] != idMed || got[2] != idHigh {
+		t.Errorf("sortTodoItems(id) = %v, want newest id first", got)
+	}
+}

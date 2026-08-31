@@ -226,6 +226,12 @@ func (s *TodoStore) List(agentID, status string, tags []string, priority, sort s
 		query += fmt.Sprintf(` ORDER BY unixepoch(updated_at) %s, updated_at %s, id %s`, dir, dir, idDir)
 	case "closed":
 		query += fmt.Sprintf(` ORDER BY unixepoch(completed_at) %s, completed_at %s, id %s`, dir, dir, idDir)
+	case "id":
+		// Needed as its own case even though every arm above already tiebreaks on id:
+		// without it, "id" fell through to the PRIORITY default and returned priority
+		// order with id only as the tiebreak. That reads as working — within one
+		// priority band the ids are ordered — and only diverges on a mixed list.
+		query += fmt.Sprintf(` ORDER BY id %s`, dir)
 	default: // "priority" or empty
 		priOrder := `CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END`
 		if reverse {
@@ -593,6 +599,8 @@ func sortTodoItems(items []TodoItem, sortField string, reverse bool) {
 			default:
 				less = ti.Before(*tj)
 			}
+		case "id":
+			less = items[i].ID < items[j].ID
 		case "priority":
 			pi := priorityOrd(items[i].Priority)
 			pj := priorityOrd(items[j].Priority)
