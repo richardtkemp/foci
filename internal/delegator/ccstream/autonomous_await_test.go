@@ -162,3 +162,75 @@ func TestTaskStopClearsPending(t *testing.T) {
 		t.Fatalf("TaskStop on empty tracker: Pending() = %d, want 0", n)
 	}
 }
+
+// TestTaskNotificationRemovesNamedEntry: a completion must clear the entry it
+// NAMES, not simply the oldest one (#1770).
+//
+// The tracker's removal was count-based (RemoveOne drops pending[0]) on the
+// grounds that the gate only reads a COUNT, so which entry goes does not
+// matter. It does. The count is only self-correcting while every Add is
+// balanced by exactly one completion — and the max-age prune breaks that by
+// design, dropping an entry whose completion is still to come.
+func TestTaskNotificationRemovesNamedEntry(t *testing.T) {
+	t.Parallel()
+
+	mkTool := func(id, name, input string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
+		}}
+	}
+	complete := func(b *Backend, toolUseID string) {
+		raw, _ := json.Marshal(TaskEvent{
+			Subtype: "task_notification", Status: "completed", ToolUseID: toolUseID,
+		})
+		b.OnSystem("task_notification", raw)
+	}
+
+	// The entry named by the notification is the one that goes, even when it is
+	// not the oldest. Distinguishable only by description: a count-based removal
+	// keeps Pending() correct here while silently retiring the wrong subagent,
+	// so the status detail is what exposes it.
+	t.Run("removes the named entry, not the oldest", func(t *testing.T) {
+		t.Parallel()
+		b := &Backend{}
+		applyHandler(b, &testHandler{})
+		var status string
+		b.agents.OnStatus = func(s string) { status = s }
+
+		b.OnAssistant(mkTool("toolu_agent", "Agent", `{"description":"researcher","prompt":"go"}`))
+		b.OnAssistant(mkTool("toolu_bash", "Bash", `{"command":"sleep 60","run_in_background":true}`))
+		if n := b.agents.Pending(); n != 2 {
+			t.Fatalf("setup: Pending() = %d, want 2", n)
+		}
+
+		complete(b, "toolu_bash") // the SECOND entry finishes first
+		if n := b.agents.Pending(); n != 1 {
+			t.Fatalf("after completion: Pending() = %d, want 1", n)
+		}
+		if status != "researcher" {
+			t.Fatalf("removed the wrong entry: surviving detail = %q, want \"researcher\"", status)
+		}
+	})
+
+	// The production failure. An entry the tracker no longer holds — aged out by
+	// the max-age prune while its job was still running, or never detected —
+	// completes late. A count-based removal then retires an UNRELATED pending
+	// entry, releasing the spec-§4 inject gate for work that is still in flight.
+	// Observed 2026-08-21: two ~45-minute background commands against a 30-minute
+	// backstop, one pruned at 39m46s.
+	t.Run("unknown id does not retire an unrelated entry", func(t *testing.T) {
+		t.Parallel()
+		b := &Backend{}
+		applyHandler(b, &testHandler{})
+
+		b.OnAssistant(mkTool("toolu_still_running", "Bash", `{"command":"sleep 3600","run_in_background":true}`))
+		if n := b.agents.Pending(); n != 1 {
+			t.Fatalf("setup: Pending() = %d, want 1", n)
+		}
+
+		complete(b, "toolu_already_pruned")
+		if n := b.agents.Pending(); n != 1 {
+			t.Fatalf("a stranger's completion retired a live entry: Pending() = %d, want 1", n)
+		}
+	})
+}

@@ -271,12 +271,18 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				// completes naturally) — so the Add above would never be
 				// balanced, leaving the entry stuck in Pending() until the
 				// 30-min max-age prune and needlessly holding the pending-work
-				// gate (spec §4). Decrement one pending entry here. Count-based
-				// like the completion path (RemoveOne, not exact-match): the
-				// tracker feeds a count for the app badge and the gate, exact
-				// tool_use-id matching off a stream/tool event isn't reliable
-				// (see SubagentTracker.RemoveOne), and RemoveOne on an empty
-				// tracker is a safe no-op.
+				// gate (spec §4). Decrement one pending entry here.
+				//
+				// Still COUNT-based, unlike the completion path — which moved to
+				// exact-match under #1770. Not an oversight: TaskStop's argument is
+				// the BACKGROUND TASK id, and the tracker is keyed by tool_use id /
+				// groupKey. For a stopped Agent subagent the two could be bridged via
+				// subagentRuns, but for a stopped background Bash there is no mapping
+				// to bridge, so there is no id to match on. RemoveOne on an empty
+				// tracker is a safe no-op. Residual, accepted: stopping one of several
+				// concurrent background commands retires the oldest entry rather than
+				// the stopped one. Harmless while counts stay balanced, and TaskStop is
+				// explicit and rare — unlike the prune, which fires unbidden.
 				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
 					b.agents.OnStatus("")
 				}
@@ -697,13 +703,6 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			}
 		case "task_notification":
 			if task.Status == "completed" {
-				// Remove one pending subagent. If the tracker had nothing
-				// (e.g. tool_use detection missed it), the resolved state is
-				// already "no subagents running" — signal that with an empty
-				// detail so any stale indicator clears.
-				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
-					b.agents.OnStatus("")
-				}
 				// The subagent RUN's true end, for foreground AND background alike (a
 				// background Agent tool_use resolves at launch, so its PostToolUse end
 				// is premature; this fires at actual completion). Map task_id -> the
@@ -714,9 +713,48 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				// endRunForTask also flips the run inactive (#1419): a SendMessage
 				// arriving AFTER this point (before any reactivation) must stash for
 				// the eventual resume, not try to surface immediately.
+				//
+				// RESOLVED FIRST because the tracker removal below needs it: groupKey is
+				// exactly the key every Add site uses — the Agent tool_use id (:246), the
+				// background Bash tool_use id (:267), or the same stable groupKey on a
+				// reactivation (:687) — so it is the one value that identifies the entry.
 				groupKey, runIndex := task.ToolUseID, 0
 				if run := b.endRunForTask(task.TaskID); run != nil {
 					groupKey, runIndex = run.groupKey, run.runIndex
+				}
+				// Retire the entry this notification NAMES, not merely one of them
+				// (#1770). The count-based RemoveOne this replaces was justified by the
+				// gate reading only a count — true, but the count is self-correcting
+				// only while every Add is balanced by exactly one completion, and the
+				// max-age prune breaks that BY DESIGN: it drops an entry whose
+				// completion is still to come. That late completion then retired an
+				// unrelated, still-running entry and released the spec-§4 inject gate
+				// underneath it. Observed 2026-08-21 — two ~45-minute background
+				// commands against the 30-minute backstop.
+				//
+				// No count-based fallback when the id is unknown: an unmatched id means
+				// the entry was already pruned or never tracked, and decrementing
+				// something else is the bug. The cost of matching nothing is that a
+				// genuinely missed Add lingers until its own prune, which holds the
+				// gate — the safe direction, since the gate exists to stop a system
+				// turn beginning mid-run (#1068).
+				//
+				// groupKey == "" is the one case that still decrements blind: a
+				// notification carrying neither a tool_use id nor a resolvable task_id
+				// names nothing, so there is no better information to act on. The same
+				// emptiness already suppresses OnSubagentEnd below, and the 2026-08-21
+				// notifications were fully identified (group=toolu_…), so this fallback
+				// does not reopen the defect.
+				removed := false
+				if groupKey != "" {
+					removed = b.agents.Remove(groupKey)
+				} else {
+					removed = b.agents.RemoveOne()
+				}
+				if !removed && b.agents.Pending() == 0 && b.agents.OnStatus != nil {
+					// Nothing tracked at all: the resolved state is already "no
+					// subagents running", so clear any stale indicator.
+					b.agents.OnStatus("")
 				}
 				if groupKey != "" {
 					b.logger().Infof("subagent_end signal=task_notification group=%s run=%d", groupKey, runIndex)
