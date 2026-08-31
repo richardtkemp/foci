@@ -2413,3 +2413,102 @@ func TestTodoActionsAllowlistMatchesRealBehaviour(t *testing.T) {
 		}
 	}
 }
+
+// TestPositionalAlsoTakesFlag_AndRejectsBoth verifies #1778: every positional
+// param is ALSO reachable as --<name>, and supplying both forms in one command
+// is an error rather than a silent merge.
+//
+// Before this, the three shapes disagreed. The generic generator already emitted
+// a --flag arm for its positional (so `foci_web_fetch --url X` worked), while the
+// hand-written http_request template did not (`--url` → "unrecognized flag"),
+// which is exactly the wrong-guess this ticket was filed from — the guess came
+// from a SIBLING tool where it works. And where both forms were accepted, giving
+// both concatenated them: `foci_web_search --query a b` silently became "a b".
+//
+// Driven through real bash against the generated function, because the defect is
+// behavioural. No foci-call needed: every case here resolves before the tool is
+// ever invoked, so a stub is enough.
+func TestPositionalAlsoTakesFlag_AndRejectsBoth(t *testing.T) {
+	t.Parallel()
+
+	if _, err := osexec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	// run sources the generated function with stubs and returns (exitCode, output).
+	run := function(t)
+
+	generic := &Tool{
+		Name:       "probe",
+		Positional: []string{"query"},
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"string"}}}`),
+	}
+
+	cases := []struct {
+		name  string
+		tool  *Tool
+		fn    string
+		flag  string
+		extra string // args needed to reach the call at all, unrelated to the positional
+	}{
+		{"generic generator", generic, "foci_probe", "--query", ""},
+		{"http_request (hand-written)", NewHTTPRequestTool(nil, nil, t.TempDir(),
+			func() int { return 0 }, func() int64 { return 1 }, func() int64 { return 1 }, nil, 0o644),
+			"foci_http_request", "--url", ""},
+		// --file is not incidental: with neither --file nor stdin, foci_summary
+		// mktemps under the LIVE shared temp root, which the sandboxed `make test`
+		// cannot write. That failure is downstream of the parsing under test and
+		// would otherwise read as "the positional form is broken".
+		{"summary (hand-written)", NewSummaryTool(nil, nil, t.TempDir()), "foci_summary", "--prompt", " --file /dev/null"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := generateShellFunc(tc.tool)
+
+			// Each form ALONE reaches the tool call.
+			if rc, out := run(body, tc.fn+" AAA"+tc.extra); rc != 0 {
+				t.Errorf("positional form failed: rc=%d out=%s", rc, out)
+			}
+			if rc, out := run(body, tc.fn+" "+tc.flag+" AAA"+tc.extra); rc != 0 {
+				t.Errorf("%s form failed (the #1778 guess): rc=%d out=%s", tc.flag, rc, out)
+			}
+
+			// BOTH forms in one command is an error, in either order, and the
+			// message names the conflict rather than silently merging.
+			for _, args := range []string{
+				tc.fn + " " + tc.flag + " AAA BBB" + tc.extra,
+				tc.fn + " BBB " + tc.flag + " AAA" + tc.extra,
+			} {
+				rc, out := run(body, args)
+				if rc == 0 {
+					t.Errorf("%q: rc=0, want non-zero (both forms given)\nout=%s", args, out)
+				}
+				if !strings.Contains(out, "not both") {
+					t.Errorf("%q: error does not explain the conflict: %s", args, out)
+				}
+			}
+		})
+	}
+}
+
+// function returns a helper that sources a generated shell function under stubs
+// and runs one command line against it, returning (exit code, combined output).
+func function(t *testing.T) func(body, cmd string) (int, string) {
+	t.Helper()
+	return func(body, cmd string) (int, string) {
+		script := "foci__json() { return 1; }\nfoci-call() { echo CALLED; }\n" + body + "\n" + cmd + "\n"
+		c := osexec.Command("bash", "-c", script)
+		c.Stdin = nil
+		out, err := c.CombinedOutput()
+		rc := 0
+		if ee, ok := err.(*osexec.ExitError); ok {
+			rc = ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("bash: %v", err)
+		}
+		return rc, string(out)
+	}
+}
