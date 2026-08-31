@@ -27,50 +27,50 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"text": {
 					"type": "string",
-					"description": "Text for the todo item (required for 'add', optional for 'edit')"
+					"description": "Text for the todo item — required on add. On complete/drop it aliases --reason"
 				},
 				"append": {
 					"type": "boolean",
-					"description": "Used with 'edit': append 'text' to the item's existing text (newline-joined) instead of replacing it. Default false. No effect without 'text'."
+					"description": "Append 'text' to the item's existing text (newline-joined) instead of replacing it. Default false. No effect without 'text'."
 				},
 				"priority": {
 					"type": "string",
 					"enum": ["high", "medium", "low"],
-					"description": "Priority level (default: medium, used with 'add' and 'edit')"
+					"description": "Priority level (default: medium)"
 				},
 				"tag": {
 					"type": "string",
-					"description": "Comma-separated tags, or repeat --tag per tag (used with 'add'/'edit' to set tags, with 'list' to filter by tag, e.g. 'background')"
+					"description": "Comma-separated tags, or repeat --tag per tag. Sets tags on add/edit, filters on list. E.g. 'background'"
 				},
 				"id": {
 					"type": "integer",
-					"description": "Todo item ID (required for 'get', 'complete', 'drop', 'reopen', 'start', 'edit', and 'remove')"
+					"description": "Todo item ID"
 				},
 				"ids": {
 					"type": "array",
 					"items": {"type": "integer"},
-					"description": "Array of todo item IDs (alternative to 'id' for batch operations, used with 'complete', 'drop', 'reopen', 'start', 'edit', 'remove')"
+					"description": "Array of todo item IDs — batch alternative to 'id'"
 				},
 				"status": {
 					"type": "string",
-					"description": "Filter by status (used with 'list' and 'search'). For 'list': default is active (excludes done/dropped). For 'search': default is all. Values: 'open', 'started', 'done', 'dropped', 'active', 'all'"
+					"description": "Filter by status; default is active (excludes done/dropped). Values: 'open', 'started', 'done', 'dropped', 'active', 'all'"
 				},
 				"query": {
 					"type": "string",
-					"description": "Search query (required for 'search', full-text search with stemming)"
+					"description": "Search query — full-text with stemming; may also be given positionally"
 				},
 				"limit": {
 					"type": "integer",
-					"description": "Max results for 'list' and 'search' (default: 10)"
+					"description": "Max results (default: 10)"
 				},
 				"reason": {
 					"type": "string",
-					"description": "Reason for closing (required for 'complete' and 'drop', e.g. 'implemented in abc1234', 'no longer relevant')"
+					"description": "Reason for closing — required, e.g. 'implemented in abc1234', 'no longer relevant'"
 				},
 				"sort": {
 					"type": "string",
 					"enum": ["priority", "created", "updated", "closed", "relevance"],
-					"description": "Sort order for 'list' and 'search'. 'list' default: 'created'. 'search' default: 'relevance'. All sort descending (newest/highest first) unless reversed"
+					"description": "Sort order. Default 'created' when listing, 'relevance' when searching. All sort descending (newest/highest first) unless reversed"
 				},
 				"reverse": {
 					"type": "boolean",
