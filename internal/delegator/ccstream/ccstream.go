@@ -175,16 +175,24 @@ type Backend struct {
 	// background agents run — so no amount of result counting can recover the
 	// turn boundary. OnResult stashes; OnSystem(idle) completes. See
 	// docs/WIRING.md → "Idle-keyed turn completion".
-	stashedResult      *delegator.TurnResult // latest per-ask-cycle result this turn; delivered at idle
-	stashedResultMsg   *ResultMessage        // raw message of the stash, for WaitForTurn signalling
-	turnOutputTokens   int                   // output tokens summed across this turn's ask cycles
-	turnCalls          int                   // ask cycles (result events) observed this turn
-	turnCalcCostUSD    float64               // foci's own priced cost, summed across this turn's ask cycles (#1674)
-	turnProvidedUSD    float64               // CC's reported cost for this turn, recovered by delta (#1674)
-	turnProvidedSeen   bool                  // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
-	redispatchInFlight bool                  // pre-answer follow-up sent at idle; hold the turn open until its result arrives
-	stateEventsSeen    bool                  // CC emitted ≥1 session_state_changed this session; gates the legacy complete-on-result fallback
-	fallbackWarned     bool                  // one-shot Warnf when falling back to complete-on-result
+	stashedResult    *delegator.TurnResult // latest per-ask-cycle result this turn; delivered at idle
+	stashedResultMsg *ResultMessage        // raw message of the stash, for WaitForTurn signalling
+	turnOutputTokens int                   // output tokens summed across this turn's ask cycles
+	turnCalls        int                   // ask cycles (result events) observed this turn
+	turnCalcCostUSD  float64               // foci's own priced cost, summed across this turn's ask cycles (#1674)
+	turnProvidedUSD  float64               // CC's reported cost for this turn, recovered by delta (#1674)
+	// The token deltas actually PRICED into turnCalcCostUSD, accumulated the
+	// same way. Stored because nothing else records them: TurnUsage carries the
+	// final cycle's context fill (what compaction needs), so after the fact
+	// there is no way to see which class foci charged for. #1695.
+	turnCalcInput      int
+	turnCalcOutput     int
+	turnCalcCacheRead  int
+	turnCalcCacheWrite int
+	turnProvidedSeen   bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
+	redispatchInFlight bool // pre-answer follow-up sent at idle; hold the turn open until its result arrives
+	stateEventsSeen    bool // CC emitted ≥1 session_state_changed this session; gates the legacy complete-on-result fallback
+	fallbackWarned     bool // one-shot Warnf when falling back to complete-on-result
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex

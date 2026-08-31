@@ -67,7 +67,19 @@ type CostDivergenceChecker struct {
 // warnf is passed in rather than a logger so this can sit in the delegator
 // package without depending on any backend's logging setup. Callers must not
 // hold a lock that warnf could contend on.
-func (c *CostDivergenceChecker) Check(model string, calculated, provided float64, warnf func(string, ...any)) {
+// Check's details argument supplies the per-class token/price breakdown to
+// print WHEN THE WARNING FIRES. It is a closure, not a string, so the cost of
+// building it is paid only on the rare firing path rather than on every turn.
+// nil is allowed and prints nothing extra.
+//
+// The breakdown is the whole diagnostic value of this warning. Without it the
+// line reports two scalars, and identifying WHICH token class disagrees then
+// requires reconstructing the turn from CC's transcript against a database that
+// stores the final cycle's context fill rather than the tokens actually priced
+// — an exercise that on 2026-08-31 produced two confident wrong answers before
+// a correct one, because turn boundaries had to be inferred. Everything needed
+// is already in the caller's hand at this moment; it was simply discarded.
+func (c *CostDivergenceChecker) Check(model string, calculated, provided float64, details func() string, warnf func(string, ...any)) {
 	// A zero on either side is not a disagreement worth reporting. Calculated
 	// is 0 for CC's synthetic/no-op sentinel, which modelinfo prices at 0 by
 	// design; an unknown model does NOT land here (it falls back to a family or
@@ -98,7 +110,17 @@ func (c *CostDivergenceChecker) Check(model string, calculated, provided float64
 		return
 	}
 
+	extra := ""
+	if details != nil {
+		if d := details(); d != "" {
+			extra = " | " + d
+		}
+	}
+	// "likely stale table" is deliberately NOT asserted any more. Measured over
+	// 1,827 opus-5 turns on 2026-08-31, ~95% priced correctly — a stale rate
+	// cannot do that, so the old wording sent every reader down the wrong path
+	// first. State the disagreement; let the breakdown name the cause.
 	warnf("cost divergence: foci priced this %s turn at $%.6f but the backend reported $%.6f "+
-		"(%.1f%% off, tolerance %.0f%%) — the modelinfo pricing table is likely stale for this model (#1674)",
-		model, calculated, provided, 100*offBy, 100*CostDivergenceTolerance)
+		"(%.1f%% off, tolerance %.0f%%)%s (#1674/#1695)",
+		model, calculated, provided, 100*offBy, 100*CostDivergenceTolerance, extra)
 }

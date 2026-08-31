@@ -21,7 +21,7 @@ func TestCostDivergence_WarnsBeyondTolerance(t *testing.T) {
 	var msgs []string
 	var c CostDivergenceChecker
 
-	c.Check("claude/claude-opus-5", 1.00, 1.50, capture(&msgs))
+	c.Check("claude/claude-opus-5", 1.00, 1.50, nil, capture(&msgs))
 
 	if len(msgs) != 1 {
 		t.Fatalf("got %d warnings, want 1 — a 50%% divergence must be reported", len(msgs))
@@ -40,7 +40,7 @@ func TestCostDivergence_SilentWithinTolerance(t *testing.T) {
 	var msgs []string
 	var c CostDivergenceChecker
 
-	c.Check("m", 1.000, 1.005, capture(&msgs)) // 0.5%, inside the 3% tolerance
+	c.Check("m", 1.000, 1.005, nil, capture(&msgs)) // 0.5%, inside the 3% tolerance
 
 	if len(msgs) != 0 {
 		t.Errorf("got %d warnings, want 0 — 0.5%% is within tolerance:\n%s", len(msgs), strings.Join(msgs, "\n"))
@@ -54,7 +54,7 @@ func TestCostDivergence_SilentBelowFloor(t *testing.T) {
 	var msgs []string
 	var c CostDivergenceChecker
 
-	c.Check("m", 0.000_1, 0.000_5, capture(&msgs)) // 400% off, but both trivial
+	c.Check("m", 0.000_1, 0.000_5, nil, capture(&msgs)) // 400% off, but both trivial
 
 	if len(msgs) != 0 {
 		t.Errorf("got %d warnings, want 0 — both figures are below the floor:\n%s", len(msgs), strings.Join(msgs, "\n"))
@@ -70,8 +70,8 @@ func TestCostDivergence_SilentWhenEitherSideIsZero(t *testing.T) {
 	var msgs []string
 	var c CostDivergenceChecker
 
-	c.Check("m", 0, 1.50, capture(&msgs))
-	c.Check("m", 1.50, 0, capture(&msgs))
+	c.Check("m", 0, 1.50, nil, capture(&msgs))
+	c.Check("m", 1.50, 0, nil, capture(&msgs))
 
 	if len(msgs) != 0 {
 		t.Errorf("got %d warnings, want 0:\n%s", len(msgs), strings.Join(msgs, "\n"))
@@ -87,7 +87,7 @@ func TestCostDivergence_ThrottledPerModel(t *testing.T) {
 	var c CostDivergenceChecker
 
 	for range 5 {
-		c.Check("opus", 1.00, 1.50, capture(&msgs))
+		c.Check("opus", 1.00, 1.50, nil, capture(&msgs))
 	}
 
 	if len(msgs) != 1 {
@@ -102,8 +102,8 @@ func TestCostDivergence_ThrottleIsPerModelNotGlobal(t *testing.T) {
 	var msgs []string
 	var c CostDivergenceChecker
 
-	c.Check("opus", 1.00, 1.50, capture(&msgs))
-	c.Check("haiku", 1.00, 1.50, capture(&msgs))
+	c.Check("opus", 1.00, 1.50, nil, capture(&msgs))
+	c.Check("haiku", 1.00, 1.50, nil, capture(&msgs))
 
 	if len(msgs) != 2 {
 		t.Errorf("got %d warnings, want 2 (one per model):\n%s", len(msgs), strings.Join(msgs, "\n"))
@@ -116,7 +116,7 @@ func TestCostDivergence_ThrottleIsPerModelNotGlobal(t *testing.T) {
 func TestCostDivergence_ZeroValueUsable(t *testing.T) {
 	t.Parallel()
 	var c CostDivergenceChecker
-	c.Check("m", 1.00, 1.50, func(string, ...any) {})
+	c.Check("m", 1.00, 1.50, nil, func(string, ...any) {})
 }
 
 // TestCostDivergence_NilWarnfSafe: callers pass a logger method; a nil one must
@@ -124,7 +124,7 @@ func TestCostDivergence_ZeroValueUsable(t *testing.T) {
 func TestCostDivergence_NilWarnfSafe(t *testing.T) {
 	t.Parallel()
 	var c CostDivergenceChecker
-	c.Check("m", 1.00, 1.50, nil)
+	c.Check("m", 1.00, 1.50, nil, nil)
 }
 
 // TestCostDivergence_SilentInTheRaisedBand pins the 2026-08-06 widening 1% -> 3%
@@ -142,7 +142,7 @@ func TestCostDivergence_SilentInTheRaisedBand(t *testing.T) {
 	var msgs []string
 	var c CostDivergenceChecker
 
-	c.Check("m", 1.00, 1.02, capture(&msgs)) // 2%: warned at the old 1%, silent at 3%
+	c.Check("m", 1.00, 1.02, nil, capture(&msgs)) // 2%: warned at the old 1%, silent at 3%
 
 	if len(msgs) != 0 {
 		t.Errorf("got %d warnings, want 0 — 2%% is inside the raised 3%% tolerance:\n%s",
@@ -158,9 +158,65 @@ func TestCostDivergence_StillWarnsJustBeyondTheBand(t *testing.T) {
 	var msgs []string
 	var c CostDivergenceChecker
 
-	c.Check("m", 1.00, 1.05, capture(&msgs)) // 5%: outside 3%
+	c.Check("m", 1.00, 1.05, nil, capture(&msgs)) // 5%: outside 3%
 
 	if len(msgs) != 1 {
 		t.Fatalf("got %d warnings, want 1 — 5%% is beyond the 3%% tolerance", len(msgs))
+	}
+}
+
+// The breakdown is the whole diagnostic value of this warning: without it the
+// line reports two scalars and the question it always provokes — WHICH token
+// class disagrees — needs the turn reconstructed from CC's transcript, because
+// api.db stores the final cycle's context fill rather than the tokens priced.
+func TestCostDivergence_WarningCarriesTheBreakdown(t *testing.T) {
+	t.Parallel()
+	var msgs []string
+	var c CostDivergenceChecker
+
+	c.Check("m", 1.00, 1.50, func() string { return "cycles=3 cache_read=8586842 ($4.293421)" }, capture(&msgs))
+
+	if len(msgs) != 1 {
+		t.Fatalf("got %d warnings, want 1", len(msgs))
+	}
+	if !strings.Contains(msgs[0], "cache_read=8586842") {
+		t.Errorf("warning dropped the breakdown, leaving only two scalars to diagnose from:\n%s", msgs[0])
+	}
+}
+
+// The details closure runs on EVERY turn's worth of arguments but must only be
+// EVALUATED when the warning actually fires — pricing four classes on the
+// common path would be pure waste, and the closure exists specifically to avoid
+// it. A plain string parameter would have quietly lost this.
+func TestCostDivergence_BreakdownNotBuiltWhenSilent(t *testing.T) {
+	t.Parallel()
+	var msgs []string
+	var c CostDivergenceChecker
+	built := 0
+	details := func() string { built++; return "x" }
+
+	c.Check("m", 1.000, 1.005, details, capture(&msgs))     // inside tolerance
+	c.Check("m", 0.000_1, 0.000_5, details, capture(&msgs)) // below floor
+	c.Check("m", 0, 1.50, details, capture(&msgs))          // zero side
+
+	if len(msgs) != 0 {
+		t.Fatalf("expected silence, got %d warnings", len(msgs))
+	}
+	if built != 0 {
+		t.Errorf("details closure evaluated %d times on the silent path — it must be paid for only when the warning fires", built)
+	}
+}
+
+// An empty breakdown must not leave a dangling separator in the message.
+func TestCostDivergence_EmptyBreakdownAddsNothing(t *testing.T) {
+	t.Parallel()
+	var msgs []string
+	var c CostDivergenceChecker
+	c.Check("m", 1.00, 1.50, func() string { return "" }, capture(&msgs))
+	if len(msgs) != 1 {
+		t.Fatalf("got %d warnings, want 1", len(msgs))
+	}
+	if strings.Contains(msgs[0], "| ") {
+		t.Errorf("empty breakdown still emitted a separator:\n%s", msgs[0])
 	}
 }
