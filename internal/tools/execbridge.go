@@ -298,6 +298,31 @@ foci__json() {
 }
 export -f foci__json
 
+# Validate a JSON-typed flag value where the flag is given, so a bad value names
+# the flag. Without this the caller sees jq's "invalid JSON text passed to
+# --argjson", which names neither the flag nor the value, and which prints TWICE
+# because the first failure leaves $params empty and the next jq rejects that
+# too (#1811).
+foci__json_arg() {
+  local flag="$1" want="$2" val="$3" got
+  got="$(printf '%s' "$val" | jq -r 'type' 2>/dev/null)"
+  if [ -z "$got" ]; then
+    echo "error: $flag expects a JSON $want, but this value is not JSON: $val" >&2
+    case "$want" in
+      object) echo "       e.g. $flag '{\"Authorization\":\"Bearer TOKEN\"}'" >&2 ;;
+      array)  echo "       e.g. $flag '[\"one\",\"two\"]'" >&2 ;;
+      number) echo "       e.g. $flag 30" >&2 ;;
+    esac
+    return 1
+  fi
+  if [ "$want" != any ] && [ "$got" != "$want" ]; then
+    echo "error: $flag expects a JSON $want, got $got: $val" >&2
+    return 1
+  fi
+  return 0
+}
+export -f foci__json_arg
+
 `
 
 // writeShellFuncs generates a bash file defining foci_<toolname>() for each
@@ -675,14 +700,14 @@ func generateShellFunc(t *Tool) string {
       --body) body="$2"; shift 2 ;;
       --body-file) body_file="$2"; shift 2 ;;
       --header) headers="$(echo "$headers" | jq --arg k "${2%%%%:*}" --arg v "${2#*: }" '. + {($k): $v}')"; shift 2 ;;
-      --headers) headers="$2"; shift 2 ;;
-      --query) query="$2"; shift 2 ;;
+      --headers) foci__json_arg --headers object "$2" || return 1; headers="$2"; shift 2 ;;
+      --query) foci__json_arg --query object "$2" || return 1; query="$2"; shift 2 ;;
       --save-to) save_to="$2"; shift 2 ;;
       --save-from-json-path) save_json_path="$2"; shift 2 ;;
-      --timeout) timeout="$2"; shift 2 ;;
-      --max-response-bytes) max_bytes="$2"; shift 2 ;;
-      --files) files="$2"; shift 2 ;;
-      --form-fields) form_fields="$2"; shift 2 ;;
+      --timeout) foci__json_arg --timeout number "$2" || return 1; timeout="$2"; shift 2 ;;
+      --max-response-bytes) foci__json_arg --max-response-bytes number "$2" || return 1; max_bytes="$2"; shift 2 ;;
+      --files) foci__json_arg --files array "$2" || return 1; files="$2"; shift 2 ;;
+      --form-fields) foci__json_arg --form-fields object "$2" || return 1; form_fields="$2"; shift 2 ;;
       --background) background=true; shift ;;
       --include-headers) inc_headers=true; shift ;;
       --*)
@@ -778,7 +803,7 @@ func generateShellFunc(t *Tool) string {
       --tag) if [ -n "$tag" ]; then tag="$tag,$2"; else tag="$2"; fi; shift 2 ;;
       --query) query="$2"; shift 2 ;;
       --status) status="$2"; shift 2 ;;
-      --id) id="$2"; shift 2 ;;
+      --id) foci__json_arg --id number "$2" || return 1; id="$2"; shift 2 ;;
       --ids) ids="$2"; shift 2 ;;
       --reason) reason="$2"; shift 2 ;;
       --notes) reason="$2"; shift 2 ;;
@@ -787,7 +812,7 @@ func generateShellFunc(t *Tool) string {
       --add) append_text="$2"; shift 2 ;;
       --append) append=true; shift ;;
       --sort) sort="$2"; shift 2 ;;
-      --limit) limit="$2"; shift 2 ;;
+      --limit) foci__json_arg --limit number "$2" || return 1; limit="$2"; shift 2 ;;
       --reverse) reverse=true; shift ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
@@ -861,6 +886,7 @@ func generateShellFunc(t *Tool) string {
       \[*\]) ;;  # already JSON array — pass through
       *) ids="[$(echo "$ids" | tr -d ' ')]" ;;
     esac
+    foci__json_arg --ids array "$ids" || return 1
   fi
   case "$action" in
     add)
@@ -1003,12 +1029,12 @@ func generateShellFunc(t *Tool) string {
       --name) name="$2"; shift 2 ;;
       --command) command="$2"; shift 2 ;;
       --workdir) workdir="$2"; shift 2 ;;
-      --watch) watch="$2"; shift 2 ;;
+      --watch) foci__json_arg --watch any "$2" || return 1; watch="$2"; shift 2 ;;
       --keys) keys="$2"; shift 2 ;;
-      --enter) enter="$2"; shift 2 ;;
-      --lines) lines="$2"; shift 2 ;;
-      --window) window="$2"; shift 2 ;;
-      --threshold-seconds) threshold_seconds="$2"; shift 2 ;;
+      --enter) foci__json_arg --enter any "$2" || return 1; enter="$2"; shift 2 ;;
+      --lines) foci__json_arg --lines number "$2" || return 1; lines="$2"; shift 2 ;;
+      --window) foci__json_arg --window number "$2" || return 1; window="$2"; shift 2 ;;
+      --threshold-seconds) foci__json_arg --threshold-seconds number "$2" || return 1; threshold_seconds="$2"; shift 2 ;;
       --raw) raw=true; shift ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
@@ -1089,10 +1115,10 @@ func generateShellFunc(t *Tool) string {
   local __foci_json_via=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --json) if [ "$__foci_json_via" = pos ]; then echo "error: the questions JSON was already given positionally; use --json OR the positional form, not both" >&2; return 1; fi; __foci_json_via=flag; json="$2"; shift 2 ;;
+      --json) if [ "$__foci_json_via" = pos ]; then echo "error: the questions JSON was already given positionally; use --json OR the positional form, not both" >&2; return 1; fi; __foci_json_via=flag; foci__json_arg --json any "$2" || return 1; json="$2"; shift 2 ;;
       --grader) grader="$2"; shift 2 ;;
-      --grader-args) grader_args="$2"; shift 2 ;;
-      --grader-timeout-seconds) grader_timeout="$2"; shift 2 ;;
+      --grader-args) foci__json_arg --grader-args array "$2" || return 1; grader_args="$2"; shift 2 ;;
+      --grader-timeout-seconds) foci__json_arg --grader-timeout-seconds number "$2" || return 1; grader_timeout="$2"; shift 2 ;;
       --grader-on-error) grader_on_error="$2"; shift 2 ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
@@ -1144,8 +1170,9 @@ func generateShellFunc(t *Tool) string {
 //   - Positional params (per Tool.Positional) accept bare args, joined
 //     with a space when multiple arrive (matches existing query/text UX)
 //   - Required params (per schema.Required) trigger a usage line on missing
-//   - JSON-typed params (object/array/integer/number) use jq --argjson, so jq
-//     validates the value at parse time
+//   - JSON-typed params (object/array/integer/number) are checked by
+//     foci__json_arg before jq --argjson sees them, so a bad value names the
+//     flag instead of printing jq internals twice (#1811)
 //
 // If the schema is unparseable or empty the function falls back to the legacy
 // JSON-blob behavior so the foci__json passthrough still works for callers
@@ -1493,10 +1520,23 @@ func generateGenericShellFunc(t *Tool) string {
 				k, k, k,
 			)
 		default:
-			// integer, number, object, array — jq validates value as JSON.
+			// integer, number, object, array — validated before jq sees it so a
+			// bad value names the flag. jq's own --argjson error names neither
+			// the flag nor the value, and prints twice because the first failure
+			// leaves $params empty and the next jq rejects that too (#1811).
+			want := ty
+			switch want {
+			case "integer":
+				want = "number"
+			case "":
+				want = "any"
+			}
 			fmt.Fprintf(&b,
-				"  [ -n \"$%s\" ] && params=\"$(echo \"$params\" | jq --argjson v \"$%s\" '. + {%s: $v}')\"\n",
-				k, k, k,
+				"  if [ -n \"$%s\" ]; then\n"+
+					"    foci__json_arg --%s %s \"$%s\" || return 1\n"+
+					"    params=\"$(echo \"$params\" | jq --argjson v \"$%s\" '. + {%s: $v}')\"\n"+
+					"  fi\n",
+				k, strings.ReplaceAll(k, "_", "-"), want, k, k, k,
 			)
 		}
 	}
