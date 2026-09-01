@@ -278,6 +278,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		if e.Rate != 0 {
 			add(prefix, "rate", e.Rate)
 		}
+		if e.Fallback != nil {
+			add(prefix, "fallback", *e.Fallback)
+		}
 	}
 	// stt
 	for i, e := range cfg.STT {
