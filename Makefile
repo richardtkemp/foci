@@ -408,6 +408,28 @@ check: lint coverage-check verify-persistence
 #   sudo make -C <repo> update   # deploy new code to an existing install
 #   sudo make -C <repo> setup    # first-time provision (usually via download.sh)
 
+# Guard: these targets must run as root, and the failure without it names the
+# wrong thing (#1741). sync-main and deploy-build both call `sudo -u $(FOCI_USER)`,
+# and on the foci account's PATH `sudo` is /home/foci/bin/sudo -> aisudo, which
+# takes no -u:
+#
+#   $ make update
+#   aisudo: unrecognized option '-u'
+#   make[1]: *** [Makefile:454: sync-main] Error 1
+#
+# That blames a flag on a tool the caller never invoked, so the natural next move
+# is to read aisudo or hand-run the sync-main steps — improvising around a
+# production deploy. Under the sanctioned `sudo make ...` form the OUTER sudo runs
+# make as root, whose PATH has no shim, so the inner `sudo -u foci` resolves to
+# the real /usr/bin/sudo. Fail early and say so.
+define REQUIRE_ROOT
+@if [ "$$(id -u)" != "0" ]; then \
+  echo "ABORT: '$@' must run as root. Use:" >&2; \
+  echo "    sudo make -C $(CURDIR) $@" >&2; \
+  exit 1; \
+fi
+endef
+
 FOCI_USER     ?= foci
 FOCI_HOME     ?= /home/$(FOCI_USER)
 INSTALL_DIR   ?= /usr/local/bin
@@ -624,6 +646,7 @@ enable:
 # First-time provision. Ordered explicitly (sub-make) so it is correct even
 # under -j. Usually invoked by download.sh after fetching the repo.
 setup:
+	$(REQUIRE_ROOT)
 	$(MAKE) deploy-build
 	$(MAKE) provision
 	$(MAKE) install-shared
@@ -639,6 +662,7 @@ setup:
 # Deploy new code to an existing install. check-config runs against the FRESH
 # binary before anything is installed, so a bad config aborts untouched.
 update:
+	$(REQUIRE_ROOT)
 	$(MAKE) sync-main
 	$(MAKE) deploy-build
 	$(MAKE) check-config
