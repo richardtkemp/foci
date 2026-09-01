@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -310,16 +311,42 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		return f.Chmod(mode)
 	}
 
-	// Format response header block
+	// redactSecrets applies both secret stores' redaction. It covers the header
+	// block AND the inline body preview — before 2026-09-01 only the body was
+	// covered, so a resolved {{secret:}} echoed back in a response header
+	// printed raw.
+	redactSecrets := func(s string) string {
+		if store != nil {
+			s = store.Redact(s)
+		}
+		if bwStore != nil {
+			s = bwStore.Redact(s)
+		}
+		return s
+	}
+
+	// Format the response header block: every header the server sent, sorted by
+	// name for a stable result, one line per value (a header may repeat). This
+	// replaced a four-name allowlist (Content-Type, Content-Length, Location,
+	// X-Request-Id) which made Retry-After, the x-ratelimit-* family and Link
+	// unreachable through the tool at any flag combination (#1810). Redaction is
+	// what makes showing everything safe for foci's OWN secrets; it does not
+	// mask a server-minted credential such as a Set-Cookie session value — a
+	// deliberate trade (Dick, 2026-09-01).
 	formatHeaders := func() string {
 		var hdr strings.Builder
 		fmt.Fprintf(&hdr, "HTTP %s\n", resp.Status)
-		for _, h := range []string{"Content-Type", "Content-Length", "Location", "X-Request-Id"} {
-			if v := resp.Header.Get(h); v != "" {
-				fmt.Fprintf(&hdr, "%s: %s\n", h, v)
+		names := make([]string, 0, len(resp.Header))
+		for name := range resp.Header {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			for _, v := range resp.Header[name] {
+				fmt.Fprintf(&hdr, "%s: %s\n", name, v)
 			}
 		}
-		return hdr.String()
+		return redactSecrets(hdr.String())
 	}
 
 	if savePath != "" || autoSave {
@@ -411,13 +438,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 
 	// Redact the inline preview (best-effort; the on-disk full body is raw, same
 	// as the shell tool — Redact is defence-in-depth, not a boundary).
-	bodyStr := sw.String()
-	if store != nil {
-		bodyStr = store.Redact(bodyStr)
-	}
-	if bwStore != nil {
-		bodyStr = bwStore.Redact(bodyStr)
-	}
+	bodyStr := redactSecrets(sw.String())
 
 	result := TextResult(formatHeaders() + "\n" + bodyStr)
 	if sw.Spilled() {
