@@ -16,6 +16,8 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
+	"foci/internal/delegator/keyedmutex"
+	"foci/internal/log"
 	"foci/internal/ratelimit"
 )
 
@@ -25,6 +27,10 @@ import (
 var (
 	serverPoolMu sync.Mutex
 	serverPool   = map[string]*Server{}
+
+	// acquireLocks serialises acquireServer PER AGENT (#1718). serverPoolMu
+	// guards the map; this guards the decision. See acquireServer.
+	acquireLocks keyedmutex.Map
 )
 
 // acquireServer returns the live Server for agentID, constructing and
@@ -34,6 +40,25 @@ var (
 // take effect — the subprocess is shared across all sessions on this
 // agent (documented v1 limitation).
 func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Server, error) {
+	// Serialise the whole check-then-spawn for THIS agent (#1718). The two
+	// serverPoolMu sections below are individually correct but the map says
+	// nothing about this agent between them, for as long as Start() takes —
+	// measured at 13s, and unbounded, since Start gets context.Background() and
+	// healthProbe returns only on healthy or subprocess death. A second caller
+	// arriving in that gap read the empty slot, correctly concluded no server
+	// existed, and launched a second subprocess; both opened the same SQLite
+	// store and one died with "database is locked" (10 occurrences in 16 days,
+	// all on restarts, most recently 2026-08-31T21:16:40).
+	//
+	// Keyed rather than one global lock held across the spawn: serverPoolMu is
+	// shared by every agent, so holding it here would let one agent whose
+	// subprocess never becomes healthy block every other agent's acquire
+	// forever. Different agents still spawn concurrently.
+	//
+	// Serialisation, not singleflight dedup — the second caller must still run
+	// this body so it does its own refCount++. See package keyedmutex.
+	defer acquireLocks.Lock(agentID)()
+
 	serverPoolMu.Lock()
 	if s, ok := serverPool[agentID]; ok {
 		if s.isAlive() {
@@ -74,6 +99,14 @@ func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Se
 	// agent (or a batch run racing an interactive Start) CAN both reach
 	// here concurrently in production; this is not just cheap insurance.
 	if existing, ok := serverPool[agentID]; ok {
+		// UNREACHABLE while the keyed lock above holds: acquireServer is the only
+		// writer to serverPool (branch.go reads, lifecycle.go deletes), and it is
+		// now serialised per agent. Kept, and made LOUD, because reaching it means
+		// the serialisation failed — which otherwise has no symptom until two
+		// subprocesses collide on the SQLite store minutes later. Behaviour is
+		// unchanged; only the WARN is new.
+		log.NewComponentLogger("opencode:" + agentID).Warnf(
+			"acquire raced despite per-agent serialisation — a second server was started and is being closed (#1718)")
 		existing.refCount++ // must happen under serverPoolMu like every other refCount mutation
 		serverPoolMu.Unlock()
 		go func() { _ = s.Close() }() // bounded shutdown, doesn't block the caller

@@ -20,6 +20,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
+	"foci/internal/delegator/keyedmutex"
 	"foci/internal/log"
 	"foci/internal/modelcaps"
 )
@@ -149,6 +150,11 @@ var sharedPool = struct {
 	servers map[string]*Backend
 	refs    map[string]int
 }{servers: make(map[string]*Backend), refs: make(map[string]int)}
+
+// acquireLocks serialises Start's acquire-or-launch PER AGENT (#1718).
+// sharedPool guards the maps; this guards the decision. See package keyedmutex
+// and the comment at the acquire site in lifecycle.go.
+var acquireLocks keyedmutex.Map
 
 // process returns the shared app-server owner. Each Backend facade retains
 // its own thread/turn/callback state; only transport and RPC correlation are
