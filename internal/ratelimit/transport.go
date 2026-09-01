@@ -60,9 +60,14 @@ type Error struct {
 	Detail     string        // raw body snippet, for debug logging only — never user-facing
 }
 
+// Error reports the remaining wait as a statement about the PROVIDER, not a
+// plan: an Error only exists in ModeDegrade, which by construction never
+// retried and never will. Phrasing it as "retry in ..." read as foci intending
+// to try again later, which for a live voice reply would be quota spent on
+// audio nobody is still waiting for.
 func (e *Error) Error() string {
 	if e.RetryAfter > 0 {
-		return fmt.Sprintf("rate limited (%d): retry in %s", e.StatusCode, e.RetryAfter.Round(time.Second))
+		return fmt.Sprintf("rate limited (%d): provider unavailable for another %s", e.StatusCode, e.RetryAfter.Round(time.Second))
 	}
 	return fmt.Sprintf("rate limited (%d)", e.StatusCode)
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -195,4 +196,187 @@ func TestResolveSTT_NilMap(t *testing.T) {
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
 	}
+}
+
+// ptr is a local helper for the *string config fields below.
+func ptr[T any](v T) *T { return &v }
+
+// chainIDs returns the ids of a resolved TTS fallback chain, or a single-element
+// slice for a bare (unchained) provider.
+func chainIDs(t *testing.T, tts voice.TTS) []string {
+	t.Helper()
+	f, ok := tts.(*voice.FallbackTTS)
+	if !ok {
+		return []string{"<bare>"}
+	}
+	ids := make([]string, 0, len(f.Chain))
+	for _, e := range f.Chain {
+		ids = append(ids, e.ID)
+	}
+	return ids
+}
+
+// TestInitVoice_RegistersBuiltinFallback: a configured cloud provider must gain
+// a key-less local provider to fall back to, without it being declared.
+func TestInitVoice_RegistersBuiltinFallback(t *testing.T) {
+	cfg := &config.Config{TTS: []config.TTSConfig{
+		{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/speech", Model: "m"},
+	}}
+	ttsMap, _ := initVoice(cfg, newTestStore(t, map[string]string{"groq.api_key": "k"}))
+
+	if _, ok := ttsMap[builtinFallbackTTSID]; !ok {
+		t.Fatalf("ttsMap has no %q provider; got keys %v", builtinFallbackTTSID, mapKeys(ttsMap))
+	}
+	if ttsMap[""] == ttsMap[builtinFallbackTTSID] {
+		t.Error("built-in fallback became the default provider; it must only ever be a fallback")
+	}
+}
+
+// TestInitVoice_NoTTSConfiguredStaysEmpty: graceful text-only degradation (#1439)
+// must survive the built-in — a deployment that configured no TTS gets none.
+func TestInitVoice_NoTTSConfiguredStaysEmpty(t *testing.T) {
+	ttsMap, _ := initVoice(&config.Config{}, newTestStore(t, nil))
+	if len(ttsMap) != 0 {
+		t.Errorf("ttsMap = %v, want empty when no [[tts]] entries are configured", mapKeys(ttsMap))
+	}
+}
+
+// TestInitVoice_ConfiguredEdgeEntryWins: declaring the id explicitly must
+// replace the built-in, so the edge voice/command stay configurable.
+func TestInitVoice_ConfiguredEdgeEntryWins(t *testing.T) {
+	cfg := &config.Config{TTS: []config.TTSConfig{
+		{ID: builtinFallbackTTSID, Format: "edge-tts", Voice: "en-GB-RyanNeural"},
+	}}
+	ttsMap, _ := initVoice(cfg, newTestStore(t, nil))
+
+	edge, ok := ttsMap[builtinFallbackTTSID].(*voice.EdgeTTS)
+	if !ok {
+		t.Fatalf("provider = %T, want *voice.EdgeTTS", ttsMap[builtinFallbackTTSID])
+	}
+	if edge.Voice != "en-GB-RyanNeural" {
+		t.Errorf("voice = %q, want the configured one — the built-in overwrote the [[tts]] entry", edge.Voice)
+	}
+}
+
+// TestResolveTTS_DefaultsToEdgeFallback is the behaviour Groq's daily token cap
+// motivated: an unconfigured cloud entry still ends up with a local backstop.
+func TestResolveTTS_DefaultsToEdgeFallback(t *testing.T) {
+	ttsMap := map[string]voice.TTS{
+		"":                   &voice.OpenAITTS{Model: "tts-1"},
+		"groq":               &voice.OpenAITTS{Model: "tts-1"},
+		builtinFallbackTTSID: &voice.EdgeTTS{},
+	}
+	entries := []config.TTSConfig{{ID: "groq", Format: "openai"}}
+
+	got := chainIDs(t, resolveTTS(ttsMap, entries, "groq", 0, nil))
+	want := []string{"groq", builtinFallbackTTSID}
+	if !equalStrings(got, want) {
+		t.Errorf("chain = %v, want %v", got, want)
+	}
+}
+
+// TestResolveTTS_ExplicitEmptyFallbackDisables: `fallback = ""` must opt out,
+// which is why the config field is a pointer rather than a plain string.
+func TestResolveTTS_ExplicitEmptyFallbackDisables(t *testing.T) {
+	ttsMap := map[string]voice.TTS{
+		"groq":               &voice.OpenAITTS{Model: "tts-1"},
+		builtinFallbackTTSID: &voice.EdgeTTS{},
+	}
+	entries := []config.TTSConfig{{ID: "groq", Format: "openai", Fallback: ptr("")}}
+
+	if got := chainIDs(t, resolveTTS(ttsMap, entries, "groq", 0, nil)); !equalStrings(got, []string{"<bare>"}) {
+		t.Errorf("chain = %v, want an unchained provider", got)
+	}
+}
+
+// TestResolveTTS_ExplicitChain: fallback ids compose into a multi-hop chain.
+func TestResolveTTS_ExplicitChain(t *testing.T) {
+	ttsMap := map[string]voice.TTS{
+		"groq":               &voice.OpenAITTS{Model: "a"},
+		"openrouter":         &voice.OpenAITTS{Model: "b"},
+		builtinFallbackTTSID: &voice.EdgeTTS{},
+	}
+	entries := []config.TTSConfig{
+		{ID: "groq", Format: "openai", Fallback: ptr("openrouter")},
+		{ID: "openrouter", Format: "openai"},
+	}
+
+	got := chainIDs(t, resolveTTS(ttsMap, entries, "groq", 0, nil))
+	want := []string{"groq", "openrouter", builtinFallbackTTSID}
+	if !equalStrings(got, want) {
+		t.Errorf("chain = %v, want %v", got, want)
+	}
+}
+
+// TestResolveTTS_EdgeEntryDoesNotChainToItself: an edge-tts entry is already
+// the local backstop, so the default fallback must not point it at itself.
+func TestResolveTTS_EdgeEntryDoesNotChainToItself(t *testing.T) {
+	ttsMap := map[string]voice.TTS{
+		"local":              &voice.EdgeTTS{},
+		builtinFallbackTTSID: &voice.EdgeTTS{},
+	}
+	entries := []config.TTSConfig{{ID: "local", Format: "edge-tts"}}
+
+	if got := chainIDs(t, resolveTTS(ttsMap, entries, "local", 0, nil)); !equalStrings(got, []string{"<bare>"}) {
+		t.Errorf("chain = %v, want an unchained provider", got)
+	}
+}
+
+// TestResolveTTS_CycleTerminates: a config that points two entries at each
+// other must not loop, and must not repeat a provider in the chain.
+func TestResolveTTS_CycleTerminates(t *testing.T) {
+	ttsMap := map[string]voice.TTS{
+		"a": &voice.OpenAITTS{Model: "a"},
+		"b": &voice.OpenAITTS{Model: "b"},
+	}
+	entries := []config.TTSConfig{
+		{ID: "a", Format: "openai", Fallback: ptr("b")},
+		{ID: "b", Format: "openai", Fallback: ptr("a")},
+	}
+
+	got := chainIDs(t, resolveTTS(ttsMap, entries, "a", 0, nil))
+	if !equalStrings(got, []string{"a", "b"}) {
+		t.Errorf("chain = %v, want [a b] — the cycle was not broken", got)
+	}
+}
+
+// TestResolveTTS_ChainLinksKeepTheirOwnRate: each link is decorated with its
+// own entry rate, not the head's, so a fallback voice is not left at 1.0.
+func TestResolveTTS_ChainLinksKeepTheirOwnRate(t *testing.T) {
+	ttsMap := map[string]voice.TTS{
+		"groq":               &voice.OpenAITTS{Model: "tts-1"},
+		builtinFallbackTTSID: &voice.EdgeTTS{},
+	}
+	entries := []config.TTSConfig{
+		{ID: "groq", Format: "openai", Rate: 1.3},
+		{ID: builtinFallbackTTSID, Format: "edge-tts", Rate: 1.1},
+	}
+
+	f, ok := resolveTTS(ttsMap, entries, "groq", 2.0, nil).(*voice.FallbackTTS)
+	if !ok {
+		t.Fatal("expected a *voice.FallbackTTS chain")
+	}
+	head, ok := f.Chain[0].TTS.(*voice.OpenAITTS)
+	if !ok {
+		t.Fatalf("head = %T, want *voice.OpenAITTS", f.Chain[0].TTS)
+	}
+	if head.Speed < 2.59 || head.Speed > 2.61 {
+		t.Errorf("head speed = %v, want ~2.6 (1.3 x 2.0)", head.Speed)
+	}
+	tail, ok := f.Chain[1].TTS.(*voice.EdgeTTS)
+	if !ok {
+		t.Fatalf("tail = %T, want *voice.EdgeTTS", f.Chain[1].TTS)
+	}
+	if tail.Rate < 2.19 || tail.Rate > 2.21 {
+		t.Errorf("tail rate = %v, want ~2.2 (1.1 x 2.0) — the fallback took the head's rate", tail.Rate)
+	}
+}
+
+func mapKeys(m map[string]voice.TTS) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

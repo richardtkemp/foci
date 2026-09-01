@@ -930,6 +930,11 @@ type TTSConfig struct {
 	Command        string            `toml:"command"`         // binary for edge-tts (default: "edge-tts")
 	ResponseFormat string            `toml:"response_format"` // audio format: "mp3", "wav", etc. (default: "wav")
 	Replacements   map[string]string `toml:"replacements"`    // word replacements applied before synthesis (e.g. "foci" = "foki")
+	// Fallback names the [[tts]] entry to try when this provider fails, forming
+	// a chain. Unset means the built-in key-less edge-tts provider, so a
+	// rate-limited cloud voice degrades to a local one rather than to silence.
+	// Set it to "" to disable fallback for this entry.
+	Fallback *string `toml:"fallback"`
 }
 
 // STTConfig describes a speech-to-text provider entry.
