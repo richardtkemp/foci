@@ -44,6 +44,22 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// once below rather than duplicated per path. Two hand-maintained copies
 	// of that sequence is what produced #1573, where the attach path returned
 	// before ever resolving the model or recording the effort.
+	// Serialise acquire PER AGENT (#1718), the same shape opencode needs — see
+	// package keyedmutex. Codex already claims its pool slot under sharedPool
+	// BEFORE launching, which is most of the fix; the residual hole is the
+	// predicate below. Between `sharedPool.servers[id] = b` and `b.running =
+	// true` (set right after cmd.Start()) the owner EXISTS but is not "running",
+	// so a second caller read the slot as free and OVERWROTE it with its own
+	// facade, then launched a second app-server. That window is an exec plus a
+	// few field assignments rather than opencode's 13-second health probe, which
+	// is why it has fired once (2026-07-16) against opencode's ten — same defect,
+	// ~10^7 less exposure.
+	//
+	// Scoped to the acquire, NOT deferred to the end of Start: the shared tail
+	// below (applyModelAndEffort, thread start/resume) must not hold a per-agent
+	// lock, or concurrent sessions on one agent would serialise their turn
+	// starts — a behaviour change, not a fix.
+	unlockAcquire := acquireLocks.Lock(opts.AgentID)
 	sharedPool.Lock()
 	owner := sharedPool.servers[opts.AgentID]
 	attached := owner != nil && owner.IsRunning()
@@ -65,9 +81,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 
 	if !attached {
 		if err := b.launchAppServer(ctx, opts); err != nil {
+			unlockAcquire()
 			return err
 		}
 	}
+	unlockAcquire()
 
 	// --- shared tail: from here the connection exists, whichever path got us
 	// one, and b.Close() is the correct teardown for both. On the attach path

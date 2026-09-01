@@ -8,6 +8,16 @@
 # Env overrides:
 #   OPC_STUB_EXIT_CODE=<n>   exit immediately with code <n>.
 #   OPC_STUB_SLEEP_SECS=<n>  sleep <n> seconds then exit 0.
+#   OPC_STUB_MARK=<file>     append "S <pid> <ns>" on start and "E <pid> <ns>" on
+#                            exit. Lets a test reconstruct each subprocess's
+#                            LIFETIME and assert that no two overlapped, which is
+#                            the #1718 defect stated directly: two servers alive
+#                            at once on the same agent, both opening one SQLite
+#                            store. A plain spawn COUNT cannot express it — the
+#                            fix serialises rather than deduplicates, so two
+#                            sequential spawns are correct and two overlapping
+#                            ones are the bug. Lines are short and opened O_APPEND,
+#                            so concurrent writes do not interleave.
 #
 # This stub does NOT serve HTTP — that's intentional. Server.Start's health
 # probe (GET /global/health) is exercised against httptest.Server in tests
@@ -21,12 +31,19 @@ case "${OPC_STUB_EXIT_CODE:-}" in
 	*) exit "$OPC_STUB_EXIT_CODE" ;;
 esac
 
+mark() {
+	[ -n "${OPC_STUB_MARK:-}" ] || return 0
+	echo "$1 $$ $(date +%s%N)" >> "$OPC_STUB_MARK"
+}
+mark S
+
 if [ -n "${OPC_STUB_SLEEP_SECS:-}" ]; then
 	sleep "$OPC_STUB_SLEEP_SECS"
+	mark E
 	exit 0
 fi
 
-trap 'exit 0' TERM
+trap 'mark E; exit 0' TERM
 while true; do
 	sleep 1
 done

@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -757,4 +760,93 @@ func lookupTestPool(agentID string) (*Server, bool) {
 	defer serverPoolMu.Unlock()
 	s, ok := serverPool[agentID]
 	return s, ok
+}
+
+// TestServer_Pool_AcquireDoesNotDoubleSpawn reproduces #1718: two concurrent
+// acquires for the SAME agent each started their own subprocess, because the
+// check ("is one pooled?") and the create ("start one") sat in two different
+// critical sections with the pool saying nothing about the agent in between.
+// Both subprocesses then opened the same SQLite store and one died with
+// "database is locked" — 10 occurrences in 16 days, all on restarts.
+//
+// Asserted on OVERLAP, not on a spawn COUNT, because the fix serialises rather
+// than deduplicates: two SEQUENTIAL spawns are correct here (the first fails —
+// the stub serves no HTTP — so the second legitimately tries again), while two
+// SIMULTANEOUS ones are the defect. A count cannot tell those apart. The stub
+// records "S <pid> <ns>" / "E <pid> <ns>", so the test reconstructs each
+// subprocess's real lifetime.
+func TestServer_Pool_AcquireDoesNotDoubleSpawn(t *testing.T) {
+	resetTestPool(t)
+
+	markFile := filepath.Join(t.TempDir(), "marks")
+	cfg := serverConfig{
+		workDir:    t.TempDir(),
+		binaryPath: stubBinary(t),
+		hostname:   "127.0.0.1",
+		port:       0,
+	}
+	// SLEEP_SECS keeps each subprocess alive ~1s, which is what makes the window
+	// observable at all: acquireServer passes context.Background(), so the health
+	// probe only returns when the subprocess dies. In production this window is
+	// the full 13s health probe.
+	env := map[string]string{"OPC_STUB_MARK": markFile, "OPC_STUB_SLEEP_SECS": "1"}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start // release both at once, to actually contend
+			_, _ = acquireServer("agent-race", cfg, env)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	type span struct{ start, end int64 }
+	spans := map[string]*span{}
+	raw, err := os.ReadFile(markFile)
+	if err != nil {
+		t.Fatalf("read stub marks: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 3 {
+			continue
+		}
+		ns, convErr := strconv.ParseInt(f[2], 10, 64)
+		if convErr != nil {
+			continue
+		}
+		sp, ok := spans[f[1]]
+		if !ok {
+			// end defaults to +inf so a subprocess with no E (killed hard) is
+			// treated as still running — conservative, never hides an overlap.
+			sp = &span{end: math.MaxInt64}
+			spans[f[1]] = sp
+		}
+		if f[0] == "S" {
+			sp.start = ns
+		} else {
+			sp.end = ns
+		}
+	}
+	if len(spans) == 0 {
+		t.Fatal("no subprocess was launched at all — the test proves nothing")
+	}
+	t.Logf("subprocesses launched: %d", len(spans))
+
+	pids := make([]string, 0, len(spans))
+	for pid := range spans {
+		pids = append(pids, pid)
+	}
+	for i := 0; i < len(pids); i++ {
+		for j := i + 1; j < len(pids); j++ {
+			a, b := spans[pids[i]], spans[pids[j]]
+			if a.start < b.end && b.start < a.end {
+				t.Fatalf("two opencode subprocesses for one agent were alive at the same time (pids %s and %s) — #1718", pids[i], pids[j])
+			}
+		}
+	}
 }
