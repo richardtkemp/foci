@@ -881,3 +881,130 @@ func IsOpenAI(model string) bool {
 	}
 	return false
 }
+
+// NewestInFamily returns the newest registered model id for one developer's
+// model family — NewestInFamily("anthropic", "opus") → "claude-opus-5".
+//
+// It exists so callers that mean "the current opus" stop hand-maintaining a
+// literal that goes stale on every release. provision.ResolveModelAlias was a
+// fixed map and had drifted three of its four rows behind the models actually
+// in use (opus→4-6 while every real turn ran opus-5) — a map keyed by a name
+// whose whole meaning is "the newest one" cannot help drifting.
+//
+// Newest is decided by the VERSION SEGMENTS THAT FOLLOW the family token in the
+// id, compared as a numeric tuple: claude-fable-5-1 [5 1] beats claude-fable-5
+// [5]; claude-opus-5 [5] beats claude-opus-4-6 [4 6]. Both spellings the
+// registry carries are accepted ("4-6" and "4.6" both parse to [4 6]); on a tie
+// the dash spelling wins, because that is the form Anthropic's own API uses.
+//
+// A candidate must be ALL-NUMERIC after the family token, which is what keeps
+// the aliases pointing at plain, current models: it rejects claude-opus-latest
+// (a moving pointer), claude-opus-5-fast and claude-opus-5[1m] (priced variants
+// of a model, not newer models), and claude-3-haiku (whose version precedes the
+// family token, so it offers no version at all and cannot outrank haiku-4-5).
+//
+// Returns ok=false when nothing in the registry matches, so callers keep a
+// literal fallback rather than propagating an empty model id.
+//
+// Deliberately NOT codex's compareModelVersions (delegator/codex/model_resolver.go),
+// which ranks by every numeric run anywhere in an id and ignores non-numeric
+// text. That is right for its input — a curated app-server catalogue where each
+// entry is a selectable model — and wrong for this one: on the registry it reads
+// claude-opus-5[1m] as [5 1] and ranks it ABOVE claude-opus-5. The registry
+// mixes real models with price/context variants and moving pointers, so the
+// non-numeric text is exactly what has to be honoured here.
+func NewestInFamily(dev, family string) (string, bool) {
+	dev, family = strings.ToLower(dev), strings.ToLower(family)
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	var bestID string
+	var bestVer []int
+	for id, byKey := range registry {
+		matchesDev := false
+		for _, m := range byKey {
+			if m.Dev == dev {
+				matchesDev = true
+				break
+			}
+		}
+		if !matchesDev {
+			continue
+		}
+		ver, ok := familyVersion(id, family)
+		if !ok {
+			continue
+		}
+		if bestID == "" || versionLess(bestVer, ver) ||
+			(!versionLess(ver, bestVer) && preferredSpelling(id, bestID)) {
+			bestID, bestVer = id, ver
+		}
+	}
+	return bestID, bestID != ""
+}
+
+// familyVersion extracts the numeric version following the family token in a
+// model id — ("claude-fable-5-1", "fable") → [5 1]. It reports false unless
+// `family` appears as a whole dash-separated segment AND every segment after it
+// is purely numeric (dots allowed, so the registry's "4.6" spelling parses like
+// its "4-6" one). See NewestInFamily for why that strictness is the point.
+func familyVersion(id, family string) ([]int, bool) {
+	segs := strings.Split(id, "-")
+	at := -1
+	for i, s := range segs {
+		if s == family {
+			at = i
+			break
+		}
+	}
+	if at < 0 || at == len(segs)-1 {
+		return nil, false
+	}
+	var ver []int
+	for _, s := range segs[at+1:] {
+		for _, part := range strings.Split(s, ".") {
+			if part == "" {
+				return nil, false
+			}
+			n := 0
+			for _, r := range part {
+				if r < '0' || r > '9' {
+					return nil, false
+				}
+				n = n*10 + int(r-'0')
+			}
+			ver = append(ver, n)
+		}
+	}
+	return ver, true
+}
+
+// versionLess orders version tuples element-wise, treating a missing element as
+// lower, so [5] < [5 1] and [4 6] < [5].
+func versionLess(a, b []int) bool {
+	for i := 0; i < len(a) || i < len(b); i++ {
+		var x, y int
+		if i < len(a) {
+			x = a[i]
+		}
+		if i < len(b) {
+			y = b[i]
+		}
+		if x != y {
+			return x < y
+		}
+	}
+	return false
+}
+
+// preferredSpelling breaks a version tie between two ids for the same model
+// (the registry carries both "claude-haiku-4-5" and "claude-haiku-4.5"). Prefer
+// the dash form — Anthropic's own API ids use dashes, and the alias result is
+// sent to that API. Falls back to lexical order so the pick is deterministic
+// whatever the map iteration order.
+func preferredSpelling(candidate, current string) bool {
+	cDot, curDot := strings.Contains(candidate, "."), strings.Contains(current, ".")
+	if cDot != curDot {
+		return !cDot
+	}
+	return candidate < current
+}

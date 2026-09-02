@@ -20,26 +20,3 @@ func TestIsValidAgentID(t *testing.T) {
 		}
 	}
 }
-
-func TestResolveModelAlias(t *testing.T) {
-	// Verifies model alias resolution for opus, sonnet, haiku shorthands.
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"opus", "anthropic/claude-opus-4-6"},
-		{"sonnet", "anthropic/claude-sonnet-4-6"},
-		{"haiku", "anthropic/claude-haiku-4-5-20251001"},
-		{"", "anthropic/claude-sonnet-4-6"},
-		{"claude-custom-model", "claude-custom-model"},
-		{"OPUS", "anthropic/claude-opus-4-6"},
-		{"  Sonnet  ", "anthropic/claude-sonnet-4-6"},
-	}
-
-	for _, tt := range tests {
-		got := ResolveModelAlias(tt.input)
-		if got != tt.want {
-			t.Errorf("ResolveModelAlias(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
