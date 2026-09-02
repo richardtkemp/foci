@@ -21,7 +21,7 @@ import "testing"
 // Code traffic is 100% 1h-TTL cache writes (measured: zero 5m writes in a month),
 // so for these ids the 5m fallback is never the right answer — it is the bug.
 func TestOneHourRate_PresentForModelsWeRun(t *testing.T) {
-	for _, id := range []string{"claude-opus-5", "claude-sonnet-5", "claude-fable-5"} {
+	for _, id := range []string{"claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-fable-5-1"} {
 		m, ok := Lookup("claude", id)
 		if !ok {
 			t.Errorf("%s: not in the registry at all", id)
@@ -65,5 +65,29 @@ func TestOneHourRate_RefreshDoesNotDropIt(t *testing.T) {
 					"5m pricing", id)
 			}
 		}
+	}
+}
+
+// TestFable51CacheReadIsQuarterRate guards the one price in the registry that
+// does NOT follow Anthropic's standard multipliers. Every other Claude model
+// prices a cache hit at 0.10x base input; Fable 5.1 and Mythos 5.1 price it at
+// 0.025x ($0.25/M against $10/M input) — footnoted on the pricing page, and
+// confirmed by Dick on release day (2026-09-02). sync-modelinfo appends dated
+// refresh rows from OpenRouter and the newest row wins, so a refresh carrying
+// the conventional 0.1x figure would silently quadruple foci's cache-read cost
+// on this model, with no parse error and no warning — and cache reads are the
+// bulk of every delegated turn. Anchor the exception in a test, not a comment.
+func TestFable51CacheReadIsQuarterRate(t *testing.T) {
+	m, ok := Lookup("claude", "claude-fable-5-1")
+	if !ok {
+		t.Fatal("claude-fable-5-1: not in the registry at all")
+	}
+	if m.InputPer1M != 10 {
+		t.Errorf("input rate = %v, want 10 — the 0.025x check below assumes it", m.InputPer1M)
+	}
+	if m.CacheReadPer1M != 0.25 {
+		t.Errorf("cache-read rate = %v, want 0.25 (0.025x input). A value of %v would mean a "+
+			"refresh applied the standard 0.1x multiplier that Fable/Mythos 5.1 are exempt from",
+			m.CacheReadPer1M, m.InputPer1M*0.1)
 	}
 }
