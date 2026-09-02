@@ -97,8 +97,14 @@ with `visible=0` but ARE present here, so their absence is meaningful too.
   rungs + `DefaultChatForAgent` now exclude `is_archived`, and delivery paths mint a
   fresh visible conversation when only archived ones remain (`route.Resolver.CreateDefault`).
   If you see this pre-542dab21 behaviour, that's the mechanism.
-- `strftime('%s','2026-...')` treats the string as **UTC**; BST is +1h. Filter
-  with `datetime(sent_ms/1000,'unixepoch','localtime') BETWEEN ...` instead.
+- **A bare `strftime` comparison matches NOTHING, silently.** `strftime` returns
+  TEXT and SQLite orders every INTEGER below every TEXT, so
+  `sent_ms/1000 > strftime('%s','2026-...')` is unsatisfiable and reports a
+  confident empty result. Arithmetic rescues it (`(strftime('%s','now')-7200)*1000`
+  forces numeric context, which is why the query above works) — a bare `>`/`BETWEEN`
+  does not. It also reads the string as **UTC**; BST is +1h. Filter with
+  `datetime(sent_ms/1000,'unixepoch','localtime') BETWEEN ...` instead, and treat
+  any zero-row filtered query as needing the UNfiltered one as its positive control.
 - `convBinding.send` (hub.go:~1385) persists to the store **unconditionally**,
   then enqueues to the live socket only if `client != nil`. So "in store, not
   delivered" is a real, distinct state from "never generated".
