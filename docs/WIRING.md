@@ -235,7 +235,7 @@ main
  ├── modelcaps     → modelinfo, log (leaf — per-backend live capability cache; Fetcher + Persister seams injected at startup so it imports no anthropic/session/DB)
  ├── compaction    → config, log, memory, messages, modelcaps, modelinfo, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
- ├── provision     (no deps — stdlib-only leaf package for agent creation)
+ ├── provision     → modelinfo (agent creation; modelinfo only so a bare model alias — "opus", "fable" — resolves to the newest member of that family instead of a literal that goes stale)
  ├── command       → agent, config, delegator, delegator/ccstream, display, log, memory, modelcaps, modelinfo, platform, procx, provider, provision, question, session, tempdir, timeutil, tools, workspace
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
@@ -260,7 +260,7 @@ main
  └── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (config, log, secrets, session, voice, warnings).
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (config, log, secrets, session, voice, warnings). `provision` depends on the leaf `modelinfo` only.
 
 **`internal/state` no longer exists.** The former `state` package (`system_state` crash-detection row, `state.json`/state.db key-value store, `agent/ID/default_chat`, `facet:<bot>` bot→session mapping, ask/wizard persistence) was folded into `internal/session`'s `SessionIndex` (SQLite-backed) before this doc's tracked baseline — every dependency line that used to read "state" above has been corrected to "session" (or dropped where session wasn't otherwise a dependency). If you see "state" cited anywhere else in this doc or in `shared/skills/`, it's stale.
 
@@ -274,7 +274,7 @@ No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `sk
 
 Most packages depend on `provider` for types; only `main.go` (`cmd/foci-gw/credentials.go`) imports `anthropic` directly in production code (for Anthropic-specific features — `tools` only references it from test-only helpers now). `periodic` still imports `session` directly (it holds a `*session.SessionIndex` to pick keepalive/reflection/background candidates) but never imports `agent` — warning dispatch is handled by the `warnings` package, wired together in `main.go`.
 
-**`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
+**`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Imports `modelinfo` and nothing else. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). `ResolveModelAlias` turns a family word (`opus`, `sonnet`, `haiku`, `fable`; empty ⇒ sonnet) into `anthropic/<newest id in that family>` via `modelinfo.NewestInFamily`, and passes anything else through untouched — an alias names a family, not a version, so pinning it to a literal guarantees drift (the old fixed map still returned `claude-opus-4-6` long after every real turn ran opus-5). `NewestInFamily` ranks only the numeric segments FOLLOWING the family token, which excludes `-latest` pointers, `-fast`/`[1m]` variants, and `claude-3-haiku` (version before the token). This affects agent CREATION only; a delegated backend still resolves its own `backend_config.model` string itself. Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
 
 ## Command Dispatch Architecture
 

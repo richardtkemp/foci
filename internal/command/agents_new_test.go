@@ -66,8 +66,13 @@ func TestAgentWizardHappyPath(t *testing.T) {
 	if captured.display != "Greek Tutor" {
 		t.Errorf("display = %q", captured.display)
 	}
-	if captured.model != "anthropic/claude-opus-4-6" {
-		t.Errorf("model = %q", captured.model)
+	// The wizard's contract is that it RESOLVES the typed alias and stores the
+	// resolved id alongside the raw input — not which opus is current. Pinning a
+	// version here would re-create the drift that made ResolveModelAlias derive
+	// the newest family member instead of returning a literal; the exact id is
+	// asserted once, in provision's own test.
+	if !strings.HasPrefix(captured.model, "anthropic/claude-opus-") {
+		t.Errorf("model = %q, want the typed alias resolved to an anthropic opus id", captured.model)
 	}
 	if captured.modelRaw != "opus" {
 		t.Errorf("modelRaw = %q, want opus", captured.modelRaw)
