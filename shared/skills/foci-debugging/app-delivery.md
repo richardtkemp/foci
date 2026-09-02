@@ -23,6 +23,10 @@ for `WARN … consecutive app connects closed without completing the handshake`.
 The `resume=N` on each `hello:` line is the discriminator between a socket that
 died before `hello` (no line) and one that asked to resume nothing (`resume=0`);
 both produce zero `replayTo`, so replay counts alone cannot tell them apart.
+`resume=0` does NOT tell you WHY, and it is not a corrupt client DB: the app's
+`onReady` sends an empty resume list both when the minimal-hello degradation is
+active and when its local conversations snapshot is empty — opposite causes,
+identical on the wire. Only the client's own `hello=minimal` line separates them.
 
 **Then read the close reason**, and read it out of the code that emits it:
 client-side in foci-client's `FapClient.kt` (`release()` sends `"backgrounded"`;
