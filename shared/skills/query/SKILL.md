@@ -1,6 +1,6 @@
 ---
 name: query
-description: "Query structured data (JSON, JSONL, TOML, YAML, XML, CSV, Markdown) using jq, mdq, and yq. Use instead of grep/cat/sed for structured files."
+description: "Query structured data (JSON, JSONL, TOML, YAML, XML, CSV, Markdown, SQLite) using jq, mdq, yq, and sqlite3. Use instead of grep/cat/sed for structured files."
 owner: foci
 seeded: true
 ---
@@ -134,6 +134,11 @@ cat something | yq -p toml '.key'
 | `.yaml`, `.yml` | yq | Docker compose, k8s, etc. |
 | `.xml` | yq | |
 | `.csv` | yq | |
+| `.db`, `.sqlite` | sqlite3 -readonly | foci's own stores: state.db, api.db, app-frames.db |
+
+## sqlite3 — `.db` files
+
+**A numeric column compared against `strftime()`/`date()` matches nothing, silently.** Those return TEXT, and SQLite orders every INTEGER below every TEXT, so `epoch_col > strftime('%s', ...)` is never true — zero rows, no error, reads as absence. Cast the bound to INTEGER, or compare on the formatted side (`datetime(col/1000,'unixepoch','localtime') > '2026-09-02 12:00'`).
 
 ## Philosophy
 
