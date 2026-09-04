@@ -108,9 +108,7 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.stashedResultMsg = nil
 	b.turnOutputTokens = 0
 	b.turnCalls = 0
-	b.turnCalcCostUSD = 0
-	b.turnProvidedUSD = 0
-	b.turnProvidedSeen = false
+	b.resetTurnCostAccumulatorsLocked()
 	b.redispatchInFlight = false
 }
 

@@ -1341,7 +1341,13 @@ Four outputs:
    recorded $4.39 — and without the breakdown, identifying which class disagrees means
    reconstructing the turn from CC's transcript with inferred boundaries. Note the warning
    no longer claims a stale table: measured 2026-08-31 over 1,827 opus-5 turns, ~95% price
-   correctly, which a stale rate cannot do (#1695).
+   correctly, which a stale rate cannot do (#1695). The breakdown's token counters are turn-scoped and MUST be cleared by the same
+   boundary that clears `turnCalcCostUSD`; both live in `resetTurnCostAccumulatorsLocked`
+   (`ccstream/costbreakdown.go`), called from `beginTurnLocked` and `tryPreAnswerRedispatch`.
+   They were reset at neither site until #1848, so the warning printed a per-SESSION
+   breakdown beside a per-TURN total — a diagnosis that silently answered a different
+   question. Add a field to that group and it is reset at every boundary for free;
+   reset one inline instead and this recurs.
 
 4. **Conversation log** (`conversation-{agentID}.db`): Per-agent SQLite databases logging exact Telegram messages sent and received. Entries are routed to the correct agent's database by parsing the session key. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
    - Use: `log.Conversation(log.ConversationEntry{...})`
