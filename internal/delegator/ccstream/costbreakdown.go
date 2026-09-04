@@ -44,3 +44,22 @@ func (b costBreakdown) String() string {
 		b.cacheWrite, price(0, 0, 0, b.cacheWrite),
 	)
 }
+
+// resetTurnCostAccumulatorsLocked clears every turn-scoped cost accumulator as
+// ONE group. Caller must hold turnMu.
+//
+// It exists because the cost and the token counts that explain it were reset at
+// two call sites and drifted apart: #1848 shipped with turnCalcCostUSD cleared
+// at both boundaries and the four counters cleared at neither, so the warning
+// printed a per-SESSION breakdown beside a per-TURN total. Splitting the group
+// across call sites is what let one half be forgotten, so the group now has one
+// name and adding a field to it cannot miss a boundary.
+func (b *Backend) resetTurnCostAccumulatorsLocked() {
+	b.turnCalcCostUSD = 0
+	b.turnProvidedUSD = 0
+	b.turnProvidedSeen = false
+	b.turnCalcInput = 0
+	b.turnCalcOutput = 0
+	b.turnCalcCacheRead = 0
+	b.turnCalcCacheWrite = 0
+}
