@@ -29,25 +29,12 @@ func TestBeginTurn_ResetsEveryTurnScopedCostAccumulator(t *testing.T) {
 	b.turnCalcCostUSD = 0.052267
 	b.turnProvidedUSD = 0.054929
 	b.turnProvidedSeen = true
-	b.turnCalcInput = 12
-	b.turnCalcOutput = 2786
-	b.turnCalcCacheRead = 144976
-	b.turnCalcCacheWrite = 74685
+	b.turnCalc = modelinfo.TokenCounts{Input: 12, Output: 2786, CacheRead: 144976, CacheWrite: 74685}
 
 	b.beginTurnLocked(&delegator.TurnEvents{})
 
-	for _, c := range []struct {
-		name string
-		got  int
-	}{
-		{"turnCalcInput", b.turnCalcInput},
-		{"turnCalcOutput", b.turnCalcOutput},
-		{"turnCalcCacheRead", b.turnCalcCacheRead},
-		{"turnCalcCacheWrite", b.turnCalcCacheWrite},
-	} {
-		if c.got != 0 {
-			t.Errorf("%s = %d after beginTurnLocked, want 0 — it carried into the next turn", c.name, c.got)
-		}
+	if b.turnCalc != (modelinfo.TokenCounts{}) {
+		t.Errorf("turnCalc = %+v after beginTurnLocked, want zero — it carried into the next turn", b.turnCalc)
 	}
 	if b.turnCalcCostUSD != 0 {
 		t.Errorf("turnCalcCostUSD = %v, want 0", b.turnCalcCostUSD)
@@ -73,10 +60,7 @@ func TestBreakdownClassesSumToTheTurnTotal(t *testing.T) {
 
 	accumulate := func(in, out, cr, cw int) {
 		b.turnCalcCostUSD += modelinfo.CostAsOf(model, priceAt, in, out, cr, cw)
-		b.turnCalcInput += in
-		b.turnCalcOutput += out
-		b.turnCalcCacheRead += cr
-		b.turnCalcCacheWrite += cw
+		b.turnCalc = b.turnCalc.Add(modelinfo.TokenCounts{Input: in, Output: out, CacheRead: cr, CacheWrite: cw})
 	}
 
 	b.beginTurnLocked(&delegator.TurnEvents{})
@@ -84,15 +68,8 @@ func TestBreakdownClassesSumToTheTurnTotal(t *testing.T) {
 	b.beginTurnLocked(&delegator.TurnEvents{})
 	accumulate(2, 15, 31292, 271) // turn 2 — small, so leaked residue is obvious
 
-	bd := costBreakdown{
-		model:      model,
-		cycles:     1,
-		input:      b.turnCalcInput,
-		output:     b.turnCalcOutput,
-		cacheRead:  b.turnCalcCacheRead,
-		cacheWrite: b.turnCalcCacheWrite,
-	}
-	classes := modelinfo.CostAsOf(model, priceAt, bd.input, bd.output, bd.cacheRead, bd.cacheWrite)
+	bd := costBreakdown{model: model, cycles: 1, counts: b.turnCalc}
+	classes := bd.counts.CostAsOf(model, priceAt)
 
 	if diff := classes - b.turnCalcCostUSD; diff > 1e-9 || diff < -1e-9 {
 		t.Errorf("breakdown classes price to $%.6f but the turn total is $%.6f (diff $%.6f)\n"+

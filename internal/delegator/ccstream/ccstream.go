@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/modelinfo"
 	"foci/internal/ratelimit"
 )
 
@@ -182,13 +183,11 @@ type Backend struct {
 	turnCalcCostUSD  float64               // foci's own priced cost, summed across this turn's ask cycles (#1674)
 	turnProvidedUSD  float64               // CC's reported cost for this turn, recovered by delta (#1674)
 	// The token deltas actually PRICED into turnCalcCostUSD, accumulated the
-	// same way. Stored because nothing else records them: TurnUsage carries the
-	// final cycle's context fill (what compaction needs), so after the fact
-	// there is no way to see which class foci charged for. #1695.
-	turnCalcInput      int
-	turnCalcOutput     int
-	turnCalcCacheRead  int
-	turnCalcCacheWrite int
+	// same way. TurnUsage's un-suffixed fields carry the final cycle's context
+	// fill (what compaction needs), so this is the only record of which class
+	// foci charged for (#1695); it is emitted as TurnUsage.Turn so api.db can
+	// re-price a row to its own cost (#1854).
+	turnCalc           modelinfo.TokenCounts
 	turnProvidedSeen   bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
 	redispatchInFlight bool // pre-answer follow-up sent at idle; hold the turn open until its result arrives
 	stateEventsSeen    bool // CC emitted ≥1 session_state_changed this session; gates the legacy complete-on-result fallback

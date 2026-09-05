@@ -38,12 +38,21 @@ type APIEntry struct {
 	// for backends that supply no per-call tokens to price; EffectiveCost falls
 	// back to a live calculation in that case.
 	CalculatedCostUSD *float64 `json:"calculated_cost_usd,omitempty"`
-	DurationMS        int64    `json:"duration_ms"`
-	StopReason        string   `json:"stop_reason"`
-	CallType          string   `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
-	SessionFile       string   `json:"session_file,omitempty"` // path to session JSONL file
-	SessionLine       int      `json:"session_line,omitempty"` // line number in session file (conversation calls)
-	PreMessages       int      `json:"pre_messages,omitempty"` // message count before compaction
+
+	// Turn is the turn-summed token counts CalculatedCostUSD was priced from.
+	// Input/Output/CacheRead/CacheWrite above are the LAST cycle's context fill
+	// for a delegated turn (what /context and compaction read), so pricing a
+	// row from them recovers a fifth of its cost (#1854). Price Turn instead.
+	// nil (NULL in api.db) for rows written before the change and for backends
+	// that do not accumulate per-cycle usage.
+	Turn *modelinfo.TokenCounts `json:"turn,omitempty"`
+
+	DurationMS  int64  `json:"duration_ms"`
+	StopReason  string `json:"stop_reason"`
+	CallType    string `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
+	SessionFile string `json:"session_file,omitempty"` // path to session JSONL file
+	SessionLine int    `json:"session_line,omitempty"` // line number in session file (conversation calls)
+	PreMessages int    `json:"pre_messages,omitempty"` // message count before compaction
 }
 
 // EffectiveCost returns this entry's cost for display: foci's own calculated

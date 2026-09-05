@@ -103,6 +103,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 		Output:     resp.Usage.OutputTokens,
 		CacheRead:  resp.Usage.CacheReadInputTokens,
 		CacheWrite: resp.Usage.CacheCreationInputTokens,
+		Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
 		DurationMS: duration.Milliseconds(),
 		StopReason: resp.StopReason,
 		CallType:   "summary",
