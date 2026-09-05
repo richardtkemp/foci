@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"foci/internal/modelinfo"
 )
 
 // ErrTurnNotInFlight is returned by Inject(SourceSteer) when the steer arrives
@@ -917,4 +919,13 @@ type TurnUsage struct {
 	// a provider's cost total does not. nil when the backend could not supply
 	// per-call tokens to price.
 	CalculatedCostUSD *float64
+
+	// Turn is the SUM of every API cycle's own token counts within this turn —
+	// exactly what CalculatedCostUSD was priced from, so a row carrying both
+	// can be re-priced back to its cost (#1854). The four un-suffixed fields
+	// above are a different quantity: the FINAL cycle's context fill, which
+	// compaction reads and which cannot be summed. A backend that does not
+	// accumulate per-cycle usage leaves this nil (persisted as NULL); it must
+	// never copy the context-fill fields in as a stand-in.
+	Turn *modelinfo.TokenCounts
 }

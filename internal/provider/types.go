@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"foci/internal/modelinfo"
 )
 
 // MarshalRaw marshals v to JSON without HTML-escaping characters like >, <, &.
@@ -379,6 +381,26 @@ type Usage struct {
 	// modelinfo table applied to real per-call token counts. Authoritative when
 	// present (#1674).
 	CalculatedCostUSD *float64 `json:"calculated_cost_usd,omitempty"`
+
+	// Turn is the turn-summed token counts CalculatedCostUSD was priced from
+	// (delegator.TurnUsage.Turn), passed through. nil when the backend did not
+	// measure them; a direct API call is a single cycle, so AsTurn() is its
+	// turn total (#1854).
+	Turn *modelinfo.TokenCounts `json:"turn,omitempty"`
+}
+
+// AsTurn returns this usage's four classes as the turn total, for a writer
+// that knows the usage covers ONE API call — a direct (non-delegated) request
+// and its response — so the call's own counts and its turn total coincide.
+// Never call it on a delegated usage: there the fields are the final cycle's
+// context fill, and this would persist the very confusion #1854 removes.
+func (u Usage) AsTurn() *modelinfo.TokenCounts {
+	return &modelinfo.TokenCounts{
+		Input:      u.InputTokens,
+		Output:     u.OutputTokens,
+		CacheRead:  u.CacheReadInputTokens,
+		CacheWrite: u.CacheCreationInputTokens,
+	}
 }
 
 // MessageResponse is the response from an LLM API call.

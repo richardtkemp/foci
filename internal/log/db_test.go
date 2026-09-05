@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/modelinfo"
 )
 
 func TestAPIDB(t *testing.T) {
@@ -254,5 +256,51 @@ func TestInsertSessionLineNullability(t *testing.T) {
 	apiLog.db.QueryRow("SELECT session_line FROM api_calls WHERE session_line IS NOT NULL").Scan(&sl)
 	if !sl.Valid || sl.Int64 != 42 {
 		t.Errorf("session_line = %v, want 42", sl)
+	}
+}
+
+// #1854: the turn-summed token columns must round-trip as a group, and stay
+// NULL — not zero — when the writer measured no turn total. A zero would
+// price as a free turn, which is a wrong answer; NULL is "not measured", which
+// is the truth for pre-change rows and for backends that do not accumulate.
+func TestAPIDB_TurnCountsRoundTrip(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	t1 := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	turn := modelinfo.TokenCounts{Input: 10, Output: 815, CacheRead: 201000, CacheWrite: 41300}
+	// Context fill deliberately differs from the turn total in every class, so
+	// a scan that read the wrong four columns cannot pass by coincidence.
+	apiLog.insert(APIEntry{Timestamp: t1, Session: "s/c/1", Model: "m",
+		Input: 3, Output: 815, CacheRead: 121000, CacheWrite: 300,
+		Turn: &turn, CallType: "delegated_turn"})
+	apiLog.insert(APIEntry{Timestamp: t1.Add(time.Minute), Session: "s/c/1", Model: "m",
+		Input: 3, Output: 5, CacheRead: 121000, CacheWrite: 300,
+		CallType: "delegated_turn"}) // no Turn: backend measured none
+
+	got := ReadAPIDBLog()
+	if len(got) != 2 {
+		t.Fatalf("ReadAPIDBLog len = %d, want 2", len(got))
+	}
+	if got[0].Turn == nil || *got[0].Turn != turn {
+		t.Errorf("entry[0].Turn = %+v, want %+v", got[0].Turn, turn)
+	}
+	if got[0].Input != 3 || got[0].CacheRead != 121000 {
+		t.Errorf("entry[0] context fill = in=%d cr=%d, want 3/121000 — the original columns must keep their meaning", got[0].Input, got[0].CacheRead)
+	}
+	if got[1].Turn != nil {
+		t.Errorf("entry[1].Turn = %+v, want nil for a row written without a turn total", *got[1].Turn)
+	}
+
+	// The columns themselves: NULL, not 0, on the unmeasured row.
+	var nulls int
+	if err := apiLog.db.QueryRow(`SELECT COUNT(*) FROM api_calls WHERE turn_input_tokens IS NULL`).Scan(&nulls); err != nil {
+		t.Fatal(err)
+	}
+	if nulls != 1 {
+		t.Errorf("rows with NULL turn_input_tokens = %d, want 1", nulls)
 	}
 }

@@ -418,6 +418,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		Output:      resp.Usage.OutputTokens,
 		CacheRead:   resp.Usage.CacheReadInputTokens,
 		CacheWrite:  resp.Usage.CacheCreationInputTokens,
+		Turn:        resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
 		DurationMS:  duration.Milliseconds(),
 		StopReason:  resp.StopReason,
 		CallType:    "compaction",

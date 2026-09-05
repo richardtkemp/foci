@@ -465,10 +465,12 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		b.turnMu.Lock()
 		b.turnCalcCostUSD += priced
 		b.turnProvidedUSD += usageDelta.CostUSD
-		b.turnCalcInput += usageDelta.InputTokens
-		b.turnCalcOutput += usageDelta.OutputTokens
-		b.turnCalcCacheRead += usageDelta.CacheReadInputTokens
-		b.turnCalcCacheWrite += usageDelta.CacheCreationInputTokens
+		b.turnCalc = b.turnCalc.Add(modelinfo.TokenCounts{
+			Input:      usageDelta.InputTokens,
+			Output:     usageDelta.OutputTokens,
+			CacheRead:  usageDelta.CacheReadInputTokens,
+			CacheWrite: usageDelta.CacheCreationInputTokens,
+		})
 		b.turnProvidedSeen = true
 		b.turnMu.Unlock()
 	}
@@ -497,16 +499,18 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	calcSoFar, providedSoFar := b.turnCalcCostUSD, b.turnProvidedUSD
 	cycles := b.turnCalls
 	bd := costBreakdown{
-		model:      prefixedModel("claude", resultModel),
-		cycles:     cycles,
-		input:      b.turnCalcInput,
-		output:     b.turnCalcOutput,
-		cacheRead:  b.turnCalcCacheRead,
-		cacheWrite: b.turnCalcCacheWrite,
+		model:  prefixedModel("claude", resultModel),
+		cycles: cycles,
+		counts: b.turnCalc,
 	}
 	if checkCost {
 		calc := calcSoFar
 		result.Usage.CalculatedCostUSD = &calc
+		// The counts that calc was priced from, copied so the row that persists
+		// them can be re-priced to calc (#1854). Gated with the cost: without a
+		// ModelUsage delta there is nothing summed, and NULL beats a zero.
+		turn := b.turnCalc
+		result.Usage.Turn = &turn
 	}
 	b.stashedResult = result
 	b.stashedResultMsg = msg

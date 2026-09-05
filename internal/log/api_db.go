@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/modelinfo"
 	"foci/internal/sqlite"
 	"foci/internal/timeutil"
 )
@@ -58,12 +59,22 @@ func InitAPIDB(path string) error {
 	// plumbing for a compaction-rotation feature that never landed). Drop it from
 	// existing DBs; the Exec is a no-op (ignored error) once the column is gone.
 	_, _ = db.Exec(`ALTER TABLE api_calls DROP COLUMN new_session`)
+	// #1854: the turn-summed token counts calculated_cost_usd was priced from.
+	// The four original token columns keep their meaning — a delegated turn's
+	// FINAL cycle context fill, which /context reads — and cannot be priced:
+	// they recover ~20% of the recorded cost. These four can. NULL for rows
+	// written before the change and for backends that do not measure them.
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_input_tokens INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_output_tokens INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_cache_read_tokens INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_cache_write_tokens INTEGER`)
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages,
-		 calculated_cost_usd)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 calculated_cost_usd,
+		 turn_input_tokens, turn_output_tokens, turn_cache_read_tokens, turn_cache_write_tokens)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -161,7 +172,8 @@ const apiRowCols = `ts, COALESCE(provider, ''), session, model,
 	       cost_usd, COALESCE(duration_ms, 0),
 	       COALESCE(stop_reason, ''), call_type,
 	       COALESCE(session_file, ''), COALESCE(session_line, 0),
-	       COALESCE(pre_messages, 0), calculated_cost_usd`
+	       COALESCE(pre_messages, 0), calculated_cost_usd,
+	       turn_input_tokens, turn_output_tokens, turn_cache_read_tokens, turn_cache_write_tokens`
 
 // scanAPIRows drains rows selected via apiRowCols into []APIEntry. Both cost
 // columns are nullable: cost_usd (ProvidedCostUSD) is NULL when the backend
@@ -175,13 +187,25 @@ func scanAPIRows(rows *sql.Rows) []APIEntry {
 		var e APIEntry
 		var tsStr string
 		var providedCost, calculatedCost sql.NullFloat64
+		var turnIn, turnOut, turnCR, turnCW sql.NullInt64
 		if err := rows.Scan(
 			&tsStr, &e.Provider, &e.Session, &e.Model,
 			&e.Input, &e.Output, &e.CacheRead, &e.CacheWrite,
 			&providedCost, &e.DurationMS, &e.StopReason, &e.CallType,
 			&e.SessionFile, &e.SessionLine, &e.PreMessages, &calculatedCost,
+			&turnIn, &turnOut, &turnCR, &turnCW,
 		); err != nil {
 			continue
+		}
+		// All four are written together or not at all (see insert), so one
+		// column's validity speaks for the group.
+		if turnIn.Valid {
+			e.Turn = &modelinfo.TokenCounts{
+				Input:      int(turnIn.Int64),
+				Output:     int(turnOut.Int64),
+				CacheRead:  int(turnCR.Int64),
+				CacheWrite: int(turnCW.Int64),
+			}
 		}
 		if providedCost.Valid {
 			v := providedCost.Float64
@@ -261,6 +285,14 @@ func (a *apiDB) insert(entry APIEntry) {
 		preMessages = &entry.PreMessages
 	}
 
+	// The four turn columns are NULL as a group when the writer measured no
+	// turn total — a zero there would price as "free", which is a wrong
+	// answer, where NULL is "not measured".
+	var turnIn, turnOut, turnCR, turnCW *int
+	if t := entry.Turn; t != nil {
+		turnIn, turnOut, turnCR, turnCW = &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -270,6 +302,7 @@ func (a *apiDB) insert(entry APIEntry) {
 		entry.ProvidedCostUSD, entry.DurationMS, entry.StopReason,
 		entry.CallType, sessionFile, sessionLine,
 		preMessages, entry.CalculatedCostUSD,
+		turnIn, turnOut, turnCR, turnCW,
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)

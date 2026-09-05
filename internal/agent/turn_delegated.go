@@ -511,6 +511,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
 						ProvidedCostUSD:          result.Usage.ProvidedCostUSD,
 						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
+						Turn:                     result.Usage.Turn,
 					})
 				}
 			}
@@ -544,6 +545,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
 						ProvidedCostUSD:          result.Usage.ProvidedCostUSD,
 						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
+						Turn:                     result.Usage.Turn,
 					}
 				}
 			}
@@ -714,6 +716,7 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			CacheWrite:        u.CacheCreationInputTokens,
 			ProvidedCostUSD:   u.ProvidedCostUSD,
 			CalculatedCostUSD: u.CalculatedCostUSD,
+			Turn:              u.Turn,
 			DurationMS:        time.Since(ts.StartedAt).Milliseconds(),
 			StopReason:        "end_turn",
 			CallType:          "delegated_turn",

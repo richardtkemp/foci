@@ -1323,6 +1323,26 @@ Four outputs:
    28 Jul - 4 Aug 2026 ($32,566 against ~$2,500 real). Rows written before #1674
    have `calculated_cost_usd` NULL and are not repaired.
 
+   **Two scopes of token columns, and only one of them prices (#1854):**
+
+   | columns | scope | use for |
+   |---|---|---|
+   | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | a delegated turn's FINAL ask cycle's context fill (output is the exception: summed) | `/context`, `/status`, compaction sizing |
+   | `turn_input_tokens`, `turn_output_tokens`, `turn_cache_read_tokens`, `turn_cache_write_tokens` | SUM of every cycle's own tokens — what `calculated_cost_usd` was priced from | pricing, per-class cost splits |
+
+   Pricing a row from the first group recovers ~20% of its recorded cost (measured
+   2026-09-05 over 14 days: $402 reconstructed against $2,040 recorded) with no error,
+   because those columns mix a last-cycle snapshot with a summed output. The `turn_*`
+   group is carried as `modelinfo.TokenCounts` on `delegator.TurnUsage.Turn` →
+   `provider.Usage.Turn` → `log.APIEntry.Turn`, and is NULL as a group when the writer
+   measured no turn total (rows before the change; codex and opencode, which do not
+   yet accumulate per-cycle usage). Never fill it from the context-fill fields as a
+   stand-in — a direct API call is the one case where the two coincide, and
+   `provider.Usage.AsTurn()` exists for exactly that writer. The control that would
+   have caught the defect, and now holds: price the `turn_*` columns over a window and
+   compare to `SUM(calculated_cost_usd)` — the ccstream unit test asserts equality per
+   turn (`turn_totals_test.go`).
+
    **Always read cost via `APIEntry.EffectiveCost()`**, which prefers the calculated
    figure and falls back to a live `modelinfo.CostAsOf` from stored tokens. Never read
    either column directly, and never `SUM` in SQL — `QuerySessionStats` deliberately
@@ -1347,7 +1367,9 @@ Four outputs:
    They were reset at neither site until #1848, so the warning printed a per-SESSION
    breakdown beside a per-TURN total — a diagnosis that silently answered a different
    question. Add a field to that group and it is reset at every boundary for free;
-   reset one inline instead and this recurs.
+   reset one inline instead and this recurs. Since #1854 the four counters are one
+   `modelinfo.TokenCounts` (`turnCalc`), and the same value is what `TurnUsage.Turn`
+   persists — the breakdown and the row are one figure, not two that can drift.
 
 4. **Conversation log** (`conversation-{agentID}.db`): Per-agent SQLite databases logging exact Telegram messages sent and received. Entries are routed to the correct agent's database by parsing the session key. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
    - Use: `log.Conversation(log.ConversationEntry{...})`
