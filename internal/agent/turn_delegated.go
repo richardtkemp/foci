@@ -422,12 +422,9 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	// Pre-answer gate state: when PreAnswerNudgeFunc returns a follow-up,
 	// ccstream re-dispatches this handler for a second round. preAnswerFired
 	// flips to true on first return so subsequent calls from the second
-	// round's OnResult yield "" and break the loop. Round-1 usage is appended
-	// to ts.PriorCallUsages (ccstream's beginTurn resets lastUsage between
-	// rounds, so we capture it here) and recorded as its OWN api.db row — it is
-	// NOT folded into FinalUsage. cache_read is cumulative per call, so summing
-	// round 1 + round 2 double-counts the same context as a size signal and
-	// trips the compaction trigger; keep the rows separate.
+	// round's OnResult yield "" and break the loop. Usage is not stashed here:
+	// the backend keeps accumulating across the re-dispatch, so the round-2
+	// result already carries the whole turn (#1856).
 	var (
 		preAnswerFired     bool
 		preAnswerFirstText string
@@ -496,24 +493,11 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 				return ""
 			}
 			preAnswerFired = true
-			// Stash round-1 state. The original answer has already streamed to
-			// the user (OnText delivered PhaseIntermediate), so the sink treats
-			// the round-2 result as the authoritative final text. Round-1 usage
-			// is recorded as its own api.db row (appended to PriorCallUsages),
-			// NOT folded into FinalUsage — see PriorCallUsages doc.
+			// Keep the round-1 text: the original answer has already streamed
+			// to the user (OnText delivered PhaseIntermediate), so the sink
+			// treats the round-2 result as the authoritative final text.
 			if result != nil {
 				preAnswerFirstText = result.Text
-				if result.Usage != nil {
-					ts.PriorCallUsages = append(ts.PriorCallUsages, &provider.Usage{
-						InputTokens:              result.Usage.InputTokens,
-						OutputTokens:             result.Usage.OutputTokens,
-						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
-						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
-						ProvidedCostUSD:          result.Usage.ProvidedCostUSD,
-						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
-						Turn:                     result.Usage.Turn,
-					})
-				}
 			}
 			a.logger().Infof("nudge: pre-answer gate fired for session %s (tool_count=%d)",
 				ts.SessionKey, toolCount)
@@ -549,14 +533,6 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 					}
 				}
 			}
-			// Do NOT fold round-1 usage into FinalUsage. FinalUsage must stay =
-			// the last terminal call (round 2) = the true current context size,
-			// which the compaction trigger and meta-header read. Round-1 usage
-			// is recorded separately (PriorCallUsages -> its own api.db row in
-			// LogUsage); turn-total cost is summed there for the sink event.
-			// Folding cumulative cache_read across rounds double-counts the same
-			// context and trips spurious compactions.
-			//
 			// If the model chose to echo the sentinel the API path uses to
 			// mean "my original answer stands", replace the final text with
 			// the round-1 answer so the platform delivery reflects the
@@ -629,16 +605,10 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	if ts.SessionMeta == nil || ts.FinalUsage == nil {
 		return
 	}
-	// Header token chips: input/output/cache_write sum across all terminal
-	// calls (distinct per-call deltas); cache_read is last-call only (cumulative
-	// — summing the gate's rounds double-counts the same context). DisplayUsage()
-	// encapsulates that rule so this and the FAP/TurnComplete header agree.
-	// (FinalUsage != nil is guaranteed by the guard above.)
-	du := ts.DisplayUsage()
-	ts.SessionMeta.prevInput = du.InputTokens
-	ts.SessionMeta.prevOutput = du.OutputTokens
-	ts.SessionMeta.prevCacheRead = du.CacheReadInputTokens
-	ts.SessionMeta.prevCacheWrite = du.CacheCreationInputTokens
+	ts.SessionMeta.prevInput = ts.FinalUsage.InputTokens
+	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens
+	ts.SessionMeta.prevCacheRead = ts.FinalUsage.CacheReadInputTokens
+	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
 
 	// Record the actual model reported by the backend so that
 	// SessionContextLimit uses the real context window. The modelUserSet flag
@@ -724,22 +694,19 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 		})
 	}
 
-	// Prior rounds (round-1 of a gated turn) get the turn start time — we don't
-	// track per-round completion times for the delegated backend. The final
-	// call keeps the current StartedAt-based timestamp.
-	for _, u := range ts.PriorCallUsages {
-		logCall(u, ts.StartedAt)
-	}
+	// One row per turn. A pre-answer re-dispatch folds into this row exactly
+	// like a steer: the backend keeps accumulating output/cost/Turn across
+	// the rounds, and input/cache stay the final cycle's fill (#1856).
 	logCall(ts.FinalUsage, ts.StartedAt)
 
 	ts.FinalCost = turnCost
 
 	// Log the last call's context size (FinalUsage = real current size) plus
-	// the turn-total cost (summed across all terminal calls this turn).
-	a.logger().Infof("session=%s model=%s input=%d output=%d cache_read=%d cache_write=%d calls=%d cost=$%.4f (delegated, last-call size; cost is turn-total)",
+	// the turn-total cost.
+	a.logger().Infof("session=%s model=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f (delegated, last-call size; cost is turn-total)",
 		ts.SessionKey, model, ts.FinalUsage.InputTokens, ts.FinalUsage.OutputTokens,
 		ts.FinalUsage.CacheReadInputTokens, ts.FinalUsage.CacheCreationInputTokens,
-		len(ts.PriorCallUsages)+1, turnCost)
+		turnCost)
 }
 
 // RunCompaction checks whether context compaction is needed and dispatches
@@ -752,12 +719,11 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 		return
 	}
 
-	// last-call context size, NOT turn-total cost — FinalUsage is the final
-	// terminal call's usage (= current context size). Never fold prior rounds
-	// (e.g. the pre-answer gate's round 1) in here: cache_read is cumulative
-	// per call, so summing rounds double-counts the same context and triggers
-	// spurious compactions. Prior-round usage lives in ts.PriorCallUsages and
-	// is only used for the per-call ledger rows, never for this size check.
+	// Last-cycle context size, NOT turn-total: FinalUsage's input/cache are
+	// the final cycle's fill (latest-wins across every cycle of the turn,
+	// pre-answer re-dispatch included). Per-cycle sums live in
+	// FinalUsage.Turn and are for pricing only — summing cumulative
+	// cache_read across cycles would double-count the same context here.
 	totalTokens := ts.FinalUsage.InputTokens + ts.FinalUsage.CacheReadInputTokens + ts.FinalUsage.CacheCreationInputTokens
 
 	// Lazily learn the real context window from the backend if we don't have

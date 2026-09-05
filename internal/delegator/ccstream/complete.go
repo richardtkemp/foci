@@ -97,16 +97,12 @@ func (b *Backend) tryPreAnswerRedispatch(turn *delegator.TurnEvents, result *del
 	b.turnMu.Lock()
 	b.redispatchInFlight = true
 	// The revision supersedes the first-round answer: reset the text
-	// accumulator so the final result carries only the revised reply.
-	// Output-token accumulator is also reset: round-1's usage is stashed
-	// separately in PriorCallUsages (one api.db row per round), so round-2's
-	// FinalUsage must carry only round-2's output — not the cross-round sum
-	// (which would double-count round-1 when both rows are summed).
+	// accumulator so the final result carries only the revised reply. The
+	// token and cost accumulators are NOT reset — the re-dispatch is more ask
+	// cycles inside the same turn, exactly like a mid-turn steer, and the turn
+	// writes one api.db row whose output/turn_* sum every cycle of both rounds
+	// while input/cache stay the final cycle's context fill (#1856).
 	b.turnText.Reset()
-	b.turnOutputTokens = 0
-	// Same reasoning for cost (#1674): round-1's cost rides its own api.db row,
-	// so round-2 must not re-carry it.
-	b.resetTurnCostAccumulatorsLocked()
 	b.turnMu.Unlock()
 	if b.typingFunc != nil {
 		b.typingFunc(true)

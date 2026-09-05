@@ -291,7 +291,7 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 		t.RunCompaction(ts)
 		sink.Emit(ctx, turnevent.TurnComplete{
 			FinalText: ts.FinalText,
-			Usage:     ts.DisplayUsage(),
+			Usage:     ts.FinalUsage,
 			Cost:      ts.FinalCost,
 			Model:     ts.FinalModel,
 		})
