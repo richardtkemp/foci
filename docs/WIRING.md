@@ -1328,13 +1328,15 @@ Four outputs:
    | columns | scope | use for |
    |---|---|---|
    | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | a delegated turn's FINAL ask cycle's context fill (output is the exception: summed) | `/context`, `/status`, compaction sizing |
-   | `turn_input_tokens`, `turn_output_tokens`, `turn_cache_read_tokens`, `turn_cache_write_tokens` | SUM of every cycle's own tokens — what `calculated_cost_usd` was priced from | pricing, per-class cost splits |
+   | `turn_input_tokens`, `turn_cache_read_tokens`, `turn_cache_write_tokens` + `output_tokens` | SUM of every cycle's own tokens — what `calculated_cost_usd` was priced from | pricing, per-class cost splits |
 
    Pricing a row from the first group recovers ~20% of its recorded cost (measured
    2026-09-05 over 14 days: $402 reconstructed against $2,040 recorded) with no error,
    because those columns mix a last-cycle snapshot with a summed output. The `turn_*`
    group is carried as `modelinfo.TokenCounts` on `delegator.TurnUsage.Turn` →
-   `provider.Usage.Turn` → `log.APIEntry.Turn`, and is NULL as a group when the writer
+   `provider.Usage.Turn` → `log.APIEntry.Turn`. Its `Output` is not stored separately —
+   `output_tokens` is already the turn sum, so there is no `turn_output_tokens` and a
+   scanned `Turn.Output` is `output_tokens`. The three stored columns are NULL as a group when the writer
    measured no turn total (rows before the change; codex and opencode, which do not
    yet accumulate per-cycle usage). Never fill it from the context-fill fields as a
    stand-in — a direct API call is the one case where the two coincide, and
