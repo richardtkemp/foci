@@ -1586,14 +1586,12 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 	}
 }
 
-// TestDelegatedTransport_RunInference_PreAnswerKeepsRoundsSeparate verifies the
-// post-fix behaviour: when the gate runs a second round, round-1 usage is
-// captured into ts.PriorCallUsages as a distinct record and FinalUsage stays =
-// round 2 ONLY (the true current context size). The rounds are NOT folded —
-// folding cumulative cache_read across rounds double-counts the same context
-// as a size signal and tripped spurious compactions. Turn-total cost (the sum
-// across rounds) is preserved separately by LogUsage via ts.FinalCost.
-func TestDelegatedTransport_RunInference_PreAnswerKeepsRoundsSeparate(t *testing.T) {
+// TestDelegatedTransport_RunInference_PreAnswerFoldsIntoFinal: when the gate
+// runs a second round, the agent layer stashes nothing from round 1 — the
+// backend keeps accumulating across the re-dispatch like a steer, so the
+// round-2 result already IS the whole turn. FinalUsage is taken from it as-is
+// (#1856; the cross-round accumulation itself is tested in ccstream).
+func TestDelegatedTransport_RunInference_PreAnswerFoldsIntoFinal(t *testing.T) {
 	var capturedHandler *mockHandler
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
@@ -1627,7 +1625,8 @@ func TestDelegatedTransport_RunInference_PreAnswerKeepsRoundsSeparate(t *testing
 		t.Fatalf("RunInference: %v", err)
 	}
 
-	// Simulate ccstream: round 1 → PreAnswerNudgeFunc (fires), round 2 → OnTurnComplete.
+	// Simulate ccstream: round 1 → PreAnswerNudgeFunc (fires), round 2 →
+	// OnTurnComplete carrying the accumulated turn (output 40+15, final fill).
 	round1 := &delegator.TurnResult{
 		Text:  "original",
 		Usage: &delegator.TurnUsage{InputTokens: 100, OutputTokens: 40, CacheReadInputTokens: 10},
@@ -1636,8 +1635,9 @@ func TestDelegatedTransport_RunInference_PreAnswerKeepsRoundsSeparate(t *testing
 		t.Fatal("gate should have fired on round 1")
 	}
 	capturedHandler.OnTurnComplete(&delegator.TurnResult{
-		Text:  "revised",
-		Usage: &delegator.TurnUsage{InputTokens: 20, OutputTokens: 15},
+		Text: "revised",
+		Usage: &delegator.TurnUsage{InputTokens: 20, OutputTokens: 55, CacheReadInputTokens: 110,
+			Turn: &modelinfo.TokenCounts{Input: 120, Output: 55, CacheRead: 120}},
 	})
 
 	if ts.FinalText != "revised" {
@@ -1646,36 +1646,23 @@ func TestDelegatedTransport_RunInference_PreAnswerKeepsRoundsSeparate(t *testing
 	if ts.FinalUsage == nil {
 		t.Fatal("FinalUsage should not be nil")
 	}
-	// FinalUsage = round 2 ONLY (un-folded): 20 input, 15 output, 0 cache read.
-	if ts.FinalUsage.InputTokens != 20 {
-		t.Errorf("FinalUsage.InputTokens = %d, want 20 (round 2 only, not folded)", ts.FinalUsage.InputTokens)
+	// FinalUsage = the completion result, untouched by the gate.
+	if ts.FinalUsage.InputTokens != 20 || ts.FinalUsage.OutputTokens != 55 || ts.FinalUsage.CacheReadInputTokens != 110 {
+		t.Errorf("FinalUsage = {in:%d out:%d cr:%d}, want {20 55 110} (the completion result as reported)",
+			ts.FinalUsage.InputTokens, ts.FinalUsage.OutputTokens, ts.FinalUsage.CacheReadInputTokens)
 	}
-	if ts.FinalUsage.OutputTokens != 15 {
-		t.Errorf("FinalUsage.OutputTokens = %d, want 15 (round 2 only, not folded)", ts.FinalUsage.OutputTokens)
-	}
-	if ts.FinalUsage.CacheReadInputTokens != 0 {
-		t.Errorf("FinalUsage.CacheReadInputTokens = %d, want 0 (round 2 only, not folded)", ts.FinalUsage.CacheReadInputTokens)
-	}
-	// Round-1 usage is preserved as a distinct record in PriorCallUsages.
-	if len(ts.PriorCallUsages) != 1 {
-		t.Fatalf("PriorCallUsages len = %d, want 1 (round-1 stashed)", len(ts.PriorCallUsages))
-	}
-	if got := ts.PriorCallUsages[0]; got.InputTokens != 100 || got.OutputTokens != 40 || got.CacheReadInputTokens != 10 {
-		t.Errorf("PriorCallUsages[0] = {in:%d out:%d cr:%d}, want {100 40 10} (round 1, un-summed)",
-			got.InputTokens, got.OutputTokens, got.CacheReadInputTokens)
+	if ts.FinalUsage.Turn == nil || ts.FinalUsage.Turn.CacheRead != 120 {
+		t.Errorf("FinalUsage.Turn = %+v, want the backend's per-cycle sums passed through", ts.FinalUsage.Turn)
 	}
 }
 
-// TestDelegatedTransport_GatedTurn_TwoRowsNoSpuriousCompaction is the end-to-end
-// regression for the 16:00 cache_read double-count bug. A gate-fired delegated
-// turn (two terminal calls, each reading the full ~55k context) must:
-//  1. write TWO api.db ledger rows, each with its OWN un-summed cache_read,
-//  2. record turn-total cost = sum of the two per-call costs in ts.FinalCost,
-//  3. NOT trigger compaction — the compaction trigger sees only round-2's size
-//     (≈56k < 60k threshold) even though round-1 + round-2 cache_read sums to
-//     >threshold. Pre-fix, the fold made the trigger read the doubled ~111k and
-//     compact on every gated turn.
-func TestDelegatedTransport_GatedTurn_TwoRowsNoSpuriousCompaction(t *testing.T) {
+// TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction: a gate-fired
+// delegated turn (two rounds, each reading the full ~55k context) folds into
+// ONE api.db row like a steer (#1856). The row's input/cache are the final
+// cycle's fill; its turn_* are the per-cycle sums pricing came from. The
+// compaction trigger sizes from the fill, so the doubled cross-round
+// cache_read (≈111k > 60k threshold) must NOT trigger compaction.
+func TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction(t *testing.T) {
 	// Real api.db so we can count the rows written by LogUsage.
 	dbPath := filepath.Join(t.TempDir(), "api.db")
 	if err := log.InitAPIDB(dbPath); err != nil {
@@ -1685,8 +1672,8 @@ func TestDelegatedTransport_GatedTurn_TwoRowsNoSpuriousCompaction(t *testing.T) 
 
 	const model = "claude-sonnet-4-5"
 	store := session.NewStore(t.TempDir())
-	// Threshold 0.3 of a 200k window = 60k. The 16:00 scenario exactly: each
-	// round read ~55k (sum ~111k > 60k) but the real context (round 2) is < 60k.
+	// Threshold 0.3 of a 200k window = 60k: each round read ~55k (sum ~111k >
+	// 60k) but the real context (final fill) is < 60k.
 	comp := compaction.NewCompactor(store, 0.3)
 	cmdSent := false
 	be := &mockBackendDT{
@@ -1706,55 +1693,44 @@ func TestDelegatedTransport_GatedTurn_TwoRowsNoSpuriousCompaction(t *testing.T) 
 	ts.FinalModel = model
 	ts.sessionFilePath = "/tmp/session.jsonl"
 
-	// Round 1: full ~55k context read (the gate's first terminal call).
-	round1 := &provider.Usage{InputTokens: 246, OutputTokens: 200, CacheReadInputTokens: 55405}
-	// Round 2 (final): re-read the same ~55k context after the nudge.
-	ts.PriorCallUsages = []*provider.Usage{round1}
-	ts.FinalUsage = &provider.Usage{InputTokens: 2, OutputTokens: 150, CacheReadInputTokens: 55566}
+	// What ccstream reports after the re-dispatch: final-cycle fill, output
+	// and Turn summed across both rounds, cost priced from Turn.
+	turn := modelinfo.TokenCounts{Input: 248, Output: 350, CacheRead: 110971}
+	cost := modelinfo.Cost(model, turn.Input, turn.Output, turn.CacheRead, turn.CacheWrite)
+	ts.FinalUsage = &provider.Usage{InputTokens: 2, OutputTokens: 350, CacheReadInputTokens: 55566,
+		Turn: &turn, CalculatedCostUSD: &cost}
 
 	tr.LogUsage(ts)
 
-	// (1) Two ledger rows, each with its OWN un-summed cache_read.
+	// (1) ONE ledger row: fill from the final cycle, turn_* summed.
 	rows := log.ReadAPIDBLog()
-	if len(rows) != 2 {
-		t.Fatalf("api.db rows = %d, want 2 (one per terminal call)", len(rows))
+	if len(rows) != 1 {
+		t.Fatalf("api.db rows = %d, want 1 (a gated turn is one turn)", len(rows))
 	}
-	// Rows are chronological: prior round(s) first, final last.
-	if rows[0].CacheRead != 55405 {
-		t.Errorf("row[0].CacheRead = %d, want 55405 (round-1, un-summed)", rows[0].CacheRead)
+	r := rows[0]
+	if r.CacheRead != 55566 || r.Input != 2 || r.Output != 350 {
+		t.Errorf("row = {in:%d out:%d cr:%d}, want {2 350 55566} (final-cycle fill, summed output)", r.Input, r.Output, r.CacheRead)
 	}
-	if rows[1].CacheRead != 55566 {
-		t.Errorf("row[1].CacheRead = %d, want 55566 (round-2, un-summed)", rows[1].CacheRead)
+	if r.Turn == nil || r.Turn.CacheRead != 110971 || r.Turn.Input != 248 {
+		t.Errorf("row.Turn = %+v, want cross-round sums {248 _ 110971 0}", r.Turn)
 	}
-	for i, r := range rows {
-		if r.CacheRead == 110971 {
-			t.Errorf("row[%d] has the folded cache_read 110971 — fold was reintroduced", i)
-		}
-		if r.CallType != "delegated_turn" {
-			t.Errorf("row[%d].CallType = %q, want delegated_turn", i, r.CallType)
-		}
+	if r.CallType != "delegated_turn" {
+		t.Errorf("row.CallType = %q, want delegated_turn", r.CallType)
 	}
 
-	// (2) Turn-total cost = sum of the two per-call costs.
-	cost1 := modelinfo.Cost(model, round1.InputTokens, round1.OutputTokens, round1.CacheReadInputTokens, round1.CacheCreationInputTokens)
-	cost2 := modelinfo.Cost(model, 2, 150, 55566, 0)
-	wantCost := cost1 + cost2
-	if diff := ts.FinalCost - wantCost; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("FinalCost = %.8f, want %.8f (sum of per-call costs)", ts.FinalCost, wantCost)
+	// (2) Turn-total cost = the backend's calculated cost, on the row and in FinalCost.
+	if diff := ts.FinalCost - cost; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("FinalCost = %.8f, want %.8f", ts.FinalCost, cost)
 	}
-	if rows[0].ProvidedCostUSD != nil || rows[1].ProvidedCostUSD != nil {
-		t.Errorf("rows should have no provided cost (backend reported none): row[0]=%v row[1]=%v", rows[0].ProvidedCostUSD, rows[1].ProvidedCostUSD)
-	}
-	if gotRowSum := rows[0].EffectiveCost() + rows[1].EffectiveCost(); gotRowSum-ts.FinalCost > 1e-9 || ts.FinalCost-gotRowSum > 1e-9 {
-		t.Errorf("sum of row costs %.8f != FinalCost %.8f", gotRowSum, ts.FinalCost)
+	if diff := r.EffectiveCost() - cost; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("row cost %.8f != %.8f", r.EffectiveCost(), cost)
 	}
 
-	// (3) Compaction trigger sees ONLY round-2 size (input+cR+cW = 2+55566 ≈
-	// 55568 < 60k) → no compaction, despite round1+round2 cache_read summing to
-	// >60k. This is the spurious-compaction bug, fixed.
+	// (3) Compaction sizes from the fill (2+55566 < 60k), not from Turn
+	// (111k) → no compaction.
 	tr.RunCompaction(ts)
 	if cmdSent {
-		t.Error("compaction fired on a gated turn whose real (round-2) size is below threshold — the fold bug is back")
+		t.Error("compaction fired on a gated turn whose real (final-cycle) size is below threshold — sizing from the turn sum")
 	}
 }
 
@@ -2632,46 +2608,6 @@ func TestDelegatedTransport_ResolveModelEffort_SessionModel(t *testing.T) {
 
 	if ts.TurnModel != "session-override" {
 		t.Errorf("TurnModel = %q, want %q", ts.TurnModel, "session-override")
-	}
-}
-
-// TestDisplayUsage_SumsDeltasButNotCacheRead locks the summable-vs-cumulative
-// rule: input/output/cache_write sum across the gate's two rounds, but
-// cache_read is the last call only (cumulative — summing double-counts the same
-// context, the bug behind the spurious compactions).
-func TestDisplayUsage_SumsDeltasButNotCacheRead(t *testing.T) {
-	// nil usage -> nil
-	if (&TurnState{}).DisplayUsage() != nil {
-		t.Fatal("DisplayUsage() with nil FinalUsage should return nil")
-	}
-
-	// Non-gated turn: no PriorCallUsages -> FinalUsage values unchanged.
-	plain := &TurnState{FinalUsage: &provider.Usage{
-		InputTokens: 2, OutputTokens: 100, CacheReadInputTokens: 55566, CacheCreationInputTokens: 484,
-	}}
-	if got := plain.DisplayUsage(); got.InputTokens != 2 || got.OutputTokens != 100 ||
-		got.CacheReadInputTokens != 55566 || got.CacheCreationInputTokens != 484 {
-		t.Fatalf("non-gated DisplayUsage mismatch: %+v", got)
-	}
-
-	// Gated turn: round-1 in PriorCallUsages, round-2 in FinalUsage (the real
-	// 16:00 scenario shape). in/out/cw sum; cache_read = round-2 only.
-	gated := &TurnState{
-		FinalUsage:      &provider.Usage{InputTokens: 2, OutputTokens: 6875, CacheReadInputTokens: 55566, CacheCreationInputTokens: 484},
-		PriorCallUsages: []*provider.Usage{{InputTokens: 246, OutputTokens: 3038, CacheReadInputTokens: 55405, CacheCreationInputTokens: 161}},
-	}
-	got := gated.DisplayUsage()
-	if got.InputTokens != 248 { // 2 + 246
-		t.Errorf("InputTokens = %d, want 248 (summed)", got.InputTokens)
-	}
-	if got.OutputTokens != 9913 { // 6875 + 3038
-		t.Errorf("OutputTokens = %d, want 9913 (summed)", got.OutputTokens)
-	}
-	if got.CacheCreationInputTokens != 645 { // 484 + 161
-		t.Errorf("CacheCreationInputTokens = %d, want 645 (summed)", got.CacheCreationInputTokens)
-	}
-	if got.CacheReadInputTokens != 55566 { // round-2 only, NOT 110971
-		t.Errorf("CacheReadInputTokens = %d, want 55566 (last call only, never summed)", got.CacheReadInputTokens)
 	}
 }
 

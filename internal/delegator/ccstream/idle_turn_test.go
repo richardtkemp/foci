@@ -418,13 +418,12 @@ func TestIdleKeyed_WaitForTurnUnblocksAtIdle(t *testing.T) {
 	}
 }
 
-// TestPreAnswerRedispack_ResetsOutputTokens is a regression test for the
-// cost double-count bug: turnOutputTokens must reset between pre-answer
-// nudge rounds so round-2's FinalUsage carries only round-2's output,
-// not the cross-round sum. Without the reset, the agent layer writes
-// PriorCallUsage(round1_out) + FinalUsage(round1_out + round2_out),
-// double-counting round-1's output in the api.db cost sum.
-func TestPreAnswerRedispatch_ResetsOutputTokens(t *testing.T) {
+// TestPreAnswerRedispatch_FoldsOutputTokens: a pre-answer re-dispatch is more
+// ask cycles inside one turn, like a steer, so the completed result's output
+// is the sum across both rounds — the turn writes ONE api.db row (#1856).
+// Before #1856 the accumulators were reset between rounds and round 1 rode a
+// second row; this test's fail-arm is that reset.
+func TestPreAnswerRedispatch_FoldsOutputTokens(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -474,9 +473,8 @@ func TestPreAnswerRedispatch_ResetsOutputTokens(t *testing.T) {
 	if completed.Usage == nil {
 		t.Fatal("completed result has nil Usage")
 	}
-	// Round-2's FinalUsage must carry only round-2's output (80),
-	// NOT the accumulated sum (100 + 80 = 180).
-	if got := completed.Usage.OutputTokens; got != 80 {
-		t.Errorf("round-2 OutputTokens = %d, want 80 (not accumulated); if 180, the turnOutputTokens reset is missing", got)
+	// One turn, both rounds: 100 + 80.
+	if got := completed.Usage.OutputTokens; got != 180 {
+		t.Errorf("completed OutputTokens = %d, want 180 (summed across rounds); 80 means the accumulators were reset at re-dispatch", got)
 	}
 }

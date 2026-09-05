@@ -625,7 +625,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 			sessionKey, len(ts.FinalText), err)
 		sink.Emit(ctx, turnevent.TurnComplete{
 			FinalText: ts.FinalText,
-			Usage:     ts.DisplayUsage(), // header chips: in/out/cw summed, cache_read last-call (size from FinalUsage, billing from ledger)
+			Usage:     ts.FinalUsage,
 			Cost:      ts.FinalCost,
 			Model:     ts.FinalModel,
 			Err:       err,
