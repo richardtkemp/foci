@@ -303,4 +303,23 @@ func TestAPIDB_TurnCountsRoundTrip(t *testing.T) {
 	if nulls != 1 {
 		t.Errorf("rows with NULL turn_input_tokens = %d, want 1", nulls)
 	}
+
+	// Output has no turn_ twin: output_tokens is already the turn sum, so a
+	// Turn.Output that disagrees with Output is not persisted and reads back
+	// as Output.
+	apiLog.insert(APIEntry{Timestamp: t1.Add(2 * time.Minute), Session: "s/c/1", Model: "m",
+		Input: 3, Output: 815, CacheRead: 121000, CacheWrite: 300,
+		Turn:     &modelinfo.TokenCounts{Input: 10, Output: 999, CacheRead: 201000, CacheWrite: 41300},
+		CallType: "delegated_turn"})
+	got = ReadAPIDBLog()
+	if len(got) != 3 || got[2].Turn == nil || got[2].Turn.Output != 815 {
+		t.Errorf("entry[2].Turn.Output should read back as output_tokens (815); got %+v", got[2].Turn)
+	}
+	var hasOut int
+	if err := apiLog.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('api_calls') WHERE name='turn_output_tokens'`).Scan(&hasOut); err != nil {
+		t.Fatal(err)
+	}
+	if hasOut != 0 {
+		t.Errorf("turn_output_tokens column exists; it duplicates output_tokens")
+	}
 }
