@@ -46,6 +46,36 @@ func noteUnpriced(bare string) {
 	}
 }
 
+// FamilyPricedModelHook, if set, is invoked once per distinct bare id that
+// resolves to pricing via familyPricing/familyPricingAsOf — i.e. no exact
+// registry row for this version, but it inherited its family canonical's
+// rates. This is silent-by-design the rest of the time (a new version
+// usually DOES match its family), but a version whose true rates diverge from
+// the family's — a cheaper cache-read tier, a repriced tier — goes unnoticed
+// until the #1674 divergence warning happens to fire on real backend-costed
+// traffic, or (if the model is never exercised, or is API-mode with no
+// backend-reported cost) not at all. Wired at startup to a log warning so the
+// inheritance is visible on the FIRST priced call, not eventually.
+var FamilyPricedModelHook func(model string)
+
+var (
+	familyPricedMu   sync.Mutex
+	familyPricedSeen = map[string]bool{}
+)
+
+func noteFamilyPriced(bare string) {
+	if FamilyPricedModelHook == nil {
+		return
+	}
+	familyPricedMu.Lock()
+	first := !familyPricedSeen[bare]
+	familyPricedSeen[bare] = true
+	familyPricedMu.Unlock()
+	if first {
+		FamilyPricedModelHook(bare)
+	}
+}
+
 // AmbiguousModelHook, if set, is invoked once per distinct leaf id whose lookup
 // had to fall back to a deterministic pick among a genuine collision (two
 // entries under the same leaf that the input couldn't disambiguate by dev or
@@ -685,7 +715,10 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 	defer registryMu.RUnlock()
 	m, ok := registryLookupSegs(segs, bare)
 	if !ok {
-		m, ok = familyPricing(bare) // caller-holds-lock: Cost holds RLock
+		if m, ok = familyPricing(bare); ok { // caller-holds-lock: Cost holds RLock
+			// noteFamilyPriced uses its own mutex (familyPricedMu), not registryMu.
+			noteFamilyPriced(bare)
+		}
 	}
 	if !ok {
 		// noteUnpriced uses its own mutex (unpricedMu), not registryMu.
@@ -843,7 +876,10 @@ func CostAsOf(model string, at time.Time, input, output, cacheRead, cacheWrite i
 	historyMu.RLock()
 	m, ok := historyLookupAsOfSegs(segs, bare, at)
 	if !ok {
-		m, ok = familyPricingAsOf(bare, at) // caller-holds-lock: mirrors Cost/familyPricing
+		if m, ok = familyPricingAsOf(bare, at); ok { // caller-holds-lock: mirrors Cost/familyPricing
+			// noteFamilyPriced uses its own mutex (familyPricedMu), not historyMu.
+			noteFamilyPriced(bare)
+		}
 	}
 	historyMu.RUnlock()
 	if !ok {
