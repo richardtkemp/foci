@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"os"
@@ -618,4 +619,277 @@ func testIndex(t *testing.T) *session.SessionIndex {
 		t.Fatalf("NewSessionIndex: %v", err)
 	}
 	return idx
+}
+
+// writeSessionLine marshals a message with the given timestamp and returns
+// its JSONL line (with trailing newline).
+func writeSessionLine(t *testing.T, ts time.Time, text string) string {
+	t.Helper()
+	msg := provider.Message{Role: "user", Content: provider.TextContent(text), Timestamp: &ts}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(data) + "\n"
+}
+
+// writeGzipFile gzips content to path.
+func writeGzipFile(t *testing.T, path, content string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	defer f.Close() //nolint:errcheck
+	gw := gzip.NewWriter(f)
+	if _, err := gw.Write([]byte(content)); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+}
+
+// Tests that branchFilesInRootDir finds only b<epoch>.jsonl(.gz) siblings,
+// ignoring root.jsonl, archive files, and unrelated names, sorted oldest first.
+func TestBranchFilesInRootDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{
+		"root.jsonl",
+		"root.2026-03-04T02-30-00Z.jsonl", // archive, not a branch
+		"b2000000000.jsonl",
+		"b1000000000.jsonl",
+		"b3000000000.jsonl.gz",
+		"badname.jsonl", // no leading "b<digits>"
+		"backup.jsonl",  // starts with "b" but not "b<digits>"
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}\n"), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	got, err := branchFilesInRootDir(dir)
+	if err != nil {
+		t.Fatalf("branchFilesInRootDir: %v", err)
+	}
+	want := []string{
+		filepath.Join(dir, "b1000000000.jsonl"),
+		filepath.Join(dir, "b2000000000.jsonl"),
+		filepath.Join(dir, "b3000000000.jsonl.gz"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("index %d: got %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
+// Tests that branchFileSpan finds the earliest/latest timestamps in a plain
+// branch file, including reading through a branch_meta first line.
+func TestBranchFileSpan(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b1000.jsonl")
+
+	early := time.Date(2026, 9, 2, 14, 10, 0, 0, time.UTC)
+	late := time.Date(2026, 9, 2, 14, 15, 0, 0, time.UTC)
+	content := `{"type":"branch_meta","parent_key":"clutch/c1"}` + "\n" +
+		writeSessionLine(t, early, "first") +
+		writeSessionLine(t, late, "second")
+
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	first, last, ok := branchFileSpan(path)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if !first.Equal(early) {
+		t.Errorf("first = %v, want %v", first, early)
+	}
+	if !last.Equal(late) {
+		t.Errorf("last = %v, want %v", last, late)
+	}
+}
+
+// Tests that branchFileSpan transparently decompresses a gzipped branch file.
+func TestBranchFileSpan_Gzip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b1000.jsonl.gz")
+
+	ts := time.Date(2026, 9, 2, 14, 12, 0, 0, time.UTC)
+	content := writeSessionLine(t, ts, "hello")
+	writeGzipFile(t, path, content)
+
+	first, last, ok := branchFileSpan(path)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if !first.Equal(ts) || !last.Equal(ts) {
+		t.Errorf("first/last = %v/%v, want both %v", first, last, ts)
+	}
+}
+
+// Tests that branchFileSpan returns ok=false for a branch file with no
+// timestamped lines (e.g. just the branch_meta header).
+// A delegated-backend branch holds only its branch_meta line — the messages
+// live in the backend transcript — so the span must fall back to the start
+// time carried by the b<epoch> file name, not report "no time" (which
+// previously made every such file match every --from/--to window, #1839).
+func TestBranchFileSpan_MetaOnlyFallsBackToFilenameEpoch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b1788654575.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"branch_meta","parent_key":"clutch/c1"}`+"\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	first, last, ok := branchFileSpan(path)
+	if !ok {
+		t.Fatal("expected ok=true via the filename epoch")
+	}
+	want := time.Unix(1788654575, 0)
+	if !first.Equal(want) || !last.Equal(want) {
+		t.Errorf("span = %v..%v, want both == %v (the b<epoch> start time)", first, last, want)
+	}
+	// And that span actually discriminates: a window before it excludes.
+	if spanOverlaps(first, last, want.Add(-2*time.Hour), want.Add(-time.Hour)) {
+		t.Error("meta-only branch matched a window that ends before it started")
+	}
+}
+
+func TestBranchFileSpan_NoTimestampsNoEpoch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bnotanepoch.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"branch_meta","parent_key":"clutch/c1"}`+"\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, ok := branchFileSpan(path); ok {
+		t.Error("expected ok=false when neither a timestamped line nor a filename epoch exists")
+	}
+}
+
+// Tests spanOverlaps boundary conditions with open and closed bounds.
+func TestSpanOverlaps(t *testing.T) {
+	base := time.Date(2026, 9, 2, 14, 0, 0, 0, time.UTC)
+	first := base
+	last := base.Add(time.Hour)
+
+	cases := []struct {
+		name     string
+		from, to time.Time
+		want     bool
+	}{
+		{"fully open", time.Time{}, time.Time{}, true},
+		{"window inside span", base.Add(10 * time.Minute), base.Add(20 * time.Minute), true},
+		{"window before span", base.Add(-2 * time.Hour), base.Add(-time.Hour), false},
+		{"window after span", base.Add(2 * time.Hour), base.Add(3 * time.Hour), false},
+		{"window touches start exactly", first.Add(-time.Minute), first, true},
+		{"window touches end exactly", last, last.Add(time.Minute), true},
+	}
+	for _, c := range cases {
+		if got := spanOverlaps(first, last, c.from, c.to); got != c.want {
+			t.Errorf("%s: spanOverlaps = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestHandleMissingRootSession_NoBranches is the RED case for #1839: before
+// this fix, a missing root.jsonl always produced a bare "session file not
+// found: <path>" regardless of whether branch files existed alongside it —
+// indistinguishable from "this session does not exist". This test covers the
+// still-correct case (no branch files either) — the bare message is right here.
+func TestHandleMissingRootSession_NoBranches(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "root.jsonl")
+
+	err := handleMissingRootSession("clutch/c1", filePath, false, time.Time{}, time.Time{}, outputHuman)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "session file not found") {
+		t.Errorf("expected bare not-found message, got: %v", err)
+	}
+}
+
+// TestHandleMissingRootSession_ReportsSpan is the GREEN case for #1839: the
+// bug reported that "foci debug session clutch --from ... --to ..." printed a
+// bare "session file not found" for an agent whose default session is
+// branch-only (cron/keepalive/reflection/background never write a root
+// turn), which reads as "this session does not exist" even though it very
+// much does — 1,285 files, all branch files. This asserts the fixed message
+// names the branch file count and time span instead of a bare not-found.
+func TestHandleMissingRootSession_ReportsSpan(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "root.jsonl")
+
+	t1 := time.Date(2026, 9, 2, 14, 12, 0, 0, time.UTC)
+	t2 := time.Date(2026, 9, 2, 14, 16, 0, 0, time.UTC)
+	if err := os.WriteFile(filepath.Join(dir, "b1000.jsonl"), []byte(writeSessionLine(t, t1, "a")), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b2000.jsonl"), []byte(writeSessionLine(t, t2, "b")), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	err := handleMissingRootSession("clutch/c1", filePath, false, time.Time{}, time.Time{}, outputHuman)
+	if err == nil {
+		t.Fatal("expected error (no time range given, so this reports rather than searches)")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "session file not found") {
+		t.Errorf("should NOT be the old bare not-found message, got: %s", msg)
+	}
+	if !strings.Contains(msg, "2 branch file(s)") {
+		t.Errorf("expected branch file count, got: %s", msg)
+	}
+	if !strings.Contains(msg, t1.Format(time.RFC3339)) || !strings.Contains(msg, t2.Format(time.RFC3339)) {
+		t.Errorf("expected time span %s..%s in message, got: %s", t1, t2, msg)
+	}
+}
+
+// TestHandleMissingRootSession_TimeRange proves the "better fix": with
+// --from/--to given, a missing root.jsonl now searches the branch files
+// instead of dead-ending, printing only the branch file(s) whose span
+// overlaps the requested window.
+func TestHandleMissingRootSession_TimeRange(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "root.jsonl")
+
+	inRange := time.Date(2026, 9, 2, 14, 13, 0, 0, time.UTC)
+	outOfRange := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(filepath.Join(dir, "b1000.jsonl"), []byte(writeSessionLine(t, inRange, "in-range-msg")), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b2000.jsonl"), []byte(writeSessionLine(t, outOfRange, "out-of-range-msg")), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	from := time.Date(2026, 9, 2, 14, 12, 0, 0, time.UTC)
+	to := time.Date(2026, 9, 2, 14, 16, 0, 0, time.UTC)
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := handleMissingRootSession("clutch/c1", filePath, true, from, to, outputJSON)
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var buf strings.Builder
+	io.Copy(&buf, r) //nolint:errcheck
+	output := buf.String()
+
+	if !strings.Contains(output, "in-range-msg") {
+		t.Errorf("expected in-range message in output, got: %s", output)
+	}
+	if strings.Contains(output, "out-of-range-msg") {
+		t.Errorf("out-of-range message should have been filtered out, got: %s", output)
+	}
 }
