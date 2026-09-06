@@ -120,6 +120,9 @@ Subcommands:
 	modelinfo.AmbiguousModelHook = func(bare string) {
 		modelinfoLog.Warnf("ambiguous model %q — multiple registry entries share this leaf id and the lookup couldn't disambiguate by dev/provider; picked deterministically. Qualify the model id with its dev (e.g. openrouter/<dev>/%s)", bare, bare)
 	}
+	modelinfo.FamilyPricedModelHook = func(model string) {
+		modelinfoLog.Warnf("no exact price for %q — inheriting its family's rates; verify against the pricing page and add a models.jsonl row", model)
+	}
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
