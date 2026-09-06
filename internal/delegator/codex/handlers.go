@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/sessionenv"
+	"foci/internal/modelinfo"
 )
 
 // onThreadStarted records the transcript path Codex associates with a thread.
@@ -80,12 +82,6 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	// turnMu from the agent goroutine (e.g. a turn/start >30s timeout firing
 	// while the turn is still running) — reading the strings.Builder without
 	// the lock is a real data race.
-	b.turnMu.Lock()
-	usage := b.stashedUsage
-	text := b.turnText.String()
-	tools := b.turnTools
-	b.turnMu.Unlock()
-
 	b.mu.Lock()
 	model := b.model
 	threadName := b.threadName
@@ -93,6 +89,12 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	if model != "" {
 		model = "codex/" + model
 	}
+
+	b.turnMu.Lock()
+	usage := b.turnUsageLocked(model)
+	text := b.turnText.String()
+	tools := b.turnTools
+	b.turnMu.Unlock()
 	result := &delegator.TurnResult{
 		Text:       text,
 		ToolCalls:  tools,
@@ -485,8 +487,14 @@ func (b *Backend) onAgentMessageDelta(params *agentMessageDeltaParams) {
 	}
 }
 
-// onTokenUsage stashes the latest usage for the current turn. Delivered
-// in TurnResult.Usage when the turn completes.
+// onTokenUsage records one API cycle's usage. codex sends this notification
+// once per cycle (see tokenUsageParams), so the handler keeps two different
+// quantities: the raw latest cycle (stashedUsage — the context fill that
+// GetContextWindow and compaction read) and a running per-turn sum of every
+// cycle (turnCalc — what TurnResult.Usage.Turn carries and cost is priced
+// from). Before #1855 only the former existed and each notification
+// OVERWROTE it, so a multi-cycle turn was reported as its last cycle alone:
+// a probe-captured 4-cycle turn logged 5 output tokens against a real 151.
 func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 	// codex/OpenAI token semantics differ from Anthropic's: cachedInputTokens
 	// is a SUBSET of inputTokens (live-verified against codex 0.144.5 rollout
@@ -498,17 +506,30 @@ func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 	// the cached portion out of InputTokens here. Reporting it in both fields
 	// otherwise double-counts the cache: context occupancy inflates (premature
 	// auto-compaction) and cost double-charges the cached tokens.
-	inputTokens := params.TokenUsage.Last.InputTokens - params.TokenUsage.Last.CachedInputTokens
+	last := params.TokenUsage.Last
+	inputTokens := last.InputTokens - last.CachedInputTokens
 	if inputTokens < 0 {
 		inputTokens = 0
 	}
 	u := &delegator.TurnUsage{
-		InputTokens:          inputTokens,
-		OutputTokens:         params.TokenUsage.Last.OutputTokens,
-		CacheReadInputTokens: params.TokenUsage.Last.CachedInputTokens,
+		InputTokens:              inputTokens,
+		OutputTokens:             last.OutputTokens,
+		CacheReadInputTokens:     last.CachedInputTokens,
+		CacheCreationInputTokens: last.CacheWriteInputTokens,
 	}
 	b.turnMu.Lock()
+	if params.TurnID != "" && params.TurnID != b.usageTurnID {
+		b.resetTurnUsageLocked()
+		b.usageTurnID = params.TurnID
+	}
 	b.stashedUsage = u
+	b.turnCalc = b.turnCalc.Add(modelinfo.TokenCounts{
+		Input:      inputTokens,
+		Output:     last.OutputTokens,
+		CacheRead:  last.CachedInputTokens,
+		CacheWrite: last.CacheWriteInputTokens,
+	})
+	b.turnCalcSeen = true
 	b.turnMu.Unlock()
 
 	if params.TokenUsage.ModelContextWindow > 0 {
@@ -516,6 +537,43 @@ func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 		b.contextWindow = params.TokenUsage.ModelContextWindow
 		b.mu.Unlock()
 	}
+}
+
+// resetTurnUsageLocked clears both per-turn usage quantities. Caller holds
+// turnMu. Every turn boundary goes through this one function so a field added
+// to the group is reset everywhere for free.
+func (b *Backend) resetTurnUsageLocked() {
+	b.stashedUsage = nil
+	b.turnCalc = modelinfo.TokenCounts{}
+	b.turnCalcSeen = false
+	b.usageTurnID = ""
+}
+
+// turnUsageLocked builds the completed turn's usage. Caller holds turnMu.
+//
+// The two scopes are deliberately different quantities (see delegator.TurnUsage
+// and docs/WIRING.md's "Two scopes of token columns"): input/cache stay the
+// FINAL cycle's context fill — summing them would report a compaction figure
+// several times the real occupancy — while output and Turn are the per-turn
+// sums, and CalculatedCostUSD is priced from exactly the counts Turn carries,
+// so a persisted row can be re-priced back to its cost.
+func (b *Backend) turnUsageLocked(model string) *delegator.TurnUsage {
+	if b.stashedUsage == nil {
+		return nil
+	}
+	u := *b.stashedUsage
+	if !b.turnCalcSeen {
+		return &u
+	}
+	turn := b.turnCalc
+	u.OutputTokens = turn.Output
+	u.Turn = &turn
+	if model != "" {
+		cost := modelinfo.CostAsOf(model, time.Now(),
+			turn.Input, turn.Output, turn.CacheRead, turn.CacheWrite)
+		u.CalculatedCostUSD = &cost
+	}
+	return &u
 }
 
 // onServerRequestResolved handles a codex-side resolution of a pending
@@ -620,7 +678,7 @@ func (b *Backend) completeTurn(result *delegator.TurnResult) {
 	b.turnResultCh = nil
 	b.turnText.Reset()
 	b.turnTools = 0
-	b.stashedUsage = nil
+	b.resetTurnUsageLocked()
 	b.turnMu.Unlock()
 
 	if b.typingFunc != nil {

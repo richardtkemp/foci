@@ -50,7 +50,7 @@ func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
 	b.turnResultCh = make(chan *delegator.TurnResult, 1)
 	b.turnText.Reset()
 	b.turnTools = 0
-	b.stashedUsage = nil
+	b.resetTurnUsageLocked()
 	b.turnMu.Unlock()
 
 	threadID := b.SessionIDFor(b.startOpts.SessionKey)
