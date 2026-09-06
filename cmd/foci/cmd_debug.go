@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -137,9 +140,11 @@ func cmdDebugSession(args []string, configPath string) error {
 		return fmt.Errorf("session path: %w", err)
 	}
 
-	// Check file exists
+	// Check file exists. A root session with no root turns yet (only ever
+	// cron/keepalive/reflection/background branch turns) never gets a
+	// root.jsonl — see handleMissingRootSession.
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return fmt.Errorf("session file not found: %s", filePath)
+		return handleMissingRootSession(sessionKey, filePath, hasTimeRange, fromTime, toTime, format)
 	}
 
 	// Print header
@@ -207,6 +212,213 @@ func cmdDebugSession(args []string, configPath string) error {
 			return nil
 		}
 	}
+}
+
+// handleMissingRootSession answers "foci debug session <key>" when the root
+// session file (root.jsonl) does not exist on disk. This is the normal shape
+// for an agent whose default session only ever receives branch turns (cron,
+// keepalive, reflection, background spawns) — those turns each get their own
+// b<epoch>.jsonl sibling file, and root.jsonl is never created (#1839).
+// Rather than a bare "session file not found" (which reads as "this session
+// does not exist" when it very much does), this reports the branch files
+// found alongside it and, if a time range was requested, searches across them.
+func handleMissingRootSession(sessionKey, filePath string, hasTimeRange bool, from, to time.Time, format outputFormat) error {
+	dir := filepath.Dir(filePath)
+	branches, _ := branchFilesInRootDir(dir)
+	if len(branches) == 0 {
+		return fmt.Errorf("session file not found: %s", filePath)
+	}
+
+	if hasTimeRange {
+		fmt.Printf("── session: %s ──\n── no root.jsonl; searching %d branch file(s) in %s ──\n\n", sessionKey, len(branches), dir)
+		return printBranchFilesInRange(branches, from, to, format)
+	}
+
+	var first, last time.Time
+	for _, b := range branches {
+		bf, bl, ok := branchFileSpan(b)
+		if !ok {
+			continue
+		}
+		if first.IsZero() || bf.Before(first) {
+			first = bf
+		}
+		if last.IsZero() || bl.After(last) {
+			last = bl
+		}
+	}
+	spanMsg := "none with a usable time"
+	if !first.IsZero() {
+		spanMsg = fmt.Sprintf("spanning %s to %s (delegated-backend branches hold only their meta line; the messages are in conversation.db and the backend transcript)", first.Format(time.RFC3339), last.Format(time.RFC3339))
+	}
+	return fmt.Errorf(
+		"no root.jsonl for %s — this session has only ever had branch turns (cron/keepalive/reflection/background), never a root/chat turn\n"+
+			"  %d branch file(s) found in %s, %s\n"+
+			"  retry with --from/--to to search across them, e.g.:\n"+
+			"    foci debug session %s --from <start> --to <end>",
+		sessionKey, len(branches), dir, spanMsg, sessionKey)
+}
+
+// branchFilesInRootDir returns the branch (child) files that live alongside a
+// root session's root.jsonl — filenames "b<epoch>.jsonl" or
+// "b<epoch>.jsonl.gz" (branches can be gzipped by the idle-archive sweep same
+// as any other session file) — sorted oldest-first by their epoch.
+func branchFilesInRootDir(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		path  string
+		epoch int64
+	}
+	var cands []candidate
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		plain := strings.TrimSuffix(name, ".gz")
+		if !strings.HasPrefix(plain, "b") || !strings.HasSuffix(plain, ".jsonl") {
+			continue
+		}
+		epoch, ok := branchFileEpoch(name)
+		if !ok {
+			continue // not a b<epoch>.jsonl name
+		}
+		cands = append(cands, candidate{path: filepath.Join(dir, name), epoch: epoch})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].epoch < cands[j].epoch })
+	out := make([]string, len(cands))
+	for i, c := range cands {
+		out[i] = c.path
+	}
+	return out, nil
+}
+
+// branchFileEpoch parses the start epoch out of a "b<epoch>.jsonl[.gz]"
+// branch file name.
+func branchFileEpoch(name string) (int64, bool) {
+	plain := strings.TrimSuffix(filepath.Base(name), ".gz")
+	if !strings.HasPrefix(plain, "b") || !strings.HasSuffix(plain, ".jsonl") {
+		return 0, false
+	}
+	epoch, err := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(plain, "b"), ".jsonl"), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return epoch, true
+}
+
+// branchFileSpan returns the time span a branch file covers: the earliest
+// and latest message timestamps in it (transparently decompressing .gz).
+// A branch of a delegated (CC/codex) session holds only its branch_meta
+// line — the messages live in the backend transcript and conversation.db,
+// not here — so when no line carries a timestamp the span collapses to the
+// branch's start time, taken from the b<epoch> file name. ok=false only when
+// neither source yields a time.
+func branchFileSpan(path string) (first, last time.Time, ok bool) {
+	defer func() {
+		if first.IsZero() {
+			if epoch, epochOK := branchFileEpoch(path); epochOK {
+				first = time.Unix(epoch, 0)
+				last = first
+				ok = true
+			}
+		}
+	}()
+	r, err := openSessionReader(path)
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	defer r.Close() //nolint:errcheck
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		ts := lineTimestamp(line)
+		if ts.IsZero() {
+			continue
+		}
+		if first.IsZero() || ts.Before(first) {
+			first = ts
+		}
+		if last.IsZero() || ts.After(last) {
+			last = ts
+		}
+	}
+	return first, last, !first.IsZero()
+}
+
+// spanOverlaps reports whether a file whose timestamped content runs
+// [first, last] could hold anything in the requested [from, to] window. A
+// zero from/to bound is open-ended.
+func spanOverlaps(first, last, from, to time.Time) bool {
+	if !to.IsZero() && first.After(to) {
+		return false
+	}
+	if !from.IsZero() && last.Before(from) {
+		return false
+	}
+	return true
+}
+
+// printBranchFilesInRange filters and prints each branch file whose span
+// overlaps [from, to], labelled with its path so the source of each message
+// is unambiguous when several branch files are searched at once.
+func printBranchFilesInRange(branches []string, from, to time.Time, format outputFormat) error {
+	found := false
+	for _, path := range branches {
+		first, last, ok := branchFileSpan(path)
+		if !ok || !spanOverlaps(first, last, from, to) {
+			continue
+		}
+		fmt.Printf("── branch file: %s ──\n\n", path)
+		if err := printFilteredContent(path, from, to, format); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		found = true
+	}
+	if !found {
+		fmt.Println("(no branch files overlap that time range)")
+	}
+	return nil
+}
+
+// openSessionReader opens a session JSONL file for reading, transparently
+// decompressing it if it is gzipped (branch files, like root files, can be
+// gzipped by the idle-archive sweep). Caller must Close the result.
+func openSessionReader(path string) (io.ReadCloser, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(path, ".gz") {
+		return f, nil
+	}
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("gzip reader %s: %w", path, err)
+	}
+	return &gzipReadCloser{gr: gr, f: f}, nil
+}
+
+// gzipReadCloser closes both the gzip reader and its underlying file.
+type gzipReadCloser struct {
+	gr *gzip.Reader
+	f  *os.File
+}
+
+func (g *gzipReadCloser) Read(p []byte) (int, error) { return g.gr.Read(p) }
+
+func (g *gzipReadCloser) Close() error {
+	_ = g.gr.Close()
+	return g.f.Close()
 }
 
 // parseTimeArg parses a time argument as either an RFC3339 timestamp or a
@@ -317,7 +529,7 @@ func inTimeRange(ts, from, to time.Time) bool {
 // printFilteredContent reads a session file and prints only lines with timestamps
 // in the given range. Meta lines (session_meta, branch_meta) are always included.
 func printFilteredContent(path string, from, to time.Time, format outputFormat) error {
-	f, err := os.Open(path)
+	f, err := openSessionReader(path)
 	if err != nil {
 		return err
 	}
