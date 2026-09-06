@@ -230,20 +230,31 @@ type agentMessageDeltaParams struct {
 	Delta    string `json:"delta"`
 }
 
+// tokenUsageBreakdown is one TokenUsageBreakdown from codex's app-server
+// protocol schema (v2/ThreadTokenUsageUpdatedNotification.json).
+type tokenUsageBreakdown struct {
+	InputTokens           int `json:"inputTokens"`
+	OutputTokens          int `json:"outputTokens"`
+	CachedInputTokens     int `json:"cachedInputTokens"`
+	CacheWriteInputTokens int `json:"cacheWriteInputTokens"`
+	ReasoningOutputTokens int `json:"reasoningOutputTokens"`
+	TotalTokens           int `json:"totalTokens"`
+}
+
 // tokenUsageParams carries token usage updates for the active thread.
-// Emitted as thread/tokenUsage/updated.
+// Emitted as thread/tokenUsage/updated ONCE PER API CYCLE, not once per turn:
+// a turn making three tool calls emits four (probe-verified against codex
+// 0.145.0 — three tool cycles plus the final answer), each carrying that
+// cycle's own figures in Last. Total is a running sum of every Last for the
+// THREAD's whole lifetime (it does not reset between turns), so a per-turn
+// figure comes from accumulating Last, not from reading Total. See #1855.
 type tokenUsageParams struct {
 	ThreadID   string `json:"threadId"`
 	TurnID     string `json:"turnId,omitempty"`
 	TokenUsage struct {
-		Last struct {
-			InputTokens           int `json:"inputTokens"`
-			OutputTokens          int `json:"outputTokens"`
-			CachedInputTokens     int `json:"cachedInputTokens"`
-			ReasoningOutputTokens int `json:"reasoningOutputTokens"`
-			TotalTokens           int `json:"totalTokens"`
-		} `json:"last"`
-		ModelContextWindow int `json:"modelContextWindow,omitempty"`
+		Last               tokenUsageBreakdown `json:"last"`
+		Total              tokenUsageBreakdown `json:"total"`
+		ModelContextWindow int                 `json:"modelContextWindow,omitempty"`
 	} `json:"tokenUsage"`
 }
 
