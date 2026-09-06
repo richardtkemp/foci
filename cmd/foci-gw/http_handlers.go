@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"foci/internal/agent"
 	"foci/internal/app"
@@ -23,6 +24,26 @@ import (
 	"foci/internal/voice"
 	"foci/shared/prompts"
 )
+
+// logBodyPreviewChars bounds how much of a prompt body previewForLog keeps.
+const logBodyPreviewChars = 120
+
+// previewForLog returns a short, bounded, single-line preview of a prompt
+// body for a service-log line — never the full text. #1838: the "[http]
+// send" INFO line used to write the entire body inline, unbounded; a routine
+// window-grep of foci.log (the standard first move in almost every
+// investigation) could pull KBs of private prompt content into an unrelated
+// agent's context purely by substring coincidence. Keeping a short prefix
+// plus the total byte length preserves greppability/auditability without
+// turning the service log into a message store — the full text still lives
+// wherever payloads are already logged (e.g. conversation.db).
+func previewForLog(body string) string {
+	if utf8.RuneCountInString(body) <= logBodyPreviewChars {
+		return fmt.Sprintf("%dB %q", len(body), body)
+	}
+	runes := []rune(body)
+	return fmt.Sprintf("%dB %q…", len(body), string(runes[:logBodyPreviewChars]))
+}
 
 // agentResolver returns the agent instance for the given ID, or the first agent if empty.
 type agentResolver func(agentID string) (*agentInstance, bool)
@@ -310,7 +331,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			}
 		}
 
-		httpLog.Infof("send (agent=%s, session=%s): %s", inst.id, sessionKey, req.Text)
+		httpLog.Infof("send (agent=%s, session=%s): %s", inst.id, sessionKey, previewForLog(req.Text))
 
 		if strings.HasPrefix(req.Text, "/") {
 			cmdReq := command.RequestFromText(req.Text, sessionKey, "", 0)
@@ -565,7 +586,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 				if inherited {
 					kind = "backend fork"
 				}
-				branchLog.Infof("delegated %s %s from %s, text=%q no_compact=%v async=%v silent=%v", kind, branchKey, parentKey, req.Text, req.NoCompact, req.Async, req.Silent)
+				branchLog.Infof("delegated %s %s from %s, text=%s no_compact=%v async=%v silent=%v", kind, branchKey, parentKey, previewForLog(req.Text), req.NoCompact, req.Async, req.Silent)
 				if req.Async {
 					asyncDispatch(w, inst, d.connMgr, branchCtx, branchKey, req.Text, "branch", req.Silent, route.PolicyFallback, route.Receipt{SessionKey: branchKey, Via: "branch"})
 					return
@@ -627,7 +648,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			}
 		}
 
-		branchLog.Infof("branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async, req.Silent)
+		branchLog.Infof("branch %s from %s, text=%s no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, previewForLog(req.Text), req.NoCompact, req.NoResetHook, req.Async, req.Silent)
 
 		branchCtx := agent.WithTrigger(d.ctx, "branch")
 		if req.NoCompact {
