@@ -175,7 +175,10 @@ func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, sel
 		}
 		t.Policy = p
 	}
-	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor}
+	// CreateDefault is set here and nowhere else in the HTTP layer: /send,
+	// /branch and /webhook are delivery paths, so an agent whose every
+	// conversation is archived gets one minted rather than a 412 (#1859).
+	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor, CreateDefault: d.createDefault}
 	res, err := r.Resolve(t)
 	if err == nil {
 		rcpt := res.ReceiptFor(t)
