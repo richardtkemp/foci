@@ -609,6 +609,7 @@ Subcommands:
 		reloadCredentials: reloadCreds,
 		pprofGate:         &pprofGate,
 		deferStore:        deferStore,
+		createDefault:     app.CreateDefaultConversation,
 	}
 
 	if deferStore != nil {

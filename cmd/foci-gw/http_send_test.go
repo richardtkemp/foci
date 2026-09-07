@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/command"
+	"foci/internal/session"
 )
 
 // postJSON posts body to path on mux and returns the recorder.
@@ -178,5 +179,59 @@ func TestSend_SerialisesBehindInFlightTurn(t *testing.T) {
 	calls := mock.snapshot()
 	if len(calls) != 2 || !strings.HasSuffix(calls[0].text, "first") || !strings.HasSuffix(calls[1].text, "second") {
 		t.Errorf("backend calls = %+v, want [first, second] in order", calls)
+	}
+}
+
+// TestSend_NoDefaultSession_NilHook_412 pins the nil-hook behaviour: with no
+// createDefault wired (the harness default), an agent with no resolvable
+// default session gets 412 and the backend is never called — the semantics
+// the warm/keepalive resolvers rely on.
+func TestSend_NoDefaultSession_NilHook_412(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{noSession: true})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/send", `{"text":"hello"}`)
+
+	if w.Code != http.StatusPreconditionFailed {
+		t.Fatalf("status = %d, want 412; body: %s", w.Code, w.Body.String())
+	}
+	if calls := mock.snapshot(); len(calls) != 0 {
+		t.Errorf("backend was called %d times, want 0", len(calls))
+	}
+}
+
+// TestSend_NoDefaultSession_CreatesDefault proves the #1859 fix: a cron-style
+// POST /send to an agent with no resolvable default session (none, or every
+// conversation archived) goes through the createDefault hook, resolves to the
+// minted session with rung "created", and dispatches the turn there.
+func TestSend_NoDefaultSession_CreatesDefault(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{noSession: true})
+	created := session.NewChatSessionKey(testAgentID, 99)
+	var hookCalls []string
+	d.createDefault = func(agentID string) (string, error) {
+		hookCalls = append(hookCalls, agentID)
+		d.sessionIndex.Upsert(session.SessionIndexEntry{SessionKey: created, FilePath: "x", SessionType: session.SessionTypeChat, Status: session.SessionStatusActive})
+		return created, nil
+	}
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/send", `{"text":"hello"}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["session"] != created {
+		t.Errorf("session = %q, want %q", resp["session"], created)
+	}
+	if resp["resolved_via"] != "created" {
+		t.Errorf("resolved_via = %q, want %q", resp["resolved_via"], "created")
+	}
+	if len(hookCalls) != 1 || hookCalls[0] != testAgentID {
+		t.Errorf("createDefault calls = %v, want exactly one for %q", hookCalls, testAgentID)
+	}
+	if got := mock.lastText(); !strings.HasSuffix(got, "\n\nhello") {
+		t.Errorf("backend saw %q, want text ending in %q", got, "hello")
 	}
 }

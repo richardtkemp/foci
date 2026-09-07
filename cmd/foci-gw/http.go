@@ -37,6 +37,13 @@ type httpHandlerDeps struct {
 	reloadCredentials func() error
 	pprofGate         *atomic.Bool // live-toggle gate for /debug/pprof/*
 	deferStore        *defersend.Store
+	// createDefault is the route.Resolver's CreateDefault hook: mint (or reuse)
+	// one visible conversation for an agent whose default rung finds nothing
+	// non-archived. Production wires app.CreateDefaultConversation. It is
+	// injected only into the delivery resolver (resolveTargetSession — /send,
+	// /branch, /webhook); defaultSessionKey (command dispatch) leaves it nil so
+	// /status and /command never mint a conversation (#1859).
+	createDefault func(agentID string) (string, error)
 }
 
 // checkActivityGate evaluates the four activity gate conditions and returns
