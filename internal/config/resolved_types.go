@@ -400,6 +400,7 @@ type ResolvedNotify struct {
 	TaskListNotify      bool           // default true
 	CompactionDebug     bool           // default false
 	WarningMaxPerWindow int            // default 3
+	RateLimitNotifyTo   string         // default "session" (#1857)
 }
 
 func resolveNotify(m NotifyConfig) ResolvedNotify {
@@ -411,6 +412,7 @@ func resolveNotify(m NotifyConfig) ResolvedNotify {
 		TaskListNotify:      m.TaskListNotifyEnabled(),
 		CompactionDebug:     m.CompactionDebugEnabled(),
 		WarningMaxPerWindow: DerefInt(m.WarningMaxPerWindow),
+		RateLimitNotifyTo:   m.RateLimitNotifyTarget(),
 	}
 }
 

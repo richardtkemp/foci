@@ -81,6 +81,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Notify.WarningMaxPerWindow != nil {
 		add("notify", "warning_max_per_window", *cfg.Notify.WarningMaxPerWindow)
 	}
+	if cfg.Notify.RateLimitNotifyTo != nil {
+		add("notify", "rate_limit_notify_to", *cfg.Notify.RateLimitNotifyTo)
+	}
 	if cfg.Sessions.FacetNoCompact != nil {
 		add("sessions", "facet_no_compact", *cfg.Sessions.FacetNoCompact)
 	}
@@ -362,6 +365,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if agent.Notify.InjectChatWarnings != nil {
 		add("inject_chat_warnings", string(*agent.Notify.InjectChatWarnings))
+	}
+	if agent.Notify.RateLimitNotifyTo != nil {
+		add("rate_limit_notify_to", *agent.Notify.RateLimitNotifyTo)
 	}
 	if agent.Notify.StartupNotify != nil {
 		add("startup_notify", *agent.Notify.StartupNotify)

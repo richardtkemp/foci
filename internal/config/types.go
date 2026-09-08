@@ -607,13 +607,33 @@ type AccessConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type NotifyConfig struct {
-	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   hot:"event" desc:"Whether internal warnings are fed directly into the agent's own conversation, as if said by the system, so it can see and react: all, errors only, or off"`        // inject warnings/errors into agent session
-	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    hot:"event" desc:"Whether internal warnings are sent to you as chat notification messages: all, errors only, or off"`                                                                // send warnings/errors as chat notifications
-	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"Send a chat notification each time this agent starts up"`                                                                                                                      // send startup notification
-	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" hot:"event" desc:"Send a chat notification whenever the conversation history is compacted (summarized to free up context space)"`                                                    // send notification on compaction
-	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" hot:"event" desc:"Send a chat notification whenever the agent's todo list changes"`                                                                                                  // send notification on task list changes
-	CompactionDebug     *bool           `toml:"compaction_debug"                        hot:"event" desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                            // send compaction summary as file attachment
-	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    hot:"event" scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"` // max identical warnings per window before suppression (default 3)
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   hot:"event" desc:"Whether internal warnings are fed directly into the agent's own conversation, as if said by the system, so it can see and react: all, errors only, or off"`                                                                                                                                        // inject warnings/errors into agent session
+	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    hot:"event" desc:"Whether internal warnings are sent to you as chat notification messages: all, errors only, or off"`                                                                                                                                                                                                // send warnings/errors as chat notifications
+	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"Send a chat notification each time this agent starts up"`                                                                                                                                                                                                                                                      // send startup notification
+	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" hot:"event" desc:"Send a chat notification whenever the conversation history is compacted (summarized to free up context space)"`                                                                                                                                                                                    // send notification on compaction
+	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" hot:"event" desc:"Send a chat notification whenever the agent's todo list changes"`                                                                                                                                                                                                                                  // send notification on task list changes
+	CompactionDebug     *bool           `toml:"compaction_debug"                        hot:"event" desc:"Attach the full compaction summary as a file whenever compaction runs, to inspect what got summarized"`                                                                                                                                                                                            // send compaction summary as file attachment
+	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    hot:"event" scope:"global,agent" desc:"Maximum identical warning notifications sent within a time window before further repeats are suppressed, to avoid spamming chat (default 3)"`                                                                                                                                 // max identical warnings per window before suppression (default 3)
+	RateLimitNotifyTo   *string         `toml:"rate_limit_notify_to" default:"session" hot:"event" scope:"global,agent" choices:"session,default,both" desc:"Where an Anthropic usage-limit warning is delivered: session sends it to the chat whose session hit the limit (falling back to the default chat), default always sends it to the agent's default chat, both sends it to each when they differ"` // #1857
+}
+
+// Rate-limit notice delivery targets for [notify] rate_limit_notify_to.
+const (
+	RateLimitNotifySession = "session" // the session that crossed the limit, else the default chat
+	RateLimitNotifyDefault = "default" // always the agent's default chat (pre-#1857 behaviour)
+	RateLimitNotifyBoth    = "both"    // the session chat AND the default chat when they differ
+)
+
+// ValidRateLimitNotifyTargets lists the accepted rate_limit_notify_to values.
+var ValidRateLimitNotifyTargets = []string{RateLimitNotifySession, RateLimitNotifyDefault, RateLimitNotifyBoth}
+
+// RateLimitNotifyTarget returns the resolved delivery target for usage-limit
+// notices (default: "session").
+func (n NotifyConfig) RateLimitNotifyTarget() string {
+	if n.RateLimitNotifyTo != nil && *n.RateLimitNotifyTo != "" {
+		return *n.RateLimitNotifyTo
+	}
+	return RateLimitNotifySession
 }
 
 // InjectAgentWarningsLevel returns the resolved injection level (default: off).

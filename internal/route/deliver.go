@@ -48,9 +48,15 @@ func ConnFor(cm platform.ConnectionManager, agentID, sessionKey string, policy P
 }
 
 // Broadcast returns every live connection for an agent across all platforms
-// — the delivery set for PolicyBroadcast targets and for agent-wide notices
-// (rate-limit, max-tokens warnings). Callers choose the send method
-// (SendNotification for notices, SendText for messages) per connection.
+// — the delivery set for PolicyBroadcast targets and for the agent-wide notices
+// fanned out by broadcastNotify: the rate-limit GATE notice (Agent.RateLimitFunc,
+// "⚡ Rate limited (resets …)") and max-tokens warnings. Callers choose the send
+// method (SendNotification for notices, SendText for messages) per connection.
+//
+// It is NOT the path for CC's usage-limit warning (ccstream's rate_limit_event,
+// #1211/#1238). That one is delivered to a single chosen chat per
+// [notify] rate_limit_notify_to — ConnFor for the session, Primary for the
+// default, or both — and never broadcast (#1857).
 func Broadcast(cm platform.ConnectionManager, agentID string) []platform.Connection {
 	if cm == nil {
 		return nil

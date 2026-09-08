@@ -46,7 +46,11 @@ func (b *Backend) SetOnAuthFailure(fn func(detail string)) { b.onAuthFailure = f
 // notice when CC reports the API is past the "allowed" threshold. The agent
 // delivers it to the user's chat; it does NOT gate periodic work (a warning is
 // not a block). Must be set before Start (#1211/#1238).
-func (b *Backend) SetOnRateLimited(fn func(detail string)) { b.onRateLimited = fn }
+//
+// sessionKey is the foci session this Backend belongs to (StartOptions.SessionKey,
+// empty before Start). Without it the hook carried no session identity and every
+// notice could only reach the agent's default chat (#1857).
+func (b *Backend) SetOnRateLimited(fn func(sessionKey, detail string)) { b.onRateLimited = fn }
 
 // SetRateLimitThrottle sets a shared rate-limit warning throttle so multiple
 // Backends for the same agent (main + facet sessions) don't each fire their

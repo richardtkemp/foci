@@ -231,6 +231,18 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
+	// Validate [notify] rate_limit_notify_to (global + per-agent). An unknown
+	// value would otherwise be treated as "session" by the delivery switch's
+	// default arm — a typo must fail loudly at load instead (#1857).
+	if err := validateRateLimitNotifyTo("[notify]", cfg.Notify.RateLimitNotifyTo); err != nil {
+		return err
+	}
+	for _, a := range cfg.Agents {
+		if err := validateRateLimitNotifyTo(fmt.Sprintf("agent %q [notify]", a.ID), a.Notify.RateLimitNotifyTo); err != nil {
+			return err
+		}
+	}
+
 	// Validate webhook keys contain no path separators (defense in depth)
 	for k := range cfg.System.Webhooks {
 		if strings.ContainsAny(k, "/\\") {
@@ -608,4 +620,19 @@ func (cfg *Config) validateAskgw() error {
 		}
 	}
 	return nil
+}
+
+// validateRateLimitNotifyTo checks a [notify] rate_limit_notify_to value against
+// the accepted delivery targets. nil (unset) inherits from the wider scope and
+// is always valid (#1857).
+func validateRateLimitNotifyTo(where string, v *string) error {
+	if v == nil || *v == "" {
+		return nil
+	}
+	for _, ok := range ValidRateLimitNotifyTargets {
+		if *v == ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s rate_limit_notify_to = %q: must be one of %s", where, *v, strings.Join(ValidRateLimitNotifyTargets, ", "))
 }
