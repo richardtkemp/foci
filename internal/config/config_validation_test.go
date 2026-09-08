@@ -704,3 +704,60 @@ func TestValidateDefaultPlatform(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateRateLimitNotifyTo proves an unknown [notify] rate_limit_notify_to
+// is rejected at load rather than silently falling through the delivery switch
+// (#1857), that the three accepted values load, and that a per-agent override is
+// validated too.
+func TestValidateRateLimitNotifyTo(t *testing.T) {
+	const base = "[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n"
+	tests := []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{"session", base + "\n[notify]\nrate_limit_notify_to = \"session\"", ""},
+		{"default", base + "\n[notify]\nrate_limit_notify_to = \"default\"", ""},
+		{"both", base + "\n[notify]\nrate_limit_notify_to = \"both\"", ""},
+		{"unset", base, ""},
+		{"global typo", base + "\n[notify]\nrate_limit_notify_to = \"primary\"", `rate_limit_notify_to = "primary"`},
+		{
+			"per-agent typo",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[agents.notify]\nrate_limit_notify_to = \"everyone\"",
+			`rate_limit_notify_to = "everyone"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "foci.toml")
+			if err := os.WriteFile(path, []byte(tt.toml), 0644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tt.wantErr != "" && err == nil:
+				t.Fatal("expected error, got nil — an unknown target would deliver nowhere")
+			case tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr):
+				t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestRateLimitNotifyTargetDefault pins the default: unset means the notice goes
+// to the session that hit the limit, not the agent's default chat (#1857).
+func TestRateLimitNotifyTargetDefault(t *testing.T) {
+	if got := (NotifyConfig{}).RateLimitNotifyTarget(); got != RateLimitNotifySession {
+		t.Errorf("unset RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifySession)
+	}
+	empty := ""
+	if got := (NotifyConfig{RateLimitNotifyTo: &empty}).RateLimitNotifyTarget(); got != RateLimitNotifySession {
+		t.Errorf("empty RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifySession)
+	}
+	both := RateLimitNotifyBoth
+	if got := (NotifyConfig{RateLimitNotifyTo: &both}).RateLimitNotifyTarget(); got != RateLimitNotifyBoth {
+		t.Errorf("RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifyBoth)
+	}
+}

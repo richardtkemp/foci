@@ -264,13 +264,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				// the user instead of being injected into the agent's own
 				// context. It reflects API utilization past a threshold, not a
 				// block, so it does NOT gate periodic work (#1211/#1238).
-				sb.SetOnRateLimited(func(notice string) {
-					if conn := connMgr.Primary(agentID); conn != nil {
-						conn.SendNotification(notice)
-						log.NewComponentLogger("agent:" + agentID).Debugf("rate limit notice delivered to default chat")
-					} else {
-						log.NewComponentLogger("agent:"+agentID).Debugf("rate limit notice undelivered (no primary connection): %s", notice)
-					}
+				//
+				// Delivery target is [notify] rate_limit_notify_to, read LIVE
+				// per notice (hot:"event") so an edit takes effect without a
+				// restart — the backend outlives the config (#1857).
+				sb.SetOnRateLimited(func(sessionKey, notice string) {
+					deliverRateLimitNotice(connMgr, agentID, sessionKey, notice,
+						p.resolvedLive.Load().Notify.RateLimitNotifyTo)
 				})
 				// A CC session-limit message engages the rate-limit gate so
 				// background/periodic work pauses until the window resets; the
@@ -511,6 +511,56 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// deliverRateLimitNotice sends a CC usage-limit notice to the chat(s) chosen by
+// [notify] rate_limit_notify_to (#1857). sessionKey identifies the foci session
+// whose backend saw the rate_limit_event — before #1857 the hook carried no
+// session identity, so every notice could only land in the agent's default chat
+// even when a facet or app session triggered it.
+//
+//   - "session" (default): the session's own chat, falling back to the agent's
+//     primary connection when that session has none live.
+//   - "default": always the agent's primary connection (pre-#1857 behaviour).
+//   - "both": the session's chat AND the primary, when they are different
+//     connections.
+//
+// The throttle is per-agent (rate limits are account-wide), so under "session"
+// the notice reaches only the session that FIRST crossed the utilization bucket
+// — "both" is the setting for also copying it to the default chat.
+func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice, target string) {
+	logger := log.NewComponentLogger("agent:" + agentID)
+
+	send := func(conn platform.Connection, outcome route.DeliveryOutcome) bool {
+		if conn == nil {
+			return false
+		}
+		conn.SendNotification(notice)
+		logger.Debugf("rate limit notice delivered (target=%s outcome=%s session=%s)", target, outcome, sessionKey)
+		return true
+	}
+
+	switch target {
+	case config.RateLimitNotifyDefault:
+		if !send(connMgr.Primary(agentID), route.DeliveredViaPrimary) {
+			logger.Debugf("rate limit notice undelivered (target=%s, no primary connection): %s", target, notice)
+		}
+	case config.RateLimitNotifyBoth:
+		sessionConn := connMgr.ForSession(sessionKey)
+		primary := connMgr.Primary(agentID)
+		delivered := send(sessionConn, route.DeliveredToSession)
+		if primary != sessionConn {
+			delivered = send(primary, route.DeliveredViaPrimary) || delivered
+		}
+		if !delivered {
+			logger.Debugf("rate limit notice undelivered (target=%s, no live connection): %s", target, notice)
+		}
+	default: // config.RateLimitNotifySession
+		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
+		if !send(conn, outcome) {
+			logger.Debugf("rate limit notice undelivered (target=%s, outcome=%s): %s", target, outcome, notice)
+		}
+	}
 }
 
 func buildDelegatedSystemPrompt(workspaceBlocks, extraBlocks []provider.SystemBlock) string {

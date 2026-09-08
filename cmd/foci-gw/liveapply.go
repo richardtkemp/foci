@@ -164,6 +164,8 @@ var (
 		"notify.compaction_notify", "agent.notify.compaction_notify", "platforms.notify.compaction_notify",
 		"notify.task_list_notify", "agent.notify.task_list_notify", "platforms.notify.task_list_notify",
 		"notify.compaction_debug", "agent.notify.compaction_debug", "platforms.notify.compaction_debug",
+		// #1857: read live by the ccstream rate-limit hook off LiveConfig().
+		"notify.rate_limit_notify_to", "agent.notify.rate_limit_notify_to",
 		"display.stream_output", "agent.display.stream_output", "platforms.display.stream_output",
 		"display.table_wrap_lines", "agent.display.table_wrap_lines", "platforms.display.table_wrap_lines",
 		"display.table_style", "agent.display.table_style", "platforms.display.table_style",

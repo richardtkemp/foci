@@ -4,13 +4,14 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/ratelimit"
 )
 
 func TestOnRateLimit(t *testing.T) {
 	var fires []string
 	b := &Backend{rlThrottle: NewRateLimitThrottle()}
-	b.onRateLimited = func(detail string) { fires = append(fires, detail) }
+	b.onRateLimited = func(_, detail string) { fires = append(fires, detail) }
 
 	resets := 1752349800.0
 	warn := func(util float64) *RateLimitEvent {
@@ -87,10 +88,30 @@ func TestFireRateLimited(t *testing.T) {
 	b.fireRateLimited("x")
 
 	var got string
-	b.onRateLimited = func(detail string) { got = detail }
+	b.onRateLimited = func(_, detail string) { got = detail }
 	b.fireRateLimited("You've hit your session limit · resets 10:30pm")
 	if got != "You've hit your session limit · resets 10:30pm" {
 		t.Errorf("hook got %q", got)
+	}
+}
+
+// TestFireRateLimitedCarriesSessionKey pins #1857: the hook must receive the
+// Backend's OWN foci session key (StartOptions.SessionKey), which is what lets
+// the handler deliver the notice to the triggering chat instead of only the
+// agent's default one. Before the fix the hook was func(detail string) and
+// carried no session identity at all.
+func TestFireRateLimitedCarriesSessionKey(t *testing.T) {
+	b := &Backend{startOpts: delegator.StartOptions{SessionKey: "clutch/facet-7"}}
+
+	var gotKey, gotDetail string
+	b.onRateLimited = func(sessionKey, detail string) { gotKey, gotDetail = sessionKey, detail }
+	b.fireRateLimited("⚠️ Approaching Anthropic 5-hour rate limit.")
+
+	if gotKey != "clutch/facet-7" {
+		t.Errorf("hook got session key %q, want %q — the notice cannot be routed to the triggering chat without it", gotKey, "clutch/facet-7")
+	}
+	if gotDetail != "⚠️ Approaching Anthropic 5-hour rate limit." {
+		t.Errorf("hook got detail %q", gotDetail)
 	}
 }
 

@@ -13,11 +13,13 @@ import (
 	"foci/internal/timeutil"
 )
 
-// fireRateLimited invokes the rate-limit warning hook if one is registered.
-// Safe to call whether or not a hook is set.
+// fireRateLimited invokes the rate-limit warning hook if one is registered,
+// passing this Backend's owning foci session key so the handler can deliver the
+// notice to the session that triggered it rather than only the default chat
+// (#1857). Safe to call whether or not a hook is set.
 func (b *Backend) fireRateLimited(detail string) {
 	if b.onRateLimited != nil {
-		b.onRateLimited(detail)
+		b.onRateLimited(b.startOpts.SessionKey, detail)
 	}
 }
 
