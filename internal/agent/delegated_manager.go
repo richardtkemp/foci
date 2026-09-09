@@ -98,6 +98,16 @@ type DelegatedManager struct {
 	// started in its place. Nil = notices are silently dropped (e.g. tests).
 	SystemNoticeFunc func(sessionKey, text string)
 
+	// LastUseFunc reports when the session last ran a turn before the current
+	// one (Agent.PrevRequestTime). Read only to word the resume-missed notice:
+	// idle longer than ResumeRetention means the backend's own retention may
+	// have deleted the transcript. nil = unknown.
+	LastUseFunc func(sessionKey string) (time.Time, bool)
+	// ResumeRetention is how long the backend keeps an idle transcript before
+	// deleting it itself (claude-code: ccstream.CleanupPeriod). Zero = unknown,
+	// and the notice never guesses at retention.
+	ResumeRetention time.Duration
+
 	// OpenAutonomousTurn is called when a backend detects CC has begun a run foci
 	// did not open (a background-agent completion, task-notification, or
 	// continuation). Wired by the Agent to openAutonomousTurn, which adopts the
@@ -511,9 +521,28 @@ func (m *DelegatedManager) notifyResumeMissed(sessionKey, resumeID string) {
 	if m.SystemNoticeFunc == nil {
 		return
 	}
-	m.SystemNoticeFunc(sessionKey,
-		"⚠️ Couldn't resume your previous session (`"+resumeID+"`) — it may have been "+
-			"evicted or cleared. Started a fresh session instead; earlier context won't carry over.")
+	var lastUse time.Time
+	known := false
+	if m.LastUseFunc != nil {
+		lastUse, known = m.LastUseFunc(sessionKey)
+	}
+	m.SystemNoticeFunc(sessionKey, resumeMissedNotice(resumeID, lastUse, known, m.ResumeRetention, time.Now()))
+}
+
+// resumeMissedNotice words the fallback: "maybe retention" only when the
+// session's last use is known AND older than the backend's retention period
+// (a dormant chat session crossing CC's 30-day cleanup is the common case,
+// fabulo 2026-09-09); otherwise a plain not-found, since a transcript can go
+// missing for other reasons and the notice must not invent one.
+func resumeMissedNotice(resumeID string, lastUse time.Time, known bool, retention time.Duration, now time.Time) string {
+	const tail = " Starting fresh; earlier context won't carry over."
+	if known && retention > 0 && now.Sub(lastUse) > retention {
+		days := int(retention.Hours() / 24)
+		return fmt.Sprintf("⚠️ Transcript for your previous session (`%s`) not found — last used %s, "+
+			"more than %d days ago, so it may have been deleted by the backend's retention.%s",
+			resumeID, lastUse.Format("2006-01-02"), days, tail)
+	}
+	return "⚠️ Transcript for your previous session (`" + resumeID + "`) not found." + tail
 }
 
 // StopSession interrupts the current agent turn. The mechanism is
