@@ -25,7 +25,13 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-# CI test-history hook: CI_HOOK is the path to the shared results CSV
+# CI test-history hook: CI_HOOK is the path to the shared results CSV.
+# Row shape (6 cols): time,repo,commit,target,pass|fail,failing-test-names
+# Column 6 (foci_todo #1754) is '|'-joined failing test names, empty on pass, so
+# "when did THIS test last pass?" is answerable from the durable record rather
+# than from /tmp artefacts aged at 30 days. Every suite INVOCATION appends its
+# own row, so a retried run leaves BOTH the failing and the passing attempt in
+# the history instead of only the final outcome.
 # (time,project,commit,target,result). When set it enables per-run recording in
 # the test/integration targets below; unset (e.g. a fresh clone) records nothing.
 # Lives in a machine-local .ci.mk (gitignored), inherited by every worktree via
@@ -151,7 +157,7 @@ test: llbox
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  rm -rf $(TESTDIR) ; \
-	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,unit,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" >> "$(CI_HOOK)" || true; fi ; \
+	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,unit,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
 # Integration tests (L2): real foci-gw subprocess against stubbed CC and
@@ -194,7 +200,7 @@ integration: llbox
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  rm -rf $(TESTDIR) ; \
-	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,integration,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" >> "$(CI_HOOK)" || true; fi ; \
+	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,integration,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
 # bucket-audit: contention-sensitivity diff. Runs the L2 suite at low
