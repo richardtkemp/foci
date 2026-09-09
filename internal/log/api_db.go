@@ -24,6 +24,25 @@ var apiLog *apiDB
 // InitAPIDB opens (or creates) the SQLite API call log.
 func InitAPIDB(path string) error {
 	db, err := sqlite.OpenInit(path,
+		// Column SCOPES differ, and nothing in the schema types says so
+		// (#1806). Before differencing or summing two columns, check they
+		// accumulate at the same scope:
+		//   cost_usd             — CUMULATIVE per CC PROCESS (ccstream rows);
+		//                          the backend's figure verbatim. Never SUM.
+		//   calculated_cost_usd  — per TURN (one row per turn since #1856).
+		//                          foci's own priced figure. SUM this.
+		//   output_tokens        — per TURN sum of every cycle's output.
+		//   input_tokens, cache_read_tokens, cache_write_tokens
+		//                        — the turn's FINAL cycle context fill (a
+		//                          snapshot, what /context reads); NOT what
+		//                          the cost was priced from.
+		//   turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens
+		//                        — per TURN sums (#1854); with output_tokens
+		//                          these are what calculated_cost_usd priced.
+		//                          NULL as a group where the writer measured
+		//                          no turn total.
+		// There is no turn id or cycle ordinal; a "turn" is a row.
+		// docs/WIRING.md "Cost columns" has the full table and history.
 		`CREATE TABLE IF NOT EXISTS api_calls (
 			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
 			ts                 DATETIME NOT NULL,

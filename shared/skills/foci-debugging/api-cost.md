@@ -23,7 +23,7 @@ sqlite3 ~/data/api.db "SELECT ts, cost_usd, cache_read, cache_write FROM api_cal
 sqlite3 ~/data/api.db "SELECT SUM(calculated_cost_usd) FROM api_calls WHERE ts > '2026-03-04T06:00'"
 ```
 
-**Token-field gotcha:** `cache_read` is the ONLY cumulative-per-call field — `input`/`output`/`cache_write` are per-call deltas (summable). Folding cumulative `cache_read` into a running total double-counts.
+**Column scopes differ (#1806):** `input/cache_read/cache_write_tokens` = the turn's FINAL-cycle context fill (a snapshot; pricing them recovers ~20% of cost). `output_tokens` + `turn_input/turn_cache_read/turn_cache_write_tokens` = per-TURN sums, what `calculated_cost_usd` priced. One row = one turn; no cycle ordinal. Table: WIRING.md "Cost columns".
 
 **`cost_usd` is CUMULATIVE over the CC process — never `SUM` it; sum `calculated_cost_usd`.**
 Two consequences. (1) Summing inflates ~quadratically in turns-per-process: 5.0x on 2026-08-21
