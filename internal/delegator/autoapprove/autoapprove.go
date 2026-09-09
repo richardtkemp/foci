@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"foci/internal/execguard"
 	"foci/internal/secrets"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -837,12 +838,39 @@ func isSpecialParam(name string) bool {
 
 // ---------- Command segment validation ----------
 
+// guardEnv describes the filesystem/PATH this process sees, for the
+// substitutability check below. It is a package-level value rather than a
+// parameter because it would otherwise have to thread through three backends'
+// call sites; the freshness that matters comes from the CanWrite/IsExecutable
+// calls, which hit the filesystem on every check, not from re-reading PATH.
+var guardEnv = execguard.Live()
+
+// commandIsSubstitutable reports whether the foci process could swap out the
+// executable this segment will run. Vetoing here — at match time — is what
+// makes the check a control rather than a report: a startup verdict is stale
+// the moment a file changes, and foci runs continuously long after startup.
+//
+// The veto is deliberately independent of WHICH rule matched, including the
+// built-in read-only group. The question "can this binary be swapped" does not
+// depend on the provenance of the rule that allowed it.
+func commandIsSubstitutable(segment string) bool {
+	tokens := tokenizeCommand(segment)
+	if len(tokens) == 0 {
+		return false
+	}
+	substitutable, _, _ := execguard.Substitutable(tokens[0], guardEnv)
+	return substitutable
+}
+
 // matchBashSegment checks whether a single command string matches at least one
 // Bash rule. If the command contains flags or arguments that are known to be
-// unsafe (e.g. sed -i, sort -o), the match is rejected regardless of which
-// rule matched.
+// unsafe (e.g. sed -i, sort -o), or if its executable could be substituted by
+// this process, the match is rejected regardless of which rule matched.
 func matchBashSegment(rules []Rule, segment string) bool {
 	if containsUnsafeFlags(segment) {
+		return false
+	}
+	if commandIsSubstitutable(segment) {
 		return false
 	}
 	for _, r := range rules {

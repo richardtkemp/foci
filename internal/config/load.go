@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"foci/internal/execguard"
 	"os"
 	"path/filepath"
 
@@ -316,7 +317,7 @@ func Load(path string) (*Config, error) {
 	// replace — approving such an entry approves whatever the path holds at run
 	// time, not the command the operator read. Runs before Validate so a dropped
 	// entry cannot satisfy any later check.
-	cfg.dropWritableAutoApproveRules(liveExecEnv())
+	cfg.dropWritableAutoApproveRules(execguard.Live())
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
