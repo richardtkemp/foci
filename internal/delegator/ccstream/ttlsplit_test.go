@@ -12,8 +12,13 @@ import (
 // per content block with identical usage, so the tests below construct repeats
 // explicitly rather than assuming one line per API call.
 func msgWith(id string, parent string, cacheWrite int, e5m, e1h int) *AssistantMessage {
+	return msgModel("claude-opus-5", id, parent, cacheWrite, e5m, e1h)
+}
+
+func msgModel(model, id, parent string, cacheWrite int, e5m, e1h int) *AssistantMessage {
 	m := &AssistantMessage{}
 	m.Message.ID = id
+	m.Message.Model = model
 	m.Message.Usage = TokenUsage{CacheCreationInputTokens: cacheWrite}
 	if e5m > 0 || e1h > 0 {
 		m.Message.Usage.CacheCreation = &CacheCreationSplit{Ephemeral5m: e5m, Ephemeral1h: e1h}
@@ -36,14 +41,14 @@ func TestNoteCacheWriteSplit_DedupesContentBlockRepeats(t *testing.T) {
 
 	// One API call, three content blocks, as CC actually streams it.
 	for i := 0; i < 3; i++ {
-		b.noteCacheWriteSplit(msgWith("msg_A", "", 8320, 0, 8320))
+		b.noteAssistantUsage(msgWith("msg_A", "", 8320, 0, 8320))
 	}
 
-	if got := b.turnWriteTop.Ephemeral1h; got != 8320 {
+	if got := b.turnUsageAcc.writeSplit(false).Ephemeral1h; got != 8320 {
 		t.Errorf("Ephemeral1h = %d, want 8320 (counted %.1fx — dedupe by message id failed)",
 			got, float64(got)/8320)
 	}
-	if got := b.turnWriteTop.total(); got != 8320 {
+	if got := b.turnUsageAcc.writeSplit(false).total(); got != 8320 {
 		t.Errorf("total = %d, want 8320", got)
 	}
 }
@@ -60,42 +65,42 @@ func TestNoteCacheWriteSplit_PartitionsSubagentFromTopLevel(t *testing.T) {
 
 	// Top-level: 1h exclusively. Blocks repeated as observed.
 	for i := 0; i < 3; i++ {
-		b.noteCacheWriteSplit(msgWith("msg_top1", "", 8320, 0, 8320))
+		b.noteAssistantUsage(msgWith("msg_top1", "", 8320, 0, 8320))
 	}
 	for i := 0; i < 3; i++ {
-		b.noteCacheWriteSplit(msgWith("msg_top2", "", 1044, 0, 1044))
+		b.noteAssistantUsage(msgWith("msg_top2", "", 1044, 0, 1044))
 	}
 	for i := 0; i < 2; i++ {
-		b.noteCacheWriteSplit(msgWith("msg_top3", "", 781, 0, 781))
+		b.noteAssistantUsage(msgWith("msg_top3", "", 781, 0, 781))
 	}
 	for i := 0; i < 2; i++ {
-		b.noteCacheWriteSplit(msgWith("msg_top4", "", 643, 0, 643))
+		b.noteAssistantUsage(msgWith("msg_top4", "", 643, 0, 643))
 	}
 	// Subagent: 5m exclusively.
 	for i := 0; i < 3; i++ {
-		b.noteCacheWriteSplit(msgWith("msg_sub1", sub, 11959, 11959, 0))
+		b.noteAssistantUsage(msgWith("msg_sub1", sub, 11959, 11959, 0))
 	}
 	for i := 0; i < 3; i++ {
-		b.noteCacheWriteSplit(msgWith("msg_sub2", sub, 786, 786, 0))
+		b.noteAssistantUsage(msgWith("msg_sub2", sub, 786, 786, 0))
 	}
 	for i := 0; i < 2; i++ {
-		b.noteCacheWriteSplit(msgWith("msg_sub3", sub, 194, 194, 0))
+		b.noteAssistantUsage(msgWith("msg_sub3", sub, 194, 194, 0))
 	}
 
-	if got := b.turnWriteTop.total(); got != 10788 {
+	if got := b.turnUsageAcc.writeSplit(false).total(); got != 10788 {
 		t.Errorf("top-level total = %d, want 10788", got)
 	}
-	if b.turnWriteTop.Ephemeral5m != 0 {
-		t.Errorf("top-level 5m = %d, want 0 — the main thread caches at 1h", b.turnWriteTop.Ephemeral5m)
+	if b.turnUsageAcc.writeSplit(false).Ephemeral5m != 0 {
+		t.Errorf("top-level 5m = %d, want 0 — the main thread caches at 1h", b.turnUsageAcc.writeSplit(false).Ephemeral5m)
 	}
-	if got := b.turnWriteSub.total(); got != 12939 {
+	if got := b.turnUsageAcc.writeSplit(true).total(); got != 12939 {
 		t.Errorf("subagent total = %d, want 12939 (its transcript's own figure)", got)
 	}
-	if b.turnWriteSub.Ephemeral1h != 0 {
-		t.Errorf("subagent 1h = %d, want 0 — subagents cache at 5m", b.turnWriteSub.Ephemeral1h)
+	if b.turnUsageAcc.writeSplit(true).Ephemeral1h != 0 {
+		t.Errorf("subagent 1h = %d, want 0 — subagents cache at 5m", b.turnUsageAcc.writeSplit(true).Ephemeral1h)
 	}
 	// The reconciliation that matters: everything must add back to ModelUsage.
-	if got := b.turnWriteTop.addSplit(b.turnWriteSub).total(); got != 23727 {
+	if got := b.turnUsageAcc.writeSplit(false).addSplit(b.turnUsageAcc.writeSplit(true)).total(); got != 23727 {
 		t.Errorf("combined total = %d, want 23727 (the result's ModelUsage cacheCreationInputTokens)", got)
 	}
 }
@@ -106,9 +111,9 @@ func TestNoteCacheWriteSplit_PartitionsSubagentFromTopLevel(t *testing.T) {
 func TestNoteCacheWriteSplit_UnknownWhenCCReportsNoBreakdown(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
-	b.noteCacheWriteSplit(msgWith("msg_A", "", 5000, 0, 0))
+	b.noteAssistantUsage(msgWith("msg_A", "", 5000, 0, 0))
 
-	w := b.turnWriteTop
+	w := b.turnUsageAcc.writeSplit(false)
 	if w.Unknown != 5000 {
 		t.Errorf("Unknown = %d, want 5000", w.Unknown)
 	}
@@ -127,12 +132,12 @@ func TestNoteCacheWriteSplit_UnknownWhenCCReportsNoBreakdown(t *testing.T) {
 func TestNoteCacheWriteSplit_ShortfallLandsInUnknown(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
-	b.noteCacheWriteSplit(msgWith("msg_A", "", 1000, 400, 500))
+	b.noteAssistantUsage(msgWith("msg_A", "", 1000, 400, 500))
 
-	if got := b.turnWriteTop.Unknown; got != 100 {
+	if got := b.turnUsageAcc.writeSplit(false).Unknown; got != 100 {
 		t.Errorf("Unknown = %d, want 100 (1000 merged - 400 5m - 500 1h)", got)
 	}
-	if got := b.turnWriteTop.total(); got != 1000 {
+	if got := b.turnUsageAcc.writeSplit(false).total(); got != 1000 {
 		t.Errorf("total = %d, want 1000 — must reconcile to the merged figure", got)
 	}
 }
@@ -144,24 +149,24 @@ func TestNoteCacheWriteSplit_ShortfallLandsInUnknown(t *testing.T) {
 func TestBeginTurn_ResetsCacheWriteSplit(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
-	b.noteCacheWriteSplit(msgWith("msg_A", "", 8320, 0, 8320))
-	b.noteCacheWriteSplit(msgWith("msg_B", "tool_1", 11959, 11959, 0))
+	b.noteAssistantUsage(msgWith("msg_A", "", 8320, 0, 8320))
+	b.noteAssistantUsage(msgWith("msg_B", "tool_1", 11959, 11959, 0))
 
 	b.beginTurnLocked(&delegator.TurnEvents{})
 
-	if b.turnWriteTop != (cacheWriteSplit{}) {
-		t.Errorf("turnWriteTop = %+v after beginTurnLocked, want zero", b.turnWriteTop)
+	if got := b.turnUsageAcc.writeSplit(false); got != (cacheWriteSplit{}) {
+		t.Errorf("top bucket = %+v after beginTurnLocked, want zero", got)
 	}
-	if b.turnWriteSub != (cacheWriteSplit{}) {
-		t.Errorf("turnWriteSub = %+v after beginTurnLocked, want zero", b.turnWriteSub)
+	if got := b.turnUsageAcc.writeSplit(true); got != (cacheWriteSplit{}) {
+		t.Errorf("sub bucket = %+v after beginTurnLocked, want zero", got)
 	}
 	// The dedupe set must reset too: a stale id would silently DROP a genuine
 	// message in the next turn, which reads as an under-count, not a crash.
-	if b.turnWriteSeen != nil {
-		t.Errorf("turnWriteSeen = %v after beginTurnLocked, want nil", b.turnWriteSeen)
+	if b.turnUsageAcc.seen != nil {
+		t.Errorf("dedupe set = %v after beginTurnLocked, want nil", b.turnUsageAcc.seen)
 	}
-	b.noteCacheWriteSplit(msgWith("msg_A", "", 500, 0, 500))
-	if got := b.turnWriteTop.Ephemeral1h; got != 500 {
+	b.noteAssistantUsage(msgWith("msg_A", "", 500, 0, 500))
+	if got := b.turnUsageAcc.writeSplit(false).Ephemeral1h; got != 500 {
 		t.Errorf("re-used message id counted %d after a turn boundary, want 500", got)
 	}
 }

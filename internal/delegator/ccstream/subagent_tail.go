@@ -124,7 +124,12 @@ type subagentTailManager struct {
 	// the backend so it always reads the current SessionEvents. May be nil in
 	// tests that only exercise lifecycle bookkeeping.
 	deliver func(groupKey, text string)
-	lg      *log.ComponentLogger
+	// noteUsage records one transcript message's token usage. Separate from
+	// deliver because the two have different failure modes: dropping a text
+	// block loses display, dropping usage loses money. May be nil in tests
+	// that only exercise text forwarding.
+	noteUsage func(model, id string, u TokenUsage)
+	lg        *log.ComponentLogger
 }
 
 type subagentTail struct {
@@ -132,15 +137,16 @@ type subagentTail struct {
 	done chan struct{}
 }
 
-func newSubagentTailManager(deliver func(groupKey, text string), lg *log.ComponentLogger) *subagentTailManager {
+func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(model, id string, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
 	if lg == nil {
 		lg = log.NewComponentLogger("ccstream")
 	}
 	return &subagentTailManager{
-		expectFg: make(map[string]bool),
-		tails:    make(map[string]*subagentTail),
-		deliver:  deliver,
-		lg:       lg,
+		noteUsage: noteUsage,
+		expectFg:  make(map[string]bool),
+		tails:     make(map[string]*subagentTail),
+		deliver:   deliver,
+		lg:        lg,
 	}
 }
 
@@ -296,6 +302,13 @@ type transcriptLine struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		// ID/Model/Usage carry the accounting half of the line. A FOREGROUND
+		// subagent's pure-text messages never reach the parent stream, and
+		// their usage goes with them, so the transcript is the only complete
+		// source for what that subagent actually spent (#1866 P2).
+		ID    string     `json:"id"`
+		Model string     `json:"model"`
+		Usage TokenUsage `json:"usage"`
 	} `json:"message"`
 }
 
@@ -304,7 +317,7 @@ type transcriptLine struct {
 // tool_result, attachments) and non-text blocks are skipped.
 func (m *subagentTailManager) deliverLine(groupKey string, line []byte) {
 	line = bytes.TrimSpace(line)
-	if len(line) == 0 || m.deliver == nil {
+	if len(line) == 0 {
 		return
 	}
 	var rec transcriptLine
@@ -312,6 +325,16 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte) {
 		return
 	}
 	if rec.Type != "assistant" {
+		return
+	}
+	// Accounting first, and NOT gated on m.deliver. The two sinks fail
+	// independently: a consumer with no text sink still spends real money, and
+	// the previous early return on a nil deliver would have discarded every
+	// token it spent.
+	if m.noteUsage != nil {
+		m.noteUsage(rec.Message.Model, rec.Message.ID, rec.Message.Usage)
+	}
+	if m.deliver == nil {
 		return
 	}
 	for _, blk := range rec.Message.Content {
