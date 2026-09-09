@@ -20,6 +20,12 @@ type costBreakdown struct {
 	model  string
 	cycles int
 	counts modelinfo.TokenCounts
+
+	// Cache-write tokens split by TTL, top-level and subagent separately
+	// (#1866 phase 1). Reported but NOT yet priced differently: phase 1 exists
+	// to make the disagreement legible before anything about the money moves.
+	writeTop cacheWriteSplit
+	writeSub cacheWriteSplit
 }
 
 // String prices each class through modelinfo.CostAsOf with the other classes
@@ -40,7 +46,34 @@ func (b costBreakdown) String() string {
 		c.Output, price(0, c.Output, 0, 0),
 		c.CacheRead, price(0, 0, c.CacheRead, 0),
 		c.CacheWrite, price(0, 0, 0, c.CacheWrite),
-	)
+	) + b.writeSplitSuffix()
+}
+
+// writeSplitSuffix names the cache-write TTL mix behind the single
+// cache_write figure above, and how much of it a subagent produced.
+//
+// This is the line that turns "foci and CC disagree by 18.8%" into a readable
+// cause: a turn whose writes are mostly 5m is a turn foci over-prices, because
+// every write is currently charged at the 1h rate. Printed only when there is a
+// mix worth reading — an all-1h turn (the main thread's normal shape) adds
+// nothing but noise.
+//
+// Deliberately reports the OBSERVED split rather than deriving it from
+// top-level-vs-subagent. The mapping happens to be clean today; asserting it
+// here would rebuild, one layer down, the assumption that caused the bug.
+func (b costBreakdown) writeSplitSuffix() string {
+	tot := b.writeTop.addSplit(b.writeSub)
+	if tot.total() == 0 {
+		return ""
+	}
+	s := fmt.Sprintf(" | cache_write_ttl 5m=%d 1h=%d", tot.Ephemeral5m, tot.Ephemeral1h)
+	if tot.Unknown > 0 {
+		s += fmt.Sprintf(" unknown=%d", tot.Unknown)
+	}
+	if b.writeSub.total() > 0 {
+		s += fmt.Sprintf(" (subagent %d of %d)", b.writeSub.total(), tot.total())
+	}
+	return s
 }
 
 // resetTurnCostAccumulatorsLocked clears every turn-scoped cost accumulator as
@@ -57,4 +90,7 @@ func (b *Backend) resetTurnCostAccumulatorsLocked() {
 	b.turnProvidedUSD = 0
 	b.turnProvidedSeen = false
 	b.turnCalc = modelinfo.TokenCounts{}
+	b.turnWriteTop = cacheWriteSplit{}
+	b.turnWriteSub = cacheWriteSplit{}
+	b.turnWriteSeen = nil
 }
