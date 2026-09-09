@@ -189,13 +189,12 @@ type Backend struct {
 	// re-price a row to its own cost (#1854).
 	turnCalc         modelinfo.TokenCounts
 	turnProvidedSeen bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
-	// Cache-write tokens split by TTL and by whether they are a subagent's,
-	// accumulated per assistant message because the result's ModelUsage merges
-	// the TTLs away (#1866). turnWriteSeen dedupes CC's one-line-per-content-
-	// block repeats; see ttlsplit.go for why that is load-bearing.
-	turnWriteTop       cacheWriteSplit
-	turnWriteSub       cacheWriteSplit
-	turnWriteSeen      map[string]struct{}
+	// This turn's usage accumulated PER ASSISTANT MESSAGE, bucketed by model
+	// and by subagent-or-not (#1866). Per-message because only there does CC
+	// report the cache-write TTL split and the message's own model; the result's
+	// ModelUsage merges the TTLs away and is keyed by a single model. See
+	// ttlsplit.go for why the dedupe inside is load-bearing.
+	turnUsageAcc       usageAccumulator
 	redispatchInFlight bool // pre-answer follow-up sent at idle; hold the turn open until its result arrives
 	stateEventsSeen    bool // CC emitted ≥1 session_state_changed this session; gates the legacy complete-on-result fallback
 	fallbackWarned     bool // one-shot Warnf when falling back to complete-on-result
@@ -380,7 +379,7 @@ func (b *Backend) subagentTails() *subagentTailManager {
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
 				se.OnSubagentText(groupKey, text, b.runIndexForGroup(groupKey))
 			}
-		}, b.logger())
+		}, b.noteSubagentTranscriptUsage, b.logger())
 	}
 	return b.subagentTailMgr
 }

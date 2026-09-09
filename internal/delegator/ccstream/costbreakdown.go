@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"foci/internal/modelinfo"
@@ -26,6 +27,12 @@ type costBreakdown struct {
 	// to make the disagreement legible before anything about the money moves.
 	writeTop cacheWriteSplit
 	writeSub cacheWriteSplit
+
+	// Every model this turn actually used. More than one means the turn's cost
+	// cannot be read off ModelUsage[resultModel], which is keyed by a single
+	// model — naming them here is what makes that visible in the log rather
+	// than only in a ticket (#1872).
+	models []string
 }
 
 // String prices each class through modelinfo.CostAsOf with the other classes
@@ -73,6 +80,9 @@ func (b costBreakdown) writeSplitSuffix() string {
 	if b.writeSub.total() > 0 {
 		s += fmt.Sprintf(" (subagent %d of %d)", b.writeSub.total(), tot.total())
 	}
+	if len(b.models) > 1 {
+		s += fmt.Sprintf(" | models %s", strings.Join(b.models, ","))
+	}
 	return s
 }
 
@@ -90,7 +100,5 @@ func (b *Backend) resetTurnCostAccumulatorsLocked() {
 	b.turnProvidedUSD = 0
 	b.turnProvidedSeen = false
 	b.turnCalc = modelinfo.TokenCounts{}
-	b.turnWriteTop = cacheWriteSplit{}
-	b.turnWriteSub = cacheWriteSplit{}
-	b.turnWriteSeen = nil
+	b.turnUsageAcc.reset()
 }

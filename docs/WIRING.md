@@ -1368,14 +1368,28 @@ Four outputs:
    correctly, which a stale rate cannot do (#1695). The breakdown's token counters are turn-scoped and MUST be cleared by the same
    boundary that clears `turnCalcCostUSD`; both live in `resetTurnCostAccumulatorsLocked`
    (`ccstream/costbreakdown.go`), called from `beginTurnLocked` and `tryPreAnswerRedispatch`.
-   That group also holds the cache-write TTL accumulators `turnWriteTop` / `turnWriteSub` /
-   `turnWriteSeen` (#1866): CC reports the 5m-vs-1h cache-write split ONLY on per-message
-   usage, and the result's `ModelUsage` merges it away, so it is accumulated in
-   `noteCacheWriteSplit` (`ccstream/ttlsplit.go`) from `OnAssistant` — called BEFORE that
-   handler's top-level guard, because subagent messages are precisely the ones whose TTL
-   differs. It dedupes by `message.id` because CC emits one `assistant` line PER CONTENT
-   BLOCK, each repeating the whole message's usage, so an undeduped sum inflates by the
-   block count. Anything added to this group must be added inside that one function.
+   That group also holds `turnUsageAcc` (`usageAccumulator`, `ccstream/ttlsplit.go`, #1866) —
+   this turn's usage accumulated PER ASSISTANT MESSAGE and bucketed by model and by
+   subagent-or-not. Per-message is the only place CC reports two things pricing needs: the
+   5m-vs-1h cache-write TTL split, and the message's own model. The result's `ModelUsage`
+   merges the TTLs away AND is keyed by a single model, so it can answer neither.
+
+   It has **two** feeds, and both are required for the source to be complete:
+   - `noteAssistantUsage` from `OnAssistant`, called BEFORE that handler's top-level guard,
+     because subagent messages are precisely the ones whose TTL and model differ;
+   - `noteSubagentTranscriptUsage` from `subagentTailManager.deliverLine`
+     (`ccstream/subagent_tail.go`), because a FOREGROUND subagent's pure-text messages are
+     suppressed from the parent stream and their usage goes with them. `deliverLine` records
+     usage before, and independently of, the text sink — a consumer with no text sink still
+     spends real money.
+
+   The tail runs ONLY for foreground subagents (`maybeStart` gates on `expectFg`);
+   background ones arrive by the stream alone, which is already complete for them. Both
+   feeds dedupe by `message.id`, which is load-bearing twice: CC emits one `assistant` line
+   PER CONTENT BLOCK each repeating the whole message's usage, and a FOREGROUND subagent's
+   messages can arrive by BOTH routes (the probe saw 2 of its 3 in the stream and all 3 in
+   the transcript). Anything added to this group must be added
+   inside `usageAccumulator` so the single `reset()` still clears all of it.
    They were reset at neither site until #1848, so the warning printed a per-SESSION
    breakdown beside a per-TURN total — a diagnosis that silently answered a different
    question. Add a field to that group and it is reset at every boundary for free;

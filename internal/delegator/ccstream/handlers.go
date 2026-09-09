@@ -105,7 +105,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	// messages too — they are the ones priced wrongly (#1866) — and every
 	// guard below this point drops messages for reasons that have nothing to
 	// do with what was billed.
-	b.noteCacheWriteSplit(msg)
+	b.noteAssistantUsage(msg)
 
 	// CC's synthetic "No response requested." placeholder is a no-API-call turn,
 	// not a real reply: drop it here so it never records the (unpriced, warning-
@@ -508,8 +508,9 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		model:    prefixedModel("claude", resultModel),
 		cycles:   cycles,
 		counts:   b.turnCalc,
-		writeTop: b.turnWriteTop,
-		writeSub: b.turnWriteSub,
+		writeTop: b.turnUsageAcc.writeSplit(false),
+		writeSub: b.turnUsageAcc.writeSplit(true),
+		models:   b.turnUsageAcc.models(),
 	}
 	if checkCost {
 		calc := calcSoFar
