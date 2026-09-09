@@ -70,7 +70,8 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 ### `foci_http_request` — HTTP with server-side secret resolution
 - Positional `url`. `--method`, `--header 'K: V'` (repeatable) or `--headers <json>`, `--body`/`--body-file`, `--query <json>`.
 - Secrets: `{{secret:NAME}}` in headers is resolved server-side against `allowed_hosts`; in body/form fields it requires `allowed_in_body` in secrets.toml.
-- `--save-to <path>` writes the body to disk (returns status/headers only); `--save-from-json-path data.0.url` extracts a field first (and decodes `data:` URIs). `--background` runs async. `--include-headers` keeps status/headers in output.
+- `--save-to <path>` writes the body to disk (prints `Saved N bytes to <path>`); `--save-from-json-path data.0.url` extracts a field first (and decodes `data:` URIs). `--background` runs async.
+- Output is the body only by default. `--include-headers` prepends the `HTTP <status>` line and every response header (e.g. to read Content-Length, Retry-After or Location) — listed in `--help` like every other flag.
 - Filter responses with jq so only what you need hits context: `foci_http_request URL | jq '.[].name'`.
 
 ### `foci_web_fetch` — URL → clean Markdown

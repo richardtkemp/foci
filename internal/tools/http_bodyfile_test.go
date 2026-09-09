@@ -30,10 +30,11 @@ func TestHTTPRequestBodyFile(t *testing.T) {
 
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
-		"url":       srv.URL,
-		"method":    "POST",
-		"body_file": bodyPath,
-		"headers":   map[string]string{"Content-Type": "application/json"},
+		"url":             srv.URL,
+		"include_headers": true,
+		"method":          "POST",
+		"body_file":       bodyPath,
+		"headers":         map[string]string{"Content-Type": "application/json"},
 	})
 
 	result, err := tool.Execute(context.Background(), params)

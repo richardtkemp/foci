@@ -136,9 +136,10 @@ allowed_hosts = ["%s"]
 
 	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
-		"url":     srv.URL,
-		"method":  "GET",
-		"headers": map[string]string{"Authorization": "Bearer {{secret:custom.api_key}}"},
+		"url":             srv.URL,
+		"include_headers": true,
+		"method":          "GET",
+		"headers":         map[string]string{"Authorization": "Bearer {{secret:custom.api_key}}"},
 	})
 
 	result, err := tool.Execute(context.Background(), params)

@@ -75,8 +75,9 @@ func TestHTTPRequestMultipartSingleFile(t *testing.T) {
 
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
-		"url":    srv.URL,
-		"method": "POST",
+		"url":             srv.URL,
+		"include_headers": true,
+		"method":          "POST",
 		"files": []map[string]string{
 			{"field_name": "document", "file_path": tmpFile},
 		},
@@ -123,8 +124,9 @@ func TestHTTPRequestMultipartFileAndFormFields(t *testing.T) {
 
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
-		"url":    srv.URL,
-		"method": "POST",
+		"url":             srv.URL,
+		"include_headers": true,
+		"method":          "POST",
 		"files": []map[string]string{
 			{"field_name": "photo", "file_path": tmpFile},
 		},
@@ -417,8 +419,9 @@ func TestHTTPRequestMultipartCustomSizeLimitAllows(t *testing.T) {
 
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 100 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
-		"url":    srv.URL,
-		"method": "POST",
+		"url":             srv.URL,
+		"include_headers": true,
+		"method":          "POST",
 		"files": []map[string]string{
 			{"field_name": "doc", "file_path": filePath},
 		},
