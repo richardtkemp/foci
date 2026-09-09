@@ -142,6 +142,34 @@ func TestCheckBareCommand_PlantedShadowIsCaught(t *testing.T) {
 	}
 }
 
+func TestCheckCommandToken_BuiltinBeatsAWritableFileOfTheSameName(t *testing.T) {
+	// A writable /home/foci/.local/bin/echo EXISTS and would win a plain PATH
+	// search — but bash resolves `echo` as a builtin and never searches PATH, so
+	// the file is not what runs. Dropping "Bash:echo *" here would be a false
+	// positive. This is the only case the builtin exemption is load-bearing for:
+	// without it, this test fails.
+	env := testEnv(
+		[]string{"/home/foci/.local/bin", "/usr/bin"},
+		[]string{"/home/foci/.local/bin", "/home/foci/.local/bin/echo", "/home/foci/.local/bin/test"},
+		[]string{"/home/foci/.local/bin/echo", "/home/foci/.local/bin/test", "/usr/bin/echo"},
+	)
+	for _, name := range []string{"echo", "test"} {
+		if sub, _, _ := checkCommandToken(name, env); sub {
+			t.Errorf("builtin %q must not be dropped for a same-named PATH file", name)
+		}
+	}
+	// Control: a NON-builtin writable file of the same shape IS caught, proving
+	// the env really does report those files as writable winners.
+	env2 := testEnv(
+		[]string{"/home/foci/.local/bin"},
+		[]string{"/home/foci/.local/bin", "/home/foci/.local/bin/ripgrep"},
+		[]string{"/home/foci/.local/bin/ripgrep"},
+	)
+	if sub, _, _ := checkCommandToken("ripgrep", env2); !sub {
+		t.Error("control failed: a writable non-builtin winner must be caught")
+	}
+}
+
 func TestCheckBareCommand_ReadOnlyPathPasses(t *testing.T) {
 	env := readOnlyPath()
 	for _, name := range []string{"git", "sqlite3", "gh"} {
