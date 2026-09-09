@@ -100,26 +100,45 @@ func TestCheckCommandToken_ExplicitPath(t *testing.T) {
 	}
 }
 
-func TestCheckBareCommand_WritablePathDirectoryShadows(t *testing.T) {
+func TestCheckBareCommand_OnlyAnExistingShadowCounts(t *testing.T) {
+	// shimmedPath has a WRITABLE /home/foci/.local/bin ahead of /usr/bin. It
+	// contains sqlite3 but not git.
 	env := shimmedPath()
 
-	// The shim itself: resolved winner is writable.
-	sub, _, _ := checkCommandToken("sqlite3", env)
+	// sqlite3: the writable directory really does hold the winning executable.
+	sub, path, reason := checkCommandToken("sqlite3", env)
 	if !sub {
-		t.Error("a bare name resolving into a writable directory must be substitutable")
+		t.Fatal("a bare name whose PATH winner is writable must be substitutable")
 	}
-
-	// THE POINT OF THIS CHANGE: git resolves to a read-only /usr/bin/git, but a
-	// writable directory sits earlier on PATH, so the name can be shadowed.
-	sub, path, reason := checkCommandToken("git", env)
-	if !sub {
-		t.Fatal("a bare name shadowable via an earlier writable PATH dir must be substitutable")
-	}
-	if path != "/home/foci/.local/bin" {
-		t.Errorf("path = %q, want the writable PATH directory", path)
+	if path != "/home/foci/.local/bin/sqlite3" {
+		t.Errorf("path = %q, want the winning executable", path)
 	}
 	if reason == "" {
 		t.Error("want a non-empty reason")
+	}
+
+	// git: the same writable directory is on PATH but holds no git, so the
+	// winner is the read-only /usr/bin/git. A shadow that COULD be created is
+	// not a finding — only one that exists.
+	if sub, _, _ := checkCommandToken("git", env); sub {
+		t.Error("a writable PATH dir NOT containing the command must not be a finding")
+	}
+}
+
+func TestCheckBareCommand_PlantedShadowIsCaught(t *testing.T) {
+	// Same host, except the shadow now exists. It wins the PATH search and is
+	// writable, so the entry must drop.
+	env := testEnv(
+		[]string{"/home/foci/.local/bin", "/usr/bin"},
+		[]string{"/home/foci/.local/bin", "/home/foci/.local/bin/git"},
+		[]string{"/home/foci/.local/bin/git", "/usr/bin/git"},
+	)
+	sub, path, _ := checkCommandToken("git", env)
+	if !sub {
+		t.Fatal("an existing writable shadow earlier on PATH must be caught")
+	}
+	if path != "/home/foci/.local/bin/git" {
+		t.Errorf("path = %q, want the planted shadow", path)
 	}
 }
 
@@ -160,19 +179,21 @@ func TestFilterWritableAutoApproveRules(t *testing.T) {
 	rules := []string{
 		"Bash:/usr/bin/sqlite3 -readonly", // read-only path: kept
 		"Bash:/home/foci/scripts/x.py *",  // writable file: dropped
-		"Bash:sqlite3 *",                  // resolves into writable dir: dropped
-		"Bash:git *",                      // shadowable via earlier writable dir: dropped
-		"Bash:cd *",                       // builtin, unresolvable: kept
+		"Bash:sqlite3 *",                  // PATH winner is the writable shim: dropped
+		"Bash:git *",                      // winner is read-only /usr/bin/git: kept
+		"Bash:cd *",                       // builtin: kept
 		"Read:/home/foci/data/*",          // data path: kept
 	}
 	env := shimmedPath()
 	env.canWrite = func(p string) bool {
-		return p == "/home/foci/.local/bin" || p == "/home/foci/scripts/x.py"
+		return p == "/home/foci/.local/bin" ||
+			p == "/home/foci/.local/bin/sqlite3" ||
+			p == "/home/foci/scripts/x.py"
 	}
 
 	kept, dropped := filterWritableAutoApproveRules(rules, env)
 
-	wantKept := []string{"Bash:/usr/bin/sqlite3 -readonly", "Bash:cd *", "Read:/home/foci/data/*"}
+	wantKept := []string{"Bash:/usr/bin/sqlite3 -readonly", "Bash:git *", "Bash:cd *", "Read:/home/foci/data/*"}
 	if len(kept) != len(wantKept) {
 		t.Fatalf("kept = %v, want %v", kept, wantKept)
 	}
@@ -181,8 +202,8 @@ func TestFilterWritableAutoApproveRules(t *testing.T) {
 			t.Fatalf("kept = %v, want %v", kept, wantKept)
 		}
 	}
-	if len(dropped) != 3 {
-		t.Fatalf("dropped %d entries, want 3: %+v", len(dropped), dropped)
+	if len(dropped) != 2 {
+		t.Fatalf("dropped %d entries, want 2: %+v", len(dropped), dropped)
 	}
 	for _, d := range dropped {
 		if d.Rule == "" || d.Reason == "" || d.Path == "" {
@@ -289,9 +310,10 @@ func TestCheckCommandToken_BuiltinsAndGlobsSurviveAWritablePath(t *testing.T) {
 			t.Errorf("glob token %q must not be reported shadowable", token)
 		}
 	}
-	// Control: a NON-builtin bare name on the same env must still be caught,
-	// or this test would pass for a checker that gave up on everything.
-	if sub, _, _ := checkCommandToken("git", env); !sub {
-		t.Error("control failed: a non-builtin bare name must still be shadowable")
+	// Control: a NON-builtin bare name whose PATH winner IS writable must still
+	// be caught, or this test would pass for a checker that gave up on
+	// everything.
+	if sub, _, _ := checkCommandToken("sqlite3", env); !sub {
+		t.Error("control failed: a non-builtin bare name with a writable winner must be caught")
 	}
 }

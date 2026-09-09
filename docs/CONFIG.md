@@ -703,18 +703,18 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 > 1. the executable file is writable by the foci process;
 > 2. the directory holding it is writable — the file can be unlinked and replaced, so a read-only file
 >    in a writable directory is *not* protected;
-> 3. for a **bare command name** (`git *`, `sqlite3 *`), any `PATH` directory searched at or before the
->    one that wins is writable — a file planted there shadows the real binary.
+> 3. for a **bare command name** (`git *`, `sqlite3 *`), the `PATH` search is performed and tests 1 and
+>    2 are applied to the executable that actually wins.
 >
 > Rationale: approving such an entry does not approve the command you read, it approves whatever runs
 > under that name at run time, and the agent can change that. The entry stays in the config file — it is
 > ignored, not rewritten, so you see the warning rather than silently losing a rule.
 >
-> **Shape 3 is the one that surprises people.** A single writable directory early on `PATH` (a
-> `~/.local/bin` holding pip/npm installs is the common case) makes *every* bare-name entry
-> substitutable, so they all drop. If a large part of your allowlist disappears at startup, that is
-> almost always the cause — harden the directory (root-owned, agent-readable) or drop it from the
-> agent's `PATH`, rather than weakening the check.
+> **A writable `PATH` directory that does not contain the command is deliberately NOT a finding.** It
+> describes a shadow that *could* be created, not one that exists. Reporting it would drop working
+> entries en masse — one writable `~/.local/bin` early on `PATH` would invalidate every bare-name rule —
+> and a warning that fires on a hypothesis is one operators learn to ignore. If the shadow is ever
+> created it becomes the `PATH` winner, and the check catches it on the next startup.
 >
 > Exempt: **Read/Edit/Write entries** (they name data, not code), **bash builtins** (`cd`, `echo`,
 > `test` — the shell resolves these before searching `PATH`, so no planted file can shadow them),
