@@ -237,7 +237,12 @@ func TestDecode_ConversationOpenSet(t *testing.T) {
 	}
 }
 
-func TestDecode_ClientHelloResumeOpen(t *testing.T) {
+// A pre-#1737 client still sends `open` on its resume points. Removing a wire field
+// is only safe if the older sender keeps working, and this is the whole of that
+// guarantee: encoding/json ignores unknown object keys unless DisallowUnknownFields
+// is set, which Decode does not set. Deleting the field's test along with the field
+// would have left that resting on a default nobody had checked.
+func TestDecode_ClientHelloIgnoresLegacyResumeOpen(t *testing.T) {
 	in, err := Decode(`{"t":"hello","id":"x","d":{"resume":[{"conversationId":"c1","ack":3,"open":true},{"conversationId":"c2","ack":1}]}}`)
 	if err != nil {
 		t.Fatal(err)
@@ -246,8 +251,14 @@ func TestDecode_ClientHelloResumeOpen(t *testing.T) {
 	if !ok {
 		t.Fatalf("frame type = %T, want ClientHello", in.Frame)
 	}
-	if len(h.Resume) != 2 || !h.Resume[0].Open || h.Resume[1].Open {
-		t.Errorf("resume open flags decoded wrong: %+v", h.Resume)
+	if len(h.Resume) != 2 {
+		t.Fatalf("resume points decoded wrong: %+v", h.Resume)
+	}
+	if h.Resume[0].ConversationID != "c1" || h.Resume[0].Ack != 3 {
+		t.Errorf("legacy `open` key disturbed the point it rode on: %+v", h.Resume[0])
+	}
+	if h.Resume[1].ConversationID != "c2" || h.Resume[1].Ack != 1 {
+		t.Errorf("resume[1] decoded wrong: %+v", h.Resume[1])
 	}
 }
 

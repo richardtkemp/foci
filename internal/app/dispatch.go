@@ -96,26 +96,19 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		// attached clients) + replay each conversation the client still has
 		// unrendered frames for.
 		h.resumeConversations(client, f.Resume)
-		// Persist the capability UNION (not just this client's caps) per resumed
+		// Persist the capability UNION (not just this client's caps) per ATTACHED
 		// conv, so a restart that rebuilds bindings caps-less still resolves checks
-		// against every device that was attached.
+		// against every device that was attached. Driven off the attach set and not
+		// f.Resume: the resume list is bounded (#1737) and naming ~6 conversations
+		// would leave the other ~157 resolving caps-less after the next restart,
+		// silently degrading them to sequential asks and plain-text wizards.
+		// resumeConversations has already attached every binding, so this set is the
+		// same one f.Resume used to describe.
 		if idx := h.deps.SessionIndex; idx != nil {
-			for _, rp := range f.Resume {
-				h.mu.RLock()
-				b := h.convs[rp.ConversationID]
-				h.mu.RUnlock()
-				if b != nil {
-					_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "features", b.featuresCSV())
-				}
+			for _, b := range client.attachedBindings() {
+				_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "features", b.featuresCSV())
 			}
 		}
-		// NOTE: the hello's ResumePoint.Open flags are deliberately NOT consumed.
-		// They used to seed a per-socket open-set that nothing ever read (#1742);
-		// the open-set that matters is the PERSISTED one, kept in sync by
-		// conversation.openSet below. Open therefore has no server-side consumer
-		// at all now, which makes it a candidate to drop from the wire — relevant
-		// to #1737, where every byte in a ResumePoint is multiplied by the
-		// conversation count.
 
 	case fap.ConversationOpen:
 		h.handleConversationOpen(client, f)

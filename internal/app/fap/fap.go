@@ -245,12 +245,23 @@ type ClientInfo struct {
 }
 
 // ResumePoint is a per-conversation resume high-water sent in client `hello`.
-// Open seeds the server's per-connection open-set: true iff the app currently
-// has this conversation open (its pager tabs), used to warm open chats.
+//
+// This is the one wire field multiplied by the conversation count, so its size IS
+// the protocol's handshake budget: at ~65 bytes an entry, a 163-conversation device
+// sent an ~11KB hello, which a 1492-MTU path with broken PMTUD silently black-holed
+// (#1728/#1737). The app therefore sends a BOUNDED selection — open tabs plus the
+// most recent — and reconciles the rest over `GET /app/history` and
+// `GET /app/replay`. Do not add a field here without spending it against that
+// budget; the server-side consequences of a SHORT resume list are handled in
+// Hub.resumeConversations, not by asking the client for more.
+//
+// It carried an `open` flag until #1737, seeding a per-connection server open-set
+// that turned out to be written and never read (#1742) — the persisted open-set,
+// kept in sync by `conversation.openSet`, is the one keepalive warms from. An older
+// client still sending `open` is harmless: encoding/json ignores unknown fields.
 type ResumePoint struct {
 	ConversationID string `json:"conversationId"`
 	Ack            int64  `json:"ack"`
-	Open           bool   `json:"open,omitempty"`
 }
 
 // AttachmentRef references an already-uploaded blob on an outbound message.
