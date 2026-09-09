@@ -1800,10 +1800,37 @@ produce no `replayTo`, and conflating them is what stalled the diagnosis.
 **Inbound (`dispatch.go`):** decode → **reliability gate** (`inboundConvID` →
 `convForReliability`: dedup by `(conversationId, envelope id)`, drop resent
 outbox entries, fold piggybacked `ack` to trim the replay buffer) → switch.
-`hello`→server hello (roster) + `resumeConversations` (re-attach EVERY resume
-point, but replay `seq > ack` only for **non-archived** ones — the two halves are
-deliberately split: a hello names every conversation the device has ever seen, and
-one device sent 169 points against 11 live conversations. Replaying an archived
+`hello`→server hello (roster) + `resumeConversations` (attach EVERY live binding —
+not just the resumed ones, see below — but replay `seq > ack` only for the
+**non-archived** conversations the hello actually named. **The hello's resume list is
+BOUNDED (#1737): the app sends its open tabs plus the most recent, 6 in total, not one entry
+per conversation.** At ~65 bytes an entry a 163-conversation device sent an ~11KB
+hello, and on a 1492-MTU path with broken PMTUD (PPPoE, VPNs, mobile carriers)
+anything past ~1452 bytes of TCP payload is silently black-holed: the WS upgrade
+SUCCEEDS, `device connected` logs, then the socket dies before the hello with no
+close frame and no error (275 consecutive failures; `resume=167` failing while
+`resume=0` on the same server in the same hour connected fine). The asymmetry is
+real — large DOWNSTREAM is fine, `GET /app/replay` returns pages of up to 10000
+frames over the same path — so the budget is client→server only. Because the list is
+bounded it can no longer decide who gets live frames, so **attach and replay are now
+fully separated**: `attachUnresumed` attaches the socket to every binding it isn't
+already on, seeded at that binding's current high-water, and replay is the only half
+that consumes a resume point. Attaching all is not a widening — `agentRoster`
+advertises the same `h.convs` to the same socket in the same hello. A conversation
+omitted from the hello therefore still gets live fan-out (so it still badges as
+unread), still gets its `lastSeq`/`lastPreview`/`lastActivityTs` from that roster and
+its watermark from `pushReads`, and backfills its missed tail over `GET /app/replay`
+when `applyRoster` sees the roster's `lastSeq` ahead of the local row (#1834). The
+per-conv `features` persistence in `dispatch.go` is driven off the ATTACH set
+(`wsClient.attachedBindings`) for the same reason — keyed off the capped resume list
+it would leave most conversations resolving caps-less after a restart. The resume
+point also carried an `open` flag until #1737; nothing read it (#1742) and it is gone
+from the wire (an older client still sending it decodes fine — `encoding/json` ignores
+unknown keys).
+
+The archived split predates the cap and still applies to whatever the hello does
+name: a hello named every conversation the device had ever seen, and one device sent
+169 points against 11 live conversations. Replaying an archived
 conversation pushes frames the roster hides, and each `replayTo` can enqueue up to
 `maxResumeStoreReplay` 2000 frames into a `sendBuffer` 256-slot queue, so the burst
 overflows, `enqueue` closes the socket "to force resume", and the reconnect replays

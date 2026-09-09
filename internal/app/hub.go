@@ -1275,9 +1275,21 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 	return b
 }
 
-// resumeConversations re-attaches each durable conversation named in a client
-// hello's resume points to the new socket and replays buffered frames the client
-// has not yet acked (seq > ack), restoring the live stream after a reconnect.
+// resumeConversations replays the buffered frames a client has not yet acked
+// (seq > ack) for each durable conversation named in its hello's resume points,
+// restoring the live stream after a reconnect, and then attaches the socket to
+// EVERY live binding (attachUnresumed) so live fan-out does not depend on the
+// resume list at all.
+//
+// The two used to be one loop, and separating them is the point (#1737). The hello
+// is size-bounded — an unbounded resume list is what black-holed the handshake on a
+// reduced-MTU path — so the client now sends only the open tabs plus the most
+// recent. Attachment must NOT shrink with it: a conversation the client did not
+// name still has to deliver its next message live, or it silently stops badging as
+// unread until the next reconnect (the #1834 shape: previews and pushes update, the
+// chat does not). Replay is the half that genuinely needs the client's ack, and the
+// half the client can recover without — it backfills over GET /app/replay when the
+// roster shows the server ahead of its local high-water.
 func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 	// Memoise the per-agent archived set for this resume, mirroring
 	// pushCommandsTo: without it a 169-point hello is 169 chat_metadata queries.
@@ -1331,9 +1343,45 @@ func (h *Hub) resumeConversations(client *wsClient, points []fap.ResumePoint) {
 		}
 		replayed++
 	}
-	if skipped > 0 || truncated > 0 {
-		appLog.Infof("resume: device=%s replayed %d conversation(s), skipped %d archived, truncated %d (client pulls the rest)", client.device(), replayed, skipped, truncated)
+	attached := h.attachUnresumed(client)
+	if skipped > 0 || truncated > 0 || attached > 0 {
+		appLog.Infof("resume: device=%s replayed %d conversation(s), skipped %d archived, truncated %d, attached %d unresumed (client pulls the rest)", client.device(), replayed, skipped, truncated, attached)
 	}
+}
+
+// attachUnresumed makes this socket a live fan-out target for every conversation
+// it is not already attached to, seeded at that conversation's current high-water,
+// and returns how many it attached.
+//
+// It exists because the hello's resume list is BOUNDED (#1737) and so can no longer
+// be what decides who receives live frames. Every binding is advertised to every
+// socket in the same hello's roster (agentRoster iterates the same h.convs), so
+// attaching to all of them widens nothing the client isn't already being told
+// about; before the cap, a hello naming every conversation the device had ever seen
+// attached to essentially this same set anyway.
+//
+// Seeding the ack to the current high-water rather than 0 is what keeps a
+// never-resumed conversation from pinning the replay-buffer trim floor forever, and
+// is correct because this socket is NOT owed the backlog here: it reconciles that
+// over HTTP off the roster's lastSeq. Same contract as the conversation.openSet
+// attach pass, which this generalises.
+func (h *Hub) attachUnresumed(client *wsClient) int {
+	h.mu.RLock()
+	bindings := make([]*convBinding, 0, len(h.convs))
+	for _, b := range h.convs {
+		bindings = append(bindings, b)
+	}
+	h.mu.RUnlock()
+	n := 0
+	for _, b := range bindings {
+		if b.isAttached(client) {
+			continue
+		}
+		b.attach(client)
+		b.seedClientAck(client, b.currentSeq())
+		n++
+	}
+	return n
 }
 
 // convForReliability returns the durable conversation state for a frame's
@@ -2528,6 +2576,19 @@ type wsClient struct {
 	closeErr  string                  // why the read loop ended, for the hello-less diagnostic (#1713)
 	features  map[string]struct{}     // advertised client capabilities (from the hello)
 	convByID  map[string]*convBinding // conversationId → binding
+}
+
+// attachedBindings snapshots the conversations this socket is currently a live
+// fan-out target for. Returned as a slice so callers touch b.mu without holding
+// c.mu — attach takes b.mu then c.mu, so the reverse order would deadlock.
+func (c *wsClient) attachedBindings() []*convBinding {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]*convBinding, 0, len(c.convByID))
+	for _, b := range c.convByID {
+		out = append(out, b)
+	}
+	return out
 }
 
 // device returns the socket's device id under the mutex that guards it. Safe
