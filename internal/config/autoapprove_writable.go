@@ -23,10 +23,11 @@ import (
 //  1. The executable file itself is writable.
 //  2. The directory holding it is writable — the file can be unlinked and
 //     replaced, so a read-only file there is not protected.
-//  3. For a bare command name, any PATH directory searched at or before the one
-//     that wins is writable — a file planted there shadows the real binary.
-//     Checking only the resolved winner would pass `git *` while
-//     /home/foci/.local/bin/git remained plantable.
+//  3. For a bare command name, the PATH search is performed and shapes 1 and 2
+//     are applied to the executable that actually wins. A writable PATH
+//     directory that does not contain the command is NOT a finding — that is a
+//     shadow that could be created, not one that exists. Creating it makes it
+//     the winner, which this check then catches.
 //
 // Scope: Bash entries only. Read/Edit/Write entries name DATA, not code, and a
 // writable data path is the normal case.
@@ -171,26 +172,25 @@ func checkResolvedPath(path string, env execEnv) (bool, string, string) {
 	return false, "", ""
 }
 
-// checkBareCommand walks PATH in order. A writable directory encountered before
-// (or containing) the winning executable means the name is substitutable, so the
-// walk stops at the first hit either way.
+// checkBareCommand performs the shell's own PATH search — first executable of
+// that name wins — and applies the file/directory test to the winner.
+//
+// A writable PATH directory that does NOT contain the command is deliberately
+// NOT a finding. It describes a shadow that could be created, not one that
+// exists, and reporting a hypothesis as a finding drops working entries and
+// trains the operator to ignore the warning. If the shadow is ever created, it
+// becomes the PATH winner and this check catches it on the next startup.
 func checkBareCommand(name string, env execEnv) (bool, string, string) {
 	for _, dir := range env.pathDirs {
 		if dir == "" {
 			continue
 		}
-		if env.canWrite(dir) {
-			return true, dir, fmt.Sprintf("PATH directory %s is writable by the foci process, so %q can be shadowed there", dir, name)
-		}
 		candidate := filepath.Join(dir, name)
-		if env.isExecutable(candidate) {
-			// First match wins the PATH search; every earlier directory was
-			// already proven unwritable above.
-			if env.canWrite(candidate) {
-				return true, candidate, "the file is writable by the foci process"
-			}
-			return false, "", ""
+		if !env.isExecutable(candidate) {
+			continue
 		}
+		// First match wins the search; later directories are unreachable.
+		return checkResolvedPath(candidate, env)
 	}
 	// Not found on PATH: a shell builtin, a shell function, or simply absent.
 	// Nothing to substitute that we can see, so no verdict.
