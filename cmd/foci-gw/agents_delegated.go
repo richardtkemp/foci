@@ -485,6 +485,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		OpenAutonomousTurn: ag.OpenAutonomousTurn,
 		AttachDelivery:     ag.AttachDelivery,
 		IdleTimeout:        idleTimeout,
+		// Resume-missed wording: only claude-code's retention is known to foci.
+		LastUseFunc:     ag.PrevRequestTime,
+		ResumeRetention: resumeRetentionFor(backendName),
 	}
 
 	return finalizeParams{
@@ -753,4 +756,15 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 
 	log.NewComponentLogger("agent:"+acfg.ID).Infof("exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())
 	return registry
+}
+
+// resumeRetentionFor is the backend's own transcript retention, for wording the
+// resume-missed notice. Only claude-code publishes one (cleanupPeriodDays);
+// zero for the others means the notice never guesses.
+func resumeRetentionFor(backendName string) time.Duration {
+	switch backendName {
+	case "claude-code", "claude-code-tmux":
+		return ccstream.CleanupPeriod()
+	}
+	return 0
 }

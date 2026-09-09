@@ -886,3 +886,15 @@ func formatCost(cost float64) string {
 	}
 	return s
 }
+
+// PrevRequestTime reports when the session last ran a turn BEFORE the one in
+// flight — prevRequestTime, the last_cache_touch captured at turn entry (the
+// index itself already holds this turn's time by the time inference starts).
+// ok=false when no earlier turn is known.
+func (a *Agent) PrevRequestTime(sessionKey string) (time.Time, bool) {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	t := sm.prevRequestTime
+	a.metaMu.Unlock()
+	return t, !t.IsZero()
+}

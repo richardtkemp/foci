@@ -2104,3 +2104,73 @@ func searchString(s, sub string) bool {
 	}
 	return false
 }
+
+// TestResumeMissedNotice pins the wording rule: retention is blamed only when
+// the last use is known and older than the retention period; every other
+// case is a plain not-found.
+func TestResumeMissedNotice(t *testing.T) {
+	now := time.Date(2026, 9, 9, 9, 0, 0, 0, time.UTC)
+	old := now.Add(-31 * 24 * time.Hour)
+	recent := now.Add(-2 * 24 * time.Hour)
+	const day30 = 30 * 24 * time.Hour
+	cases := []struct {
+		name      string
+		lastUse   time.Time
+		known     bool
+		retention time.Duration
+		wantMaybe bool
+	}{
+		{"idle past retention", old, true, day30, true},
+		{"used within retention", recent, true, day30, false},
+		{"last use unknown", time.Time{}, false, day30, false},
+		{"retention unknown", old, true, 0, false},
+	}
+	for _, c := range cases {
+		got := resumeMissedNotice("uuid-1", c.lastUse, c.known, c.retention, now)
+		if !contains(got, "uuid-1") || !contains(got, "not found") || !contains(got, "Starting fresh") {
+			t.Errorf("%s: notice missing fixed parts: %q", c.name, got)
+		}
+		if hasMaybe := contains(got, "retention"); hasMaybe != c.wantMaybe {
+			t.Errorf("%s: mentions retention = %v, want %v: %q", c.name, hasMaybe, c.wantMaybe, got)
+		}
+		if c.wantMaybe && !contains(got, "2026-08-09") {
+			t.Errorf("%s: retention notice should name the last-use date: %q", c.name, got)
+		}
+	}
+}
+
+// TestGet_ResumeFallback_NoticeUsesLastUse proves the manager feeds LastUseFunc
+// and ResumeRetention into the notice on the real fallback path.
+func TestGet_ResumeFallback_NoticeUsesLastUse(t *testing.T) {
+	idx := newTestSessionIndex(t)
+	var callCount int
+	var noticeText string
+	mgr := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			callCount++
+			be := &mockBackendDM{running: true}
+			if callCount == 1 {
+				be.startErr = errors.New("stale session")
+			}
+			return be, nil
+		},
+		StartOpts:        delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:          "test-agent",
+		SessionIndex:     idx,
+		IdleTimeout:      time.Hour,
+		SystemNoticeFunc: func(_, text string) { noticeText = text },
+		LastUseFunc:      func(string) (time.Time, bool) { return time.Now().Add(-45 * 24 * time.Hour), true },
+		ResumeRetention:  30 * 24 * time.Hour,
+	}
+	t.Cleanup(func() { mgr.Close() })
+	base := "test-agent/c222"
+	if err := idx.SetSessionMetadata(base, "cc_resume_id", "stale-uuid"); err != nil {
+		t.Fatalf("SetSessionMetadata: %v", err)
+	}
+	if _, err := mgr.Get(context.Background(), base); err != nil {
+		t.Fatalf("Get should succeed after retry: %v", err)
+	}
+	if !contains(noticeText, "retention") || !contains(noticeText, "stale-uuid") {
+		t.Errorf("notice should blame retention for a 45-day-idle session, got: %q", noticeText)
+	}
+}
