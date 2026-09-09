@@ -697,15 +697,33 @@ Controls foci-level auto-approval of delegated backend permission requests. When
 
 Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. Both bools follow standard cascade (per-agent overrides global).
 
-> **⚠ An `auto_approve` entry naming a foci-writable executable is ignored.** If a Bash entry's command
-> token is an explicit path (`/opt/tools/report.py *`, `~/bin/x.sh`), startup checks whether the foci
-> process can write that file — or write the directory holding it, and so replace the file. If it can,
-> the entry is **dropped and a warning is logged**; the entry stays in the config file, so you see the
-> warning rather than silently losing a rule. Rationale: approving such an entry does not approve the
-> command you read, it approves whatever that path contains when it runs, and the agent can change that.
-> To keep the entry, move the script somewhere the foci process cannot write. Out of scope: bare command
-> names resolved through `PATH` (a writable `PATH` directory can shadow any name — a separate hazard),
+> **⚠ An `auto_approve` entry whose command foci could substitute is ignored.** At startup every Bash
+> entry's command token is checked, and the entry is **dropped with a warning** if any of these hold:
+>
+> 1. the executable file is writable by the foci process;
+> 2. the directory holding it is writable — the file can be unlinked and replaced, so a read-only file
+>    in a writable directory is *not* protected;
+> 3. for a **bare command name** (`git *`, `sqlite3 *`), any `PATH` directory searched at or before the
+>    one that wins is writable — a file planted there shadows the real binary.
+>
+> Rationale: approving such an entry does not approve the command you read, it approves whatever runs
+> under that name at run time, and the agent can change that. The entry stays in the config file — it is
+> ignored, not rewritten, so you see the warning rather than silently losing a rule.
+>
+> **Shape 3 is the one that surprises people.** A single writable directory early on `PATH` (a
+> `~/.local/bin` holding pip/npm installs is the common case) makes *every* bare-name entry
+> substitutable, so they all drop. If a large part of your allowlist disappears at startup, that is
+> almost always the cause — harden the directory (root-owned, agent-readable) or drop it from the
+> agent's `PATH`, rather than weakening the check.
+>
+> Exempt: **Read/Edit/Write entries** (they name data, not code), **bash builtins** (`cd`, `echo`,
+> `test` — the shell resolves these before searching `PATH`, so no planted file can shadow them),
+> **glob tokens** (`foci_*` names no single file), relative paths (no cwd exists at config-load time),
 > and the built-in readonly/safe-write groups.
+>
+> `PATH` is read from the foci daemon's own environment. That is a *proxy* for the `PATH` an agent's
+> Bash tool sees — an agent shell initialised from the user profile may prepend more directories — so
+> the check can miss a writable directory added later, but never invents one.
 
 > **⚠ Safe-write rules are not path-scoped.** Unlike `Edit`/`Write` rules, which can be pinned to a workspace (`Edit:/path/to/workspace/*`), Bash-command rules are prefix-matched on the command string. Enabling `auto_approve_common_safe_write` means `mkdir ./build` and `mkdir /etc/foo` are both auto-approved — the allowlist trusts the agent not to target paths outside its workspace. Leave this off unless you've reasoned about that trust boundary for your deployment.
 
