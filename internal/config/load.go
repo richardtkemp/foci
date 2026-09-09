@@ -312,6 +312,12 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
+	// Drop auto_approve entries naming an executable the foci process can
+	// replace — approving such an entry approves whatever the path holds at run
+	// time, not the command the operator read. Runs before Validate so a dropped
+	// entry cannot satisfy any later check.
+	cfg.dropWritableAutoApproveRules(processCanWrite)
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
