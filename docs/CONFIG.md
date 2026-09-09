@@ -697,8 +697,9 @@ Controls foci-level auto-approval of delegated backend permission requests. When
 
 Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. Both bools follow standard cascade (per-agent overrides global).
 
-> **⚠ An `auto_approve` entry whose command foci could substitute is ignored.** At startup every Bash
-> entry's command token is checked, and the entry is **dropped with a warning** if any of these hold:
+> **⚠ A command foci could substitute is never auto-approved.** An allowlist entry is only as
+> trustworthy as the binary behind it, so the executable behind every Bash command is checked **at the
+> moment it is approved** — not once at startup — and the approval is refused if any of these hold:
 >
 > 1. the executable file is writable by the foci process;
 > 2. the directory holding it is writable — the file can be unlinked and replaced, so a read-only file
@@ -707,8 +708,17 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 >    2 are applied to the executable that actually wins.
 >
 > Rationale: approving such an entry does not approve the command you read, it approves whatever runs
-> under that name at run time, and the agent can change that. The entry stays in the config file — it is
-> ignored, not rewritten, so you see the warning rather than silently losing a rule.
+> under that name at run time, and the agent can change that *after* the gateway starts. Checking at
+> match time is what makes this a control rather than a report: a shadow planted mid-session is caught
+> on the next command, with no restart or config reload. A refused command is not denied — it simply
+> falls through to a normal approval prompt.
+>
+> The check applies **regardless of which rule matched**, including the built-in read-only group. The
+> question "can this binary be swapped" does not depend on the provenance of the rule that allowed it.
+>
+> **Startup additionally drops** any `auto_approve` entry that already fails the test, with a warning
+> naming it. That is hygiene, not the control — it reports an entry that would never have matched
+> anyway. The entry stays in the config file; it is ignored, not rewritten.
 >
 > **A writable `PATH` directory that does not contain the command is deliberately NOT a finding.** It
 > describes a shadow that *could* be created, not one that exists. Reporting it would drop working
