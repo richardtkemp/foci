@@ -23,7 +23,8 @@ func TestHTTPRequestBasicGET(t *testing.T) {
 
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
-		"url": srv.URL + "/test",
+		"url":             srv.URL + "/test",
+		"include_headers": true,
 	})
 
 	result, err := tool.Execute(context.Background(), params)

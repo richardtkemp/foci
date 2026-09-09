@@ -49,7 +49,8 @@ Secure HTTP requests with secret template support. Secrets in headers/body are v
 Features:
 - **Cross-domain redirect blocking** when secrets are present
 - **Response redaction** — secret values in response bodies replaced with `[REDACTED]`
-- **`save_to`** — save response body to a specific file path (returns status + headers + path, not body)
+- **`save_to`** — save response body to a specific file path (the result is `Saved N bytes to <path>`, not the body)
+- **`include_headers`** — prefix the result with the `HTTP <status>` line and every response header (default off: body only, so output pipes cleanly)
 - **`save_from_json_path`** — extract a value from JSON response by dot path; decodes `data:` URIs to binary. Designed for image generation APIs.
 - **`body_file`** — read request body from a local file instead of inline `body`. Solves large payload problems (e.g. base64 audio).
 - **`files`** — multipart/form-data file uploads with `form_fields` for additional text fields
@@ -128,13 +129,14 @@ foci_web_fetch https://example.com/api-docs
 foci_web_fetch https://example.com/page --raw
 ```
 
-#### `foci_http_request <url> [--method M] [--header 'K: V'] [--body B] [--save-to P]`
+#### `foci_http_request <url> [--method M] [--header 'K: V'] [--body B] [--save-to P] [--include-headers]`
 Make an HTTP request with full control over method, headers, and body.
 ```bash
 foci_http_request https://api.example.com/data
 foci_http_request https://api.example.com/items --method POST --body '{"name":"test"}'
 foci_http_request https://api.example.com/file --save-to /tmp/output.json
 foci_http_request https://api.example.com/auth --header 'Authorization: Bearer token123'
+foci_http_request https://api.example.com/health --include-headers   # status line + response headers before the body
 ```
 
 #### `foci_memory_search <query>`

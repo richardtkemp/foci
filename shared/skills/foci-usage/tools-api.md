@@ -62,7 +62,7 @@ These behave the same as for backend agents — the only difference is you call 
 ### `http_request` — HTTP with server-side secret resolution
 - `url`, `method`, `header`(s) or `headers`, `body`/`body-file`, `query`.
 - `{{secret:NAME}}` in headers resolves server-side against `allowed_hosts`; in body/form fields it requires `allowed_in_body`.
-- Can save the body to a path, extract a JSON field first, run in the background, or include status/headers.
+- Can save the body to a path, extract a JSON field first, or run in the background. The result is the body only unless `include_headers: true`, which prepends the `HTTP <status>` line and the response headers.
 
 ### `web_fetch` — URL → clean Markdown
 - `url`; Readability extraction → Markdown (or raw HTML). SSRF-safe; large pages truncated. Not for downloading files (use `http_request`).

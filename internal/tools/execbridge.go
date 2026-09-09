@@ -166,9 +166,8 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	}
 
 	var req struct {
-		Tool           string          `json:"tool"`
-		Params         json.RawMessage `json:"params"`
-		IncludeHeaders bool            `json:"include_headers,omitempty"`
+		Tool   string          `json:"tool"`
+		Params json.RawMessage `json:"params"`
 	}
 	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 		writeError(conn, fmt.Sprintf("invalid request: %v", err))
@@ -200,15 +199,6 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		return
 	}
 
-	// Strip HTTP headers from http_request results so piping works cleanly.
-	// The tool returns "HTTP <status>\nHeader: val\n...\n\n<body>" — in a pipe
-	// context only the body is useful (e.g. `foci_http_request url | jq .`).
-	// Pass --include-headers to foci_http_request to keep status/headers.
-	text := result.Text
-	if req.Tool == "http_request" && !req.IncludeHeaders {
-		text = stripHTTPHeaders(text)
-	}
-
 	// When the tool spilled the full result to disk (large http body, etc.),
 	// pass the file pointer through instead of inlining megabytes onto the
 	// socket. foci-call streams the file straight to stdout, so a pipe
@@ -216,7 +206,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	// own output truncation to the final result. text remains the inline
 	// preview for the non-spilled case / fallback.
 	writeBridgeResponse(conn, bridgeResponse{
-		Result:     text,
+		Result:     result.Text,
 		ResultFile: result.ResultFile,
 		ResultSize: result.ResultSize,
 	})
@@ -239,16 +229,6 @@ func writeBridgeResponse(conn net.Conn, resp bridgeResponse) {
 	data, _ := json.Marshal(resp)
 	data = append(data, '\n')
 	_, _ = conn.Write(data)
-}
-
-// stripHTTPHeaders removes the HTTP status/header block from an http_request
-// result, returning only the body. The format is "HTTP <status>\n...headers...\n\n<body>".
-// If the separator isn't found, the result is returned unchanged.
-func stripHTTPHeaders(result string) string {
-	if idx := strings.Index(result, "\n\n"); idx >= 0 && strings.HasPrefix(result, "HTTP ") {
-		return result[idx+2:]
-	}
-	return result
 }
 
 func (b *ExecBridge) exportedToolCount() int {
@@ -438,6 +418,24 @@ func toolParamKeys(t *Tool) string {
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, " ")
+}
+
+// toolFlagList returns every schema property (and alias) of a tool as a
+// sorted "--kebab-case" flag list, for the "valid flags:" line of a
+// hand-written shell function. Hand-maintained copies of that line drifted
+// from the schema (#1817: --include-headers was handled and listed there but
+// absent from the schema, so --help never mentioned it); deriving it keeps the
+// rejection message, --help and the parity check all reading the same source.
+func toolFlagList(t *Tool, extra ...string) string {
+	flags := append([]string(nil), extra...)
+	for _, k := range strings.Fields(toolParamKeys(t)) {
+		flags = append(flags, "--"+strings.ReplaceAll(k, "_", "-"))
+		for _, alias := range t.Aliases[k] {
+			flags = append(flags, "--"+strings.ReplaceAll(alias, "_", "-"))
+		}
+	}
+	sort.Strings(flags)
+	return strings.Join(flags, " ")
 }
 
 // positionalParamsForTool returns a tool's positional schema params (declared on
@@ -688,10 +686,13 @@ func generateShellFunc(t *Tool) string {
 	switch t.Name {
 	case "http_request":
 		// URL as first arg, flags for method, headers, body, save_to, etc.
+		// Hand-written for the repeatable --header 'K: V' accumulator, which
+		// has no schema property; everything else (including the "valid
+		// flags:" list) comes from the schema like the generic generator.
 		return fmt.Sprintf(`%s() {
 %s
 %s
-  local url="" method="GET" body="" body_file="" save_to="" save_json_path="" headers="{}" query="{}" inc_headers=false background=false timeout="" max_bytes="" files="[]" form_fields="{}"
+  local url="" method="GET" body="" body_file="" save_to="" save_json_path="" headers="{}" query="{}" include_headers=false background=false timeout="" max_bytes="" files="[]" form_fields="{}"
   local __foci_url_via=""
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -709,10 +710,10 @@ func generateShellFunc(t *Tool) string {
       --files) foci__json_arg --files array "$2" || return 1; files="$2"; shift 2 ;;
       --form-fields) foci__json_arg --form-fields object "$2" || return 1; form_fields="$2"; shift 2 ;;
       --background) background=true; shift ;;
-      --include-headers) inc_headers=true; shift ;;
+      --include-headers) include_headers=true; shift ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --url --method --body --body-file --header --headers --query --save-to --save-from-json-path --timeout --max-response-bytes --files --form-fields --background --include-headers" >&2
+        echo "valid flags: %s" >&2
         echo "note: foci_http_request <url> [flags...] — <url> may also be given as a bare argument" >&2
         return 1 ;;
       *)
@@ -733,12 +734,13 @@ func generateShellFunc(t *Tool) string {
   [ -n "$timeout" ] && params="$(echo "$params" | jq --argjson t "$timeout" '. + {timeout: $t}')"
   [ -n "$max_bytes" ] && params="$(echo "$params" | jq --argjson m "$max_bytes" '. + {max_response_bytes: $m}')"
   [ "$background" = true ] && params="$(echo "$params" | jq '. + {background: true}')"
+  [ "$include_headers" = true ] && params="$(echo "$params" | jq '. + {include_headers: true}')"
   [ "$query" != "{}" ] && params="$(echo "$params" | jq --argjson q "$query" '. + {query: $q}')"
   [ "$files" != "[]" ] && params="$(echo "$params" | jq --argjson f "$files" '. + {files: $f}')"
   [ "$form_fields" != "{}" ] && params="$(echo "$params" | jq --argjson f "$form_fields" '. + {form_fields: $f}')"
-  foci-call "$(jq -nc --argjson p "$params" --argjson ih "$inc_headers" '{"tool":"http_request","params":$p,"include_headers":$ih}')"
+  foci-call "$(jq -nc --argjson p "$params" '{"tool":"http_request","params":$p}')"
 }
-`, name, helpCheck, guard, name)
+`, name, helpCheck, guard, toolFlagList(t, "--header"), name)
 
 	case "todo":
 		// action as first arg, rest varies by action. helpCheck above is the

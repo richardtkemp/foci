@@ -104,7 +104,7 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				},
 				"save_to": {
 					"type": "string",
-					"description": "Save response body to this file path instead of returning it. Returns status and headers only. If save_from_json_path is also set, extracts and decodes that field from JSON response before saving."
+					"description": "Save response body to this file path instead of returning it. The result is 'Saved N bytes to <path>' (preceded by the status line and response headers when include_headers is set). If save_from_json_path is also set, extracts and decodes that field from JSON response before saving."
 				},
 				"save_from_json_path": {
 					"type": "string",
@@ -121,6 +121,10 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				"background": {
 					"type": "boolean",
 					"description": "If true, run the request in the background immediately and deliver the result asynchronously."
+				},
+				"include_headers": {
+					"type": "boolean",
+					"description": "Include the HTTP status line and response headers before the body (default: body only, so the output pipes cleanly)"
 				}
 			},
 			"required": ["url"]
@@ -146,6 +150,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		Timeout          int               `json:"timeout"`
 		MaxResponseBytes int64             `json:"max_response_bytes"`
 		Background       bool              `json:"background"`
+		IncludeHeaders   bool              `json:"include_headers"`
 	}](params)
 	if err != nil {
 		return ToolResult{}, err
@@ -263,7 +268,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			return ToolResult{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, maxSpillBytes, tempDir, store, bwStore, fileMode)
+		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.IncludeHeaders, p.MaxResponseBytes, maxSpillBytes, tempDir, store, bwStore, fileMode)
 	}
 
 	displayURL := formatDisplayURL(p.URL, p.Method)
@@ -277,8 +282,14 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	return doAndProcess(ctx)
 }
 
-// processHTTPResponse reads and formats an HTTP response.
-func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes, maxSpillBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
+// processHTTPResponse reads and formats an HTTP response. The result is the
+// body alone (or the "Saved N bytes" line alone) unless includeHeaders is set,
+// in which case the "HTTP <status>\n<headers>\n\n" block precedes it. The
+// choice lives here, in the tool, so every caller — exec bridge, API-backend
+// tool call, background notifier — sees the same default; it used to be an
+// exec-bridge-only strip, which left the flag out of the schema and the shell
+// --help (#1817).
+func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, includeHeaders bool, maxResponseBytes, maxSpillBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
 	if fileMode == 0 {
 		fileMode = 0640
 	}
@@ -333,7 +344,12 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	// what makes showing everything safe for foci's OWN secrets; it does not
 	// mask a server-minted credential such as a Set-Cookie session value — a
 	// deliberate trade (Dick, 2026-09-01).
-	formatHeaders := func() string {
+	// headerPrefix is what goes in front of the body / Saved line: the header
+	// block plus a blank-line separator when asked for, nothing otherwise.
+	headerPrefix := func() string {
+		if !includeHeaders {
+			return ""
+		}
 		var hdr strings.Builder
 		fmt.Fprintf(&hdr, "HTTP %s\n", resp.Status)
 		names := make([]string, 0, len(resp.Header))
@@ -346,7 +362,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 				fmt.Fprintf(&hdr, "%s: %s\n", name, v)
 			}
 		}
-		return redactSecrets(hdr.String())
+		return redactSecrets(hdr.String()) + "\n"
 	}
 
 	if savePath != "" || autoSave {
@@ -398,7 +414,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 			}
 		}
 		http_requestLog.Debugf("session=%s saved %d bytes to %s", sessionKey, len(saveData), savePath)
-		return TextResult(fmt.Sprintf("%s\nSaved %d bytes to %s", formatHeaders(), len(saveData), savePath)), nil
+		return TextResult(fmt.Sprintf("%sSaved %d bytes to %s", headerPrefix(), len(saveData), savePath)), nil
 	}
 
 	// Inline text path: stream the body through a spiller. The first `preview`
@@ -440,7 +456,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	// as the shell tool — Redact is defence-in-depth, not a boundary).
 	bodyStr := redactSecrets(sw.String())
 
-	result := TextResult(formatHeaders() + "\n" + bodyStr)
+	result := TextResult(headerPrefix() + bodyStr)
 	if sw.Spilled() {
 		result.ResultFile = sw.FilePath() // raw body on disk; full content for the agent / pipe
 		result.ResultSize = sw.Total()

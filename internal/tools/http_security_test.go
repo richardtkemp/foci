@@ -30,7 +30,8 @@ allowed_hosts = ["%s"]
 
 	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
-		"url": srv.URL + "/api",
+		"url":             srv.URL + "/api",
+		"include_headers": true,
 		"headers": map[string]string{
 			"Authorization": "Bearer {{secret:custom.api_key}}",
 		},

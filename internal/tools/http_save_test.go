@@ -25,8 +25,9 @@ func TestHTTPRequestSaveToText(t *testing.T) {
 	savePath := filepath.Join(t.TempDir(), "output.json")
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]interface{}{
-		"url":     srv.URL + "/api",
-		"save_to": savePath,
+		"url":             srv.URL + "/api",
+		"include_headers": true,
+		"save_to":         savePath,
 	})
 
 	result, err := tool.Execute(context.Background(), params)

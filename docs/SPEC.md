@@ -310,7 +310,7 @@ Selected tools are exposed as shell functions inside `shell` commands. A per-she
 - `set -o pipefail` is prepended to all shell commands
 
 **Exported tools** (controlled by `ExecExport: true` on the Tool struct):
-- `foci_http_request <url> [--method M] [--header 'K: V'] [--body B] [--save-to P]`
+- `foci_http_request <url> [--method M] [--header 'K: V'] [--body B] [--save-to P] [--include-headers]`
 - `foci_web_fetch <url> [--raw]`
 - `foci_web_search <query>`
 - `foci_memory_search <query>`
@@ -394,7 +394,8 @@ This prevents large tool results (e.g. `shell cat bigfile.txt`) from permanently
 Configurable: max result chars, temp directory, summary context turns, and summary context chars. See [CONFIG.md](CONFIG.md).
 
 **http_request — file saves, binary handling, and auto-background:**
-- `save_to` — save response body to a specific file path (returns status + headers + path, not body)
+- `save_to` — save response body to a specific file path (result is `Saved N bytes to <path>`, not the body)
+- `include_headers` — prefix the result with the `HTTP <status>` line and the response headers; default off, so the result is the body alone and pipes cleanly
 - `save_from_json_path` — extract a value from JSON response by dot path (e.g. `data.0.url`); if it's a `data:` URI, decodes base64 to binary. Requires `save_to`. Designed for image generation APIs that return base64 data URIs.
 - Binary content types (`image/*`, `audio/*`, `video/*`, etc.) auto-save to temp file when `save_to` is not set
 - `background` parameter — if `true`, request runs immediately in background and result is delivered asynchronously

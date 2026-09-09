@@ -354,55 +354,6 @@ func TestExecBridgeUniquePaths(t *testing.T) {
 	b2.Close()
 }
 
-func TestStripHTTPHeaders(t *testing.T) {
-	// Verifies that stripHTTPHeaders removes the status line and headers, returning only the body, across multiple response shapes.
-	t.Parallel()
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "standard response",
-			input: "HTTP 200 OK\nContent-Type: application/json\n\n{\"key\":\"value\"}",
-			want:  "{\"key\":\"value\"}",
-		},
-		{
-			name:  "multiple headers",
-			input: "HTTP 200 OK\nContent-Type: text/html\nContent-Length: 5\nX-Request-Id: abc\n\nhello",
-			want:  "hello",
-		},
-		{
-			name:  "no headers (not HTTP prefix)",
-			input: "just a plain result",
-			want:  "just a plain result",
-		},
-		{
-			name:  "empty body",
-			input: "HTTP 204 No Content\n\n",
-			want:  "",
-		},
-		{
-			name:  "body with newlines",
-			input: "HTTP 200 OK\nContent-Type: text/plain\n\nline1\nline2\nline3",
-			want:  "line1\nline2\nline3",
-		},
-		{
-			name:  "saved to file (no body separator)",
-			input: "HTTP 200 OK\nContent-Type: image/png\n\nSaved 1234 bytes to /tmp/foo.png",
-			want:  "Saved 1234 bytes to /tmp/foo.png",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := stripHTTPHeaders(tt.input)
-			if got != tt.want {
-				t.Errorf("stripHTTPHeaders() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestToolParamKeys(t *testing.T) {
 	// Verifies that toolParamKeys extracts and alphabetically sorts property names from a tool's JSON schema.
 	t.Parallel()
@@ -473,17 +424,19 @@ func TestShellFuncsContainJSONGuard(t *testing.T) {
 	}
 }
 
-func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
-	// Register a fake http_request tool that returns headers + body
+func TestExecBridgeHTTPRequestPassesResultThrough(t *testing.T) {
+	// The bridge no longer post-processes http_request output: whether the
+	// header block is present is decided by the tool's include_headers param
+	// (#1817), so what the tool returns is exactly what foci-call receives.
 	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
 		Positional: []string{"url"},
 		ExecExport: true,
-		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
+		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"include_headers":{"type":"boolean"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return TextResult("HTTP 200 OK\nContent-Type: application/json\nContent-Length: 27\n\n{\"origin\":\"1.2.3.4\"}"), nil
+			return TextResult("HTTP 200 OK\nContent-Type: application/json\n\n{\"origin\":\"1.2.3.4\"}"), nil
 		},
 	})
 
@@ -497,98 +450,24 @@ func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
 	if errMsg != "" {
 		t.Fatalf("unexpected error: %s", errMsg)
 	}
-	// Headers should be stripped — result should be body only
-	if strings.Contains(result, "HTTP 200") {
-		t.Errorf("result should not contain HTTP headers, got: %q", result)
-	}
-	if result != `{"origin":"1.2.3.4"}` {
-		t.Errorf("result = %q, want %q", result, `{"origin":"1.2.3.4"}`)
-	}
-}
-
-func TestExecBridgeHTTPRequestIncludeHeaders(t *testing.T) {
-	// When include_headers is true, the full response (status + headers + body) is returned
-	t.Parallel()
-	r := NewRegistry()
-	r.Register(&Tool{
-		Name:       "http_request",
-		Positional: []string{"url"},
-		ExecExport: true,
-		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return TextResult("HTTP 200 OK\nContent-Type: application/json\n\n{\"key\":\"value\"}"), nil
-		},
-	})
-
-	bridge, err := NewExecBridge(r, context.Background())
-	if err != nil {
-		t.Fatalf("NewExecBridge: %v", err)
-	}
-	defer bridge.Close()
-
-	// Without include_headers — body only (existing behavior)
-	result, errMsg := callBridge(t, bridge.SockPath(), `{"tool":"http_request","params":{"url":"https://example.com"}}`)
-	if errMsg != "" {
-		t.Fatalf("unexpected error: %s", errMsg)
-	}
-	if result != `{"key":"value"}` {
-		t.Errorf("default result = %q, want body only", result)
-	}
-
-	// With include_headers: true — full response
-	result, errMsg = callBridge(t, bridge.SockPath(), `{"tool":"http_request","params":{"url":"https://example.com"},"include_headers":true}`)
-	if errMsg != "" {
-		t.Fatalf("unexpected error: %s", errMsg)
-	}
-	if !strings.HasPrefix(result, "HTTP 200 OK") {
-		t.Errorf("include_headers result should start with HTTP status, got: %q", result)
-	}
-	if !strings.Contains(result, "Content-Type: application/json") {
-		t.Errorf("include_headers result should contain headers, got: %q", result)
-	}
-	if !strings.Contains(result, `{"key":"value"}`) {
-		t.Errorf("include_headers result should contain body, got: %q", result)
-	}
-}
-
-func TestExecBridgeHTTPRequestIncludeHeadersFalse(t *testing.T) {
-	// Explicitly passing include_headers: false should strip headers (same as default)
-	t.Parallel()
-	r := NewRegistry()
-	r.Register(&Tool{
-		Name:       "http_request",
-		Positional: []string{"url"},
-		ExecExport: true,
-		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return TextResult("HTTP 404 Not Found\nContent-Type: text/plain\n\nnot found"), nil
-		},
-	})
-
-	bridge, err := NewExecBridge(r, context.Background())
-	if err != nil {
-		t.Fatalf("NewExecBridge: %v", err)
-	}
-	defer bridge.Close()
-
-	result, errMsg := callBridge(t, bridge.SockPath(), `{"tool":"http_request","params":{"url":"https://example.com"},"include_headers":false}`)
-	if errMsg != "" {
-		t.Fatalf("unexpected error: %s", errMsg)
-	}
-	if result != "not found" {
-		t.Errorf("result = %q, want %q", result, "not found")
+	want := "HTTP 200 OK\nContent-Type: application/json\n\n{\"origin\":\"1.2.3.4\"}"
+	if result != want {
+		t.Errorf("bridge must pass the tool result through unchanged\nwant %q\ngot  %q", want, result)
 	}
 }
 
 func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
-	// Verify the generated shell function contains --include-headers handling
+	// The generated foci_http_request handles --include-headers as an ordinary
+	// schema-derived boolean param: the case arm sets it, and it lands in the
+	// tool params (not a bridge-envelope field, which is what the removed
+	// bridge special case used).
 	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
 		Positional: []string{"url"},
 		ExecExport: true,
-		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"}}}`),
+		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"},"include_headers":{"type":"boolean"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return TextResult(""), nil
 		},
@@ -606,14 +485,57 @@ func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
 	}
 	content := string(data)
 
-	if !strings.Contains(content, "--include-headers") {
-		t.Error("http_request shell function should support --include-headers flag")
+	if !strings.Contains(content, "--include-headers) include_headers=true; shift ;;") {
+		t.Error("http_request shell function should have an --include-headers case arm")
 	}
-	if !strings.Contains(content, "inc_headers") {
-		t.Error("http_request shell function should have inc_headers variable")
+	if !strings.Contains(content, `'. + {include_headers: true}'`) {
+		t.Error("http_request shell function should pass include_headers inside the tool params")
 	}
-	if !strings.Contains(content, `"include_headers"`) {
-		t.Error("http_request shell function should pass include_headers in request JSON")
+	if strings.Contains(content, `"include_headers":$ih`) {
+		t.Error("http_request shell function must not send include_headers as a bridge-envelope field")
+	}
+}
+
+func TestHTTPRequestShellHelpDerivesFromSchema(t *testing.T) {
+	// --help and the "valid flags:" rejection line for the REAL http_request
+	// tool both come from its schema, so every flag the function handles is
+	// discoverable (#1817: --include-headers worked but --help never listed
+	// it; the save_to text promised status+headers it did not print).
+	t.Parallel()
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
+	if err := validateShellFuncSchemaParity(tool); err != nil {
+		t.Fatalf("schema/body parity: %v", err)
+	}
+
+	help := generateHelpText(tool)
+	if !strings.Contains(help, "--include-headers (flag)") {
+		t.Errorf("--help should list --include-headers as a flag, got:\n%s", help)
+	}
+	if !strings.Contains(help, "Include the HTTP status line and response headers before the body") {
+		t.Errorf("--help should carry the include_headers description, got:\n%s", help)
+	}
+	if strings.Contains(help, "Returns status and headers only") {
+		t.Errorf("--save-to help still promises status+headers it does not print:\n%s", help)
+	}
+	if !strings.Contains(help, "'Saved N bytes to <path>'") {
+		t.Errorf("--save-to help should describe the Saved line it actually prints, got:\n%s", help)
+	}
+
+	body := generateShellFunc(tool)
+	validLine := ""
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, `echo "valid flags:`) {
+			validLine = line
+			break
+		}
+	}
+	if validLine == "" {
+		t.Fatalf("no valid-flags line in generated body:\n%s", body)
+	}
+	for _, want := range []string{"--include-headers", "--header ", "--save-to", "--url"} {
+		if !strings.Contains(validLine, want) {
+			t.Errorf("valid-flags line should mention %s, got: %s", want, validLine)
+		}
 	}
 }
 
@@ -1227,7 +1149,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 		},
 		{
 			name:       "http_request",
-			params:     json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"}}}`),
+			params:     json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"},"include_headers":{"type":"boolean"}}}`),
 			validFlags: []string{"--method", "--body", "--header", "--save-to", "--include-headers"},
 			positional: []string{"url"},
 		},
