@@ -316,7 +316,7 @@ func Load(path string) (*Config, error) {
 	// replace — approving such an entry approves whatever the path holds at run
 	// time, not the command the operator read. Runs before Validate so a dropped
 	// entry cannot satisfy any later check.
-	cfg.dropWritableAutoApproveRules(processCanWrite)
+	cfg.dropWritableAutoApproveRules(liveExecEnv())
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
