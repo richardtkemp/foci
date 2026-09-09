@@ -697,6 +697,16 @@ Controls foci-level auto-approval of delegated backend permission requests. When
 
 Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. Both bools follow standard cascade (per-agent overrides global).
 
+> **⚠ An `auto_approve` entry naming a foci-writable executable is ignored.** If a Bash entry's command
+> token is an explicit path (`/opt/tools/report.py *`, `~/bin/x.sh`), startup checks whether the foci
+> process can write that file — or write the directory holding it, and so replace the file. If it can,
+> the entry is **dropped and a warning is logged**; the entry stays in the config file, so you see the
+> warning rather than silently losing a rule. Rationale: approving such an entry does not approve the
+> command you read, it approves whatever that path contains when it runs, and the agent can change that.
+> To keep the entry, move the script somewhere the foci process cannot write. Out of scope: bare command
+> names resolved through `PATH` (a writable `PATH` directory can shadow any name — a separate hazard),
+> and the built-in readonly/safe-write groups.
+
 > **⚠ Safe-write rules are not path-scoped.** Unlike `Edit`/`Write` rules, which can be pinned to a workspace (`Edit:/path/to/workspace/*`), Bash-command rules are prefix-matched on the command string. Enabling `auto_approve_common_safe_write` means `mkdir ./build` and `mkdir /etc/foo` are both auto-approved — the allowlist trusts the agent not to target paths outside its workspace. Leave this off unless you've reasoned about that trust boundary for your deployment.
 
 Delegated backends also auto-approve workspace Edit/Write access (scoped to the agent's workspace directory).
