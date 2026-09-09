@@ -121,6 +121,6 @@ func (c *CostDivergenceChecker) Check(model string, calculated, provided float64
 	// cannot do that, so the old wording sent every reader down the wrong path
 	// first. State the disagreement; let the breakdown name the cause.
 	warnf("cost divergence: foci priced this %s turn at $%.6f but the backend reported $%.6f "+
-		"(%.1f%% off, tolerance %.0f%%)%s (#1674/#1695)",
+		"(%.1f%% off, tolerance %.0f%%)%s",
 		model, calculated, provided, 100*offBy, 100*CostDivergenceTolerance, extra)
 }
