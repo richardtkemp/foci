@@ -1368,6 +1368,14 @@ Four outputs:
    correctly, which a stale rate cannot do (#1695). The breakdown's token counters are turn-scoped and MUST be cleared by the same
    boundary that clears `turnCalcCostUSD`; both live in `resetTurnCostAccumulatorsLocked`
    (`ccstream/costbreakdown.go`), called from `beginTurnLocked` and `tryPreAnswerRedispatch`.
+   That group also holds the cache-write TTL accumulators `turnWriteTop` / `turnWriteSub` /
+   `turnWriteSeen` (#1866): CC reports the 5m-vs-1h cache-write split ONLY on per-message
+   usage, and the result's `ModelUsage` merges it away, so it is accumulated in
+   `noteCacheWriteSplit` (`ccstream/ttlsplit.go`) from `OnAssistant` — called BEFORE that
+   handler's top-level guard, because subagent messages are precisely the ones whose TTL
+   differs. It dedupes by `message.id` because CC emits one `assistant` line PER CONTENT
+   BLOCK, each repeating the whole message's usage, so an undeduped sum inflates by the
+   block count. Anything added to this group must be added inside that one function.
    They were reset at neither site until #1848, so the warning printed a per-SESSION
    breakdown beside a per-TURN total — a diagnosis that silently answered a different
    question. Add a field to that group and it is reset at every boundary for free;

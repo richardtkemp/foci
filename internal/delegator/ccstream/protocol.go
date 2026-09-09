@@ -42,6 +42,31 @@ type TokenUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+
+	// CacheCreation splits CacheCreationInputTokens by cache TTL. Anthropic
+	// bills a 1-hour cache write at ~1.6x a 5-minute one, so the split is a
+	// price difference, not a detail.
+	//
+	// It exists ONLY on per-message usage. The result message's ModelUsage
+	// reports a single merged cacheCreationInputTokens, so once a turn is
+	// summarised there the split is gone — which is why #1866 accumulates it
+	// per assistant message rather than reading it off the result.
+	//
+	// nil when CC does not report a breakdown; treat that as "TTL unknown",
+	// never as "all one TTL".
+	CacheCreation *CacheCreationSplit `json:"cache_creation,omitempty"`
+}
+
+// CacheCreationSplit is the per-TTL breakdown of one call's cache-write tokens.
+//
+// Probe-verified 2026-09-09 (CC 2.1.261, verify-cc-stream-hooks/ttl_probe.sh):
+// the MAIN thread caches at 1h exclusively and SUBAGENT (Task) calls cache at
+// 5m exclusively, on two models and in both foreground and background mode.
+// Do not hardcode that mapping — read these fields. It is CC's choice to make
+// and it has already changed once.
+type CacheCreationSplit struct {
+	Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
 }
 
 // ModelUsage holds per-model token and cost accounting in a ResultMessage.

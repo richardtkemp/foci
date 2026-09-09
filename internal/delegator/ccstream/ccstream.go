@@ -187,8 +187,15 @@ type Backend struct {
 	// fill (what compaction needs), so this is the only record of which class
 	// foci charged for (#1695); it is emitted as TurnUsage.Turn so api.db can
 	// re-price a row to its own cost (#1854).
-	turnCalc           modelinfo.TokenCounts
-	turnProvidedSeen   bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
+	turnCalc         modelinfo.TokenCounts
+	turnProvidedSeen bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
+	// Cache-write tokens split by TTL and by whether they are a subagent's,
+	// accumulated per assistant message because the result's ModelUsage merges
+	// the TTLs away (#1866). turnWriteSeen dedupes CC's one-line-per-content-
+	// block repeats; see ttlsplit.go for why that is load-bearing.
+	turnWriteTop       cacheWriteSplit
+	turnWriteSub       cacheWriteSplit
+	turnWriteSeen      map[string]struct{}
 	redispatchInFlight bool // pre-answer follow-up sent at idle; hold the turn open until its result arrives
 	stateEventsSeen    bool // CC emitted ≥1 session_state_changed this session; gates the legacy complete-on-result fallback
 	fallbackWarned     bool // one-shot Warnf when falling back to complete-on-result

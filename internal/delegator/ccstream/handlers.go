@@ -101,6 +101,12 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	b.touchActivity()
 	isTopLevel := msg.ParentToolUseID == nil
 
+	// Before any filtering. Cache-write TTL accounting must see subagent
+	// messages too — they are the ones priced wrongly (#1866) — and every
+	// guard below this point drops messages for reasons that have nothing to
+	// do with what was billed.
+	b.noteCacheWriteSplit(msg)
+
 	// CC's synthetic "No response requested." placeholder is a no-API-call turn,
 	// not a real reply: drop it here so it never records the (unpriced, warning-
 	// triggering) <synthetic> model, appends to the turn text, reaches delivery,
@@ -499,9 +505,11 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	calcSoFar, providedSoFar := b.turnCalcCostUSD, b.turnProvidedUSD
 	cycles := b.turnCalls
 	bd := costBreakdown{
-		model:  prefixedModel("claude", resultModel),
-		cycles: cycles,
-		counts: b.turnCalc,
+		model:    prefixedModel("claude", resultModel),
+		cycles:   cycles,
+		counts:   b.turnCalc,
+		writeTop: b.turnWriteTop,
+		writeSub: b.turnWriteSub,
 	}
 	if checkCost {
 		calc := calcSoFar
