@@ -1384,7 +1384,30 @@ Four outputs:
      spends real money.
 
    The tail runs ONLY for foreground subagents (`maybeStart` gates on `expectFg`);
-   background ones arrive by the stream alone, which is already complete for them. Both
+   background ones arrive by the stream alone.
+
+   **The accumulator is NOT yet a complete source — measured, do not price from it (#1880).**
+   Against the cache-write total each turn is actually priced on, it has seen 1-15%:
+   4.3% and 1.1% on 2026-09-10 02:48/03:36 (P1), 15.0% and 4.7% at 14:47/15:32 (P2).
+   The 15:32 turn ran one subagent, `agent-affb669c`, on the SAME model as its parent
+   (197,503 cache-write tokens, 100% ephemeral_5m); the accumulator's subagent bucket
+   recorded ZERO of them. Both post-P2 warnings reconcile to under one token: the gap
+   divided by opus-5's $3.75/MTok 1h-vs-5m spread equals `cache_write` minus what the
+   accumulator saw, exactly — so the unseen tokens ARE the mispriced ones.
+   The measured cause is a SPAN mismatch, not a missing feed: `reset()` runs at
+   `beginTurnLocked` (turn START) while `modelUsageDelta` prices from the PREVIOUS
+   RESULT, a window measured at 34 minutes against a 3.5-minute turn on 2026-09-10.
+   Everything in the delta window but before the turn opened is priced and never
+   accumulated. Phase B closes this; until it does, the accumulator is observe-only.
+
+   Since #1880 phase A the warning also carries `turn=<dur> priced_span=<dur>`, and flags
+   `SPAN Nx TURN` when the priced window exceeds twice the turn — the two measurements that
+   made the above legible. `pricedSpanStart` (`ccstream/cost.go`) records the delta window's
+   start PER MODEL beside `lastModelUsage`'s snapshot; one scalar would report one model's
+   window for another's delta. A zero duration means NOT MEASURED (first snapshot for a
+   model) and prints nothing rather than `0s`.
+
+   Both
    feeds dedupe by `message.id`, which is load-bearing twice: CC emits one `assistant` line
    PER CONTENT BLOCK each repeating the whole message's usage, and a FOREGROUND subagent's
    messages can arrive by BOTH routes (the probe saw 2 of its 3 in the stream and all 3 in
