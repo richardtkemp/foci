@@ -97,3 +97,47 @@ func TestNote_HighWaterMarkIsPerMessageNotPerModel(t *testing.T) {
 		t.Fatalf("Output = %d, want 541 — distinct messages must sum", got)
 	}
 }
+
+// TestNote_WritesNotDoubledWhenOutputRises is the production shape, and the one
+// the other tests could not reach.
+//
+// A repeat with IDENTICAL usage short-circuits on `cur == prev` and never runs
+// the increment arithmetic, so a test built from identical repeats pins the
+// short-circuit rather than the maths. The real deliveries differ — output
+// rises from a placeholder to the completed figure while cache writes stay
+// flat — which is the only path that exercises the per-class increment. A
+// fail-arm adding the full value instead of the increase reddened nothing until
+// this test existed.
+func TestNote_WritesNotDoubledWhenOutputRises(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	mk := func(out int) *AssistantMessage {
+		m := &AssistantMessage{}
+		m.Message.ID = "msg_A"
+		m.Message.Model = "claude-opus-5"
+		m.Message.Usage = TokenUsage{
+			OutputTokens:             out,
+			CacheCreationInputTokens: 8320,
+			CacheReadInputTokens:     2410348,
+			InputTokens:              116,
+			CacheCreation:            &CacheCreationSplit{Ephemeral1h: 8320},
+		}
+		return m
+	}
+	b.noteAssistantUsage(mk(1))
+	b.noteAssistantUsage(mk(185)) // same message, output completed
+
+	tu := b.turnUsageAcc.top["claude-opus-5"]
+	if tu.Output != 185 {
+		t.Errorf("Output = %d, want 185", tu.Output)
+	}
+	if got := tu.Write.Ephemeral1h; got != 8320 {
+		t.Errorf("1h = %d, want 8320 — a flat class must not re-add when another class rises", got)
+	}
+	if tu.CacheRead != 2410348 {
+		t.Errorf("CacheRead = %d, want 2410348 — must not re-add", tu.CacheRead)
+	}
+	if tu.Input != 116 {
+		t.Errorf("Input = %d, want 116 — must not re-add", tu.Input)
+	}
+}

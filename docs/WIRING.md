@@ -1422,10 +1422,26 @@ Four outputs:
    model) and prints nothing rather than `0s`.
 
    Both
-   feeds dedupe by `message.id`, which is load-bearing twice: CC emits one `assistant` line
-   PER CONTENT BLOCK each repeating the whole message's usage, and a FOREGROUND subagent's
-   messages can arrive by BOTH routes (the probe saw 2 of its 3 in the stream and all 3 in
-   the transcript). Anything added to this group must be added
+   feeds reconcile by `message.id`, which is load-bearing twice: CC emits one `assistant`
+   line PER CONTENT BLOCK, and a FOREGROUND subagent's messages can arrive by BOTH routes
+   (the probe saw 2 of its 3 in the stream and all 3 in the transcript).
+
+   **Reconciliation is a HIGH-WATER MARK per class, not first-wins.** Each repeated line
+   repeats the message's usage, but only THREE of the four classes are final on the first
+   line. `output_tokens` is a running count starting at 1-3, completed only on the line
+   carrying a non-nil `stop_reason`. Measured 2026-09-10 across 29 message ids in one
+   subagent transcript: input / cache_read / cache_write varied on ZERO, output on 26.
+   First-wins therefore locked in the placeholder — 88.6% of subagent output tokens on
+   this host, and output is the most expensive class. `note()` keeps the max per class in
+   `applied` and adds only the INCREASE, so a repeat still cannot inflate a total. Max
+   rather than last-wins so the fix does not depend on the completed line arriving last.
+
+   **Residual, measured:** the PARENT STREAM never completes output at all — every
+   assistant line in both saved probe captures carries `stop_reason: null` and output 2-3.
+   So the repair covers the transcript feed (foreground subagents) only. Top-level output
+   is unaffected because pricing takes it from `ModelUsage`. BACKGROUND subagents get no
+   tail and arrive by the stream alone, so their output stays a placeholder and cannot be
+   priced from this source yet. Anything added to this group must be added
    inside `usageAccumulator` so the single `reset()` still clears all of it.
    They were reset at neither site until #1848, so the warning printed a per-SESSION
    breakdown beside a per-TURN total — a diagnosis that silently answered a different
