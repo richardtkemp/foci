@@ -516,6 +516,14 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		writeSub:  b.turnUsageAcc.writeSplit(true),
 		models:    b.turnUsageAcc.models(),
 	}
+	// Move the accumulator's result baseline in step with modelUsageDelta's
+	// snapshot above, so the next turn measures from the same point pricing
+	// does. AFTER the breakdown, which reads the CURRENT turn's delta.
+	//
+	// Under turnMu because the accumulator is turnMu-guarded, not b.mu-guarded
+	// like lastModelUsage — the two baselines describe one window but are
+	// protected by different locks, so they cannot be marked together.
+	b.turnUsageAcc.markResult()
 	if checkCost {
 		calc := calcSoFar
 		result.Usage.CalculatedCostUSD = &calc

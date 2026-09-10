@@ -142,32 +142,84 @@ func TestNoteCacheWriteSplit_ShortfallLandsInUnknown(t *testing.T) {
 	}
 }
 
-// TestBeginTurn_ResetsCacheWriteSplit puts the new fields under the SAME
-// boundary as the rest of the cost group. #1848 shipped because half that group
-// was reset at neither call site, and the fix was to give the group one name;
-// a field added outside it re-creates the bug.
-func TestBeginTurn_ResetsCacheWriteSplit(t *testing.T) {
+// TestBeginTurn_MovesBaselineWithoutWiping: a turn boundary must move the
+// per-turn baseline, not clear the totals. #1848 shipped because half the cost
+// group was reset at neither call site; #1880 showed the opposite failure —
+// resetting at turn START discarded usage from inside the window that was about
+// to be priced.
+func TestBeginTurn_MovesBaselineWithoutWiping(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
 	b.noteAssistantUsage(msgWith("msg_A", "", 8320, 0, 8320))
 	b.noteAssistantUsage(msgWith("msg_B", "tool_1", 11959, 11959, 0))
+	b.turnUsageAcc.markResult() // a result closes the window those two fell in
 
 	b.beginTurnLocked(&delegator.TurnEvents{})
 
+	// The NEW turn starts empty...
 	if got := b.turnUsageAcc.writeSplit(false); got != (cacheWriteSplit{}) {
-		t.Errorf("top bucket = %+v after beginTurnLocked, want zero", got)
+		t.Errorf("top bucket = %+v at turn start, want zero", got)
 	}
 	if got := b.turnUsageAcc.writeSplit(true); got != (cacheWriteSplit{}) {
-		t.Errorf("sub bucket = %+v after beginTurnLocked, want zero", got)
+		t.Errorf("sub bucket = %+v at turn start, want zero", got)
 	}
-	// The dedupe set must reset too: a stale id would silently DROP a genuine
-	// message in the next turn, which reads as an under-count, not a crash.
-	if b.turnUsageAcc.seen != nil {
-		t.Errorf("dedupe set = %v after beginTurnLocked, want nil", b.turnUsageAcc.seen)
+	// ...but the totals behind it survive, which is what makes the previous
+	// window recoverable instead of lost.
+	// Nil-checked rather than indexed straight through: a missing key would
+	// panic, and a panic aborts the whole test binary, silencing every test
+	// that had not finished.
+	tu, ok := b.turnUsageAcc.top["claude-opus-5"]
+	if !ok || tu == nil {
+		t.Fatalf("cumulative total was wiped at the turn boundary; want it retained")
 	}
-	b.noteAssistantUsage(msgWith("msg_A", "", 500, 0, 500))
-	if got := b.turnUsageAcc.writeSplit(false).Ephemeral1h; got != 500 {
-		t.Errorf("re-used message id counted %d after a turn boundary, want 500", got)
+	if tu.Write.Ephemeral1h != 8320 {
+		t.Errorf("cumulative 1h = %d, want 8320 retained behind the baseline", tu.Write.Ephemeral1h)
+	}
+}
+
+// TestUsageAccumulator_CountsUsageFromBeforeTheTurnOpened is the #1880 phase B
+// regression test, and the one that matters.
+//
+// Pricing measures from the PREVIOUS RESULT. A message arriving after that
+// result but before the turn opens is inside the priced window. The predecessor
+// wiped at turn start and charged for those tokens without ever accumulating
+// them: measured coverage was 1-15%, and the tokens it missed were exactly the
+// ones being mispriced.
+func TestUsageAccumulator_CountsUsageFromBeforeTheTurnOpened(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	b.turnUsageAcc.markResult() // R0: the result the next delta measures from
+
+	// A background subagent is still working; its message lands before foci
+	// opens the next turn. This is the token that used to vanish.
+	b.noteAssistantUsage(msgWith("msg_straggler", "tool_1", 197503, 197503, 0))
+
+	b.beginTurnLocked(&delegator.TurnEvents{})
+	b.noteAssistantUsage(msgWith("msg_inturn", "", 8989, 0, 8989))
+
+	if got := b.turnUsageAcc.writeSplit(true).Ephemeral5m; got != 197503 {
+		t.Errorf("subagent 5m = %d, want 197503 — usage from inside the priced "+
+			"window but before the turn opened must still be counted", got)
+	}
+	if got := b.turnUsageAcc.writeSplit(false).Ephemeral1h; got != 8989 {
+		t.Errorf("top-level 1h = %d, want 8989", got)
+	}
+}
+
+// TestUsageAccumulator_DedupeSurvivesTurnBoundary: message ids are unique per
+// API call, so a message must be counted once EVER, not once per turn. The
+// predecessor cleared the dedupe set at each boundary, which meant a message
+// spanning a boundary could be counted twice.
+func TestUsageAccumulator_DedupeSurvivesTurnBoundary(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	b.noteAssistantUsage(msgWith("msg_A", "", 8320, 0, 8320))
+	b.turnUsageAcc.markResult()
+	b.beginTurnLocked(&delegator.TurnEvents{})
+
+	b.noteAssistantUsage(msgWith("msg_A", "", 8320, 0, 8320)) // same id again
+	if got := b.turnUsageAcc.writeSplit(false); got != (cacheWriteSplit{}) {
+		t.Errorf("re-delivered message counted again across a turn boundary: %+v", got)
 	}
 }
 
