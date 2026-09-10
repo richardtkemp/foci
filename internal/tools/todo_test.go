@@ -115,6 +115,144 @@ func TestTodoToolEditAppendDefaultsReplace(t *testing.T) {
 	}
 }
 
+func TestTodoToolEditTitlePrependsWhenNoneExists(t *testing.T) {
+	// #1714: an item created without the *Title* convention (plain text) gets
+	// the title prepended as a new bold line ahead of the untouched body.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "cause not established — investigation ongoing", "high", "")
+	params := map[string]interface{}{
+		"action": "edit",
+		"id":     id,
+		"title":  "cause established: ask-deferral starvation",
+	}
+	if _, err := executeTodoTool(tool, params); err != nil {
+		t.Fatalf("edit title: %v", err)
+	}
+	item, _ := store.Get("agent1", id)
+	want := "*cause established: ask-deferral starvation*\n\ncause not established — investigation ongoing"
+	if item.Text != want {
+		t.Errorf("text = %q, want %q", item.Text, want)
+	}
+}
+
+func TestTodoToolEditTitleReplacesExistingTitleLine(t *testing.T) {
+	// An item created via `add --title` carries the *Title* convention —
+	// editing title must swap only that line, leaving the body untouched.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "*cause not established*\n\nSee logs at 09:53.", "high", "")
+	params := map[string]interface{}{
+		"action": "edit",
+		"id":     id,
+		"title":  "cause established",
+	}
+	if _, err := executeTodoTool(tool, params); err != nil {
+		t.Fatalf("edit title: %v", err)
+	}
+	item, _ := store.Get("agent1", id)
+	want := "*cause established*\n\nSee logs at 09:53."
+	if item.Text != want {
+		t.Errorf("text = %q, want %q", item.Text, want)
+	}
+}
+
+func TestTodoToolEditTitleOnTitleOnlyItem(t *testing.T) {
+	// An item that is JUST a title (add --title with no body) stays title-only.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "*old headline*", "high", "")
+	params := map[string]interface{}{
+		"action": "edit",
+		"id":     id,
+		"title":  "new headline",
+	}
+	if _, err := executeTodoTool(tool, params); err != nil {
+		t.Fatalf("edit title: %v", err)
+	}
+	item, _ := store.Get("agent1", id)
+	if want := "*new headline*"; item.Text != want {
+		t.Errorf("text = %q, want %q", item.Text, want)
+	}
+}
+
+func TestTodoToolEditEmptyTitleIsNoop(t *testing.T) {
+	// #1714: a title must never be settable to empty — neither by omission nor
+	// by explicitly passing "". Since priority is also supplied, the edit as a
+	// whole succeeds; only the title is left alone.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "*keep me*\n\nbody", "medium", "")
+	params := map[string]interface{}{
+		"action":   "edit",
+		"id":       id,
+		"title":    "",
+		"priority": "high",
+	}
+	if _, err := executeTodoTool(tool, params); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	item, _ := store.Get("agent1", id)
+	if want := "*keep me*\n\nbody"; item.Text != want {
+		t.Errorf("text = %q, want %q (empty title must be a no-op)", item.Text, want)
+	}
+	if item.Priority != "high" {
+		t.Errorf("priority = %q, want high", item.Priority)
+	}
+}
+
+func TestTodoToolEditTitleRejectsAppend(t *testing.T) {
+	// title composes a whole new document from the CURRENT text; combining it
+	// with append (which is defined in terms of a text fragment) doesn't have
+	// a sensible meaning, so it's rejected rather than guessed at.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "body", "medium", "")
+	params := map[string]interface{}{
+		"action": "edit",
+		"id":     id,
+		"title":  "new title",
+		"append": true,
+		"text":   "more",
+	}
+	if _, err := executeTodoTool(tool, params); err == nil {
+		t.Error("expected error: title cannot be combined with append")
+	}
+}
+
+func TestTodoToolEditTitleWithTextReplace(t *testing.T) {
+	// title and a --text replace in the same call: the new title wraps the
+	// NEW text, not the old one.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "*old title*\n\nold body", "medium", "")
+	params := map[string]interface{}{
+		"action": "edit",
+		"id":     id,
+		"title":  "new title",
+		"text":   "new body",
+	}
+	if _, err := executeTodoTool(tool, params); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	item, _ := store.Get("agent1", id)
+	if want := "*new title*\n\nnew body"; item.Text != want {
+		t.Errorf("text = %q, want %q", item.Text, want)
+	}
+}
+
 func TestTodoToolEditAppendRequiresText(t *testing.T) {
 	// append=true with no text is rejected.
 	t.Parallel()

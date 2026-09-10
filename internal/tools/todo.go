@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -29,6 +30,10 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				"text": {
 					"type": "string",
 					"description": "Text for the todo item — required on add. On complete/drop it aliases --reason"
+				},
+				"title": {
+					"type": "string",
+					"description": "Rename the item's headline — the bold '*Title*' line 'add --title' composes at the front of text. Replaces just that leading title line (prepending one if the item doesn't have one yet); the rest of the text is untouched. Empty/absent is always a no-op — a title can never be cleared by omission, or by passing an empty string."
 				},
 				"append": {
 					"type": "boolean",
@@ -84,6 +89,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			p, err := UnmarshalParams[struct {
 				Action   string  `json:"action"`
 				Text     string  `json:"text"`
+				Title    string  `json:"title"`
 				Append   bool    `json:"append"`
 				Priority string  `json:"priority"`
 				Tag      string  `json:"tag"`
@@ -134,7 +140,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				// New callers should use 'complete' or 'drop'.
 				return todoTransition(store, agentID, p.ID, p.IDs, p.State, p.Reason)
 			case "edit":
-				return todoEdit(store, agentID, p.ID, p.IDs, p.Text, p.Append, p.Priority, p.Tag, params)
+				return todoEdit(store, agentID, p.ID, p.IDs, p.Text, p.Title, p.Append, p.Priority, p.Tag, params)
 			case "remove":
 				return todoRemove(store, agentID, p.ID, p.IDs)
 			default:
@@ -480,7 +486,7 @@ func todoTransition(store *memory.TodoStore, agentID string, id int64, ids []int
 	return TextResult(strings.Join(results, "\n")), nil
 }
 
-func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, text string, appendText bool, priority, tag string, params json.RawMessage) (ToolResult, error) {
+func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, text, title string, appendText bool, priority, tag string, params json.RawMessage) (ToolResult, error) {
 	resolved, err := resolveIDs(id, ids)
 	if err != nil {
 		return ToolResult{}, err
@@ -491,16 +497,41 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 	}
 	_, setTags := raw["tag"]
 
-	if text == "" && priority == "" && !setTags {
-		return ToolResult{}, fmt.Errorf("edit requires at least one of: text, priority, tag")
+	// title follows the same sentinel convention as text/priority (empty means
+	// "leave alone"), NOT tag's raw-JSON-presence convention (empty + present
+	// means "clear"). A title must never be settable to empty — neither by
+	// omission nor by an explicit "" — so there is deliberately no way to ask
+	// for the tag-style "clear" behaviour here.
+	if text == "" && title == "" && priority == "" && !setTags {
+		return ToolResult{}, fmt.Errorf("edit requires at least one of: text, title, priority, tag")
 	}
 	if appendText && text == "" {
 		return ToolResult{}, fmt.Errorf("edit: append requires text")
 	}
+	if appendText && title != "" {
+		return ToolResult{}, fmt.Errorf("edit: title cannot be combined with append — retitle in a separate edit")
+	}
 	var results []string
 	for _, rid := range resolved {
 		oldItem, getErr := store.Get(agentID, rid)
-		item, err := store.Edit(agentID, rid, text, priority, tag, setTags, appendText)
+		finalText := text
+		if title != "" {
+			base := text
+			if base == "" {
+				// No simultaneous text replacement — retitle the item's
+				// CURRENT text. Requires the just-fetched oldItem; if that
+				// fetch failed, do NOT fall back to an empty base, which
+				// would silently discard the existing body instead of just
+				// failing this item.
+				if getErr != nil {
+					results = append(results, fmt.Sprintf("#%d: error: %v", rid, getErr))
+					continue
+				}
+				base = oldItem.Text
+			}
+			finalText = retitleItemText(base, title)
+		}
+		item, err := store.Edit(agentID, rid, finalText, priority, tag, setTags, appendText)
 		if err != nil {
 			results = append(results, fmt.Sprintf("#%d: error: %v", rid, err))
 			continue
@@ -511,7 +542,14 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 			continue
 		}
 		var changes []string
-		if text != "" && oldItem.Text != item.Text {
+		switch {
+		case title != "":
+			// The composed text also carries any --text change in the same
+			// call; leading with the title is the useful headline, and the
+			// underlying text diff for a rename-only edit is just the title
+			// line moving, which describeTextChange would render unhelpfully.
+			changes = append(changes, fmt.Sprintf("title: → %q", title))
+		case text != "" && oldItem.Text != item.Text:
 			changes = append(changes, describeTextChange(oldItem.Text, item.Text, appendText))
 		}
 		if priority != "" && oldItem.Priority != item.Priority {
@@ -535,6 +573,27 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 		}
 	}
 	return TextResult(strings.Join(results, "\n")), nil
+}
+
+// todoTitleLineRe matches the bold "*Title*" headline line that todoAdd's
+// --title composes at the front of an item's text (#941: `*%s*\n\n%s`, or
+// bare `*%s*` when there's no body). Captures the body that follows, if any.
+var todoTitleLineRe = regexp.MustCompile(`(?s)\A\*[^\n]*\*(?:\n\n(.*))?\z`)
+
+// retitleItemText returns text with its leading bold title line replaced by
+// newTitle, preserving everything after it untouched. If text has no such
+// line yet (or is empty), newTitle is prepended as a new title line ahead of
+// whatever text there was — so retitling an item that predates the --title
+// convention, or was never given one, still does something useful (#1714).
+func retitleItemText(text, newTitle string) string {
+	body := text
+	if m := todoTitleLineRe.FindStringSubmatch(text); m != nil {
+		body = m[1]
+	}
+	if body == "" {
+		return "*" + newTitle + "*"
+	}
+	return "*" + newTitle + "*\n\n" + body
 }
 
 // editSummaryTextBudget is the combined old+new length below which an edit
