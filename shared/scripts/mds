@@ -5,10 +5,20 @@
 # Usage:
 #   mds file.md              # list all headings (a TOC)
 #   mds file.md pattern      # match a heading, extract that section
+#   mds file.md pattern --raw  # same, but as the section's ORIGINAL SOURCE BYTES
 #
 # The point is context economy: reading a whole large markdown file to answer
 # one question is the expensive mistake. `mds file.md` shows you the shape,
 # then `mds file.md <pattern>` gives you only the part you need.
+#
+# --raw / --source: mds delegates the actual extraction to mdq, which
+# re-renders from an AST and normalises formatting (e.g. '*word*' comes back
+# as '_word_') — same footgun as calling mdq directly, and the same fix: pass
+# --raw through to it, and get the section's original source bytes instead of
+# a re-render. See mdq's own header comment for the full rationale and the
+# constraints (requires jq, one concrete file, selector must resolve to whole
+# section(s)). Only meaningful with a pattern — there is no single section to
+# slice for a bare TOC listing.
 #
 # Matching is tiered, most precise first, so an ID-like query ('N1') picks 'N1'
 # rather than ranking the longer 'N11' above it:
@@ -25,15 +35,35 @@
 
 set -euo pipefail
 
+# Pull --raw/--source out wherever it appears, so the positional file/pattern
+# parsing below sees exactly the argv it saw before this flag existed. When
+# neither flag is present, this loop is a no-op passthrough — same args, same
+# order — so the rest of the script's behaviour is unchanged byte-for-byte.
+raw=0
+args=()
+for a in "$@"; do
+    case "$a" in
+        --raw|--source) raw=1 ;;
+        *) args+=("$a") ;;
+    esac
+done
+set -- "${args[@]+"${args[@]}"}"
+
 if [[ $# -lt 1 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
-    echo "Usage: mds <file.md> [pattern]"
+    echo "Usage: mds <file.md> [pattern] [--raw]"
     echo "  No pattern: list headings"
     echo "  With pattern: match a heading, extract that section"
+    echo "  --raw / --source: extract as original source bytes, not mdq's re-render"
     exit 0
 fi
 
 file="$1"
 pattern="${2:-}"
+
+if (( raw )) && [[ -z "$pattern" ]]; then
+    echo "mds --raw: needs a pattern — there's no single section to slice for a bare TOC listing." >&2
+    exit 1
+fi
 
 headings=$(grep '^#' "$file" 2>/dev/null) || { echo "No headings found in $file" >&2; exit 1; }
 
@@ -73,4 +103,8 @@ fi
 #   2. Wrap in double quotes — mdq's quoted-string syntax is a literal match,
 #      so <, [ and friends are not parsed as selector syntax.
 clean=$(echo "$match" | sed 's/^#* //' | sed 's/`//g')
-mdq "# \"$clean\"" "$file"
+if (( raw )); then
+    mdq --raw "# \"$clean\"" "$file"
+else
+    mdq "# \"$clean\"" "$file"
+fi

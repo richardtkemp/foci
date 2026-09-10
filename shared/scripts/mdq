@@ -19,9 +19,26 @@
 # this wrapper entirely and write a real regex selector, call the binary by its
 # own path, or set MDQ_BIN.
 #
+# --raw / --source: print the matched section's ORIGINAL SOURCE BYTES instead
+# of mdq's re-rendered Markdown. mdq re-renders from its AST, which normalises
+# formatting — source '*word*' comes back as '_word_'. Same characters to a
+# reader, different bytes to an exact-match Edit old_string. --raw asks the
+# real mdq (via its JSON output) which section(s) it selected, then slices
+# those same lines verbatim out of the file on disk instead of letting mdq
+# print them. Requires jq. Needs exactly one concrete file argument — stdin
+# ('-', or no file at all) and multi-file invocations have no single byte
+# range to slice. Only works when the selector resolves to whole section(s)
+# (i.e. it matched on a heading); a selector that matches a bare paragraph or
+# other sub-section element has no heading-bounded line range to slice, and
+# --raw reports an error rather than guessing. If the selector matches more
+# than one section, each is emitted verbatim in document order with no
+# separator inserted between them — the output is exactly the source bytes
+# of each range, concatenated, nothing synthetic added.
+#
 # Usage: mdq '## Some Heading' file.md
 #        mdq '# Exact' file.md
 #        mdq '## 7. Open: ship now or defer?' file.md   # would be a syntax error unwrapped
+#        mdq --raw '## Some Heading' file.md             # source bytes, not the render
 
 set -uo pipefail
 
@@ -69,6 +86,147 @@ MDQ=$(resolve_mdq) || {
     exit 127
 }
 
+# Pull --raw/--source out of the argument list wherever it appears, so the
+# heading-collapsing logic below (which inspects "$1") sees exactly the argv
+# it saw before this flag existed. When neither flag is present, this loop is
+# a no-op passthrough — same args, same order — so the rest of the script's
+# behaviour is unchanged byte-for-byte from before --raw existed.
+raw=0
+args=()
+for a in "$@"; do
+    case "$a" in
+        --raw|--source) raw=1 ;;
+        *) args+=("$a") ;;
+    esac
+done
+set -- "${args[@]+"${args[@]}"}"
+
+# raw_mode: emit the ORIGINAL SOURCE BYTES of the section(s) mdq would have
+# selected and rendered. $1 is the (possibly heading-collapsed) selector, or
+# "" if none was given; the rest of the args are whatever would otherwise
+# have been exec'd straight to the real binary (typically just the file).
+#
+# Strategy: ask the real mdq for the SAME selection, but as JSON (which
+# reports each matched section's heading depth and title). Re-render still
+# normalises the title's emphasis delimiters, but stripping '*' and '_' from
+# both the JSON title and each candidate heading line before comparing them
+# cancels that normalisation out — it's the only documented difference
+# between source and re-render, so it's safe to strip from both sides. Once
+# a heading is relocated by (depth, stripped title), the section's end is the
+# next heading of the same-or-shallower depth (or EOF), matching how mdq
+# itself scopes a "## X" selection.
+raw_mode() {
+    local selector="$1"
+    shift
+
+    command -v jq >/dev/null 2>&1 || {
+        echo "mdq --raw: needs jq on PATH to interpret which section(s) matched; none found." >&2
+        exit 1
+    }
+
+    # Drop any -o/--output the caller supplied — raw mode's output is source
+    # bytes, not a render, so an explicit --output would be meaningless — and
+    # force our own JSON probe.
+    local -a probe_args=()
+    local skip_next=0 a
+    for a in "$@"; do
+        if (( skip_next )); then
+            skip_next=0
+            continue
+        fi
+        case "$a" in
+            -o|--output) skip_next=1 ;;
+            -o=*|--output=*) ;;
+            *) probe_args+=("$a") ;;
+        esac
+    done
+
+    local -a call_args=()
+    [[ -n "$selector" ]] && call_args+=("$selector")
+    call_args+=("${probe_args[@]+"${probe_args[@]}"}")
+
+    local json
+    json=$("$MDQ" -o json "${call_args[@]+"${call_args[@]}"}") || exit $?
+
+    # Raw mode needs exactly one concrete on-disk file: stdin ('-', or no
+    # file at all) has no byte range to slice, and multiple files would make
+    # line numbers ambiguous (mdq treats them as one concatenated document).
+    local -a files=()
+    for a in "${probe_args[@]+"${probe_args[@]}"}"; do
+        [[ "$a" == -* ]] && continue
+        files+=("$a")
+    done
+    if [[ ${#files[@]} -ne 1 ]]; then
+        echo "mdq --raw: need exactly one markdown file to slice source bytes from (got ${#files[@]})." >&2
+        exit 1
+    fi
+    local file="${files[0]}"
+    [[ -r "$file" ]] || {
+        echo "mdq --raw: cannot read '$file'" >&2
+        exit 1
+    }
+
+    # Raw mode only works when every top-level match is a whole section — a
+    # paragraph/list/etc match has no heading-bounded line range of its own.
+    if ! printf '%s' "$json" | jq -e '(.items|length) > 0 and all(.items[]; has("section"))' >/dev/null 2>&1; then
+        echo "mdq --raw: the selector must match one or more whole sections (headings); it matched something else, or nothing." >&2
+        exit 1
+    fi
+
+    # All ATX headings in the source, outside fenced code blocks:
+    # parallel arrays of line number / depth / delimiter-stripped text.
+    local -a h_line=() h_depth=() h_norm=()
+    local ln d t
+    while IFS=$'\t' read -r ln d t; do
+        h_line+=("$ln")
+        h_depth+=("$d")
+        h_norm+=("${t//[*_]/}")
+    done < <(awk '
+        /^(```|~~~)/ { infence = !infence; next }
+        infence { next }
+        /^#+/ {
+            line = $0
+            match(line, /^#+/)
+            depth = RLENGTH
+            if (depth > 6) next
+            text = substr(line, depth + 1)
+            if (text != "" && substr(text, 1, 1) != " " && substr(text, 1, 1) != "\t") next
+            sub(/^[ \t]/, "", text)
+            gsub(/[ \t]+$/, "", text)
+            printf "%d\t%d\t%s\n", NR, depth, text
+        }
+    ' "$file")
+    local total_lines
+    total_lines=$(awk 'END { print NR }' "$file")
+
+    local n=${#h_line[@]}
+    local cursor=1 depth title
+    while IFS=$'\t' read -r depth title; do
+        local norm_target=${title//[*_]/}
+        local idx=-1 i
+        for ((i = 0; i < n; i++)); do
+            (( h_line[i] < cursor )) && continue
+            if [[ "${h_depth[i]}" == "$depth" && "${h_norm[i]}" == "$norm_target" ]]; then
+                idx=$i
+                break
+            fi
+        done
+        if (( idx < 0 )); then
+            echo "mdq --raw: matched section '$title' (depth $depth) but could not relocate it in '$file' by heading text — cannot slice raw bytes." >&2
+            exit 1
+        fi
+        local start=${h_line[idx]} end=$total_lines j
+        for ((j = idx + 1; j < n; j++)); do
+            if (( h_depth[j] <= depth )); then
+                end=$(( h_line[j] - 1 ))
+                break
+            fi
+        done
+        cursor=$(( end + 1 ))
+        sed -n "${start},${end}p" "$file"
+    done < <(printf '%s' "$json" | jq -r '.items[].section | "\(.depth)\t\(.title)"')
+}
+
 if [[ $# -ge 1 && "$1" == \#* ]]; then
     # Strip the leading run of '#' plus one optional space to get heading text.
     text=$(sed -E 's/^#+[[:space:]]?//' <<<"$1")
@@ -81,7 +239,15 @@ if [[ $# -ge 1 && "$1" == \#* ]]; then
         esc=${text//\"/\\\"}
         selector="# \"$esc\""
     fi
+    if (( raw )); then
+        raw_mode "$selector" "$@"
+        exit $?
+    fi
     exec "$MDQ" "$selector" "$@"
 else
+    if (( raw )); then
+        raw_mode "" "$@"
+        exit $?
+    fi
     exec "$MDQ" "$@"
 fi
