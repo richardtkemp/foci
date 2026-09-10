@@ -500,6 +500,11 @@ func (b *Backend) finalizeExit(reason error) {
 		b.stashedResult = nil
 		b.stashedResultMsg = nil
 		b.redispatchInFlight = false
+		// The usage accumulator is CUMULATIVE for the Backend's life (#1880
+		// phase B) and its dedupe set holds one entry per API call ever seen,
+		// so the subprocess going away is the point it must be cleared. A turn
+		// boundary only moves the baseline; this is the only full wipe.
+		b.turnUsageAcc.reset()
 		resultCh := b.turnResultCh
 		b.turnMu.Unlock()
 		b.drainEdgeCallbacks()
