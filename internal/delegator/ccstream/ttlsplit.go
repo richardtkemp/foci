@@ -1,6 +1,10 @@
 package ccstream
 
-import "sort"
+import (
+	"sort"
+
+	"foci/internal/modelinfo"
+)
 
 // Cache-write TTL accounting (#1866 phase 1).
 //
@@ -290,6 +294,80 @@ func (a *usageAccumulator) writeSplit(sub bool) cacheWriteSplit {
 		out = out.addSplit(w)
 	}
 	return out
+}
+
+// writeSplitByModel returns this turn's cache-write TTL split for EACH model,
+// both buckets combined.
+//
+// Per model because pricing is per model: a turn routinely spans several (73%
+// of subagents run a different model from their parent), and each has its own
+// 5m and 1h rates. The aggregate writeSplit above answers "what did this turn
+// cache" for the warning text; this answers "what do I charge whom".
+//
+// Buckets are combined because the TTL is read from the OBSERVED split, never
+// derived from subagent-vs-top-level. That mapping happens to be clean today —
+// subagents 5m, main thread 1h — and asserting it here would rebuild, one layer
+// down, the assumption that caused #1866.
+func (a *usageAccumulator) writeSplitByModel() map[string]cacheWriteSplit {
+	out := make(map[string]cacheWriteSplit, len(a.top)+len(a.sub))
+	for _, p := range []struct {
+		cur  map[string]*turnUsage
+		base map[string]turnUsage
+	}{{a.top, a.atTurnStart.top}, {a.sub, a.atTurnStart.sub}} {
+		for model, tu := range p.cur {
+			w := tu.Write
+			if b, ok := p.base[model]; ok {
+				w.Ephemeral5m -= b.Write.Ephemeral5m
+				w.Ephemeral1h -= b.Write.Ephemeral1h
+				w.Unknown -= b.Write.Unknown
+			}
+			out[model] = out[model].addSplit(w)
+		}
+	}
+	return out
+}
+
+// splitFor allocates `total` authoritative cache-write tokens for one model
+// across the TTL classes, using what the accumulator actually observed.
+//
+// THIS IS NOT A RATIO. When the accumulator saw exactly `total` tokens, its
+// split IS the answer and is returned verbatim — measured 100.00% on a
+// production turn (369,913 = 369,913) and on a live probe (30,921 = 30,921),
+// so the exact path is the normal path.
+//
+// When the counts DISAGREE, the honest answer is that the TTL of the
+// difference was not observed, so the difference lands in Unknown — which
+// prices at the 1h rate, i.e. the pre-#1866 behaviour, erring toward
+// over-charging. Scaling the observed split proportionally onto the
+// authoritative total would manufacture a number no one measured; that is the
+// fudge this function exists to refuse.
+//
+// `total` always wins: the returned classes sum to it exactly, so pricing still
+// reconciles against ModelUsage whatever the coverage.
+func splitFor(observed cacheWriteSplit, total int) modelinfo.CacheWrites {
+	if total <= 0 {
+		return modelinfo.CacheWrites{}
+	}
+	w := modelinfo.CacheWrites{
+		Ephemeral5m: observed.Ephemeral5m,
+		Ephemeral1h: observed.Ephemeral1h,
+		Unknown:     observed.Unknown,
+	}
+	// Never allocate more than the authoritative total. An accumulator reading
+	// HIGH means a message was counted that ModelUsage does not include; drop
+	// from the cheaper class first so the residue cannot under-charge.
+	for w.Ephemeral5m+w.Ephemeral1h+w.Unknown > total {
+		switch {
+		case w.Ephemeral5m > 0:
+			w.Ephemeral5m--
+		case w.Unknown > 0:
+			w.Unknown--
+		default:
+			w.Ephemeral1h--
+		}
+	}
+	w.Unknown += total - (w.Ephemeral5m + w.Ephemeral1h + w.Unknown)
+	return w
 }
 
 // models lists every model seen this turn, in either bucket. The count being
