@@ -69,6 +69,21 @@ func (s *cacheWriteSplit) add(u TokenUsage) {
 	}
 }
 
+// raise lifts each class to the larger of its current value and what this
+// delivery reports, mirroring add's allocation rules.
+//
+// Separate from add because add ACCUMULATES across different messages while
+// this reconciles repeated deliveries of the SAME message. Folding them into
+// one function would make the difference invisible at the call site, and that
+// difference is exactly what the output-token bug turned on.
+func (s *cacheWriteSplit) raise(u TokenUsage) {
+	var in cacheWriteSplit
+	in.add(u)
+	s.Ephemeral5m = maxInt(s.Ephemeral5m, in.Ephemeral5m)
+	s.Ephemeral1h = maxInt(s.Ephemeral1h, in.Ephemeral1h)
+	s.Unknown = maxInt(s.Unknown, in.Unknown)
+}
+
 // addSplit returns s with o's counts added, class by class.
 func (s cacheWriteSplit) addSplit(o cacheWriteSplit) cacheWriteSplit {
 	return cacheWriteSplit{
@@ -120,9 +135,14 @@ type turnUsage struct {
 // every turn. Losing tokens is a pricing error; misfiling them is an
 // attribution error (#1880 phase C), and only one of those costs money.
 type usageAccumulator struct {
-	top  map[string]*turnUsage
-	sub  map[string]*turnUsage
-	seen map[string]struct{}
+	top map[string]*turnUsage
+	sub map[string]*turnUsage
+	// applied is what has already been folded into the buckets for each
+	// message id — the high-water mark per class, so a later delivery of the
+	// same message contributes only its INCREASE. Replaces a plain seen-set:
+	// a set could only ignore a repeat, and the repeat is where the real
+	// output token count arrives.
+	applied map[string]turnUsage
 
 	// atLastResult is the running total as of the most recent RESULT message —
 	// the same boundary modelUsageDelta snapshots at. Marked by markResult.
@@ -177,19 +197,48 @@ func (a *usageAccumulator) beginTurn() { a.atTurnStart = a.atLastResult }
 // transcript. Background subagents get no tail at all, so they arrive by the
 // stream alone.
 func (a *usageAccumulator) note(model string, isSub bool, id string, u TokenUsage) {
-	// An empty id cannot be deduped, so it is dropped rather than risking a
-	// multiple. That makes totals read LOW against ModelUsage, which the
-	// divergence check reports — preferable to a silent over-count.
+	// An empty id cannot be reconciled against an earlier delivery of the same
+	// message, so it is dropped rather than risking a multiple. That makes
+	// totals read LOW against ModelUsage, which the divergence check reports —
+	// preferable to a silent over-count. Measured 2026-09-10 across 5.5M
+	// assistant records on this host: zero had an empty id, so this is a guard,
+	// not a live loss.
 	if id == "" {
 		return
 	}
-	if a.seen == nil {
-		a.seen = make(map[string]struct{})
+	if a.applied == nil {
+		a.applied = make(map[string]turnUsage)
 	}
-	if _, dup := a.seen[id]; dup {
+
+	// HIGH-WATER MARK PER CLASS, not first-wins.
+	//
+	// CC delivers one line per content block and each repeats the message's
+	// usage — but only THREE of the four classes are final on the first line.
+	// Output is a running count that starts at 1-3 and is only completed on the
+	// line carrying a non-nil stop_reason. Measured on a subagent transcript
+	// 2026-09-10: across 29 message ids, input / cache_read / cache_write
+	// varied on ZERO of them and output varied on 26. First-wins therefore
+	// locked in the placeholder and discarded the real figure — 88.6% of
+	// subagent output tokens on this host, ~894,000 opus tokens, and output is
+	// the most expensive class ($25/MTok on opus-5 against $5 input).
+	//
+	// Taking the max per class is a no-op for the three stable classes and
+	// repairs the fourth, without depending on stop_reason being present or on
+	// the lines arriving in order. Only the INCREASE is added to the bucket, so
+	// a repeated delivery still cannot inflate a total — which is what the
+	// previous first-wins rule existed to prevent.
+	prev := a.applied[id]
+	cur := turnUsage{
+		Input:     maxInt(prev.Input, u.InputTokens),
+		Output:    maxInt(prev.Output, u.OutputTokens),
+		CacheRead: maxInt(prev.CacheRead, u.CacheReadInputTokens),
+	}
+	cur.Write = prev.Write
+	cur.Write.raise(u)
+	if cur == prev {
 		return
 	}
-	a.seen[id] = struct{}{}
+	a.applied[id] = cur
 
 	bucket := &a.top
 	if isSub {
@@ -203,10 +252,19 @@ func (a *usageAccumulator) note(model string, isSub bool, id string, u TokenUsag
 		tu = &turnUsage{}
 		(*bucket)[model] = tu
 	}
-	tu.Input += u.InputTokens
-	tu.Output += u.OutputTokens
-	tu.CacheRead += u.CacheReadInputTokens
-	tu.Write.add(u)
+	tu.Input += cur.Input - prev.Input
+	tu.Output += cur.Output - prev.Output
+	tu.CacheRead += cur.CacheRead - prev.CacheRead
+	tu.Write.Ephemeral5m += cur.Write.Ephemeral5m - prev.Write.Ephemeral5m
+	tu.Write.Ephemeral1h += cur.Write.Ephemeral1h - prev.Write.Ephemeral1h
+	tu.Write.Unknown += cur.Write.Unknown - prev.Write.Unknown
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // writeSplit totals cache-write tokens across every model in one bucket, for
