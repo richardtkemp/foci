@@ -91,15 +91,75 @@ MDQ=$(resolve_mdq) || {
 # it saw before this flag existed. When neither flag is present, this loop is
 # a no-op passthrough — same args, same order — so the rest of the script's
 # behaviour is unchanged byte-for-byte from before --raw existed.
-raw=0
+# RAW IS THE DEFAULT (#1705, Dick 2026-09-10). The re-render is a footgun that
+# is invisible at the call site — source `*emphasis*` comes back as `_emphasis_`,
+# identical to a reader and different to an exact-match Edit. Putting the fix
+# behind a flag left the footgun as the default and made the remedy reachable
+# only by someone who already knew about it, which is precisely who does not
+# need it. So: honest bytes by default, normalisation on request.
+#
+# raw_explicit distinguishes "the caller ASKED for bytes" from "bytes are simply
+# the default". It decides what happens when slicing is impossible (stdin, more
+# than one file, a selector matching something that is not a whole section):
+#   asked  -> hard error, because silently handing back a render is the exact
+#             substitution the caller was trying to avoid;
+#   default-> fall back to the render with a one-line note on STDERR, so the
+#             change of shape announces itself without touching stdout.
+raw=1
+raw_explicit=0
 args=()
 for a in "$@"; do
     case "$a" in
-        --raw|--source) raw=1 ;;
+        --raw|--source) raw=1; raw_explicit=1 ;;
+        --render|--no-raw) raw=0 ;;
         *) args+=("$a") ;;
     esac
 done
 set -- "${args[@]+"${args[@]}"}"
+
+# emit_raw_or_render: run raw_mode; on success print its bytes, on failure
+# decide by raw_explicit. Buffers stdout to a temp file so a failed slice never
+# emits a partial section before the fallback runs — a half-written section
+# followed by a full render would be worse than either alone.
+emit_raw_or_render() {
+    local selector="$1"; shift
+    # PRE-CHECK, before anything reads stdin. Slicing needs exactly one readable
+    # file; a stream or several files has no single byte-range to cut. Deciding
+    # that from argv alone matters because stdin can only be consumed ONCE — an
+    # attempt-then-fall-back would eat the stream and hand the render an empty
+    # input, which is how this produced zero bytes and no explanation the first
+    # time round.
+    local -a fargs=() a
+    for a in "$@"; do [[ "$a" == -* ]] || fargs+=("$a"); done
+    if [[ ${#fargs[@]} -ne 1 ]] || [[ ! -r "${fargs[0]}" ]]; then
+        if (( raw_explicit )); then
+            echo "mdq --raw: need exactly one readable markdown file to slice source bytes from (got ${#fargs[@]})." >&2
+            return 1
+        fi
+        echo "mdq: emitting the RE-RENDER, not source bytes — no single readable file to slice (reading a stream, or several files). Emphasis and list markers may be normalised; do not use this output as an exact-match string." >&2
+        return 10
+    fi
+    local out err rc
+    out=$(mktemp) || { echo "mdq: mktemp failed" >&2; return 1; }
+    err=$(mktemp) || { rm -f "$out"; echo "mdq: mktemp failed" >&2; return 1; }
+    raw_mode "$selector" "$@" >"$out" 2>"$err"
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        cat "$out"; rm -f "$out" "$err"; return 0
+    fi
+    if (( raw_explicit )); then
+        # The caller asked for bytes. Handing back a render instead is the exact
+        # substitution --raw exists to prevent, so fail loudly.
+        cat "$err" >&2; rm -f "$out" "$err"; return $rc
+    fi
+    # Implicit raw: say why the shape changed, on stderr so stdout stays clean
+    # for pipelines, then give the caller the render rather than nothing.
+    local why
+    why=$(head -1 "$err" | sed 's/^mdq --raw: //')
+    rm -f "$out" "$err"
+    echo "mdq: emitting the RE-RENDER, not source bytes — ${why:-cannot slice this selector}. Emphasis and list markers may be normalised; do not use this output as an exact-match string." >&2
+    return 10
+}
 
 # raw_mode: emit the ORIGINAL SOURCE BYTES of the section(s) mdq would have
 # selected and rendered. $1 is the (possibly heading-collapsed) selector, or
@@ -116,12 +176,17 @@ set -- "${args[@]+"${args[@]}"}"
 # next heading of the same-or-shallower depth (or EOF), matching how mdq
 # itself scopes a "## X" selection.
 raw_mode() {
+    # NOTE: every failure path here RETURNS, never exits. emit_raw_or_render has
+    # to be able to catch a failed slice and fall back to the render (#1705,
+    # raw-by-default). An exit here would kill the script before the fallback
+    # ran, and — because the caller buffers our streams — would swallow the
+    # reason too, producing an empty result with no explanation.
     local selector="$1"
     shift
 
     command -v jq >/dev/null 2>&1 || {
         echo "mdq --raw: needs jq on PATH to interpret which section(s) matched; none found." >&2
-        exit 1
+        return 1
     }
 
     # Drop any -o/--output the caller supplied — raw mode's output is source
@@ -146,7 +211,7 @@ raw_mode() {
     call_args+=("${probe_args[@]+"${probe_args[@]}"}")
 
     local json
-    json=$("$MDQ" -o json "${call_args[@]+"${call_args[@]}"}") || exit $?
+    json=$("$MDQ" -o json "${call_args[@]+"${call_args[@]}"}") || return $?
 
     # Raw mode needs exactly one concrete on-disk file: stdin ('-', or no
     # file at all) has no byte range to slice, and multiple files would make
@@ -158,19 +223,19 @@ raw_mode() {
     done
     if [[ ${#files[@]} -ne 1 ]]; then
         echo "mdq --raw: need exactly one markdown file to slice source bytes from (got ${#files[@]})." >&2
-        exit 1
+        return 1
     fi
     local file="${files[0]}"
     [[ -r "$file" ]] || {
         echo "mdq --raw: cannot read '$file'" >&2
-        exit 1
+        return 1
     }
 
     # Raw mode only works when every top-level match is a whole section — a
     # paragraph/list/etc match has no heading-bounded line range of its own.
     if ! printf '%s' "$json" | jq -e '(.items|length) > 0 and all(.items[]; has("section"))' >/dev/null 2>&1; then
         echo "mdq --raw: the selector must match one or more whole sections (headings); it matched something else, or nothing." >&2
-        exit 1
+        return 1
     fi
 
     # All ATX headings in the source, outside fenced code blocks:
@@ -213,7 +278,7 @@ raw_mode() {
         done
         if (( idx < 0 )); then
             echo "mdq --raw: matched section '$title' (depth $depth) but could not relocate it in '$file' by heading text — cannot slice raw bytes." >&2
-            exit 1
+            return 1
         fi
         local start=${h_line[idx]} end=$total_lines j
         for ((j = idx + 1; j < n; j++)); do
@@ -240,14 +305,16 @@ if [[ $# -ge 1 && "$1" == \#* ]]; then
         selector="# \"$esc\""
     fi
     if (( raw )); then
-        raw_mode "$selector" "$@"
-        exit $?
+        emit_raw_or_render "$selector" "$@"
+        rc=$?
+        [ $rc -ne 10 ] && exit $rc
     fi
     exec "$MDQ" "$selector" "$@"
 else
     if (( raw )); then
-        raw_mode "" "$@"
-        exit $?
+        emit_raw_or_render "" "$@"
+        rc=$?
+        [ $rc -ne 10 ] && exit $rc
     fi
     exec "$MDQ" "$@"
 fi
